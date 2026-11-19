@@ -33,6 +33,20 @@ const ORG_ROLE_SQL: &str = "INSERT INTO identity.org_roles (principal_id, org, r
 const PROJECT_ADMIN_SQL: &str = "INSERT INTO identity.project_roles \
     (principal_id, org, project, role) VALUES ($1, $2, $4, $3) ON CONFLICT DO NOTHING";
 
+fn membership_write_error(error: &sqlx::Error) -> IdentityError {
+    if error.as_database_error().is_some_and(|error| {
+        error.code().as_deref() == Some("23514")
+            && error.constraint() == Some("org_memberships_single_org")
+    }) {
+        return IdentityError::refused(
+            IdentityErrorType::Conflict,
+            IdentityRefusal::UserInAnotherOrg,
+            "the user already belongs to another org",
+        );
+    }
+    database_error(error)
+}
+
 /// Create the user's active membership of `org`, or make an inactive
 /// membership active. It restores no project, environment or role access.
 pub async fn activate_org_membership(
@@ -46,7 +60,7 @@ pub async fn activate_org_membership(
         .execute(&mut *client)
         .await
         .map(|result| result.rows_affected())
-        .map_err(|error| database_error(&error))?;
+        .map_err(|error| membership_write_error(&error))?;
     Ok(())
 }
 
@@ -351,7 +365,7 @@ pub async fn reactivate_org_membership(
         .execute(&mut *client)
         .await
         .map(|result| result.rows_affected())
-        .map_err(|error| database_error(&error))?;
+        .map_err(|error| membership_write_error(&error))?;
     Ok(())
 }
 

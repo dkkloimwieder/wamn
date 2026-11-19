@@ -48,7 +48,7 @@ pub fn app_identity_hash(project_env_key: &crate::ProjectEnvKey, database: &str)
     )
 }
 
-/// The org and database hash used by SQL's `registry.control_org()`.
+/// The control login hash used by SQL's `registry.login_org()`.
 pub fn control_identity_hash(org: &crate::OrgId, database: &str) -> String {
     identity_hash(
         b"wamn.control.identity.v0.1",
@@ -56,7 +56,7 @@ pub fn control_identity_hash(org: &crate::OrgId, database: &str) -> String {
     )
 }
 
-/// The org and database hash used by the org's apply login.
+/// The apply login hash used by SQL's `registry.login_org()`.
 pub fn apply_identity_hash(org: &crate::OrgId, database: &str) -> String {
     identity_hash(
         b"wamn.apply.identity.v0.1",

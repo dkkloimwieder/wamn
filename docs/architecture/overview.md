@@ -173,7 +173,7 @@ Project database coordinates also contain the project.
 Their constructors parse external strings. Internal calls carry the types, and wire formats keep strings.
 SQL decoding uses the same constructors and refuses invalid stored values.
 The catalog holds no second environment identity table.
-Postgres row security restricts each control login to the org encoded by its authenticated login.
+Postgres row security restricts each control and apply login to the org encoded by its authenticated login.
 Request settings cannot select a different org.
 
 ## Organization membership and administration
@@ -181,6 +181,7 @@ Request settings cannot select a different org.
 A principal is global. Membership of an org is explicit.
 `identity.org_memberships` holds one row for each principal and org, with the status `active` or `inactive`.
 `user.create` and `user.invite` create or reuse the principal and activate its org membership.
+Control refuses a new or reactivated membership if the user belongs to another org, including an inactive membership.
 An active member can hold no project access, a membership of environments, application roles, `project-admin`, or `org-admin`.
 A valid account with no effective access is not an authentication error.
 

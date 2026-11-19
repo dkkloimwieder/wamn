@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 use sqlx::PgConnection;
 use wamn_catalog::HostAttachment;
 use wamn_identity::org::{MemberGrants, invite_member};
-use wamn_identity::require_user_contact;
+use wamn_identity::{IdentityRefusal, require_user_contact};
 use wamn_identity_client::users::{DisableOutcome, UserClient, UserRefused};
 use wamn_identity_protocol::{
     PrincipalId,
@@ -91,7 +91,18 @@ impl ControlRoutes<'_> {
         grants: &MemberGrants,
     ) -> Result<(), Refusal> {
         let mut transaction = self.begin(writer, attachment, caller).await?;
-        invite_member(&mut transaction, user, self.org, grants).await?;
+        invite_member(&mut transaction, user, self.org, grants)
+            .await
+            .map_err(|error| {
+                if error.refusal() == Some(IdentityRefusal::UserInAnotherOrg) {
+                    Refusal::Declared {
+                        code: "user_in_another_org",
+                        detail: json!({"field": "email"}),
+                    }
+                } else {
+                    error.into()
+                }
+            })?;
         // Activation holds the principal lock. Refuse if disable won the race
         // between identity's successful response and this membership write.
         let active = sqlx::query_scalar::<_, bool>(
@@ -206,7 +217,7 @@ pub(crate) async fn first_owner(
     let mut writer = handlers.writer.lock().await;
     let mut tx = wamn_platform_install::transaction::provisioning_transaction(&mut writer).await?;
     let registered: bool =
-        sqlx::query_scalar("SELECT COALESCE(registry.control_org() = $1, false)")
+        sqlx::query_scalar("SELECT COALESCE(registry.login_org() = $1, false)")
             .bind(org)
             .fetch_one(&mut *tx)
             .await?;
@@ -255,7 +266,12 @@ pub(crate) async fn first_owner(
         org_admin: true,
         ..MemberGrants::default()
     };
-    invite_member(&mut tx, &user.principal_id, org, &grants).await?;
+    if let Err(error) = invite_member(&mut tx, &user.principal_id, org, &grants).await {
+        if error.refusal() == Some(IdentityRefusal::UserInAnotherOrg) {
+            return Ok(StatusCode::CONFLICT);
+        }
+        return Err(error.into());
+    }
     let active: bool =
         sqlx::query_scalar("SELECT status = 'active' FROM identity.principals WHERE id = $1")
             .bind(user.principal_id)

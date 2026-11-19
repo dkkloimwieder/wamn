@@ -235,14 +235,25 @@ CREATE TRIGGER wamn_record_history_stamp
     FOR EACH ROW
     EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 
--- Control isolation follows the authenticated login, never a request parameter.
-CREATE FUNCTION registry.control_org() RETURNS text
+-- Org isolation follows the authenticated login.
+CREATE FUNCTION registry.login_org() RETURNS text
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
     SELECT o.id FROM registry.orgs o
-    WHERE session_user::text = 'wamn_control_' ||
-        left(encode(sha256(pg_catalog.int8send(octet_length(convert_to('wamn.control.identity.v0.1', 'UTF8'))::bigint) || convert_to('wamn.control.identity.v0.1', 'UTF8') || pg_catalog.int8send(octet_length(convert_to('org', 'UTF8'))::bigint) || convert_to('org', 'UTF8') || pg_catalog.int8send(octet_length(convert_to(o.id, 'UTF8'))::bigint) || convert_to(o.id, 'UTF8') || pg_catalog.int8send(octet_length(convert_to('database', 'UTF8'))::bigint) || convert_to('database', 'UTF8') || pg_catalog.int8send(octet_length(convert_to(current_database(), 'UTF8'))::bigint) || convert_to(current_database(), 'UTF8')), 'hex'), 40)
+    CROSS JOIN (VALUES
+        ('wamn_control_', 'wamn.control.identity.v0.1'),
+        ('wamn_apply_', 'wamn.apply.identity.v0.1')
+    ) AS family(prefix, domain)
+    WHERE starts_with(session_user::text, prefix)
+      AND session_user::text = prefix || left(encode(sha256(
+          int8send(octet_length(convert_to(domain, 'UTF8'))::bigint) || convert_to(domain, 'UTF8')
+          || int8send(3) || convert_to('org', 'UTF8')
+          || int8send(octet_length(convert_to(o.id, 'UTF8'))::bigint) || convert_to(o.id, 'UTF8')
+          || int8send(8) || convert_to('database', 'UTF8')
+          || int8send(octet_length(convert_to(current_database(), 'UTF8'))::bigint)
+          || convert_to(current_database(), 'UTF8')
+      ), 'hex'), 40)
 $$;
-REVOKE ALL ON FUNCTION registry.control_org() FROM PUBLIC;
+REVOKE ALL ON FUNCTION registry.login_org() FROM PUBLIC;
 
 
 -- ---------------------------------------------------------------------------
@@ -434,20 +445,32 @@ CREATE TRIGGER wamn_record_history_stamp
     FOR EACH ROW
     EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 
--- Order membership activation against the issuer's cross-org disable check.
--- RLS can hide the principal from a control login before it adds the membership.
-CREATE FUNCTION identity.lock_org_membership_principal() RETURNS trigger
+-- Serialize new memberships and activations with each other and with the issuer's
+-- disable check. Updating a row version also forces stale snapshots to retry.
+CREATE FUNCTION identity.check_org_membership() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
 BEGIN
-    PERFORM 1 FROM identity.principals WHERE id = NEW.principal_id FOR NO KEY UPDATE;
+    IF TG_OP = 'UPDATE' AND NEW.status <> 'active'
+       AND (NEW.principal_id, NEW.org) = (OLD.principal_id, OLD.org) THEN
+        RETURN NEW;
+    END IF;
+
+    UPDATE identity.principals SET display_name = display_name WHERE id = NEW.principal_id;
+    IF (COALESCE(pg_has_role(session_user, to_regrole('wamn_control'), 'member'), false)
+        OR COALESCE(pg_has_role(session_user, to_regrole('wamn_apply'), 'member'), false))
+       AND NOT EXISTS (SELECT FROM pg_roles WHERE rolname = session_user AND rolsuper)
+       AND EXISTS (SELECT FROM identity.org_memberships
+                   WHERE principal_id = NEW.principal_id AND org <> NEW.org) THEN
+        RAISE EXCEPTION 'the user already belongs to another org'
+            USING ERRCODE = '23514', CONSTRAINT = 'org_memberships_single_org';
+    END IF;
     RETURN NEW;
 END;
 $$;
-REVOKE ALL ON FUNCTION identity.lock_org_membership_principal() FROM PUBLIC;
-CREATE TRIGGER lock_org_membership_principal
-    AFTER INSERT OR UPDATE OF status ON identity.org_memberships
-    FOR EACH ROW WHEN (NEW.status = 'active')
-    EXECUTE FUNCTION identity.lock_org_membership_principal();
+REVOKE ALL ON FUNCTION identity.check_org_membership() FROM PUBLIC;
+CREATE TRIGGER check_org_membership
+    AFTER INSERT OR UPDATE OF principal_id, org, status ON identity.org_memberships
+    FOR EACH ROW EXECUTE FUNCTION identity.check_org_membership();
 
 -- A user's administrative role in one org (docs/plan/platform-ui.md §4.4).
 -- A role needs the user's membership of the org, and deleting the
@@ -881,6 +904,14 @@ CREATE TRIGGER project_envs_retire_instance
     BEFORE DELETE ON registry.environment_projects
     FOR EACH ROW EXECUTE FUNCTION registry.retire_project_env();
 
+-- Call under the project stream capacity lock when reserving projects.
+CREATE FUNCTION registry.project_capacity_available(requested int) RETURNS boolean
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
+    SELECT (SELECT count(*) FROM registry.environment_projects) + requested <= max_projects
+    FROM registry.meta
+$$;
+REVOKE ALL ON FUNCTION registry.project_capacity_available(int) FROM PUBLIC;
+
 -- ---------------------------------------------------------------------------
 -- Event readers — the CDC capture registrations (D19 v3, wamn-l5i9.9). One row
 -- per project-env with CDC enabled: the publication + failover replication slot
@@ -995,7 +1026,10 @@ CREATE TRIGGER environment_target_immutable BEFORE UPDATE OF target_id ON regist
 CREATE FUNCTION registry.configure_integration_type(org_id text, operation text, payload jsonb) RETURNS jsonb
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
 BEGIN
-    IF (COALESCE(pg_has_role(session_user,to_regrole('wamn_control'),'member'),false) AND NOT EXISTS (SELECT FROM pg_roles WHERE rolname=session_user AND rolsuper)) AND org_id IS DISTINCT FROM registry.control_org() THEN
+    IF (COALESCE(pg_has_role(session_user, to_regrole('wamn_control'), 'member'), false)
+        OR COALESCE(pg_has_role(session_user, to_regrole('wamn_apply'), 'member'), false))
+       AND NOT EXISTS (SELECT FROM pg_roles WHERE rolname = session_user AND rolsuper)
+       AND org_id IS DISTINCT FROM registry.login_org() THEN
         RAISE EXCEPTION 'org access refused' USING ERRCODE='42501';
     END IF;
     IF operation <> 'integration_type.list' THEN
@@ -1031,42 +1065,74 @@ DO $control_surface$ BEGIN
   END IF;
 END $control_surface$;
 
-CREATE FUNCTION registry.control_principal(principal uuid) RETURNS boolean
+CREATE FUNCTION registry.login_principal(principal uuid) RETURNS boolean
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path=pg_catalog AS $$
-    SELECT EXISTS (SELECT FROM identity.org_memberships m WHERE m.principal_id=principal AND m.org=registry.control_org())
+    SELECT EXISTS (SELECT FROM identity.org_memberships m WHERE m.principal_id=principal AND m.org=registry.login_org())
 $$;
-REVOKE ALL ON FUNCTION registry.control_principal(uuid) FROM PUBLIC;
+REVOKE ALL ON FUNCTION registry.login_principal(uuid) FROM PUBLIC;
+
+CREATE FUNCTION identity.principal_in_login_org_only(principal uuid) RETURNS boolean
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
+    SELECT COALESCE(bool_and(m.org = (SELECT registry.login_org())), false)
+    FROM identity.org_memberships m WHERE m.principal_id = principal
+$$;
+REVOKE ALL ON FUNCTION identity.principal_in_login_org_only(uuid) FROM PUBLIC;
+
 DO $identity_membership_read$ BEGIN
     IF to_regrole('wamn_system_reader') IS NOT NULL THEN
         GRANT SELECT (principal_id, org, status) ON identity.org_memberships TO wamn_system_reader;
-        GRANT EXECUTE ON FUNCTION registry.control_org(), registry.control_principal(uuid) TO wamn_system_reader;
+        GRANT EXECUTE ON FUNCTION registry.login_org(), registry.login_principal(uuid) TO wamn_system_reader;
     END IF;
 END $identity_membership_read$;
 
 DO $control_security$
-DECLARE relation_name text; predicate text;
+DECLARE
+    relation_name text;
+    predicate text;
+    -- Resolve the group roles at query time so this also works before bootstrap creates them.
+    org_login constant text := $predicate$
+        (COALESCE(pg_has_role(session_user, to_regrole('wamn_control'), 'member'), false)
+         OR COALESCE(pg_has_role(session_user, to_regrole('wamn_apply'), 'member'), false))
+        AND NOT EXISTS (SELECT FROM pg_roles WHERE rolname = session_user AND rolsuper)
+    $predicate$;
+    bound_actor constant text := '(SELECT wamn_authority.current_principal_id()) IS NOT NULL';
 BEGIN
     FOREACH relation_name IN ARRAY ARRAY[
         'registry.orgs', 'registry.env_policies', 'registry.projects',
         'registry.environments', 'registry.environment_projects',
         'registry.environment_applications', 'registry.environment_application_connections',
-        'registry.environment_integrations',
+        'registry.environment_integrations', 'registry.event_readers',
+        'registry.capture_gap', 'registry.retired_project_envs',
         'identity.org_memberships', 'identity.org_roles',
-        'identity.project_roles', 'identity.project_env_memberships',
-        'identity.principals', 'identity.password_logins'
+        'identity.project_roles', 'identity.project_env_memberships'
     ] LOOP
         predicate := CASE relation_name
-          WHEN 'registry.orgs' THEN 'id = registry.control_org()'
-          WHEN 'identity.principals' THEN 'registry.control_principal(id)'
-          WHEN 'identity.password_logins' THEN 'registry.control_principal(principal_id)'
-          ELSE 'org = registry.control_org()' END;
-        -- The policy also exists when bootstrap creates the ACL role later.
-        predicate := '(SELECT wamn_authority.current_principal_id()) IS NOT NULL AND CASE WHEN COALESCE(pg_has_role(session_user,to_regrole(''wamn_control''),''member''),false) AND NOT EXISTS (SELECT FROM pg_roles WHERE rolname=session_user AND rolsuper) THEN (' || predicate || ') ELSE true END';
+          WHEN 'registry.orgs' THEN 'id = (SELECT registry.login_org())'
+          ELSE 'org = (SELECT registry.login_org())' END;
+        predicate := format('CASE WHEN %s THEN %s ELSE true END', org_login, predicate);
         EXECUTE format('ALTER TABLE %s ENABLE ROW LEVEL SECURITY', relation_name);
-        EXECUTE format('CREATE POLICY control_org ON %s USING (%s) WITH CHECK (%s)',relation_name,predicate,predicate);
+        EXECUTE format('CREATE POLICY login_org ON %s USING (%s) WITH CHECK (%s AND %s)',
+                       relation_name, predicate, bound_actor, predicate);
     END LOOP;
+
+    ALTER TABLE identity.principals ENABLE ROW LEVEL SECURITY;
+    EXECUTE format('CREATE POLICY login_org_select ON identity.principals FOR SELECT
+                    USING (CASE WHEN %s THEN registry.login_principal(id) ELSE true END)', org_login);
+    EXECUTE format('CREATE POLICY login_org_insert ON identity.principals FOR INSERT
+                    WITH CHECK (%s)', bound_actor);
+    predicate := format('CASE WHEN %s THEN identity.principal_in_login_org_only(id) ELSE true END',
+                        org_login);
+    EXECUTE format('CREATE POLICY login_org_update ON identity.principals FOR UPDATE
+                    USING (%s) WITH CHECK (%s AND %s)', predicate, bound_actor, predicate);
+
+    ALTER TABLE identity.password_logins ENABLE ROW LEVEL SECURITY;
+    EXECUTE format('CREATE POLICY login_org_select ON identity.password_logins FOR SELECT
+                    USING (CASE WHEN %s THEN registry.login_principal(principal_id) ELSE true END)',
+                   org_login);
+
     IF to_regrole('wamn_control') IS NOT NULL THEN
-        GRANT EXECUTE ON FUNCTION registry.control_org(), registry.control_principal(uuid) TO wamn_control;
+        GRANT EXECUTE ON FUNCTION registry.login_org(), registry.login_principal(uuid),
+            identity.principal_in_login_org_only(uuid) TO wamn_control;
         GRANT SELECT ON registry.environments TO wamn_control;
     END IF;
 END
@@ -1078,7 +1144,10 @@ RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalo
     SELECT EXISTS (SELECT FROM identity.principals p
         JOIN identity.org_memberships m ON m.principal_id=p.id AND m.org=org_id AND m.status='active'
         WHERE p.id=principal AND p.type='user' AND p.status='active'
-        AND (NOT (COALESCE(pg_has_role(session_user,to_regrole('wamn_control'),'member'),false) AND NOT EXISTS (SELECT FROM pg_roles WHERE rolname=session_user AND rolsuper)) OR org_id=registry.control_org())
+        AND (NOT ((COALESCE(pg_has_role(session_user, to_regrole('wamn_control'), 'member'), false)
+                   OR COALESCE(pg_has_role(session_user, to_regrole('wamn_apply'), 'member'), false))
+                  AND NOT EXISTS (SELECT FROM pg_roles WHERE rolname = session_user AND rolsuper))
+             OR org_id = registry.login_org())
         AND (EXISTS (SELECT FROM identity.org_roles r WHERE r.principal_id=p.id AND r.org=org_id AND r.role='org-admin')
           OR EXISTS (SELECT FROM identity.project_roles r WHERE r.principal_id=p.id AND r.org=org_id AND r.project=project_id AND r.role='project-admin')))
 $$;
@@ -1086,7 +1155,10 @@ REVOKE ALL ON FUNCTION identity.is_project_admin(uuid,text,text) FROM PUBLIC;
 
 CREATE FUNCTION identity.has_project_access(principal uuid, org_id text, environment text, project_id text)
 RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
-    SELECT (NOT (COALESCE(pg_has_role(session_user,to_regrole('wamn_control'),'member'),false) AND NOT EXISTS (SELECT FROM pg_roles WHERE rolname=session_user AND rolsuper)) OR org_id=registry.control_org())
+    SELECT (NOT ((COALESCE(pg_has_role(session_user, to_regrole('wamn_control'), 'member'), false)
+                  OR COALESCE(pg_has_role(session_user, to_regrole('wamn_apply'), 'member'), false))
+                 AND NOT EXISTS (SELECT FROM pg_roles WHERE rolname = session_user AND rolsuper))
+            OR org_id = registry.login_org())
     AND EXISTS (SELECT FROM registry.environment_projects e WHERE e.org=org_id AND e.env=environment AND e.project=project_id)
     AND (identity.is_project_admin(principal,org_id,project_id)
       OR EXISTS (SELECT FROM identity.project_env_memberships m

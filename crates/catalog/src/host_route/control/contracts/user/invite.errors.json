@@ -22,6 +22,16 @@
       "text": "Identity refused the user of this email, for example a disabled user."
     },
     {
+      "literal": "user_in_another_org",
+      "from": "transaction_invariant",
+      "detail": {
+        "required": [
+          "field"
+        ]
+      },
+      "text": "The user already belongs to another org."
+    },
+    {
       "literal": "project_not_found",
       "from": "transaction_invariant",
       "detail": {

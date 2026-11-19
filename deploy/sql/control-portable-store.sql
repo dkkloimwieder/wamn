@@ -25,5 +25,18 @@ CREATE TRIGGER wamn_record_history_stamp
         'created_at', 'created_by', 'updated_at', 'updated_by');
 REVOKE ALL ON TABLE wamn_authority.author_login_projects FROM PUBLIC;
 
+ALTER TABLE wamn_authority.author_login_projects ENABLE ROW LEVEL SECURITY;
+CREATE POLICY login_org ON wamn_authority.author_login_projects
+USING (CASE WHEN
+    (COALESCE(pg_has_role(session_user, to_regrole('wamn_control'), 'member'), false)
+     OR COALESCE(pg_has_role(session_user, to_regrole('wamn_apply'), 'member'), false))
+    AND NOT EXISTS (SELECT FROM pg_roles WHERE rolname = session_user AND rolsuper)
+    THEN org_id = (SELECT registry.login_org()) ELSE true END)
+WITH CHECK ((SELECT wamn_authority.current_principal_id()) IS NOT NULL AND CASE WHEN
+    (COALESCE(pg_has_role(session_user, to_regrole('wamn_control'), 'member'), false)
+     OR COALESCE(pg_has_role(session_user, to_regrole('wamn_apply'), 'member'), false))
+    AND NOT EXISTS (SELECT FROM pg_roles WHERE rolname = session_user AND rolsuper)
+    THEN org_id = (SELECT registry.login_org()) ELSE true END);
+
 REVOKE ALL ON ALL TABLES IN SCHEMA catalog FROM PUBLIC;
 REVOKE ALL ON ALL FUNCTIONS IN SCHEMA catalog FROM PUBLIC;
