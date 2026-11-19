@@ -1,6 +1,7 @@
 # Org chart
 
 The org chart declares the tenant namespace, base RBAC, resource quota, and default-deny ingress and egress.
+The platform selects the namespace by its `wamn.dev/org` label.
 Set `org` to the registry org slug. The platform, hosts, cert-manager, default, kube-* and wamn names are reserved.
 The quota caps object counts and storage requests. Set individual limits in `quota`.
 
@@ -11,4 +12,8 @@ Environment and project releases supply the policy rules for their host groups, 
 Create `wamn-helm-<org>` before installing the org chart, and use it as the Helm release namespace.
 The trusted install entry point in Epic 10 will create it.
 The chart grants the org worker access to Helm release Secrets in that namespace. Keep payload and credential Secrets in their resource namespaces.
-Existing Helm records stay in their original namespaces.
+Set `control.image` and `control.configuration` to deploy the org's control service.
+Set `control.routeHost` and pin `control.image` by digest to publish its API route. Set `control.platformUi` to publish the UI release at that host.
+Control mounts its database login and system migration credential from named Secrets. Supply both Secrets before installing control.
+Pass the public CA certificates as PEM through `identityCa`, `natsCa`, and `postgresCa`.
+Read `tls.crt` from `platform/wamn-identity-ca` and `platform/wasmcloud-ca`, and `ca.crt` from `platform/wamn-pg-ca`.

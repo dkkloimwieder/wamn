@@ -1,43 +1,8 @@
-//! CloudNativePG managed roles for the system and project databases.
+//! CloudNativePG managed roles for project databases.
 
 use wamn_provision::WorkloadRoleFamily;
 use wamn_provision::connection::{ManagedRole, managed_replication_role, managed_role};
-use wamn_provision::migrations::MigrationDatabase;
 use wamn_registry::name::project_login_secret;
-
-pub(crate) fn control(org: &wamn_registry::OrgId, database: &str) -> ManagedRole {
-    managed_role(
-        wamn_registry::name::credential_login(
-            wamn_role::CONTROL_ROLE,
-            &wamn_registry::control_identity_hash(org, database),
-        ),
-        wamn_role::CONTROL_ROLE,
-        "wamn-control-db".into(),
-    )
-}
-
-/// Fixed bootstrap credentials precede every org and project row.
-pub(crate) fn platform(
-    namespace: &wamn_registry::OrgId,
-    database: &str,
-) -> anyhow::Result<Vec<ManagedRole>> {
-    Ok(vec![
-        managed_role(
-            wamn_role::APPLY_ROLE.parse().expect("platform login"),
-            "",
-            "wamn-apply".into(),
-        ),
-        MigrationDatabase::System.managed_role(database),
-        control(namespace, database),
-        managed_role(
-            wamn_provision::identity_role::identity_issuer_login(
-                &crate::platform::identity::issuer(namespace.as_str()),
-            )?,
-            wamn_role::IDENTITY_ISSUER_ROLE,
-            "wamn-identity-db".into(),
-        ),
-    ])
-}
 
 /// Derive project role limits from the environment host replica count.
 pub(crate) fn project(database: &str, replicas: u32) -> anyhow::Result<Vec<ManagedRole>> {

@@ -155,6 +155,30 @@ fn write_kubeconfig(path: &Path, namespace: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+async fn wait_for_system_schema(database: &str) -> anyhow::Result<sqlx::PgConnection> {
+    use std::time::Duration;
+
+    tokio::time::timeout(Duration::from_mins(5), async {
+        loop {
+            let ready = tokio::time::timeout(Duration::from_secs(5), async {
+                let mut connection = wamn_postgres::connect(database).await?;
+                let domain: Option<String> =
+                    sqlx::query_scalar(wamn_registry::sql::PLATFORM_DOMAIN_SQL)
+                        .fetch_one(&mut connection)
+                        .await?;
+                Ok::<_, anyhow::Error>(domain.map(|_| connection))
+            })
+            .await;
+            if let Ok(Ok(Some(connection))) = ready {
+                return connection;
+            }
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+    })
+    .await
+    .map_err(|_| anyhow::anyhow!("wait for system schema timed out"))
+}
+
 /// Serve org routes on native HTTP and drain active requests on shutdown.
 pub async fn serve(config: Configuration) -> anyhow::Result<()> {
     let platform = config.platform()?;
@@ -180,6 +204,7 @@ pub async fn serve(config: Configuration) -> anyhow::Result<()> {
     };
     write_kubeconfig(&platform.target.kubeconfig, config.org.as_str())?;
     let database = config.database.to_json()?;
+    let writer = wait_for_system_schema(&database).await?;
     let pool = wamn_postgres::pool(&database, 4).await?;
     let identity_databases = config.administration_dir.clone();
     let identity_system = wamn_provision::migrations::MigrationDatabase::System
@@ -204,9 +229,7 @@ pub async fn serve(config: Configuration) -> anyhow::Result<()> {
     let handlers = Arc::new(
         HostRouteDelivery::new(HostRouteHandlers {
             control: pool.clone(),
-            writer: Arc::new(tokio::sync::Mutex::new(
-                wamn_postgres::connect(&database).await?,
-            )),
+            writer: Arc::new(tokio::sync::Mutex::new(writer)),
             identity: config.identity.users()?,
             issuer: config.session_issuer,
             administration: Some(config.administration_dir.clone()),

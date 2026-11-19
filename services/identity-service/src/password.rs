@@ -631,6 +631,9 @@ pub(super) fn throttled() -> Response<Full<Bytes>> {
 
 #[cfg(test)]
 mod tests {
+    use std::io::Write as _;
+    use std::os::unix::fs::OpenOptionsExt as _;
+
     use super::*;
     use crate::connect_database;
     use crate::{IdentityConfig, IdentityService};
@@ -758,6 +761,16 @@ mod tests {
         url.set_username(identity_issuer_login(issuer).unwrap().as_str())
             .unwrap();
         url.set_password(Some("fixture-password")).unwrap();
+        let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create().unwrap();
+        let key = scratch.path().join("envelope-key");
+        std::fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .mode(0o600)
+            .open(&key)
+            .unwrap()
+            .write_all(&[42; 32])
+            .unwrap();
         let mut service = IdentityService::connect(
             IdentityConfig::new(issuer, url.as_str())
                 .unwrap()
@@ -768,6 +781,7 @@ mod tests {
                     )
                     .unwrap(),
                 ),
+            wamn_envelope::encryption::Envelope::from_file(&key).unwrap(),
         )
         .await
         .unwrap();

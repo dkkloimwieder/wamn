@@ -14,7 +14,7 @@ async fn connect(url: &str) -> sqlx::PgConnection {
 }
 
 #[sqlx::test(migrations = false)]
-async fn platform_initialization_runs_sqlx_once_and_explicit_apply_advances_it(pool: sqlx::PgPool) {
+async fn platform_initialization_applies_pending_migrations_on_upgrade(pool: sqlx::PgPool) {
     use sqlx::SqlSafeStr as _;
     use sqlx::migrate::{Migration, MigrationType};
     use wamn_provision::migrations::MigrationDatabase;
@@ -60,20 +60,6 @@ async fn platform_initialization_runs_sqlx_once_and_explicit_apply_advances_it(p
     initialize_system(&mut client, &migration_input, &sources)
         .await
         .unwrap();
-    let mut migration = connect(&migration_input).await;
-    let values: Vec<i32> =
-        sqlx::query_scalar("SELECT value FROM registry.migration_probe ORDER BY value")
-            .fetch_all(&mut client)
-            .await
-            .unwrap();
-    assert_eq!(values, [1]);
-    platform_migrations::apply_reported(
-        &mut migration,
-        platform_migrations::MigrationTarget::System,
-        &sources,
-    )
-    .await
-    .unwrap();
     let observed = wamn_environment::platform_migrations::observe(
         &mut client,
         MigrationDatabase::System,

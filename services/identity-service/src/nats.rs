@@ -22,6 +22,13 @@ const OPERATOR_SECRET: &str = "wamn-nats-operator";
 const RUNTIME_OPERATOR_SECRET: &str = "wamn-nats-runtime-operator";
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
 
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct Settings {
+    url: String,
+    tls_ca: PathBuf,
+}
+
 pub(super) struct State {
     authority: Authority,
     server: ServerAddr,
@@ -86,11 +93,10 @@ pub(super) async fn start(
     issuer: &str,
     envelope: &wamn_envelope::encryption::Envelope,
     api: Option<&KubernetesApi>,
+    settings: Option<Settings>,
 ) -> Result<Option<State>, IdentityServiceError> {
-    let url = match std::env::var("WAMN_NATS_URL") {
-        Ok(url) => url,
-        Err(std::env::VarError::NotPresent) => return Ok(None),
-        Err(_) => return Err(IdentityServiceError::new("invalid identity NATS URL")),
+    let Some(Settings { url, tls_ca }) = settings else {
+        return Ok(None);
     };
     let server: ServerAddr = url
         .parse()
@@ -100,10 +106,6 @@ pub(super) async fn start(
             "identity NATS URL must omit credentials",
         ));
     }
-    let ca = PathBuf::from(
-        std::env::var_os("WAMN_NATS_TLS_CA")
-            .ok_or_else(|| IdentityServiceError::new("identity NATS TLS CA is required"))?,
-    );
     let api = api.ok_or_else(|| IdentityServiceError::new("NATS bootstrap requires Kubernetes"))?;
     if api.namespace != PLATFORM_NAMESPACE {
         return Err(IdentityServiceError::new(
@@ -138,7 +140,7 @@ pub(super) async fn start(
     })?;
     let options = ConnectOptions::new()
         .require_tls(true)
-        .add_root_certificates(ca)
+        .add_root_certificates(tls_ca)
         .custom_inbox_prefix(bootstrap.system_inbox)
         .request_timeout(Some(REQUEST_TIMEOUT))
         .max_reconnects(None)

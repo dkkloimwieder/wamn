@@ -47,7 +47,9 @@ spec:
   policyTypes: [Egress]
   egress:
     - to:
-        - podSelector:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: platform}
+          podSelector:
             matchLabels: {app.kubernetes.io/name: wamn-identity}
       ports: [{port: 8443, protocol: TCP}]
 ---

@@ -188,7 +188,6 @@ object_store = { version = "0.14.1", default-features = false, features = ["aws"
 # docs/testing/unit-and-property.md covers property tests and
 # shrinking on the stable pin. `std` only; the
 # `fork`/`timeout` features pull `rusty-fork` and are not used.
-dotenvy = "0.15.7"
 ring = "0.17"
 rcgen = "0.14.8"
 rustls = { version = "0.23", default-features = false }

@@ -1,18 +1,9 @@
 //! Thin platform command adapters.
 
-use std::io::Write;
 use std::path::PathBuf;
 
 use anyhow::Context as _;
 use clap::{Args, Subcommand, ValueEnum};
-use wamn_platform_install::platform::document::ClusterDocument;
-
-/// Management verbs also available through the low-level control tool.
-#[derive(Debug, Subcommand)]
-pub enum PlatformCommand {
-    /// Print a cluster.k file in its standard KCL form.
-    Show(ShowArgs),
-}
 
 /// Platform verbs exposed by the product command.
 #[derive(Debug, Subcommand)]
@@ -20,8 +11,6 @@ pub enum ProductPlatformCommand {
     /// Inspect or apply platform SQL through control.
     #[command(subcommand)]
     Schema(PlatformSchemaCommand),
-    #[command(flatten)]
-    Manage(PlatformCommand),
 }
 
 #[derive(Debug, Subcommand)]
@@ -85,52 +74,39 @@ impl Args for PlatformSchemaArgs {
     }
 }
 
-#[derive(Debug, Args)]
-pub struct ShowArgs {
-    /// The cluster.k document.
-    pub file: PathBuf,
-}
-
-pub async fn run_product(
-    command: ProductPlatformCommand,
-    output: impl Write,
-) -> anyhow::Result<()> {
+pub async fn run_product(command: ProductPlatformCommand) -> anyhow::Result<()> {
     let mut signals = signals()?;
-    match command {
-        ProductPlatformCommand::Schema(command) => {
-            let (args, apply) = match command {
-                PlatformSchemaCommand::Diff(args) => (args, false),
-                PlatformSchemaCommand::Apply(args) => (args, true),
-            };
-            let (target, projects, org, env) = match args.target {
-                PlatformSchemaTarget::System => ("system", Vec::new(), None, None),
-                PlatformSchemaTarget::Project => {
-                    let file = args.env.context("--env is required for project SQL")?;
-                    let document =
-                        wamn_environment::environment::document::EnvironmentFile::compile(&file)?;
-                    let projects = document
-                        .projects
-                        .into_iter()
-                        .map(|project| project.name)
-                        .collect();
-                    ("project", projects, Some(document.org), Some(document.env))
-                }
-            };
-            let control = crate::operation_verbs::ControlHost::from_env()?;
-            interruptible(
-                &mut signals,
-                control.platform_schema(serde_json::json!({
-                    "target": target,
-                    "projects": projects,
-                    "org": org,
-                    "env": env,
-                    "apply": apply,
-                })),
-            )
-            .await
+    let ProductPlatformCommand::Schema(command) = command;
+    let (args, apply) = match command {
+        PlatformSchemaCommand::Diff(args) => (args, false),
+        PlatformSchemaCommand::Apply(args) => (args, true),
+    };
+    let (target, projects, org, env) = match args.target {
+        PlatformSchemaTarget::System => ("system", Vec::new(), None, None),
+        PlatformSchemaTarget::Project => {
+            let file = args.env.context("--env is required for project SQL")?;
+            let document =
+                wamn_environment::environment::document::EnvironmentFile::compile(&file)?;
+            let projects = document
+                .projects
+                .into_iter()
+                .map(|project| project.name)
+                .collect();
+            ("project", projects, Some(document.org), Some(document.env))
         }
-        ProductPlatformCommand::Manage(command) => run(command, output),
-    }
+    };
+    let control = crate::operation_verbs::ControlHost::from_env()?;
+    interruptible(
+        &mut signals,
+        control.platform_schema(serde_json::json!({
+            "target": target,
+            "projects": projects,
+            "org": org,
+            "env": env,
+            "apply": apply,
+        })),
+    )
+    .await
 }
 
 struct Signals {
@@ -141,7 +117,6 @@ struct Signals {
 }
 
 fn signals() -> anyhow::Result<Signals> {
-    // Register before synchronous KCL compilation, and retain signals between operations.
     Ok(Signals {
         #[cfg(unix)]
         interrupt: tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())
@@ -181,16 +156,4 @@ async fn interruptible<T>(
         () = terminated => anyhow::bail!("platform command terminated"),
         result = operation => result,
     }
-}
-
-pub fn run(command: PlatformCommand, output: impl Write) -> anyhow::Result<()> {
-    let PlatformCommand::Show(args) = command;
-    show(&args, output)
-}
-
-fn show(args: &ShowArgs, mut output: impl Write) -> anyhow::Result<()> {
-    let document = ClusterDocument::compile(&args.file)?;
-    output
-        .write_all(document.to_kcl().as_bytes())
-        .context("write the cluster document")
 }
