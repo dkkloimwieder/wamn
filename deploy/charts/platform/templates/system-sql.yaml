@@ -15,14 +15,18 @@ data:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: {{ printf "%s-%d" $name .Release.Revision }}
+  name: {{ $name }}
   namespace: {{ $namespace }}
   labels:
     app.kubernetes.io/instance: {{ .Release.Name }}
 spec:
   activeDeadlineSeconds: 900
+  podReplacementPolicy: Failed
   template:
     metadata:
+      annotations:
+        # The immutable pod template prevents a concurrent upgrade from reusing this Job.
+        wamn.dev/platform-release-revision: {{ .Release.Revision | quote }}
       labels:
         app.kubernetes.io/component: wamn-system-sql
     spec:

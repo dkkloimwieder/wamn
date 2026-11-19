@@ -3,6 +3,8 @@ use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
 use std::time::Duration;
 
+use crate::{Target, kubectl};
+
 // Bound execution even if the caller exits. Kubernetes never retries these Jobs.
 const INSTALL_DEADLINE: Duration = Duration::from_mins(15);
 
@@ -15,7 +17,7 @@ pub fn manifest(name: &str, image: &str, command: &[&str], arguments: &[&str]) -
                 "volumes":[]}}}})
 }
 
-pub fn name(job: &Value) -> &str {
+fn name(job: &Value) -> &str {
     job["metadata"]["name"].as_str().expect("platform Job name")
 }
 
@@ -89,6 +91,176 @@ pub async fn wait(target: &crate::Target, name: &str, timeout: Duration) -> anyh
     .await?;
     ensure!(!failed.get(), "Job {}/{} failed", target.namespace, name);
     Ok(())
+}
+
+/// Wait for the previous Job to finish and remove it and its Pods.
+pub async fn clear_finished(
+    target: &Target,
+    name: &str,
+    deadline: tokio::time::Instant,
+) -> anyhow::Result<()> {
+    tokio::time::timeout_at(deadline, clear(target, name))
+        .await
+        .map_err(anyhow::Error::from)
+        .flatten()
+        .with_context(|| format!("wait to replace Job {}/{name}", target.namespace))
+}
+
+async fn clear(target: &Target, name: &str) -> anyhow::Result<()> {
+    let namespace = &target.namespace;
+    let path = format!("/apis/batch/v1/namespaces/{namespace}/jobs/{name}");
+    loop {
+        let Some(job) =
+            kubectl::get::<Value>(&target.kubeconfig, &target.context, namespace, "job", name)
+                .await?
+        else {
+            return Ok(());
+        };
+        if matches!(state(&job), State::Succeeded | State::Failed)
+            && job["metadata"]["deletionTimestamp"].is_null()
+        {
+            let uid = job["metadata"]["uid"]
+                .as_str()
+                .context("Job UID is absent")?;
+            // A concurrent caller can already have replaced this Job by name.
+            let options = serde_json::to_vec(&json!({
+                "apiVersion": "v1",
+                "kind": "DeleteOptions",
+                "propagationPolicy": "Foreground",
+                "preconditions": {"uid": uid},
+            }))?;
+            match kubectl::kubectl(
+                &target.kubeconfig,
+                &target.context,
+                namespace,
+                &["delete", "--raw", &path, "-f", "-"],
+                Some(&options),
+            )
+            .await
+            {
+                Ok(_) => {}
+                Err(error)
+                    if error.is::<kubectl::Conflict>() || error.is::<kubectl::NotFound>() => {}
+                Err(error) => {
+                    return Err(error).with_context(|| format!("remove Job {namespace}/{name}"));
+                }
+            }
+        }
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+}
+
+/// Run one Job under its fixed name and return the UID of the completed run.
+pub async fn run_exclusive(
+    target: &Target,
+    manifest: &Value,
+    timeout: Duration,
+) -> anyhow::Result<String> {
+    let name = name(manifest);
+    let namespace = &target.namespace;
+    let input = serde_json::to_vec(manifest)?;
+    let created = tokio::time::timeout(timeout, async {
+        loop {
+            clear(target, name).await?;
+            match kubectl::kubectl(
+                &target.kubeconfig,
+                &target.context,
+                namespace,
+                &["create", "-f", "-", "-o", "json"],
+                Some(&input),
+            )
+            .await
+            {
+                Ok(output) => return Ok(serde_json::from_str::<Value>(&output)?),
+                Err(error) if error.is::<kubectl::Conflict>() => {}
+                Err(error) => return Err(error),
+            }
+        }
+    })
+    .await
+    .map_err(anyhow::Error::from)
+    .flatten()
+    .with_context(|| format!("start Job {namespace}/{name}"))?;
+    let uid = created["metadata"]["uid"]
+        .as_str()
+        .context("Job UID is absent")?;
+    let version = created["metadata"]["resourceVersion"]
+        .as_str()
+        .context("Job resource version is absent")?;
+    wait_instance(target, name, uid, version, timeout).await?;
+    Ok(uid.to_owned())
+}
+
+async fn wait_instance(
+    target: &Target,
+    name: &str,
+    uid: &str,
+    version: &str,
+    timeout: Duration,
+) -> anyhow::Result<()> {
+    let namespace = &target.namespace;
+    let deadline = tokio::time::Instant::now() + timeout;
+    let path =
+        format!("/apis/batch/v1/namespaces/{namespace}/jobs?fieldSelector=metadata.name%3D{name}");
+    let mut version = version.to_owned();
+    let inspect = |job: &Value| match state(job) {
+        State::Succeeded => Ok(true),
+        State::Failed => anyhow::bail!("Job {namespace}/{name} failed"),
+        State::Pending | State::Running => Ok(false),
+    };
+    loop {
+        let output = kubectl::with_timeout(
+            deadline,
+            &target.kubeconfig,
+            &target.context,
+            namespace,
+            &["get", "--raw", &path],
+        )
+        .await
+        .with_context(|| format!("read Job {namespace}/{name}"))?;
+        let jobs: Value = serde_json::from_str(&output).context("decode Job list")?;
+        let job = &jobs["items"][0];
+        if job["metadata"]["uid"] != uid {
+            break;
+        }
+        if inspect(job)? {
+            return Ok(());
+        }
+        jobs["metadata"]["resourceVersion"]
+            .as_str()
+            .context("Job list resource version is absent")?
+            .clone_into(&mut version);
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+
+    // A concurrent caller may already have removed the finished Job. Replay only
+    // the events since our last observation to recover this run's terminal state.
+    ensure!(
+        !version.is_empty() && version.bytes().all(|byte| byte.is_ascii_digit()),
+        "invalid resource version for Job {namespace}/{name}"
+    );
+    let watch = format!("{path}&watch=true&resourceVersion={version}&timeoutSeconds=1");
+    let events = kubectl::with_timeout(
+        deadline,
+        &target.kubeconfig,
+        &target.context,
+        namespace,
+        &["get", "--raw", &watch],
+    )
+    .await
+    .with_context(|| format!("watch Job {namespace}/{name}"))?;
+    for event in serde_json::Deserializer::from_str(&events).into_iter::<Value>() {
+        let event = event.context("decode Job watch event")?;
+        let job = &event["object"];
+        ensure!(
+            event["type"] != "ERROR",
+            "watch Job {namespace}/{name}: {job}"
+        );
+        if job["metadata"]["uid"] == uid && inspect(job)? {
+            return Ok(());
+        }
+    }
+    anyhow::bail!("Job {namespace}/{name} disappeared before completion could be verified")
 }
 
 /// Installed worker image and its public component configuration.

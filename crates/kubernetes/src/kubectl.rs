@@ -41,6 +41,17 @@ impl std::fmt::Display for Conflict {
 
 impl std::error::Error for Conflict {}
 
+#[derive(Debug)]
+pub(crate) struct NotFound;
+
+impl std::fmt::Display for NotFound {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Kubernetes resource does not exist")
+    }
+}
+
+impl std::error::Error for NotFound {}
+
 /// Run `kubectl` against the selected cluster and namespace.
 ///
 /// Calls with input suppress standard error because the input can contain Secrets.
@@ -155,6 +166,11 @@ async fn run(
             || stderr.contains("Error from server (AlreadyExists)")
         {
             return Err(Conflict.into());
+        }
+        if arguments.starts_with(&["delete", "--raw"])
+            && stderr.contains("Error from server (NotFound)")
+        {
+            return Err(NotFound.into());
         }
         if !show_error {
             bail!(

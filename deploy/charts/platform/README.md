@@ -8,7 +8,7 @@ Each NATS pod reserves 320 MiB of JetStream storage per `global.maxProjects`. A 
 
 The SQL Job runs `provision-system` from the `wamn-control` image. Platform artifact stamping pins that image through `systemSql.image`.
 It applies pending system migrations and records `platformDomain` for application hosts and platform principal email addresses.
-Each Helm upgrade runs the Job again.
+Each `wamn platform deploy` waits for the previous SQL Job, removes it, and runs a new Job through Helm.
 
 Identity serves the fixed `global.identityIssuer` address and uses the system PostgreSQL login in `platform`. The edge uses that issuer, and the runtime operator uses the shared broker address in `global.nats.schedulerUrl`.
 The chart mounts the `identity-settings` ConfigMap as a JSON file.

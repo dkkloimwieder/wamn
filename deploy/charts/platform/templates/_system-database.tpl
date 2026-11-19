@@ -17,3 +17,24 @@
 {{- end -}}
 {{- dict "names" $names "authRole" "wamn_pooler_auth" "authSecret" "wamn-pg-pooler-auth-tls" | toJson -}}
 {{- end -}}
+
+{{- define "wamn-platform.identityReplicas" -}}
+2
+{{- end -}}
+
+{{- define "wamn-platform.systemDatabaseMaxConnections" -}}
+{{- $pooler := .Values.postgres.pooler -}}
+{{- $poolerConnections := add $pooler.control.maxDbConnections $pooler.apply.maxDbConnections -}}
+{{- /* The auth_query pool uses one login per Pooler, capped by max_user_connections. */ -}}
+{{- $passwordLookupConnections := add $pooler.control.maxUserConnections $pooler.apply.maxUserConnections -}}
+{{- /* services/identity-service/src/password.rs:51 opens a pool of 8 per replica. */ -}}
+{{- $identityConnections := mul (include "wamn-platform.identityReplicas" .) 8 -}}
+{{- /* crates/platform-install/src/provision_org.rs:35 opens one connection. */ -}}
+{{- $provisionOrgConnections := 1 -}}
+{{- /* provision_system.rs:32,87,185 holds the admin connection and one extra at a time. */ -}}
+{{- $systemSqlConnections := 2 -}}
+{{- /* PostgreSQL 18 defaults: superuser_reserved_connections=3, reserved_connections=0. */ -}}
+{{- $reservedConnections := 3 -}}
+{{- $margin := 10 -}}
+{{- add $poolerConnections $passwordLookupConnections $identityConnections $provisionOrgConnections $systemSqlConnections $reservedConnections $margin -}}
+{{- end -}}

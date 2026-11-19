@@ -285,10 +285,6 @@
           "type": "string",
           "minLength": 1
         },
-        "maxConnections": {
-          "type": "integer",
-          "minimum": 1
-        },
         "pooler": {
           "type": "object",
           "additionalProperties": false,
