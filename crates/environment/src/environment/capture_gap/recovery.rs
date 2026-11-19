@@ -28,7 +28,7 @@ pub struct RecoverCaptureGapRequest {
     pub project: wamn_registry::ProjectId,
     pub env: wamn_registry::EnvName,
 
-    /// Owning connection of the system database: the instance suffix, the reader
+    /// Apply connection of the system database: the instance suffix, the reader
     /// registration, and the gap row.
     pub system_database_url: String,
 
@@ -46,7 +46,7 @@ pub struct CloseCaptureGapRequest {
     pub project: wamn_registry::ProjectId,
     pub env: wamn_registry::EnvName,
 
-    /// Owning connection of the system database.
+    /// Apply connection of the system database.
     pub system_database_url: String,
 }
 
@@ -83,7 +83,9 @@ pub async fn recover_capture_gap(
     let slot = cdc_object_name(&args.org, &args.project, &args.env, instance);
     let database = project_env_database_name(&args.org, &args.project, &args.env, instance);
 
-    let mut system = connect_system(&args.system_database_url).await?;
+    let mut system = connect(&args.system_database_url)
+        .await
+        .context("system db connect")?;
     let env = &triple.env;
     let registration = sqlx::query(sqlx::AssertSqlSafe(
         (select_event_reader_origin_sql()).to_string(),
@@ -221,7 +223,9 @@ pub async fn recover_capture_gap(
 /// Close the newest gap, retaining its original resynchronization time on retry.
 pub async fn close_capture_gap(args: &CloseCaptureGapRequest) -> anyhow::Result<ClosedCaptureGap> {
     let triple = Triple::new(args.org.clone(), args.env.clone(), args.project.clone());
-    let mut system = connect_system(&args.system_database_url).await?;
+    let mut system = connect(&args.system_database_url)
+        .await
+        .context("system db connect")?;
     let env = &triple.env;
     let mut transaction = provisioning_transaction(&mut system).await?;
     let newest = sqlx::query(sqlx::AssertSqlSafe(
@@ -310,17 +314,6 @@ async fn connect(url: &str) -> anyhow::Result<Client> {
         .await
         .context("database connect")?;
 
-    Ok(client)
-}
-
-/// Select `wamn_system`, the registry owner, on its owning connection.
-async fn connect_system(url: &str) -> anyhow::Result<Client> {
-    let mut client = connect(url).await.context("system db connect")?;
-    sqlx::raw_sql("SET ROLE wamn_system")
-        .execute(&mut client)
-        .await
-        .map(drop)
-        .context("SET ROLE wamn_system")?;
     Ok(client)
 }
 

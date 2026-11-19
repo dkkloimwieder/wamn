@@ -7,7 +7,6 @@ license.workspace = true
 
 [dependencies]
 wamn-envelope.workspace = true
-wamn-role.workspace = true
 wamn-digest = { workspace = true, features = ["sqlx"] }
 anyhow.workspace = true
 uuid = { workspace = true, features = ["v4"] }

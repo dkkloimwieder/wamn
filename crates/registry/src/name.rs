@@ -130,12 +130,12 @@ pub fn project_database_host(database: &str, org: &crate::OrgId) -> String {
     format!("{}-rw.{org}.svc.cluster.local", project_cluster(database))
 }
 
-/// A login Secret for this coordinate, generation, and role. Its 43 bytes
+/// A login certificate Secret for this coordinate, generation, and role. Its 43 bytes
 /// fit the runtime operator's volume name with the host-plugin-secret- prefix.
-pub fn project_login_secret(database: &str, login: &str) -> String {
+pub fn project_login_certificate(database: &str, login: &str) -> String {
     let identity = format!("{database}/{login}");
     format!(
-        "wamn-login-{}",
+        "wamn-pgtls-{}",
         &hex::encode(sha256(identity.as_bytes()))[..32]
     )
 }

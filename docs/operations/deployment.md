@@ -41,7 +41,8 @@ The published application bundle includes the infrastructure, platform, org, env
 Helm installs cert-manager, CloudNativePG, and the ingress controller before the platform.
 The platform chart installs the system PostgreSQL Cluster, its SQL Job, shared identity, edge, NATS, the wasmCloud runtime operator, and the collector.
 The org chart owns control, the namespace quota, RBAC, and network policies.
-Run `wamn org create <org> --owner <email>` with the admin kubeconfig. The command installs the org chart with public platform settings. Its platform Job writes the control password directly to the org Secret before the invitation Job runs. [Org chart](../../deploy/charts/org/README.md)
+Run `wamn org create <org> --owner <email>` with the admin kubeconfig.
+The command installs the org chart with public platform settings. Its platform Job writes the control and apply passwords to their org Secrets before the invitation Job runs. [Org chart](../../deploy/charts/org/README.md)
 
 Set `global.maxProjects` to the project stream limit for the installation. Each project in an environment uses one slot.
 `wamn env apply` refuses new reservations if their total across all organizations and environments would exceed the limit.
@@ -67,7 +68,7 @@ The local outbox is temporary pod storage. Keep invitation codes and passwords o
 
 A port-forward connects a local port to a pod.
 The control Service selects the org's control Deployment, `c-<org>`.
-Use the host in the org chart's `control.routeHost`.
+Use `<org>.<base>`, where `<base>` comes from the platform wildcard.
 The example uses org `local` and host `control.wamn.localhost`.
 The edge certificate covers `*.wamn.localhost`, including application hosts.
 Export the cluster access file to a private directory:
@@ -152,7 +153,8 @@ Kubernetes removes completed Jobs after one hour.
 There is no operation history database.
 
 The server selects the image, command, namespace, actor, chart, and credential references.
-Operation workers stage the system migration login and CA in the Job's in-memory volume. They stage project logins and the project CA as needed.
+Operation workers stage the org's apply login and system database CA in the Job's in-memory volume.
+They stage project logins and the project CA as needed.
 Reset advances replication through the capture login and removes package objects through their migration login.
 SQL steps run inside the authorized operation Job with their owning role credentials.
 The control image runs workers and reads the installed chart reference.
@@ -247,19 +249,19 @@ An omitted project schema mode follows the environment's disposable setting.
 Use `--disposable` only when first recording an environment that can be reset.
 The project chart declares one PostgreSQL Cluster and five managed logins per project.
 The environment YAML sets the database size for all projects. The installation values pin the PostgreSQL image.
-Project upgrades keep the login passwords and omit the Helm wait flag.
+Project upgrades omit the Helm wait flag. Each project Cluster has a CA that signs its five login certificates and its replication certificate.
 See [Backup and recovery](backup-and-recovery.md) for backup settings.
 The worker reads each required PostgreSQL cluster, Database, and reader Deployment by name.
 The project chart creates the PostgreSQL publication for change data capture (CDC).
 For each project, the worker waits for the database to be applied and allows up to 120 seconds for it to accept a SQL connection.
-CloudNativePG creates the database with `wamn_migration` as owner. The worker installs the project schema before restoring platform migrations. It checks the publication in SQL before it creates the replication slot.
+CloudNativePG creates the database and assigns ownership to `wamn_migration`. The worker installs the project schema before restoring platform migrations. It checks the publication in SQL before it creates the replication slot.
 The CDC reader waits up to 120 seconds for its slot before it starts replication.
 The worker creates the stream with the environment's `stream-admin` credentials and saves the project's applied configuration.
 The project chart mounts the YAML document in later project Jobs.
 The reader stays paused while a capture gap is open.
 The shared host group uses the runtime operator chart at version 2.12.2. The host reads NATS user credentials from `/etc/wamn/nats/` and trusts the broker CA at `/etc/wamn/nats-ca/ca.crt`.
 
-Use `wamn env delete ORG/ENV/PROJECT` to remove a project deployment. Helm keeps the Cluster and ObjectStore by default. Add `--data` and confirm the coordinate to remove both resources.
+Use `wamn env delete ORG/ENV/PROJECT` to remove a project deployment. Helm keeps the Cluster, ObjectStore, and project certificate resources by default. Add `--data` to remove them.
 Delete stops the reader before it removes the stream, then removes the replication slot and publication.
 Delete removes the project’s CDC and recovery credential Secrets. For the last project it also removes the host group, the shared credentials, and the environment account.
 These lifecycle requests return Jobs. The CLI polls `environment.operation_status`.
@@ -768,14 +770,16 @@ The readiness probe checks that the database answers and that the issuer has an 
 
 ## Platform schema upgrades
 
-Set `WAMN_CONTROL_URL` and `WAMN_TOKEN` for platform SQL operations.
-Control selects its installed chart and pinned worker image.
-The system worker reads the named migration login and CA Secrets in the org namespace and stages the database files before connecting.
-Both targets execute SQL in a bounded Job in that namespace.
+The `provision-system` Job in `platform` initializes an empty system database and applies pending system migrations from the control image.
+Each platform upgrade runs the Job again. It preserves the baseline and skips migrations recorded in SQLx history.
+
+Set `WAMN_CONTROL_URL` and `WAMN_TOKEN` for project SQL operations.
+Supply the environment document with `--env`.
+Control selects its installed chart and pinned worker image and runs a bounded Job in the org namespace.
 
 ```bash
-wamn platform schema diff --target system
-wamn platform schema apply --target system
+wamn platform schema diff --target project --env environment.yaml
+wamn platform schema apply --target project --env environment.yaml
 ```
 
 Both commands run the installed immutable `control` image.
@@ -787,16 +791,8 @@ Each transactional file commits with its SQLx history row.
 A later failure keeps earlier commits.
 Files that begin with `-- no-transaction` need safe retries after partial execution.
 
-The platform SQL Job initializes an empty system database and applies pending system migrations from the control image.
-Each platform upgrade runs the Job again. It preserves the baseline and skips migrations recorded in SQLx history.
-
-System schema apply changes only system SQL objects and migration records.
-It changes no service release, application selection, credential, or Helm release.
-Use a platform with a compatible control worker image before you apply SQL.
-Select the project target and give the YAML file for the environment.
-Project target requires `--env`, and system target refuses it.
 Control reads the environment's recorded database instance and installed connection projection.
-The SQL Job uses the scope's own CNPG migration login and basic-auth Secret.
+The project SQL Job uses the project's migration login.
 The platform owner roles stay `NOLOGIN`. Migration logins inherit their privileges through membership.
 Platform migration execution refuses administrator sessions.
 
@@ -870,8 +866,8 @@ Operation workers copy the selected Secret keys to a memory-backed volume as the
 The database client reads `ca.crt` from `/etc/wamn/db/<login-secret>/` to verify the server.
 For a password login, the client reads `username` and `password` from that directory.
 It makes sure that the username matches the configured login.
-For identity's system database login, SQLx reads `tls.crt` and `tls.key` on each new connection. PostgreSQL matches the certificate's common name to the configured login.
-The control administration directory supplies the password login files and `ca.crt` for project connections.
+For project logins and identity's system database login, SQLx reads `tls.crt` and `tls.key` on each new connection. PostgreSQL matches the certificate's common name to the configured login.
+Project clients use `ca.crt` from the CloudNativePG server CA Secret to verify the server.
 Explicit operator connection strings must name a readable CA file through `sslrootcert`.
 The database hostname must match the server certificate.
 The provisioned CNPG clusters accept client connections only over TLS.
@@ -919,7 +915,6 @@ The control service removes expired transaction identities every minute in a sep
 Cleanup runs do not overlap. Each database operation has a five-second limit.
 Shutdown cancels the task before the service drains HTTP connections.
 It connects to each configured project as `wamn_platform_login`.
-It also cleans the control database as `wamn_system`.
 It deletes rows with `xid < pg_snapshot_xmin(pg_current_snapshot())`.
 The UNLOGGED table `platform.tx_identity` stays outside CDC publications. A crash discards its rows.
 

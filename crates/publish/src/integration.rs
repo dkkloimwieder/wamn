@@ -251,10 +251,6 @@ pub async fn record(
     )?;
     let mut system = wamn_postgres::connect(database_url).await?;
     let mut tx = system.begin().await?;
-    sqlx::raw_sql("SET LOCAL ROLE wamn_system")
-        .execute(&mut *tx)
-        .await
-        .map(drop)?;
     sqlx::query(wamn_registry::sql::CONTROL_PACKAGE_SRC_INTEGRATION_PUBLISH)
         .bind(code)
         .bind(publication.version)

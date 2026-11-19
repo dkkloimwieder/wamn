@@ -27,7 +27,7 @@ pub use env_name::{EnvName, ParseEnvNameError};
 pub use project_env_key::{ParseProjectEnvKeyError, ProjectEnvKey};
 
 mod project_identity;
-pub use project_identity::{app_identity_hash, control_identity_hash};
+pub use project_identity::{app_identity_hash, apply_identity_hash, control_identity_hash};
 
 /// Whether native tools can use HTTP for this registry endpoint.
 pub fn registry_is_loopback(registry: &str) -> bool {

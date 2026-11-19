@@ -6,8 +6,11 @@ metadata:
   namespace: {{ $org | quote }}
 automountServiceAccountToken: false
 {{- if .Values.control.image }}
-{{- $secret := required "Set control.configuration.database.credentials.name." .Values.control.configuration.database.credentials.name }}
-{{- $login := required "Set control.configuration.database.username." .Values.control.configuration.database.username }}
+{{- $secrets := list }}
+{{- range list .Values.control.configuration.database .Values.control.configuration.apply_database }}
+{{- $secret := required "Set the org database credentials name." .credentials.name }}
+{{- $login := required "Set the org database username." .username }}
+{{- $secrets = append $secrets $secret }}
 ---
 apiVersion: v1
 kind: Secret
@@ -18,6 +21,7 @@ type: kubernetes.io/basic-auth
 data:
   # Kubernetes requires a key. Helm owns the public username and the Job owns the password.
   username: {{ $login | b64enc | quote }}
+{{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -27,7 +31,7 @@ metadata:
 rules:
   - apiGroups: [""]
     resources: [secrets]
-    resourceNames: [{{ $secret | quote }}]
+    resourceNames: {{ $secrets | toJson }}
     verbs: [get, update, patch]
 ---
 apiVersion: rbac.authorization.k8s.io/v1

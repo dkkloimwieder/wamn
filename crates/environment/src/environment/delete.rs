@@ -13,7 +13,7 @@
 //! Delete the applied configuration with the environment row
 //! last and commit. Disable connection principals in a retained database.
 //!
-//! Helm preserves the Cluster and ObjectStore unless deletion includes data.
+//! Helm preserves the Cluster, ObjectStore, and certificates unless deletion includes data.
 //! With `--data`, an absent or unreachable project database skips database-side cleanup.
 
 use sqlx::{Connection as _, Row as _};
@@ -50,14 +50,13 @@ pub async fn delete(
     platform: &Platform,
     triple: &Triple,
     data: bool,
-    admin_url: &str,
 ) -> anyhow::Result<Vec<String>> {
     let mut platform = platform.clone();
     super::runtime::resolve_platform(&mut platform)?;
     LifecycleLock::hold(
         wamn_postgres::connect(&platform.system_database_url).await?,
         triple,
-        async |_| Box::pin(delete_locked(&platform, triple, data, admin_url)).await,
+        async |lock| Box::pin(delete_locked(&platform, triple, data, lock)).await,
     )
     .await
 }
@@ -71,23 +70,16 @@ async fn delete_locked(
     platform: &Platform,
     triple: &Triple,
     data: bool,
-    admin_url: &str,
+    system: &LifecycleLock,
 ) -> anyhow::Result<Vec<String>> {
     let (org, project, env) = (&triple.org, &triple.project, &triple.env);
     let mut lines = Vec::new();
-    // A lifecycle verb: the provisioning credential, as the install Jobs use.
-    let mut system = connect(admin_url).await?;
-    sqlx::raw_sql("SET ROLE wamn_system")
-        .execute(&mut system)
-        .await
-        .map(drop)
-        .context("SET ROLE wamn_system")?;
     let Some(row) =
         sqlx::query(wamn_registry::sql::CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_DELETE_DELETE_LOCKED)
             .bind(org)
             .bind(project)
             .bind(env)
-            .fetch_optional(&mut system)
+            .fetch_optional(&mut *system.client().await)
             .await
             .context("read the environment row")?
     else {
@@ -234,7 +226,9 @@ async fn delete_locked(
             .await
             .with_context(|| format!("remove the environment's key of Secret {control}"))?;
             let policy_name = row.try_get(1)?;
-            let policy = super::analyse::read_policy(&mut system, org, &policy_name).await?;
+            let policy =
+                super::analyse::read_policy(&mut *system.client().await, org, &policy_name)
+                    .await?;
             crate::platform::control::wait_administration(
                 &platform.target,
                 triple,
@@ -335,8 +329,11 @@ async fn delete_locked(
         .await?;
         lines.push("uninstalled the project release".into());
     }
+    if data {
+        resources::delete_database_certificate_secrets(platform, &database).await?;
+    }
 
-    let remaining = super::broker::project_count(&mut system, org, env)
+    let remaining = super::broker::project_count(&mut *system.client().await, org, env)
         .await?
         .saturating_sub(1);
     if remaining == 0 {
@@ -357,7 +354,7 @@ async fn delete_locked(
     if !deleted.is_empty() {
         lines.push(deleted);
     }
-    lines.extend(delete_registry_rows(&mut system, triple).await?);
+    lines.extend(delete_registry_rows(&mut *system.client().await, triple).await?);
     Ok(lines)
 }
 

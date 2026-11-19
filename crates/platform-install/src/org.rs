@@ -8,7 +8,9 @@ use wamn_kubernetes::{Target, helm, job, kubectl};
 use wamn_postgres::ConnectionConfig;
 use wamn_registry::OrgId;
 
-use crate::provision_org::{CONTROL_AUDIENCE, CONTROL_SECRET, INVITATION_ACCOUNT, SQL_ACCOUNT};
+use crate::provision_org::{
+    APPLY_SECRET, CONTROL_AUDIENCE, CONTROL_SECRET, INVITATION_ACCOUNT, SQL_ACCOUNT,
+};
 use crate::release_chart::bundle::POD_REGISTRY;
 
 const PLATFORM: &str = "platform";
@@ -16,7 +18,7 @@ const SYSTEM_SQL_CONFIG: &str = "wamn-system-sql";
 const SQL_CONFIG_PATH: &str = "/etc/wamn/system-sql/database.json";
 const DEADLINE: Duration = Duration::from_secs(300);
 
-/// Install the org release, provision its login, then invite its owner.
+/// Install the org release, provision its logins, then invite its owner.
 pub async fn create(org: &OrgId, owner: &str) -> anyhow::Result<()> {
     let chart = org_chart()?;
     // The empty path lets kubectl and Helm use their normal KUBECONFIG loading rules.
@@ -158,7 +160,7 @@ pub async fn create(org: &OrgId, owner: &str) -> anyhow::Result<()> {
         None,
     )
     .await
-    .context("reload the org control login")?;
+    .context("reload the org database logins")?;
 
     let mut invitation = org_job(
         INVITATION_ACCOUNT,
@@ -201,8 +203,6 @@ fn org_values(
             || registry.to_owned(),
             |path| format!("{POD_REGISTRY}{path}"),
         );
-    let control = wamn_registry::name::control_resource(org);
-    let origin = format!("http://{control}-http.{org}.svc.cluster.local");
     let connection = |username: &str, secret: &str| {
         json!({
             "host": database.host, "port": database.port, "database": database.database,
@@ -210,20 +210,18 @@ fn org_values(
             "server_ca": {"namespace": org, "name": "wamn-pg-ca"},
         })
     };
-    let login = crate::provision_org::control_login(org, &database.database);
-    let migration =
-        wamn_provision::migrations::MigrationDatabase::System.managed_role(&database.database);
+    let control = crate::provision_org::control_login(org, &database.database);
+    let apply = crate::provision_org::apply_login(org, &database.database);
     Ok(json!({
-        "org": org, "registry": internal_registry, "identityCa": identity_ca, "natsCa": nats_ca, "postgresCa": postgres_ca,
+        "org": org, "base": field(inputs, "base")?, "registry": internal_registry, "identityCa": identity_ca, "natsCa": nats_ca, "postgresCa": postgres_ca,
         "postgres": {"image": field(inputs, "postgresImage")?},
         "networkPolicy": {"apiServer": api_server},
         "control": {
             "image": image,
-            "systemMigrationSecret": migration.password_secret.name,
             "configuration": {
-                "org": org, "public_origin": origin,
-                "database": connection(login.as_str(), CONTROL_SECRET),
-                "apply_database": connection(wamn_role::APPLY_ROLE, "wamn-apply"),
+                "org": org,
+                "database": connection(control.as_str(), CONTROL_SECRET),
+                "apply_database": connection(apply.as_str(), APPLY_SECRET),
                 "identity_issuer": field(inputs, "identityIssuer")?,
                 "nats_url": field(inputs, "natsUrl")?,
                 "registry": internal_registry,

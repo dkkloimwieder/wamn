@@ -52,6 +52,10 @@ impl Execution {
             .as_object_mut()
             .context("expected platform SQL object")?;
         ensure!(
+            fields.get("target").and_then(Value::as_str) == Some("project"),
+            "platform SQL through control requires the project target"
+        );
+        ensure!(
             fields.insert("type".into(), "schema".into()).is_none(),
             "platform SQL request cannot select a worker task"
         );
@@ -148,13 +152,7 @@ pub async fn execute(config: &Configuration, payload: &str) -> anyhow::Result<Va
     let request: Request = serde_json::from_str(payload)?;
     let mut platform = config.platform()?;
     let files = wamn_platform_install::credentials::DatabaseFiles::in_cluster()?;
-    let system = MigrationDatabase::System.configuration(&platform.system_database_url)?;
-    files.materialize(&serde_json::from_str(&system)?).await?;
-    if matches!(&request, Request::Environment { .. })
-        || matches!(&request, Request::Schema { target, .. } if target == "project")
-    {
-        files.materialize(&config.apply_database).await?;
-    }
+    files.materialize(&config.apply_database).await?;
     platform.database_files = Some(files);
     crate::write_kubeconfig(&platform.target.kubeconfig, config.org.as_str())?;
     let mut output = Vec::new();
@@ -163,10 +161,7 @@ pub async fn execute(config: &Configuration, payload: &str) -> anyhow::Result<Va
             operation,
             request,
             actor,
-        } => {
-            platform.system_database_url = system;
-            crate::worker::execute(config, platform, operation, request, &actor).await
-        }
+        } => crate::worker::execute(config, platform, operation, request, &actor).await,
         Request::Environment {
             operation,
             project,
@@ -179,10 +174,8 @@ pub async fn execute(config: &Configuration, payload: &str) -> anyhow::Result<Va
             let triple =
                 wamn_registry::Triple::new(config.org.clone(), env.clone(), project.clone());
             if operation == "environment.delete" {
-                let messages = wamn_environment::environment::delete::delete(
-                    &platform, &triple, data, &system,
-                )
-                .await?;
+                let messages =
+                    wamn_environment::environment::delete::delete(&platform, &triple, data).await?;
                 return Ok(json!({"messages":messages}));
             }
             ensure!(
@@ -207,7 +200,6 @@ pub async fn execute(config: &Configuration, payload: &str) -> anyhow::Result<Va
                 document,
                 application.as_ref(),
                 disposable,
-                &system,
             )
             .await?;
             Ok(json!({"configured":true}))
@@ -219,66 +211,37 @@ pub async fn execute(config: &Configuration, payload: &str) -> anyhow::Result<Va
             env,
             apply,
         } => {
-            if target == "system" {
-                ensure!(
-                    projects.is_empty() && org.is_none() && env.is_none(),
-                    "system SQL has no project target"
-                );
-                let mut client = wamn_postgres::connect(&system).await?;
-                wamn_environment::platform_migrations::run(
-                    &mut client,
-                    wamn_environment::platform_migrations::MigrationTarget::System,
-                    &wamn_environment::platform_migrations::embedded_sources(
-                        MigrationDatabase::System,
-                    ),
-                    apply,
-                    &mut output,
-                )
-                .await?;
-            } else {
-                ensure!(target == "project", "unknown platform SQL target");
-                let env = env.context("environment is absent")?;
-                ensure!(
-                    org.as_ref() == Some(&config.org),
-                    "environment belongs to another org"
-                );
-                let first = projects.first().context("environment has no projects")?;
-                let coordinate =
-                    wamn_registry::Triple::new(config.org.clone(), env.clone(), first.clone());
-                let lock = LifecycleLock::acquire_wait(
-                    wamn_postgres::connect(&platform.system_database_url).await?,
-                    &coordinate,
-                )
-                .await?;
-                let result = lock
-                    .protect(async {
-                        let sources = wamn_environment::platform_migrations::embedded_sources(
-                            MigrationDatabase::Project,
-                        );
-                        for project in projects {
-                            let triple = wamn_registry::Triple::new(
-                                config.org.clone(),
-                                env.clone(),
-                                project,
-                            );
-                            project_schema(
-                                &platform,
-                                &lock,
-                                &system,
-                                &triple,
-                                &sources,
-                                apply,
-                                &mut output,
-                            )
+            ensure!(target == "project", "unknown platform SQL target");
+            let env = env.context("environment is absent")?;
+            ensure!(
+                org.as_ref() == Some(&config.org),
+                "environment belongs to another org"
+            );
+            let first = projects.first().context("environment has no projects")?;
+            let coordinate =
+                wamn_registry::Triple::new(config.org.clone(), env.clone(), first.clone());
+            let lock = LifecycleLock::acquire_wait(
+                wamn_postgres::connect(&platform.system_database_url).await?,
+                &coordinate,
+            )
+            .await?;
+            let result = lock
+                .protect(async {
+                    let sources = wamn_environment::platform_migrations::embedded_sources(
+                        MigrationDatabase::Project,
+                    );
+                    for project in projects {
+                        let triple =
+                            wamn_registry::Triple::new(config.org.clone(), env.clone(), project);
+                        project_schema(&platform, &lock, &triple, &sources, apply, &mut output)
                             .await
                             .with_context(|| format!("platform SQL for {}", triple.project))?;
-                        }
-                        Ok(())
-                    })
-                    .await;
-                lock.release().await;
-                result?;
-            }
+                    }
+                    Ok(())
+                })
+                .await;
+            lock.release().await;
+            result?;
             Ok(json!({"log":String::from_utf8(output)?}))
         }
     }
@@ -287,7 +250,6 @@ pub async fn execute(config: &Configuration, payload: &str) -> anyhow::Result<Va
 async fn project_schema(
     platform: &wamn_environment::environment::Platform,
     lock: &LifecycleLock,
-    system: &str,
     triple: &wamn_registry::Triple,
     sources: &[sqlx::migrate::Migration],
     apply: bool,
@@ -295,7 +257,9 @@ async fn project_schema(
 ) -> anyhow::Result<()> {
     use std::io::Write as _;
 
-    let migration = wamn_platform_install::environment::connection(system, triple).await?;
+    let migration =
+        wamn_platform_install::environment::connection(&platform.system_database_url, triple)
+            .await?;
     platform.prepare_database(&migration).await?;
     let migration = migration.to_json()?;
     writeln!(output, "Project {}", triple.project)?;

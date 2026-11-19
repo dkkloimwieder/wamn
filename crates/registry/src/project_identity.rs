@@ -56,6 +56,14 @@ pub fn control_identity_hash(org: &crate::OrgId, database: &str) -> String {
     )
 }
 
+/// The org and database hash used by the org's apply login.
+pub fn apply_identity_hash(org: &crate::OrgId, database: &str) -> String {
+    identity_hash(
+        b"wamn.apply.identity.v0.1",
+        [("org", org.as_str()), ("database", database)],
+    )
+}
+
 fn identity_hash(domain: &[u8], fields: [(&str, &str); 2]) -> String {
     let mut preimage = Vec::new();
     frame(&mut preimage, domain);

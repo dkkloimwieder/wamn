@@ -33,12 +33,28 @@ pub async fn wait_role(
     connection: &mut sqlx::PgConnection,
     username: &wamn_identity_protocol::LoginName,
 ) -> anyhow::Result<()> {
+    wait_role_kind(connection, username, true).await
+}
+
+pub(crate) async fn wait_group_role(
+    connection: &mut sqlx::PgConnection,
+    role: &wamn_identity_protocol::LoginName,
+) -> anyhow::Result<()> {
+    wait_role_kind(connection, role, false).await
+}
+
+async fn wait_role_kind(
+    connection: &mut sqlx::PgConnection,
+    role: &wamn_identity_protocol::LoginName,
+    can_login: bool,
+) -> anyhow::Result<()> {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(120);
     loop {
         let present: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT FROM pg_roles WHERE rolname=$1 AND rolcanlogin)",
+            "SELECT EXISTS(SELECT FROM pg_roles WHERE rolname=$1 AND rolcanlogin=$2)",
         )
-        .bind(username)
+        .bind(role)
+        .bind(can_login)
         .fetch_one(&mut *connection)
         .await?;
         if present {
@@ -46,7 +62,7 @@ pub async fn wait_role(
         }
         anyhow::ensure!(
             tokio::time::Instant::now() < deadline,
-            "CNPG did not reconcile the database login"
+            "CNPG did not reconcile database role {role}"
         );
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
@@ -114,17 +130,25 @@ impl DatabaseFiles {
         };
         let (login, ca) =
             tokio::try_join!(read(&config.credentials.name), read(&config.server_ca.name),)?;
-        anyhow::ensure!(
-            login["type"] == "kubernetes.io/basic-auth",
-            "database credential is not a basic-auth Secret"
-        );
-        let username = secret_entry(&login, "username")?;
-        anyhow::ensure!(
-            username == config.username.as_str().as_bytes(),
-            "database Secret names another login"
-        );
-        let password = secret_entry(&login, "password")?;
-        let certificate = secret_entry(&ca, "ca.crt")?;
+        let credentials = match login["type"].as_str() {
+            Some("kubernetes.io/tls") => [
+                ("tls.crt", secret_entry(&login, "tls.crt")?),
+                ("tls.key", secret_entry(&login, "tls.key")?),
+            ],
+            Some("kubernetes.io/basic-auth") => {
+                let username = secret_entry(&login, "username")?;
+                anyhow::ensure!(
+                    username == config.username.as_str().as_bytes(),
+                    "database Secret names another login"
+                );
+                [
+                    ("username", username),
+                    ("password", secret_entry(&login, "password")?),
+                ]
+            }
+            _ => anyhow::bail!("database credential Secret must be TLS or basic-auth"),
+        };
+        let server_ca = secret_entry(&ca, "ca.crt")?;
 
         let mut builder = tokio::fs::DirBuilder::new();
         builder.mode(0o700);
@@ -133,11 +157,7 @@ impl DatabaseFiles {
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
             Err(error) => return Err(error.into()),
         }
-        for (name, bytes) in [
-            ("username", username),
-            ("password", password),
-            ("ca.crt", certificate),
-        ] {
+        for (name, bytes) in credentials.into_iter().chain([("ca.crt", server_ca)]) {
             let path = directory.join(name);
             let mut file = tokio::fs::OpenOptions::new()
                 .write(true)

@@ -26,8 +26,8 @@
 {{- $caItems := list }}
 {{- range $login := $database.logins }}
 {{- $items := list
-    (dict "key" "username" "path" (printf "%s/username" $login))
-    (dict "key" "password" "path" (printf "%s/password" $login))
+    (dict "key" "tls.crt" "path" (printf "%s/tls.crt" $login))
+    (dict "key" "tls.key" "path" (printf "%s/tls.key" $login))
 }}
 {{- $sources = append $sources (dict "secret" (dict "name" $login "items" $items)) }}
 {{- $caItems = append $caItems (dict "key" "ca.crt" "path" (printf "%s/ca.crt" $login)) }}

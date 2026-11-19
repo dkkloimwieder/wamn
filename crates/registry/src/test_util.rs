@@ -4,8 +4,9 @@
 pub fn apply_authority_sql() -> &'static str {
     r"
         DO $denials$ DECLARE relation text; privilege text; BEGIN
-            ASSERT (SELECT rolcanlogin AND NOT rolsuper AND NOT rolcreatedb AND NOT rolcreaterole AND NOT rolreplication AND NOT rolbypassrls FROM pg_roles WHERE rolname='wamn_apply');
-            ASSERT NOT pg_has_role('wamn_apply', 'wamn_system', 'MEMBER');
+            ASSERT (SELECT NOT rolcanlogin FROM pg_roles WHERE rolname='wamn_apply');
+            ASSERT (SELECT rolcanlogin AND NOT rolsuper AND NOT rolcreatedb AND NOT rolcreaterole AND NOT rolreplication AND NOT rolbypassrls FROM pg_roles WHERE rolname='wamn_apply_fixture');
+            ASSERT NOT pg_has_role('wamn_apply_fixture', 'wamn_system', 'MEMBER');
             FOREACH relation IN ARRAY ARRAY[
                 'registry.connection', 'registry.integration', 'registry.connection_generation',
                 'identity.credential', 'identity.oauth_token', 'identity.oauth_authorization'
@@ -16,13 +17,13 @@ pub fn apply_authority_sql() -> &'static str {
                 ASSERT NOT has_any_column_privilege('wamn_apply', relation, 'INSERT,UPDATE,REFERENCES'), relation;
             END LOOP;
         END $denials$;
-        SET SESSION AUTHORIZATION wamn_apply;
+        SET SESSION AUTHORIZATION wamn_apply_fixture;
         DO $role_denial$ BEGIN
             BEGIN
                 SET ROLE wamn_system;
                 RAISE EXCEPTION 'apply assumed the system owner';
             EXCEPTION WHEN insufficient_privilege THEN NULL; END;
-            ASSERT current_user = 'wamn_apply';
+            ASSERT current_user = 'wamn_apply_fixture';
         END $role_denial$;
         SELECT registry.connection_projection('absent','absent','dev');
         SELECT principal_id FROM identity.org_memberships ORDER BY principal_id FOR UPDATE;
