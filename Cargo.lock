@@ -6374,6 +6374,7 @@ dependencies = [
  "wamn-identity",
  "wamn-identity-protocol",
  "wamn-kubernetes",
+ "wamn-oci",
  "wamn-postgres",
  "wamn-provision",
  "wamn-registry",

@@ -18,7 +18,7 @@ use wamn_catalog::manifest::deploy::PublishedComponent;
 use wamn_catalog::manifest::{PackageManifest, PolicyContractState};
 use wamn_catalog::{ComponentDescriptor, PackageCoordinate, component_artifact_reference};
 use wamn_digest::Digest;
-use wamn_oci::package_artifact::registry_credentials::read_registry_push_credentials;
+use wamn_oci::package_artifact::registry_credentials::read_registry_credentials;
 
 use crate::component_admission::admit;
 use crate::component_declaration::package_declaration;
@@ -510,8 +510,7 @@ async fn component_image(
     digest: &Digest,
 ) -> anyhow::Result<Option<Digest>> {
     let artifact = component_artifact_reference(artifact_base, digest)?;
-    let credentials =
-        read_registry_push_credentials(&registry.registry_auth_file, artifact.registry())?;
+    let credentials = read_registry_credentials(&registry.registry_auth_file, artifact.registry())?;
     let transport = PackageRegistry {
         artifact_base: artifact_base.to_owned(),
         credentials: None,
@@ -549,9 +548,8 @@ async fn push_component_artifact(
         artifact.repository().to_owned(),
         artifact.tag().to_owned(),
     );
-    let credentials =
-        read_registry_push_credentials(&registry.registry_auth_file, artifact.registry())
-            .context("load the component registry push credential")?;
+    let credentials = read_registry_credentials(&registry.registry_auth_file, artifact.registry())
+        .context("load the component registry push credential")?;
     wash_runtime::oci::set_extra_ca_certificates(&registry.oci_ca_paths)?;
     let digest = wash_runtime::oci::push_component(
         &reference.to_string(),

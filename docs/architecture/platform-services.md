@@ -359,7 +359,10 @@ Use `pat.revoke` with `project`, `env`, and `token_prefix` to revoke one token.
 
 A release-backed host takes exactly one registry credential: `--registry-auth-file` or `--registry-token-metadata`.
 With `--registry-auth-file`, server pulls read one explicitly configured projected credential file.
-The lookup requires an exact registry authority and a plaintext username and password entry.
+For pulls and pushes, the file must have an exact registry authority entry.
+An explicit empty entry, `{"auths":{"<registry>":{}}}`, allows anonymous access.
+An authenticated entry must contain a plaintext username and password.
+A missing or partial entry causes the reader to refuse the request.
 It does not consult `DOCKER_CONFIG`, invoke helpers, normalize Docker Hub names, or accept identity tokens and base64-only entries.
 With `--registry-token-metadata`, the host reads no credential file.
 Each pull gets its credential from the shared pod metadata service and sends it as the password of `oauth2accesstoken`.
@@ -367,7 +370,7 @@ Registry, GCS and KMS share that service's token and account email.
 The service serializes token refreshes and stops reusing a token thirty seconds before expiry.
 Each pull builds a new upstream registry client because that client remembers its first credential.
 The server's host is `GCE_METADATA_HOST` when it is set, as Google's client libraries read it, and `metadata.google.internal` otherwise.
-The [reader](../../crates/package-artifact/src/registry_credentials.rs) owns both accepted forms.
+The registry credential module owns the file and metadata readers. [Source](../../crates/oci/src/package_artifact/registry_credentials.rs)
 The artifact crate also owns the shared registry client configuration, trust roots and release artifact transfer.
 Platform endpoint calls share its Hyper client. They use explicit trust, bounded bodies and request deadlines, without proxies or redirects.
 The upstream transports inside `oci-client` and `object_store` stay with those libraries.

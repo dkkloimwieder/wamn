@@ -20,7 +20,7 @@ use object_store::{Attribute, Attributes, ObjectStore, ObjectStoreExt as _, PutM
 use oci_client::manifest::{OCI_IMAGE_MEDIA_TYPE, OciImageManifest};
 use wamn_codegen::fingerprint;
 use wamn_digest::{bytes_sha256, canonical_json_bytes};
-use wamn_oci::package_artifact::registry_credentials::read_registry_push_credentials;
+use wamn_oci::package_artifact::registry_credentials::read_registry_credentials;
 use wamn_oci::package_artifact::{Repository, registry_auth};
 
 use crate::package_artifact::PackageRegistry;
@@ -298,8 +298,7 @@ pub async fn push_web_artifact(
 ) -> Result<PushedWebArtifact, WebArtifactError> {
     let repository = (|| {
         let base = wamn_catalog::parse_component_artifact_base(&registry.artifact_base)?;
-        let credentials =
-            read_registry_push_credentials(&registry.registry_auth_file, base.registry())?;
+        let credentials = read_registry_credentials(&registry.registry_auth_file, base.registry())?;
         Repository::with_auth(registry, &packed.tag, registry_auth(credentials.as_ref()))
     })()
     .map_err(|source| WebArtifactError {
@@ -310,7 +309,7 @@ pub async fn push_web_artifact(
     push_archive(packed, &repository).await
 }
 
-/// Publish a packed browser artifact through an authenticated repository.
+/// Publish a packed browser artifact through an open repository.
 ///
 /// # Errors
 /// Refuses a conflicting tag or a failed transfer.

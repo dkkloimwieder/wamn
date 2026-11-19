@@ -264,13 +264,13 @@ impl Repository {
         let base = parse_component_artifact_base(&registry.artifact_base)?;
         let from_file;
         let credentials = if let Some(credentials) = &registry.credentials {
-            credentials
+            Some(credentials)
         } else {
             from_file = read_registry_credentials(&registry.registry_auth_file, base.registry())
                 .with_context(|| format!("load the credential for registry {}", base.registry()))?;
-            &from_file
+            from_file.as_ref()
         };
-        Self::with_auth(registry, reference, registry_auth(Some(credentials)))
+        Self::with_auth(registry, reference, registry_auth(credentials))
     }
 
     /// Open a repository with a host-resolved credential, including metadata tokens.

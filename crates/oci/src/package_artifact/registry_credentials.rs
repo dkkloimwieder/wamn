@@ -5,14 +5,14 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 /// Stable classification of a refused registry credential file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RegistryCredentialsErrorType {
     /// The projected credential file or the metadata server could not be read.
     Unreadable,
-    /// The file did not carry one complete credential for the expected registry.
+    /// The file did not carry a valid entry for the expected registry.
     Rejected,
 }
 
@@ -170,48 +170,60 @@ struct DockerConfig {
     auths: BTreeMap<String, DockerCredential>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 struct DockerCredential {
+    #[serde(
+        default,
+        deserialize_with = "present_string",
+        skip_serializing_if = "Option::is_none"
+    )]
     username: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "present_string",
+        skip_serializing_if = "Option::is_none"
+    )]
     password: Option<String>,
     #[serde(flatten)]
     other: serde_json::Map<String, serde_json::Value>,
 }
 
-impl DockerCredential {
-    /// `{}`: the entry names the registry and carries no field at all.
-    fn is_empty(&self) -> bool {
-        self.username.is_none() && self.password.is_none() && self.other.is_empty()
-    }
+fn present_string<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<String>, D::Error> {
+    String::deserialize(deserializer).map(Some)
 }
 
-/// Read one exact registry entry from a projected `.dockerconfigjson` file.
+/// Read one exact registry entry for an OCI pull or push.
 ///
-/// The registry key must equal the authority used by artifact references. No
-/// Docker Hub fallback, URL normalization, credential helper, or wildcard is
-/// admitted at this production boundary.
+/// An explicit empty entry, `{"auths":{"<registry>":{}}}`, returns `None` for
+/// anonymous access. A missing or partial entry is refused. The registry key
+/// must equal the authority used by artifact references.
 pub fn read_registry_credentials(
-    path: &Path,
-    registry: &str,
-) -> Result<RegistryCredentials, RegistryCredentialsError> {
-    let credential = read_registry_entry(path, registry)?;
-    complete_credentials(&credential, path, registry)
-}
-
-/// Read the push credential for one exact registry, or `None` for an anonymous push.
-///
-/// Only an explicit empty entry, `{"auths":{"<registry>":{}}}`, states an
-/// anonymous push. A missing entry or a partial one refuses as in
-/// [`read_registry_credentials`]. Pulls never read an empty entry as anonymous.
-pub fn read_registry_push_credentials(
     path: &Path,
     registry: &str,
 ) -> Result<Option<RegistryCredentials>, RegistryCredentialsError> {
     let credential = read_registry_entry(path, registry)?;
-    if credential.is_empty() {
-        return Ok(None);
-    }
-    complete_credentials(&credential, path, registry).map(Some)
+    Ok(
+        basic_auth(&credential, path, registry)?.map(|(username, password)| RegistryCredentials {
+            username: username.into(),
+            password: password.into(),
+        }),
+    )
+}
+
+/// Project the installed registry entry under both its original and pod authorities.
+///
+/// The entry keeps its Docker fields. An explicit empty entry stays empty.
+pub fn project_registry_credentials(
+    path: &Path,
+    registry: &str,
+    pod_registry: &str,
+) -> Result<serde_json::Value, RegistryCredentialsError> {
+    let credential = read_registry_entry(path, registry)?;
+    basic_auth(&credential, path, registry)?;
+    let auths = BTreeMap::from([(registry, &credential), (pod_registry, &credential)]);
+    Ok(serde_json::json!({ "auths": auths }))
 }
 
 fn read_registry_entry(
@@ -227,11 +239,15 @@ fn read_registry_entry(
     })
 }
 
-fn complete_credentials(
-    credential: &DockerCredential,
+fn basic_auth<'a>(
+    credential: &'a DockerCredential,
     path: &Path,
     registry: &str,
-) -> Result<RegistryCredentials, RegistryCredentialsError> {
+) -> Result<Option<(&'a str, &'a str)>, RegistryCredentialsError> {
+    if credential.username.is_none() && credential.password.is_none() && credential.other.is_empty()
+    {
+        return Ok(None);
+    }
     let username = credential
         .username
         .as_deref()
@@ -246,10 +262,7 @@ fn complete_credentials(
         .ok_or_else(|| {
             RegistryCredentialsError::rejected(path, registry, "registry-credentials-incomplete")
         })?;
-    Ok(RegistryCredentials {
-        username: username.into(),
-        password: password.into(),
-    })
+    Ok(Some((username, password)))
 }
 
 /// The variable Google's client libraries read for the metadata server's host.
