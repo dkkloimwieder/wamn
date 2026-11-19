@@ -157,7 +157,7 @@ Source builds use [committed PostgreSQL describe evidence](building.md#wamn-buil
 To refresh the evidence during a source deploy, pass `--refresh-describe` with `--database-url` or set `DATABASE_URL`.
 Set `WAMN_PACKAGE_ARTIFACT_BASE`, `WAMN_COMPONENT_ARTIFACT_BASE` and `WAMN_REGISTRY_AUTH_FILE` for publication.
 `WAMN_OCI_CA_PATHS` supplies optional registry certificates.
-For an HTTP registry, the existing `WAMN_RELEASE_HOST_GROUP` document supplies `--allow-insecure-registries` in `extraArgs`.
+Control derives HTTP registry access from the installed registry address using the loopback rule.
 `wamn publish` uses the existing build output and starts no Job.
 
 Application, schema and administration commands require `WAMN_CONTROL_URL` and `WAMN_TOKEN`.
@@ -586,7 +586,7 @@ Deployment needs no source checkout, pnpm installation, or local UI output.
 Kind keeps an empty web bucket and selects no platform UI.
 
 The control root is `https://control.wamn.dev`.
-The org chart runs `wamn-control --config /etc/wamn/control/config.json platform` in the org namespace.
+The org chart runs `wamn-control --settings /etc/wamn/control/settings.json platform` in the org namespace.
 The native service has no route guest or application release.
 The control Service selects that Deployment.
 Local platform deployment installs control without a UI upload. GCP integration for public control access remains unfinished.
@@ -612,8 +612,8 @@ It makes sure of the identity certificate, as it does in kind.
 
 `wamn-identity serve --settings <path>` reads one JSON file. The chart renders the issuer, public database connection, envelope provider, and mail mode into that file.
 The pod mounts the database credentials, TLS keys, local wrapping key, and Resend token as files.
-When `identity.authNats.url` is set, the chart adds the resolver URL and CA path to identity settings and mounts `ca.crt` from `identity.authNats.tlsSecret`.
-Identity creates the first session signing key at startup. CloudNativePG manages the issuer login and its credential Secret.
+When `identity.authNats.tlsSecret` is set, the chart adds `global.nats.schedulerUrl` and the CA path to identity settings. Identity mounts `ca.crt` from that Secret.
+Identity creates the first session signing key at startup. CloudNativePG manages the issuer login. Identity uses the client certificate and key from `wamn-identity-db-tls`.
 
 Create a Secret in `platform` with an `api-key` entry.
 Set `identity.resendSecret` to that Secret and `identity.resendFrom` to the verified sender in the platform chart.
@@ -840,11 +840,14 @@ The other apply phases use the restricted credential from the worker's database 
 ## PostgreSQL client TLS
 
 Runtime pools, OAuth transactions, and resource leases use SQLx with verified TLS.
-Component configuration names the database host, port, database, login, basic-auth Secret, and CNPG CA Secret.
+Component configuration names the database host, port, database, login, login Secret, and CNPG CA Secret.
 The login and CA Secrets live in the consumer’s namespace. Shared identity and the platform SQL Job mount them in `platform`. Hosts, CDC readers, and control use read-only mounts in their org namespace.
 Operation workers copy the selected Secret keys to a memory-backed volume as the database names become known.
-The database client reads `username`, `password` and `ca.crt` from `/etc/wamn/db/<login-secret>/`. It makes sure that the username matches the configured login.
-The control administration directory supplies the same files for project connections.
+The database client reads `ca.crt` from `/etc/wamn/db/<login-secret>/` to verify the server.
+For a password login, the client reads `username` and `password` from that directory.
+It makes sure that the username matches the configured login.
+For identity's system database login, SQLx reads `tls.crt` and `tls.key` on each new connection. PostgreSQL matches the certificate's common name to the configured login.
+The control administration directory supplies the password login files and `ca.crt` for project connections.
 Explicit operator connection strings must name a readable CA file through `sslrootcert`.
 The database hostname must match the server certificate.
 The provisioned CNPG clusters accept client connections only over TLS.
@@ -876,9 +879,8 @@ They do not supply a local connection credential store.
 Identity login uses the org audience `urn:wamn:org:<org>`.
 The identity Deployment mounts the system login and CA certificate.
 
-The org chart writes `WAMN_SESSION_ISSUER`, `WAMN_SESSION_JWKS_URL`, `WAMN_SESSION_AUDIENCE`, `WAMN_SESSION_ALGORITHMS`, and `WAMN_SESSION_JWKS_CA` into the org's `wamn-host-settings` ConfigMap.
-Environment hosts read these defaults and mount the org's `identity-ca` ConfigMap at `/etc/identity-ca`.
-Control reads the same verifier settings from its mounted configuration.
+The environment chart renders a settings ConfigMap for each host group using the endpoints from the org control settings.
+Hosts and control derive the JWKS URL and org audience, and read the public platform identity CA from the org's `identity-ca` ConfigMap. Control sends identity a projected service account token for the `wamn-identity` audience.
 
 The HTTP interface keeps its `credential-unavailable` result.
 

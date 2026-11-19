@@ -44,17 +44,24 @@ fn main() -> anyhow::Result<()> {
     // and then quiets `async_nats` to error. The more specific directive keeps
     // the cause of each failed NATS attempt, which async-nats logs at debug
     // (wamn-gdex). A RUST_LOG the deployment sets wins.
-    if std::env::var_os("RUST_LOG").is_none() {
-        // SAFETY: no other thread exists yet; the runtime starts below.
-        #[expect(
-            unsafe_code,
-            reason = "No other thread exists yet because the runtime starts below."
-        )]
-        unsafe {
-            std::env::set_var(
-                "RUST_LOG",
-                format!("{},async_nats::connector=debug", cli.log_level),
-            );
+    let log_filter = format!("{},async_nats::connector=debug", cli.log_level);
+    // wash-runtime reads residency settings from the process environment.
+    // Keep the defaults used by deployed hosts when launching outside Helm, too.
+    for (key, default) in [
+        ("RUST_LOG", log_filter.as_str()),
+        ("WASMTIME_POOLING_LINEAR_MEMORY_KEEP_RESIDENT", "65536"),
+        ("WASMTIME_POOLING_TABLE_KEEP_RESIDENT", "4096"),
+        ("WASMTIME_POOLING_ASYNC_STACK_KEEP_RESIDENT", "8192"),
+    ] {
+        if std::env::var_os(key).is_none() {
+            // SAFETY: no other thread exists yet; the runtime starts below.
+            #[expect(
+                unsafe_code,
+                reason = "No other thread exists yet because the runtime starts below."
+            )]
+            unsafe {
+                std::env::set_var(key, default);
+            }
         }
     }
     let runtime = tokio::runtime::Builder::new_multi_thread()

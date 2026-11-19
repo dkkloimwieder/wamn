@@ -16,10 +16,14 @@ fn the_host_key_reader_accepts_the_rendered_secret_permissions() {
         "chart": chart, "version": metadata["version"], "name": "wamn-control", "namespace": "wamn-helm-acme",
         "values": {"org": "acme", "control": {
             "image": "wamn-control:dev",
-            "configuration": {"database": {
-                "credentials": {"name": "wamn-control-db"},
-                "server_ca": {"name": "wamn-pg-ca"}
-            }},
+            "configuration": {
+                "identity_issuer": "https://identity.platform.svc.cluster.local",
+                "nats_url": wamn_platform_install::platform::identity::NATS_URL,
+                "database": {
+                    "credentials": {"name": "wamn-control-db"},
+                    "server_ca": {"name": "wamn-pg-ca"}
+                }
+            },
             "systemMigrationSecret": "wamn-platform-sql-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "registrySecret": "registry-pull",
             "oauthSecret": "wamn-oauth"
@@ -40,14 +44,7 @@ fn the_host_key_reader_accepts_the_rendered_secret_permissions() {
         .iter()
         .find(|container| container["name"] == "control")
         .unwrap();
-    let key = container["env"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|entry| entry["name"] == "WAMN_OAUTH_KEY_FILE")
-        .expect("the control service declares its OAuth key file")["value"]
-        .as_str()
-        .unwrap();
+    let key = "/etc/wamn/oauth/key";
     let (mount, relative) = container["volumeMounts"]
         .as_array()
         .unwrap()

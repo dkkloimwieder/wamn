@@ -6,10 +6,10 @@
 {{- if and $identity.resendFrom (not $identity.resendSecret) -}}
 {{- fail "Set identity.resendSecret when identity.resendFrom is enabled." -}}
 {{- end -}}
-{{- $database := dict "host" $system.host "port" $system.port "database" $system.name "username" $system.identityRole.name "credentials" (dict "namespace" $system.namespace "name" $system.identityRole.passwordSecret.name) "server_ca" (dict "namespace" $system.namespace "name" $system.ca) -}}
-{{- $settings := dict "issuer" "https://identity.platform.svc.cluster.local" "database" $database "envelope" $identity.oauthEncryption -}}
-{{- if $identity.authNats.url -}}
-{{- $_ := set $settings "nats" (dict "url" $identity.authNats.url "tls_ca" "/var/run/wamn-identity/nats/ca.crt") -}}
+{{- $database := dict "host" $system.host "port" $system.port "database" $system.name "username" $system.identityRole.name "credentials" (dict "namespace" $system.namespace "name" $system.identityTlsSecret) "server_ca" (dict "namespace" $system.namespace "name" $system.ca) -}}
+{{- $settings := dict "issuer" .Values.global.identityIssuer "database" $database "envelope" $identity.oauthEncryption -}}
+{{- if $identity.authNats.tlsSecret -}}
+{{- $_ := set $settings "nats" (dict "url" .Values.global.nats.schedulerUrl "tls_ca" "/var/run/wamn-identity/nats/ca.crt") -}}
 {{- end -}}
 {{- if $identity.localMail -}}
 {{- $_ := set $settings "mail" (dict "mode" "local" "spool" $identity.localMail) -}}

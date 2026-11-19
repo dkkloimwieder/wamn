@@ -24,36 +24,31 @@ use wamn_authentication::route_authentication::ControlRouteAuthenticator;
 use wamn_environment::environment::Platform;
 use wamn_identity_client::users::UserClient;
 
+const HTTP_PORT: u16 = 80;
+const ADMINISTRATION_DIR: &str = "/etc/wamn/control-administration";
+const REGISTRY_AUTH_FILE: &str = "/credentials/registry/config.json";
+const IDENTITY_CA: &str = "/etc/identity-ca/ca.crt";
+const OAUTH_KEY: &str = "/etc/wamn/oauth/key";
+const SETTINGS_FILE: &str = "/etc/wamn/control/settings.json";
+
 /// Public component configuration. Database passwords stay in CNPG Secrets.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Configuration {
     pub org: wamn_registry::OrgId,
-    pub http_addr: SocketAddr,
     pub public_origin: String,
     pub database: wamn_postgres::ConnectionConfig,
     pub apply_database: wamn_postgres::ConnectionConfig,
-    pub session_issuer: String,
-    pub session_jwks_url: String,
-    pub session_audience: String,
-    pub session_algorithms: Vec<String>,
-    pub session_jwks_ca: PathBuf,
-    pub administration_dir: PathBuf,
-    pub worker: wamn_kubernetes::job::Worker,
+    pub identity_issuer: String,
+    pub nats_url: String,
+    pub registry: String,
+    pub worker_image: String,
     pub chart: PathBuf,
-    pub package_artifact_base: String,
-    pub component_artifact_base: String,
-    pub integration_artifact_base: String,
-    pub registry_auth_file: PathBuf,
     #[serde(default)]
     pub registry_token_metadata: bool,
     #[serde(default)]
-    pub insecure_registry: bool,
-    #[serde(default)]
     pub oci_ca_paths: Vec<PathBuf>,
     pub events: Option<Events>,
-    #[serde(default)]
-    pub identity: Identity,
     pub oauth_encryption: Option<wamn_envelope::encryption::Configuration>,
 }
 
@@ -65,33 +60,12 @@ pub struct Events {
     pub dup_window_secs: u64,
 }
 
-/// The identity endpoint and its server trust roots.
-#[derive(Debug, Default, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Identity {
-    pub endpoint: Option<String>,
-    pub server_ca: Option<PathBuf>,
-}
-impl Identity {
-    fn users(&self) -> anyhow::Result<Option<UserClient>> {
-        let Some(endpoint) = self.endpoint.as_deref() else {
-            return Ok(None);
-        };
-        UserClient::new(
-            endpoint,
-            self.server_ca
-                .as_deref()
-                .context("identity server CA is required")?,
-        )
-        .map(Some)
-    }
-}
-
 impl Configuration {
     /// Read one installer-owned configuration before accepting requests.
     pub fn read(path: &Path) -> anyhow::Result<Self> {
-        let config: Self = serde_json::from_slice(&std::fs::read(path)?)
-            .context("read native control configuration")?;
+        let bytes = std::fs::read(path)
+            .with_context(|| format!("read control settings {}", path.display()))?;
+        let config: Self = serde_json::from_slice(&bytes).context("decode control settings")?;
         ensure!(
             config.database.credentials.namespace == config.org
                 && config.apply_database.credentials.namespace == config.org
@@ -104,12 +78,22 @@ impl Configuration {
             "operation configuration requires the apply role"
         );
         let (_, digest) = config
-            .worker
-            .image
+            .worker_image
             .rsplit_once('@')
             .context("worker image must be pinned")?;
         digest.parse::<wamn_digest::Digest>()?;
         Ok(config)
+    }
+
+    fn worker(&self) -> wamn_kubernetes::job::Worker {
+        wamn_kubernetes::job::Worker {
+            image: self.worker_image.clone(),
+            configuration: format!(
+                "{}-settings",
+                wamn_registry::name::control_resource(&self.org)
+            ),
+            service_account: format!("wamn-operation-{}", self.org),
+        }
     }
 
     fn platform(&self) -> anyhow::Result<Platform> {
@@ -123,13 +107,15 @@ impl Configuration {
             },
             chart: self.chart.clone(),
             chart_download: None,
-            registry_auth_file: self.registry_auth_file.clone(),
+            registry_auth_file: REGISTRY_AUTH_FILE.into(),
             registry_token_metadata: self.registry_token_metadata,
             oci_ca_paths: self.oci_ca_paths.clone(),
-            insecure_registry: self.insecure_registry,
-            package_artifact_base: Some(self.package_artifact_base.clone()),
+            insecure_registry: wamn_registry::registry_is_loopback(&self.registry),
+            package_artifact_base: Some(format!("{}/wamn/packages", self.registry)),
             host_group: None,
-            identity_issuer: self.session_issuer.clone(),
+            identity_issuer: self.identity_issuer.clone(),
+            nats_url: self.nats_url.clone(),
+            oauth_encryption: self.oauth_encryption.clone(),
             events: self.events.as_ref().map(|events| wamn_broker::EventBroker {
                 stream_replicas: events.stream_replicas,
                 dup_window_secs: events.dup_window_secs,
@@ -183,71 +169,85 @@ async fn wait_for_system_schema(database: &str) -> anyhow::Result<sqlx::PgConnec
 pub async fn serve(config: Configuration) -> anyhow::Result<()> {
     let platform = config.platform()?;
     write_kubeconfig(&platform.target.kubeconfig, config.org.as_str())?;
-    let integration_registry = wamn_oci::package_artifact::PackageRegistry {
-        artifact_base: config.integration_artifact_base.clone(),
-        credentials: None,
-        registry_auth_file: config.registry_auth_file.clone(),
-        insecure_registry: config.insecure_registry,
-        oci_ca_paths: config.oci_ca_paths.clone(),
-    };
-    let registry_base =
-        wamn_catalog::parse_component_artifact_base(&config.integration_artifact_base)?;
+    let integration_artifact_base = format!("{}/wamn/integrations", config.registry);
+    let registry_base = wamn_catalog::parse_component_artifact_base(&integration_artifact_base)?;
     let registry_credentials = if config.registry_token_metadata {
         wamn_oci::package_artifact::registry_credentials::RegistryCredentialSource::MetadataServer
     } else {
         wamn_oci::package_artifact::registry_credentials::RegistryCredentialSource::Fixed(
             wamn_oci::package_artifact::registry_credentials::read_registry_credentials(
-                &config.registry_auth_file,
+                Path::new(REGISTRY_AUTH_FILE),
                 registry_base.registry(),
             )?,
         )
     };
-    write_kubeconfig(&platform.target.kubeconfig, config.org.as_str())?;
+    let integration_registry = wamn_oci::package_artifact::PackageRegistry {
+        artifact_base: integration_artifact_base,
+        credentials: None,
+        registry_auth_file: REGISTRY_AUTH_FILE.into(),
+        insecure_registry: platform.insecure_registry,
+        oci_ca_paths: platform.oci_ca_paths,
+    };
     let database = config.database.to_json()?;
     let writer = wait_for_system_schema(&database).await?;
     let pool = wamn_postgres::pool(&database, 4).await?;
-    let identity_databases = config.administration_dir.clone();
+    let identity_databases = Path::new(ADMINISTRATION_DIR);
     let identity_system = wamn_provision::migrations::MigrationDatabase::System
-        .configuration(&config.apply_database.to_json()?)?;
+        .configuration(&platform.system_database_url)?;
     let verifier = wamn_authentication::access_token::AccessTokenVerifier::new(
-        &config.session_issuer,
-        &config.session_jwks_url,
-        &config.session_audience,
-        &config.session_algorithms,
-        &config.session_jwks_ca,
+        &config.identity_issuer,
+        &format!(
+            "{}/.well-known/jwks.json",
+            config.identity_issuer.trim_end_matches('/')
+        ),
+        &wamn_registry::name::org_audience(&config.org),
+        &["EdDSA".into()],
+        Path::new(IDENTITY_CA),
     )?;
     let oauth = config
         .oauth_encryption
         .as_ref()
         .map(|configuration| {
-            let envelope = Arc::new(wamn_envelope::encryption::Envelope::open(configuration)?);
+            let envelope = match configuration {
+                wamn_envelope::encryption::Configuration::Local => {
+                    wamn_envelope::encryption::Envelope::from_file(Path::new(OAUTH_KEY))
+                }
+                wamn_envelope::encryption::Configuration::Gcp { .. } => {
+                    wamn_envelope::encryption::Envelope::open(configuration)
+                }
+            }?;
+            let envelope = Arc::new(envelope);
             wamn_http::oauth_authorization::Authorization::new(&config.public_origin, envelope)
                 .map(Arc::new)
         })
         .transpose()?;
     let transport = Arc::new(wamn_http::transport::HttpTransport::new()?);
+    let worker = config.worker();
     let handlers = Arc::new(
         HostRouteDelivery::new(HostRouteHandlers {
             control: pool.clone(),
             writer: Arc::new(tokio::sync::Mutex::new(writer)),
-            identity: config.identity.users()?,
-            issuer: config.session_issuer,
-            administration: Some(config.administration_dir.clone()),
+            identity: Some(UserClient::new(
+                &config.identity_issuer,
+                Path::new(IDENTITY_CA),
+            )?),
+            issuer: config.identity_issuer,
+            administration: Some(ADMINISTRATION_DIR.into()),
             status: Arc::new(crate::environment_status::KubernetesSource),
             org: config.org.clone(),
         })
         .with_control_authenticator(Arc::new(ControlRouteAuthenticator::new(verifier)))
         .with_control_execution(Arc::new(execution::Execution {
             org: config.org.clone(),
-            worker: config.worker.clone(),
-            administration: config.administration_dir.clone(),
+            worker: worker.clone(),
+            administration: ADMINISTRATION_DIR.into(),
             control_database: database,
             registry_token_metadata: config.registry_token_metadata,
             system_database: identity_system.clone(),
             integration_registry,
             registry_credentials,
         }))
-        .with_worker(config.worker)
+        .with_worker(worker)
         .with_operation_jobs(wamn_kubernetes::kubernetes_api::KubernetesApi::in_cluster()?)
         .with_registry_token_metadata(config.registry_token_metadata)
         .with_connection_health(Arc::new(crate::connection_health::ConnectionHealth::new(
@@ -255,15 +255,16 @@ pub async fn serve(config: Configuration) -> anyhow::Result<()> {
         )))
         .with_oauth(oauth.as_ref().map(Arc::clone)),
     );
-    let callback_databases = Arc::new(config.administration_dir);
-    let listener = tokio::net::TcpListener::bind(config.http_addr).await?;
+    let callback_databases = Arc::new(PathBuf::from(ADMINISTRATION_DIR));
+    let listener =
+        tokio::net::TcpListener::bind(SocketAddr::from(([0, 0, 0, 0], HTTP_PORT))).await?;
     let mut maintenance = tokio::task::JoinSet::new();
     maintenance.spawn(async move {
         let mut ticks = tokio::time::interval(std::time::Duration::from_secs(60));
         ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             ticks.tick().await;
-            if let Err(error) = retention::identities(&identity_databases, &identity_system).await {
+            if let Err(error) = retention::identities(identity_databases, &identity_system).await {
                 tracing::warn!(%error, "transaction identity retention failed");
             }
         }

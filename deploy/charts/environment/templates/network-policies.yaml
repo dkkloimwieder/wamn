@@ -1,11 +1,7 @@
-{{- range (index .Values "runtime-operator").runtime.hostGroups }}
-{{- $name := .name }}
-{{- $namespace := include "environment.namespace" $ }}
-{{- if ne (default "" .namespace) $namespace }}
-{{- fail "Set each runtime host group's namespace to the environment namespace." }}
-{{- end }}
+{{- if .Values.projects }}
+{{- $name := .Values.hostName }}
+{{- $namespace := include "environment.namespace" . }}
 {{- $host := dict "wasmcloud.com/name" "hostgroup" "wasmcloud.com/hostgroup" $name }}
-{{- if and .http .http.enabled }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -20,8 +16,7 @@ spec:
             matchLabels: {kubernetes.io/metadata.name: hosts}
           podSelector:
             matchLabels: {app.kubernetes.io/name: wamn-edge}
-      ports: [{port: {{ .http.port | int }}, protocol: TCP}]
-{{- end }}
+      ports: [{port: {{ include "environment.httpPort" . }}, protocol: TCP}]
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -67,7 +62,10 @@ spec:
           podSelector:
             matchLabels: {app.kubernetes.io/name: opentelemetry-collector, app.kubernetes.io/instance: wamn}
       ports: [{port: 4317, protocol: TCP}]
-{{- with $.Values.networkPolicy.projectClusters }}
+{{- $clusters := list }}
+{{- range .Values.projects }}
+{{- $clusters = append $clusters .cluster }}
+{{- end }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -80,7 +78,6 @@ spec:
     - to:
         - podSelector:
             matchExpressions:
-              - {key: cnpg.io/cluster, operator: In, values: {{ . | toJson }}}
+              - {key: cnpg.io/cluster, operator: In, values: {{ $clusters | uniq | toJson }}}
       ports: [{port: 5432, protocol: TCP}]
-{{- end }}
 {{- end }}

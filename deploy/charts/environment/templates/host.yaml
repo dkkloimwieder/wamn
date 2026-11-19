@@ -1,0 +1,113 @@
+{{- if .Values.projects }}
+{{- $org := include "environment.namespace" . }}
+{{- $env := required "Set env." .Values.env }}
+{{- $name := required "Set hostName." .Values.hostName }}
+{{- $nats := required "Set natsUrl." .Values.natsUrl }}
+{{- $issuer := required "Set identityIssuer." .Values.identityIssuer }}
+{{- $drain := required "Set drainBoundSeconds." .Values.drainBoundSeconds }}
+{{- $settingsName := printf "%s-settings" $name }}
+{{- $registry := ternary (dict "configMap" (dict "name" "wamn-registry-helper")) (dict "secret" (dict "secretName" "wamn-registry-pull" "items" (list (dict "key" ".dockerconfigjson" "path" "config.json")))) .Values.registryTokenMetadata }}
+{{- $volumes := list (dict "name" "settings" "configMap" (dict "name" $settingsName)) (dict "name" "identity-ca" "configMap" (dict "name" "identity-ca")) (merge (dict "name" "registry") $registry) }}
+{{- $mounts := list
+    (dict "name" "settings" "mountPath" "/etc/wamn/host" "readOnly" true)
+    (dict "name" "identity-ca" "mountPath" "/etc/identity-ca" "readOnly" true)
+    (dict "name" "registry" "mountPath" "/etc/wamn/registry" "readOnly" true)
+}}
+{{- if eq (dig "provider" "" (.Values.oauthEncryption | default dict)) "local" }}
+{{- $volumes = append $volumes (dict "name" "oauth-key" "secret" (dict "secretName" "wamn-oauth" "defaultMode" 384)) }}
+{{- $mounts = append $mounts (dict "name" "oauth-key" "mountPath" "/etc/wamn/oauth" "readOnly" true) }}
+{{- end }}
+{{- $projects := dict }}
+{{- $sources := list }}
+{{- $streams := list }}
+{{- range $project, $database := .Values.projects }}
+{{- $_ := set $projects $project (pick $database "host" "port" "database" "logins") }}
+{{- $streams = append $streams $database.stream }}
+{{- $caItems := list }}
+{{- range $login := $database.logins }}
+{{- $items := list
+    (dict "key" "username" "path" (printf "%s/username" $login))
+    (dict "key" "password" "path" (printf "%s/password" $login))
+}}
+{{- $sources = append $sources (dict "secret" (dict "name" $login "items" $items)) }}
+{{- $caItems = append $caItems (dict "key" "ca.crt" "path" (printf "%s/ca.crt" $login)) }}
+{{- end }}
+{{- $sources = append $sources (dict "secret" (dict "name" $database.serverCa "items" $caItems)) }}
+{{- end }}
+{{- $volumes = append $volumes (dict "name" "project-database" "projected" (dict "defaultMode" 256 "sources" $sources)) }}
+{{- $mounts = append $mounts (dict "name" "project-database" "mountPath" "/etc/wamn/db" "readOnly" true) }}
+
+{{- $broker := required "Set environmentNats." .Values.environmentNats }}
+{{- $brokerDirectory := printf "/etc/wasmcloud/host-plugin-secrets/%s" $broker.secret }}
+{{- $natsConfig := dict
+    "servers" $nats
+    "tls-ca" (printf "%s/ca.crt" $brokerDirectory)
+    "tls-cert" (printf "%s/tls.crt" $brokerDirectory)
+    "tls-key" (printf "%s/tls.key" $brokerDirectory)
+    "stream-allow" (join "," $streams)
+    "subject-allow" $broker.subjects
+}}
+{{- $bindings := dict }}
+{{- range $binding := list "workflow" "ingress" }}
+{{- $_ := set $bindings $binding (dict "config" (dict "inbox-prefix" (printf "%s.%s" $broker.inbox $binding))) }}
+{{- end }}
+{{- $plugins := list
+    (dict "id" "wamn-postgres" "workloadConfig" "deny")
+    (dict "id" "wasmcloud-nats" "workloadConfig" "deny" "secretFrom" (list $broker.secret) "config" $natsConfig "bindings" $bindings)
+}}
+
+{{- $settings := dict "org" $org "env" $env "identity_issuer" $issuer "nats_url" $nats "drain_bound_seconds" $drain "insecure_registry" .Values.insecureRegistry "oauth_encryption" .Values.oauthEncryption "projects" $projects | toJson }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $settingsName }}
+  namespace: {{ $org | quote }}
+data:
+  settings.json: {{ $settings | quote }}
+
+{{- /* Render the pinned upstream host resources with this group's generated values.
+       The subchart's own render has no groups. Copy its values before applying ours. */}}
+{{- $stock := index .Subcharts "runtime-operator" }}
+{{- $stockValues := deepCopy $stock.Values }}
+{{- $runtime := $stockValues.runtime }}
+{{- $_ := set $runtime.image "registry" "" }}
+{{- $image := required "Set image to the tagged, pinned host image." .Values.image }}
+{{- $tag := regexFind ":[^/:@]+@sha256:[a-f0-9]{64}$" $image }}
+{{- if not $tag }}
+{{- fail "image must include a tag and a sha256 digest." }}
+{{- end }}
+{{- $placement := pick .Values.placement "replicas" "nodeSelector" "tolerations" "affinity" "topologySpreadConstraints" "resources" }}
+{{- if $placement.resources }}
+{{- $_ := set $placement "resources" (mergeOverwrite (deepCopy $runtime.resources) $placement.resources) }}
+{{- end }}
+{{- $group := merge (dict
+    "name" $name
+    "namespace" $org
+    "image" (dict "repository" (trimSuffix $tag $image) "tag" (trimPrefix ":" $tag))
+    "schedulerNatsUrl" $nats
+    "dataNatsUrl" $nats
+    "http" (dict "enabled" true "port" (include "environment.httpPort" . | int))
+    "ociCaPaths" .Values.ociCaPaths
+    "env" (list (dict "name" "DOCKER_CONFIG" "value" "/etc/wamn/registry"))
+    "plugins" $plugins
+    "volumes" $volumes
+    "volumeMounts" $mounts
+    "extraArgs" (list "--settings=/etc/wamn/host/settings.json")
+) $placement }}
+{{- $_ := set $runtime "hostGroups" (list $group) }}
+{{- $_ := set $runtime "terminationGracePeriodSeconds" $drain }}
+{{- $_ := set $runtime.serviceAccount "name" (required "Set serviceAccount." .Values.serviceAccount) }}
+{{- $_ := set $runtime "podAnnotations" (dict "checksum/host-settings" (sha256sum $settings)) }}
+{{- if not .Values.registryTokenMetadata }}
+{{- $_ := set $stockValues.global.image "pullSecrets" (list (dict "name" "wamn-registry-pull")) }}
+{{- end }}
+{{- $context := merge (dict) $stock }}
+{{- $_ := set $context "Values" $stockValues }}
+{{- $templates := printf "%s/charts/runtime-operator/templates/runtime" (trimSuffix "/templates" .Template.BasePath) }}
+---
+{{ include (printf "%s/host-plugin-config.yaml" $templates) $context }}
+---
+{{ include (printf "%s/deployment.yaml" $templates) $context }}
+---
+{{ include (printf "%s/service.yaml" $templates) $context }}
+{{- end }}

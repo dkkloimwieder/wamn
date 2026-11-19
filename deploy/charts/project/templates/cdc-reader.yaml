@@ -1,15 +1,17 @@
 {{- with .Values.cdcReader }}
 {{- $operations := required "operations is required for the CDC reader" $.Values.operations }}
-{{- $login := required "operations.captureSecret is required for the CDC reader" $operations.captureSecret }}
-{{- $cluster := required "operations.cluster is required for the CDC reader" $operations.cluster }}
+{{- $database := required "cdcReader.database is required for the CDC reader" .database }}
+{{- $login := required "Set cdcReader.database.credentials.name" $database.credentials.name }}
+{{- $ca := required "Set cdcReader.database.server_ca.name" $database.server_ca.name }}
+{{- $publication := required "publication is required for the CDC reader" $.Values.publication }}
+{{- $settings := dict "org" $publication.org "project" $publication.project "env" $publication.env "database" $database "cdc_name" $publication.name "nats_url" (required "cdcReader.natsUrl is required" .natsUrl) | toJson }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: {{ .name }}
   namespace: {{ include "project.namespace" $ | quote }}
 data:
-  connection.json: {{ .connection | quote }}
-  reader.json: {{ .configuration | toJson | quote }}
+  settings.json: {{ $settings | quote }}
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -32,7 +34,7 @@ spec:
         app.kubernetes.io/name: wamn-cdc-reader
         app.kubernetes.io/instance: {{ .key | quote }}
       annotations:
-        wamn.dev/cdc-configuration: {{ list .connection .configuration | toJson | sha256sum | quote }}
+        wamn.dev/cdc-configuration: {{ $settings | sha256sum | quote }}
     spec:
       automountServiceAccountToken: false
       serviceAccountName: {{ required "operations.capture is required for the CDC reader" $operations.capture | quote }}
@@ -43,7 +45,7 @@ spec:
         - name: reader
           image: {{ .image | quote }}
           command: [/usr/local/bin/wamn-cdc-reader]
-          args: [--config, /etc/wamn/cdc/reader.json]
+          args: [--settings, /etc/wamn/cdc/settings.json]
           volumeMounts:
             - {name: cdc, mountPath: /etc/wamn/cdc, readOnly: true}
             - {name: database, mountPath: /etc/wamn/db, readOnly: true}
@@ -61,7 +63,7 @@ spec:
                     - {key: username, path: {{ printf "%s/username" $login | quote }}}
                     - {key: password, path: {{ printf "%s/password" $login | quote }}}
               - secret:
-                  name: {{ printf "%s-ca" $cluster | quote }}
+                  name: {{ $ca | quote }}
                   items:
                     - {key: ca.crt, path: {{ printf "%s/ca.crt" $login | quote }}}
         - name: nats

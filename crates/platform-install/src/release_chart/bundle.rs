@@ -235,24 +235,6 @@ pub fn prepare_payload(repository: &Path, chart: &Path) -> anyhow::Result<()> {
     ] {
         copy_package_output(&repository.join(source), &platform.join(name))?;
     }
-    let defaults = read_yaml(&chart.join("values.yaml"))?;
-    let path = platform.join("environment").join("values.yaml");
-    let mut values = read_yaml(&path)?;
-    let reference: oci_client::Reference = defaults["platform"]["host"]["image"]
-        .as_str()
-        .context("host image")?
-        .parse()?;
-    values["runtime-operator"]["runtime"]["image"] = serde_json::json!({
-        "registry":reference.registry(), "repository":reference.repository(),
-        "tag":format!("{}@{}", reference.tag().context("host tag")?, reference.digest().context("host digest")?),
-        "pull_policy":"IfNotPresent"
-    });
-    values["global"]["nats"] = serde_json::json!({
-        "schedulerUrl":crate::platform::identity::NATS_URL,
-        "dataUrl":crate::platform::identity::NATS_URL,
-    });
-    std::fs::write(path, serde_yaml::to_string(&values)?)?;
-
     Ok(())
 }
 

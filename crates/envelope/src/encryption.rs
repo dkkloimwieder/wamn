@@ -20,7 +20,7 @@ const CACHE_ENTRIES: usize = 1024;
 const NONCE_BYTES: usize = 12;
 
 /// Deployment configuration shared by signing and OAuth consumers.
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "provider", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Configuration {
     /// Read the envelope key from WAMN_OAUTH_KEY_FILE.

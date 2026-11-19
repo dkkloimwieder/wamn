@@ -3,10 +3,10 @@
 `wamn-control` serves the org control routes over native HTTP.
 It authenticates org sessions and checks current authority before each operation.
 It has no application release, route guest, runtime operator registration, or host heartbeat.
-The platform chart deploys the `control` image.
+The org chart deploys the `control` image.
 
-Start the service with `wamn-control --config /etc/wamn/control/config.json platform`.
-The installer owns this JSON file. The control Deployment mounts the system database login files and the database CA certificate.
+Start the service with `wamn-control --settings /etc/wamn/control/settings.json platform`.
+The org chart renders this JSON file and mounts it for control and the org worker. The control Deployment mounts the system database login files and the database CA certificate.
 Both database fields use `wamn-postgres::ConnectionConfig`.
 The service refuses a database credential outside its org namespace.
 It also checks the org control login and the fixed apply login.
@@ -14,21 +14,20 @@ It also checks the org control login and the fixed apply login.
 | Field | Meaning |
 | --- | --- |
 | `org` | Org served by this process |
-| `http_addr`, `public_origin` | Bind address and public control origin |
+| `public_origin` | Public control origin |
 | `database`, `apply_database` | Public connection objects for control reads and lifecycle writes |
-| `session_issuer`, `session_jwks_url`, `session_audience`, `session_algorithms`, `session_jwks_ca` | Bearer issuer, key-set address, org audience, EdDSA allowlist, and the CA bundle path |
-| `administration_dir` | Public project connection files named by `control_administration_key` and credential subdirectories named by login Secret |
-| `worker.image` | Pinned `control` image for operation Jobs |
-| `worker.service_account` | Org worker account for environment lifecycle and platform SQL Jobs |
-| `worker.configuration` | ConfigMap that mounts `config.json` at `/etc/wamn/control` in each Job |
+| `identity_issuer` | Shared identity endpoint for token verification and user administration |
+| `nats_url` | Shared in-cluster NATS endpoint |
+| `worker_image` | Pinned control image for operation Jobs |
 | `chart` | Installed immutable chart reference |
-| `package_artifact_base`, `component_artifact_base`, `integration_artifact_base` | Installed artifact repositories |
-| `registry_auth_file` | Mounted registry credential file |
-| `registry_token_metadata` | Use the installed metadata credential source instead of the registry file |
-| `insecure_registry`, `oci_ca_paths` | Installed registry transport and public trust bundles |
+| `registry` | Installed registry authority |
+| `registry_token_metadata` | Use the metadata credential source for the registry |
+| `oci_ca_paths` | Mounted registry trust bundles |
 | `events` | Optional event policy with `stream_replicas` and `dup_window_secs` |
-| `identity` | Optional identity `endpoint` and `server_ca` for the service account token client |
 | `oauth_encryption` | Optional envelope encryption configuration |
+
+Control listens on port 80. It derives the JWKS URL and org audience and verifies EdDSA signatures.
+The worker ConfigMap and service account names follow from the org.
 
 Control authorizes the target and submits one Kubernetes Job.
 It puts the request and authenticated actor in an immutable ConfigMap owned by that Job.
