@@ -235,7 +235,7 @@ pub mod package_schema;
 mod palette;
 pub use palette::{
     PALETTE_DESCRIPTOR_ANNOTATION, PALETTE_FILE, PALETTE_PACKAGE_ID, PALETTE_PACKAGE_VERSION,
-    Palette, PalettePin, palette_target, read_palette,
+    palette_target,
 };
 
 /// Resource names derived from catalog identities.

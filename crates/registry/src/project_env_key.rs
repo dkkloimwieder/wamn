@@ -55,6 +55,12 @@ impl From<ProjectEnvKey> for String {
     }
 }
 impl ProjectEnvKey {
+    /// Build the platform palette key directly because parsing rejects the reserved `wamn` org.
+    #[must_use]
+    pub fn platform_palette() -> Self {
+        Self("wamn--palette--platform".to_owned())
+    }
+
     /// Borrow the persisted and wire spelling.
     pub fn as_str(&self) -> &str {
         &self.0

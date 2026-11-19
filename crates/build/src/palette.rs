@@ -83,9 +83,7 @@ fn seal(
             declaration: wamn_catalog::ComponentDeclaration {
                 data_change: false,
                 target: wamn_catalog::palette_target(
-                    &"platform--palette--platform"
-                        .parse::<wamn_registry::ProjectEnvKey>()
-                        .expect("platform palette coordinates"),
+                    &wamn_registry::ProjectEnvKey::platform_palette(),
                 ),
                 component: declaration.component,
                 interface_version: declaration.interface_version,
