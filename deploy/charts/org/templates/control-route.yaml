@@ -1,7 +1,7 @@
-{{- if and .Values.control.image .Values.control.routeHost }}
+{{- if .Values.control.image }}
 {{- $org := .Values.org }}
 {{- $name := printf "c-%s" $org }}
-{{- $host := .Values.control.routeHost }}
+{{- $host := include "org.controlHost" . }}
 {{- $digest := required "Set control.image to an image pinned by digest when publishing its route." (regexFind "sha256:[a-f0-9]{64}$" .Values.control.image) }}
 apiVersion: v1
 kind: ConfigMap

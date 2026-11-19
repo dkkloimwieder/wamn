@@ -17,12 +17,11 @@ pub async fn configure(
     document: EnvironmentFile,
     application: Option<&wamn_catalog::ApplicationName>,
     disposable: Option<bool>,
-    system_owner: &str,
 ) -> anyhow::Result<()> {
     let mut platform = platform.clone();
     super::runtime::resolve_platform(&mut platform)?;
     let lock = LifecycleLock::acquire_environment(
-        wamn_postgres::connect(system_owner).await?,
+        wamn_postgres::connect(&platform.system_database_url).await?,
         &document.org,
         &document.env,
     )
@@ -112,7 +111,6 @@ pub async fn configure(
                         &instance,
                         &connection,
                         database,
-                        system_owner,
                         &lock,
                         &applied_document,
                     )
@@ -178,7 +176,6 @@ async fn configure_project(
     instance: &wamn_registry::instance_suffix::InstanceSuffix,
     connection: &wamn_postgres::ConnectionConfig,
     mut values: Value,
-    system_owner: &str,
     lock: &LifecycleLock,
     applied_document: &str,
 ) -> anyhow::Result<()> {
@@ -291,7 +288,7 @@ async fn configure_project(
                 .await?;
             }
             super::fill(
-                system_owner,
+                &platform.system_database_url,
                 &owner,
                 &platform.identity_issuer,
                 wamn_identity::application::ApplicationTarget {

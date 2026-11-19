@@ -19,7 +19,7 @@ const ROLLOUT_TIMEOUT: Duration = Duration::from_secs(960);
 pub enum ProductPlatformCommand {
     /// Install or upgrade the shared Kubernetes platform.
     Deploy(DeployArgs),
-    /// Inspect or apply platform SQL through control.
+    /// Inspect or apply project platform SQL through control.
     #[command(subcommand)]
     Schema(PlatformSchemaCommand),
 }
@@ -52,55 +52,17 @@ pub enum PlatformSchemaCommand {
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
 pub enum PlatformSchemaTarget {
-    System,
     Project,
 }
 
-#[derive(Debug)]
-pub struct PlatformSchemaArgs {
-    pub target: PlatformSchemaTarget,
-    pub env: Option<PathBuf>,
-}
-
 #[derive(Debug, Args)]
-struct PlatformSchemaInput {
-    /// The database target.
+pub struct PlatformSchemaArgs {
+    /// The project database target.
     #[arg(long, value_enum)]
     target: PlatformSchemaTarget,
-    /// The environment document, required only for project target.
-    #[arg(long, required_if_eq("target", "project"))]
-    env: Option<PathBuf>,
-}
-
-impl clap::FromArgMatches for PlatformSchemaArgs {
-    fn from_arg_matches(matches: &clap::ArgMatches) -> Result<Self, clap::Error> {
-        let input = PlatformSchemaInput::from_arg_matches(matches)?;
-        if matches!(input.target, PlatformSchemaTarget::System) && input.env.is_some() {
-            return Err(clap::Error::raw(
-                clap::error::ErrorKind::ArgumentConflict,
-                "--env is refused for system target",
-            ));
-        }
-        Ok(Self {
-            target: input.target,
-            env: input.env,
-        })
-    }
-
-    fn update_from_arg_matches(&mut self, matches: &clap::ArgMatches) -> Result<(), clap::Error> {
-        *self = Self::from_arg_matches(matches)?;
-        Ok(())
-    }
-}
-
-impl Args for PlatformSchemaArgs {
-    fn augment_args(command: clap::Command) -> clap::Command {
-        PlatformSchemaInput::augment_args(command)
-    }
-
-    fn augment_args_for_update(command: clap::Command) -> clap::Command {
-        PlatformSchemaInput::augment_args_for_update(command)
-    }
+    /// The environment document.
+    #[arg(long)]
+    env: PathBuf,
 }
 
 pub async fn run_product(command: ProductPlatformCommand) -> anyhow::Result<()> {
@@ -115,28 +77,23 @@ pub async fn run_product(command: ProductPlatformCommand) -> anyhow::Result<()> 
         PlatformSchemaCommand::Diff(args) => (args, false),
         PlatformSchemaCommand::Apply(args) => (args, true),
     };
-    let (target, projects, org, env) = match args.target {
-        PlatformSchemaTarget::System => ("system", Vec::new(), None, None),
-        PlatformSchemaTarget::Project => {
-            let file = args.env.context("--env is required for project SQL")?;
-            let document =
-                wamn_environment::environment::document::EnvironmentFile::compile(&file)?;
-            let projects = document
-                .projects
-                .into_iter()
-                .map(|project| project.name)
-                .collect();
-            ("project", projects, Some(document.org), Some(document.env))
-        }
+    let target = match args.target {
+        PlatformSchemaTarget::Project => "project",
     };
+    let document = wamn_environment::environment::document::EnvironmentFile::compile(&args.env)?;
+    let projects: Vec<_> = document
+        .projects
+        .into_iter()
+        .map(|project| project.name)
+        .collect();
     let control = crate::operation_verbs::ControlHost::from_env()?;
     interruptible(
         &mut signals,
         control.platform_schema(serde_json::json!({
             "target": target,
             "projects": projects,
-            "org": org,
-            "env": env,
+            "org": document.org,
+            "env": document.env,
             "apply": apply,
         })),
     )

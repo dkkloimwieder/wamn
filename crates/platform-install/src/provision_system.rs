@@ -34,7 +34,7 @@ pub async fn provision_system(request: &ProvisionSystemRequest) -> anyhow::Resul
         .context("connect to the system database")?;
     let scope = MigrationDatabase::System;
     crate::credentials::wait_role(&mut client, &scope.login(&request.database.database)).await?;
-    crate::credentials::wait_role(&mut client, &wamn_role::APPLY_ROLE.parse()?).await?;
+    crate::credentials::wait_group_role(&mut client, &wamn_role::APPLY_ROLE.parse()?).await?;
     let migration_input = scope.configuration(&database)?;
 
     initialize_system(

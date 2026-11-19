@@ -9,7 +9,7 @@ async fn apply_cannot_write_connection_authority_or_assume_the_system_owner(pool
     wamn_provision::test_database::system(database.as_str()).await;
     {
         let batches: &[&str] = &[
-            "CREATE ROLE wamn_apply LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS",
+            "CREATE ROLE wamn_apply NOLOGIN NOINHERIT; CREATE ROLE wamn_apply_fixture LOGIN IN ROLE wamn_apply",
             &wamn_provision::sql::ensure_platform_group_role_sql(),
             APPLY_GRANTS_SQL,
             wamn_registry::test_util::apply_authority_sql(),

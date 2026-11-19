@@ -2,7 +2,7 @@
 {{- $namespace := $system.namespace }}
 {{- $database := $system.name }}
 {{- $roles := list
-    (dict "name" "wamn_apply" "login" true "inherit" true "passwordSecret" (dict "name" "wamn-apply"))
+    (dict "name" "wamn_apply" "login" false "inherit" false)
     $system.migrationRole $system.identityRole }}
 {{- $cluster := $system.cluster }}
 {{- $caName := $system.ca }}

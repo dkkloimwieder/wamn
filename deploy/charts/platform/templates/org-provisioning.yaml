@@ -1,4 +1,10 @@
 {{- $sql := .Values.systemSql | default dict -}}
+{{- $base := "" -}}
+{{- range .Values.edge.tlsDnsNames -}}
+  {{- if and (not $base) (hasPrefix "*." .) -}}
+    {{- $base = trimPrefix "*." . -}}
+  {{- end -}}
+{{- end -}}
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -11,6 +17,7 @@ metadata:
   name: wamn-org-inputs
   namespace: platform
 data:
+  base: {{ required "Set a wildcard in edge.tlsDnsNames for org control routes." $base | quote }}
   controlImage: {{ $sql.image | default (printf "%s/wamn-control:%s" .Values.registry .Chart.Version) | quote }}
   provider: {{ .Values.provider | quote }}
   registry: {{ .Values.registry | quote }}

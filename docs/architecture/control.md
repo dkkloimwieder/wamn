@@ -6,10 +6,12 @@ It has no application release, route guest, runtime operator registration, or ho
 The org chart deploys the `control` image.
 
 Start the service with `wamn-control --settings /etc/wamn/control/settings.json platform`.
-The org chart renders this JSON file and mounts it for control and the org worker. The control Deployment mounts the system database login files and the database CA certificate.
+The org chart renders this JSON file and mounts it for control and the org worker.
+The control Deployment mounts the org's control and apply logins and the system database CA certificate.
+The worker uses the org's apply login for lifecycle operations.
 Both database fields use `wamn-postgres::ConnectionConfig`.
 The service refuses a database credential outside its org namespace.
-It also checks the org control login and the fixed apply login.
+It checks that the apply login name matches the org and database.
 
 | Field | Meaning |
 | --- | --- |

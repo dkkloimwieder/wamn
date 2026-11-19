@@ -57,6 +57,7 @@ metadata:
   namespace: {{ $org | quote }}
 rules:
 - apiGroups: [""]
+  # Namespace-wide Secret access is a stated exception inside the org (ruling D, 2026-11-19).
   # Project provisioning reads and applies payload Secrets. Cleanup deletes them by name.
   resources: [secrets]
   verbs: [get, create, patch, delete]

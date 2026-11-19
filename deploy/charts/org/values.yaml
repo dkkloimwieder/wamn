@@ -1,4 +1,5 @@
 org: ""
+base: ""
 quota:
   count/pods: 200
   count/jobs.batch: 50
@@ -24,9 +25,7 @@ postgres:
     secret: null
 control:
   image: ""
-  routeHost: ""
   platformUi: null
   registrySecret: ""
   oauthSecret: ""
-  systemMigrationSecret: ""
   configuration: {}

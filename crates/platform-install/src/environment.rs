@@ -130,7 +130,7 @@ pub fn set_operation_values<'a>(
         })
         .collect();
     let diff_secrets = [
-        MigrationDatabase::System.credential_secret("wamn_system"),
+        crate::provision_org::APPLY_SECRET.into(),
         "wamn-pg-ca".into(),
         MigrationDatabase::Project.credential_secret(database),
         format!("{cluster}-ca"),

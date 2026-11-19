@@ -1,4 +1,4 @@
-//! Provision an org's control login and registry row from inside the cluster.
+//! Provision an org's system database logins and registry row inside the cluster.
 
 use anyhow::Context as _;
 use ring::rand::{SecureRandom as _, SystemRandom};
@@ -7,6 +7,7 @@ use wamn_postgres::ConnectionConfig;
 use wamn_registry::OrgId;
 
 pub const CONTROL_SECRET: &str = "wamn-control-db";
+pub(crate) const APPLY_SECRET: &str = "wamn-apply-db";
 pub const SQL_ACCOUNT: &str = "wamn-org-sql";
 pub const INVITATION_ACCOUNT: &str = "wamn-org-invitation";
 pub const CONTROL_AUDIENCE: &str = "wamn-control";
@@ -20,61 +21,86 @@ pub(crate) fn control_login(org: &OrgId, database: &str) -> LoginName {
     )
 }
 
-/// Rotate the org login, recording the org before releasing its credential.
+/// The system database login used for this org's operations.
+pub fn apply_login(org: &OrgId, database: &str) -> LoginName {
+    wamn_registry::name::credential_login(
+        wamn_role::APPLY_ROLE,
+        &wamn_registry::apply_identity_hash(org, database),
+    )
+}
+
+/// Rotate both logins, recording the org before releasing their credentials.
 pub async fn provision_org(database: &ConnectionConfig, org: &OrgId) -> anyhow::Result<()> {
     let api = wamn_kubernetes::kubernetes_api::KubernetesApi::in_cluster()?;
     let mut connection = wamn_postgres::connect(&database.to_json()?).await?;
-    let login = control_login(org, &database.database);
+    let control = control_login(org, &database.database);
+    let apply = apply_login(org, &database.database);
     // Keep concurrent provisioning Jobs ordered through the Secret patch.
     // Dropping the dedicated connection releases this lock on every exit.
     sqlx::query("SELECT pg_advisory_lock(hashtextextended($1, 0))")
-        .bind(&login)
+        .bind(&control)
         .execute(&mut connection)
         .await
         .context("lock the org login")?;
 
-    let mut entropy = [0_u8; 32];
-    SystemRandom::new()
-        .fill(&mut entropy)
-        .map_err(|_| anyhow::anyhow!("generate the org login password"))?;
-    let password = hex::encode(entropy);
-
+    // The default org quota admits 50 Jobs, with up to two apply sessions each.
+    // The single control replica allows one concurrent publication on this login.
+    let logins = [
+        (control, wamn_role::CONTROL_ROLE, 4_i32, CONTROL_SECRET),
+        (apply, wamn_role::APPLY_ROLE, 101_i32, APPLY_SECRET),
+    ];
+    let mut passwords = Vec::with_capacity(logins.len());
     let mut tx = crate::transaction::provisioning_transaction(&mut connection).await?;
-    // Bind the password rather than putting it in the client statement text.
-    sqlx::query(
-        "SELECT set_config('wamn.org_login', $1, true), set_config('wamn.org_password', $2, true)",
-    )
-    .bind(&login)
-    .bind(&password)
-    .execute(&mut *tx)
-    .await
-    .context("bind the org login settings")?;
-    sqlx::raw_sql(
-        "DO $org_login$
-         DECLARE
-             login_name text := current_setting('wamn.org_login');
-             login_password text := current_setting('wamn.org_password');
-         BEGIN
-             IF EXISTS (SELECT FROM pg_roles WHERE rolname = login_name) THEN
-                 EXECUTE format('ALTER ROLE %I LOGIN PASSWORD %L CONNECTION LIMIT 4',
-                                login_name, login_password);
-                 EXECUTE format('GRANT wamn_control TO %I', login_name);
-             ELSE
-                 EXECUTE format('CREATE ROLE %I LOGIN PASSWORD %L CONNECTION LIMIT 4 IN ROLE wamn_control',
-                                login_name, login_password);
-             END IF;
-         END
-         $org_login$",
-    )
-    .execute(&mut *tx)
-    .await
-    .map_err(|error| OrgRoleError {
-        login,
-        code: error
-            .as_database_error()
-            .and_then(sqlx::error::DatabaseError::code)
-            .map(std::borrow::Cow::into_owned),
-    })?;
+    let random = SystemRandom::new();
+    for (login, group, limit, secret) in logins {
+        let mut entropy = [0_u8; 32];
+        random
+            .fill(&mut entropy)
+            .map_err(|_| anyhow::anyhow!("generate the org login password"))?;
+        let password = hex::encode(entropy);
+        let role_error = |error: sqlx::Error| OrgRoleError {
+            login: login.as_str().to_owned(),
+            code: error
+                .as_database_error()
+                .and_then(sqlx::error::DatabaseError::code)
+                .map(std::borrow::Cow::into_owned),
+        };
+        // Bind the password so the client statement text never contains it.
+        sqlx::query(
+            "SELECT set_config('wamn.org_login', $1, true), set_config('wamn.org_password', $2, true),
+                    set_config('wamn.org_group', $3, true), set_config('wamn.org_connection_limit', $4::int::text, true)",
+        )
+        .bind(&login)
+        .bind(&password)
+        .bind(group)
+        .bind(limit)
+        .execute(&mut *tx)
+        .await
+        .map_err(role_error)?;
+        sqlx::raw_sql(
+            "DO $org_login$
+             DECLARE
+                 login_name text := current_setting('wamn.org_login');
+                 login_password text := current_setting('wamn.org_password');
+                 login_group text := current_setting('wamn.org_group');
+                 connection_limit integer := current_setting('wamn.org_connection_limit')::integer;
+             BEGIN
+                 IF EXISTS (SELECT FROM pg_roles WHERE rolname = login_name) THEN
+                     EXECUTE format('ALTER ROLE %I LOGIN PASSWORD %L CONNECTION LIMIT %s',
+                                    login_name, login_password, connection_limit);
+                     EXECUTE format('GRANT %I TO %I', login_group, login_name);
+                 ELSE
+                     EXECUTE format('CREATE ROLE %I LOGIN PASSWORD %L CONNECTION LIMIT %s IN ROLE %I',
+                                    login_name, login_password, connection_limit, login_group);
+                 END IF;
+             END
+             $org_login$",
+        )
+        .execute(&mut *tx)
+        .await
+        .map_err(role_error)?;
+        passwords.push((secret, password));
+    }
     sqlx::query("INSERT INTO registry.orgs (id) VALUES ($1) ON CONFLICT DO NOTHING")
         .bind(org)
         .execute(&mut *tx)
@@ -82,19 +108,16 @@ pub async fn provision_org(database: &ConnectionConfig, org: &OrgId) -> anyhow::
         .context("record the org in registry.orgs")?;
     tx.commit().await.context("commit org provisioning")?;
 
-    api.patch_namespaced_secret_data(
-        org.as_str(),
-        CONTROL_SECRET,
-        "password",
-        password.as_bytes(),
-    )
-    .await?;
+    for (secret, password) in passwords {
+        api.patch_namespaced_secret_data(org.as_str(), secret, "password", password.as_bytes())
+            .await?;
+    }
     Ok(())
 }
 
 #[derive(Debug)]
 struct OrgRoleError {
-    login: LoginName,
+    login: String,
     // PostgreSQL error details can contain the dynamic SQL and password.
     code: Option<String>,
 }

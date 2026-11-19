@@ -16,6 +16,7 @@ pub(crate) struct Execution {
     pub control: sqlx::PgPool,
     pub registry_token_metadata: bool,
     pub system_database: String,
+    pub integration_publication: tokio::sync::Mutex<()>,
     pub integration_registry: wamn_oci::package_artifact::PackageRegistry,
 }
 
@@ -63,6 +64,7 @@ impl crate::host_route::ControlExecution for Execution {
                 } else {
                     read_registry_credentials(&registry.registry_auth_file, base.registry())?
                 });
+                let _publication = self.integration_publication.lock().await;
                 wamn_publish::integration::record(
                     &registry,
                     &self.system_database,
