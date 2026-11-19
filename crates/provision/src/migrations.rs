@@ -47,25 +47,14 @@ impl MigrationDatabase {
         }
     }
 
-    /// Declare the system migration login with its basic-auth Secret.
-    ///
-    /// # Panics
-    /// Panics if called for a project database, whose login uses a certificate.
-    pub fn managed_role(self, database: &str) -> crate::connection::ManagedRole {
-        assert_eq!(self, Self::System);
-        let login = self.login(database);
-        let secret = login.as_str().replace('_', "-");
-        crate::connection::managed_role(login, wamn_role::SYSTEM_ROLE, secret)
-    }
-
-    /// The Kubernetes Secret that holds the selected migration login's credentials.
+    /// The Kubernetes Secret that holds the selected migration login's certificate and key.
     pub fn credential_secret(self, database: &str) -> String {
         let login = self.login(database);
         match self {
             Self::Project => {
                 wamn_registry::name::project_login_certificate(database, login.as_str())
             }
-            Self::System => login.as_str().replace('_', "-"),
+            Self::System => format!("{login}-tls").replace('_', "-"),
         }
     }
 

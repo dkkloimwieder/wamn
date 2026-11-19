@@ -5,7 +5,6 @@
 
 pub mod apply;
 pub mod audit_retention;
-pub mod connection;
 pub mod environment_names;
 mod error;
 pub mod identity_role;

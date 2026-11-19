@@ -325,8 +325,8 @@ A separate SQLx history table records each package and environment's applied ver
 Authored and generated history migrations run through the same SQLx sequence.
 The restricted migration connection keeps its actor binding across commits.
 The operation worker selects the migration login from its server-owned connection configuration.
-Both connections retain their own password and TLS parameters.
-Kubernetes callers use the managed role's basic-auth Secret.
+Both connections retain their own credentials and TLS parameters.
+Kubernetes callers use the managed migration login's client certificate.
 A separate trusted connection records package completion and grants.
 SQLx refuses edited or missing applied migrations.
 A failed transactional file rolls back its effects and its history row together.
@@ -860,12 +860,13 @@ The other apply phases use the restricted credential from the worker's database 
 
 Runtime pools, OAuth transactions, and resource leases use SQLx with verified TLS.
 Component configuration names the database host, port, database, login, login Secret, and CNPG CA Secret.
-The login and CA Secrets live in the consumer’s namespace. Shared identity and the platform SQL Job mount them in `platform`. Hosts, CDC readers, and control use read-only mounts in their org namespace.
+The login and CA Secrets live in the consumer’s namespace. Shared identity, the platform SQL Job, and the org provisioning Jobs mount them in `platform`. Hosts, CDC readers, and control use read-only mounts in their org namespace.
 Operation workers copy the selected Secret keys to a memory-backed volume as the database names become known.
 The database client reads `ca.crt` from `/etc/wamn/db/<login-secret>/` to verify the server.
 For a password login, the client reads `username` and `password` from that directory.
 It makes sure that the username matches the configured login.
-For project logins and identity's system database login, SQLx reads `tls.crt` and `tls.key` on each new connection. PostgreSQL matches the certificate's common name to the configured login.
+For project logins and platform logins on the system database, SQLx reads `tls.crt` and `tls.key` on each new connection. PostgreSQL matches the certificate's common name to the configured login.
+The namespaced system database issuer signs the platform certificates. The platform SQL Job mounts separate certificates for `postgres` and its restricted migration login. Org provisioning Jobs mount only the `postgres` certificate.
 Project clients use `ca.crt` from the CloudNativePG server CA Secret to verify the server.
 Explicit operator connection strings must name a readable CA file through `sslrootcert`.
 The database hostname must match the server certificate.
