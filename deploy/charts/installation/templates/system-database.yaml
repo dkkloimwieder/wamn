@@ -69,16 +69,6 @@ data:
   username: {{ $username | quote }}
   password: {{ $password | quote }}
 {{- end }}
-{{- if eq $name "wamn-identity-db" }}
----
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: {{ $name }}-configuration
-  namespace: {{ $org }}
-data:
-  connection.json: {{ dict "host" $system.host "port" 5432 "database" $database "username" .name "credentials" (dict "namespace" $org "name" $name) "server_ca" (dict "namespace" $org "name" $caName) | toJson | quote }}
-{{- end }}
 {{- end }}
 ---
 apiVersion: postgresql.cnpg.io/v1

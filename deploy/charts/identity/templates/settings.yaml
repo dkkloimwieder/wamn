@@ -1,0 +1,32 @@
+{{- $issuer := required "Set issuer to the configured HTTPS identity authority URL." .Values.issuer -}}
+{{- if not (hasPrefix "https://" $issuer) -}}
+{{- fail "issuer must use HTTPS." -}}
+{{- end -}}
+{{- if and .Values.localMail .Values.resendSecret -}}
+{{- fail "Select either localMail or resendSecret." -}}
+{{- end -}}
+{{- if and .Values.resendFrom (not .Values.resendSecret) -}}
+{{- fail "Set resendSecret when resendFrom is enabled." -}}
+{{- end -}}
+{{- $database := .Values.database -}}
+{{- $_ := required "Set database.host to the system database host." $database.host -}}
+{{- $_ := required "Set database.username to the identity login." $database.username -}}
+{{- $envelope := required "Set oauthEncryption to the same envelope configuration as OAuth hosts." .Values.oauthEncryption -}}
+{{- $settings := dict "issuer" $issuer "database" $database "envelope" $envelope -}}
+{{- if .Values.localMail -}}
+{{- $_ := set $settings "mail" (dict "mode" "local" "spool" .Values.localMail) -}}
+{{- else if .Values.resendSecret -}}
+{{- $sender := required "Set resendFrom when resendSecret is enabled." .Values.resendFrom -}}
+{{- $mail := dict "mode" "resend" "sender" $sender -}}
+{{- if .Values.inviteUrl -}}
+{{- $_ := set $mail "invite_url" .Values.inviteUrl -}}
+{{- end -}}
+{{- $_ := set $settings "mail" $mail -}}
+{{- end -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ printf "%s-settings" (default .Release.Name .Values.name) | quote }}
+  namespace: {{ required "Set namespace." .Values.namespace | quote }}
+data:
+  settings.json: {{ $settings | toJson | quote }}

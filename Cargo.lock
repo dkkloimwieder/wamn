@@ -6227,7 +6227,6 @@ dependencies = [
  "bytes",
  "chrono",
  "clap",
- "dotenvy",
  "hex",
  "http-body-util",
  "hyper",

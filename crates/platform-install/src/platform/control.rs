@@ -10,7 +10,6 @@ use wamn_kubernetes::kubectl;
 
 use super::document::ClusterDocument;
 
-use wamn_oci::package_artifact::http_client::{HttpClient, Redirects};
 use wamn_registry::name::REGISTRY_PULL;
 
 /// Wait until every control host observes the environment's administration login change.
@@ -126,48 +125,6 @@ pub async fn initialize(target: &Target, document: &ClusterDocument) -> anyhow::
             .as_ref()
             .is_some_and(|value| value["data"]["control.json"].is_string()),
         "control database configuration is absent"
-    );
-    Ok(())
-}
-
-/// Require the control route to refuse a request without credentials.
-///
-/// # Errors
-/// Returns a forwarding, HTTP, or authorization-boundary failure.
-pub async fn probe(target: &Target, document: &ClusterDocument) -> anyhow::Result<()> {
-    let service = format!(
-        "service/{}",
-        wamn_registry::name::resource_suffix(
-            &wamn_registry::name::control_resource(&document.org),
-            "http"
-        )
-    );
-    let forward =
-        wamn_kubernetes::forward::port_forward(target, document.org.as_str(), &service, 80).await?;
-    let response = HttpClient::builder()
-        .redirects(Redirects::None)
-        .timeout(std::time::Duration::from_secs(5))
-        .build()?
-        .get(format!(
-            "http://127.0.0.1:{}/wamn_control/control/mine",
-            forward.port
-        ))
-        .header(hyper::header::HOST, &document.route_hosts.control)
-        .send()
-        .await
-        .context("probe the unauthenticated control route")?;
-    anyhow::ensure!(
-        response.status() == hyper::StatusCode::UNAUTHORIZED,
-        "the unauthenticated control route returned {}; expected 401",
-        response.status()
-    );
-    // The hint uses the exported context and the native control Deployment.
-    println!(
-        "Local control access: kubectl --context '{}' -n {} port-forward --address=127.0.0.1 deployment/{} 8080:80\nHost: {}",
-        target.context.replace('\'', "'\\''"),
-        document.org,
-        wamn_registry::name::control_resource(&document.org),
-        document.route_hosts.control,
     );
     Ok(())
 }

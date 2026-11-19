@@ -1,0 +1,70 @@
+{{- $namespace := "platform" -}}
+{{- $system := .Values.systemDatabase -}}
+{{- $cluster := required "Set systemDatabase.cluster." $system.cluster -}}
+{{- $database := required "Set systemDatabase.name." $system.name -}}
+{{- $host := required "Set systemDatabase.host." $system.host -}}
+{{- $ca := printf "%s-ca" $cluster -}}
+{{- $admin := printf "%s-superuser" $cluster -}}
+{{- $migration := "" -}}
+{{- range $system.roles -}}
+{{- if has $database (default (list) .inRoles) -}}
+{{- if $migration -}}
+{{- fail "Declare exactly one system migration login." -}}
+{{- end -}}
+{{- $migration = required "Set the system migration login Secret." .passwordSecret.name -}}
+{{- end -}}
+{{- end -}}
+{{- if not $migration -}}
+{{- fail "Declare the system migration login in systemDatabase.roles." -}}
+{{- end -}}
+{{- $name := printf "%s-system-sql" .Release.Name -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}
+  namespace: {{ $namespace }}
+data:
+  database.json: {{ dict "host" $host "port" 5432 "database" $database "username" "postgres" "credentials" (dict "namespace" $namespace "name" $admin) "server_ca" (dict "namespace" $namespace "name" $ca) | toJson | quote }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ printf "%s-%d" $name .Release.Revision }}
+  namespace: {{ $namespace }}
+spec:
+  activeDeadlineSeconds: 900
+  template:
+    spec:
+      automountServiceAccountToken: false
+      restartPolicy: OnFailure
+      containers:
+        - name: system-sql
+          image: {{ required "Set control.image to the wamn-control image." .Values.control.image | quote }}
+          args:
+            - provision-system
+            - --database
+            - /etc/wamn/system-sql/database.json
+            - --platform-domain
+            - {{ required "Set platformDomain to the platform email domain." .Values.platformDomain | quote }}
+          volumeMounts:
+            - {name: configuration, mountPath: /etc/wamn/system-sql, readOnly: true}
+            - {name: database, mountPath: /etc/wamn/db, readOnly: true}
+      volumes:
+        - name: configuration
+          configMap:
+            name: {{ $name }}
+        - name: database
+          projected:
+            defaultMode: 0400
+            sources:
+              {{- range list $admin $migration }}
+              - secret:
+                  name: {{ . | quote }}
+                  items:
+                    - {key: username, path: {{ printf "%s/username" . | quote }}}
+                    - {key: password, path: {{ printf "%s/password" . | quote }}}
+              - secret:
+                  name: {{ $ca | quote }}
+                  items:
+                    - {key: ca.crt, path: {{ printf "%s/ca.crt" . | quote }}}
+              {{- end }}

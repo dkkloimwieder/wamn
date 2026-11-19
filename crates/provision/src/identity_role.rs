@@ -158,14 +158,19 @@ pub fn identity_issuer_login(issuer: &str) -> anyhow::Result<wamn_identity_proto
 }
 
 pub fn grant_identity_issuer_surface_sql() -> String {
+    format!("{} {}", crate::sql::ensure_system_roles_sql(), grants_sql())
+}
+
+/// Grant the issuer surface after the cluster role and system store exist.
+pub fn grants_sql() -> String {
     let role = escape_identifier(IDENTITY_ISSUER_ROLE);
     let mut sql = format!(
-        "{} GRANT USAGE ON SCHEMA identity, registry, platform, wamn_authority TO {role}; \
+        "DO $$ BEGIN EXECUTE format('GRANT CONNECT ON DATABASE %I TO {role}', current_database()); END $$; \
+         GRANT USAGE ON SCHEMA identity, registry, platform, wamn_authority TO {role}; \
          GRANT INSERT ON platform.tx_identity TO {role}; \
          GRANT EXECUTE ON FUNCTION wamn_authority.current_identity(), wamn_authority.current_principal_id(), wamn_authority.current_role(), wamn_authority.current_application() TO {role}; \
          GRANT SELECT, INSERT, UPDATE, DELETE ON \
            identity.session_keys, identity.session_signing_state TO {role}; GRANT EXECUTE ON FUNCTION identity.is_project_admin(uuid,text,text), identity.has_project_access(uuid,text,text,text) TO {role};",
-        crate::sql::ensure_system_roles_sql(),
     );
     for (schema, table, columns) in IDENTITY_ISSUER_READ_COLUMNS {
         let columns = columns

@@ -1,6 +1,6 @@
 //! Issuer-targeted Ed25519 keys stay inside the system-database signing authority.
 //!
-//! Publication and activation are separate committed operations. Signers hold
+//! Rotation publishes and activates in separate commits. Signers hold
 //! the issuer row's shared lock until signing completes; lifecycle mutations
 //! take its exclusive lock. A committed flip is therefore a signing-cutoff
 //! barrier, not an estimate of the last signature. Retirement retains public
@@ -29,69 +29,91 @@ pub const KEY_PUBLICATION_MARGIN_SECONDS: i64 = 30;
 /// A key must be published for the full cache lifetime plus the safety margin.
 const KEY_PUBLICATION_DELAY_SECONDS: i64 = JWKS_CACHE_SECONDS + KEY_PUBLICATION_MARGIN_SECONDS;
 
-/// Generate and commit a new public generation without activating it.
-///
-/// Private PKCS#8 bytes are generated internally and never returned.
-pub async fn publish_session_key(
+/// Initialize a new issuer with its first key and active pointer in one commit.
+pub async fn initialize_session_key(
     client: &mut Client,
     issuer: &str,
     envelope: &Envelope,
-) -> Result<PublicSessionKey, IdentityError> {
+) -> Result<(), IdentityError> {
     validate_issuer(issuer)?;
+    let mut transaction = client.begin().await.map_err(key_database_error)?;
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+        .bind(issuer)
+        .execute(&mut *transaction)
+        .await
+        .map_err(key_database_error)?;
+    let initialized: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT FROM identity.session_signing_state WHERE issuer = $1)",
+    )
+    .bind(issuer)
+    .fetch_one(&mut *transaction)
+    .await
+    .map_err(key_database_error)?;
+    if !initialized {
+        bind_provisioning(&mut transaction).await?;
+        let kid = insert_session_key(&mut transaction, issuer, envelope).await?;
+        sqlx::query(
+            "INSERT INTO identity.session_signing_state (issuer, active_kid) VALUES ($1, $2::text::uuid)",
+        )
+        .bind(issuer)
+        .bind(kid)
+        .execute(&mut *transaction)
+        .await
+        .map_err(key_database_error)?;
+    }
+    transaction.commit().await.map_err(key_database_error)
+}
+
+/// Check whether the issuer has an active signing generation.
+pub async fn active_session_key_exists(
+    client: &mut Client,
+    issuer: &str,
+) -> Result<bool, IdentityError> {
+    sqlx::query_scalar(
+        "SELECT EXISTS (SELECT FROM identity.session_signing_state s \
+         JOIN identity.session_keys k ON k.issuer = s.issuer AND k.kid = s.active_kid \
+         WHERE s.issuer = $1 AND k.signing_cutoff IS NULL AND k.private_key_envelope IS NOT NULL)",
+    )
+    .bind(issuer)
+    .fetch_one(client)
+    .await
+    .map_err(key_database_error)
+}
+
+async fn insert_session_key(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    issuer: &str,
+    envelope: &Envelope,
+) -> Result<String, IdentityError> {
     let document = Ed25519KeyPair::generate_pkcs8(&SystemRandom::new()).map_err(|_| {
         IdentityError::new(IdentityErrorType::Entropy, "generate session signing key")
     })?;
     let pair = Ed25519KeyPair::from_pkcs8(document.as_ref()).map_err(|_| corrupt_key())?;
     let encrypted = envelope.encrypt(document.as_ref()).await?;
     let packed = serde_json::to_vec(&encrypted).map_err(|_| corrupt_key())?;
-    let mut transaction = client.begin().await.map_err(key_database_error)?;
-    bind_provisioning(&mut transaction).await?;
-    sqlx::query(
-        "INSERT INTO identity.session_signing_state (issuer) VALUES ($1) ON CONFLICT DO NOTHING",
-    )
-    .bind(issuer)
-    .execute(&mut *transaction)
-    .await
-    .map(|result| result.rows_affected())
-    .map_err(key_database_error)?;
-    let row = sqlx::query(
+    sqlx::query_scalar(
         "INSERT INTO identity.session_keys (issuer, public_key, private_key_envelope) \
          VALUES ($1, $2, $3) RETURNING kid::text",
     )
     .bind(issuer)
     .bind(pair.public_key().as_ref())
     .bind(packed)
-    .fetch_one(&mut *transaction)
+    .fetch_one(&mut **transaction)
     .await
-    .map_err(key_database_error)?;
-    let key = PublicSessionKey::new(row.get(0), pair.public_key().as_ref());
-    transaction.commit().await.map_err(key_database_error)?;
-    Ok(key)
-}
-
-/// Activate an already committed publication and retire the prior signing key.
-///
-/// Retired generations cannot be reactivated. Repeating the current activation
-/// is harmless and does not restart any retirement deadline.
-pub async fn activate_session_key(
-    client: &mut Client,
-    issuer: &str,
-    kid: &str,
-) -> Result<(), IdentityError> {
-    activate_session_key_if_current(client, issuer, kid, None).await
+    .map_err(key_database_error)
 }
 
 async fn activate_session_key_if_current(
     client: &mut Client,
     issuer: &str,
     kid: &str,
-    expected: Option<&str>,
+    expected: &str,
 ) -> Result<(), IdentityError> {
     let mut transaction = client.begin().await.map_err(key_database_error)?;
     bind_provisioning(&mut transaction).await?;
     let active = lock_issuer(&mut transaction, issuer).await?;
-    // Scheduled publication must not undo a removal or an explicit activation.
-    if expected.is_some_and(|expected| active.as_deref() != Some(expected)) {
+    // Scheduled activation must not undo a removal.
+    if active.as_deref() != Some(expected) {
         transaction.commit().await.map_err(key_database_error)?;
         return Ok(());
     }
@@ -119,9 +141,8 @@ async fn activate_session_key_if_current(
     transaction.commit().await.map_err(key_database_error)
 }
 
-/// Rotate a due issuer with the same publication, activation and retirement commands.
+/// Rotate a due issuer after the new key has been published for 330 seconds.
 /// A session lock serializes schedulers in different identity replicas.
-/// An issuer without an active key still requires explicit activation.
 pub async fn rotate_session_keys(
     client: &mut Client,
     issuer: &str,
@@ -157,10 +178,13 @@ pub async fn rotate_session_keys(
             if let Some(row) = pending {
                 if row.get::<bool, _>(1) {
                     let kid: String = row.get(0);
-                    activate_session_key_if_current(client, issuer, &kid, Some(&expected)).await?;
+                    activate_session_key_if_current(client, issuer, &kid, &expected).await?;
                 }
             } else {
-                publish_session_key(client, issuer, envelope).await?;
+                let mut transaction = client.begin().await.map_err(key_database_error)?;
+                bind_provisioning(&mut transaction).await?;
+                insert_session_key(&mut transaction, issuer, envelope).await?;
+                transaction.commit().await.map_err(key_database_error)?;
             }
         }
         retire_session_keys(client, issuer).await?;
@@ -206,7 +230,7 @@ pub async fn session_jwks(
 /// Remove compromised public and private material without activating another key.
 ///
 /// A concurrent signer finishes before this operation commits. An active-key
-/// removal leaves the issuer unable to sign until an explicit activation.
+/// removal leaves the issuer unable to sign.
 pub async fn remove_compromised_session_key(
     client: &mut Client,
     issuer: &str,
@@ -327,7 +351,7 @@ async fn lock_issuer(
     row.map(|row| row.get(0)).ok_or_else(|| {
         IdentityError::new(
             IdentityErrorType::NotFound,
-            "session issuer is not published",
+            "session issuer is not initialized",
         )
     })
 }

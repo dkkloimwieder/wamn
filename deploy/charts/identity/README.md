@@ -1,27 +1,22 @@
 # Identity chart
 
-Identity runs two replicas. Each replica uses eight pooled password connections and a dedicated connection for signing-key rotation.
-The issuer advisory lock serializes rotation across replicas. Each signature reads the active database key under the issuer lock.
+Identity runs two replicas. Each replica uses eight pooled password connections and a dedicated connection for signing key rotation.
+The issuer advisory lock serializes first key creation and rotation across replicas.
+Each signature reads the active database key under the issuer row lock.
+The HTTPS readiness probe requires a working database connection and an active signing key.
 
-Set `namespace` to the org namespace and set `issuer`, `databaseSecret` and `tlsSecret` to the existing authority and credential resources.
-The pod projects `username` and `password` from `databaseSecret` and `ca.crt` from the org copy of `wamn-pg-ca` under `/etc/wamn/db/<databaseSecret>/`.
+Set `namespace`, `issuer`, the public `database` connection, and `tlsSecret`.
+The chart renders `settings.json` and mounts it for `wamn-identity serve --settings`.
+The pod mounts the named database login and CA under `/etc/wamn/db`.
 
-For user management, set `operatorCaSecret` to the CA that signs the control client certificate.
-Set `controlSubject` to the exact certificate subject `CN=control-<org>`.
-The chart sets `WAMN_IDENTITY_CONTROL_SUBJECT` from this value. An empty value disables user management.
-Provide the corresponding `control-<org>` Secret for the control release, with `tls.crt` and `tls.key`.
+Set `oauthEncryption` to the envelope provider that the OAuth hosts use.
+For local encryption, use `oauthEncryption: {provider: local}`.
+Set `oauthSecret` to the Secret that contains the 32-byte `key`.
+The pod mounts the key at `/etc/wamn/oauth/key`.
+For Cloud KMS, use `{provider: gcp, project: <project>, region: <region>}` and authorize the pod to use the OAuth KMS key.
 
-Set `oauthEncryption` to exactly the provider configuration used by the OAuth hosts. Identity requires encrypted signing keys and has no plaintext fallback.
-For local encryption, use `oauthEncryption: {provider: local}` and set `oauthSecret` to the existing OAuth Secret containing the 32-byte `key`.
-The chart mounts that key at `/etc/wamn/oauth/key` through `WAMN_OAUTH_KEY_FILE`.
-For Cloud KMS, supply `{provider: gcp, project: <project>, region: <region>}` and the pod identity authorized for the same OAuth KMS key.
-The chart renders the configuration as `WAMN_OAUTH_ENCRYPTION`. Installation supplies these resources separately.
+Set `localMail` for a local mail file. For Resend, set `resendSecret` and `resendFrom`.
+The Resend Secret supplies the `api-key` file. Restart identity after changing the token.
 
-`trustedProxyHops` defaults to one for the forwarding web proxy. The service defaults to zero when run without the chart.
-Zero uses the TLS peer address. A positive value counts backward through all `x-forwarded-for` header values and comma-separated addresses.
-Restrict direct access to the service when trusting forwarded addresses.
-Identity returns password-route tokens in JSON. The web proxy sets and validates the browser cookies.
-
-The database stores the packed JSON envelope in `identity.session_keys.private_key_envelope` as bytes.
-The envelope contains `ciphertext`, `nonce`, `wrapped_key` and `key_id`. Retirement erases the entire column.
-Both replicas require the same provider and wrapping key. Restart them after changing that configuration.
+Identity trusts one hop for the forwarding web proxy.
+The web proxy sets and validates the browser cookies for tokens returned by the password routes.
