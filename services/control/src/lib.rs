@@ -4,6 +4,7 @@ pub mod connection_health;
 mod control_route;
 pub mod environment_status;
 mod execution;
+pub mod first_owner;
 mod host_route;
 pub mod platform;
 pub mod retention;
@@ -174,21 +175,10 @@ pub async fn serve(config: Configuration) -> anyhow::Result<()> {
         insecure_registry: config.insecure_registry,
         oci_ca_paths: config.oci_ca_paths.clone(),
     };
-    let registry_base =
-        wamn_catalog::parse_component_artifact_base(&config.integration_artifact_base)?;
-    let registry_credentials = if config.registry_token_metadata {
-        wamn_oci::package_artifact::registry_credentials::RegistryCredentialSource::MetadataServer
-    } else {
-        wamn_oci::package_artifact::registry_credentials::RegistryCredentialSource::Fixed(
-            wamn_oci::package_artifact::registry_credentials::read_registry_credentials(
-                &config.registry_auth_file,
-                registry_base.registry(),
-            )?,
-        )
-    };
     write_kubeconfig(&platform.target.kubeconfig, config.org.as_str())?;
     let database = config.database.to_json()?;
-    let pool = wamn_postgres::pool(&database, 4).await?;
+    // The login permits four connections, including the dedicated writer.
+    let pool = wamn_postgres::pool(&database, 3).await?;
     let identity_databases = config.administration_dir.clone();
     let identity_system = wamn_provision::migrations::MigrationDatabase::System
         .configuration(&config.apply_database.to_json()?)?;
@@ -226,11 +216,10 @@ pub async fn serve(config: Configuration) -> anyhow::Result<()> {
             org: config.org.clone(),
             worker: config.worker.clone(),
             administration: config.administration_dir.clone(),
-            control_database: database,
+            control: pool,
             registry_token_metadata: config.registry_token_metadata,
             system_database: identity_system.clone(),
             integration_registry,
-            registry_credentials,
         }))
         .with_worker(config.worker)
         .with_operation_jobs(wamn_kubernetes::kubernetes_api::KubernetesApi::in_cluster()?)

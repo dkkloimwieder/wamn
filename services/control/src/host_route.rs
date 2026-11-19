@@ -357,6 +357,18 @@ impl HostRouteDelivery {
             );
             response
         };
+        if request.uri().path() == wamn_platform_install::provision_org::FIRST_OWNER_PATH {
+            let status =
+                crate::first_owner::respond(&self.handlers, self.operation_jobs.as_ref(), request)
+                    .await;
+            let mut response = hyper::Response::new(
+                http_body_util::Empty::<bytes::Bytes>::new()
+                    .map_err(|never| match never {})
+                    .boxed_unsync(),
+            );
+            *response.status_mut() = status;
+            return response;
+        }
         let Some((id, attachment)) = HostRouteSet::Control.attachments().find(|(_, attachment)| {
             attachment.definition["route"]["path"].as_str() == Some(request.uri().path())
         }) else {

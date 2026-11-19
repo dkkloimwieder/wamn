@@ -1,0 +1,17 @@
+{{- $sql := .Values.systemSql | default dict -}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: wamn-org-sql
+  namespace: platform
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: wamn-org-inputs
+  namespace: platform
+data:
+  controlImage: {{ $sql.image | default (printf "%s/wamn-control:%s" .Values.registry .Chart.Version) | quote }}
+  provider: {{ .Values.provider | quote }}
+  registry: {{ .Values.registry | quote }}
+  postgresImage: {{ .Values.postgres.image | quote }}

@@ -1,0 +1,76 @@
+{{- $org := .Values.org -}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: wamn-org-invitation
+  namespace: {{ $org | quote }}
+automountServiceAccountToken: false
+{{- if .Values.control.image }}
+{{- $secret := required "Set control.configuration.database.credentials.name." .Values.control.configuration.database.credentials.name }}
+{{- $login := required "Set control.configuration.database.username." .Values.control.configuration.database.username }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $secret }}
+  namespace: {{ $org | quote }}
+type: kubernetes.io/basic-auth
+data:
+  # Kubernetes requires a key. Helm owns the public username and the Job owns the password.
+  username: {{ $login | b64enc | quote }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: wamn-org-sql
+  namespace: {{ $org | quote }}
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames: [{{ $secret | quote }}]
+    verbs: [get, update, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: wamn-org-sql
+  namespace: {{ $org | quote }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: wamn-org-sql
+subjects:
+  - kind: ServiceAccount
+    name: wamn-org-sql
+    namespace: platform
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-owner-invitation
+  namespace: {{ $org | quote }}
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: c-{{ $org }}}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: {app.kubernetes.io/component: wamn-org-invitation}
+      ports: [{port: 80, protocol: TCP}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-invitation-to-control
+  namespace: {{ $org | quote }}
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/component: wamn-org-invitation}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels: {app.kubernetes.io/name: c-{{ $org }}}
+      ports: [{port: 80, protocol: TCP}]
+{{- end }}

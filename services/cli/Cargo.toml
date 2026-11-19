@@ -40,11 +40,13 @@ wamn-oci = { workspace = true }
 # The pure provisioning SQL builders + identifier naming + credential Secret
 # rendering.
 wamn-provision = { workspace = true }
+wamn-platform-install = { workspace = true }
 # wamn-q3n.6 provision-org: the control-plane registry model + registry SQL.
 wamn-registry = { workspace = true }
 # MVP management authentication: stable service principals, project roles, and
 # independently issued/revoked PATs for provision-project-env.
 wamn-identity-protocol = { workspace = true }
+wamn-identity = { workspace = true }
 
 [dev-dependencies]
 wamn-codegen.workspace = true

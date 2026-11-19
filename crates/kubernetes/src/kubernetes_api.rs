@@ -10,6 +10,7 @@ use hyper::{Method, Request, StatusCode};
 use hyper_rustls::HttpsConnector;
 use hyper_util::client::legacy::{Client, connect::HttpConnector};
 use rustls::pki_types::{CertificateDer, pem::PemObject as _};
+use serde::Deserialize;
 use serde_json::Value;
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
@@ -40,6 +41,36 @@ impl std::fmt::Debug for KubernetesApi {
             .field("namespace", &self.namespace)
             .finish_non_exhaustive()
     }
+}
+
+/// The service account authenticated by the Kubernetes API.
+#[derive(Debug)]
+pub struct ServiceAccountIdentity {
+    pub namespace: String,
+    pub name: String,
+}
+
+#[derive(Deserialize)]
+struct TokenReview {
+    status: TokenReviewStatus,
+}
+
+#[derive(Deserialize)]
+struct TokenReviewStatus {
+    #[serde(default)]
+    authenticated: bool,
+    #[serde(default)]
+    audiences: Vec<String>,
+    #[serde(default)]
+    error: String,
+    #[serde(default)]
+    user: Option<TokenReviewUser>,
+}
+
+#[derive(Deserialize)]
+struct TokenReviewUser {
+    #[serde(default)]
+    username: String,
 }
 
 impl KubernetesApi {
@@ -204,6 +235,50 @@ impl KubernetesApi {
             .map_err(|e| failure("request timeout", path, e))?
     }
 
+    /// Review an opaque bearer token for the receiving service's audience.
+    pub async fn review_service_account_token(
+        &self,
+        token: &str,
+        audience: &str,
+    ) -> Result<Option<ServiceAccountIdentity>, Error> {
+        const PATH: &str = "/apis/authentication.k8s.io/v1/tokenreviews";
+        let body = serde_json::json!({
+            "apiVersion": "authentication.k8s.io/v1",
+            "kind": "TokenReview",
+            "spec": { "token": token, "audiences": [audience] },
+        });
+        let (status, bytes) = self
+            .request(Method::POST, PATH, Some(&body), BODY_LIMIT)
+            .await?;
+        successful(status, PATH)?;
+        let reply: TokenReview = serde_json::from_slice(&bytes)
+            .map_err(|_| failure("decode TokenReview", PATH, "invalid API reply"))?;
+        let status = reply.status;
+        if !status.authenticated
+            || !status.error.is_empty()
+            || !status.audiences.iter().any(|value| value == audience)
+        {
+            return Ok(None);
+        }
+        let Some(user) = status.user else {
+            return Ok(None);
+        };
+        let Some((namespace, name)) = user
+            .username
+            .strip_prefix("system:serviceaccount:")
+            .and_then(|identity| identity.split_once(':'))
+            .filter(|(namespace, name)| {
+                !namespace.is_empty() && !name.is_empty() && !name.contains(':')
+            })
+        else {
+            return Ok(None);
+        };
+        Ok(Some(ServiceAccountIdentity {
+            namespace: namespace.to_owned(),
+            name: name.to_owned(),
+        }))
+    }
+
     /// Read one API path. An absent object is an error.
     pub async fn get(&self, path: String) -> Result<Value, Error> {
         self.json(Method::GET, &path, None)
@@ -222,6 +297,20 @@ impl KubernetesApi {
             &format!("/apis/runtime.wasmcloud.dev/v1alpha1/namespaces/{namespace}/workloaddeployments/{name}"),
             None,
         ).await
+    }
+
+    /// Set a data entry on an existing Secret in a named namespace.
+    pub async fn patch_namespaced_secret_data(
+        &self,
+        namespace: &str,
+        name: &str,
+        key: &str,
+        value: &[u8],
+    ) -> Result<(), Error> {
+        use base64::{Engine as _, engine::general_purpose::STANDARD};
+        let path = format!("/api/v1/namespaces/{namespace}/secrets/{name}");
+        let body = serde_json::json!({"data": {key: STANDARD.encode(value)}});
+        successful(self.write(Method::PATCH, &path, &body).await?, &path)
     }
 
     /// Submit a server-built Job once.

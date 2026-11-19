@@ -56,6 +56,9 @@ enum Command {
     /// Inspect or apply platform SQL.
     #[command(subcommand)]
     Platform(wamn_cli::platform_verbs::ProductPlatformCommand),
+    /// Manage organizations.
+    #[command(subcommand)]
+    Org(OrgCommand),
     /// Build packages: generate every output from wamn.k into target/wamn.
     Build(wamn_cli::build_verbs::BuildArgs),
     /// Publish existing source build output without rebuilding.
@@ -72,6 +75,17 @@ enum Command {
     Inspect(wamn_cli::artifact_verbs::InspectArgs),
     /// Print where layer 0 of two pushed package artifacts differs.
     Diff(wamn_cli::artifact_verbs::DiffArgs),
+}
+
+#[cfg(target_os = "linux")]
+#[derive(Debug, Subcommand)]
+enum OrgCommand {
+    /// Install an org and invite its first owner using the active kubeconfig.
+    Create {
+        org: wamn_registry::OrgId,
+        #[arg(long)]
+        owner: String,
+    },
 }
 
 #[cfg(target_os = "linux")]
@@ -117,8 +131,10 @@ async fn main() -> anyhow::Result<()> {
         Command::Rollback(args) => wamn_cli::application_verbs::rollback(args).await,
         Command::Status(args) => wamn_cli::application_verbs::status(args).await,
         Command::Schema(command) => wamn_cli::schema_verbs::run(command).await,
-        Command::Platform(command) => {
-            wamn_cli::platform_verbs::run_product(command).await
+        Command::Platform(command) => wamn_cli::platform_verbs::run_product(command).await,
+        Command::Org(OrgCommand::Create { org, owner }) => {
+            wamn_identity::require_user_contact(&owner, "Org owner")?;
+            wamn_platform_install::org::create(&org, &owner).await
         }
         Command::Eject(args) => wamn_cli::build_verbs::eject(args),
         Command::Build(args) => wamn_cli::build_verbs::run(args).await,
