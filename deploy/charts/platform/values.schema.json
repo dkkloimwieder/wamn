@@ -284,6 +284,40 @@
         "image": {
           "type": "string",
           "minLength": 1
+        },
+        "maxConnections": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "pooler": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["maxClientConnections", "control", "apply"],
+          "properties": {
+            "maxClientConnections": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "control": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["maxUserConnections", "maxDbConnections"],
+              "properties": {
+                "maxUserConnections": {"const": 8},
+                "maxDbConnections": {"type": "integer", "minimum": 8}
+              }
+            },
+            "apply": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["maxUserConnections", "maxDbConnections", "queryWaitTimeout"],
+              "properties": {
+                "maxUserConnections": {"const": 16},
+                "maxDbConnections": {"type": "integer", "minimum": 16},
+                "queryWaitTimeout": {"const": 900}
+              }
+            }
+          }
         }
       }
     },

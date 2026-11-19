@@ -124,6 +124,8 @@ The org chart declares the namespace, base RBAC, object and storage quotas, and 
 The environment chart allows traffic for its host group. The project chart allows traffic for its database and change reader.
 Each application release adds its integration ports to the host group's public egress. The runtime enforces the authorities on each wasm integration.
 The platform chart owns the system PostgreSQL Cluster in namespace `platform`.
+Org control and apply logins use separate PgBouncer session poolers to reach the system database.
+Clients check the pooler hostname and TLS certificate against the platform CA.
 The project chart owns each project's PostgreSQL Cluster, database, managed logins, backups, and change capture resources.
 The environment chart owns the shared host group.
 The application chart sets `wamn.package-digest` and `wamn.release-revision` on the WorkloadDeployment.
