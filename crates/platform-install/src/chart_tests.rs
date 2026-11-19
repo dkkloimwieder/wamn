@@ -119,11 +119,24 @@ fn colliding_coordinates_read_only_their_own_credentials() -> anyhow::Result<()>
     assert_ne!(accounts[0], accounts[1]);
     assert_ne!(secrets[0], secrets[1]);
     for index in 0..coordinates.len() {
+        let (org, project, env) = coordinates[index];
         let entry = crate::environment::entry(
             &repository.join("deploy/charts/environment"),
-            coordinates[index].0,
+            org,
             &accounts[index],
-            json!({"namespace":coordinates[index].0,"credentialAccess":{"account":accounts[index],"secrets":[secrets[index]]}}),
+            json!({
+                "org":org, "env":env, "hostName":accounts[index], "serviceAccount":accounts[index],
+                "image":format!("registry.example/wamn-host:test@sha256:{}", "a".repeat(64)),
+                "drainBoundSeconds":60,
+                "identityIssuer":"https://identity.platform.svc.cluster.local",
+                "natsUrl":crate::platform::identity::NATS_URL,
+                "environmentNats":{"secret":"environment-nats", "inbox":"_INBOX_fixture", "subjects":"evt.fixture.>"},
+                "projects":{(project):{
+                    "host":"project-rw", "port":5432, "database":"project", "cluster":"project",
+                    "logins":{"guest-sql":"project-app"}, "serverCa":"project-ca",
+                    "credentialSecret":secrets[index], "stream":"EVT_FIXTURE",
+                }},
+            }),
         )?;
         let objects = wamn_kubernetes::helm::template(&entry)?;
         let binding = objects

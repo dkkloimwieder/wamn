@@ -28,10 +28,10 @@ spec:
           image: {{ .Values.identity.image | default (printf "%s/wamn-identity:%s" .Values.registry .Chart.Version) | quote }}
           imagePullPolicy: IfNotPresent
           args: [serve, --settings, /etc/wamn/identity/settings.json]
-          {{- if .Values.identity.authNats.url }}
+          {{- if .Values.identity.authNats.tlsSecret }}
           env:
             - name: WAMN_NATS_URL
-              value: {{ .Values.identity.authNats.url | quote }}
+              value: {{ .Values.global.nats.schedulerUrl | quote }}
             - name: WAMN_NATS_TLS_CA
               value: /var/run/wamn-identity/nats/ca.crt
             - name: WAMN_NATS_TLS_CERT
@@ -65,7 +65,7 @@ spec:
             - name: serving-tls
               mountPath: /var/run/wamn-identity/tls
               readOnly: true
-            {{- if .Values.identity.authNats.url }}
+            {{- if .Values.identity.authNats.tlsSecret }}
             - name: auth-nats
               mountPath: /var/run/wamn-identity/nats
               readOnly: true
@@ -121,10 +121,10 @@ spec:
                 path: tls.crt
               - key: tls.key
                 path: tls.key
-        {{- if .Values.identity.authNats.url }}
+        {{- if .Values.identity.authNats.tlsSecret }}
         - name: auth-nats
           secret:
-            secretName: {{ required "Set authNats.tlsSecret when authNats.url is set." .Values.identity.authNats.tlsSecret | quote }}
+            secretName: {{ .Values.identity.authNats.tlsSecret | quote }}
             optional: false
             defaultMode: 0400
             items:

@@ -7,7 +7,7 @@ global:
   maxProjects: 32
   nats:
     schedulerUrl: nats://wamn-nats.platform.svc.cluster.local:4222
-    dataUrl: nats://wamn-nats.platform.svc.cluster.local:4222
+  identityIssuer: https://identity.platform.svc.cluster.local
 runtime-operator:
   global:
     certificates:
@@ -180,7 +180,6 @@ identity:
   inviteUrl: ""
   localMail: ""
   authNats:
-    url: ""
     tlsSecret: ""
   resources:
     requests:

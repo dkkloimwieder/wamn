@@ -6,7 +6,7 @@ use std::path::PathBuf;
 #[derive(Parser)]
 struct Cli {
     #[arg(long)]
-    config: Option<PathBuf>,
+    settings: Option<PathBuf>,
     #[command(subcommand)]
     command: Command,
 }
@@ -47,8 +47,8 @@ async fn main() -> anyhow::Result<()> {
         return wamn_platform_install::provision_system::provision_system(&request).await;
     }
     let config = cli
-        .config
-        .ok_or_else(|| anyhow::anyhow!("--config is required"))?;
+        .settings
+        .ok_or_else(|| anyhow::anyhow!("--settings is required"))?;
     let config = wamn_control::Configuration::read(&config)?;
     match cli.command {
         Command::Platform => wamn_control::serve(config).await,

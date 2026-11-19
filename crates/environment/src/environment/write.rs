@@ -52,5 +52,5 @@ pub fn host_group(path: Option<&Path>) -> anyhow::Result<Mapping> {
         )
         .with_context(|| format!("{} is not a YAML mapping", path.display()))?,
     };
-    plan::host_group(group)
+    Ok(group)
 }

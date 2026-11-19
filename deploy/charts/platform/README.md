@@ -10,7 +10,7 @@ The SQL Job runs `provision-system` from the `wamn-control` image. Platform arti
 It applies pending system migrations and records `platformDomain` as the email domain for platform principals.
 Each Helm upgrade runs the Job again.
 
-Identity serves `https://identity.platform.svc.cluster.local` and uses the system PostgreSQL login in `platform`.
+Identity serves the fixed `global.identityIssuer` address and uses the system PostgreSQL login in `platform`. The edge uses that issuer, and the runtime operator uses the shared broker address in `global.nats.schedulerUrl`.
 The chart mounts the `identity-settings` ConfigMap as a JSON file.
 The readiness probe checks the database and active signing key.
 Both replicas use the same encryption provider and wrapping key as the OAuth hosts.

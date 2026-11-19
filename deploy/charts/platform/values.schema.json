@@ -62,21 +62,24 @@
           "minimum": 1,
           "description": "Project streams across all environments. JetStream reserves 320 MiB per project per pod."
         },
+        "identityIssuer": {
+          "const": "https://identity.platform.svc.cluster.local"
+        },
         "nats": {
           "type": "object",
           "additionalProperties": false,
           "properties": {
             "schedulerUrl": {
-              "type": "string"
-            },
-            "dataUrl": {
-              "type": "string"
+              "const": "nats://wamn-nats.platform.svc.cluster.local:4222"
             }
-          }
+          },
+          "required": ["schedulerUrl"]
         }
       },
       "required": [
-        "maxProjects"
+        "maxProjects",
+        "identityIssuer",
+        "nats"
       ]
     },
     "gcp": {
@@ -194,9 +197,6 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "url": {
-              "type": "string"
-            },
             "tlsSecret": {
               "type": "string",
               "maxLength": 253
