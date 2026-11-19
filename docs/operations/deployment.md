@@ -17,9 +17,19 @@ Use `wamn env apply` to roll out a host image.
 ## Local platform
 
 Use Docker, kind 0.32, Helm, kubectl, OpenSSL, and the pinned KCL compiler on the deployment host.
-Use the `wamn` binary from the selected build.
 Keep registry, database, and broker credentials outside committed files.
 Certificate subjects must match the endpoint names that their clients verify.
+
+Set `CARGO_TARGET_DIR` before you build. [Checkout setup](building.md#building)
+Build the `wamn` command in debug mode.
+Add `$CARGO_TARGET_DIR/debug` to `PATH`.
+`cargo xtask install-kcl` installs the pinned KCL compiler under `.tools/kcl/`.
+
+```bash
+cargo build --locked --offline -p wamn-cli
+export PATH="$CARGO_TARGET_DIR/debug:$PATH"
+cargo xtask install-kcl
+```
 
 From the source checkout, create the local cluster and OCI registry.
 
@@ -28,12 +38,36 @@ cargo xtask kind-cluster-create
 ```
 
 The command reuses the `wamn-local` cluster and the registry at `localhost:5001` if they already exist.
-Select the `kind-wamn-local` Kubernetes context for the local deployment.
 Copy the kind values file to `platform-kind.yaml` and add the printed `registryEndpoint` block. The kind values file sets the registry to `localhost:5001`. [Kind values](../../deploy/charts/platform/values-kind.yaml)
 Prepare the artifacts as [building](building.md#platform-artifacts) describes.
 
+Select the `kind-wamn-local` Kubernetes context.
+On a fresh cluster, create the `platform` namespace before you create the Secret.
+Identity uses the `key` entry in `platform/wamn-oauth` to encrypt its signing keys.
+Create the Secret with a random 32-byte key if it is missing.
+
 ```bash
-kubectl config use-context kind-wamn-local
+(
+  set -e
+  kubectl config use-context kind-wamn-local
+  namespace=$(kubectl get namespace platform --ignore-not-found -o name)
+  if [ -z "$namespace" ]; then
+    kubectl create namespace platform
+  fi
+
+  secret=$(kubectl -n platform get secret wamn-oauth --ignore-not-found -o name)
+  if [ -z "$secret" ]; then
+    key_file=$(mktemp)
+    trap 'rm -f "$key_file"' EXIT
+    openssl rand -out "$key_file" 32
+    kubectl -n platform create secret generic wamn-oauth --from-file="key=$key_file"
+  fi
+)
+```
+
+Install the platform.
+
+```bash
 wamn platform deploy platform-kind.yaml --chart /var/tmp/wamn-platform-chart
 ```
 
@@ -198,14 +232,19 @@ Use one `environment.yaml` file for each environment. Each application name must
 The [environment schema](../../crates/environment/environment.schema.json) describes the YAML fields.
 Set each application's `label` to a value unique within the org, across all its environments and projects.
 Use 1 to 21 lowercase letters, digits, and single hyphens between letters or digits.
-Deploy uses `<label>--<org>.<base>` as the host name. For example, `shop` in org `acme` uses `shop--acme.wamn.dev` on GCP.
+Deploy uses `<label>--<org>.<base>` as the host name.
+The example uses `receiving--local.wamn.localhost`.
 The platform's `platformDomain` value supplies the base for both deploy and web.
 An application connection alias names a connection from the shared `connections` map.
 Set `revocation_seconds` to an integer from 0 to 3600 for the environment.
 Deploy sets this grant cache lifetime on each application workload. Zero disables the cache.
 
+Save this kind example as `environment.yaml` in the repository root.
+The platform registers the target named `cloud` on kind too.
+The example requires an existing `dev` policy for org `local`.
+
 ```yaml
-org: acme
+org: local
 env: dev
 target: cloud
 policy: dev
@@ -215,21 +254,11 @@ database:
   storage: 2Gi
   cpu: 200m
   memory: 256Mi
-connections:
-  orders-api: {version: 2}
 projects:
-  - name: orders
+  - name: receiving
     applications:
-      shop:
-        label: shop
-        connections:
-          orders: orders-api
-  - name: reporting
-    applications:
-      reports:
-        label: reports
-        connections:
-          orders: orders-api
+      wamn_receiving:
+        label: receiving
 ```
 
 Helm installs, upgrades, and rollbacks use `--server-side=true`.
@@ -269,22 +298,22 @@ Use `wamn revoke-pat --project PROJECT --env ENV --prefix PREFIX` from an org ad
 Other lifecycle operations take the coordinate and read the registry.
 Helm history records the applied release. The top package's deploy section pins its dependency closure.
 The configuration export contains no code selection.
-Use a source package directory for source deployment. Use an application release digest for deployment without source:
+Run `wamn env apply environment.yaml` before deploying the application.
+Use the source directory or set `RELEASE_DIGEST` to the full digest of a published release.
 
 ```bash
-wamn deploy apps/sample_app --application sample_app --env environments/dev/environment.yaml
-wamn deploy --release sha256:<release-digest> --application sample_app --env environments/dev/environment.yaml
-wamn rollback sample_app --env environments/dev/environment.yaml
-wamn rollback sample_app --revision 3 --env environments/dev/environment.yaml
-wamn status --env environments/dev/environment.yaml
-wamn status sample_app --env environments/dev/environment.yaml
+wamn deploy apps/wamn_receiving --application wamn_receiving --env environment.yaml
+wamn deploy --release "$RELEASE_DIGEST" --application wamn_receiving --env environment.yaml
+wamn rollback wamn_receiving --env environment.yaml
+wamn rollback wamn_receiving --revision 3 --env environment.yaml
+wamn status --env environment.yaml
+wamn status wamn_receiving --env environment.yaml
 ```
 
 Status reports each project in the file. An application name selects its project.
 For each workload, status reports the deployed package digest, content revision, and workload conditions.
 
 Publication needs no destination database.
-Run `wamn env apply environments/dev/environment.yaml` before deploying the application.
 Each application owns its Helm history, workloads, Services, and route ConfigMaps.
 The environment chart owns one host for each org and environment. All projects share it.
 Application workloads and file Services select that host. Database credentials and event bindings remain separate for each project.
@@ -310,11 +339,15 @@ If omitted, the mode is `reset` only when `registry.environments.disposable` is 
 An environment name or explicit `reset` mode grants no authority to discard data.
 Editing the mode alone executes no SQL and changes no application selection.
 
+Publish the package and save its digest for `wamn schema apply`.
+To use the reset example, pass `--disposable` the first time you apply the environment.
+
 ```bash
-wamn publish apps/target/wamn/sample_app
-wamn schema diff sample_app --env environments/dev/environment.yaml
-wamn schema apply sample_app --env environments/dev/environment.yaml --release sha256:<package-digest>
-wamn schema reset --project sample_project --env environments/dev/environment.yaml
+wamn build apps/wamn_receiving
+PACKAGE_DIGEST=$(wamn publish apps/target/wamn/wamn_receiving)
+wamn schema diff wamn_receiving --env environment.yaml
+wamn schema apply wamn_receiving --env environment.yaml --release "$PACKAGE_DIGEST"
+wamn schema reset --project receiving --env environment.yaml
 ```
 
 Schema diff uses the live package digest unless you supply `--release`.
@@ -532,7 +565,7 @@ The same immutable web artifact can serve more than one environment.
 Deploy a published release through control:
 
 ```bash
-wamn deploy --env <document> --application <application> --release <digest>
+wamn deploy --env environment.yaml --application wamn_receiving --release "$RELEASE_DIGEST"
 ```
 
 The operation worker holds the environment lock through SQL and the application rollout.
@@ -795,11 +828,6 @@ The project SQL Job uses the project's migration login.
 The platform owner roles stay `NOLOGIN`. Migration logins inherit their privileges through membership.
 Platform migration execution refuses administrator sessions.
 
-```bash
-wamn platform schema diff --target project --env environments/dev/environment.yaml
-wamn platform schema apply --target project --env environments/dev/environment.yaml
-```
-
 The Job holds one exclusive environment lock for the whole operation.
 It visits each project in file order and stops on the first error.
 It changes WAMN substrate SQL and `platform._sqlx_migrations` in each selected project database.
@@ -809,12 +837,12 @@ The operation runs no environment provisioning or application activation.
 Fresh environment provisioning installs the catalog and project substrate, then runs every embedded project migration.
 Repeated provisioning runs no pending migration.
 If execution stops, the error reports completed and remaining files.
-Resume with `wamn platform schema apply --target project --env FILE` with the same installed worker image.
+Resume with `wamn platform schema apply --target project --env environment.yaml` with the same installed worker image.
 Application package migrations keep their own streams.
 
 ## Rollback and maintenance
 
-Use `wamn rollback APP --revision N --env FILE` to restore the content of revision N.
+Use `wamn rollback APP --revision N --env environment.yaml` to restore the content of revision N.
 Without `--revision`, the worker finds the newest earlier deploy. It skips revisions that record a rollback.
 If no older deploy exists, the command reports the current content revision and refuses.
 The worker reads the target package digest from Helm, checks enabled workflows, and runs `helm rollback --wait=watcher` under the lifecycle lock.
@@ -907,7 +935,8 @@ The HTTP interface keeps its `credential-unavailable` result.
 Connection administration passes the registry's credential Secret name and the coordinate values to `wamn-kubernetes`.
 Separate credential keys can change independently. The project chart must create the Secret before control writes credentials.
 
-The broker retains the static `PLATFORM` account and authentication through client certificates. Org account provisioning requires the migration to operator mode in Epic 10.2.
+NATS runs in operator mode and authenticates clients with user JWTs.
+Identity signs the `PLATFORM` account and one account for each environment. [NATS accounts](../architecture/platform-services.md#events)
 
 ### Transaction identity retention
 
