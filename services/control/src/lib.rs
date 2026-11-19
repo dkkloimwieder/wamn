@@ -9,6 +9,7 @@ mod host_route;
 pub mod platform;
 pub mod retention;
 mod worker;
+mod writer;
 
 use std::{
     net::SocketAddr,
@@ -24,6 +25,7 @@ use serde_json::json;
 use wamn_authentication::route_authentication::ControlRouteAuthenticator;
 use wamn_environment::environment::Platform;
 use wamn_identity_client::users::UserClient;
+pub use writer::Writer;
 
 const HTTP_PORT: u16 = 80;
 const ADMINISTRATION_DIR: &str = "/etc/wamn/control-administration";
@@ -213,7 +215,7 @@ pub async fn serve(config: Configuration) -> anyhow::Result<()> {
     let handlers = Arc::new(
         HostRouteDelivery::new(HostRouteHandlers {
             control: pool.clone(),
-            writer: Arc::new(tokio::sync::Mutex::new(writer)),
+            writer: Writer::new(database, writer),
             identity: Some(UserClient::new(
                 &config.identity_issuer,
                 Path::new(IDENTITY_CA),

@@ -34,7 +34,7 @@ impl ControlRoutes<'_> {
         if attachment.route.operation == "connection.test" {
             return self.connection_test(attachment, caller, payload).await;
         }
-        let mut writer = self.writer.lock().await;
+        let mut writer = self.writer.lock().await?;
         let result = self
             .integration_administration_in(&mut writer, attachment, caller, payload)
             .await;

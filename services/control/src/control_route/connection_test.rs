@@ -63,7 +63,7 @@ impl ControlRoutes<'_> {
             .as_ref()
             .expect("connection request requires an environment");
         let (context, pin) = {
-            let mut writer = self.writer.lock().await;
+            let mut writer = self.writer.lock().await?;
             let mut authorized = self
                 .begin_in(&mut writer, attachment, caller, Some(&project))
                 .await?;
