@@ -161,8 +161,11 @@ The hierarchy is org, environment, project, application.
 `wamn-catalog` owns typed environment configuration and lifecycle locks.
 `registry.environments` owns each environment's policy, status, disposable setting, and target.
 `registry.projects` holds org-level project definitions.
-`registry.environment_projects` places a project under an environment and owns its database Secret, instance suffix, and route host.
+`registry.environment_projects` places a project under an environment and owns its database Secret and instance suffix.
 Applications are releases under those project deployments.
+`registry.environment_applications` stores the host label of each application and keeps it unique within the org.
+Deploy derives `<label>--<org>.<base>` using the base in `registry.meta.platform_domain`.
+Web accepts an application route only when its host uses the ConfigMap namespace as the org and matches the platform base in web's settings file.
 Environment coordinates contain org and environment.
 Project database coordinates also contain the project.
 `wamn_registry::OrgId`, `ProjectId`, and `EnvName` own the three coordinate names.

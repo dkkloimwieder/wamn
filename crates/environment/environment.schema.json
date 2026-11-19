@@ -54,7 +54,7 @@
       "description": "An application's deployment selection and declared membership.",
       "type": "object",
       "required": [
-        "hostname"
+        "label"
       ],
       "properties": {
         "client": {
@@ -73,11 +73,11 @@
             "$ref": "#/definitions/ConnectionReference"
           }
         },
-        "hostname": {
+        "label": {
           "type": "string",
-          "maxLength": 253,
+          "maxLength": 21,
           "minLength": 1,
-          "pattern": "^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$"
+          "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
         }
       },
       "additionalProperties": false

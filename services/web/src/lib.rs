@@ -26,6 +26,7 @@ use tokio::net::TcpListener;
 use tokio::sync::RwLock;
 use tower_service::Service;
 use wamn_kubernetes::http_transport::{self, Protocols, Schemes};
+use wamn_registry::platform_domain::PlatformDomain;
 
 const LISTEN_PORT: u16 = 8080;
 const IDENTITY_CA: &str = "/etc/wamn-edge/identity-ca/ca.crt";
@@ -43,6 +44,8 @@ mod rollout_tests;
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WebConfig {
+    /// Base domain covered by the platform wildcard certificate.
+    pub platform_domain: PlatformDomain,
     /// Empty on kind, otherwise `gs://<buckets.web>`.
     pub bucket: String,
     /// Canonical HTTPS identity issuer.
@@ -51,7 +54,7 @@ pub struct WebConfig {
     pub trusted_proxy_hops: usize,
 }
 
-/// One application-owned route, discovered from a labelled ConfigMap in hosts.
+/// One route discovered from a labelled ConfigMap in an org namespace.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Route {
@@ -102,14 +105,36 @@ fn segment(value: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || b"._-".contains(&byte))
 }
 
+fn valid_route_host(host: &str, namespace: &str, base: &PlatformDomain) -> bool {
+    let Some((label, domain)) = host.split_once('.') else {
+        return false;
+    };
+    if domain != base.as_str() || namespace.is_empty() || label.len() > 63 || host.len() > 253 {
+        return false;
+    }
+    label
+        .strip_suffix(namespace)
+        .and_then(|prefix| prefix.strip_suffix("--"))
+        .is_some_and(|prefix| {
+            !prefix.is_empty()
+                && !prefix.starts_with('-')
+                && !prefix.ends_with('-')
+                && prefix
+                    .bytes()
+                    .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+        })
+}
+
 #[derive(Debug)]
 struct Releases {
     api: wamn_kubernetes::kubernetes_api::KubernetesApi,
+    platform_domain: PlatformDomain,
 }
 impl Releases {
-    fn in_cluster() -> anyhow::Result<Self> {
+    fn in_cluster(platform_domain: PlatformDomain) -> anyhow::Result<Self> {
         Ok(Self {
             api: wamn_kubernetes::kubernetes_api::KubernetesApi::in_cluster()?,
+            platform_domain,
         })
     }
     async fn request(&self, path: &str) -> anyhow::Result<serde_json::Value> {
@@ -130,15 +155,24 @@ impl Releases {
         });
         let mut routes = BTreeMap::new();
         for object in objects {
-            let mut route: Route = serde_json::from_str(
-                object["data"]["route.json"]
-                    .as_str()
-                    .context("route ConfigMap lacks route.json")?,
-            )?;
-            object["metadata"]["namespace"]
+            let namespace = object["metadata"]["namespace"].as_str().unwrap_or_default();
+            let name = object["metadata"]["name"].as_str().unwrap_or_default();
+            let parsed = object["data"]["route.json"]
                 .as_str()
-                .context("route namespace is absent")?
-                .clone_into(&mut route.namespace);
+                .context("route ConfigMap lacks route.json")
+                .and_then(|json| serde_json::from_str::<Route>(json).context("invalid route.json"));
+            let mut route = match parsed {
+                Ok(route) => route,
+                Err(error) => {
+                    tracing::warn!(namespace, name, %error, "dropping malformed route");
+                    continue;
+                }
+            };
+            if !valid_route_host(&route.host, namespace, &self.platform_domain) {
+                tracing::warn!(namespace, name, host = %route.host, "dropping route outside its namespace host pattern");
+                continue;
+            }
+            namespace.clone_into(&mut route.namespace);
             routes
                 .entry(std::mem::take(&mut route.host))
                 .or_insert(route);
@@ -552,7 +586,7 @@ pub async fn serve(path: &Path) -> anyhow::Result<()> {
         ))
     };
     let web = Arc::new(Web { store });
-    let releases = Arc::new(Releases::in_cluster()?);
+    let releases = Arc::new(Releases::in_cluster(config.platform_domain)?);
     ensure!(
         config.identity_issuer.starts_with("https://"),
         "identity must use HTTPS"
@@ -607,8 +641,8 @@ pub async fn serve(path: &Path) -> anyhow::Result<()> {
 /// # Errors
 /// Returns an error naming the host and path if a response is not successful.
 pub async fn probe(path: &Path) -> anyhow::Result<()> {
-    let _: WebConfig = serde_json::from_slice(&std::fs::read(path)?)?;
-    let releases = Releases::in_cluster()?;
+    let config: WebConfig = serde_json::from_slice(&std::fs::read(path)?)?;
+    let releases = Releases::in_cluster(config.platform_domain)?;
     let client: Client<HttpConnector, Empty<Bytes>> = http_transport::http_client();
     for (host, route) in releases.routes().await? {
         let row = releases.read(&route.namespace, &route.release).await?;
@@ -707,12 +741,12 @@ mod tests {
         use serde_json::json;
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let endpoint = format!("http://{}", listener.local_addr().unwrap());
-        let route = json!({"host":"app.example", "release":"app", "api":endpoint});
+        let route = json!({"host":"app--acme.example", "release":"app", "api":endpoint});
         let web_digest = (format!("sha256:{}", "a".repeat(64)))
             .parse::<wamn_digest::Digest>()
             .unwrap();
-        let release = json!({"host":"app.example", "digest":wamn_digest::bytes_sha256(b"release"), "clients":{"app.example":"client"},
-            "webs":{"app.example":web_digest}, "platformUi":null, "org":"acme", "project":"app"});
+        let release = json!({"host":"app--acme.example", "digest":wamn_digest::bytes_sha256(b"release"), "clients":{"app--acme.example":"client"},
+            "webs":{"app--acme.example":web_digest}, "platformUi":null, "org":"acme", "project":"app"});
         let mut tasks = tokio::task::JoinSet::new();
         tasks.spawn(async move {
             loop {
@@ -722,8 +756,8 @@ mod tests {
                     async move {
                         let (status, value) = match request.uri().path() {
                             "/api/v1/configmaps" => (StatusCode::OK,
-                                json!({"items":[{"metadata":{"name":"app","namespace":"hosts"},"data":{"route.json":route.to_string()}}]})),
-                            "/api/v1/namespaces/hosts/configmaps/app" => (StatusCode::OK,
+                                json!({"items":[{"metadata":{"name":"app","namespace":"acme"},"data":{"route.json":route.to_string()}}]})),
+                            "/api/v1/namespaces/acme/configmaps/app" => (StatusCode::OK,
                                 json!({"data":{"release.json":release.to_string()}})),
                             _ => (StatusCode::ACCEPTED, json!(null)),
                         };
@@ -742,6 +776,7 @@ mod tests {
             csrf_key: ring::hmac::Key::new(ring::hmac::HMAC_SHA256, &[0; 32]),
         };
         let releases = Releases {
+            platform_domain: "example".parse().unwrap(),
             api: wamn_kubernetes::kubernetes_api::KubernetesApi::with_client(
                 http_transport::client(connector, |_| {}),
                 endpoint,
@@ -778,7 +813,7 @@ mod tests {
         for path in ["/api/query", "/config.json"] {
             let request = hyper::Request::builder()
                 .uri(format!("{front}{path}"))
-                .header(HOST, "app.example")
+                .header(HOST, "app--acme.example")
                 .body(Full::new(Bytes::new()))
                 .unwrap();
             let response = client.request(request).await.unwrap();

@@ -199,7 +199,6 @@ edge:
   image: ""
   trustedProxyHops: 1
   neg: false
-  tlsDnsNames: ["*.wamn.localhost"]
   acme: null
   service:
     type: ClusterIP

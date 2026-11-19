@@ -12,13 +12,14 @@ use super::document::EnvironmentDocument;
 use crate::release_chart::{self, RoleName, ValuesInput};
 
 /// Render application values without host configuration.
-pub fn render(input: &ValuesInput) -> anyhow::Result<Value> {
+pub fn render(input: &ValuesInput<'_>) -> anyhow::Result<Value> {
     release_chart::values(input)
 }
 
 /// Build release values from the application selection and artifact repositories.
 pub fn release_values(
     document: &EnvironmentDocument,
+    platform_domain: &wamn_registry::platform_domain::PlatformDomain,
     application: &wamn_catalog::ApplicationName,
     package_manifests: &std::collections::BTreeMap<
         wamn_catalog::PackageName,
@@ -32,6 +33,7 @@ pub fn release_values(
 ) -> anyhow::Result<(Value, Vec<RoleName>)> {
     plan::release_values(
         document,
+        platform_domain,
         application,
         package_manifests,
         package_digest,

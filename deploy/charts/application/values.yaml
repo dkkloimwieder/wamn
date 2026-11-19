@@ -25,10 +25,11 @@ release:
   manifestDigest: ""
 # `org/project/env`.
 environment: ""
+# Public host derived by the release planner from the application's label.
 routeHost: ""
 # Exactly one application name to its package membership.
 applications: {}
-# Host to client package id; env apply resolves the package from its declaration.
+# Derived host to the declared client package ID.
 webClients: {}
 # Host to pinned web artifact digest.
 webDigests: {}

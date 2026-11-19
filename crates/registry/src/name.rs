@@ -1,7 +1,13 @@
 //! Resource names derived from registry coordinates.
 
 use crate::instance_suffix::InstanceSuffix;
+use crate::platform_domain::PlatformDomain;
 use wamn_digest::sha256;
+
+/// The public host name of an application with a validated label.
+pub fn application_host(label: &str, org: &crate::OrgId, base: &PlatformDomain) -> String {
+    format!("{label}--{org}.{base}")
+}
 
 /// The key of a project environment: `<org>--<env>--<project>` (owner
 /// ruling of 2026-10-09 on `wamn-snz0`). The first apply, the analysis of

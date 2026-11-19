@@ -179,6 +179,9 @@ pub async fn application(
                         selection.current = DeclaredRelease::Digest(digest);
                         selection.packages = packages.manifests.keys().cloned().collect();
                         let mut system_client = system.client().await;
+                        let platform_domain =
+                            wamn_identity::application::service::platform_domain(&mut system_client)
+                                .await?;
                         let mut project_client = project.client().await;
                         let bindings = bindings::analyse(
                             &mut system_client,
@@ -189,6 +192,7 @@ pub async fn application(
                         .await?;
                         let (values, _) = write::release_values(
                             &document,
+                            &platform_domain,
                             name,
                             &packages.manifests,
                             &digest,
@@ -204,7 +208,7 @@ pub async fn application(
                         apply_sql(platform, system, &triple, &connection, &owner, &packages)
                             .await?;
                         stage::materialize_application_principals(
-                            platform,
+                            &platform_domain,
                             &owner,
                             &wamn_registry::project_env_key(
                                 &triple.org,

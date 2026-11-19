@@ -12,7 +12,7 @@ use super::*;
 #[tokio::test]
 async fn host_replacement_routes_the_next_post_to_the_serving_host() {
     tokio::time::timeout(Duration::from_secs(10), async {
-        let host = "app.example.test";
+        let host = "app--acme.example.test";
         let mut tasks = tokio::task::JoinSet::new();
         let mut backends = Vec::new();
         for _ in 0..2 {
@@ -64,7 +64,7 @@ async fn host_replacement_routes_the_next_post_to_the_serving_host() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let endpoint = format!("http://{}", listener.local_addr().unwrap());
         let route = serde_json::json!({"host":host,"release":"unused","api":format!("http://{service}")});
-        let objects = serde_json::json!({"items":[{"metadata":{"name":"route","namespace":"hosts"},"data":{"route.json":route.to_string()}}]}).to_string();
+        let objects = serde_json::json!({"items":[{"metadata":{"name":"route","namespace":"acme"},"data":{"route.json":route.to_string()}}]}).to_string();
         tasks.spawn(async move {
             loop {
                 let (stream, _) = listener.accept().await.unwrap();
@@ -84,6 +84,7 @@ async fn host_replacement_routes_the_next_post_to_the_serving_host() {
                 .with_root_certificates(rustls::RootCertStore::empty()).with_no_client_auth(),
                 HttpConnector::new(), Schemes::HttpAndHttps, Protocols::Http1);
         let releases = Releases {
+            platform_domain: "example.test".parse().unwrap(),
             api: wamn_kubernetes::kubernetes_api::KubernetesApi::with_client(
                 http_transport::client(connector, |_| {}), endpoint, String::new(), "hosts".into()),
         };

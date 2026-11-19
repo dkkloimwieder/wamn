@@ -36,10 +36,10 @@ pub struct ApplicationSelection {
     #[serde(skip)]
     pub current: DeclaredRelease,
     #[schemars(
-        length(min = 1, max = 253),
-        regex(pattern = "^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$")
+        length(min = 1, max = "wamn_registry::identifiers::MAX_APPLICATION_LABEL_LEN"),
+        regex(pattern = "^[a-z0-9]+(-[a-z0-9]+)*$")
     )]
-    pub hostname: String,
+    pub label: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub client: Option<Client>,
     /// Transient membership from the verified release manifest.
@@ -217,18 +217,14 @@ pub(super) fn require_applications(
     integrations: &BTreeMap<String, Integration>,
 ) -> anyhow::Result<()> {
     for (name, application) in applications {
-        let hostname = &application.hostname;
-        ensure!(
-            !hostname.is_empty()
-                && hostname.len() <= 253
-                && hostname.bytes().all(|byte| byte.is_ascii_lowercase()
-                    || byte.is_ascii_digit()
-                    || byte == b'.'
-                    || byte == b'-')
-                && !hostname.starts_with(['.', '-'])
-                && !hostname.ends_with(['.', '-']),
-            "application {name}: hostname {hostname:?} is not a lowercase DNS name"
-        );
+        if let Some(reason) =
+            wamn_registry::identifiers::application_label_reason(&application.label)
+        {
+            anyhow::bail!(
+                "application {name}: invalid host label {:?}: {reason}",
+                application.label
+            );
+        }
         for (alias, connection) in &application.connections {
             ensure!(
                 !alias.is_empty(),
