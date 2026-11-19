@@ -55,7 +55,7 @@ impl ControlRoutes<'_> {
             &request.display_name,
         )
         .await?;
-        let mut writer = self.writer.lock().await;
+        let mut writer = self.writer.lock().await?;
         self.write_user_membership(
             &mut writer,
             attachment,
@@ -141,7 +141,7 @@ impl ControlRoutes<'_> {
         };
         // The lock stays held through the application rows, so no other
         // write of this host runs between the system rows and them.
-        let mut writer = self.writer.lock().await;
+        let mut writer = self.writer.lock().await?;
         self.write_user_membership(&mut writer, attachment, caller, &user.principal_id, &grants)
             .await?;
         let mut environments: std::collections::BTreeSet<(
@@ -214,7 +214,7 @@ pub(crate) async fn first_owner(
     }
 
     let org = &handlers.org;
-    let mut writer = handlers.writer.lock().await;
+    let mut writer = handlers.writer.lock().await?;
     let mut tx = wamn_platform_install::transaction::provisioning_transaction(&mut writer).await?;
     let registered: bool =
         sqlx::query_scalar("SELECT COALESCE(registry.login_org() = $1, false)")

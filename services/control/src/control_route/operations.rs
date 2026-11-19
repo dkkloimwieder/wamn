@@ -98,7 +98,7 @@ impl ControlRoutes<'_> {
             Some(operation)
         };
         // Repeat authority in the write transaction before contacting Kubernetes.
-        let mut writer = self.writer.lock().await;
+        let mut writer = self.writer.lock().await?;
         let mut transaction = self
             .begin_in(&mut writer, attachment, caller, Some(&request.project))
             .await?;

@@ -20,6 +20,7 @@ use wamn_identity::paging::Order;
 use wamn_identity_client::users::UserClient;
 use wamn_identity_protocol::PrincipalId;
 
+use crate::Writer;
 use crate::control_route::{ControlRoutes, Refusal, control_page};
 
 /// Native control execution after the route checks the caller's current authority.
@@ -39,7 +40,7 @@ pub struct HostRouteHandlers {
     pub control: sqlx::PgPool,
     /// A second `control` login that holds one write transaction at a
     /// time, so a read never runs inside a write.
-    pub writer: Arc<tokio::sync::Mutex<sqlx::PgConnection>>,
+    pub writer: Writer,
     /// The identity adapter for user management.
     pub identity: Option<UserClient>,
     /// The configured identity issuer address used for project user rows.

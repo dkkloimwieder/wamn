@@ -47,7 +47,6 @@ use std::time::Duration;
 use anyhow::Context as _;
 use serde::Deserialize;
 use serde_json::{Value, json};
-use tokio::sync::Mutex;
 use wamn_catalog::{HostAttachment, HostHandler, HostRouteAuthority};
 use wamn_engine::native_routes::{DeliveryError, PermissionDenial};
 use wamn_environment::org::{
@@ -71,6 +70,8 @@ use wamn_identity_client::users::UserClient;
 use wamn_identity_protocol::PrincipalId;
 use wamn_postgres::ConnectionInput;
 use wamn_provision::control_administration_key;
+
+use crate::Writer;
 
 /// Why an org route did not answer.
 #[derive(Debug)]
@@ -157,7 +158,7 @@ pub(crate) struct ControlRoutes<'a> {
     /// The `control` login for reads.
     pub(crate) control: &'a sqlx::PgPool,
     /// A second `control` login that holds one write transaction at a time.
-    pub(crate) writer: &'a Mutex<Client>,
+    pub(crate) writer: &'a Writer,
     /// The identity adapter for user management.
     pub(crate) identity: Option<&'a UserClient>,
     pub(crate) issuer: &'a str,
@@ -240,7 +241,7 @@ impl ControlRoutes<'_> {
         payload: &str,
     ) -> Result<Value, Refusal> {
         let input: Value = serde_json::from_str(payload).map_err(anyhow::Error::from)?;
-        let mut writer = self.writer.lock().await;
+        let mut writer = self.writer.lock().await?;
         let transaction = self
             .begin_in(
                 &mut writer,
@@ -365,7 +366,7 @@ impl ControlRoutes<'_> {
             HostHandler::UserDisable => self.disable_user(payload).await,
             HostHandler::UserActivate => {
                 let principal = principal(payload)?;
-                let mut writer = self.writer.lock().await;
+                let mut writer = self.writer.lock().await?;
                 let mut transaction = self.begin(&mut writer, attachment, caller).await?;
                 reactivate_org_membership(&mut transaction, &principal, self.org).await?;
                 transaction.commit().await?;
@@ -373,7 +374,7 @@ impl ControlRoutes<'_> {
             }
             HostHandler::UserDeactivate => {
                 let principal = principal(payload)?;
-                let mut writer = self.writer.lock().await;
+                let mut writer = self.writer.lock().await?;
                 let mut transaction = self.begin(&mut writer, attachment, caller).await?;
                 deactivate_org_membership(&mut transaction, &principal, self.org).await?;
                 transaction.commit().await?;
@@ -384,7 +385,7 @@ impl ControlRoutes<'_> {
             }
             HostHandler::OrgAdminGrant => {
                 let principal = principal(payload)?;
-                let mut writer = self.writer.lock().await;
+                let mut writer = self.writer.lock().await?;
                 let mut transaction = self.begin(&mut writer, attachment, caller).await?;
                 grant_org_admin(&mut transaction, &principal, self.org).await?;
                 transaction.commit().await?;
@@ -395,7 +396,7 @@ impl ControlRoutes<'_> {
             }
             HostHandler::OrgAdminRevoke => {
                 let principal = principal(payload)?;
-                let mut writer = self.writer.lock().await;
+                let mut writer = self.writer.lock().await?;
                 let mut transaction = self.begin(&mut writer, attachment, caller).await?;
                 revoke_org_admin(&mut transaction, &principal, self.org).await?;
                 transaction.commit().await?;
@@ -521,7 +522,7 @@ impl ControlRoutes<'_> {
             HostHandler::MemberGrant => {
                 let request: MemberRequest = parse(payload)?;
                 let principal: PrincipalId = request.principal_id;
-                let mut writer = self.writer.lock().await;
+                let mut writer = self.writer.lock().await?;
                 let mut transaction = self
                     .begin_in(&mut writer, attachment, caller, Some(&request.project))
                     .await?;
@@ -547,7 +548,7 @@ impl ControlRoutes<'_> {
             HostHandler::MemberRevoke => {
                 let request: MemberRequest = parse(payload)?;
                 let principal: PrincipalId = request.principal_id;
-                let mut writer = self.writer.lock().await;
+                let mut writer = self.writer.lock().await?;
                 let mut transaction = self
                     .begin_in(&mut writer, attachment, caller, Some(&request.project))
                     .await?;
@@ -573,7 +574,7 @@ impl ControlRoutes<'_> {
             HostHandler::ProjectAdminGrant => {
                 let request: ProjectPrincipalRequest = parse(payload)?;
                 let principal: PrincipalId = request.principal_id;
-                let mut writer = self.writer.lock().await;
+                let mut writer = self.writer.lock().await?;
                 let mut transaction = self
                     .begin_in(&mut writer, attachment, caller, Some(&request.project))
                     .await?;
@@ -592,7 +593,7 @@ impl ControlRoutes<'_> {
             HostHandler::ProjectAdminRevoke => {
                 let request: ProjectPrincipalRequest = parse(payload)?;
                 let principal: PrincipalId = request.principal_id;
-                let mut writer = self.writer.lock().await;
+                let mut writer = self.writer.lock().await?;
                 let mut transaction = self
                     .begin_in(&mut writer, attachment, caller, Some(&request.project))
                     .await?;
@@ -646,7 +647,7 @@ impl ControlRoutes<'_> {
                     code: "invalid_input",
                     detail: json!({ "field": "project" }),
                 })?;
-                let mut writer = self.writer.lock().await;
+                let mut writer = self.writer.lock().await?;
                 let mut transaction = self.begin(&mut writer, attachment, caller).await?;
                 create_project(&mut transaction, self.org, &project).await?;
                 for row in sqlx::query(
@@ -680,7 +681,7 @@ impl ControlRoutes<'_> {
         env: Option<&wamn_registry::EnvName>,
         status: EnvironmentStatus,
     ) -> Result<(), Refusal> {
-        let mut writer = self.writer.lock().await;
+        let mut writer = self.writer.lock().await?;
         let mut transaction = self.begin(&mut writer, attachment, caller).await?;
         let envs = status_environments(&mut transaction, self.org, project, env).await?;
         let environments: Vec<(wamn_registry::ProjectId, wamn_registry::EnvName)> =
