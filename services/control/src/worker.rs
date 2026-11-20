@@ -143,6 +143,7 @@ pub(crate) async fn execute(
                             digest: request.release.context("package digest is required")?,
                             integration_base: &integration_base,
                             component_base: &component_base,
+                            chart: &chart,
                             actor,
                         }
                     }
