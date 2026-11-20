@@ -24,7 +24,7 @@ wamn-catalog = { workspace = true }
 # The project of the box's environment coordinate (R1).
 wamn-registry = { workspace = true }
 # The plain host, its ingress and the route guest's workload. No `oci`.
-wash-runtime = { workspace = true, features = ["wasi-config"] }
+wash-runtime = { workspace = true, features = ["wasi-config", "wasm_component_model_implements"] }
 # The host owns the serial port: raw mode and the baud rate, with no serial
 # crate.
 rustix = { workspace = true, features = ["termios"] }
