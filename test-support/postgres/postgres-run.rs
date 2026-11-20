@@ -236,7 +236,7 @@ async fn apply_migrations(
             );
             for file in files {
                 sqlx::raw_sql(sqlx::AssertSqlSafe(
-                    (&std::fs::read_to_string(&file)?).to_string(),
+                    std::fs::read_to_string(&file)?,
                 ))
                 .execute(&mut client)
                 .await

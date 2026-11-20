@@ -52,14 +52,13 @@ async fn provision(admin: &mut Client) {
 
 async fn drop_fixture_schemas(admin: &mut Client) {
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (&format!(
+        format!(
             "DROP SCHEMA IF EXISTS {SCHEMA} CASCADE; \
              DROP SCHEMA IF EXISTS platform CASCADE; \
              DROP SCHEMA IF EXISTS catalog CASCADE; \
              DROP SCHEMA IF EXISTS wamn_authority CASCADE; \
              DROP SCHEMA IF EXISTS wamn_history CASCADE;"
-        ))
-            .to_string(),
+        ),
     ))
     .execute(&mut *admin)
     .await
@@ -168,22 +167,20 @@ async fn seed(admin: &mut Client, table: &str, statement: &str, age_days: i32) -
     .expect("read the last history position")
     .get(0);
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (&format!(
+        format!(
             "BEGIN; \
              INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('{FIXTURE_PRINCIPAL}'::text::uuid,'','fixture','admin:seed-retention-fixture'); \
              {statement}; \
              COMMIT;"
-        ))
-            .to_string(),
+        ),
     ))
     .execute(&mut *admin)
     .await.map_or_else(|error| panic!("write {statement}: {error}"), drop);
     let mut positions = sqlx::query(sqlx::AssertSqlSafe(
-        (&format!(
+        format!(
             "UPDATE {history} SET changed_at = now() - make_interval(days => $1) \
                   WHERE position > $2 RETURNING position"
-        ))
-            .to_string(),
+        ),
     ))
     .bind(&age_days)
     .bind(&last)
@@ -212,8 +209,7 @@ async fn positions(admin: &mut Client) -> BTreeMap<String, Vec<i64>> {
     let mut observed = BTreeMap::new();
     for (table, _) in RELATIONS {
         let rows = sqlx::query(sqlx::AssertSqlSafe(
-            (&format!("SELECT position FROM {SCHEMA}.{table}_history ORDER BY position"))
-                .to_string(),
+            format!("SELECT position FROM {SCHEMA}.{table}_history ORDER BY position"),
         ))
         .fetch_all(&mut *admin)
         .await

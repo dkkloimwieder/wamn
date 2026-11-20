@@ -10,24 +10,19 @@ GRANT EXECUTE ON FUNCTION registry.login_org(), registry.login_principal(uuid),
     registry.project_capacity_available(int) TO wamn_apply;
 GRANT SELECT ON registry.orgs, registry.environment_projects,
     registry.target, identity.org_roles, identity.project_roles,
-    identity.project_env_memberships, identity.principals,
-    wamn_authority.author_login_projects TO wamn_apply;
+    identity.project_env_memberships, identity.principals TO wamn_apply;
 GRANT SELECT ON registry.integration_type, registry.integration_type_version TO wamn_apply;
 GRANT SELECT (platform_domain, max_projects) ON registry.meta TO wamn_apply;
 GRANT SELECT (org, id), INSERT (org, id) ON registry.projects TO wamn_apply;
 GRANT INSERT (org, env, project, secret_name, secret_namespace, instance_suffix) ON registry.environment_projects TO wamn_apply;
 GRANT UPDATE (secret_name, secret_namespace, schema_mode)
     ON registry.environment_projects TO wamn_apply;
-GRANT DELETE ON registry.environment_projects, wamn_authority.author_login_projects TO wamn_apply;
+GRANT DELETE ON registry.environment_projects TO wamn_apply;
 GRANT INSERT, SELECT (org, project, env, instance_suffix)
     ON registry.retired_project_envs TO wamn_apply;
 GRANT SELECT, INSERT, UPDATE, DELETE ON registry.environment_applications,
     registry.environment_application_connections, registry.environment_integrations TO wamn_apply;
 GRANT INSERT (principal_id, org, project, env) ON identity.project_env_memberships TO wamn_apply;
-GRANT INSERT (login_identity, project_env_key, org_id, project_id, environment)
-    ON wamn_authority.author_login_projects TO wamn_apply;
-GRANT UPDATE (org_id, project_id, environment)
-    ON wamn_authority.author_login_projects TO wamn_apply;
 GRANT SELECT, INSERT, UPDATE ON registry.event_readers TO wamn_apply;
 GRANT SELECT, INSERT, UPDATE (resync_at) ON registry.capture_gap TO wamn_apply;
 

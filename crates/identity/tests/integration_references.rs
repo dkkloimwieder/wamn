@@ -15,8 +15,7 @@ async fn refusal(pool: &sqlx::PgPool, relation: &str, expected: &str) {
         CREATE TABLE platform.file(connection_id uuid); \
         INSERT INTO platform.external_system VALUES ('00000000-0000-0000-0000-000000000001')").execute(&mut client).await.map(drop).unwrap();
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (&format!("INSERT INTO {relation} VALUES ('00000000-0000-0000-0000-000000000001')"))
-            .to_string(),
+        format!("INSERT INTO {relation} VALUES ('00000000-0000-0000-0000-000000000001')"),
     ))
     .execute(&mut client)
     .await

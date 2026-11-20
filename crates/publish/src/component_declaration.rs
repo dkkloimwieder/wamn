@@ -1,7 +1,7 @@
 //! Package component declarations.
 //!
 //! This module reads compiled base digests and component declarations. It
-//! supplies the deployment coordinate that admission reads.
+//! supplies the coordinate used by the declaration consumer.
 
 pub(super) mod plan;
 
@@ -168,35 +168,37 @@ pub fn render_package_declaration(
                 source.to_string(),
             )
         })?;
-    let declaration =
-        package_declaration(&mut manifest, component, project_env_key).map_err(|source| {
-            ComponentDeclarationError::invalid(
-                ComponentDeclarationErrorType::ManifestInvalid,
-                &path,
-                source.to_string(),
-            )
-        })?;
+    let invalid = |source: &dyn Error| {
+        ComponentDeclarationError::invalid(
+            ComponentDeclarationErrorType::ManifestInvalid,
+            &path,
+            source.to_string(),
+        )
+    };
+    let target = wamn_catalog::ComponentPackageCoordinate::new(
+        project_env_key,
+        manifest.package.id.clone(),
+        manifest.package.version.clone(),
+    )
+    .map_err(|source| invalid(&source))?;
+    let declaration = package_declaration(&mut manifest, component, target)
+        .map_err(|source| invalid(source.as_ref()))?;
     serde_json::to_value(declaration)
         .map_err(|source| ComponentDeclarationError::parse(&path, source))
 }
 
-/// Take a build's declaration and supply the project coordinate admission needs.
-pub(crate) fn package_declaration(
+/// Take a build's declaration and attach the supplied coordinate.
+pub(crate) fn package_declaration<T>(
     manifest: &mut wamn_catalog::manifest::PackageManifest,
     component: &wamn_catalog::canonical_name::CanonicalName,
-    project_env_key: &wamn_registry::ProjectEnvKey,
-) -> anyhow::Result<wamn_catalog::ComponentDeclaration> {
+    target: T,
+) -> anyhow::Result<wamn_catalog::ComponentDeclaration<T>> {
     use anyhow::Context as _;
     let declaration = manifest
         .deploy
         .as_mut()
         .and_then(|deploy| deploy.declarations.remove(component))
         .with_context(|| format!("component {component} was not compiled"))?;
-    let target = wamn_catalog::ComponentPackageCoordinate::new(
-        project_env_key,
-        manifest.package.id.clone(),
-        manifest.package.version.clone(),
-    )?;
     Ok(wamn_catalog::ComponentDeclaration {
         target,
         data_change: manifest
@@ -230,8 +232,9 @@ pub fn declared_platform_packages(
     template: &Path,
     document: &Value,
 ) -> Result<Vec<String>, ComponentDeclarationError> {
-    let declaration: wamn_catalog::ComponentDeclaration = serde_json::from_value(document.clone())
-        .map_err(|source| ComponentDeclarationError::parse(template, source))?;
+    let declaration: wamn_catalog::ComponentDeclaration<wamn_catalog::ComponentPackageCoordinate> =
+        serde_json::from_value(document.clone())
+            .map_err(|source| ComponentDeclarationError::parse(template, source))?;
     let mut packages = std::collections::BTreeSet::new();
     for operation in declaration.operations.keys() {
         let (package, _) = operation.as_str().split_once('/').ok_or_else(|| {

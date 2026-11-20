@@ -4,7 +4,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 use wamn_catalog::package_version::PackageVersion;
-use wamn_catalog::{ComponentDeclaration, OperationType, PackageCoordinate};
+use wamn_catalog::{
+    ComponentDeclaration, ComponentPackageCoordinate, OperationType, PackageCoordinate,
+};
 use wamn_digest::bytes_sha256;
 use wamn_engine::component_admission::{ComponentAdmissionRequest, validate_component_admission};
 
@@ -95,8 +97,10 @@ fn admit_components(
             &PROJECT_ENV_KEY.parse().unwrap(),
         )
         .unwrap_or_else(|error| panic!("render {}: {error}", input.component));
-        let declaration: ComponentDeclaration = serde_json::from_value(declaration)
-            .expect("the package-owned component declaration is strict");
+        let declaration: ComponentDeclaration<ComponentPackageCoordinate> =
+            serde_json::from_value(declaration)
+                .expect("the package-owned component declaration is strict");
+        let (declaration, target) = declaration.split_target();
         let bytes = std::fs::read(&input.component_bytes)
             .unwrap_or_else(|error| panic!("read {}: {error}", input.component_bytes.display()));
         if let Some(expected) = &input.expected_component_digest {
@@ -125,7 +129,8 @@ fn admit_components(
             facts.connections.is_empty(),
             "the POC application components declare no portable store aliases"
         );
-        digests.insert(input.id.to_owned(), facts.component.component_digest);
+        digests.insert(input.id.to_owned(), facts.component_digest);
+        let facts = facts.into_admitted(target);
         release_components
             .insert(facts.component, facts.connections)
             .expect("each package names its component once");

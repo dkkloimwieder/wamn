@@ -274,24 +274,3 @@ pub fn stable_surface_sql(family: WorkloadRoleFamily) -> Option<String> {
         _ => None,
     }
 }
-
-/// Record the owner-maintained login-identity-to-project mapping for one target.
-///
-/// `$1` login identity, `$2` `project_env_key`, `$3` org, `$4` project, `$5` environment.
-/// Each author-accessed relation resolves project authority through this row.
-/// The statement belongs to the database owner and carries no
-/// grant to the author. `DO UPDATE` is restricted to a row whose project already
-/// matches, so a replay converges while a re-point to a different project returns
-/// **zero rows** instead of widening one login's reach — the caller must read an
-/// empty result as a refusal, not as a no-op.
-pub fn upsert_control_author_project_env_key_mapping_sql() -> &'static str {
-    "INSERT INTO wamn_authority.author_login_projects \
-       (login_identity, project_env_key, org_id, project_id, environment) \
-     VALUES ($1, $2, $3, $4, $5) \
-     ON CONFLICT (login_identity) DO UPDATE \
-       SET org_id = EXCLUDED.org_id, \
-           project_id = EXCLUDED.project_id, \
-           environment = EXCLUDED.environment \
-       WHERE author_login_projects.project_env_key = EXCLUDED.project_env_key \
-     RETURNING project_env_key"
-}

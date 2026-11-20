@@ -59,12 +59,12 @@ impl Error {
     /// One detail member.
     pub fn detail(&self, key: &str) -> Option<String> {
         match (self, key) {
-            (Self::InvalidInput { field, .. }, "field") => Some(field.to_string()),
+            (Self::InvalidInput { field, .. }, "field") => Some(field.clone()),
             (Self::InvalidInput { minimum, .. }, "minimum") => minimum.clone(),
             (Self::InvalidInput { maximum, .. }, "maximum") => maximum.clone(),
             (Self::InvalidInput { observed, .. }, "observed") => observed.clone(),
-            (Self::NotFound { field, .. }, "field") => Some(field.to_string()),
-            (Self::NotFound { id, .. }, "id") => Some(id.to_string()),
+            (Self::NotFound { field, .. }, "field") => Some(field.clone()),
+            (Self::NotFound { id, .. }, "id") => Some(id.clone()),
             (
                 Self::ConcurrencyConflict {
                     expected_row_version,
@@ -80,16 +80,16 @@ impl Error {
                 "observed_row_version",
             ) => Some(observed_row_version.to_string()),
             (Self::UniqueViolation { constraint, .. }, "constraint") => {
-                Some(constraint.to_string())
+                Some(constraint.clone())
             }
             (Self::ForeignKeyViolation { constraint, .. }, "constraint") => {
-                Some(constraint.to_string())
+                Some(constraint.clone())
             }
-            (Self::CheckViolation { constraint, .. }, "constraint") => Some(constraint.to_string()),
+            (Self::CheckViolation { constraint, .. }, "constraint") => Some(constraint.clone()),
             (Self::ExclusionViolation { constraint, .. }, "constraint") => {
-                Some(constraint.to_string())
+                Some(constraint.clone())
             }
-            (Self::PermissionDenied { operation, .. }, "operation") => Some(operation.to_string()),
+            (Self::PermissionDenied { operation, .. }, "operation") => Some(operation.clone()),
             _ => None,
         }
     }

@@ -152,13 +152,13 @@ async fn bootstrap_is_atomic_and_uses_database_facts() {
         SystemState::Absent
     );
 
-    // Refuse a table revoke after the control relations exist.
+    // Refuse a revoke during the final bootstrap stage.
     // This is a server-side SQL failure, not a replacement bootstrap or validator.
     sqlx::raw_sql(
         r"
         CREATE FUNCTION public.reject_final_grant() RETURNS event_trigger LANGUAGE plpgsql AS $$
         BEGIN
-          IF to_regclass('wamn_authority.author_login_projects') IS NOT NULL THEN
+          IF to_regnamespace('catalog') IS NOT NULL THEN
             PERFORM 1 / 0;
           END IF;
         END $$;

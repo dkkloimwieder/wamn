@@ -13,7 +13,7 @@ async fn file_reference_is_introspected_and_other_platform_keys_are_refused(pool
     // Bootstrap creates the target and the migration owner. The application
     // migration runs with REFERENCES(id), with no platform write authority.
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (&format!(
+        format!(
             "CREATE SCHEMA platform; \
          CREATE TABLE platform.file (id uuid PRIMARY KEY, blob_key text UNIQUE); \
          DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='file_reference_owner') \
@@ -21,8 +21,7 @@ async fn file_reference_is_introspected_and_other_platform_keys_are_refused(pool
          END IF; END $$; \
          GRANT CREATE ON DATABASE \"{}\" TO file_reference_owner;",
             database.path().trim_start_matches('/')
-        ))
-            .to_string(),
+        ),
     ))
     .execute(&mut client)
     .await

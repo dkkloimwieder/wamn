@@ -62,7 +62,7 @@ mod tests {
         let server = tokio::spawn(async move {
             let (mut stream, _) = listener.accept().await.unwrap();
             let mut request = [0; 1024];
-            stream.read(&mut request).await.unwrap();
+            let _read = stream.read(&mut request).await.unwrap();
             let email = "pod@example.iam.gserviceaccount.com";
             stream
                 .write_all(

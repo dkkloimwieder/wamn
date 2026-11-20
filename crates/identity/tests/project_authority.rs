@@ -10,8 +10,7 @@
 //!   admits a request by, and the platform configuration tables are the rows
 //!   the platform writes for the application. An App generation may inherit
 //!   their stable `wamn_app` reads and nothing more, so a project or an
-//!   application cannot create a platform row or a `wamn:` name. `api_key`
-//!   takes no grant at all;
+//!   application cannot create a platform row or a `wamn:` name.
 //! - the history tables take no read and no direct write from an App
 //!   generation.
 //!
@@ -101,7 +100,6 @@ INSERT INTO platform."user" (id, type, email) VALUES ('{U1}','user','u1@t1');
 INSERT INTO platform.role (name) VALUES ('admin'),('auditor');
 INSERT INTO platform.user_role (user_id, role_name) VALUES ('{U1}','admin');
 INSERT INTO platform.permission (role_name, permission) VALUES ('auditor','platform-fixture:widget/get');
-INSERT INTO platform.api_key (user_id, name, key_hash, prefix) VALUES ('{U1}','ci','hash-1','wk_a');
 INSERT INTO platform.setting (target_type, target_id, key, value) VALUES ('org','acme','display.theme','"dark"'::jsonb);
 INSERT INTO platform.number_sequence (id, application, name, pattern) VALUES
   ('{SEQUENCE}','{APPLICATION}','purchase_order','P-{{seq:po,width=8}}');"#
@@ -145,8 +143,7 @@ fn run(url: &str, script: &str) {
 /// through `wamn_app` and writable by nobody through it: author SQL that could
 /// insert its own `user_role` row would be minting the input its own
 /// generated policies are then evaluated against, and author SQL that could
-/// write `number_counter` would break gapless numbering. `api_key` is not even
-/// readable.
+/// write `number_counter` would break gapless numbering.
 ///
 /// Each denied statement is RLS-LEGAL for the probe project — same generation,
 /// FKs satisfied, no key collision — so `42501` here is the revoked privilege and
@@ -174,10 +171,6 @@ BEGIN
       ASSERT NOT has_table_privilege('wamn_app'::name, ('platform.'||relation)::text, operation),
         format('wamn_app holds %s on %s — author SQL can mint its own authorization', operation, relation);
     END LOOP;
-  END LOOP;
-  FOREACH operation IN ARRAY ARRAY['SELECT','INSERT','UPDATE','DELETE','TRUNCATE'] LOOP
-    ASSERT NOT has_table_privilege('wamn_app'::name, 'platform.api_key'::text, operation),
-      format('wamn_app holds %s on api_key, which no runtime code reads', operation);
   END LOOP;
 END $$;
 
@@ -212,10 +205,6 @@ BEGIN
     'INSERT INTO platform.permission (role_name, permission) VALUES (''auditor'', ''platform-fixture:widget/list'')',
     'UPDATE platform.permission SET permission = ''platform-fixture:widget/list''',
     'DELETE FROM platform.permission',
-    'INSERT INTO platform.api_key (user_id, name, key_hash, prefix) VALUES (''{U1}'', ''forged'', ''hash-2'', ''wk_b'')',
-    'UPDATE platform.api_key SET revoked_at = now()',
-    'DELETE FROM platform.api_key',
-    'SELECT count(*) FROM platform.api_key',
     'INSERT INTO platform.number_counter (sequence_id, counter, key_value, value) VALUES (''{SEQUENCE}'', ''po'', '''', 100)',
     'UPDATE platform.number_counter SET value = 1',
     'DELETE FROM platform.number_counter',
@@ -288,7 +277,6 @@ async fn author_sql_reads_and_writes_no_history_table(pool: sqlx::PgPool) {
             None,
             r#"{"role_name": "auditor", "permission": "platform-fixture:widget/get"}"#,
         ),
-        entry("api_key_history", None, &format!(r#"{{"id": "{U2}"}}"#)),
         entry("environment_history", None, r#"{"id": true}"#),
         entry(
             "setting_history",
@@ -309,7 +297,7 @@ DO $$
 DECLARE history text; operation text;
 BEGIN
   FOREACH history IN ARRAY ARRAY['user_history','role_history','user_role_history',
-                                 'permission_history','api_key_history',
+                                 'permission_history',
                                  'environment_history','number_sequence_history',
                                  'setting_history'] LOOP
     FOREACH operation IN ARRAY ARRAY['SELECT','INSERT','UPDATE','DELETE','TRUNCATE'] LOOP
@@ -342,7 +330,6 @@ BEGIN
     'SELECT count(*) FROM platform.role_history',
     'SELECT count(*) FROM platform.user_role_history',
     'SELECT count(*) FROM platform.permission_history',
-    'SELECT count(*) FROM platform.api_key_history',
     'SELECT count(*) FROM platform.environment_history',
     'SELECT count(*) FROM platform.number_sequence_history',
     'SELECT count(*) FROM platform.setting_history',
