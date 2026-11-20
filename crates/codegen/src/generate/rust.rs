@@ -1,20 +1,23 @@
 //! Rust projections and accessors.
 
-use std::fmt::Write as _;
+use proc_macro2::TokenStream;
+use quote::quote;
 use wamn_scalar::SqlValueType;
 
-use wamn_catalog::manifest::{CustomOperationType, authored_name};
+use wamn_catalog::manifest::CustomOperationType;
+
+use super::rust_source::{insert_rust, rust_ident};
 
 use super::{
-    AccessorBind, AccessorFetch, BTreeMap, CHANGES_STATEMENT, CREATE_STATEMENT, CatalogIr, Column,
+    AccessorBind, AccessorFetch, BTreeMap, CHANGES_STATEMENT, CREATE_STATEMENT, CatalogIr,
     ConstraintNameSlice, ConstraintType, MutationConstraintNames, RustMember, RustRow,
-    RustVisibility, StaticSqlAccessor, Table, WamnAccessor, WamnApi, column, insert_bytes,
-    operation_constraints, operation_exclusions, query_variants, sql,
+    RustVisibility, StaticSqlAccessor, Table, WamnAccessor, WamnApi, column, operation_constraints,
+    operation_exclusions, query_variants, sql,
 };
 use wamn_catalog::manifest::ManifestError as GenerateError;
 use wamn_catalog::manifest::{
     CrudAction, CustomOperationDeclaration, ModelDeclaration, OperationDeclaration, StaticSqlFetch,
-    rust_identifier, rust_type_identifier,
+    rust_type_identifier,
 };
 
 /// Clippy's default `too-many-arguments-threshold`. The repository declares no
@@ -65,9 +68,8 @@ pub(super) fn static_sql_rows(operation: &CustomOperationDeclaration) -> Vec<Rus
                 .row
                 .iter()
                 .map(|field| RustMember {
-                    name: rust_identifier(field.name.as_str())
-                        .expect("static SQL value names were validated for Rust"),
-                    rust_type: projected_rust_type(field.ty, field.nullable),
+                    name: field.name.to_string(),
+
                     statement_type: field.ty,
                     nullable: field.nullable,
                 })
@@ -98,113 +100,70 @@ pub(super) fn static_sql_accessors(
         .collect()
 }
 
+const HEADER: &str = "// @generated from migration IR; do not edit.\n\n";
+
 pub(super) fn emit_static_sql_projection(
     files: &mut BTreeMap<String, Vec<u8>>,
     paths: super::OutputPaths<'_>,
     module_name: &str,
     compiled: &super::operations::CustomDescription<'_>,
 ) -> Result<(), GenerateError> {
-    let operation = compiled.declaration;
-    let rows = &compiled.rows;
-    let mut source = String::from("// @generated from migration IR; do not edit.\n\n");
-    source.push_str(if operation.type_ == CustomOperationType::Projection {
-        "use wamn_guest::postgres_statements::Connection;\n\n"
+    let transactional = compiled.declaration.type_ != CustomOperationType::Projection;
+    let mut source = if transactional {
+        quote!(
+            use wamn_guest::postgres_statements::Transaction;
+        )
     } else {
-        "use wamn_guest::postgres_statements::Transaction;\n\n"
-    });
-    for row in rows {
-        emit_rust_row(&mut source, row);
+        quote!(
+            use wamn_guest::postgres_statements::Connection;
+        )
+    };
+    for row in &compiled.rows {
+        source.extend(emit_rust_row(row));
     }
     for (name, statement) in compiled.statements {
-        writeln!(
-            source,
-            "pub(crate) const {}_STATEMENT: &str = include_str!({:?});",
-            name.as_str().to_ascii_uppercase(),
-            sql_include_path(paths, module_name, &statement.path)
-        )
-        .expect("writing to a String cannot fail");
+        let constant = rust_ident(&statement_constant_name(name.as_str(), 0, 1));
+        let path = sql_include_path(paths, module_name, &statement.path);
+        source.extend(quote!(pub(crate) const #constant: &str = include_str!(#path);));
     }
     for accessor in &compiled.accessors {
-        let row = rows
+        let row = compiled
+            .rows
             .iter()
             .find(|row| row.name == accessor.row)
             .expect("accessor row exists");
-        emit_static_sql_wamn_accessor(
-            &mut source,
-            accessor,
-            row,
-            operation.type_ != CustomOperationType::Projection,
+        let state = if transactional {
+            quote!(transaction: &mut Transaction)
+        } else {
+            quote!(connection: &mut Connection)
+        };
+        let (result, decode) = match accessor.fetch {
+            StaticSqlFetch::OptionalOne => (AccessorFetch::Optional, "decode_optional"),
+            StaticSqlFetch::BoundedList => (AccessorFetch::All, "decode_all"),
+            StaticSqlFetch::One => (AccessorFetch::One, "decode_one"),
+        };
+        let header = accessor_header(
+            &accessor.name,
+            RustVisibility::Crate,
+            &accessor.binds,
+            &state,
         );
+        source.extend(emit_accessor(
+            &header,
+            &accessor.binds,
+            row,
+            result,
+            decode,
+            &accessor.statement_constant,
+            transactional,
+        ));
     }
-    insert_bytes(
+    insert_rust(
         files,
         &format!("generated/wamn/{module_name}.rs"),
-        source.into_bytes(),
-    )
-}
-
-fn emit_static_sql_wamn_accessor(
-    source: &mut String,
-    accessor: &StaticSqlAccessor,
-    row: &RustRow,
-    transactional: bool,
-) {
-    let function = rust_identifier(&accessor.name)
-        .expect("static SQL statement names were validated for Rust");
-    emit_argument_count_expectation(source, accessor.binds.len());
-    writeln!(source, "pub(crate) async fn {function}(").expect("writing to a String cannot fail");
-    source.push_str(if transactional {
-        "    transaction: &mut Transaction,\n"
-    } else {
-        "    connection: &mut Connection,\n"
-    });
-    for bind in &accessor.binds {
-        let parameter = rust_identifier(&bind.parameter)
-            .expect("static SQL parameter names were validated for Rust");
-        writeln!(source, "    {parameter}: {},", bind.wamn_rust)
-            .expect("writing to a String cannot fail");
-    }
-    writeln!(
+        HEADER,
         source,
-        ") -> Result<{}, wamn_guest::postgres_statements::StatementError> {{",
-        static_sql_accessor_result_type(accessor),
     )
-    .expect("writing to a String cannot fail");
-    writeln!(
-        source,
-        "    let rows = {}.query({}, vec![",
-        if transactional {
-            "transaction"
-        } else {
-            "connection"
-        },
-        accessor.statement_constant,
-    )
-    .expect("writing to a String cannot fail");
-    for bind in &accessor.binds {
-        let parameter = rust_identifier(&bind.parameter)
-            .expect("static SQL parameter names were validated for Rust");
-        writeln!(
-            source,
-            "        wamn_guest::postgres_statements::into_sql_value({parameter}),"
-        )
-        .expect("writing to a String cannot fail");
-    }
-    source.push_str("    ]).await?;\n");
-    let decode_function = match accessor.fetch {
-        StaticSqlFetch::OptionalOne => "decode_optional",
-        StaticSqlFetch::BoundedList => "decode_all",
-        StaticSqlFetch::One => "decode_one",
-    };
-    emit_decode_result(source, row, decode_function, &accessor.statement_constant);
-}
-
-fn static_sql_accessor_result_type(accessor: &StaticSqlAccessor) -> String {
-    match accessor.fetch {
-        StaticSqlFetch::OptionalOne => format!("Option<{}>", accessor.row),
-        StaticSqlFetch::BoundedList => format!("Vec<{}>", accessor.row),
-        StaticSqlFetch::One => accessor.row.clone(),
-    }
 }
 
 pub(super) fn wamn_api(
@@ -318,24 +277,13 @@ pub(super) fn wamn_api(
                 binds: std::iter::once("id")
                     .filter(|_| !crate::key::database_generated(table))
                     .chain(operation.writable_fields.iter().map(String::as_str))
-                    .map(|field| {
-                        bind_for_column(
-                            table,
-                            field,
-                            &rust_identifier(field)
-                                .expect("model field names were validated for Rust"),
-                            false,
-                        )
-                    })
+                    .map(|field| bind_for_column(table, field, field, false))
                     // The numbered field binds the text guest numbering SQL returned.
-                    .chain(model.number_field().map(|(field, _)| {
-                        accessor_bind(
-                            &rust_identifier(field)
-                                .expect("model field names were validated for Rust"),
-                            SqlValueType::Text,
-                            false,
-                        )
-                    }))
+                    .chain(
+                        model
+                            .number_field()
+                            .map(|(field, _)| accessor_bind(field, SqlValueType::Text, false)),
+                    )
                     .collect(),
             }),
             CrudAction::Update => {
@@ -492,13 +440,13 @@ fn feed_rows(
     }
     let member = |name: &str, ty: SqlValueType| RustMember {
         name: name.to_owned(),
-        rust_type: projected_rust_type(ty, true),
+
         statement_type: ty,
         nullable: true,
     };
     let model_members = table.columns().iter().map(|column| RustMember {
-        name: rust_identifier(column.name()).expect("model fields were validated for Rust"),
-        rust_type: optional_rust_type(column),
+        name: column.name().to_owned(),
+
         statement_type: column.column_type(),
         nullable: true,
     });
@@ -510,16 +458,16 @@ fn feed_rows(
             name: if column.name() == "row_version" {
                 "model_row_version".to_owned()
             } else {
-                rust_identifier(column.name()).expect("validated model field")
+                column.name().to_owned()
             },
-            rust_type: rust_type(column),
+
             statement_type: column.column_type(),
             nullable: column.nullable(),
         })
         .collect::<Vec<_>>();
     fields.push(RustMember {
         name: "row_version".to_owned(),
-        rust_type: "i64".to_owned(),
+
         statement_type: SqlValueType::Int64,
         nullable: false,
     });
@@ -566,7 +514,7 @@ fn operation_result_row(
 ) -> RustRow {
     let mut fields = vec![RustMember {
         name: "outcome".to_owned(),
-        rust_type: "Option<String>".to_owned(),
+
         statement_type: SqlValueType::Text,
         nullable: true,
     }];
@@ -583,22 +531,15 @@ fn operation_result_row(
         .expect("the revision field is a column")
         .column_type();
     fields.push(RustMember {
-        name: format!(
-            "observed_{}",
-            rust_identifier(revision).expect("model field names were validated for Rust")
-        ),
-        rust_type: if revision_type == SqlValueType::Int32 {
-            "Option<i32>".to_owned()
-        } else {
-            "Option<i64>".to_owned()
-        },
+        name: ["observed_", revision].concat(),
+
         statement_type: revision_type,
         nullable: true,
     });
     if action == CrudAction::Update {
         fields.extend(table.columns().iter().map(|column| RustMember {
-            name: rust_identifier(column.name()).expect("model fields were validated for Rust"),
-            rust_type: optional_rust_type(column),
+            name: column.name().to_owned(),
+
             statement_type: column.column_type(),
             nullable: true,
         }));
@@ -632,7 +573,7 @@ fn accessor_bind(parameter: &str, ty: SqlValueType, nullable: bool) -> AccessorB
     AccessorBind {
         parameter: parameter.to_owned(),
         nullable,
-        wamn_rust: projected_rust_type(ty, nullable),
+
         statement_type: ty,
     }
 }
@@ -646,13 +587,15 @@ pub(super) fn emit_projection(
     let table = &compiled.shape;
     let operation_sql = compiled.paths;
     let api = &compiled.api;
-    let mut source = String::from("// @generated from migration IR; do not edit.\n\n");
+    let mut source = TokenStream::new();
     if api
         .accessors
         .iter()
         .any(|accessor| !accessor.operation.changes_records())
     {
-        source.push_str("use wamn_guest::postgres_statements::Connection;\n\n");
+        source.extend(quote!(
+            use wamn_guest::postgres_statements::Connection;
+        ));
     }
     let model_row = RustRow {
         name: format!("{}Row", rust_type_identifier(model_name.as_str())),
@@ -661,34 +604,30 @@ pub(super) fn emit_projection(
             .columns
             .iter()
             .map(|column| RustMember {
-                name: rust_identifier(column.name()).expect("validated model field"),
-                rust_type: rust_type(column),
+                name: column.name().to_owned(),
+
                 statement_type: column.column_type(),
                 nullable: column.nullable(),
             })
             .collect(),
     };
-    emit_rust_row(&mut source, &model_row);
+    source.extend(emit_rust_row(&model_row));
     for row in &api.operation_rows {
-        emit_rust_row(&mut source, row);
+        source.extend(emit_rust_row(row));
     }
     for (action, sql_paths) in operation_sql {
         for (index, path) in sql_paths.iter().enumerate() {
-            writeln!(
-                source,
-                "{} const {}: &str = include_str!({:?});",
-                api.statement_visibility.source(),
-                statement_constant_name(action, index, sql_paths.len()),
-                sql_include_path(paths, model_name.as_str(), path)
-            )
-            .expect("writing to a String cannot fail");
+            let visibility = visibility(api.statement_visibility);
+            let name = rust_ident(&statement_constant_name(action, index, sql_paths.len()));
+            let path = sql_include_path(paths, model_name.as_str(), path);
+            source.extend(quote!(#visibility const #name: &str = include_str!(#path);));
         }
     }
     for constraints in &api.mutation_constraints {
-        emit_constraint_name_slice(&mut source, &constraints.unique);
-        emit_constraint_name_slice(&mut source, &constraints.foreign_key);
-        emit_constraint_name_slice(&mut source, &constraints.check);
-        emit_constraint_name_slice(&mut source, &constraints.exclusion);
+        source.extend(emit_constraint_name_slice(&constraints.unique));
+        source.extend(emit_constraint_name_slice(&constraints.foreign_key));
+        source.extend(emit_constraint_name_slice(&constraints.check));
+        source.extend(emit_constraint_name_slice(&constraints.exclusion));
     }
     for accessor in &api.accessors {
         let row = if accessor.row == model_row.name {
@@ -699,147 +638,124 @@ pub(super) fn emit_projection(
                 .find(|row| row.name == accessor.row)
                 .expect("accessor row exists")
         };
-        emit_wamn_accessor(&mut source, accessor, row);
+        source.extend(emit_wamn_accessor(accessor, row));
     }
-    insert_bytes(
+    insert_rust(
         files,
         &format!("generated/wamn/{model_name}.rs"),
-        source.into_bytes(),
-    )
-}
-
-fn emit_constraint_name_slice(source: &mut String, constraints: &ConstraintNameSlice) {
-    let names = constraints
-        .names
-        .iter()
-        .map(|name| format!("{name:?}"))
-        .collect::<Vec<_>>()
-        .join(", ");
-    writeln!(
+        HEADER,
         source,
-        "{} const {}: &[&str] = &[{}];",
-        constraints.visibility.source(),
-        constraints.constant,
-        names
     )
-    .expect("writing to a String cannot fail");
 }
 
-/// Expect the arity lint on an accessor whose bind list outruns Clippy's
-/// threshold. The bind list is the statement's, so the accessor cannot take
-/// fewer parameters without hiding which binds the statement wants.
-///
-/// Emitted only above the threshold: an `expect` the lint does not fire on is
-/// itself an error.
-fn emit_argument_count_expectation(source: &mut String, binds: usize) {
-    if accessor_argument_count(binds) > CLIPPY_ARGUMENT_THRESHOLD {
-        source.push_str(
-            "#[expect(clippy::too_many_arguments, reason = \"the parameters are the statement's \
-             bind list\")]\n",
-        );
+fn visibility(visibility: RustVisibility) -> TokenStream {
+    match visibility {
+        RustVisibility::Public => quote!(pub),
+        RustVisibility::Crate => quote!(pub(crate)),
     }
 }
 
-fn emit_rust_row(source: &mut String, row: &RustRow) {
-    writeln!(
-        source,
-        "#[derive(Debug)]\n{} struct {} {{",
-        row.visibility.source(),
-        row.name
-    )
-    .expect("writing to a String cannot fail");
-    for field in &row.fields {
-        writeln!(source, "    pub {}: {},", field.name, field.rust_type)
-            .expect("writing to a String cannot fail");
-    }
-    source.push_str("}\n\n");
+fn emit_constraint_name_slice(constraints: &ConstraintNameSlice) -> TokenStream {
+    let names = &constraints.names;
+    let visibility = visibility(constraints.visibility);
+    let name = rust_ident(&constraints.constant);
+    quote!(#visibility const #name: &[&str] = &[#(#names),*];)
 }
 
-fn emit_wamn_accessor(source: &mut String, accessor: &WamnAccessor, row: &RustRow) {
-    // A change runs in the transaction the host began for its operation.
+fn emit_rust_row(row: &RustRow) -> TokenStream {
+    let name = rust_ident(&row.name);
+    let visibility = visibility(row.visibility);
+    let fields = row.fields.iter().map(|field| {
+        let name = rust_ident(&field.name);
+        let ty = projected_rust_type(field.statement_type, field.nullable);
+        quote!(pub #name: #ty,)
+    });
+    quote!(#[derive(Debug)] #visibility struct #name { #(#fields)* })
+}
+
+fn emit_wamn_accessor(accessor: &WamnAccessor, row: &RustRow) -> TokenStream {
     let transactional = accessor.operation.changes_records();
-    emit_argument_count_expectation(source, accessor.binds.len());
-    writeln!(
-        source,
-        "{} async fn {}(",
-        accessor.visibility.source(),
-        accessor.name
-    )
-    .expect("writing to a String cannot fail");
-    if transactional {
-        source.push_str("    transaction: &mut wamn_guest::postgres_statements::Transaction,\n");
+    let state = if transactional {
+        quote!(transaction: &mut wamn_guest::postgres_statements::Transaction)
     } else {
-        source.push_str("    connection: &mut Connection,\n");
-    }
-    for bind in &accessor.binds {
-        writeln!(source, "    {}: {},", bind.parameter, bind.wamn_rust)
-            .expect("writing to a String cannot fail");
-    }
-    writeln!(
-        source,
-        ") -> Result<{}, wamn_guest::postgres_statements::StatementError> {{",
-        accessor_result_type(accessor)
-    )
-    .expect("writing to a String cannot fail");
-    writeln!(
-        source,
-        "    let rows = {}.query({}, vec![",
-        if transactional {
-            "transaction"
-        } else {
-            "connection"
-        },
-        accessor.statement_constant
-    )
-    .expect("writing to a String cannot fail");
-    for bind in &accessor.binds {
-        writeln!(
-            source,
-            "        wamn_guest::postgres_statements::into_sql_value({}),",
-            bind.parameter
-        )
-        .expect("writing to a String cannot fail");
-    }
-    source.push_str("    ]).await?;\n");
-    let decode_function = match accessor.fetch {
+        quote!(connection: &mut Connection)
+    };
+    let decode = match accessor.fetch {
         AccessorFetch::Optional => "decode_optional",
         AccessorFetch::One => "decode_one",
         AccessorFetch::All => "decode_all",
     };
-    emit_decode_result(source, row, decode_function, &accessor.statement_constant);
-}
-
-fn accessor_result_type(accessor: &WamnAccessor) -> String {
-    match accessor.fetch {
-        AccessorFetch::Optional => format!("Option<{}>", accessor.row),
-        AccessorFetch::All => format!("Vec<{}>", accessor.row),
-        AccessorFetch::One => accessor.row.clone(),
-    }
-}
-
-fn emit_decode_result(
-    source: &mut String,
-    row: &RustRow,
-    decode_function: &str,
-    statement_constant: &str,
-) {
-    source.push_str("    ");
-    writeln!(
-        source,
-        "wamn_guest::postgres_statements::{decode_function}({statement_constant}, rows, |row| {{"
+    let header = accessor_header(&accessor.name, accessor.visibility, &accessor.binds, &state);
+    emit_accessor(
+        &header,
+        &accessor.binds,
+        row,
+        accessor.fetch,
+        decode,
+        &accessor.statement_constant,
+        transactional,
     )
-    .expect("writing to a String cannot fail");
-    writeln!(source, "        Ok({} {{", row.name).expect("writing to a String cannot fail");
-    for field in &row.fields {
-        writeln!(
-            source,
-            "            {}: row.decode({:?})?,",
-            field.name,
-            authored_name(&field.name)
-        )
-        .expect("writing to a String cannot fail");
+}
+
+fn accessor_header(
+    name: &str,
+    visibility_value: RustVisibility,
+    binds: &[AccessorBind],
+    state: &TokenStream,
+) -> TokenStream {
+    // The bind list fixes the number of parameters.
+    let arity = (accessor_argument_count(binds.len()) > CLIPPY_ARGUMENT_THRESHOLD).then(|| {
+        quote!(#[expect(clippy::too_many_arguments, reason = "the parameters are the statement's bind list")])
+    });
+    let visibility = visibility(visibility_value);
+    let name = rust_ident(name);
+    let parameters = binds.iter().map(|bind| {
+        let parameter = rust_ident(&bind.parameter);
+        let ty = projected_rust_type(bind.statement_type, bind.nullable);
+        quote!(#parameter: #ty,)
+    });
+    quote!(#arity #visibility async fn #name(#state, #(#parameters)*))
+}
+
+fn emit_accessor(
+    header: &TokenStream,
+    binds: &[AccessorBind],
+    row: &RustRow,
+    fetch: AccessorFetch,
+    decode: &str,
+    statement: &str,
+    transactional: bool,
+) -> TokenStream {
+    let statement = rust_ident(statement);
+    let decode = rust_ident(decode);
+    let state = if transactional {
+        quote!(transaction)
+    } else {
+        quote!(connection)
+    };
+    let arguments = binds.iter().map(|bind| {
+        let parameter = rust_ident(&bind.parameter);
+        quote!(wamn_guest::postgres_statements::into_sql_value(#parameter),)
+    });
+    let row_name = rust_ident(&row.name);
+    let result = match fetch {
+        AccessorFetch::Optional => quote!(Option<#row_name>),
+        AccessorFetch::All => quote!(Vec<#row_name>),
+        AccessorFetch::One => quote!(#row_name),
+    };
+    let fields = row.fields.iter().map(|field| {
+        let column = &field.name;
+        let name = rust_ident(column);
+        quote!(#name: row.decode(#column)?,)
+    });
+    quote! {
+        #header -> Result<#result, wamn_guest::postgres_statements::StatementError> {
+            let rows = #state.query(#statement, vec![#(#arguments)*]).await?;
+            wamn_guest::postgres_statements::#decode(#statement, rows, |row| {
+                Ok(#row_name { #(#fields)* })
+            })
+        }
     }
-    source.push_str("        })\n    })\n}\n\n");
 }
 
 fn statement_constant_name(action: &str, index: usize, path_count: usize) -> String {
@@ -851,30 +767,22 @@ fn statement_constant_name(action: &str, index: usize, path_count: usize) -> Str
     format!("{}{}_STATEMENT", action.to_ascii_uppercase(), suffix)
 }
 
-fn rust_type(column: &Column) -> String {
-    projected_rust_type(column.column_type(), column.nullable())
-}
-
-fn optional_rust_type(column: &Column) -> String {
-    projected_rust_type(column.column_type(), true)
-}
-
-pub(super) fn projected_rust_type(ty: SqlValueType, optional: bool) -> String {
+pub(super) fn projected_rust_type(ty: SqlValueType, optional: bool) -> TokenStream {
     let base = match ty {
-        SqlValueType::Boolean => "bool",
-        SqlValueType::Int32 => "i32",
-        SqlValueType::Int64 => "i64",
-        SqlValueType::Float64 => "f64",
-        SqlValueType::Text => "String",
-        SqlValueType::Bytes => "Vec<u8>",
-        SqlValueType::Numeric => "wamn_guest::postgres_statements::Numeric",
-        SqlValueType::Timestamptz => "wamn_guest::postgres_statements::TimestampTz",
-        SqlValueType::Json => "wamn_guest::postgres_statements::Json",
-        SqlValueType::Uuid => "wamn_guest::postgres_statements::Uuid",
+        SqlValueType::Boolean => quote!(bool),
+        SqlValueType::Int32 => quote!(i32),
+        SqlValueType::Int64 => quote!(i64),
+        SqlValueType::Float64 => quote!(f64),
+        SqlValueType::Text => quote!(String),
+        SqlValueType::Bytes => quote!(Vec<u8>),
+        SqlValueType::Numeric => quote!(wamn_guest::postgres_statements::Numeric),
+        SqlValueType::Timestamptz => quote!(wamn_guest::postgres_statements::TimestampTz),
+        SqlValueType::Json => quote!(wamn_guest::postgres_statements::Json),
+        SqlValueType::Uuid => quote!(wamn_guest::postgres_statements::Uuid),
     };
     if optional {
-        format!("Option<{base}>")
+        quote!(Option<#base>)
     } else {
-        base.to_owned()
+        base
     }
 }

@@ -2,7 +2,7 @@ import { createSignal, onCleanup, Show, untrack } from "solid-js";
 import { FieldError } from "@wfe/components/fields";
 import { createForm } from "@wfe/form";
 import { FormView, type FormDescription } from "@wfe/generator";
-import { environment, member, project } from "./generated/wamn_control_org/index.js";
+import { environment, member, project } from "./control-client";
 import { Page } from "./page";
 import { value } from "./outcome";
 import type { ScreenProps } from "./shell";
@@ -27,7 +27,7 @@ export function GrantMembership(props: ScreenProps & { returnTo: string }) {
       : value(await project.list(props.transport, [{}])).projects.map((entry) => entry.name);
     const choices = await Promise.all(
       names
-        .filter((name) => props.holds(member.MEMBER_GRANT_ROUTE.operation, name))
+        .filter((name) => props.holds(member.grant.route.operation, name))
         .map(async (name) => ({
           name,
           environments: value(await environment.list(props.transport, [{ project: name }])).environments.map(

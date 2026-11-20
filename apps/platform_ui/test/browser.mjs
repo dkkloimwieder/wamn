@@ -139,18 +139,16 @@ async function assertTiles(view, status) {
   const notReady = status.workloads.length - ready;
   const expected = [
     [
-      "Release",
-      status.digest ? status.digest.replace(/^sha256:/, "").slice(0, 8) : "Unknown",
-      status.digest ? (complete ? "ok" : "warning") : "unknown",
+      "Host replicas",
+      `${status.rollout.ready_replicas} ready / ${status.rollout.replicas} total`,
+      complete ? "ok" : "warning",
     ],
     ...[
       ["Users with a role", status.users_with_role],
       ["Roles", status.roles],
       ["Memberships", status.memberships],
     ].map(([label, count]) => [label, String(count ?? "Unknown"), count == null ? "unknown" : "ok"]),
-    status.digest
-      ? ["Workloads", `${ready} ready / ${notReady} not ready`, notReady ? "warning" : "ok"]
-      : ["Workloads", "Unknown", "unknown"],
+    ["Workloads", `${ready} ready / ${notReady} not ready`, notReady ? "warning" : "ok"],
   ];
   const row = view.getByRole("region", { name: "Environment status", exact: true });
   for (const [label, value, state] of expected) {
@@ -533,18 +531,11 @@ try {
   assert.equal(new URL(page.url()).pathname, `${controlPath}/projects/${fixture.releaseProject}/${fixture.releaseEnv}`);
   await page.getByRole("heading", { name: `${fixture.releaseProject}/${fixture.releaseEnv}`, exact: true }).waitFor();
   const observedRelease = await releaseStatus;
-  assert.equal(observedRelease.digest, fixture.releaseDigest);
   // Earlier steps grant and revoke in this environment, so the counts vary; assertTiles shows each answered value.
   for (const count of ["users_with_role", "roles", "memberships"]) {
     assert.ok(Number.isInteger(observedRelease[count]) && observedRelease[count] >= 1, `${count} is answered`);
   }
   await assertTiles(page, observedRelease);
-  await page
-    .getByRole("combobox", { name: "Application release" })
-    .locator("option")
-    .filter({ hasText: fixture.releaseDigest })
-    .first()
-    .waitFor({ state: "attached" });
   assert.equal(await page.getByRole("table").count(), 0);
   assert.deepEqual(splashReads, [{ project: fixture.releaseProject, env: fixture.releaseEnv }]);
   await capture(page, "environment");
@@ -583,8 +574,6 @@ try {
   for (const [label, path] of [
     ["Workloads", "workloads"],
     ["Live releases", "live-releases"],
-    ["Operations", "operations"],
-    ["Roles", "roles"],
   ]) {
     await page
       .getByRole("navigation", { name: "Primary navigation" })
@@ -605,10 +594,6 @@ try {
       assert.equal(new URL(page.url()).pathname, `${environmentPathname}/${path}`);
       assert.ok((await page.locator("table table").count()) > 0);
       await capture(page, "workload-conditions");
-    }
-    if (path === "roles" && (await table.locator("[data-subtable-toggle]").count())) {
-      await table.locator("[data-subtable-toggle]").first().click();
-      await page.getByRole("table", { name: "Role operations", exact: true }).waitFor();
     }
     await visit(page);
     await table.waitFor();
@@ -657,11 +642,8 @@ try {
   assert.equal(await page.getByRole("button", { name: "Activate environment", exact: true }).count(), 0);
   await visit(page);
   await page.getByRole("button", { name: "Inactivate environment", exact: true }).waitFor();
-  await page.getByRole("combobox", { name: "Application release" }).waitFor();
   assert.deepEqual(errors, []);
-  console.log(
-    "PASS: Environment navigation, local runtime status, release profile, single activate/inactivate action and reload state",
-  );
+  console.log("PASS: Environment navigation, local runtime status, single activate/inactivate action and reload state");
   console.log(
     "PASS: Control hierarchy follows the address; create, membership grant/revoke, project-admin grant/revoke, viewed access, activate/inactivate and reload state",
   );
@@ -807,10 +789,7 @@ try {
       "control-splash",
       "environment-workloads",
       "environment-live-releases",
-      "environment-operations",
-      "environment-roles",
       "workload-conditions",
-      "operation-references",
       "environment-switcher",
       "environment-members",
       "users",

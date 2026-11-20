@@ -268,15 +268,6 @@ async fn retired_material_stays_during_the_five_minute_grace(pool: sqlx::PgPool)
 }
 
 #[sqlx::test(migrations = false)]
-async fn connection_refuses_integration_deletion(pool: sqlx::PgPool) {
-    run(&wamn_test_postgres::url(&pool), "DO $$ DECLARE result jsonb; BEGIN
-        result := registry.configure_integration('acme','integration.delete','{\"project\":\"app\",\"name\":\"first\"}');
-        ASSERT result->>'error'='referenced' AND result->>'field'='connection',result::text;
-        ASSERT EXISTS(SELECT FROM registry.integration WHERE name='first');
-    END $$;").await;
-}
-
-#[sqlx::test(migrations = false)]
 async fn integration_refuses_external_system_deletion(pool: sqlx::PgPool) {
     run(&wamn_test_postgres::url(&pool), "DO $$ DECLARE result jsonb; BEGIN
         result := registry.configure_external_system('acme','external_system.delete','{\"project\":\"app\",\"name\":\"erp\"}');

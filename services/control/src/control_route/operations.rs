@@ -160,7 +160,7 @@ impl ControlRoutes<'_> {
             worker,
             self.registry_token_metadata,
         );
-        let input = json!({"type":"project_operation","operation":operation,"request":request,"actor":caller});
+        let input = json!({"type":"project_operation","operation":operation,"request":request});
         wamn_kubernetes::job::submit(api, &mut job, &input.to_string())
             .await
             .map_err(Refusal::from)

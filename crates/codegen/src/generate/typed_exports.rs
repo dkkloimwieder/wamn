@@ -1,68 +1,86 @@
 //! Standard adapters between application values and declared typed contracts.
 
-use std::fmt::Write as _;
+use proc_macro2::TokenStream;
+use quote::quote;
 use wamn_scalar::SqlValueType;
 
-use wamn_catalog::manifest::OperationErrorDetailKey;
+use super::rust_source::rust_ident;
+use super::wit::detail_name;
 use wamn_catalog::manifest::{
-    OperationErrorDetailDeclaration, binding_identifier, rust_identifier, rust_type_identifier,
+    OperationErrorDetailDeclaration, OperationErrorDetailKey, rust_type_identifier,
 };
 
 /// Emit a row conversion without requiring an application crate dependency.
 pub(super) fn emit_row_adapter<'a>(
     fields: impl IntoIterator<Item = (&'a str, SqlValueType, bool, Option<&'a str>)>,
-) -> String {
-    let mut source = String::from(
-        "\n#[allow(unused_macros)]\nmacro_rules! row {\n    ($row:expr, $target:path) => {{\n        let row = $row;\n        $target {\n",
-    );
-    for (name, ty, nullable, enum_error) in fields {
-        // A list result field takes each element the way a single field of
-        // its type does.
-        let list = name
-            .strip_suffix("[]")
-            .filter(|member| !member.contains('.') && !member.contains("[]"));
-        let field = rust_identifier(list.unwrap_or(name)).expect("validated field has a Rust name");
-        let member =
-            binding_identifier(list.unwrap_or(name)).expect("validated field has a Rust name");
-        if let Some(error) = enum_error {
-            let parse = format!("value.parse().map_err(|_| contract::{error}::InternalError)");
-            let value = if nullable {
-                format!("row.{field}.map(|value| {parse}).transpose()?")
-            } else {
-                parse.replace("value.parse()", &format!("row.{field}.parse()")) + "?"
-            };
-            writeln!(source, "            {member}: {value},")
-                .expect("writing to a String cannot fail");
-            continue;
+) -> TokenStream {
+    let members = fields.into_iter().filter_map(|(path, ty, nullable, enum_error)| {
+        let list = path.strip_suffix("[]");
+        let name = list.unwrap_or(path);
+        // The WIT record includes only top-level result fields.
+        if name.contains('.') || name.contains("[]") {
+            return None;
         }
-        let value = match ty {
-            SqlValueType::Uuid | SqlValueType::Numeric | SqlValueType::Timestamptz => "value.0",
-            SqlValueType::Json => "crate::wamn::node::types::JsonValue { encoded_json: value.0 }",
-            SqlValueType::Boolean
-            | SqlValueType::Int32
-            | SqlValueType::Int64
-            | SqlValueType::Float64
-            | SqlValueType::Text
-            | SqlValueType::Bytes => "value",
-        };
-        let value = if list.is_some() {
-            if value == "value" {
-                format!("row.{field}")
-            } else if nullable {
-                format!("row.{field}.into_iter().map(|value| value.map(|value| {value})).collect()")
+        let member = rust_ident(name);
+        let input = quote!(row.#member);
+        if let Some(error) = enum_error {
+            let error = rust_ident(error);
+            let parse = |value: TokenStream| {
+                quote!(#value.parse().map_err(|_| contract::#error::InternalError))
+            };
+            let value = if nullable {
+                let parsed = parse(quote!(value));
+                quote!(#input.map(|value| #parsed).transpose()?)
             } else {
-                format!("row.{field}.into_iter().map(|value| {value}).collect()")
+                let parsed = parse(input);
+                quote!(#parsed?)
+            };
+            return Some(quote!(#member: #value,));
+        }
+        let convert = |value: TokenStream| match ty {
+            SqlValueType::Uuid | SqlValueType::Numeric | SqlValueType::Timestamptz => {
+                quote!(#value.0)
             }
-        } else if nullable && value != "value" {
-            format!("row.{field}.map(|value| {value})")
-        } else {
-            value.replace("value", &format!("row.{field}"))
+            SqlValueType::Json => {
+                quote!(crate::wamn::node::types::JsonValue { encoded_json: #value.0 })
+            }
+            _ => value,
         };
-        writeln!(source, "            {member}: {value},")
-            .expect("writing to a String cannot fail");
+        let requires_conversion = matches!(
+            ty,
+            SqlValueType::Uuid
+                | SqlValueType::Numeric
+                | SqlValueType::Timestamptz
+                | SqlValueType::Json
+        );
+        let value = if !requires_conversion {
+            input
+        } else if list.is_some() {
+            let value = convert(quote!(value));
+            if nullable {
+                quote!(#input.into_iter().map(|value| value.map(|value| #value)).collect())
+            } else {
+                quote!(#input.into_iter().map(|value| #value).collect())
+            }
+        } else if nullable {
+            let value = convert(quote!(value));
+            quote!(#input.map(|value| #value))
+        } else {
+            convert(input)
+        };
+        Some(quote!(#member: #value,))
+    });
+    quote! {
+        #[allow(unused_macros)]
+        macro_rules! row {
+            ($row:expr, $target:path) => {{
+                let row = $row;
+                $target { #(#members)* }
+            }};
+        }
+        #[allow(unused_imports)]
+        pub(crate) use row;
     }
-    source.push_str("        }\n    }};\n}\n#[allow(unused_imports)]\npub(crate) use row;\n");
-    source
 }
 
 /// Emit the declared error vocabulary and expose only permitted details.
@@ -71,133 +89,89 @@ pub(super) fn emit_error_mapper<'a>(
     cases: impl IntoIterator<Item = (&'a str, &'a OperationErrorDetailDeclaration)>,
     revision: Option<SqlValueType>,
     guarded_fields: &std::collections::BTreeMap<String, String>,
-) -> String {
-    // A revision detail parses at the width its own column declares.
+) -> TokenStream {
     let revision_type = if revision == Some(SqlValueType::Int32) {
-        "i32"
+        quote!(i32)
     } else {
-        "i64"
+        quote!(i64)
     };
-    let mut source = format!(
-        "\n#[allow(dead_code)]\npub(crate) fn map_error(code: &str, mut detail: impl FnMut(&str) -> Option<String>) -> contract::{error_type} {{\n    match code {{\n"
-    );
-    for (literal, declaration) in cases {
-        if literal == "internal_error" {
-            continue;
-        }
+    let error_type = rust_ident(error_type);
+    let arms = cases.into_iter().filter(|(literal, _)| *literal != "internal_error").map(|(literal, declaration)| {
         let variant = rust_type_identifier(literal);
-        writeln!(source, "        {literal:?} => {{").expect("writing to a String cannot fail");
-        for (key, required) in declaration
-            .required
-            .iter()
-            .map(|key| (*key, true))
-            .chain(declaration.optional.iter().map(|key| (*key, false)))
-        {
-            let name = detail_name(key);
-            let mut value = format!("detail({name:?})");
-            if key == OperationErrorDetailKey::Field
+        let detail_type = rust_ident(&[&variant, "Detail"].concat());
+        let variant = rust_ident(&variant);
+        let keys = declaration.required.iter().chain(&declaration.optional);
+        let names = keys.clone().map(|key| rust_ident(detail_name(*key)));
+        let bindings = keys.map(|key| {
+            let name = rust_ident(detail_name(*key));
+            let literal = name.to_string();
+            let required = declaration.required.contains(key);
+            let mut value = quote!(detail(#literal));
+            if *key == OperationErrorDetailKey::Field
                 && !required
-                && declaration
-                    .required
-                    .contains(&OperationErrorDetailKey::Constraint)
+                && declaration.required.contains(&OperationErrorDetailKey::Constraint)
                 && !guarded_fields.is_empty()
             {
-                value.push_str(".or_else(|| match constraint.as_str() {");
-                for (constraint, field) in guarded_fields {
-                    write!(value, "{constraint:?} => Some({field:?}.to_owned()),")
-                        .expect("write constraint field");
-                }
-                value.push_str("_ => None })");
+                let fallback = guarded_fields.iter().map(|(constraint, field)| quote!(#constraint => Some(#field.to_owned()),));
+                value.extend(quote!(.or_else(|| match constraint.as_str() { #(#fallback)* _ => None })));
             }
-            // Only a revision is a number; a bound or observed value stays
-            // the decimal string its producer wrote.
-            let numeric = matches!(
-                key,
-                OperationErrorDetailKey::ExpectedRowVersion
-                    | OperationErrorDetailKey::ObservedRowVersion
-            );
-            if required {
-                let value = if numeric {
-                    format!("{value}.and_then(|value| value.parse::<{revision_type}>().ok())")
-                } else {
-                    value
-                };
-                writeln!(source, "            let Some({name}) = {value} else {{ return contract::{error_type}::InternalError; }};")
-                    .expect("writing to a String cannot fail");
-            } else if numeric {
-                writeln!(source, "            let Ok({name}) = {value}.map(|value| value.parse::<{revision_type}>()).transpose() else {{ return contract::{error_type}::InternalError; }};")
-                    .expect("writing to a String cannot fail");
-            } else {
-                writeln!(source, "            let {name} = {value};")
-                    .expect("writing to a String cannot fail");
+            let numeric = matches!(key, OperationErrorDetailKey::ExpectedRowVersion | OperationErrorDetailKey::ObservedRowVersion);
+            let internal = quote!(return contract::#error_type::InternalError;);
+            match (required, numeric) {
+                (true, true) => quote!(let Some(#name) = #value.and_then(|value| value.parse::<#revision_type>().ok()) else { #internal };),
+                (true, false) => quote!(let Some(#name) = #value else { #internal };),
+                (false, true) => quote!(let Ok(#name) = #value.map(|value| value.parse::<#revision_type>()).transpose() else { #internal };),
+                (false, false) => quote!(let #name = #value;),
             }
-        }
-        if declaration.required.is_empty() && declaration.optional.is_empty() {
-            writeln!(source, "            contract::{error_type}::{variant}")
-                .expect("writing to a String cannot fail");
+        });
+        let result = if declaration.required.is_empty() && declaration.optional.is_empty() {
+            quote!(contract::#error_type::#variant)
         } else {
-            writeln!(
-                source,
-                "            contract::{error_type}::{variant}(contract::{variant}Detail {{"
-            )
-            .expect("writing to a String cannot fail");
-            for key in declaration.required.iter().chain(&declaration.optional) {
-                writeln!(source, "                {},", detail_name(*key))
-                    .expect("writing to a String cannot fail");
+            quote!(contract::#error_type::#variant(contract::#detail_type { #(#names,)* }))
+        };
+        quote!(#literal => { #(#bindings)* #result })
+    });
+    quote! {
+        #[allow(dead_code)]
+        pub(crate) fn map_error(code: &str, mut detail: impl FnMut(&str) -> Option<String>) -> contract::#error_type {
+            match code {
+                #(#arms)*
+                _ => contract::#error_type::InternalError,
             }
-            source.push_str("            })\n");
         }
-        source.push_str("        }\n");
-    }
-    writeln!(
-        source,
-        "        _ => contract::{error_type}::InternalError,\n    }}\n}}"
-    )
-    .expect("writing to a String cannot fail");
-    source
-}
-
-fn detail_name(key: OperationErrorDetailKey) -> &'static str {
-    match key {
-        OperationErrorDetailKey::Field => "field",
-        OperationErrorDetailKey::Id => "id",
-        OperationErrorDetailKey::ExpectedRowVersion => "expected_row_version",
-        OperationErrorDetailKey::ObservedRowVersion => "observed_row_version",
-        OperationErrorDetailKey::Minimum => "minimum",
-        OperationErrorDetailKey::Maximum => "maximum",
-        OperationErrorDetailKey::Observed => "observed",
-        OperationErrorDetailKey::Constraint => "constraint",
-        OperationErrorDetailKey::Operation => "operation",
     }
 }
 
 /// Emit an operation export that validates before calling the application.
-pub(super) fn emit_export_adapter(type_name: &str, direct: bool, transacted: bool) -> String {
-    let (input, output, export) = if direct {
+pub(super) fn emit_export_adapter(type_name: &str, direct: bool, transacted: bool) -> TokenStream {
+    let (input, output, error, export) = if direct {
+        let request = rust_ident(&[type_name, "Request"].concat());
         (
-            format!("contract::{type_name}Request"),
-            format!("contract::{type_name}Request"),
-            "export_direct",
+            quote!(contract::#request),
+            quote!(contract::#request),
+            None,
+            quote!(export_direct),
         )
     } else {
+        let item = rust_ident(&[type_name, "Item"].concat());
+        let outcome = rust_ident(&[type_name, "Outcome"].concat());
+        let error = rust_ident(&[type_name, "Error"].concat());
+        let export = if transacted {
+            quote!(export_transaction)
+        } else {
+            quote!(export_batch)
+        };
         (
-            format!("Vec<contract::{type_name}Item>"),
-            format!("Vec<contract::{type_name}Outcome>"),
-            if transacted {
-                "export_transaction"
-            } else {
-                "export_batch"
-            },
+            quote!(Vec<contract::#item>),
+            quote!(Vec<contract::#outcome>),
+            Some(quote!(#[allow(dead_code)] pub(crate) type OperationError = contract::#error;)),
+            export,
         )
     };
-    let error = if direct {
-        String::new()
-    } else {
-        format!(
-            "#[allow(dead_code)]\npub(crate) type OperationError = contract::{type_name}Error;\n"
-        )
-    };
-    format!(
-        "pub(crate) type Input = {input};\npub(crate) type Output = {output};\n{error}pub(crate) use wamn_guest::{export} as export_operation;\n"
-    )
+    quote! {
+        pub(crate) type Input = #input;
+        pub(crate) type Output = #output;
+        #error
+        pub(crate) use wamn_guest::#export as export_operation;
+    }
 }

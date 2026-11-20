@@ -10,8 +10,8 @@
 import { cleanup, fireEvent, render, screen } from "@solidjs/testing-library";
 import { afterEach, beforeEach } from "vitest";
 
-import { member, user } from "../src/generated/wamn_control_org/index.js";
-import { permission } from "../src/generated/wamn_control/index.js";
+import { member, user } from "../src/control-client";
+import { permission } from "../src/application-client";
 
 import { createSignal, flush, For } from "solid-js";
 
@@ -111,7 +111,7 @@ const ADMINISTRATION: ShellSection = {
   screens: [
     {
       path: "administration/roles",
-      operation: permission.PERMISSION_LIST_ROUTE.operation,
+      operation: permission.list.route.operation,
       label: "roles",
       component: () => <p>role</p>,
     },
@@ -126,16 +126,14 @@ const ADMINISTRATION: ShellSection = {
 const CONTROL_SECTIONS: readonly ShellSection[] = [
   {
     label: "Org",
-    screens: [
-      { path: "org", operation: user.USER_LIST_ROUTE.operation, label: "org", component: () => <p>members</p> },
-    ],
+    screens: [{ path: "org", operation: user.list.route.operation, label: "org", component: () => <p>members</p> }],
   },
   {
     label: "Projects",
     screens: [
       {
         path: "projects/:project",
-        operation: member.MEMBER_LIST_ROUTE.operation,
+        operation: member.list.route.operation,
         label: "project",
         component: (props) => <p>members of {props.params.project}</p>,
       },
@@ -161,11 +159,7 @@ const ORG_ADMIN = {
  * The identity service, holding one session cookie or none, with the
  * application host's `permission.mine`.
  */
-export function identity(
-  signedIn: boolean,
-  mine: unknown = ADMIN,
-  control: unknown = ORG_ADMIN,
-) {
+export function identity(signedIn: boolean, mine: unknown = ADMIN, control: unknown = ORG_ADMIN) {
   const state = {
     signedIn,
     calls: [] as string[],

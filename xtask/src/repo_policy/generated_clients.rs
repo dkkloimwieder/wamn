@@ -2,7 +2,6 @@
 //! sources (docs/architecture/overview.md#application-ownership).
 //!
 //! The lint refuses a tracked file that is:
-//! - in a `client-ts` directory: a TypeScript client generated from contracts.
 //! - in a `generated` or `.sqlx` directory under `apps/`: a package's build
 //!   output, which `wamn build` writes to `apps/target/wamn/<package>`.
 //!
@@ -48,9 +47,8 @@ pub(super) fn report_problems(root: &Path, problems: &mut Problems) {
 
 fn is_build_output(path: &str) -> bool {
     let components = path.split('/').collect::<Vec<_>>();
-    components.contains(&"client-ts")
-        || (components.first() == Some(&"apps")
-            && components
-                .iter()
-                .any(|component| *component == "generated" || *component == ".sqlx"))
+    components.first() == Some(&"apps")
+        && components
+            .iter()
+            .any(|component| *component == "generated" || *component == ".sqlx")
 }

@@ -4,7 +4,14 @@ import { AlertDialog } from "@wfe/components";
 import { Button, FieldError } from "@wfe/components/fields";
 import { createForm } from "@wfe/form";
 import { FormView, type FormDescription } from "@wfe/generator";
-import { application, environment, operation, release, schema } from "./generated/wamn_control_org/index.js";
+import {
+  application,
+  environment,
+  operation,
+  schema,
+  type EnvironmentStatusResult,
+  type OperationStatusResult,
+} from "./control-client";
 import { MissingPage, Page } from "./page";
 import { DashboardPanel } from "@wfe/components/layout";
 import { EnvironmentTiles } from "./status-tiles";
@@ -13,22 +20,22 @@ import { value } from "./outcome";
 import type { ScreenProps } from "./shell";
 
 const operationActions = {
-  deploy: { label: "Deploy release", route: application.APPLICATION_DEPLOY_ROUTE, effect: "" },
-  stop: { label: "Stop application", route: application.APPLICATION_STOP_ROUTE, effect: "" },
+  deploy: { label: "Deploy release", route: application.deploy.route, effect: "" },
+  stop: { label: "Stop application", route: application.stop.route, effect: "" },
   rollback: {
     label: "Rollback application",
-    route: application.APPLICATION_ROLLBACK_ROUTE,
+    route: application.rollback.route,
     effect: "Replace the running application code with the selected or previous release. SQL is not reversed.",
   },
-  diff: { label: "Diff schema", route: schema.SCHEMA_DIFF_ROUTE, effect: "" },
+  diff: { label: "Diff schema", route: schema.diff.route, effect: "" },
   apply: {
     label: "Apply schema",
-    route: schema.SCHEMA_APPLY_ROUTE,
+    route: schema.apply.route,
     effect: "Apply SQL changes to this application's database tables. Changes may remove data.",
   },
   reset: {
     label: "Reset schema",
-    route: schema.SCHEMA_RESET_ROUTE,
+    route: schema.reset.route,
     effect:
       "Stop all applications, clear their data, runs, queued events and authored workflows, then reapply migrations.",
   },
@@ -37,7 +44,7 @@ const operationActions = {
 function OperationControls(props: ScreenProps) {
   const config = untrack(() => ({ project: props.params.project!, env: props.params.env! }));
   const [action, setAction] = createSignal<keyof typeof operationActions>();
-  const [observed, setObserved] = createSignal<operation.OperationStatusResult>();
+  const [observed, setObserved] = createSignal<OperationStatusResult>();
   const [busy, setBusy] = createSignal(false);
   const [trouble, setTrouble] = createSignal<string>();
   const controller = new AbortController();
@@ -79,11 +86,13 @@ function OperationControls(props: ScreenProps) {
         <Show when={action()} keyed>
           {(selected) => {
             const entry = operationActions[selected];
-            const defaults = { application: "", release: "" };
+            const defaults = { application: "", release: "", revision: "" };
             const [values, setValues] = createSignal(defaults);
             const [confirmation, setConfirmation] = createSignal<typeof defaults>();
             const needsApplication = selected !== "reset";
-            const needsRelease = selected !== "stop" && selected !== "reset";
+            const needsRevision = selected === "rollback";
+            const needsRelease = selected !== "stop" && selected !== "reset" && !needsRevision;
+            const requiresRelease = selected === "deploy" || selected === "apply";
             const start = async (snapshot: typeof defaults) => {
               if (busy() || controller.signal.aborted || !props.holds(entry.route.operation, config.project)) return;
               setBusy(true);
@@ -112,11 +121,28 @@ function OperationControls(props: ScreenProps) {
                           options,
                         )
                       : selected === "rollback"
-                        ? application.rollback(props.transport, [{ requestId, value: target }], options)
+                        ? application.rollback(
+                            props.transport,
+                            [
+                              {
+                                requestId,
+                                value: {
+                                  ...config,
+                                  application: target.application,
+                                  revision: snapshot.revision.trim() ? Number(snapshot.revision) : null,
+                                },
+                              },
+                            ],
+                            options,
+                          )
                         : selected === "diff"
                           ? schema.diff(props.transport, [{ requestId, value: target }], options)
                           : selected === "apply"
-                            ? schema.apply(props.transport, [{ requestId, value: target }], options)
+                            ? schema.apply(
+                                props.transport,
+                                [{ requestId, value: { ...target, release: snapshot.release.trim() } }],
+                                options,
+                              )
                             : schema.reset(props.transport, [{ requestId, value: config }], options)),
                 );
                 if (controller.signal.aborted) return;
@@ -133,12 +159,19 @@ function OperationControls(props: ScreenProps) {
               values,
               defaults: () => defaults,
               onValuesChange: setValues,
-              validate: (snapshot) =>
-                needsApplication && !snapshot.application.trim()
-                  ? { form: "Enter an application." }
-                  : selected === "deploy" && !snapshot.release.trim()
-                    ? { form: "Enter a release digest." }
-                    : {},
+              validate: (snapshot) => {
+                if (needsApplication && !snapshot.application.trim()) return { form: "Enter an application." };
+                if (requiresRelease && !snapshot.release.trim()) return { form: "Enter a release digest." };
+                const revision = snapshot.revision.trim();
+                if (
+                  needsRevision &&
+                  revision &&
+                  (!/^\d+$/.test(revision) || Number(revision) < 1 || Number(revision) > 2_147_483_647)
+                ) {
+                  return { form: "Enter a positive revision up to 2147483647." };
+                }
+                return {};
+              },
               onSubmit: async (snapshot) => {
                 if (entry.effect) setConfirmation(snapshot);
                 else await start(snapshot);
@@ -163,10 +196,13 @@ function OperationControls(props: ScreenProps) {
                           ? [
                               {
                                 field: "release",
-                                label: selected === "deploy" ? "Release digest" : "Release digest (optional)",
+                                label: requiresRelease ? "Release digest" : "Release digest (optional)",
                                 control: "text",
                               } as const,
                             ]
+                          : []),
+                        ...(needsRevision
+                          ? [{ field: "revision", label: "Revision (optional)", control: "text" } as const]
                           : []),
                       ],
                       submit: { id: "start", label: `Start ${entry.label.toLowerCase()}` },
@@ -187,7 +223,8 @@ function OperationControls(props: ScreenProps) {
                       <AlertDialog.Description>
                         Project: {config.project}; environment: {config.env}; application:{" "}
                         {needsApplication ? confirmation()?.application : "all applications"}.
-                        {needsRelease && ` Release: ${confirmation()?.release || "configured or previous release"}. `}
+                        {needsRelease && ` Release: ${confirmation()?.release || "configured release"}. `}
+                        {needsRevision && ` Revision: ${confirmation()?.revision || "previous revision"}. `}
                         {entry.effect}
                       </AlertDialog.Description>
                       <AlertDialog.Cancel>Cancel</AlertDialog.Cancel>
@@ -223,24 +260,12 @@ function OperationControls(props: ScreenProps) {
 
 export function Environment(
   props: ScreenProps & {
-    table?: "workloads" | "live-releases" | "operations" | "roles";
+    table?: "workloads" | "live-releases";
   },
 ): JSX.Element {
   const config = untrack(() => ({ project: props.params.project!, env: props.params.env! }));
   const [state, setState] = createSignal<"active" | "inactive">();
-  const [status, setStatus] = createSignal<environment.EnvironmentStatusResult>();
-  const [profile, setProfile] = createSignal<release.ReleaseProfileResult>();
-  const [selection, setSelection] = createSignal<string>();
-  type ResidentRelease = environment.EnvironmentStatusResult["residency"][number];
-  const selectionKey = (entry: ResidentRelease) => `${entry.application}@${entry.manifestDigest}`;
-  const selectRelease = async (entry: ResidentRelease | undefined) => {
-    const key = entry && selectionKey(entry);
-    if (selection() !== key || !entry) setProfile(undefined);
-    setSelection(key);
-    if (!entry) return;
-    const nextProfile = value(await release.profile(props.transport, [{ ...config, digest: entry.manifestDigest }]));
-    if (active && selection() === key) setProfile(nextProfile);
-  };
+  const [status, setStatus] = createSignal<EnvironmentStatusResult>();
   const [trouble, setTrouble] = createSignal<string>();
   const [missing, setMissing] = createSignal(false);
   const [pending, setPending] = createSignal(false);
@@ -264,8 +289,6 @@ export function Environment(
     const next = value(observed);
     if (!active) return;
     setStatus(next);
-    const selected = next.residency.find((entry) => selectionKey(entry) === selection()) ?? next.residency[0];
-    await selectRelease(selected);
   };
   void untrack(refresh).catch((error: unknown) => {
     if (active) setTrouble(String(error));
@@ -290,30 +313,6 @@ export function Environment(
   return (
     <Show when={!missing()} fallback={<MissingPage />}>
       <Show when={trouble()}>{(text) => <FieldError role="alert">{text()}</FieldError>}</Show>
-      <Show
-        when={(!props.table || props.table === "operations" || props.table === "roles") && status()?.residency.length}
-      >
-        <label>
-          Application release
-          <select
-            value={selection() ?? ""}
-            onChange={(event) => {
-              const selected = status()?.residency.find((entry) => selectionKey(entry) === event.currentTarget.value);
-              void selectRelease(selected).catch((error: unknown) => {
-                if (active) setTrouble(String(error));
-              });
-            }}
-          >
-            <For each={status()?.residency}>
-              {(entry) => (
-                <option value={selectionKey(entry)}>
-                  {entry.application}: {entry.manifestDigest}
-                </option>
-              )}
-            </For>
-          </select>
-        </label>
-      </Show>
       <Show when={!props.table}>
         <Page
           title={`${config.project}/${config.env}`}
@@ -322,9 +321,7 @@ export function Environment(
               when={
                 state() &&
                 props.holds(
-                  state() === "active"
-                    ? environment.ENVIRONMENT_INACTIVATE_ROUTE.operation
-                    : environment.ENVIRONMENT_ACTIVATE_ROUTE.operation,
+                  state() === "active" ? environment.inactivate.route.operation : environment.activate.route.operation,
                 )
               }
             >
@@ -379,57 +376,15 @@ export function Environment(
           <Records
             refresh={refresh}
             id="live-releases"
-            title="Resident releases"
-            rows={status()?.residency ?? []}
-            rowKey={(entry) => `${entry.application}:${entry.manifestDigest}`}
+            title="Live releases"
+            rows={status()?.workloads ?? []}
+            rowKey={(entry) => entry.name}
             columns={[
               { id: "application", header: "Application", accessorKey: "application" },
-              { id: "manifestDigest", header: "Release", accessorKey: "manifestDigest", size: 150 },
-              { id: "loaded", header: "Loaded", accessorFn: (entry) => (entry.loaded ? "Yes" : "No") },
-              { id: "runs", header: "Run pins", accessorFn: (entry) => entry.runs.join(", ") },
+              { id: "packageDigest", header: "Package digest", accessorKey: "packageDigest", size: 150 },
+              { id: "revision", header: "Revision", accessorKey: "revision" },
             ]}
-            formats={{ manifestDigest: "short-hash" }}
-          />
-        </div>
-      </Show>
-      <Show when={props.table === "operations" && (profile() || (status() && !status()?.residency.length))}>
-        <div class="platform-table-screen">
-          <Records
-            refresh={refresh}
-            id="operations"
-            title="Operations"
-            rows={profile()?.operations ?? []}
-            rowKey={(entry) => entry.operation}
-            columns={[
-              { id: "operation", header: "Operation", accessorKey: "operation", size: 400 },
-              { id: "package", header: "Package", accessorKey: "package", size: 250 },
-              { id: "component", header: "Component", accessorKey: "component", size: 250 },
-            ]}
-          />
-        </div>
-      </Show>
-      <Show when={props.table === "roles" && (profile() || (status() && !status()?.residency.length))}>
-        <div class="platform-table-screen">
-          <Records
-            refresh={refresh}
-            id="roles"
-            title="Roles"
-            rows={profile()?.roles ?? []}
-            rowKey={(entry) => entry.role}
-            columns={[
-              { id: "role", header: "Role", accessorKey: "role" },
-              { id: "operations", header: "Operations", accessorFn: (entry) => entry.operations.length },
-            ]}
-            details={(cell) => (
-              <Records
-                refresh={refresh}
-                id="role-operations"
-                title="Role operations"
-                rows={cell.row.operations}
-                rowKey={(entry) => entry}
-                columns={[{ id: "operation", header: "Operation", accessorFn: (entry) => entry }]}
-              />
-            )}
+            formats={{ packageDigest: "short-hash" }}
           />
         </div>
       </Show>

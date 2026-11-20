@@ -1,13 +1,14 @@
 //! Authored feeding reads use the generated snapshot and cursor contract.
 
+use quote::quote;
 use std::collections::BTreeMap;
-use std::fmt::Write as _;
 use wamn_scalar::SqlValueType;
 
 use super::rust::projected_rust_type;
-use super::{CatalogIr, insert_bytes, sql};
+use super::rust_source::{insert_rust, rust_ident};
+use super::{CatalogIr, sql};
 use wamn_catalog::manifest::ManifestError as GenerateError;
-use wamn_catalog::manifest::{CustomOperationDeclaration, rust_identifier, rust_type_identifier};
+use wamn_catalog::manifest::{CustomOperationDeclaration, rust_type_identifier};
 use wamn_catalog::manifest::{
     StaticSqlFetch, StaticSqlStatementDeclaration, StaticSqlValueDeclaration, custom_artifact_stem,
 };
@@ -174,9 +175,7 @@ pub(super) fn emit(
     emit_component(files, &manifest.package.id, name, compiled, key_type)
 }
 
-fn member(name: &str) -> String {
-    rust_identifier(name).expect("validated field")
-}
+const HEADER: &str = "// @generated from the authored feed; do not edit.\n";
 
 fn emit_data(
     files: &mut BTreeMap<String, Vec<u8>>,
@@ -192,7 +191,7 @@ fn emit_data(
         .values()
         .next()
         .expect("validated statement");
-    let key = member(&operation.lists.as_ref().expect("validated list").key_field[0]);
+    let key = rust_ident(&operation.lists.as_ref().expect("validated list").key_field[0]);
     let id_type = super::data::cursor_key_type(key_type);
     let permission = wamn_catalog::manifest::canonical_operation_identity(package, name)?;
     let query = name.as_str();
@@ -202,162 +201,125 @@ fn emit_data(
         .fields
         .iter()
         .filter(|field| field.path != "row_version")
-        .fold(String::new(), |mut fields, field| {
-            write!(
-                fields,
-                "pub {}: {},",
-                member(&field.path),
-                projected_rust_type(field.ty, field.nullable)
+        .map(|field| {
+            let name = rust_ident(&field.path);
+            let ty = projected_rust_type(field.ty, field.nullable);
+            quote!(pub #name: #ty,)
+        });
+    let input_fields = statement.parameters.iter().map(|field| {
+        let name = rust_ident(field.name.as_str());
+        let ty = super::data::request_type(field.ty);
+        let ty = if field.nullable {
+            quote!(Option<#ty>)
+        } else {
+            ty
+        };
+        quote!(pub #name: #ty,)
+    });
+    let binds = statement.parameters.iter().map(|field| {
+        let path = field.name.as_str();
+        let field_name = rust_ident(path);
+        let input = quote!(input.#field_name);
+        let parsed = if field.nullable {
+            super::data::parse(field.ty, &quote!(value), path).map_or_else(
+                || quote!(#input),
+                |value| quote!(#input.map(|value| #value).transpose()?),
             )
-            .expect("writing to a String cannot fail");
-            fields
-        });
-    let input_fields = statement
-        .parameters
-        .iter()
-        .fold(String::new(), |mut fields, field| {
-            let ty = super::data::request_type(field.ty);
-            write!(
-                fields,
-                "pub {}: {},",
-                member(field.name.as_str()),
-                if field.nullable {
-                    format!("Option<{ty}>")
-                } else {
-                    ty.to_owned()
-                }
-            )
-            .expect("writing to a String cannot fail");
-            fields
-        });
-    let binds = statement
-        .parameters
-        .iter()
-        .fold(String::new(), |mut binds, field| {
-            let field_name = member(field.name.as_str());
-            let parsed = if field.nullable {
-                let parsed = super::data::parse(field.ty, "value", field.name.as_str());
-                parsed.strip_suffix('?').map_or_else(
-                    || format!("input.{field_name}"),
-                    |parsed| format!("input.{field_name}.map(|value| {parsed}).transpose()?"),
-                )
-            } else {
-                super::data::parse(
-                    field.ty,
-                    &format!("input.{field_name}"),
-                    field.name.as_str(),
-                )
-            };
-            writeln!(binds, "let {field_name} = {parsed};")
-                .expect("writing to a String cannot fail");
-            binds
-        });
+        } else {
+            super::data::parse(field.ty, &input, path)
+                .map_or_else(|| quote!(#input), |value| quote!(#value?))
+        };
+        quote!(let #field_name = #parsed;)
+    });
     let args = statement
         .parameters
         .iter()
-        .map(|field| member(field.name.as_str()))
-        .collect::<Vec<_>>()
-        .join(", ");
-    let args = if args.is_empty() {
-        args
-    } else {
-        format!("{args}, ")
-    };
+        .map(|field| rust_ident(field.name.as_str()));
+    let args = quote!(#(#args,)*);
     let members = result
         .fields
         .iter()
         .filter(|field| field.path != "row_version")
         .map(|field| {
-            let name = member(&field.path);
+            let name = rust_ident(&field.path);
             if field.nullable {
-                format!("{name}: row.{name},")
+                quote!(#name: row.#name,)
             } else {
-                format!("{name}: row.{name}.ok_or_else(Error::internal)?,")
+                quote!(#name: row.#name.ok_or_else(Error::internal)?,)
             }
-        })
-        .collect::<String>();
+        });
     let input = if statement.parameters.is_empty() {
-        "_input"
+        quote!(_input)
     } else {
-        "input"
+        quote!(input)
     };
-    let row_id = if key_type == SqlValueType::Uuid {
-        "row.change_id.clone()"
+    let (row_id, change_id) = if key_type == SqlValueType::Uuid {
+        (quote!(row.change_id.clone()), quote!(id.clone()))
     } else {
-        "row.change_id"
+        (quote!(row.change_id), quote!(id))
     };
-    let change_id = if key_type == SqlValueType::Uuid {
-        "id.clone()"
-    } else {
-        "id"
+    let include = format!("../wamn/{stem}.rs");
+    let source = quote! {
+        #[allow(unused_imports)]
+        use wamn_guest::data_access::{Invalid, feed, scalar};
+        use wamn_guest::postgres_statements::Connection;
+        use super::error::{Constraints, Error};
+        /// The statement accessors of the authored read.
+        pub mod sql { include!(#include); }
+        const QUERY: &str = #query;
+        const PERMISSION: &str = #permission_text;
+        #[derive(Debug)]
+        pub struct Row { #(#row_fields)* pub row_version: i64 }
+        #[derive(Debug)]
+        pub struct Input { #(#input_fields)* }
+        #[derive(Debug)]
+        pub struct FeedInput { pub cursor: Option<String>, pub limit: i64 }
+        #[derive(Debug)]
+        pub enum Output { Page { rows: Vec<Row>, cursor: String }, Changes(feed::id::Changes<Row, #id_type>) }
+        macro_rules! live_row { ($row:expr, $version:expr) => {{
+            let row = $row;
+            if row.#key.is_none() { None } else { Some(Row { #(#members)* row_version: $version }) }
+        }}; }
+        /// Run the authored page or its changes in one statement.
+        ///
+        /// # Errors
+        ///
+        /// The operation contract refusal.
+        pub async fn read(connection: &mut Connection, #input: Input, part: Option<FeedInput>) -> Result<Output, Error> {
+            #(#binds)*
+            let refusal = |error| Error::from_statement(&error, &Constraints::NONE, PERMISSION);
+            if let Some(part) = part {
+                let cursor = part.cursor.as_deref().map(|encoded| feed::id::decode::<#id_type>(encoded, QUERY)).transpose().map_err(|Invalid| Error::invalid("cursor"))?;
+                let (transaction, after) = cursor.map_or((None, None), |cursor| (Some(cursor.transaction), cursor.after));
+                let rows = sql::feed_changes(connection, #args transaction, after, part.limit + 1).await.map_err(refusal)?;
+                let mut end = None;
+                let mut changed = Vec::with_capacity(rows.len());
+                for row in rows {
+                    if row.expired == Some(true) { return Err(Error::cursor_expired()); }
+                    let version = row.feed_end.ok_or_else(Error::internal)?;
+                    end = Some(version);
+                    if let (Some(id), Some(transaction)) = (#row_id, row.change_transaction) {
+                        let present = row.present == Some(true);
+                        let data = live_row!(row, version).filter(|_| present);
+                        let change = feed::id::Change { id: #change_id, row_version: version, data };
+                        changed.push(feed::id::Changed { transaction, id, change });
+                    }
+                }
+                return feed::id::Changes::new(QUERY, part.cursor.as_deref(), end.ok_or_else(Error::internal)?, changed, part.limit).map(Output::Changes).map_err(|Invalid| Error::internal());
+            }
+            let rows = sql::feed_page(connection, #args).await.map_err(refusal)?;
+            let mut end = None;
+            let mut result = Vec::with_capacity(rows.len());
+            for row in rows {
+                let version = row.feed_cursor.ok_or_else(Error::internal)?;
+                end = Some(version);
+                if let Some(row) = live_row!(row, version) { result.push(row); }
+            }
+            let cursor = feed::id::encode::<#id_type>(QUERY, &feed::id::Cursor { transaction: end.ok_or_else(Error::internal)?, after: None }).map_err(|Invalid| Error::internal())?;
+            Ok(Output::Page { rows: result, cursor })
+        }
     };
-    let text = format!(
-        r#"// @generated from the authored feed; do not edit.
-#[allow(unused_imports)]
-use wamn_guest::data_access::{{Invalid, feed, scalar}};
-use wamn_guest::postgres_statements::Connection;
-use super::error::{{Constraints, Error}};
-/// The statement accessors of the authored read.
-pub mod sql {{ include!("../wamn/{stem}.rs"); }}
-const QUERY: &str = {query:?};
-const PERMISSION: &str = {permission_text:?};
-#[derive(Debug)]
-pub struct Row {{ {row_fields} pub row_version: i64 }}
-#[derive(Debug)]
-pub struct Input {{ {input_fields} }}
-#[derive(Debug)]
-pub struct FeedInput {{ pub cursor: Option<String>, pub limit: i64 }}
-#[derive(Debug)]
-pub enum Output {{ Page {{ rows: Vec<Row>, cursor: String }}, Changes(feed::id::Changes<Row, {id_type}>) }}
-macro_rules! live_row {{ ($row:expr, $version:expr) => {{{{
-    let row = $row;
-    if row.{key}.is_none() {{ None }} else {{ Some(Row {{ {members} row_version: $version }}) }}
-}}}}; }}
-/// Run the authored page or its changes in one statement.
-///
-/// # Errors
-///
-/// The operation contract refusal.
-pub async fn read(connection: &mut Connection, {input}: Input, part: Option<FeedInput>) -> Result<Output, Error> {{
-    {binds}
-    let refusal = |error| Error::from_statement(&error, &Constraints::NONE, PERMISSION);
-    if let Some(part) = part {{
-        let cursor = part.cursor.as_deref().map(|encoded| feed::id::decode::<{id_type}>(encoded, QUERY)).transpose().map_err(|Invalid| Error::invalid("cursor"))?;
-        let (transaction, after) = cursor.map_or((None, None), |cursor| (Some(cursor.transaction), cursor.after));
-        let rows = sql::feed_changes(connection, {args}transaction, after, part.limit + 1).await.map_err(refusal)?;
-        let mut end = None;
-        let mut changed = Vec::with_capacity(rows.len());
-        for row in rows {{
-            if row.expired == Some(true) {{ return Err(Error::cursor_expired()); }}
-            let version = row.feed_end.ok_or_else(Error::internal)?;
-            end = Some(version);
-            if let (Some(id), Some(transaction)) = ({row_id}, row.change_transaction) {{
-                let present = row.present == Some(true);
-                let data = live_row!(row, version).filter(|_| present);
-                let change = feed::id::Change {{ id: {change_id}, row_version: version, data }};
-                changed.push(feed::id::Changed {{ transaction, id, change }});
-            }}
-        }}
-        return feed::id::Changes::new(QUERY, part.cursor.as_deref(), end.ok_or_else(Error::internal)?, changed, part.limit).map(Output::Changes).map_err(|Invalid| Error::internal());
-    }}
-    let rows = sql::feed_page(connection, {args}).await.map_err(refusal)?;
-    let mut end = None;
-    let mut result = Vec::with_capacity(rows.len());
-    for row in rows {{
-        let version = row.feed_cursor.ok_or_else(Error::internal)?;
-        end = Some(version);
-        if let Some(row) = live_row!(row, version) {{ result.push(row); }}
-    }}
-    let cursor = feed::id::encode::<{id_type}>(QUERY, &feed::id::Cursor {{ transaction: end.ok_or_else(Error::internal)?, after: None }}).map_err(|Invalid| Error::internal())?;
-    Ok(Output::Page {{ rows: result, cursor }})
-}}
-"#
-    );
-    insert_bytes(
-        files,
-        &format!("generated/data/{stem}.rs"),
-        text.into_bytes(),
-    )
+    insert_rust(files, &format!("generated/data/{stem}.rs"), HEADER, source)
 }
 
 fn emit_component(
@@ -370,86 +332,82 @@ fn emit_component(
     let operation = compiled.declaration;
     let stem = custom_artifact_stem(name);
     let (group, local) = name.as_str().split_once('.').expect("validated operation");
-    let namespace = namespace.as_str();
-    let group = group.replace('-', "_");
-    let local_module = local.replace('-', "_");
+    let namespace = rust_ident(namespace.as_str());
+    let group = rust_ident(group);
+    let local_module = rust_ident(local);
+    let module = rust_ident(&stem);
     let ty = rust_type_identifier(local);
+    let request = rust_ident(&[&ty, "Request"].concat());
+    let result = rust_ident(&[&ty, "Result"].concat());
+    let error = rust_ident(&[&ty, "Error"].concat());
+    let page = rust_ident(&[&ty, "Page"].concat());
+    let changes = rust_ident(&[&ty, "Changes"].concat());
+    let change = rust_ident(&[&ty, "Change"].concat());
+    let row = rust_ident(&[&ty, "Row"].concat());
     let statement = operation
         .statements
         .values()
         .next()
         .expect("validated statement");
-    let inputs = statement
-        .parameters
-        .iter()
-        .fold(String::new(), |mut inputs, field| {
-            write!(
-                inputs,
-                "{}: request.{}{},",
-                member(field.name.as_str()),
-                wamn_catalog::manifest::binding_identifier(field.name.as_str())
-                    .expect("validated input"),
-                if field.ty == SqlValueType::Json {
-                    if field.nullable {
-                        ".map(|value| value.encoded_json)"
-                    } else {
-                        ".encoded_json"
-                    }
-                } else {
-                    ""
-                }
-            )
-            .expect("writing to a String cannot fail");
-            inputs
-        });
+    let inputs = statement.parameters.iter().map(|field| {
+        let name = rust_ident(field.name.as_str());
+        let value = match (field.ty, field.nullable) {
+            (SqlValueType::Json, true) => quote!(request.#name.map(|value| value.encoded_json)),
+            (SqlValueType::Json, false) => quote!(request.#name.encoded_json),
+            _ => quote!(request.#name),
+        };
+        quote!(#name: #value,)
+    });
     let id = if key_type == SqlValueType::Uuid {
-        "change.id.0"
+        quote!(change.id.0)
     } else {
-        "change.id"
+        quote!(change.id)
     };
-    let row = format!("operation::row!(row, contract::{ty}Row)");
-    let (page, changes) = if compiled
+    let row = quote!(operation::row!(row, contract::#row));
+    let (page_rows, change_rows) = if compiled
         .result
         .as_ref()
         .is_some_and(|result| result.fields.iter().any(|field| !field.values.is_empty()))
     {
         (
-            format!(
-                "rows.into_iter().map(|row| Ok({row})).collect::<Result<_, contract::{ty}Error>>()?"
-            ),
-            format!(
-                "changes.rows.into_iter().map(|change| Ok(contract::{ty}Change {{ id: {id}, row_version: change.row_version, data: change.data.map(|row| Ok({row})).transpose()? }})).collect::<Result<_, contract::{ty}Error>>()?"
-            ),
+            quote!(rows.into_iter().map(|row| Ok(#row)).collect::<Result<_, contract::#error>>()?),
+            quote!(changes.rows.into_iter().map(|change| Ok(contract::#change {
+                id: #id,
+                row_version: change.row_version,
+                data: change.data.map(|row| Ok(#row)).transpose()?,
+            })).collect::<Result<_, contract::#error>>()?),
         )
     } else {
         (
-            format!("rows.into_iter().map(|row| {row}).collect()"),
-            format!(
-                "changes.rows.into_iter().map(|change| contract::{ty}Change {{ id: {id}, row_version: change.row_version, data: change.data.map(|row| {row}) }}).collect()"
-            ),
+            quote!(rows.into_iter().map(|row| #row).collect()),
+            quote!(changes.rows.into_iter().map(|change| contract::#change {
+                id: #id,
+                row_version: change.row_version,
+                data: change.data.map(|row| #row),
+            }).collect()),
         )
     };
-    let text = format!(
-        r#"// @generated from the authored feed; do not edit.
-use super::data::{stem} as model;
-use wamn_guest::postgres_statements::Connection;
-use crate::exports::{namespace}::{group}::{local_module} as contract;
-pub(crate) mod operation {{ use super::contract; include!("../wit/{stem}_operation.rs"); }}
-pub(crate) async fn handle(connection: &mut Connection, request: contract::{ty}Request) -> Result<contract::{ty}Result, contract::{ty}Error> {{
-    let input = model::Input {{ {inputs} }};
-    let part = request.feed.map(|part| model::FeedInput {{ cursor: part.cursor, limit: i64::from(part.limit.unwrap_or(100)) }});
-    let output = model::read(connection, input, part).await.map_err(|error| operation::map_error(error.literal(), |key| error.detail(key)))?;
-    Ok(match output {{
-        model::Output::Page {{ rows, cursor }} => contract::{ty}Result::Page(contract::{ty}Page {{ item: {page}, next_cursor: None, cursor }}),
-        model::Output::Changes(changes) => contract::{ty}Result::Changes(contract::{ty}Changes {{ rows: {changes}, next_cursor: changes.next_cursor, complete: changes.complete }}),
-    }})
-}}
-operation::export_operation!(crate::Component, contract, crate::wamn::node::types, Connection::new(), handle, operation);
-"#
-    );
-    insert_bytes(
+    let include = format!("../wit/{stem}_operation.rs");
+    let source = quote! {
+        use super::data::#module as model;
+        use wamn_guest::postgres_statements::Connection;
+        use crate::exports::#namespace::#group::#local_module as contract;
+        pub(crate) mod operation { use super::contract; include!(#include); }
+        pub(crate) async fn handle(connection: &mut Connection, request: contract::#request) -> Result<contract::#result, contract::#error> {
+            let input = model::Input { #(#inputs)* };
+            let part = request.feed.map(|part| model::FeedInput { cursor: part.cursor, limit: i64::from(part.limit.unwrap_or(100)) });
+            let output = model::read(connection, input, part).await.map_err(|error| operation::map_error(error.literal(), |key| error.detail(key)))?;
+            Ok(match output {
+                model::Output::Page { rows, cursor } => contract::#result::Page(contract::#page { item: #page_rows, next_cursor: None, cursor }),
+                model::Output::Changes(changes) => contract::#result::Changes(contract::#changes { rows: #change_rows, next_cursor: changes.next_cursor, complete: changes.complete }),
+            })
+        }
+        operation::export_operation!(crate::Component, contract, crate::wamn::node::types, Connection::new(), handle, operation);
+    };
+    insert_rust(
         files,
         &format!("generated/component/{stem}.rs"),
-        text.into_bytes(),
+        HEADER,
+        source,
     )
 }

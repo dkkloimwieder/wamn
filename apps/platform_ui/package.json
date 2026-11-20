@@ -7,9 +7,12 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "lint": "pnpm --workspace-root run wfe:build && tsc --noEmit",
-    "test": "pnpm --workspace-root run wfe:build && vitest run",
-    "build": "pnpm --workspace-root run wfe:build && vite build"
+    "openapi": "pnpm --workspace-root exec cargo xtask platform-ui-openapi",
+    "generate:clients": "pnpm run openapi && openapi-ts",
+    "lint": "pnpm run generate:clients && pnpm --workspace-root run wfe:build && tsc --noEmit",
+    "test": "pnpm run generate:clients && pnpm --workspace-root run wfe:build && vitest run",
+    "build": "pnpm run openapi && pnpm run build:platform",
+    "build:platform": "openapi-ts && pnpm --workspace-root run wfe:build && vite build"
   },
   "wamn": {
     "clients": [
@@ -27,6 +30,7 @@
     "@wamn/web-runtime": "workspace:*"
   },
   "devDependencies": {
+    "@hey-api/openapi-ts": "0.99.0",
     "@solidjs/testing-library": "1.0.0-beta.3",
     "@types/d3-shape": "3.1.8",
     "@types/node": "^24.19.1",

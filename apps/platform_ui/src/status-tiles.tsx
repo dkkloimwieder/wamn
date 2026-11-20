@@ -1,8 +1,8 @@
 import { createMemo } from "solid-js";
 import { StatusTile, TileRow } from "@wfe/components";
-import type { environment } from "./generated/wamn_control_org/index.js";
+import type { EnvironmentStatusResult } from "./control-client";
 
-export function EnvironmentTiles(props: { status?: environment.EnvironmentStatusResult; error?: string }) {
+export function EnvironmentTiles(props: { status?: EnvironmentStatusResult; error?: string }) {
   const complete = () => {
     const rollout = props.status?.rollout;
     return (
@@ -20,18 +20,16 @@ export function EnvironmentTiles(props: { status?: environment.EnvironmentStatus
     ).length;
     return { ready, notReady: entries.length - ready };
   });
-  const residency = createMemo(() => {
-    const entries = props.status?.residency;
-    if (!entries) return undefined;
-    const loaded = entries.filter((entry) => entry.loaded).length;
-    return { loaded, notLoaded: entries.length - loaded };
-  });
   return (
     <TileRow role="region" aria-label="Environment status">
       <StatusTile
-        label="Resident releases"
-        value={residency() ? `${residency()!.loaded} loaded / ${residency()!.notLoaded} not loaded` : "Unknown"}
-        state={!residency() ? "unknown" : residency()!.notLoaded || !complete() ? "warning" : "ok"}
+        label="Host replicas"
+        value={
+          props.status
+            ? `${props.status.rollout.readyReplicas} ready / ${props.status.rollout.replicas} total`
+            : "Unknown"
+        }
+        state={!props.status ? "unknown" : complete() ? "ok" : "warning"}
         detail={props.error}
       />
       <StatusTile

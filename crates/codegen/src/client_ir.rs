@@ -11,18 +11,11 @@ use crate::client_fields::{fields_of, input_fields_of, schema_fields};
 
 /// The input path that carries a page cursor.
 ///
-/// This path and the four below it are fixed by the query input contract that
-/// `generate/operations.rs` writes, so every consumer reads the same spelling.
+/// The query input contract in `generate/operations.rs` defines these paths.
 pub const CURSOR_INPUT: &str = "cursor";
 
 /// The input path that carries the page size.
 pub const LIMIT_INPUT: &str = "limit";
-
-/// The input path that carries the sort field.
-pub const SORT_FIELD_INPUT: &str = "sort.field";
-
-/// The input path that carries the sort direction.
-pub const SORT_DIRECTION_INPUT: &str = "sort.direction";
 
 /// The prefix of every filter input path.
 pub const FILTER_PREFIX: &str = "filter.";
@@ -44,7 +37,7 @@ impl ClientIrError {
         self.type_
     }
 
-    pub(super) fn new(type_: ClientIrErrorType, detail: impl Into<String>) -> Self {
+    fn new(type_: ClientIrErrorType, detail: impl Into<String>) -> Self {
         Self {
             type_,
             detail: detail.into(),
@@ -67,8 +60,6 @@ pub enum ClientIrErrorType {
     MalformedContract,
     /// A required contract member was absent.
     MissingMember,
-    /// One operation is published at more than one route.
-    AmbiguousRoute,
 }
 
 impl ClientIrErrorType {
@@ -78,7 +69,6 @@ impl ClientIrErrorType {
         match self {
             Self::MalformedContract => "malformed_contract",
             Self::MissingMember => "missing_member",
-            Self::AmbiguousRoute => "ambiguous_route",
         }
     }
 }
@@ -598,75 +588,6 @@ fn default_field_labels(fields: &mut [FieldIr]) {
     }
 }
 
-/// Index final publication documents without resolving references.
-pub fn published_routes(
-    published: BTreeMap<
-        wamn_catalog::canonical_name::CanonicalName,
-        wamn_catalog::ServingAttachment,
-    >,
-    declarations: &Value,
-) -> Result<BTreeMap<wamn_catalog::registered_operation::RegisteredOperation, RouteIr>, ClientIrError>
-{
-    let mut index =
-        BTreeMap::<wamn_catalog::registered_operation::RegisteredOperation, RouteIr>::new();
-    for (id, attachment) in published {
-        if attachment.type_ != wamn_catalog::AttachmentType::Http {
-            continue;
-        }
-        let Some(operation) = &attachment.registered_operation else {
-            continue;
-        };
-        let evidence = crate::client_route::evidence(&attachment, declarations)?;
-        let template = attachment
-            .definition
-            .pointer("/route/path")
-            .or_else(|| attachment.definition.pointer("/route/template"))
-            .and_then(Value::as_str)
-            .ok_or_else(|| {
-                ClientIrError::new(
-                    ClientIrErrorType::MissingMember,
-                    format!("attachment {id} has no route path"),
-                )
-            })?;
-        let (fields, result_class) = if evidence.direct {
-            (Vec::new(), None)
-        } else {
-            evidence
-                .output_schema
-                .as_ref()
-                .map_or((Vec::new(), None), |schema| {
-                    let value = schema.pointer("/items/properties/value").unwrap_or(schema);
-                    let class = (value["type"] == "object").then(|| "one".to_owned());
-                    (schema_fields(value, &[]), class)
-                })
-        };
-        let route = RouteIr {
-            method: String::new(),
-            template: template.to_owned(),
-            input_schema: evidence.input_schema,
-            terminal_operation: evidence.terminal_operation,
-            direct: evidence.direct,
-            response: ResponseIr {
-                schema: evidence.output_schema,
-                partial_schema: evidence.partial_schema,
-                fields,
-                result_class,
-                ..ResponseIr::default()
-            },
-            replay: None,
-        };
-        if let Some(existing) = index.insert(operation.clone(), route.clone())
-            && existing != route
-        {
-            return Err(ClientIrError::new(
-                ClientIrErrorType::AmbiguousRoute,
-                format!("operation {operation} has more than one published route"),
-            ));
-        }
-    }
-    Ok(index)
-}
-
 fn build_model(
     name: &str,
     operations: BTreeMap<String, &crate::OperationDescription>,
@@ -991,7 +912,7 @@ fn paging_of(input: &Value) -> Option<PagingIr> {
     })
 }
 
-fn errors_of(errors: Option<&Value>) -> Vec<ErrorCaseIr> {
+pub(crate) fn errors_of(errors: Option<&Value>) -> Vec<ErrorCaseIr> {
     let mut cases: Vec<ErrorCaseIr> = errors
         .and_then(|errors| errors.get("cases"))
         .and_then(Value::as_array)

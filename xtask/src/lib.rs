@@ -58,6 +58,8 @@ enum Task {
     GuestRustflags,
     /// Build, push, and stamp one platform chart.
     BuildPlatform(platform::Args),
+    /// Write the two platform UI OpenAPI documents.
+    PlatformUiOpenapi,
     /// Run the deployed application benchmark.
     Bench(bench::Args),
     /// Measure the deployed benchmark tier.
@@ -176,6 +178,7 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
             Ok(())
         }
         Task::BuildPlatform(args) => platform::run(args).await,
+        Task::PlatformUiOpenapi => platform::write_ui_openapi(&root),
         Task::Bench(args) => bench::run(args).await,
         Task::BenchTier(args) => bench_cloud::tier(&root, &args).await,
         Task::BenchPgMinimum(args) => bench_cloud::pg(&root, &args).await,

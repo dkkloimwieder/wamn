@@ -1,20 +1,25 @@
 import { cleanup, render, screen, waitFor, within } from "@solidjs/testing-library";
 import { describe, expect, it } from "vitest";
-import type { environment } from "../src/generated/wamn_control_org/index.js";
+import type { EnvironmentStatusResult } from "../src/control-client";
 import { createTransport } from "@wamn/web-runtime";
 import { EnvironmentTiles } from "../src/status-tiles";
 import { ControlHome } from "../src/control-home";
 import { CONTROL } from "./fixtures";
 
-const status: environment.EnvironmentStatusResult = {
-  digest: null,
+const status: EnvironmentStatusResult = {
   rollout: { replicas: 2, updatedReplicas: 2, readyReplicas: 2, availableReplicas: 2 },
   usersWithRole: 3,
   roles: 4,
   memberships: 5,
-  workloads: [{ name: "http", conditions: [{ type: "Ready", status: "True" }] }],
-  live: [],
-  residency: [{ application: "orders", manifestDigest: "sha256:release", loaded: true, runs: [] }],
+  workloads: [
+    {
+      name: "http",
+      application: "orders",
+      packageDigest: "sha256:release",
+      revision: 2,
+      conditions: [{ type: "Ready", status: "True" }],
+    },
+  ],
 };
 
 function tile(label: string, expected: readonly number[], view: Pick<typeof screen, "getByRole"> = screen) {
@@ -28,18 +33,18 @@ function tile(label: string, expected: readonly number[], view: Pick<typeof scre
 describe("Environment tiles", () => {
   it("shows a complete rollout, counts and ready workloads from one snapshot", () => {
     render(() => <EnvironmentTiles status={status} />);
-    tile("Resident releases", [1, 0]);
+    tile("Host replicas", [2, 2]);
     tile("Users with a role", [3]);
     tile("Roles", [4]);
     tile("Memberships", [5]);
     tile("Workloads", [1, 0]);
   });
 
-  it("keeps missing counters unknown without hiding measured workloads and residency", () => {
+  it("keeps missing counters unknown without hiding measured workloads and replicas", () => {
     render(() => <EnvironmentTiles status={{ ...status, usersWithRole: null, roles: null, memberships: null }} />);
     for (const label of ["Users with a role", "Roles", "Memberships"]) tile(label, []);
     tile("Workloads", [1, 0]);
-    tile("Resident releases", [1, 0]);
+    tile("Host replicas", [2, 2]);
     cleanup();
     render(() => <EnvironmentTiles />);
     for (const group of screen.getAllByRole("group")) {
@@ -62,9 +67,9 @@ describe("Environment tiles", () => {
           ...status,
           workloads: [
             ...status.workloads,
-            { name: "false", conditions: [{ type: "Ready", status: "False" }] },
-            { name: "unknown", conditions: [{ type: "Ready", status: "Unknown" }] },
-            { name: "missing", conditions: [{ type: "Scheduled", status: "True" }] },
+            { ...status.workloads[0]!, name: "false", conditions: [{ type: "Ready", status: "False" }] },
+            { ...status.workloads[0]!, name: "unknown", conditions: [{ type: "Ready", status: "Unknown" }] },
+            { ...status.workloads[0]!, name: "missing", conditions: [{ type: "Scheduled", status: "True" }] },
           ],
         }}
       />
@@ -118,14 +123,11 @@ describe("Control splash", () => {
             JSON.stringify([
               {
                 value: {
-                  digest: status.digest,
                   rollout: { replicas: 2, updated_replicas: 2, ready_replicas: 2, available_replicas: 2 },
                   users_with_role: input.project === "widgets" ? 3 : 8,
                   roles: 4,
                   memberships: 5,
                   workloads: status.workloads,
-                  live: [],
-                  residency: [],
                 },
               },
             ]),

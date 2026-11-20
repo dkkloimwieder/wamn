@@ -111,13 +111,14 @@ jmespath = "0.5.0"
 wamn-postgres = { path = "crates/postgres", version = "0.1.0" }
 
 quote = "1"
+proc-macro2 = "1.0.107"
 wamn-build = { path = "crates/build", version = "0.1.0" }
 wamn-broker = { path = "crates/broker", version = "0.1.0" }
 jsonwebtoken = { version = "11.1.0", default-features = false, features = ["aws_lc_rs", "use_pem"] }
 wamn-digest = { path = "crates/digest", version = "0.1.0" }
 wamn-scalar = { path = "crates/scalar", version = "0.1.0" }
 wit-component = "=0.254.2"
-wit-encoder = "=0.254.2"
+wit-encoder = { version = "=0.254.2", default-features = false }
 wit-parser = "=0.254.2"
 wamn-kubernetes = { path = "crates/kubernetes", version = "0.1.0" }
 mimalloc = "0.1.52"
@@ -198,6 +199,7 @@ rustls-platform-verifier = "0.7"
 rustix = { version = "1", features = ["fs", "process"] }
 schemars = "0.8"
 serde = "1"
+oas3 = { version = "=0.22.0", default-features = false }
 serde_json = "1"
 serde_yaml = "=0.9.34"
 sha2 = "0.11"

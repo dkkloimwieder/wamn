@@ -5,7 +5,15 @@ import { Button, FieldError } from "@wfe/components/fields";
 import { FormView, type FormDescription } from "@wfe/generator";
 import { createServerPage, Records } from "./records";
 import { createForm } from "@wfe/form";
-import { control, environment, member, project, projectAdmin, release } from "./generated/wamn_control_org/index.js";
+import {
+  control,
+  environment,
+  member,
+  project,
+  projectAdmin,
+  type EnvironmentListResultEnvironments,
+  type MemberListResultMembers,
+} from "./control-client";
 import type { Outcome } from "@wamn/web-runtime";
 import { MissingPage, Page, RecordLink } from "./page";
 import { GrantMembership } from "./membership";
@@ -16,7 +24,7 @@ import type { ScreenProps, ShellSection } from "./shell";
 
 function Projects(props: ScreenProps): JSX.Element {
   const page = createServerPage<{ name: string; state?: string; projectAdmin?: boolean }>(async (input) => {
-    if (!props.holds(project.PROJECT_LIST_ROUTE.operation)) {
+    if (!props.holds(project.list.route.operation)) {
       const mine = value(await control.mine(props.transport, [input]));
       return {
         ...mine,
@@ -52,7 +60,7 @@ function Projects(props: ScreenProps): JSX.Element {
         id="projects"
         title="Projects"
         create={
-          props.holds(project.PROJECT_CREATE_ROUTE.operation)
+          props.holds(project.create.route.operation)
             ? { label: "Create project", run: () => props.open("create-project") }
             : undefined
         }
@@ -60,7 +68,7 @@ function Projects(props: ScreenProps): JSX.Element {
         rowKey={(entry) => entry.name}
         columns={[
           { id: "project", header: "Project" },
-          ...(props.holds(project.PROJECT_LIST_ROUTE.operation)
+          ...(props.holds(project.list.route.operation)
             ? [{ id: "state", header: "State", accessorKey: "state" as const }]
             : []),
           { id: "projectAdmin", header: "Project admin", accessorKey: "projectAdmin" },
@@ -118,18 +126,18 @@ export function Project(props: ScreenProps & { table?: "environments" | "members
   const name = () => props.params.project!;
   const projectBase = () => `projects/${encodeURIComponent(name())}`;
   const base = () => (props.params.env ? `${projectBase()}/${encodeURIComponent(props.params.env)}` : projectBase());
-  const environmentPage = createServerPage<environment.EnvironmentListResultEnvironments>(async (input) => {
+  const environmentPage = createServerPage<EnvironmentListResultEnvironments>(async (input) => {
     const result = value(await environment.list(props.transport, [{ project: name(), ...input }]));
     return { ...result, rows: result.environments };
   });
   // The server keeps only the members of the selected environment.
   const memberFilter = () => ({ project: name(), ...(props.params.env ? { environment: props.params.env } : {}) });
-  const memberPage = createServerPage<member.MemberListResultMembers>(async (input) => {
+  const memberPage = createServerPage<MemberListResultMembers>(async (input) => {
     const result = value(await member.list(props.transport, [{ ...memberFilter(), ...input }]));
     return { ...result, rows: result.members };
   });
   const [state, setState] = createSignal<"active" | "inactive">();
-  const [members, setMembers] = createSignal<readonly member.MemberListResultMembers[]>([]);
+  const [members, setMembers] = createSignal<readonly MemberListResultMembers[]>([]);
   const [missing, setMissing] = createSignal(false);
   const [loaded, setLoaded] = createSignal(false);
   const [trouble, setTrouble] = createSignal<string>();
@@ -142,7 +150,7 @@ export function Project(props: ScreenProps & { table?: "environments" | "members
   const refresh = async () => {
     const current = ++refreshGeneration;
     setTrouble(undefined);
-    if (props.holds(project.PROJECT_LIST_ROUTE.operation)) {
+    if (props.holds(project.list.route.operation)) {
       const found = value(await project.list(props.transport, [{}])).projects.find((entry) => entry.name === name());
       if (!active || current !== refreshGeneration) return;
       setMissing(!found);
@@ -226,9 +234,7 @@ export function Project(props: ScreenProps & { table?: "environments" | "members
               when={
                 state() &&
                 props.holds(
-                  state() === "active"
-                    ? project.PROJECT_INACTIVATE_ROUTE.operation
-                    : project.PROJECT_ACTIVATE_ROUTE.operation,
+                  state() === "active" ? project.inactivate.route.operation : project.activate.route.operation,
                 )
               }
             >
@@ -285,7 +291,7 @@ export function Project(props: ScreenProps & { table?: "environments" | "members
             rows={memberPage.rows()}
             rowKey={(entry) => entry.principalId}
             create={
-              props.holds(member.MEMBER_GRANT_ROUTE.operation)
+              props.holds(member.grant.route.operation)
                 ? { label: "Grant membership", run: () => props.open(`${base()}/members/grant`) }
                 : undefined
             }
@@ -320,9 +326,7 @@ export function Project(props: ScreenProps & { table?: "environments" | "members
               actions={
                 <Show
                   when={props.holds(
-                    current().projectAdmin
-                      ? projectAdmin.PROJECT_ADMIN_REVOKE_ROUTE.operation
-                      : projectAdmin.PROJECT_ADMIN_GRANT_ROUTE.operation,
+                    current().projectAdmin ? projectAdmin.revoke.route.operation : projectAdmin.grant.route.operation,
                   )}
                 >
                   <Button
@@ -351,7 +355,7 @@ export function Project(props: ScreenProps & { table?: "environments" | "members
                 rows={current().environments}
                 rowKey={(env) => env}
                 create={
-                  props.holds(member.MEMBER_GRANT_ROUTE.operation)
+                  props.holds(member.grant.route.operation)
                     ? {
                         label: "Grant membership",
                         run: () => props.open(`${base()}/members/${encodeURIComponent(current().principalId)}/grant`),
@@ -369,7 +373,7 @@ export function Project(props: ScreenProps & { table?: "environments" | "members
                     </RecordLink>
                   ),
                   revoke: (cell) => (
-                    <Show when={props.holds(member.MEMBER_REVOKE_ROUTE.operation)}>
+                    <Show when={props.holds(member.revoke.route.operation)}>
                       <Button
                         class="ui-icon-button"
                         aria-label="Revoke membership"
@@ -407,31 +411,31 @@ export const controlSections: readonly ShellSection[] = [
       {
         path: "projects",
         label: "Projects",
-        operation: control.CONTROL_MINE_ROUTE.operation,
+        operation: control.mine.route.operation,
         component: Projects,
         scroll: "content",
       },
     ],
     routes: [
-      { path: "", operation: control.CONTROL_MINE_ROUTE.operation, component: ControlHome },
+      { path: "", operation: control.mine.route.operation, component: ControlHome },
       {
         path: "projects/:project/environments",
         label: "Environments",
-        operation: environment.ENVIRONMENT_LIST_ROUTE.operation,
+        operation: environment.list.route.operation,
         component: (props) => <Project {...props} table="environments" />,
         scroll: "content",
       },
       {
         path: "projects/:project/members",
         label: "Members",
-        operation: member.MEMBER_LIST_ROUTE.operation,
+        operation: member.list.route.operation,
         component: (props) => <Project {...props} table="members" />,
         scroll: "content",
       },
       {
         path: "projects/:project/members/grant",
         label: "Grant membership",
-        operation: member.MEMBER_GRANT_ROUTE.operation,
+        operation: member.grant.route.operation,
         component: (props) => (
           <GrantMembership {...props} returnTo={`projects/${encodeURIComponent(props.params.project!)}/members`} />
         ),
@@ -439,7 +443,7 @@ export const controlSections: readonly ShellSection[] = [
       {
         path: "projects/:project/members/:principal/grant",
         label: "Grant membership",
-        operation: member.MEMBER_GRANT_ROUTE.operation,
+        operation: member.grant.route.operation,
         component: (props) => (
           <GrantMembership
             {...props}
@@ -450,59 +454,45 @@ export const controlSections: readonly ShellSection[] = [
       {
         path: "create-project",
         label: "Create project",
-        operation: project.PROJECT_CREATE_ROUTE.operation,
+        operation: project.create.route.operation,
         component: CreateProject,
       },
       {
         path: "projects/:project/members/:principal",
-        operation: member.MEMBER_LIST_ROUTE.operation,
+        operation: member.list.route.operation,
         component: Project,
         scroll: "content",
       },
       {
         path: "projects/:project",
-        operation: member.MEMBER_LIST_ROUTE.operation,
+        operation: member.list.route.operation,
         component: Project,
       },
       {
         path: "projects/:project/:env/workloads",
         label: "Workloads",
-        operation: environment.ENVIRONMENT_STATUS_ROUTE.operation,
+        operation: environment.status.route.operation,
         component: (props) => <Environment {...props} table="workloads" />,
         scroll: "content",
       },
       {
         path: "projects/:project/:env/live-releases",
         label: "Live releases",
-        operation: environment.ENVIRONMENT_STATUS_ROUTE.operation,
+        operation: environment.status.route.operation,
         component: (props) => <Environment {...props} table="live-releases" />,
-        scroll: "content",
-      },
-      {
-        path: "projects/:project/:env/operations",
-        label: "Operations",
-        operation: release.RELEASE_PROFILE_ROUTE.operation,
-        component: (props) => <Environment {...props} table="operations" />,
-        scroll: "content",
-      },
-      {
-        path: "projects/:project/:env/roles",
-        label: "Roles",
-        operation: release.RELEASE_PROFILE_ROUTE.operation,
-        component: (props) => <Environment {...props} table="roles" />,
         scroll: "content",
       },
       {
         path: "projects/:project/:env/members",
         label: "Members",
-        operation: member.MEMBER_LIST_ROUTE.operation,
+        operation: member.list.route.operation,
         component: (props) => <Project {...props} table="members" />,
         scroll: "content",
       },
       {
         path: "projects/:project/:env/members/grant",
         label: "Grant membership",
-        operation: member.MEMBER_GRANT_ROUTE.operation,
+        operation: member.grant.route.operation,
         component: (props) => (
           <GrantMembership
             {...props}
@@ -513,7 +503,7 @@ export const controlSections: readonly ShellSection[] = [
       {
         path: "projects/:project/:env/members/:principal/grant",
         label: "Grant membership",
-        operation: member.MEMBER_GRANT_ROUTE.operation,
+        operation: member.grant.route.operation,
         component: (props) => (
           <GrantMembership
             {...props}
@@ -523,13 +513,13 @@ export const controlSections: readonly ShellSection[] = [
       },
       {
         path: "projects/:project/:env/members/:principal",
-        operation: member.MEMBER_LIST_ROUTE.operation,
+        operation: member.list.route.operation,
         component: Project,
         scroll: "content",
       },
       {
         path: "projects/:project/:env",
-        operation: environment.ENVIRONMENT_STATUS_ROUTE.operation,
+        operation: environment.status.route.operation,
         component: Environment,
       },
     ],

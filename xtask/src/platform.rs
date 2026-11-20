@@ -5,7 +5,8 @@ use anyhow::{Context as _, ensure};
 use clap::Args as ClapArgs;
 use docker_credential::{CredentialRetrievalError, DockerCredential};
 use serde_json::Value;
-use std::path::PathBuf;
+use std::io::Write as _;
+use std::path::{Path, PathBuf};
 use wamn_build::GuestTarget;
 use wamn_platform_install::release_chart::{self, ImageSet};
 
@@ -30,6 +31,22 @@ pub struct Args {
     /// Platform Helm values. A GCP web bucket selects the platform UI.
     #[arg(long)]
     cluster: Option<PathBuf>,
+}
+
+pub(crate) fn write_ui_openapi(root: &Path) -> anyhow::Result<()> {
+    use wamn_catalog::HostRouteSet;
+
+    let output = root.join("apps/target/wamn/platform_ui");
+    std::fs::create_dir_all(&output)?;
+    for (file, set) in [
+        ("application.openapi.json", HostRouteSet::Application),
+        ("control.openapi.json", HostRouteSet::Control),
+    ] {
+        let mut document = tempfile::NamedTempFile::new_in(&output)?;
+        document.write_all(&wamn_codegen::host_openapi(set)?)?;
+        document.persist(output.join(file))?;
+    }
+    Ok(())
 }
 
 pub async fn run(args: Args) -> anyhow::Result<()> {
@@ -125,7 +142,13 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
             std::fs::copy(components.path().join(&name), palette_directory.join(name))?;
         }
         if ui {
-            process::run(&root, "pnpm", &["--filter", "@wamn/platform-ui", "build"]).await?;
+            write_ui_openapi(&root)?;
+            process::run(
+                &root,
+                "pnpm",
+                &["--filter", "@wamn/platform-ui", "build:platform"],
+            )
+            .await?;
         }
         let key = wamn_digest::bytes_sha256(root.as_os_str().as_encoded_bytes());
         let pins: toml::Value = toml::from_str(&std::fs::read_to_string(root.join("mise.toml"))?)?;

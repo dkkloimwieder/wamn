@@ -1,6 +1,11 @@
 import { createSignal, For, onCleanup, Show, untrack } from "solid-js";
 import { FieldError } from "@wfe/components/fields";
-import { environment, project } from "./generated/wamn_control_org/index.js";
+import {
+  environment,
+  project,
+  type EnvironmentListResultEnvironments,
+  type EnvironmentStatusResult,
+} from "./control-client";
 import { Page, RecordLink } from "./page";
 import { value } from "./outcome";
 import { EnvironmentTiles } from "./status-tiles";
@@ -36,7 +41,7 @@ export function ControlHome(props: ScreenProps) {
 }
 
 function ProjectStatus(props: { screen: ScreenProps; project: string }) {
-  const [environments, setEnvironments] = createSignal<readonly environment.EnvironmentListResultEnvironments[]>([]);
+  const [environments, setEnvironments] = createSignal<readonly EnvironmentListResultEnvironments[]>([]);
   const [trouble, setTrouble] = createSignal<string>();
   let active = true;
   onCleanup(() => {
@@ -59,7 +64,7 @@ function ProjectStatus(props: { screen: ScreenProps; project: string }) {
 }
 
 function EnvironmentStatus(props: { screen: ScreenProps; project: string; env: string }) {
-  const [status, setStatus] = createSignal<environment.EnvironmentStatusResult>();
+  const [status, setStatus] = createSignal<EnvironmentStatusResult>();
   const [trouble, setTrouble] = createSignal<string>();
   let active = true;
   onCleanup(() => {

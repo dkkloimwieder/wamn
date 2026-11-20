@@ -653,7 +653,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     );
     let liveness = Liveness::new(silence_budget);
     let probe_state = ProbeState::default().with_liveness(Arc::clone(&liveness));
-    let (stop_queue, stopping) = tokio::sync::watch::channel(false);
+    let (stop_http, stopping) = tokio::sync::watch::channel(false);
     let (ingress_connections, ingress_handler) = {
         // The route host lives only on the http workload's `config.host`
         // (R2), so the host expects no host before a workload binds one.
@@ -773,7 +773,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             stopped,
             stop_ingress,
             native_cleanup,
-            stop_queue,
+            stop_http,
             &probe_state,
             args.drain_delay,
             shutdown_budget(settings.drain_bound_seconds),
@@ -836,7 +836,7 @@ async fn stop_combined_after<I, N>(
     stopped: impl std::future::Future<Output = anyhow::Result<()>>,
     stop_ingress: I,
     native_cleanup: N,
-    stop_queue: tokio::sync::watch::Sender<bool>,
+    stop_http: tokio::sync::watch::Sender<bool>,
     probes: &ProbeState,
     drain_delay: Duration,
     shutdown_budget: Duration,
@@ -849,16 +849,12 @@ where
     let result = tokio::select! {
         result = &mut stopped => result,
     };
-    // One deadline for the whole sequence, set when the shutdown trigger
-    // arrives (R20). Ingress stop, queue drain and native cleanup share what
-    // remains of it.
+    // Set one deadline for ingress shutdown and native cleanup (R20).
     let deadline = tokio::time::Instant::now() + shutdown_budget;
     let remaining = || deadline.saturating_duration_since(tokio::time::Instant::now());
-    // This is the single admission cut: readiness drains before either HTTP
-    // cleanup or queue cleanup can wait. The expected router reads the same
-    // stop signal and admits no new request; the queue turns to its drain.
+    // Mark the host unready and tell the router to stop accepting requests.
     probes.drain();
-    let _ = stop_queue.send(true);
+    let _ = stop_http.send(true);
     let propagation_delay = if result.is_ok() {
         drain_delay
     } else {
@@ -868,18 +864,17 @@ where
         budget_secs = shutdown_budget.as_secs(),
         "shutting down wamn-host"
     );
-    // Admission closes completely before the queue drains.
     let ingress_result = wamn_engine::lifecycle::bounded_cleanup(remaining(), stop_ingress).await;
-    let drain_then_cleanup =
+    let cleanup_native =
         async { wamn_engine::lifecycle::bounded_cleanup(remaining(), native_cleanup).await };
     let (native_result, ()) = tokio::join!(
-        drain_then_cleanup,
+        cleanup_native,
         tokio::time::sleep(propagation_delay.min(remaining()))
     );
     let native_result = normalize_explicit_ingress_stop(native_result, ingress_result.is_ok());
     let cleanup_result = ingress_result.and(native_result);
     if let Err(error) = &cleanup_result {
-        tracing::error!(%error, "combined host cleanup failed; durable queue remains fenced for recovery");
+        tracing::error!(%error, "combined host cleanup failed");
     }
     result.and(cleanup_result)
 }

@@ -22,40 +22,36 @@ function fixture(initial: "active" | "inactive" = "active", digest: string | nul
         JSON.stringify([{ request_id: body[0].request_id, value: { project: "widgets", env: "dev", status: state } }]),
       );
     }
-    const selectedDigest = path.includes("/release/profile")
-      ? (JSON.parse(new URL(path, "http://localhost").searchParams.get("digest") ?? "null") as string)
-      : digest;
     const value = path.includes("/member/list")
       ? { members: [] }
       : path.includes("/environment/list")
         ? { environments: [{ name: "dev", state }] }
         : path.includes("/environment/status")
           ? {
-              digest: null,
               users_with_role: 3,
               roles: 4,
               memberships: 5,
               rollout: { replicas: 2, updated_replicas: 1, ready_replicas: 1, available_replicas: 1 },
-              workloads: [{ name: "http", conditions: [{ type: "Ready", status: "True" }] }],
-              live: [{ digest: "sha256:release", pods: 1 }],
-              residency: digest
+              workloads: digest
                 ? [
-                    { application: "orders", manifest_digest: digest, loaded: true, runs: [] },
-                    { application: "receiving", manifest_digest: "sha256:other", loaded: false, runs: ["pending"] },
+                    {
+                      name: "http",
+                      application: "orders",
+                      package_digest: digest,
+                      revision: 2,
+                      conditions: [{ type: "Ready", status: "True" }],
+                    },
+                    {
+                      name: "worker",
+                      application: "receiving",
+                      package_digest: "sha256:other",
+                      revision: 1,
+                      conditions: [],
+                    },
                   ]
                 : [],
             }
-          : {
-              digest: selectedDigest,
-              operations: [
-                {
-                  package: "acme",
-                  component: "receiving",
-                  operation: "acme:receiving/record",
-                },
-              ],
-              roles: [{ role: "clerk", operations: ["acme:receiving/record"] }],
-            };
+          : undefined;
     return new Response(JSON.stringify([{ value }]));
   };
   return { fetch, calls, writes, transport: createTransport({ baseUrl: "/api", fetch }) };
@@ -95,23 +91,17 @@ describe("Environment", () => {
     expect(opened).toBe("projects/widgets/dev");
   });
 
-  it("shows status and selects an application release", async () => {
+  it("shows environment status", async () => {
     const data = fixture();
     mount(data);
-    await screen.findByRole("combobox", { name: "Application release" });
-    expect(Number(screen.getByRole("group", { name: "Workloads" }).textContent?.match(/\d+/)?.[0])).toBe(1);
-    fireEvent.change(screen.getByRole("combobox", { name: "Application release" }), {
-      target: { value: "receiving@sha256:other" },
-    });
-    await waitFor(() => expect(data.calls.filter((path) => path.includes("/release/profile"))).toHaveLength(2));
-    expect(screen.queryByRole("table")).toBeNull();
-    expect(screen.queryByRole("navigation", { name: "Environment tables" })).toBeNull();
-    expect(data.calls.filter((path) => path.includes("/release/profile"))).toHaveLength(2);
+    await waitFor(() =>
+      expect(Number(screen.getByRole("group", { name: "Workloads" }).textContent?.match(/\d+/)?.[0])).toBe(1),
+    );
     expect(data.calls.filter((path) => path.includes("/environment/status"))).toHaveLength(1);
     expect(Number(screen.getByRole("group", { name: "Roles" }).textContent?.match(/\d+/)?.[0])).toBe(4);
   });
 
-  it("expands workload and role details and opens Operations without changing the address", async () => {
+  it("expands workload details without changing the address", async () => {
     const data = fixture();
     const session = identity(true);
     const base = `/${CONTROL}/projects/widgets/dev`;
@@ -143,27 +133,9 @@ describe("Environment", () => {
     expect(screen.getAllByRole("button", { name: "Refresh results" })).toHaveLength(1);
     fireEvent.click(screen.getByRole("button", { name: "Collapse details for row http" }));
     await waitFor(() => expect(screen.queryByRole("table", { name: "Conditions for http" })).toBeNull());
-    fireEvent.click(screen.getByRole("link", { name: "Roles" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Expand details for row clerk" }));
-    expect(
-      within(await screen.findByRole("table", { name: "Role operations" })).getByRole("cell", {
-        name: "acme:receiving/record",
-      }),
-    ).toBeTruthy();
-    expect(window.location.pathname).toBe(`${base}/roles`);
-    fireEvent.click(screen.getByRole("link", { name: "Operations" }));
-    await screen.findByRole("table", { name: "Operations" });
-    expect(window.location.pathname).toBe(`${base}/operations`);
-    expect(screen.getAllByRole("button", { name: "Refresh results" })).toHaveLength(1);
-    expect(screen.getAllByRole("navigation", { name: "Table pages" })).toHaveLength(1);
-    expect(
-      within(screen.getByRole("navigation", { name: "Platform location" }))
-        .getByText("OPERATIONS")
-        .getAttribute("aria-current"),
-    ).toBe("page");
   });
 
-  it.each(["workloads", "live-releases", "operations", "roles"])("opens the saved table address %s", async (path) => {
+  it.each(["workloads", "live-releases"])("opens the saved table address %s", async (path) => {
     const data = fixture();
     const session = identity(true);
     window.history.pushState({}, "", `/${CONTROL}/projects/widgets/dev/${path}`);
@@ -261,7 +233,6 @@ describe("Environment", () => {
         expect(observed).toHaveProperty(["0", "env"], "dev");
       }
       expect(data.calls.filter((path) => path.includes("/environment/list"))).toHaveLength(2);
-      await waitFor(() => expect(data.calls.filter((path) => path.includes("/release/profile"))).toHaveLength(2));
     },
   );
 
@@ -279,41 +250,21 @@ describe("Environment", () => {
     ).toBe("active");
   });
 
-  it("does not request a profile when no release is installed", async () => {
+  it("shows no workloads when no release is installed", async () => {
     const data = fixture("inactive", null);
     mount(data);
     await screen.findByRole("button", { name: "Activate environment" });
-    expect(Number(screen.getByRole("group", { name: "Resident releases" }).textContent?.match(/\d+/)?.[0])).toBe(0);
-    expect(data.calls.some((path) => path.includes("/release/profile"))).toBe(false);
-  });
-
-  it.each(["operations", "roles"] as const)("shows an empty %s table without a release", async (table) => {
-    const data = fixture("active", null);
-    render(() => (
-      <Environment
-        transport={data.transport}
-        holds={() => true}
-        params={{ aud: CONTROL, project: "widgets", env: "dev" }}
-        table={table}
-        search={{}}
-        open={() => {}}
-        close={() => {}}
-      />
-    ));
-    const records = await screen.findByRole("table", { name: table === "operations" ? "Operations" : "Roles" });
-    expect(within(records).queryAllByRole("cell")).toHaveLength(0);
-    expect(screen.getAllByRole("table")).toHaveLength(1);
-    expect(data.calls.some((path) => path.includes("/release/profile"))).toBe(false);
+    expect(Number(screen.getByRole("group", { name: "Workloads" }).textContent?.match(/\d+/)?.[0])).toBe(0);
   });
 
   it("lets a project admin read its environment but offers no status writes", async () => {
     const data = fixture();
     mount(data, false);
-    await screen.findByRole("combobox", { name: "Application release" });
+    await screen.findByRole("region", { name: "Environment status" });
     expect(screen.queryByRole("button", { name: /environment$/ })).toBeNull();
   });
 
-  it.each(["", "/workloads", "/live-releases", "/operations", "/roles"])(
+  it.each(["", "/workloads", "/live-releases"])(
     "refuses an environment address outside the project admin's view: %s",
     async (path) => {
       const session = identity(true, undefined, {
@@ -391,13 +342,15 @@ function operationsFixture(options: { refuse?: boolean; states?: string[]; proje
   return { writes, reads, statuses, ...mounted };
 }
 
-async function openOperation(action: string, withRelease = true) {
+async function openOperation(action: string, withTarget = true) {
   fireEvent.click(await screen.findByRole("button", { name: new RegExp(`^${action}\\b`, "i") }));
   await screen.findByRole("button", { name: /^Start / });
   const application = screen.queryByRole("textbox", { name: "Application" });
   if (application) input(application, "receiving");
   const release = screen.queryByRole("textbox", { name: /Release digest/ });
-  if (release && withRelease) input(release, releaseDigest);
+  if (release && withTarget) input(release, releaseDigest);
+  const revision = screen.queryByRole("textbox", { name: /Revision/ });
+  if (revision && withTarget) input(revision, "2");
   fireEvent.click(screen.getByRole("button", { name: /^Start / }));
 }
 
@@ -405,11 +358,11 @@ describe("environment operation controls", () => {
   for (const [path, contract] of Object.entries(operationContracts)) {
     const [family, filename] = path.split("/").slice(-2);
     const action = filename!.split(".")[0]!;
-    const release = contract.fields.find((field) => field.path === "value.release");
-    for (const withRelease of release?.nullable ? [true, false] : [true]) {
-      it(`sends the contract fields for ${family}.${action}, explicit release=${withRelease}`, async () => {
+    const target = contract.fields.find((field) => ["value.release", "value.revision"].includes(field.path));
+    for (const withTarget of target?.nullable ? [true, false] : [true]) {
+      it(`sends the contract fields for ${family}.${action}, explicit target=${withTarget}`, async () => {
         const data = operationsFixture();
-        await openOperation(action, withRelease);
+        await openOperation(action, withTarget);
         if (["reset", "apply", "rollback"].includes(action)) {
           const dialog = within(await screen.findByRole("alertdialog"));
           {
@@ -432,7 +385,8 @@ describe("environment operation controls", () => {
           project: "widgets",
           env: "dev",
           application: "receiving",
-          release: withRelease ? releaseDigest : null,
+          release: withTarget ? releaseDigest : null,
+          revision: withTarget ? 2 : null,
         };
         const fields = contract.fields
           .filter((field) => field.path.startsWith("value."))
@@ -494,7 +448,7 @@ describe("environment operation controls", () => {
     "hides controls without authority for the target: %j",
     async (options) => {
       operationsFixture(options);
-      await screen.findByRole("combobox", { name: "Application release" });
+      await screen.findByRole("region", { name: "Environment status" });
       expect(screen.queryByRole("region", { name: "Deployment controls" })).toBeNull();
     },
   );

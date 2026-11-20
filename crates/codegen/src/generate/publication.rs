@@ -1,11 +1,12 @@
 //! Inline publication schemas and OpenAPI from compiled operations.
 use super::{OperationDescription, insert_json_line};
-use wamn_catalog::manifest::ManifestError as GenerateError;
 use crate::client_fields::{fields_of, input_fields_of};
 use crate::client_ir::FieldIr;
-use wamn_catalog::manifest::PackageManifest;
+use crate::openapi::{add_route, document, scalar};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
+use wamn_catalog::manifest::ManifestError as GenerateError;
+use wamn_catalog::manifest::PackageManifest;
 
 pub const ATTACHMENTS: &str = "generated/publication/attachments.json";
 pub const COMPONENTS: &str = "generated/publication/components.json";
@@ -193,7 +194,7 @@ pub(crate) fn input_schema(description: &OperationDescription) -> Value {
 }
 
 fn field_schema(field: &FieldIr) -> Value {
-    let mut schema = super::routes::scalar(&field.type_name);
+    let mut schema = scalar(&field.type_name);
     if !field.values.is_empty() {
         schema["enum"] = json!(field.values);
     }
@@ -234,7 +235,7 @@ fn object_schema(fields: &[FieldIr]) -> Value {
                 }
                 schema
             }
-            ty => super::routes::scalar(ty),
+            ty => scalar(ty),
         };
         if !field.values.is_empty() {
             schema["enum"] = json!(field.values);
@@ -316,7 +317,7 @@ pub(crate) fn result_schema(description: &OperationDescription) -> Value {
                 let ty = case["detail"]["types"][name]
                     .as_str()
                     .expect("compiled detail type");
-                (name.to_owned(), super::routes::scalar(ty))
+                (name.to_owned(), scalar(ty))
             })
             .collect::<serde_json::Map<_, _>>();
         match refusals.entry(literal) {
@@ -362,8 +363,8 @@ pub(crate) fn openapi(
     operations: &BTreeMap<wamn_catalog::local_operation::LocalOperation, OperationDescription>,
     attachments: &Value,
     components: &Value,
-) -> Value {
-    let mut paths = serde_json::Map::<String, Value>::new();
+) -> oas3::Spec {
+    let mut paths = oas3::Map::new();
     for attachment in attachments
         .as_object()
         .into_iter()
@@ -398,41 +399,20 @@ pub(crate) fn openapi(
             .and_then(|port| port.get("schema"))
             .cloned()
             .unwrap_or_else(|| result_schema(operation));
-        let mut entry = json!({"operationId": identity, "responses": {
-            "200": {"description": "Operation outcomes", "content": {"application/json": {"schema": output}}}
-        }});
-        let request = input.get("items").unwrap_or(&input);
-        let path_names = path
-            .split('{')
-            .skip(1)
-            .filter_map(|part| part.split_once('}').map(|(name, _)| name))
-            .collect::<BTreeSet<_>>();
-        let mut parameters = path_names
-            .iter()
-            .map(|name| {
-                let schema = request["properties"]
-                    .get(*name)
-                    .cloned()
-                    .unwrap_or_else(|| json!({"type": "string"}));
-                json!({"name": name, "in": "path", "required": true, "schema": schema})
-            })
-            .collect::<Vec<_>>();
-        if method == "GET" {
-            let required = request.get("required").and_then(Value::as_array);
-            parameters.extend(request["properties"].as_object().into_iter().flatten().filter(|(name, _)| !path_names.contains(name.as_str())).map(|(name, schema)| {
-                json!({"name": name, "in": "query", "required": required.is_some_and(|required| required.iter().any(|value| value == name)), "content": {"application/json": {"schema": schema}}})
-            }));
-        } else {
-            entry["requestBody"] =
-                json!({"required": true, "content": {"application/json": {"schema": input}}});
-        }
-        if !parameters.is_empty() {
-            entry["parameters"] = json!(parameters);
-        }
-        paths.entry(path.to_owned()).or_insert_with(|| json!({}))[method.to_ascii_lowercase()] =
-            entry;
+        add_route(
+            &mut paths,
+            path,
+            method,
+            identity.to_owned(),
+            serde_json::from_value(input).expect("published input schema"),
+            serde_json::from_value(output).expect("published result schema"),
+        );
     }
-    json!({"openapi": "3.1.0", "info": {"title": manifest.package.id, "version": manifest.package.version}, "paths": paths})
+    document(
+        manifest.package.id.as_str().to_owned(),
+        manifest.package.version.as_str().to_owned(),
+        paths,
+    )
 }
 
 #[cfg(test)]
@@ -585,6 +565,7 @@ mod tests {
             &routed,
             &serde_json::to_value(declarations).unwrap(),
         );
+        let api = serde_json::to_value(api).unwrap();
         for (path, methods) in api["paths"].as_object().unwrap() {
             for method in methods.as_object().unwrap().values() {
                 let parameters = method["parameters"].as_array().unwrap();

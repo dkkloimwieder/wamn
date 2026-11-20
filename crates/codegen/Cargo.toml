@@ -14,7 +14,12 @@ wamn-scalar.workspace = true
 wamn-digest = { workspace = true, features = ["sqlx"] }
 wamn-identity-protocol = { workspace = true, features = ["sqlx"] }
 anyhow.workspace = true
+oas3.workspace = true
 pg_query = "=6.2.1"
+prettyplease = "=0.3.0"
+proc-macro2.workspace = true
+quote.workspace = true
+syn = { workspace = true, features = ["full"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 toml.workspace = true
@@ -35,7 +40,6 @@ url.workspace = true
 wamn-guest = { path = "../guest" }
 uuid.workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }
-syn = { workspace = true, features = ["full"] }
 boon.workspace = true
 
 wamn-catalog = { workspace = true, features = ["test-util"] }

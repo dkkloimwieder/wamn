@@ -142,10 +142,9 @@ Any other payload answers 400 `delivery-invalid-payload`.
 | `wamn-control:org-admin/grant@0.9.0` | Takes `principal_id` of an active member and writes only the explicit `org-admin` grant. Authorization derives access below it. |
 | `wamn-control:org-admin/revoke@0.9.0` | Takes `principal_id` and removes only `org-admin`. Other explicit grants stay. |
 | `wamn-control:environment/list@0.9.0` | Takes `project`. Answers `environments`: environments of the project as `{name, state}`. |
-| `wamn-control:environment/status@0.9.0` | Answers the shared host rollout, workload conditions, resident releases, and unfinished-run pins for one project of an environment. Adds nullable counts `users_with_role`, `roles`, and `memberships`. |
+| `wamn-control:environment/status@0.9.0` | Answers the shared host rollout, workload conditions, package digests, and revisions for one project of an environment. Adds nullable counts `users_with_role`, `roles`, and `memberships`. |
 | `wamn-control:connection/test@0.9.0` | Requires project-admin authority. Takes `project`, `env`, integration `name`, candidate `parameters`, optional `credential`, and optional `version`. Answers `{ok: true}` or `{ok: false, error}`. Writes nothing and stops after ten seconds. |
 | `wamn-control:project/create@0.9.0` | Creates a project with no environment. An invalid project name returns `invalid_input` with `detail.field` set to `project`. |
-| `wamn-control:release/profile@0.9.0` | Takes `project`, `env` and the `digest` of an installed release. Answers its exported operations with their package and component, and the operations each role holds. The `admin` role holds every operation of the release. Writes nothing. |
 | `wamn-control:member/list@0.9.0` | Takes `project` and an optional `environment`. Answers `members`: each user with a membership or `project-admin` in the project, with `principal_id`, `email`, `display_name`, `org_admin`, `project_admin` and `environments`. |
 | `wamn-control:member/grant@0.9.0` | Takes `project`, `env` and `principal_id` of an active member, and writes the membership of that environment. |
 | `wamn-control:member/revoke@0.9.0` | Takes `project`, `env` and `principal_id`, and removes the membership of that environment. It refuses while org or project administration covers the membership. |
@@ -177,7 +176,7 @@ The writes are the functions of [`wamn_environment::application`](../../crates/e
 `user_role.grant` and `user_role.revoke` refuse direct changes to `admin`. Control projects that role from org and project grants.
 `permission.grant` writes one permission row. A row the serving release does not serve grants nothing.
 An application refusal is a declared error of its route, with `field` in its detail: `admin_fixed`, `invalid_input`, `role_not_found`, `operation_not_served`, `operation_not_grantable`, `permission_not_held`, `user_not_found` or `admin_covered`.
-TypeScript client generation is pending for the [application route contracts](../../crates/catalog/src/host_route/contracts).
+The [application route contracts](../../crates/catalog/src/host_route/contracts) define the request and result schemas.
 The administration screens in the [platform UI](../../apps/platform_ui/README.md) call these routes through the TypeScript client and write no database directly.
 The role screen reads operations from `permission.list`, and the user screen reads roles from `user.list` and permissions from `permission.list`.
 The control lists `project.list`, `user.list`, `environment.list`, `member.list`, and `control.mine` accept optional `limit` and `cursor` members.
@@ -195,7 +194,7 @@ Users and members sort by email, then principal UUID. SQL comparisons use the sa
 Cursors encode canonical compact JSON as unpadded base64url and bind the operation, authenticated principal, org, applicable project, the `member.list` environment or its absence, and order.
 Malformed or mismatched cursors return `invalid_input` with `detail.field` set to `cursor`. Bad limits name `limit` in that field.
 Every page repeats authorization. Pages reflect current data, so an email change can move a user between pages.
-The contracts retain version 0.9.0. `environment.status` and `release.profile` retain their whole-result contracts.
+The contracts retain version 0.9.0. `environment.status` retains its whole-result contract.
 
 `control.mine` reads `wamn_system` through the `control` login of the org.
 
@@ -230,11 +229,10 @@ The server builds the command and credential references after it repeats authori
 Each start route returns a Kubernetes Job name.
 `operation.status` compares that Job's target and reads its state and bounded log tail.
 The service submits Jobs through the shared runner and keeps no operation history.
-The immutable Job input ConfigMap carries the authenticated principal to the worker.
 [Deployment routes](../operations/deployment.md#application-and-schema-operations) defines inputs, credential target, deadlines, and result bounds.
 
-The contracts of the control routes live in [`host_route/control/contracts`](../../crates/catalog/src/host_route/control/contracts), and the generator projects them into the TypeScript client `@wamn/control-org-client` in `apps/target/wamn/wamn_control/control/client-ts`.
-The control set has its own client because both sets serve `user.list`.
+The [control route contracts](../../crates/catalog/src/host_route/control/contracts) define the request and result schemas.
+Both route sets serve `user.list` and use separate client modules.
 
 The native control service has no application release or guest connection.
 `wamn-control` serves it for one org.
@@ -859,8 +857,6 @@ Its caller deletes the keys of the list after the commit. `wamn-broker::Publishe
 A failed delete is logged, the commit stands, and the 60 seconds bound it.
 A connection write, copy, credential change, disable, enable or delete deletes the key of that connection.
 A connection write, copy or delete also deletes the connection map of its environment, because it can create or remove a connection.
-An integration delete deletes no key, because it refuses while the integration has a connection.
-An integration disable or enable deletes the key of each of its connections, in every environment of the project.
 An `environment::apply` deletes the release key of each release whose connection rows changed.
 An `env delete` deletes every key of the environment.
 
@@ -1109,32 +1105,17 @@ The [key cache](../../crates/authentication/src/access_token.rs) and [key owner]
 
 ## Operator clients
 
-Generated screens use the [client contract](../../crates/codegen/src/client_ir.rs), derived from admitted declarations.
+The [client contract](../../crates/codegen/src/client_ir.rs) describes operations and fields from compiled declarations.
 Operation types come from the manifest.
 Record links come from declared relations, keys, and compatible reads.
 The generator never guesses a record from a field name ending in `_id`.
 
-The [screen plan](../../crates/codegen/src/client_plan.rs) holds the screen rules that every UI target applies.
-It gives each callable operation one role: table, detail, form, delete, or none with a reason.
-It also states the columns, the operator inputs, the row source, the paging, and the screens that one row opens.
-It carries interaction meaning only, so no layout, styling, or framework concept enters it.
-
-A package can also generate [TypeScript bindings](../../crates/codegen/src/client_ts.rs) for a browser.
-It opts in with a `client_package` name in its manifest, and a package that declares none generates no TypeScript. Nothing is published to a registry, and the name is what a workspace imports.
-The bindings carry a request type, a result type, the published route and one function for each public operation.
-A private event handler is absent, and an operation the release does not publish carries its types without a function.
-The application supplies a transport that owns the URL and the credential.
-That transport also classifies one response into a completion, a partial completion, a refusal or an uncertainty.
-The contract stays snake_case on the wire, and the TypeScript members are camelCase.
-The generator decides every member name and emits a field map beside each operation, so the browser holds no name rule.
-A key that no map declares keeps its spelling, so the inside of a `json` value is never renamed.
-A bounded list returns its rows under `rows`, and a page returns them under `item` beside a `nextCursor`.
+The HTTP contract uses snake_case member names.
+A bounded list returns items under `rows`. A page returns items under `item` beside `next_cursor`.
 An `int64` and a `numeric` are strings in TypeScript, because that is what the wire carries and a number loses precision above 2^53.
-A field that declares a closed value domain types as a union of its literals.
 
-The [web runtime](../../web/runtime/) is the hand-written package that the bindings import.
-It is TypeScript source, it builds nothing, and a generated package declares it as its one dependency.
-It implements the transport: the URL, the credential the application supplies, the request envelope, and the classification of one reply.
+The [web runtime](../../web/runtime/) uses the URL and credentials from the application.
+It builds each request and classifies each reply.
 The runtime tests read the cases in `web/runtime/test/classification-cases.json`.
 The browser transport also sends one write that carries many items, each with its own request identity, and reads one outcome for each item.
 A 200 reply with one outcome for each item classifies each item by the rule of one item, so a refusal marks only its own item.
@@ -1160,10 +1141,8 @@ A generated detail, a table, an edit cell, the record text in a table's referenc
 Each reads again only after a write that touches them, so an unchanged read costs one 304 and an untouched read costs nothing.
 A form's own record read does not read again, because the form sends the revision that it read when it opened.
 
-A package that generates TypeScript also generates [wfe descriptions](../../crates/codegen/src/client_component.rs) for its supported screen roles.
-Descriptions contain presentation data for tables, details, forms, and deletes.
-The [Receiving web application](../../apps/wamn_receiving/web/README.md) binds those descriptions to requests, validation, reference selectors, and navigation.
-The generated TypeScript bindings continue to use the browser runtime.
+The [Receiving web application](../../apps/wamn_receiving/web/README.md) uses wfe descriptions for tables, details, forms, and deletes.
+Receiving binds those descriptions to requests, validation, reference selectors, and navigation.
 
 A request type declares writable members, because a caller builds a request and a form library writes into it. A result type keeps its own read only.
 Descriptions state no route or navigation. The application decides what to open.
