@@ -1,4 +1,5 @@
 use wamn_scalar::SqlValueType;
+mod adapter;
 mod authored_feed;
 mod component;
 mod data;
