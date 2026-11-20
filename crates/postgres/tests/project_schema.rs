@@ -150,7 +150,6 @@ async fn app_schema_applies_and_enforces_isolation_on_postgres() {
          INSERT INTO platform.role (name) VALUES ('admin'),('clerk');\n\
          INSERT INTO platform.user_role (user_id, role_name) VALUES ('{U1}','admin');\n\
          INSERT INTO platform.permission (role_name, permission) VALUES ('clerk','platform-fixture:widget/get');\n\
-         INSERT INTO platform.api_key (user_id, name, key_hash, prefix) VALUES ('{U1}','ci','hash-1','wk_a');\n\
          INSERT INTO platform.setting (target_type, target_id, key, value) VALUES ('user','{U1}','display.theme','\"dark\"'::jsonb);"
     )
     .expect("writing to a String cannot fail");
@@ -237,12 +236,6 @@ async fn app_schema_applies_and_enforces_isolation_on_postgres() {
             "(project_env_key, role_name, permission) VALUES ('', 'clerk', 'platform-fixture:widget/get')"
                 .to_owned(),
         ),
-        (
-            "api_key",
-            format!(
-                "(project_env_key, user_id, name, key_hash, prefix) VALUES ('', '{U2}', 'ci', 'hash-2', 'wk_b')"
-            ),
-        ),
     ] {
         writeln!(
             script,
@@ -260,13 +253,12 @@ async fn app_schema_applies_and_enforces_isolation_on_postgres() {
         "INSERT INTO platform.user_role (user_id, role_name) VALUES ('{U2}','admin');"
     )
     .expect("writing to a String cannot fail");
-    // FK cascade: deleting U1 prunes its role grant and api key.
+    // FK cascade: deleting U1 prunes its role grant.
     writeln!(
         script,
         "DELETE FROM platform.\"user\" WHERE id='{U1}';\n\
          DO $$ BEGIN\n\
            ASSERT (SELECT count(*) FROM platform.user_role WHERE user_id='{U1}')=0, 'user_role cascade';\n\
-           ASSERT (SELECT count(*) FROM platform.api_key WHERE user_id='{U1}')=0, 'api_key cascade';\n\
          END $$;"
     )
     .expect("writing to a String cannot fail");
@@ -319,8 +311,6 @@ async fn platform_relations_log_every_row_change_on_postgres(pool: sqlx::PgPool)
     const U1: &str = "11111111-1111-1111-1111-111111111111";
     const U2: &str = "22222222-2222-2222-2222-222222222222";
     const U3: &str = "33333333-3333-3333-3333-333333333333";
-    const K1: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
-    const K2: &str = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
     const SEED: &str = "admin:seed-history-fixture";
     const CHANGE: &str = "admin:change-history-fixture";
     const REMOVE: &str = "admin:remove-history-fixture";
@@ -347,8 +337,6 @@ async fn platform_relations_log_every_row_change_on_postgres(pool: sqlx::PgPool)
            ('auditor', 'platform-fixture:widget/get');\n\
          INSERT INTO platform.setting (target_type, target_id, key, value) VALUES \
            ('org', 'acme', 'display.theme', '\"dark\"');\n\
-         INSERT INTO platform.api_key (id, user_id, name, key_hash, prefix) VALUES \
-           ('{K1}', '{U1}', 'ci', 'hash-1', 'wk_a'), ('{K2}', '{U1}', 'cd', 'hash-2', 'wk_b');\n\
          COMMIT;\n\
          BEGIN;\n\
          INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('{U2}'::uuid,'','fixture','{CHANGE}');\n\
@@ -357,11 +345,9 @@ async fn platform_relations_log_every_row_change_on_postgres(pool: sqlx::PgPool)
          UPDATE platform.user_role SET role_name = 'auditor' WHERE user_id = '{U3}';\n\
          UPDATE platform.permission SET permission = 'platform-fixture:widget/list';\n\
          UPDATE platform.setting SET value = '\"light\"';\n\
-         UPDATE platform.api_key SET revoked_at = '2026-09-14T00:00:00Z' WHERE id = '{K1}';\n\
          COMMIT;\n\
          BEGIN;\n\
          INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('{U3}'::uuid,'','fixture','{REMOVE}');\n\
-         DELETE FROM platform.api_key WHERE id = '{K2}';\n\
          DELETE FROM platform.setting;\n\
          DELETE FROM platform.\"user\" WHERE id = '{U1}';\n\
          DELETE FROM platform.\"user\" WHERE id = '{U2}';\n\
@@ -377,7 +363,6 @@ async fn platform_relations_log_every_row_change_on_postgres(pool: sqlx::PgPool)
         ("user_role", 2, 0, 2),
         ("permission", 1, 0, 1),
         ("setting", 1, 1, 1),
-        ("api_key", 2, 1, 2),
     ] {
         let key_change = updated == 0;
         let changed = if key_change { 2 } else { updated };
@@ -409,8 +394,6 @@ async fn platform_relations_log_every_row_change_on_postgres(pool: sqlx::PgPool)
             AND row_key ->> 'name' = 'admin' AND after ->> 'description' = 'administrators');
         ASSERT EXISTS (SELECT FROM platform.setting_history WHERE type = 'update'
             AND before ->> 'value' = 'dark' AND after ->> 'value' = 'light');
-        ASSERT EXISTS (SELECT FROM platform.api_key_history WHERE type = 'update'
-            AND row_key ->> 'id' = '{K1}' AND after ->> 'revoked_at' IS NOT NULL);
         ASSERT EXISTS (SELECT FROM platform.user_role_history WHERE type = 'delete'
             AND operation = '{CHANGE}' AND row_key ->> 'user_id' = '{U3}' AND row_key ->> 'role_name' = 'admin');
         ASSERT EXISTS (SELECT FROM platform.user_role_history WHERE type = 'insert'
@@ -419,10 +402,6 @@ async fn platform_relations_log_every_row_change_on_postgres(pool: sqlx::PgPool)
             AND operation = '{CHANGE}' AND row_key ->> 'permission' = 'platform-fixture:widget/get');
         ASSERT EXISTS (SELECT FROM platform.permission_history WHERE type = 'insert'
             AND operation = '{CHANGE}' AND row_key ->> 'permission' = 'platform-fixture:widget/list');
-        ASSERT EXISTS (SELECT FROM platform.api_key_history WHERE type = 'insert'
-            AND row_key ->> 'id' = '{K1}' AND after ->> 'key_hash' = 'hash-1');
-        ASSERT EXISTS (SELECT FROM platform.api_key_history WHERE type = 'delete'
-            AND operation = '{REMOVE}' AND row_key ->> 'id' = '{K1}' AND before ->> 'key_hash' = 'hash-1');
         ASSERT EXISTS (SELECT FROM platform.user_role_history WHERE type = 'delete'
             AND operation = '{REMOVE}' AND row_key ->> 'user_id' = '{U1}');
         ASSERT EXISTS (SELECT FROM platform.user_role_history WHERE type = 'delete'
@@ -431,7 +410,6 @@ async fn platform_relations_log_every_row_change_on_postgres(pool: sqlx::PgPool)
             AND operation = '{REMOVE}' AND row_key ->> 'permission' = 'platform-fixture:widget/list');
         ASSERT NOT EXISTS (SELECT FROM platform.user_role);
         ASSERT NOT EXISTS (SELECT FROM platform.permission);
-        ASSERT NOT EXISTS (SELECT FROM platform.api_key);
         END $$;").unwrap();
     run(url, &script);
 }
