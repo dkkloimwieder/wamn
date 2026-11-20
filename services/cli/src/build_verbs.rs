@@ -55,7 +55,7 @@ pub async fn run(args: BuildArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Take ownership of one generated action or browser component.
+/// Copy a generated action into application source.
 #[derive(Debug, clap::Args)]
 pub struct EjectArgs {
     #[command(subcommand)]
@@ -66,30 +66,13 @@ pub struct EjectArgs {
 pub enum EjectTarget {
     /// Replace an empty Action implementation with its current default body.
     Action { package: PathBuf, operation: String },
-    /// Copy a browser component to an authored file for composition.
-    Component {
-        package: PathBuf,
-        name: wamn_catalog::manifest::source_name::SourceName,
-        output: PathBuf,
-    },
 }
 /// Eject a generated default into application source.
 pub fn eject(args: EjectArgs) -> anyhow::Result<()> {
-    match args.target {
-        EjectTarget::Action { package, operation } => {
-            println!(
-                "{}",
-                wamn_build::eject::action(&package, &operation)?.display()
-            );
-        }
-        EjectTarget::Component {
-            package,
-            name,
-            output,
-        } => {
-            wamn_build::eject::component(&package, &name, &output)?;
-            println!("{}", output.display());
-        }
-    }
+    let EjectTarget::Action { package, operation } = args.target;
+    println!(
+        "{}",
+        wamn_build::eject::action(&package, &operation)?.display()
+    );
     Ok(())
 }

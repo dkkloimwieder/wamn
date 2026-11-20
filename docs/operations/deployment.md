@@ -172,8 +172,7 @@ curl -i -H "Authorization: Bearer $WAMN_TOKEN" http://receiving--local.wamn.loca
 ```
 
 `GET /` on an application host serves the pinned web client for that application.
-If the host has no pinned client, web returns HTTP 502 and logs `the host has no web client`.
-This response is a known limitation.
+If the host has no pinned web client, `GET /` and `HEAD /` return HTTP 404 with an empty body.
 
 ### Cleanup
 

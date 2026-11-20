@@ -13,7 +13,6 @@ pub(super) fn release_values(
     package_digest: &wamn_digest::Digest,
     bindings: &[super::super::bindings::Binding],
     integration_repository: &str,
-    actor: &str,
     component_repository: &str,
 ) -> anyhow::Result<(Value, Vec<RoleName>)> {
     let seconds = document
@@ -49,7 +48,6 @@ pub(super) fn release_values(
         client: selection.client.as_ref(),
         applications,
         roles,
-        actor: actor.to_owned(),
     })?;
     let repository = wamn_catalog::parse_component_artifact_base(component_repository)?;
     let components = release_chart::published_components(package_manifests)

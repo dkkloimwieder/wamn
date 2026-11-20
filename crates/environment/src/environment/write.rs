@@ -28,7 +28,6 @@ pub fn release_values(
     package_digest: &wamn_digest::Digest,
     bindings: &[super::bindings::Binding],
     integration_repository: &str,
-    actor: &str,
     component_repository: &str,
 ) -> anyhow::Result<(Value, Vec<RoleName>)> {
     plan::release_values(
@@ -39,7 +38,6 @@ pub fn release_values(
         package_digest,
         bindings,
         integration_repository,
-        actor,
         component_repository,
     )
 }

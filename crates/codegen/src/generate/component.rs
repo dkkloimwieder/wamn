@@ -16,18 +16,19 @@
 //! dependencies as one group.
 
 use std::collections::BTreeMap;
-use std::fmt::Write as _;
 
 use proc_macro2::TokenStream;
 use quote::quote;
+use wit_encoder::{Ident, Package, PackageName, World};
 
 use super::insert_bytes;
 use super::rust_source::{insert_rust, rust_ident};
+use super::wit::wit_ident;
+use wamn_catalog::manifest::FilterMatch;
 use wamn_catalog::manifest::ManifestError as GenerateError;
 use wamn_catalog::manifest::{
     CrudAction, ModelDeclaration, OperationDeclaration, PackageManifest, rust_type_identifier,
 };
-use wamn_catalog::manifest::{FilterMatch, PackageIdentity, canonical_operation_prefix};
 
 const HEADER: &str = "// @generated from the package manifest; do not edit.\n\n";
 
@@ -313,90 +314,87 @@ pub(super) fn emit_package_component(
 fn emit_package_world(
     files: &mut BTreeMap<String, Vec<u8>>,
     manifest: &PackageManifest,
-    models: &[(&wamn_catalog::manifest::source_name::SourceName, &ModelDeclaration)],
+    models: &[(
+        &wamn_catalog::manifest::source_name::SourceName,
+        &ModelDeclaration,
+    )],
 ) -> Result<(), GenerateError> {
-    const POSTGRES: &str =
-        "  import wamn:postgres/types@0.4.0;\n  import wamn:postgres/statements@0.4.0;\n";
     let package = &manifest.package;
-    let sealed = |package: &PackageIdentity,
-                  local: &wamn_catalog::local_operation::LocalOperation|
-     -> Result<String, GenerateError> {
+    let namespace = wit_ident(package.id.as_str());
+    let mut world = World::new(WORLD_PACKAGE);
+    for (name, declaration) in &manifest.connections {
+        if !wamn_catalog::manifest::host_connection_interface(&declaration.interface) {
+            let label = wit_ident(name.as_str());
+            // The encoder takes the label and path as one identifier.
+            world.named_interface_import(format!("{label}: {}", declaration.interface));
+        }
+    }
+    let mut exports = Vec::new();
+    let mut postgres = !models.is_empty();
+    for (local, operation) in &manifest.custom_operations {
         let (group, name) = local
             .as_str()
             .split_once('.')
             .expect("validated operation identity has one separator");
-        Ok(format!(
-            "{}{}/{}@{}",
-            canonical_operation_prefix(package)?,
-            super::wit::wit_name(group),
-            super::wit::wit_name(name),
-            package.version
-        ))
-    };
-    let base = |alias: &str| -> PackageIdentity {
-        let base = &manifest.base_dependencies[alias];
-        PackageIdentity {
-            id: base.package.clone(),
-            version: base.version.clone(),
-        }
-    };
-    // The custom lines come first, where the authored world had them, so each
-    // component keeps its world byte for byte.
-    let mut imports = String::new();
-    for (name, declaration) in &manifest.connections {
-        if !wamn_catalog::manifest::host_connection_interface(&declaration.interface) {
-            writeln!(imports, "  import {name}: {};", declaration.interface)
-                .expect("writing to a String cannot fail");
-        }
-    }
-    let mut exports = String::new();
-    let mut postgres = !models.is_empty();
-    for (local, operation) in &manifest.custom_operations {
+        let group = wit_ident(group);
+        let name = wit_ident(name);
         postgres |= operation.connection.is_some();
         // An operation that bears a base operation's name forwards to it, so
         // the component imports that operation to call it.
-        if let Some((alias, _)) = manifest
+        if let Some(base) = manifest
             .base_dependencies
-            .iter()
-            .find(|(_, dependency)| dependency.operations.iter().any(|name| name == local))
+            .values()
+            .find(|dependency| dependency.operations.iter().any(|name| name == local))
         {
-            writeln!(
-                imports,
-                "  import {};",
-                sealed(&base(alias.as_str()), local)?
-            )
-            .expect("writing to a String cannot fail");
+            world.named_interface_import(operation_interface(
+                &wit_ident(base.package.as_str()),
+                &group,
+                &name,
+                &base.version,
+            ));
         }
-        writeln!(exports, "  export {};", sealed(package, local)?)
-            .expect("writing to a String cannot fail");
+        exports.push(operation_interface(
+            &namespace,
+            &group,
+            &name,
+            &package.version,
+        ));
     }
     for (model_name, model) in models {
+        let group = wit_ident(model_name.as_str());
         for action in model.operations.keys() {
-            writeln!(
-                exports,
-                "  export {};",
-                sealed(
-                    package,
-                    &wamn_catalog::local_operation::LocalOperation::try_from(format!(
-                        "{model_name}.{}",
-                        action.as_str()
-                    ))?
-                )?
-            )
-            .expect("writing to a String cannot fail");
+            exports.push(operation_interface(
+                &namespace,
+                &group,
+                &Ident::new(action.as_str()),
+                &package.version,
+            ));
         }
     }
-    if exports.is_empty() && imports.is_empty() {
+    if exports.is_empty() && world.items().is_empty() {
         return Ok(());
     }
+    if postgres {
+        world.named_interface_import("wamn:postgres/types@0.4.0");
+        world.named_interface_import("wamn:postgres/statements@0.4.0");
+    }
+    for export in exports {
+        world.named_interface_export(export);
+    }
 
-    let namespace = package.id.as_str().replace('_', "-");
-    let postgres = if postgres { POSTGRES } else { "" };
-    let world = format!(
-        "// @generated from the package manifest; do not edit.\n\n\
-         package {namespace}:{WORLD_PACKAGE};\n\n\
-         /// Every operation of the package. An authored world includes it.\n\
-         world {WORLD_PACKAGE} {{\n{imports}{postgres}{exports}}}\n"
+    let mut wit = Package::new(PackageName::new(namespace.to_string(), WORLD_PACKAGE, None));
+    wit.world(world);
+    let source = format!(
+        "{HEADER}// Every operation of the package. An authored world includes it.\n\n{wit}"
     );
-    insert_bytes(files, "generated/wit/world.wit", world.into_bytes())
+    insert_bytes(files, "generated/wit/world.wit", source.into_bytes())
+}
+
+fn operation_interface(
+    namespace: &Ident,
+    group: &Ident,
+    name: &Ident,
+    version: &wamn_catalog::package_version::PackageVersion,
+) -> Ident {
+    Ident::new(format!("{namespace}:{group}/{name}@{version}"))
 }

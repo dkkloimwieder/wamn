@@ -1,7 +1,7 @@
 {{/* The annotations every object of this chart carries. */}}
 {{- define "application.annotations" -}}
 wamn.environment: {{ required "environment is required" .Values.environment | quote }}
-wamn.release-digest: {{ required "application.manifestDigest is required" .Values.release.manifestDigest | quote }}
+{{- $_ := required "application.manifestDigest is required" .Values.release.manifestDigest }}
 {{- with .Values.applications }}
 {{- if ne (len .) 1 }}{{ fail "a release must select exactly one application" }}{{ end }}
 wamn.application: {{ keys . | first | quote }}

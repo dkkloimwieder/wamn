@@ -4,8 +4,7 @@
     "project_admin/revoke.errors.json"
   ],
   "catalog-list.input": [
-    "external_system/list.input.json",
-    "integration/list.input.json"
+    "external_system/list.input.json"
   ],
   "connection-integration.errors": [
     "connection/authorize.errors.json",
@@ -19,11 +18,6 @@
     "external_system/delete.errors.json",
     "external_system/list.errors.json",
     "external_system/write.errors.json",
-    "integration/delete.errors.json",
-    "integration/disable.errors.json",
-    "integration/enable.errors.json",
-    "integration/get.errors.json",
-    "integration/list.errors.json",
     "integration_type/list.errors.json"
   ],
   "connection.authorize-get.input": [
@@ -59,17 +53,11 @@
   ],
   "integration-name.input": [
     "external_system/delete.input.json",
-    "external_system/write.input.json",
-    "integration/delete.input.json",
-    "integration/disable.input.json",
-    "integration/enable.input.json"
+    "external_system/write.input.json"
   ],
   "integration-name.result": [
     "external_system/delete.result.json",
-    "external_system/write.result.json",
-    "integration/delete.result.json",
-    "integration/disable.result.json",
-    "integration/enable.result.json"
+    "external_system/write.result.json"
   ],
   "list.errors": [
     "control/mine.errors.json",

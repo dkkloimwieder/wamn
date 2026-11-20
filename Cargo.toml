@@ -118,6 +118,7 @@ jsonwebtoken = { version = "11.1.0", default-features = false, features = ["aws_
 wamn-digest = { path = "crates/digest", version = "0.1.0" }
 wamn-scalar = { path = "crates/scalar", version = "0.1.0" }
 wit-component = "=0.254.2"
+wit-encoder = { version = "=0.254.2", default-features = false }
 wit-parser = "=0.254.2"
 wamn-kubernetes = { path = "crates/kubernetes", version = "0.1.0" }
 mimalloc = "0.1.52"
