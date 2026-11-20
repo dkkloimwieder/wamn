@@ -19,7 +19,7 @@ use object_store::gcp::GoogleCloudStorageBuilder;
 use object_store::{ClientOptions, ObjectStore, RetryConfig};
 
 use super::store::{BoundContainer, ConnectionAuthority};
-use wamn_catalog::{BlobstoreDefinition, BlobstoreProvider};
+use wamn_connection_type::{BlobstoreDefinition, BlobstoreProvider};
 
 use wamn_connection::connection::ConnectionInvocation;
 use wamn_connection::connection_facts::{ConnectionAnswer, ConnectionFacts};

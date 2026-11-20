@@ -5794,8 +5794,8 @@ dependencies = [
  "tracing",
  "uuid",
  "wamn-authority",
- "wamn-catalog",
  "wamn-connection",
+ "wamn-connection-type",
  "wamn-digest",
  "wamn-engine",
  "wamn-envelope",
@@ -5824,7 +5824,7 @@ dependencies = [
  "url",
  "uuid",
  "wamn-authority",
- "wamn-catalog",
+ "wamn-connection-type",
  "wamn-digest",
  "wamn-engine",
  "wamn-identity-protocol",
@@ -5856,8 +5856,8 @@ dependencies = [
  "uuid",
  "wamn-authority",
  "wamn-blobstore",
- "wamn-catalog",
  "wamn-connection",
+ "wamn-connection-type",
  "wamn-digest",
  "wamn-engine",
  "wamn-envelope",
@@ -5916,19 +5916,6 @@ dependencies = [
  "wat",
  "wit-component 0.254.2",
  "wit-parser 0.254.2",
-]
-
-[[package]]
-name = "wamn-catalog"
-version = "0.1.0"
-dependencies = [
- "schemars",
- "serde",
- "serde_json",
- "url",
- "wamn-digest",
- "wamn-package",
- "wamn-registry",
 ]
 
 [[package]]
@@ -6072,8 +6059,8 @@ dependencies = [
  "tracing",
  "uuid",
  "wamn-authority",
- "wamn-catalog",
  "wamn-connection",
+ "wamn-connection-type",
  "wamn-digest",
  "wamn-engine",
  "wamn-envelope",
@@ -6086,6 +6073,19 @@ dependencies = [
  "wash-runtime",
  "wasmtime",
  "wat",
+]
+
+[[package]]
+name = "wamn-connection-type"
+version = "0.1.0"
+dependencies = [
+ "schemars",
+ "serde",
+ "serde_json",
+ "url",
+ "wamn-digest",
+ "wamn-package",
+ "wamn-registry",
 ]
 
 [[package]]
@@ -6232,10 +6232,10 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
- "wamn-catalog",
  "wamn-component-policy",
  "wamn-digest",
  "wamn-edge-document",
+ "wamn-oci-reference",
  "wamn-package",
  "wamn-registry",
  "wamn-routes",
@@ -6257,8 +6257,8 @@ dependencies = [
  "tracing",
  "tracing-opentelemetry",
  "url",
- "wamn-catalog",
  "wamn-component-policy",
+ "wamn-connection-type",
  "wamn-digest",
  "wamn-identity-protocol",
  "wamn-package",
@@ -6329,10 +6329,10 @@ dependencies = [
  "wamn-blobstore",
  "wamn-broker",
  "wamn-build",
- "wamn-catalog",
  "wamn-codegen",
  "wamn-component-policy",
  "wamn-connection",
+ "wamn-connection-type",
  "wamn-digest",
  "wamn-engine",
  "wamn-envelope",
@@ -6345,6 +6345,7 @@ dependencies = [
  "wamn-identity-protocol",
  "wamn-kubernetes",
  "wamn-oci",
+ "wamn-oci-reference",
  "wamn-operation",
  "wamn-package",
  "wamn-platform-install",
@@ -6437,7 +6438,6 @@ dependencies = [
  "wamn-authority",
  "wamn-blobstore",
  "wamn-broker",
- "wamn-catalog",
  "wamn-connection",
  "wamn-digest",
  "wamn-engine",
@@ -6447,6 +6447,7 @@ dependencies = [
  "wamn-identity",
  "wamn-identity-client",
  "wamn-identity-protocol",
+ "wamn-oci-reference",
  "wamn-operation",
  "wamn-package",
  "wamn-postgres",
@@ -6497,8 +6498,8 @@ dependencies = [
  "uuid",
  "wamn-authority",
  "wamn-broker",
- "wamn-catalog",
  "wamn-connection",
+ "wamn-connection-type",
  "wamn-engine",
  "wamn-http",
  "wamn-http-client",
@@ -6713,14 +6714,21 @@ dependencies = [
  "tokio",
  "tracing",
  "url",
- "wamn-catalog",
  "wamn-digest",
  "wamn-engine",
  "wamn-http-client",
+ "wamn-oci-reference",
  "wamn-package",
  "wash-runtime",
  "wasmtime",
  "wat",
+]
+
+[[package]]
+name = "wamn-oci-reference"
+version = "0.1.0"
+dependencies = [
+ "wamn-digest",
 ]
 
 [[package]]
@@ -6901,15 +6909,16 @@ dependencies = [
  "tokio",
  "url",
  "wamn-build",
- "wamn-catalog",
  "wamn-codegen",
  "wamn-component-policy",
+ "wamn-connection-type",
  "wamn-digest",
  "wamn-edge-document",
  "wamn-engine",
  "wamn-fixture-package",
  "wamn-identity",
  "wamn-oci",
+ "wamn-oci-reference",
  "wamn-package",
  "wamn-record-history",
  "wamn-registry",

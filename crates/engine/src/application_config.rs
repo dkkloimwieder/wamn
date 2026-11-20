@@ -103,7 +103,7 @@ pub struct ApplicationConnection {
     pub mode: wamn_package::ConnectionMode,
     pub interface: String,
     pub integration_type: wamn_registry::integration_code::IntegrationCode,
-    pub runtime_type: wamn_catalog::RuntimeType,
+    pub runtime_type: wamn_connection_type::RuntimeType,
     pub exclusive: bool,
     pub target_type: String,
     /// Full repository@digest of a wasm integration.

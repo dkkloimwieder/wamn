@@ -11,7 +11,8 @@ test-util = ["dep:wamn-fixture-package", "dep:wamn-test-infrastructure", "wamn-o
 
 [dependencies]
 wamn-package.workspace = true
-wamn-catalog.workspace = true
+wamn-connection-type.workspace = true
+wamn-oci-reference.workspace = true
 wamn-component-policy.workspace = true
 wamn-routes.workspace = true
 wamn-edge-document.workspace = true

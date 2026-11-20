@@ -11,7 +11,7 @@ test-util = []
 wasm_component_model_implements = ["wash-runtime/wasm_component_model_implements"]
 
 [dependencies]
-wamn-catalog.workspace = true
+wamn-connection-type.workspace = true
 wamn-package.workspace = true
 wamn-routes.workspace = true
 wamn-registry.workspace = true

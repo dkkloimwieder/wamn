@@ -632,7 +632,7 @@ impl ServingManifest {
         }
 
         if let Some(entry) = &self.composed_entry {
-            wamn_catalog::validate_serving_entry_reference(&entry.reference).map_err(|error| {
+            wamn_oci_reference::validate_serving_entry_reference(&entry.reference).map_err(|error| {
                 CatalogIdentityError::InvalidDefinition {
                     message: error.reason().to_owned(),
                 }

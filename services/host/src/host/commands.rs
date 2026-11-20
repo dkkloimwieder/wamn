@@ -132,7 +132,7 @@ impl HostCommandHandler for Commands {
             .as_ref()
             .map_or_default(|world| &world.components[..]);
         for component in components {
-            wamn_catalog::validate_component_start_reference(&component.image)?;
+            wamn_oci_reference::validate_component_start_reference(&component.image)?;
         }
         let workload_id = request.workload_id.clone();
         self.drain.admit(&workload_id, workload.service.is_some())?;

@@ -219,9 +219,9 @@ impl ConnectionFacts {
                     .find(|binding| binding.connection_id == connection_id)
             })
             .map_or("", |binding| match binding.runtime_type {
-                wamn_catalog::RuntimeType::Host => "host",
-                wamn_catalog::RuntimeType::Wasm => "wasm",
-                wamn_catalog::RuntimeType::Native => "native",
+                wamn_connection_type::RuntimeType::Host => "host",
+                wamn_connection_type::RuntimeType::Wasm => "wasm",
+                wamn_connection_type::RuntimeType::Native => "native",
             });
         Ok(Generation { runtime_type, data })
     }

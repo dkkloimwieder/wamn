@@ -1,7 +1,7 @@
 //! Resolved connection inputs retained by an environment apply.
 
 use serde_json::Value;
-use wamn_catalog::RequirementType;
+use wamn_connection_type::RequirementType;
 
 /// The resolved inputs retained for one apply.
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -189,12 +189,12 @@ impl DnsResolver for TokioDnsResolver {
 pub fn parse_http_definition(
     value: &serde_json::Value,
 ) -> Result<HttpConnectionAuthority, AuthorityError> {
-    let definition = wamn_catalog::HttpConnectionDefinition::parse(value).map_err(|error| {
+    let definition = wamn_connection_type::HttpConnectionDefinition::parse(value).map_err(|error| {
         AuthorityError::new(AuthorityErrorType::InvalidDefinition, error.to_string())
     })?;
     let tls = match definition.tls_verification {
-        wamn_catalog::HttpTlsVerification::Disabled => TlsPolicy::Disabled,
-        wamn_catalog::HttpTlsVerification::VerifyAuthority => TlsPolicy::VerifyAuthority,
+        wamn_connection_type::HttpTlsVerification::Disabled => TlsPolicy::Disabled,
+        wamn_connection_type::HttpTlsVerification::VerifyAuthority => TlsPolicy::VerifyAuthority,
     };
     parse_http_connection_authority(&definition.primary_authority, tls)
 }

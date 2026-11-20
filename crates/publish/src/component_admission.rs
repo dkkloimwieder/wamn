@@ -16,8 +16,8 @@ use std::fmt;
 use std::path::PathBuf;
 
 use anyhow::Context as _;
-use wamn_catalog::ComponentConnectionRequirement;
-use wamn_catalog::ConnectionTypeDescriptor;
+use wamn_connection_type::ComponentConnectionRequirement;
+use wamn_connection_type::ConnectionTypeDescriptor;
 use wamn_component_policy::{AdmittedComponent, ComponentDescriptor, ComponentPackageCoordinate};
 use wamn_engine::component_admission::validate_component_admission;
 use wamn_package::package_schema::package_metadata;

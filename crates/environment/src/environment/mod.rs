@@ -78,7 +78,7 @@ impl Platform {
         base: &str,
     ) -> anyhow::Result<wamn_oci::package_artifact::PackageRegistry> {
         let credentials = if self.registry_token_metadata {
-            let base = wamn_catalog::parse_component_artifact_base(base)?;
+            let base = wamn_oci_reference::parse_component_artifact_base(base)?;
             Some(wamn_oci::package_artifact::registry_credentials::RegistryCredentialSource::MetadataServer
                 .credentials(base.registry()).await?)
         } else {

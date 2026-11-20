@@ -49,7 +49,7 @@ pub struct Binding {
     pub alias: String,
     pub interface: String,
     pub components: std::collections::BTreeSet<String>,
-    pub runtime_type: wamn_catalog::RuntimeType,
+    pub runtime_type: wamn_connection_type::RuntimeType,
     pub target_type: String,
     pub connection_id: String,
     pub authority: Option<String>,
@@ -202,7 +202,7 @@ pub async fn analyse(
             let runtime: String = row.get(2);
             let resolved = if runtime == "host" {
                 let requirement_type =
-                    wamn_catalog::RequirementType::for_integration(&integration_type)
+                    wamn_connection_type::RequirementType::for_integration(&integration_type)
                         .ok_or_else(|| refuse("integration_version_unserved", &at))?;
                 Some(crate::org_connection::ResolvedConnection {
                     requirement_type,
@@ -229,9 +229,9 @@ pub async fn analyse(
                     })
                     .collect(),
                 runtime_type: if runtime == "host" {
-                    wamn_catalog::RuntimeType::Host
+                    wamn_connection_type::RuntimeType::Host
                 } else {
-                    wamn_catalog::RuntimeType::Wasm
+                    wamn_connection_type::RuntimeType::Wasm
                 },
                 target_type: row.get(11),
                 connection_id: row.get(0),

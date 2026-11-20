@@ -297,7 +297,7 @@ pub async fn push_web_artifact(
     registry: &PackageRegistry,
 ) -> Result<PushedWebArtifact, WebArtifactError> {
     let repository = (|| {
-        let base = wamn_catalog::parse_component_artifact_base(&registry.artifact_base)?;
+        let base = wamn_oci_reference::parse_component_artifact_base(&registry.artifact_base)?;
         let credentials = read_registry_credentials(&registry.registry_auth_file, base.registry())?;
         Repository::with_auth(registry, &packed.tag, registry_auth(credentials.as_ref()))
     })()

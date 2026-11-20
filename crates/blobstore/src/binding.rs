@@ -1,13 +1,13 @@
 //! Validate a storage binding before building a client.
 
-use wamn_catalog::{BlobstoreDefinition, BlobstoreProvider};
+use wamn_connection_type::{BlobstoreDefinition, BlobstoreProvider};
 
 /// A storage refusal before a client or container is exposed.
 #[derive(Debug)]
 pub struct BindingError {
     type_: BindingErrorType,
     detail: &'static str,
-    source: Option<wamn_catalog::ConnectionDefinitionError>,
+    source: Option<wamn_connection_type::ConnectionDefinitionError>,
 }
 #[derive(Debug)]
 enum BindingErrorType {
@@ -19,7 +19,7 @@ impl BindingError {
         Self::refused(BindingErrorType::Credential, "blobstore binding refused")
     }
 
-    fn definition(source: wamn_catalog::ConnectionDefinitionError) -> Self {
+    fn definition(source: wamn_connection_type::ConnectionDefinitionError) -> Self {
         Self {
             type_: BindingErrorType::Definition,
             detail: "storage definition is invalid",

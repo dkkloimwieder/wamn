@@ -10,7 +10,7 @@ test-util = ["wamn-engine/test-util", "wamn-authority/test-util", "wamn-connecti
 
 [dependencies]
 wamn-package.workspace = true
-wamn-catalog.workspace = true
+wamn-connection-type.workspace = true
 wamn-routes.workspace = true
 wamn-envelope.workspace = true
 boon.workspace = true

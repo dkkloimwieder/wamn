@@ -15,7 +15,7 @@ sqlx = ["dep:sqlx"]
 test-util = ["tokio/io-util", "tokio/net", "tokio/rt"]
 
 [dependencies]
-wamn-catalog.workspace = true
+wamn-oci-reference.workspace = true
 wamn-package.workspace = true
 wamn-digest = { workspace = true }
 async-trait = { workspace = true }

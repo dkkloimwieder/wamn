@@ -49,7 +49,7 @@ pub(super) fn release_values(
         applications,
         roles,
     })?;
-    let repository = wamn_catalog::parse_component_artifact_base(component_repository)?;
+    let repository = wamn_oci_reference::parse_component_artifact_base(component_repository)?;
     let components = release_chart::published_components(package_manifests)
         .map(|(package, component)| {
             let name = release_chart::component_name(package, &component.descriptor.component);

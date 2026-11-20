@@ -1,18 +1,18 @@
 [package]
-name = "wamn-catalog"
-description = "Portable connections and component artifact references."
+name = "wamn-connection-type"
+description = "Portable connection definitions and runtime tags."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
 wamn-digest.workspace = true
-wamn-registry.workspace = true
 wamn-package.workspace = true
+wamn-registry.workspace = true
 schemars.workspace = true
+serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 url.workspace = true
-serde = { workspace = true, features = ["derive"] }
 
 [lints]
 workspace = true

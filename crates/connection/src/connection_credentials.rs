@@ -274,7 +274,7 @@ impl ConnectionCredentials {
 
     pub fn connection_name<'a>(&self, handle: &'a str) -> anyhow::Result<&'a str> {
         let (org, name) =
-            wamn_catalog::parse_org_credential_handle(handle).map_err(anyhow::Error::msg)?;
+            wamn_connection_type::parse_org_credential_handle(handle).map_err(anyhow::Error::msg)?;
         let configured_org = self
             .org
             .as_ref()

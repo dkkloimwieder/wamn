@@ -313,7 +313,7 @@ impl ConnectionCache for Authorization {
             .flat_map(|component| &component.connections)
             .find(|binding| {
                 binding.connection_id == id
-                    && binding.runtime_type == wamn_catalog::RuntimeType::Wasm
+                    && binding.runtime_type == wamn_connection_type::RuntimeType::Wasm
             })
             .context("integration connection undeclared")?;
         self.facts(application)

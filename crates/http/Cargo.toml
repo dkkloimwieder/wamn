@@ -9,7 +9,7 @@ license.workspace = true
 test-util = ["dep:wamn-broker", "wamn-engine/test-util", "wamn-authority/test-util", "wamn-connection/test-util", "dep:wamn-operation", "wamn-operation/test-util", "dep:tempfile", "dep:wamn-test-postgres", "dep:wamn-test-infrastructure", "dep:rcgen", "dep:wat", "hyper/server"]
 
 [dependencies]
-wamn-catalog.workspace = true
+wamn-connection-type.workspace = true
 async-trait.workspace = true
 wasmtime-wasi-http.workspace = true
 tempfile = { workspace = true, optional = true }

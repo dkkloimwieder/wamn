@@ -1,4 +1,4 @@
-//! Portable connection-type semantics owned beside component admission.
+//! Portable connection definitions and runtime tags.
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

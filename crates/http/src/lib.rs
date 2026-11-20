@@ -125,7 +125,7 @@ impl ConnectionHttp {
                 .connection(&context.release, &alias)
                 .ok_or(ConnectionError::Unbound)?
         };
-        if binding.runtime_type != wamn_catalog::RuntimeType::Host
+        if binding.runtime_type != wamn_connection_type::RuntimeType::Host
             || binding.integration_type.as_str() != "http"
         {
             return Err(ConnectionError::Incompatible);

@@ -10,7 +10,7 @@ test-util = ["wamn-registry/test-util", "wamn-authority/test-util"]
 
 [dependencies]
 wamn-package.workspace = true
-wamn-catalog.workspace = true
+wamn-connection-type.workspace = true
 wamn-envelope.workspace = true
 wamn-engine.workspace = true
 wash-runtime.workspace = true

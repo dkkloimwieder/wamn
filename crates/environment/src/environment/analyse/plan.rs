@@ -46,10 +46,10 @@ pub fn refusals(document: &EnvironmentDocument, authorities: &Authorities) -> Ve
                     if !matches!(
                         (connection.requirement_type, requirement.requirement_type),
                         (
-                            wamn_catalog::RequirementType::Http,
+                            wamn_connection_type::RequirementType::Http,
                             wamn_package::ComponentConnectionType::Http
                         ) | (
-                            wamn_catalog::RequirementType::Blobstore,
+                            wamn_connection_type::RequirementType::Blobstore,
                             wamn_package::ComponentConnectionType::Blobstore
                         )
                     ) {

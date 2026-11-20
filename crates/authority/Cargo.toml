@@ -10,7 +10,7 @@ test-util = ["dep:opentelemetry_sdk", "dep:tracing-subscriber", "wamn-engine/tes
 
 [dependencies]
 wamn-package = { workspace = true, features = ["sqlx"] }
-wamn-catalog.workspace = true
+wamn-connection-type.workspace = true
 wamn-digest.workspace = true
 opentelemetry_sdk = { workspace = true, features = ["trace", "testing"], optional = true }
 tracing-subscriber = { workspace = true, optional = true }

@@ -132,8 +132,8 @@ pub fn roles(
                     binding.alias
                 );
             }
-            let integration = if binding.runtime_type == wamn_catalog::RuntimeType::Wasm {
-                let base = wamn_catalog::parse_component_artifact_base(integration_repository)?;
+            let integration = if binding.runtime_type == wamn_connection_type::RuntimeType::Wasm {
+                let base = wamn_oci_reference::parse_component_artifact_base(integration_repository)?;
                 Some(format!(
                     "{}/{}@{}",
                     base.registry(),
