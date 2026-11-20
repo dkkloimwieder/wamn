@@ -806,9 +806,9 @@ Issues:
 
 11.4 WIT output is generated with `wit-encoder`. No WIT as strings.
 
-11.5 Each application gets `openapi.json`, built from typed `oas3` OpenAPI 3.1 structs. The TypeScript client comes from `@hey-api/openapi-ts` with the `@tanstack/solid-query` plugin, version pinned. `apps/platform_ui` gets its clients again against the new `environment.status` and `application.rollback` contracts.
+11.5 Each application gets `openapi.json`, built from typed `oas3` OpenAPI 3.1 structs. Control's `openapi.json` comes from the existing contract JSON files. The TypeScript client comes from `@hey-api/openapi-ts`, version pinned, with only its type, SDK and fetch-client plugins, and no `@tanstack/solid-query`. The client uses `@wamn/web-runtime`: its transport as the client's fetch, interceptors that run `toWire` and `reviveOutcome`, and a query serializer that JSON-encodes values, as `readQuery.ts` does. Reads keep going through `readQuery` and `readCache`. A pnpm script in `apps/platform_ui`, called by its existing build, writes `src/generated/{wamn_control,wamn_control_org}`. `apps/platform_ui` gets its clients again against the new `environment.status` and `application.rollback` contracts.
 
-11.6 `wamn.k` holds no types. Custom-operation WIT is hand-written, so `generate/operations.rs::emit_custom_operation_wit` goes. Every app under `apps/` that has a `wamn.k` is updated.
+11.6 `wamn.k` holds no types. Custom-operation WIT is hand-written, so `generate/wit.rs::emit_custom_operation_wit` goes. It has one caller, `generate/operations.rs::emit_custom_operation`. The Rust adapter writer in it moves out first. Every app under `apps/` that has a `wamn.k` is updated.
 
 End of the epic: the standard checks, the preflight and the short smoke run.
 
@@ -894,6 +894,10 @@ End of the epic: the standard checks, the preflight and the short smoke run.
   - CAs come from cert-manager everywhere; no Helm `genCA` keys in release records.
   - `platform.tx_identity` stamps: either state them as tamper-evident only within one project database, or bind the identity through a definer function.
   - Org quotas count CPU and memory, with a LimitRange, and requests on control and the CDC reader.
+- Possible future exploration, not scheduled: a wamn hey-api plugin.
+- Typed control inputs, then OpenAPI derived with `schemars`.
+- The JSONata output check: P146 says output is validated at run time, but `walk.rs::invoke` only checks that the output is JSON.
+- Where `revocation_seconds` lives: P43 and P336 set the grant cache lifetime per project, but the environment file has one top-level `revocation_seconds`.
 - After the first kind run:
   - Fold the review's accidental-complexity items into 3.7b: the `wamn-catalog` split, and the duplicated operation and environment types.
   - Charts: `enablePDB: false` for single-instance project clusters; delete the dropped `affinity` and `topologySpreadConstraints` host values, or render them.
@@ -2525,6 +2529,29 @@ Facts:
 Epic 9 closed at 01bb4a1e2: review accepted, main fast-forwarded. The application record is 69,220 B on the 772-route wamn_wms fixture, a different fixture from the Epic 8 one, not growth. The slot cleanup connects to the postgres database, and the deadline for an unreachable database under --data is 10 s.
 
 **Ruled (D, 2026-11-20): Epic 11 scope (step 3.7, codegen), issues 11.0 to 11.6.**
-- Q1: the TypeScript client generator is `@hey-api/openapi-ts` with the `@tanstack/solid-query` plugin, version pinned. The alternative, `openapi-typescript` with `openapi-fetch`, makes types only and no query hooks.
+- Q1 (corrected after the scout): the TypeScript client generator is `@hey-api/openapi-ts`, version pinned, with only its type, SDK and fetch-client plugins. No `@tanstack/solid-query`. Reason: the plugin broke two earlier rulings, Epic 16 (a small store, not TanStack Query) and sync (Solid 2 owns optimistic state). The client uses `@wamn/web-runtime`: its transport as the client's fetch, interceptors that run `toWire` and `reviveOutcome`, and a query serializer that JSON-encodes values, as `readQuery.ts` does. Reads keep going through `readQuery` and `readCache`.
+- A wamn hey-api plugin (calls into `@wamn/web-runtime` for each operation, sync code for each model) is a possible future exploration only. It is not an epic and not scheduled.
 - Q2: 11.6 (no types in `wamn.k`, hand-written custom-operation WIT, apps updated) is done in this epic, because 11.3 to 11.5 rewrite the same generators.
 - The 3.7b items stay in 3.7b.
+
+**Ruled (D, 2026-11-20): Epic 11 scout choices.**
+- 1: control's OpenAPI comes from the existing contract JSON files. `contract_files.rs` and the JSON files stay. Reason: control's schemas exist only there.
+- 2: a pnpm script in `apps/platform_ui` runs the generator, called by its existing build.
+- 3: `wit-encoder =0.254.2`, which matches the workspace `wit-parser` and wasmtime 48.0.8.
+- 4: a labeled world import is one identifier. That is the only string fragment left in WIT output, and it carries a comment.
+- 5: a fixed `// @generated` line goes before the formatted output.
+- 6: keyword and dotted names are spelled as wit-bindgen spells them.
+- 7: there is no Solid Query (Q1 corrected).
+- 8: a client-side query serializer JSON-encodes values. The server does not change.
+- 9: each statement entry in `wamn.k` lists its bind names only. Types and nullability come from the WIT input. This extends K1: a statement entry holds its name, fetch class and bind names.
+- 10: value lists become WIT enums. `uuid`, `numeric` and `timestamp` become named WIT aliases.
+- 11: the modbus integer range stays in `wamn.k` as a check.
+- 12: the web/wfe examples stay as they are. They belong to the wfe agent.
+- 13: all of 11.0 is doc fixes. The JWT `data` claim is doc text only: "data: -1 (no limit); NATS does not enforce it." The JWT does not change.
+- P5: Part 1 holds the current rules. Each new ruling edits Part 1 in the same commit. Part 2 holds the reasons.
+- The second review's 8 contradicted rules:
+  - "`wamn.k` holds no types" and "custom-operation WIT is not generated": 11.6.
+  - The exclusive lock (only `sql/session_identity.rs::lock_file` exists), the HTTP client cache key (`http/transport.rs::HttpTransport` holds TLS settings only) and `registry.connection_principal` (absent): removed from Part 1 and listed in Open items as not built.
+  - Control is in the platform chart: doc fix, it is in the org chart.
+  - "Every Kubernetes object comes from a chart": doc fix that states the exceptions, `platform-install/org.rs::create` and `environment/broker.rs::ensure_user`.
+  - One writer for `platform."user"`: a 3.7b open item (`identity/application.rs::write_user`).
