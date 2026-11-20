@@ -280,6 +280,7 @@ fn org_values(
                 "worker_image": image,
                 "chart": application_chart,
                 "registry_token_metadata": registry_token_metadata(inputs)?,
+                "events": {"stream_replicas": 1, "dup_window_secs": 120},
                 "oauth_encryption": oauth_encryption,
             },
         },
