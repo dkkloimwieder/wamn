@@ -61,6 +61,23 @@
         }
       ]
     },
+    "registryEgress": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "cidr": {
+            "type": "string",
+            "minLength": 1
+          },
+          "port": {
+            "$ref": "#/definitions/port"
+          }
+        },
+        "required": ["cidr", "port"]
+      }
+    },
     "global": {
       "type": "object",
       "additionalProperties": false,

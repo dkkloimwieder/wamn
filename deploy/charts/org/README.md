@@ -5,7 +5,9 @@ The platform selects the namespace by its `wamn.dev/org` label.
 Set `org` to the registry org slug. The platform, hosts, cert-manager, default, kube-* and wamn names are reserved.
 The quota caps object counts and storage requests. Set individual limits in `quota`.
 
-Set `networkPolicy.apiServer` and `networkPolicy.registry` to lists of CIDR and TCP port pairs for this installation.
+`wamn org create` finds the API server destinations and sets `networkPolicy.apiServer`.
+It reads the required `registryEgress` list from `wamn-org-inputs` and sets `networkPolicy.registry`.
+For direct Helm installs, set both lists with `cidr` and TCP `port` pairs for this installation.
 Include addresses and ports used before and after Service translation where the network plugin requires them.
 Environment and project releases supply the policy rules for their host groups, project databases, and CDC readers.
 

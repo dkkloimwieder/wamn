@@ -1,6 +1,7 @@
 //! Thin platform command adapters.
 
 use std::{
+    net::IpAddr,
     path::{Path, PathBuf},
     time::Duration,
 };
@@ -106,6 +107,9 @@ async fn deploy(args: &DeployArgs) -> anyhow::Result<()> {
         .values
         .canonicalize()
         .context("resolve the Helm values file")?;
+    let infrastructure = !matches!(args.only, Some(DeployChart::Platform));
+    let platform = !matches!(args.only, Some(DeployChart::Infrastructure));
+    let registry_egress = platform.then(|| registry_egress(&values)).transpose()?;
     let chart = bundle::select(&args.chart)?;
     let reference = args
         .chart
@@ -145,8 +149,6 @@ async fn deploy(args: &DeployArgs) -> anyhow::Result<()> {
         context,
         namespace: "platform".into(),
     };
-    let infrastructure = !matches!(args.only, Some(DeployChart::Platform));
-    let platform = !matches!(args.only, Some(DeployChart::Infrastructure));
     let charts = chart.directory().join("platform");
     if infrastructure {
         upgrade(
@@ -160,14 +162,17 @@ async fn deploy(args: &DeployArgs) -> anyhow::Result<()> {
         // The platform chart needs the CloudNativePG admission webhook.
         kubectl::wait_deployment_ready(&target, "cnpg-controller-manager", ROLLOUT_TIMEOUT).await?;
     }
-    if platform {
+    if let Some(registry_egress) = registry_egress {
         let chart_values = tempfile::NamedTempFile::new()
-            .context("create a file for the application chart value")?;
+            .context("create a file for the resolved platform values")?;
         serde_json::to_writer(
             chart_values.as_file(),
-            &serde_json::json!({"applicationChart": application_chart}),
+            &serde_json::json!({
+                "applicationChart": application_chart,
+                "registryEgress": registry_egress,
+            }),
         )
-        .context("write the application chart value")?;
+        .context("write the resolved platform values")?;
         let deadline = tokio::time::Instant::now() + ROLLOUT_TIMEOUT;
         job::clear_finished(&target, SYSTEM_SQL_JOB, deadline).await?;
         upgrade(
@@ -231,6 +236,35 @@ async fn deploy(args: &DeployArgs) -> anyhow::Result<()> {
     };
     tokio::try_join!(infrastructure_rollout, platform_rollout)?;
     Ok(())
+}
+
+fn registry_egress(path: &Path) -> anyhow::Result<serde_json::Value> {
+    let read_context = || format!("read platform values from {}", path.display());
+    let file = std::fs::File::open(path).with_context(read_context)?;
+    let mut values: serde_yaml::Value = serde_yaml::from_reader(file).with_context(read_context)?;
+    values.apply_merge().with_context(read_context)?;
+    let egress = &values["registryEgress"];
+    if !egress.is_null() {
+        let destinations = egress
+            .as_sequence()
+            .context("registryEgress must be a list of CIDR and TCP port pairs")?;
+        if !destinations.is_empty() {
+            return serde_json::to_value(destinations).context("encode registryEgress");
+        }
+    }
+
+    let endpoint = &values["registryEndpoint"];
+    let address: IpAddr = endpoint["address"]
+        .as_str()
+        .context("set registryEgress or supply an IP address in registryEndpoint.address")?
+        .parse()
+        .context("registryEndpoint.address must be an IP address to derive registryEgress")?;
+    let port = endpoint["port"]
+        .as_u64()
+        .filter(|port| (1..=u64::from(u16::MAX)).contains(port))
+        .context("registryEndpoint.port must be a valid TCP port to derive registryEgress")?;
+    let prefix = if address.is_ipv4() { 32 } else { 128 };
+    Ok(serde_json::json!([{"cidr": format!("{address}/{prefix}"), "port": port}]))
 }
 
 async fn upgrade(

@@ -4,6 +4,10 @@ This chart installs shared services in `platform` and the edge in `hosts`. Use t
 
 Use `values-kind.yaml` or `values-gcp.yaml` for the installation. The schema validates WAMN inputs. Vendored charts accept their upstream values.
 
+Set `registryEgress` to a list of `cidr` and `port` pairs for registry access from org pods.
+If the list is empty, `wamn platform deploy` derives one entry from `registryEndpoint` using `/32` for IPv4 or `/128` for IPv6.
+The command requires one of these inputs. The chart writes `registryEgress` as JSON in `wamn-org-inputs`.
+
 Each NATS pod reserves 320 MiB of JetStream storage per `global.maxProjects`. A project stream can use 256 MiB. The remaining 64 MiB per project covers metadata and filesystem overhead. The full resolver has a separate 1 GiB persistent volume claim. The NATS init container waits for identity to publish the operator JWT.
 
 The SQL Job runs `provision-system` from the `wamn-control` image. Platform artifact stamping pins that image through `systemSql.image`.
