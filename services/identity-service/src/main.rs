@@ -6,6 +6,8 @@ use clap::Parser as _;
 use wamn_identity_service::cli::{Cli, run};
 
 fn main() -> ExitCode {
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+
     // The stderr fmt layer of the other services, with RUST_LOG over info.
     // A supervisor can close stderr after it reads the readiness line. The
     // subscriber then drops events; its internal-error report would panic in
