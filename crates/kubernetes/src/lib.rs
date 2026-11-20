@@ -1,6 +1,5 @@
 //! Shared Kubernetes transport, Secret storage, and bounded Job execution.
 
-pub mod forward;
 pub mod helm;
 pub mod job;
 pub mod kubectl;
