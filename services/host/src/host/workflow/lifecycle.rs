@@ -18,7 +18,7 @@ use super::{
     RunAs, RunNow, Workflow, Workload, authoring,
     broker::{Broker, Consumer},
 };
-use crate::host::application_route::Refusal;
+use crate::host::route_refusal::{Refusal, parse};
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -113,10 +113,6 @@ impl Workflow {
             )
             .await?
     }
-}
-
-fn parse<T: serde::de::DeserializeOwned>(payload: &str) -> Result<T, Refusal> {
-    serde_json::from_str(payload).map_err(|_| Refusal::Delivery(DeliveryError::InvalidPayload))
 }
 
 async fn lock(

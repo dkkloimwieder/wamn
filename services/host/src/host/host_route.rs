@@ -14,7 +14,8 @@ use wamn_engine::native_routes::{
 };
 use wamn_operation::OperationHost;
 
-use super::application_route::{ApplicationRoutes, Refusal};
+use super::application_route::ApplicationRoutes;
+use super::route_refusal::Refusal;
 use super::workflow::{self, Workflow};
 
 pub(super) struct HostRouteDelivery {

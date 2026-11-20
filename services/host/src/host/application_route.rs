@@ -22,7 +22,6 @@ use sqlx::PgConnection as Client;
 use wamn_catalog::application_config::ApplicationConfig;
 use wamn_catalog::{HostAttachment, HostHandler, HostRouteAuthority, sealed_operation_reference};
 use wamn_engine::ingress::AuthenticatedCaller;
-use wamn_engine::native_routes::DeliveryError;
 use wamn_identity::application::{
     AdministrationError, AdministrationRefusal, GrantAuthority, GrantChange, application_users,
     create_role, delete_role, mutate_grant, permission_is_grantable, permission_rows, role_names,
@@ -30,33 +29,7 @@ use wamn_identity::application::{
 use wamn_operation::OperationHost;
 use wamn_operation::number_counter::{CounterSet, CounterSetRefusal};
 
-/// Why an application route did not answer.
-#[derive(Debug)]
-pub(crate) enum Refusal {
-    /// A delivery refusal, such as a caller without `admin`.
-    Delivery(DeliveryError),
-    /// A refusal that the route's contract declares: its code and its
-    /// detail, answered as the error of the request element.
-    Declared { code: &'static str, detail: Value },
-    /// A failure of the host or of a service it calls.
-    Failed(anyhow::Error),
-}
-
-impl From<anyhow::Error> for Refusal {
-    fn from(error: anyhow::Error) -> Self {
-        Self::Failed(error)
-    }
-}
-
-impl From<sqlx::Error> for Refusal {
-    fn from(error: sqlx::Error) -> Self {
-        Self::Failed(error.into())
-    }
-}
-
-fn parse<T: serde::de::DeserializeOwned>(payload: &str) -> Result<T, Refusal> {
-    serde_json::from_str(payload).map_err(|_| Refusal::Delivery(DeliveryError::InvalidPayload))
-}
+use super::route_refusal::{Refusal, parse};
 
 /// What the application routes of one host use.
 pub(crate) struct ApplicationRoutes<'a> {
