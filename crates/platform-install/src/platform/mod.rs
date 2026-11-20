@@ -1,4 +1,3 @@
-//! Shared service coordinates and control rollout helpers.
+//! Shared service coordinates.
 
-pub mod control;
 pub mod identity;

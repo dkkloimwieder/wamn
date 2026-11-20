@@ -1,19 +1,16 @@
-//! Typed Secret reads and optimistic writes preserve concurrent changes.
+//! Typed Secret documents.
 
-use anyhow::{Context as _, ensure};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::{collections::BTreeMap, path::Path};
+use std::collections::BTreeMap;
 
-/// Kubernetes metadata, including the version used for optimistic writes.
+/// Kubernetes metadata.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Metadata {
     pub name: String,
     #[serde(default)]
     pub namespace: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub resource_version: Option<String>,
     #[serde(default, flatten)]
     pub attributes: BTreeMap<String, Value>,
 }
@@ -77,45 +74,4 @@ impl Secret {
             attributes: BTreeMap::new(),
         }
     }
-}
-
-/// Read, edit and replace an existing Secret, retrying a concurrent write.
-/// Every edit runs against the latest resource version.
-pub async fn update(
-    kubeconfig: &Path,
-    context: &str,
-    namespace: &str,
-    name: &str,
-    mut edit: impl FnMut(&mut Secret) -> anyhow::Result<()>,
-) -> anyhow::Result<()> {
-    // Keep callers' suspended state small while the command runner waits for I/O.
-    Box::pin(async {
-        for attempt in 0..5 {
-            let existing: Option<Secret> =
-                crate::kubectl::get(kubeconfig, context, namespace, "secret", name).await?;
-            let mut secret =
-                existing.with_context(|| format!("Secret {namespace}/{name} is absent"))?;
-            ensure!(
-                secret.metadata.resource_version.is_some(),
-                "Secret has no resourceVersion"
-            );
-            edit(&mut secret)?;
-            let body = serde_json::to_vec(&secret).context("encode Secret")?;
-            let result = crate::kubectl::kubectl(
-                kubeconfig,
-                context,
-                namespace,
-                &["replace", "-f", "-"],
-                Some(&body),
-            )
-            .await;
-            match result {
-                Ok(_) => return Ok(()),
-                Err(error) if error.is::<crate::kubectl::Conflict>() && attempt < 4 => {}
-                Err(error) => return Err(error),
-            }
-        }
-        unreachable!("the last write returns its error")
-    })
-    .await
 }

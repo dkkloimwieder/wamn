@@ -223,7 +223,7 @@ pub const CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_STATUS_STRANDED_RUNS: &str =
     "SELECT 1 FROM registry.environment_projects WHERE org = $1 AND project = $2 AND env = $3";
 
 /// crates/environment/src/environment/delete.rs::delete_locked registry statement.
-pub const CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_DELETE_DELETE_LOCKED: &str = "SELECT instance_suffix, readiness_budget_seconds, drain_bound_seconds FROM registry.environment_projects JOIN registry.environments USING (org,env) \
+pub const CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_DELETE_DELETE_LOCKED: &str = "SELECT instance_suffix, drain_bound_seconds FROM registry.environment_projects JOIN registry.environments USING (org,env) \
               WHERE org = $1 AND project = $2 AND env = $3";
 
 /// crates/environment/src/environment/delete/rows.rs::delete_registry_rows registry statement.
