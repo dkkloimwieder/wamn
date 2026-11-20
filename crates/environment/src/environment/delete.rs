@@ -77,16 +77,15 @@ async fn delete_locked(
     let release = name::environment_resource_name(org, project, env);
     let release_present = data && resources::project_release_exists(platform, &release).await?;
     let mut lines = Vec::new();
-    let Some((instance, readiness_budget_seconds, drain_bound_seconds)) =
-        sqlx::query_as::<_, (InstanceSuffix, i32, i32)>(
-            wamn_registry::sql::CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_DELETE_DELETE_LOCKED,
-        )
-        .bind(org)
-        .bind(project)
-        .bind(env)
-        .fetch_optional(&mut *system.client().await)
-        .await
-        .context("read the environment row")?
+    let Some((instance, drain_bound_seconds)) = sqlx::query_as::<_, (InstanceSuffix, i32)>(
+        wamn_registry::sql::CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_DELETE_DELETE_LOCKED,
+    )
+    .bind(org)
+    .bind(project)
+    .bind(env)
+    .fetch_optional(&mut *system.client().await)
+    .await
+    .context("read the environment row")?
     else {
         if data {
             if release_present {
@@ -240,13 +239,6 @@ async fn delete_locked(
             )
             .await
             .with_context(|| format!("remove the environment's key of Secret {control}"))?;
-            crate::platform::control::wait_administration(
-                &platform.target,
-                triple,
-                false,
-                Duration::from_secs(u64::try_from(readiness_budget_seconds)?),
-            )
-            .await?;
             lines.push(format!("removed the environment's key of Secret {control}"));
         }
 
