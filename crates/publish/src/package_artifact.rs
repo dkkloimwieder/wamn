@@ -42,9 +42,7 @@ const MIGRATION_PATHS: [&str; 2] = ["migrations", "history"];
 /// The project that admission writes into a component target. A package
 /// artifact is project-free, and a descriptor drops the target.
 fn admission_project_env_key() -> wamn_registry::ProjectEnvKey {
-    "platform--package--artifact"
-        .parse()
-        .expect("package admission coordinate")
+    wamn_registry::ProjectEnvKey::package_admission()
 }
 
 /// The platform packages a package-owned component is admitted with.
