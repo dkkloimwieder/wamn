@@ -11,6 +11,7 @@ test-util = []
 ops = ["wamn-provision/ops"]
 
 [dependencies]
+async-trait.workspace = true
 base64.workspace = true
 wamn-role.workspace = true
 wamn-connection = { workspace = true }
@@ -35,6 +36,8 @@ schemars.workspace = true
 serde_yaml = { workspace = true }
 tokio = { workspace = true, features = ["fs", "io-util", "macros", "process", "rt", "signal", "sync", "time"] }
 tracing = { workspace = true }
+uuid = { workspace = true, features = ["v4"] }
+wash-runtime.workspace = true
 wamn-catalog = { workspace = true, features = ["sqlx"] }
 wamn-oci = { workspace = true }
 wamn-provision = { workspace = true }
@@ -69,7 +72,6 @@ wamn-http = { workspace = true, features = ["test-util"] }
 wamn-blobstore = { workspace = true, features = ["test-util"] }
 wamn-fixture-package = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "sync", "test-util", "time"] }
-uuid = { workspace = true }
 tokio-rustls = { workspace = true }
 wamn-catalog = { workspace = true, features = ["test-util"] }
 wamn-provision = { workspace = true, features = ["test-util"] }

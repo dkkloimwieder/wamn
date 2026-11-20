@@ -39,7 +39,6 @@ use wamn_authority::connection_authority::{
 mod authentication;
 mod jwt;
 mod network_policy;
-pub mod oauth_callback;
 pub mod transport;
 
 use crate::oauth::{Request as Oauth2Request, Response as Oauth2Token};
@@ -985,8 +984,7 @@ mod connection_mode_tests {
     }
 }
 
-mod oauth;
-pub mod oauth_authorization;
+pub mod oauth;
 
 /// Shared HTTP fixtures for host invocation tests.
 #[cfg(any(test, feature = "test-util"))]

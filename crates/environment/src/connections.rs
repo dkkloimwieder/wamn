@@ -1,9 +1,13 @@
 //! Project integration administration and environment connection authority.
 
 pub mod administration;
+mod credentials;
 pub mod references;
 
 use std::fmt;
+
+#[doc(inline)]
+pub use credentials::KubernetesCredentials;
 
 /// A refused configuration write, or its database failure.
 #[derive(Debug)]

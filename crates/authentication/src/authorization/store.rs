@@ -8,7 +8,9 @@ use anyhow::Context as _;
 use moka::sync::Cache;
 use wamn_authority::auth_cache::PrincipalGrants;
 use wamn_catalog::application_config::ApplicationConfig;
-use wamn_connection::connection_credentials::{ConnectionCredentials, CredentialReader};
+use wamn_connection::connection_credentials::{
+    ConnectionCredentials, CredentialReader, CredentialStore,
+};
 use wamn_connection::connection_facts::{ConnectionAnswer, ConnectionCache, ConnectionFacts};
 use wamn_connection::database::ProjectDatabase;
 use wamn_identity_protocol::PrincipalId;
@@ -65,7 +67,7 @@ pub struct Authorization {
     applications: RwLock<HashMap<String, Weak<ApplicationConfig>>>,
     lifetimes: RwLock<HashMap<ProjectEnvKey, (ProjectId, Duration)>>,
     answers: Cache<Key, Answer>,
-    credentials: Arc<CredentialReader>,
+    credentials: Option<Arc<CredentialReader>>,
 }
 
 impl std::fmt::Debug for Authorization {
@@ -85,12 +87,18 @@ impl Authorization {
             envelope: None,
             lifetimes: RwLock::default(),
             applications: RwLock::default(),
-            credentials: Arc::default(),
+            credentials: None,
             answers: Cache::builder()
                 .max_capacity(MAX_AUTHORIZATION_ENTRIES)
                 .expire_after(Expiry)
                 .build(),
         }
+    }
+
+    /// Share one credential store and cache across application workloads.
+    pub fn with_credential_store(mut self, store: Box<dyn CredentialStore>) -> Self {
+        self.credentials = Some(Arc::new(CredentialReader::new(store)));
+        self
     }
 
     /// Supply the envelope used for OAuth credentials.
@@ -342,7 +350,7 @@ impl ConnectionCache for Authorization {
                 Arc::default(),
                 Arc::new(ConnectionCredentials::for_org(
                     &application.org,
-                    Arc::clone(&self.credentials),
+                    self.credentials.as_ref().map(Arc::clone),
                 )),
                 &self.database,
                 &key,

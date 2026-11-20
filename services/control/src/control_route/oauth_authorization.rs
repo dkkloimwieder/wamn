@@ -8,7 +8,10 @@ use sqlx::{Connection as _, Row as _};
 use url::Url;
 use zeroize::Zeroizing;
 
+use wamn_connection::connection_credentials::CredentialStore as _;
 use wamn_envelope::encryption::{Encrypted, Envelope};
+use wamn_environment::connections::KubernetesCredentials;
+use wamn_http::{oauth, transport::HttpTransport};
 
 /// A refusal with a safe public reason. Sources never enter a callback page.
 pub struct Error {
@@ -50,9 +53,7 @@ fn failed(reason: &'static str, source: impl Into<anyhow::Error>) -> Error {
 pub struct Authorization {
     redirect_uri: String,
     envelope: Arc<Envelope>,
-    transport: Arc<crate::transport::HttpTransport>,
-    #[cfg(any(test, feature = "test-util"))]
-    store: Option<Arc<dyn wamn_kubernetes::Store>>,
+    transport: HttpTransport,
 }
 
 impl Authorization {
@@ -72,24 +73,8 @@ impl Authorization {
         Ok(Self {
             redirect_uri: format!("{}/oauth/callback", url.origin().ascii_serialization()),
             envelope,
-            #[cfg(any(test, feature = "test-util"))]
-            store: None,
-            transport: Arc::new(crate::transport::HttpTransport::new()?),
+            transport: HttpTransport::new()?,
         })
-    }
-
-    /// Inject a private fixture store without changing process environment.
-    #[cfg(any(test, feature = "test-util"))]
-    pub fn with_store(mut self, store: Arc<dyn wamn_kubernetes::Store>) -> Self {
-        self.store = Some(store);
-        self
-    }
-
-    /// Use a fixture's private TLS roots for pinned token exchanges.
-    #[cfg(any(test, feature = "test-util"))]
-    pub fn with_transport(mut self, transport: Arc<crate::transport::HttpTransport>) -> Self {
-        self.transport = transport;
-        self
     }
 
     /// The address that the administrator registers with the provider.
@@ -114,7 +99,7 @@ impl Authorization {
         if context["auth_type"] != "oauth2_authorization_code" {
             return Err(refused("unsupported authentication type"));
         }
-        let (url, state, verifier) = crate::oauth::authorize(
+        let (url, state, verifier) = oauth::authorize(
             &context["parameters"]["auth"],
             &self.redirect_uri,
             &format!(
@@ -225,43 +210,23 @@ impl Authorization {
             .map_err(|error| failed("authorization state decryption failed", error))?;
         let verifier = std::str::from_utf8(verifier.expose())
             .map_err(|error| failed("invalid PKCE verifier", error))?;
-        let material = self
-            .credential(&context)
+        let material = credential(&context)
             .await
             .map_err(|error| failed("client credential unavailable", error))?;
-        let request = crate::oauth::Request::code(
-            &context["parameters"]["auth"],
+        let token = oauth::exchange_code(
+            &self.transport,
+            &context["parameters"],
             &material,
             &self.redirect_uri,
             code.to_string(),
             verifier.to_owned(),
         )
-        .map_err(|error| failed("invalid authorization parameters", error))?;
-        let parameters = &context["parameters"];
-        let authority = wamn_authority::connection_authority::parse_http_definition(parameters)
-            .map_err(|error| failed("invalid connection authority", error))?;
-        let decision = crate::token_endpoint(
-            &authority,
-            request.token_authority.as_deref(),
-            &request.token_url,
-            None,
-        )
         .await
-        .map_err(|error| failed("token endpoint authority refused", error))?;
-        let token = request
-            .send(&crate::oauth::Transport {
-                http: (*self.transport).clone(),
-                decision,
-            })
-            .await
-            .map_err(|error| failed("invalid provider token response", error))?;
+        .map_err(|error| failed(error.reason, error))?;
         let received = tokio::time::Instant::now();
         let plaintext = Zeroizing::new(
-            serde_json::to_vec(&wamn_connection::oauth_token::Token {
-                access_token: Some(token.access_token),
-                refresh_token: token.refresh_token,
-            })
-            .map_err(|error| failed("token encoding failed", error))?,
+            serde_json::to_vec(&token.token)
+                .map_err(|error| failed("token encoding failed", error))?,
         );
         let encrypted = self
             .envelope
@@ -280,21 +245,21 @@ impl Authorization {
         .map_err(|error| failed("token write failed", error))?;
         Ok(())
     }
+}
 
-    async fn credential(&self, context: &Value) -> anyhow::Result<Zeroizing<String>> {
-        let reference = &context["credential"];
-        let text = |field: &str| {
-            reference[field]
-                .as_str()
-                .context("credential reference missing")
-        };
-        let store = None;
-        #[cfg(any(test, feature = "test-util"))]
-        let store = self.store.as_deref().or(store);
-        wamn_connection::connection_credentials::read_secret(text("ref")?, text("version")?, store)
-            .await
-            .map(Zeroizing::new)
-    }
+async fn credential(context: &Value) -> anyhow::Result<Zeroizing<String>> {
+    let reference = &context["credential"];
+    let text = |field: &str| {
+        reference[field]
+            .as_str()
+            .context("credential reference missing")
+    };
+    let reference = text("ref")?;
+    let version = text("version")?;
+    let bytes = KubernetesCredentials.read(reference, version).await?;
+    String::from_utf8(bytes)
+        .context("credential is not UTF-8")
+        .map(Zeroizing::new)
 }
 
 /// Select only the project and environment named by an opaque authorization state.

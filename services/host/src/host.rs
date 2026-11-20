@@ -24,6 +24,7 @@ use wash_runtime::washlet::AttachedHostControl;
 
 mod application_route;
 mod commands;
+mod credential_store;
 mod files;
 mod host_route;
 mod platform_http;
@@ -535,8 +536,11 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         .transpose()?
         .map(Arc::new);
     let database = Arc::new(OperationDatabase::new(Arc::clone(&pools)));
-    let authorization =
-        Arc::new(Authorization::new(Arc::clone(&pools), database).with_oauth_encryption(envelope));
+    let authorization = Arc::new(
+        Authorization::new(Arc::clone(&pools), database)
+            .with_credential_store(Box::new(credential_store::KubernetesCredentials::default()))
+            .with_oauth_encryption(envelope),
+    );
     let postgres = Arc::new(OperationHost::new(pools, Some(Arc::clone(&authorization))));
     let integration = Arc::new(wamn_connection::integrations::IntegrationBound::new(
         Arc::clone(&authorization) as _,

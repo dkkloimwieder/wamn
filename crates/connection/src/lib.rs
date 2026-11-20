@@ -8,6 +8,3 @@ pub mod database;
 pub mod integrations;
 pub mod invocation;
 pub mod oauth_token;
-
-pub mod connections;
-pub mod credential_cleanup;

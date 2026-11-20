@@ -238,9 +238,9 @@ pub async fn execute(
             let source = source.ok_or_else(|| refuse("invalid_input", "source_env"))?;
             let copied: Option<(String,String,Value,Option<String>)> = sqlx::query_as("SELECT c.integration_type,c.auth_type,g.parameters,c.authority FROM platform.connection c JOIN platform.connection_generation g ON (g.connection_id,g.generation)=(c.id,c.active_generation) WHERE c.name=$1")
                 .bind(request["name"].as_str()).fetch_optional(source).await?;
-            let (kind, auth, parameters, source_authority) =
+            let (integration_type, auth, parameters, source_authority) =
                 copied.ok_or_else(|| refuse("not_found", "connection"))?;
-            if context["integration_type"] != kind || context["auth_type"] != auth {
+            if context["integration_type"] != integration_type || context["auth_type"] != auth {
                 return Err(refuse("immutable_field", "integration_type"));
             }
             if source_authority.as_deref() != authority {

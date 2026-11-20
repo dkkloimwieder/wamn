@@ -9,6 +9,10 @@ use oauth2::{
 use serde::Deserialize;
 
 use wamn_authority::connection::ConnectionError;
+use wamn_authority::connection_authority::parse_http_definition;
+use wamn_connection::oauth_token::{Fetched, Token};
+
+use crate::transport::HttpTransport;
 
 // The endpoint is required before any exchange can be built.
 type Client =
@@ -234,7 +238,7 @@ impl Request {
 }
 
 /// Build state, PKCE and the provider URL together.
-pub(crate) fn authorize(
+pub fn authorize(
     parameters: &serde_json::Value,
     redirect: &str,
     scope: &str,
@@ -268,4 +272,68 @@ pub(crate) fn authorize(
         state.secret().to_owned(),
         verifier.secret().to_owned(),
     ))
+}
+
+/// A failed exchange with a reason safe to show on the callback page.
+#[derive(Debug)]
+pub struct CodeExchangeError {
+    pub reason: &'static str,
+    source: anyhow::Error,
+}
+
+impl std::fmt::Display for CodeExchangeError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.reason)
+    }
+}
+
+impl std::error::Error for CodeExchangeError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(self.source.as_ref())
+    }
+}
+
+/// Exchange a code at the token endpoint bound to the connection's authority.
+pub async fn exchange_code(
+    transport: &HttpTransport,
+    parameters: &serde_json::Value,
+    material: &str,
+    redirect: &str,
+    code: String,
+    verifier: String,
+) -> Result<Fetched, CodeExchangeError> {
+    let request = Request::code(&parameters["auth"], material, redirect, code, verifier).map_err(
+        |source| CodeExchangeError {
+            reason: "invalid authorization parameters",
+            source: source.into(),
+        },
+    )?;
+    let authority = parse_http_definition(parameters).map_err(|source| CodeExchangeError {
+        reason: "invalid connection authority",
+        source: source.into(),
+    })?;
+    let decision = crate::token_endpoint(
+        &authority,
+        request.token_authority.as_deref(),
+        &request.token_url,
+        None,
+    )
+    .await
+    .map_err(|source| CodeExchangeError {
+        reason: "token endpoint authority refused",
+        source: source.into(),
+    })?;
+    let token = crate::fetch_health_token(transport, decision, &request)
+        .await
+        .map_err(|source| CodeExchangeError {
+            reason: "invalid provider token response",
+            source: source.into(),
+        })?;
+    Ok(Fetched {
+        token: Token {
+            access_token: Some(token.access_token),
+            refresh_token: token.refresh_token,
+        },
+        expires_in: token.expires_in,
+    })
 }

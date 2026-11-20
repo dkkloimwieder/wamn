@@ -15,7 +15,7 @@ async fn prune_identities(input: ConnectionInput<'_>) -> anyhow::Result<()> {
         sqlx::query("SELECT platform.prune_tx_identity()")
             .execute(&mut *transaction)
             .await?;
-        wamn_connection::credential_cleanup::collect(&mut transaction).await?;
+        wamn_environment::credential_cleanup::collect(&mut transaction).await?;
         transaction.commit().await?;
         Ok(())
     })

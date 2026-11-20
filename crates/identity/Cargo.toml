@@ -34,7 +34,6 @@ wamn-catalog = { workspace = true }
 
 [dev-dependencies]
 wamn-kubernetes = { workspace = true }
-wamn-connection = { workspace = true }
 wamn-environment = { workspace = true }
 wamn-registry = { workspace = true, features = ["test-util"] }
 sqlx = { workspace = true, features = ["macros", "migrate"] }

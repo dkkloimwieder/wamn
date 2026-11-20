@@ -8,39 +8,14 @@ use anyhow::Context as _;
 use moka::sync::Cache;
 use tokio::sync::OnceCell;
 use uuid::Uuid;
-use wamn_kubernetes::kubernetes::KubernetesStore;
 use wamn_registry::ProjectEnvKey;
 
 use crate::connection_memory::bounded;
 
-/// Read one versioned credential through the configured store.
-pub async fn read_secret(
-    reference: &str,
-    version: &str,
-    store: Option<&dyn wamn_kubernetes::Store>,
-) -> anyhow::Result<String> {
-    let configured;
-    let backend = if let Some(backend) = store {
-        backend
-    } else {
-        configured = in_cluster_store()?;
-        &configured
-    };
-    String::from_utf8(backend.get(reference, version).await?).context("credential is not UTF-8")
-}
-
-fn in_cluster_store() -> anyhow::Result<KubernetesStore> {
-    KubernetesStore::in_cluster().map_err(|error| {
-        let local = error.type_ == Some(wamn_kubernetes::ErrorType::NoCluster);
-        let error = anyhow::Error::new(error);
-        if local {
-            let reason = "no credential store in local mode";
-            tracing::warn!("{reason}");
-            error.context(reason)
-        } else {
-            error
-        }
-    })
+/// Read one versioned credential from the host's Secret store.
+#[async_trait::async_trait]
+pub trait CredentialStore: Send + Sync {
+    async fn read(&self, reference: &str, version: &str) -> anyhow::Result<Vec<u8>>;
 }
 
 /// Credential material omitted from debug output.
@@ -83,9 +58,9 @@ impl std::error::Error for ReadError {
     }
 }
 
-/// The host's shared Kubernetes client and bounded cache of credential values.
+/// The host's shared Secret reader and bounded cache of credential values.
 pub struct CredentialReader {
-    store: OnceCell<KubernetesStore>,
+    store: Box<dyn CredentialStore>,
     values: Cache<Key, Arc<Secret>>,
     pending: Mutex<HashMap<Key, Arc<Read>>>,
 }
@@ -98,17 +73,15 @@ impl fmt::Debug for CredentialReader {
     }
 }
 
-impl Default for CredentialReader {
-    fn default() -> Self {
+impl CredentialReader {
+    pub fn new(store: Box<dyn CredentialStore>) -> Self {
         Self {
-            store: OnceCell::new(),
+            store,
             values: bounded(),
             pending: Mutex::default(),
         }
     }
-}
 
-impl CredentialReader {
     async fn read(
         &self,
         key: Key,
@@ -224,10 +197,10 @@ impl std::fmt::Debug for ConnectionCredentials {
 
 impl ConnectionCredentials {
     /// Read connection rows without a system database.
-    pub fn for_org(org: &wamn_registry::OrgId, secrets: Arc<CredentialReader>) -> Self {
+    pub fn for_org(org: &wamn_registry::OrgId, secrets: Option<Arc<CredentialReader>>) -> Self {
         Self {
             org: Some(org.to_owned()),
-            secrets: Some(secrets),
+            secrets,
             project: None,
         }
     }
@@ -390,11 +363,8 @@ impl ConnectionCredentials {
                     reference.reference == name,
                     "credential Secret does not match project"
                 );
-                let store = reader
-                    .store
-                    .get_or_try_init(|| async { in_cluster_store() })
-                    .await?;
-                read_secret(&name, &reference.version, Some(store)).await
+                let bytes = reader.store.read(&name, &reference.version).await?;
+                String::from_utf8(bytes).context("credential is not UTF-8")
             })
             .await
     }

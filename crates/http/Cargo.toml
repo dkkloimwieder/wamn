@@ -1,15 +1,14 @@
 [package]
 name = "wamn-http"
-description = "Bound HTTP host service and OAuth authorization."
+description = "Bound HTTP host service and OAuth token exchanges."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [features]
-test-util = ["wamn-provision/test-util", "dep:wamn-provision", "dep:wamn-broker", "wamn-engine/test-util", "wamn-catalog/test-util", "wamn-authority/test-util", "wamn-connection/test-util", "dep:wamn-operation", "wamn-operation/test-util", "dep:tempfile", "dep:wamn-test-postgres", "dep:wamn-test-infrastructure", "dep:rcgen", "dep:wat", "hyper/server"]
+test-util = ["dep:wamn-broker", "wamn-engine/test-util", "wamn-catalog/test-util", "wamn-authority/test-util", "wamn-connection/test-util", "dep:wamn-operation", "wamn-operation/test-util", "dep:tempfile", "dep:wamn-test-postgres", "dep:wamn-test-infrastructure", "dep:rcgen", "dep:wat", "hyper/server"]
 
 [dependencies]
-wamn-envelope.workspace = true
 async-trait.workspace = true
 wasmtime-wasi-http.workspace = true
 tempfile = { workspace = true, optional = true }
@@ -47,12 +46,9 @@ wamn-broker = { workspace = true, optional = true }
 wamn-authority = { workspace = true }
 wamn-catalog = { workspace = true }
 wamn-connection = { workspace = true }
-wamn-provision = { workspace = true, optional = true }
 wamn-engine = { workspace = true }
 wamn-identity-protocol = { workspace = true, features = ["sqlx"] }
-wamn-kubernetes = { workspace = true }
 wamn-http-client = { workspace = true, features = ["tls12"] }
-wamn-postgres = { workspace = true }
 wamn-operation = { workspace = true, optional = true }
 wamn-registry = { workspace = true }
 wash-runtime = { workspace = true }
@@ -64,10 +60,9 @@ opentelemetry_sdk = { workspace = true, features = ["trace", "testing"] }
 tokio = { workspace = true, features = ["test-util"] }
 tracing-subscriber = { workspace = true }
 wamn-catalog = { workspace = true, features = ["test-util"] }
-wamn-provision = { workspace = true, features = ["test-util"] }
 wamn-engine = { workspace = true, features = ["test-util"] }
 wamn-http = { path = ".", features = ["test-util"] }
-wamn-kubernetes = { workspace = true, features = ["test-util"] }
+wamn-postgres.workspace = true
 
 [lints]
 workspace = true

@@ -15,6 +15,7 @@ wamn-envelope.workspace = true
 boon.workspace = true
 wamn-blobstore.workspace = true
 wamn-connection.workspace = true
+wamn-kubernetes.workspace = true
 bytes.workspace = true
 http-body-util.workspace = true
 hyper.workspace = true
