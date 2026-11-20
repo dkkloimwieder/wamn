@@ -784,6 +784,8 @@ Issues:
 
 10.12 Platform logins use certificates.
 
+10.13 NATS users per host pod, the data user in the environment account, finite account limits (NATS and tenancy review). Built after the first kind run report.
+
 Merged to main on 2026-11-19 after review. The first kind run waits for D's approval.
 
 ## Open items
@@ -853,8 +855,11 @@ Merged to main on 2026-11-19 after review. The first kind run waits for D's appr
 - 3.7b: component admission takes only the package id and version; the palette key and `ProjectEnvKey::platform_palette()` go.
 - Later option: registry access for each org. Today every org uses the same registry credential (a copied file on kind, the node's token on GCP), so an org's hosts could pull another org's packages. For example, one repository per org, with read access only to its own.
 - Before any install that must survive an upgrade: system schema migrations. The system schema loads only when it is absent (`provision_system.rs:242`), and no system migration exists, so a schema change today needs a new cluster.
-- Before running more than one real customer: a fleet rollout command, run after `wamn platform deploy`. It applies `wamn org create` again for every org in `registry.orgs`, then `wamn env apply` for every environment. It records each environment's application bundle digest, so version skew is visible. It is resumable, and stops an org's remaining environments at their first failure. Reason: org and environment releases pick up a platform, `host.yaml` or runtime-operator change only when they are applied again, and nothing does that for all of them today. This replaces the earlier open item about `wamn platform deploy` applying `wamn org create` again for every org.
+- Before running more than one real customer: a fleet rollout command, run after `wamn platform deploy`. It applies `wamn org create` again for every org in `registry.orgs`, then `wamn env apply` for every environment. It records each environment's application bundle digest, so version skew is visible. It is resumable, and stops an org's remaining environments at their first failure. Reason: org and environment releases pick up a platform, `host.yaml` or runtime-operator change only when they are applied again, and nothing does that for all of them today. This replaces the earlier open item about `wamn platform deploy` applying `wamn org create` again for every org. The rollout detects and recovers a release left in a pending state by a run that died partway.
 - The org owner's access token lasts about 15 minutes, which can be shorter than a long `env apply` run by hand.
+- Before the first production customer: split scheduler NATS from data NATS with the stock `schedulerUrl` and `dataUrl`, so no tenant can starve the control plane. NATS has no CPU or rate limits per account.
+- Before the first production customer: a PriorityClass for production environments, so production outranks dev. The environment values already accept `resources`, `nodeSelector`, `tolerations` and `affinity`.
+- First kind run: confirm that kind's CNI enforces NetworkPolicy, and that an environment's host cannot reach another environment's host, Postgres or Services.
 
 # Part 2: Review log
 
@@ -2447,5 +2452,15 @@ Facts:
 - During a run, the agent fixes a defect without asking when the fix stays inside one function or file, matches the rulings and patterns, and changes no schema, chart values contract, permission or security boundary, dependency or CLI. Each such fix is committed on its own and listed in the report for review afterwards. The agent stops only for design choices, the excluded areas, or a conflict with a ruling. Reason: most defects of the first kind run were small and local, and each one waited for D.
 - A dependency already in the workspace, added with `workspace = true` and no new crate, version or feature set beyond another member's, counts as no new dependency under the run rule.
 - Any wasmCloud chart upgrade (the vendored runtime-operator chart) also renders the environment and platform charts with the old and the new vendored chart, using the same values, and the diff of the rendered objects is reviewed before merging. Reason: `deploy/charts/environment/templates/host.yaml` includes the vendored chart's internal template files by path (`charts/runtime-operator/templates/runtime/deployment.yaml`, `host-plugin-config.yaml`, `service.yaml`). A moved file fails the preflight render, but a changed `.Values` key or helper can render wrong defaults without failing.
+
+**Ruled (D, 2026-11-19): NATS and tenancy review.**
+- Scheduler users: one per host pod, replacing the shared scheduler rights (this overturns the 2026-11-19 stated exception to T1). Reason: every host group's scheduler user could publish on `runtime.host.>`, and wasmCloud's threat model says that anyone who can publish there can start any workload with any grant, so a sandbox escape in one org's host would control every host. Design:
+  - The host sets its id to its pod name (`HostBuilder::with_id`).
+  - At start it makes a key pair and asks identity for a user limited to what upstream documents (`wash-runtime/src/washlet/mod.rs`, `ClusterHost`): subscribe `runtime.host.<id>.>`; publish `runtime.host.<id>.__control.ready` and `runtime.operator.heartbeat.<id>`; its own inbox and reply subjects.
+  - Identity checks the request with TokenReview, takes the pod name from the pod-bound token and the environment from the service account. No expiry, because pod names are never reused.
+  - The operator's user keeps its broad rights.
+- The host's default data user moves from `PLATFORM` to the environment's own account, with publish denied. Nothing tenant-related stays in `PLATFORM`.
+- Environment accounts get finite limits for connections, subscriptions, payload size and data, set at install like the other platform caps. Reason: these were `UNLIMITED` (`identity/src/nats/claims.rs`); only JetStream was capped.
+- One NATS stays (E6), with these limits and the three NATS pods already planned. The shared runtime operator stays, the same as CloudNativePG and cert-manager.
 
 Epic 9 closed at 01bb4a1e2: review accepted, main fast-forwarded. The application record is 69,220 B on the 772-route wamn_wms fixture, a different fixture from the Epic 8 one, not growth. The slot cleanup connects to the postgres database, and the deadline for an unreachable database under --data is 10 s.
