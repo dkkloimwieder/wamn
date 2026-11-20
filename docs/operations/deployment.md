@@ -301,7 +301,11 @@ The project chart mounts the YAML document in later project Jobs.
 The reader stays paused while a capture gap is open.
 The shared host group uses the runtime operator chart at version 2.12.2. The host reads NATS user credentials from `/etc/wamn/nats/` and trusts the broker CA at `/etc/wamn/nats-ca/ca.crt`.
 
-Use `wamn env delete ORG/ENV/PROJECT` to remove a project deployment. Helm keeps the Cluster, ObjectStore, and project certificate resources by default. Add `--data` to remove them.
+Use `wamn env delete ORG/ENV/PROJECT` to remove a project deployment.
+A plain delete keeps the Cluster and ObjectStore for a manual dump. It also keeps the project certificate resources.
+The next `wamn env apply` creates a new database generation with a new Cluster.
+Run `wamn env delete ORG/ENV/PROJECT --data` to remove the kept resources after a plain delete. The command lists each one it deletes.
+See [Recover after a plain delete](backup-and-recovery.md#recover-after-a-plain-delete) for cleanup when the Cluster is already gone.
 Delete stops the reader before it removes the stream, then removes the replication slot and publication.
 Delete removes the project’s CDC and recovery credential Secrets. For the last project it also removes the host group, the shared credentials, and the environment account.
 These lifecycle requests return Jobs. The CLI polls `environment.operation_status`.
