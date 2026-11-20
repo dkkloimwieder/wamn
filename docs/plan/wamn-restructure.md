@@ -860,6 +860,7 @@ Merged to main on 2026-11-19 after review. The first kind run waits for D's appr
 - Before the first production customer: split scheduler NATS from data NATS with the stock `schedulerUrl` and `dataUrl`, so no tenant can starve the control plane. NATS has no CPU or rate limits per account.
 - Before the first production customer: a PriorityClass for production environments, so production outranks dev. The environment values already accept `resources`, `nodeSelector`, `tolerations` and `affinity`.
 - First kind run: confirm that kind's CNI enforces NetworkPolicy, and that an environment's host cannot reach another environment's host, Postgres or Services.
+- `pg_walstream` runs from the fork `dkkloimwieder/pg-walstream` with two patches (typed keepalive, client certificate). Move back to the upstream crate when both are released there.
 
 # Part 2: Review log
 
@@ -2439,6 +2440,12 @@ Facts:
 - K11 (fixed by the agent): `org_values` writes the event stream policy again (e4320450d).
 - K12: control installs the aws-lc-rs rustls provider in `main`, like identity, cdc-reader and the CLI. Cause: the operation worker panicked on its first TLS connection to NATS.
 - K15 (fixed by the agent): a chart test gives the project chart its environment document (e2846d11f).
+- K16 and K22 (fixed by the agent; K16 touched two files because the key constructor lives in `wamn-registry`, per the palette ruling).
+- K17: the registry's egress address goes through `wamn-org-inputs` into each org's `networkPolicy.registry`.
+- K18: loopback registry references map to `POD_REGISTRY` in one shared function, digest unchanged, only when the registry is loopback.
+- K19: `env apply` after `env delete` makes a new generation; kept Clusters and ObjectStores stay for a manual dump (copy-back ruling), and `env delete --data` after a plain delete removes them and lists what it removed.
+- K20: Rust waits for `Ready=True` on each WorkloadDeployment. Helm's watcher does not check `Ready` on custom resources.
+- K21: the `pg_walstream` fork sends the client certificate and key. It carries two patches, typed keepalive and client certificate, both prepared for upstream.
 
 **Ruled (D, 2026-11-19): preflight and smoke runs.**
 - Preflight, run before any kind install:
