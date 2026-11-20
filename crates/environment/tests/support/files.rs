@@ -70,13 +70,12 @@ pub async fn fixture(name: &str) -> anyhow::Result<Fixture> {
     )] {
         let role = workload_login(family, target)?;
         sqlx::raw_sql(sqlx::AssertSqlSafe(
-            (&wamn_provision::test_database::login_sql(
+            wamn_provision::test_database::login_sql(
                 family,
                 name,
                 &role,
                 "file-fixture-only",
-            ))
-                .to_string(),
+            ),
         ))
         .execute(&mut observer)
         .await
@@ -84,14 +83,13 @@ pub async fn fixture(name: &str) -> anyhow::Result<Fixture> {
         logins.push(connect(&login(database.url(), &role)?).await?);
     }
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (&format!(
+        format!(
             "CREATE ROLE file_fixture_migrator LOGIN PASSWORD 'file-fixture-only' \
          NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS; \
          GRANT CREATE ON DATABASE \"{name}\" TO file_fixture_migrator; \
          GRANT USAGE ON SCHEMA platform TO file_fixture_migrator; \
          GRANT REFERENCES (id) ON platform.file TO file_fixture_migrator;"
-        ))
-            .to_string(),
+        ),
     ))
     .execute(&mut observer)
     .await

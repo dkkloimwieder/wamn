@@ -28,7 +28,7 @@ fn outcome(row: &sqlx::postgres::PgRow, expected: &str, detail: &Value) {
 
 async fn prepare(client: &mut Client) -> anyhow::Result<()> {
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (&format!(
+        format!(
             "SET search_path = wms, public;
          PREPARE test_lock_adjust AS {} PREPARE test_adjust AS {}
          PREPARE test_lock_split AS {} PREPARE test_split AS {}
@@ -39,8 +39,7 @@ async fn prepare(client: &mut Client) -> anyhow::Result<()> {
             include_str!("../command/inventory/split/split.sql"),
             include_str!("../command/inventory/merge/lock_both_packagings.sql"),
             include_str!("../command/inventory/merge/merge.sql"),
-        ))
-            .to_string(),
+        ),
     ))
     .execute(&mut *client)
     .await
@@ -50,7 +49,7 @@ async fn prepare(client: &mut Client) -> anyhow::Result<()> {
 
 async fn seed(client: &mut Client) -> anyhow::Result<()> {
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (&format!(
+        format!(
             "INSERT INTO wms.packaging (id, packaging_code, type, location_id, status)
          VALUES ('{SOURCE}', 'SQL-SOURCE', 'pallet', '{LOCATION}', 'held'),
                 ('{TARGET}', 'SQL-TARGET', 'tote', '{LOCATION}', 'available');
@@ -58,8 +57,7 @@ async fn seed(client: &mut Client) -> anyhow::Result<()> {
          VALUES ('{SOURCE}', '{PRODUCT}', 'available', 10),
                 ('{SOURCE}', '{PRODUCT}', 'held', 2),
                 ('{TARGET}', '{PRODUCT}', 'available', 4);"
-        ))
-            .to_string(),
+        ),
     ))
     .execute(&mut *client)
     .await
@@ -71,7 +69,7 @@ async fn seed(client: &mut Client) -> anyhow::Result<()> {
 pub(crate) async fn assert_outcomes(client: &mut Client) -> anyhow::Result<()> {
     prepare(client).await?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (&format!("BEGIN; {CONTEXT}")).to_string(),
+        format!("BEGIN; {CONTEXT}"),
     ))
     .execute(&mut *client)
     .await
@@ -271,7 +269,7 @@ pub(crate) async fn assert_fresh_reads(client: &mut Client, url: &str) -> anyhow
         .get(0);
     for command in ["adjust", "split", "merge"] {
         sqlx::raw_sql(sqlx::AssertSqlSafe(
-            (&format!("BEGIN; {CONTEXT}")).to_string(),
+            format!("BEGIN; {CONTEXT}"),
         ))
         .execute(&mut *client)
         .await
@@ -281,12 +279,12 @@ pub(crate) async fn assert_fresh_reads(client: &mut Client, url: &str) -> anyhow
             .execute(&mut *client)
             .await
             .map(drop)?;
-        sqlx::raw_sql(sqlx::AssertSqlSafe((&format!("BEGIN; {CONTEXT} SELECT id FROM wms.packaging WHERE id = '{SOURCE}' FOR UPDATE;
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!("BEGIN; {CONTEXT} SELECT id FROM wms.packaging WHERE id = '{SOURCE}' FOR UPDATE;
             UPDATE wms.packaging_quantity SET quantity = 6 WHERE packaging_id = '{SOURCE}' AND status = 'available';
             INSERT INTO wms.packaging_quantity (packaging_id, product_id, status, quantity) VALUES ('{TARGET}', '{PRODUCT}', 'held', 3);
-            UPDATE wms.packaging SET row_version = 2 WHERE id = '{SOURCE}';")).to_string())).execute(&mut *client).await.map(drop)?;
+            UPDATE wms.packaging SET row_version = 2 WHERE id = '{SOURCE}';"))).execute(&mut *client).await.map(drop)?;
         sqlx::raw_sql(sqlx::AssertSqlSafe(
-            (&format!("BEGIN; {CONTEXT}")).to_string(),
+            format!("BEGIN; {CONTEXT}"),
         ))
         .execute(&mut waiter)
         .await
@@ -350,12 +348,11 @@ pub(crate) async fn assert_fresh_reads(client: &mut Client, url: &str) -> anyhow
             .await
             .map(drop)?;
         sqlx::raw_sql(sqlx::AssertSqlSafe(
-            (&format!(
+            format!(
                 "BEGIN; {CONTEXT}
             DELETE FROM wms.packaging_quantity WHERE packaging_id IN ('{SOURCE}', '{TARGET}');
             DELETE FROM wms.packaging WHERE id IN ('{SOURCE}', '{TARGET}'); COMMIT;"
-            ))
-                .to_string(),
+            ),
         ))
         .execute(&mut *client)
         .await

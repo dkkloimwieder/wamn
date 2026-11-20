@@ -199,7 +199,7 @@ mod tests {
 
         bind_actor(&mut client, COMMAND_PRINCIPAL).await?;
         let updated = sqlx::query(sqlx::AssertSqlSafe(
-            (&generated_sql(OVERLAY_UPDATE_SQL)).to_string(),
+            generated_sql(OVERLAY_UPDATE_SQL),
         ))
         .bind(&id)
         .bind(&1_i32)
@@ -566,7 +566,7 @@ mod tests {
             .chain(logs)
             .collect::<Vec<_>>()
             .join("\n");
-        sqlx::raw_sql(sqlx::AssertSqlSafe((&sql).to_string()))
+        sqlx::raw_sql(sqlx::AssertSqlSafe(sql))
             .execute(&mut *client)
             .await
             .map(drop)
@@ -665,7 +665,7 @@ mod tests {
         let before = stamps(client, purchase_order_id).await?;
         bind_actor(client, COMMAND_PRINCIPAL).await?;
         let updated = sqlx::query(sqlx::AssertSqlSafe(
-            (&generated_sql(OVERLAY_UPDATE_SQL)).to_string(),
+            generated_sql(OVERLAY_UPDATE_SQL),
         ))
         .bind(&purchase_order_id)
         .bind(&1_i32)
@@ -780,7 +780,7 @@ mod tests {
         );
 
         let fetched = sqlx::query(sqlx::AssertSqlSafe(
-            (&generated_sql(OVERLAY_GET_SQL)).to_string(),
+            generated_sql(OVERLAY_GET_SQL),
         ))
         .bind(&purchase_order_id)
         .fetch_one(&mut *client)
@@ -1720,7 +1720,7 @@ mod tests {
         .map(|result| result.rows_affected())
         .context("insert supplier fixture")?;
         sqlx::raw_sql(sqlx::AssertSqlSafe(
-            (&format!("SET LOCAL ROLE \"{}\"", role.replace('"', "\"\""))).to_string(),
+            format!("SET LOCAL ROLE \"{}\"", role.replace('"', "\"\"")),
         ))
         .execute(&mut *client)
         .await
@@ -1761,7 +1761,7 @@ mod tests {
         insert_supplier(client, supplier_id).await?;
         let supplier_id = Some(supplier_id);
         let row = sqlx::query(sqlx::AssertSqlSafe(
-            (&generated_sql(UPDATE_SQL)).to_string(),
+            generated_sql(UPDATE_SQL),
         ))
         .bind(&id)
         .bind(&expected_row_version)
