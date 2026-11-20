@@ -311,10 +311,6 @@ The module contains the current default body.
 Its WIT, SQL and input validation stay generated.
 The command refuses an existing implementation or output file.
 
-`wamn eject component apps/wamn_receiving purchase_order path/to/purchase_order.ts` copies one browser component to an authored file.
-Import that file through normal application composition.
-Generated client copies stay under `src/generated/`.
-
 ## Pushing a package
 
 Build the package and any bases before publication.
