@@ -1,9 +1,9 @@
-{{- with .Values.cdcReader }}
+{{- with and .Values.publication .Values.publication.schemas .Values.cdcReader }}
 {{- $operations := required "operations is required for the CDC reader" $.Values.operations }}
 {{- $database := required "cdcReader.database is required for the CDC reader" .database }}
 {{- $login := required "Set cdcReader.database.credentials.name" $database.credentials.name }}
 {{- $ca := required "Set cdcReader.database.server_ca.name" $database.server_ca.name }}
-{{- $publication := required "publication is required for the CDC reader" $.Values.publication }}
+{{- $publication := $.Values.publication }}
 {{- $settings := dict "org" $publication.org "project" $publication.project "env" $publication.env "database" $database "cdc_name" $publication.name "nats_url" (required "cdcReader.natsUrl is required" .natsUrl) "nats_creds" "/etc/wamn/nats/user.creds" | toJson }}
 apiVersion: v1
 kind: ConfigMap

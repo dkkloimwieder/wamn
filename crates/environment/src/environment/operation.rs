@@ -370,6 +370,9 @@ async fn apply_sql(
         values,
     )
     .await?;
+    if schemas.is_empty() {
+        return Ok(());
+    }
     let capture = wamn_platform_install::environment::capture_configuration(connection.clone())?;
     platform.prepare_database(&capture).await?;
     resources::prepare_cdc(

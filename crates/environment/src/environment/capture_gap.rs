@@ -1,5 +1,6 @@
 //! Stop capture for recovery and retry reader restart after resynchronization.
 use super::Platform;
+use anyhow::{Context as _, ensure};
 pub use recovery::{
     CloseCaptureGapRequest, ClosedCaptureGap, RecoverCaptureGapRequest, RecoveredCaptureGap,
 };
@@ -41,7 +42,21 @@ pub(super) async fn set_paused(
     )
     .await?;
     if !paused {
-        super::cdc_reader::wait_reader_ready(&platform.target, triple).await?;
+        let target = &platform.target;
+        let reader = wamn_provision::cdc_reader_name(&triple.org, &triple.project, &triple.env);
+        let reader_exists = wamn_kubernetes::kubectl::get::<serde_json::Value>(
+            &target.kubeconfig,
+            &target.context,
+            &target.namespace,
+            "deployment",
+            &reader,
+        )
+        .await
+        .with_context(|| format!("read CDC reader Deployment {reader}"))?
+        .is_some();
+        if reader_exists {
+            super::cdc_reader::wait_reader_ready(target, triple).await?;
+        }
     }
     Ok(())
 }
@@ -63,6 +78,21 @@ pub async fn recover(
             )
             .await?;
             let owner = wamn_platform_install::environment::connection_for(&triple, &instance);
+            let target = &platform.target;
+            let publication_exists = wamn_kubernetes::kubectl::get::<serde_json::Value>(
+                &target.kubeconfig,
+                &target.context,
+                &target.namespace,
+                "publication.postgresql.cnpg.io",
+                &owner.database,
+            )
+            .await
+            .with_context(|| format!("read CDC Publication for {triple}"))?
+            .is_some();
+            ensure!(
+                publication_exists,
+                "{triple} has no CDC Publication to recover"
+            );
             let capture = wamn_platform_install::environment::capture_configuration(owner)?;
             platform.prepare_database(&capture).await?;
             recovery::recover_capture_gap(args, &instance, &capture.to_json()?, platform, lock)

@@ -270,8 +270,6 @@ async fn configure_project(
     if unconfigured {
         platform.prepare_database(connection).await?;
     }
-    platform.prepare_database(&capture).await?;
-    let capture_json = capture.to_json()?;
     LifecycleLock::hold(
         installer::environment::wait_project_connection(&owner, &connection.database).await?,
         triple,
@@ -309,22 +307,25 @@ async fn configure_project(
                 .await?;
             }
             workload::grant(&mut *project_lock.client().await, &connections).await?;
-            resources::prepare_cdc(
-                &owner,
-                &capture_json,
-                &connection.database,
-                &publication,
-                &schemas,
-            )
-            .await?;
+            if !schemas.is_empty() {
+                platform.prepare_database(&capture).await?;
+                resources::prepare_cdc(
+                    &owner,
+                    &capture.to_json()?,
+                    &connection.database,
+                    &publication,
+                    &schemas,
+                )
+                .await?;
+            }
             resources::ensure_stream(platform, triple).await?;
-            if !paused {
+            if !schemas.is_empty() && !paused {
                 super::cdc_reader::wait_reader_ready(&platform.target, triple).await?;
             }
             let mut connection = lock.client().await;
             let mut tx = provision_project_env::provisioning_transaction(&mut connection).await?;
             document.save(&mut tx).await?;
-            // prepare_cdc creates the failover slot under the publication name.
+            // With deployed schemas, the failover slot uses the publication name.
             let slot = &publication;
             let stream = wamn_event::stream_name(&triple.org, &triple.project, &triple.env);
             sqlx::query(sqlx::AssertSqlSafe(upsert_event_reader_sql()))
