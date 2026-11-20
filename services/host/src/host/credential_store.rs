@@ -1,33 +1,67 @@
-//! Read connection Secrets through the in-cluster credential store.
+//! Read connection Secrets in the host's namespace.
 
+use std::{fmt, time::Duration};
+
+use anyhow::{Context as _, ensure};
+use k8s_openapi::api::core::v1::Secret;
+use kube::{Api, Client, Config};
 use tokio::sync::OnceCell;
 use wamn_connection::connection_credentials::CredentialStore;
-use wamn_kubernetes::{ErrorType, Store as _, kubernetes::KubernetesStore};
+
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+
+#[derive(Debug)]
+struct NoCluster;
+
+impl fmt::Display for NoCluster {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("no credential store in local mode")
+    }
+}
+
+impl std::error::Error for NoCluster {}
 
 #[derive(Default)]
 pub(super) struct KubernetesCredentials {
-    store: OnceCell<KubernetesStore>,
+    secrets: OnceCell<Api<Secret>>,
+}
+
+fn in_cluster_secrets() -> anyhow::Result<Api<Secret>> {
+    if std::env::var_os("KUBERNETES_SERVICE_HOST").is_none() {
+        let error = NoCluster;
+        tracing::warn!("{error}");
+        return Err(error.into());
+    }
+
+    let mut config = Config::incluster().context("load in-cluster credential configuration")?;
+    config.default_retry = false;
+    let namespace = config.default_namespace.clone();
+    let client = Client::try_from(config).context("build in-cluster credential client")?;
+    Ok(Api::<Secret>::namespaced(client, &namespace))
 }
 
 #[async_trait::async_trait]
 impl CredentialStore for KubernetesCredentials {
     async fn read(&self, reference: &str, version: &str) -> anyhow::Result<Vec<u8>> {
-        let store = self
-            .store
-            .get_or_try_init(|| async {
-                KubernetesStore::in_cluster().map_err(|error| {
-                    let local = error.type_ == Some(ErrorType::NoCluster);
-                    let error = anyhow::Error::new(error);
-                    if local {
-                        let reason = "no credential store in local mode";
-                        tracing::warn!("{reason}");
-                        error.context(reason)
-                    } else {
-                        error
-                    }
-                })
-            })
+        let secrets = self
+            .secrets
+            .get_or_try_init(|| async { in_cluster_secrets() })
             .await?;
-        Ok(store.get(reference, version).await?)
+        ensure!(
+            reference.starts_with("wamn-credential-")
+                && reference
+                    .bytes()
+                    .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-'),
+            "invalid Secret name"
+        );
+        let secret = tokio::time::timeout(REQUEST_TIMEOUT, secrets.get_opt(reference))
+            .await
+            .context("credential Secret request timed out")??
+            .context("Secret is absent")?;
+        secret
+            .data
+            .and_then(|mut data| data.remove(version))
+            .map(|bytes| bytes.0)
+            .context("credential data is absent")
     }
 }
