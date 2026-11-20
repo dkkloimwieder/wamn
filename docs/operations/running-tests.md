@@ -311,9 +311,7 @@ Exact text remains in the cases below because the bytes or literal are the publi
 - [Connection requirement identity](../../crates/catalog/src/connection.rs), `the_requirement_hash_bytes_are_pinned`, and [catalog serialization](../../crates/schema-introspection/src/ir.rs), `catalog_without_views_keeps_canonical_bytes`: canonical persisted bytes define identity. [Durable JSON identity](../../crates/digest/src/lib.rs) also preserves numeric spelling, signed zero and canonical key order.
 - [SHA-256 vectors](../../crates/digest/src/lib.rs), [Ed25519 vectors](../../crates/identity-protocol/src/token/tests.rs), [HMAC vectors](../../crates/http/src/authentication.rs) and [release label encoding](../../crates/engine/src/release_manifest.rs): independent encoded vectors define the digest, signature or base32 value. A digest comparison is not a source-file snapshot.
 - Frozen serialized variants, refusal codes, media types, SQLSTATEs, reserved input paths, token prefixes and protocol identifiers remain literal comparisons. Their owners are [SQL values](../../crates/scalar/src/lib.rs), [identity protocols](../../crates/identity-protocol/src), [component contracts](../../crates/catalog/src), [host route contracts](../../crates/catalog/src/host_route.rs) and the RFC protocols used by the transport. HTTP request lines, authorization schemes, metadata headers, health response tokens and canonical cache keys are wire values. Security allowlists remain independent of the implementation that installs the grants.
-- [TypeScript type spelling](../../crates/codegen/src/client_ts.rs), `every_contract_type_has_its_exact_typescript_spelling`: the test reads the non-null scalar types from the PostgreSQL WIT contract. Their TypeScript names are part of the client contract.
 - [HTML escaping](../../crates/execution-host/src/oauth_callback.rs) and its [HTTP boundary](../../crates/execution-host/tests/support/oauth_authorization.rs): `&lt;script&gt;&quot;&amp;&#39;` and `&lt;script&gt;&amp;&quot;&#39;` encode the supplied attack text. The unescaped text must stay absent.
-- [Generated TypeScript documentation](../../crates/codegen/tests/client_ts_behavior.test.ts) compares authored paragraphs with their input declarations. Generated comment headings and formatting are not asserted. Export names derive from the input operations; the public `Feed`, `Collection`, `Write` and `Changes` naming suffixes remain API literals.
 - [Receiving decimal arithmetic](../../apps/wamn_receiving/web/test/sync.test.tsx): `3.500`, `6.500`, `0.3`, `-0.25` and `15` are decimal values with the required scale, not formatted diagnostics.
 - [Manifest loading](../../crates/engine/src/release_manifest.rs), `an_unsupported_format_refuses_with_the_frozen_literal`: `unsupported-serving-manifest-version` is the serialized refusal that the loader must preserve.
 - [The log viewer](../../apps/platform_ui/test/environment.test.tsx) must display the supplied log bytes unchanged; its fixture owns those bytes, and the assertions read them from the recorded response.
@@ -683,7 +681,6 @@ Select each test by its exact name in the `platform_apply_kind` Cargo target:
 | --- | --- | --- |
 | `control_operations_kind` | Authenticated Job credentials, cross-project denial without a Job, two-application selection isolation, rollback, schema mutation and artifact worker | Creates one fresh kind cluster; bounded to 45 minutes |
 | `application_recovery_kind` | Interrupted explicit provisioning and code installation, replacement recovery, canonical reapply, retained data, and application isolation | Attaches to an existing disposable kind platform |
-| `platform_schema_kind` | One system file and one selected project file through SQL Jobs, unchanged application rows and releases, and second-environment isolation | Attaches to an existing disposable kind platform |
 | `same_name_reset_kind` | Two initial application releases, data, published schema-change reset, interrupted same-name CNPG reset, reconnection, durable refusal, and environment isolation | Attaches to an existing disposable kind platform |
 | `platform_apply_kind` | Normal and interrupted platform installation, retry, status, repair, and owner sign-in | Creates two fresh kind clusters |
 
@@ -695,12 +692,12 @@ The reset body installs no earlier code versions.
 Artifact preparation uses the product build and publication operation before the focused bodies run.
 These tests can run in any order on the same platform.
 The recovery body provisions the environment with `environment::apply` and initializes SQL with `schema apply` before code deployment.
-The reset and platform SQL bodies use those same explicit commands.
+The reset body uses those same commands.
 Code reapply reads the canonical selection through `status`.
 Platform recovery publishes no applications.
 
 After a body succeeds, product lifecycle cleanup removes its environment, database, and roles.
-Reset and platform schema cases also delete their isolation environments after all assertions succeed.
+The reset case also deletes its isolation environment after all assertions pass.
 Failed bodies retain their resources and logs.
 The old environment worker and its terminal confirmation are removed.
 Creation and deletion journeys need the replacement lifecycle routes before they can run.
@@ -820,25 +817,6 @@ kind delete cluster --name wamn-test-dep3
 The journeys have no saved completion state or resume system.
 Retry product deployment with the same cluster document and prepared chart.
 
-#### Focused platform schema preparation
-
-Use the disposable platform, owner password, and publication inputs described above.
-Keep chart A, the installed chart, available and unchanged.
-In a scratch source tree, add one SQL file under each of `deploy/sql/migrations/system/` and `deploy/sql/migrations/project/`.
-Each file must create one probe table and insert one row.
-Keep the initialization SQL and existing migration files unchanged.
-Rebuild and publish only the `control` image from that tree.
-Use `cargo xtask build-platform` to stamp chart B with that image and every other image from chart A. Install the selected control worker configuration through the platform owner.
-Set `WAMN_RELEASE_CHART` to chart B.
-
-DEP5-06 adds `platform_schema_kind` with its body in `support/platform_schema.rs`.
-The case refuses equal `control` digests or a changed digest for any other image.
-It derives pending file names and checksums from `wamn platform schema diff` for chart B.
-It reads each database catalog directly and requires one new table with one row in the applied database, and no relation change in the others.
-The existing journey deploys one application release into two environments and deletes both environments after success.
-The case needs explicit owner approval to run.
-Approval must cover setup, both SQL applies, and cleanup on the disposable platform.
-
 ### Removed application cluster coverage
 
 DEP2-02 removes the Receiving and WMS cluster suites and their duplicate installers.
@@ -957,30 +935,6 @@ One test composes Acme over Receiving into a copy of their build output.
 It requires the composed component to embed the exact bytes of the Receiving component.
 The application preparation step supplies both packages.
 
-### Generated TypeScript bindings
-
-The client emitter tests run the emitted bindings through the web runtime and compile them with the workspace TypeScript compiler.
-Run `pnpm install --offline` at the repository root first.
-The compilation test skips with a message only when the workspace `tsc` executable is absent.
-
-```bash
-cargo test --locked --offline -p wamn-codegen --test client_ts_emitter
-```
-To compile the bindings for the platform fixture, run:
-
-```bash
-cargo run --locked --offline -p wamn-codegen --example compile_client_ts
-```
-
-The command emits the fixture bindings into a temporary directory, writes a strict `tsconfig.json` beside them, and runs `tsc --project` on that directory.
-Strict here means `strict`, `noImplicitAny`, `strictNullChecks`, `exactOptionalPropertyTypes`, `noUncheckedIndexedAccess`, and `noUnusedLocals`.
-Pass a directory as the one argument to keep the emitted source for reading.
-The command reads `tsc` from `PATH`. If `tsc` is absent, the command refuses and names it.
-It needs TypeScript 5.5 or later.
-The emitted modules import the hand-written runtime by its package name, and the command maps that name to `web/runtime` in this checkout.
-
-The repository policy lint refuses a tracked file in a `client-ts` directory outside `apps/`.
-
 ### Web packages
 
 The web packages form one pnpm workspace, which `pnpm-workspace.yaml` at the repository root lists.
@@ -1040,23 +994,6 @@ pnpm --filter @wamn/platform-ui build
 
 Browser sessions use the installed web, identity, and control services.
 Use the [development loop](development-loop.md) to publish and deploy an application before opening its screens.
-
-### Generated descriptions
-
-`client_component.rs` emits typed descriptions for `@wfe/generator` from the pinned `web/wfe` package.
-The generator integration test compiles fixture descriptions with TypeScript.
-It covers table, form, repeated group, detail, and delete descriptions.
-Application bindings own requests, validation, and value conversion.
-
-Run `pnpm install --offline` at the repository root first.
-The existing manual test uses the same test code:
-
-```bash
-TMPDIR=/var/tmp cargo run --offline -p wamn-codegen --example compile_client_components
-```
-
-The command writes temporary modules and removes them after the test.
-`compile_client_ts` makes sure of the unchanged TypeScript bindings separately.
 
 ### Shared Vite tooling and Receiving
 

@@ -4,7 +4,6 @@ use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
 use std::path::Path;
 use wamn_environment::environment::{Platform, capture_gap, document::EnvironmentFile, operation};
-use wamn_identity_protocol::PrincipalId;
 use wamn_kubernetes::job;
 use wamn_registry::{Triple, name::REGISTRY_PULL};
 
@@ -73,7 +72,6 @@ pub(crate) async fn execute(
     platform: Platform,
     kind: Operation,
     request: Request,
-    actor: &PrincipalId,
 ) -> anyhow::Result<Value> {
     let file = EnvironmentFile::compile(Path::new("/etc/wamn/environment/environment.yaml"))?;
     ensure!(
@@ -144,7 +142,6 @@ pub(crate) async fn execute(
                             integration_base: &integration_base,
                             component_base: &component_base,
                             chart: &chart,
-                            actor,
                         }
                     }
                     Operation::Apply => operation::Application::Apply(

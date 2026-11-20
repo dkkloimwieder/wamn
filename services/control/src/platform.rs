@@ -5,7 +5,6 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use wamn_catalog::lifecycle_lock::LifecycleLock;
 use wamn_environment::environment::document::EnvironmentFile;
-use wamn_identity_protocol::PrincipalId;
 use wamn_provision::migrations::MigrationDatabase;
 
 use crate::{Configuration, execution::Execution};
@@ -16,7 +15,6 @@ enum Request {
     ProjectOperation {
         operation: crate::control_route::operations::Operation,
         request: crate::control_route::operations::Request,
-        actor: PrincipalId,
     },
     Environment {
         operation: String,
@@ -157,11 +155,9 @@ pub async fn execute(config: &Configuration, payload: &str) -> anyhow::Result<Va
     crate::write_kubeconfig(&platform.target.kubeconfig, config.org.as_str())?;
     let mut output = Vec::new();
     match request {
-        Request::ProjectOperation {
-            operation,
-            request,
-            actor,
-        } => crate::worker::execute(config, platform, operation, request, &actor).await,
+        Request::ProjectOperation { operation, request } => {
+            crate::worker::execute(config, platform, operation, request).await
+        }
         Request::Environment {
             operation,
             project,

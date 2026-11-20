@@ -49,13 +49,9 @@ pub fn validate_request(operation: &str, request: &Value) -> Result<(), Connecti
         .ok_or_else(|| refuse("invalid_input", "value"))?;
     let allowed: &[&str] = match operation {
         "integration_type.list" => &["project"],
-        "external_system.list" | "integration.list" | "connection.list" => &["project", "env"],
+        "external_system.list" | "connection.list" => &["project", "env"],
         "external_system.write"
         | "external_system.delete"
-        | "integration.get"
-        | "integration.enable"
-        | "integration.disable"
-        | "integration.delete"
         | "connection.authorize"
         | "connection.get"
         | "connection.enable"
@@ -143,7 +139,7 @@ pub async fn execute(
     let mut request: Value =
         serde_json::from_str(payload).map_err(|_| refuse("invalid_input", "value"))?;
     validate_request(operation, &request)?;
-    if matches!(operation, "connection.delete" | "integration.delete") {
+    if operation == "connection.delete" {
         let id: Option<Uuid> =
             sqlx::query_scalar("SELECT id FROM platform.connection WHERE name=$1")
                 .bind(request["name"].as_str())
@@ -489,7 +485,7 @@ pub async fn configure(
             _ => Err(refuse("invalid_input","operation")),
         };
     }
-    if matches!(operation, "connection.list" | "integration.list") {
+    if operation == "connection.list" {
         let ids: Vec<Uuid> = sqlx::query_scalar("SELECT id FROM platform.connection ORDER BY name")
             .fetch_all(&mut **project)
             .await?;
@@ -497,11 +493,7 @@ pub async fn configure(
         for id in ids {
             rows.push(summary(project, system, org, request, id).await?);
         }
-        return Ok(if operation == "connection.list" {
-            json!({"connections":rows})
-        } else {
-            json!({"integrations":rows})
-        });
+        return Ok(json!({"connections":rows}));
     }
     let lookup = if operation == "connection.test" {
         "SELECT id FROM platform.connection WHERE name=$1"
@@ -515,7 +507,7 @@ pub async fn configure(
         .ok_or_else(|| refuse("not_found", "connection"))?;
     let mut row = summary(project, system, org, request, id).await?;
     match operation {
-        "connection.get" | "integration.get" => Ok(row),
+        "connection.get" => Ok(row),
         "connection.authorize" => {
             if row["auth_type"] != "oauth2_authorization_code" {
                 return Err(refuse("unsupported_auth_type", "auth_type"));
@@ -534,10 +526,7 @@ pub async fn configure(
             row["credential"] = credential_reference(project, id).await?;
             Ok(row)
         }
-        "connection.enable"
-        | "integration.enable"
-        | "connection.disable"
-        | "integration.disable" => {
+        "connection.enable" | "connection.disable" => {
             sqlx::query("UPDATE platform.connection SET status=$2 WHERE id=$1")
                 .bind(id)
                 .bind(if operation.ends_with(".enable") {
@@ -552,7 +541,7 @@ pub async fn configure(
                 json!({"id":id,"name":name,"env":request["env"],"principal_id":row["service_principal_id"]}),
             )
         }
-        "connection.delete" | "integration.delete" => {
+        "connection.delete" => {
             super::references::refuse_environment_references(
                 project,
                 "connection",

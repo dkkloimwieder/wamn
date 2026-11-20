@@ -1,22 +1,13 @@
 namespace: ""
 
-# Defaults for application workloads and the published platform image set.
+# Defaults for application workloads.
 
 platform:
-  host:
-    image: ""
-  # The role component images of the platform image set: `<repository>@sha256:<hex>`.
   roles:
     ingress:
       image: ""
       maxConcurrency: 1
   workflow:
-    image: ""
-  ctl:
-    image: ""
-  identity:
-    image: ""
-  edge:
     image: ""
 
 # Install values. `wamn_environment::environment::write::release_values` writes them.

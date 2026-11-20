@@ -38,7 +38,6 @@ pub enum Application<'a> {
         integration_base: &'a str,
         component_base: &'a str,
         chart: &'a SelectedChart,
-        actor: &'a wamn_identity_protocol::PrincipalId,
     },
     Apply(Digest),
     Diff(Option<Digest>),
@@ -201,7 +200,6 @@ pub async fn application(
                         integration_base,
                         component_base,
                         chart,
-                        actor,
                     } => {
                         let packages = Packages::open(platform, digest).await?;
                         let selection = document
@@ -229,7 +227,6 @@ pub async fn application(
                             &digest,
                             &bindings,
                             integration_base,
-                            &actor.to_string(),
                             component_base,
                         )?;
                         if platform.insecure_registry {

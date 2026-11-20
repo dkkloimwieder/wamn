@@ -190,7 +190,6 @@ The compiled `wamn.json` carries `compiled_operations`, including described stat
 Readers borrow each operation through `wamn_catalog::operation_contract`. The compiler emits no contract files, source maps, or native verifier rows.
 `generated/openapi.json` describes the published HTTP interface with OpenAPI 3.1. GET parameters carry separate JSON values.
 Every list schema has a maximum. Generated exports enforce page and feed limits before they call application code.
-The TypeScript client retains its camelCase field mappings. It reads the compiled operation descriptions in memory.
 A data crate includes `data/mod.rs` of its build output as its public module `generated`, through a path relative to the crate. The generated files include each other by paths relative to themselves.
 A component includes `generated/component/mod.rs` in a module that names that data module `data`.
 The fixture overlay has no data crate, so its component includes the data functions itself.
