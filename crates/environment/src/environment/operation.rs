@@ -3,6 +3,7 @@
 mod rollback;
 
 use std::{
+    borrow::Cow,
     collections::{BTreeMap, BTreeSet},
     sync::Mutex,
     time::Duration,
@@ -17,6 +18,7 @@ use wamn_catalog::{
     manifest::PackageManifest,
 };
 use wamn_digest::Digest;
+use wamn_platform_install::release_chart::bundle::{SelectedChart, pod_registry_reference};
 use wamn_publish::package_artifact::{OpenedPackage, open_package_digest};
 use wamn_registry::Triple;
 
@@ -33,6 +35,7 @@ pub enum Application<'a> {
         digest: Digest,
         integration_base: &'a str,
         component_base: &'a str,
+        chart: &'a SelectedChart,
         actor: &'a wamn_identity_protocol::PrincipalId,
     },
     Apply(Digest),
@@ -173,6 +176,7 @@ pub async fn application(
                         digest,
                         integration_base,
                         component_base,
+                        chart,
                         actor,
                     } => {
                         let packages = Packages::open(platform, digest).await?;
@@ -193,7 +197,7 @@ pub async fn application(
                             packages.manifests.values(),
                         )
                         .await?;
-                        let (values, roles) = write::release_values(
+                        let (mut values, roles) = write::release_values(
                             &document,
                             &platform_domain,
                             name,
@@ -204,6 +208,9 @@ pub async fn application(
                             &actor.to_string(),
                             component_base,
                         )?;
+                        if platform.insecure_registry {
+                            use_pod_registry(chart, &mut values)?;
+                        }
                         let app = application_config(&values)?;
                         check_workflows(&mut *project.client().await, &app).await?;
                         apply_sql(platform, system, &triple, &connection, &owner, &packages)
@@ -223,7 +230,7 @@ pub async fn application(
                             Duration::from_secs(u64::try_from(document.readiness_budget_seconds)?);
                         wamn_platform_install::environment::apply_application(
                             &platform.target,
-                            &platform.chart,
+                            chart.directory(),
                             &release,
                             &values,
                         )
@@ -356,6 +363,26 @@ async fn wait_workload_ready(
             error
         }
     })
+}
+
+fn use_pod_registry(chart: &SelectedChart, values: &mut serde_yaml::Value) -> anyhow::Result<()> {
+    if let Cow::Owned(image) = pod_registry_reference(chart.image("ingress")?) {
+        values["platform"]["roles"]["ingress"]["image"] = image.into();
+    }
+    if let Cow::Owned(image) = pod_registry_reference(chart.image("workflow")?) {
+        values["platform"]["workflow"]["image"] = image.into();
+    }
+    for component in values["components"]
+        .as_sequence_mut()
+        .expect("release values contain a component list")
+    {
+        if let serde_yaml::Value::String(image) = &mut component["image"]
+            && let Cow::Owned(pod_image) = pod_registry_reference(image)
+        {
+            *image = pod_image;
+        }
+    }
+    Ok(())
 }
 
 fn application_config(values: &serde_yaml::Value) -> anyhow::Result<ApplicationConfig> {

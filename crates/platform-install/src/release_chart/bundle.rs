@@ -1,12 +1,29 @@
 //! Select and assemble the published chart bundle.
 
-use std::path::{Path, PathBuf};
+use std::{
+    borrow::Cow,
+    path::{Path, PathBuf},
+};
 
 use anyhow::{Context as _, ensure};
 use serde_json::Value;
 
 /// Registry Service address for the local cluster.
 pub const POD_REGISTRY: &str = "wamn-registry.platform.svc.cluster.local:5000";
+
+/// Replace a loopback OCI registry authority with the registry reachable from pods.
+pub fn pod_registry_reference(reference: &str) -> Cow<'_, str> {
+    let (scheme, name) = match reference.strip_prefix("oci://") {
+        Some(name) => ("oci://", name),
+        None => ("", reference),
+    };
+    if let Some((authority, path)) = name.split_once('/')
+        && wamn_registry::registry_is_loopback(authority)
+    {
+        return Cow::Owned(format!("{scheme}{POD_REGISTRY}/{path}"));
+    }
+    Cow::Borrowed(reference)
+}
 
 /// A prepared platform chart validated before provider setup.
 #[derive(Debug)]
@@ -63,34 +80,22 @@ impl SelectedChart {
 /// Returns an error for missing payload files, invalid metadata, or unpinned images.
 pub fn select(chart: &Path) -> anyhow::Result<SelectedChart> {
     let reference = chart.to_str().context("chart reference must be UTF-8")?;
-    let download = if reference.starts_with("oci://") {
+    let download = if let Some(oci_reference) = reference.strip_prefix("oci://") {
         let (_, digest) = reference
             .rsplit_once('@')
             .context("chart requires an immutable digest")?;
         digest.parse::<wamn_digest::Digest>()?;
         let directory = tempfile::tempdir()?;
-        let authority = reference
-            .trim_start_matches("oci://")
-            .split('/')
-            .next()
-            .unwrap_or_default();
+        let (authority, _) = oci_reference.split_once('/').context("chart repository")?;
         let loopback = wamn_registry::registry_is_loopback(authority);
         let pull_reference = if loopback && std::env::var_os("KUBERNETES_SERVICE_HOST").is_some() {
-            format!(
-                "oci://{}/{}",
-                POD_REGISTRY,
-                reference
-                    .trim_start_matches("oci://")
-                    .split_once('/')
-                    .context("chart repository")?
-                    .1
-            )
+            pod_registry_reference(reference)
         } else {
-            reference.to_owned()
+            Cow::Borrowed(reference)
         };
         let mut command = std::process::Command::new("helm");
         command
-            .args(["pull", &pull_reference, "--untar", "--untardir"])
+            .args(["pull", pull_reference.as_ref(), "--untar", "--untardir"])
             .arg(directory.path());
         if loopback || authority == POD_REGISTRY {
             command.arg("--plain-http");
