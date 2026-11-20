@@ -65,7 +65,7 @@ impl Execution {
         operation: &wamn_catalog::canonical_name::CanonicalName,
         payload: &str,
     ) -> anyhow::Result<Value> {
-        let api = wamn_kubernetes::kubernetes_api::KubernetesApi::in_cluster()?;
+        let api = wamn_kubernetes::client::KubernetesApi::in_cluster()?;
         ensure!(
             api.namespace == self.org,
             "platform worker must share the org namespace"

@@ -162,14 +162,7 @@ pub(super) async fn recover_capture_gap(
     // Refusals leave a healthy Deployment running. Stop it before the repaired
     // slot can become visible to a restarting reader.
     super::set_paused(platform, &triple, true).await?;
-    let target = &platform.target;
-    super::super::cdc_reader::wait_reader_stopped(
-        &target.kubeconfig,
-        &target.context,
-        &target.namespace,
-        &triple,
-    )
-    .await?;
+    super::super::cdc_reader::wait_reader_stopped(&platform.target, &triple).await?;
 
     sqlx::raw_sql(sqlx::AssertSqlSafe(sql::drop_replication_slot_sql(&slot)))
         .execute(&mut admin)

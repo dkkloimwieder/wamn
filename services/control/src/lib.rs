@@ -107,11 +107,11 @@ impl Configuration {
         Ok(Platform {
             system_database_url: self.apply_database.to_json()?,
             database_files: None,
-            target: wamn_kubernetes::Target {
-                kubeconfig: "/work/kubeconfig".into(),
-                context: "operation".into(),
-                namespace: self.org.to_string(),
-            },
+            target: wamn_kubernetes::Target::in_cluster(
+                "/work/kubeconfig".into(),
+                "operation",
+                self.org.to_string(),
+            )?,
             chart: self.chart.clone(),
             chart_download: None,
             registry_auth_file: REGISTRY_AUTH_FILE.into(),

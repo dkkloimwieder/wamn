@@ -6,6 +6,8 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+kube = { workspace = true }
+k8s-openapi = { workspace = true }
 wamn-envelope.workspace = true
 wamn-digest = { workspace = true, features = ["sqlx"] }
 anyhow.workspace = true

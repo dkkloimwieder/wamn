@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use wamn_catalog::HostAttachment;
 use wamn_identity_protocol::PrincipalId;
-use wamn_kubernetes::kubernetes_api::KubernetesApi;
+use wamn_kubernetes::client::KubernetesApi;
 
 use super::{ControlRoutes, Refusal};
 

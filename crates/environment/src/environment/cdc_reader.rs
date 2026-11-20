@@ -1,5 +1,8 @@
 //! Provision and discard CDC state through authorized connections.
+use wamn_kubernetes::client::wait_named;
 use anyhow::Context as _;
+use k8s_openapi::api::{apps::v1::Deployment, core::v1::Pod};
+use kube::{Api, api::ListParams};
 use sqlx::Row as _;
 use std::fmt::Write as _;
 use std::time::Duration;
@@ -69,30 +72,19 @@ fn cdc_schema_sql_bundle(
 
 /// Wait for reader pods, including pods left by an interrupted Deployment delete.
 pub async fn wait_reader_stopped(
-    kubeconfig: &std::path::Path,
-    context: &str,
-    namespace: &str,
+    target: &wamn_kubernetes::Target,
     triple: &Triple,
 ) -> anyhow::Result<()> {
-    use wamn_kubernetes::kubectl::kubectl;
     let project_env_key =
         wamn_provision::project_env_key(&triple.org, &triple.project, &triple.env);
     let selector = format!(
         "app.kubernetes.io/name=wamn-cdc-reader,app.kubernetes.io/instance={project_env_key}"
     );
+    let pods = Api::<Pod>::namespaced(target.client.client(), &target.namespace);
+    let params = ListParams::default().labels(&selector);
     tokio::time::timeout(Duration::from_secs(120), async {
         loop {
-            let pods: serde_json::Value = serde_json::from_str(
-                &kubectl(
-                    kubeconfig,
-                    context,
-                    namespace,
-                    &["get", "pods", "-l", &selector, "-o", "json"],
-                    None,
-                )
-                .await?,
-            )?;
-            if pods["items"].as_array().context("reader pods")?.is_empty() {
+            if pods.list(&params).await?.items.is_empty() {
                 break Ok::<_, anyhow::Error>(());
             }
             tokio::time::sleep(Duration::from_millis(100)).await;
@@ -108,5 +100,29 @@ pub(super) async fn wait_reader_ready(
     triple: &Triple,
 ) -> anyhow::Result<()> {
     let name = cdc_reader_name(&triple.org, &triple.project, &triple.env);
-    wamn_kubernetes::kubectl::wait_deployment_ready(target, &name, Duration::from_secs(120)).await
+    let deployments = Api::<Deployment>::namespaced(target.client.client(), &target.namespace);
+    wait_named(&deployments, &name, Duration::from_secs(120), |object| {
+        Ok(object
+            .filter(|deployment| {
+                let Some(status) = &deployment.status else {
+                    return false;
+                };
+                let desired = deployment
+                    .spec
+                    .as_ref()
+                    .and_then(|spec| spec.replicas)
+                    .unwrap_or(1);
+                let updated = status.updated_replicas.unwrap_or(0);
+                deployment
+                    .metadata
+                    .generation
+                    .zip(status.observed_generation)
+                    .is_some_and(|(generation, observed)| generation <= observed)
+                    && updated >= desired
+                    && status.replicas.unwrap_or(0) <= updated
+                    && status.available_replicas.unwrap_or(0) >= updated
+            })
+            .map(drop))
+    })
+    .await
 }

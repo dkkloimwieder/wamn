@@ -2,11 +2,14 @@
 
 use crate::{
     CredentialSecret, Error, ErrorType, Store, StoreVersion, failure,
-    kubernetes_api::{KubernetesApi, successful},
-    secret::Secret,
+    client::{KubernetesApi, REQUEST_TIMEOUT, status_matches},
 };
 use base64::{Engine as _, engine::general_purpose::STANDARD};
-use hyper::{Method, StatusCode};
+use k8s_openapi::api::core::v1::Secret;
+use kube::{
+    Api,
+    api::{Patch, PatchParams},
+};
 use serde_json::json;
 
 #[derive(Clone, Debug)]
@@ -16,11 +19,6 @@ pub struct KubernetesStore {
 
 impl KubernetesStore {
     pub fn in_cluster() -> Result<Self, Error> {
-        if std::env::var_os("KUBERNETES_SERVICE_HOST").is_none() {
-            let mut error = failure("read endpoint", "k8s", std::env::VarError::NotPresent);
-            error.type_ = Some(ErrorType::NoCluster);
-            return Err(error);
-        }
         Ok(Self {
             api: KubernetesApi::in_cluster()?,
         })
@@ -29,7 +27,7 @@ impl KubernetesStore {
         Self { api }
     }
 
-    fn path(&self, reference: &str) -> Result<String, Error> {
+    fn secrets(&self, reference: &str) -> Result<Api<Secret>, Error> {
         if !reference.starts_with("wamn-credential-")
             || !reference
                 .bytes()
@@ -37,19 +35,15 @@ impl KubernetesStore {
         {
             return Err(failure("resolve", reference, "invalid Secret name"));
         }
-        Ok(format!(
-            "/api/v1/namespaces/{}/secrets/{reference}",
-            self.api.namespace
-        ))
+        Ok(Api::namespaced(self.api.client(), &self.api.namespace))
     }
 
     async fn read(&self, reference: &str) -> Result<Option<Secret>, Error> {
-        self.api
-            .json(Method::GET, &self.path(reference)?, None)
-            .await?
-            .map(serde_json::from_value)
-            .transpose()
-            .map_err(|e| failure("decode Secret", reference, e))
+        let secrets = self.secrets(reference)?;
+        tokio::time::timeout(REQUEST_TIMEOUT, secrets.get_opt(reference))
+            .await
+            .map_err(|error| failure("get Secret", reference, error))?
+            .map_err(|error| failure("get Secret", reference, error))
     }
 
     async fn change(
@@ -60,8 +54,7 @@ impl KubernetesStore {
         target: Option<&CredentialSecret<'_>>,
     ) -> Result<(), Error> {
         uuid::Uuid::parse_str(version).map_err(|e| failure("resolve", reference, e))?;
-        let secret_path = self.path(reference)?;
-        let patch_path = format!("{secret_path}?fieldManager=wamn-control");
+        let secrets = self.secrets(reference)?;
         let mut patch = json!({"data":{}});
         patch["data"][version] =
             value.map_or(serde_json::Value::Null, |bytes| STANDARD.encode(bytes).into());
@@ -70,16 +63,28 @@ impl KubernetesStore {
                 "labels":{"wamn.org":target.org,"wamn.project":target.project,"wamn.env":target.env}
             });
         }
-        let status = self.api.write(Method::PATCH, &patch_path, &patch).await?;
-        if status == StatusCode::NOT_FOUND {
-            if value.is_none() {
-                return Ok(());
+        let params = PatchParams {
+            field_manager: Some("wamn-control".into()),
+            ..PatchParams::default()
+        };
+        match tokio::time::timeout(
+            REQUEST_TIMEOUT,
+            secrets.patch(reference, &params, &Patch::Merge(&patch)),
+        )
+        .await
+        .map_err(|error| failure("patch Secret", reference, error))?
+        {
+            Ok(_) => Ok(()),
+            Err(error) if status_matches(&error, 404, "NotFound") => {
+                if value.is_none() {
+                    return Ok(());
+                }
+                let mut failure = failure("patch Secret", reference, error);
+                failure.type_ = Some(ErrorType::ProjectCredentialSecretMissing);
+                Err(failure)
             }
-            let mut error = failure("patch", reference, "Kubernetes API answered 404 Not Found");
-            error.type_ = Some(ErrorType::ProjectCredentialSecretMissing);
-            return Err(error);
+            Err(error) => Err(failure("patch Secret", reference, error)),
         }
-        successful(status, reference)
     }
 }
 
@@ -115,13 +120,11 @@ impl Store for KubernetesStore {
             .read(reference)
             .await?
             .ok_or_else(|| failure("get", reference, "Secret is absent"))?;
-        let encoded = document
+        document
             .data
-            .get(version)
-            .ok_or_else(|| failure("get", reference, "credential data is absent"))?;
-        STANDARD
-            .decode(encoded)
-            .map_err(|e| failure("decode", reference, e))
+            .and_then(|mut data| data.remove(version))
+            .map(|bytes| bytes.0)
+            .ok_or_else(|| failure("get", reference, "credential data is absent"))
     }
     async fn destroy(&self, reference: &str, version: &str) -> Result<(), Error> {
         self.change(reference, version, None, None).await

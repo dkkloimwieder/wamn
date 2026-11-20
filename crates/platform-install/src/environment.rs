@@ -206,10 +206,24 @@ pub async fn wait_database_applied(
     database: &str,
     timeout: Duration,
 ) -> anyhow::Result<()> {
-    wamn_kubernetes::kubectl::wait_named(target, "database", database, timeout, |object| {
-        object["status"]["applied"] == true
-            && object["metadata"]["generation"].is_u64()
-            && object["status"]["observedGeneration"] == object["metadata"]["generation"]
+    use wamn_kubernetes::client::{resource, wait_named};
+    let databases = resource(
+        target.client.client(),
+        &target.namespace,
+        "postgresql.cnpg.io",
+        "v1",
+        "Database",
+        "databases",
+    );
+    wait_named(&databases, database, timeout, |object| {
+        Ok(object
+            .filter(|object| {
+                object.data["status"]["applied"] == true
+                    && object.metadata.generation.is_some_and(|generation| {
+                        object.data["status"]["observedGeneration"].as_i64() == Some(generation)
+                    })
+            })
+            .map(drop))
     })
     .await
 }

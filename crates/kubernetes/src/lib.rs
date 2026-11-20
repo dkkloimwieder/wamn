@@ -1,11 +1,12 @@
 //! Shared Kubernetes transport, Secret storage, and bounded Job execution.
 
+pub mod client;
 pub mod helm;
 pub mod job;
-pub mod kubectl;
 pub mod kubernetes;
-pub mod kubernetes_api;
-pub mod secret;
+pub mod kubernetes_api {
+    pub use crate::client::KubernetesApi;
+}
 #[cfg(feature = "test-util")]
 pub mod test_util;
 
@@ -102,6 +103,7 @@ pub struct Target {
     pub kubeconfig: std::path::PathBuf,
     pub context: String,
     pub namespace: String,
+    pub client: client::KubernetesApi,
 }
 
 #[cfg(test)]

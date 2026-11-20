@@ -1,9 +1,25 @@
 //! Bounded platform Job execution and observation.
 use anyhow::{Context as _, ensure};
+use serde::Deserialize as _;
 use serde_json::{Value, json};
 use std::time::Duration;
 
-use crate::{Target, kubectl};
+use crate::{
+    Target,
+    client::{KubernetesApi, REQUEST_TIMEOUT, status_matches, wait_named},
+};
+use futures_util::{AsyncReadExt as _, TryStreamExt as _};
+use k8s_openapi::api::{
+    batch::v1::Job,
+    core::v1::{ConfigMap, Pod},
+};
+use kube::{
+    Api,
+    api::{
+        DeleteParams, ListParams, LogParams, PostParams, Preconditions, PropagationPolicy,
+        WatchEvent, WatchParams,
+    },
+};
 
 // Bound execution even if the caller exits. Kubernetes never retries these Jobs.
 const INSTALL_DEADLINE: Duration = Duration::from_mins(15);
@@ -57,20 +73,22 @@ enum State {
     Failed,
 }
 
-fn state(job: &Value) -> State {
-    let conditions = job["status"]["conditions"].as_array();
-    let has = |type_| {
-        conditions.is_some_and(|conditions| {
+fn state(job: &Job) -> State {
+    let Some(status) = &job.status else {
+        return State::Pending;
+    };
+    let has = |type_: &str| {
+        status.conditions.as_ref().is_some_and(|conditions| {
             conditions
                 .iter()
-                .any(|condition| condition["type"] == type_ && condition["status"] == "True")
+                .any(|condition| condition.type_ == type_ && condition.status == "True")
         })
     };
     if has("Failed") {
         State::Failed
     } else if has("Complete") {
         State::Succeeded
-    } else if job["status"]["active"].as_u64().unwrap_or(0) > 0 {
+    } else if status.active.unwrap_or(0) > 0 {
         State::Running
     } else {
         State::Pending
@@ -78,71 +96,56 @@ fn state(job: &Value) -> State {
 }
 
 /// Wait for a named Job to reach a terminal condition within the caller's deadline.
-pub async fn wait(target: &crate::Target, name: &str, timeout: Duration) -> anyhow::Result<()> {
-    let failed = std::cell::Cell::new(false);
-    crate::kubectl::wait_named(target, "job", name, timeout, |job| match state(job) {
-        State::Succeeded => true,
-        State::Failed => {
-            failed.set(true);
-            true
-        }
-        State::Pending | State::Running => false,
+pub async fn wait(jobs: &Api<Job>, name: &str, timeout: Duration) -> anyhow::Result<()> {
+    let result = wait_named(jobs, name, timeout, |job| {
+        Ok(match job.as_ref().map(state) {
+            Some(result @ (State::Succeeded | State::Failed)) => Some(result),
+            _ => None,
+        })
     })
     .await?;
-    ensure!(!failed.get(), "Job {}/{} failed", target.namespace, name);
+    ensure!(
+        result == State::Succeeded,
+        "Job {}/{name} failed",
+        jobs.resource_url()
+    );
     Ok(())
 }
 
-/// Wait for the previous Job to finish and remove it and its Pods.
-pub async fn clear_finished(
-    target: &Target,
-    name: &str,
-    deadline: tokio::time::Instant,
-) -> anyhow::Result<()> {
-    tokio::time::timeout_at(deadline, clear(target, name))
+/// Wait for the previous Job to terminate, then delete it and wait for the name to disappear.
+pub async fn remove_previous(jobs: &Api<Job>, name: &str, timeout: Duration) -> anyhow::Result<()> {
+    tokio::time::timeout(timeout, clear(jobs, name))
         .await
         .map_err(anyhow::Error::from)
         .flatten()
-        .with_context(|| format!("wait to replace Job {}/{name}", target.namespace))
+        .with_context(|| format!("wait to replace Job {}/{name}", jobs.resource_url()))
 }
 
-async fn clear(target: &Target, name: &str) -> anyhow::Result<()> {
-    let namespace = &target.namespace;
-    let path = format!("/apis/batch/v1/namespaces/{namespace}/jobs/{name}");
+async fn clear(jobs: &Api<Job>, name: &str) -> anyhow::Result<()> {
     loop {
-        let Some(job) =
-            kubectl::get::<Value>(&target.kubeconfig, &target.context, namespace, "job", name)
-                .await?
-        else {
+        let Some(job) = jobs.get_opt(name).await? else {
             return Ok(());
         };
         if matches!(state(&job), State::Succeeded | State::Failed)
-            && job["metadata"]["deletionTimestamp"].is_null()
+            && job.metadata.deletion_timestamp.is_none()
         {
-            let uid = job["metadata"]["uid"]
-                .as_str()
-                .context("Job UID is absent")?;
-            // A concurrent caller can already have replaced this Job by name.
-            let options = serde_json::to_vec(&json!({
-                "apiVersion": "v1",
-                "kind": "DeleteOptions",
-                "propagationPolicy": "Foreground",
-                "preconditions": {"uid": uid},
-            }))?;
-            match kubectl::kubectl(
-                &target.kubeconfig,
-                &target.context,
-                namespace,
-                &["delete", "--raw", &path, "-f", "-"],
-                Some(&options),
-            )
-            .await
-            {
+            let uid = job.metadata.uid.context("Job UID is absent")?;
+            let options = DeleteParams {
+                propagation_policy: Some(PropagationPolicy::Foreground),
+                preconditions: Some(Preconditions {
+                    uid: Some(uid),
+                    resource_version: None,
+                }),
+                ..DeleteParams::default()
+            };
+            match jobs.delete(name, &options).await {
                 Ok(_) => {}
                 Err(error)
-                    if error.is::<kubectl::Conflict>() || error.is::<kubectl::NotFound>() => {}
+                    if status_matches(&error, 409, "Conflict")
+                        || status_matches(&error, 404, "NotFound") => {}
                 Err(error) => {
-                    return Err(error).with_context(|| format!("remove Job {namespace}/{name}"));
+                    return Err(error)
+                        .with_context(|| format!("remove Job {}/{name}", jobs.resource_url()));
                 }
             }
         }
@@ -158,22 +161,15 @@ pub async fn run_exclusive(
 ) -> anyhow::Result<String> {
     let name = name(manifest);
     let namespace = &target.namespace;
-    let input = serde_json::to_vec(manifest)?;
+    let jobs = Api::<Job>::namespaced(target.client.client(), namespace);
+    let job = Job::deserialize(manifest).context("decode Job manifest")?;
     let created = tokio::time::timeout(timeout, async {
         loop {
-            clear(target, name).await?;
-            match kubectl::kubectl(
-                &target.kubeconfig,
-                &target.context,
-                namespace,
-                &["create", "-f", "-", "-o", "json"],
-                Some(&input),
-            )
-            .await
-            {
-                Ok(output) => return Ok(serde_json::from_str::<Value>(&output)?),
-                Err(error) if error.is::<kubectl::Conflict>() => {}
-                Err(error) => return Err(error),
+            clear(&jobs, name).await?;
+            match jobs.create(&PostParams::default(), &job).await {
+                Ok(job) => return Ok(job),
+                Err(error) if status_matches(&error, 409, "AlreadyExists") => {}
+                Err(error) => return Err(error.into()),
             }
         }
     })
@@ -181,86 +177,86 @@ pub async fn run_exclusive(
     .map_err(anyhow::Error::from)
     .flatten()
     .with_context(|| format!("start Job {namespace}/{name}"))?;
-    let uid = created["metadata"]["uid"]
-        .as_str()
-        .context("Job UID is absent")?;
-    let version = created["metadata"]["resourceVersion"]
-        .as_str()
+    let uid = created.metadata.uid.context("Job UID is absent")?;
+    let version = created
+        .metadata
+        .resource_version
         .context("Job resource version is absent")?;
-    wait_instance(target, name, uid, version, timeout).await?;
-    Ok(uid.to_owned())
+    tokio::time::timeout(timeout, wait_instance(&jobs, name, &uid, version))
+        .await
+        .with_context(|| format!("wait for Job {namespace}/{name}"))??;
+    Ok(uid)
 }
 
 async fn wait_instance(
-    target: &Target,
+    jobs: &Api<Job>,
     name: &str,
     uid: &str,
-    version: &str,
-    timeout: Duration,
+    mut version: String,
 ) -> anyhow::Result<()> {
-    let namespace = &target.namespace;
-    let deadline = tokio::time::Instant::now() + timeout;
-    let path =
-        format!("/apis/batch/v1/namespaces/{namespace}/jobs?fieldSelector=metadata.name%3D{name}");
-    let mut version = version.to_owned();
-    let inspect = |job: &Value| match state(job) {
+    let path = jobs.resource_url();
+    let selector = format!("metadata.name={name}");
+    let list = ListParams::default().fields(&selector);
+    let inspect = |job: &Job| match state(job) {
         State::Succeeded => Ok(true),
-        State::Failed => anyhow::bail!("Job {namespace}/{name} failed"),
+        State::Failed => anyhow::bail!("Job {path}/{name} failed"),
         State::Pending | State::Running => Ok(false),
     };
     loop {
-        let output = kubectl::with_timeout(
-            deadline,
-            &target.kubeconfig,
-            &target.context,
-            namespace,
-            &["get", "--raw", &path],
-        )
-        .await
-        .with_context(|| format!("read Job {namespace}/{name}"))?;
-        let jobs: Value = serde_json::from_str(&output).context("decode Job list")?;
-        let job = &jobs["items"][0];
-        if job["metadata"]["uid"] != uid {
+        let found = jobs
+            .list(&list)
+            .await
+            .with_context(|| format!("read Job {path}/{name}"))?;
+        let Some(job) = found
+            .items
+            .first()
+            .filter(|job| job.metadata.uid.as_deref() == Some(uid))
+        else {
             break;
-        }
+        };
         if inspect(job)? {
             return Ok(());
         }
-        jobs["metadata"]["resourceVersion"]
-            .as_str()
-            .context("Job list resource version is absent")?
-            .clone_into(&mut version);
+        version = found
+            .metadata
+            .resource_version
+            .context("Job list resource version is absent")?;
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
 
-    // A concurrent caller may already have removed the finished Job. Replay only
-    // the events since our last observation to recover this run's terminal state.
+    // Replay events for the previous UID if another caller already replaced the Job.
     ensure!(
         !version.is_empty() && version.bytes().all(|byte| byte.is_ascii_digit()),
-        "invalid resource version for Job {namespace}/{name}"
+        "invalid resource version for Job {path}/{name}"
     );
-    let watch = format!("{path}&watch=true&resourceVersion={version}&timeoutSeconds=1");
-    let events = kubectl::with_timeout(
-        deadline,
-        &target.kubeconfig,
-        &target.context,
-        namespace,
-        &["get", "--raw", &watch],
-    )
-    .await
-    .with_context(|| format!("watch Job {namespace}/{name}"))?;
-    for event in serde_json::Deserializer::from_str(&events).into_iter::<Value>() {
-        let event = event.context("decode Job watch event")?;
-        let job = &event["object"];
-        ensure!(
-            event["type"] != "ERROR",
-            "watch Job {namespace}/{name}: {job}"
-        );
-        if job["metadata"]["uid"] == uid && inspect(job)? {
-            return Ok(());
+    let watch = WatchParams::default()
+        .fields(&selector)
+        .timeout(1)
+        .disable_bookmarks();
+    let events = jobs
+        .watch(&watch, &version)
+        .await
+        .with_context(|| format!("watch Job {path}/{name}"))?;
+    let mut events = std::pin::pin!(events);
+    while let Some(event) = events
+        .try_next()
+        .await
+        .with_context(|| format!("watch Job {path}/{name}"))?
+    {
+        match event {
+            WatchEvent::Added(job) | WatchEvent::Modified(job) | WatchEvent::Deleted(job) => {
+                if job.metadata.uid.as_deref() == Some(uid) && inspect(&job)? {
+                    return Ok(());
+                }
+            }
+            WatchEvent::Error(status) => {
+                return Err(kube::Error::Api(status.boxed()))
+                    .with_context(|| format!("watch Job {path}/{name}"));
+            }
+            WatchEvent::Bookmark(_) => {}
         }
     }
-    anyhow::bail!("Job {namespace}/{name} disappeared before completion could be verified")
+    anyhow::bail!("Job {path}/{name} disappeared before completion could be verified")
 }
 
 /// Installed worker image and its public component configuration.
@@ -273,11 +269,7 @@ pub struct Worker {
 }
 
 /// Submit one bounded operation Job. The caller has already authorized its target.
-pub async fn submit(
-    api: &crate::kubernetes_api::KubernetesApi,
-    job: &mut Value,
-    request: &str,
-) -> anyhow::Result<Value> {
+pub async fn submit(api: &KubernetesApi, job: &mut Value, request: &str) -> anyhow::Result<Value> {
     let input = format!("{}-input", name(job));
     job["spec"]["suspend"] = false.into();
     job["spec"]["template"]["spec"]["volumes"]
@@ -290,65 +282,73 @@ pub async fn submit(
         .push(json!({"name":"request","mountPath":"/etc/wamn/request","readOnly":true}));
     // The pod waits for the volume while the Job deadline runs. The Job's UID
     // is available for the owner reference before we create the input.
-    let created = api.create_job(&api.namespace, job).await?;
-    ensure!(
-        created["metadata"]["name"] == job["metadata"]["name"],
-        "Kubernetes returned a different Job"
-    );
-    let uid = created["metadata"]["uid"]
-        .as_str()
-        .context("Job UID is absent")?;
-    api.create_operation_input(
-        &api.namespace,
-        &json!({
-            "apiVersion":"v1","kind":"ConfigMap","immutable":true,
-            "metadata":{"name":input,"ownerReferences":[{
-                "apiVersion":"batch/v1","kind":"Job","name":name(job),"uid":uid
-            }]},
-            "data":{"request.json":request}
-        }),
+    let jobs = Api::<Job>::namespaced(api.client(), &api.namespace);
+    let manifest = Job::deserialize(&*job).context("decode operation Job")?;
+    let name = manifest
+        .metadata
+        .name
+        .as_deref()
+        .context("operation Job name is absent")?;
+    let created = tokio::time::timeout(
+        REQUEST_TIMEOUT,
+        jobs.create(&PostParams::default(), &manifest),
     )
     .await
-    .with_context(|| format!("create input for Job {}", name(job)))?;
-    Ok(json!({"job":name(job)}))
+    .with_context(|| format!("create Job {name}"))??;
+    ensure!(
+        created.metadata.name.as_deref() == Some(name),
+        "Kubernetes returned a different Job"
+    );
+    let uid = created.metadata.uid.context("Job UID is absent")?;
+    let inputs = Api::<ConfigMap>::namespaced(api.client(), &api.namespace);
+    let manifest = serde_json::from_value::<ConfigMap>(json!({
+        "metadata":{"name":input,"ownerReferences":[{
+            "apiVersion":"batch/v1","kind":"Job","name":name,"uid":uid
+        }]},
+        "immutable":true,"data":{"request.json":request}
+    }))?;
+    tokio::time::timeout(
+        REQUEST_TIMEOUT,
+        inputs.create(&PostParams::default(), &manifest),
+    )
+    .await
+    .map_err(anyhow::Error::from)
+    .and_then(|result| result.map_err(anyhow::Error::from))
+    .with_context(|| format!("create input for Job {name}"))?;
+    Ok(json!({"job":name}))
 }
 
 /// Read the Job that controls the current worker Pod.
-pub async fn current(api: &crate::kubernetes_api::KubernetesApi) -> anyhow::Result<Value> {
+pub async fn current(api: &KubernetesApi) -> anyhow::Result<Value> {
     // Operation Pods use the default hostname, which Kubernetes sets to the Pod name.
     let hostname = std::fs::read_to_string("/proc/sys/kernel/hostname")
         .context("read operation Pod hostname")?;
     let pod = hostname.trim();
     ensure!(kubernetes_name(pod), "invalid operation Pod name");
     let namespace = &api.namespace;
-    let pod = api
-        .get(format!("/api/v1/namespaces/{namespace}/pods/{pod}"))
-        .await?;
-    let owner = pod["metadata"]["ownerReferences"]
-        .as_array()
-        .and_then(|owners| {
-            owners.iter().find(|owner| {
-                owner["controller"] == true
-                    && owner["kind"] == "Job"
-                    && owner["apiVersion"] == "batch/v1"
-            })
+    let pods = Api::<Pod>::namespaced(api.client(), namespace);
+    let pod = tokio::time::timeout(REQUEST_TIMEOUT, pods.get(pod)).await??;
+    let owner = pod
+        .metadata
+        .owner_references
+        .as_deref()
+        .unwrap_or_default()
+        .iter()
+        .find(|owner| {
+            owner.controller == Some(true) && owner.api_version == "batch/v1" && owner.kind == "Job"
         })
         .context("operation Pod has no controlling Job")?;
-    let name = owner["name"]
-        .as_str()
-        .filter(|name| kubernetes_name(name))
-        .context("invalid operation Job name")?;
-    let job = api
-        .get_job(namespace, name)
-        .await?
+    let name = &owner.name;
+    ensure!(kubernetes_name(name), "invalid operation Job name");
+    let jobs = Api::<Job>::namespaced(api.client(), namespace);
+    let job = tokio::time::timeout(REQUEST_TIMEOUT, jobs.get_opt(name))
+        .await??
         .context("operation Job is absent")?;
     ensure!(
-        owner["uid"]
-            .as_str()
-            .is_some_and(|uid| job["metadata"]["uid"] == uid),
+        job.metadata.uid.as_deref() == Some(&owner.uid),
         "operation Job {namespace}/{name} UID does not match its Pod's owner"
     );
-    Ok(job)
+    Ok(serde_json::to_value(job)?)
 }
 
 /// A refused observation never reveals a Job outside the authorized target.
@@ -371,7 +371,7 @@ impl std::error::Error for ObservationError {}
 
 /// Observe only Jobs that belong to the authorized environment and operation set.
 pub async fn observe(
-    api: &crate::kubernetes_api::KubernetesApi,
+    api: &KubernetesApi,
     name: &str,
     target: &str,
     operations: &[&str],
@@ -387,59 +387,95 @@ pub async fn observe(
         }
         .into());
     }
-    let job = api
-        .get_job(&api.namespace, name)
-        .await
-        .map_err(anyhow::Error::from)?
+    let jobs = Api::<Job>::namespaced(api.client(), namespace);
+    let job = tokio::time::timeout(REQUEST_TIMEOUT, jobs.get_opt(name))
+        .await??
         .ok_or(ObservationError {
             type_: ObservationErrorType::NotFound,
         })?;
-    if job["metadata"]["annotations"]["wamn.dev/operation-target"] != target
-        || job["metadata"]["annotations"]["wamn.dev/operation"]
-            .as_str()
-            .is_none_or(|operation| !operations.contains(&operation))
+    let annotations = job.metadata.annotations.as_ref();
+    let annotation = |key| {
+        annotations
+            .and_then(|values| values.get(key))
+            .map(String::as_str)
+    };
+    if annotation("wamn.dev/operation-target") != Some(target)
+        || annotation("wamn.dev/operation").is_none_or(|operation| !operations.contains(&operation))
     {
         return Err(ObservationError {
             type_: ObservationErrorType::NotFound,
         }
         .into());
     }
-    let uid = job["metadata"]["uid"]
-        .as_str()
-        .context("Job UID is absent")?;
-    let uid = uuid::Uuid::parse_str(uid).context("Job UID is invalid")?;
-    let pods = api.get(format!("/api/v1/namespaces/{namespace}/pods?labelSelector=batch.kubernetes.io%2Fcontroller-uid%3D{uid}&limit=1")).await.map_err(anyhow::Error::from)?;
+    let uid = job.metadata.uid.as_deref().context("Job UID is absent")?;
+    let uid = uuid::Uuid::parse_str(uid)
+        .context("Job UID is invalid")?
+        .to_string();
+    let pods = Api::<Pod>::namespaced(api.client(), namespace);
+    let params = ListParams::default()
+        .labels(&format!("batch.kubernetes.io/controller-uid={uid}"))
+        .limit(1);
+    let result = tokio::time::timeout(REQUEST_TIMEOUT, pods.list(&params)).await??;
     let mut log = String::new();
-    if let Some(pod) = pods["items"].as_array().and_then(|items| items.first()) {
-        let owned = pod["metadata"]["ownerReferences"]
-            .as_array()
-            .is_some_and(|owners| {
-                owners
-                    .iter()
-                    .any(|owner| owner["uid"] == uid.to_string() && owner["kind"] == "Job")
+    if let Some(pod) = result.items.first() {
+        let owned = pod
+            .metadata
+            .owner_references
+            .as_deref()
+            .unwrap_or_default()
+            .iter()
+            .any(|owner| owner.uid == uid && owner.kind == "Job");
+        let container = job
+            .spec
+            .as_ref()
+            .and_then(|spec| spec.template.spec.as_ref())
+            .and_then(|spec| spec.containers.first())
+            .map(|container| container.name.as_str());
+        let started = pod
+            .status
+            .as_ref()
+            .and_then(|status| status.container_statuses.as_deref())
+            .unwrap_or_default()
+            .iter()
+            .any(|status| {
+                Some(status.name.as_str()) == container
+                    && status
+                        .state
+                        .as_ref()
+                        .is_none_or(|state| state.waiting.is_none())
             });
-        if owned
-            && pod["status"]["containerStatuses"]
-                .as_array()
-                .is_some_and(|states| {
-                    states.iter().any(|state| {
-                        state["name"] == job["spec"]["template"]["spec"]["containers"][0]["name"]
-                            && state["state"].get("waiting").is_none()
-                    })
-                })
-        {
-            let pod = pod["metadata"]["name"]
-                .as_str()
+        if owned && started {
+            let pod = pod
+                .metadata
+                .name
+                .as_deref()
                 .filter(|name| kubernetes_name(name))
                 .context("pod name is invalid")?;
-            log = api
-                .pod_log(&api.namespace, pod)
-                .await
-                .map_err(anyhow::Error::from)?;
+            log = tokio::time::timeout(REQUEST_TIMEOUT, pod_log(&pods, pod)).await??;
         }
     }
-    let state = state(&job);
-    Ok(json!({"job":name,"state":state,"log":log}))
+    Ok(json!({"job":name,"state":state(&job),"log":log}))
+}
+
+async fn pod_log(pods: &Api<Pod>, name: &str) -> anyhow::Result<String> {
+    const LIMIT: usize = 32 * 1024;
+    let params = LogParams {
+        container: Some("operation".into()),
+        tail_lines: Some(100),
+        limit_bytes: Some(LIMIT as i64),
+        ..LogParams::default()
+    };
+    let mut log = Vec::new();
+    pods.log_stream(name, &params)
+        .await?
+        .take(LIMIT as u64)
+        .read_to_end(&mut log)
+        .await?;
+    let mut text = String::from_utf8_lossy(&log).into_owned();
+    while text.len() > LIMIT {
+        text.pop();
+    }
+    Ok(text)
 }
 
 fn kubernetes_name(name: &str) -> bool {

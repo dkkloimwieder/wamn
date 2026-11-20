@@ -5,7 +5,7 @@ use http_body_util::BodyExt as _;
 use hyper::{Method, Request, StatusCode, header};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
-use wamn_kubernetes::kubernetes_api::KubernetesApi;
+use wamn_kubernetes::client::KubernetesApi;
 use wamn_platform_install::provision_org::{
     CONTROL_AUDIENCE, CONTROL_TOKEN_PATH, FIRST_OWNER_PATH, INVITATION_ACCOUNT,
 };

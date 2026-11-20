@@ -2,7 +2,7 @@
 pub(super) mod plan;
 use anyhow::{Context as _, ensure};
 use serde_json::Value;
-use std::{borrow::Cow, ffi::OsStr, process::Stdio};
+use std::{borrow::Cow, ffi::OsStr, process::Stdio, time::Duration};
 use tokio::time::Instant;
 
 /// The Helm storage namespace for releases owned by an org.
@@ -90,6 +90,10 @@ pub fn template(entry: &serde_json::Value) -> anyhow::Result<Vec<serde_json::Val
 pub enum Wait {
     None,
     Watcher,
+    Platform {
+        timeout: Duration,
+        jobs: bool,
+    },
     /// Use the watcher and cap the upgrade timeout at this deadline.
     WatcherUntil(Instant),
 }
@@ -98,7 +102,9 @@ impl Wait {
     fn argument(self) -> Option<&'static OsStr> {
         match self {
             Self::None => None,
-            Self::Watcher | Self::WatcherUntil(_) => Some(OsStr::new("--wait=watcher")),
+            Self::Watcher | Self::Platform { .. } | Self::WatcherUntil(_) => {
+                Some(OsStr::new("--wait=watcher"))
+            }
         }
     }
 }
@@ -159,6 +165,7 @@ pub async fn upgrade(
             .as_secs()
             .min(600),
         Wait::None | Wait::Watcher => 600,
+        Wait::Platform { timeout, .. } => timeout.as_secs(),
     };
     ensure!(
         timeout > 0,
@@ -186,6 +193,9 @@ pub async fn upgrade(
         arguments.extend([OsStr::new("-f"), file.as_os_str()]);
     }
     arguments.extend(wait.argument());
+    if matches!(wait, Wait::Platform { jobs: true, .. }) {
+        arguments.push("--wait-for-jobs".as_ref());
+    }
     match install {
         Install::CreateNamespace => arguments.push("--create-namespace".as_ref()),
         Install::SkipCrds => arguments.push("--skip-crds".as_ref()),

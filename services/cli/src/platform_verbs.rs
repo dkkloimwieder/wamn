@@ -8,7 +8,7 @@ use std::{
 
 use anyhow::Context as _;
 use clap::{Args, Subcommand, ValueEnum};
-use wamn_kubernetes::{Target, helm, job, kubectl};
+use wamn_kubernetes::{Target, helm, job};
 use wamn_platform_install::release_chart::bundle;
 
 const INFRASTRUCTURE_RELEASE: &str = "wamn-infrastructure";
@@ -142,13 +142,7 @@ async fn deploy(args: &DeployArgs) -> anyhow::Result<()> {
             .with_context(|| format!("invalid OCI chart digest in {}", path.display()))?;
         reference
     };
-    let kubeconfig = PathBuf::new();
-    let context = kubectl::current_context(&kubeconfig)?;
-    let target = Target {
-        kubeconfig,
-        context,
-        namespace: "platform".into(),
-    };
+    let target = Target::developer("platform").await?;
     let charts = chart.directory().join("platform");
     if infrastructure {
         upgrade(
@@ -159,8 +153,6 @@ async fn deploy(args: &DeployArgs) -> anyhow::Result<()> {
             helm::Install::CreateNamespace,
         )
         .await?;
-        // The platform chart needs the CloudNativePG admission webhook.
-        kubectl::wait_deployment_ready(&target, "cnpg-controller-manager", ROLLOUT_TIMEOUT).await?;
     }
     if let Some(registry_egress) = registry_egress {
         let chart_values = tempfile::NamedTempFile::new()
@@ -173,8 +165,8 @@ async fn deploy(args: &DeployArgs) -> anyhow::Result<()> {
             }),
         )
         .context("write the resolved platform values")?;
-        let deadline = tokio::time::Instant::now() + ROLLOUT_TIMEOUT;
-        job::clear_finished(&target, SYSTEM_SQL_JOB, deadline).await?;
+        let jobs = kube::Api::namespaced(target.client.client(), &target.namespace);
+        job::remove_previous(&jobs, SYSTEM_SQL_JOB, ROLLOUT_TIMEOUT).await?;
         upgrade(
             &target,
             &charts.join("platform"),
@@ -184,57 +176,6 @@ async fn deploy(args: &DeployArgs) -> anyhow::Result<()> {
         )
         .await?;
     }
-    let deadline = tokio::time::Instant::now() + ROLLOUT_TIMEOUT;
-    let wait = async |namespace: &str, command: &[&str]| {
-        kubectl::with_timeout(
-            deadline,
-            &target.kubeconfig,
-            &target.context,
-            namespace,
-            command,
-        )
-        .await
-    };
-    let infrastructure_rollout = async {
-        if infrastructure {
-            // The Traefik chart appends the release namespace to its instance label.
-            let selector = format!(
-                "app.kubernetes.io/instance in ({INFRASTRUCTURE_RELEASE},{INFRASTRUCTURE_RELEASE}-{})",
-                target.namespace
-            );
-            let command = ["rollout", "status", "deployment", "--selector", &selector];
-            tokio::try_join!(
-                wait("cert-manager", &command),
-                wait(&target.namespace, &command)
-            )
-            .context("wait for infrastructure operators")?;
-        }
-        anyhow::Ok(())
-    };
-    let platform_rollout = async {
-        if platform {
-            let selector = format!("app.kubernetes.io/instance in ({PLATFORM_RELEASE},identity)");
-            let rollout = [
-                "rollout",
-                "status",
-                "deployment,statefulset",
-                "--selector",
-                &selector,
-            ];
-            tokio::try_join!(
-                wait(&target.namespace, &rollout),
-                wait("hosts", &["rollout", "status", "deployment/wamn-edge"]),
-                job::wait(
-                    &target,
-                    SYSTEM_SQL_JOB,
-                    deadline.saturating_duration_since(tokio::time::Instant::now())
-                ),
-            )
-            .context("wait for platform rollouts and the system SQL Job")?;
-        }
-        anyhow::Ok(())
-    };
-    tokio::try_join!(infrastructure_rollout, platform_rollout)?;
     Ok(())
 }
 
@@ -280,7 +221,10 @@ async fn upgrade(
         chart,
         release,
         values,
-        helm::Wait::None,
+        helm::Wait::Platform {
+            timeout: ROLLOUT_TIMEOUT,
+            jobs: release == PLATFORM_RELEASE,
+        },
         install,
     )
     .await

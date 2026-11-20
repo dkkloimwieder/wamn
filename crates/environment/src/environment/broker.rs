@@ -1,11 +1,16 @@
 //! Org-owned NATS credentials and the environment's resolver account.
 
 use anyhow::Context as _;
-use base64::{Engine as _, engine::general_purpose::STANDARD};
+use k8s_openapi::{ByteString, api::core::v1::Secret};
+use kube::{
+    Api,
+    api::{ObjectMeta, Patch, PatchParams},
+};
 use serde_json::json;
 use wamn_broker::nats::{CA_FILE, CREDENTIALS_KEY};
 use wamn_identity_client::nats::{EnsureAccount, NatsClient, SignUser, UserKind};
-use wamn_kubernetes::{kubectl, secret::Secret};
+use wamn_kubernetes::client::{APPLY_MANAGER, delete_named};
+
 use wamn_registry::{EnvName, OrgId, Triple, name};
 use zeroize::Zeroizing;
 
@@ -157,52 +162,53 @@ async fn ensure_user(
         wamn_broker::nats::credentials_inbox(&creds)? == signed.inbox_prefix,
         "identity returned an unexpected NATS inbox"
     );
-    let mut secret = Secret::new(&platform.target.namespace, secret_name);
-    secret
-        .data
-        .insert(CREDENTIALS_KEY.into(), STANDARD.encode(creds.as_bytes()));
-    kubectl::apply(
-        &platform.target.kubeconfig,
-        &platform.target.context,
-        &platform.target.namespace,
-        &secret,
-    )
-    .await
+    let target = &platform.target;
+    let secrets = Api::<Secret>::namespaced(target.client.client(), &target.namespace);
+    let secret = Secret {
+        metadata: ObjectMeta {
+            name: Some(secret_name.to_owned()),
+            namespace: Some(target.namespace.clone()),
+            ..ObjectMeta::default()
+        },
+        type_: Some("Opaque".into()),
+        data: Some(
+            [(
+                CREDENTIALS_KEY.into(),
+                ByteString(creds.as_bytes().to_vec()),
+            )]
+            .into(),
+        ),
+        ..Secret::default()
+    };
+    secrets
+        .patch(
+            secret_name,
+            &PatchParams::apply(APPLY_MANAGER),
+            &Patch::Apply(secret),
+        )
+        .await?;
+    Ok(())
 }
 
 async fn read_user(platform: &Platform, name: &str) -> anyhow::Result<Option<Zeroizing<String>>> {
-    let Some(secret) = kubectl::get::<Secret>(
-        &platform.target.kubeconfig,
-        &platform.target.context,
-        &platform.target.namespace,
-        "secret",
-        name,
-    )
-    .await?
-    else {
+    let target = &platform.target;
+    let secrets = Api::<Secret>::namespaced(target.client.client(), &target.namespace);
+    let Some(secret) = secrets.get_opt(name).await? else {
         return Ok(None);
     };
-    let bytes = Zeroizing::new(
-        STANDARD.decode(
-            secret
-                .data
-                .get(CREDENTIALS_KEY)
-                .context("broker Secret is missing its credentials")?,
-        )?,
-    );
-    let creds = std::str::from_utf8(&bytes).context("broker credentials are invalid")?;
-    Ok(Some(Zeroizing::new(creds.to_owned())))
+    let bytes = secret
+        .data
+        .and_then(|mut data| data.remove(CREDENTIALS_KEY))
+        .context("broker Secret is missing its credentials")?;
+    let bytes = Zeroizing::new(bytes.0);
+    let credentials = std::str::from_utf8(&bytes).context("broker credentials are invalid")?;
+    Ok(Some(Zeroizing::new(credentials.to_owned())))
 }
 
 async fn delete_secret(platform: &Platform, name: &str) -> anyhow::Result<()> {
-    super::ensure::kubectl(
-        platform,
-        &platform.target.namespace,
-        &["delete", "secret", name, "--ignore-not-found"],
-        None,
-    )
-    .await
-    .map(drop)
+    let target = &platform.target;
+    let secrets = Api::<Secret>::namespaced(target.client.client(), &target.namespace);
+    delete_named(&secrets, name, true).await.map(drop)
 }
 
 pub(super) async fn binding(

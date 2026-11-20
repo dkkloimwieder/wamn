@@ -2603,6 +2603,7 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.21",
  "tokio",
+ "tokio-tungstenite",
  "tokio-util",
  "tower",
  "tower-http 0.7.1",
@@ -5253,6 +5254,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "tokio-tungstenite"
+version = "0.30.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "17a073bfed563fa236697a068031408a93cd9522e08abf9933ead3e73411bd71"
+dependencies = [
+ "futures-util",
+ "log",
+ "tokio",
+ "tungstenite",
+]
+
+[[package]]
 name = "tokio-util"
 version = "0.7.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5584,6 +5597,22 @@ checksum = "9fe58ebd5edd976e0fe0f8a14d2a04b7c81ef153ea9a54eebc42e67c2c23b4e5"
 dependencies = [
  "pin-project-lite",
  "tokio",
+]
+
+[[package]]
+name = "tungstenite"
+version = "0.30.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e48ac77174b19c110a50ab2128b24215ac9cb40e0e12e093fb602d175c569d22"
+dependencies = [
+ "bytes",
+ "data-encoding",
+ "http",
+ "httparse",
+ "log",
+ "rand 0.10.3",
+ "sha1",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -5979,6 +6008,7 @@ dependencies = [
  "clap",
  "http-body-util",
  "hyper",
+ "kube",
  "postgres-protocol",
  "rustls",
  "serde_json",
@@ -6096,6 +6126,8 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
+ "k8s-openapi",
+ "kube",
  "moka",
  "oci-client",
  "rustls",
@@ -6280,6 +6312,8 @@ dependencies = [
  "chrono",
  "futures-util",
  "hex",
+ "k8s-openapi",
+ "kube",
  "nkeys",
  "object_store",
  "oci-client",
@@ -6583,6 +6617,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "jsonwebtoken 11.1.0",
+ "kube",
  "postgres-protocol",
  "ring",
  "rustls",
@@ -6644,17 +6679,18 @@ dependencies = [
  "async-trait",
  "base64 0.22.1",
  "bytes",
+ "futures-util",
  "http-body-util",
  "hyper",
- "hyper-rustls",
  "hyper-util",
- "rustls",
+ "k8s-openapi",
+ "kube",
  "serde",
  "serde_json",
  "serde_yaml",
  "tokio",
+ "tower",
  "uuid",
- "wamn-http-client",
 ]
 
 [[package]]
@@ -6743,6 +6779,8 @@ dependencies = [
  "anyhow",
  "base64 0.22.1",
  "hex",
+ "k8s-openapi",
+ "kube",
  "oci-client",
  "postgres-protocol",
  "rcgen",
@@ -7069,6 +7107,8 @@ dependencies = [
  "hyper",
  "hyper-rustls",
  "hyper-util",
+ "k8s-openapi",
+ "kube",
  "object_store",
  "ring",
  "rustls",
@@ -8470,6 +8510,8 @@ dependencies = [
  "docker_credential",
  "futures-util",
  "hyper",
+ "k8s-openapi",
+ "kube",
  "oci-client",
  "regex",
  "rustix 1.1.6",
@@ -8477,6 +8519,7 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "sqlx",
+ "tar",
  "tempfile",
  "tokio",
  "toml 1.1.6+spec-1.1.0",

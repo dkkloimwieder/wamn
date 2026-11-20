@@ -78,15 +78,11 @@ async fn host_replacement_routes_the_next_post_to_the_serving_host() {
                     .serve_connection(TokioIo::new(stream), service).await.unwrap();
             }
         });
-        let connector = http_transport::tls_connector(rustls::ClientConfig::builder_with_provider(Arc::new(
-                rustls::crypto::aws_lc_rs::default_provider()))
-                .with_safe_default_protocol_versions().unwrap()
-                .with_root_certificates(rustls::RootCertStore::empty()).with_no_client_auth(),
-                HttpConnector::new(), Schemes::HttpAndHttps, Protocols::Http1);
+        let mut config = kube::Config::new(endpoint.parse().unwrap());
+        config.default_namespace = "hosts".into();
         let releases = Releases {
             platform_domain: "example.test".parse().unwrap(),
-            api: wamn_kubernetes::kubernetes_api::KubernetesApi::with_client(
-                http_transport::client(connector, |_| {}), endpoint, String::new(), "hosts".into()),
+            api: wamn_kubernetes::client::KubernetesApi::from_config(config).unwrap(),
         };
         let web = Web { store: None };
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();

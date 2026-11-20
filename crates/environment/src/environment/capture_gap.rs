@@ -1,6 +1,9 @@
 //! Stop capture for recovery and retry reader restart after resynchronization.
+use wamn_kubernetes::client::resource;
 use super::Platform;
 use anyhow::{Context as _, ensure};
+use k8s_openapi::api::apps::v1::Deployment;
+use kube::Api;
 pub use recovery::{
     CloseCaptureGapRequest, ClosedCaptureGap, RecoverCaptureGapRequest, RecoveredCaptureGap,
 };
@@ -44,16 +47,12 @@ pub(super) async fn set_paused(
     if !paused {
         let target = &platform.target;
         let reader = wamn_provision::cdc_reader_name(&triple.org, &triple.project, &triple.env);
-        let reader_exists = wamn_kubernetes::kubectl::get::<serde_json::Value>(
-            &target.kubeconfig,
-            &target.context,
-            &target.namespace,
-            "deployment",
-            &reader,
-        )
-        .await
-        .with_context(|| format!("read CDC reader Deployment {reader}"))?
-        .is_some();
+        let deployments = Api::<Deployment>::namespaced(target.client.client(), &target.namespace);
+        let reader_exists = deployments
+            .get_opt(&reader)
+            .await
+            .with_context(|| format!("read CDC reader Deployment {reader}"))?
+            .is_some();
         if reader_exists {
             super::cdc_reader::wait_reader_ready(target, triple).await?;
         }
@@ -79,16 +78,19 @@ pub async fn recover(
             .await?;
             let owner = wamn_platform_install::environment::connection_for(&triple, &instance);
             let target = &platform.target;
-            let publication_exists = wamn_kubernetes::kubectl::get::<serde_json::Value>(
-                &target.kubeconfig,
-                &target.context,
+            let publications = resource(
+                target.client.client(),
                 &target.namespace,
-                "publication.postgresql.cnpg.io",
-                &owner.database,
-            )
-            .await
-            .with_context(|| format!("read CDC Publication for {triple}"))?
-            .is_some();
+                "postgresql.cnpg.io",
+                "v1",
+                "Publication",
+                "publications",
+            );
+            let publication_exists = publications
+                .get_opt(&owner.database)
+                .await
+                .with_context(|| format!("read CDC Publication for {triple}"))?
+                .is_some();
             ensure!(
                 publication_exists,
                 "{triple} has no CDC Publication to recover"

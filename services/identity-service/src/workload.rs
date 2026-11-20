@@ -4,7 +4,7 @@ use hyper::{HeaderMap, header};
 use sqlx::PgConnection;
 use wamn_identity_client::TOKEN_AUDIENCE;
 use wamn_identity_protocol::PlatformComponent;
-use wamn_kubernetes::kubernetes_api::KubernetesApi;
+use wamn_kubernetes::client::KubernetesApi;
 use wamn_registry::{EnvName, OrgId, name};
 
 /// The service account allowed to use a protected route.
