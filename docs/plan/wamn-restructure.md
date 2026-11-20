@@ -845,7 +845,6 @@ Merged to main on 2026-11-19 after review. The first kind run waits for D's appr
 - After the first kind run: three NATS pods with three-replica streams.
 - Epic 10: the trusted install entry point installs the org chart (namespace, quota, base RBAC, default deny) and creates `wamn-helm-<org>` before it.
 - Epic 10 (10.8): database logins by client certificate. Each project chart renders a cert-manager `Certificate` per login, Postgres authenticates by certificate, and hosts mount `tls.crt` and `tls.key`. Release records then hold no passwords, project accounts can run their own Helm Jobs again, and nothing needs password rotation. Check CloudNativePG's support for certificate auth on managed roles and `wamn-postgres` connecting with a client certificate.
-- Later option, not in Epic 10: offer wasmCloud a change so its runtime-operator tracks host pods in all namespaces by label (T4). The `len(podCacheNamespaces) == 0` fallback in `cmd/main.go` never runs.
 - Later option: custom domains for applications through a verified-domain list (E).
 - Later option: integration types owned by one org (Q4).
 - Later option: users in more than one org, through an invitation the user accepts (grant ruling, change 1).
@@ -860,7 +859,7 @@ Merged to main on 2026-11-19 after review. The first kind run waits for D's appr
 - Before the first production customer: split scheduler NATS from data NATS with the stock `schedulerUrl` and `dataUrl`, so no tenant can starve the control plane. NATS has no CPU or rate limits per account.
 - Before the first production customer: a PriorityClass for production environments, so production outranks dev. The environment values already accept `resources`, `nodeSelector`, `tolerations` and `affinity`.
 - First kind run: confirm that kind's CNI enforces NetworkPolicy, and that an environment's host cannot reach another environment's host, Postgres or Services.
-- `pg_walstream` runs from the fork `dkkloimwieder/pg-walstream` with two patches (typed keepalive, client certificate). Move back to the upstream crate when both are released there.
+- `pg_walstream` runs from the fork `dkkloimwieder/pg-walstream` with two patches (typed keepalive, client certificate). The fork is wamn's own.
 
 # Part 2: Review log
 
@@ -2333,7 +2332,7 @@ Facts:
 - T1. Shared platform components (infrastructure operators, NATS, identity, edge, web) are trusted, run across all namespaces and know orgs only as run-time data. Adding an org changes no shared config and restarts no shared pod. Least privilege applies to the actors inside each org: org workers, hosts, control and users.
 - T2. Orgs are data in the system Postgres (`registry.orgs`). No chart values list orgs. `wamn org create <org> --owner <email>` creates an org.
 - T3. NATS runs in operator (JWT) mode with the full resolver. Accounts and users are signed JWTs, pushed to the running server. One account per environment plus `PLATFORM`. JetStream limits and user permissions, including each user's inbox prefix, live in the JWTs. Clients connect with creds files; TLS stays, for encryption only.
-- T4. wasmCloud operator: `watchNamespaces` is empty (all namespaces). `-host-namespaces` stays fixed and never lists org namespaces, so the operator never restarts for a new org. Cost: no host-pod finalizer, so a gone host leaves the application endpoints only after heartbeats time out (about 1 to 2 minutes). The web proxy retries when a connection fails, with a connect timeout of about 1 s; nothing reached the host, so this is safe for every request. No upstream change in Epic 10. Later option: offer wasmCloud a change so its operator tracks host pods in all namespaces by the `wasmcloud.com/hostgroup` label, which brings back the host-pod finalizer.
+- T4. wasmCloud operator: `watchNamespaces` is empty (all namespaces). `-host-namespaces` stays fixed and never lists org namespaces, so the operator never restarts for a new org. Cost: no host-pod finalizer, so a gone host leaves the application endpoints only after heartbeats time out (about 1 to 2 minutes). The web proxy retries when a connection fails, with a connect timeout of about 1 s; nothing reached the host, so this is safe for every request. No upstream change, ever.
 - T5. Identity accepts `CN=control-<org>` for any org in `registry.orgs`. The `controlSubject` value goes. Replaced on 2026-11-19 by the service account token ruling.
 - Q1 a: `wamn platform deploy <values>` is the install entry point. It runs the infrastructure chart, then the platform chart, with one wait at the end.
 - Q3 a: each service reads one settings file. The host's file arrives through the stock runtime-operator `volumes`/`volumeMounts` and an extra `--settings` argument; the stock host arguments stay.
@@ -2445,7 +2444,7 @@ Facts:
 - K18: loopback registry references map to `POD_REGISTRY` in one shared function, digest unchanged, only when the registry is loopback.
 - K19: `env apply` after `env delete` makes a new generation; kept Clusters and ObjectStores stay for a manual dump (copy-back ruling), and `env delete --data` after a plain delete removes them and lists what it removed.
 - K20: Rust waits for `Ready=True` on each WorkloadDeployment. Helm's watcher does not check `Ready` on custom resources.
-- K21: the `pg_walstream` fork sends the client certificate and key. It carries two patches, typed keepalive and client certificate, both prepared for upstream.
+- K21: the `pg_walstream` fork sends the client certificate and key. It carries two patches, typed keepalive and client certificate.
 
 **Ruled (D, 2026-11-19): preflight and smoke runs.**
 - Preflight, run before any kind install:
@@ -2469,5 +2468,17 @@ Facts:
 - The host's default data user moves from `PLATFORM` to the environment's own account, with publish denied. Nothing tenant-related stays in `PLATFORM`.
 - Environment accounts get finite limits for connections, subscriptions, payload size and data, set at install like the other platform caps. Reason: these were `UNLIMITED` (`identity/src/nats/claims.rs`); only JetStream was capped.
 - One NATS stays (E6), with these limits and the three NATS pods already planned. The shared runtime operator stays, the same as CloudNativePG and cert-manager.
+
+**Ruled (D, 2026-11-20): no upstream; K24; 10.13 details.**
+- No upstream changes or upstream pull requests, ever. wasmCloud stays stock with no patches and no fork. The `pg_walstream` fork is wamn's own.
+- K24: every application workload has an unnamed `wasmcloud:nats` binding on the host's default data connection. The data user lives in the environment's own account with publish denied, so the plain import routes through nothing in `PLATFORM`. Cause: the Data change handler's message resource comes from the plain `jetstream` interface, which wash-runtime links only for an unnamed binding.
+- 10.13:
+  - TokenReview and the host service account only.
+  - Key-based inbox, with NATS `resp` (at most one reply) for operator replies.
+  - No revocation; reissue for the same pod.
+  - No migration code.
+  - Connection, subscription and payload limits per project, multiplied by the project count, and signed again when changed.
+  - No `data` claim: NATS does not enforce it; the payload, subscription, connection and JetStream caps are the limits.
+- Remaining host risk, accepted under wasmCloud's threat model, which trusts hosts: a host's heartbeat carries labels it reports itself (`HostHeartbeat.Labels`), and the operator places workloads by them. So a host taken over by a sandbox escape could announce another org's host group and attract its workloads and traffic. Per-pod users stop it from taking over other hosts' ids and commands, and org NetworkPolicies keep it from other orgs' databases.
 
 Epic 9 closed at 01bb4a1e2: review accepted, main fast-forwarded. The application record is 69,220 B on the 772-route wamn_wms fixture, a different fixture from the Epic 8 one, not growth. The slot cleanup connects to the postgres database, and the deadline for an unreachable database under --data is 10 s.
