@@ -136,58 +136,12 @@ pub fn action(package: &Path, local: &str) -> Result<std::path::PathBuf> {
     Ok(destination)
 }
 
-/// Copy a generated browser component to an application-owned path.
-pub fn component(
-    package: &Path,
-    name: &wamn_catalog::manifest::source_name::SourceName,
-    destination: &Path,
-) -> Result<()> {
-    let source = wamn_codegen::output_root(package)
-        .join("client-ts/components")
-        .join(format!("{name}.ts"));
-    let source_text = fs::read_to_string(&source)?;
-    let origin = source
-        .parent()
-        .context("generated component directory")?
-        .canonicalize()?;
-    let authored = destination
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .unwrap_or(Path::new("."))
-        .canonicalize()?;
-    let common = origin
-        .components()
-        .zip(authored.components())
-        .take_while(|(left, right)| left == right)
-        .count();
-    let mut relative = std::path::PathBuf::new();
-    for _ in authored.components().skip(common) {
-        relative.push("..");
-    }
-    relative.extend(origin.components().skip(common));
-    relative.push("presentation.js");
-    let relative = relative.to_string_lossy().replace('\\', "/");
-    let relative = if relative.starts_with('.') {
-        relative
-    } else {
-        format!("./{relative}")
-    };
-    let source_text =
-        source_text.replace("\"./presentation.js\"", &serde_json::to_string(&relative)?);
-    let mut file = fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(destination)?;
-    file.write_all(source_text.as_bytes())?;
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn ejected_action_owns_the_default_and_component_copy_refuses_overwrite() {
+    fn ejected_action_owns_the_default() {
         let scratch = tempfile::tempdir().unwrap();
         let workspace = scratch.path().join("apps");
         let package = workspace.join("package");
@@ -261,37 +215,5 @@ mod tests {
             String::from_utf8_lossy(&compiled.stderr)
         );
         assert!(action(&package, "thing.get").is_err());
-        fs::create_dir_all(output.join("client-ts/components")).unwrap();
-        fs::write(
-            output.join("client-ts/components/presentation.ts"),
-            "export interface ScreenPresentation { readonly view: string; }",
-        )
-        .unwrap();
-        fs::write(
-            output.join("client-ts/components/thing.ts"),
-            "import type { ScreenPresentation } from \"./presentation.js\"; export const thing = { view: 'thing' } satisfies ScreenPresentation;",
-        )
-        .unwrap();
-        let destination = package.join("thing.ts");
-        component(&package, &"thing".parse().unwrap(), &destination).unwrap();
-        let compiled = std::process::Command::new("tsc")
-            .args([
-                "--strict",
-                "--noEmit",
-                "--module",
-                "nodenext",
-                "--moduleResolution",
-                "nodenext",
-            ])
-            .arg(&destination)
-            .output()
-            .unwrap();
-        assert!(
-            compiled.status.success(),
-            "{}{}",
-            String::from_utf8_lossy(&compiled.stdout),
-            String::from_utf8_lossy(&compiled.stderr)
-        );
-        assert!(component(&package, &"thing".parse().unwrap(), &destination).is_err());
     }
 }

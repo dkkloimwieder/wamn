@@ -2,7 +2,7 @@
 //!
 //! MVP outcome: crash minimum · M0 execution · flow composition.
 //!
-//! `host` combines HTTP and durable queue execution in one runtime.
+//! `host` runs workloads and serves HTTP.
 //! The runtime-operator controls ClusterHost over NATS. Identity and CDC
 //! remain separate services.
 //!

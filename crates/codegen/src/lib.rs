@@ -18,9 +18,6 @@ pub mod build;
 mod client_fields;
 pub mod client_ir;
 pub mod client_plan;
-mod client_route;
-/// The TypeScript client emitter. Browser bindings from the same contract IR.
-pub mod client_ts;
 mod describe;
 mod describe_cache;
 pub mod fingerprint;

@@ -535,8 +535,6 @@ pub struct ValuesInput<'a> {
     /// Exactly one application's membership, retained in Helm values for status reads.
     pub applications: wamn_catalog::EnvironmentApplications,
     pub roles: Vec<Role>,
-    /// Who applied. It renders nothing and is kept with the revision (§9.2).
-    pub actor: String,
 }
 
 /// The host samples traces at their start and exports to the cluster's collector.

@@ -108,8 +108,7 @@ impl WorkloadDrain {
                 .await?;
             }
             // A local stop does not release the operator's finalizer. Keep
-            // control alive for the operator's own stop, within the same bound,
-            // so the queue drain keeps the rest of the host's deadline.
+            // control alive for the operator's own stop, within the same bound.
             state
                 .wait_for(|state| state.pending_stops.is_empty())
                 .await?;

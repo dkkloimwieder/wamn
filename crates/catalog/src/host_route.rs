@@ -32,15 +32,7 @@ pub use contract_files::HostRouteContractError;
 #[serde(deny_unknown_fields)]
 struct ControlContract {
     package: ControlPackage,
-    client_package: ControlClientPackage,
-    control_client_package: ControlClientPackage,
     routes: ControlRoutes,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ControlClientPackage {
-    name: crate::client_package_name::ClientPackageName,
 }
 
 #[derive(Deserialize)]
@@ -446,41 +438,6 @@ const ROUTES: &[HostRoute] = &[
     HostRoute {
         set: HostRouteSet::Control,
         operation: "external_system.delete",
-        type_: OperationType::Command,
-        authority: HostRouteAuthority::ProjectAdmin,
-        handler: HostHandler::IntegrationAdministration,
-    },
-    HostRoute {
-        set: HostRouteSet::Control,
-        operation: "integration.list",
-        type_: OperationType::Get,
-        authority: HostRouteAuthority::ProjectAdmin,
-        handler: HostHandler::IntegrationAdministration,
-    },
-    HostRoute {
-        set: HostRouteSet::Control,
-        operation: "integration.get",
-        type_: OperationType::Get,
-        authority: HostRouteAuthority::ProjectAdmin,
-        handler: HostHandler::IntegrationAdministration,
-    },
-    HostRoute {
-        set: HostRouteSet::Control,
-        operation: "integration.disable",
-        type_: OperationType::Command,
-        authority: HostRouteAuthority::ProjectAdmin,
-        handler: HostHandler::IntegrationAdministration,
-    },
-    HostRoute {
-        set: HostRouteSet::Control,
-        operation: "integration.enable",
-        type_: OperationType::Command,
-        authority: HostRouteAuthority::ProjectAdmin,
-        handler: HostHandler::IntegrationAdministration,
-    },
-    HostRoute {
-        set: HostRouteSet::Control,
-        operation: "integration.delete",
         type_: OperationType::Command,
         authority: HostRouteAuthority::ProjectAdmin,
         handler: HostHandler::IntegrationAdministration,
@@ -918,16 +875,6 @@ impl HostRouteSet {
     pub fn attachment(self, id: &CanonicalName) -> Option<&'static HostAttachment> {
         self.attachments()
             .find_map(|(key, attachment)| (key == id).then_some(attachment))
-    }
-
-    /// The package name of the generated TypeScript client of this set, as
-    /// an application's `client_package` names its client. Each set has its
-    /// own client, because the two sets share operation ids.
-    pub fn client_package(self) -> &'static crate::client_package_name::ClientPackageName {
-        match self {
-            Self::Application => &CONTRACT.client_package.name,
-            Self::Control => &CONTRACT.control_client_package.name,
-        }
     }
 }
 

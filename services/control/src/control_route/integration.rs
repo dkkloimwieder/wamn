@@ -111,7 +111,7 @@ impl ControlRoutes<'_> {
         } else {
             None
         };
-        let applications = if matches!(operation, "connection.delete" | "integration.delete") {
+        let applications = if operation == "connection.delete" {
             crate::environment_status::applications(self.org, &target.project, env).await?
         } else {
             Vec::new()
@@ -139,7 +139,7 @@ impl ControlRoutes<'_> {
             project.commit().await?;
             return Ok(json!({"authorization_url":url}));
         }
-        if matches!(operation, "connection.delete" | "integration.delete") {
+        if operation == "connection.delete" {
             let principal = result["principal_id"]
                 .as_str()
                 .ok_or_else(|| anyhow::anyhow!("connection delete returned no principal id"))?
