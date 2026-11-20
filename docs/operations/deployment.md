@@ -6,7 +6,7 @@ It does not compile source, build JavaScript, publish packages, or select applic
 A fresh platform contains zero application environments and zero application releases.
 
 [Building](building.md#platform-artifacts) explains how to prepare the chart bundle.
-Run `wamn platform deploy <values>` on a developer machine with Helm 4, kubectl, and an administrator kubeconfig.
+Run `wamn platform deploy <values>` on a developer machine with Helm 4 and an administrator kubeconfig.
 The command uses the current Kubernetes context. Helm validates the operator's values against the platform chart schema.
 Set `WAMN_RELEASE_CHART` to the prepared bundle directory or its published OCI digest reference. You can also pass it with `--chart`.
 
