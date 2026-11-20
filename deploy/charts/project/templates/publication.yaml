@@ -1,4 +1,5 @@
 {{- with .Values.publication }}
+{{- if .schemas }}
 apiVersion: postgresql.cnpg.io/v1
 kind: Publication
 metadata:
@@ -13,11 +14,12 @@ spec:
   cluster: {name: {{ .cluster }}}
   dbname: {{ .database }}
   target:
-    objects:{{ if not .schemas }} []{{ end }}
+    objects:
     {{- range .schemas }}
       - tablesInSchema: {{ . | quote }}
     {{- end }}
   parameters:
     publish: {{ .publish | quote }}
   publicationReclaimPolicy: {{ default "retain" .reclaimPolicy }}
+{{- end }}
 {{- end }}

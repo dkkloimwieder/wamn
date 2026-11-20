@@ -1,7 +1,7 @@
 {{- with .Values.operations }}
 {{- $policy := include "project.networkPolicyNames" $ | fromJson }}
 {{- $cluster := dict "cnpg.io/cluster" .cluster }}
-{{- $reader := dict "app.kubernetes.io/name" "wamn-cdc-reader" "app.kubernetes.io/instance" (get (default dict $.Values.cdcReader) "key") }}
+{{- $reader := and $.Values.publication $.Values.publication.schemas $.Values.cdcReader (dict "app.kubernetes.io/name" "wamn-cdc-reader" "app.kubernetes.io/instance" $.Values.cdcReader.key) }}
 {{- $control := dict "app.kubernetes.io/name" (required "Set operations.controlDeployment." .controlDeployment) }}
 {{- $worker := dict "app.kubernetes.io/component" "wamn-worker" }}
 apiVersion: networking.k8s.io/v1
@@ -21,7 +21,7 @@ spec:
             matchLabels: {{ $control | toJson }}
         - podSelector:
             matchLabels: {{ $worker | toJson }}
-        {{- if $.Values.cdcReader }}
+        {{- if $reader }}
         - podSelector:
             matchLabels: {{ $reader | toJson }}
         {{- end }}
@@ -69,7 +69,7 @@ spec:
         - podSelector:
             matchLabels: {{ $cluster | toJson }}
       ports: [{port: 5432, protocol: TCP}]
-{{- if $.Values.cdcReader }}
+{{- if $reader }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
