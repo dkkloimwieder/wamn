@@ -35,6 +35,13 @@ CREATE UNLOGGED TABLE IF NOT EXISTS platform.tx_identity (
 ALTER TABLE platform.tx_identity OWNER TO CURRENT_USER;
 REVOKE ALL ON platform.tx_identity FROM PUBLIC;
 
+CREATE OR REPLACE FUNCTION platform.prune_tx_identity() RETURNS void
+LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog AS $$
+    DELETE FROM platform.tx_identity WHERE xid < pg_snapshot_xmin(pg_current_snapshot())
+$$;
+ALTER FUNCTION platform.prune_tx_identity() OWNER TO CURRENT_USER;
+REVOKE ALL ON FUNCTION platform.prune_tx_identity() FROM PUBLIC;
+
 CREATE OR REPLACE FUNCTION wamn_authority.check_identity_xid()
 RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog AS $$
 BEGIN

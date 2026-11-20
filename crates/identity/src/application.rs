@@ -8,6 +8,9 @@
 
 pub mod service;
 
+mod user;
+pub use user::{ApplicationUser, disable_connection_services, remove_user, write_user};
+
 use sqlx::Row as _;
 use std::fmt;
 
@@ -25,10 +28,6 @@ pub const OPERATION_GRANT_LOCK_SQL: &str = "SELECT pg_advisory_xact_lock(hashtex
 const PLATFORM_ROWS_SQL: &str =
     "SELECT EXISTS (SELECT FROM platform.\"user\" WHERE type = 'platform')";
 
-const USER_ROW_SQL: &str = "INSERT INTO platform.\"user\" \
-    (id, issuer, sub, type, email, display_name) VALUES ($1, $2, $3, 'user', $4, $5) \
-    ON CONFLICT (id) DO NOTHING";
-
 const ROLE_SQL: &str = "INSERT INTO platform.role (name) VALUES ($1) \
     ON CONFLICT (name) DO NOTHING";
 
@@ -38,22 +37,11 @@ const USER_ROLE_SQL: &str = "INSERT INTO platform.user_role (user_id, role_name)
 const DROP_USER_ROLE_SQL: &str = "DELETE FROM platform.user_role \
     WHERE user_id = $1 AND role_name = $2";
 
-const DROP_USER_ROW_SQL: &str = "DELETE FROM platform.\"user\" \
-    WHERE id = $1 AND type = 'user'";
-
 /// The status row of the environment. No row means active.
 const ENVIRONMENT_STATUS_ROW_SQL: &str = "INSERT INTO platform.environment \
     (status) VALUES ($1) \
     ON CONFLICT (id) DO UPDATE SET status = EXCLUDED.status \
     WHERE platform.environment.status <> EXCLUDED.status";
-
-/// The user an application row names.
-#[derive(Debug, Clone, Copy)]
-pub struct ApplicationUser<'a> {
-    pub principal_id: &'a PrincipalId,
-    pub email: &'a str,
-    pub display_name: &'a str,
-}
 
 /// Refuse a project database without platform rows. The database is the org
 /// boundary, so its rows name no project: the caller derives the project of
@@ -82,40 +70,6 @@ pub async fn write_environment_status(
 ) -> Result<(), IdentityError> {
     sqlx::query(ENVIRONMENT_STATUS_ROW_SQL)
         .bind(status.as_str())
-        .execute(&mut *client)
-        .await
-        .map(|result| result.rows_affected())
-        .map_err(|error| database_error(&error))?;
-    Ok(())
-}
-
-/// Write the user row of `user`, and keep a row that exists.
-pub async fn write_user(
-    client: &mut sqlx::PgConnection,
-    issuer: &str,
-    user: ApplicationUser<'_>,
-) -> Result<(), IdentityError> {
-    sqlx::query(USER_ROW_SQL)
-        .bind(user.principal_id)
-        .bind(issuer)
-        .bind(user.principal_id.to_string())
-        .bind(user.email)
-        .bind(user.display_name)
-        .execute(&mut *client)
-        .await
-        .map(|result| result.rows_affected())
-        .map_err(|error| database_error(&error))?;
-    Ok(())
-}
-
-/// Remove the user row of the principal. Its foreign keys remove its role
-/// rows and its API keys.
-pub async fn remove_user(
-    client: &mut sqlx::PgConnection,
-    principal_id: &PrincipalId,
-) -> Result<(), IdentityError> {
-    sqlx::query(DROP_USER_ROW_SQL)
-        .bind(principal_id)
         .execute(&mut *client)
         .await
         .map(|result| result.rows_affected())

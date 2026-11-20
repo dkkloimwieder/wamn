@@ -7,6 +7,8 @@ use wamn_identity_protocol::{
 };
 use wamn_registry::platform_domain::PlatformDomain;
 
+pub use super::user::{disable, write_service};
+
 const MAX_PAT_TTL: Duration = Duration::from_hours(365 * 24);
 
 /// Classification of a project service error at the control boundary.
@@ -28,7 +30,7 @@ pub struct ServiceError {
 }
 
 impl ServiceError {
-    fn refusal(type_: ServiceErrorType, context: &'static str) -> Self {
+    pub(super) fn refusal(type_: ServiceErrorType, context: &'static str) -> Self {
         Self {
             type_,
             context,
@@ -36,7 +38,7 @@ impl ServiceError {
         }
     }
 
-    fn database(context: &'static str, source: sqlx::Error) -> Self {
+    pub(super) fn database(context: &'static str, source: sqlx::Error) -> Self {
         Self {
             type_: ServiceErrorType::Database,
             context,
@@ -73,56 +75,6 @@ pub async fn platform_domain(
         })
 }
 
-/// Write a project service principal, reusing its active row on a retry.
-pub async fn write_service(
-    project: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    domain: &PlatformDomain,
-    subject: &str,
-    display_name: &str,
-) -> Result<PrincipalId, ServiceError> {
-    let subject = subject.trim().to_ascii_lowercase();
-    let display_name = display_name.trim();
-    if subject.is_empty()
-        || subject.len() > 254
-        || !subject.bytes().enumerate().all(|(index, byte)| {
-            byte.is_ascii_lowercase()
-                || byte.is_ascii_digit()
-                || (index > 0 && matches!(byte, b'.' | b'_' | b'+' | b'-'))
-        })
-    {
-        return Err(ServiceError::refusal(
-            ServiceErrorType::InvalidInput("subject"),
-            "invalid service subject",
-        ));
-    }
-    if display_name.is_empty() || display_name.len() > 200 || display_name.starts_with("wamn:") {
-        return Err(ServiceError::refusal(
-            ServiceErrorType::InvalidInput("display_name"),
-            "invalid service display name",
-        ));
-    }
-    let id = sqlx::query_scalar(
-        r#"INSERT INTO platform."user" (id, issuer, sub, type, email, display_name)
-           VALUES (gen_random_uuid(), 'wamn', $1, 'service', $2, $3)
-           ON CONFLICT (issuer, sub) DO NOTHING RETURNING id"#,
-    )
-    .bind(&subject)
-    .bind(format!("{subject}@{domain}"))
-    .bind(display_name)
-    .fetch_optional(&mut **project)
-    .await
-    .map_err(|source| ServiceError::database("write the project service principal", source))?;
-    match id {
-        Some(id) => Ok(id),
-        None => active_service(project, &subject).await?.ok_or_else(|| {
-            ServiceError::refusal(
-                ServiceErrorType::NotFound("subject"),
-                "project service principal is disabled or unavailable",
-            )
-        }),
-    }
-}
-
 /// Resolve an active project service by its local subject.
 pub async fn active_service(
     project: &mut sqlx::PgConnection,
@@ -150,28 +102,6 @@ pub async fn write_connection_service(
 ) -> anyhow::Result<PrincipalId> {
     let domain = platform_domain(system).await?;
     Ok(write_service(project, &domain, subject, display_name).await?)
-}
-
-/// Disable a project service, retaining its PAT metadata.
-pub async fn disable(
-    project: &mut sqlx::PgConnection,
-    principal: &PrincipalId,
-) -> Result<(), ServiceError> {
-    sqlx::query_scalar(
-        r#"UPDATE platform."user" SET status='disabled'
-           WHERE id=$1 AND issuer='wamn' AND type='service' RETURNING id"#,
-    )
-    .bind(principal)
-    .fetch_optional(project)
-    .await
-    .map_err(|source| ServiceError::database("disable the project service principal", source))?
-    .map(|_: PrincipalId| ())
-    .ok_or_else(|| {
-        ServiceError::refusal(
-            ServiceErrorType::NotFound("principal_id"),
-            "project service principal does not exist",
-        )
-    })
 }
 
 /// Issue a token for an active service in the current project transaction.

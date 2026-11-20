@@ -76,12 +76,14 @@ impl Execution {
                 wamn_catalog::host_route_version(),
                 &operation.as_str().parse()?,
             )?;
-            sqlx::query(
-                "INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1,'','',$2)",
+            wamn_postgres::bind_transaction_identity(
+                &mut transaction,
+                caller,
+                "",
+                "",
+                Some(sealed.as_str()),
+                None,
             )
-            .bind(caller)
-            .bind(&sealed)
-            .execute(&mut *transaction)
             .await?;
         }
         let result = match operation.as_str() {

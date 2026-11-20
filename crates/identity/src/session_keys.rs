@@ -50,7 +50,7 @@ pub async fn initialize_session_key(
     .await
     .map_err(key_database_error)?;
     if !initialized {
-        bind_provisioning(&mut transaction).await?;
+        bind_identity_service(&mut transaction).await?;
         let kid = insert_session_key(&mut transaction, issuer, envelope).await?;
         sqlx::query(
             "INSERT INTO identity.session_signing_state (issuer, active_kid) VALUES ($1, $2::text::uuid)",
@@ -110,7 +110,7 @@ async fn activate_session_key_if_current(
     expected: &str,
 ) -> Result<(), IdentityError> {
     let mut transaction = client.begin().await.map_err(key_database_error)?;
-    bind_provisioning(&mut transaction).await?;
+    bind_identity_service(&mut transaction).await?;
     let active = lock_issuer(&mut transaction, issuer).await?;
     // Scheduled activation must not undo a removal.
     if active.as_deref() != Some(expected) {
@@ -182,7 +182,7 @@ pub async fn rotate_session_keys(
                 }
             } else {
                 let mut transaction = client.begin().await.map_err(key_database_error)?;
-                bind_provisioning(&mut transaction).await?;
+                bind_identity_service(&mut transaction).await?;
                 insert_session_key(&mut transaction, issuer, envelope).await?;
                 transaction.commit().await.map_err(key_database_error)?;
             }
@@ -237,7 +237,7 @@ pub async fn remove_compromised_session_key(
     kid: &str,
 ) -> Result<bool, IdentityError> {
     let mut transaction = client.begin().await.map_err(key_database_error)?;
-    bind_provisioning(&mut transaction).await?;
+    bind_identity_service(&mut transaction).await?;
     sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
         .bind(issuer)
         .execute(&mut *transaction)
@@ -269,7 +269,7 @@ pub async fn remove_compromised_session_key(
 /// Delete expired retiring generations; their public projection already excludes them.
 pub async fn retire_session_keys(client: &mut Client, issuer: &str) -> Result<u64, IdentityError> {
     let mut transaction = client.begin().await.map_err(key_database_error)?;
-    bind_provisioning(&mut transaction).await?;
+    bind_identity_service(&mut transaction).await?;
     lock_issuer(&mut transaction, issuer).await?;
     let removed = sqlx::query(
         "DELETE FROM identity.session_keys WHERE issuer = $1 AND \
@@ -323,17 +323,14 @@ pub(crate) async fn sign_message(
     Ok(token)
 }
 
-/// Bind `wamn:provisioning` as the stamp actor of `transaction`.
-pub(crate) async fn bind_provisioning(
+/// Bind the identity service as the actor for key changes.
+pub(crate) async fn bind_identity_service(
     transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
 ) -> Result<(), IdentityError> {
-    sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application) VALUES($1,'','')")
-        .bind(wamn_identity_protocol::PlatformComponent::Provisioning.principal_id())
-        .execute(&mut **transaction)
+    let actor = wamn_identity_protocol::PlatformComponent::IdentityService.principal_id();
+    wamn_postgres::bind_transaction_identity(transaction, &actor, "", "", None, None)
         .await
-        .map(|result| result.rows_affected())
-        .map_err(key_database_error)?;
-    Ok(())
+        .map_err(key_database_error)
 }
 
 async fn lock_issuer(

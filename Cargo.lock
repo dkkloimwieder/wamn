@@ -6300,8 +6300,8 @@ dependencies = [
  "sha2 0.11.0",
  "sqlx",
  "subtle",
- "uuid",
  "wamn-digest",
+ "wamn-principal",
  "wamn-role",
  "zeroize",
 ]
@@ -6476,6 +6476,17 @@ dependencies = [
  "tokio",
  "url",
  "wamn-identity-protocol",
+ "wamn-principal",
+]
+
+[[package]]
+name = "wamn-principal"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sqlx",
+ "uuid",
 ]
 
 [[package]]

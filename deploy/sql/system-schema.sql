@@ -29,8 +29,8 @@
 -- installs deploy/sql/record-history.sql first. The SYSTEM_SCHEMA_SQL
 -- composition in wamn-provision carries it. The system database owner,
 -- wamn_system, owns its record history helpers. Every write to these relations
--- binds a transaction principal: the identity issuer
--- and wamn bind wamn:provisioning, and test fixtures bind a principal.
+-- binds a transaction principal. The identity issuer binds wamn:identity-service
+-- for service writes. Provisioning binds wamn:provisioning.
 --
 -- THE FOUR INVARIANTS for T1, and how this schema
 -- encodes / makes each testable:
@@ -65,13 +65,6 @@
 INSERT INTO platform.login_principal(login, principal_id)
 VALUES ('wamn_system', '770df186-ac15-579e-b46b-c297cae2011b')
 ON CONFLICT (login) DO NOTHING;
-
-CREATE FUNCTION platform.prune_tx_identity() RETURNS void
-LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog AS $$
-    DELETE FROM platform.tx_identity WHERE xid < pg_snapshot_xmin(pg_current_snapshot())
-$$;
-ALTER FUNCTION platform.prune_tx_identity() OWNER TO CURRENT_USER;
-REVOKE ALL ON FUNCTION platform.prune_tx_identity() FROM PUBLIC;
 
 CREATE SCHEMA registry AUTHORIZATION wamn_system;
 CREATE SCHEMA provisioning AUTHORIZATION wamn_system;
@@ -337,7 +330,8 @@ CREATE TABLE identity.principals (
     CONSTRAINT principals_platform_principal_check
         CHECK (CASE WHEN type = 'platform'
                     THEN (subject, display_name, id) IN (
-                             ('wamn:provisioning', 'wamn:provisioning', '770df186-ac15-579e-b46b-c297cae2011b'::uuid))
+                             ('wamn:provisioning', 'wamn:provisioning', '770df186-ac15-579e-b46b-c297cae2011b'::uuid),
+                             ('wamn:identity-service', 'wamn:identity-service', '63082942-c2ba-5970-9b32-e86ed5c3eb79'::uuid))
                     ELSE display_name NOT LIKE 'wamn:%'
                END)
 );
@@ -346,12 +340,13 @@ CREATE TRIGGER wamn_record_history_stamp
     FOR EACH ROW
     EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 
--- The wamn:provisioning row is the first identity row. The block binds
--- that principal for the current transaction, so the row stamps itself.
+-- The system owner stamps both platform principals as wamn:provisioning.
 DO $provisioning$ BEGIN
   INSERT INTO identity.principals (id, type, subject, display_name)
   VALUES ('770df186-ac15-579e-b46b-c297cae2011b', 'platform',
-          'wamn:provisioning', 'wamn:provisioning');
+          'wamn:provisioning', 'wamn:provisioning'),
+         ('63082942-c2ba-5970-9b32-e86ed5c3eb79', 'platform',
+          'wamn:identity-service', 'wamn:identity-service');
 END $provisioning$;
 
 CREATE TABLE identity.project_roles (
