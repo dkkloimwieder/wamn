@@ -256,7 +256,7 @@ End of the epic: the standard checks, the preflight and the short smoke run.
 - 3.8: these tests compile but use SQL on tables Epic 1 dropped (`catalog.releases`, `catalog.wiring_tombstones`): `crates/provision/tests/{deploy_sql_authority,family_denial_matrix,record_history}.rs`, `crates/provision/tests/fixtures/catalog_record_history.sql`, `crates/identity/tests/fixtures/connections.sql`.
 - 3.8: `crates/dev/tests/support/platform_schema.rs` and `platform_upgrade.rs` run the binary `wamn-ctl`, which Epic 1 deleted.
 - 3.8: `docs/operations/running-tests.md` describes test targets that no longer exist.
-- Journey tests on kind, deferred from the first kind run: rollback, `env delete`, apply again, and `env delete --data` after a plain delete; the Data change check for `client_acme_receiving` (K24); the 10.13 per-pod scheduler users beyond host start; the Pooler per-login limits and waits under load.
+- Journey tests on kind, deferred from the first kind run: rollback, `env delete`, apply again, and `env delete --data` after a plain delete; the Data change check for `client_acme_receiving` (K24); the 10.13 per-pod scheduler users beyond host start; the Pooler per-login limits and waits under load; that kind's CNI enforces NetworkPolicy, and that an environment's host cannot reach another environment's host, Postgres or Services.
 - 3.7b: `cargo xtask build-platform` skips images whose inputs did not change, so short smoke runs rebuild only what changed.
 - Clippy has 45 errors in test code that predate Epic 1. Epic 1 counted green as no new error.
 - 3.8: `deploy/sql/postgres-init.sql` is an old test fixture that still defines `project_key()`, `current_project_key()`, the old row policies and its own roles. Only `crates/provision/tests/{family_denial_matrix,deploy_sql_authority}.rs` load it; it goes with them or is rewritten.
@@ -285,7 +285,6 @@ End of the epic: the standard checks, the preflight and the short smoke run.
 - 3.7b runs before 3.8, so service tests are written once, against the final crates.
 - Edge device: the edge runs the cluster `ingress.wasm` and turns every import it does not provide into a trap (`define_unknown_imports_as_traps` in `services/edge/src/serve.rs`). Risk: a capability missing on the edge fails on the first call, not at load. The stock `wasmcloud_nats` plugin cannot fill the NATS imports on the edge, because it needs a `servers` value and connects at bind. The edge design decides between a real NATS server on the edge (see the next item) and an HTTP-only build of `ingress`.
 - Edge device, if the edge needs NATS: use the stock NATS way. A leaf node on the device with its own JetStream domain, one per edge environment. Mirror cloud streams to the edge, and source edge streams into the cloud. The edge then binds the stock `wasmcloud_nats` plugin to the local server, which also fills `ingress`'s NATS imports, and the guest code does not change. Not ruled; the edge design decides.
-- After 3.6, with D's approval: the first kind run deploys through the new install and deploy paths, and covers a Data change handler (the subscription and the dispatch through `ingress`).
 - The xtask dependency check fails on `wamn-edge`, which links `oci-client` through wash-runtime. This predates Epic 7. Fix the check's allowance or the dependency.
 - After 3.6, first kind run: verify the kstatus waits on the `application` and `environment` charts, and the explicit Rust waits on the `project` and `org` charts (Certificate, Database connection, the CDC reader's wait for its replication slot, CDC reader rollout, Cluster).
 - After 3.6, first kind run: The two Poolers: session mode with the org logins, the auth query, waiting at the per-login limit, and the 15-minute apply wait.
@@ -306,7 +305,6 @@ End of the epic: the standard checks, the preflight and the short smoke run.
 - The org owner's access token lasts about 15 minutes, which can be shorter than a long `env apply` run by hand.
 - Before the first production customer: split scheduler NATS from data NATS with the stock `schedulerUrl` and `dataUrl`, so no tenant can starve the control plane. NATS has no CPU or rate limits per account.
 - Before the first production customer: a PriorityClass for production environments, so production outranks dev. The environment values already accept `resources`, `nodeSelector`, `tolerations` and `affinity`.
-- First kind run: confirm that kind's CNI enforces NetworkPolicy, and that an environment's host cannot reach another environment's host, Postgres or Services.
 - `pg_walstream` runs from the fork `dkkloimwieder/pg-walstream` with two patches (typed keepalive, client certificate). The fork is wamn's own.
 - Before any real customer (second review, 2026-11-20, of 02c1a085):
   - Pod security: `pod-security.kubernetes.io/enforce: restricted` on org namespaces, a `securityContext` on every wamn workload, and a non-root `USER` in the Dockerfile. Today a privileged pod in an org namespace would reach the node.
@@ -324,6 +322,8 @@ End of the epic: the standard checks, the preflight and the short smoke run.
 - Rebuild the Operations and Roles views of platform_ui when a route serves the release profile.
 - Postgres array columns have no WIT type. Decide when a second real case appears.
 - A WIT package whose name is a Rust keyword, such as `type`: pinned wit-bindgen writes the module name bare, which does not compile. Decide whether validation refuses such names or WIT generation derives a safe package name.
+- Variant case names go on the wire in kebab-case (462 cases today). Record fields, error codes, enum cases and flags use snake_case. Decide whether variants follow the same rule.
+- `apps/platform_ui/src/host-client.ts` reads the OpenAPI document at run time to build routes and camelCase field maps, and makes a new client on every write. This conflicts with the rule that nothing in the web UI is driven by descriptors at run time. Cause: camelCase TypeScript members against the snake_case wire. Options for the next scope: (a) the UI uses the wire names, which removes the field maps and `toWire` and reverses the camelCase ruling; (b) generate the field maps at build time (the hey-api plugin exploration).
 - Typed control inputs, then OpenAPI derived with `schemars`.
 - The JSONata output check: P146 says output is validated at run time, but `walk.rs::invoke` only checks that the output is JSON.
 - Where `revocation_seconds` lives: P43 and P336 set the grant cache lifetime per project, but the environment file has one top-level `revocation_seconds`.
@@ -1983,6 +1983,7 @@ Epic 9 closed at 01bb4a1e2: review accepted, main fast-forwarded. The applicatio
   - Control is in the platform chart: doc fix, it is in the org chart.
   - "Every Kubernetes object comes from a chart": doc fix that states the exceptions, `platform-install/org.rs::create` and `environment/broker.rs::ensure_user`.
   - One writer for `platform."user"`: a 3.7b open item (`identity/application.rs::write_user`).
+- Contradiction 17, route ownership: the crate splits said "control route, host route, application route, environment status and connection health → control service", but step 5.4 said "The host serves `HostRouteSet::Application`" and moved the Application half of control's route code into `services/host`. The code follows 5.4. 11.0 fixed the doc: the splits now say "control routes, environment status and connection health → control service. Application routes → host."
 
 **Ruled (D, 2026-11-20): Epic 11 questions 1 to 5.**
 - 1: a bind with no input field of the same name. A computed bind takes its type from SQLx describe, as non-null. A renamed bind takes the name of its input field in the `wamn.k` bind list, and the SQL does not change, because binds are positional. If a computed bind can be null, the work stops for a ruling. Reason: SQLx describe gives positional bind types, and the handler computes these values, so no WIT input owns them.
@@ -1999,3 +2000,5 @@ Epic 9 closed at 01bb4a1e2: review accepted, main fast-forwarded. The applicatio
 **Ruled (D, 2026-11-20): Epic 11 questions 9 and 10.** Both correct earlier rulings, which were made without checking the host code.
 - 9: `inventory.merge` `transaction_ids`: `merge.sql` keeps its JSON aggregate, which describe types as JSONB, and the hand-written handler converts it to the `list<uuid>` of its authored WIT result. This replaces the `uuid[]` cast of ruling 2. Reason: `crates/sql/src/types.rs::decode_row` has no array arm, and the host gets no change.
 - 10: `not_required`: in `crates/engine/src/operation/json.rs`, enum cases and flags follow the rule for record field names and error codes: `-` becomes `_` on output, and `_` becomes `-` on input. This replaces the guest serde attribute of ruling 3. Reason: the host, not the guest, writes the JSON. Variant case names are not converted, and this epic does not change them.
+
+Epic 11 closed on 2026-11-20 after review. The smoke run on kind passed.
