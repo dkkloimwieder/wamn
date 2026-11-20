@@ -2429,6 +2429,8 @@ Facts:
 - Pulls read an explicit empty entry for the exact registry as anonymous, the same as pushes; a missing or partial entry is refused before any request.
 - K7: `wamn platform deploy` records the application bundle's digest reference in `wamn-org-inputs`, and `wamn org create` sets control's `chart` setting from it, as it already does for `controlImage`. Cause: `org create` pointed control at the plain chart folder in the image, while the worker needs the stamped bundle.
 - K8: `bundle::select` takes the one pulled entry that holds `Chart.yaml`, and refuses zero or several. Cause: Helm 4.2.2 adds an empty `<chart>@sha256:<digest>` folder when it pulls by digest.
+- K9 (fixed by the agent under the standing rule): identity installs the aws-lc-rs rustls crypto provider at start (546ed2004).
+- K10: a project with no deployed schemas has no Publication and no CDC reader. `env apply` waits for the publication only when there are schemas, and the first deploy with models creates both through the deploy path. Cause: an empty `objects: []` was dropped by CloudNativePG, which then refused the Publication.
 
 **Ruled (D, 2026-11-19): preflight and smoke runs.**
 - Preflight, run before any kind install:
