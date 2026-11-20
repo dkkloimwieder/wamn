@@ -24,6 +24,13 @@ fn operation_worker_bindings_use_their_own_accounts_and_namespace_resources() ->
         std::iter::once(&application),
     )?;
     values["namespace"] = json!(document.org);
+    values["environmentDocument"] = format!(
+        "org: {}\nenv: {}\ntarget: cloud\nrevocation_seconds: 60\n\
+         database: {{instances: 1, storage: 2Gi, cpu: 200m, memory: 256Mi}}\n\
+         projects:\n  - name: {}\n    applications:\n      {application}: {{label: {application}}}\n",
+        document.org, document.env, document.project,
+    )
+    .into();
     let entry = crate::environment::entry(
         &repository.join("deploy/charts/project"),
         document.org.as_str(),
