@@ -183,9 +183,9 @@ Org → environment → project → application. One boundary per level.
 - `wamn.k` holds no types. It holds package and base pins, model overrides, routes and field labels, statement lists, idempotency key fields, connections and components. Routes default from operation names. Modbus retains its integer range check in `wamn.k`.
 - Each statement entry holds its name, fetch class and bind names (K1). Types and nullability come from the WIT input. The operation and statement names determine the SQL path. An idempotency key names a field in the WIT input.
 - A computed bind (a bind with no input field of the same name) takes its type from SQLx describe, as non-null. A renamed bind takes the name of its input field in the bind list. Binds are positional, so the SQL does not change.
-- Result column nullability that SQLx cannot infer uses SQLx's own aliases in the SQL file: `"col!"` (not null) and `"col?"` (nullable). A result column type comes from a real SQL cast, not from a type-override alias.
+- Result column nullability that SQLx cannot infer uses SQLx's own aliases in the SQL file: `"col!"` (not null) and `"col?"` (nullable). A result column type comes from a real SQL cast, not from a type-override alias. Describe types a JSON aggregate column as JSONB, and the hand-written handler converts it to its WIT result type.
 - Generated: model WIT from the schema (with named `id` and `revision` types), Rust bindings, and statement result types from SQLx describe. Value lists use WIT enums. Use named WIT aliases for `uuid`, `numeric` and `timestamp`. Custom-operation WIT is not generated.
-- WIT enum cases go on the wire in snake_case: the generated Rust enum carries `#[serde(rename_all = "snake_case")]`.
+- The host writes WIT names to JSON in snake_case (record fields, error codes, enum cases, flags) and reads them back the same way.
 - Authored WIT files carry no package line. Only the generated `package.wit` declares the package and its version, and the development-build version rewrite touches only that file.
 - Generate Rust with `quote` and format it with `prettyplease`. Start the formatted Rust with a fixed `// @generated` line. Spell keywords and dotted names as wit-bindgen does.
 - Generate WIT with `wit-encoder =0.254.2`. A labeled world import is one identifier. It is the only WIT string fragment and carries a comment.
@@ -322,6 +322,7 @@ End of the epic: the standard checks, the preflight and the short smoke run.
 - Possible future exploration, not scheduled: a wamn hey-api plugin.
 - `wamn eject component` returns only if a component generator is built.
 - Rebuild the Operations and Roles views of platform_ui when a route serves the release profile.
+- Postgres array columns have no WIT type. Decide when a second real case appears.
 - Typed control inputs, then OpenAPI derived with `schemars`.
 - The JSONata output check: P146 says output is validated at run time, but `walk.rs::invoke` only checks that the output is JSON.
 - Where `revocation_seconds` lives: P43 and P336 set the grant cache lifetime per project, but the environment file has one top-level `revocation_seconds`.
@@ -1993,3 +1994,7 @@ Epic 9 closed at 01bb4a1e2: review accepted, main fast-forwarded. The applicatio
 - 6: control's `openapi.json`: a `cargo xtask` command writes control's OpenAPI files to `apps/target/wamn/platform_ui/`, and `crates/codegen/build.rs` writes no files. `cargo xtask build-platform` calls the same xtask function directly before its pnpm build, so the chain is never xtask, then pnpm, then xtask. The pnpm script in `apps/platform_ui` calls the xtask command only for local UI work. Reason: a build script does not write files for other tools to read.
 - 7: SDK writes: `@wamn/web-runtime` exports one fetch-shaped function on the same authenticated transport, with the same auth and CSRF, and no existing caller changes. Interceptors run `toWire` on requests and `reviveOutcome` on responses. A caller of the SDK must get the same classified `Outcome` as a caller of `Transport.invoke`. If hey-api interceptors cannot give that, the work stops and reports. Reason: one added function changes no existing caller.
 - 8: `release.profile`: no route serves it, so the Operations and Roles views of `platform_ui` are already broken. Remove the two routes in `projects.tsx` that use `RELEASE_PROFILE_ROUTE`, the profile read in `environment.tsx`, the `release/profile` contract files and anything only they use. Role administration (`application-roles.tsx`, `role-users.tsx`) stays. Reason: the freeze adds no new route, and an Open item records the rebuild.
+
+**Ruled (D, 2026-11-20): Epic 11 questions 9 and 10.** Both correct earlier rulings, which were made without checking the host code.
+- 9: `inventory.merge` `transaction_ids`: `merge.sql` keeps its JSON aggregate, which describe types as JSONB, and the hand-written handler converts it to the `list<uuid>` of its authored WIT result. This replaces the `uuid[]` cast of ruling 2. Reason: `crates/sql/src/types.rs::decode_row` has no array arm, and the host gets no change.
+- 10: `not_required`: in `crates/engine/src/operation/json.rs`, enum cases and flags follow the rule for record field names and error codes: `-` becomes `_` on output, and `_` becomes `-` on input. This replaces the guest serde attribute of ruling 3. Reason: the host, not the guest, writes the JSON. Variant case names are not converted, and this epic does not change them.
