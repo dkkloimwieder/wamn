@@ -16,16 +16,18 @@
 //! dependencies as one group.
 
 use std::collections::BTreeMap;
-use std::fmt::Write as _;
+
+use proc_macro2::TokenStream;
+use quote::quote;
 use wit_encoder::{Ident, Package, PackageName, World};
 
 use super::insert_bytes;
+use super::rust_source::{insert_rust, rust_ident};
 use super::wit::wit_ident;
 use wamn_catalog::manifest::FilterMatch;
 use wamn_catalog::manifest::ManifestError as GenerateError;
 use wamn_catalog::manifest::{
-    CrudAction, ModelDeclaration, OperationDeclaration, PackageManifest, binding_identifier,
-    rust_identifier, rust_type_identifier,
+    CrudAction, ModelDeclaration, OperationDeclaration, PackageManifest, rust_type_identifier,
 };
 
 const HEADER: &str = "// @generated from the package manifest; do not edit.\n\n";
@@ -33,293 +35,239 @@ const HEADER: &str = "// @generated from the package manifest; do not edit.\n\n"
 /// The WIT package of the generated world.
 pub(crate) const WORLD_PACKAGE: &str = "generated";
 
-/// The spelling wit-bindgen gives a WIT package or interface name in a Rust
-/// module path.
-fn module_name(value: &str) -> String {
-    value.replace('-', "_")
-}
-
-fn field_name(field: &str) -> String {
-    rust_identifier(field).expect("model field names were validated for Rust")
-}
-
-fn member_name(field: &str) -> String {
-    binding_identifier(field).expect("model field names were validated for Rust")
-}
-
 /// Emit `generated/component/<model>.rs`.
 pub(super) fn emit_model_component(
     files: &mut BTreeMap<String, Vec<u8>>,
     compiled: &super::operations::ModelDescription<'_>,
 ) -> Result<(), GenerateError> {
     let model_name = compiled.name;
-    let namespace = compiled.package.id.as_str();
-    let package = module_name(model_name.as_str());
-    let mut source = String::from(HEADER);
-    writeln!(
-        source,
-        "// The generated `{model_name}` handlers.\n\n\
-         #[allow(unused_imports)]\n\
-         use super::data::{model_name} as model;\n\
-         #[allow(unused_imports)]\n\
-         use super::data::error::Error;\n\
-         #[allow(unused_imports)]\n\
-         use wamn_guest::postgres_statements::{{Connection, Transaction}};\n"
-    )
-    .expect("writing to a String cannot fail");
+    let namespace = rust_ident(compiled.package.id.as_str());
+    let model = rust_ident(model_name.as_str());
+    let mut source = quote! {
+        #[allow(unused_imports)]
+        use super::data::#model as model;
+        #[allow(unused_imports)]
+        use super::data::error::Error;
+        #[allow(unused_imports)]
+        use wamn_guest::postgres_statements::{Connection, Transaction};
+    };
     for (action, facts) in &compiled.operations {
-        let operation = facts.request;
-        let name = action.as_str();
-        let contract = rust_type_identifier(name);
-        let (state, body) = handler(
+        let name = rust_ident(action.as_str());
+        let stem = rust_type_identifier(action.as_str());
+        let request = rust_ident(&[&stem, "Request"].concat());
+        let result = rust_ident(&[&stem, "Result"].concat());
+        let error = rust_ident(&[&stem, "Error"].concat());
+        let body = handler(
             *action,
-            &contract,
-            operation,
+            &stem,
+            facts.request,
             compiled.feed,
-            compiled.shape.key,
             &compiled.shape,
         );
-        let state_argument = if action.changes_records() {
-            "transaction"
+        let (state_argument, state_type, export_state) = if action.changes_records() {
+            (quote!(transaction), quote!(Transaction), None)
         } else {
-            "connection"
+            (
+                quote!(connection),
+                quote!(Connection),
+                Some(quote!(Connection::new(),)),
+            )
         };
-        // A change works in the host's operation transaction, so its export
-        // takes no state.
-        let export_state = if action.changes_records() {
-            ""
-        } else {
-            " Connection::new(),"
-        };
-        writeln!(
-            source,
-            "pub mod {name} {{\n\
-             #[allow(unused_imports)]\n\
-             use super::{{Connection, Error, Transaction, model}};\n\
-             use crate::exports::{namespace}::{package}::{name} as contract;\n\
-             pub(crate) mod operation {{\n\
-             use super::contract;\n\
-             include!(\"../wit/{model_name}_{name}_operation.rs\");\n\
-             }}\n\n\
-             /// Override this action or call `default_handle` from the override.\n\
-             pub trait Action {{\n\
-             fn run({state}, request: contract::{contract}Request) -> impl std::future::Future<Output = Result<contract::{contract}Result, contract::{contract}Error>> {{\n\
-             default_handle({state_argument}, request)\n\
-             }}\n\
-             }}\n\
-             /// The generated implementation, available to an override and eject.\n\
-             pub async fn default_handle({state}, request: contract::{contract}Request) -> Result<contract::{contract}Result, contract::{contract}Error> {{\n\
-             {body}\
-             }}\n\
-             pub(crate) async fn handle({state}, request: contract::{contract}Request) -> Result<contract::{contract}Result, contract::{contract}Error> {{\n\
-             <crate::Component as Action>::run({state_argument}, request).await\n\
-             }}\n\
-             operation::export_operation!(crate::Component, contract, crate::wamn::node::types,{export_state} handle, operation);\n\
-             }}\n"
-        )
-        .expect("writing to a String cannot fail");
+        let state = quote!(#state_argument: &mut #state_type);
+        let path = format!(
+            "../wit/{model_name}_{action}_operation.rs",
+            action = action.as_str()
+        );
+        source.extend(quote! {
+            pub mod #name {
+                #[allow(unused_imports)]
+                use super::{Connection, Error, Transaction, model};
+                use crate::exports::#namespace::#model::#name as contract;
+                pub(crate) mod operation {
+                    use super::contract;
+                    include!(#path);
+                }
+                /// Override this action or call `default_handle` from the override.
+                pub trait Action {
+                    fn run(#state, request: contract::#request) -> impl std::future::Future<Output = Result<contract::#result, contract::#error>> {
+                        default_handle(#state_argument, request)
+                    }
+                }
+                /// The generated implementation, available to an override and eject.
+                pub async fn default_handle(#state, request: contract::#request) -> Result<contract::#result, contract::#error> {
+                    #body
+                }
+                pub(crate) async fn handle(#state, request: contract::#request) -> Result<contract::#result, contract::#error> {
+                    <crate::Component as Action>::run(#state_argument, request).await
+                }
+                operation::export_operation!(crate::Component, contract, crate::wamn::node::types, #export_state handle, operation);
+            }
+        });
     }
-    while source.ends_with("\n\n") {
-        source.pop();
-    }
-    insert_bytes(
+    insert_rust(
         files,
         &format!("generated/component/{model_name}.rs"),
-        source.into_bytes(),
+        HEADER,
+        source,
     )
 }
 
-const REFUSE: &str =
-    ".map_err(|error| operation::map_error(error.literal(), |key| error.detail(key)))";
-
-/// The state parameter and the body of one handler.
 fn handler(
     action: CrudAction,
     contract: &str,
     operation: &OperationDeclaration,
     feed: bool,
-    key: crate::key::KeyType,
     shape: &super::operations::ModelShape<'_>,
-) -> (&'static str, String) {
-    let id = if key == crate::key::KeyType::Uuid {
-        "&request.id"
+) -> TokenStream {
+    let row = rust_ident(&[contract, "Row"].concat());
+    let result = rust_ident(&[contract, "Result"].concat());
+    let wrap = quote!(|row| contract::#result { value: operation::row!(row, contract::#row) });
+    let refuse =
+        quote!(.map_err(|error| operation::map_error(error.literal(), |key| error.detail(key))));
+    let id = if shape.key == crate::key::KeyType::Uuid {
+        quote!(&request.id)
     } else {
-        "request.id"
+        quote!(request.id)
     };
-    let connection = "connection: &mut Connection";
-    let transaction = "transaction: &mut Transaction";
     let revision = || {
         let revision = operation
             .revision_field
             .as_deref()
             .expect("update and delete validation require a revision field");
-        format!("request.expected_{}", member_name(revision))
+        let field = rust_ident(&["expected_", revision].concat());
+        quote!(request.#field)
+    };
+    let is_json = |field: &str| {
+        shape
+            .column(field)
+            .is_some_and(|column| column.column_type() == wamn_scalar::SqlValueType::Json)
     };
     match action {
-        CrudAction::Get => (
-            connection,
-            format!(
-                "model::get(connection, {id}).await.map(|row| contract::{contract}Result {{ value: operation::row!(row, contract::{contract}Row) }}){REFUSE}\n"
-            ),
-        ),
+        CrudAction::Get => quote!(model::get(connection, #id).await.map(#wrap) #refuse),
         CrudAction::Create => {
-            let arguments = std::iter::once("&request.id".to_owned())
-                .filter(|_| key == crate::key::KeyType::Uuid)
+            let arguments = std::iter::once(quote!(&request.id))
+                .filter(|_| shape.key == crate::key::KeyType::Uuid)
                 .chain(operation.writable_fields.iter().map(|field| {
-                    let json = shape.column(field).is_some_and(|column| {
-                        column.column_type() == wamn_scalar::SqlValueType::Json
-                    });
-                    format!(
-                        "request.{}.flatten(){}",
-                        member_name(field),
-                        if json {
-                            ".map(|value| value.encoded_json)"
-                        } else {
-                            ""
-                        }
-                    )
-                }))
-                .collect::<Vec<_>>()
-                .join(", ");
-            (
-                transaction,
-                format!(
-                    "model::create(transaction, {arguments}).await.map(|row| contract::{contract}Result {{ value: operation::row!(row, contract::{contract}Row) }}){REFUSE}\n"
-                ),
-            )
+                    let member = rust_ident(field);
+                    let value = quote!(request.#member.flatten());
+                    if is_json(field) {
+                        quote!(#value.map(|value| value.encoded_json))
+                    } else {
+                        value
+                    }
+                }));
+            quote!(model::create(transaction, #(#arguments),*).await.map(#wrap) #refuse)
         }
         CrudAction::Update => {
-            let mut arguments = format!("{id}, {}", revision());
-            for field in &operation.writable_fields {
-                let json = shape
-                    .column(field)
-                    .is_some_and(|column| column.column_type() == wamn_scalar::SqlValueType::Json);
-                write!(
-                    arguments,
-                    ", request.change.{}{}",
-                    member_name(field),
-                    if json {
-                        ".map(|value| value.map(|value| value.encoded_json))"
-                    } else {
-                        ""
-                    }
-                )
-                .expect("writing to a String cannot fail");
+            let revision = revision();
+            let arguments = operation.writable_fields.iter().map(|field| {
+                let member = rust_ident(field);
+                let value = quote!(request.change.#member);
+                if is_json(field) {
+                    quote!(, #value.map(|value| value.map(|value| value.encoded_json)))
+                } else {
+                    quote!(, #value)
+                }
+            });
+            quote! {
+                model::update(transaction, #id, #revision #(#arguments)*).await
+                    .map(|row| operation::row!(row, contract::#result)) #refuse
             }
-            (
-                transaction,
-                format!(
-                    "model::update(transaction, {arguments}).await.map(|row| operation::row!(row, contract::{contract}Result)){REFUSE}\n"
-                ),
-            )
         }
-        CrudAction::Delete => (
-            transaction,
-            format!(
-                "model::delete(transaction, {id}, {}).await.map(|row| contract::{contract}Result {{ value: operation::row!(row, contract::{contract}Row) }}){REFUSE}\n",
-                revision()
-            ),
-        ),
+        CrudAction::Delete => {
+            let revision = revision();
+            quote!(model::delete(transaction, #id, #revision).await.map(#wrap) #refuse)
+        }
         CrudAction::Query => {
-            let mut members = String::new();
-            for filter in &operation.filters {
-                let json = shape
-                    .column(&filter.field)
-                    .is_some_and(|column| column.column_type() == wamn_scalar::SqlValueType::Json);
-                let value = if json && matches!(filter.match_mode, FilterMatch::Range) {
-                    format!(
-                        "request.{}.map(|range| model::Range {{ min: range.min.map(|value| value.encoded_json), max: range.max.map(|value| value.encoded_json) }})",
-                        member_name(&filter.field)
-                    )
-                } else if json && !matches!(filter.match_mode, FilterMatch::IsNull) {
-                    format!(
-                        "request.{}.map(|values| values.into_iter().map(|value| value.encoded_json).collect())",
-                        member_name(&filter.field)
-                    )
-                } else if matches!(filter.match_mode, FilterMatch::Range) {
-                    format!(
-                        "request.{}.map(|range| model::Range {{ min: range.min, max: range.max }})",
-                        member_name(&filter.field)
-                    )
-                } else {
-                    format!("request.{}", member_name(&filter.field))
+            let members = operation.filters.iter().map(|filter| {
+                let member = rust_ident(&filter.field);
+                let json = is_json(&filter.field);
+                let value = match (filter.match_mode, json) {
+                    (FilterMatch::Range, true) => quote! {
+                        request.#member.map(|range| model::Range {
+                            min: range.min.map(|value| value.encoded_json),
+                            max: range.max.map(|value| value.encoded_json)
+                        })
+                    },
+                    (FilterMatch::Range, false) => quote! {
+                        request.#member.map(|range| model::Range { min: range.min, max: range.max })
+                    },
+                    (FilterMatch::IsNull, _) | (_, false) => quote!(request.#member),
+                    (_, true) => quote! {
+                        request.#member.map(|values| values.into_iter().map(|value| value.encoded_json).collect())
+                    },
                 };
-                writeln!(members, "{}: {value},", field_name(&filter.field))
-                    .expect("writing to a String cannot fail");
-            }
-            if operation.search.is_some() {
-                members.push_str("search: request.search,\n");
-            }
-            // A query that declares no sort takes its default one, and its
-            // request carries no sort members.
-            if operation.sort.is_some() {
-                members.push_str(
-                    "sort_field: request.sort_field,\nsort_direction: request.sort_direction,\n",
-                );
+                quote!(#member: #value,)
+            });
+            let search = operation
+                .search
+                .as_ref()
+                .map(|_| quote!(search: request.search,));
+            let sort = if operation.sort.is_some() {
+                quote!(sort_field: request.sort_field, sort_direction: request.sort_direction,)
             } else {
-                members.push_str("sort_field: None,\nsort_direction: None,\n");
-            }
-            let input = format!(
-                "let input = model::QueryInput {{\n\
-                 {members}\
-                 cursor: request.cursor,\n\
-                 limit: i64::from(request.limit.expect(\"the operation fills the default limit\")),\n\
-                 }};\n\
-                 let refuse = |error: Error| operation::map_error(error.literal(), |key| error.detail(key));\n"
-            );
-            // A request with the feed part reads the changes since its
-            // cursor; one without it reads a page and its feed cursor.
-            let body = if feed {
-                let change_id = if key == crate::key::KeyType::Uuid {
-                    "change.id.0"
-                } else {
-                    "change.id"
-                };
-                format!(
-                    "{input}\
-                     if let Some(part) = request.feed {{\n\
-                     let part = model::FeedInput {{\n\
-                     cursor: part.cursor,\n\
-                     limit: i64::from(part.limit.expect(\"the operation fills the default limit\")),\n\
-                     }};\n\
-                     let changes = model::changes(connection, input, part).await.map_err(refuse)?;\n\
-                     return Ok(contract::{contract}Result::Changes(contract::{contract}Changes {{\n\
-                     rows: changes.rows.into_iter().map(|change| contract::{contract}Change {{\n\
-                     id: {change_id},\n\
-                     row_version: change.row_version,\n\
-                     data: change.data.map(|row| operation::row!(row, contract::{contract}Row)),\n\
-                     }}).collect(),\n\
-                     next_cursor: changes.next_cursor,\n\
-                     complete: changes.complete,\n\
-                     }}));\n\
-                     }}\n\
-                     let page = model::query(connection, input).await.map_err(refuse)?;\n\
-                     let cursor = page.feed_cursor().map(str::to_owned).ok_or(contract::{contract}Error::InternalError)?;\n\
-                     let (rows, next_cursor) = page.into_parts();\n\
-                     Ok(contract::{contract}Result::Page(contract::{contract}Page {{\n\
-                     item: rows.into_iter().map(|row| operation::row!(row, contract::{contract}Row)).collect(),\n\
-                     next_cursor,\n\
-                     cursor,\n\
-                     }}))\n"
-                )
-            } else {
-                format!(
-                    "{input}\
-                     let (rows, next_cursor) = model::query(connection, input).await.map_err(refuse)?.into_parts();\n\
-                     Ok(contract::{contract}Result {{\n\
-                     item: rows.into_iter().map(|row| operation::row!(row, contract::{contract}Row)).collect(),\n\
-                     next_cursor,\n\
-                     }})\n"
-                )
+                quote!(sort_field: None, sort_direction: None,)
             };
-            (connection, body)
+            let input = quote! {
+                let input = model::QueryInput {
+                    #(#members)* #search #sort
+                    cursor: request.cursor,
+                    limit: i64::from(request.limit.expect("the operation fills the default limit")),
+                };
+                let refuse = |error: Error| operation::map_error(error.literal(), |key| error.detail(key));
+            };
+            if feed {
+                let changes = rust_ident(&[contract, "Changes"].concat());
+                let change = rust_ident(&[contract, "Change"].concat());
+                let page = rust_ident(&[contract, "Page"].concat());
+                let error = rust_ident(&[contract, "Error"].concat());
+                let change_id = if shape.key == crate::key::KeyType::Uuid {
+                    quote!(change.id.0)
+                } else {
+                    quote!(change.id)
+                };
+                quote! {
+                    #input
+                    if let Some(part) = request.feed {
+                        let part = model::FeedInput {
+                            cursor: part.cursor,
+                            limit: i64::from(part.limit.expect("the operation fills the default limit")),
+                        };
+                        let changes = model::changes(connection, input, part).await.map_err(refuse)?;
+                        return Ok(contract::#result::Changes(contract::#changes {
+                            rows: changes.rows.into_iter().map(|change| contract::#change {
+                                id: #change_id,
+                                row_version: change.row_version,
+                                data: change.data.map(|row| operation::row!(row, contract::#row)),
+                            }).collect(),
+                            next_cursor: changes.next_cursor,
+                            complete: changes.complete,
+                        }));
+                    }
+                    let page = model::query(connection, input).await.map_err(refuse)?;
+                    let cursor = page.feed_cursor().map(str::to_owned).ok_or(contract::#error::InternalError)?;
+                    let (rows, next_cursor) = page.into_parts();
+                    Ok(contract::#result::Page(contract::#page {
+                        item: rows.into_iter().map(|row| operation::row!(row, contract::#row)).collect(),
+                        next_cursor,
+                        cursor,
+                    }))
+                }
+            } else {
+                quote! {
+                    #input
+                    let (rows, next_cursor) = model::query(connection, input).await.map_err(refuse)?.into_parts();
+                    Ok(contract::#result {
+                        item: rows.into_iter().map(|row| operation::row!(row, contract::#row)).collect(),
+                        next_cursor,
+                    })
+                }
+            }
         }
     }
 }
 
-/// Emit `generated/component/mod.rs`, when any model of the package has a
-/// generated operation, and `generated/wit/world.wit`, when the package has
-/// any operation.
+/// Emit the model and feed modules and the component's WIT world.
 pub(super) fn emit_package_component(
     files: &mut BTreeMap<String, Vec<u8>>,
     manifest: &PackageManifest,
@@ -337,27 +285,25 @@ pub(super) fn emit_package_component(
     if models.is_empty() && feeds.is_empty() {
         return emit_package_world(files, manifest, &models);
     }
-    let mut source = String::from(HEADER);
-    source.push_str(
-        "// The generated handlers. The including module names its data crate's\n\
-         // generated module as `data`.\n",
-    );
-    for (model_name, _) in &models {
-        writeln!(
-            source,
-            "\n/// The generated `{model_name}` handlers.\npub mod {model_name} {{\n    include!(\"{model_name}.rs\");\n}}"
-        )
-        .expect("writing to a String cannot fail");
-    }
-    for (name, _) in feeds {
+    let modules = models.iter().map(|(name, _)| {
+        let doc = format!(" The generated `{name}` handlers.");
+        let path = format!("{name}.rs");
+        let name = rust_ident(name.as_str());
+        quote!(#[doc = #doc] pub mod #name { include!(#path); })
+    });
+    let feeds = feeds.into_iter().map(|(name, _)| {
         let stem = wamn_catalog::manifest::custom_artifact_stem(name);
-        writeln!(
-            source,
-            "\n/// The authored `{name}` handler.\npub mod {stem} {{ include!(\"{stem}.rs\"); }}"
-        )
-        .expect("writing to a String cannot fail");
-    }
-    insert_bytes(files, "generated/component/mod.rs", source.into_bytes())?;
+        let doc = format!(" The authored `{name}` handler.");
+        let path = format!("{stem}.rs");
+        let module = rust_ident(&stem);
+        quote!(#[doc = #doc] pub mod #module { include!(#path); })
+    });
+    insert_rust(
+        files,
+        "generated/component/mod.rs",
+        HEADER,
+        quote!(#(#modules)* #(#feeds)*),
+    )?;
     emit_package_world(files, manifest, &models)
 }
 
