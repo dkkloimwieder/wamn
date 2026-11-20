@@ -41,6 +41,7 @@ wamn-codegen.workspace = true
 wamn-platform-install.workspace = true
 wamn-publish.workspace = true
 wamn-oci.workspace = true
+wamn-http-client = { workspace = true, features = ["tls12"] }
 wash-runtime = { workspace = true, features = ["oci"] }
 oci-client.workspace = true
 docker_credential = "=1.4.0"

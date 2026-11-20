@@ -19,6 +19,7 @@ serde_json.workspace = true
 sha2.workspace = true
 tokio = { workspace = true, features = ["sync"] }
 wamn-oci.workspace = true
+wamn-http-client = { workspace = true, features = ["tls12"] }
 zeroize.workspace = true
 
 [dev-dependencies]

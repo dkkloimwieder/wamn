@@ -16,7 +16,6 @@
 //! the host's included. This module does not use the component adapter or
 //! `wamn-engine`; the artifact reference rule is in `wamn-catalog`.
 
-pub mod http_client;
 pub mod integration;
 pub mod metadata;
 pub mod registry_credentials;

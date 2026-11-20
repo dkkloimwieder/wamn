@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 use wamn_environment::environment::document::{
     DeclaredRelease, EnvironmentDocument, EnvironmentFile,
 };
-use wamn_oci::package_artifact::http_client::HttpClient;
+use wamn_http_client::HttpClient;
 use wamn_test_infrastructure::scratch::ScratchRoot;
 
 mod routes;

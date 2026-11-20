@@ -12,22 +12,87 @@ use std::time::Duration;
 use anyhow::Context as _;
 use bytes::Bytes;
 use http_body_util::{BodyExt as _, Full, Limited};
-use hyper::body::Incoming;
+use hyper::body::{Body, Incoming};
 use hyper::{Request, Response, StatusCode, header};
-use hyper_rustls::HttpsConnector;
+use hyper_rustls::{HttpsConnector, HttpsConnectorBuilder};
 use hyper_util::client::legacy::{
-    Client,
+    Builder, Client,
     connect::{
-        HttpConnector,
+        Connect, HttpConnector,
         dns::{GaiResolver, Name},
     },
 };
-use hyper_util::rt::TokioTimer;
+use hyper_util::rt::{TokioExecutor, TokioTimer};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject as _};
 use tokio::time::{Instant, timeout_at};
 use tower_service::Service;
 use url::Url;
-use wamn_kubernetes::http_transport::{self, Protocols, Schemes};
+
+fn builder() -> Builder {
+    Client::builder(TokioExecutor::new())
+}
+
+/// The URL schemes a TLS connector accepts.
+#[derive(Clone, Copy, Debug)]
+pub enum Schemes {
+    /// Accept HTTPS endpoints only.
+    HttpsOnly,
+    /// Accept both HTTP and HTTPS endpoints.
+    HttpAndHttps,
+}
+
+/// The HTTP protocols a TLS connector negotiates.
+#[derive(Clone, Copy, Debug)]
+pub enum Protocols {
+    /// Negotiate HTTP/1 only.
+    Http1,
+    /// Negotiate HTTP/1 and HTTP/2.
+    Http1AndHttp2,
+}
+
+/// Wrap a TCP connector with the caller's TLS trust and protocol policy.
+///
+/// # Panics
+/// Panics if `tls` already contains ALPN protocols.
+pub fn tls_connector<R>(
+    tls: rustls::ClientConfig,
+    mut http: HttpConnector<R>,
+    schemes: Schemes,
+    protocols: Protocols,
+) -> HttpsConnector<HttpConnector<R>> {
+    http.enforce_http(false);
+    let builder = HttpsConnectorBuilder::new().with_tls_config(tls);
+    let builder = match schemes {
+        Schemes::HttpsOnly => builder.https_only(),
+        Schemes::HttpAndHttps => builder.https_or_http(),
+    }
+    .enable_http1();
+    match protocols {
+        Protocols::Http1 => builder.wrap_connector(http),
+        Protocols::Http1AndHttp2 => builder.enable_http2().wrap_connector(http),
+    }
+}
+
+/// Construct a pooled client without changing its request or response body type.
+pub fn client<C, B>(connector: C, configure: impl FnOnce(&mut Builder)) -> Client<C, B>
+where
+    C: Connect + Clone,
+    B: Body + Send + 'static,
+    B::Data: Send,
+{
+    let mut builder = builder();
+    configure(&mut builder);
+    builder.build(connector)
+}
+
+/// Construct a plaintext client with Hyper's TCP keepalive and pool defaults.
+pub fn http_client<B>() -> Client<HttpConnector, B>
+where
+    B: Body + Send + 'static,
+    B::Data: Send,
+{
+    builder().build_http()
+}
 
 type Transport = Client<HttpsConnector<HttpConnector<Resolver>>, Full<Bytes>>;
 type BoxError = Box<dyn StdError + Send + Sync>;
@@ -184,13 +249,13 @@ impl HttpClientBuilder {
     /// Construct a client. Proxy configuration is never read from the environment.
     pub fn build(self) -> anyhow::Result<HttpClient> {
         let tls = self.tls.map_or_else(platform_tls, Ok)?;
-        let connector = http_transport::tls_connector(
+        let connector = tls_connector(
             tls,
             HttpConnector::new_with_resolver(Resolver(Arc::new(self.addresses))),
             Schemes::HttpAndHttps,
             Protocols::Http1AndHttp2,
         );
-        let transport = http_transport::client(connector, |builder| {
+        let transport = client(connector, |builder| {
             builder
                 .timer(TokioTimer::new())
                 .pool_timer(TokioTimer::new())

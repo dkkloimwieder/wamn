@@ -1,9 +1,6 @@
 //! The shared Kubernetes HTTP client with a rotating ServiceAccount token.
 
-use crate::{
-    Error, failure,
-    http_transport::{self, Protocols, Schemes},
-};
+use crate::{Error, failure};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use bytes::Bytes;
 use http_body_util::{BodyExt as _, Full, Limited};
@@ -14,6 +11,7 @@ use rustls::pki_types::{CertificateDer, pem::PemObject as _};
 use serde::Deserialize;
 use serde_json::Value;
 use std::{path::PathBuf, sync::Arc, time::Duration};
+use wamn_http_client::{self as http_transport, Protocols, Schemes};
 
 const SERVICE_ACCOUNT: &str = "/var/run/secrets/kubernetes.io/serviceaccount";
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);

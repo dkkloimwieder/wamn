@@ -8,7 +8,7 @@ use serde::Serialize;
 use zeroize::Zeroizing;
 
 use crate::IdentityServiceError;
-use wamn_oci::package_artifact::http_client::{HttpClient, Redirects};
+use wamn_http_client::{HttpClient, Redirects};
 
 /// Validated sender and API credential for invitation delivery.
 #[derive(Clone)]

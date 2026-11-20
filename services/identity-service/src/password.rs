@@ -643,7 +643,7 @@ mod tests {
     use std::convert::Infallible;
     use std::sync::Arc;
     use tokio::net::TcpListener;
-    use wamn_oci::package_artifact::http_client::HttpClient;
+    use wamn_http_client::HttpClient;
     use wamn_provision::identity_role::identity_issuer_login;
 
     #[sqlx::test(migrations = false)]
@@ -787,7 +787,7 @@ mod tests {
         .unwrap();
         let review_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let review_endpoint = format!("http://{}", review_listener.local_addr().unwrap());
-        let connector = wamn_kubernetes::http_transport::tls_connector(
+        let connector = wamn_http_client::tls_connector(
             rustls::ClientConfig::builder_with_provider(Arc::new(
                 rustls::crypto::aws_lc_rs::default_provider(),
             ))
@@ -796,12 +796,12 @@ mod tests {
             .with_root_certificates(rustls::RootCertStore::empty())
             .with_no_client_auth(),
             hyper_util::client::legacy::connect::HttpConnector::new(),
-            wamn_kubernetes::http_transport::Schemes::HttpAndHttps,
-            wamn_kubernetes::http_transport::Protocols::Http1,
+            wamn_http_client::Schemes::HttpAndHttps,
+            wamn_http_client::Protocols::Http1,
         );
         let state = Arc::get_mut(&mut service.inner).unwrap();
         state.kubernetes = Some(wamn_kubernetes::kubernetes_api::KubernetesApi::with_client(
-            wamn_kubernetes::http_transport::client(connector, |_| {}),
+            wamn_http_client::client(connector, |_| {}),
             review_endpoint,
             "fixture-reviewer".into(),
             "platform".into(),

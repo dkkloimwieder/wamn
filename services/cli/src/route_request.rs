@@ -55,7 +55,7 @@ pub(crate) async fn send(
     use http_body_util::BodyExt as _;
     let (parts, body) = request.into_parts();
     let body = body.collect().await?.to_bytes();
-    wamn_oci::package_artifact::http_client::HttpClient::shared()?
+    wamn_http_client::HttpClient::shared()?
         .send(
             hyper::Request::from_parts(parts, body),
             std::time::Duration::from_secs(60),

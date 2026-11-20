@@ -1,0 +1,28 @@
+[package]
+name = "wamn-http-client"
+description = "Shared Hyper transport and bounded HTTP requests."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+# Bounded clients keep TLS 1.2 support. Standalone Kubernetes builds keep their prior TLS defaults.
+tls12 = ["hyper-rustls/tls12", "rustls/tls12"]
+
+[dependencies]
+anyhow.workspace = true
+bytes.workspace = true
+http-body-util.workspace = true
+hyper = { workspace = true, features = ["client", "http1", "http2"] }
+hyper-util = { workspace = true, features = ["client-legacy", "http1", "http2", "tokio"] }
+hyper-rustls = { workspace = true, features = ["http1", "http2", "aws-lc-rs"] }
+rustls = { workspace = true, features = ["aws_lc_rs", "std"] }
+rustls-platform-verifier.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["time"] }
+tower-service.workspace = true
+url.workspace = true
+
+[lints]
+workspace = true
