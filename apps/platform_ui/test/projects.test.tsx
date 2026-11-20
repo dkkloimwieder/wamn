@@ -1,15 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from "@solidjs/testing-library";
 import { flush } from "solid-js";
 import { describe, expect, it } from "vitest";
-import {
-  control,
-  environment,
-  member,
-  project,
-  projectAdmin,
-  release,
-  user,
-} from "../src/generated/wamn_control_org/index.js";
+import { control, environment, member, project, projectAdmin, user } from "../src/control-client";
 import { createTransport } from "@wamn/web-runtime";
 import { controlHolds, Shell } from "../src/shell";
 import { GrantMembership } from "../src/membership";
@@ -25,30 +17,29 @@ const projectAdminOnly = controlHolds({
   ],
 });
 const projectOperations = [
-  environment.ENVIRONMENT_LIST_ROUTE.operation,
-  environment.ENVIRONMENT_STATUS_ROUTE.operation,
-  release.RELEASE_PROFILE_ROUTE.operation,
-  member.MEMBER_LIST_ROUTE.operation,
-  member.MEMBER_GRANT_ROUTE.operation,
-  member.MEMBER_REVOKE_ROUTE.operation,
-  projectAdmin.PROJECT_ADMIN_GRANT_ROUTE.operation,
-  projectAdmin.PROJECT_ADMIN_REVOKE_ROUTE.operation,
+  environment.list.route.operation,
+  environment.status.route.operation,
+  member.list.route.operation,
+  member.grant.route.operation,
+  member.revoke.route.operation,
+  projectAdmin.grant.route.operation,
+  projectAdmin.revoke.route.operation,
 ];
 const orgOperations = [
-  user.USER_LIST_ROUTE.operation,
-  project.PROJECT_LIST_ROUTE.operation,
-  project.PROJECT_CREATE_ROUTE.operation,
-  project.PROJECT_ACTIVATE_ROUTE.operation,
-  project.PROJECT_INACTIVATE_ROUTE.operation,
-  environment.ENVIRONMENT_ACTIVATE_ROUTE.operation,
-  environment.ENVIRONMENT_INACTIVATE_ROUTE.operation,
+  user.list.route.operation,
+  project.list.route.operation,
+  project.create.route.operation,
+  project.activate.route.operation,
+  project.inactivate.route.operation,
+  environment.activate.route.operation,
+  environment.inactivate.route.operation,
 ];
 
 describe("control holds", () => {
   it("admits the Projects screen through control.mine only for administrators", () => {
-    expect(admin(control.CONTROL_MINE_ROUTE.operation)).toBe(true);
-    expect(projectAdminOnly(control.CONTROL_MINE_ROUTE.operation)).toBe(true);
-    expect(controlHolds({ orgAdmin: false, projects: [] })(control.CONTROL_MINE_ROUTE.operation)).toBe(false);
+    expect(admin(control.mine.route.operation)).toBe(true);
+    expect(projectAdminOnly(control.mine.route.operation)).toBe(true);
+    expect(controlHolds({ orgAdmin: false, projects: [] })(control.mine.route.operation)).toBe(false);
   });
   it.each([...projectOperations, ...orgOperations])(
     "admits an org admin to %s, including newly created projects",
@@ -408,7 +399,7 @@ describe("Project page errors", () => {
           return new Response(
             JSON.stringify([
               {
-                error: { code: "permission_denied", detail: { operation: member.MEMBER_LIST_ROUTE.operation } },
+                error: { code: "permission_denied", detail: { operation: member.list.route.operation } },
               },
             ]),
           );

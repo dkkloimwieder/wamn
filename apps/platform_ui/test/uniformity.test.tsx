@@ -30,10 +30,7 @@ function mount(path: string, missing = false) {
             ? { environments: missing ? [] : [{ name: "dev", state: "active" }] }
             : route.endsWith("/environment/status")
               ? {
-                  digest: null,
                   workloads: [],
-                  live: [],
-                  residency: [],
                   rollout: { replicas: 0, updated_replicas: 0, ready_replicas: 0, available_replicas: 0 },
                 }
               : undefined;

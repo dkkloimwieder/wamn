@@ -2,7 +2,7 @@ import { createSignal, onCleanup, Show, untrack } from "solid-js";
 import { FieldError } from "@wfe/components/fields";
 import { createForm } from "@wfe/form";
 import { FormView } from "@wfe/generator";
-import { permission, role, user, userRole } from "./generated/wamn_control/index.js";
+import { permission, role, user, userRole, type PermissionListResult, type UserListResult } from "./application-client";
 import { ConfirmAction } from "./confirm-action";
 import { MissingPage, Page, RecordLink } from "./page";
 import { Records } from "./records";
@@ -13,8 +13,8 @@ import { grantedOperations, rolePath } from "./application-roles";
 export const applicationUsersPath = "administration/users";
 
 export function ApplicationUsers(props: ScreenProps) {
-  const [users, setUsers] = createSignal<user.UserListResult["users"]>([]);
-  const [permissions, setPermissions] = createSignal<permission.PermissionListResult[]>([]);
+  const [users, setUsers] = createSignal<UserListResult["users"]>([]);
+  const [permissions, setPermissions] = createSignal<PermissionListResult[]>([]);
   const [loaded, setLoaded] = createSignal(false);
   const [trouble, setTrouble] = createSignal<string>();
   let active = true;

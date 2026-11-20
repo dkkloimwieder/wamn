@@ -1,4 +1,4 @@
-import { permission, role, user, userRole } from "./generated/wamn_control/index.js";
+import { permission, role, user, userRole } from "./application-client";
 import { screen, type ShellSection } from "./shell";
 
 export const administrationSections: readonly ShellSection[] = [
@@ -8,7 +8,7 @@ export const administrationSections: readonly ShellSection[] = [
       {
         path: "administration/roles",
         label: "Roles",
-        operation: role.ROLE_LIST_ROUTE.operation,
+        operation: role.list.route.operation,
         component: screen(
           () => import("./application-roles"),
           (module) => module.ApplicationRoles,
@@ -20,7 +20,7 @@ export const administrationSections: readonly ShellSection[] = [
       {
         path: "administration/roles/create",
         label: "Create role",
-        operation: role.ROLE_CREATE_ROUTE.operation,
+        operation: role.create.route.operation,
         component: screen(
           () => import("./application-roles"),
           (module) => module.CreateRole,
@@ -28,7 +28,7 @@ export const administrationSections: readonly ShellSection[] = [
       },
       {
         path: "administration/roles/:role",
-        operation: permission.PERMISSION_LIST_ROUTE.operation,
+        operation: permission.list.route.operation,
         component: screen(
           () => import("./application-roles"),
           (module) => module.RolePermissions,
@@ -38,7 +38,7 @@ export const administrationSections: readonly ShellSection[] = [
       {
         path: "administration/roles/:role/permissions",
         label: "Permissions",
-        operation: permission.PERMISSION_LIST_ROUTE.operation,
+        operation: permission.list.route.operation,
         component: screen(
           () => import("./application-roles"),
           (module) => module.RolePermissions,
@@ -48,7 +48,7 @@ export const administrationSections: readonly ShellSection[] = [
       {
         path: "administration/roles/:role/users",
         label: "Users",
-        operation: user.USER_LIST_ROUTE.operation,
+        operation: user.list.route.operation,
         component: screen(
           () => import("./role-users"),
           (module) => module.RoleUsers,
@@ -58,7 +58,7 @@ export const administrationSections: readonly ShellSection[] = [
       {
         path: "administration/roles/:role/users/grant",
         label: "Grant to user",
-        operation: userRole.USER_ROLE_GRANT_ROUTE.operation,
+        operation: userRole.grant.route.operation,
         component: screen(
           () => import("./role-users"),
           (module) => module.GrantRoleToUser,
@@ -72,7 +72,7 @@ export const administrationSections: readonly ShellSection[] = [
       {
         path: "administration/users",
         label: "Users",
-        operation: user.USER_LIST_ROUTE.operation,
+        operation: user.list.route.operation,
         component: screen(
           () => import("./application-users"),
           (module) => module.ApplicationUsers,
@@ -83,7 +83,7 @@ export const administrationSections: readonly ShellSection[] = [
     routes: [
       {
         path: "administration/users/:principal",
-        operation: user.USER_LIST_ROUTE.operation,
+        operation: user.list.route.operation,
         component: screen(
           () => import("./application-users"),
           (module) => module.ApplicationUsers,
@@ -93,7 +93,7 @@ export const administrationSections: readonly ShellSection[] = [
       {
         path: "administration/users/:principal/grant",
         label: "Grant role",
-        operation: userRole.USER_ROLE_GRANT_ROUTE.operation,
+        operation: userRole.grant.route.operation,
         component: screen(
           () => import("./application-users"),
           (module) => module.GrantApplicationRole,
@@ -107,7 +107,7 @@ export const administrationSections: readonly ShellSection[] = [
       {
         path: "administration/permissions",
         label: "Permissions overview",
-        operation: permission.PERMISSION_LIST_ROUTE.operation,
+        operation: permission.list.route.operation,
         component: screen(
           () => import("./application-roles"),
           (module) => module.PermissionsOverview,

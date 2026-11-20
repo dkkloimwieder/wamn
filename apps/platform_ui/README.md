@@ -25,14 +25,13 @@ No data entry action opens a modal.
 
 Records supplies wfe pagination for every table, with 25 rows per page and the total returned row count.
 The application selects each page from the returned rows and limits the current page when rows disappear.
-These APIs return complete arrays without server pagination: `project.list`, `user.list`, `environment.list`, `member.list`, `control.mine`, `environment.status`, and `release.profile`.
+The APIs `project.list`, `user.list`, `environment.list`, `member.list`, `control.mine`, and `environment.status` return complete arrays without server pagination.
 Workloads, conditions, and live releases come from `environment.status`.
-Operations and roles come from `release.profile`.
 Membership tables use the same pagination.
 Refresh requests fresh data from each table’s owning API, including `control.mine` for project administrators.
 
-The environment home uses one `environment.status` read for Release, Users with a role, Roles, Memberships, and Workloads tiles.
-Release shows a short digest and warns until updated, ready, and available replica counts match the total.
+The environment home uses one `environment.status` read for Host replicas, Users with a role, Roles, Memberships, and Workloads tiles.
+Host replicas shows the ready and total counts. It warns until the updated, ready, and available counts match the total.
 Workloads shows ready and not-ready counts. A workload is ready when its `Ready` condition is `True`.
 Missing counts show Unknown. Tiles remain read-only, and the left pane supplies navigation.
 The Control home groups these tiles by project, with an environment link above each row.
@@ -41,7 +40,7 @@ Each environment uses one status read. A failed read shows Unknown tiles with th
 The left pane follows the address through organization, project, and environment contexts, including direct links, history navigation, and reloads.
 SidebarContextSwitcher shows the current context, searches sibling choices, and returns to the parent.
 At the organization level, Projects expands to held projects from `control.mine`. Only org admins see Users.
-Project context shows expandable Environments and Members. Environment context shows Workloads, Live releases, Operations, Roles, and Members.
+Project context shows expandable Environments and Members. Environment context shows Workloads, Live releases, and Members.
 Environment membership screens filter members and view grants and revocations to the current environment.
 In an application audience, the environment pane shows Roles and Users when `permission.mine` grants access.
 Breadcrumbs name the organization, project, and environment in uppercase.
@@ -54,7 +53,7 @@ A viewer with one held project opens that project directly when entering Control
 The Users group contains Project access and Memberships links for the addressed user.
 
 Tables with actions retain separate screens with `scroll="content"` and no outer padding.
-Read-only reference tables expand through wfe `rowDetails`: conditions under Workloads and operations under Roles.
+The Workloads table uses wfe `rowDetails` to show workload conditions.
 These reference tables have no separate screens or routes.
 Child tables use wfe defaults without controls or refresh. A child with more than 25 rows shows the shared pagination footer.
 Each column shows one fact. Parent tables show counts for growing lists.
@@ -98,5 +97,6 @@ pnpm --filter @wamn/platform-ui exec vite build
 pnpm exec prettier --check 'apps/platform_ui/src/**/*.{ts,tsx,css}' 'apps/platform_ui/test/**/*.{ts,tsx,mjs}'
 ```
 
-The package scripts also generate host clients through Cargo.
-The direct commands above do not run Cargo or the live browser fixture.
+Run `pnpm --filter @wamn/platform-ui generate:clients` to generate both host clients.
+Local lint, test, and build generate the OpenAPI documents and clients.
+The platform build writes the OpenAPI documents before it starts the UI build.

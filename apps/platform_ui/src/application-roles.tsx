@@ -3,7 +3,7 @@ import { Checkbox } from "@wfe/components";
 import { FieldError } from "@wfe/components/fields";
 import { createForm } from "@wfe/form";
 import { FormView } from "@wfe/generator";
-import { permission, role } from "./generated/wamn_control/index.js";
+import { permission, role, type PermissionListResult } from "./application-client";
 import { ConfirmAction } from "./confirm-action";
 import { MissingPage, Page, RecordLink } from "./page";
 import { Records } from "./records";
@@ -12,12 +12,12 @@ import type { ScreenProps } from "./shell";
 
 export const rolesPath = "administration/roles";
 export const rolePath = (name: string) => `${rolesPath}/${encodeURIComponent(name)}`;
-type Operation = permission.PermissionListResult["operations"][number];
-export const grantedOperations = (list: permission.PermissionListResult) =>
+type Operation = PermissionListResult["operations"][number];
+export const grantedOperations = (list: PermissionListResult) =>
   list.operations.filter((op) => op.served && (list.admin || op.selected));
 
 export function ApplicationRoles(props: ScreenProps & { overview?: boolean }) {
-  const [permissions, setPermissions] = createSignal<permission.PermissionListResult[]>([]);
+  const [permissions, setPermissions] = createSignal<PermissionListResult[]>([]);
   const [trouble, setTrouble] = createSignal<string>();
   let active = true;
   onCleanup(() => {
@@ -117,7 +117,7 @@ export function PermissionsOverview(props: ScreenProps) {
 
 export function RolePermissions(props: ScreenProps) {
   const name = untrack(() => props.params.role!);
-  const [list, setList] = createSignal<permission.PermissionListResult>();
+  const [list, setList] = createSignal<PermissionListResult>();
   const [missing, setMissing] = createSignal(false);
   const [pending, setPending] = createSignal<ReadonlySet<string>>(new Set());
   const [trouble, setTrouble] = createSignal<string>();
@@ -163,7 +163,7 @@ export function RolePermissions(props: ScreenProps) {
     setResult(undefined);
     setSelected(op.operation, enabled);
     try {
-      value(
+      value<unknown>(
         await (enabled ? permission.grant : permission.revoke)(props.transport, [
           { requestId: crypto.randomUUID(), value: { role: name, operation: op.operation } },
         ]),

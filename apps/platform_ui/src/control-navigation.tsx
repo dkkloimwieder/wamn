@@ -6,7 +6,13 @@ import {
   type DashboardShellProps,
 } from "@wfe/components/layout";
 import { FieldError } from "@wfe/components/fields";
-import { control, environment, member, user } from "./generated/wamn_control_org/index.js";
+import {
+  environment,
+  member,
+  user,
+  type ControlMineResult,
+  type EnvironmentListResultEnvironments,
+} from "./control-client";
 import type { Transport } from "@wamn/web-runtime";
 import type { Address } from "./address";
 import type { ScreenProps } from "./shell";
@@ -17,7 +23,7 @@ type Navigation = Parameters<NonNullable<DashboardShellProps["navigation"]>>[0];
 export function ControlNavigation(props: {
   org: string;
   aud: string;
-  mine: Pick<control.ControlMineResult, "orgAdmin" | "projects">;
+  mine: Pick<ControlMineResult, "orgAdmin" | "projects">;
   holds: ScreenProps["holds"];
   params: Readonly<Record<string, string | undefined>>;
   address: Address;
@@ -32,9 +38,9 @@ export function ControlNavigation(props: {
   const projectPath = () => `${root()}/projects/${encodeURIComponent(project()!)}`;
   const environmentPath = () => `${projectPath()}/${encodeURIComponent(env()!)}`;
   const projects = createMemo(() =>
-    props.mine.projects.filter((entry) => props.holds(member.MEMBER_LIST_ROUTE.operation, entry.project)),
+    props.mine.projects.filter((entry) => props.holds(member.list.route.operation, entry.project)),
   );
-  const [environments, setEnvironments] = createSignal<readonly environment.EnvironmentListResultEnvironments[]>([]);
+  const [environments, setEnvironments] = createSignal<readonly EnvironmentListResultEnvironments[]>([]);
   const [trouble, setTrouble] = createSignal<string>();
   const [projectsOpen, setProjectsOpen] = createSignal(true);
   const [environmentsOpen, setEnvironmentsOpen] = createSignal(true);
@@ -52,7 +58,7 @@ export function ControlNavigation(props: {
   createEffect(project, (name) => {
     setEnvironments([]);
     setTrouble(undefined);
-    if (!name || !untrack(() => props.holds(environment.ENVIRONMENT_LIST_ROUTE.operation, name))) return;
+    if (!name || !untrack(() => props.holds(environment.list.route.operation, name))) return;
     let active = true;
     environment
       .list(
@@ -155,7 +161,7 @@ export function ControlNavigation(props: {
         </SidebarGroup>
       </Show>
       <Show when={!project()}>
-        <Show when={props.holds(user.USER_LIST_ROUTE.operation)}>
+        <Show when={props.holds(user.list.route.operation)}>
           <Show
             when={principal()}
             fallback={
@@ -237,8 +243,6 @@ export function ControlNavigation(props: {
             [
               ["workloads", "Workloads"],
               ["live-releases", "Live releases"],
-              ["operations", "Operations"],
-              ["roles", "Roles"],
               ["members", "Members"],
             ] as const
           }

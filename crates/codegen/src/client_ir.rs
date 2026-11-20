@@ -991,7 +991,7 @@ fn paging_of(input: &Value) -> Option<PagingIr> {
     })
 }
 
-fn errors_of(errors: Option<&Value>) -> Vec<ErrorCaseIr> {
+pub(crate) fn errors_of(errors: Option<&Value>) -> Vec<ErrorCaseIr> {
     let mut cases: Vec<ErrorCaseIr> = errors
         .and_then(|errors| errors.get("cases"))
         .and_then(Value::as_array)

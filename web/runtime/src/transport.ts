@@ -17,11 +17,22 @@ import type {
   FieldMap,
   InvokeOptions,
   JsonValue,
+  OperationRoute,
   Outcome,
   ResponseContract,
   Transport,
   WireRequest,
 } from "./wire.js";
+
+/** Run an SDK write through the caller's authenticated transport. */
+export function transportFetch(transport: Transport, route: OperationRoute): typeof fetch {
+  return async (input, init) => {
+    const request = input instanceof Request && init === undefined ? input : new Request(input, init);
+    const items: readonly JsonValue[] = await request.json();
+    const outcome = await transport.invoke({ ...route, items }, { signal: request.signal });
+    return Response.json(outcome);
+  };
+}
 
 /** One HTTP reply, as the transport reads it. */
 export interface HttpReply {

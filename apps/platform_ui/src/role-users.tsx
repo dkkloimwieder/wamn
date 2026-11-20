@@ -2,7 +2,7 @@ import { createSignal, onCleanup, Show, untrack } from "solid-js";
 import { FieldError } from "@wfe/components/fields";
 import { createForm } from "@wfe/form";
 import { FormView } from "@wfe/generator";
-import { role, user, userRole } from "./generated/wamn_control/index.js";
+import { role, user, userRole, type UserListResult } from "./application-client";
 import { ConfirmAction } from "./confirm-action";
 import { MissingPage, Page, RecordLink } from "./page";
 import { Records } from "./records";
@@ -13,7 +13,7 @@ import type { ScreenProps } from "./shell";
 
 export function RoleUsers(props: ScreenProps) {
   const name = untrack(() => props.params.role!);
-  const [users, setUsers] = createSignal<user.UserListResult["users"]>([]);
+  const [users, setUsers] = createSignal<UserListResult["users"]>([]);
   const [missing, setMissing] = createSignal(false);
   const [trouble, setTrouble] = createSignal<string>();
   let active = true;
@@ -80,7 +80,7 @@ export function RoleUsers(props: ScreenProps) {
 export function GrantRoleToUser(props: ScreenProps) {
   const name = untrack(() => props.params.role!);
   const returnTo = `${rolePath(name)}/users`;
-  const [choices, setChoices] = createSignal<user.UserListResult["users"]>([]);
+  const [choices, setChoices] = createSignal<UserListResult["users"]>([]);
   const [loaded, setLoaded] = createSignal(false);
   const [missing, setMissing] = createSignal(false);
   const [trouble, setTrouble] = createSignal<string>();

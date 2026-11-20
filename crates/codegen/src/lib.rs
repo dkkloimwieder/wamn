@@ -27,10 +27,12 @@ pub mod fingerprint;
 /// Catalog facts for authored query feeds.
 pub mod feed;
 mod generate;
+mod host_openapi;
 mod inheritance;
 pub mod kcl;
 mod key;
 mod materialize;
+mod openapi;
 mod output;
 mod package_catalog;
 pub mod publication;
@@ -45,6 +47,7 @@ pub use generate::{
     AuthoredSql, GeneratedFile, GeneratedPackage, GenerationInput, OperationDescription,
     StatementTransactionality, derive_manifest, generate,
 };
+pub use host_openapi::host_openapi;
 pub use materialize::introspect_package;
 pub use output::{is_input_path, output_root, package_workspace, source_root};
 pub use package_catalog::project_package_catalog;

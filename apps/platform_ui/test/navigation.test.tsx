@@ -74,10 +74,7 @@ function mount(path: string, orgAdmin = true, projects = ["widgets", "gadgets"])
             ? { users: members.map((entry) => ({ ...entry, status: "active" })) }
             : route.endsWith("/environment/status")
               ? {
-                  digest: null,
                   workloads: [],
-                  live: [],
-                  residency: [],
                   rollout: { replicas: 0, updated_replicas: 0, ready_replicas: 0, available_replicas: 0 },
                 }
               : undefined;
@@ -167,8 +164,6 @@ describe("control hierarchy navigation", () => {
     ["projects/widgets/dev", "Environment widgets/dev", "dev"],
     ["projects/widgets/dev/workloads", "Environment widgets/dev", "Workloads"],
     ["projects/widgets/dev/live-releases", "Environment widgets/dev", "Live releases"],
-    ["projects/widgets/dev/operations", "Environment widgets/dev", "Operations"],
-    ["projects/widgets/dev/roles", "Environment widgets/dev", "Roles"],
     ["projects/widgets/dev/members", "Environment widgets/dev", "Members"],
     ["projects/widgets/dev/members/grant", "Environment widgets/dev", "Members"],
     ["projects/widgets/dev/members/alex", "Environment widgets/dev", "Members"],
@@ -272,16 +267,15 @@ describe("control hierarchy navigation", () => {
   it.each([
     ["projects/widgets/environments", "Project widgets"],
     ["projects/widgets/members/grant", "Project widgets"],
-    ["projects/widgets/dev/roles", "Environment widgets/dev"],
     ["projects/widgets/dev/members/alex", "Environment widgets/dev"],
     ["users/alex/projects/widgets", "Organization acme"],
   ])("derives the initial pane from %s and follows browser history", async (path, context) => {
     mount(path);
     await switcher(context);
-    window.history.pushState({}, "", `/${CONTROL}/projects/gadgets/prod/operations`);
+    window.history.pushState({}, "", `/${CONTROL}/projects/gadgets/prod/workloads`);
     window.dispatchEvent(new PopStateEvent("popstate"));
     await switcher("Environment gadgets/prod");
-    await selectedTarget("Operations");
+    await selectedTarget("Workloads");
   });
 
   it("opens the Control splash for multiple held projects", async () => {

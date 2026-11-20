@@ -1,7 +1,7 @@
 import { createContext, createSignal, lazy, onCleanup, Show, Loading, useContext, type Component } from "solid-js";
 import type { JSX } from "@solidjs/web";
 import { DashboardPanel, type DashboardShellProps } from "@wfe/components/layout";
-import { permission } from "./generated/wamn_control/index.js";
+import { permission } from "./application-client";
 import {
   application,
   control,
@@ -11,10 +11,10 @@ import {
   orgAdmin,
   project,
   projectAdmin,
-  release,
   schema,
   user,
-} from "./generated/wamn_control_org/index.js";
+  type ControlMineResult,
+} from "./control-client";
 import {
   createTransport,
   keepSession,
@@ -62,7 +62,7 @@ export function useSession(): Session | undefined {
 export interface ScreenProps {
   readonly transport: Transport;
   readonly holds: Holds;
-  readonly controlMine?: Pick<control.ControlMineResult, "orgAdmin" | "projects">;
+  readonly controlMine?: Pick<ControlMineResult, "orgAdmin" | "projects">;
   readonly params: Readonly<Record<string, string | undefined>>;
   readonly search: Readonly<Record<string, string | undefined>>;
   readonly open: (path: string) => void;
@@ -100,7 +100,7 @@ type Holds = (operation: string, project?: string) => boolean;
 interface View {
   readonly holds: Holds;
   readonly sections: readonly ShellSection[];
-  readonly controlMine?: Pick<control.ControlMineResult, "orgAdmin" | "projects">;
+  readonly controlMine?: Pick<ControlMineResult, "orgAdmin" | "projects">;
 }
 
 function reference(operation: string): string {
@@ -132,40 +132,39 @@ function applicationView(saved: SavedView, sections: readonly ShellSection[]): V
   };
 }
 
-export function controlHolds(mine: Pick<control.ControlMineResult, "orgAdmin" | "projects">): Holds {
+export function controlHolds(mine: Pick<ControlMineResult, "orgAdmin" | "projects">): Holds {
   const projectOperations = new Set([
-    application.APPLICATION_DEPLOY_ROUTE.operation,
-    application.APPLICATION_STOP_ROUTE.operation,
-    application.APPLICATION_ROLLBACK_ROUTE.operation,
-    schema.SCHEMA_DIFF_ROUTE.operation,
-    schema.SCHEMA_APPLY_ROUTE.operation,
-    schema.SCHEMA_RESET_ROUTE.operation,
-    operation.OPERATION_STATUS_ROUTE.operation,
-    environment.ENVIRONMENT_LIST_ROUTE.operation,
-    environment.ENVIRONMENT_STATUS_ROUTE.operation,
-    release.RELEASE_PROFILE_ROUTE.operation,
-    member.MEMBER_LIST_ROUTE.operation,
-    member.MEMBER_GRANT_ROUTE.operation,
-    member.MEMBER_REVOKE_ROUTE.operation,
-    projectAdmin.PROJECT_ADMIN_GRANT_ROUTE.operation,
-    projectAdmin.PROJECT_ADMIN_REVOKE_ROUTE.operation,
+    application.deploy.route.operation,
+    application.stop.route.operation,
+    application.rollback.route.operation,
+    schema.diff.route.operation,
+    schema.apply.route.operation,
+    schema.reset.route.operation,
+    operation.status.route.operation,
+    environment.list.route.operation,
+    environment.status.route.operation,
+    member.list.route.operation,
+    member.grant.route.operation,
+    member.revoke.route.operation,
+    projectAdmin.grant.route.operation,
+    projectAdmin.revoke.route.operation,
   ]);
   const orgOperations = new Set([
-    user.USER_LIST_ROUTE.operation,
-    user.USER_INVITE_ROUTE.operation,
-    user.USER_ACTIVATE_ROUTE.operation,
-    user.USER_DEACTIVATE_ROUTE.operation,
-    orgAdmin.ORG_ADMIN_GRANT_ROUTE.operation,
-    orgAdmin.ORG_ADMIN_REVOKE_ROUTE.operation,
-    project.PROJECT_LIST_ROUTE.operation,
-    project.PROJECT_CREATE_ROUTE.operation,
-    project.PROJECT_ACTIVATE_ROUTE.operation,
-    project.PROJECT_INACTIVATE_ROUTE.operation,
-    environment.ENVIRONMENT_ACTIVATE_ROUTE.operation,
-    environment.ENVIRONMENT_INACTIVATE_ROUTE.operation,
+    user.list.route.operation,
+    user.invite.route.operation,
+    user.activate.route.operation,
+    user.deactivate.route.operation,
+    orgAdmin.grant.route.operation,
+    orgAdmin.revoke.route.operation,
+    project.list.route.operation,
+    project.create.route.operation,
+    project.activate.route.operation,
+    project.inactivate.route.operation,
+    environment.activate.route.operation,
+    environment.inactivate.route.operation,
   ]);
   return (operation, config) => {
-    if (operation === control.CONTROL_MINE_ROUTE.operation)
+    if (operation === control.mine.route.operation)
       return mine.orgAdmin || mine.projects.some((entry) => entry.projectAdmin);
     if (orgOperations.has(operation)) return mine.orgAdmin;
     return (
@@ -246,9 +245,7 @@ function saved(aud: string) {
     user: savedUser(application, environment),
     view: savedView(application, environment),
     /** Delete the user's saved rows and outbox. */
-    clear: (userId: string) =>
-      Promise.all([
-      ]),
+    clear: (userId: string) => Promise.all([]),
   };
 }
 
@@ -283,7 +280,7 @@ function Session(
     const first = shown.sections[0]?.screens[0];
     if (props.address.url().pathname.replace(/\/$/, "") === `/${props.aud}` && first) {
       const projects = shown.controlMine?.projects.filter((entry) =>
-        shown.holds(member.MEMBER_LIST_ROUTE.operation, entry.project),
+        shown.holds(member.list.route.operation, entry.project),
       );
       const home =
         projects?.length === 1
