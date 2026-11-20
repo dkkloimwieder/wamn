@@ -17,7 +17,7 @@ environmentNats: null
 
 global:
   tls:
-    # The host sets the broker CA and credentials in its group arguments.
+    # The host gets the broker CA from its group arguments.
     enabled: false
 
 runtime-operator:

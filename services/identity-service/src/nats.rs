@@ -10,7 +10,8 @@ use sqlx::PgConnection;
 use tokio::sync::OnceCell;
 use wamn_identity::nats::{self, Authority, LimitsPerProject, Permissions, SubjectPermission};
 use wamn_identity_client::nats::{
-    Account, ENSURE_ACCOUNT_PATH, EnsureAccount, SIGN_USER_PATH, SignUser, SignedUser, UserKind,
+    Account, ENSURE_ACCOUNT_PATH, EnsureAccount, SIGN_USER_PATH, SignHostUser, SignUser,
+    SignedUser, UserKind,
 };
 use wamn_kubernetes::kubernetes_api::KubernetesApi;
 use wamn_registry::{OrgId, name};
@@ -298,22 +299,17 @@ async fn sign_user(
         name: &name,
         permissions: &permissions,
     };
-    let signed = match request.kind {
-        UserKind::HostScheduler => state.authority.platform_user(&user).map(Some),
-        _ => {
-            state
-                .authority
-                .environment_user(
-                    client,
-                    &inner.envelope,
-                    &inner.issuer,
-                    org,
-                    &request.env,
-                    &user,
-                )
-                .await
-        }
-    };
+    let signed = state
+        .authority
+        .environment_user(
+            client,
+            &inner.envelope,
+            &inner.issuer,
+            org,
+            &request.env,
+            &user,
+        )
+        .await;
     match signed {
         Ok(Some(jwt)) => json(&SignedUser { jwt, inbox_prefix }),
         Ok(None) => response(
@@ -321,6 +317,44 @@ async fn sign_user(
             "application/json",
             br#"{"error":"NATS environment account is absent"}"#.to_vec(),
         ),
+        Err(error) => signing_error(&error),
+    }
+}
+
+pub(super) fn sign_host_user(inner: &Inner, pod: &str, body: &[u8]) -> Response<Full<Bytes>> {
+    let Some(state) = &inner.nats else {
+        return unavailable();
+    };
+    let Ok(request) = serde_json::from_slice::<SignHostUser>(body) else {
+        return invalid();
+    };
+    if !nats::is_user_public_key(&request.public_key) {
+        return invalid();
+    }
+    let inbox_prefix = name::nats_user_inbox(&request.public_key);
+    let permissions = Permissions {
+        pub_: SubjectPermission {
+            allow: vec![
+                format!("runtime.host.{pod}.__control.ready"),
+                format!("runtime.operator.heartbeat.{pod}"),
+                format!("{inbox_prefix}.>"),
+                format!("{}.>", nats::RUNTIME_OPERATOR_INBOX),
+            ],
+            deny: Vec::new(),
+        },
+        sub: SubjectPermission {
+            allow: vec![format!("runtime.host.{pod}.>"), format!("{inbox_prefix}.>")],
+            deny: Vec::new(),
+        },
+        resp: None,
+    };
+    let user = nats::User {
+        public_key: &request.public_key,
+        name: pod,
+        permissions: &permissions,
+    };
+    match state.authority.platform_user(&user) {
+        Ok(jwt) => json(&SignedUser { jwt, inbox_prefix }),
         Err(error) => signing_error(&error),
     }
 }
@@ -373,20 +407,6 @@ fn template(request: &SignUser, inbox: &str) -> (String, Permissions) {
             .map(str::to_owned)
             .into(),
         ),
-        UserKind::HostScheduler => {
-            // The shared scheduler protocol uses random host IDs. The
-            // installation's scheduler subjects apply to every host group.
-            const SCHEDULER: [&str; 2] = ["runtime.host.>", "runtime.operator.>"];
-            let publish = [
-                SCHEDULER[0].to_owned(),
-                SCHEDULER[1].to_owned(),
-                format!("{}.>", nats::RUNTIME_OPERATOR_INBOX),
-                format!("{inbox}.>"),
-            ]
-            .into();
-            subscribe.extend(SCHEDULER.map(str::to_owned));
-            ("wasmcloud-runtime".into(), publish)
-        }
         UserKind::HostData => ("wasmcloud-data".into(), Vec::new()),
     };
     let name = format!(

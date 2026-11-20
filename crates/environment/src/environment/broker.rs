@@ -17,9 +17,8 @@ fn client(platform: &Platform) -> anyhow::Result<NatsClient> {
     NatsClient::new(&platform.identity_issuer, std::path::Path::new(IDENTITY_CA))
 }
 
-fn environment_users() -> [(&'static str, UserKind); 6] {
+fn environment_users() -> [(&'static str, UserKind); 5] {
     [
-        ("scheduler", UserKind::HostScheduler),
         ("data", UserKind::HostData),
         ("workflow", UserKind::Workflow),
         ("ingress", UserKind::Ingress),

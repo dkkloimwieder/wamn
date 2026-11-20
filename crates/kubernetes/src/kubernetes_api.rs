@@ -49,6 +49,8 @@ impl std::fmt::Debug for KubernetesApi {
 pub struct ServiceAccountIdentity {
     pub namespace: String,
     pub name: String,
+    /// The pod bound to the token, when reported by Kubernetes.
+    pub pod_name: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -72,6 +74,14 @@ struct TokenReviewStatus {
 struct TokenReviewUser {
     #[serde(default)]
     username: String,
+    #[serde(default)]
+    extra: TokenReviewUserExtra,
+}
+
+#[derive(Default, Deserialize)]
+struct TokenReviewUserExtra {
+    #[serde(default, rename = "authentication.kubernetes.io/pod-name")]
+    pod_name: Vec<String>,
 }
 
 impl KubernetesApi {
@@ -274,9 +284,12 @@ impl KubernetesApi {
         else {
             return Ok(None);
         };
+        let mut pod_names = user.extra.pod_name.into_iter();
+        let pod_name = pod_names.next().filter(|_| pod_names.next().is_none());
         Ok(Some(ServiceAccountIdentity {
             namespace: namespace.to_owned(),
             name: name.to_owned(),
+            pod_name,
         }))
     }
 
