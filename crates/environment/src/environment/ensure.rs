@@ -223,7 +223,6 @@ async fn host_values(
         "ociCaPaths":platform.oci_ca_paths,
         "oauthEncryption":platform.oauth_encryption,
         "environmentNats":{
-            "scheduler":name::environment_nats_secret(org,env,"scheduler"),
             "data":name::environment_nats_secret(org,env,"data"),
             "native":name::environment_nats_secret(org,env,"workflow-native"),
             "workflow":workflow,

@@ -301,7 +301,7 @@ impl Authority {
             .transpose()
     }
 
-    /// Issue a scoped JWT for a host group's connection to PLATFORM.
+    /// Issue a scoped JWT for a host connection to PLATFORM.
     pub fn platform_user(&self, user: &User<'_>) -> Result<String, Error> {
         sign_user(&self.platform_signing, &self.platform, user)
     }

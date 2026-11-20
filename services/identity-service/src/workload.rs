@@ -5,7 +5,7 @@ use sqlx::PgConnection;
 use wamn_identity_client::TOKEN_AUDIENCE;
 use wamn_identity_protocol::PlatformComponent;
 use wamn_kubernetes::kubernetes_api::KubernetesApi;
-use wamn_registry::{OrgId, name};
+use wamn_registry::{EnvName, OrgId, name};
 
 /// The service account allowed to use a protected route.
 #[derive(Clone, Copy)]
@@ -43,6 +43,39 @@ pub(super) async fn authenticate(
         Role::Worker => name::operation(&org),
     };
     Ok((account.name == allowed).then_some(org))
+}
+
+pub(super) async fn authenticate_host(
+    api: &KubernetesApi,
+    token: &str,
+) -> Result<Option<String>, wamn_kubernetes::Error> {
+    let Some(account) = api
+        .review_service_account_token(token, TOKEN_AUDIENCE)
+        .await?
+    else {
+        return Ok(None);
+    };
+    let Ok(org) = OrgId::try_from(account.namespace) else {
+        return Ok(None);
+    };
+    let Some(env) = account
+        .name
+        .rsplit_once("--")
+        .and_then(|(_, env)| env.parse::<EnvName>().ok())
+    else {
+        return Ok(None);
+    };
+    if account.name != name::environment_service_account(&org, &env) {
+        return Ok(None);
+    }
+    // The pod ID must fit a single wash-runtime host subject token.
+    Ok(account.pod_name.filter(|pod| {
+        !pod.is_empty()
+            && pod.len() <= 128
+            && pod
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+    }))
 }
 
 pub(super) async fn registered(

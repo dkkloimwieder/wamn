@@ -1,4 +1,4 @@
-//! Control's NATS account and user requests to identity.
+//! NATS account and user requests to identity.
 
 use std::path::Path;
 
@@ -15,6 +15,8 @@ const MAX_RESPONSE_BYTES: usize = 8192;
 pub const ENSURE_ACCOUNT_PATH: &str = "/nats/accounts";
 /// User JWT signing route.
 pub const SIGN_USER_PATH: &str = "/nats/users";
+/// Scheduler JWT signing route for a host pod.
+pub const SIGN_HOST_USER_PATH: &str = "/nats/host-user";
 
 /// Ensure one environment account with a disk reservation for its project count.
 #[derive(Debug, Serialize, Deserialize)]
@@ -42,7 +44,6 @@ pub enum UserKind {
     Cdc { project: ProjectId },
     Recovery { project: ProjectId },
     StreamAdmin,
-    HostScheduler,
     HostData,
 }
 
@@ -53,6 +54,13 @@ pub struct SignUser {
     pub org: OrgId,
     pub env: EnvName,
     pub kind: UserKind,
+    pub public_key: String,
+}
+
+/// Sign a scheduler user for the pod identified by its service account token.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SignHostUser {
     pub public_key: String,
 }
 
@@ -94,23 +102,32 @@ impl NatsClient {
 
     /// Sign and push the environment account's current limits.
     pub async fn ensure_account(&self, request: &EnsureAccount) -> anyhow::Result<Account> {
-        self.post(&self.accounts, request).await
+        post(&self.http, &self.accounts, request).await
     }
 
     /// Sign the caller's public key for the requested user kind and scope.
     pub async fn sign_user(&self, request: &SignUser) -> anyhow::Result<SignedUser> {
-        self.post(&self.users, request).await
+        post(&self.http, &self.users, request).await
     }
+}
 
-    async fn post<T: DeserializeOwned>(
-        &self,
-        endpoint: &Url,
-        request: &impl Serialize,
-    ) -> anyhow::Result<T> {
-        let mut response = self
-            .http
-            .post(endpoint, serde_json::to_vec(request)?)
-            .await?;
+/// Sign a public key using the host's projected service account token.
+pub async fn sign_host_user(
+    endpoint: &str,
+    ca: &Path,
+    request: &SignHostUser,
+) -> anyhow::Result<SignedUser> {
+    let http = IdentityHttp::new(ca, Path::new(TOKEN_PATH))?;
+    let url = service_endpoint(endpoint, SIGN_HOST_USER_PATH.trim_start_matches('/'))?;
+    post(&http, &url, request).await
+}
+
+async fn post<T: DeserializeOwned>(
+    http: &IdentityHttp,
+    endpoint: &Url,
+    request: &impl Serialize,
+) -> anyhow::Result<T> {
+        let mut response = http.post(endpoint, serde_json::to_vec(request)?).await?;
         anyhow::ensure!(
             response.status() != StatusCode::CONFLICT,
             "platform NATS project limit exceeded"
@@ -129,5 +146,4 @@ impl NatsClient {
             body.extend_from_slice(&chunk);
         }
         serde_json::from_slice(&body).map_err(|_| anyhow::anyhow!("invalid identity NATS response"))
-    }
 }

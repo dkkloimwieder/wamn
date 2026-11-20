@@ -36,6 +36,7 @@ use wamn_authentication::route_authentication::{
 };
 use wamn_engine::engine::{DEFAULT_CORE_INSTANCES, build_engine_with_host_memory};
 use wamn_engine::ingress::IngressRouting;
+use wamn_identity_client::nats::{SignHostUser, sign_host_user};
 use wamn_sql::WamnPostgres;
 
 #[derive(Debug, Args)]
@@ -67,9 +68,6 @@ pub struct HostArgs {
 
     #[arg(long = "scheduler-nats-tls-first", default_value_t = false)]
     pub scheduler_nats_tls_first: bool,
-
-    #[arg(long = "scheduler-nats-creds")]
-    pub scheduler_nats_creds: Option<PathBuf>,
 
     /// NATS URL of the event plane: `wamn:jetstream`, the auth memory and the
     /// connection memory connect here using its PLATFORM credentials
@@ -357,15 +355,31 @@ const SCHEDULER_NATS_BUFFER: usize = 2048;
 /// event carries only the error type, so each line also counts the failed
 /// passes since the last connect; async-nats logs the cause of each attempt on
 /// `async_nats::connector` at debug.
-async fn connect_scheduler_nats(args: &HostArgs, name: &str) -> anyhow::Result<async_nats::Client> {
+async fn connect_scheduler_nats(
+    args: &HostArgs,
+    name: &str,
+    issuer: &str,
+) -> anyhow::Result<async_nats::Client> {
+    let key = nkeys::KeyPair::new_user();
+    let request = SignHostUser {
+        public_key: key.public_key(),
+    };
+    let signed = sign_host_user(issuer, Path::new(IDENTITY_CA), &request)
+        .await
+        .context("request scheduler NATS credentials")?;
+    anyhow::ensure!(
+        signed.inbox_prefix == wamn_registry::name::nats_user_inbox(&request.public_key),
+        "identity returned an unexpected NATS inbox"
+    );
     let mut opts = async_nats::ConnectOptions::new()
         .name(name)
+        .jwt(signed.jwt, move |nonce| {
+            std::future::ready(key.sign(&nonce).map_err(async_nats::AuthError::new))
+        })
+        .custom_inbox_prefix(signed.inbox_prefix)
         .max_reconnects(None)
         .client_capacity(SCHEDULER_NATS_BUFFER);
     opts = wamn_broker::nats::tls_options(opts, args.scheduler_nats_tls_ca.as_deref());
-    if let Some(creds) = &args.scheduler_nats_creds {
-        opts = wamn_broker::nats::credentials_options(opts, creds).await?;
-    }
     if args.nats_ignore_discovered_servers {
         opts = opts.ignore_discovered_servers();
     }
@@ -461,10 +475,12 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         "operator host namespace and settings org differ"
     );
     tracing::info!(org = %settings.org, env = %settings.env, "loaded host settings");
-    anyhow::ensure!(
-        settings.projects.is_empty() || settings.identity_issuer.is_some(),
-        "project hosts require an identity issuer"
-    );
+    let issuer = settings
+        .identity_issuer
+        .as_deref()
+        .context("scheduler NATS signing requires an identity issuer")?;
+    let pod_name = std::env::var("POD_NAME").context("read POD_NAME for the host ID")?;
+    let mut host_builder = wash_runtime::host::HostBuilder::default().with_id(pod_name)?;
 
     // Trust roots are a property of the host, not of any one pull, so they are
     // installed once here rather than carried to every construction site. This
@@ -483,7 +499,8 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         .unwrap_or_else(|| "wamn-host".to_owned());
 
     let scheduler_nats_client =
-        connect_scheduler_nats(&args, args.host_name.as_deref().unwrap_or(&router_owner)).await?;
+        connect_scheduler_nats(&args, args.host_name.as_deref().unwrap_or(&router_owner), issuer)
+            .await?;
     let host_memory = host_memory(&args)?;
     let engine = build_engine_with_host_memory(
         &args.wasm_proposals,
@@ -615,7 +632,6 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
 
     // Count the same plugins supplied to the native host, including the optional bridge.
     let cleanup_budget = host_cleanup_budget(plugins.len())?;
-    let mut host_builder = wash_runtime::host::HostBuilder::default();
     for plugin in plugins {
         host_builder = host_builder.with_plugin(plugin)?;
     }

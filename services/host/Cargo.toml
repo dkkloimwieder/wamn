@@ -26,6 +26,7 @@ mimalloc = { workspace = true }
 wamn-catalog = { workspace = true }
 wamn-registry = { workspace = true }
 wamn-identity.workspace = true
+wamn-identity-client.workspace = true
 wamn-identity-protocol = { workspace = true }
 wamn-sql = { workspace = true, features = ["wasm_component_model_implements"] }
 wamn-authentication = { workspace = true }
@@ -42,6 +43,7 @@ serde = { workspace = true, features = ["derive"] }
 serde_yaml = { workspace = true }
 humantime = { workspace = true }
 async-nats = { workspace = true }
+nkeys.workspace = true
 clap = { workspace = true, features = ["derive", "env"] }
 # Delivery metrics and request tracing share the process observability provider.
 # `trace` reads the sampler's decision from the active context (src/observability.rs).

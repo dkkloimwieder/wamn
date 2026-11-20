@@ -303,7 +303,10 @@ The CDC reader waits up to 120 seconds for its slot before it starts replication
 The worker creates the stream with the environment's `stream-admin` credentials and saves the project's applied configuration.
 The project chart mounts the YAML document in later project Jobs.
 The reader stays paused while a capture gap is open.
-The shared host group uses the runtime operator chart at version 2.12.2. The host reads NATS user credentials from `/etc/wamn/nats/` and trusts the broker CA at `/etc/wamn/nats-ca/ca.crt`.
+The shared host group uses the runtime operator chart at version 2.12.2.
+At startup, the host uses `POD_NAME` as its host ID and generates a scheduler user key in memory.
+It sends the public key and its projected service account token to identity over HTTPS using `/etc/identity-ca/ca.crt`.
+The host reads its other NATS credentials from `/etc/wamn/nats/` and trusts the broker CA at `/etc/wamn/nats-ca/ca.crt`.
 
 Use `wamn env delete ORG/ENV/PROJECT` to remove a project deployment.
 A plain delete keeps the Cluster and ObjectStore for a manual dump. It also keeps the project certificate resources.

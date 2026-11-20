@@ -138,7 +138,7 @@ fn colliding_coordinates_read_only_their_own_credentials() -> anyhow::Result<()>
                 "identityIssuer":"https://identity.platform.svc.cluster.local",
                 "natsUrl":crate::platform::identity::NATS_URL,
                 "environmentNats":{
-                    "scheduler":"scheduler-nats", "data":"data-nats", "native":"native-nats",
+                    "data":"data-nats", "native":"native-nats",
                     "workflow":{"secret":"workflow-nats", "inbox":"_INBOX_workflow"},
                     "ingress":{"secret":"ingress-nats", "inbox":"_INBOX_ingress"},
                     "subjects":"evt.fixture.>",

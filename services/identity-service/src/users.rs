@@ -1,4 +1,4 @@
-//! Identity requests from the control service or the operation worker of one org.
+//! Identity requests from the control service, operation workers and host pods.
 
 use std::net::IpAddr;
 
@@ -42,14 +42,30 @@ async fn handle(
     request: Request<Incoming>,
     source: IpAddr,
 ) -> Response<Full<Bytes>> {
-    let Some(token) = workload::bearer(request.headers()) else {
+    let (parts, body) = request.into_parts();
+    let Some(token) = workload::bearer(&parts.headers) else {
         return forbidden();
     };
     let Some(api) = &inner.kubernetes else {
         return unavailable();
     };
+    let route = parts.uri.path();
+    if route == wamn_identity_client::nats::SIGN_HOST_USER_PATH {
+        let pod = match workload::authenticate_host(api, token).await {
+            Ok(Some(pod)) => pod,
+            Ok(None) => return forbidden(),
+            Err(error) => {
+                tracing::warn!(%error, "check identity host token failed");
+                return unavailable();
+            }
+        };
+        let Some(body) = json_body(&parts.headers, body).await else {
+            return invalid();
+        };
+        return nats::sign_host_user(inner, &pod, &body);
+    }
     let nats_route = matches!(
-        request.uri().path(),
+        route,
         wamn_identity_client::nats::ENSURE_ACCOUNT_PATH
             | wamn_identity_client::nats::SIGN_USER_PATH
     );
@@ -81,27 +97,10 @@ async fn handle(
             Err(_) => return unavailable(),
         }
     }
-    let (parts, body) = request.into_parts();
-    let mut types = parts.headers.get_all(hyper::header::CONTENT_TYPE).iter();
-    if !types
-        .next()
-        .and_then(|value| value.to_str().ok())
-        .is_some_and(|value| {
-            value
-                .split(';')
-                .next()
-                .is_some_and(|value| value.trim().eq_ignore_ascii_case("application/json"))
-        })
-        || types.next().is_some()
-    {
-        return invalid();
-    }
-    let Ok(body) = Limited::new(body, 8192).collect().await else {
+    let Some(bytes) = json_body(&parts.headers, body).await else {
         return invalid();
     };
-    let bytes = body.to_bytes();
 
-    let route = parts.uri.path();
     if nats_route {
         return nats::respond(inner, &mut db.client, &org, route, &bytes).await;
     }
@@ -123,6 +122,24 @@ async fn handle(
     }
 
     disable(&mut db.client, &org, &request.principal_id).await
+}
+
+async fn json_body(headers: &hyper::HeaderMap, body: Incoming) -> Option<Bytes> {
+    let mut types = headers.get_all(hyper::header::CONTENT_TYPE).iter();
+    if !types
+        .next()
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| {
+            value
+                .split(';')
+                .next()
+                .is_some_and(|value| value.trim().eq_ignore_ascii_case("application/json"))
+        })
+        || types.next().is_some()
+    {
+        return None;
+    }
+    Some(Limited::new(body, 8192).collect().await.ok()?.to_bytes())
 }
 
 async fn begin(client: &mut Client) -> Result<sqlx::Transaction<'_, sqlx::Postgres>, sqlx::Error> {

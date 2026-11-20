@@ -983,8 +983,12 @@ Direct requests without that header use the TLS peer address.
 Refused attempts do not extend the window. Counters older than two minutes are removed during admission.
 Password requests expire after ten seconds and accept at most 8,192 body bytes.
 User management and NATS signing use projected service account tokens with audience `wamn-identity`.
-Identity verifies each token through Kubernetes TokenReview and requires its namespace to exist in `registry.orgs`.
+Identity verifies each token through Kubernetes TokenReview.
+For control and worker requests, identity requires the token's namespace to exist in `registry.orgs`.
 The `wamn-control-<org>` service account can manage users. The `wamn-operation-<org>` service account can request NATS credentials for its own org.
+The `wamn-host-<org>--<env>` service account can request a scheduler user at `POST /nats/host-user`.
+The request body contains only the public key. Identity takes the pod name from TokenReview and refuses a token without it.
+The scheduler JWT has no expiry. A restarted container can request another JWT with a fresh key for the same pod.
 User management shares the password request limits and uses the TLS peer address.
 `POST /invitations` takes an active member's `principal_id` and requires mail configuration.
 The service sends the one-time secret through Resend to that principal's stored email.

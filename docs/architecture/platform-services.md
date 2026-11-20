@@ -315,19 +315,21 @@ The stream keeps messages for up to seven days and holds up to 256 MiB. It disca
 
 The platform runs one NATS server in operator mode. TLS protects the connection, and NATS user JWTs authenticate clients.
 Identity signs account and user JWTs. NATS stores account JWTs in its full resolver.
-The `PLATFORM` account contains a user for the runtime operator and separate scheduler and data users for each host group.
+The `PLATFORM` account contains a user for the runtime operator and a separate scheduler user for each host pod.
+The scheduler user subscribes to `runtime.host.<pod-name>.>` and publishes its ready marker and heartbeat.
+It can publish and subscribe under its own key-based inbox prefix and send one reply per operator request.
 Each environment has its own account for project events.
 Its JetStream file storage limit is 256 MiB times the number of projects in the environment.
 It has zero memory storage and unlimited stream and consumer counts.
 The account contains all the environment's project streams. Accounts exchange no imports or exports.
 
-The org worker generates the user keys and stores the credentials in Secrets in the org namespace.
+The org worker generates the other environment user keys and stores their credentials in Secrets in the org namespace.
 The worker uses the environment's `stream-admin` credentials to manage project streams.
 Each project's CDC reader can publish only to the project's event subjects.
 Its recovery worker can request stream information and read messages from that project's stream.
 Each JWT authorizes a separate reply inbox.
 
-The host group mounts separate credentials for `workflow` and `ingress` bindings and for its native workflow client.
+The host group mounts a shared data user and separate credentials for its `workflow` and `ingress` bindings and native workflow client.
 Bindings use `workloadConfig: deny` and narrow access to the application's project stream and subjects.
 The NATS HTTP monitor binds to loopback.
 

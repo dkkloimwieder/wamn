@@ -13,6 +13,9 @@
     (dict "name" "identity-ca" "mountPath" "/etc/identity-ca" "readOnly" true)
     (dict "name" "registry" "mountPath" "/etc/wamn/registry" "readOnly" true)
 }}
+{{- $token := dict "audience" "wamn-identity" "path" "token" "expirationSeconds" 3600 }}
+{{- $volumes = append $volumes (dict "name" "identity-token" "projected" (dict "sources" (list (dict "serviceAccountToken" $token)))) }}
+{{- $mounts = append $mounts (dict "name" "identity-token" "mountPath" "/var/run/secrets/wamn-identity" "readOnly" true) }}
 {{- if eq (dig "provider" "" (.Values.oauthEncryption | default dict)) "local" }}
 {{- $volumes = append $volumes (dict "name" "oauth-key" "secret" (dict "secretName" "wamn-oauth" "defaultMode" 384)) }}
 {{- $mounts = append $mounts (dict "name" "oauth-key" "mountPath" "/etc/wamn/oauth" "readOnly" true) }}
@@ -41,7 +44,7 @@
 {{- $ca := "/etc/wamn/nats-ca/ca.crt" }}
 {{- $volumes = append $volumes (dict "name" "nats-ca" "configMap" (dict "name" "nats-ca")) }}
 {{- $mounts = append $mounts (dict "name" "nats-ca" "mountPath" (dir $ca) "readOnly" true) }}
-{{- $brokerNames := dict "scheduler" $broker.scheduler "data" $broker.data "workflow-native" $broker.native "workflow" $broker.workflow.secret "ingress" $broker.ingress.secret }}
+{{- $brokerNames := dict "data" $broker.data "workflow-native" $broker.native "workflow" $broker.workflow.secret "ingress" $broker.ingress.secret }}
 {{- range $kind, $secret := $brokerNames }}
 {{- $volumes = append $volumes (dict "name" (printf "nats-%s" $kind) "secret" (dict "secretName" $secret "defaultMode" 256 "items" (list (dict "key" "user.creds" "path" "user.creds")))) }}
 {{- $mounts = append $mounts (dict "name" (printf "nats-%s" $kind) "mountPath" (printf "/etc/wamn/nats/%s" $kind) "readOnly" true) }}
@@ -89,12 +92,14 @@ data:
     "dataNatsUrl" $nats
     "http" (dict "enabled" true "port" (include "environment.httpPort" . | int))
     "ociCaPaths" .Values.ociCaPaths
-    "env" (list (dict "name" "DOCKER_CONFIG" "value" "/etc/wamn/registry"))
+    "env" (list
+        (dict "name" "DOCKER_CONFIG" "value" "/etc/wamn/registry")
+        (dict "name" "POD_NAME" "valueFrom" (dict "fieldRef" (dict "fieldPath" "metadata.name")))
+    )
     "plugins" $plugins
     "volumes" $volumes
     "volumeMounts" $mounts
     "extraArgs" (list "--settings=/etc/wamn/host/settings.json"
-        "--scheduler-nats-creds=/etc/wamn/nats/scheduler/user.creds"
         "--data-nats-creds=/etc/wamn/nats/data/user.creds"
         (printf "--scheduler-nats-tls-ca=%s" $ca)
         (printf "--data-nats-tls-ca=%s" $ca)
