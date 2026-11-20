@@ -8,6 +8,7 @@ mod operations;
 pub(crate) mod publication;
 mod routes;
 mod rust;
+mod rust_source;
 mod typed_exports;
 mod validation;
 mod wit;
@@ -794,7 +795,6 @@ struct RustRow {
 #[derive(Debug, Clone)]
 struct RustMember {
     name: String,
-    rust_type: String,
     statement_type: SqlValueType,
     nullable: bool,
 }
@@ -803,7 +803,6 @@ struct RustMember {
 struct AccessorBind {
     parameter: String,
     nullable: bool,
-    wamn_rust: String,
     statement_type: SqlValueType,
 }
 
@@ -844,15 +843,6 @@ enum AccessorFetch {
 enum RustVisibility {
     Public,
     Crate,
-}
-
-impl RustVisibility {
-    const fn source(self) -> &'static str {
-        match self {
-            Self::Public => "pub",
-            Self::Crate => "pub(crate)",
-        }
-    }
 }
 
 fn relation<'a>(catalog: &'a CatalogIr, model: &ModelDeclaration) -> Option<&'a Table> {
