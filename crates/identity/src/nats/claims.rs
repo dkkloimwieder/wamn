@@ -3,7 +3,7 @@
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use data_encoding::BASE32_NOPAD;
 use nkeys::{KeyPair, KeyPairType};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha512_256};
 use zeroize::Zeroizing;
 
@@ -63,6 +63,57 @@ struct AccountLimits {
     disk_storage: i64,
     streams: i64,
     consumer: i64,
+}
+
+#[derive(Default, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub(super) struct ClientLimits {
+    pub conn: i64,
+    pub subs: i64,
+    pub payload: i64,
+}
+
+pub(super) const UNLIMITED_CLIENT_LIMITS: ClientLimits = ClientLimits {
+    conn: UNLIMITED,
+    subs: UNLIMITED,
+    payload: UNLIMITED,
+};
+
+pub(super) fn account_limits_match(
+    jwt: &[u8],
+    issued_at: i64,
+    limits: &ClientLimits,
+) -> Result<bool, Error> {
+    #[derive(Deserialize)]
+    struct StoredAccount {
+        iat: i64,
+        nats: StoredNats,
+    }
+
+    #[derive(Deserialize)]
+    struct StoredNats {
+        #[serde(default)]
+        limits: ClientLimits,
+    }
+
+    if jwt.is_empty() {
+        return Ok(false);
+    }
+    let mut parts = jwt.splitn(3, |&byte| byte == b'.');
+    let (Some(_), Some(payload), Some(_)) = (parts.next(), parts.next(), parts.next()) else {
+        return Err(Error::new(
+            "decode NATS resolver account JWT",
+            std::io::Error::other("expected a compact JWT"),
+        ));
+    };
+    // The full resolver has already validated the signature before storing the JWT.
+    let decoded = URL_SAFE_NO_PAD
+        .decode(payload)
+        .map_err(|source| Error::new("decode NATS resolver account JWT payload", source))?;
+    let stored: StoredAccount = serde_json::from_slice(&decoded)
+        .map_err(|source| Error::new("decode NATS resolver account claims", source))?;
+    // An earlier revision can match while a newer update is awaiting publication.
+    Ok(stored.iat == issued_at && stored.nats.limits == *limits)
 }
 
 #[derive(Serialize)]
@@ -134,6 +185,7 @@ pub(super) fn account(
     name: &str,
     issued_at: i64,
     project_count: i32,
+    client_limits: &ClientLimits,
     signing_keys: &[String],
 ) -> Result<String, Error> {
     // One file-backed stream of 256 MiB per project.
@@ -147,10 +199,10 @@ pub(super) fn account(
             kind: "account",
             version: 2,
             limits: AccountLimits {
-                subs: UNLIMITED,
+                subs: client_limits.subs,
                 data: UNLIMITED,
-                payload: UNLIMITED,
-                conn: UNLIMITED,
+                payload: client_limits.payload,
+                conn: client_limits.conn,
                 leaf: 0,
                 imports: 0,
                 exports: 0,

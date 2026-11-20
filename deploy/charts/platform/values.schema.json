@@ -219,6 +219,25 @@
         "localMail": {
           "type": "string"
         },
+        "natsLimitsPerProject": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "connections": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "subscriptions": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "payload": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "required": ["connections", "subscriptions", "payload"]
+        },
         "authNats": {
           "type": "object",
           "additionalProperties": false,
@@ -233,7 +252,8 @@
         "resources": {
           "$ref": "#/definitions/resources"
         }
-      }
+      },
+      "required": ["natsLimitsPerProject"]
     },
     "edge": {
       "type": "object",

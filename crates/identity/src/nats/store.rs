@@ -103,10 +103,10 @@ pub(super) async fn ensure_environment(
     client: &mut PgConnection,
     envelope: &Envelope,
     issuer: &str,
-    org: &OrgId,
-    env: &EnvName,
+    (org, env): (&OrgId, &EnvName),
     project_count: i32,
     max_projects: i64,
+    limits_match: impl AsyncFnOnce(&str, i64) -> Result<bool, Error>,
 ) -> Result<Account, Error> {
     let mut tx = client.begin().await.map_err(database_error)?;
     lock(&mut tx, &format!("{issuer} nats accounts")).await?;
@@ -130,26 +130,39 @@ pub(super) async fn ensure_environment(
         ));
     }
 
-    // The full resolver breaks ties on JWT bytes for two claims issued in the
-    // same second. Persist a strictly increasing iat when the limits change.
     let existing: Option<(String, i64)> = sqlx::query_as(
-        "UPDATE identity.nats_keys
-         SET issued_at = CASE WHEN project_count = $4 THEN issued_at ELSE
-             GREATEST(issued_at + 1, floor(EXTRACT(EPOCH FROM clock_timestamp()))::bigint) END,
-             project_count = $4
-         WHERE issuer = $1 AND kind = 'environment' AND org = $2 AND env = $3
-         RETURNING public_key, issued_at",
+        "SELECT public_key, issued_at FROM identity.nats_keys
+         WHERE issuer = $1 AND kind = 'environment' AND org = $2 AND env = $3",
     )
     .bind(issuer)
     .bind(org.as_str())
     .bind(env.as_str())
-    .bind(project_count)
     .fetch_optional(&mut *tx)
     .await
     .map_err(database_error)?;
 
-    let (subject, issued_at) = if let Some(existing) = existing {
-        existing
+    let (subject, issued_at) = if let Some((subject, issued_at)) = existing {
+        let matches = limits_match(&subject, issued_at).await?;
+        let issued_at = if matches && project_count == current {
+            issued_at
+        } else {
+            // The full resolver breaks same-second ties on JWT bytes.
+            sqlx::query_scalar(
+                "UPDATE identity.nats_keys
+                 SET issued_at = GREATEST(issued_at + 1, floor(EXTRACT(EPOCH FROM clock_timestamp()))::bigint),
+                     project_count = $4
+                 WHERE issuer = $1 AND kind = 'environment' AND org = $2 AND env = $3
+                 RETURNING issued_at",
+            )
+            .bind(issuer)
+            .bind(org.as_str())
+            .bind(env.as_str())
+            .bind(project_count)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(database_error)?
+        };
+        (subject, issued_at)
     } else {
         let pair = KeyPair::new_account();
         let packed = seal(envelope, &pair).await?;
