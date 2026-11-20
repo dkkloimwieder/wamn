@@ -323,6 +323,7 @@ End of the epic: the standard checks, the preflight and the short smoke run.
 - `wamn eject component` returns only if a component generator is built.
 - Rebuild the Operations and Roles views of platform_ui when a route serves the release profile.
 - Postgres array columns have no WIT type. Decide when a second real case appears.
+- A WIT package whose name is a Rust keyword, such as `type`: pinned wit-bindgen writes the module name bare, which does not compile. Decide whether validation refuses such names or WIT generation derives a safe package name.
 - Typed control inputs, then OpenAPI derived with `schemars`.
 - The JSONata output check: P146 says output is validated at run time, but `walk.rs::invoke` only checks that the output is JSON.
 - Where `revocation_seconds` lives: P43 and P336 set the grant cache lifetime per project, but the environment file has one top-level `revocation_seconds`.
