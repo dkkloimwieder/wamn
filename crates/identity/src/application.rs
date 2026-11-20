@@ -108,8 +108,7 @@ pub async fn write_user(
     Ok(())
 }
 
-/// Remove the user row of the principal. Its foreign keys remove its role
-/// rows and its API keys.
+/// Remove the principal's user row and cascade the removal to its role rows.
 pub async fn remove_user(
     client: &mut sqlx::PgConnection,
     principal_id: &PrincipalId,

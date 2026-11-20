@@ -10,6 +10,4 @@ pub mod invocation;
 pub mod oauth_token;
 
 pub mod connections;
-#[cfg(feature = "test-util")]
-pub mod credentials;
 pub mod credential_cleanup;
