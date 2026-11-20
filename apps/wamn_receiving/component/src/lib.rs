@@ -31,7 +31,7 @@ wit_bindgen::generate!({
         "../../../wit/wamn-node",
         "../../../wit/wamn-postgres-0.4",
         "../../target/wamn/wamn_receiving/wit",
-        "wit",
+        "wit/authored.wit",
     ],
     generate_all,
     async: true,
@@ -107,7 +107,12 @@ async fn record_receipt_execute(
         .map(|value| contract::RecordReceiptResult {
             receipt_id: value.receipt_id.into(),
             purchase_order_id: value.purchase_order_id.into(),
-            purchase_order_status: value.purchase_order_status.as_str().to_owned(),
+            purchase_order_status: match value.purchase_order_status {
+                receipt::PurchaseOrderStatus::Open => contract::PurchaseOrderStatusValue::Open,
+                receipt::PurchaseOrderStatus::Complete => {
+                    contract::PurchaseOrderStatusValue::Complete
+                }
+            },
             row_version: value.row_version,
         })
         .map_err(|error| map_record_receipt_error(&error))

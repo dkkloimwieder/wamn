@@ -1,0 +1,71 @@
+interface finish {
+  use wamn:node/types@0.1.0.{node-context, node-error, json-value};
+
+  type timestamp = string;
+
+  record finish-request {
+    keys: json-value,
+  }
+
+  record invalid-input-detail {
+    field: string,
+  }
+
+  variant finish-error {
+    internal-error,
+    invalid-input(invalid-input-detail),
+    retry,
+    timeout,
+  }
+
+  record finish-item {
+    request-id: string,
+    input: result<finish-request, invalid-input-detail>,
+  }
+
+  record finish-result {
+    due: timestamp,
+  }
+
+  record finish-outcome {
+    request-id: string,
+    outcome: result<finish-result, finish-error>,
+  }
+
+  run: async func(ctx: node-context, input: list<finish-item>) -> result<list<finish-outcome>, node-error>;
+}
+
+interface pushed {
+  use wamn:node/types@0.1.0.{node-context, node-error, json-value};
+
+  record pushed-request {
+    record-id: string,
+  }
+
+  record invalid-input-detail {
+    field: string,
+  }
+
+  variant pushed-error {
+    internal-error,
+    invalid-input(invalid-input-detail),
+    retry,
+    timeout,
+  }
+
+  record pushed-item {
+    request-id: string,
+    input: result<pushed-request, invalid-input-detail>,
+  }
+
+  record pushed-result {
+    record-id: string,
+  }
+
+  record pushed-outcome {
+    request-id: string,
+    outcome: result<pushed-result, pushed-error>,
+  }
+
+  run: async func(ctx: node-context, input: list<pushed-item>) -> result<list<pushed-outcome>, node-error>;
+}

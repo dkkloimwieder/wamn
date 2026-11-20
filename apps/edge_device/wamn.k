@@ -8,24 +8,19 @@ manifest.Package {
     models = {}
     custom_operations = {
         "sample.read" = manifest.Command("sample.read") {
-            # No SQL: no connection, transaction or retry.
             connection = None
             transaction = None
             automatic_retry = None
+            idempotent_by = "stateless"
             label = "Read a sample"
             description = "The device operation of an edge box. It turns one frame from the serial device into the sample that the box stores and forwards. It declares no SQL."
-            idempotent_by = "stateless"
-            input.fields = [
-                manifest.request_id
-                {path = "value.frame", type = "text", label = "Frame", description = "The frame that the device sent, without its line ending."}
-                {path = "value.captured_at", type = "timestamptz", label = "Captured at", description = "When the edge box read the frame."}
-            ]
-            result = {
-                class = "one"
-                fields = [{path = "frame", type = "text"}, {path = "captured_at", type = "timestamptz"}]
+            input: {
+                request_id = "request_id"
+                labels = {
+                    "frame" = {"label" = "Frame", "description" = "The frame that the device sent, without its line ending."}
+                    "captured_at" = {"label" = "Captured at", "description" = "When the edge box read the frame."}
+                }
             }
-            errors = ["invalid_input", "permission_denied", "internal_error"]
-            error_details = {}
         }
     }
     connections = {}

@@ -424,7 +424,7 @@ fn result_column<'a>(query: &'a SelectStmt, key: &'a str, relation: &str) -> Opt
         let output = if target.name.is_empty() {
             field
         } else {
-            &target.name
+            crate::describe::column_name(&target.name)
         };
         (output == key && (fields.len() == 1 || (fields.len() == 2 && fields[0] == relation)))
             .then_some(field)

@@ -89,7 +89,7 @@ fn emit_model_export(
             .result
             .fields
             .iter()
-            .map(|f| (f.path.as_str(), f.ty, f.nullable)),
+            .map(|f| (f.path.as_str(), f.ty, f.nullable, None)),
     ));
     source.extend(emit_error_mapper(
         &[&name, "Error"].concat(),
@@ -411,14 +411,14 @@ fn emit_custom_export(local_name: &str, compiled: &CustomDescription<'_>) -> Tok
             }
         });
         source.extend(emit_handler(&name, custom_is_keyed(operation)));
-        source.extend(emit_row_adapter(
-            result
-                .fields
-                .iter()
-                .map(|f| (f.path.as_str(), f.ty, f.nullable)),
-        ));
+        let error_name = [&name, "Error"].concat();
+        source.extend(emit_row_adapter(result.fields.iter().map(|field| {
+            let enum_error = (operation.feed == Some(true) && !field.values.is_empty())
+                .then_some(error_name.as_str());
+            (field.path.as_str(), field.ty, field.nullable, enum_error)
+        })));
         source.extend(emit_error_mapper(
-            &[&name, "Error"].concat(),
+            &error_name,
             compiled
                 .refusals
                 .iter()
@@ -511,19 +511,9 @@ fn emit_tree_validation(fields: &[FieldIr], access: &TokenStream) -> TokenStream
             }
             continue;
         }
-        let mut conditions = Vec::new();
-        if let Some(condition) = scalar_refusal(&field.type_name, &quote!(value)) {
-            conditions.push(condition);
-        }
-        let values = &field.values;
-        if !values.is_empty() {
-            conditions.push(quote!(![#(#values),*].contains(&value.as_str())));
-        }
-        let mut conditions = conditions.into_iter();
-        let Some(first) = conditions.next() else {
+        let Some(condition) = scalar_refusal(&field.type_name, &quote!(value)) else {
             continue;
         };
-        let condition = quote!(#first #(|| #conditions)*);
         if field.nullable {
             source.extend(quote! {
                 if let Some(value) = &mut #field_access && (#condition) { return Err(invalid(#path)); }

@@ -15,9 +15,8 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context as _, Result, ensure};
+use anyhow::{Result, ensure};
 
-use wamn_catalog::manifest::PackageManifest;
 use crate::output_root;
 
 /// The manifest file an author writes.
@@ -70,24 +69,32 @@ pub fn is_package_root(directory: &Path) -> bool {
     is_authored(directory) || package_manifest_path(directory).is_file()
 }
 
-/// Compile a package's `wamn.k` to the bytes of `generated/wamn.json`.
-///
-/// The bytes decode to a validated [`PackageManifest`].
+/// Compile package authorship with the SQL facts from its describe evidence.
 ///
 /// # Errors
 ///
-/// When the package also holds a hand-written `wamn.json`, when no `kcl` runs,
-/// when KCL refuses the file (the error names its path and line), or when the
-/// compiled JSON is not a valid manifest. A statement value that states no
-/// type is not valid here: only `wamn build` derives it.
+/// Returns an error if KCL or WIT is invalid or a statement description is missing.
 pub fn compile_manifest(package_root: &Path) -> Result<Vec<u8>> {
-    let bytes = compile_authored_manifest(package_root)?;
-    PackageManifest::from_authored_slice(&bytes).with_context(|| {
-        format!(
-            "the compiled {} is not a valid manifest",
-            package_root.join(AUTHORED_MANIFEST).display()
-        )
-    })?;
+    let source = crate::build::prepare_source(package_root)?;
+    let mut descriptions = std::collections::BTreeMap::new();
+    if source.document()["custom_operations"]
+        .as_object()
+        .is_some_and(|operations| {
+            operations.values().any(|operation| {
+                operation["statements"]
+                    .as_object()
+                    .is_some_and(|statements| !statements.is_empty())
+            })
+        })
+    {
+        let evidence: crate::describe_cache::Evidence =
+            serde_json::from_slice(&crate::describe_cache::read(package_root)?)?;
+        descriptions = evidence.statements;
+    }
+    let mut document = source.document().clone();
+    crate::build::apply_statement_types(&mut document, &descriptions)?;
+    let bytes = serde_json::to_vec(&document)?;
+    wamn_catalog::manifest::PackageManifest::from_authored_slice(&bytes)?;
     Ok(bytes)
 }
 
@@ -97,7 +104,7 @@ pub fn compile_manifest(package_root: &Path) -> Result<Vec<u8>> {
 ///
 /// The authored form may leave out the type of a statement parameter or row
 /// value, which `wamn build` derives from the statement. It therefore is not
-/// yet a [`PackageManifest`], and this function does not parse it as one.
+/// yet a [`wamn_catalog::manifest::PackageManifest`], and this function does not parse it as one.
 ///
 /// # Errors
 ///
@@ -117,8 +124,8 @@ pub(crate) fn compile_authored_manifest(package_root: &Path) -> Result<Vec<u8>> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wamn_catalog::manifest::CustomOperationResultDeclaration;
     use crate::{GenerationInput, StatementTransactionality, generate};
+    use wamn_catalog::manifest::{CustomOperationResultDeclaration, PackageManifest};
     use wamn_schema_introspection::ir::CatalogIr;
 
     #[test]
@@ -137,19 +144,33 @@ manifest.Package {
             transaction = None
             automatic_retry = None
             idempotent_by = "stateless"
-            input.fields = []
-            result = {
-                class = "one"
-                fields = [{path = "document", type = "uuid"}]
-                signed_reads = {document = {lifetime_seconds = 300}}
-            }
-            errors = ["invalid_input", "permission_denied", "internal_error"]
+            result = {signed_reads = {document = {lifetime_seconds = 300}}}
         }
     }
     components = {files = {}}
 }
 "#;
         fs::write(root.join(AUTHORED_MANIFEST), source).unwrap();
+        let wit = root.join("component/wit/deps/files-file");
+        fs::create_dir_all(&wit).unwrap();
+        fs::write(wit.join("custom.wit"), r"
+interface read {
+    use wamn:node/types@0.1.0.{node-context, node-error};
+    type uuid = string;
+    enum read-request { request }
+    record invalid-input-detail { field: string }
+    record permission-denied-detail { operation: string }
+    variant read-error {
+        internal-error,
+        invalid-input(invalid-input-detail),
+        permission-denied(permission-denied-detail),
+    }
+    record read-item { request-id: string, input: result<read-request, invalid-input-detail> }
+    record read-result { document: uuid }
+    record read-outcome { request-id: string, outcome: result<read-result, read-error> }
+    run: async func(ctx: node-context, input: list<read-item>) -> result<list<read-outcome>, node-error>;
+}
+").unwrap();
         let compiled = compile_manifest(&root);
         fs::remove_dir_all(&root).unwrap();
         let bytes = compiled.unwrap();

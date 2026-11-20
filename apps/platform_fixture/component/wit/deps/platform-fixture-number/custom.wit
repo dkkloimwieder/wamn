@@ -1,0 +1,52 @@
+interface issue {
+  use wamn:node/types@0.1.0.{node-context, node-error, json-value};
+
+  record issue-request {
+    batch-id: string,
+    idempotency-key: string,
+  }
+
+  record idempotency-conflict-detail {
+    field: string,
+  }
+
+  record invalid-input-detail {
+    field: string,
+    minimum: option<string>,
+    maximum: option<string>,
+    observed: option<string>,
+  }
+
+  record permission-denied-detail {
+    operation: string,
+  }
+
+  variant issue-error {
+    idempotency-conflict(idempotency-conflict-detail),
+    internal-error,
+    invalid-input(invalid-input-detail),
+    permission-denied(permission-denied-detail),
+    retry,
+    timeout,
+  }
+
+  record issue-item {
+    request-id: string,
+    input: result<issue-request, invalid-input-detail>,
+  }
+
+  record issue-result {
+    records: s64,
+    bare: string,
+    bare-peek: string,
+    keyed: string,
+    keyed-peek: string,
+  }
+
+  record issue-outcome {
+    request-id: string,
+    outcome: result<issue-result, issue-error>,
+  }
+
+  run: async func(ctx: node-context, input: list<issue-item>) -> result<list<issue-outcome>, node-error>;
+}

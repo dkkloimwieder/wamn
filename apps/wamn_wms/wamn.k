@@ -4,8 +4,6 @@
 import manifest
 
 _schema = "wms"
-_errors_after_input = ["retry", "timeout", "permission_denied", "internal_error"]
-_command_errors = ["concurrency_conflict", "idempotency_conflict", *_errors_after_input]
 
 manifest.Package {
     package = {id = "wamn_wms", version = "2.1.7"}
@@ -93,261 +91,73 @@ manifest.Package {
         "inventory.move" = manifest.Command("inventory.move") {
             idempotent_by = "claim"
             input: {
-                fields = [
-                    manifest.request_id
-                    manifest.idempotency_key
-                    {path = "value.packaging_id", type = "uuid", references = {model = "packaging"}}
-                    {path = "value.to_location_id", type = "uuid", references = {model = "location"}}
-                    {path = "value.expected_row_version", type = "int32", revision = "value.packaging_id"}
-                    manifest.occurred_at
-                ]
-            }
-            result = {
-                class = "one"
-                fields = [
-                    {path = "packaging_id", type = "uuid"}
-                    {path = "location_id", type = "uuid"}
-                    {path = "row_version", type = "int32", revision = True}
-                ]
-            }
-            errors = ["invalid_input", "packaging_not_found", "location_not_found", *_command_errors]
-            error_details = {
-                packaging_not_found = manifest.not_found_details
-                location_not_found = manifest.not_found_details
+                request_id = "request_id"
+                revision_guards = {"expected_row_version" = "packaging_id"}
+                key = "idempotency_key"
+                labels = {
+                    "packaging_id" = {"references" = {"model" = "packaging"}}
+                    "to_location_id" = {"references" = {"model" = "location"}}
+                }
             }
             statements = {
-                lock_packaging = manifest.Statement("command/inventory_move", "lock_packaging") {
-                    fetch = "optional_one"
-                    parameters = [manifest.uuid("packaging_id")]
-                    row = [manifest.uuid("location_id"), manifest.int32("row_version"), manifest.text("status")]
-                }
-                validate_location = manifest.Statement("command/inventory_move", "validate_location") {
-                    fetch = "optional_one"
-                    parameters = [manifest.uuid("location_id")]
-                    row = [manifest.uuid("id")]
-                }
-                move_packaging = manifest.Statement("command/inventory_move", "move_packaging") {
-                    fetch = "one"
-                    parameters = [
-                        manifest.uuid("packaging_id")
-                        manifest.uuid("to_location_id")
-                        manifest.timestamptz("occurred_at")
-                    ]
-                    row = [manifest.uuid("location_id"), manifest.int32("row_version"), manifest.text("status")]
-                }
+                lock_packaging = {fetch = "optional_one", binds = ["packaging_id"]}
+                validate_location = {fetch = "optional_one", binds = ["to_location_id"]}
+                move_packaging = {fetch = "one", binds = ["packaging_id", "to_location_id", "occurred_at"]}
             }
         }
         "inventory.adjust" = manifest.Command("inventory.adjust") {
             idempotent_by = "claim"
             input: {
-                fields = [
-                    manifest.request_id
-                    manifest.idempotency_key
-                    {path = "value.packaging_id", type = "uuid", references = {model = "packaging"}}
-                    {path = "value.product_id", type = "uuid", references = {model = "product"}}
-                    {path = "value.status", type = "text", values = ["available", "held"]}
-                    {path = "value.quantity", type = "numeric"}
-                    {path = "value.reason_code", type = "text"}
-                    {path = "value.expected_row_version", type = "int32", revision = "value.packaging_id"}
-                    manifest.occurred_at
-                ]
-            }
-            result = {
-                class = "one"
-                fields = [
-                    {path = "transaction_ids[]", type = "uuid"}
-                    {path = "packaging_id", type = "uuid"}
-                    {path = "adjusted_quantity", type = "numeric"}
-                    {path = "packaging_status", type = "text", values = ["available", "held", "consumed"]}
-                    {path = "row_version", type = "int32", revision = True}
-                ]
-            }
-            errors = ["invalid_input", "packaging_not_found", "quantity_not_found", *_command_errors]
-            error_details = {
-                packaging_not_found = manifest.not_found_details
-                quantity_not_found = manifest.not_found_details
+                request_id = "request_id"
+                revision_guards = {"expected_row_version" = "packaging_id"}
+                key = "idempotency_key"
+                labels = {
+                    "packaging_id" = {"references" = {"model" = "packaging"}}
+                    "product_id" = {"references" = {"model" = "product"}}
+                }
             }
             statements = {
-                lock_packaging = manifest.Statement("command/inventory_adjust", "lock_packaging") {
-                    fetch = "one"
-                    parameters = [manifest.uuid("packaging_id"), manifest.int32("expected_row_version")]
-                    row = [
-                        manifest.Value {name = "outcome", type = "text", nullable = False}
-                        manifest.Value {name = "detail", type = "json", nullable = False}
-                    ]
-                }
-                adjust = manifest.Statement("command/inventory_adjust", "adjust") {
-                    fetch = "one"
-                    parameters = [
-                        manifest.uuid("packaging_id")
-                        manifest.uuid("product_id")
-                        manifest.text("status")
-                        manifest.numeric("quantity")
-                        manifest.text("reason_code")
-                        manifest.timestamptz("occurred_at")
-                    ]
-                    row = [
-                        manifest.Value {name = "outcome", type = "text", nullable = False}
-                        manifest.Value {name = "detail", type = "json", nullable = False}
-                        manifest.Value {name = "transaction_id", type = "uuid", nullable = True}
-                        manifest.Value {name = "adjusted_quantity", type = "numeric", nullable = True}
-                        manifest.Value {name = "row_version", type = "int32", nullable = True}
-                        manifest.Value {name = "status", type = "text", nullable = True}
-                    ]
-                }
+                lock_packaging = {fetch = "one", binds = ["packaging_id", "expected_row_version"]}
+                adjust = {fetch = "one", binds = ["packaging_id", "product_id", "status", "quantity", "reason_code", "occurred_at"]}
             }
         }
         "inventory.merge" = manifest.Command("inventory.merge") {
             idempotent_by = "claim"
             input: {
-                fields = [
-                    manifest.request_id
-                    manifest.idempotency_key
-                    {path = "value.source_packaging_id", type = "uuid", references = {model = "packaging"}}
-                    {path = "value.target_packaging_id", type = "uuid", references = {model = "packaging"}}
-                    {path = "value.expected_row_version", type = "int32", revision = "value.target_packaging_id"}
-                    manifest.occurred_at
-                ]
-            }
-            result = {
-                class = "one"
-                fields = [
-                    {path = "transaction_ids[]", type = "uuid"}
-                    {path = "source_packaging_id", type = "uuid"}
-                    {path = "target_packaging_id", type = "uuid"}
-                    {path = "target_status", type = "text", values = ["available", "held", "consumed"]}
-                    {path = "row_version", type = "int32", revision = True}
-                ]
-            }
-            errors = ["invalid_input", "packaging_not_found", *_command_errors]
-            error_details = {
-                packaging_not_found = manifest.not_found_details
+                request_id = "request_id"
+                revision_guards = {"expected_row_version" = "target_packaging_id"}
+                key = "idempotency_key"
+                labels = {
+                    "source_packaging_id" = {"references" = {"model" = "packaging"}}
+                    "target_packaging_id" = {"references" = {"model" = "packaging"}}
+                }
             }
             statements = {
-                lock_both_packagings = manifest.Statement("command/inventory_merge", "lock_both_packagings") {
-                    fetch = "one"
-                    parameters = [manifest.uuid("source_packaging_id"), manifest.uuid("target_packaging_id"), manifest.int32("expected_row_version")]
-                    row = [
-                        manifest.Value {name = "outcome", type = "text", nullable = False}
-                        manifest.Value {name = "detail", type = "json", nullable = False}
-                    ]
-                }
-                merge = manifest.Statement("command/inventory_merge", "merge") {
-                    fetch = "one"
-                    parameters = [manifest.uuid("source_packaging_id"), manifest.uuid("target_packaging_id"), manifest.timestamptz("occurred_at")]
-                    row = [
-                        manifest.Value {name = "outcome", type = "text", nullable = False}
-                        manifest.Value {name = "detail", type = "json", nullable = False}
-                        manifest.Value {name = "transaction_ids", type = "json", nullable = False}
-                        manifest.Value {name = "row_version", type = "int32", nullable = True}
-                        manifest.Value {name = "status", type = "text", nullable = True}
-                    ]
-                }
+                lock_both_packagings = {fetch = "one", binds = ["source_packaging_id", "target_packaging_id", "expected_row_version"]}
+                merge = {fetch = "one", binds = ["source_packaging_id", "target_packaging_id", "occurred_at"]}
             }
         }
         "inventory.split" = manifest.Command("inventory.split") {
             idempotent_by = "claim"
             input: {
-                fields = [
-                    manifest.request_id
-                    manifest.idempotency_key
-                    {path = "value.source_packaging_id", type = "uuid", references = {model = "packaging"}}
-                    {path = "value.product_id", type = "uuid", references = {model = "product"}}
-                    {path = "value.status", type = "text", values = ["available", "held"]}
-                    {path = "value.quantity", type = "numeric"}
-                    {path = "value.new_packaging_code", type = "text"}
-                    {
-                        path = "value.new_packaging_type"
-                        type = "text"
-                        values = ["pallet", "tote", "bin", "case", "loose"]
-                    }
-                    {path = "value.to_location_id", type = "uuid", references = {model = "location"}}
-                    {path = "value.expected_row_version", type = "int32", revision = "value.source_packaging_id"}
-                    manifest.occurred_at
-                ]
-            }
-            result = {
-                class = "one"
-                fields = [
-                    {path = "transaction_ids[]", type = "uuid"}
-                    {path = "source_packaging_id", type = "uuid"}
-                    {path = "new_packaging_id", type = "uuid"}
-                    {path = "source_status", type = "text", values = ["available", "held", "consumed"]}
-                    {path = "row_version", type = "int32", revision = True}
-                ]
-            }
-            errors = [
-                "invalid_input"
-                "packaging_not_found"
-                "location_not_found"
-                "quantity_not_found"
-                "insufficient_quantity"
-                *_command_errors
-            ]
-            error_details = {
-                packaging_not_found = manifest.not_found_details
-                location_not_found = manifest.not_found_details
-                quantity_not_found = manifest.not_found_details
-                insufficient_quantity = {required = ["field"], optional = ["maximum", "observed"]}
+                request_id = "request_id"
+                revision_guards = {"expected_row_version" = "source_packaging_id"}
+                key = "idempotency_key"
+                labels = {
+                    "source_packaging_id" = {"references" = {"model" = "packaging"}}
+                    "product_id" = {"references" = {"model" = "product"}}
+                    "to_location_id" = {"references" = {"model" = "location"}}
+                }
             }
             statements = {
-                lock_packaging = manifest.Statement("command/inventory_split", "lock_packaging") {
-                    fetch = "one"
-                    parameters = [manifest.uuid("source_packaging_id"), manifest.int32("expected_row_version")]
-                    row = [
-                        manifest.Value {name = "outcome", type = "text", nullable = False}
-                        manifest.Value {name = "detail", type = "json", nullable = False}
-                    ]
-                }
-                split = manifest.Statement("command/inventory_split", "split") {
-                    fetch = "one"
-                    parameters = [
-                        manifest.uuid("source_packaging_id")
-                        manifest.uuid("product_id")
-                        manifest.text("status")
-                        manifest.numeric("quantity")
-                        manifest.text("new_packaging_code")
-                        manifest.text("new_packaging_type")
-                        manifest.uuid("to_location_id")
-                        manifest.timestamptz("occurred_at")
-                    ]
-                    row = [
-                        manifest.Value {name = "outcome", type = "text", nullable = False}
-                        manifest.Value {name = "detail", type = "json", nullable = False}
-                        manifest.Value {name = "transaction_id", type = "uuid", nullable = True}
-                        manifest.Value {name = "new_packaging_id", type = "uuid", nullable = True}
-                        manifest.Value {name = "row_version", type = "int32", nullable = True}
-                        manifest.Value {name = "status", type = "text", nullable = True}
-                    ]
-                }
+                lock_packaging = {fetch = "one", binds = ["source_packaging_id", "expected_row_version"]}
+                split = {fetch = "one", binds = ["source_packaging_id", "product_id", "status", "quantity", "new_packaging_code", "new_packaging_type", "to_location_id", "occurred_at"]}
             }
         }
         "inventory.aggregate" = manifest.Projection("inventory.aggregate") {
-            lists = {key_field = ["product_id", "location_id", "status"]}
-            input: {fields = []}
-            result = {
-                class = "bounded_list"
-                fields = [
-                    {path = "product_id", type = "uuid"}
-                    {path = "location_id", type = "uuid"}
-                    {path = "status", type = "text", values = ["available", "held"]}
-                    {path = "quantity", type = "numeric"}
-                    {path = "packaging_count", type = "int32"}
-                ]
-            }
-            errors = ["invalid_input", *_errors_after_input]
+            lists = {"key_field" = ["product_id", "location_id", "status"]}
             statements = {
-                inventory_aggregate = manifest.Statement("query", "inventory_aggregate") {
-                    fetch = "bounded_list"
-                    parameters = []
-                    row = [
-                        manifest.uuid("product_id")
-                        manifest.uuid("location_id")
-                        manifest.text("status")
-                        manifest.nullable(manifest.numeric("quantity"))
-                        manifest.nullable(manifest.int32("packaging_count"))
-                    ]
-                }
+                inventory_aggregate = {fetch = "bounded_list", binds = []}
             }
         }
     }

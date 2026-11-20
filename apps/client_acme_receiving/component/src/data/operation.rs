@@ -38,7 +38,6 @@ impl From<detail_sql::LoadPurchaseOrderDetailRow> for PurchaseOrderDetailValue {
 #[derive(Debug)]
 pub struct ApproveInspectionValue {
     pub receipt_id: WamnUuid,
-    pub status: String,
     pub row_version: i32,
     pub purchase_order_id: WamnUuid,
     pub purchase_order_row_version: i32,
@@ -92,7 +91,6 @@ fn approve_inspection_value(
                 Some(purchase_order_row_version),
             ) if status == "approved" => Ok(ApproveInspectionValue {
                 receipt_id,
-                status,
                 row_version,
                 purchase_order_id,
                 purchase_order_row_version,

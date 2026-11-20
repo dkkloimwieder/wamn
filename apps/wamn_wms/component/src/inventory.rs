@@ -31,7 +31,11 @@ mod adjust {
             &inventory_adjust::AdjustCommand {
                 packaging_id: request.packaging_id,
                 product_id: request.product_id,
-                status: request.status,
+                status: match request.status {
+                    contract::StatusValue::Available => "available",
+                    contract::StatusValue::Held => "held",
+                }
+                .to_owned(),
                 quantity: request.quantity,
                 reason_code: request.reason_code,
                 expected_row_version: request.expected_row_version,
@@ -39,15 +43,22 @@ mod adjust {
             },
         )
         .await
-        .map(|value| contract::AdjustResult {
-            transaction_ids: value.transaction_ids,
-            packaging_id: value.packaging_id,
-            adjusted_quantity: value.adjusted_quantity,
-            packaging_status: value.packaging_status,
-            row_version: value.row_version,
-        })
         .map_err(|error| {
             operation::map_error(error.error_type().literal(), |key| detail(&error, key))
+        })
+        .and_then(|value| {
+            Ok(contract::AdjustResult {
+                transaction_ids: value.transaction_ids,
+                packaging_id: value.packaging_id,
+                adjusted_quantity: value.adjusted_quantity,
+                packaging_status: match value.packaging_status.as_str() {
+                    "available" => contract::PackagingStatusValue::Available,
+                    "held" => contract::PackagingStatusValue::Held,
+                    "consumed" => contract::PackagingStatusValue::Consumed,
+                    _ => return Err(contract::AdjustError::InternalError),
+                },
+                row_version: value.row_version,
+            })
         })
     }
     operation::export_operation!(
@@ -85,7 +96,11 @@ mod aggregate {
                 Ok(contract::AggregateRow {
                     product_id: row.product_id.0,
                     location_id: row.location_id.0,
-                    status: row.status,
+                    status: match row.status.as_str() {
+                        "available" => contract::StatusValue::Available,
+                        "held" => contract::StatusValue::Held,
+                        _ => return Err(contract::AggregateError::InternalError),
+                    },
                     quantity: row
                         .quantity
                         .ok_or(contract::AggregateError::InternalError)?
@@ -133,15 +148,22 @@ mod merge {
             },
         )
         .await
-        .map(|value| contract::MergeResult {
-            transaction_ids: value.transaction_ids,
-            source_packaging_id: value.source_packaging_id,
-            target_packaging_id: value.target_packaging_id,
-            target_status: value.target_status,
-            row_version: value.row_version,
-        })
         .map_err(|error| {
             operation::map_error(error.error_type().literal(), |key| detail(&error, key))
+        })
+        .and_then(|value| {
+            Ok(contract::MergeResult {
+                transaction_ids: value.transaction_ids,
+                source_packaging_id: value.source_packaging_id,
+                target_packaging_id: value.target_packaging_id,
+                target_status: match value.target_status.as_str() {
+                    "available" => contract::TargetStatusValue::Available,
+                    "held" => contract::TargetStatusValue::Held,
+                    "consumed" => contract::TargetStatusValue::Consumed,
+                    _ => return Err(contract::MergeError::InternalError),
+                },
+                row_version: value.row_version,
+            })
         })
     }
     operation::export_operation!(
@@ -216,25 +238,43 @@ mod split {
             &inventory_split::SplitCommand {
                 source_packaging_id: request.source_packaging_id,
                 product_id: request.product_id,
-                status: request.status,
+                status: match request.status {
+                    contract::StatusValue::Available => "available",
+                    contract::StatusValue::Held => "held",
+                }
+                .to_owned(),
                 quantity: request.quantity,
                 new_packaging_code: request.new_packaging_code,
-                new_packaging_type: request.new_packaging_type,
+                new_packaging_type: match request.new_packaging_type {
+                    contract::NewPackagingTypeValue::Pallet => "pallet",
+                    contract::NewPackagingTypeValue::Tote => "tote",
+                    contract::NewPackagingTypeValue::Bin => "bin",
+                    contract::NewPackagingTypeValue::Case => "case",
+                    contract::NewPackagingTypeValue::Loose => "loose",
+                }
+                .to_owned(),
                 to_location_id: request.to_location_id,
                 expected_row_version: request.expected_row_version,
                 occurred_at: request.occurred_at,
             },
         )
         .await
-        .map(|value| contract::SplitResult {
-            transaction_ids: value.transaction_ids,
-            source_packaging_id: value.source_packaging_id,
-            new_packaging_id: value.new_packaging_id,
-            source_status: value.source_status,
-            row_version: value.row_version,
-        })
         .map_err(|error| {
             operation::map_error(error.error_type().literal(), |key| detail(&error, key))
+        })
+        .and_then(|value| {
+            Ok(contract::SplitResult {
+                transaction_ids: value.transaction_ids,
+                source_packaging_id: value.source_packaging_id,
+                new_packaging_id: value.new_packaging_id,
+                source_status: match value.source_status.as_str() {
+                    "available" => contract::SourceStatusValue::Available,
+                    "held" => contract::SourceStatusValue::Held,
+                    "consumed" => contract::SourceStatusValue::Consumed,
+                    _ => return Err(contract::SplitError::InternalError),
+                },
+                row_version: value.row_version,
+            })
         })
     }
     operation::export_operation!(

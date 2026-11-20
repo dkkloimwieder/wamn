@@ -33,7 +33,11 @@ async fn append(
         transaction,
         request.delivery_id,
         request.record_id.clone(),
-        request.outcome,
+        match request.outcome {
+            contract::OutcomeValue::Pushed => "pushed",
+            contract::OutcomeValue::Refused => "refused",
+        }
+        .to_owned(),
         request.detail.map(|value| Json(value.encoded_json)),
     )
     .await
@@ -70,35 +74,5 @@ mod tests {
             .record_id,
             appended("item-1".into(), None).record_id
         );
-    }
-
-    #[test]
-    fn only_declared_outcomes_are_accepted() {
-        use std::future::Future as _;
-        use std::task::{Context, Poll, Waker};
-        for outcome in ["pushed", "refused", "vendor_refused"] {
-            let input = vec![contract::AppendItem {
-                request_id: "r".into(),
-                input: Ok(contract::AppendRequest {
-                    idempotency_key: "r".into(),
-                    delivery_id: "d".into(),
-                    record_id: "i".into(),
-                    outcome: outcome.into(),
-                    detail: None,
-                }),
-            }];
-            let mut state = ();
-            let future = operation::run(input, &mut state, async |(), request| {
-                Ok(contract::AppendResult {
-                    record_id: request.record_id,
-                })
-            });
-            let Poll::Ready(results) =
-                std::pin::pin!(future).poll(&mut Context::from_waker(Waker::noop()))
-            else {
-                panic!("the in-memory handler completes immediately");
-            };
-            assert_eq!(results[0].outcome.is_ok(), outcome != "vendor_refused");
-        }
     }
 }

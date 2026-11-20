@@ -466,13 +466,14 @@ fn joined_root_keys(
 /// Wrap the authored read in the same snapshot carrier as a generated page.
 pub(crate) fn authored_page(statement: &str, fields: &[String]) -> String {
     format!(
-        "SELECT bound.feed_cursor, {} FROM (SELECT {SNAPSHOT_XMIN} AS feed_cursor) AS bound LEFT JOIN LATERAL (\n{}\n) AS page ON true;\n",
+        "SELECT bound.feed_cursor, {} FROM (SELECT {SNAPSHOT_XMIN} AS feed_cursor) AS bound LEFT JOIN LATERAL (\n{}\n) AS page ({}) ON true;\n",
         fields
             .iter()
             .map(|field| format!("page.{field}"))
             .collect::<Vec<_>>()
             .join(", "),
-        statement.trim().trim_end_matches(';')
+        statement.trim().trim_end_matches(';'),
+        fields.join(", "),
     )
 }
 
@@ -541,11 +542,11 @@ LEFT JOIN LATERAL (
         WHERE ${after}::{cast} IS NULL OR (changed.change_transaction, changed.change_id) > (${transaction}::int8, ${after}::{cast})
         ORDER BY changed.change_transaction, changed.change_id LIMIT ${limit}::int8
     ), result AS (
-        SELECT * FROM (\n{statement}\n        ) AS result WHERE result.{key} = ANY(ARRAY(SELECT change_id FROM affected))
+        SELECT * FROM (\n{statement}\n        ) AS result ({names}) WHERE result.{key} = ANY(ARRAY(SELECT change_id FROM affected))
     )
     SELECT affected.change_id, affected.change_transaction, result.{key} IS NOT NULL AS present, {result_columns}
     FROM affected LEFT JOIN result ON result.{key} = affected.change_id
-) AS page ON true ORDER BY page.change_transaction, page.change_id;\n", page_columns = columns("page"), result_columns = columns("result"), statement = statement.trim().trim_end_matches(';'))
+) AS page ON true ORDER BY page.change_transaction, page.change_id;\n", page_columns = columns("page"), result_columns = columns("result"), names = fields.join(", "), statement = statement.trim().trim_end_matches(';'))
 }
 
 /// The query body shared by a list page and its restricted feed run.
@@ -701,8 +702,8 @@ const fn sql_direction(direction: CursorDirection) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::query;
-    use wamn_catalog::manifest::{CursorDirection, ModelDeclaration, OperationDeclaration};
     use sqlx::Row as _;
+    use wamn_catalog::manifest::{CursorDirection, ModelDeclaration, OperationDeclaration};
 
     use wamn_scalar::SqlValueType;
     use wamn_schema_introspection::ir::{Column, Constraint, Table};

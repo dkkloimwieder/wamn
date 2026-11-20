@@ -12,9 +12,9 @@ use wamn_catalog::manifest::{
 
 /// Emit a row conversion without requiring an application crate dependency.
 pub(super) fn emit_row_adapter<'a>(
-    fields: impl IntoIterator<Item = (&'a str, SqlValueType, bool)>,
+    fields: impl IntoIterator<Item = (&'a str, SqlValueType, bool, Option<&'a str>)>,
 ) -> TokenStream {
-    let members = fields.into_iter().filter_map(|(path, ty, nullable)| {
+    let members = fields.into_iter().filter_map(|(path, ty, nullable, enum_error)| {
         let list = path.strip_suffix("[]");
         let name = list.unwrap_or(path);
         // The WIT record includes only top-level result fields.
@@ -22,6 +22,21 @@ pub(super) fn emit_row_adapter<'a>(
             return None;
         }
         let member = rust_ident(name);
+        let input = quote!(row.#member);
+        if let Some(error) = enum_error {
+            let error = rust_ident(error);
+            let parse = |value: TokenStream| {
+                quote!(#value.parse().map_err(|_| contract::#error::InternalError))
+            };
+            let value = if nullable {
+                let parsed = parse(quote!(value));
+                quote!(#input.map(|value| #parsed).transpose()?)
+            } else {
+                let parsed = parse(input);
+                quote!(#parsed?)
+            };
+            return Some(quote!(#member: #value,));
+        }
         let convert = |value: TokenStream| match ty {
             SqlValueType::Uuid | SqlValueType::Numeric | SqlValueType::Timestamptz => {
                 quote!(#value.0)
@@ -31,7 +46,6 @@ pub(super) fn emit_row_adapter<'a>(
             }
             _ => value,
         };
-        let input = quote!(row.#member);
         let requires_conversion = matches!(
             ty,
             SqlValueType::Uuid

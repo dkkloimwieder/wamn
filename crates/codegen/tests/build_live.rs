@@ -171,14 +171,18 @@ async fn statement_types_are_derived_and_nullability_only_widens(pool: sqlx::PgP
     let database = wamn_test_postgres::url(&pool);
 
     let accepted = Workspace::new("accepted");
-    accepted.edit_manifest(
-        "row = [manifest.uuid(\"widget_id\")]",
-        "row = [manifest.Value {name = \"widget_id\"}]",
-    );
-    accepted.edit_manifest(
-        "manifest.int32(\"edit_version\"), manifest.nullable",
-        "manifest.nullable(manifest.int32(\"edit_version\")), manifest.nullable",
-    );
+    let archive_sql = accepted
+        .package()
+        .join("command/widget/archive/archive.sql");
+    let sql = fs::read_to_string(&archive_sql).unwrap();
+    fs::write(
+        &archive_sql,
+        sql.replace(
+            "SELECT id, edit_version, note",
+            r#"SELECT id, edit_version AS "edit_version?", note"#,
+        ),
+    )
+    .unwrap();
     let manifest = build(
         &accepted.package(),
         &accepted.root.join("target"),
@@ -194,10 +198,16 @@ async fn statement_types_are_derived_and_nullability_only_widens(pool: sqlx::PgP
     assert_eq!(archive["row"][1]["nullable"], true);
 
     let refused = Workspace::new("refused");
-    refused.edit_manifest(
-        "manifest.nullable(manifest.text(\"note\"))",
-        "manifest.Value {name = \"note\", type = \"text\", nullable = False}",
-    );
+    let archive_sql = refused.package().join("command/widget/archive/archive.sql");
+    let sql = fs::read_to_string(&archive_sql).unwrap();
+    fs::write(
+        &archive_sql,
+        sql.replace(
+            "SELECT id, edit_version, note",
+            r#"SELECT id, edit_version, note AS "note!""#,
+        ),
+    )
+    .unwrap();
     let _error = build(
         &refused.package(),
         &refused.root.join("target"),
@@ -214,8 +224,8 @@ fn projection_view_workspace(name: &str) -> Workspace {
     sql.push_str("\nCREATE VIEW inventory.widget_screen AS SELECT id, code, edit_version, to_jsonb(widget) AS attributes FROM inventory.widget;\n");
     fs::write(migration, sql).unwrap();
     fs::write(
-        workspace.package().join("query/widget_list.sql"),
-        "SELECT id, code, edit_version, attributes FROM widget_screen ORDER BY id;\n",
+        workspace.package().join("query/widget/list/list.sql"),
+        r#"SELECT id AS "id!", code AS "code!", edit_version AS "edit_version!", attributes AS "attributes!" FROM widget_screen ORDER BY id;"#,
     )
     .unwrap();
     workspace
@@ -236,8 +246,8 @@ fn authored_feed_workspace(name: &str, definition: &str) -> Workspace {
          CREATE VIEW inventory.widget_screen AS {definition};\n"
     )).unwrap();
     fs::write(
-        workspace.package().join("query/widget_list.sql"),
-        "SELECT id, code, edit_version, attributes FROM widget_screen ORDER BY id;\n",
+        workspace.package().join("query/widget/list/list.sql"),
+        r#"SELECT id AS "id!", code AS "code!", edit_version AS "edit_version!", attributes AS "attributes!" FROM widget_screen ORDER BY id;"#,
     )
     .unwrap();
     workspace
@@ -267,7 +277,7 @@ async fn authored_feed_refuses_a_one_to_many_view_without_grouping(pool: sqlx::P
         orders.edit_version::int4 AS edit_version, to_jsonb(orders) AS attributes
         FROM inventory.widget_maker AS orders JOIN inventory.widget AS line ON line.maker_id = orders.id");
     workspace.edit_manifest(
-        "lists = {model = \"widget\", key_field = \"id\", display_field = \"code\"}",
+        "lists = {\"model\" = \"widget\", \"key_field\" = [\"id\"], \"display_field\" = \"code\"}",
         "lists = {model = \"widget_maker\", key_field = \"id\", display_field = \"code\"}",
     );
     authored_feed_build(&pool, &workspace).await.unwrap_err();
@@ -294,7 +304,7 @@ async fn authored_feed_refuses_statement_tables_and_joins(pool: sqlx::PgPool) {
     ] {
         let workspace =
             authored_feed_workspace(&format!("feed-statement-{name}"), RECEIPT_FEED_VIEW);
-        fs::write(workspace.package().join("query/widget_list.sql"), sql).unwrap();
+        fs::write(workspace.package().join("query/widget/list/list.sql"), sql).unwrap();
         authored_feed_build(&pool, &workspace).await.unwrap_err();
     }
 }
@@ -317,7 +327,7 @@ async fn authored_feed_refuses_statement_grouping_windows_and_limits(pool: sqlx:
     ] {
         let workspace =
             authored_feed_workspace(&format!("feed-statement-{name}"), RECEIPT_FEED_VIEW);
-        fs::write(workspace.package().join("query/widget_list.sql"), sql).unwrap();
+        fs::write(workspace.package().join("query/widget/list/list.sql"), sql).unwrap();
         authored_feed_build(&pool, &workspace).await.unwrap_err();
     }
 }
@@ -338,8 +348,8 @@ async fn authored_feed_refuses_a_base_table_without_history(pool: sqlx::PgPool) 
 async fn authored_feed_refuses_a_key_other_than_the_root_id(pool: sqlx::PgPool) {
     let workspace = authored_feed_workspace("feed-wrong-key", RECEIPT_FEED_VIEW);
     workspace.edit_manifest(
-        "lists = {model = \"widget\", key_field = \"id\", display_field = \"code\"}",
-        "lists = {model = \"widget\", key_field = \"code\", display_field = \"code\"}",
+        "lists = {\"model\" = \"widget\", \"key_field\" = [\"id\"], \"display_field\" = \"code\"}",
+        "lists = {\"model\" = \"widget\", \"key_field\" = [\"code\"], \"display_field\" = \"code\"}",
     );
     authored_feed_build(&pool, &workspace).await.unwrap_err();
 }
@@ -363,15 +373,9 @@ async fn projection_view_keeps_non_null_and_nullable_declarations() {
             "view-required"
         });
         if nullable {
-            workspace.edit_manifest(
-                "row = [manifest.uuid(\"id\"), manifest.text(\"code\"), manifest.int32(\"edit_version\"), manifest.Value {name = \"attributes\", type = \"json\", nullable = False}]",
-                "row = [manifest.nullable(manifest.uuid(\"id\")), manifest.nullable(manifest.text(\"code\")), manifest.nullable(manifest.int32(\"edit_version\")), manifest.nullable(manifest.json(\"attributes\"))]",
-            );
-        } else {
-            workspace.edit_manifest(
-                "row = [manifest.uuid(\"id\"), manifest.text(\"code\"), manifest.int32(\"edit_version\"), manifest.Value {name = \"attributes\", type = \"json\", nullable = False}]",
-                "row = [manifest.Value {name = \"id\", type = \"uuid\", nullable = False}, manifest.Value {name = \"code\", type = \"text\", nullable = False}, manifest.Value {name = \"edit_version\", type = \"int32\", nullable = False}, manifest.Value {name = \"attributes\", type = \"json\", nullable = False}]",
-            );
+            let path = workspace.package().join("query/widget/list/list.sql");
+            let sql = fs::read_to_string(&path).unwrap();
+            fs::write(&path, sql.replace('!', "?")).unwrap();
         }
         let output_root = workspace.root.join("target/wamn");
         generate_package(&BuildRequest::refresh(
@@ -404,77 +408,6 @@ async fn projection_view_keeps_non_null_and_nullable_declarations() {
             assert_eq!(observed[3], serde_json::json!("id"));
         };
     }
-    let workspace = projection_view_workspace("view-undeclared");
-    let mut database_server_database = wamn_test_postgres::start(&[]).unwrap();
-    let database = url::Url::parse(
-        database_server_database
-            .create_database("fixture")
-            .await
-            .unwrap()
-            .url(),
-    )
-    .unwrap();
-    let output_root = workspace.root.join("target/wamn");
-    generate_package(&BuildRequest::refresh(
-        &workspace.package(),
-        &output_root,
-        database.as_str(),
-    ))
-    .await
-    .expect("generate an undeclared view value as nullable");
-    let manifest: Value = serde_json::from_slice(
-        &fs::read(
-            package_output(
-                &output_root,
-                &wamn_fixture_package::PACKAGE_ID
-                    .parse()
-                    .expect("valid fixture name"),
-            )
-            .join("wamn.json"),
-        )
-        .unwrap(),
-    )
-    .unwrap();
-    assert_eq!(
-        statement(&manifest, "widget.list", "list")["row"][1]["nullable"],
-        true
-    );
-}
-
-#[sqlx::test(migrations = false)]
-async fn projection_view_refuses_a_wrong_declared_type_and_names_the_field(pool: sqlx::PgPool) {
-    let workspace = projection_view_workspace("view-wrong-type");
-    workspace.edit_manifest(
-        "manifest.text(\"code\"), manifest.int32(\"edit_version\")",
-        "manifest.int32(\"code\"), manifest.int32(\"edit_version\")",
-    );
-    let database = wamn_test_postgres::url(&pool);
-    let _error = generate_package(&BuildRequest::refresh(
-        &workspace.package(),
-        &workspace.root.join("target/wamn"),
-        database.as_str(),
-    ))
-    .await
-    .expect_err("refuse a projection whose declared type differs from its view column");
-}
-
-#[sqlx::test(migrations = false)]
-async fn projection_view_does_not_hide_nullable_table_columns(pool: sqlx::PgPool) {
-    let workspace = projection_view_workspace("view-with-table");
-    workspace.edit_manifest(
-        "manifest.text(\"code\"), manifest.int32(\"edit_version\")",
-        "manifest.Value {name = \"code\", type = \"text\", nullable = False}, manifest.int32(\"edit_version\")",
-    );
-    fs::write(workspace.package().join("query/widget_list.sql"),
-        "SELECT screen.id, widget.note AS code, screen.edit_version, screen.attributes FROM widget_screen AS screen JOIN widget ON widget.id = screen.id ORDER BY screen.id;\n").unwrap();
-    let database = wamn_test_postgres::url(&pool);
-    let _error = generate_package(&BuildRequest::refresh(
-        &workspace.package(),
-        &workspace.root.join("target/wamn"),
-        database.as_str(),
-    ))
-    .await
-    .expect_err("a view read must keep the nullable table-column refusal");
 }
 
 /// Owner declarations survive compilation at a caller-selected output root.
@@ -529,12 +462,12 @@ async fn a_statement_takes_exactly_the_parameters_its_accessor_binds(pool: sqlx:
     for (label, path, sql) in [
         (
             "list-binds",
-            "query/widget_list.sql",
+            "query/widget/list/list.sql",
             "SELECT id, code, edit_version, to_jsonb(widget) AS attributes FROM widget WHERE id = $1 ORDER BY id",
         ),
         (
             "archive-binds",
-            "command/widget/archive.sql",
+            "command/widget/archive/archive.sql",
             "SELECT id, edit_version, note FROM widget WHERE id = $1 AND edit_version = $2 FOR UPDATE",
         ),
     ] {

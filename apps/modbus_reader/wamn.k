@@ -12,13 +12,9 @@ manifest.Package {
             transaction = None
             automatic_retry = None
             idempotent_by = "stateless"
-            input.fields = [
-                manifest.request_id
-                {path = "value.address", type = "int32"}
-            ]
-            result = {class = "one", fields = [{path = "register", type = "int32"}]}
-            errors = ["invalid_input", "unavailable", "retry", "timeout", "internal_error"]
-            error_details = {unavailable = {}}
+            input: {
+                request_id = "request_id"
+            }
         }
     }
     connections = {registers = {interface = "wamn:modbus/read@1.0.0", mode = "read"}}

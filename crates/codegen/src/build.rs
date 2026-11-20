@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::{Context as _, Result, bail, ensure};
-use serde_json::{Map, Value};
+use serde_json::{Value, json};
 use sqlx::{AssertSqlSafe, Row as _, SqlSafeStr as _};
 use wamn_catalog::manifest::{
     CrudAction, PackageManifest, ResultClass, canonical_operation_identity,
@@ -101,6 +101,7 @@ pub struct PreparedSource {
     paths: Vec<PathBuf>,
     document: Value,
     sources: ManifestSources,
+    wit: crate::authored_wit::Sources,
 }
 
 impl PreparedSource {
@@ -153,8 +154,10 @@ impl PreparedSource {
 /// Freeze the package inputs and compile KCL once before discovery or generation.
 pub fn prepare_source(root: &Path) -> Result<PreparedSource> {
     let (snapshot, paths) = snapshot_source(root)?;
-    let document = serde_json::from_slice(&compile_authored_manifest(snapshot.path())?)
+    let mut document = serde_json::from_slice(&compile_authored_manifest(snapshot.path())?)
         .context("parse the authored manifest")?;
+    let wit = crate::authored_wit::Sources::read(snapshot.path(), &paths, &mut document)?;
+    set_statement_paths(&mut document)?;
     let sources = ManifestSources::from_document(&document)?;
     Ok(PreparedSource {
         root: root.to_owned(),
@@ -162,6 +165,7 @@ pub fn prepare_source(root: &Path) -> Result<PreparedSource> {
         paths,
         document,
         sources,
+        wit,
     })
 }
 
@@ -293,7 +297,13 @@ pub async fn generate_prepared(
         mut files,
         ..
     } = generated;
+    source
+        .wit
+        .stage(root, manifest.package.version.as_str(), &mut files)?;
     for path in &source.paths {
+        if path.starts_with("component/wit") {
+            continue;
+        }
         if let std::collections::btree_map::Entry::Vacant(entry) = files.entry(path.clone()) {
             entry.insert(fs::read(root.join(path))?);
         }
@@ -370,6 +380,25 @@ fn source_paths(root: &Path) -> Result<Vec<PathBuf>> {
             let entry = entry?;
             let path = relative.join(entry.file_name());
             let type_ = entry.file_type()?;
+            if path.starts_with("component") {
+                if type_.is_dir()
+                    && (Path::new(crate::authored_wit::DEPS).starts_with(&path)
+                        || path.starts_with(crate::authored_wit::DEPS))
+                {
+                    directories.push(path);
+                } else if (path == Path::new("component/wit/authored.wit")
+                    || path.starts_with(crate::authored_wit::DEPS))
+                    && path.extension().is_some_and(|extension| extension == "wit")
+                {
+                    ensure!(
+                        type_.is_file(),
+                        "authored WIT must be a regular file: {}",
+                        entry.path().display()
+                    );
+                    paths.push(path);
+                }
+                continue;
+            }
             let authored_tree = path.starts_with("migrations")
                 || path.starts_with("history")
                 || path.starts_with("command")
@@ -722,172 +751,123 @@ fn missing_paged_query_indexes(
     Ok(warnings)
 }
 
-/// Every statement value object of a manifest document: each parameter and row
-/// value of each custom operation statement, with the statement's name and path.
-fn for_each_statement(
-    manifest: &mut Value,
-    mut visit: impl FnMut(&str, &mut Map<String, Value>) -> Result<()>,
-) -> Result<()> {
-    let Some(operations) = manifest
+fn set_statement_paths(document: &mut Value) -> Result<()> {
+    let Some(operations) = document
         .get_mut("custom_operations")
         .and_then(Value::as_object_mut)
     else {
         return Ok(());
     };
     for (operation_name, operation) in operations {
-        let Some(statements) = operation
+        let local_name: wamn_catalog::local_operation::LocalOperation = operation_name.parse()?;
+        let (group, local) = local_name
+            .as_str()
+            .split_once('.')
+            .context("custom operation group and name")?;
+        let directory = if operation["type"] == "projection" {
+            "query"
+        } else {
+            "command"
+        };
+        if let Some(statements) = operation
             .get_mut("statements")
             .and_then(Value::as_object_mut)
-        else {
+        {
+            for (name, statement) in statements {
+                let name: wamn_catalog::manifest::source_name::SourceName = name.parse()?;
+                statement["path"] = format!("{directory}/{group}/{local}/{name}.sql").into();
+            }
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn apply_statement_types(
+    document: &mut Value,
+    descriptions: &BTreeMap<String, DescribedStatement>,
+) -> Result<()> {
+    let Some(operations) = document
+        .get_mut("custom_operations")
+        .and_then(Value::as_object_mut)
+    else {
+        return Ok(());
+    };
+    for (operation_name, operation) in operations {
+        let operation = operation.as_object_mut().context("custom operation")?;
+        let Some(statements) = operation.remove("statements") else {
             continue;
         };
-        for (statement_name, statement) in statements {
-            let statement = statement.as_object_mut().with_context(|| {
-                format!("statement {operation_name}.{statement_name} is not an object")
-            })?;
-            visit(&format!("{operation_name}.{statement_name}"), statement)?;
-        }
-    }
-    Ok(())
-}
-
-/// The value objects of one statement member, `parameters` or `row`.
-fn values_mut<'a>(
-    statement: &'a mut Map<String, Value>,
-    member: &str,
-) -> impl Iterator<Item = &'a mut Map<String, Value>> {
-    statement
-        .get_mut(member)
-        .and_then(Value::as_array_mut)
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_object_mut)
-}
-
-/// Apply what describe says to the statement values of the authored manifest
-/// (docs/architecture/data-access.md#application-declarations).
-///
-/// A value without a type takes the described type. A stated type must equal
-/// it. A parameter without a nullability is not null, because SQLx describes
-/// no parameter nullability. A row value without a nullability takes SQLx's,
-/// and is nullable where SQLx cannot tell. For a stated row nullability the
-/// owner's rule (wamn-00rts.3) holds: a `nullable: true` declaration on a column that SQLx says cannot be null is
-/// wider, always safe, and kept, because SQLx can miss an outer join that
-/// planning removed. A `nullable: false` declaration is refused only when SQLx
-/// says the column can be null; when SQLx does not know, as for an
-/// expression, the declaration stands. Every refusal of the package is
-/// reported at once.
-/// View columns carry no nullability evidence, so their declarations stand too.
-/// An undeclared view value is nullable because PostgreSQL gives no evidence.
-fn apply_statement_types(
-    manifest: &mut Value,
-    described: &BTreeMap<String, DescribedStatement>,
-) -> Result<()> {
-    let mut refusals = Vec::new();
-    for_each_statement(manifest, |at, statement| {
-        let path = statement
-            .get("path")
-            .and_then(Value::as_str)
-            .with_context(|| format!("statement {at} names no path"))?
-            .to_owned();
-        let described = described
-            .get(&path)
-            .with_context(|| format!("statement {at} ({path}) was not described"))?;
-        let at = format!("{at} ({path})");
-
-        let parameters = values_mut(statement, "parameters").collect::<Vec<_>>();
-        if parameters.len() == described.parameters.len() {
-            for (value, type_name) in parameters.into_iter().zip(&described.parameters) {
-                apply_type(&at, value, type_name, &mut refusals);
-                value.entry("nullable").or_insert(Value::Bool(false));
-            }
-        } else {
-            refusals.push(format!(
-                "{at}: the statement takes {} parameters, and the manifest names {}",
-                described.parameters.len(),
-                parameters.len()
-            ));
-        }
-
-        let row = values_mut(statement, "row").collect::<Vec<_>>();
-        if row.len() != described.columns.len() {
-            refusals.push(format!(
-                "{at}: the statement returns {} columns, and the manifest names {}",
-                described.columns.len(),
-                row.len()
-            ));
-            return Ok(());
-        }
-        for (value, column) in row.into_iter().zip(&described.columns) {
-            let name = value
-                .get("name")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_owned();
-            if name != column.name {
-                refusals.push(format!(
-                    "{at}: the manifest names row value {name}, and the statement returns column {}",
-                    column.name
-                ));
-                continue;
-            }
-            apply_type(&at, value, &column.type_name, &mut refusals);
-            match value.get("nullable").map(Value::as_bool) {
-                None => {
-                    value.insert(
-                        "nullable".to_owned(),
-                        Value::Bool(column.nullable != Some(false)),
+        let request = operation["input"]["fields"]
+            .as_array()
+            .context("WIT input fields")?;
+        let Value::Object(mut statements) = statements else {
+            bail!("custom statements must be an object");
+        };
+        for (name, statement) in &mut statements {
+            let path = statement["path"].as_str().context("statement path")?;
+            let at = format!("{operation_name}.{name} ({path})");
+            let described = descriptions
+                .get(path)
+                .with_context(|| format!("{at}: no SQLx description"))?;
+            let binds = statement["binds"]
+                .as_array()
+                .context("statement bind names")?;
+            ensure!(
+                binds.len() == described.parameters.len(),
+                "{at}: KCL has {} binds and SQLx describes {}",
+                binds.len(),
+                described.parameters.len()
+            );
+            let mut parameters = Vec::with_capacity(binds.len());
+            for (bind, type_name) in binds.iter().zip(&described.parameters) {
+                let bind = bind.as_str().context("bind name")?;
+                let ty = column_type(type_name).with_context(|| {
+                    format!("{at}: unsupported bind type {type_name} for {bind}")
+                })?;
+                let mut fields = request.iter().filter(|field| {
+                    field["path"]
+                        .as_str()
+                        .is_some_and(|path| path.rsplit('.').next() == Some(bind))
+                });
+                let nullable = if let Some(field) = fields.next() {
+                    ensure!(
+                        fields.next().is_none(),
+                        "{at}: bind {bind} matches more than one WIT input field"
                     );
-                }
-                Some(Some(false)) if column.nullable == Some(true) && !column.view_column => refusals.push(format!(
-                    "{at}: row value {name} is declared not null, and SQLx says its column can be null; declare it nullable"
-                )),
-                Some(Some(_)) => {}
-                Some(None) => refusals.push(format!(
-                    "{at}: row value {name} has a nullable that is not a boolean"
-                )),
+                    ensure!(
+                        field["type"] == ty.as_str(),
+                        "{at}: bind {bind} has WIT type {} and SQLx type {}",
+                        field["type"],
+                        ty.as_str()
+                    );
+                    field["nullable"] == true
+                } else {
+                    false
+                };
+                parameters.push(json!({"name": bind, "type": ty, "nullable": nullable}));
             }
+            let mut row = Vec::with_capacity(described.columns.len());
+            for column in &described.columns {
+                let (column_name, nullable) = column
+                    .contract()
+                    .with_context(|| format!("{at}: column {}", column.name))?;
+                let ty = crate::describe::result_type(&column.type_name).with_context(|| {
+                    format!(
+                        "{at}: unsupported result type {} for {column_name}",
+                        column.type_name
+                    )
+                })?;
+                let nullable = nullable.with_context(|| format!("{at}: SQLx cannot infer nullability. Add a ! or ? to the SQL alias for {column_name}"))?;
+                row.push(json!({"name": column_name, "type": ty, "nullable": nullable}));
+            }
+            let statement = statement.as_object_mut().context("statement object")?;
+            statement.remove("binds");
+            statement.insert("parameters".into(), parameters.into());
+            statement.insert("row".into(), row.into());
         }
-        Ok(())
-    })?;
-    if !refusals.is_empty() {
-        bail!(
-            "the statement declarations disagree with SQLx's description:\n{}",
-            refusals.join("\n")
-        );
+        operation.insert("statements".into(), statements.into());
     }
     Ok(())
-}
-
-/// Apply one described type to one statement value.
-fn apply_type(
-    at: &str,
-    value: &mut Map<String, Value>,
-    type_name: &str,
-    refusals: &mut Vec<String>,
-) {
-    let name = value
-        .get("name")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_owned();
-    let Some(derived) = column_type(type_name) else {
-        refusals.push(format!(
-            "{at}: {name} has PostgreSQL type {type_name}, which the manifest vocabulary has no type for"
-        ));
-        return;
-    };
-    match value.get("type").map(Value::as_str) {
-        None => {
-            value.insert("type".to_owned(), Value::from(derived.as_str()));
-        }
-        Some(Some(declared)) if declared == derived.as_str() => {}
-        Some(declared) => refusals.push(format!(
-            "{at}: {name} is declared {}, and the statement gives {}",
-            declared.unwrap_or("a non-string type"),
-            derived.as_str()
-        )),
-    }
 }
 
 /// Migrate the verification database to the package's dependency closure: the
@@ -1110,7 +1090,6 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::describe::DescribedColumn;
 
     #[sqlx::test(migrations = false)]
     async fn verification_migration_accepts_a_platform_file_reference(pool: sqlx::PgPool) {
@@ -1152,114 +1131,6 @@ mod tests {
             Some("23503")
         );
         client.close().await;
-    }
-
-    fn manifest(row_nullable: bool, row_type: Option<&str>) -> Value {
-        let mut row = json!({"name": "quantity", "nullable": row_nullable});
-        if let Some(row_type) = row_type {
-            row["type"] = json!(row_type);
-        }
-        json!({"custom_operations": {"adjust": {"statements": {"select_quantity": {
-            "path": "command/adjust/select_quantity.sql",
-            "fetch": "one",
-            "parameters": [{"name": "packaging_id", "nullable": false}],
-            "row": [row],
-        }}}}})
-    }
-
-    fn described(nullable: Option<bool>) -> BTreeMap<String, DescribedStatement> {
-        BTreeMap::from([(
-            "command/adjust/select_quantity.sql".to_owned(),
-            DescribedStatement {
-                parameters: vec!["UUID".to_owned()],
-                columns: vec![DescribedColumn {
-                    name: "quantity".to_owned(),
-                    type_name: "INT8".to_owned(),
-                    nullable,
-                    view_column: false,
-                }],
-            },
-        )])
-    }
-
-    #[test]
-    fn an_undeclared_type_is_derived() {
-        let mut document = manifest(false, None);
-        apply_statement_types(&mut document, &described(Some(false))).expect("derive the types");
-        let statement = &document["custom_operations"]["adjust"]["statements"]["select_quantity"];
-        assert_eq!(statement["parameters"][0]["type"], "uuid");
-        assert_eq!(statement["row"][0]["type"], "int64");
-    }
-
-    #[test]
-    fn a_nullable_declaration_over_a_non_null_column_is_kept() {
-        let mut document = manifest(true, Some("int64"));
-        apply_statement_types(&mut document, &described(Some(false)))
-            .expect("keep the declaration");
-        let row = &document["custom_operations"]["adjust"]["statements"]["select_quantity"]["row"];
-        assert_eq!(row[0]["nullable"], true);
-    }
-
-    #[test]
-    fn a_not_null_declaration_over_a_nullable_column_is_refused() {
-        let mut document = manifest(false, Some("int64"));
-        let _error = apply_statement_types(&mut document, &described(Some(true)))
-            .expect_err("a not-null declaration on a nullable column was accepted");
-    }
-
-    #[test]
-    fn a_not_null_declaration_stands_where_sqlx_does_not_know() {
-        let mut document = manifest(false, Some("int64"));
-        apply_statement_types(&mut document, &described(None)).expect("keep the declaration");
-        let row = &document["custom_operations"]["adjust"]["statements"]["select_quantity"]["row"];
-        assert_eq!(row[0]["nullable"], false);
-    }
-
-    #[test]
-    fn an_unstated_nullability_is_derived() {
-        for (described_nullable, row_nullable) in
-            [(Some(true), true), (Some(false), false), (None, true)]
-        {
-            let mut document = manifest(false, None);
-            let statement =
-                &mut document["custom_operations"]["adjust"]["statements"]["select_quantity"];
-            for member in ["parameters", "row"] {
-                statement[member][0]
-                    .as_object_mut()
-                    .unwrap()
-                    .remove("nullable");
-            }
-            apply_statement_types(&mut document, &described(described_nullable))
-                .expect("derive the nullability");
-            let statement =
-                &document["custom_operations"]["adjust"]["statements"]["select_quantity"];
-            assert_eq!(statement["parameters"][0]["nullable"], false);
-            assert_eq!(statement["row"][0]["nullable"], row_nullable);
-        }
-    }
-
-    #[test]
-    fn a_different_declared_type_is_refused() {
-        let mut other_type = manifest(false, Some("int32"));
-        let _error = apply_statement_types(&mut other_type, &described(Some(false)))
-            .expect_err("a different declared type was accepted");
-    }
-
-    #[test]
-    fn view_columns_keep_declared_nullability_and_require_the_reported_type() {
-        for nullable in [false, true] {
-            let mut description = described(Some(true));
-            description.values_mut().next().unwrap().columns[0].view_column = true;
-            let mut document = manifest(nullable, Some("int64"));
-            apply_statement_types(&mut document, &description).expect("accept a view column");
-            assert_eq!(
-                document["custom_operations"]["adjust"]["statements"]["select_quantity"]["row"][0]
-                    ["nullable"],
-                nullable
-            );
-            let mut document = manifest(nullable, Some("text"));
-            let _error = apply_statement_types(&mut document, &description).unwrap_err();
-        }
     }
 }
 

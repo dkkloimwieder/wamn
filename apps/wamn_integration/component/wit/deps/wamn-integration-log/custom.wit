@@ -1,0 +1,51 @@
+interface append {
+  use wamn:node/types@0.1.0.{node-context, node-error, json-value};
+
+  enum outcome-value {
+    pushed,
+    refused,
+  }
+
+  record append-request {
+    delivery-id: string,
+    detail: option<json-value>,
+    idempotency-key: string,
+    outcome: outcome-value,
+    record-id: string,
+  }
+
+  record idempotency-conflict-detail {
+    field: string,
+  }
+
+  record invalid-input-detail {
+    field: string,
+    minimum: option<string>,
+    maximum: option<string>,
+    observed: option<string>,
+  }
+
+  variant append-error {
+    idempotency-conflict(idempotency-conflict-detail),
+    internal-error,
+    invalid-input(invalid-input-detail),
+    retry,
+    timeout,
+  }
+
+  record append-item {
+    request-id: string,
+    input: result<append-request, invalid-input-detail>,
+  }
+
+  record append-result {
+    record-id: string,
+  }
+
+  record append-outcome {
+    request-id: string,
+    outcome: result<append-result, append-error>,
+  }
+
+  run: async func(ctx: node-context, input: list<append-item>) -> result<list<append-outcome>, node-error>;
+}

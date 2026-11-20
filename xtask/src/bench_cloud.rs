@@ -299,7 +299,7 @@ pub async fn pg(root: &Path, _args: &PgArgs) -> anyhow::Result<()> {
         .operation
         .as_str();
     let mut statement = std::fs::read_to_string(
-        root.join("apps/wamn_receiving/command/record_receipt/record_receipt.sql"),
+        root.join("apps/wamn_receiving/command/receiving/record_receipt/record_receipt.sql"),
     )?;
     for (parameter, value) in [
         ("$1", ":purchase_order_id::uuid"),

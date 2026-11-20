@@ -2,10 +2,10 @@
 
 use super::adapter::{emit_custom_adapter, emit_model_adapters};
 use super::rust::{emit_projection, emit_static_sql_projection, static_sql_rows, wamn_api};
-use super::wit::{emit_custom_operation_wit, emit_model_wit};
+use super::wit::emit_model_wit;
 use super::{
-    BTreeMap, CHANGES_STATEMENT, CREATE_KEY_FIELD, CREATE_STATEMENT, CURSOR_VERSION,
-    CatalogIr, ConstraintType, StatementContract, StatementTransactionality, StatementValueContract, Table,
+    BTreeMap, CHANGES_STATEMENT, CREATE_KEY_FIELD, CREATE_STATEMENT, CURSOR_VERSION, CatalogIr,
+    ConstraintType, StatementContract, StatementTransactionality, StatementValueContract, Table,
     Value, WamnApi, column, constraint_error_code, constraint_field,
     custom_operation_constraint_origin, json, operation_constraints, operation_exclusions,
     query_variants, server_owned_fields, sql, writable_path,
@@ -20,7 +20,9 @@ use wamn_catalog::manifest::{
     FieldReference, OperationErrorDetailKey, StaticSqlRelationDeclaration, TombstoneColumn,
     authored_name,
 };
-use wamn_catalog::manifest::{ManifestError as GenerateError, ManifestErrorType as GenerateErrorType};
+use wamn_catalog::manifest::{
+    ManifestError as GenerateError, ManifestErrorType as GenerateErrorType,
+};
 use wamn_scalar::SqlValueType;
 
 /// Request, result and refusal facts compiled once for a model action.
@@ -28,8 +30,10 @@ use wamn_scalar::SqlValueType;
 pub(super) struct ModelOperation<'a> {
     pub request: &'a OperationDeclaration,
     pub result: CustomOperationResultDeclaration,
-    pub refusals:
-        BTreeMap<wamn_catalog::manifest::AccessOperationErrorLiteral, OperationErrorDetailDeclaration>,
+    pub refusals: BTreeMap<
+        wamn_catalog::manifest::AccessOperationErrorLiteral,
+        OperationErrorDetailDeclaration,
+    >,
     pub revision: Option<SqlValueType>,
     pub guarded_fields: BTreeMap<String, String>,
 }
@@ -75,10 +79,10 @@ pub(super) struct CustomDescription<'a> {
         wamn_catalog::manifest::StaticSqlStatementDeclaration,
     >,
     pub request: Vec<crate::client_ir::FieldIr>,
-    pub request_root: &'static str,
     pub feed_key: Option<SqlValueType>,
     pub result: Option<std::borrow::Cow<'a, CustomOperationResultDeclaration>>,
-    pub refusals: BTreeMap<wamn_catalog::manifest::source_name::SourceName, OperationErrorDetailDeclaration>,
+    pub refusals:
+        BTreeMap<wamn_catalog::manifest::source_name::SourceName, OperationErrorDetailDeclaration>,
     pub revision: Option<SqlValueType>,
     pub rows: Vec<super::RustRow>,
     pub accessors: Vec<super::StaticSqlAccessor>,
@@ -235,20 +239,16 @@ pub(super) fn compile_custom<'a>(
         &serde_json::to_value(&operation.input).expect("validated request serializes"),
     );
     request.retain(|field| field.path != "request_id");
-    let request_root = if operation.result.is_some()
+    if operation.result.is_some()
         && let Some(value) = request.iter().position(|field| field.path == "value")
     {
         request = request.remove(value).children;
-        "value."
-    } else {
-        ""
-    };
+    }
     CustomDescription {
         declaration: operation,
         statements: &sql.statements,
         feed_key,
         request,
-        request_root,
         result,
         revision,
         refusals,
@@ -293,7 +293,6 @@ pub(super) fn emit_custom_operation(
             "custom operation needs a group and local name",
         )
     })?;
-    emit_custom_operation_wit(files, manifest, group, compiled)?;
     emit_custom_adapter(files, group, local_name, operation)?;
     super::authored_feed::emit(files, manifest, operation_name, operation)?;
     if operation.statements.is_empty() {
@@ -339,7 +338,9 @@ fn describe_custom_operation(
         .collect::<Result<Vec<_>, _>>()?;
     let operation_contract = wamn_catalog::OperationContract {
         type_: match operation.type_ {
-            wamn_catalog::manifest::CustomOperationType::Command => wamn_catalog::OperationType::Command,
+            wamn_catalog::manifest::CustomOperationType::Command => {
+                wamn_catalog::OperationType::Command
+            }
             wamn_catalog::manifest::CustomOperationType::Projection => {
                 wamn_catalog::OperationType::Projection
             }
@@ -1304,7 +1305,6 @@ fn error_contract(
         .collect::<Vec<_>>();
     json!({"closed": true, "cases": cases})
 }
-
 
 /// A query's contract with its search, when the query declares one. A query
 /// without one keeps its bytes.

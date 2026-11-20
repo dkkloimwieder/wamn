@@ -10,16 +10,10 @@ mod sample;
 
 wit_bindgen::generate!({
     world: "edge-device:component/device@0.1.0",
-    inline: r#"
-        package edge-device:component@0.1.0;
-
-        world device {
-          include edge-device:generated/generated;
-        }
-    "#,
     path: [
         "../../../wit/wamn-node",
         "../../target/wamn/edge_device/wit",
+        "wit/authored.wit",
     ],
     generate_all,
     async: true,

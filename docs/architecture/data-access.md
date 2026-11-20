@@ -100,7 +100,7 @@ The generator compares those choices with the schema and SQL. It does not replac
 | `required_platform_policy_contract.id`, `.state` | WAMN policy requirement. Retain independently of migration shape. |
 | `models.*.schema`, `.table`, `.owner` | Application relation selection and package ownership. PostgreSQL supplies the selected relation's schema. Retain selection and ownership. |
 | `server_owned_fields`, `client_field_extensible` | Application exposure and extension policies. Database defaults do not determine these choices. Retain, except the stamp columns `created_at`, `created_by`, `updated_at` and `updated_by`: generation makes each one the table carries server-owned, and refuses a list that names one. |
-| `enum_fields` | Application value policy of a text column. A CHECK that carries a quoted value takes the form `CHECK (<column> IN ('a', ...))`, which PostgreSQL stores as `(<column> = ANY (ARRAY['a'::text, ...]))`, and generation reads the column's value set from it into the compiled manifest. A CHECK of any other form with a quoted value refuses with its name, and a CHECK without one is not a value set. The author states a list only to narrow a CHECK's set or to name a set that no CHECK carries; a list equal to the CHECK's set, or one that widens it, refuses. Derive. |
+| `enum_fields` | The compiler reads each text column's allowed values from PostgreSQL `CHECK` constraints of the form `CHECK (column IN ('a', ...))`. |
 | `min_lengths` | Application value policy: the fewest characters that a text column holds after a trim. The generated typed export refuses a shorter value with `invalid_input` on its field. The author writes `CHECK (char_length(btrim(<column>)) >= <n>)` in a migration, and generation refuses the model without it. That CHECK is the database guard and never the answer, so no operation contract lists it. Retain. |
 | `audit_log.columns`, `.retention` | Application history policy. Retain. |
 | `operations` keys, `permission`, `writable_fields`, `revision_field`, `result` | Application operation, authority, revision, and result choices. Retain. |
@@ -118,12 +118,12 @@ The generator compares those choices with the schema and SQL. It does not replac
 | `input.raw_body_maximum`, `.envelope.minimum`, `.maximum` | Application input bounds. A command that claims its key takes the public envelope, and the schema module fills a raw body of at most 1048576 bytes and 1 to 100 inputs. Written only to change. |
 | `input.line.minimum`, `.maximum` | Application input bounds. Retain. |
 | Input `item_semantics` and count-bound `invalid` | Fixed per-item outcomes and input refusal. Derive. |
-| Input/result `fields[].path`, `.type`, `.nullable`, `.values`, `.revision`, and result `class` | Application boundary contract. Generated WIT consumes these fields, so it cannot replace their source. Retain. |
-| Custom `errors`, business `error_details`, `constraint_errors` | Application error choices and constraint mappings. A business error detail can state the `text` that a screen shows. Retain. Derive fixed details for standard platform errors, `idempotency_conflict` among them. |
+| Custom input and result types | Write the request and result in WIT. Use enums for closed value lists. Use named aliases for UUIDs, numeric values and timestamps. Keep field labels and other display settings in KCL, keyed by WIT field name. The input policy names the WIT idempotency and request correlation fields where the operation uses them. |
+| Custom errors | Write error cases and payloads in WIT. Keep constraint mappings and error display text in KCL. Each mapping or text entry names a WIT error. |
 | `relations[].schema`, `.table`, `.select_fields`, `.insert_fields`, `.update_fields`, `.delete`, `.lock` | SQL authority. The SQL owns what a statement reads, writes, locks and deletes, so generation derives each relation from the statements over the tables of the package's own schemas and writes it into the compiled manifest. The compiler describes the statement with SQLx and classifies its transaction needs. Derive. |
 | `relations[].constraints` | The constraints a statement relies on: each one its SQL names in `ON CONFLICT ON CONSTRAINT`, and each one `constraint_errors` maps, on the reached relation that defines it. Derive. |
-| `statements.*.path`, `.fetch`, `.parameters`, `.row` | Static SQL selection and accessor contract. PostgreSQL tests types, privileges, and transaction requirements. Retain names and declared shape. |
-| Parameter/row `name`, `type`, `nullable` | Accessor names and representation. SQL planning does not determine all application names or nullability contracts. Retain. |
+| `statements` | Each entry names a statement, its fetch class and its ordered binds. The operation and statement names set the path, such as `query/widget/list/list.sql`. Commands and event handlers use `command/`. |
+| Statement type checks | Match each bind name to a WIT input field. SQLx checks its type. If the handler computes a bind with no matching input, SQLx gives its type and the bind must be non-null. SQLx describes result columns. If SQLx cannot tell whether a column is nullable, give it an alias such as `"total!"` or `"note?"`. Use real SQL casts to set result types. |
 | `connections` | Map each application alias to an integration code and a `read` or `write` mode. PostgreSQL stays outside this map. |
 | `components` keys | Component grouping. Cargo artifact names do not determine operation grouping. |
 | `components.*.connections` | External connection aliases available to every operation of the component. The singular operation field `connection` names the SQL connection. |
@@ -145,9 +145,9 @@ Package-owned typed accessors and registered operations expose that fixed set.
 There is no universal runtime controller with unrestricted operation-ID authority over the database.
 Command source uses generated accessors and named queries instead of adding unreviewed SQL strings.
 
-The generator derives native-async WIT contracts and Rust adapters from supported CRUD and custom-operation declarations.
+The generator derives model WIT from the database schema and writes Rust adapters for model and custom operations.
 Each package owns its contracts under `wit/` in its build output.
-Names, fields, revision inputs, nested values, results, and error details follow the declarations.
+The build reads the authored WIT to compile the custom request, result and error contracts.
 Separate operations over one table retain separate writable fields and permissions.
 
 Generated exports validate typed input before calling a handler or an override.
@@ -158,7 +158,7 @@ Revision inputs, returned revisions, and conflict revisions follow their declare
 An `int32` uses a JSON number, and an `int64` uses a decimal string.
 Database and WIT revision values remain numeric.
 The `minimum`, `maximum`, and `observed` refusal details are decimal strings in WIT and JSON, spelled as a numeric value is and never as a float.
-Custom fields declare `revision: true`; CRUD operations use their declared revision field.
+Custom operation WIT names the revision type. CRUD operations use their declared revision field.
 Other integer fields follow the same rule.
 The host converter preserves integers above JavaScript’s safe-integer limit.
 Application handlers of custom operations retain business rules, transaction sequencing, and deliberate result transformations.
@@ -194,8 +194,8 @@ A data crate includes `data/mod.rs` of its build output as its public module `ge
 A component includes `generated/component/mod.rs` in a module that names that data module `data`.
 The fixture overlay has no data crate, so its component includes the data functions itself.
 
-The authored world, in `component/wit/authored.wit`, only includes the generated world.
-The authored world includes the generated one, and the reverse is not possible.
+Place the authored world in `component/wit/authored.wit`. It includes the generated world.
+Place each custom group in one file under `component/wit/deps/<package>/`. Leave out the package line. The build copies the file beside the generated `package.wit`.
 
 The package declares custom HTTP exposure in `routes.operations`, keyed by its local operation name.
 Each entry names an attachment id and path.

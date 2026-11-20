@@ -26,6 +26,26 @@ impl Package {
             .join("package");
         std::fs::create_dir_all(&root).expect("create the package");
         std::fs::write(root.join("wamn.k"), source).expect("write wamn.k");
+        let wit = root.join("component/wit/deps/fixture-widget");
+        std::fs::create_dir_all(&wit).unwrap();
+        std::fs::write(wit.join("custom.wit"), r"
+interface archive {
+    use wamn:node/types@0.1.0.{node-context, node-error};
+    type uuid = string;
+    record archive-request { id: uuid }
+    record invalid-input-detail { field: string }
+    record permission-denied-detail { operation: string }
+    variant archive-error {
+        invalid-input(invalid-input-detail),
+        permission-denied(permission-denied-detail),
+        internal-error,
+    }
+    record archive-item { request-id: string, input: result<archive-request, invalid-input-detail> }
+    record archive-result { id: uuid }
+    record archive-outcome { request-id: string, outcome: result<archive-result, archive-error> }
+    run: async func(ctx: node-context, input: list<archive-item>) -> result<list<archive-outcome>, node-error>;
+}
+").unwrap();
         Self(root)
     }
 
@@ -74,17 +94,10 @@ manifest.Package {{
     }}
     custom_operations = {{
         "widget.archive" = manifest.Command("widget.archive") {{
-            input.fields = [manifest.request_id, manifest.idempotency_key, {{path = "id", type = "uuid"}}]
-            result = {{class = "one", fields = [{{path = "id", type = "uuid"}}]}}
-            errors = manifest.platform_errors
-            idempotent_by = "claim"
-            statements = {{
-                archive = manifest.Statement("command/widget_archive", "archive") {{
-                    fetch = "one"
-                    parameters = [manifest.uuid("id")]
-                    row = [manifest.nullable(manifest.uuid("id"))]
-                }}
-            }}
+            connection = None
+            transaction = None
+            automatic_retry = None
+            idempotent_by = "stateless"
 {command}
         }}
     }}
@@ -125,53 +138,8 @@ fn feed_and_append_only_declarations_round_trip() {
 }
 
 #[test]
-fn authored_list_feed_declarations_round_trip() {
-    for feed in ["", "feed = False", "feed = True"] {
-        let read = format!(
-            r#"    custom_operations = {{
-        "widget.list" = manifest.Projection("widget.list") {{
-            {feed}
-            input.fields = []
-            result = {{class = "bounded_list", fields = [{{path = "id", type = "uuid"}}]}}
-            lists = {{model = "widget", key_field = "id"}}
-            errors = manifest.platform_errors
-            statements = {{
-                list = manifest.Statement("query", "widget_list") {{
-                    fetch = "bounded_list"
-                    row = [manifest.uuid("id")]
-                }}
-            }}
-        }}"#
-        );
-        let compiled =
-            Package::new(&source("", "").replace("    custom_operations = {", &read)).compile();
-        let parsed = wamn_catalog::manifest::PackageManifest::from_slice(
-            &serde_json::to_vec(&compiled).unwrap(),
-        )
-        .unwrap();
-        assert_eq!(
-            parsed.custom_operations["widget.list"].feed,
-            match feed {
-                "" => None,
-                "feed = False" => Some(false),
-                _ => Some(true),
-            }
-        );
-    }
-}
-
-#[test]
 fn a_model_feed_declaration_is_refused() {
     Package::new(&source("            feed = False", "")).refusal();
-}
-
-#[test]
-fn an_input_assigned_with_equals_is_refused() {
-    let package = Package::new(&source("", "").replace(
-        "            input.fields = [manifest.request_id, manifest.idempotency_key, {path = \"id\", type = \"uuid\"}]",
-        "            input = {fields = [manifest.request_id, manifest.idempotency_key, {path = \"id\", type = \"uuid\"}]}",
-    ));
-    package.refusal();
 }
 
 #[test]
@@ -197,26 +165,12 @@ fn a_derived_member_is_refused() {
     ));
     conflict.refusal();
 }
-
-/// The schema module lets a statement value leave out its type, which only
-/// `wamn build` derives
-/// (docs/architecture/data-access.md#application-declarations). KCL accepts it;
-/// a reader that has no build to derive it refuses the compiled manifest.
-#[test]
-fn a_statement_value_type_is_optional_and_only_the_build_derives_it() {
-    let package = Package::new(&source("", "").replace(
-        "parameters = [manifest.uuid(\"id\")]",
-        "parameters = [manifest.Value {name = \"id\"}]",
-    ));
-    package.refusal();
-}
-
 #[test]
 fn a_wrong_enum_value_fails_at_compile_with_its_path() {
     for (model, command, _) in [
         (
             "",
-            r#"            statements.archive.fetch = "several""#,
+            r#"            statements = {archive = {fetch = "several", binds = []}}"#,
             "several",
         ),
         ("", r#"            transaction = "always""#, "always"),
@@ -254,8 +208,9 @@ fn field_visibility_is_optional_and_boolean_for_models_and_custom_results() {
         r#"            field_text = {id = {visible = False}, code = {label = "Code", visible = True}}"#,
         "",
     ).replace(
-        r#"result = {class = "one", fields = [{path = "id", type = "uuid"}]}"#,
-        r#"result = {class = "one", fields = [{path = "id", type = "uuid", visible = True}]}"#,
+        r#"idempotent_by = "stateless""#,
+        r#"idempotent_by = "stateless"
+            result = {labels = {id = {visible = True}}}"#,
     );
     let compiled = Package::new(&authored).compile();
     assert_eq!(

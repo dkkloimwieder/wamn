@@ -34,8 +34,30 @@ pub(super) async fn handle_detail(
 > {
     operation::quality_load_purchase_order_detail(connection, &request.purchase_order_id)
         .await
-        .map(|row| detail_operation::row!(row, detail_contract::LoadPurchaseOrderDetailResult))
         .map_err(|error| detail_error(&error, &request.purchase_order_id))
+        .and_then(|row| {
+            let status = match row.status.as_str() {
+                "open" => detail_contract::StatusValue::Open,
+                "complete" => detail_contract::StatusValue::Complete,
+                "cancelled" => detail_contract::StatusValue::Cancelled,
+                _ => return Err(detail_contract::LoadPurchaseOrderDetailError::InternalError),
+            };
+            let acme_quality_status = match row.acme_quality_status.as_str() {
+                "not_required" => detail_contract::AcmeQualityStatusValue::NotRequired,
+                "pending" => detail_contract::AcmeQualityStatusValue::Pending,
+                "approved" => detail_contract::AcmeQualityStatusValue::Approved,
+                _ => return Err(detail_contract::LoadPurchaseOrderDetailError::InternalError),
+            };
+            Ok(detail_contract::LoadPurchaseOrderDetailResult {
+                id: row.id.0,
+                purchase_order_number: row.purchase_order_number,
+                supplier_id: row.supplier_id.0,
+                status,
+                row_version: row.row_version,
+                acme_inspection_required: row.acme_inspection_required,
+                acme_quality_status,
+            })
+        })
 }
 
 pub(super) async fn handle_approve(
@@ -48,7 +70,13 @@ pub(super) async fn handle_approve(
         request.expected_row_version,
     )
     .await
-    .map(|row| approve_operation::row!(row, approve_contract::ApproveInspectionResult))
+    .map(|row| approve_contract::ApproveInspectionResult {
+        receipt_id: row.receipt_id.0,
+        status: approve_contract::StatusValue::Approved,
+        row_version: row.row_version,
+        purchase_order_id: row.purchase_order_id.0,
+        purchase_order_row_version: row.purchase_order_row_version,
+    })
     .map_err(|error| approve_error(&error, &request.receipt_id, request.expected_row_version))
 }
 
@@ -56,7 +84,8 @@ pub(super) async fn handle_create(
     _state: &mut (),
     input: create_contract::CreateInspectionRequest,
 ) -> Result<create_contract::CreateInspectionRequest, NodeError> {
-    operation::quality_create_inspection(&input.event, &input.new.id)
+    let create_contract::EventValue::Insert = input.event;
+    operation::quality_create_inspection("insert", &input.new.id)
         .await
         .map_err(|error| private_node_error(&error))?;
     Ok(input)

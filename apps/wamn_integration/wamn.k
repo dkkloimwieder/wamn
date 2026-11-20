@@ -19,52 +19,34 @@ manifest.Package {
     }
     custom_operations = {
         "setting.read" = manifest.Projection("setting.read") {
-            permission = None
             visibility = "private"
-            input.fields = [{path = "key", type = "text"}, {path = "carry", type = "json", nullable = True}]
-            result = {class = "one", fields = [{path = "value", type = "json", nullable = True}, {path = "carry", type = "json", nullable = True}]}
-            errors = ["invalid_input", "retry", "timeout", "internal_error"]
+            permission = None
             statements = {
-                read_setting = manifest.Statement("command/setting", "read") {
-                    fetch = "optional_one"
-                    parameters = [manifest.text("key")]
-                    row = [manifest.json("value")]
-                }
+                read_setting = {fetch = "optional_one", binds = ["key"]}
             }
         }
         "setting.write" = manifest.Command("setting.write") {
-            permission = None
             visibility = "private"
+            permission = None
             idempotent_by = "claim"
-            input: {fields = [manifest.request_id, manifest.idempotency_key,
-                {path = "value.key", type = "text"}, {path = "value.value", type = "json"}]}
-            result = {class = "one", fields = [{path = "key", type = "text"}]}
-            errors = ["invalid_input", "idempotency_conflict", "retry", "timeout", "internal_error"]
+            input: {
+                request_id = "request_id"
+                key = "idempotency_key"
+            }
             statements = {
-                write_setting = manifest.Statement("command/setting", "write") {
-                    fetch = "one"
-                    parameters = [manifest.text("key"), manifest.json("value")]
-                    row = [manifest.text("key")]
-                }
+                write_setting = {fetch = "one", binds = ["key", "value"]}
             }
         }
         "log.append" = manifest.Command("log.append") {
-            permission = None
             visibility = "private"
+            permission = None
             idempotent_by = "claim"
-            input: {fields = [manifest.request_id, manifest.idempotency_key,
-                {path = "value.delivery_id", type = "text"},
-                {path = "value.record_id", type = "text"},
-                {path = "value.outcome", type = "text", values = ["pushed", "refused"]},
-                {path = "value.detail", type = "json", nullable = True}]}
-            result = {class = "one", fields = [{path = "record_id", type = "text"}]}
-            errors = ["invalid_input", "idempotency_conflict", "retry", "timeout", "internal_error"]
+            input: {
+                request_id = "request_id"
+                key = "idempotency_key"
+            }
             statements = {
-                append_log = manifest.Statement("command/log", "append") {
-                    fetch = "optional_one"
-                    parameters = [manifest.text("delivery_id"), manifest.text("record_id"), manifest.text("outcome"), manifest.nullable(manifest.json("detail"))]
-                    row = [manifest.text("delivery_id"), manifest.text("record_id"), manifest.text("outcome")]
-                }
+                append_log = {fetch = "optional_one", binds = ["delivery_id", "record_id", "outcome", "detail"]}
             }
         }
     }

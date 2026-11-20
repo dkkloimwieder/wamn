@@ -1,0 +1,94 @@
+interface read {
+  use wamn:node/types@0.1.0.{node-context, node-error, json-value};
+
+  type timestamp = string;
+
+  record read-request {
+    captured-at: timestamp,
+    frame: string,
+  }
+
+  record invalid-input-detail {
+    field: string,
+  }
+
+  record permission-denied-detail {
+    operation: string,
+  }
+
+  variant read-error {
+    internal-error,
+    invalid-input(invalid-input-detail),
+    permission-denied(permission-denied-detail),
+  }
+
+  record read-item {
+    request-id: string,
+    input: result<read-request, invalid-input-detail>,
+  }
+
+  record read-result {
+    frame: string,
+    captured-at: timestamp,
+  }
+
+  record read-outcome {
+    request-id: string,
+    outcome: result<read-result, read-error>,
+  }
+
+  run: async func(ctx: node-context, input: list<read-item>) -> result<list<read-outcome>, node-error>;
+}
+
+interface %record {
+  use wamn:node/types@0.1.0.{node-context, node-error, json-value};
+
+  type timestamp = string;
+  type uuid = string;
+
+  record %record-request {
+    captured-at: timestamp,
+    frame: string,
+    idempotency-key: string,
+  }
+
+  record idempotency-conflict-detail {
+    field: string,
+  }
+
+  record invalid-input-detail {
+    field: string,
+    minimum: option<string>,
+    maximum: option<string>,
+    observed: option<string>,
+  }
+
+  record permission-denied-detail {
+    operation: string,
+  }
+
+  variant %record-error {
+    idempotency-conflict(idempotency-conflict-detail),
+    internal-error,
+    invalid-input(invalid-input-detail),
+    permission-denied(permission-denied-detail),
+    retry,
+    timeout,
+  }
+
+  record %record-item {
+    request-id: string,
+    input: result<%record-request, invalid-input-detail>,
+  }
+
+  record %record-result {
+    sample-id: uuid,
+  }
+
+  record %record-outcome {
+    request-id: string,
+    outcome: result<%record-result, %record-error>,
+  }
+
+  run: async func(ctx: node-context, input: list<%record-item>) -> result<list<%record-outcome>, node-error>;
+}

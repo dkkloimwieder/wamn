@@ -22,8 +22,8 @@ async fn run(client: &mut Client, sql: &str) -> anyhow::Result<sqlx::postgres::P
 }
 
 fn outcome(row: &sqlx::postgres::PgRow, expected: &str, detail: &Value) {
-    assert_eq!(row.get::<String, _>("outcome"), expected);
-    assert_eq!(&row.get::<Value, _>("detail"), detail);
+    assert_eq!(row.get::<String, _>("outcome!"), expected);
+    assert_eq!(&row.get::<Value, _>("detail!"), detail);
 }
 
 async fn prepare(client: &mut Client) -> anyhow::Result<()> {
@@ -33,12 +33,12 @@ async fn prepare(client: &mut Client) -> anyhow::Result<()> {
          PREPARE test_lock_adjust AS {} PREPARE test_adjust AS {}
          PREPARE test_lock_split AS {} PREPARE test_split AS {}
          PREPARE test_lock_merge AS {} PREPARE test_merge AS {}",
-            include_str!("../command/inventory_adjust/lock_packaging.sql"),
-            include_str!("../command/inventory_adjust/adjust.sql"),
-            include_str!("../command/inventory_split/lock_packaging.sql"),
-            include_str!("../command/inventory_split/split.sql"),
-            include_str!("../command/inventory_merge/lock_both_packagings.sql"),
-            include_str!("../command/inventory_merge/merge.sql"),
+            include_str!("../command/inventory/adjust/lock_packaging.sql"),
+            include_str!("../command/inventory/adjust/adjust.sql"),
+            include_str!("../command/inventory/split/lock_packaging.sql"),
+            include_str!("../command/inventory/split/split.sql"),
+            include_str!("../command/inventory/merge/lock_both_packagings.sql"),
+            include_str!("../command/inventory/merge/merge.sql"),
         ))
             .to_string(),
     ))
@@ -204,7 +204,7 @@ pub(crate) async fn assert_outcomes(client: &mut Client) -> anyhow::Result<()> {
     )
     .await?;
     outcome(&row, "ok", &json!({}));
-    let ids: Vec<String> = serde_json::from_value(row.get::<Value, _>("transaction_ids"))?;
+    let ids: Vec<String> = serde_json::from_value(row.get::<Value, _>("transaction_ids!"))?;
     assert_eq!(ids.len(), 2);
     for (id, status, quantity) in [(&ids[0], "available", "12"), (&ids[1], "held", "2")] {
         let row = run(client, &format!("SELECT from_status, quantity::text FROM wms.inventory_transaction WHERE id = '{id}'")).await?;

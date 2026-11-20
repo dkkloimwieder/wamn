@@ -29,29 +29,29 @@ mod tests {
     /// The administrative operation that every fixture write logs.
     const FIXTURE_OPERATION: &str = "admin:receiving-data-access-fixture";
     const HISTORY_SQL: &str =
-        include_str!("../../../apps/wamn_receiving/query/load_purchase_order_history.sql");
+        include_str!("../../../apps/wamn_receiving/query/receiving/load_purchase_order_history/load_purchase_order_history.sql");
     const UPDATE_SQL: &str = "wamn_receiving/sql/purchase_order/update.sql";
     const APP_SCHEMA_SQL: &str = include_str!("../../../deploy/sql/app-schema.sql");
     /// The write log operation of `receiving.record_receipt`, without its version.
     const RECORD_RECEIPT_OPERATION: &str = "wamn-receiving:receiving/record-receipt";
     const LOCK_PURCHASE_ORDER_SQL: &str =
-        include_str!("../../../apps/wamn_receiving/command/record_receipt/lock_purchase_order.sql");
+        include_str!("../../../apps/wamn_receiving/command/receiving/record_receipt/lock_purchase_order.sql");
     const RECORD_RECEIPT_SQL: &str =
-        include_str!("../../../apps/wamn_receiving/command/record_receipt/record_receipt.sql");
+        include_str!("../../../apps/wamn_receiving/command/receiving/record_receipt/record_receipt.sql");
     const OVERLAY_FIELDS_MIGRATION: &str =
         include_str!("../../../apps/client_acme_receiving/migrations/0001_initial.sql");
     const OVERLAY_GET_SQL: &str = "client_acme_receiving/sql/purchase_order/get.sql";
     const OVERLAY_UPDATE_SQL: &str = "client_acme_receiving/sql/purchase_order/update.sql";
     const OVERLAY_LOAD_DETAIL_SQL: &str =
-        include_str!("../../../apps/client_acme_receiving/query/quality_purchase_order_detail.sql");
+        include_str!("../../../apps/client_acme_receiving/query/quality/load_purchase_order_detail/load_purchase_order_detail.sql");
     const OVERLAY_APPROVE_INSPECTION_SQL: &str = include_str!(
-        "../../../apps/client_acme_receiving/command/approve_inspection/approve_inspection.sql"
+        "../../../apps/client_acme_receiving/command/quality/approve_inspection/approve_inspection.sql"
     );
     const OVERLAY_INSERT_INSPECTION_SQL: &str = include_str!(
-        "../../../apps/client_acme_receiving/command/create_inspection/insert_inspection.sql"
+        "../../../apps/client_acme_receiving/command/quality/create_inspection/insert_inspection.sql"
     );
     const OVERLAY_LOAD_INSPECTION_SQL: &str = include_str!(
-        "../../../apps/client_acme_receiving/command/create_inspection/load_inspection.sql"
+        "../../../apps/client_acme_receiving/command/quality/create_inspection/load_inspection.sql"
     );
 
     fn generated(path: &str) -> Vec<u8> {
@@ -772,7 +772,7 @@ mod tests {
             .await
             .context("execute exact Acme approve_inspection SQL")?;
         ensure!(
-            approved.get::<String, _>("outcome") == "approved"
+            approved.get::<String, _>("outcome?") == "approved"
                 && approved.get::<Option<String>, _>("status").as_deref() == Some("approved")
                 && approved.get::<Option<i32>, _>("row_version") == Some(2)
                 && approved.get::<Option<i32>, _>("purchase_order_row_version") == Some(4),
@@ -1169,7 +1169,7 @@ mod tests {
             .await
             .context("validate lines while holding referenced location locks")?;
         ensure!(
-            validation.get::<Option<String>, _>("outcome").as_deref() == Some("ready"),
+            validation.get::<Option<String>, _>("outcome?").as_deref() == Some("ready"),
             "location-lock test fixture did not validate"
         );
 
@@ -1425,7 +1425,7 @@ mod tests {
                 return Err(CommandAttemptError::Database(source));
             }
         };
-        let outcome = recorded.get::<String, _>("outcome");
+        let outcome = recorded.get::<String, _>("outcome?");
         if outcome != "ready" {
             let code = match outcome.as_str() {
                 "purchase_order_line_not_found" => "purchase_order_line_not_found",
@@ -1441,11 +1441,11 @@ mod tests {
             };
             return Err(CommandAttemptError::Domain(DomainRefusal::with_id(
                 code,
-                recorded.get("id"),
+                recorded.get("id?"),
             )));
         }
-        let inserted = recorded.get::<i64, _>("inserted_line_count");
-        let updated = recorded.get::<i64, _>("updated_line_count");
+        let inserted = recorded.get::<i64, _>("inserted_line_count?");
+        let updated = recorded.get::<i64, _>("updated_line_count?");
         let expected = command.line.len();
         if usize::try_from(inserted).ok() != Some(expected)
             || usize::try_from(updated).ok() != Some(expected)

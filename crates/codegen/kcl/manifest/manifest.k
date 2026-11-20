@@ -15,24 +15,20 @@ input bounds are defaults, written only to change them, and the detail of
 idempotency_conflict is derived with the other platform error details. The
 schema owns column constraints and stamps: a model's enum_fields come from its
 CHECK col IN ('a', ...) constraints, and its stamp columns are server-owned
-without being listed. A model states enum_fields only to narrow a CHECK's set
-or to name a set that no CHECK carries. A model query that one table answers
+without being listed. A create operation can narrow a column's allowed values.
+A model query that one table answers
 states its sort and filters, and the generator writes its SQL.
 """
 
 
-type ColumnType = "boolean" | "int32" | "int64" | "float64" | "text" | "bytes" | "numeric" | "timestamptz" | "json" | "uuid"
 type Direction = "ascending" | "descending"
 type ResultClass = "one" | "optional_one" | "page" | "bounded_list"
 type Fetch = "one" | "optional_one" | "bounded_list"
 type Visibility = "public" | "private"
 type Transaction = "explicit_per_input"
 type Match = "exact" | "contains" | "prefix" | "range" | "is_null"
-type ErrorDetailKey = "field" | "id" | "expected_row_version" | "observed_row_version" | "minimum" | "maximum" | "observed" | "constraint" | "operation"
 type HistoryColumn = "created_at" | "created_by" | "updated_at" | "updated_by"
 type EventOp = "insert" | "update" | "delete"
-# A field's revision: true on a result row version, or the input field whose row version it guards.
-type Revision = bool | str
 # A target type a package runs on.
 type Target = "cloud" | "local"
 # A column role a model states.
@@ -59,30 +55,11 @@ schema Ref:
     model: str
     narrowed_by?: str
 
-schema Field:
-    """An input or result field of an operation contract."""
-    path: str
-    type: ColumnType
-    nullable: bool = False
-    revision?: Revision
-    values?: [str]
+schema FieldLabel:
     label?: str
-    # Select this field for generated tables and details.
     visible?: bool
     description?: str
     references?: Ref
-
-schema Value:
-    """A parameter or row column of a statement. The type is optional: wamn build
-    derives it from the statement and refuses a stated type that differs.
-    nullable is optional too. A row value that does not state it takes SQLx's
-    nullability, and is nullable where SQLx cannot tell. A row value stated
-    nullable = True is kept even where SQLx says the column cannot be null;
-    nullable = False where SQLx says it can be null is refused, and stands
-    where SQLx cannot tell. A parameter that does not state it is not null."""
-    name: str
-    type?: ColumnType
-    nullable?: bool
 
 schema CountLimit:
     minimum: int
@@ -94,29 +71,21 @@ schema Input:
     raw_body_maximum?: int
     envelope?: CountLimit
     line?: CountLimit
-    fields: [Field]
+    key?: str
+    request_id?: str
+    labels?: {str:FieldLabel}
+    revision_guards?: {str:str}
 
 schema SignedRead:
     lifetime_seconds?: int
 
 schema Result:
     signed_reads?: {str:SignedRead}
-    class: ResultClass
-    fields: [Field]
+    labels?: {str:FieldLabel}
 
-schema ErrorDetail:
-    required?: [ErrorDetailKey]
-    optional?: [ErrorDetailKey]
-    text?: str
-
-schema Statement[directory: str, name: str]:
-    """A statement of a custom operation. Its path defaults to <directory>/<name>.sql,
-    for example Statement("command/inventory_move", "lock_packaging") or
-    Statement("query", "inventory_aggregate")."""
-    path: str = "${directory}/${name}.sql"
+schema Statement:
     fetch: Fetch
-    parameters?: [Value]
-    row: [Value]
+    binds: [str]
 
 schema StateGuard:
     guards: {str:str}
@@ -137,10 +106,9 @@ schema CustomOperation[name: str]:
     permission?: str = name
     component?: str
     connection?: str = "postgres"
-    input: Input
+    input: Input = {}
     result?: Result
-    errors: [str]
-    error_details?: {str:ErrorDetail}
+    error_text?: {str:str}
     # A constraint the SQL can violate, mapped to the business error it answers.
     constraint_errors?: {str:str}
     statements?: {str:Statement}
@@ -297,7 +265,6 @@ schema Model[name: str, schema_name: str]:
     # Server-owned fields other than the stamps, which come from the table.
     server_owned_fields?: [str]
     # Only a narrower set than the column's CHECK, or a set no CHECK carries.
-    enum_fields?: {str:[str]}
     min_lengths?: {str:int}
     field_text?: {str:TextOfField}
     fields?: {str:ModelField}
@@ -381,41 +348,3 @@ schema Package:
         not custom_operations or all _, operation in custom_operations {
             operation.type != "command" or not _claims(operation.idempotent_by) or (operation.input.raw_body_maximum and operation.input.envelope)
         }, "a command that takes the public envelope has no bounds: merge the input with ':', input: {...}, so that the command fills them"
-
-# Typed constructors of a statement value.
-uuid = lambda name: str -> Value {
-    Value {name = name, type = "uuid"}
-}
-text = lambda name: str -> Value {
-    Value {name = name, type = "text"}
-}
-int32 = lambda name: str -> Value {
-    Value {name = name, type = "int32"}
-}
-int64 = lambda name: str -> Value {
-    Value {name = name, type = "int64"}
-}
-json = lambda name: str -> Value {
-    Value {name = name, type = "json"}
-}
-numeric = lambda name: str -> Value {
-    Value {name = name, type = "numeric"}
-}
-timestamptz = lambda name: str -> Value {
-    Value {name = name, type = "timestamptz"}
-}
-nullable = lambda value: Value -> Value {
-    Value {name = value.name, type = value.type, nullable = True}
-}
-
-# The three inputs the platform supplies to a command.
-request_id = Field {path = "request_id", type = "text"}
-idempotency_key = Field {path = "value.idempotency_key", type = "text"}
-occurred_at = Field {path = "value.occurred_at", type = "timestamptz"}
-command_inputs = [request_id, idempotency_key, occurred_at]
-
-# The seven platform error codes, in the order the manifests list them. Business
-# errors follow invalid_input.
-platform_errors = ["invalid_input", "concurrency_conflict", "idempotency_conflict", "retry", "timeout", "permission_denied", "internal_error"]
-# The standard details of a not-found error.
-not_found_details = ErrorDetail {required = ["field", "id"]}

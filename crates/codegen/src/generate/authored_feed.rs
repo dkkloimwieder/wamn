@@ -363,6 +363,30 @@ fn emit_component(
     } else {
         quote!(change.id)
     };
+    let row = quote!(operation::row!(row, contract::#row));
+    let (page_rows, change_rows) = if compiled
+        .result
+        .as_ref()
+        .is_some_and(|result| result.fields.iter().any(|field| !field.values.is_empty()))
+    {
+        (
+            quote!(rows.into_iter().map(|row| Ok(#row)).collect::<Result<_, contract::#error>>()?),
+            quote!(changes.rows.into_iter().map(|change| Ok(contract::#change {
+                id: #id,
+                row_version: change.row_version,
+                data: change.data.map(|row| Ok(#row)).transpose()?,
+            })).collect::<Result<_, contract::#error>>()?),
+        )
+    } else {
+        (
+            quote!(rows.into_iter().map(|row| #row).collect()),
+            quote!(changes.rows.into_iter().map(|change| contract::#change {
+                id: #id,
+                row_version: change.row_version,
+                data: change.data.map(|row| #row),
+            }).collect()),
+        )
+    };
     let include = format!("../wit/{stem}_operation.rs");
     let source = quote! {
         use super::data::#module as model;
@@ -374,8 +398,8 @@ fn emit_component(
             let part = request.feed.map(|part| model::FeedInput { cursor: part.cursor, limit: i64::from(part.limit.unwrap_or(100)) });
             let output = model::read(connection, input, part).await.map_err(|error| operation::map_error(error.literal(), |key| error.detail(key)))?;
             Ok(match output {
-                model::Output::Page { rows, cursor } => contract::#result::Page(contract::#page { item: rows.into_iter().map(|row| operation::row!(row, contract::#row)).collect(), next_cursor: None, cursor }),
-                model::Output::Changes(changes) => contract::#result::Changes(contract::#changes { rows: changes.rows.into_iter().map(|change| contract::#change { id: #id, row_version: change.row_version, data: change.data.map(|row| operation::row!(row, contract::#row)) }).collect(), next_cursor: changes.next_cursor, complete: changes.complete }),
+                model::Output::Page { rows, cursor } => contract::#result::Page(contract::#page { item: #page_rows, next_cursor: None, cursor }),
+                model::Output::Changes(changes) => contract::#result::Changes(contract::#changes { rows: #change_rows, next_cursor: changes.next_cursor, complete: changes.complete }),
             })
         }
         operation::export_operation!(crate::Component, contract, crate::wamn::node::types, Connection::new(), handle, operation);

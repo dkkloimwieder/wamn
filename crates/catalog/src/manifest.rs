@@ -1174,11 +1174,16 @@ fn validate_data_change(manifest: &PackageManifest) -> Result<(), ManifestError>
                     ));
                 }
                 if ops.is_empty()
-                    || ops.iter().enumerate().any(|(index, op)| ops[..index].contains(op))
+                    || ops
+                        .iter()
+                        .enumerate()
+                        .any(|(index, op)| ops[..index].contains(op))
                 {
                     return Err(ManifestError::new(
                         ManifestErrorType::InvalidComponent,
-                        format!("component {name} must declare a nonempty list of distinct operations for model {model}"),
+                        format!(
+                            "component {name} must declare a nonempty list of distinct operations for model {model}"
+                        ),
                     ));
                 }
             }
@@ -1242,9 +1247,10 @@ fn validate_component_groups(
         };
         *count += 1;
     }
-    if let Some((component, _)) = grouped.iter().find(|(name, count)| {
-        **count == 0 && manifest.components[**name].data_change.is_none()
-    }) {
+    if let Some((component, _)) = grouped
+        .iter()
+        .find(|(name, count)| **count == 0 && manifest.components[**name].data_change.is_none())
+    {
         return Err(ManifestError::new(
             ManifestErrorType::InvalidComponent,
             format!("component {component} groups no operations"),
@@ -1767,21 +1773,25 @@ fn validate_custom_operation_errors(
         .copied()
         .filter(|error| shared_custom_error_detail(operation, error).is_none())
         .collect::<BTreeSet<_>>();
-    if operation
-        .error_details
-        .keys()
-        .map(self::source_name::SourceName::as_str)
-        .collect::<BTreeSet<_>>()
-        != authored_errors
+    if !authored_errors
+        .iter()
+        .all(|error| operation.error_details.contains_key(*error))
     {
         return Err(ManifestError::new(
             ManifestErrorType::InvalidOperation,
-            format!(
-                "{operation_name} error details must contain exactly its business error set; platform error details are derived"
-            ),
+            format!("{operation_name} needs details for each business error"),
         ));
     }
     for (error, detail) in &operation.error_details {
+        if !errors.contains(error.as_str()) {
+            return Err(ManifestError::new(
+                ManifestErrorType::InvalidOperation,
+                format!("{operation_name} has details for undeclared error {error}"),
+            ));
+        }
+        if let Some((required, optional)) = shared_custom_error_detail(operation, error.as_str()) {
+            validate_detail_keys(operation_name, error.as_str(), detail, required, optional)?;
+        }
         if operation
             .constraint_errors
             .values()
@@ -1841,6 +1851,9 @@ pub fn custom_operation_error_detail(
     operation: &CustomOperationDeclaration,
     error: &str,
 ) -> OperationErrorDetailDeclaration {
+    if let Some(detail) = operation.error_details.get(error) {
+        return detail.clone();
+    }
     if let Some((required, optional)) = shared_custom_error_detail(operation, error) {
         return OperationErrorDetailDeclaration {
             required: required.to_vec(),
@@ -1848,11 +1861,7 @@ pub fn custom_operation_error_detail(
             text: None,
         };
     }
-    operation
-        .error_details
-        .get(error)
-        .expect("manifest validation closed custom-operation error details")
-        .clone()
+    unreachable!("manifest validation closed custom-operation error details")
 }
 
 fn shared_custom_error_detail(

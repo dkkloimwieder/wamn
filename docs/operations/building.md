@@ -251,7 +251,7 @@ Commit the refreshed `.wamn/describe/` files and any new `history/` migrations.
 Both flags are also available on `cargo xtask build-package`.
 
 Verification runs base migrations first, then the package migrations.
-SQLx describes authored statements to fill their declared value types.
+The compiler reads authored WIT and describes authored statements with SQLx.
 The compiler derives relations and feed sources, then generates the remaining SQL once.
 SQLx describes every generated statement, including each fixed list sort and each feed statement.
 The compiler checks each accessor's parameters and selected columns against those descriptions before it writes consumers.
@@ -272,15 +272,14 @@ Build output does not hold the migration baseline.
 A history declaration change appends a generated migration, even when authored SQL stays unchanged.
 Refresh runs the complete migration sequence before it writes the updated evidence.
 
-A statement value in `wamn.k` can leave out its `type`, and the build takes the type from SQLx.
-A stated type that differs from the type SQLx gives is refused.
-A statement value can also leave out `nullable`.
-A row value without it takes the nullability that SQLx gives. If SQLx cannot tell, as for an expression, the value is nullable.
-A parameter without it is not null.
-A row value stated `nullable = True` is kept, even when SQLx says that the column cannot be null.
-A row value stated `nullable = False`, where SQLx says that the column can be null, is refused.
-If SQLx cannot tell, the stated `nullable = False` stands.
-The refusal names the operation, the statement, and the value.
+A custom statement in `wamn.k` lists its fetch class and ordered bind names.
+The operation and statement names set its SQL path.
+The build reads a named bind's type and nullability from the WIT input.
+A bind computed by the handler takes its type from SQLx and must be non-null.
+SQLx describes the result columns.
+If SQLx cannot tell whether a result column is nullable, add a SQL alias that ends in `!` for non-null or `?` for nullable.
+For example, use `AS "total!"` for a count.
+Use a SQL cast to set the type of a result expression.
 
 A consuming workspace package lists application clients in its `package.json` field `"wamn": { "clients": ["wamn_wms"] }`.
 `wamn build` writes each named client as plain source under that consumer's `src/generated/<app>/`, without a `package.json`.
