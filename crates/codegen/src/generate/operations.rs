@@ -1,5 +1,6 @@
 //! Operation contracts, schema contracts, and their SQL output.
 
+use super::adapter::{emit_custom_adapter, emit_model_adapters};
 use super::rust::{emit_projection, emit_static_sql_projection, static_sql_rows, wamn_api};
 use super::wit::{emit_custom_operation_wit, emit_model_wit};
 use super::{
@@ -155,6 +156,7 @@ pub(super) fn emit_model(
         number,
     };
     emit_model_wit(files, &compiled)?;
+    emit_model_adapters(files, &compiled)?;
     super::data::emit_model_data(files, &compiled)?;
     super::component::emit_model_component(files, &compiled)?;
     emit_projection(files, paths, &compiled)
@@ -285,7 +287,14 @@ pub(super) fn emit_custom_operation(
             operation,
         )?,
     );
-    emit_custom_operation_wit(files, manifest, operation_name, compiled)?;
+    let (group, local_name) = operation_name.as_str().split_once('.').ok_or_else(|| {
+        GenerateError::new(
+            GenerateErrorType::InvalidOperation,
+            "custom operation needs a group and local name",
+        )
+    })?;
+    emit_custom_operation_wit(files, manifest, group, compiled)?;
+    emit_custom_adapter(files, group, local_name, operation)?;
     super::authored_feed::emit(files, manifest, operation_name, operation)?;
     if operation.statements.is_empty() {
         return Ok(());
