@@ -14,6 +14,9 @@ The command installs or upgrades infrastructure first, then the platform. At the
 Use `--only infrastructure` for cert-manager, CloudNativePG, and Traefik when enabled. Use `--only platform` for the shared platform workloads on an existing infrastructure install.
 Use `wamn env apply` to roll out a host image.
 
+Set `registryEgress` to the registry's CIDR blocks and TCP ports. If the list is empty, the command uses the IP address and port from `registryEndpoint`.
+The platform install requires one of these inputs and records the resolved list in `wamn-org-inputs`.
+
 ## Local platform
 
 Use Docker, kind 0.32, Helm, kubectl, OpenSSL, and the pinned KCL compiler on the deployment host.
@@ -156,6 +159,7 @@ A new platform starts with zero applications. Redeploy each required application
 
 Provision the GKE cluster and select its administrator context. [Google Cloud prerequisites](gcp.md#cloud-credentials-and-prerequisites)
 Copy the GCP values file to `platform-gcp.yaml`. Set the registry, project, zone, domain, and buckets for your installation. [GCP values](../../deploy/charts/platform/values-gcp.yaml)
+Set `registryEgress` to the address ranges and TCP ports your org pods use to reach Artifact Registry.
 Use the chart bundle published to your registry.
 
 ```bash
@@ -913,7 +917,9 @@ The provisioned CNPG clusters accept client connections only over TLS.
 
 ## Kubernetes network policies
 
-Org network policies deny ingress and egress by default. Supply the installation's API server and registry destinations as CIDR and TCP port pairs.
+Org network policies deny ingress and egress by default.
+`wamn org create` finds the API server destinations and copies `registryEgress` from `wamn-org-inputs` into `networkPolicy.registry`.
+The registry rules allow control, the org worker, and hosts to reach those CIDR blocks and TCP ports.
 The environment and project charts allow connections to their host group and database. The edge accepts ingress from Traefik on installations that use Traefik.
 Application deploy adds a public IPv4 egress policy for the TCP ports of that release's wasm integration authorities.
 The rule excludes fixed private and special-use ranges. The runtime still checks each integration's allowed hosts.

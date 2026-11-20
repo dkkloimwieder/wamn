@@ -18,6 +18,7 @@ data:
   applicationChart: {{ .Values.applicationChart | quote }}
   provider: {{ .Values.provider | quote }}
   registry: {{ .Values.registry | quote }}
+  registryEgress: {{ .Values.registryEgress | toJson | quote }}
   postgresImage: {{ .Values.postgres.image | quote }}
   {{- range $family, $name := $poolers.names }}
   {{ $family }}DatabaseHost: {{ printf "%s.%s.svc.cluster.local" $name $system.namespace | quote }}

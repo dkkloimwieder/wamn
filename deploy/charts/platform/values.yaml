@@ -2,6 +2,7 @@ provider: kind
 platformDomain: wamn.localhost
 registry: localhost:5001
 registryEndpoint: null
+registryEgress: []
 global:
   # Each project can fill one 256 MiB stream on every broker pod.
   maxProjects: 32

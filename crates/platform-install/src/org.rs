@@ -246,6 +246,34 @@ fn org_values(
         .parse::<wamn_digest::Digest>()
         .context("invalid applicationChart digest in the platform release")?;
     let registry = field(inputs, "registry")?;
+    let registry_egress: Value = serde_json::from_str(field(inputs, "registryEgress")?)
+        .context("decode registryEgress from wamn-org-inputs")?;
+    let registry_egress = registry_egress
+        .as_array()
+        .filter(|destinations| !destinations.is_empty())
+        .context("registryEgress in wamn-org-inputs must be a nonempty list")?;
+    for (index, destination) in registry_egress.iter().enumerate() {
+        let valid_shape = destination
+            .as_object()
+            .is_some_and(|fields| fields.len() == 2);
+        let cidr = destination["cidr"]
+            .as_str()
+            .and_then(|cidr| cidr.split_once('/'));
+        let valid_cidr = cidr.is_some_and(|(address, prefix)| {
+            let (Ok(address), Ok(bits)) = (address.parse::<IpAddr>(), prefix.parse::<u8>()) else {
+                return false;
+            };
+            prefix.bytes().all(|byte| byte.is_ascii_digit())
+                && bits <= if address.is_ipv4() { 32 } else { 128 }
+        });
+        let valid_port = destination["port"]
+            .as_u64()
+            .is_some_and(|port| (1..=u64::from(u16::MAX)).contains(&port));
+        ensure!(
+            valid_shape && valid_cidr && valid_port,
+            "registryEgress entry {index} in wamn-org-inputs must contain a valid CIDR and TCP port"
+        );
+    }
     let oauth_encryption: Value = serde_json::from_str(field(inputs, OAUTH_ENCRYPTION_INPUT)?)
         .context("decode the platform OAuth encryption configuration")?;
     let internal_registry = registry
@@ -267,7 +295,7 @@ fn org_values(
     Ok(json!({
         "org": org, "base": field(inputs, "base")?, "registry": internal_registry, "identityCa": identity_ca, "natsCa": nats_ca, "postgresCa": postgres_ca,
         "postgres": {"image": field(inputs, "postgresImage")?},
-        "networkPolicy": {"apiServer": api_server},
+        "networkPolicy": {"apiServer": api_server, "registry": registry_egress},
         "control": {
             "image": image,
             "configuration": {

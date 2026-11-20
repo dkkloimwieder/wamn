@@ -5666,6 +5666,7 @@ dependencies = [
  "postgres-protocol",
  "rustls",
  "serde_json",
+ "serde_yaml",
  "sqlx",
  "tempfile",
  "tokio",
