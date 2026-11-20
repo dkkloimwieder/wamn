@@ -506,22 +506,26 @@ pub async fn run_with_shutdown(
         result = wait_for_slot(&args.cdc_url, &args.slot) => result?,
     };
     let mut input = options.to_url_lossy();
-    let ca = input
-        .query_pairs()
-        .find(|(name, _)| name == "sslrootcert")
-        .map(|(_, value)| value.into_owned());
     // SQLx serializes certificate files with a prefix and includes its statement
     // cache setting. The replication client expects libpq connection options.
     let pairs: Vec<_> = input
         .query_pairs()
-        .filter(|(name, _)| name != "sslrootcert" && name != "statement-cache-capacity")
-        .map(|(name, value)| (name.into_owned(), value.into_owned()))
+        .filter(|(name, _)| name != "statement-cache-capacity")
+        .map(|(name, value)| {
+            let value = if matches!(name.as_ref(), "sslrootcert" | "sslcert" | "sslkey")
+                && let Some(path) = value.strip_prefix("file: ")
+            {
+                path.to_owned()
+            } else {
+                value.into_owned()
+            };
+            (name.into_owned(), value)
+        })
         .collect();
     input.query_pairs_mut().clear().extend_pairs(pairs);
-    if let Some(ca) = ca {
-        input
-            .query_pairs_mut()
-            .append_pair("sslrootcert", ca.strip_prefix("file: ").unwrap_or(&ca));
+    // libpq-style URIs require percent-encoded spaces in file paths.
+    if let Some(query) = input.query().filter(|query| query.contains('+')) {
+        input.set_query(Some(&query.replace('+', "%20")));
     }
     args.cdc_url = input.into();
     let mut nats_options = wamn_broker::nats::tls_options(
