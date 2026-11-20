@@ -2428,6 +2428,7 @@ Facts:
 - K6: `wamn org create` writes `wamn-registry-pull` into the org namespace from the operator's registry auth file, as listed in "Secrets made by Rust". On kind the file may be `{"auths":{"localhost:5001":{}}}`, because the local registry has no authentication. Skipped with registry token metadata. Cause: the old install path that wrote it was deleted (550cdc5f1).
 - Pulls read an explicit empty entry for the exact registry as anonymous, the same as pushes; a missing or partial entry is refused before any request.
 - K7: `wamn platform deploy` records the application bundle's digest reference in `wamn-org-inputs`, and `wamn org create` sets control's `chart` setting from it, as it already does for `controlImage`. Cause: `org create` pointed control at the plain chart folder in the image, while the worker needs the stamped bundle.
+- K8: `bundle::select` takes the one pulled entry that holds `Chart.yaml`, and refuses zero or several. Cause: Helm 4.2.2 adds an empty `<chart>@sha256:<digest>` folder when it pulls by digest.
 
 **Ruled (D, 2026-11-19): preflight and smoke runs.**
 - Preflight, run before any kind install:
@@ -2438,5 +2439,6 @@ Facts:
 - Every epic ends with a kind smoke run before it merges to main: the preflight, then `wamn platform deploy`, `wamn org create` and one application deploy. Local kind has standing approval for these runs; GCP and other clusters still need D's approval.
 - During a run, collect every failing pod and its cause at each step before stopping, rather than stopping at the first.
 - Reason: the standard checks never built images, pulled images, sent objects to an API server or started a binary, so ten epics of runtime defects surfaced one per round in the first kind run.
+- During a run, the agent fixes a defect without asking when the fix stays inside one function or file, matches the rulings and patterns, and changes no schema, chart values contract, permission or security boundary, dependency or CLI. Each such fix is committed on its own and listed in the report for review afterwards. The agent stops only for design choices, the excluded areas, or a conflict with a ruling. Reason: most defects of the first kind run were small and local, and each one waited for D.
 
 Epic 9 closed at 01bb4a1e2: review accepted, main fast-forwarded. The application record is 69,220 B on the 772-route wamn_wms fixture, a different fixture from the Epic 8 one, not growth. The slot cleanup connects to the postgres database, and the deadline for an unreachable database under --data is 10 s.
