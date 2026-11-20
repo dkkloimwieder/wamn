@@ -63,6 +63,8 @@ cargo build --locked --offline -p wamn-host -p wamn-control -p wamn-cli -p wamn-
   -p wamn-cdc-reader
 ```
 
+A machine that builds offline runs cargo fetch once first.
+
 `wamn-host` uses mimalloc as its global allocator. Cargo builds its bundled C source with the existing C toolchain; no other program changes allocator.
 
 `wamn` owns the developer commands.

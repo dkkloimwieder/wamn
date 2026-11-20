@@ -264,6 +264,7 @@ End of the epic: the standard checks, the preflight and the short smoke run.
 - 3.8: `docs/operations/running-tests.md` describes test targets that no longer exist.
 - Journey tests on kind, deferred from the first kind run: rollback, `env delete`, apply again, and `env delete --data` after a plain delete; the Data change check for `client_acme_receiving` (K24); the 10.13 per-pod scheduler users beyond host start; the Pooler per-login limits and waits under load; that kind's CNI enforces NetworkPolicy, and that an environment's host cannot reach another environment's host, Postgres or Services.
 - 3.8: `deploy/sql/postgres-init.sql` is an old test fixture that still defines `project_key()`, `current_project_key()`, the old row policies and its own roles. Only `crates/provision/tests/{family_denial_matrix,deploy_sql_authority}.rs` load it; it goes with them or is rewritten.
+- Apps clippy (the second workspace): three unsafe_code errors in crates/guest/examples/numbering_refusal.rs:5 and the duplicate panic_impl in test-support/fixtures/guests/connection-http-standard. Fix in 3.8.
 - Health probes for wasm integration types: `connection_test` cannot run integration code outside an application workload. To be designed.
 - Edge device design: plant-network devices such as Modbus run at the edge, and the edge runtime gets its own address rule. A cloud integration that needs a private address (a customer network linked by VPN) is decided when a real case appears.
 - Native integration types (for example the NetSuite ODBC driver) are native Rust host plugins compiled into the wamn host, as wasmCloud advises for drivers with no WASI binding. Decide this when the first one is built.
@@ -2012,3 +2013,5 @@ Epic 11 closed on 2026-11-20 after review. The smoke run on kind passed.
 - Q2: the connection types leave `wamn-catalog` for a new small crate, `wamn-connection-type`, below `wamn-engine` and `wamn-authority`. Reason: `wamn-connection` would make the cycles authority → connection → authority and engine → connection → engine, and `wamn-registry` keeps only its database (one owner per fact).
 - Q3: the artifact reference module and `validate_composed_entry_path` go to a new crate under `crates/oci/` with no network code, `wamn-oci-reference`. `wamn-oci` and `wamn-edge` both depend on it. Reason: `wamn-edge` validates composed-entry references, and `repo-lint-dependencies` forbids network crates in `wamn-edge`. No feature flag is added, and the dependency check rules do not change.
 - With Q2 and Q3 done, `wamn-catalog` is deleted.
+
+Epic 12 closed on 2026-11-20 after review. The smoke run on kind passed.
