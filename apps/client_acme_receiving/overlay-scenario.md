@@ -26,7 +26,7 @@ Inspection status is `pending` or `approved`.
 
 ## Public operations
 
-The [attachments](publication/attachments.json) expose five authenticated POST routes:
+The [manifest](wamn.k) defines five operations that the build exposes as authenticated POST routes.
 
 | Path | Operation |
 |---|---|
@@ -51,7 +51,7 @@ A failed detail read does not change a successful receipt result or authorize re
 The detail projection combines declared base and client fields for the screen.
 Approval identifies the inspection by `receipt_id` and advances the purchase-order revision.
 Its result includes `purchase_order_row_version` for a later edit.
-The [operation owner](data/src/operation.rs) implements these commands and their refusals.
+The [component's data access code](component/src/data/operation.rs) implements the custom operations and their refusals.
 
 ## Committed receipt events
 
@@ -63,8 +63,7 @@ The event retains its causation identity.
 
 Repeated delivery for the same receipt must leave one inspection.
 A distinct receipt must receive its own inspection.
-The existing [postcommit assertions](../wamn_receiving/tests/postcommit.rs) exercise both requirements through the registered consumer.
-They also require bounded failed attempts, a correlated native advisory, and progress for a later valid event.
+The [Receiving data access tests](../wamn_receiving/tests/receiving_data_access.rs) run the inspection SQL twice for the same receipt and expect one insert.
 Payload recovery remains limited by broker retention.
 
 ERP synchronization remains deferred because this application declares no ERP consumer.
@@ -77,10 +76,7 @@ Compatibility uses two independent fresh installations.
 One contains base A and overlay O, and the other contains additive base B with the exact same overlay artifacts.
 Neither installation updates an existing database in place.
 
-The [compatibility observer](tests/overlay_compatibility.rs) compares consumed contracts, definition ownership, and application permissions.
-It refuses a breaking consumed field or constraint.
-The [deployed receipt case](../wamn_receiving/tests/route_authentication_live/cluster/postcommit_case.rs) exercises the receipt consumer with the unchanged overlay.
+Compare the contracts that the overlay uses, the owners of those definitions, and the application permissions.
 
 A compatible additive base does not require rewriting the immutable overlay artifact.
 An incompatible consumed contract requires client work and a new package version.
-The separate [upgrade plan](../../docs/history/upgrades.md) covers deferred changes to databases with retained data.

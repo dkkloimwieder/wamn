@@ -84,10 +84,15 @@ The org chart owns control, the namespace quota, RBAC, and network policies.
 On kind, create a registry auth file with `{"auths":{"localhost:5001":{}}}`.
 On kind, set `WAMN_REGISTRY_AUTH_FILE` to the path of that file.
 If the platform uses registry token metadata, skip these two steps.
+A user can belong to only one org. Use an owner email that does not belong to a user in another org.
+An inactive membership in another org also blocks the invitation.
 Run `wamn org create <org> --owner <email>` with the admin kubeconfig.
 On kind, the command copies the registry entry into the org's `wamn-registry-pull` Secret.
 The command installs the org chart with public platform settings. Its platform Job writes the control and apply passwords to their org Secrets before the invitation Job runs.
 For local OAuth encryption, the same Job generates a separate 32-byte key in `<org>/wamn-oauth` if the `key` entry is absent. Cloud KMS uses no org OAuth Secret. [Org chart](../../deploy/charts/org/README.md)
+
+If the owner email belongs to another org, control refuses the invitation with HTTP 409.
+The command exits with `Error: Job <org>/wamn-org-invitation-<suffix> failed`. The invitation Job's log shows the HTTP 409.
 
 Set `global.maxProjects` to the project stream limit for the installation. Each project in an environment uses one slot.
 `wamn env apply` refuses new reservations if their total across all organizations and environments would exceed the limit.
@@ -143,9 +148,32 @@ This request must return HTTP 401.
 A permitted control query requires a password-login token for the org audience.
 The local TLS ingress listens on host port 443.
 Port 80 reaches the same ingress controller.
+For the same control call through web on port 80, use `http://local.wamn.localhost/wamn_control/control/mine`.
 The edge certificate covers the application hostnames.
 Trust the local certificate explicitly when using these endpoints.
 Kind selects no hosted UI artifact.
+
+Call an application route through web at `/api/<route path>` on `<label>--<org>.<base>`.
+Web strips `/api` before it forwards the request for a route declared by the application.
+Find the route paths in `wamn.http.routes` in the application's HTTP WorkloadDeployment.
+This key is under `localResources.config` for the `ingress` component.
+The Receiving [manifest](../../apps/wamn_receiving/wamn.k) declares `/location/list` in `routes.operations`.
+
+After you deploy Receiving, call its location list route without a token. This request returns HTTP 401.
+
+```bash
+curl -i http://receiving--local.wamn.localhost/api/location/list
+```
+
+Set `WAMN_TOKEN` to an authorized token for the org. Send it as a bearer token to get HTTP 200.
+
+```bash
+curl -i -H "Authorization: Bearer $WAMN_TOKEN" http://receiving--local.wamn.localhost/api/location/list
+```
+
+`GET /` on an application host serves the pinned web client for that application.
+If the host has no pinned client, web returns HTTP 502 and logs `the host has no web client`.
+This response is a known limitation.
 
 ### Cleanup
 
@@ -231,6 +259,9 @@ Source publication stays local and returns the top package OCI digest.
 Source builds use [committed PostgreSQL describe evidence](building.md#wamn-build) and the existing registry inputs.
 To refresh the evidence during a source deploy, pass `--refresh-describe` with `--database-url` or set `DATABASE_URL`.
 Set `WAMN_PACKAGE_ARTIFACT_BASE`, `WAMN_COMPONENT_ARTIFACT_BASE` and `WAMN_REGISTRY_AUTH_FILE` for publication.
+On kind, set `WAMN_PACKAGE_ARTIFACT_BASE` to `localhost:5001/wamn/packages`.
+Set `WAMN_COMPONENT_ARTIFACT_BASE` to `localhost:5001/wamn/components`.
+Set `WAMN_REGISTRY_AUTH_FILE` to the path of the registry auth file you created for `wamn org create`.
 `WAMN_OCI_CA_PATHS` supplies optional registry certificates.
 Control derives HTTP registry access from the installed registry address using the loopback rule.
 `wamn publish` uses the existing build output and starts no Job.
@@ -317,6 +348,7 @@ Use `wamn env delete ORG/ENV/PROJECT` to remove a project deployment.
 A plain delete keeps the Cluster and ObjectStore for a manual dump. It also keeps the project certificate resources.
 The next `wamn env apply` creates a new database generation with a new Cluster.
 Run `wamn env delete ORG/ENV/PROJECT --data` to remove the kept resources after a plain delete. The command lists each one it deletes.
+The command reads the confirmation from a terminal. At the prompt, type the same `ORG/ENV/PROJECT` value.
 See [Recover after a plain delete](backup-and-recovery.md#recover-after-a-plain-delete) for cleanup when the Cluster is already gone.
 Delete stops the reader before it removes the stream, then removes the replication slot and publication.
 Delete removes the project’s CDC and recovery credential Secrets. For the last project it also removes the host group, the shared credentials, and the environment account.
