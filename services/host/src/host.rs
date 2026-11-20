@@ -498,9 +498,12 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         .filter(|owner| !owner.is_empty())
         .unwrap_or_else(|| "wamn-host".to_owned());
 
-    let scheduler_nats_client =
-        connect_scheduler_nats(&args, args.host_name.as_deref().unwrap_or(&router_owner), issuer)
-            .await?;
+    let scheduler_nats_client = connect_scheduler_nats(
+        &args,
+        args.host_name.as_deref().unwrap_or(&router_owner),
+        issuer,
+    )
+    .await?;
     let host_memory = host_memory(&args)?;
     let engine = build_engine_with_host_memory(
         &args.wasm_proposals,

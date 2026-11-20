@@ -317,7 +317,7 @@ The platform runs one NATS server in operator mode. TLS protects the connection,
 Identity signs account and user JWTs. NATS stores account JWTs in its full resolver.
 The `PLATFORM` account contains a user for the runtime operator and a separate scheduler user for each host pod.
 The scheduler user subscribes to `runtime.host.<pod-name>.>` and publishes its ready marker and heartbeat.
-It can publish and subscribe under its own key-based inbox prefix and send one reply per operator request.
+It can publish and subscribe under its own key-based inbox prefix. It publishes operator replies to `_INBOX_wasmcloud-operator.>`.
 Each environment has its own account for project events.
 Its JetStream file storage limit is 256 MiB times the number of projects in the environment.
 It has zero memory storage and unlimited stream and consumer counts.
@@ -329,7 +329,7 @@ Each project's CDC reader can publish only to the project's event subjects.
 Its recovery worker can request stream information and read messages from that project's stream.
 Each JWT authorizes a separate reply inbox.
 
-The host group mounts a shared data user and separate credentials for its `workflow` and `ingress` bindings and native workflow client.
+The host group mounts shared data credentials and separate credentials for its `workflow` and `ingress` bindings and native workflow client.
 Bindings use `workloadConfig: deny` and narrow access to the application's project stream and subjects.
 The NATS HTTP monitor binds to loopback.
 

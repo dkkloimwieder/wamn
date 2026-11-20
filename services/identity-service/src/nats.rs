@@ -8,10 +8,10 @@ use hyper::{Response, StatusCode, body::Bytes};
 use serde::{Deserialize, Serialize};
 use sqlx::PgConnection;
 use tokio::sync::OnceCell;
-use wamn_identity::nats::{self, Authority, Permissions, ResponsePermission, SubjectPermission};
+use wamn_identity::nats::{self, Authority, Permissions, SubjectPermission};
 use wamn_identity_client::nats::{
-    Account, ENSURE_ACCOUNT_PATH, EnsureAccount, SIGN_USER_PATH, SignHostUser, SignUser, SignedUser,
-    UserKind,
+    Account, ENSURE_ACCOUNT_PATH, EnsureAccount, SIGN_USER_PATH, SignHostUser, SignUser,
+    SignedUser, UserKind,
 };
 use wamn_kubernetes::kubernetes_api::KubernetesApi;
 use wamn_registry::{OrgId, name};
@@ -326,6 +326,7 @@ pub(super) fn sign_host_user(inner: &Inner, pod: &str, body: &[u8]) -> Response<
                 format!("runtime.host.{pod}.__control.ready"),
                 format!("runtime.operator.heartbeat.{pod}"),
                 format!("{inbox_prefix}.>"),
+                format!("{}.>", nats::RUNTIME_OPERATOR_INBOX),
             ],
             deny: Vec::new(),
         },
@@ -333,7 +334,7 @@ pub(super) fn sign_host_user(inner: &Inner, pod: &str, body: &[u8]) -> Response<
             allow: vec![format!("runtime.host.{pod}.>"), format!("{inbox_prefix}.>")],
             deny: Vec::new(),
         },
-        resp: Some(ResponsePermission { max: 1, ttl: 0 }),
+        resp: None,
     };
     let user = nats::User {
         public_key: &request.public_key,

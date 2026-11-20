@@ -127,23 +127,23 @@ async fn post<T: DeserializeOwned>(
     endpoint: &Url,
     request: &impl Serialize,
 ) -> anyhow::Result<T> {
-        let mut response = http.post(endpoint, serde_json::to_vec(request)?).await?;
+    let mut response = http.post(endpoint, serde_json::to_vec(request)?).await?;
+    anyhow::ensure!(
+        response.status() != StatusCode::CONFLICT,
+        "platform NATS project limit exceeded"
+    );
+    anyhow::ensure!(
+        response.status() == StatusCode::OK,
+        "identity NATS request failed: {}",
+        response.status()
+    );
+    let mut body = Vec::new();
+    while let Some(chunk) = response.chunk().await? {
         anyhow::ensure!(
-            response.status() != StatusCode::CONFLICT,
-            "platform NATS project limit exceeded"
+            chunk.len() <= MAX_RESPONSE_BYTES - body.len(),
+            "identity NATS response exceeds the size limit"
         );
-        anyhow::ensure!(
-            response.status() == StatusCode::OK,
-            "identity NATS request failed: {}",
-            response.status()
-        );
-        let mut body = Vec::new();
-        while let Some(chunk) = response.chunk().await? {
-            anyhow::ensure!(
-                chunk.len() <= MAX_RESPONSE_BYTES - body.len(),
-                "identity NATS response exceeds the size limit"
-            );
-            body.extend_from_slice(&chunk);
-        }
-        serde_json::from_slice(&body).map_err(|_| anyhow::anyhow!("invalid identity NATS response"))
+        body.extend_from_slice(&chunk);
+    }
+    serde_json::from_slice(&body).map_err(|_| anyhow::anyhow!("invalid identity NATS response"))
 }

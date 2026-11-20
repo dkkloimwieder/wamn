@@ -2474,7 +2474,7 @@ Facts:
 - K24: every application workload has an unnamed `wasmcloud:nats` binding on the host's default data connection. The data user lives in the environment's own account with publish denied, so the plain import routes through nothing in `PLATFORM`. Cause: the Data change handler's message resource comes from the plain `jetstream` interface, which wash-runtime links only for an unnamed binding.
 - 10.13:
   - TokenReview and the host service account only.
-  - Key-based inbox, with NATS `resp` (at most one reply) for operator replies.
+  - Key-based inbox. Operator replies use a fixed publish right on `_INBOX_wasmcloud-operator.>`, not NATS `resp`. Reason: NATS grants a `resp` reply right for any message the host receives, with a reply subject the sender chooses. Because wasmCloud requires the host to receive its own messages, a host could set another host's command subject as the reply on its own `__control.ready` message and then publish once to that host. The operator's inboxes carry random tokens a host cannot guess, so the fixed right reaches no other host.
   - No revocation; reissue for the same pod.
   - No migration code.
   - Connection, subscription and payload limits per project, multiplied by the project count, and signed again when changed.
