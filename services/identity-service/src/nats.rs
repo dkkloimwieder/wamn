@@ -8,7 +8,7 @@ use hyper::{Response, StatusCode, body::Bytes};
 use serde::{Deserialize, Serialize};
 use sqlx::PgConnection;
 use tokio::sync::OnceCell;
-use wamn_identity::nats::{self, Authority, Permissions, SubjectPermission};
+use wamn_identity::nats::{self, Authority, LimitsPerProject, Permissions, SubjectPermission};
 use wamn_identity_client::nats::{
     Account, ENSURE_ACCOUNT_PATH, EnsureAccount, SIGN_USER_PATH, SignUser, SignedUser, UserKind,
 };
@@ -28,6 +28,7 @@ pub(super) struct Settings {
     url: String,
     tls_ca: PathBuf,
     max_projects: i64,
+    limits_per_project: LimitsPerProject,
 }
 
 pub(super) struct State {
@@ -42,6 +43,23 @@ impl State {
         self.client
             .get_or_try_init(|| self.options.clone().connect(self.server.clone()))
             .await
+    }
+
+    async fn lookup_account(&self, account: &str) -> Result<Bytes, IdentityServiceError> {
+        let subject = nats::LOOKUP_SUBJECT.replacen('*', account, 1);
+        tokio::time::timeout(REQUEST_TIMEOUT, async {
+            let client = self
+                .client()
+                .await
+                .map_err(|_| IdentityServiceError::new("connect to NATS resolver failed"))?;
+            client
+                .request(subject, Bytes::new())
+                .await
+                .map(|message| message.payload)
+                .map_err(|_| IdentityServiceError::new("request NATS account lookup failed"))
+        })
+        .await
+        .map_err(|_| IdentityServiceError::new("NATS account lookup timed out"))?
     }
 
     async fn resolver_request(
@@ -101,6 +119,7 @@ pub(super) async fn start(
         url,
         tls_ca,
         max_projects,
+        limits_per_project,
     }) = settings
     else {
         return Ok(None);
@@ -124,7 +143,7 @@ pub(super) async fn start(
             "identity NATS bootstrap requires the platform namespace",
         ));
     }
-    let bootstrap = nats::bootstrap(db, issuer, envelope, max_projects)
+    let bootstrap = nats::bootstrap(db, issuer, envelope, max_projects, limits_per_project)
         .await
         .map_err(|error| {
             tracing::error!(%error, "NATS bootstrap failed");
@@ -230,9 +249,9 @@ async fn ensure_account(
             client,
             &inner.envelope,
             &inner.issuer,
-            org,
-            &request.env,
+            (org, &request.env),
             count,
+            async |account| state.lookup_account(account).await,
         )
         .await
     {

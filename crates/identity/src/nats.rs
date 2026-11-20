@@ -6,6 +6,7 @@ mod store;
 use std::{error, fmt, time::SystemTime};
 
 use nkeys::{KeyPair, KeyPairType};
+use serde::Deserialize;
 use sqlx::{Connection as _, PgConnection};
 use wamn_envelope::encryption::Envelope;
 use wamn_registry::{EnvName, OrgId, name};
@@ -86,6 +87,16 @@ pub struct Authority {
     platform: String,
     platform_signing: KeyPair,
     max_projects: i64,
+    limits_per_project: LimitsPerProject,
+}
+
+/// Install-time environment account limits for one project.
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LimitsPerProject {
+    connections: i64,
+    subscriptions: i64,
+    payload: i64,
 }
 
 impl fmt::Debug for Authority {
@@ -96,6 +107,8 @@ impl fmt::Debug for Authority {
 
 /// The subject used to push account claims to the NATS full resolver.
 pub const UPDATE_SUBJECT: &str = "$SYS.REQ.CLAIMS.UPDATE";
+/// Subject pattern for reading account JWTs from the full resolver.
+pub const LOOKUP_SUBJECT: &str = "$SYS.REQ.ACCOUNT.*.CLAIMS.LOOKUP";
 /// Resolver endpoint for operator-signed account removal.
 pub const DELETE_SUBJECT: &str = "$SYS.REQ.CLAIMS.DELETE";
 /// Inbox prefix for the platform runtime operator.
@@ -107,7 +120,19 @@ pub async fn bootstrap(
     issuer: &str,
     envelope: &Envelope,
     max_projects: i64,
+    limits_per_project: LimitsPerProject,
 ) -> Result<Bootstrap, Error> {
+    let LimitsPerProject {
+        connections,
+        subscriptions,
+        payload,
+    } = limits_per_project;
+    if connections < 1 || subscriptions < 1 || payload < 1 {
+        return Err(Error::new(
+            "validate NATS limits per project",
+            std::io::Error::other("limits must be positive"),
+        ));
+    }
     let mut tx = client.begin().await.map_err(store::database_error)?;
     store::lock(&mut tx, issuer).await?;
     let root = store::platform_key(
@@ -177,6 +202,7 @@ pub async fn bootstrap(
         "SYS",
         system.issued_at,
         0,
+        &claims::UNLIMITED_CLIENT_LIMITS,
         &[system_signing.pair.public_key()],
     )?;
     let platform_jwt = claims::account(
@@ -185,6 +211,7 @@ pub async fn bootstrap(
         "PLATFORM",
         platform.issued_at,
         0,
+        &claims::UNLIMITED_CLIENT_LIMITS,
         &[platform_signing.pair.public_key()],
     )?;
     let operator_include = format!(
@@ -201,7 +228,7 @@ pub async fn bootstrap(
         "wamn-identity-resolver",
         unix_seconds()?,
         &permissions(
-            [UPDATE_SUBJECT, DELETE_SUBJECT],
+            [UPDATE_SUBJECT, DELETE_SUBJECT, LOOKUP_SUBJECT],
             [format!("{system_inbox}.>")],
         ),
     )?;
@@ -232,29 +259,53 @@ pub async fn bootstrap(
             platform: platform_id,
             platform_signing: platform_signing.pair,
             max_projects,
+            limits_per_project,
         },
     })
 }
 
 impl Authority {
     /// Persist the environment key and issue its current account JWT.
-    pub async fn ensure_environment(
+    /// For an existing account, `lookup` returns the resolver's JWT or empty bytes.
+    pub async fn ensure_environment<B, E>(
         &self,
         client: &mut PgConnection,
         envelope: &Envelope,
         issuer: &str,
-        org: &OrgId,
-        env: &EnvName,
+        (org, env): (&OrgId, &EnvName),
         project_count: i32,
-    ) -> Result<(String, String), Error> {
+        lookup: impl AsyncFnOnce(&str) -> Result<B, E>,
+    ) -> Result<(String, String), Error>
+    where
+        B: AsRef<[u8]>,
+        E: error::Error + Send + Sync + 'static,
+    {
+        let scale = |limit: i64| {
+            limit.checked_mul(i64::from(project_count)).ok_or_else(|| {
+                Error::new(
+                    "scale NATS environment limits",
+                    std::io::Error::other("limit exceeds the NATS claim range"),
+                )
+            })
+        };
+        let limits = claims::ClientLimits {
+            conn: scale(self.limits_per_project.connections)?,
+            subs: scale(self.limits_per_project.subscriptions)?,
+            payload: scale(self.limits_per_project.payload)?,
+        };
         let key = store::ensure_environment(
             client,
             envelope,
             issuer,
-            org,
-            env,
+            (org, env),
             project_count,
             self.max_projects,
+            async |subject, issued_at| {
+                let jwt = lookup(subject).await.map_err(|source| {
+                    Error::new("look up NATS environment account claim", source)
+                })?;
+                claims::account_limits_match(jwt.as_ref(), issued_at, &limits)
+            },
         )
         .await?;
         let jwt = claims::account(
@@ -263,6 +314,7 @@ impl Authority {
             &name::environment_nats_account(org, env),
             key.issued_at,
             project_count,
+            &limits,
             &[key.signer.public_key()],
         )?;
         Ok((key.subject, jwt))

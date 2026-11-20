@@ -317,8 +317,10 @@ The platform runs one NATS server in operator mode. TLS protects the connection,
 Identity signs account and user JWTs. NATS stores account JWTs in its full resolver.
 The `PLATFORM` account contains a user for the runtime operator and a scheduler user for each host group.
 Each environment has its own account for project events and for the host group's data user.
-Its JetStream file storage limit is 256 MiB times the number of projects in the environment.
-It has zero memory storage and unlimited stream and consumer counts.
+Identity multiplies the installation's per-project connection, subscription, and payload limits by the number of projects in the environment.
+NATS limits subscriptions per connection and also enforces the server's maximum message size.
+The account has no total data cap. JetStream allows one stream and 256 MiB of file storage per project.
+JetStream has zero memory storage and an unlimited consumer count.
 The account contains all the environment's project streams. Accounts exchange no imports or exports.
 
 The org worker generates the user keys and stores the credentials in Secrets in the org namespace.

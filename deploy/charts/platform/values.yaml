@@ -191,6 +191,10 @@ identity:
   resendFrom: ""
   inviteUrl: ""
   localMail: ""
+  natsLimitsPerProject:
+    connections: 64
+    subscriptions: 1024
+    payload: 1048576
   authNats:
     tlsSecret: wasmcloud-nats-tls
   resources:

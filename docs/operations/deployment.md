@@ -95,6 +95,11 @@ The system SQL Job records the limit in the system database on each platform dep
 Each NATS pod uses 256 MiB per project for streams and 64 MiB per project for storage overhead.
 The resolver has a separate claim when operator mode is enabled. [Platform chart](../../deploy/charts/platform/README.md)
 
+Set `identity.natsLimitsPerProject` to size the NATS accounts for environments.
+The defaults are 64 connections, 1,024 subscriptions per connection, and 1,048,576 bytes per message.
+Identity multiplies each value by the environment's project count in the account JWT. The NATS server also enforces its own maximum message size.
+Run `wamn env apply` for an environment after changing these values to publish its updated account JWT.
+
 The local collector uses debug export.
 
 Kubernetes and its operators own running resources. Helm owns release revisions.
@@ -689,7 +694,8 @@ It makes sure of the identity certificate, as it does in kind.
 
 `wamn-identity serve --settings <path>` reads one JSON file. The chart renders the issuer, public database connection, envelope provider, and mail mode into that file.
 The pod mounts the database credentials, TLS keys, local wrapping key, and Resend token as files.
-When `identity.authNats.tlsSecret` is set, the chart adds `global.nats.schedulerUrl` and the CA path to identity settings. Identity mounts `ca.crt` from that Secret.
+When `identity.authNats.tlsSecret` is set, the chart adds `global.nats.schedulerUrl`, the CA path, and the NATS limits to identity settings.
+Identity mounts `ca.crt` from that Secret.
 Identity creates the first session signing key at startup. CloudNativePG manages the issuer login. Identity uses the client certificate and key from `wamn-identity-db-tls`.
 
 Create a Secret in `platform` with an `api-key` entry.
