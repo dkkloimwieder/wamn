@@ -139,9 +139,10 @@ wash-runtime = { git = "https://github.com/wasmCloud/wasmCloud", tag = "v2.12.2"
 wasmtime = { version = "=48.0.8", default-features = false, features = ["cache", "parallel-compilation"] }
 wasmtime-wasi = "=48.0.8"
 wasmtime-wasi-http = "=48.0.8"
-# pg_walstream 0.10.0 with the typed keepalive patch.
+# pg_walstream 0.10.0 from the fork with two patches: the typed keepalive
+# and the native TLS client certificate (sslcert, sslkey).
 # Upstream already contains the FAILOVER syntax fix.
-pg_walstream = { git = "https://github.com/dkkloimwieder/pg-walstream", rev = "2f6697e4e761565ed366b94f43a6f29b2287d67a" }
+pg_walstream = { git = "https://github.com/dkkloimwieder/pg-walstream", rev = "9957974fc64efb2431ba77fb2670c034da869756" }
 anyhow = "1"
 argon2 = { version = "0.6.0", features = ["zeroize"] }
 zeroize = "1"

@@ -3210,7 +3210,7 @@ dependencies = [
 [[package]]
 name = "pg_walstream"
 version = "0.10.0"
-source = "git+https://github.com/dkkloimwieder/pg-walstream?rev=2f6697e4e761565ed366b94f43a6f29b2287d67a#2f6697e4e761565ed366b94f43a6f29b2287d67a"
+source = "git+https://github.com/dkkloimwieder/pg-walstream?rev=9957974fc64efb2431ba77fb2670c034da869756#9957974fc64efb2431ba77fb2670c034da869756"
 dependencies = [
  "aws-lc-rs",
  "bytes",
