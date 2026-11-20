@@ -1,6 +1,8 @@
-//! Ownership tests and deletion of resources installed outside Helm.
+//! Ownership checks and deletion of project resources.
 
+use anyhow::Context as _;
 use serde_json::Value;
+use wamn_kubernetes::helm;
 use wamn_registry::{Triple, name};
 
 use super::super::Platform;
@@ -56,15 +58,19 @@ pub(super) async fn require_ownership(
     Ok(())
 }
 
-pub(super) async fn delete_reader(platform: &Platform, triple: &Triple) -> anyhow::Result<()> {
+pub(super) async fn delete_reader(
+    platform: &Platform,
+    triple: &Triple,
+    release: Option<&str>,
+) -> anyhow::Result<()> {
     let cdc = wamn_provision::cdc_reader_name(&triple.org, &triple.project, &triple.env);
-    if get(platform, &platform.target.namespace, "deployment", &cdc)
-        .await?
-        .is_some()
+    if let Some(release) = release
+        && get(platform, &platform.target.namespace, "deployment", &cdc)
+            .await?
+            .is_some()
     {
-        let release = name::environment_resource_name(&triple.org, &triple.project, &triple.env);
         wamn_platform_install::environment::update_project(
-            &platform.target, &platform.chart, &release,
+            &platform.target, &platform.chart, release,
             serde_json::json!({"cdcReader":{"pause":true},"publication":{"reclaimPolicy":"delete"}}),
         ).await?;
     }
@@ -77,11 +83,145 @@ pub(super) async fn delete_reader(platform: &Platform, triple: &Triple) -> anyho
     .await
 }
 
+pub(super) async fn project_release_exists(
+    platform: &Platform,
+    release: &str,
+) -> anyhow::Result<bool> {
+    let target = &platform.target;
+    let namespace = helm::org_release_namespace(&target.namespace);
+    let filter = format!("^{release}$");
+    let output = helm::run_text(&[
+        "list".as_ref(),
+        "--filter".as_ref(),
+        filter.as_ref(),
+        "-o".as_ref(),
+        "json".as_ref(),
+        "--kubeconfig".as_ref(),
+        target.kubeconfig.as_os_str(),
+        "--kube-context".as_ref(),
+        target.context.as_ref(),
+        "--namespace".as_ref(),
+        std::ffi::OsStr::new(namespace.as_ref()),
+    ])
+    .await
+    .with_context(|| format!("look up project release {release}"))?;
+    let releases: Vec<Value> = serde_json::from_str(&output).context("decode Helm release list")?;
+    Ok(releases.iter().any(|entry| entry["name"] == release))
+}
+
+pub(super) async fn uninstall_project(
+    platform: &Platform,
+    triple: &Triple,
+    data: bool,
+    lines: &mut Vec<String>,
+) -> anyhow::Result<()> {
+    wamn_platform_install::environment::remove_database(
+        &platform.target,
+        &platform.chart,
+        triple,
+        data,
+    )
+    .await?;
+    lines.push("uninstalled the project release".into());
+    Ok(())
+}
+
+/// Remove chart resources left by uninstalled project generations.
+pub(super) async fn delete_kept_project_resources(
+    platform: &Platform,
+    triple: &Triple,
+    release: &str,
+) -> anyhow::Result<Vec<String>> {
+    const CLUSTER: &str = "cluster.postgresql.cnpg.io";
+    const STORE: &str = "objectstore.barmancloud.cnpg.io";
+    let namespace = &platform.target.namespace;
+    let coordinate = name::project_env_key(&triple.org, &triple.project, &triple.env);
+    let mut lines = Vec::new();
+    for kind in [
+        CLUSTER,
+        "certificate.cert-manager.io",
+        "issuer.cert-manager.io",
+    ] {
+        let output = super::kubectl(platform, namespace, &["get", kind, "-o", "json"], None)
+            .await
+            .with_context(|| format!("list {kind} in {namespace}"))?;
+        let list: Value =
+            serde_json::from_str(&output).with_context(|| format!("decode {kind} list"))?;
+        let items = list["items"]
+            .as_array()
+            .with_context(|| format!("read items in {kind} list"))?;
+        for object in items
+            .iter()
+            .filter(|object| kept_by_release(object, release))
+        {
+            let name = object["metadata"]["name"]
+                .as_str()
+                .with_context(|| format!("kept {kind} has no name"))?;
+            if kind == CLUSTER {
+                let project = object["spec"]["bootstrap"]["initdb"]["database"]
+                    .as_str()
+                    .and_then(name::project_database_key);
+                if project.as_ref() != Some(&coordinate) {
+                    continue;
+                }
+                // Remove the store first so a retry can still find it by the Cluster name.
+                let store = format!("{name}-store");
+                if let Some(object) = get(platform, namespace, STORE, &store).await?
+                    && kept_by_release(&object, release)
+                {
+                    // Waiting in kubectl would require list and watch on ObjectStores.
+                    delete_kept_object(platform, STORE, &store, "--wait=false", &mut lines).await?;
+                }
+            }
+            delete_kept_object(platform, kind, name, "--wait=true", &mut lines).await?;
+        }
+    }
+    if lines.is_empty() {
+        lines.push(format!("no kept project resources found for {triple}"));
+    }
+    Ok(lines)
+}
+
+fn kept_by_release(object: &Value, release: &str) -> bool {
+    let annotations = &object["metadata"]["annotations"];
+    annotations["meta.helm.sh/release-name"] == release
+        && annotations["helm.sh/resource-policy"] == "keep"
+}
+
+async fn delete_kept_object(
+    platform: &Platform,
+    kind: &str,
+    name: &str,
+    wait: &str,
+    lines: &mut Vec<String>,
+) -> anyhow::Result<()> {
+    let removed = super::kubectl(
+        platform,
+        &platform.target.namespace,
+        &[
+            "delete",
+            kind,
+            name,
+            "--ignore-not-found",
+            wait,
+            "-o",
+            "name",
+        ],
+        None,
+    )
+    .await
+    .with_context(|| format!("delete kept {kind}/{name}"))?;
+    if !removed.is_empty() {
+        lines.push(format!("deleted {removed}"));
+    }
+    Ok(())
+}
+
 pub(super) async fn delete_database_certificate_secrets(
     platform: &Platform,
     database: &str,
 ) -> anyhow::Result<()> {
-    // cert-manager is configured to retain its Secrets after Certificate deletion.
+    // Also remove older Secrets that lack cert-manager's Certificate owner reference.
     let cluster = name::project_cluster(database);
     let root = format!("{cluster}-login-ca");
     let namespace = &platform.target.namespace;

@@ -14,7 +14,8 @@
 //! last and commit. Disable connection principals in a retained database.
 //!
 //! Helm preserves the Cluster, ObjectStore, and certificates unless deletion includes data.
-//! With `--data`, an absent or unreachable project database skips database-side cleanup.
+//! With `--data`, remove kept generations even when the registry row is gone.
+//! An absent or unreachable project database skips database-side cleanup.
 
 use sqlx::{Connection as _, Row as _};
 mod resources;
@@ -73,6 +74,8 @@ async fn delete_locked(
     system: &LifecycleLock,
 ) -> anyhow::Result<Vec<String>> {
     let (org, project, env) = (&triple.org, &triple.project, &triple.env);
+    let release = name::environment_resource_name(org, project, env);
+    let release_present = data && resources::project_release_exists(platform, &release).await?;
     let mut lines = Vec::new();
     let Some((instance, readiness_budget_seconds, drain_bound_seconds)) =
         sqlx::query_as::<_, (InstanceSuffix, i32, i32)>(
@@ -85,9 +88,18 @@ async fn delete_locked(
         .await
         .context("read the environment row")?
     else {
-        lines.push(format!(
-            "{triple} has no environment row: nothing else to delete"
-        ));
+        if data {
+            if release_present {
+                resources::uninstall_project(platform, triple, data, &mut lines).await?;
+            }
+            lines.extend(
+                resources::delete_kept_project_resources(platform, triple, &release).await?,
+            );
+        } else {
+            lines.push(format!(
+                "{triple} has no environment row: nothing else to delete"
+            ));
+        }
         return Ok(lines);
     };
     let database = project_env_database_name(org, project, env, &instance);
@@ -109,8 +121,9 @@ async fn delete_locked(
     )
     .await?
     .is_empty();
+    let database_managed = cr_present && (!data || release_present);
     let cluster_missing = data
-        && cr_present
+        && database_managed
         && wamn_kubernetes::kubectl::get::<serde_json::Value>(
             &platform.target.kubeconfig,
             &platform.target.context,
@@ -120,7 +133,7 @@ async fn delete_locked(
         )
         .await?
         .is_none();
-    let project_connection = (cr_present && !cluster_missing)
+    let project_connection = (database_managed && !cluster_missing)
         .then(|| wamn_platform_install::environment::connection_for(triple, &instance));
     let project_lock = if cluster_missing {
         lines.push(format!(
@@ -184,7 +197,8 @@ async fn delete_locked(
             }
         }
 
-        resources::delete_reader(platform, triple).await?;
+        let reader_release = (!data || release_present).then_some(release.as_str());
+        resources::delete_reader(platform, triple, reader_release).await?;
         lines.push(format!(
             "deleted the CDC reader of {triple} (or it was gone)"
         ));
@@ -316,17 +330,11 @@ async fn delete_locked(
     if let Some(lock) = project_lock {
         lock.release().await;
     }
-    if cr_present {
-        wamn_platform_install::environment::remove_database(
-            &platform.target,
-            &platform.chart,
-            triple,
-            data,
-        )
-        .await?;
-        lines.push("uninstalled the project release".into());
+    if release_present || (!data && cr_present) {
+        resources::uninstall_project(platform, triple, data, &mut lines).await?;
     }
     if data {
+        lines.extend(resources::delete_kept_project_resources(platform, triple, &release).await?);
         resources::delete_database_certificate_secrets(platform, &database).await?;
     }
 

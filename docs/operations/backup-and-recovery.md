@@ -130,6 +130,16 @@ cat receipts.sql merge-receipts.sql |
 
 Make sure that the live database contains the expected rows before you resume writes.
 
+## Recover after a plain delete
+
+`wamn env delete ORG/ENV/PROJECT` keeps the Cluster and ObjectStore for a manual dump.
+The next `wamn env apply` creates a new database generation with a new Cluster.
+When you no longer need the kept data, run `wamn env delete ORG/ENV/PROJECT --data`.
+The command removes the kept resources and lists each one it deletes.
+If you already applied the environment again, `--data` also deletes the new generation.
+
+If the Cluster is already gone, the command cannot find its ObjectStore, so delete it by name with `kubectl -n "$org" delete objectstore.barmancloud.cnpg.io "${cluster}-store" --ignore-not-found`.
+
 ## Recover after total loss of the live Cluster
 
 1. Follow [Restore to a separate Cluster](#restore-to-a-separate-cluster) to recover the archive into `<cluster>-restore`.
