@@ -27,6 +27,8 @@ wamn-authority = { workspace = true }
 wamn-catalog = { workspace = true }
 wamn-connection = { workspace = true }
 wamn-engine = { workspace = true }
+wamn-envelope.workspace = true
+wamn-postgres = { workspace = true, features = ["host"] }
 wamn-identity-protocol = { workspace = true, features = ["sqlx"] }
 wamn-registry = { workspace = true }
 

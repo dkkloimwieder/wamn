@@ -1,16 +1,12 @@
 use std::sync::Arc;
 
-use super::super::pool::Object;
 use sqlx::postgres::PgPoolOptions;
 use tracing::Instrument as _;
-
+use wamn_engine::entry_operation::postgres_types::PgError;
 use wamn_identity_protocol::AuthorityClass;
 
-use super::super::pool::{
-    PoolKey, ProjectPool, ResolvedCredential, destroy_connection,
-};
-use super::super::PgError;
-use super::WamnPostgres;
+use crate::WamnPostgres;
+use crate::pool::{Object, PoolKey, ProjectPool, ResolvedCredential, destroy_connection};
 
 impl WamnPostgres {
     /// Build one SQLx pool for the selected login and database.
@@ -19,7 +15,7 @@ impl WamnPostgres {
         class: AuthorityClass,
         _project: &wamn_registry::ProjectId,
     ) -> anyhow::Result<sqlx::PgPool> {
-        let options = wamn_postgres::connect_options(&cfg.database_url).await?;
+        let options = crate::connect_options(&cfg.database_url).await?;
         let timeout = cfg.statement_timeout_ms.to_string();
         let size = u32::try_from(match class {
             AuthorityClass::GuestSql | AuthorityClass::DynamicSql => cfg.guest_pool_max_size,
@@ -41,7 +37,7 @@ impl WamnPostgres {
             .connect_lazy_with(options))
     }
 
-    pub(crate) async fn ensure_pool(
+    pub(super) async fn ensure_pool(
         &self,
         class: AuthorityClass,
         project: &wamn_registry::ProjectId,
@@ -67,8 +63,8 @@ impl WamnPostgres {
                 return Err(PgError::ConnectionUnavailable);
             }
         };
-        let (login, _) = wamn_postgres::identity(&cfg.database_url)
-            .map_err(|_| PgError::ConnectionUnavailable)?;
+        let (login, _) =
+            crate::identity(&cfg.database_url).map_err(|_| PgError::ConnectionUnavailable)?;
         let key = PoolKey::new(project, login);
         if let Some(pool) = self.pools.read().expect("pools lock poisoned").get(&key) {
             return Ok(Arc::clone(pool));
@@ -92,8 +88,8 @@ impl WamnPostgres {
         Ok(Arc::clone(w.entry(key).or_insert(pp)))
     }
 
-    pub(in super::super) fn destroy(&self, obj: Object) {
-        destroy_connection(obj, &self.destroyed);
+    pub fn destroy(&self, obj: Object) {
+        destroy_connection(obj, self.destroyed_connections());
     }
 
     async fn checkout_class(
@@ -129,10 +125,10 @@ impl WamnPostgres {
     /// at which a guest checkout could name a platform authority.
     ///
     /// It DOES take the project, and that is the whole of `wamn-0h0g.22.6.7`:
-    /// after the `wamn-0h0g.22.6` sweep the guest's project comes from
+    /// after `wamn-0h0g.22.6` the guest's project comes from
     /// `current_user`, so the credential IS the project authority and the
     /// connection cannot be selected without knowing which project it is for.
-    pub(in super::super) async fn checkout_dynamic(
+    pub async fn checkout_dynamic(
         &self,
         project: &wamn_registry::ProjectId,
         project_env_key: &wamn_registry::ProjectEnvKey,
@@ -141,7 +137,7 @@ impl WamnPostgres {
             .await
     }
 
-    pub(in super::super) async fn checkout_guest(
+    pub async fn checkout_guest(
         &self,
         project: &wamn_registry::ProjectId,
         project_env_key: &wamn_registry::ProjectEnvKey,
@@ -153,7 +149,7 @@ impl WamnPostgres {
     /// acquire the credential selected by the host-owned workload binding.
     /// Absence is exactly the existing guest path; only the closed
     /// event-materializer binding selects a platform credential.
-    pub(in super::super) async fn checkout_workload(
+    pub async fn checkout_workload(
         &self,
         _component_id: &str,
         project: &wamn_registry::ProjectId,
@@ -174,7 +170,7 @@ impl WamnPostgres {
     /// project environment, not to a project. The remaining relation with a
     /// settable identity is `wamn_run.run_queue`. The host injects that identity,
     /// and the guest cannot reach the relation.
-    pub(in super::super) async fn checkout_platform(
+    pub async fn checkout_platform(
         &self,
         project: &wamn_registry::ProjectId,
         class: AuthorityClass,

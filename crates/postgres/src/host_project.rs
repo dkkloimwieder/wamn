@@ -1,12 +1,16 @@
-//! Project login Secrets belong to the host plugin; pools start at workload bind.
+//! Project login configuration and its mounted credentials.
 use crate::{
-    AuthorityClass, ClassCredentials, CredentialProvider, ProjectConfig, ResolvedCredential,
-    StaticCredentialProvider, WamnPostgres,
+    WamnPostgres,
+    pool::{
+        ClassCredentials, CredentialProvider, ProjectConfig, ResolvedCredential,
+        StaticCredentialProvider,
+    },
 };
 use anyhow::Context as _;
 use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::sync::{Arc, RwLock};
+use wamn_identity_protocol::AuthorityClass;
 
 /// Public database coordinates and mounted login references for one host project.
 #[derive(Debug, Deserialize)]
@@ -48,10 +52,7 @@ impl WamnPostgres {
                         .any(|entry| entry.as_str() == class),
                     "unknown database authority class"
                 );
-                wamn_postgres::credential_directory(
-                    std::path::Path::new(wamn_postgres::DATABASE_DIR),
-                    secret,
-                )?;
+                crate::credential_directory(std::path::Path::new(crate::DATABASE_DIR), secret)?;
             }
         }
         let credentials = Arc::new(HostCredentials::default());
@@ -62,7 +63,7 @@ impl WamnPostgres {
         Ok(postgres)
     }
 
-    pub(super) async fn bind_host_project(
+    pub async fn bind_host_project(
         &self,
         project: &wamn_registry::ProjectId,
         key: &wamn_registry::ProjectEnvKey,
@@ -80,10 +81,8 @@ impl WamnPostgres {
             let Some(secret) = config.logins.get(class.as_str()) else {
                 continue;
             };
-            let directory = wamn_postgres::credential_directory(
-                std::path::Path::new(wamn_postgres::DATABASE_DIR),
-                secret,
-            )?;
+            let directory =
+                crate::credential_directory(std::path::Path::new(crate::DATABASE_DIR), secret)?;
             let username: wamn_identity_protocol::LoginName = match class {
                 AuthorityClass::GuestSql => wamn_role::APP_LOGIN,
                 AuthorityClass::DynamicSql => wamn_role::QUERY_LOGIN,
@@ -110,7 +109,7 @@ impl WamnPostgres {
             let has_cert = credential_exists(&cert).await?;
             let has_key = credential_exists(&key).await?;
             if !has_cert && !has_key {
-                let password = wamn_postgres::read_password(&directory, &username).await?;
+                let password = crate::read_password(&directory, &username).await?;
                 url.set_password(Some(&password))
                     .map_err(|()| anyhow::anyhow!("invalid database password"))?;
             } else {

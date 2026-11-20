@@ -197,3 +197,12 @@ pub async fn project_pat(
         deadline: deadline.into(),
     })))
 }
+
+mod project_reads;
+mod store;
+
+pub use project_reads::{
+    SessionIdentityError, SessionIdentityErrorType, UnprovisionedPrincipal, oauth_connection,
+    read_guest_grants, require_provisioned_principal,
+};
+pub use store::Authorization;

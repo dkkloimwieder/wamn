@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use anyhow::Context as _;
 use serde_json::Value;
+use wamn_authentication::authorization::Authorization;
 use wamn_blobstore::file_route::{FileRoutes, RegistryFileConnections};
 use wamn_blobstore::plugin::WamnBlobstore;
 use wamn_catalog::application_config::ApplicationConfig;
@@ -13,8 +14,8 @@ use wamn_catalog::{SignedFileField, SignedFileResultClass};
 use wamn_connection::connection_facts::ConnectionCache;
 use wamn_connection::invocation::ReleaseContext;
 use wamn_engine::operation::node_types::{ErrorDetail, NodeError};
-use wamn_sql::WamnPostgres;
-use wamn_sql::result_signing::{ResultSigner, ResultSigning};
+use wamn_operation::OperationHost;
+use wamn_operation::result_signing::{ResultSigner, ResultSigning};
 
 pub(super) struct Routes {
     pub(super) files: FileRoutes,
@@ -27,9 +28,9 @@ struct ApplicationFiles {
 }
 
 pub(super) struct Files {
-    postgres: Weak<WamnPostgres>,
+    postgres: Weak<OperationHost>,
     blobstore: Arc<WamnBlobstore>,
-    connections: Arc<dyn ConnectionCache>,
+    authorization: Arc<Authorization>,
     applications: RwLock<HashMap<String, Arc<ApplicationFiles>>>,
 }
 
@@ -41,14 +42,14 @@ impl std::fmt::Debug for Files {
 
 impl Files {
     pub(super) fn new(
-        postgres: &Arc<WamnPostgres>,
+        postgres: &Arc<OperationHost>,
         blobstore: Arc<WamnBlobstore>,
-        connections: Arc<dyn ConnectionCache>,
+        authorization: Arc<Authorization>,
     ) -> Self {
         Self {
             postgres: Arc::downgrade(postgres),
             blobstore,
-            connections,
+            authorization,
             applications: RwLock::default(),
         }
     }
@@ -89,7 +90,7 @@ impl Files {
                     .upgrade()
                     .context("file database was unloaded")?;
                 let application = &state.application;
-                let facts = Arc::clone(&self.connections).facts(Arc::clone(application))?;
+                let facts = Arc::clone(&self.authorization).facts(Arc::clone(application))?;
                 let context = Arc::new(ReleaseContext::new(
                     Arc::clone(application),
                     Arc::clone(&facts),
@@ -102,6 +103,7 @@ impl Files {
                 });
                 let application_routes = super::host_route::HostRouteDelivery::new(
                     Arc::clone(&postgres),
+                    Arc::clone(&self.authorization),
                     Arc::clone(application),
                 );
                 Ok(Arc::new(Routes {

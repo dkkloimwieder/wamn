@@ -23,7 +23,6 @@ use wash_runtime::sockets::policy::EgressMode;
 use wash_runtime::washlet::AttachedHostControl;
 
 mod application_route;
-mod authentication;
 mod commands;
 mod files;
 mod host_route;
@@ -31,13 +30,15 @@ mod platform_http;
 mod workflow;
 
 use wamn_authentication::access_token::AccessTokenVerifier;
+use wamn_authentication::authorization::Authorization;
 use wamn_authentication::route_authentication::{
     EnvironmentStatusReader, PlatformRouteAuthenticator,
 };
 use wamn_engine::engine::{DEFAULT_CORE_INSTANCES, build_engine_with_host_memory};
 use wamn_engine::ingress::IngressRouting;
 use wamn_identity_client::nats::{SignHostUser, sign_host_user};
-use wamn_sql::WamnPostgres;
+use wamn_operation::{OperationDatabase, OperationHost};
+use wamn_postgres::WamnPostgres;
 
 #[derive(Debug, Args)]
 pub struct HostArgs {
@@ -204,7 +205,7 @@ struct Settings {
     nats_url: String,
     insecure_registry: bool,
     oauth_encryption: Option<wamn_envelope::encryption::Configuration>,
-    projects: BTreeMap<wamn_registry::ProjectId, wamn_sql::HostProject>,
+    projects: BTreeMap<wamn_registry::ProjectId, wamn_postgres::HostProject>,
     #[serde(default)]
     allowed_hosts: Vec<String>,
 }
@@ -267,7 +268,7 @@ fn plugin_bindings(args: &HostArgs, source: &str) -> anyhow::Result<plugin::Plug
                 .get(secret)
                 .context("plugin Secret is absent from host secrets catalog")?;
             anyhow::ensure!(
-                (entry.id == wamn_sql::WAMN_POSTGRES_ID
+                (entry.id == wamn_operation::WAMN_POSTGRES_ID
                     || entry.id == plugin::wasmcloud_nats::PLUGIN_NATS_ID)
                     && source.dir == PathBuf::from(HOST_PLUGIN_SECRET_DIRECTORY).join(secret),
                 "unsupported plugin Secret projection"
@@ -519,7 +520,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
                 args.user_config.display()
             )
         })?;
-    let postgres = Arc::new(WamnPostgres::from_host_config(settings.projects)?);
+    let pools = Arc::new(WamnPostgres::from_host_config(settings.projects)?);
     let envelope = settings
         .oauth_encryption
         .as_ref()
@@ -533,12 +534,10 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         })
         .transpose()?
         .map(Arc::new);
-    let authorization = Arc::new(
-        authentication::Authorization::new(Arc::downgrade(&postgres))
-            .with_oauth_encryption(envelope),
-    );
-    postgres.set_authorization_store(Arc::clone(&authorization) as _);
-    postgres.set_connection_cache(Arc::clone(&authorization) as _);
+    let database = Arc::new(OperationDatabase::new(Arc::clone(&pools)));
+    let authorization =
+        Arc::new(Authorization::new(Arc::clone(&pools), database).with_oauth_encryption(envelope));
+    let postgres = Arc::new(OperationHost::new(pools, Some(Arc::clone(&authorization))));
     let integration = Arc::new(wamn_connection::integrations::IntegrationBound::new(
         Arc::clone(&authorization) as _,
     ));
@@ -558,10 +557,10 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     let files = Arc::new(files::Files::new(
         &postgres,
         Arc::clone(&blobstore),
-        Arc::clone(&authorization) as _,
+        Arc::clone(&authorization),
     ));
     postgres.set_result_signer(
-        &(Arc::clone(&files) as Arc<dyn wamn_sql::result_signing::ResultSigner>),
+        &(Arc::clone(&files) as Arc<dyn wamn_operation::result_signing::ResultSigner>),
     );
     let logging = Arc::new(plugin::wasi_logging::TracingLogger::default());
     let verifier = settings
@@ -590,7 +589,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     let ingress_routing = IngressRouting::new(Arc::clone(&postgres.scopes))
         .with_authenticator(authentication as Arc<_>);
     let status: Arc<dyn wamn_engine::ingress::EnvironmentStatus> =
-        Arc::new(EnvironmentStatusReader::new(Arc::clone(&postgres)));
+        Arc::new(EnvironmentStatusReader::new(Arc::clone(&authorization)));
     let ingress_routing = Arc::new(ingress_routing.with_environment_status(status));
     let operations = Arc::new(wamn_engine::operation::WamnOperation::new(
         Arc::clone(&postgres) as Arc<dyn plugin::HostPlugin>,
@@ -614,7 +613,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         Arc::new(plugin::wasi_otel::WasiOtel::default()),
         operations,
         Arc::<workflow::Workflow>::clone(&workflow),
-        Arc::<WamnPostgres>::clone(&postgres),
+        postgres,
         // wamn-0h0g.15.96: READER 3 of the loaded release. Route projection stays wholly
         // in-memory; a PAT-protected route additionally carries the targeted
         // identity reader and preloads exact grants from the existing

@@ -1,136 +1,18 @@
-use super::super::SqlValue;
-use super::super::pool::ResolvedCredential;
-use super::*;
-use std::collections::BTreeSet;
+use crate::scope_registry;
+use crate::transactions::validate_session_identity;
+use crate::{OperationDatabase, OperationHost, PgError, SessionIdentity, SqlValue};
+use std::collections::{BTreeSet, HashMap};
+use std::sync::Arc;
+use wamn_authentication::authorization::{
+    Authorization, AuthorizationStore as _, SessionIdentityError, SessionIdentityErrorType,
+    UnprovisionedPrincipal,
+};
+use wamn_identity_protocol::AuthorityClass;
+use wamn_postgres::{
+    ClassCredentials, CredentialProvider, DEFAULT_PROJECT, ResolvedCredential,
+    StaticCredentialProvider, WamnPostgres, WamnPostgresConfig,
+};
 
-/// Guest-sql must never be usable as a platform authority, and the refusal
-/// must survive `--release`, where a `debug_assert` would not exist.
-#[tokio::test]
-async fn a_platform_checkout_refuses_the_guest_authority() {
-    let postgres = WamnPostgres::from_env(Some(ClassCredentials::every_class(
-        "postgres://wamn_app_refusal@localhost/refusal-test",
-    )))
-    .expect("compose");
-    let refused = postgres
-        .checkout_platform(&DEFAULT_PROJECT, AuthorityClass::GuestSql)
-        .await;
-    assert!(
-        refused.is_err(),
-        "platform work under the guest authority must fail closed"
-    );
-}
-
-/// REGRESSION GUARD (`wamn-0h0g.22.8.3`).
-///
-/// Removing the ambient read in split B silently cut the HOST's default
-/// project, because `from_env` derived it from the config field that split
-/// had just forced to `None`. Nothing in the sweep exercised that path, so
-/// the only thing standing between that and a deployed host with no
-/// database is this test. It asserts the composed credential actually
-/// reaches resolution, and that composing without one resolves NOTHING
-/// rather than falling back.
-/// A guest credential url for `project_env_key` in `database`, named the way
-/// provisioning names one: the login carries the project_env_key as its scope
-/// digest (`wamn-0h0g.22.6.4`).
-fn guest_url(project_env_key: &wamn_registry::ProjectEnvKey, database: &str) -> String {
-    format!(
-        "postgres://wamn_app_{}:pw@db/{database}",
-        wamn_registry::app_identity_hash(project_env_key, database)
-    )
-}
-
-/// *** THE REFUSAL THAT MAKES THE CREDENTIAL THE AUTHORITY. ***
-///
-/// After `wamn-0h0g.22.6` a guest's project_env_key is its LOGIN, so handing back a
-/// credential minted for another project_env_key is not a mis-selection, it is a
-/// cross-project_env_key read. Resolution refuses instead, and refuses again when the
-/// caller names no project_env_key at all.
-#[test]
-fn a_guest_credential_resolves_for_its_own_project_env_key_and_no_other() {
-    let host = WamnPostgres::from_env(Some(ClassCredentials::every_class(guest_url(
-        &"test--dev--fixture".parse().unwrap(),
-        "host-default",
-    ))))
-    .expect("compose with a credential");
-    assert!(
-        host.provider
-            .resolve(
-                &DEFAULT_PROJECT,
-                AuthorityClass::GuestSql,
-                Some(&"test--dev--fixture".parse().unwrap())
-            )
-            .expect("the credential's own project_env_key resolves")
-            .is_some()
-    );
-    assert!(
-        host.provider
-            .resolve(
-                &DEFAULT_PROJECT,
-                AuthorityClass::GuestSql,
-                Some(&"evil--dev--project".parse().unwrap())
-            )
-            .is_err(),
-        "a credential minted for another project_env_key must be REFUSED, not borrowed"
-    );
-    assert!(
-        host.provider
-            .resolve(&DEFAULT_PROJECT, AuthorityClass::GuestSql, None)
-            .is_err(),
-        "guest resolution without an project_env_key has no authority to validate"
-    );
-    // Platform classes are project-environment scoped, so the project_env_key is not
-    // part of their binding and its absence is not an error.
-    assert!(
-        host.provider
-            .resolve(&DEFAULT_PROJECT, AuthorityClass::Platform, None)
-            .expect("platform resolution needs no project_env_key")
-            .is_some()
-    );
-}
-
-#[test]
-fn the_composed_credential_becomes_the_default_project() {
-    let composed = WamnPostgres::from_env(Some(ClassCredentials::every_class(guest_url(
-        &"test--dev--fixture".parse().unwrap(),
-        "host-default",
-    ))))
-    .expect("compose with a credential");
-    assert!(
-        composed
-            .provider
-            .resolve(
-                &DEFAULT_PROJECT,
-                AuthorityClass::GuestSql,
-                Some(&"test--dev--fixture".parse().unwrap())
-            )
-            .expect("resolve default")
-            .is_some(),
-        "a host composed WITH a credential must resolve the default project; \
-             deploy/platform injects it via secretKeyRef and a host that cannot \
-             resolve it has no database at all"
-    );
-
-    let bare = WamnPostgres::from_env(None).expect("compose without a credential");
-    assert!(
-        bare.provider
-            .resolve(
-                &DEFAULT_PROJECT,
-                AuthorityClass::GuestSql,
-                Some(&"test--dev--fixture".parse().unwrap())
-            )
-            .expect("resolve default")
-            .is_none(),
-        "composing without a credential must resolve nothing, not reach for \
-             an ambient one"
-    );
-}
-
-// The identity-time record must match `runs_release_record_check` exactly, or a
-// identity that would otherwise succeed dies on a CHECK inside the lease grant.
-// The hand-rolled shape test this used to exercise is retired: the invariant
-// now rides `wamn_digest::Digest`, so what is pinned here is that the TYPE admits
-// exactly what the run-plane CHECK admits. Same coupling, one owner.
-// wamn-cjv.2 — the in-band identity/role mutation guard.
 #[test]
 fn validate_identity_rejects_malformed_identities() {
     assert!(
@@ -284,11 +166,11 @@ async fn transaction_rows(
             (connection, result)
         })
         .await?;
-    rows.iter().map(super::super::types::decode_row).collect()
+    rows.iter().map(wamn_postgres::types::decode_row).collect()
 }
 
 async fn run_operation(
-    pg: &WamnPostgres,
+    pg: &OperationHost,
     scope: &str,
     sql: &str,
 ) -> Result<Vec<Vec<SqlValue>>, PgError> {
@@ -299,7 +181,7 @@ async fn run_operation(
 }
 
 /// Rows a component sees in its host operation transaction.
-async fn visible_rows(pg: &WamnPostgres, component: &str, sql: &str) -> usize {
+async fn visible_rows(pg: &OperationHost, component: &str, sql: &str) -> usize {
     match run_operation(pg, component, sql).await {
         Ok(rows) => rows.len(),
         Err(e) => panic!("operation SQL {sql:?} failed: {e:?}"),
@@ -335,14 +217,32 @@ impl CredentialProvider for RecordingProvider {
 #[tokio::test]
 async fn user_operation_permissions_reuse_only_the_callable_http_authority() {
     let provider = Arc::new(RecordingProvider::default());
-    let pg = WamnPostgres::with_provider(Arc::clone(&provider) as Arc<dyn CredentialProvider>);
+    let pools = Arc::new(WamnPostgres::with_provider(
+        Arc::clone(&provider) as Arc<dyn CredentialProvider>,
+    ));
+    let database = Arc::new(OperationDatabase::new(Arc::clone(&pools)));
+    let authorization = Authorization::new(pools, database);
+    let application = wamn_catalog::application_config::ApplicationConfig {
+        org: "org".parse().unwrap(),
+        project: (*DEFAULT_PROJECT).clone(),
+        environment: "a".parse().unwrap(),
+        application: "app".parse().unwrap(),
+        grant_cache_seconds: 1,
+        components: Vec::new(),
+    };
+    authorization.configure_application(&application).unwrap();
+    let project_env_key = wamn_registry::project_env_key(
+        &application.org,
+        &application.project,
+        &application.environment,
+    );
     let principal_id = "00000000-0000-0000-0000-000000000019"
         .parse()
         .expect("user UUID");
 
-    pg.user_operation_permissions(
+    authorization.user_operation_permissions(
         &DEFAULT_PROJECT,
-        &"org--dev--a".parse().unwrap(),
+        &project_env_key,
         &principal_id,
     )
     .await
@@ -415,7 +315,7 @@ async fn live_a_second_project_env_key_is_refused_rather_than_served_the_first_p
     url.set_username(&role_a).expect("set A's login");
     url.set_password(Some("live-guest"))
         .expect("set A's password");
-    let pg = WamnPostgres::new(WamnPostgresConfig {
+    let pools = WamnPostgres::new(WamnPostgresConfig {
         credentials: Some(ClassCredentials::every_class(url.to_string())),
         guest_pool_max_size: 2,
         platform_pool_max_size: 2,
@@ -423,6 +323,7 @@ async fn live_a_second_project_env_key_is_refused_rather_than_served_the_first_p
         statement_timeout_ms: 5_000,
     })
     .unwrap();
+    let pg = OperationHost::new(Arc::new(pools), None);
 
     let scope_a = "warm-instance-0";
     let scope_b = "warm-instance-1";
@@ -480,8 +381,8 @@ async fn live_a_second_project_env_key_is_refused_rather_than_served_the_first_p
     // Ending A's checkout revokes A's identity and nothing else. Matched on
     // the `WAMN0` code specifically: a revoke that cleared only the
     // search_path would also fail this query, for an unrelated reason.
-    pg.revoke_session_identity(scope_a);
-    assert_eq!(pg.session_identity(scope_a), None);
+    scope_registry::revoke_session_identity(&pg.scopes, scope_a);
+    assert_eq!(scope_registry::session_identity(&pg.scopes, scope_a), None);
     let unbound = run_operation(&pg, scope_a, "SELECT id FROM dispositions")
         .await
         .err()
@@ -569,7 +470,7 @@ async fn live_a_cold_connection_parses_inside_the_identity_transaction(pool: sql
     .map(drop)
     .expect("seed the cold-parse fixture as the superuser owner");
 
-    let pg = WamnPostgres::new(WamnPostgresConfig {
+    let pools = WamnPostgres::new(WamnPostgresConfig {
         credentials: Some(ClassCredentials::every_class(guest_url)),
         // ONE connection, and a pool built in this test, so the checkout
         // below is guaranteed to be a NEW physical connection with an empty
@@ -580,6 +481,7 @@ async fn live_a_cold_connection_parses_inside_the_identity_transaction(pool: sql
         statement_timeout_ms: 5_000,
     })
     .expect("the plugin builds from the guest generation's url");
+    let pg = OperationHost::new(Arc::new(pools), None);
     let scope = "coldparse-instance-0";
     pg.bind_session_identity(
         scope,
@@ -644,7 +546,7 @@ async fn live_a_bind_refuses_a_principal_with_no_user_row(pool: sqlx::PgPool) {
     );
     let guest_url = live_guest_url(admin_url, &PROJECT_ENV_KEY.parse().unwrap()).await;
     ensure_live_user_rows(admin_url, &[LIVE_PRINCIPAL, LIVE_PLATFORM_PRINCIPAL]).await;
-    let pg = WamnPostgres::new(WamnPostgresConfig {
+    let pools = WamnPostgres::new(WamnPostgresConfig {
         credentials: Some(ClassCredentials::every_class(guest_url)),
         guest_pool_max_size: 1,
         platform_pool_max_size: 1,
@@ -652,6 +554,7 @@ async fn live_a_bind_refuses_a_principal_with_no_user_row(pool: sqlx::PgPool) {
         statement_timeout_ms: 5_000,
     })
     .expect("the plugin builds from the guest generation's url");
+    let pg = OperationHost::new(Arc::new(pools), None);
     let scope = "unprovisioned-instance-0";
     let identity = |principal: wamn_identity_protocol::PrincipalId| SessionIdentity {
         project_env_key: Some(PROJECT_ENV_KEY.parse().unwrap()),
@@ -679,15 +582,15 @@ async fn live_a_bind_refuses_a_principal_with_no_user_row(pool: sqlx::PgPool) {
     pg.bind_session_identity(scope, &identity(LIVE_PRINCIPAL.parse().unwrap()))
         .await
         .expect("a provisioned principal binds");
-    assert_eq!(pg.user_id_for(scope), Some(LIVE_PRINCIPAL.parse().unwrap()));
-    pg.revoke_session_identity(scope);
+    assert_eq!(scope_registry::user_id_for(&pg.scopes, scope), Some(LIVE_PRINCIPAL.parse().unwrap()));
+    scope_registry::revoke_session_identity(&pg.scopes, scope);
 
     // And a platform principal is a principal like any other.
     pg.bind_session_identity(scope, &identity(LIVE_PLATFORM_PRINCIPAL.parse().unwrap()))
         .await
         .expect("the platform principal's own row binds");
     assert_eq!(
-        pg.user_id_for(scope),
+        scope_registry::user_id_for(&pg.scopes, scope),
         Some(LIVE_PLATFORM_PRINCIPAL.parse().unwrap())
     );
 
@@ -716,10 +619,11 @@ fn operation_statement() -> &'static str {
 #[tokio::test]
 async fn an_acquisition_binds_its_operation_and_the_next_one_does_not_inherit_it() {
     const OPERATION: &str = "platform-fixture:widget/update@1.0.0";
-    let pg = WamnPostgres::with_provider(Arc::new(StaticCredentialProvider::new(
+    let pools = WamnPostgres::with_provider(Arc::new(StaticCredentialProvider::new(
         HashMap::new(),
         None,
     )));
+    let pg = OperationHost::new(Arc::new(pools), None);
     let scope = "operation-instance-0";
     let identity = SessionIdentity {
         project_env_key: Some(LIVE_PROJECT_ENV_KEY.parse().unwrap()),
@@ -729,7 +633,7 @@ async fn an_acquisition_binds_its_operation_and_the_next_one_does_not_inherit_it
     pg.bind_session_identity(scope, &identity)
         .await
         .expect("the operation binds");
-    assert_eq!(pg.session_identity(scope), Some(identity.clone()));
+    assert_eq!(scope_registry::session_identity(&pg.scopes, scope), Some(identity.clone()));
 
     pg.bind_session_identity(
         scope,
@@ -740,13 +644,13 @@ async fn an_acquisition_binds_its_operation_and_the_next_one_does_not_inherit_it
     )
     .await
     .expect("the next acquisition binds");
-    assert_eq!(pg.operation_for(scope), None);
+    assert_eq!(scope_registry::operation_for(&pg.scopes, scope), None);
 
     pg.bind_session_identity(scope, &identity)
         .await
         .expect("the operation binds again");
-    pg.revoke_session_identity(scope);
-    assert_eq!(pg.operation_for(scope), None);
+    scope_registry::revoke_session_identity(&pg.scopes, scope);
+    assert_eq!(scope_registry::operation_for(&pg.scopes, scope), None);
 }
 
 /// Reads and writes record their operation. A later transaction inherits none.
@@ -768,7 +672,7 @@ async fn live_a_transaction_binds_the_executing_operation_and_a_pooled_connectio
     );
     let guest_url = live_guest_url(admin_url, &PROJECT_ENV_KEY.parse().unwrap()).await;
     ensure_live_user_rows(admin_url, &[LIVE_PRINCIPAL]).await;
-    let pg = WamnPostgres::new(WamnPostgresConfig {
+    let pools = WamnPostgres::new(WamnPostgresConfig {
         credentials: Some(ClassCredentials::every_class(guest_url)),
         guest_pool_max_size: 1,
         platform_pool_max_size: 1,
@@ -776,6 +680,7 @@ async fn live_a_transaction_binds_the_executing_operation_and_a_pooled_connectio
         statement_timeout_ms: 5_000,
     })
     .expect("the plugin builds from the guest generation's url");
+    let pg = OperationHost::new(Arc::new(pools), None);
     let scope = "operation-instance-1";
     let identity = SessionIdentity {
         project_env_key: Some(PROJECT_ENV_KEY.parse().unwrap()),
@@ -822,7 +727,7 @@ async fn live_a_transaction_binds_the_executing_operation_and_a_pooled_connectio
         next
     );
     assert_eq!(
-        pg.destroyed.load(std::sync::atomic::Ordering::Relaxed),
+        pg.pools.destroyed_connections().load(std::sync::atomic::Ordering::Relaxed),
         0,
         "every statement reused the one pooled connection"
     );
@@ -848,10 +753,11 @@ fn application_statement() -> &'static str {
 /// The identity name no executing principal, so the bind stays offline.
 #[tokio::test]
 async fn an_acquisition_binds_its_application_and_the_next_one_does_not_inherit_it() {
-    let pg = WamnPostgres::with_provider(Arc::new(StaticCredentialProvider::new(
+    let pools = WamnPostgres::with_provider(Arc::new(StaticCredentialProvider::new(
         HashMap::new(),
         None,
     )));
+    let pg = OperationHost::new(Arc::new(pools), None);
     let scope = "application-instance-0";
     let identity = SessionIdentity {
         project_env_key: Some(LIVE_PROJECT_ENV_KEY.parse().unwrap()),
@@ -861,7 +767,7 @@ async fn an_acquisition_binds_its_application_and_the_next_one_does_not_inherit_
     pg.bind_session_identity(scope, &identity)
         .await
         .expect("the application binds");
-    assert_eq!(pg.session_identity(scope), Some(identity.clone()));
+    assert_eq!(scope_registry::session_identity(&pg.scopes, scope), Some(identity.clone()));
 
     pg.bind_session_identity(
         scope,
@@ -872,13 +778,13 @@ async fn an_acquisition_binds_its_application_and_the_next_one_does_not_inherit_
     )
     .await
     .expect("the next acquisition binds");
-    assert_eq!(pg.application_for(scope), None);
+    assert_eq!(scope_registry::application_for(&pg.scopes, scope), None);
 
     pg.bind_session_identity(scope, &identity)
         .await
         .expect("the application binds again");
-    pg.revoke_session_identity(scope);
-    assert_eq!(pg.application_for(scope), None);
+    scope_registry::revoke_session_identity(&pg.scopes, scope);
+    assert_eq!(scope_registry::application_for(&pg.scopes, scope), None);
 }
 
 /// The identity half of the cross-application refusal
@@ -905,7 +811,7 @@ async fn live_a_transaction_carries_only_the_application_its_host_bound(pool: sq
     );
     let guest_url = live_guest_url(admin_url, &PROJECT_ENV_KEY.parse().unwrap()).await;
     ensure_live_user_rows(admin_url, &[LIVE_PRINCIPAL]).await;
-    let pg = WamnPostgres::new(WamnPostgresConfig {
+    let pools = WamnPostgres::new(WamnPostgresConfig {
         credentials: Some(ClassCredentials::every_class(guest_url)),
         guest_pool_max_size: 1,
         platform_pool_max_size: 1,
@@ -913,6 +819,7 @@ async fn live_a_transaction_carries_only_the_application_its_host_bound(pool: sq
         statement_timeout_ms: 5_000,
     })
     .expect("the plugin builds from the guest generation's url");
+    let pg = OperationHost::new(Arc::new(pools), None);
     let identity = |application: &wamn_catalog::ApplicationName| SessionIdentity {
         project_env_key: Some(PROJECT_ENV_KEY.parse().unwrap()),
         user_id: Some(LIVE_PRINCIPAL.parse().unwrap()),
@@ -959,7 +866,7 @@ async fn live_a_transaction_carries_only_the_application_its_host_bound(pool: sq
         "an acquisition with no application carries none"
     );
     assert_eq!(
-        pg.destroyed.load(std::sync::atomic::Ordering::Relaxed),
+        pg.pools.destroyed_connections().load(std::sync::atomic::Ordering::Relaxed),
         0,
         "every statement reused the one pooled connection"
     );
@@ -977,10 +884,11 @@ async fn live_a_transaction_carries_only_the_application_its_host_bound(pool: sq
 
 #[tokio::test]
 async fn workflow_caller_retains_typed_connection_unavailable() -> anyhow::Result<()> {
-    let postgres = WamnPostgres::with_provider(std::sync::Arc::new(StaticCredentialProvider::new(
+    let pools = WamnPostgres::with_provider(Arc::new(StaticCredentialProvider::new(
         std::collections::HashMap::new(),
         None,
     )));
+    let postgres = OperationHost::new(Arc::new(pools), None);
     let error = postgres
         .workflow_node_caller(
             &"default".parse().unwrap(),

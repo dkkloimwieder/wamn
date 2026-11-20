@@ -25,7 +25,7 @@ use wamn_catalog::canonical_name::CanonicalName;
 use wamn_engine::operation::WamnOperation;
 use wamn_event::Causation;
 use wamn_identity_protocol::PrincipalId;
-use wamn_sql::WamnPostgres;
+use wamn_operation::OperationHost;
 use wash_runtime::engine::ctx::{SharedCtx, extract_active_ctx};
 use wash_runtime::engine::dispatch::DispatchTarget;
 use wash_runtime::engine::workload::{ResolvedWorkload, WorkloadItem};
@@ -52,7 +52,7 @@ const LEASE_TTL: Duration = Duration::from_secs(30);
 
 /// Shared owner of the service dispatch target and guest import authority.
 pub(super) struct Workflow {
-    postgres: Arc<WamnPostgres>,
+    postgres: Arc<OperationHost>,
     operations: Arc<WamnOperation>,
     workloads: RwLock<HashMap<Box<str>, Arc<Workload>>>,
     broker: Arc<broker::Broker>,
@@ -94,7 +94,7 @@ impl std::fmt::Debug for Workflow {
 
 impl Workflow {
     pub(super) fn new(
-        postgres: Arc<WamnPostgres>,
+        postgres: Arc<OperationHost>,
         operations: Arc<WamnOperation>,
         nats_server: String,
         tls_first: bool,

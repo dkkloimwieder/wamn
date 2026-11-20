@@ -46,7 +46,8 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use wamn_engine::engine::build_engine;
-use wamn_sql::{self, WAMN_POSTGRES_ID, WamnPostgres, WamnPostgresConfig};
+use wamn_operation::{self, OperationHost, WAMN_POSTGRES_ID, scope_registry};
+use wamn_postgres::{WamnPostgres, WamnPostgresConfig};
 use wash_runtime::engine::ctx::{Ctx, SharedCtx};
 use wash_runtime::plugin::HostPlugin;
 use wash_runtime::wasmtime::Store;
@@ -195,15 +196,16 @@ fn libc_module(data: &str) -> String {
 
 /// The plugin's own contract: a `WamnPostgresConfig` with no `database_url`
 /// registers, and every call reports `connection-unavailable`.
-fn offline_postgres() -> WamnPostgres {
-    WamnPostgres::new(WamnPostgresConfig {
+fn offline_postgres() -> OperationHost {
+    let pools = WamnPostgres::new(WamnPostgresConfig {
         credentials: None,
         guest_pool_max_size: 1,
         platform_pool_max_size: 1,
         wait_timeout_ms: 100,
         statement_timeout_ms: 100,
     })
-    .expect("offline postgres plugin builds")
+    .expect("offline postgres pools build");
+    OperationHost::new(Arc::new(pools), None)
 }
 
 /// Query reaches credential resolution after the host binds the project.
@@ -299,14 +301,14 @@ fn postgres_guest() -> String {
 #[tokio::test]
 async fn wamn_postgres_maps_an_unresolvable_project_to_connection_unavailable_not_a_trap() {
     let postgres = Arc::new(offline_postgres());
-    postgres.set_project_env_key(GUEST_ID, &"org--dev--a".parse().unwrap());
+    scope_registry::set_project_env_key(&postgres.scopes, GUEST_ID, &"org--dev--a".parse().unwrap());
     let mut plugins: HashMap<&'static str, Arc<dyn HostPlugin + Send + Sync>> = HashMap::new();
     plugins.insert(
         WAMN_POSTGRES_ID,
         postgres as Arc<dyn HostPlugin + Send + Sync>,
     );
 
-    let (outcome, trail) = drive_guest(&postgres_guest(), plugins, wamn_sql::add_to_linker).await;
+    let (outcome, trail) = drive_guest(&postgres_guest(), plugins, wamn_operation::add_to_linker).await;
 
     outcome.expect("the guest survived the postgres refusal");
     // `1` is `err`, and `1` again is `connection-unavailable` — the second case

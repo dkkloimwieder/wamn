@@ -27,8 +27,8 @@ use wamn_identity::application::{
     AdministrationError, AdministrationRefusal, GrantAuthority, GrantChange, application_users,
     create_role, delete_role, mutate_grant, permission_is_grantable, permission_rows, role_names,
 };
-use wamn_sql::WamnPostgres;
-use wamn_sql::number_counter::{CounterSet, CounterSetRefusal};
+use wamn_operation::OperationHost;
+use wamn_operation::number_counter::{CounterSet, CounterSetRefusal};
 
 /// Why an application route did not answer.
 #[derive(Debug)]
@@ -60,7 +60,7 @@ fn parse<T: serde::de::DeserializeOwned>(payload: &str) -> Result<T, Refusal> {
 
 /// What the application routes of one host use.
 pub(crate) struct ApplicationRoutes<'a> {
-    pub(crate) postgres: &'a WamnPostgres,
+    pub(crate) postgres: &'a OperationHost,
     pub(crate) project: &'a wamn_registry::ProjectId,
     pub(crate) config: &'a ApplicationConfig,
     pub(crate) project_env_key: &'a wamn_registry::ProjectEnvKey,
@@ -338,7 +338,7 @@ impl ApplicationRoutes<'_> {
             key: request.key,
             value: request.value,
         };
-        let value = wamn_sql::number_counter::set_number_counter(
+        let value = wamn_operation::number_counter::set_number_counter(
             self.postgres,
             self.project,
             self.project_env_key,

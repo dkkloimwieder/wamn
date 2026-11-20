@@ -22,7 +22,7 @@ use sqlx::{Row as _, Statement as _};
 use wamn_number_pattern::Policy;
 
 use wamn_authority::identity::SessionIdentity;
-use crate::WamnPostgres;
+use crate::OperationHost;
 use crate::write_log::Claim;
 use crate::invocation::{AuthorizedInvocation, InvocationRequest};
 use wamn_engine::ingress::AuthenticatedCaller;
@@ -147,7 +147,7 @@ const SET_SQL: &str = "SELECT platform.set_counter($1::text::uuid, $2, $3, $4)";
 /// retain the cause of a failed statement or transaction.
 /// Neither commits anything.
 pub async fn set_number_counter(
-    postgres: &WamnPostgres,
+    postgres: &OperationHost,
     project: &wamn_registry::ProjectId,
     project_env_key: &wamn_registry::ProjectEnvKey,
     caller: AuthenticatedCaller,
@@ -181,7 +181,7 @@ pub async fn set_number_counter(
         ..SessionIdentity::default()
     };
     let invocation = AuthorizedInvocation::enter(
-        postgres,
+        &postgres.scopes,
         InvocationRequest {
             scope,
             identity,
@@ -205,7 +205,7 @@ pub async fn set_number_counter(
 }
 
 async fn set_in_transaction(
-    postgres: &WamnPostgres,
+    postgres: &OperationHost,
     scope: &str,
     operation: &wamn_catalog::registered_operation::RegisteredOperation,
     request_id: &str,

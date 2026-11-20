@@ -11,7 +11,7 @@ use wamn_connection::connection::WiringPosition;
 use wamn_engine::native_routes::{OperationRefusal, bounded_node_deadline_ms};
 use wamn_engine::operation::node_types;
 use wamn_run_state::persistence;
-use wamn_sql::WorkflowNode;
+use wamn_operation::WorkflowNode;
 use wash_runtime::wasmtime::component::Accessor;
 use wit_node::{Detail, Emission, Invocation, NodeError};
 

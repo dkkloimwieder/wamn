@@ -6,7 +6,7 @@ edition.workspace = true
 license.workspace = true
 
 [features]
-test-util = ["wamn-engine/test-util", "wamn-catalog/test-util", "wamn-authority/test-util", "wamn-connection/test-util", "wamn-sql/test-util"]
+test-util = ["wamn-engine/test-util", "wamn-catalog/test-util", "wamn-authority/test-util", "wamn-connection/test-util", "wamn-operation/test-util"]
 
 [dependencies]
 wamn-envelope.workspace = true
@@ -33,11 +33,12 @@ wamn-authority = { workspace = true }
 wamn-catalog = { workspace = true }
 wamn-connection = { workspace = true }
 wamn-engine = { workspace = true }
-wamn-sql = { workspace = true }
+wamn-operation = { workspace = true }
 wamn-registry = { workspace = true }
 wash-runtime = { workspace = true }
 
 [dev-dependencies]
+wamn-postgres.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 wamn-blobstore = { path = ".", features = ["test-util"] }
 wamn-catalog = { workspace = true, features = ["test-util"] }

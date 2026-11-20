@@ -5,7 +5,18 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+host = ["dep:chrono", "dep:tracing", "dep:uuid", "dep:wamn-engine", "dep:wamn-registry", "dep:wamn-role", "dep:wamn-scalar", "tokio/sync"]
+test-util = []
+
 [dependencies]
+chrono = { workspace = true, optional = true, features = ["std"] }
+tracing = { workspace = true, optional = true }
+uuid = { workspace = true, optional = true }
+wamn-engine = { workspace = true, optional = true }
+wamn-registry = { workspace = true, optional = true }
+wamn-role = { workspace = true, optional = true }
+wamn-scalar = { workspace = true, optional = true }
 wamn-identity-protocol = { workspace = true, features = ["sqlx"] }
 postgres-protocol.workspace = true
 url.workspace = true
@@ -18,5 +29,13 @@ sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls"
 [lints]
 workspace = true
 
+[[test]]
+name = "project_schema"
+required-features = ["host"]
+
 [dev-dependencies]
+sqlx = { workspace = true, features = ["macros", "migrate"] }
+wamn-catalog.workspace = true
+wamn-provision = { workspace = true, features = ["test-util"] }
+wamn-test-postgres.workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }
