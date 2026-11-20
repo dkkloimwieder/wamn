@@ -5,12 +5,10 @@ use std::{ffi::OsStr, num::NonZeroU32};
 use anyhow::{Context as _, ensure};
 use serde::Deserialize as _;
 use serde_json::Value;
-use wamn_catalog::{
-    ApplicationName,
-    application_config::{APPLICATION_CONFIG, ApplicationConfig},
-};
 use wamn_digest::Digest;
+use wamn_engine::application_config::{APPLICATION_CONFIG, ApplicationConfig};
 use wamn_kubernetes::helm;
+use wamn_registry::ApplicationName;
 use wamn_registry::Triple;
 
 use super::Platform;
@@ -124,8 +122,8 @@ pub(super) async fn application(
 pub(super) fn verify_package_components(
     application: &ApplicationConfig,
     packages: &std::collections::BTreeMap<
-        wamn_catalog::PackageName,
-        wamn_catalog::manifest::PackageManifest,
+        wamn_package::PackageName,
+        wamn_component_policy::PackageManifest,
     >,
 ) -> anyhow::Result<()> {
     let expected = crate::release_chart::published_components(packages).count();

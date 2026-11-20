@@ -7,12 +7,12 @@
 //! It reads authorization from the project database. Signature policies verify the
 //! raw body with the bound connection credential and return its active principal.
 
+use wamn_package::AttachmentAuthPolicy;
 use std::sync::Arc;
 
 use hmac::{Hmac, KeyInit as _, Mac as _};
 use sha2::Sha256;
 use tracing::Instrument as _;
-use wamn_catalog::AttachmentAuthPolicy;
 use wamn_engine::ingress::{
     AuthRejection, AuthenticatedCaller, AuthenticationRequest, CredentialType, Header,
     RouteAuthenticator, RouteCredential, authentication_unavailable, required_bearer_token,
@@ -350,7 +350,7 @@ impl ControlRouteAuthenticator {
     /// Verify the bearer subject and recover the system principal UUID.
     pub async fn authenticate_control(
         &self,
-        attachment_id: &wamn_catalog::canonical_name::CanonicalName,
+        attachment_id: &wamn_package::canonical_name::CanonicalName,
         headers: &[Header],
     ) -> Result<AuthenticatedCaller, AuthRejection> {
         let token = self

@@ -6,9 +6,11 @@ edition.workspace = true
 license.workspace = true
 
 [features]
-test-util = ["wamn-registry/test-util", "wamn-catalog/test-util", "wamn-authority/test-util"]
+test-util = ["wamn-registry/test-util", "wamn-authority/test-util"]
 
 [dependencies]
+wamn-package.workspace = true
+wamn-catalog.workspace = true
 wamn-envelope.workspace = true
 wamn-engine.workspace = true
 wash-runtime.workspace = true
@@ -25,7 +27,6 @@ tokio = { workspace = true, features = ["time", "fs", "net", "io-util", "rt", "m
 tracing = { workspace = true }
 uuid = { workspace = true, features = ["serde", "v4"] }
 wamn-authority = { workspace = true }
-wamn-catalog = { workspace = true }
 wamn-digest = { workspace = true, features = ["sqlx"] }
 wamn-postgres.workspace = true
 wamn-registry = { workspace = true }
@@ -35,7 +36,6 @@ wamn-registry = { workspace = true, features = ["test-util"] }
 sqlx = { workspace = true, features = ["macros", "migrate"] }
 
 tokio = { workspace = true, features = ["test-util"] }
-wamn-catalog = { workspace = true, features = ["test-util"] }
 wamn-connection = { path = ".", features = ["test-util"] }
 wamn-identity = { workspace = true, features = ["test-util"] }
 wamn-test-postgres = { workspace = true }

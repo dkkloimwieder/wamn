@@ -1,4 +1,4 @@
-use wamn_catalog::schema::ForeignKeyColumn;
+use wamn_package::schema::ForeignKeyColumn;
 use wamn_scalar::SqlValueType;
 use wamn_schema_introspection::ir::{
     CatalogIr, Column, ColumnDefault, ColumnGeneration, Constraint, Exclusion,

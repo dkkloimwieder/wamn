@@ -41,8 +41,8 @@ pub fn source_stream_config(
 /// Declare one application source consumer, shared by its serving hosts.
 pub fn application_consumer(
     target: &Triple,
-    application: &wamn_catalog::ApplicationName,
-    package: &wamn_catalog::PackageName,
+    application: &wamn_registry::ApplicationName,
+    package: &wamn_package::PackageName,
     entity: &str,
 ) -> anyhow::Result<pull::Config> {
     anyhow::ensure!(
@@ -57,7 +57,7 @@ pub fn application_consumer(
         "event coordinates and source must be nonempty broker tokens"
     );
     let durable =
-        wamn_catalog::resource_names::application_event_consumer(application, package, entity);
+        wamn_registry::resource_names::application_event_consumer(application, package, entity);
     let filter = wamn_event::entity_filter(&target.org, &target.project, &target.env, entity);
     Ok(application_consumer_config(&durable, &filter))
 }

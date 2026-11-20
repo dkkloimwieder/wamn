@@ -6,9 +6,11 @@ edition.workspace = true
 license.workspace = true
 
 [features]
-test-util = ["dep:opentelemetry_sdk", "dep:tracing-subscriber", "wamn-engine/test-util", "wamn-catalog/test-util", ]
+test-util = ["dep:opentelemetry_sdk", "dep:tracing-subscriber", "wamn-engine/test-util"]
 
 [dependencies]
+wamn-package = { workspace = true, features = ["sqlx"] }
+wamn-catalog.workspace = true
 wamn-digest.workspace = true
 opentelemetry_sdk = { workspace = true, features = ["trace", "testing"], optional = true }
 tracing-subscriber = { workspace = true, optional = true }
@@ -24,7 +26,6 @@ tracing = { workspace = true }
 tracing-opentelemetry = { workspace = true }
 url = { workspace = true }
 uuid = { workspace = true, features = ["serde", "v4"] }
-wamn-catalog = { workspace = true, features = ["sqlx"] }
 wamn-engine = { workspace = true }
 wamn-identity-protocol = { workspace = true }
 wamn-registry = { workspace = true }
@@ -37,7 +38,6 @@ hyper = { workspace = true, features = ["server"] }
 opentelemetry_sdk = { workspace = true, features = ["trace", "testing"] }
 tokio = { workspace = true, features = ["test-util"] }
 tracing-subscriber = { workspace = true }
-wamn-catalog = { workspace = true, features = ["test-util"] }
 wamn-engine = { workspace = true, features = ["test-util"] }
 wat = "=1.254.2"
 

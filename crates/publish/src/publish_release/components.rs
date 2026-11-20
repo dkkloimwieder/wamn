@@ -1,6 +1,6 @@
 //! Exact component facts and the bases their packages pin.
 
-use wamn_catalog::AdmittedComponentOperation;
+use wamn_component_policy::AdmittedComponentOperation;
 
 use super::{
     AdmittedComponent, BTreeMap, BTreeSet, DependencyDigestRule, PublishManifestError,
@@ -8,24 +8,21 @@ use super::{
 };
 
 pub(super) fn resolve_component_dependency_closure(
-    roots: &BTreeMap<wamn_catalog::canonical_name::CanonicalName, AdmittedComponent>,
+    roots: &BTreeMap<wamn_package::canonical_name::CanonicalName, AdmittedComponent>,
     component_facts: &BTreeMap<
         (
-            wamn_catalog::PackageName,
-            wamn_catalog::package_version::PackageVersion,
+            wamn_package::PackageName,
+            wamn_package::package_version::PackageVersion,
         ),
         Vec<AdmittedComponent>,
     >,
-    package_manifests: &BTreeMap<
-        wamn_catalog::PackageName,
-        wamn_catalog::manifest::PackageManifest,
-    >,
+    package_manifests: &BTreeMap<wamn_package::PackageName, wamn_component_policy::PackageManifest>,
     rule: DependencyDigestRule,
 ) -> Result<Vec<AdmittedComponent>, PublishManifestError> {
     let mut closure = BTreeMap::<
         (
-            wamn_catalog::PackageName,
-            wamn_catalog::package_version::PackageVersion,
+            wamn_package::PackageName,
+            wamn_package::package_version::PackageVersion,
             wamn_digest::Digest,
         ),
         AdmittedComponent,
@@ -52,8 +49,8 @@ pub(super) fn resolve_component_dependency_closure(
 fn insert_closure_component(
     closure: &mut BTreeMap<
         (
-            wamn_catalog::PackageName,
-            wamn_catalog::package_version::PackageVersion,
+            wamn_package::PackageName,
+            wamn_package::package_version::PackageVersion,
             wamn_digest::Digest,
         ),
         AdmittedComponent,
@@ -81,33 +78,30 @@ fn insert_closure_component(
 /// Resolve each base the package `(package, version)` pins, then its bases.
 fn visit_base_dependencies(
     (package, version): (
-        &wamn_catalog::PackageName,
-        &wamn_catalog::package_version::PackageVersion,
+        &wamn_package::PackageName,
+        &wamn_package::package_version::PackageVersion,
     ),
     component_facts: &BTreeMap<
         (
-            wamn_catalog::PackageName,
-            wamn_catalog::package_version::PackageVersion,
+            wamn_package::PackageName,
+            wamn_package::package_version::PackageVersion,
         ),
         Vec<AdmittedComponent>,
     >,
-    package_manifests: &BTreeMap<
-        wamn_catalog::PackageName,
-        wamn_catalog::manifest::PackageManifest,
-    >,
+    package_manifests: &BTreeMap<wamn_package::PackageName, wamn_component_policy::PackageManifest>,
     rule: DependencyDigestRule,
     path: &mut Vec<(
-        wamn_catalog::PackageName,
-        wamn_catalog::package_version::PackageVersion,
+        wamn_package::PackageName,
+        wamn_package::package_version::PackageVersion,
     )>,
     visited: &mut BTreeSet<(
-        wamn_catalog::PackageName,
-        wamn_catalog::package_version::PackageVersion,
+        wamn_package::PackageName,
+        wamn_package::package_version::PackageVersion,
     )>,
     closure: &mut BTreeMap<
         (
-            wamn_catalog::PackageName,
-            wamn_catalog::package_version::PackageVersion,
+            wamn_package::PackageName,
+            wamn_package::package_version::PackageVersion,
             wamn_digest::Digest,
         ),
         AdmittedComponent,
@@ -151,11 +145,11 @@ fn visit_base_dependencies(
 /// The admitted facts of one pinned base: the one component under the pinned
 /// digest, or under the development rule every component of the coordinate.
 fn resolve_base_dependency<'a>(
-    requirement: &wamn_catalog::manifest::BaseDependencyRequirement,
+    requirement: &wamn_package::manifest::BaseDependencyRequirement,
     component_facts: &'a BTreeMap<
         (
-            wamn_catalog::PackageName,
-            wamn_catalog::package_version::PackageVersion,
+            wamn_package::PackageName,
+            wamn_package::package_version::PackageVersion,
         ),
         Vec<AdmittedComponent>,
     >,
@@ -194,10 +188,10 @@ fn resolve_base_dependency<'a>(
 }
 
 pub(super) fn resolve_route_component<'a>(
-    attachment_id: &wamn_catalog::canonical_name::CanonicalName,
+    attachment_id: &wamn_package::canonical_name::CanonicalName,
     attachment: &ServingAttachment,
-    component: &wamn_catalog::canonical_name::CanonicalName,
-    operation: &wamn_catalog::canonical_name::CanonicalName,
+    component: &wamn_package::canonical_name::CanonicalName,
+    operation: &wamn_package::canonical_name::CanonicalName,
     facts: &'a [AdmittedComponent],
 ) -> Result<&'a AdmittedComponent, PublishManifestError> {
     let mut matches = facts
@@ -222,8 +216,8 @@ pub(super) fn resolve_route_component<'a>(
             ),
         ));
     }
-    if wamn_catalog::parse_attachment_auth_policy(&attachment.auth_policy)
-        .is_some_and(wamn_catalog::AttachmentAuthPolicy::has_no_caller)
+    if wamn_package::parse_attachment_auth_policy(&attachment.auth_policy)
+        .is_some_and(wamn_package::AttachmentAuthPolicy::has_no_caller)
     {
         let export = fact
             .operation(operation)
@@ -237,7 +231,7 @@ pub(super) fn resolve_route_component<'a>(
 /// operation that begins a host transaction, or a transactional statement at
 /// `site`.
 pub(super) fn refuse_anonymous_reach(
-    attachment_id: &wamn_catalog::canonical_name::CanonicalName,
+    attachment_id: &wamn_package::canonical_name::CanonicalName,
     operation: &AdmittedComponentOperation,
     site: &str,
 ) -> Result<(), PublishManifestError> {
@@ -248,7 +242,7 @@ pub(super) fn refuse_anonymous_reach(
                 "attachment {attachment_id:?} reaches registered operation \
                  {operation:?} at {site}; set auth-policy modes = \
                  [{mode:?}]",
-                mode = wamn_catalog::PAT_AUTHENTICATION_MODE,
+                mode = wamn_package::PAT_AUTHENTICATION_MODE,
             ),
         ));
     }
@@ -258,7 +252,7 @@ pub(super) fn refuse_anonymous_reach(
             format!(
                 "attachment {attachment_id:?} reaches an operation that begins a host \
                  transaction at {site}; set auth-policy modes = [{mode:?}]",
-                mode = wamn_catalog::PAT_AUTHENTICATION_MODE,
+                mode = wamn_package::PAT_AUTHENTICATION_MODE,
             ),
         ));
     }
@@ -267,25 +261,25 @@ pub(super) fn refuse_anonymous_reach(
 
 /// Seal each palette alias mode while preserving its configuration declaration.
 pub(super) fn palette_connections(
-    connections: &[wamn_catalog::ComponentConnection],
-    manifests: &BTreeMap<wamn_catalog::PackageName, wamn_catalog::manifest::PackageManifest>,
-) -> Vec<wamn_catalog::ComponentConnection> {
+    connections: &[wamn_package::ComponentConnection],
+    manifests: &BTreeMap<wamn_package::PackageName, wamn_component_policy::PackageManifest>,
+) -> Vec<wamn_package::ComponentConnection> {
     connections
         .iter()
         .map(|connection| {
             let mut modes: BTreeMap<
-                wamn_catalog::PackageName,
-                BTreeMap<wamn_catalog::canonical_name::CanonicalName, wamn_catalog::ConnectionMode>,
+                wamn_package::PackageName,
+                BTreeMap<wamn_package::canonical_name::CanonicalName, wamn_package::ConnectionMode>,
             > = BTreeMap::new();
             for ((package, alias), declaration) in
                 crate::connection_requirement::palette_connections(connection, manifests.values())
             {
                 let mode = match declaration.mode {
-                    wamn_catalog::manifest::ConnectionMode::Read => {
-                        wamn_catalog::ConnectionMode::Read
+                    wamn_package::manifest::ConnectionMode::Read => {
+                        wamn_package::ConnectionMode::Read
                     }
-                    wamn_catalog::manifest::ConnectionMode::Write => {
-                        wamn_catalog::ConnectionMode::Write
+                    wamn_package::manifest::ConnectionMode::Write => {
+                        wamn_package::ConnectionMode::Write
                     }
                 };
                 modes
@@ -293,8 +287,8 @@ pub(super) fn palette_connections(
                     .or_default()
                     .insert(alias.clone(), mode);
             }
-            wamn_catalog::ComponentConnection {
-                mode: wamn_catalog::ConnectionMode::ByBinding(modes),
+            wamn_package::ComponentConnection {
+                mode: wamn_package::ConnectionMode::ByBinding(modes),
                 store_alias: connection.store_alias.clone(),
                 requirement_type: connection.requirement_type,
             }

@@ -137,8 +137,8 @@ pub struct PackageRegistry {
 /// internal error.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NoPackageArtifact {
-    pub package_id: wamn_catalog::PackageName,
-    pub version: wamn_catalog::package_version::PackageVersion,
+    pub package_id: wamn_package::PackageName,
+    pub version: wamn_package::package_version::PackageVersion,
 }
 
 impl std::fmt::Display for NoPackageArtifact {
@@ -463,8 +463,8 @@ impl Repository {
 /// the artifact cannot be pulled.
 pub async fn pull_package(
     registry: &PackageRegistry,
-    package_id: &wamn_catalog::PackageName,
-    version: &wamn_catalog::package_version::PackageVersion,
+    package_id: &wamn_package::PackageName,
+    version: &wamn_package::package_version::PackageVersion,
 ) -> anyhow::Result<(wamn_digest::Digest, Vec<PackedLayer>)> {
     Repository::open(
         registry,

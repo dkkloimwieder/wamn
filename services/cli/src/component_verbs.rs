@@ -6,7 +6,7 @@ use crate::route_request::request as route_request;
 use anyhow::{Context as _, ensure};
 use clap::{Args, Subcommand};
 use serde_json::Value;
-use wamn_catalog::{HostAttachment, HostRouteSet};
+use wamn_routes::{HostAttachment, HostRouteSet};
 
 /// A route request with a separate, write-only credential file.
 #[derive(Debug, Args)]

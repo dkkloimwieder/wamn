@@ -35,3 +35,31 @@ pub struct Environment {
     pub org: OrgId,
     pub env: crate::EnvName,
 }
+
+/// The status of a project environment
+/// (docs/architecture/execution.md#host-run-routes).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EnvironmentStatus {
+    /// Identity offers its audience and its host serves its routes.
+    Active,
+    /// Identity offers no audience and its host answers
+    /// `environment-inactive`. CDC, data and grants stay.
+    Inactive,
+}
+
+impl EnvironmentStatus {
+    /// The stored value.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Active => "active",
+            Self::Inactive => "inactive",
+        }
+    }
+}
+
+/// The environment row of the system database.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EnvironmentRow {
+    pub disposable: bool,
+    pub instance_suffix: crate::instance_suffix::InstanceSuffix,
+}

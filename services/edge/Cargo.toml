@@ -10,7 +10,14 @@ name = "wamn-edge"
 path = "src/main.rs"
 test = false
 
+[features]
+test-util = []
+
 [dependencies]
+wamn-edge-document.workspace = true
+wamn-component-policy.workspace = true
+wamn-package.workspace = true
+wamn-routes.workspace = true
 wamn-http-client.workspace = true
 sqlx = { workspace = true, features = ["sqlite"] }
 wamn-digest = { workspace = true, features = ["sqlx"] }
@@ -18,8 +25,6 @@ wamn-digest = { workspace = true, features = ["sqlx"] }
 wamn-engine = { workspace = true }
 # Device identity and role slugs.
 wamn-identity-protocol = { workspace = true }
-# The admitted component facts and the serving manifest of a release bundle.
-wamn-catalog = { workspace = true }
 # The `sha256:<hex>` spelling of bundle, file and schema digests.
 # The project of the box's environment coordinate (R1).
 wamn-registry = { workspace = true }
@@ -53,12 +58,11 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 
 [dev-dependencies]
+wamn-edge-document = { workspace = true, features = ["test-util"] }
+wamn-component-policy = { workspace = true, features = ["test-util"] }
 wat = "=1.254.2"
 wamn-codegen.workspace = true
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt"] }
-# The release tests build a manifest from parts, which wamn-catalog conditions
-# behind `test-util`. Never add this feature to the normal dependency.
-wamn-catalog = { workspace = true, features = ["test-util"] }
 # The tests write the edge_device bundle with the dev loop's bundle writer.
 wamn-dev = { workspace = true }
 # The device test writes frames into a pseudo-terminal pair.

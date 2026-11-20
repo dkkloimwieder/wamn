@@ -94,7 +94,7 @@ pub fn compile_manifest(package_root: &Path) -> Result<Vec<u8>> {
     let mut document = source.document().clone();
     crate::build::apply_statement_types(&mut document, &descriptions)?;
     let bytes = serde_json::to_vec(&document)?;
-    wamn_catalog::manifest::PackageManifest::from_authored_slice(&bytes)?;
+    wamn_component_policy::PackageManifest::from_authored_slice(&bytes)?;
     Ok(bytes)
 }
 
@@ -104,7 +104,7 @@ pub fn compile_manifest(package_root: &Path) -> Result<Vec<u8>> {
 ///
 /// The authored form may leave out the type of a statement parameter or row
 /// value, which `wamn build` derives from the statement. It therefore is not
-/// yet a [`wamn_catalog::manifest::PackageManifest`], and this function does not parse it as one.
+/// yet a [`wamn_component_policy::PackageManifest`], and this function does not parse it as one.
 ///
 /// # Errors
 ///
@@ -125,7 +125,8 @@ pub(crate) fn compile_authored_manifest(package_root: &Path) -> Result<Vec<u8>> 
 mod tests {
     use super::*;
     use crate::{GenerationInput, StatementTransactionality, generate};
-    use wamn_catalog::manifest::{CustomOperationResultDeclaration, PackageManifest};
+    use wamn_component_policy::PackageManifest;
+    use wamn_package::manifest::CustomOperationResultDeclaration;
     use wamn_schema_introspection::ir::CatalogIr;
 
     #[test]

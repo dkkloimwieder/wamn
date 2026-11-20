@@ -23,104 +23,23 @@
 //! [`ServingManifest::from_canonical_bytes`] rejects bytes whose order or JSON
 //! encoding differs from that canonical representation.
 
-use crate::canonical_name::CanonicalName;
+use wamn_package::canonical_name::CanonicalName;
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::{
-    AdmittedComponent, AttachmentType, CatalogIdentityError, ComponentConnection,
-    ComponentDescriptor, HostAttachment, HostRouteSet, PackageCoordinate,
-    package::validate_canonical_operation_for_package,
+use crate::CatalogIdentityError;
+use wamn_component_policy::{AdmittedComponent, ComponentDescriptor};
+use wamn_package::{
+    AttachmentTarget, AttachmentType, ComponentConnection, OperationType, PackageCoordinate,
+    ServingAttachment, parse_attachment_auth_policy, validate_canonical_operation_for_package,
 };
+use wamn_routes::{HostAttachment, HostRouteSet};
 
 /// The only serving-manifest format admitted by this revision.
 pub const SERVING_MANIFEST_FORMAT_VERSION: u32 = 11;
-
-/// The attachment auth-policy mode that permits an unauthenticated caller.
-pub const NO_AUTHENTICATION_MODE: &str = "none";
-
-/// The attachment auth-policy mode that requires a platform access token.
-pub const PAT_AUTHENTICATION_MODE: &str = "pat";
-
-/// The attachment auth-policy mode that permits a verified session token.
-pub const SESSION_AUTHENTICATION_MODE: &str = "session";
-
-/// The admitted authentication modes for one release attachment.
-///
-/// This parsed view is not a second wire representation. The manifest retains
-/// the original JSON, including the canonical order of a combined modes list.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AttachmentAuthPolicy<'a> {
-    None,
-    Pat,
-    Session,
-    PatAndSession,
-    Signature {
-        header: &'a str,
-        credential: &'a str,
-    },
-}
-
-impl AttachmentAuthPolicy<'_> {
-    /// Whether this policy admits a request without a caller principal.
-    pub fn has_no_caller(self) -> bool {
-        matches!(self, Self::None | Self::Signature { .. })
-    }
-
-    /// Whether this attachment admits a platform access token.
-    pub fn allows_pat(self) -> bool {
-        matches!(self, Self::Pat | Self::PatAndSession)
-    }
-
-    /// Whether this attachment admits a verified session token.
-    pub fn allows_session(self) -> bool {
-        matches!(self, Self::Session | Self::PatAndSession)
-    }
-}
-
-/// Parse the exact attachment authentication policy.
-///
-/// The only shapes are `{"modes":["none"]}`, `{"modes":["pat"]}`,
-/// `{"modes":["session"]}`, `{"modes":["pat","session"]}`, and
-/// `{"modes":["signature"],"header":"…","credential":"…"}`. Unknown
-/// fields, scalar modes, duplicates, and other list orders are refused.
-pub fn parse_attachment_auth_policy(policy: &Value) -> Option<AttachmentAuthPolicy<'_>> {
-    let object = policy.as_object()?;
-    let modes = object.get("modes")?.as_array()?;
-    if matches!(modes.as_slice(), [mode] if mode.as_str() == Some("signature")) {
-        if object.len() != 3 {
-            return None;
-        }
-        let header = object.get("header")?.as_str()?;
-        let credential = object.get("credential")?.as_str()?;
-        return (!header.is_empty() && !credential.is_empty())
-            .then_some(AttachmentAuthPolicy::Signature { header, credential });
-    }
-    if object.len() != 1 {
-        return None;
-    }
-    match modes.as_slice() {
-        [mode] => match mode.as_str()? {
-            NO_AUTHENTICATION_MODE => Some(AttachmentAuthPolicy::None),
-            PAT_AUTHENTICATION_MODE => Some(AttachmentAuthPolicy::Pat),
-            SESSION_AUTHENTICATION_MODE => Some(AttachmentAuthPolicy::Session),
-            _ => None,
-        },
-        [pat, session]
-            if pat.as_str() == Some(PAT_AUTHENTICATION_MODE)
-                && session.as_str() == Some(SESSION_AUTHENTICATION_MODE) =>
-        {
-            Some(AttachmentAuthPolicy::PatAndSession)
-        }
-        _ => None,
-    }
-}
-
-/// Stable refusal literal for malformed or unsupported attachment auth policy.
-pub const INVALID_ATTACHMENT_AUTH_POLICY_REFUSAL: &str = "invalid-attachment-auth-policy";
 
 /// Stable refusal literal for a serving-manifest format this reader will not admit.
 pub const UNSUPPORTED_SERVING_MANIFEST_VERSION_REFUSAL: &str =
@@ -152,7 +71,7 @@ pub struct ServingRelease {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ServingComponent {
-    pub package_id: crate::PackageName,
+    pub package_id: wamn_package::PackageName,
     /// The application schema selected at publication. Absent releases use the host fallback.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime_schema: Option<String>,
@@ -214,48 +133,11 @@ impl ServingComponent {
     }
 }
 
-/// The contract type of one application operation.
-///
-/// The values are the `type` literals of the generated contract
-/// `operation.json`, which is the only source of this fact.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum OperationType {
-    Get,
-    Query,
-    Create,
-    Update,
-    Delete,
-    Command,
-    Projection,
-    EventHandler,
-}
-
-impl OperationType {
-    /// The types that read without changing a record.
-    pub const READ_TYPES: [Self; 3] = [Self::Get, Self::Query, Self::Projection];
-
-    /// Whether this type reads without changing a record.
-    #[must_use]
-    pub fn is_read(self) -> bool {
-        Self::READ_TYPES.contains(&self)
-    }
-
-    /// The HTTP method of a route that calls an operation of this type.
-    ///
-    /// A read is a GET and every other type is a POST. The method follows from
-    /// the type alone, so no author writes it (`docs/architecture/execution.md`).
-    #[must_use]
-    pub fn http_method(self) -> &'static str {
-        if self.is_read() { "GET" } else { "POST" }
-    }
-}
-
 /// One component export that a route calls once, with no graph walk.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ServingRoute {
-    pub package_id: crate::PackageName,
+    pub package_id: wamn_package::PackageName,
     pub component: CanonicalName,
     pub operation: CanonicalName,
     #[serde(rename = "type")]
@@ -285,121 +167,32 @@ pub struct ServingRelation {
     pub relation: String,
 }
 
-/// What one release attachment invokes.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum AttachmentTarget {
-    /// One component export of the attachment's package, through a route.
-    Route {
-        component: CanonicalName,
-        operation: CanonicalName,
-    },
-}
-
-/// One authored attachment targeting a route.
-///
-/// Codegen stores these route facts in the package's compiled deploy section.
-/// Edge assembly converts them into a [`RouteAttachment`].
-///
-/// On the wire the target is flat: `component` and `operation`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(try_from = "AttachmentWire", into = "AttachmentWire")]
-pub struct ServingAttachment {
-    pub type_: AttachmentType,
-    pub package_id: crate::PackageName,
-    pub target: AttachmentTarget,
-    pub definition_hash: wamn_digest::Digest,
-    pub definition: Value,
-    pub auth_policy: Value,
-    /// Exact operation authority selected by this attachment. Attachments that
-    /// do not invoke a package operation carry no token; callers never infer one
-    /// from route, wiring, or component syntax.
-    pub registered_operation: Option<crate::registered_operation::RegisteredOperation>,
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case", deny_unknown_fields)]
-struct AttachmentWire {
-    #[serde(rename = "type")]
-    type_: AttachmentType,
-    package_id: crate::PackageName,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    component: Option<CanonicalName>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    operation: Option<CanonicalName>,
-    definition_hash: wamn_digest::Digest,
-    definition: Value,
-    auth_policy: Value,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    registered_operation: Option<crate::registered_operation::RegisteredOperation>,
-}
-
-impl TryFrom<AttachmentWire> for ServingAttachment {
-    type Error = String;
-
-    fn try_from(wire: AttachmentWire) -> Result<Self, Self::Error> {
-        let target = AttachmentTarget::Route {
-            component: wire.component.ok_or("attachment component is required")?,
-            operation: wire.operation.ok_or("attachment operation is required")?,
-        };
-        Ok(Self {
-            type_: wire.type_,
-            package_id: wire.package_id,
-            target,
-            definition_hash: wire.definition_hash,
-            definition: wire.definition,
-            auth_policy: wire.auth_policy,
-            registered_operation: wire.registered_operation,
-        })
-    }
-}
-
-impl From<ServingAttachment> for AttachmentWire {
-    fn from(attachment: ServingAttachment) -> Self {
-        let AttachmentTarget::Route {
-            component,
-            operation,
-        } = attachment.target;
-        Self {
-            type_: attachment.type_,
-            package_id: attachment.package_id,
-            component: Some(component),
-            operation: Some(operation),
-            definition_hash: attachment.definition_hash,
-            definition: attachment.definition,
-            auth_policy: attachment.auth_policy,
-            registered_operation: attachment.registered_operation,
-        }
-    }
-}
-
-impl ServingAttachment {
-    /// Project authored route attachments into the manifest.
-    pub fn routes(
-        authored: BTreeMap<CanonicalName, Self>,
-    ) -> BTreeMap<CanonicalName, RouteAttachment> {
-        authored
-            .into_iter()
-            .map(|(id, attachment)| {
-                let AttachmentTarget::Route {
+/// Project authored route attachments into the manifest.
+pub fn route_attachments(
+    authored: BTreeMap<CanonicalName, ServingAttachment>,
+) -> BTreeMap<CanonicalName, RouteAttachment> {
+    authored
+        .into_iter()
+        .map(|(id, attachment)| {
+            let AttachmentTarget::Route {
+                component,
+                operation,
+            } = attachment.target;
+            (
+                id,
+                RouteAttachment {
+                    type_: attachment.type_,
+                    package_id: attachment.package_id,
                     component,
                     operation,
-                } = attachment.target;
-                (
-                    id,
-                    RouteAttachment {
-                        type_: attachment.type_,
-                        package_id: attachment.package_id,
-                        component,
-                        operation,
-                        definition_hash: attachment.definition_hash,
-                        definition: attachment.definition,
-                        auth_policy: attachment.auth_policy,
-                        registered_operation: attachment.registered_operation,
-                    },
-                )
-            })
-            .collect()
-    }
+                    definition_hash: attachment.definition_hash,
+                    definition: attachment.definition,
+                    auth_policy: attachment.auth_policy,
+                    registered_operation: attachment.registered_operation,
+                },
+            )
+        })
+        .collect()
 }
 
 impl From<RouteAttachment> for ServingAttachment {
@@ -433,7 +226,7 @@ impl From<AttachmentRef<'_>> for ServingAttachment {
 pub struct RouteAttachment {
     #[serde(rename = "type")]
     pub type_: AttachmentType,
-    pub package_id: crate::PackageName,
+    pub package_id: wamn_package::PackageName,
     pub component: CanonicalName,
     pub operation: CanonicalName,
     pub definition_hash: wamn_digest::Digest,
@@ -441,7 +234,7 @@ pub struct RouteAttachment {
     pub auth_policy: Value,
     /// Exact operation authority selected by this attachment.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub registered_operation: Option<crate::registered_operation::RegisteredOperation>,
+    pub registered_operation: Option<wamn_package::registered_operation::RegisteredOperation>,
 }
 
 /// One borrowed route attachment.
@@ -457,7 +250,7 @@ impl<'a> AttachmentRef<'a> {
         }
     }
 
-    pub fn package_id(self) -> &'a crate::PackageName {
+    pub fn package_id(self) -> &'a wamn_package::PackageName {
         match self {
             Self::Route(attachment) => &attachment.package_id,
         }
@@ -477,7 +270,7 @@ impl<'a> AttachmentRef<'a> {
 
     pub fn registered_operation(
         self,
-    ) -> Option<&'a crate::registered_operation::RegisteredOperation> {
+    ) -> Option<&'a wamn_package::registered_operation::RegisteredOperation> {
         match self {
             Self::Route(attachment) => attachment.registered_operation.as_ref(),
         }
@@ -526,7 +319,7 @@ impl<'a> ServedAttachment<'a> {
 
     pub fn registered_operation(
         self,
-    ) -> Option<&'a crate::registered_operation::RegisteredOperation> {
+    ) -> Option<&'a wamn_package::registered_operation::RegisteredOperation> {
         match self {
             Self::Authored(attachment) => attachment.registered_operation(),
             Self::Host(attachment) => attachment.registered_operation(),
@@ -534,29 +327,11 @@ impl<'a> ServedAttachment<'a> {
     }
 }
 
-/// Parse a workflow's five-field UTC cron expression.
-///
-/// # Errors
-/// Returns an invalid-definition error for any other schedule syntax.
-pub fn parse_workflow_schedule(text: &str) -> Result<croner::Cron, CatalogIdentityError> {
-    if text.split_whitespace().count() != 5 {
-        return invalid("workflow-schedule-invalid: requires five-field cron in UTC");
-    }
-    croner::parser::CronParser::builder()
-        .seconds(croner::parser::Seconds::Disallowed)
-        .year(croner::parser::Year::Disallowed)
-        .build()
-        .parse(text)
-        .map_err(|error| CatalogIdentityError::InvalidDefinition {
-            message: format!("workflow-schedule-invalid: {error}"),
-        })
-}
-
 /// An application member whose exact bytes participate in the HTTP entry.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ServingEntryMember {
-    pub package_id: crate::PackageName,
+    pub package_id: wamn_package::PackageName,
     pub component: CanonicalName,
     pub digest: wamn_digest::Digest,
 }
@@ -603,8 +378,8 @@ impl ServingManifest {
         self.components
             .iter()
             .map(|component| {
-                let version = if component.package_id.as_str() == crate::PALETTE_PACKAGE_ID {
-                    crate::PALETTE_PACKAGE_VERSION
+                let version = if component.package_id.as_str() == wamn_package::PALETTE_PACKAGE_ID {
+                    wamn_package::PALETTE_PACKAGE_VERSION
                         .parse()
                         .expect("fixed palette package version")
                 } else {
@@ -618,7 +393,7 @@ impl ServingManifest {
                         .package_version()
                         .clone()
                 };
-                let target = crate::ComponentPackageCoordinate::new(
+                let target = wamn_component_policy::ComponentPackageCoordinate::new(
                     project_env_key,
                     component.package_id.clone(),
                     version,
@@ -631,7 +406,7 @@ impl ServingManifest {
     /// Whether this operation returns short-lived signed file reads.
     pub fn signs_file_results(
         &self,
-        package: &crate::PackageName,
+        package: &wamn_package::PackageName,
         component: &CanonicalName,
         operation: &CanonicalName,
     ) -> bool {
@@ -642,10 +417,12 @@ impl ServingManifest {
             })
             .and_then(|served| served.descriptor.operations.get(operation))
             .is_some_and(|operation| {
-                operation
-                    .output_ports
-                    .iter()
-                    .any(|port| port.schema.schema.get(crate::SIGNED_FILE_READS).is_some())
+                operation.output_ports.iter().any(|port| {
+                    port.schema
+                        .schema
+                        .get(wamn_package::SIGNED_FILE_READS)
+                        .is_some()
+                })
             })
     }
 
@@ -662,7 +439,7 @@ impl ServingManifest {
         routes: BTreeSet<ServingRoute>,
         attachments: BTreeMap<CanonicalName, ServingAttachment>,
     ) -> Result<Self, CatalogIdentityError> {
-        let attachments = ServingAttachment::routes(attachments);
+        let attachments = route_attachments(attachments);
         let manifest = Self {
             format_version: SERVING_MANIFEST_FORMAT_VERSION,
             release,
@@ -719,7 +496,7 @@ impl ServingManifest {
     pub fn composing_application<'a>(
         &'a self,
         component: &'a ServingComponent,
-    ) -> &'a crate::PackageName {
+    ) -> &'a wamn_package::PackageName {
         if self.entry_members().contains(&component)
             && let Some(composing) = self.composing_member()
         {
@@ -731,7 +508,7 @@ impl ServingManifest {
     /// The route that calls `operation` of `component` in package `package_id`.
     pub fn route(
         &self,
-        package_id: &crate::PackageName,
+        package_id: &wamn_package::PackageName,
         component: &CanonicalName,
         operation: &CanonicalName,
     ) -> Option<&ServingRoute> {
@@ -839,7 +616,7 @@ impl ServingManifest {
         }
         let mut package_versions = BTreeMap::new();
         for package in &self.release.packages {
-            if package.package_id().as_str() == crate::PALETTE_PACKAGE_ID {
+            if package.package_id().as_str() == wamn_package::PALETTE_PACKAGE_ID {
                 return invalid("the platform palette is not an application package");
             }
 
@@ -855,16 +632,11 @@ impl ServingManifest {
         }
 
         if let Some(entry) = &self.composed_entry {
-            if let Some(path) = entry.reference.strip_prefix("file:") {
-                if !std::path::Path::new(path).is_absolute() {
-                    return invalid("a local composed entry must name an absolute file");
+            wamn_catalog::validate_serving_entry_reference(&entry.reference).map_err(|error| {
+                CatalogIdentityError::InvalidDefinition {
+                    message: error.reason().to_owned(),
                 }
-            } else if crate::validate_composed_entry_path(&entry.reference).is_err() {
-                return invalid(
-                    "a composed entry requires the path entries@sha256:<manifest digest> \
-                     relative to the component artifact base",
-                );
-            }
+            })?;
 
             if entry.members.is_empty() {
                 return invalid("a composed entry must name its application members");
@@ -913,7 +685,7 @@ impl ServingManifest {
             {
                 return invalid("components of one application must carry the same runtime schema");
             }
-            if component.package_id.as_str() == crate::PALETTE_PACKAGE_ID {
+            if component.package_id.as_str() == wamn_package::PALETTE_PACKAGE_ID {
                 if component.runtime_schema.is_some()
                     || component.descriptor.operations.values().any(|operation| {
                         operation.registered_operation.is_some() || operation.host_transaction
@@ -932,7 +704,7 @@ impl ServingManifest {
                 return invalid("a serving component must export at least one operation");
             }
             for operation in descriptor.operations.values() {
-                crate::signed_file_reads(operation).map_err(|error| {
+                wamn_component_policy::signed_file_reads(operation).map_err(|error| {
                     CatalogIdentityError::InvalidDefinition {
                         message: error.to_string(),
                     }
@@ -954,7 +726,7 @@ impl ServingManifest {
                         operation.registered_operation
                     ));
                 }
-                crate::component_facts::validate_committed_result_schema(
+                wamn_component_policy::validate_committed_result_schema(
                     operation.registered_operation.as_ref(),
                     operation.committed_result_schema.as_ref(),
                 ).map_err(|error| CatalogIdentityError::InvalidDefinition {
@@ -1064,12 +836,15 @@ fn validate_route_target(
 
 /// The tests that every attachment passes, whatever it targets.
 fn validate_attachment(
-    package_versions: &BTreeMap<&crate::PackageName, &crate::package_version::PackageVersion>,
+    package_versions: &BTreeMap<
+        &wamn_package::PackageName,
+        &wamn_package::package_version::PackageVersion,
+    >,
     attachment_id: &CanonicalName,
-    package_id: &crate::PackageName,
+    package_id: &wamn_package::PackageName,
     definition: &Value,
     auth_policy: &Value,
-    registered_operation: Option<&crate::registered_operation::RegisteredOperation>,
+    registered_operation: Option<&wamn_package::registered_operation::RegisteredOperation>,
 ) -> Result<(), CatalogIdentityError> {
     if !definition.is_object() {
         return invalid("attachment definition must be a JSON object");
@@ -1091,8 +866,11 @@ fn validate_attachment(
 }
 
 fn validate_package_member(
-    package_versions: &BTreeMap<&crate::PackageName, &crate::package_version::PackageVersion>,
-    package_id: &crate::PackageName,
+    package_versions: &BTreeMap<
+        &wamn_package::PackageName,
+        &wamn_package::package_version::PackageVersion,
+    >,
+    package_id: &wamn_package::PackageName,
 ) -> Result<(), CatalogIdentityError> {
     if !package_versions.contains_key(package_id) {
         return Err(CatalogIdentityError::InvalidDefinition {
@@ -1103,9 +881,12 @@ fn validate_package_member(
 }
 
 fn validate_registered_operation(
-    package_versions: &BTreeMap<&crate::PackageName, &crate::package_version::PackageVersion>,
-    package_id: &crate::PackageName,
-    operation: Option<&crate::registered_operation::RegisteredOperation>,
+    package_versions: &BTreeMap<
+        &wamn_package::PackageName,
+        &wamn_package::package_version::PackageVersion,
+    >,
+    package_id: &wamn_package::PackageName,
+    operation: Option<&wamn_package::registered_operation::RegisteredOperation>,
 ) -> Result<(), CatalogIdentityError> {
     let Some(operation) = operation else {
         return Ok(());
@@ -1114,6 +895,7 @@ fn validate_registered_operation(
         .get(package_id)
         .expect("package membership was validated before operation identity");
     validate_canonical_operation_for_package(operation, package_id, package_version)
+        .map_err(Into::into)
 }
 
 fn contains_retired_identity(value: &Value) -> bool {
@@ -1154,6 +936,7 @@ fn within_delivery_limit(bytes: usize) -> Result<(), CatalogIdentityError> {
 
 #[cfg(test)]
 mod tests {
+    use wamn_package::{AttachmentAuthPolicy, NO_AUTHENTICATION_MODE, PAT_AUTHENTICATION_MODE, SESSION_AUTHENTICATION_MODE};
     use super::*;
 
     const COMPONENT_A: &str =
@@ -1192,7 +975,7 @@ mod tests {
                 data_change: false,
                 operations: BTreeMap::from([(
                     operation.parse().unwrap(),
-                    crate::AdmittedComponentOperation {
+                    wamn_component_policy::AdmittedComponentOperation {
                         registered_operation: Some(operation.parse().unwrap()),
                         committed_result_schema: None,
                         host_transaction: false,
@@ -1312,7 +1095,7 @@ mod tests {
 
     fn component_of(
         manifest: &ServingManifest,
-        package_id: &crate::PackageName,
+        package_id: &wamn_package::PackageName,
     ) -> ServingComponent {
         manifest
             .components

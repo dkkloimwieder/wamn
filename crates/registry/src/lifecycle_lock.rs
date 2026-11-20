@@ -7,12 +7,12 @@ use sqlx::{Connection as _, Row as _};
 use std::{sync::Arc, time::Duration};
 use tokio::task::JoinHandle;
 
-use wamn_registry::Triple;
+use crate::Triple;
 
 /// The refusal when another verb holds the lock.
 pub const DEPLOYMENT_IN_PROGRESS: &str = "deployment in progress";
 
-use wamn_registry::sql::{
+use crate::sql::{
     ENVIRONMENT_LOCK_SQL as TRY_LOCK_SQL, ENVIRONMENT_SHARED_LOCK_SQL as TRY_SHARED_LOCK_SQL,
 };
 
@@ -45,8 +45,8 @@ impl LifecycleLock {
     /// Take exclusive ownership of the host shared by an org and environment.
     pub async fn acquire_environment(
         client: Client,
-        org: &wamn_registry::OrgId,
-        env: &wamn_registry::EnvName,
+        org: &crate::OrgId,
+        env: &crate::EnvName,
     ) -> anyhow::Result<Self> {
         let lock = Self::start(client).await?;
         if !lock

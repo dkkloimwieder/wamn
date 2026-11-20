@@ -1,32 +1,14 @@
 //! Authored workflow graphs and their canonical JSON identity.
 
-use crate::{ApplicationName, CatalogIdentityError, canonical_name::CanonicalName};
+use crate::WiringError;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
+use wamn_package::{WiringEventOperation, canonical_name::CanonicalName};
+use wamn_registry::ApplicationName;
 
 /// The only accepted workflow graph format.
 pub const WIRING_DOCUMENT_FORMAT_VERSION: &str = "0.2";
-
-/// The row operation that can trigger a data-change workflow.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum WiringEventOperation {
-    Insert,
-    Update,
-    Delete,
-}
-
-impl WiringEventOperation {
-    /// The stored row operation.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Insert => "insert",
-            Self::Update => "update",
-            Self::Delete => "delete",
-        }
-    }
-}
 
 /// The trigger declared by a workflow's entry node.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -39,7 +21,7 @@ pub enum WiringEntry {
         cron: String,
     },
     DataChange {
-        package: crate::PackageName,
+        package: wamn_package::PackageName,
         entity: CanonicalName,
         ops: Vec<WiringEventOperation>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -89,14 +71,14 @@ pub struct WiringDocument {
 
 impl WiringDocument {
     /// Decode the graph and verify its format and structural constraints.
-    pub fn parse(value: &Value) -> Result<Self, CatalogIdentityError> {
+    pub fn parse(value: &Value) -> Result<Self, WiringError> {
         let document = Self::deserialize(value)
             .map_err(|error| invalid(format!("invalid workflow graph JSON: {error}")))?;
         if document.format_version != WIRING_DOCUMENT_FORMAT_VERSION {
             return Err(invalid("workflow graph format-version must be 0.2"));
         }
         if document.version == 0 {
-            return Err(CatalogIdentityError::ZeroVersion { field: "version" });
+            return Err(WiringError::ZeroVersion { field: "version" });
         }
         if contains_secret_value(value) {
             return Err(invalid(
@@ -115,7 +97,7 @@ impl WiringDocument {
         for edge in &document.edges {
             for endpoint in [&edge.from, &edge.to] {
                 if !document.nodes.contains_key(endpoint) {
-                    return Err(CatalogIdentityError::UnresolvedWiringNode {
+                    return Err(WiringError::UnresolvedWiringNode {
                         node_id: endpoint.clone(),
                     });
                 }
@@ -158,8 +140,8 @@ fn contains_secret_value(value: &Value) -> bool {
     }
 }
 
-fn invalid(message: impl Into<String>) -> CatalogIdentityError {
-    CatalogIdentityError::InvalidDefinition {
+fn invalid(message: impl Into<String>) -> WiringError {
+    WiringError::InvalidDefinition {
         message: message.into(),
     }
 }

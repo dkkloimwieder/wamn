@@ -13,8 +13,8 @@ struct ExecutorIdentity<'a> {
     schema: Option<&'a str>,
     runner: Option<&'a str>,
     user: Option<&'a wamn_identity_protocol::PrincipalId>,
-    operation: Option<&'a wamn_catalog::canonical_name::CanonicalName>,
-    application: Option<&'a wamn_catalog::ApplicationName>,
+    operation: Option<&'a wamn_package::canonical_name::CanonicalName>,
+    application: Option<&'a wamn_registry::ApplicationName>,
 }
 
 impl OperationHost {
@@ -38,7 +38,7 @@ impl OperationHost {
         E: From<ProductionLeaseError>,
     {
         let executor = PlatformComponent::Executor.principal_id();
-        let operation: wamn_catalog::canonical_name::CanonicalName = PlatformComponent::Executor
+        let operation: wamn_package::canonical_name::CanonicalName = PlatformComponent::Executor
             .principal_name()
             .parse()
             .expect("platform operation");

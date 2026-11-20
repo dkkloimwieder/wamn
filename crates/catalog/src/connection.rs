@@ -27,7 +27,7 @@ impl std::fmt::Display for RuntimeType {
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ComponentConnectionRequirement {
     component_digest: wamn_digest::Digest,
-    store_alias: crate::canonical_name::CanonicalName,
+    store_alias: wamn_package::canonical_name::CanonicalName,
     requirement: ConnectionTypeDescriptor,
 }
 
@@ -35,7 +35,7 @@ impl ComponentConnectionRequirement {
     /// Construct one requirement from its admitted component identity.
     pub fn new(
         component_digest: wamn_digest::Digest,
-        store_alias: crate::canonical_name::CanonicalName,
+        store_alias: wamn_package::canonical_name::CanonicalName,
         requirement: ConnectionTypeDescriptor,
     ) -> Self {
         Self {
@@ -49,7 +49,7 @@ impl ComponentConnectionRequirement {
         &self.component_digest
     }
 
-    pub fn store_alias(&self) -> &crate::canonical_name::CanonicalName {
+    pub fn store_alias(&self) -> &wamn_package::canonical_name::CanonicalName {
         &self.store_alias
     }
 

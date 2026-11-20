@@ -1,6 +1,6 @@
 //! Pure component facts produced by byte admission.
 
-use crate::canonical_name::CanonicalName;
+use wamn_package::canonical_name::CanonicalName;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -9,8 +9,60 @@ use boon::{Compiler, Draft, Schemas};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 
-use crate::{CatalogIdentityError, PackageCoordinate};
-use crate::package::validate_canonical_operation_for_package;
+use wamn_package::{
+    ComponentConnection, ComponentConnectionAlias, ComponentConnectionType, ComponentDeclaration,
+    ComponentParameterDeclaration, ComponentPortDeclaration, PackageCoordinate,
+    PackageIdentityError, validate_canonical_operation_for_package,
+};
+
+/// Every connection type. A new variant does not compile until it is listed.
+const CONNECTION_TYPES: [ComponentConnectionType; 2] = [
+    ComponentConnectionType::Http,
+    ComponentConnectionType::Blobstore,
+];
+
+/// Separate the package identity used for admission from the deployment target.
+pub fn split_target(
+    declaration: ComponentDeclaration<ComponentPackageCoordinate>,
+) -> (ComponentDeclaration, ComponentPackageCoordinate) {
+    let package = PackageCoordinate::new(
+        declaration.target.package_id.clone(),
+        declaration.target.package_version.clone(),
+    )
+    .expect("valid package coordinate");
+    let ComponentDeclaration {
+        data_change,
+        target,
+        component,
+        interface_version,
+        operations,
+        connections,
+    } = declaration;
+    (
+        ComponentDeclaration {
+            data_change,
+            target: package,
+            component,
+            interface_version,
+            operations,
+            connections,
+        },
+        target,
+    )
+}
+fn validate_alias(alias: &ComponentConnectionAlias) -> Result<(), ComponentFactError> {
+    let name = match alias {
+        ComponentConnectionAlias::Name(name) => name,
+        ComponentConnectionAlias::Configuration { parameter } => parameter,
+    };
+    if name == "__STORE_ALIAS__" {
+        return Err(ComponentFactError::new(
+            ComponentFactErrorType::NonCanonicalIdentity,
+            "connection alias placeholders are not declarations",
+        ));
+    }
+    Ok(())
+}
 
 const JSON_SCHEMA_2020_12: &str = "https://json-schema.org/draft/2020-12/schema";
 const SCHEMA_URI: &str = "mem://wamn-component-schema.json";
@@ -19,16 +71,16 @@ const SCHEMA_URI: &str = "mem://wamn-component-schema.json";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ComponentPackageCoordinate {
     pub project_env_key: wamn_registry::ProjectEnvKey,
-    pub package_id: crate::PackageName,
-    pub package_version: crate::package_version::PackageVersion,
+    pub package_id: wamn_package::PackageName,
+    pub package_version: wamn_package::package_version::PackageVersion,
 }
 
 impl ComponentPackageCoordinate {
     pub fn new(
         project_env_key: &wamn_registry::ProjectEnvKey,
-        package_id: crate::PackageName,
-        package_version: crate::package_version::PackageVersion,
-    ) -> Result<Self, CatalogIdentityError> {
+        package_id: wamn_package::PackageName,
+        package_version: wamn_package::package_version::PackageVersion,
+    ) -> Result<Self, PackageIdentityError> {
         let project_env_key = project_env_key.clone();
         Ok(Self {
             project_env_key,
@@ -114,203 +166,6 @@ impl<'de> Deserialize<'de> for ComponentPackageCoordinate {
     }
 }
 
-/// One author-declared input or output port before admission.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub struct ComponentPortDeclaration {
-    pub name: CanonicalName,
-    pub schema: Value,
-}
-
-/// One author-declared component parameter before admission.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub struct ComponentParameterDeclaration {
-    pub name: CanonicalName,
-    pub schema: Value,
-    pub required: bool,
-}
-
-/// The closed set of connection types an admitted component may require.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum ComponentConnectionType {
-    Http,
-    Blobstore,
-}
-
-/// Every connection type. A new variant does not compile until it is listed.
-const CONNECTION_TYPES: [ComponentConnectionType; 2] = [
-    ComponentConnectionType::Http,
-    ComponentConnectionType::Blobstore,
-];
-
-impl ComponentConnectionType {
-    /// Exact WIT `namespace:package` whose import this connection type needs.
-    pub fn import_package(self) -> &'static str {
-        match self {
-            Self::Http => "wamn:connection",
-            Self::Blobstore => "wasmcloud:blobstore",
-        }
-    }
-}
-
-/// The source of a connection name: a declared alias or a node parameter.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(untagged, deny_unknown_fields)]
-pub enum ComponentConnectionAlias {
-    Name(CanonicalName),
-    Configuration { parameter: CanonicalName },
-}
-
-impl From<CanonicalName> for ComponentConnectionAlias {
-    fn from(name: CanonicalName) -> Self {
-        Self::Name(name)
-    }
-}
-impl ComponentConnectionAlias {
-    /// The static alias, when the declaration does not read node configuration.
-    pub fn name(&self) -> Option<&CanonicalName> {
-        match self {
-            Self::Name(name) => Some(name),
-            Self::Configuration { .. } => None,
-        }
-    }
-    pub(crate) fn validate(&self) -> Result<(), ComponentFactError> {
-        let name = match self {
-            Self::Name(name) => name,
-            Self::Configuration { parameter } => parameter,
-        };
-        if name == "__STORE_ALIAS__" {
-            return Err(ComponentFactError::new(
-                ComponentFactErrorType::NonCanonicalIdentity,
-                "connection alias placeholders are not declarations",
-            ));
-        }
-        Ok(())
-    }
-    /// Resolve a declaration against the host-owned node configuration.
-    pub fn resolve(&self, configuration: &BTreeMap<CanonicalName, Value>) -> Option<CanonicalName> {
-        match self {
-            Self::Name(name) => Some(name.clone()),
-            Self::Configuration { parameter } => configuration
-                .get(parameter)?
-                .as_str()
-                .and_then(|name| name.parse().ok()),
-        }
-    }
-    /// Whether an application alias can supply this declaration's binding.
-    pub fn accepts(&self, name: &CanonicalName) -> bool {
-        match self {
-            Self::Name(declared) => declared == name,
-            Self::Configuration { .. } => true,
-        }
-    }
-}
-
-/// The operations a published connection permits.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum ConnectionMode {
-    Read,
-    Write,
-    /// Modes of configured palette aliases, indexed by package and alias.
-    ByBinding(BTreeMap<crate::PackageName, BTreeMap<CanonicalName, ConnectionMode>>),
-}
-impl ConnectionMode {
-    /// Read the sealed mode of one concrete binding. Nested maps are refused.
-    pub fn read_only(&self, package: &crate::PackageName, alias: &CanonicalName) -> Option<bool> {
-        let mode = match self {
-            Self::ByBinding(packages) => packages.get(package)?.get(alias)?,
-            mode => mode,
-        };
-        match mode {
-            Self::Read => Some(true),
-            Self::Write => Some(false),
-            Self::ByBinding(_) => None,
-        }
-    }
-}
-
-/// One portable connection the component reaches under an author-chosen alias.
-///
-/// The alias is the author-owned half: it is the `requirement` string the guest
-/// names at the `wamn:connection` boundary, and the coordinate an environment
-/// binds to a concrete instance. Connection SEMANTICS are platform-owned and
-/// selected whole by `requirement-type`, never authored field by field.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub struct ComponentConnection {
-    pub mode: ConnectionMode,
-    pub store_alias: ComponentConnectionAlias,
-    pub requirement_type: ComponentConnectionType,
-}
-
-/// One operation exported by component bytes before admission.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub struct ComponentOperationDeclaration {
-    /// Explicit application permission identity. Palette operations carry none.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub registered_operation: Option<crate::registered_operation::RegisteredOperation>,
-    /// A matching successful payload shows that this registered command committed.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub committed_result_schema: Option<Value>,
-    pub input_ports: Vec<ComponentPortDeclaration>,
-    pub output_ports: Vec<ComponentPortDeclaration>,
-    pub parameters: Vec<ComponentParameterDeclaration>,
-}
-
-/// Component-owned facts presented with exact component bytes for admission.
-///
-/// Each map key is the exact exported `wamn:node/handler` instance name. A
-/// package operation repeats that key in `registered-operation`; palette
-/// operations leave the authorization identity absent.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub struct ComponentDeclaration<T = PackageCoordinate> {
-    /// Whether the verified package manifest declares a data change handler.
-    #[serde(skip)]
-    pub data_change: bool,
-    pub target: T,
-    pub component: CanonicalName,
-    pub interface_version: CanonicalName,
-    pub operations: BTreeMap<CanonicalName, ComponentOperationDeclaration>,
-    /// External connections available to every operation of this component.
-    #[serde(default)]
-    pub connections: Vec<ComponentConnection>,
-}
-
-impl ComponentDeclaration<ComponentPackageCoordinate> {
-    /// Separate the package identity used for admission from the deployment target.
-    pub fn split_target(self) -> (ComponentDeclaration, ComponentPackageCoordinate) {
-        let package = PackageCoordinate::new(
-            self.target.package_id.clone(),
-            self.target.package_version.clone(),
-        )
-        .expect("valid package coordinate");
-        let Self {
-            data_change,
-            target,
-            component,
-            interface_version,
-            operations,
-            connections,
-        } = self;
-        (
-            ComponentDeclaration {
-                data_change,
-                target: package,
-                component,
-                interface_version,
-                operations,
-                connections,
-            },
-            target,
-        )
-    }
-}
-
 /// A compiled-valid JSON Schema document.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
@@ -371,7 +226,7 @@ pub enum ComponentEffectProvenance {
 pub struct AdmittedComponentOperation {
     /// Explicit application permission identity. Never inferred from the key.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub registered_operation: Option<crate::registered_operation::RegisteredOperation>,
+    pub registered_operation: Option<wamn_package::registered_operation::RegisteredOperation>,
     /// The admitted success schema for this registered command's committed result.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub committed_result_schema: Option<ComponentSchema>,
@@ -452,8 +307,8 @@ impl ComponentDescriptor {
     /// Check the stored admission against its package and audited imports.
     pub fn verify_projection(
         &self,
-        package: &crate::PackageName,
-        version: &crate::package_version::PackageVersion,
+        package: &wamn_package::PackageName,
+        version: &wamn_package::package_version::PackageVersion,
     ) -> Result<(), ComponentFactError> {
         verify_projection(
             package,
@@ -539,7 +394,7 @@ pub enum ComponentFactErrorType {
     UndeclaredConnection,
 }
 
-/// Refusal to mint a complete normalized component fact.
+/// Refusal to build a complete normalized component fact.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ComponentFactError {
     type_: ComponentFactErrorType,
@@ -671,8 +526,8 @@ pub fn verify_stored_effect_projection(
 }
 
 fn verify_projection(
-    package: &crate::PackageName,
-    version: &crate::package_version::PackageVersion,
+    package: &wamn_package::PackageName,
+    version: &wamn_package::package_version::PackageVersion,
     data_change: bool,
     operations: &BTreeMap<CanonicalName, AdmittedComponentOperation>,
     imports: &[String],
@@ -704,10 +559,10 @@ fn verify_projection(
 }
 
 fn validate_registered_operation_target(
-    package: &crate::PackageName,
-    version: &crate::package_version::PackageVersion,
+    package: &wamn_package::PackageName,
+    version: &wamn_package::package_version::PackageVersion,
     export: &CanonicalName,
-    operation: Option<&crate::registered_operation::RegisteredOperation>,
+    operation: Option<&wamn_package::registered_operation::RegisteredOperation>,
 ) -> Result<(), ComponentFactError> {
     let Some(operation) = operation else {
         return Ok(());
@@ -764,7 +619,7 @@ fn refuse_application_operation_imports(imports: &[String]) -> Result<(), Compon
 /// `wasi:clocks` import at an unregistered version is still a platform
 /// import; refusing the version is admission's job, not this classifier's.
 fn is_application_operation_import(name: &str) -> bool {
-    !wamn_component_policy::is_registered_package(name)
+    !crate::is_registered_package(name)
 }
 
 /// Sort and deduplicate derived effects, pinning them to platform imports.
@@ -799,10 +654,8 @@ fn normalize_effects(
     normalized.dedup_by(|left, right| left.package == right.package);
 
     for import in imports {
-        let package = wamn_component_policy::import_pkg(import);
-        if wamn_component_policy::import_posture(import)
-            != Some(wamn_component_policy::Posture::Effect)
-        {
+        let package = crate::import_pkg(import);
+        if crate::import_posture(import) != Some(crate::Posture::Effect) {
             continue;
         }
         if !normalized.iter().any(|effect| {
@@ -829,7 +682,7 @@ fn normalize_connections(
     let mut seen = BTreeSet::new();
     let mut connections = Vec::with_capacity(declarations.len());
     for declaration in declarations {
-        declaration.store_alias.validate()?;
+        validate_alias(&declaration.store_alias)?;
         if !seen.insert(declaration.store_alias.clone()) {
             return Err(ComponentFactError::new(
                 ComponentFactErrorType::DuplicateConnection,
@@ -914,8 +767,8 @@ fn normalize_parameters(
     Ok(parameters)
 }
 
-pub(crate) fn validate_committed_result_schema(
-    registered_operation: Option<&crate::registered_operation::RegisteredOperation>,
+pub fn validate_committed_result_schema(
+    registered_operation: Option<&wamn_package::registered_operation::RegisteredOperation>,
     schema: Option<&ComponentSchema>,
 ) -> Result<(), ComponentFactError> {
     let Some(schema) = schema else {
@@ -990,6 +843,7 @@ fn has_remote_ref(value: &Value) -> bool {
 #[cfg(test)]
 mod tests {
     use serde_json::json;
+    use wamn_package::{ComponentOperationDeclaration, ConnectionMode};
 
     use super::*;
 
@@ -1102,7 +956,7 @@ mod tests {
         .into_admitted(deployment());
         let connections = vec![ComponentConnection {
             store_alias: "labels"
-                .parse::<crate::canonical_name::CanonicalName>()
+                .parse::<wamn_package::canonical_name::CanonicalName>()
                 .unwrap()
                 .into(),
             requirement_type: ComponentConnectionType::Blobstore,
@@ -1376,7 +1230,7 @@ mod tests {
         verify_stored_effect_projection(&stored).expect("a derived pure projection verifies");
     }
 
-    /// Admission itself must never mint the shape the migration fabricated.
+    /// Admission itself must never produce the shape the migration fabricated.
     #[test]
     fn admission_refuses_an_effect_projection_narrower_than_the_imports() {
         let error = normalize_component_fact(
@@ -1405,7 +1259,7 @@ mod tests {
         let imports = ["wamn:connection/http@0.1.0".to_string()];
         let connection = ComponentConnection {
             store_alias: "erp"
-                .parse::<crate::canonical_name::CanonicalName>()
+                .parse::<wamn_package::canonical_name::CanonicalName>()
                 .unwrap()
                 .into(),
             requirement_type: ComponentConnectionType::Http,
@@ -1612,6 +1466,7 @@ mod tests {
 
 #[cfg(test)]
 mod connection_alias_tests {
+    use wamn_package::ConnectionMode;
     use super::*;
     #[test]
     fn configuration_connections_follow_each_nodes_alias() {
@@ -1661,9 +1516,10 @@ mod connection_alias_tests {
             assert!(declaration.resolve(&BTreeMap::new()).is_none());
         }
         assert!(
-            ComponentConnectionAlias::Name("__STORE_ALIAS__".parse().unwrap())
-                .validate()
-                .is_err()
+            validate_alias(&ComponentConnectionAlias::Name(
+                "__STORE_ALIAS__".parse().unwrap()
+            ))
+            .is_err()
         );
     }
 }

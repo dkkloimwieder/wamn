@@ -9,8 +9,8 @@ license.workspace = true
 path = "lib.rs"
 
 [dependencies]
+wamn-package.workspace = true
 
-wamn-catalog.workspace = true
 wamn-identity-protocol = { workspace = true, features = ["sqlx"] }
 
 rustix.workspace = true

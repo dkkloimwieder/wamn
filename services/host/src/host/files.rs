@@ -1,5 +1,8 @@
 //! Native file handlers and result signing for one resolved application workload.
 
+use wamn_engine::application_config::ApplicationConfig;
+use wamn_package::SignedFileField;
+use wamn_package::SignedFileResultClass;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock, Weak};
 use std::time::Duration;
@@ -9,8 +12,6 @@ use serde_json::Value;
 use wamn_authentication::authorization::Authorization;
 use wamn_blobstore::file_route::{FileRoutes, RegistryFileConnections};
 use wamn_blobstore::plugin::WamnBlobstore;
-use wamn_catalog::application_config::ApplicationConfig;
-use wamn_catalog::{SignedFileField, SignedFileResultClass};
 use wamn_connection::connection_facts::ConnectionCache;
 use wamn_connection::invocation::ReleaseContext;
 use wamn_engine::operation::node_types::{ErrorDetail, NodeError};
@@ -54,14 +55,14 @@ impl Files {
         }
     }
 
-    pub(super) fn register(&self, workload: &str, application: ApplicationConfig) {
+    pub(super) fn register(&self, workload: &str, application: Arc<ApplicationConfig>) {
         self.applications
             .write()
             .expect("file applications lock poisoned")
             .insert(
                 workload.to_owned(),
                 Arc::new(ApplicationFiles {
-                    application: Arc::new(application),
+                    application,
                     routes: tokio::sync::OnceCell::new(),
                 }),
             );

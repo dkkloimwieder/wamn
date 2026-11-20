@@ -5,15 +5,17 @@ use std::path::Path;
 
 use anyhow::{Context as _, Result, ensure};
 
-use wamn_catalog::manifest::PackageManifest;
-use wamn_catalog::manifest::{ManifestError as GenerateError, ManifestErrorType as GenerateErrorType};
+use wamn_component_policy::PackageManifest;
+use wamn_package::manifest::{
+    ManifestError as GenerateError, ManifestErrorType as GenerateErrorType,
+};
 
 /// Read the compiled manifests used for inherited model declarations.
 pub(crate) fn load_base_manifests(
     output_root: &Path,
     dependencies: &std::collections::BTreeMap<
-        wamn_catalog::manifest::source_name::SourceName,
-        wamn_catalog::manifest::BaseDependencyRequirement,
+        wamn_package::manifest::source_name::SourceName,
+        wamn_package::manifest::BaseDependencyRequirement,
     >,
 ) -> Result<Vec<PackageManifest>> {
     dependencies

@@ -20,10 +20,10 @@ pub fn render(input: &ValuesInput<'_>) -> anyhow::Result<Value> {
 pub fn release_values(
     document: &EnvironmentDocument,
     platform_domain: &wamn_registry::platform_domain::PlatformDomain,
-    application: &wamn_catalog::ApplicationName,
+    application: &wamn_registry::ApplicationName,
     package_manifests: &std::collections::BTreeMap<
-        wamn_catalog::PackageName,
-        wamn_catalog::manifest::PackageManifest,
+        wamn_package::PackageName,
+        wamn_component_policy::PackageManifest,
     >,
     package_digest: &wamn_digest::Digest,
     bindings: &[super::bindings::Binding],

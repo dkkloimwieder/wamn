@@ -4,7 +4,7 @@ use anyhow::Context as _;
 use clap::{Args, Subcommand, ValueEnum};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
-use wamn_catalog::canonical_name::CanonicalName;
+use wamn_package::canonical_name::CanonicalName;
 
 /// The application host and the administrator's bearer token.
 #[derive(Debug, Args)]

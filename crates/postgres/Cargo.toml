@@ -36,7 +36,6 @@ required-features = ["host"]
 
 [dev-dependencies]
 sqlx = { workspace = true, features = ["macros", "migrate"] }
-wamn-catalog.workspace = true
 wamn-provision = { workspace = true, features = ["test-util"] }
 wamn-test-postgres.workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }

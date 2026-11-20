@@ -34,7 +34,7 @@ pub struct Args {
 }
 
 pub(crate) fn write_ui_openapi(root: &Path) -> anyhow::Result<()> {
-    use wamn_catalog::HostRouteSet;
+    use wamn_routes::HostRouteSet;
 
     let output = root.join("apps/target/wamn/platform_ui");
     std::fs::create_dir_all(&output)?;
@@ -114,7 +114,7 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
                     ..Default::default()
                 },
                 Some(std::collections::HashMap::from([(
-                    wamn_catalog::PALETTE_DESCRIPTOR_ANNOTATION.to_owned(),
+                    wamn_package::PALETTE_DESCRIPTOR_ANNOTATION.to_owned(),
                     serde_json::to_string(&component.declaration)?,
                 )])),
             )
@@ -131,7 +131,7 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
         let palette_directory = components.path().join("palette");
         std::fs::create_dir(&palette_directory)?;
         std::fs::write(
-            palette_directory.join(wamn_catalog::PALETTE_FILE),
+            palette_directory.join(wamn_package::PALETTE_FILE),
             wamn_digest::canonical_json_bytes(&serde_json::to_value(&palette_pins)?),
         )?;
         for pin in palette_pins.values() {
@@ -226,8 +226,8 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
             )
             .await?;
             let manifest: Value = serde_json::from_str(&manifest)?;
-            let descriptor: wamn_catalog::ComponentDescriptor = serde_json::from_str(
-                manifest["annotations"][wamn_catalog::PALETTE_DESCRIPTOR_ANNOTATION]
+            let descriptor: wamn_component_policy::ComponentDescriptor = serde_json::from_str(
+                manifest["annotations"][wamn_package::PALETTE_DESCRIPTOR_ANNOTATION]
                     .as_str()
                     .context("published palette has no sealed descriptor")?,
             )?;

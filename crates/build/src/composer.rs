@@ -121,7 +121,7 @@ pub fn compose(overlay: Vec<u8>, bases: Vec<Vec<u8>>) -> anyhow::Result<Vec<u8>>
             .cloned()
             .collect::<Vec<_>>();
         for name in names {
-            if member.instance != overlay.instance && name == wamn_catalog::DATA_CHANGE_EXPORT {
+            if member.instance != overlay.instance && name == wamn_package::DATA_CHANGE_EXPORT {
                 continue;
             }
             let export = graph

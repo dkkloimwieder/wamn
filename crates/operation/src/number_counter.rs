@@ -33,7 +33,7 @@ const SEQUENCE_SQL: &str =
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct CounterSet {
     /// The declared application that owns the sequence.
-    pub application: wamn_catalog::ApplicationName,
+    pub application: wamn_registry::ApplicationName,
     /// The sequence name.
     pub sequence: String,
     /// The counter name in the sequence's pattern.
@@ -151,7 +151,7 @@ pub async fn set_number_counter(
     project: &wamn_registry::ProjectId,
     project_env_key: &wamn_registry::ProjectEnvKey,
     caller: AuthenticatedCaller,
-    operation: &wamn_catalog::registered_operation::RegisteredOperation,
+    operation: &wamn_package::registered_operation::RegisteredOperation,
     request_id: &str,
     set: &CounterSet,
 ) -> Result<i64, CounterSetError> {
@@ -207,7 +207,7 @@ pub async fn set_number_counter(
 async fn set_in_transaction(
     postgres: &OperationHost,
     scope: &str,
-    operation: &wamn_catalog::registered_operation::RegisteredOperation,
+    operation: &wamn_package::registered_operation::RegisteredOperation,
     request_id: &str,
     set: &CounterSet,
 ) -> Result<i64, CounterSetError> {

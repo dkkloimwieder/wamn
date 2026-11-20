@@ -27,9 +27,9 @@ impl RunTrigger {
 /// Frozen workflow version, input, and execution identity.
 #[derive(Debug)]
 pub struct RunAdmission<'a> {
-    pub application: &'a wamn_catalog::ApplicationName,
+    pub application: &'a wamn_registry::ApplicationName,
     pub environment: &'a wamn_registry::EnvName,
-    pub workflow_id: &'a wamn_catalog::canonical_name::CanonicalName,
+    pub workflow_id: &'a wamn_package::canonical_name::CanonicalName,
     pub workflow_version: i32,
     pub wiring_hash: &'a wamn_digest::Digest,
     pub execution_principal_id: &'a wamn_identity_protocol::PrincipalId,
@@ -167,7 +167,7 @@ pub async fn history_actor(
             return Ok(None);
         }
         let image = match envelope.op {
-            wamn_catalog::WiringEventOperation::Delete => &envelope.old,
+            wamn_package::WiringEventOperation::Delete => &envelope.old,
             _ => &envelope.new,
         }
         .as_ref()

@@ -21,7 +21,7 @@ const SETTING_SQL: &str = "INSERT INTO platform.setting \
 pub struct NumberSequence {
     /// A uuid, which the control plane assigns.
     pub id: String,
-    pub application: wamn_catalog::ApplicationName,
+    pub application: wamn_registry::ApplicationName,
     pub name: String,
     pub pattern: String,
 }
@@ -92,7 +92,7 @@ pub async fn write_configuration(
 /// environment map, its sequence name and its default pattern.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SequenceDefault {
-    pub application: wamn_catalog::ApplicationName,
+    pub application: wamn_registry::ApplicationName,
     pub name: String,
     pub pattern: String,
 }

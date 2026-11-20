@@ -7,14 +7,14 @@ use wamn_scalar::SqlValueType;
 use super::rust::projected_rust_type;
 use super::rust_source::{insert_rust, rust_ident};
 use super::{CatalogIr, sql};
-use wamn_catalog::manifest::ManifestError as GenerateError;
-use wamn_catalog::manifest::{CustomOperationDeclaration, rust_type_identifier};
-use wamn_catalog::manifest::{
+use wamn_package::manifest::ManifestError as GenerateError;
+use wamn_package::manifest::{CustomOperationDeclaration, rust_type_identifier};
+use wamn_package::manifest::{
     StaticSqlFetch, StaticSqlStatementDeclaration, StaticSqlValueDeclaration, custom_artifact_stem,
 };
 
 fn value(
-    name: wamn_catalog::manifest::source_name::SourceName,
+    name: wamn_package::manifest::source_name::SourceName,
     ty: SqlValueType,
     nullable: bool,
 ) -> StaticSqlValueDeclaration {
@@ -25,7 +25,7 @@ fn value(
 pub(super) fn prepare_sql(
     corpus: &mut BTreeMap<String, Vec<u8>>,
     catalog: &CatalogIr,
-    name: &wamn_catalog::local_operation::LocalOperation,
+    name: &wamn_package::local_operation::LocalOperation,
     operation: &CustomOperationDeclaration,
 ) -> Option<CustomOperationDeclaration> {
     if operation.feed != Some(true) {
@@ -162,8 +162,8 @@ pub(super) fn prepare_sql(
 
 pub(super) fn emit(
     files: &mut BTreeMap<String, Vec<u8>>,
-    manifest: &wamn_catalog::manifest::PackageManifest,
-    name: &wamn_catalog::local_operation::LocalOperation,
+    manifest: &wamn_component_policy::PackageManifest,
+    name: &wamn_package::local_operation::LocalOperation,
     compiled: &super::operations::CustomDescription<'_>,
 ) -> Result<(), GenerateError> {
     let operation = compiled.declaration;
@@ -179,8 +179,8 @@ const HEADER: &str = "// @generated from the authored feed; do not edit.\n";
 
 fn emit_data(
     files: &mut BTreeMap<String, Vec<u8>>,
-    package: &wamn_catalog::manifest::PackageIdentity,
-    name: &wamn_catalog::local_operation::LocalOperation,
+    package: &wamn_package::manifest::PackageIdentity,
+    name: &wamn_package::local_operation::LocalOperation,
     compiled: &super::operations::CustomDescription<'_>,
     key_type: SqlValueType,
 ) -> Result<(), GenerateError> {
@@ -193,7 +193,7 @@ fn emit_data(
         .expect("validated statement");
     let key = rust_ident(&operation.lists.as_ref().expect("validated list").key_field[0]);
     let id_type = super::data::cursor_key_type(key_type);
-    let permission = wamn_catalog::manifest::canonical_operation_identity(package, name)?;
+    let permission = wamn_package::manifest::canonical_operation_identity(package, name)?;
     let query = name.as_str();
     let permission_text = permission.as_str();
     let result = compiled.result.as_ref().expect("compiled feed result");
@@ -324,8 +324,8 @@ fn emit_data(
 
 fn emit_component(
     files: &mut BTreeMap<String, Vec<u8>>,
-    namespace: &wamn_catalog::PackageName,
-    name: &wamn_catalog::local_operation::LocalOperation,
+    namespace: &wamn_package::PackageName,
+    name: &wamn_package::local_operation::LocalOperation,
     compiled: &super::operations::CustomDescription<'_>,
     key_type: SqlValueType,
 ) -> Result<(), GenerateError> {

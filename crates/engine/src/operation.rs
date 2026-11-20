@@ -1,5 +1,7 @@
 //! Dispatch application operations through the workload's resolved component targets.
 
+use crate::application_config::ApplicationConfig;
+use crate::application::bind_application_config;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock, RwLock};
@@ -8,8 +10,7 @@ use std::time::Duration;
 use anyhow::Context as _;
 use tokio::sync::oneshot;
 use tokio::time::Instant;
-use wamn_catalog::application_config::{APPLICATION_CONFIG, ApplicationConfig};
-use wamn_catalog::canonical_name::CanonicalName;
+use wamn_package::canonical_name::CanonicalName;
 use wash_runtime::engine::ctx::SharedCtx;
 use wash_runtime::engine::dispatch::{DispatchTarget, GuestCall, GuestCallFuture};
 use wash_runtime::engine::workload::{ResolvedWorkload, WorkloadItem};
@@ -38,13 +39,14 @@ pub use bindings::wamn::node::types as node_types;
 /// Host plugin that retains application targets; SQL owns the operation interface.
 pub struct WamnOperation {
     host: Arc<dyn HostPlugin>,
+    scopes: Arc<InvocationScopes>,
     bindings: RwLock<HashMap<String, Arc<Binding>>>,
 }
 
 struct Binding {
     workload: String,
     ingress: bool,
-    application: ApplicationConfig,
+    application: Arc<ApplicationConfig>,
     targets: OnceLock<BTreeMap<String, ComponentTarget>>,
 }
 
@@ -63,9 +65,10 @@ impl std::fmt::Debug for WamnOperation {
 
 impl WamnOperation {
     /// Delegate the operation WIT binding to its SQL owner, without a crate cycle.
-    pub fn new(host: Arc<dyn HostPlugin>) -> Self {
+    pub fn new(host: Arc<dyn HostPlugin>, scopes: Arc<InvocationScopes>) -> Self {
         Self {
             host,
+            scopes,
             bindings: RwLock::default(),
         }
     }
@@ -245,8 +248,9 @@ impl HostPlugin for WamnOperation {
         item: &mut WorkloadItem<'a>,
         interfaces: WitInterfaces<'_>,
     ) -> anyhow::Result<()> {
-        if let Some(config) = item.local_resources().config.get(APPLICATION_CONFIG) {
-            let application = serde_json::from_str(config).context("decode wamn.application")?;
+        if let Some(application) =
+            bind_application_config(&self.scopes, item).context("decode wamn.application")?
+        {
             let WorkloadItem::Component(component) = &*item else {
                 anyhow::bail!("operation authority requires a route component");
             };
@@ -472,7 +476,7 @@ impl GuestCall for OperationInvocation {
 
 impl GuestCall for DataChangeInvocation {
     fn describe(&self) -> &str {
-        wamn_catalog::DATA_CHANGE_EXPORT
+        wamn_package::DATA_CHANGE_EXPORT
     }
 
     fn deadline(&self) -> Duration {
@@ -498,7 +502,7 @@ impl GuestCall for DataChangeInvocation {
             let _active = ActiveScope::enter(accessor, scope);
             let handle = accessor.with(|mut access| {
                 let interface = instance
-                    .get_export_index(&mut access, None, wamn_catalog::DATA_CHANGE_EXPORT)
+                    .get_export_index(&mut access, None, wamn_package::DATA_CHANGE_EXPORT)
                     .context("component has no data change export")?;
                 let export = instance
                     .get_export_index(&mut access, Some(&interface), "handle")

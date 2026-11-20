@@ -3,7 +3,9 @@
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
-use wamn_catalog::{AdmittedComponent, AdmittedComponentOperation, ComponentPackageCoordinate};
+use wamn_component_policy::{
+    AdmittedComponent, AdmittedComponentOperation, ComponentPackageCoordinate,
+};
 use wash_runtime::observability::{MeterKind, Meters};
 use wash_runtime::plugin::PluginBindings;
 use wash_runtime::types::LocalResources;
@@ -105,7 +107,7 @@ async fn native_loader_allows_repeated_export_only_handlers() {
     };
     let second = component("http-request", HANDLER, None, 37);
     assert_eq!(first.fact.component_digest, second.fact.component_digest);
-    let expected: std::collections::BTreeSet<wamn_catalog::canonical_name::CanonicalName> =
+    let expected: std::collections::BTreeSet<wamn_package::canonical_name::CanonicalName> =
         [&first, &second]
             .map(|component| component.fact.component.clone())
             .into_iter()

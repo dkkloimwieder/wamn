@@ -96,7 +96,7 @@ pub fn validate_request(operation: &str, request: &Value) -> Result<(), Connecti
         }
     }
     if let Some(name) = request["name"].as_str()
-        && !wamn_catalog::configuration::valid_connection_name(name)
+        && !wamn_registry::configuration::valid_connection_name(name)
     {
         return Err(refuse("invalid_input", "name"));
     }
@@ -128,7 +128,7 @@ pub async fn execute(
     operation: &str,
     payload: &str,
     source: Option<&mut sqlx::PgConnection>,
-    applications: &[wamn_catalog::application_config::ApplicationConfig],
+    applications: &[wamn_engine::application_config::ApplicationConfig],
     write_service: impl AsyncFnOnce(
         &mut sqlx::PgConnection,
         &mut sqlx::Transaction<'_, sqlx::Postgres>,

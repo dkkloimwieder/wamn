@@ -13,17 +13,18 @@
 
 mod contract_files;
 
-use crate::canonical_name::CanonicalName;
+use crate::{route_attachment_id, route_path};
 use std::collections::BTreeMap;
+use wamn_package::canonical_name::CanonicalName;
 use std::sync::LazyLock;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::route_identity::{
-    operation_token, route_attachment_id, route_path, sealed_operation_reference,
+use wamn_package::{
+    AttachmentType, OperationType, PAT_AUTHENTICATION_MODE, SESSION_AUTHENTICATION_MODE,
 };
-use crate::{AttachmentType, OperationType, PAT_AUTHENTICATION_MODE, SESSION_AUTHENTICATION_MODE};
+use wamn_package::{operation_token, sealed_operation_reference};
 
 pub use contract_files::HostRouteContractError;
 
@@ -38,8 +39,8 @@ struct ControlContract {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ControlPackage {
-    id: crate::PackageName,
-    version: crate::package_version::PackageVersion,
+    id: wamn_package::PackageName,
+    version: wamn_package::package_version::PackageVersion,
 }
 
 #[derive(Deserialize)]
@@ -55,12 +56,12 @@ static CONTRACT: LazyLock<ControlContract> = LazyLock::new(|| {
 });
 
 /// The package of every host route. No application package has this id.
-pub fn host_route_package() -> &'static crate::PackageName {
+pub fn host_route_package() -> &'static wamn_package::PackageName {
     &CONTRACT.package.id
 }
 
 /// The authored version of the host route contract.
-pub fn host_route_version() -> &'static crate::package_version::PackageVersion {
+pub fn host_route_version() -> &'static wamn_package::package_version::PackageVersion {
     &CONTRACT.package.version
 }
 
@@ -788,7 +789,7 @@ pub struct HostAttachment {
     pub route: &'static HostRoute,
     /// The sealed operation id, such as `wamn-control:permission/mine@0.9.0`.
     /// A host-run write stamps it.
-    pub operation: crate::registered_operation::RegisteredOperation,
+    pub operation: wamn_package::registered_operation::RegisteredOperation,
     /// The operation id without its version, as a stored permission names it.
     pub reference: String,
     pub definition: Value,
@@ -804,7 +805,7 @@ impl HostAttachment {
     /// route requires none.
     pub fn registered_operation(
         &self,
-    ) -> Option<&crate::registered_operation::RegisteredOperation> {
+    ) -> Option<&wamn_package::registered_operation::RegisteredOperation> {
         matches!(
             self.route.authority,
             HostRouteAuthority::Admin | HostRouteAuthority::Granted

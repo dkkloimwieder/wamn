@@ -5,7 +5,7 @@ pub mod reader;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
-pub use wamn_catalog::WiringEventOperation as Op;
+pub use wamn_package::WiringEventOperation as Op;
 
 /// The v3 §4 causation stamp `{run, root, depth}` — stitched onto a
 /// transaction's envelopes by the reader when the `wamn:postgres` plugin
@@ -35,7 +35,7 @@ pub struct DerivedEvent {
     pub project: wamn_registry::ProjectId,
     pub environment: wamn_registry::EnvName,
     #[serde(rename = "package_id")]
-    pub application: wamn_catalog::ApplicationName,
+    pub application: wamn_registry::ApplicationName,
     #[serde(deserialize_with = "source_name")]
     pub entity: String,
     pub op: Op,
@@ -54,7 +54,7 @@ impl DerivedEvent {
         project_env_key: wamn_registry::ProjectEnvKey,
         project: wamn_registry::ProjectId,
         environment: wamn_registry::EnvName,
-        application: wamn_catalog::ApplicationName,
+        application: wamn_registry::ApplicationName,
         entity: impl Into<String>,
         op: Op,
         payload: serde_json::Value,
@@ -95,7 +95,7 @@ pub struct Envelope {
     pub old: Option<serde_json::Map<String, serde_json::Value>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub new: Option<serde_json::Map<String, serde_json::Value>>,
-    pub package_id: wamn_catalog::PackageName,
+    pub package_id: wamn_package::PackageName,
     #[serde(deserialize_with = "source_name")]
     pub entity: String,
     pub table: String,
@@ -138,7 +138,7 @@ pub fn derived_msg_id(
     project_env_key: &wamn_registry::ProjectEnvKey,
     project: &wamn_registry::ProjectId,
     env: &wamn_registry::EnvName,
-    application: &wamn_catalog::ApplicationName,
+    application: &wamn_registry::ApplicationName,
     entity: &str,
     op: Op,
     dedup_id: &str,

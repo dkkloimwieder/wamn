@@ -6,9 +6,11 @@ edition.workspace = true
 license.workspace = true
 
 [features]
-test-util = ["wamn-catalog/test-util"]
+test-util = ["dep:wamn-provision"]
 
 [dependencies]
+wamn-routes.workspace = true
+wamn-provision = { workspace = true, optional = true, features = ["test-util"] }
 wamn-envelope.workspace = true
 wamn-postgres.workspace = true
 sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls", "chrono", "uuid", "json"] }
@@ -30,7 +32,6 @@ tokio = { workspace = true, features = ["rt", "sync", "time"] }
 # The token profile and its verification.
 wamn-identity-protocol = { workspace = true, features = ["sqlx"] }
 # The application role names of a project database.
-wamn-catalog = { workspace = true }
 
 [dev-dependencies]
 wamn-kubernetes = { workspace = true }

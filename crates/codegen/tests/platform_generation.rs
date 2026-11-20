@@ -1,6 +1,7 @@
 use serde_json::{Value, json};
-use wamn_catalog::manifest::ManifestErrorType as GenerateErrorType;
-use wamn_catalog::manifest::{PackageManifest, validate_operation_vocabulary};
+use wamn_component_policy::PackageManifest;
+use wamn_package::manifest::ManifestErrorType as GenerateErrorType;
+use wamn_package::manifest::validate_operation_vocabulary;
 
 #[path = "support/platform_fixture.rs"]
 mod fixture;
@@ -202,7 +203,7 @@ fn authored_text_is_optional_and_its_key_is_closed() {
         "a label alone is a complete declaration"
     );
     assert_eq!(
-        widget.operations[&wamn_catalog::manifest::CrudAction::Query]
+        widget.operations[&wamn_package::manifest::CrudAction::Query]
             .label
             .as_deref(),
         authored["models"]["widget"]["operations"]["query"]["label"].as_str()
@@ -442,7 +443,7 @@ fn without_relations(mut manifest: Value) -> Value {
             .as_array_mut()
             .expect("server-owned fields")
             .retain(|field| {
-                !wamn_catalog::manifest::RecordHistoryColumn::ALL
+                !wamn_package::manifest::RecordHistoryColumn::ALL
                     .iter()
                     .any(|column| field == column.as_str())
             });
@@ -454,7 +455,7 @@ fn without_relations(mut manifest: Value) -> Value {
     manifest
 }
 
-fn derive(manifest: &Value) -> Result<Value, wamn_catalog::manifest::ManifestError> {
+fn derive(manifest: &Value) -> Result<Value, wamn_package::manifest::ManifestError> {
     let sql = fixture::authored_sql();
     let sources = sql
         .iter()

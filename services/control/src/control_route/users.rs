@@ -1,10 +1,10 @@
 //! Control user routes and their identity adapter calls.
 
+use wamn_routes::HostAttachment;
 use anyhow::Context as _;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sqlx::PgConnection;
-use wamn_catalog::HostAttachment;
 use wamn_identity::org::{MemberGrants, invite_member};
 use wamn_identity::{IdentityRefusal, require_user_contact};
 use wamn_identity_client::users::{DisableOutcome, UserClient, UserRefused};

@@ -14,7 +14,7 @@ pub struct ApplicationConfig {
     pub org: wamn_registry::OrgId,
     pub project: wamn_registry::ProjectId,
     pub environment: wamn_registry::EnvName,
-    pub application: crate::ApplicationName,
+    pub application: wamn_registry::ApplicationName,
     /// One positive grant cache lifetime for the project, in seconds.
     pub grant_cache_seconds: u32,
     pub components: Vec<ApplicationComponent>,
@@ -26,12 +26,12 @@ pub struct ApplicationConfig {
 pub struct ApplicationComponent {
     /// The sibling component name in the WorkloadDeployment.
     pub name: String,
-    pub package: crate::PackageName,
+    pub package: wamn_package::PackageName,
     pub digest: wamn_digest::Digest,
     pub connections: Vec<ApplicationConnection>,
     /// Absent for a component that declares no SQL.
     pub schema: Option<String>,
-    pub operations: BTreeMap<crate::canonical_name::CanonicalName, ApplicationOperation>,
+    pub operations: BTreeMap<wamn_package::canonical_name::CanonicalName, ApplicationOperation>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub data_change: Option<ApplicationDataChange>,
 }
@@ -49,10 +49,10 @@ pub struct ApplicationDataChange {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct DataChangeModel {
-    pub owner_package: crate::PackageName,
-    pub model: crate::manifest::source_name::SourceName,
-    pub entity: crate::manifest::source_name::SourceName,
-    pub ops: Vec<crate::WiringEventOperation>,
+    pub owner_package: wamn_package::PackageName,
+    pub model: wamn_package::manifest::source_name::SourceName,
+    pub entity: wamn_package::manifest::source_name::SourceName,
+    pub ops: Vec<wamn_package::WiringEventOperation>,
 }
 
 /// The host policy of one component export.
@@ -68,7 +68,7 @@ pub struct ApplicationOperation {
     #[serde(rename = "type")]
     pub type_: Option<ApplicationOperationType>,
     pub idempotency_key: Option<String>,
-    pub signed_result: Option<crate::SignedFileReads>,
+    pub signed_result: Option<wamn_package::SignedFileReads>,
 }
 
 /// The SQL admission type of an application operation.
@@ -80,17 +80,30 @@ pub enum ApplicationOperationType {
     Delete,
 }
 
+impl ApplicationOperationType {
+    /// The SQL mode for a routed package operation.
+    pub fn from_operation(operation: wamn_package::OperationType) -> Option<Self> {
+        use wamn_package::OperationType;
+        match operation {
+            OperationType::EventHandler => None,
+            OperationType::Delete => Some(Self::Delete),
+            read if read.is_read() => Some(Self::Read),
+            _ => Some(Self::Write),
+        }
+    }
+}
+
 /// One component declaration resolved by deploy, without runtime storage or secrets.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ApplicationConnection {
-    pub name: crate::canonical_name::CanonicalName,
-    pub selector: crate::ComponentConnectionAlias,
+    pub name: wamn_package::canonical_name::CanonicalName,
+    pub selector: wamn_package::ComponentConnectionAlias,
     pub connection_id: String,
-    pub mode: crate::ConnectionMode,
+    pub mode: wamn_package::ConnectionMode,
     pub interface: String,
     pub integration_type: wamn_registry::integration_code::IntegrationCode,
-    pub runtime_type: crate::RuntimeType,
+    pub runtime_type: wamn_catalog::RuntimeType,
     pub exclusive: bool,
     pub target_type: String,
     /// Full repository@digest of a wasm integration.
@@ -115,8 +128,8 @@ pub fn binding<'a>(
 /// Find the declared export on an exact workload sibling.
 pub fn workflow_call<'a>(
     application: &'a ApplicationConfig,
-    sibling: &crate::canonical_name::CanonicalName,
-    export: &crate::canonical_name::CanonicalName,
+    sibling: &wamn_package::canonical_name::CanonicalName,
+    export: &wamn_package::canonical_name::CanonicalName,
 ) -> Option<(&'a ApplicationComponent, &'a ApplicationOperation)> {
     let component = application
         .components
@@ -128,15 +141,15 @@ pub fn workflow_call<'a>(
 /// Verify that every call in an enabled graph is available in the candidate workload.
 pub fn check_workflow_references(
     application: &ApplicationConfig,
-    graph: &crate::WiringDocument,
-) -> Result<(), crate::CatalogIdentityError> {
+    graph: &wamn_routes::WiringDocument,
+) -> Result<(), wamn_routes::WiringError> {
     for (id, node) in &graph.nodes {
-        if let crate::WiringNode::Call {
+        if let wamn_routes::WiringNode::Call {
             sibling, export, ..
         } = node
             && workflow_call(application, sibling, export).is_none()
         {
-            return Err(crate::CatalogIdentityError::InvalidDefinition {
+            return Err(wamn_routes::WiringError::InvalidDefinition {
                 message: format!("node {id} names an unavailable sibling export"),
             });
         }

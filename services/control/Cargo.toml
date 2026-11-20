@@ -6,6 +6,8 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+wamn-routes.workspace = true
+wamn-package.workspace = true
 wamn-envelope.workspace = true
 wamn-digest = { workspace = true, features = ["sqlx"] }
 anyhow.workspace = true
@@ -25,7 +27,6 @@ url.workspace = true
 zeroize.workspace = true
 wasmtime-wasi-http.workspace = true
 wamn-broker.workspace = true
-wamn-catalog.workspace = true
 wamn-provision.workspace = true
 wamn-engine.workspace = true
 wamn-environment = { workspace = true, features = ["ops"] }

@@ -1,13 +1,13 @@
 //! Project the release's application routes for publication.
-pub use crate::http_route_data::*;
-use crate::{
-    AttachmentAuthPolicy, AttachmentType, OperationType, ServingManifest, ServingRoute,
-    parse_attachment_auth_policy,
+use crate::{ServingManifest, ServingRoute};
+use wamn_package::{
+    AttachmentAuthPolicy, AttachmentType, OperationType, parse_attachment_auth_policy,
+};
+use wamn_routes::http_route_data::{
+    BandStart, EtagInputs, EtagType, ReadLimits, Relation, RouteDefinition,
 };
 
 const ADAPTER_GOVERNED_BYTES: u64 = u32::MAX as u64;
-/// The only route configuration key read by the HTTP component.
-pub const HTTP_ROUTES_CONFIG: &str = "wamn.http.routes";
 
 /// Prepare the route table from an edge bundle manifest.
 pub fn route_data(
@@ -48,7 +48,7 @@ pub fn route_data(
 
 /// Project a route and its admitted operation into the ingress configuration.
 pub fn route_definition(
-    attachment_id: &crate::canonical_name::CanonicalName,
+    attachment_id: &wamn_package::canonical_name::CanonicalName,
     definition: &serde_json::Value,
     auth_policy: &serde_json::Value,
     operation: &ServingRoute,

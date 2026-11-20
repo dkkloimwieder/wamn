@@ -1,4 +1,4 @@
-//! The edge release bundle: the files that publish writes for an edge box, and
+//! The edge release bundle: the files that publish writes for an edge device, and
 //! the one file whose digest pins them (docs/history/edge.md section 4.6).
 //!
 //! The directory holds `edge-release.json`, the canonical serving manifest,
@@ -33,7 +33,7 @@ pub struct EdgeBundle {
     pub ingress: wamn_digest::Digest,
 }
 
-/// `grants.json`: the permissions of each role on the box.
+/// `grants.json`: the permissions of each role on the device.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EdgeGrants {

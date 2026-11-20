@@ -56,14 +56,14 @@ impl Application {
             std::fs::write(
                 &request,
                 serde_json::to_vec(&json!({
-                    "project":document.project,"env":document.env,"name":connection,"source_env":source_environment
+                    "project":document.settings.project,"env":document.settings.env,"name":connection,"source_env":source_environment
                 }))?,
             )?;
             product(["connection", "copy", "--file", text(&request)?]).await?;
             std::fs::write(
                 &request,
                 serde_json::to_vec(&json!({
-                    "project":document.project,"env":document.env,"name":connection
+                    "project":document.settings.project,"env":document.settings.env,"name":connection
                 }))?,
             )?;
             product(["connection", "enable", "--file", text(&request)?]).await?;
@@ -73,11 +73,11 @@ impl Application {
         product([
             "create-api-service",
             "--project",
-            document.project.as_str(),
+            document.settings.project.as_str(),
             "--env",
-            document.env.as_str(),
+            document.settings.env.as_str(),
             "--name",
-            document.env.as_str(),
+            document.settings.env.as_str(),
             "--display-name",
             "Route fixture",
             "--role",
@@ -106,7 +106,7 @@ impl Application {
             ),
             host: wamn_registry::name::application_host(
                 &document.applications[&name].label,
-                &document.org,
+                &document.settings.org,
                 &base,
             ),
             bearer,
@@ -126,9 +126,9 @@ impl Application {
         let url = std::env::var("WAMN_SYSTEM_ADMIN_URL")?;
         let suffix = self.instance_suffix().await?;
         let name = wamn_provision::project_env_database_name(
-            &self.document.org,
-            &self.document.project,
-            &self.document.env,
+            &self.document.settings.org,
+            &self.document.settings.project,
+            &self.document.settings.env,
             &suffix,
         );
         wamn_postgres::database_configuration(&url, &name)
@@ -153,7 +153,7 @@ impl Application {
     }
 
     pub async fn audience(&self) -> anyhow::Result<String> {
-        Ok(wamn_registry::name::org_audience(&self.document.org))
+        Ok(wamn_registry::name::org_audience(&self.document.settings.org))
     }
 
     async fn instance_suffix(
@@ -173,7 +173,7 @@ impl Application {
     }
 
     pub async fn call(&self, operation: &str, value: Value) -> anyhow::Result<Value> {
-        let (_, route) = wamn_catalog::HostRouteSet::Application
+        let (_, route) = wamn_routes::HostRouteSet::Application
             .attachments()
             .find(|(_, route)| route.route.operation == operation)
             .context("application operation")?;

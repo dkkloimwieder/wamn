@@ -1,9 +1,9 @@
 //! Result signing is supplied by the host, after SQL commit or replay.
 
-use wamn_catalog::SignedFileReads;
-use wamn_catalog::canonical_name::CanonicalName;
 use wamn_engine::ingress::AuthenticatedCaller;
 use wamn_engine::operation::node_types::NodeError;
+use wamn_package::SignedFileReads;
+use wamn_package::canonical_name::CanonicalName;
 
 /// Retained operation authority; no open SQL transaction is required.
 #[derive(Debug)]

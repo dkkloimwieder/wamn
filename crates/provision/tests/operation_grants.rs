@@ -41,7 +41,7 @@ async fn admin_role_has_no_rows_and_authored_rows_are_grants_live(
     assert_eq!(missing.code().as_deref(), Some("55000"));
 
     for batch in [
-        wamn_catalog::CATALOG_SCHEMA_SQL,
+        wamn_provision::CATALOG_SCHEMA_SQL,
         include_str!("../../../deploy/sql/app-schema.sql"),
     ] {
         sqlx::raw_sql(sqlx::AssertSqlSafe(batch))

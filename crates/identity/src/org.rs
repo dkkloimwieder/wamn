@@ -489,27 +489,6 @@ pub async fn org_users_page(
         .collect()
 }
 
-/// The status of a project environment
-/// (docs/architecture/execution.md#host-run-routes).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum EnvironmentStatus {
-    /// Identity offers its audience and its host serves its routes.
-    Active,
-    /// Identity offers no audience and its host answers
-    /// `environment-inactive`. CDC, data and grants stay.
-    Inactive,
-}
-
-impl EnvironmentStatus {
-    /// The stored value.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Active => "active",
-            Self::Inactive => "inactive",
-        }
-    }
-}
-
 /// An environment and its registry state.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct EnvironmentSummary {

@@ -7,7 +7,7 @@ pub(crate) use read_query::encode_read_query;
 
 use anyhow::Context as _;
 use serde_json::{Value, json};
-use wamn_catalog::HostAttachment;
+use wamn_routes::HostAttachment;
 
 pub(crate) fn request(
     host_url: &str,

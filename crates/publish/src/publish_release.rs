@@ -12,13 +12,16 @@ use std::path::PathBuf;
 
 use anyhow::{Context as _, ensure};
 
-use wamn_catalog::exposure::{
-    HttpRoute as AuthoredHttpRoute, canonical_http_route_template, normalize_http_route,
+use wamn_component_policy::AdmittedComponent;
+use wamn_edge_document::{
+    SERVING_MANIFEST_FORMAT_VERSION, ServingComponent, ServingManifest, ServingRelation,
+    ServingRelease, ServingRoute,
 };
-use wamn_catalog::{
-    AdmittedComponent, AttachmentTarget, ComponentConnection, OperationType, PackageCoordinate,
-    SERVING_MANIFEST_FORMAT_VERSION, ServingAttachment, ServingComponent, ServingManifest,
-    ServingRelation, ServingRelease, ServingRoute,
+use wamn_package::{
+    AttachmentTarget, ComponentConnection, OperationType, PackageCoordinate, ServingAttachment,
+};
+use wamn_routes::exposure::{
+    HttpRoute as AuthoredHttpRoute, canonical_http_route_template, normalize_http_route,
 };
 
 mod attachments;
@@ -40,7 +43,7 @@ pub struct PublishReleaseManifest<'a> {
     pub project: &'a wamn_registry::ProjectId,
     pub environment: &'a wamn_registry::EnvName,
     pub packages: &'a BTreeSet<PackageCoordinate>,
-    pub attachments: &'a BTreeMap<wamn_catalog::canonical_name::CanonicalName, ServingAttachment>,
+    pub attachments: &'a BTreeMap<wamn_package::canonical_name::CanonicalName, ServingAttachment>,
     /// Local development can use rebuilt dependencies after target validation.
     /// Published construction always requires the declared dependency digests.
     pub environment_is_disposable: bool,
@@ -182,8 +185,8 @@ impl std::error::Error for PublishManifestError {
 /// calls, keyed by package id and exact operation.
 pub type RouteContracts = BTreeMap<
     (
-        wamn_catalog::PackageName,
-        wamn_catalog::canonical_name::CanonicalName,
+        wamn_package::PackageName,
+        wamn_package::canonical_name::CanonicalName,
     ),
     RouteContract,
 >;
@@ -232,11 +235,11 @@ impl PublishReleaseRequest {
 
 /// Build ingress routes from the deployed package closure and its admitted exports.
 pub fn deployment_routes(
-    packages: &BTreeMap<wamn_catalog::PackageName, wamn_catalog::manifest::PackageManifest>,
+    packages: &BTreeMap<wamn_package::PackageName, wamn_component_policy::PackageManifest>,
     contracts: &RouteContracts,
-    application: &wamn_catalog::ApplicationName,
+    application: &wamn_registry::ApplicationName,
     digest: &wamn_digest::Digest,
-) -> anyhow::Result<Vec<wamn_catalog::http_routes::RouteDefinition>> {
+) -> anyhow::Result<Vec<wamn_routes::http_route_data::RouteDefinition>> {
     let documents = packages
         .values()
         .map(|package| {
@@ -254,12 +257,12 @@ pub fn deployment_routes(
         .collect::<anyhow::Result<Vec<_>>>()?;
     let attachments = attachments::merge_package_attachment_documents(documents)?;
     let attachments = attachments::plan::resolve_owned_route_methods(attachments, contracts)?;
-    let workflow_prefix = wamn_catalog::workflow_http_prefix(application);
+    let workflow_prefix = wamn_routes::workflow_http_prefix(application);
     let mut routes = Vec::with_capacity(attachments.len());
     for (id, attachment) in attachments {
         if !matches!(
             attachment.type_,
-            wamn_catalog::AttachmentType::Http | wamn_catalog::AttachmentType::Studio
+            wamn_package::AttachmentType::Http | wamn_package::AttachmentType::Studio
         ) {
             continue;
         }
@@ -284,7 +287,7 @@ pub fn deployment_routes(
             .with_context(|| {
                 format!("attachment {id} names an operation that no admitted component exports")
             })?;
-        let policy = wamn_catalog::parse_attachment_auth_policy(&attachment.auth_policy)
+        let policy = wamn_package::parse_attachment_auth_policy(&attachment.auth_policy)
             .with_context(|| format!("attachment {id} has an invalid auth policy"))?;
         if policy.has_no_caller() {
             components::refuse_anonymous_reach(&id, export, operation.as_str())?;
@@ -295,7 +298,7 @@ pub fn deployment_routes(
         let signs_files = export.output_ports.iter().any(|port| {
             port.schema
                 .schema
-                .get(wamn_catalog::SIGNED_FILE_READS)
+                .get(wamn_package::SIGNED_FILE_READS)
                 .is_some()
         });
         ensure!(
@@ -312,7 +315,7 @@ pub fn deployment_routes(
             idempotency: contract.idempotency.clone(),
         };
         routes.push(
-            wamn_catalog::http_routes::route_definition(
+            wamn_edge_document::http_routes::route_definition(
                 &id,
                 &attachment.definition,
                 &attachment.auth_policy,
@@ -414,10 +417,7 @@ pub fn assemble_release(
 pub fn publish_release_with_package_manifests(
     request: &PublishReleaseManifest<'_>,
     component_facts: &ReleaseComponents,
-    package_manifests: &BTreeMap<
-        wamn_catalog::PackageName,
-        wamn_catalog::manifest::PackageManifest,
-    >,
+    package_manifests: &BTreeMap<wamn_package::PackageName, wamn_component_policy::PackageManifest>,
     route_contracts: &RouteContracts,
 ) -> Result<PublishedRelease, PublishManifestError> {
     validate_request(request)?;
@@ -431,7 +431,7 @@ pub fn publish_release_with_package_manifests(
         package_manifests,
         &mut components,
     )?;
-    let route_attachments = ServingAttachment::routes(request.attachments.clone());
+    let route_attachments = wamn_edge_document::route_attachments(request.attachments.clone());
 
     let projected = ServingManifest {
         composed_entry: None,
@@ -444,7 +444,7 @@ pub fn publish_release_with_package_manifests(
         attachments: route_attachments,
         // Every application release serves the fixed application administration
         // routes (docs/architecture/execution.md#host-run-routes).
-        host_routes: BTreeSet::from([wamn_catalog::HostRouteSet::Application]),
+        host_routes: BTreeSet::from([wamn_routes::HostRouteSet::Application]),
     };
     seal_release(&projected)
 }
@@ -474,15 +474,15 @@ fn seal_release(projected: &ServingManifest) -> Result<PublishedRelease, Publish
 pub struct ReleaseComponents {
     facts: BTreeMap<
         (
-            wamn_catalog::PackageName,
-            wamn_catalog::package_version::PackageVersion,
+            wamn_package::PackageName,
+            wamn_package::package_version::PackageVersion,
         ),
         Vec<AdmittedComponent>,
     >,
     connections: BTreeMap<
         (
-            wamn_catalog::PackageName,
-            wamn_catalog::canonical_name::CanonicalName,
+            wamn_package::PackageName,
+            wamn_package::canonical_name::CanonicalName,
         ),
         Vec<ComponentConnection>,
     >,
@@ -541,10 +541,7 @@ impl ReleaseComponents {
 /// Bind release behavior and ownership to its verified package manifests.
 fn validate_release_package_manifests(
     request: &PublishReleaseManifest<'_>,
-    package_manifests: &BTreeMap<
-        wamn_catalog::PackageName,
-        wamn_catalog::manifest::PackageManifest,
-    >,
+    package_manifests: &BTreeMap<wamn_package::PackageName, wamn_component_policy::PackageManifest>,
 ) -> Result<(), PublishManifestError> {
     let expected_package_ids = request
         .packages
@@ -601,10 +598,8 @@ mod tests {
             manifest.package.version.clone(),
         )
         .unwrap()]);
-        let manifests: BTreeMap<
-            wamn_catalog::PackageName,
-            wamn_catalog::manifest::PackageManifest,
-        > = BTreeMap::from([(manifest.package.id.clone(), manifest)]);
+        let manifests: BTreeMap<wamn_package::PackageName, wamn_component_policy::PackageManifest> =
+            BTreeMap::from([(manifest.package.id.clone(), manifest)]);
         let publish = |environment| {
             let request = PublishReleaseManifest {
                 org: &"acme".parse().unwrap(),
@@ -639,7 +634,7 @@ mod tests {
     }
 
     fn fixture_route_contracts(
-        attachments: &BTreeMap<wamn_catalog::canonical_name::CanonicalName, ServingAttachment>,
+        attachments: &BTreeMap<wamn_package::canonical_name::CanonicalName, ServingAttachment>,
     ) -> RouteContracts {
         attachments
             .values()
@@ -655,7 +650,7 @@ mod tests {
 
     fn package_http_attachment(
         attachment_id: &str,
-        package_id: &wamn_catalog::PackageName,
+        package_id: &wamn_package::PackageName,
         component: &str,
         operation: &str,
         path: &str,
@@ -667,9 +662,9 @@ mod tests {
         });
         let definition_hash = wamn_digest::canonical_json_sha256(&definition);
         ServingAttachment {
-            type_: wamn_catalog::AttachmentType::Http,
+            type_: wamn_package::AttachmentType::Http,
             package_id: package_id.to_owned(),
-            target: wamn_catalog::AttachmentTarget::Route {
+            target: wamn_package::AttachmentTarget::Route {
                 component: component.parse().unwrap(),
                 operation: operation.parse().unwrap(),
             },
@@ -820,9 +815,9 @@ mod tests {
         });
         let authored_hash = wamn_digest::canonical_json_sha256(&definition);
         let attachment = ServingAttachment {
-            type_: wamn_catalog::AttachmentType::Http,
+            type_: wamn_package::AttachmentType::Http,
             package_id: "source_fixture".parse().unwrap(),
-            target: wamn_catalog::AttachmentTarget::Route {
+            target: wamn_package::AttachmentTarget::Route {
                 component: "widget".parse().unwrap(),
                 operation: "source-fixture:widget/get@1.0.0".parse().unwrap(),
             },
@@ -869,7 +864,7 @@ mod tests {
         non_routed
             .get_mut("fixture-http")
             .expect("the attachment exists")
-            .type_ = wamn_catalog::AttachmentType::Internal;
+            .type_ = wamn_package::AttachmentType::Internal;
         let package_host = resolve_route_methods(&non_routed, &fixture_route_contracts(&authored))
             .expect_err("every attachment type refuses an authored route hostname");
         assert_eq!(
@@ -917,7 +912,7 @@ mod tests {
                 operation,
                 path,
             );
-            attachment.target = wamn_catalog::AttachmentTarget::Route {
+            attachment.target = wamn_package::AttachmentTarget::Route {
                 component: "widget".parse().unwrap(),
                 operation: operation.parse().unwrap(),
             };
@@ -1017,9 +1012,7 @@ mod tests {
 
     /// A package directory whose `descriptors/` holds the canonical descriptor
     /// of `fact` with one connection, as an unpacked artifact holds it.
-    fn dependency_manifest(
-        digest: &wamn_digest::Digest,
-    ) -> wamn_catalog::manifest::PackageManifest {
+    fn dependency_manifest(digest: &wamn_digest::Digest) -> wamn_component_policy::PackageManifest {
         let mut document: serde_json::Value = serde_json::from_str(include_str!(
             "../tests/fixtures/component_package/generated/wamn.json"
         ))
@@ -1075,11 +1068,11 @@ mod tests {
     /// The manifest of package `id`@`version` with one base pinned at
     /// `digest`.
     fn pinning_manifest(
-        id: &wamn_catalog::PackageName,
+        id: &wamn_package::PackageName,
         version: &str,
-        base: (&wamn_catalog::PackageName, &str),
+        base: (&wamn_package::PackageName, &str),
         digest: &wamn_digest::Digest,
-    ) -> wamn_catalog::manifest::PackageManifest {
+    ) -> wamn_component_policy::PackageManifest {
         let mut document = serde_json::to_value(dependency_manifest(digest))
             .expect("the dependency fixture manifest serializes");
         document["package"] = serde_json::json!({"id": id, "version": version});
@@ -1090,9 +1083,9 @@ mod tests {
 
     #[test]
     fn base_dependencies_expand_the_exact_release_closure_and_refuse_cycles() {
-        let base_operation: wamn_catalog::registered_operation::RegisteredOperation =
+        let base_operation: wamn_package::registered_operation::RegisteredOperation =
             "base:stock/record-widget@1.0.0".parse().unwrap();
-        let overlay_operation: wamn_catalog::registered_operation::RegisteredOperation =
+        let overlay_operation: wamn_package::registered_operation::RegisteredOperation =
             "overlay:stock/record-widget@3.0.0".parse().unwrap();
         let mut base = closure_component("base-component", Some(&base_operation));
         base.target.package_id = "base".parse().unwrap();
@@ -1105,8 +1098,8 @@ mod tests {
         let roots = BTreeMap::from([("entry".parse().unwrap(), overlay.clone())]);
         let facts: BTreeMap<
             (
-                wamn_catalog::PackageName,
-                wamn_catalog::package_version::PackageVersion,
+                wamn_package::PackageName,
+                wamn_package::package_version::PackageVersion,
             ),
             Vec<AdmittedComponent>,
         > = BTreeMap::from([
@@ -1119,18 +1112,16 @@ mod tests {
                 vec![overlay.clone()],
             ),
         ]);
-        let manifests: BTreeMap<
-            wamn_catalog::PackageName,
-            wamn_catalog::manifest::PackageManifest,
-        > = BTreeMap::from([(
-            "overlay".parse().unwrap(),
-            pinning_manifest(
-                &"overlay".parse().unwrap(),
-                "3.0.0",
-                (&"base".parse().unwrap(), "1.0.0"),
-                &base.component_digest,
-            ),
-        )]);
+        let manifests: BTreeMap<wamn_package::PackageName, wamn_component_policy::PackageManifest> =
+            BTreeMap::from([(
+                "overlay".parse().unwrap(),
+                pinning_manifest(
+                    &"overlay".parse().unwrap(),
+                    "3.0.0",
+                    (&"base".parse().unwrap(), "1.0.0"),
+                    &base.component_digest,
+                ),
+            )]);
 
         let closure = resolve_component_dependency_closure(
             &roots,
@@ -1180,9 +1171,9 @@ mod tests {
     /// from this same tree, so it resolves the base by coordinate.
     #[test]
     fn a_disposable_target_expands_a_closure_whose_pinned_base_digest_moved() {
-        let base_operation: wamn_catalog::registered_operation::RegisteredOperation =
+        let base_operation: wamn_package::registered_operation::RegisteredOperation =
             "base:stock/record-widget@1.0.0".parse().unwrap();
-        let overlay_operation: wamn_catalog::registered_operation::RegisteredOperation =
+        let overlay_operation: wamn_package::registered_operation::RegisteredOperation =
             "overlay:stock/record-widget@3.0.0".parse().unwrap();
         let mut base = closure_component("base-component", Some(&base_operation));
         base.target.package_id = "base".parse().unwrap();
@@ -1199,8 +1190,8 @@ mod tests {
         let roots = BTreeMap::from([("entry".parse().unwrap(), overlay.clone())]);
         let facts: BTreeMap<
             (
-                wamn_catalog::PackageName,
-                wamn_catalog::package_version::PackageVersion,
+                wamn_package::PackageName,
+                wamn_package::package_version::PackageVersion,
             ),
             Vec<AdmittedComponent>,
         > = BTreeMap::from([
@@ -1213,18 +1204,16 @@ mod tests {
                 vec![overlay.clone()],
             ),
         ]);
-        let manifests: BTreeMap<
-            wamn_catalog::PackageName,
-            wamn_catalog::manifest::PackageManifest,
-        > = BTreeMap::from([(
-            "overlay".parse().unwrap(),
-            pinning_manifest(
-                &"overlay".parse().unwrap(),
-                "3.0.0",
-                (&"base".parse().unwrap(), "1.0.0"),
-                &stale_pin,
-            ),
-        )]);
+        let manifests: BTreeMap<wamn_package::PackageName, wamn_component_policy::PackageManifest> =
+            BTreeMap::from([(
+                "overlay".parse().unwrap(),
+                pinning_manifest(
+                    &"overlay".parse().unwrap(),
+                    "3.0.0",
+                    (&"base".parse().unwrap(), "1.0.0"),
+                    &stale_pin,
+                ),
+            )]);
 
         let refusal = resolve_component_dependency_closure(
             &roots,

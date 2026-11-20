@@ -8,14 +8,14 @@ use crate::provision_project_env::{self, registry, workload};
 use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
 use std::time::Duration;
-use wamn_catalog::lifecycle_lock::LifecycleLock;
 use wamn_platform_install as installer;
+use wamn_registry::lifecycle_lock::LifecycleLock;
 use wamn_registry::{Triple, name, sql::upsert_event_reader_sql};
 
 pub async fn configure(
     platform: &Platform,
     document: EnvironmentFile,
-    application: Option<&wamn_catalog::ApplicationName>,
+    application: Option<&wamn_registry::ApplicationName>,
     disposable: Option<bool>,
 ) -> anyhow::Result<()> {
     let mut platform = platform.clone();
@@ -40,7 +40,7 @@ pub async fn configure(
                 .context("environment has no selected projects")?;
             let project_names: Vec<_> = projects
                 .iter()
-                .map(|project| project.project.as_str())
+                .map(|project| project.settings.project.as_str())
                 .collect();
             let mut reserved = Vec::with_capacity(projects.len());
             {
@@ -59,8 +59,8 @@ pub async fn configure(
                          WHERE registered.org = $1 AND registered.env = $2 \
                          AND registered.project = selected.project)",
                 )
-                .bind(&first.org)
-                .bind(&first.env)
+                .bind(&first.settings.org)
+                .bind(&first.settings.env)
                 .bind(&project_names)
                 .fetch_one(&mut *transaction)
                 .await
@@ -82,20 +82,20 @@ pub async fn configure(
                     reserved.push(
                         reserve_project(&mut transaction, project, disposable)
                             .await
-                            .with_context(|| format!("reserve project {}", project.project))?,
+                            .with_context(|| format!("reserve project {}", project.settings.project))?,
                     );
                 }
                 transaction.commit().await.context("commit project reservations")?;
             }
             let count =
-                super::broker::project_count(&mut *lock.client().await, &first.org, &first.env)
+                super::broker::project_count(&mut *lock.client().await, &first.settings.org, &first.settings.env)
                     .await?;
-            super::broker::configure(&platform, &first.org, &first.env, count).await?;
+            super::broker::configure(&platform, &first.settings.org, &first.settings.env, count).await?;
             let (replicas, host) = resources::prepare_host_upgrade(
                 &platform,
                 &lock,
-                &first.org,
-                &first.env,
+                &first.settings.org,
+                &first.settings.env,
                 first.drain_bound_seconds,
                 &project_names,
             )
@@ -124,7 +124,7 @@ pub async fn configure(
                     .with_context(|| {
                         format!(
                             "Configure project {} failed. Run env apply again to continue.",
-                            project.project
+                            project.settings.project
                         )
                     })?;
                 }
@@ -135,14 +135,14 @@ pub async fn configure(
                 tokio::try_join!(biased; async { anyhow::Ok(host.await) }, configure_projects)?;
             host_result?;
             if application.is_none() {
-                let names: Vec<_> = first.integrations.keys().map(String::as_str).collect();
+                let names: Vec<_> = first.settings.integrations.keys().map(String::as_str).collect();
                 let mut connection = lock.client().await;
                 let mut transaction =
                     provision_project_env::provisioning_transaction(&mut connection).await?;
-                wamn_catalog::configuration::retain_integrations(
+                wamn_registry::configuration::retain_integrations(
                     &mut transaction,
-                    &first.org,
-                    &first.env,
+                    &first.settings.org,
+                    &first.settings.env,
                     &names,
                 )
                 .await
@@ -161,15 +161,23 @@ async fn reserve_project(
     document: &EnvironmentDocument,
     disposable: Option<bool>,
 ) -> anyhow::Result<wamn_registry::instance_suffix::InstanceSuffix> {
-    wamn_provision::validate_project_env_cdc(&document.org, &document.project, &document.env)?;
+    wamn_provision::validate_project_env_cdc(
+        &document.settings.org,
+        &document.settings.project,
+        &document.settings.env,
+    )?;
     registry::record_project_env(
         transaction,
         &document.triple(),
         document.readiness_budget_seconds,
         document.drain_bound_seconds,
-        &document.target,
-        &name::project_env_secret_name(&document.org, &document.project, &document.env),
-        Some(document.org.as_str()),
+        &document.settings.target,
+        &name::project_env_secret_name(
+            &document.settings.org,
+            &document.settings.project,
+            &document.settings.env,
+        ),
+        Some(document.settings.org.as_str()),
         &registry::mint_instance_suffix()?,
         disposable,
     )
@@ -179,7 +187,7 @@ async fn reserve_project(
 async fn configure_project(
     platform: &Platform,
     document: &EnvironmentDocument,
-    application: Option<&wamn_catalog::ApplicationName>,
+    application: Option<&wamn_registry::ApplicationName>,
     instance: &wamn_registry::instance_suffix::InstanceSuffix,
     connection: &wamn_postgres::ConnectionConfig,
     mut values: Value,

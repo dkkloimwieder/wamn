@@ -1,11 +1,20 @@
 [package]
 name = "wamn-component-policy"
-description = "Pure component import policy and import-grant derivation."
+description = "Component import policy and verified admission facts."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+test-util = []
+
 [dependencies]
+wamn-package.workspace = true
+wamn-digest.workspace = true
+wamn-registry.workspace = true
+boon.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true, features = ["float_roundtrip"] }
 
 [lints]
 workspace = true

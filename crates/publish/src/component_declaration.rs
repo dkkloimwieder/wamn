@@ -155,13 +155,13 @@ pub fn authored_base_digests(
 /// Read one final component declaration and supply its deployment coordinate.
 pub fn render_package_declaration(
     package_root: &Path,
-    component: &wamn_catalog::canonical_name::CanonicalName,
+    component: &wamn_package::canonical_name::CanonicalName,
     project_env_key: &wamn_registry::ProjectEnvKey,
 ) -> Result<Value, ComponentDeclarationError> {
     let path = wamn_codegen::package_manifest_path(package_root);
     let bytes = fs::read(&path).map_err(|source| ComponentDeclarationError::read(&path, source))?;
     let mut manifest =
-        wamn_catalog::manifest::PackageManifest::from_slice(&bytes).map_err(|source| {
+        wamn_component_policy::PackageManifest::from_slice(&bytes).map_err(|source| {
             ComponentDeclarationError::invalid(
                 ComponentDeclarationErrorType::ManifestInvalid,
                 &path,
@@ -175,7 +175,7 @@ pub fn render_package_declaration(
             source.to_string(),
         )
     };
-    let target = wamn_catalog::ComponentPackageCoordinate::new(
+    let target = wamn_component_policy::ComponentPackageCoordinate::new(
         project_env_key,
         manifest.package.id.clone(),
         manifest.package.version.clone(),
@@ -189,17 +189,17 @@ pub fn render_package_declaration(
 
 /// Take a build's declaration and attach the supplied coordinate.
 pub(crate) fn package_declaration<T>(
-    manifest: &mut wamn_catalog::manifest::PackageManifest,
-    component: &wamn_catalog::canonical_name::CanonicalName,
+    manifest: &mut wamn_component_policy::PackageManifest,
+    component: &wamn_package::canonical_name::CanonicalName,
     target: T,
-) -> anyhow::Result<wamn_catalog::ComponentDeclaration<T>> {
+) -> anyhow::Result<wamn_package::ComponentDeclaration<T>> {
     use anyhow::Context as _;
     let declaration = manifest
         .deploy
         .as_mut()
         .and_then(|deploy| deploy.declarations.remove(component))
         .with_context(|| format!("component {component} was not compiled"))?;
-    Ok(wamn_catalog::ComponentDeclaration {
+    Ok(wamn_package::ComponentDeclaration {
         target,
         data_change: manifest
             .components
@@ -215,7 +215,7 @@ pub(crate) fn package_declaration<T>(
 /// Resolve a palette declaration into concrete connection names for a package fixture.
 pub fn render_palette_declaration(
     template: &Path,
-    target: &wamn_catalog::ComponentPackageCoordinate,
+    target: &wamn_component_policy::ComponentPackageCoordinate,
     store_alias: Option<&str>,
 ) -> Result<Value, ComponentDeclarationError> {
     let bytes =
@@ -232,9 +232,10 @@ pub fn declared_platform_packages(
     template: &Path,
     document: &Value,
 ) -> Result<Vec<String>, ComponentDeclarationError> {
-    let declaration: wamn_catalog::ComponentDeclaration<wamn_catalog::ComponentPackageCoordinate> =
-        serde_json::from_value(document.clone())
-            .map_err(|source| ComponentDeclarationError::parse(template, source))?;
+    let declaration: wamn_package::ComponentDeclaration<
+        wamn_component_policy::ComponentPackageCoordinate,
+    > = serde_json::from_value(document.clone())
+        .map_err(|source| ComponentDeclarationError::parse(template, source))?;
     let mut packages = std::collections::BTreeSet::new();
     for operation in declaration.operations.keys() {
         let (package, _) = operation.as_str().split_once('/').ok_or_else(|| {
@@ -260,7 +261,7 @@ mod tests {
     #[test]
     fn a_palette_declaration_requires_a_binding_selection() {
         let palette = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../guests");
-        let target = wamn_catalog::ComponentPackageCoordinate {
+        let target = wamn_component_policy::ComponentPackageCoordinate {
             project_env_key: "org-a--dev--project".parse().unwrap(),
             package_id: "wamn_wms".parse().unwrap(),
             package_version: "1.0.0".parse().unwrap(),

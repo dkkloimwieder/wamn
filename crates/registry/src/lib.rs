@@ -1,6 +1,15 @@
 //! Registry coordinates, resource names, and system database statements.
 
+pub mod configuration;
 pub mod connections;
+mod environment_application;
+pub mod lifecycle_lock;
+pub mod resource_names;
+
+pub use environment_application::{
+    ApplicationDefinition, ApplicationName, EnvironmentApplications, ParseApplicationNameError,
+    application_for_package,
+};
 pub mod deployment;
 pub mod identifiers;
 pub mod instance_suffix;
@@ -12,7 +21,7 @@ pub mod sql;
 mod types;
 
 pub use name::{credential_secret_name, project_env_key};
-pub use types::{Environment, Triple};
+pub use types::{Environment, EnvironmentRow, EnvironmentStatus, Triple};
 mod org_id;
 mod project_id;
 pub use org_id::{OrgId, ParseOrgIdError};

@@ -26,7 +26,7 @@ pub enum ProductionLeaseResult {
         input_json: String,
         checkpoint_json: Option<String>,
         lease_generation: i64,
-        wiring_id: wamn_catalog::canonical_name::CanonicalName,
+        wiring_id: wamn_package::canonical_name::CanonicalName,
         wiring_version: i32,
         workflow: Box<ProductionWorkflow>,
     },
@@ -62,7 +62,7 @@ struct SelectedLease {
     status: RunStatus,
     input_json: String,
     checkpoint_json: Option<String>,
-    wiring_id: wamn_catalog::canonical_name::CanonicalName,
+    wiring_id: wamn_package::canonical_name::CanonicalName,
     wiring_version: i32,
     workflow: Box<ProductionWorkflow>,
 }
@@ -76,7 +76,7 @@ struct ExhaustedLease {
 
 #[derive(Debug)]
 struct ExhaustedExecutionIdentity {
-    wiring_id: wamn_catalog::canonical_name::CanonicalName,
+    wiring_id: wamn_package::canonical_name::CanonicalName,
     wiring_version: i32,
 }
 
@@ -165,7 +165,7 @@ fn decode_terminalization(row: &Row) -> Result<TerminalizeResult, ProductionLeas
 pub async fn lease_next(
     connection: &mut sqlx::PgConnection,
     runner: &str,
-    application: &wamn_catalog::ApplicationName,
+    application: &wamn_registry::ApplicationName,
     environment: &wamn_registry::EnvName,
     lease_ttl_ms: i64,
 ) -> Result<LeaseTurn, ProductionLeaseError> {
@@ -257,7 +257,7 @@ pub async fn lease_next(
 /// Fail and dequeue one expired run whose retry budget is spent.
 pub async fn reap_exhausted(
     connection: &mut sqlx::PgConnection,
-    application: &wamn_catalog::ApplicationName,
+    application: &wamn_registry::ApplicationName,
     environment: &wamn_registry::EnvName,
     grace_ms: i64,
 ) -> Result<ProductionReapResult, ProductionLeaseError> {
@@ -283,7 +283,7 @@ pub async fn reap_exhausted(
             format!("unknown run status {status_text:?}"),
         )
     })?;
-    let wiring_id: Option<wamn_catalog::canonical_name::CanonicalName> =
+    let wiring_id: Option<wamn_package::canonical_name::CanonicalName> =
         row_value(&row, 2, "exhausted wiring id")?;
     let wiring_version: Option<i32> = row_value(&row, 3, "exhausted wiring version")?;
     let identity = match (wiring_id, wiring_version) {
@@ -402,9 +402,9 @@ fn decode_selected_lease(row: &Row) -> Result<SelectedLease, ProductionLeaseErro
 }
 
 fn decode_wiring_identity(
-    wiring_id: Option<wamn_catalog::canonical_name::CanonicalName>,
+    wiring_id: Option<wamn_package::canonical_name::CanonicalName>,
     wiring_version: Option<i32>,
-) -> Result<(wamn_catalog::canonical_name::CanonicalName, i32), ProductionLeaseError> {
+) -> Result<(wamn_package::canonical_name::CanonicalName, i32), ProductionLeaseError> {
     let (wiring_id, wiring_version) = match (wiring_id, wiring_version) {
         (Some(wiring_id), Some(wiring_version)) if wiring_version > 0 => {
             (wiring_id, wiring_version)

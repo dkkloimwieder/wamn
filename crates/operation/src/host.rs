@@ -120,7 +120,7 @@ impl OperationHost {
         &self,
         project: &wamn_registry::ProjectId,
         principal_id: &wamn_identity_protocol::PrincipalId,
-        operation: &wamn_catalog::canonical_name::CanonicalName,
+        operation: &wamn_package::canonical_name::CanonicalName,
         work: impl AsyncFnOnce(&mut sqlx::PgConnection) -> Result<T, E>,
     ) -> anyhow::Result<Result<T, E>> {
         let mut connection = self
@@ -141,7 +141,7 @@ impl OperationHost {
         &self,
         project: &wamn_registry::ProjectId,
         principal_id: &wamn_identity_protocol::PrincipalId,
-        operation: &wamn_catalog::canonical_name::CanonicalName,
+        operation: &wamn_package::canonical_name::CanonicalName,
     ) -> anyhow::Result<wamn_connection::database::ConnectionGuard> {
         let (connection, policy) = self
             .pools

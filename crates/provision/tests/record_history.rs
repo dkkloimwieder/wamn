@@ -9,7 +9,7 @@ async fn fresh_run_history_stamps_rows(pool: sqlx::PgPool) {
     {
         let batches: &[&str] = &[
             &wamn_provision::sql::ensure_app_acl_role_sql(),
-            wamn_catalog::CATALOG_SCHEMA_SQL,
+            wamn_provision::CATALOG_SCHEMA_SQL,
             include_str!("../../../deploy/sql/run-state.sql"),
             include_str!("../../../deploy/sql/run-queue.sql"),
         ];

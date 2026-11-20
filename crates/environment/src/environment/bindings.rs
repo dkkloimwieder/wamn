@@ -9,10 +9,9 @@ use plan::{mode_satisfies, refuse};
 use std::collections::BTreeMap;
 use std::fmt;
 
-use wamn_catalog::{
-    lifecycle_lock::LifecycleLock,
-    manifest::{ConnectionDeclaration, ConnectionMode, PackageManifest},
-};
+use wamn_component_policy::PackageManifest;
+use wamn_package::manifest::{ConnectionDeclaration, ConnectionMode};
+use wamn_registry::lifecycle_lock::LifecycleLock;
 
 use super::document::EnvironmentDocument;
 
@@ -46,7 +45,7 @@ impl From<sqlx::Error> for BindingError {
 /// One declared name resolved to an active environment connection and version.
 #[derive(Debug, Clone)]
 pub struct Binding {
-    pub application: wamn_catalog::ApplicationName,
+    pub application: wamn_registry::ApplicationName,
     pub alias: String,
     pub interface: String,
     pub components: std::collections::BTreeSet<String>,
@@ -87,8 +86,8 @@ pub async fn analyse(
     let environment_target = sqlx::query_scalar::<_, Option<String>>(
         "SELECT target_id::text FROM registry.environments WHERE org=$1 AND env=$2",
     )
-    .bind(&document.org)
-    .bind(&document.env)
+    .bind(&document.settings.org)
+    .bind(&document.settings.env)
     .fetch_optional(&mut *system.client().await)
     .await?;
     if matches!(&environment_target, Some(None)) {
@@ -96,12 +95,12 @@ pub async fn analyse(
             "environment_target_missing",
             format!(
                 "environment {}/{} has no target",
-                document.org, document.env
+                document.settings.org, document.settings.env
             ),
         ));
     }
     let environment_target = environment_target.flatten();
-    for (name, version) in document.integrations.iter().filter(|(name, _)| {
+    for (name, version) in document.settings.integrations.iter().filter(|(name, _)| {
         applications.iter().any(|(_, definition)| {
             definition
                 .connections
@@ -120,12 +119,12 @@ pub async fn analyse(
                 "connection_target_mismatch",
                 format!(
                     "connection {name} target {connection_target} does not match environment {}/{} target {environment_target}",
-                    document.org, document.env
+                    document.settings.org, document.settings.env
                 ),
             ));
         }
         let row=sqlx::query("SELECT $1::text AS id,t.code,t.runtime_type,$3::jsonb AS parameters,v.parameter_schema,v.digest,v.operations,$6::bigint AS generation,t.exclusive,v.exports,v.write_interfaces,destination.type FROM registry.integration_type t JOIN registry.target destination ON destination.id=$4::text::uuid AND destination.name=$5 AND destination.status='active' JOIN registry.environments e ON e.org=$7 AND e.env=$8 LEFT JOIN registry.integration_type_version v ON v.integration_type=t.code AND v.version=$9 WHERE t.code=$2")
-            .bind(connection.get::<String,_>(0)).bind(connection.get::<String,_>(1)).bind(connection.get::<serde_json::Value,_>(2)).bind(connection_target).bind(&document.target).bind(connection.get::<i64,_>(3)).bind(&document.org).bind(&document.env).bind(version.version)
+            .bind(connection.get::<String,_>(0)).bind(connection.get::<String,_>(1)).bind(connection.get::<serde_json::Value,_>(2)).bind(connection_target).bind(&document.settings.target).bind(connection.get::<i64,_>(3)).bind(&document.settings.org).bind(&document.settings.env).bind(version.version)
             .fetch_optional(&mut *system.client().await).await?.ok_or_else(||refuse("connection_unavailable",name))?;
         if row.get::<bool, _>(8) && row.get::<&str, _>(11) == "cloud" {
             return Err(refuse(
@@ -156,7 +155,7 @@ pub async fn analyse(
     let mut bindings = Vec::new();
     for (application, definition) in applications {
         let mut declarations: BTreeMap<
-            wamn_catalog::canonical_name::CanonicalName,
+            wamn_package::canonical_name::CanonicalName,
             ConnectionDeclaration,
         > = BTreeMap::new();
         for package in packages
@@ -209,7 +208,7 @@ pub async fn analyse(
                     requirement_type,
                     definition: row.get(3),
                     credential_handle: (integration_type.as_str() != "gcs")
-                        .then(|| format!("org:{}:{integration}", document.org)),
+                        .then(|| format!("org:{}:{integration}", document.settings.org)),
                     org_connection_name: Some(integration.as_str().to_owned()),
                 })
             } else {
@@ -256,7 +255,7 @@ mod tests {
     use super::plan::interface_compatible;
     #[test]
     fn a_read_requirement_refuses_a_write_interface() {
-        use wamn_catalog::manifest::ConnectionMode::{Read, Write};
+        use wamn_package::manifest::ConnectionMode::{Read, Write};
         let writes = vec!["wamn:modbus/write@1.0.0".to_owned()];
         assert!(!super::mode_satisfies(
             Read,

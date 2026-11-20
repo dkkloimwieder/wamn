@@ -4,13 +4,13 @@
 //! invocation binding. Activation tests the deadline, that the operation is
 //! admitted and released, and the released-operation grant under the caller.
 
-use wamn_catalog::serving_context::ServingContext;
+use crate::serving_context::ServingContext;
 use std::collections::{BTreeMap, HashSet};
 use std::sync::{Arc, RwLock};
 
 use anyhow::Context as _;
 use tokio::time::Instant;
-use wamn_catalog::AdmittedComponent;
+use wamn_component_policy::AdmittedComponent;
 use wamn_engine::ingress::AuthenticatedCaller;
 use wamn_engine::native_routes::authorize_released_operation;
 use crate::native_operation::invocation_policy::{InvocationPolicy, InvocationScope};
@@ -253,7 +253,7 @@ mod tests {
                 "00000000-0000-4000-8000-000000000001".parse().unwrap(),
                 CredentialType::Session,
                 false,
-                [wamn_catalog::sealed_operation_reference(OPERATION).to_owned()].into(),
+                [wamn_package::sealed_operation_reference(OPERATION).to_owned()].into(),
                 Some("operator".into()),
             ))),
             application,

@@ -74,7 +74,7 @@ pub fn start(
             .grants()
             .permissions(std::slice::from_ref(&config.role))
             .iter()
-            .map(|permission| wamn_catalog::sealed_operation_reference(permission).to_owned())
+            .map(|permission| wamn_package::sealed_operation_reference(permission).to_owned())
             .collect(),
         Some(config.role.as_str().into()),
     );
@@ -82,7 +82,7 @@ pub fn start(
     let attachment = manifest
         .attachment(&config.attachment)
         .context("device attachment is missing")?;
-    let wamn_catalog::AttachmentTarget::Route {
+    let wamn_package::AttachmentTarget::Route {
         component,
         operation,
     } = attachment.target();
@@ -125,7 +125,7 @@ pub fn start(
 }
 
 async fn run(
-    attachment: wamn_catalog::canonical_name::CanonicalName,
+    attachment: wamn_package::canonical_name::CanonicalName,
     caller: AuthenticatedCaller,
     delivery: Arc<EdgeOperation>,
     samples: SampleStore,

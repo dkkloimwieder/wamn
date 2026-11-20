@@ -18,7 +18,7 @@ use wamn_provision::workload_role::{
 };
 
 const POSTGRES_INIT: &str = include_str!("../../../deploy/sql/postgres-init.sql");
-const CATALOG_SCHEMA: &str = wamn_catalog::CATALOG_SCHEMA_SQL;
+const CATALOG_SCHEMA: &str = wamn_provision::CATALOG_SCHEMA_SQL;
 const RUN_STATE: &str = include_str!("../../../deploy/sql/run-state.sql");
 const RUN_QUEUE: &str = include_str!("../../../deploy/sql/run-queue.sql");
 const APP_SCHEMA: &str = include_str!("../../../deploy/sql/app-schema.sql");

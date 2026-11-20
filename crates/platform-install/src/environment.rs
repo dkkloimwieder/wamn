@@ -119,7 +119,7 @@ pub fn set_operation_values<'a>(
     triple: &Triple,
     cluster: &str,
     database: &str,
-    applications: impl Iterator<Item = &'a wamn_catalog::ApplicationName>,
+    applications: impl Iterator<Item = &'a wamn_registry::ApplicationName>,
 ) -> anyhow::Result<()> {
     let name = wamn_provision::environment_names::environment_resource_name(
         &triple.org,
@@ -129,7 +129,7 @@ pub fn set_operation_values<'a>(
     let capture = wamn_provision::cdc_reader_name(&triple.org, &triple.project, &triple.env);
     let diff_workloads: Vec<_> = applications
         .map(|application| {
-            let release = wamn_catalog::resource_names::application_release_name(
+            let release = wamn_registry::resource_names::application_release_name(
                 &triple.org,
                 &triple.project,
                 &triple.env,
@@ -164,7 +164,7 @@ pub fn publication_values(
     instance: &wamn_registry::instance_suffix::InstanceSuffix,
     cluster: &str,
     name: &str,
-    schemas: &[wamn_catalog::canonical_name::CanonicalName],
+    schemas: &[wamn_package::canonical_name::CanonicalName],
 ) -> Value {
     json!({"publication":{"name":name,"cluster":cluster,"org":triple.org,"project":triple.project,"env":triple.env,
         "database":wamn_provision::project_env_database_name(&triple.org,&triple.project,&triple.env,instance),

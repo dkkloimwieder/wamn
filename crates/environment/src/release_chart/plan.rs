@@ -3,12 +3,11 @@ use anyhow::Context as _;
 use std::collections::{BTreeMap, BTreeSet};
 const INGRESS_BINDING: &str = "ingress";
 const WORKFLOW_BINDING: &str = "workflow";
-use wamn_catalog::{
-    ComponentDescriptor, PackageName,
-    canonical_name::CanonicalName,
-    configuration::Client,
-    manifest::{PackageManifest, deploy::PublishedComponent},
-};
+use wamn_component_policy::{ComponentDescriptor, PackageManifest};
+use wamn_package::PackageName;
+use wamn_package::canonical_name::CanonicalName;
+use wamn_package::manifest::deploy::PublishedComponent;
+use wamn_registry::configuration::Client;
 use wamn_registry::platform_domain::PlatformDomain;
 
 /// The Helm release name of an application: `r-<slug>-<hash>`.
@@ -20,7 +19,7 @@ pub fn release_name(
     org: &wamn_registry::OrgId,
     project: &wamn_registry::ProjectId,
     env: &wamn_registry::EnvName,
-    application: &wamn_catalog::ApplicationName,
+    application: &wamn_registry::ApplicationName,
 ) -> anyhow::Result<String> {
     Ok(wamn_provision::environment_names::application_release_name(
         org,
@@ -45,12 +44,12 @@ pub fn roles(
     org: &wamn_registry::OrgId,
     project: &wamn_registry::ProjectId,
     env: &wamn_registry::EnvName,
-    application: &wamn_catalog::ApplicationName,
+    application: &wamn_registry::ApplicationName,
     grant_cache_seconds: u32,
     bindings: &[crate::environment::bindings::Binding],
     integration_repository: &str,
 ) -> anyhow::Result<Vec<Role>> {
-    use wamn_catalog::application_config::{
+    use wamn_engine::application_config::{
         ApplicationComponent, ApplicationConfig, ApplicationConnection, ApplicationDataChange,
         ApplicationOperation, ApplicationOperationType, DataChangeModel,
     };
@@ -96,7 +95,7 @@ pub fn roles(
                         connection.requirement_type.import_package()
                     ))
                     && match &connection.mode {
-                        wamn_catalog::ConnectionMode::ByBinding(packages) => packages
+                        wamn_package::ConnectionMode::ByBinding(packages) => packages
                             .values()
                             .any(|aliases| aliases.contains_key(&alias)),
                         _ => true,
@@ -104,13 +103,13 @@ pub fn roles(
             });
             let (selector, mode) = if binding.components.contains(&name) {
                 (
-                    wamn_catalog::ComponentConnectionAlias::Name(alias.clone()),
+                    wamn_package::ComponentConnectionAlias::Name(alias.clone()),
                     match binding.mode {
-                        wamn_catalog::manifest::ConnectionMode::Read => {
-                            wamn_catalog::ConnectionMode::Read
+                        wamn_package::manifest::ConnectionMode::Read => {
+                            wamn_package::ConnectionMode::Read
                         }
-                        wamn_catalog::manifest::ConnectionMode::Write => {
-                            wamn_catalog::ConnectionMode::Write
+                        wamn_package::manifest::ConnectionMode::Write => {
+                            wamn_package::ConnectionMode::Write
                         }
                     },
                 )
@@ -186,12 +185,9 @@ pub fn roles(
         for (operation_name, operation) in &component.descriptor.operations {
             let route = route_contracts
                 .get(&(package_id.clone(), operation_name.clone()))
-                .filter(|route| route.type_ != wamn_catalog::OperationType::EventHandler);
-            let type_ = route.map(|route| match route.type_ {
-                wamn_catalog::OperationType::Delete => ApplicationOperationType::Delete,
-                type_ if type_.is_read() => ApplicationOperationType::Read,
-                _ => ApplicationOperationType::Write,
-            });
+                .filter(|route| route.type_ != wamn_package::OperationType::EventHandler);
+            let type_ =
+                route.and_then(|route| ApplicationOperationType::from_operation(route.type_));
             if type_.is_some() {
                 ensure!(
                     typed_operations.insert(operation_name),
@@ -211,7 +207,7 @@ pub fn roles(
                             .clone()
                             .unwrap_or_else(|| "request_id".to_owned())
                     }),
-                    signed_result: wamn_catalog::signed_file_reads(operation)?,
+                    signed_result: wamn_component_policy::signed_file_reads(operation)?,
                 },
             );
         }
@@ -300,11 +296,11 @@ pub fn roles(
         config.insert(key.into(), value.into());
     }
     config.insert(
-        wamn_catalog::http_routes::HTTP_ROUTES_CONFIG.into(),
+        wamn_routes::HTTP_ROUTES_CONFIG.into(),
         serde_json::to_string(&routes)?.into(),
     );
     config.insert(
-        wamn_catalog::application_config::APPLICATION_CONFIG.into(),
+        wamn_engine::application_config::APPLICATION_CONFIG.into(),
         serde_json::to_string(&application)?.into(),
     );
     let descriptors =
@@ -385,7 +381,12 @@ pub fn host_interfaces<'a>(
 
 pub(crate) fn published_components(
     packages: &BTreeMap<PackageName, PackageManifest>,
-) -> impl Iterator<Item = (&PackageName, &PublishedComponent)> {
+) -> impl Iterator<
+    Item = (
+        &PackageName,
+        &PublishedComponent<wamn_component_policy::ComponentDescriptor>,
+    ),
+> {
     packages.iter().flat_map(|(package, manifest)| {
         manifest
             .deploy
@@ -533,7 +534,7 @@ pub struct ValuesInput<'a> {
     pub platform_domain: &'a PlatformDomain,
     pub client: Option<&'a Client>,
     /// Exactly one application's membership, retained in Helm values for status reads.
-    pub applications: wamn_catalog::EnvironmentApplications,
+    pub applications: wamn_registry::EnvironmentApplications,
     pub roles: Vec<Role>,
 }
 

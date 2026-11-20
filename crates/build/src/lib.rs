@@ -6,11 +6,11 @@ mod guest_workspace;
 mod inputs;
 pub mod kcl;
 pub mod palette;
+use wamn_component_policy::PackageManifest;
 use anyhow::{Context as _, Result};
 pub use components::{GuestTarget, build_guest, component_path, guest_rustflags};
 pub use inputs::paths as build_inputs;
 use std::path::Path;
-use wamn_catalog::manifest::PackageManifest;
 pub use wamn_codegen::build::{
     BuildRequest, DescribeMode, PreparedSource, default_output_root, package_output,
 };
@@ -48,7 +48,7 @@ pub enum BuildMode {
 /// Package identity and exact compiled manifest digest.
 #[derive(Debug)]
 pub struct BuiltPackage {
-    pub package: wamn_catalog::manifest::PackageIdentity,
+    pub package: wamn_package::manifest::PackageIdentity,
     pub manifest_digest: Digest,
 }
 
@@ -163,9 +163,9 @@ pub async fn build_prepared(
 
 /// Derive the development version from the complete build fingerprint.
 pub fn development_version(
-    authored: &wamn_catalog::package_version::PackageVersion,
+    authored: &wamn_package::package_version::PackageVersion,
     digest: &Digest,
-) -> Result<wamn_catalog::package_version::PackageVersion> {
+) -> Result<wamn_package::package_version::PackageVersion> {
     let base = authored
         .as_str()
         .split(['-', '+'])

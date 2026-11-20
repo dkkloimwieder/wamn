@@ -1,5 +1,8 @@
 //! Compile package declarations and SQL evidence into one output tree.
 
+use wamn_package::manifest::CrudAction;
+use wamn_package::manifest::ResultClass;
+use wamn_package::manifest::canonical_operation_identity;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::fs;
@@ -9,9 +12,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use anyhow::{Context as _, Result, bail, ensure};
 use serde_json::{Value, json};
 use sqlx::{AssertSqlSafe, Row as _, SqlSafeStr as _};
-use wamn_catalog::manifest::{
-    CrudAction, PackageManifest, ResultClass, canonical_operation_identity,
-};
+use wamn_component_policy::PackageManifest;
 use wamn_digest::{Digest, bytes_sha256, canonical_json_bytes};
 use wamn_schema_introspection::ir::CatalogIr;
 use wamn_schema_introspection::postgres::authored_object_name;
@@ -109,15 +110,15 @@ impl PreparedSource {
         &self.root
     }
 
-    pub fn package(&self) -> &wamn_catalog::manifest::PackageIdentity {
+    pub fn package(&self) -> &wamn_package::manifest::PackageIdentity {
         &self.sources.package
     }
 
     pub fn bases(
         &self,
     ) -> &BTreeMap<
-        wamn_catalog::manifest::source_name::SourceName,
-        wamn_catalog::manifest::BaseDependencyRequirement,
+        wamn_package::manifest::source_name::SourceName,
+        wamn_package::manifest::BaseDependencyRequirement,
     > {
         &self.sources.base_dependencies
     }
@@ -178,7 +179,7 @@ pub fn default_output_root(package_root: &Path) -> PathBuf {
 
 /// The build output directory of `package` below `output_root`.
 #[must_use]
-pub fn package_output(output_root: &Path, package: &wamn_catalog::PackageName) -> PathBuf {
+pub fn package_output(output_root: &Path, package: &wamn_package::PackageName) -> PathBuf {
     output_root.join(package.as_str())
 }
 
@@ -196,8 +197,8 @@ pub async fn generate_prepared(
     source: &PreparedSource,
     bases: &[PackageManifest],
     development: Option<(
-        &wamn_catalog::package_version::PackageVersion,
-        &BTreeMap<wamn_catalog::PackageName, Digest>,
+        &wamn_package::package_version::PackageVersion,
+        &BTreeMap<wamn_package::PackageName, Digest>,
     )>,
 ) -> Result<(PackageManifest, BTreeMap<PathBuf, Digest>)> {
     let root = source.snapshot.path();
@@ -210,7 +211,7 @@ pub async fn generate_prepared(
             .and_then(Value::as_object_mut)
         {
             for dependency in dependencies.values_mut() {
-                let package: wamn_catalog::PackageName = dependency["package"]
+                let package: wamn_package::PackageName = dependency["package"]
                     .as_str()
                     .context("base package id")?
                     .parse()?;
@@ -599,7 +600,7 @@ async fn generate_from_evidence(
     let declarations = generated
         .remove(Path::new(COMPONENTS).strip_prefix("generated")?)
         .context("generated components")?;
-    manifest.deploy = Some(wamn_catalog::manifest::deploy::CompiledDeploy {
+    manifest.deploy = Some(wamn_package::manifest::deploy::CompiledDeploy {
         routes: serde_json::from_slice(routes)?,
         declarations: serde_json::from_slice(declarations)?,
         components: BTreeMap::new(),
@@ -644,7 +645,7 @@ async fn ordered_columns(
     database_url: &str,
     manifest: &PackageManifest,
 ) -> Result<
-    BTreeMap<wamn_catalog::manifest::source_name::SourceName, Vec<crate::history::RelationColumn>>,
+    BTreeMap<wamn_package::manifest::source_name::SourceName, Vec<crate::history::RelationColumn>>,
 > {
     use crate::history::{RelationColumn, SELECT_RELATION_COLUMNS_SQL};
     let client = wamn_postgres::pool(database_url, 4).await?;
@@ -681,7 +682,7 @@ fn missing_paged_query_indexes(
     catalog: &CatalogIr,
     manifest: &PackageManifest,
     columns: &BTreeMap<
-        wamn_catalog::manifest::source_name::SourceName,
+        wamn_package::manifest::source_name::SourceName,
         Vec<crate::history::RelationColumn>,
     >,
 ) -> Result<Vec<String>> {
@@ -696,7 +697,7 @@ fn missing_paged_query_indexes(
         };
         let operation = canonical_operation_identity(
             &manifest.package,
-            &wamn_catalog::local_operation::LocalOperation::try_from(format!(
+            &wamn_package::local_operation::LocalOperation::try_from(format!(
                 "{model_name}.query"
             ))?,
         )?;
@@ -759,7 +760,7 @@ fn set_statement_paths(document: &mut Value) -> Result<()> {
         return Ok(());
     };
     for (operation_name, operation) in operations {
-        let local_name: wamn_catalog::local_operation::LocalOperation = operation_name.parse()?;
+        let local_name: wamn_package::local_operation::LocalOperation = operation_name.parse()?;
         let (group, local) = local_name
             .as_str()
             .split_once('.')
@@ -774,7 +775,7 @@ fn set_statement_paths(document: &mut Value) -> Result<()> {
             .and_then(Value::as_object_mut)
         {
             for (name, statement) in statements {
-                let name: wamn_catalog::manifest::source_name::SourceName = name.parse()?;
+                let name: wamn_package::manifest::source_name::SourceName = name.parse()?;
                 statement["path"] = format!("{directory}/{group}/{local}/{name}.sql").into();
             }
         }
@@ -1137,15 +1138,15 @@ mod tests {
 /// Source metadata used before the database describes statement values.
 #[derive(Debug, serde::Deserialize)]
 struct ManifestSources {
-    package: wamn_catalog::manifest::PackageIdentity,
+    package: wamn_package::manifest::PackageIdentity,
     #[serde(default)]
     base_dependencies: BTreeMap<
-        wamn_catalog::manifest::source_name::SourceName,
-        wamn_catalog::manifest::BaseDependencyRequirement,
+        wamn_package::manifest::source_name::SourceName,
+        wamn_package::manifest::BaseDependencyRequirement,
     >,
     models: BTreeMap<
-        wamn_catalog::manifest::source_name::SourceName,
-        wamn_catalog::manifest::ModelDeclaration,
+        wamn_package::manifest::source_name::SourceName,
+        wamn_package::manifest::ModelDeclaration,
     >,
     #[serde(default)]
     custom_operations: BTreeMap<String, OperationSources>,

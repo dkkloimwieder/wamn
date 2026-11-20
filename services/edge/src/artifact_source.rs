@@ -4,10 +4,10 @@
 
 use std::fmt;
 use std::path::PathBuf;
-use wamn_catalog::edge_bundle::local_component_path;
+use wamn_edge_document::edge_bundle::local_component_path;
 
 use async_trait::async_trait;
-use wamn_catalog::AdmittedComponent;
+use wamn_component_policy::AdmittedComponent;
 
 use wamn_digest::bytes_sha256;
 
@@ -152,9 +152,10 @@ mod tests {
     use std::collections::BTreeMap;
 
     use serde_json::json;
-    use wamn_catalog::{
-        ComponentDeclaration, ComponentOperationDeclaration, ComponentPackageCoordinate,
-        ComponentPortDeclaration, PackageCoordinate, normalize_component_fact,
+    use wamn_component_policy::{ComponentPackageCoordinate, normalize_component_fact};
+    use wamn_package::{
+        ComponentDeclaration, ComponentOperationDeclaration, ComponentPortDeclaration,
+        PackageCoordinate,
     };
 
     use super::*;

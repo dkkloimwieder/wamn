@@ -56,7 +56,7 @@ pub fn package_workspace(package_root: &Path) -> PathBuf {
 }
 
 /// Resolve a base package beside its application consumer.
-pub(crate) fn dependency_root(package_root: &Path, package: &wamn_catalog::PackageName) -> PathBuf {
+pub(crate) fn dependency_root(package_root: &Path, package: &wamn_package::PackageName) -> PathBuf {
     package_workspace(package_root).join(package.as_str())
 }
 
@@ -106,7 +106,7 @@ pub fn source_root(output: &Path) -> Result<PathBuf> {
         .file_name()
         .and_then(|name| name.to_str())
         .with_context(|| format!("{} has no UTF-8 package name", output.display()))?
-        .parse::<wamn_catalog::PackageName>()?;
+        .parse::<wamn_package::PackageName>()?;
     Ok(dependency_root(&workspace.join(package.as_str()), &package))
 }
 

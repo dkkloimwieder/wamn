@@ -1,12 +1,14 @@
 //! Application host routes served on the workload's native ingress.
 
+use wamn_routes::HostAttachment;
+use wamn_routes::HostHandler;
+use wamn_routes::HostRouteSet;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use serde_json::{Value, json};
 use wamn_authentication::authorization::{Authorization, AuthorizationStore as _};
-use wamn_catalog::application_config::ApplicationConfig;
-use wamn_catalog::{HostAttachment, HostHandler, HostRouteSet};
+use wamn_engine::application_config::ApplicationConfig;
 use wamn_engine::ingress::AuthenticatedCaller;
 use wamn_engine::native_routes::{
     DeliveryError, DeliveryOutcome, DeliveryReport, DeliveryRequest, Source,
@@ -111,7 +113,7 @@ fn served_references(config: &ApplicationConfig) -> BTreeSet<String> {
         .flat_map(|component| &component.operations)
         .filter(|(_, operation)| operation.public)
         .map(|(operation, _)| {
-            wamn_catalog::sealed_operation_reference(operation.as_str()).to_owned()
+            wamn_package::sealed_operation_reference(operation.as_str()).to_owned()
         });
     let host = HostRouteSet::Application
         .attachments()
@@ -310,7 +312,7 @@ impl HostRouteDelivery {
             Err(error) => return answer(error.status, json!({"error":{"code":error.code}})),
         };
         let payload = if read {
-            let parsed = wamn_catalog::read_query::decode_read_query(&query);
+            let parsed = wamn_routes::read_query::decode_read_query(&query);
             match parsed {
                 Ok(input) => json!([input]),
                 Err(_) => return answer(400, json!({"error":{"code":"invalid-query"}})),

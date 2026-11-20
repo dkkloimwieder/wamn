@@ -30,7 +30,7 @@ async fn sqlx_commits_files_with_their_history_and_refuses_checksum_drift(
     ))
     .execute(&mut admin)
     .await?;
-    sqlx::raw_sql(wamn_catalog::CATALOG_SCHEMA_SQL)
+    sqlx::raw_sql(wamn_provision::CATALOG_SCHEMA_SQL)
         .execute(&mut admin)
         .await?;
     let component = wamn_provision::PlatformComponent::ApplyPackage;

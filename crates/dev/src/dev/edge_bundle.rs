@@ -1,19 +1,20 @@
 //! Write edge bundles from built packages and admitted component bytes.
 
-use wamn_catalog::edge_bundle::local_component_path;
+use wamn_edge_document::edge_bundle::local_component_path;
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 
 use anyhow::{Context as _, ensure};
-use wamn_catalog::AdmittedComponent;
-use wamn_catalog::edge_bundle::{
+use wamn_component_policy::AdmittedComponent;
+use wamn_digest::bytes_sha256;
+use wamn_edge_document::edge_bundle::{
     BUNDLE_FILE_NAME, BUNDLE_FORMAT, COMPONENTS_FILE_NAME, EdgeBundle, EdgeGrants,
     GRANTS_FILE_NAME, INGRESS_FILE_NAME,
 };
-use wamn_catalog::{PackageCoordinate, RELEASE_MANIFEST_FILE_NAME, ServingManifest};
-use wamn_digest::bytes_sha256;
+use wamn_edge_document::{RELEASE_MANIFEST_FILE_NAME, ServingManifest};
 use wamn_identity_protocol::ADMIN_ROLE;
+use wamn_package::PackageCoordinate;
 use wamn_registry::project_env_key;
 
 use wamn_publish::component_admission::{AdmitComponentRequest, admit_component};
@@ -44,7 +45,7 @@ impl EdgeTarget<'_> {
 /// It admits the bytes and assembles the release without a database or session.
 pub fn write_package(
     package: &Path,
-    component: &wamn_catalog::canonical_name::CanonicalName,
+    component: &wamn_package::canonical_name::CanonicalName,
     bytes: &Path,
     ingress: &Path,
     target: &EdgeTarget<'_>,

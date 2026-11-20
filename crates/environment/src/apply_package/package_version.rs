@@ -1,9 +1,9 @@
 use sqlx::Row as _;
-use wamn_catalog::package_schema::AppliedPackage;
+use wamn_package::package_schema::AppliedPackage;
 
 pub(super) async fn record_package_schema(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    coordinate: &wamn_catalog::PackageCoordinate,
+    coordinate: &wamn_package::PackageCoordinate,
     artifact_digest: Option<&wamn_digest::Digest>,
 ) -> anyhow::Result<bool> {
     Ok(sqlx::query("INSERT INTO catalog.packages (package_id, package_version, artifact_digest) \
@@ -20,7 +20,7 @@ pub const LOCK_PACKAGE_SQL: &str = "SELECT pg_advisory_xact_lock(hashtextextende
 
 pub async fn load_applied_package(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    package_id: &wamn_catalog::PackageName,
+    package_id: &wamn_package::PackageName,
 ) -> anyhow::Result<Option<AppliedPackage>> {
     read_package(
         tx,
@@ -32,7 +32,7 @@ pub async fn load_applied_package(
 
 pub async fn read_applied_package(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    package_id: &wamn_catalog::PackageName,
+    package_id: &wamn_package::PackageName,
 ) -> anyhow::Result<Option<AppliedPackage>> {
     read_package(
         tx,
@@ -44,7 +44,7 @@ pub async fn read_applied_package(
 
 async fn read_package(
     tx: &mut sqlx::PgConnection,
-    package_id: &wamn_catalog::PackageName,
+    package_id: &wamn_package::PackageName,
     query: &str,
 ) -> anyhow::Result<Option<AppliedPackage>> {
     let Some(row) = sqlx::query(sqlx::AssertSqlSafe(query.to_owned()))
@@ -55,9 +55,9 @@ async fn read_package(
         return Ok(None);
     };
     Ok(Some(AppliedPackage {
-        coordinate: wamn_catalog::PackageCoordinate::new(
+        coordinate: wamn_package::PackageCoordinate::new(
             package_id.clone(),
-            row.try_get::<wamn_catalog::package_version::PackageVersion, _>(1)?,
+            row.try_get::<wamn_package::package_version::PackageVersion, _>(1)?,
         )?,
         artifact_digest: row.get(0),
     }))
@@ -67,7 +67,7 @@ async fn read_package(
 pub async fn read_package_migrations(
     connection: &mut sqlx::PgConnection,
     project_env_key: &wamn_registry::ProjectEnvKey,
-    package_id: &wamn_catalog::PackageName,
+    package_id: &wamn_package::PackageName,
 ) -> anyhow::Result<Vec<sqlx::migrate::AppliedMigration>> {
     use sqlx::migrate::Migrate as _;
     let table = wamn_provision::migration::history_table(project_env_key, package_id);

@@ -16,10 +16,9 @@ use wamn_scalar::SqlValueType;
 use super::rust_source::{insert_rust, rust_ident};
 use super::{AccessorBind, WamnApi, query_variants, sql};
 use crate::key::KeyType;
-use wamn_catalog::manifest::ManifestError as GenerateError;
-use wamn_catalog::manifest::{
-    CrudAction, FilterMatch, OperationDeclaration, PackageManifest, rust_type_identifier,
-};
+use wamn_component_policy::PackageManifest;
+use wamn_package::manifest::ManifestError as GenerateError;
+use wamn_package::manifest::{CrudAction, FilterMatch, OperationDeclaration, rust_type_identifier};
 
 const HEADER: &str = "// @generated from the package manifest and migration IR; do not edit.\n\n";
 
@@ -184,7 +183,7 @@ fn key_request(
     }
 }
 
-type SourceName = wamn_catalog::manifest::source_name::SourceName;
+type SourceName = wamn_package::manifest::source_name::SourceName;
 
 fn emit_get(
     model: &SourceName,
@@ -449,10 +448,10 @@ fn emit_delete(
     }
 }
 
-fn direction_tokens(direction: wamn_catalog::manifest::CursorDirection) -> TokenStream {
+fn direction_tokens(direction: wamn_package::manifest::CursorDirection) -> TokenStream {
     match direction {
-        wamn_catalog::manifest::CursorDirection::Ascending => quote!(Direction::Ascending),
-        wamn_catalog::manifest::CursorDirection::Descending => quote!(Direction::Descending),
+        wamn_package::manifest::CursorDirection::Ascending => quote!(Direction::Ascending),
+        wamn_package::manifest::CursorDirection::Descending => quote!(Direction::Descending),
     }
 }
 
@@ -730,7 +729,7 @@ pub(super) fn emit_package_data(
         quote!(#[doc = #doc] pub mod #name { include!(#path); })
     });
     let feeds = feeds.map(|(name, _)| {
-        let stem = wamn_catalog::manifest::custom_artifact_stem(name);
+        let stem = wamn_package::manifest::custom_artifact_stem(name);
         let doc = format!(" The authored `{name}` feed.");
         let path = format!("{stem}.rs");
         let module = rust_ident(&stem);

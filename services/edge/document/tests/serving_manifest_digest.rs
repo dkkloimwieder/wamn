@@ -3,10 +3,13 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::json;
-use wamn_catalog::{
-    AdmittedComponentOperation, AttachmentAuthPolicy, AttachmentTarget, AttachmentType,
-    CatalogIdentityError, ComponentDescriptor, OperationType, PackageCoordinate, ServingAttachment,
-    ServingComponent, ServingManifest, ServingRelease, ServingRoute, parse_attachment_auth_policy,
+use wamn_component_policy::{AdmittedComponentOperation, ComponentDescriptor};
+use wamn_edge_document::{
+    CatalogIdentityError, ServingComponent, ServingManifest, ServingRelease, ServingRoute,
+};
+use wamn_package::{
+    AttachmentAuthPolicy, AttachmentTarget, AttachmentType, OperationType, PackageCoordinate,
+    ServingAttachment, parse_attachment_auth_policy,
 };
 
 mod format_three_vector {
@@ -255,7 +258,7 @@ fn malformed_authentication_lists_are_refused_by_parser_and_release_reader() {
 /// namespace produced the reserved id `wamn`, which is not a manifest any
 /// publisher can publish.
 fn operation_provider_manifest(
-    package: &wamn_catalog::PackageName,
+    package: &wamn_package::PackageName,
     export: &str,
     version: &str,
 ) -> ServingManifest {

@@ -4,14 +4,14 @@ use anyhow::Context as _;
 /// The sequence defaults of `packages`, each under the application that
 /// holds the declaring package in `environment.k`.
 pub fn sequence_defaults<'a>(
-    applications: &wamn_catalog::EnvironmentApplications,
+    applications: &wamn_registry::EnvironmentApplications,
     packages: impl IntoIterator<Item = &'a PackageManifest>,
 ) -> anyhow::Result<Vec<crate::configuration::SequenceDefault>> {
     let mut defaults = BTreeMap::new();
     for package in packages {
         let id = &package.package.id;
         let application =
-            wamn_catalog::application_for_package(applications, id).with_context(|| {
+            wamn_registry::application_for_package(applications, id).with_context(|| {
                 format!("package {id} must belong to exactly one declared application")
             })?;
         for (name, declaration) in &package.sequences {
@@ -46,7 +46,7 @@ pub fn sequence_defaults<'a>(
 ///
 /// When the packages extend one another in a cycle.
 pub fn apply_order(
-    packages: &[(&wamn_catalog::PackageName, Vec<&wamn_catalog::PackageName>)],
+    packages: &[(&wamn_package::PackageName, Vec<&wamn_package::PackageName>)],
 ) -> anyhow::Result<Vec<usize>> {
     let mut order = Vec::with_capacity(packages.len());
     while order.len() < packages.len() {

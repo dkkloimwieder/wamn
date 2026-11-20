@@ -33,7 +33,7 @@ pub async fn prepare(pool: &sqlx::PgPool, family: WorkloadRoleFamily) -> Fixture
             for batch in [
                 &sql::ensure_app_acl_role_sql(),
                 sql::ensure_project_roles_sql(),
-                wamn_catalog::CATALOG_SCHEMA_SQL,
+                wamn_provision::CATALOG_SCHEMA_SQL,
                 include_str!("../../../../deploy/sql/run-state.sql"),
                 include_str!("../../../../deploy/sql/run-queue.sql"),
                 wamn_provision::APP_SCHEMA_SQL,

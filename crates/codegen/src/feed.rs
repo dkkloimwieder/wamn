@@ -6,14 +6,17 @@ use wamn_scalar::SqlValueType;
 
 use pg_query::NodeEnum;
 use pg_query::protobuf::{JoinType, Node, RangeVar, SelectStmt, SetOperation};
-use wamn_catalog::schema::ForeignKeyColumn;
+use wamn_package::schema::ForeignKeyColumn;
 use wamn_schema_introspection::ir::{CatalogIr, ConstraintType, Table, View, ViewColumnOrigin};
 
 use crate::AuthoredSql;
-use wamn_catalog::manifest::{CustomOperationDeclaration, PackageManifest};
-use wamn_catalog::manifest::{ManifestError as GenerateError, ManifestErrorType as GenerateErrorType};
+use wamn_component_policy::PackageManifest;
+use wamn_package::manifest::CustomOperationDeclaration;
+use wamn_package::manifest::{
+    ManifestError as GenerateError, ManifestErrorType as GenerateErrorType,
+};
 
-use wamn_catalog::feed::{FeedDirection, FeedLink, FeedSource, FeedTable};
+use wamn_package::feed::{FeedDirection, FeedLink, FeedSource, FeedTable};
 
 #[derive(Debug)]
 struct JoinColumn {
@@ -30,7 +33,7 @@ fn table_ref(table: &Table) -> FeedTable {
 }
 
 fn refusal(
-    operation: &wamn_catalog::local_operation::LocalOperation,
+    operation: &wamn_package::local_operation::LocalOperation,
     reason: impl std::fmt::Display,
 ) -> GenerateError {
     GenerateError::new(
@@ -41,7 +44,7 @@ fn refusal(
 
 fn parse(
     sql: &str,
-    operation: &wamn_catalog::local_operation::LocalOperation,
+    operation: &wamn_package::local_operation::LocalOperation,
 ) -> Result<pg_query::ParseResult, GenerateError> {
     pg_query::parse(sql).map_err(|error| refusal(operation, format!("cannot read SELECT: {error}")))
 }
@@ -115,7 +118,7 @@ pub(crate) fn derive(
     catalog: &CatalogIr,
     manifest: &PackageManifest,
     sources: &[AuthoredSql<'_>],
-    name: &wamn_catalog::local_operation::LocalOperation,
+    name: &wamn_package::local_operation::LocalOperation,
     operation: &CustomOperationDeclaration,
 ) -> Result<Option<FeedSource>, GenerateError> {
     if operation.feed != Some(true) {
@@ -159,7 +162,7 @@ pub(crate) fn derive(
         ));
     }
     if let Some(result) = &operation.result {
-        if result.class != wamn_catalog::manifest::ResultClass::BoundedList {
+        if result.class != wamn_package::manifest::ResultClass::BoundedList {
             return Err(fail("a feeding read needs a bounded_list result"));
         }
         for field in &result.fields {
@@ -632,7 +635,7 @@ fn view_from<'a>(
 /// Warn about missing indexes on base columns used by a feed's links.
 pub(crate) fn missing_indexes(
     catalog: &CatalogIr,
-    name: &wamn_catalog::local_operation::LocalOperation,
+    name: &wamn_package::local_operation::LocalOperation,
     source: &FeedSource,
 ) -> Vec<String> {
     let mut missing = BTreeSet::new();
@@ -839,7 +842,7 @@ mod tests {
             .get_mut("load")
             .unwrap()
             .row
-            .push(wamn_catalog::manifest::StaticSqlValueDeclaration {
+            .push(wamn_package::manifest::StaticSqlValueDeclaration {
                 name: "row_version".parse().unwrap(),
                 ty: wamn_scalar::SqlValueType::Int64,
                 nullable: false,

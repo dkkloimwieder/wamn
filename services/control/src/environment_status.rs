@@ -108,7 +108,7 @@ pub async fn applications(
     org: &wamn_registry::OrgId,
     project: &wamn_registry::ProjectId,
     env: &wamn_registry::EnvName,
-) -> anyhow::Result<Vec<wamn_catalog::application_config::ApplicationConfig>> {
+) -> anyhow::Result<Vec<wamn_engine::application_config::ApplicationConfig>> {
     let api = KubernetesApi::in_cluster()?;
     let coordinate = wamn_registry::name::host_status(org, project, env);
     let workloads = api
@@ -131,11 +131,11 @@ pub async fn applications(
             .iter()
             .find_map(|component| {
                 component["localResources"]["config"]
-                    [wamn_catalog::application_config::APPLICATION_CONFIG]
+                    [wamn_engine::application_config::APPLICATION_CONFIG]
                     .as_str()
             })
             .context("application workload has no wamn.application")?;
-        let application: wamn_catalog::application_config::ApplicationConfig =
+        let application: wamn_engine::application_config::ApplicationConfig =
             serde_json::from_str(config)?;
         anyhow::ensure!(
             &application.org == org

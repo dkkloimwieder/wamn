@@ -14,14 +14,15 @@ pub mod source_name;
 
 use self::source_name::SourceName;
 use crate::local_operation::LocalOperation;
+use crate::OperationType;
 pub use manifest_error::{ManifestError, ManifestErrorType};
 
 pub const CONTROL_OWNED_RELATION_TABLES: [&str; 2] = ["wamn_entities", "wamn_cdc_exclusions"];
 
 /// Strict package-owned behavior declaration parsed from `wamn.json`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct PackageManifest {
+#[serde(deny_unknown_fields, bound(deserialize = "D: Deserialize<'de>"))]
+pub struct PackageManifest<D> {
     pub package: PackageIdentity,
     /// The package name the generated TypeScript client carries.
     ///
@@ -56,7 +57,7 @@ pub struct PackageManifest {
     pub compiled_operations: BTreeMap<LocalOperation, crate::OperationDescription>,
     /// Deployment facts written by the build and completed at publication.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub deploy: Option<deploy::CompiledDeploy>,
+    pub deploy: Option<deploy::CompiledDeploy<D>>,
 }
 
 /// An external connection required by a package, without deployment values.
@@ -113,8 +114,11 @@ pub struct CustomOperationDeclaration {
     /// Whether a refusal leaves later entries for the row free to proceed.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub append_only: bool,
-    #[serde(rename = "type")]
-    pub type_: CustomOperationType,
+    #[serde(
+        rename = "type",
+        deserialize_with = "deserialize_custom_operation_type"
+    )]
+    pub type_: OperationType,
     pub visibility: OperationVisibility,
     #[serde(default)]
     pub permission: Option<LocalOperation>,
@@ -153,23 +157,26 @@ pub struct CustomOperationDeclaration {
     pub lists: Option<ListDeclaration>,
 }
 
-/// Closed non-CRUD operation types admitted by the package manifest.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum CustomOperationType {
-    Projection,
-    Command,
-    EventHandler,
+fn deserialize_custom_operation_type<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<OperationType, D::Error> {
+    const TYPES: [OperationType; 3] = [
+        OperationType::Projection,
+        OperationType::Command,
+        OperationType::EventHandler,
+    ];
+    const NAMES: &[&str] = &[TYPES[0].as_str(), TYPES[1].as_str(), TYPES[2].as_str()];
+    let value = String::deserialize(deserializer)?;
+    TYPES
+        .into_iter()
+        .find(|type_| type_.as_str() == value)
+        .ok_or_else(|| serde::de::Error::unknown_variant(&value, NAMES))
 }
 
 impl CustomOperationDeclaration {
     /// Closed authored operation type.
     pub const fn operation_type(&self) -> &'static str {
-        match self.type_ {
-            CustomOperationType::Projection => "projection",
-            CustomOperationType::Command => "command",
-            CustomOperationType::EventHandler => "event_handler",
-        }
+        self.type_.as_str()
     }
 
     /// Route visibility declared for this operation.
@@ -190,7 +197,7 @@ impl CustomOperationDeclaration {
     /// Whether this operation's export works in the host transaction itself:
     /// a command with SQL of its own (`docs/history/host-transaction.md` 4.1).
     pub fn has_host_transaction(&self) -> bool {
-        self.type_ == CustomOperationType::Command && !self.statements.is_empty()
+        self.type_ == OperationType::Command && !self.statements.is_empty()
     }
 
     /// Whether the host begins the request element transaction of this operation: a
@@ -198,7 +205,7 @@ impl CustomOperationDeclaration {
     /// without SQL of its own. A command without SQL works in it through the
     /// members it calls.
     pub fn begins_host_transaction(&self) -> bool {
-        self.type_ == CustomOperationType::Command
+        self.type_ == OperationType::Command
             && self.transaction == Some(CommandTransaction::ExplicitPerInput)
     }
 
@@ -403,7 +410,7 @@ pub struct ListDeclaration {
     /// One field is spelled as a string, and several as a list.
     #[serde(with = "row_key")]
     pub key_field: Vec<String>,
-    /// Result field that labels the record for a person.
+    /// Result field that labels the record in the interface.
     ///
     /// If absent, clients show the declared record key.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -440,7 +447,7 @@ pub mod row_key {
 
 /// Authored field text and selection for generated screens.
 ///
-/// Text for a person, never a name: it changes no path, no wire spelling and
+/// Display text, never a name: it changes no path, no wire spelling and
 /// no generated identifier. An absent member writes nothing, so a package that
 /// authors none keeps the bytes it has today.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -582,7 +589,7 @@ pub enum StaticSqlFetch {
     BoundedList,
 }
 
-impl PackageManifest {
+impl<D> PackageManifest<D> {
     /// Captured entities paired with the package that owns each relation.
     pub fn entity_pairs(&self) -> impl Iterator<Item = (&crate::PackageName, &str)> {
         self.models
@@ -609,7 +616,7 @@ impl PackageManifest {
                     .iter()
                     .filter(|(_, operation)| {
                         operation.begins_host_transaction()
-                            || (operation.type_ == CustomOperationType::EventHandler
+                            || (operation.type_ == OperationType::EventHandler
                                 && !operation.statements.is_empty())
                     })
                     .map(|(name, _)| Ok(name.clone())),
@@ -619,7 +626,10 @@ impl PackageManifest {
     }
 
     /// Decode a compiled document. Authored input is checked by `from_authored_slice`.
-    pub fn from_slice(bytes: &[u8]) -> Result<Self, ManifestError> {
+    pub fn from_slice(bytes: &[u8]) -> Result<Self, ManifestError>
+    where
+        D: serde::de::DeserializeOwned,
+    {
         let manifest = serde_json::from_slice(bytes).map_err(|source| {
             ManifestError::with_source(
                 ManifestErrorType::InvalidManifest,
@@ -632,7 +642,10 @@ impl PackageManifest {
     }
 
     /// Decode authored input before defaults erase derived-member presence.
-    pub fn parse_authored(bytes: &[u8]) -> Result<Self, ManifestError> {
+    pub fn parse_authored(bytes: &[u8]) -> Result<Self, ManifestError>
+    where
+        D: serde::de::DeserializeOwned,
+    {
         let decode = |source| {
             ManifestError::with_source(
                 ManifestErrorType::InvalidManifest,
@@ -646,7 +659,10 @@ impl PackageManifest {
     }
 
     /// Decode and validate an authored document once at the compiler boundary.
-    pub fn from_authored_slice(bytes: &[u8]) -> Result<Self, ManifestError> {
+    pub fn from_authored_slice(bytes: &[u8]) -> Result<Self, ManifestError>
+    where
+        D: serde::de::DeserializeOwned,
+    {
         let manifest = Self::parse_authored(bytes)?;
         manifest.refuse_authored_stamps()?;
         manifest.validate()?;
@@ -819,7 +835,7 @@ impl PackageManifest {
 
     /// Whether the package declares no SQL, owned relations or base dependencies.
     /// Commands can be stateless or use external claims. The package needs no
-    /// application schema, and an edge box can run its component.
+    /// application schema, and an edge device can run its component.
     pub fn declares_no_sql(&self) -> bool {
         self.models.is_empty()
             && self.internal_relations.is_empty()
@@ -870,7 +886,7 @@ impl PackageManifest {
 /// every membership explicitly. Empty, unknown, unused, or requirement-
 /// identical component groups refuse.
 pub fn validate_operation_vocabulary(
-    manifest: &PackageManifest,
+    manifest: &PackageManifest<impl Sized>,
 ) -> Result<BTreeSet<LocalOperation>, ManifestError> {
     validate_base_dependencies(manifest)?;
     validate_internal_relation_vocabulary(manifest)?;
@@ -931,7 +947,7 @@ pub fn validate_operation_vocabulary(
 
 /// Refuse a record-history declaration whose shape is invalid without a catalog.
 fn validate_audit_log(
-    manifest: &PackageManifest,
+    manifest: &PackageManifest<impl Sized>,
     model_name: &crate::manifest::source_name::SourceName,
     model: &ModelDeclaration,
 ) -> Result<(), ManifestError> {
@@ -998,7 +1014,7 @@ fn validate_audit_log(
 /// SQL deletes rows. Only the relation owner declares either one. An overlay
 /// package cannot delete a base row.
 fn validate_delete_mode(
-    manifest: &PackageManifest,
+    manifest: &PackageManifest<impl Sized>,
     model_name: &crate::manifest::source_name::SourceName,
     model: &ModelDeclaration,
 ) -> Result<(), ManifestError> {
@@ -1026,7 +1042,9 @@ fn validate_delete_mode(
     Ok(())
 }
 
-fn validate_internal_relation_vocabulary(manifest: &PackageManifest) -> Result<(), ManifestError> {
+fn validate_internal_relation_vocabulary(
+    manifest: &PackageManifest<impl Sized>,
+) -> Result<(), ManifestError> {
     let mut coordinates = BTreeMap::<(SourceName, SourceName), String>::new();
     for (model_id, model) in &manifest.models {
         if CONTROL_OWNED_RELATION_TABLES.contains(&model.table.as_str()) {
@@ -1163,7 +1181,7 @@ fn validate_routes(routes: &RoutesDeclaration) -> Result<(), ManifestError> {
     Ok(())
 }
 
-fn validate_data_change(manifest: &PackageManifest) -> Result<(), ManifestError> {
+fn validate_data_change(manifest: &PackageManifest<impl Sized>) -> Result<(), ManifestError> {
     for (name, declaration) in &manifest.components {
         if let Some(handler) = &declaration.data_change {
             for (model, ops) in &handler.models {
@@ -1193,7 +1211,7 @@ fn validate_data_change(manifest: &PackageManifest) -> Result<(), ManifestError>
 }
 
 fn validate_component_groups(
-    manifest: &PackageManifest,
+    manifest: &PackageManifest<impl Sized>,
     component_by_operation: &BTreeMap<LocalOperation, Option<&SourceName>>,
 ) -> Result<(), ManifestError> {
     if manifest.components.is_empty() {
@@ -1260,12 +1278,12 @@ fn validate_component_groups(
 }
 
 fn validate_custom_operation(
-    manifest: &PackageManifest,
+    manifest: &PackageManifest<impl Sized>,
     operation_name: &LocalOperation,
     operation: &CustomOperationDeclaration,
 ) -> Result<(), ManifestError> {
     if operation.feed == Some(true)
-        && (operation.type_ != CustomOperationType::Projection
+        && (operation.type_ != OperationType::Projection
             || operation
                 .lists
                 .as_ref()
@@ -1347,7 +1365,7 @@ fn validate_signed_reads(
 }
 
 fn custom_operation_uses_sql(
-    manifest: &PackageManifest,
+    manifest: &PackageManifest<impl Sized>,
     name: &LocalOperation,
     operation: &CustomOperationDeclaration,
 ) -> bool {
@@ -1363,12 +1381,12 @@ fn custom_operation_uses_sql(
 }
 
 fn validate_custom_operation_type(
-    manifest: &PackageManifest,
+    manifest: &PackageManifest<impl Sized>,
     operation_name: &LocalOperation,
     operation: &CustomOperationDeclaration,
 ) -> Result<(), ManifestError> {
     match operation.type_ {
-        CustomOperationType::Projection => {
+        OperationType::Projection => {
             if operation.result.is_none() {
                 return Err(ManifestError::new(
                     ManifestErrorType::InvalidOperation,
@@ -1402,7 +1420,7 @@ fn validate_custom_operation_type(
                 ));
             }
         }
-        CustomOperationType::Command => {
+        OperationType::Command => {
             if operation.result.is_none() {
                 return Err(ManifestError::new(
                     ManifestErrorType::InvalidOperation,
@@ -1449,7 +1467,7 @@ fn validate_custom_operation_type(
                 }
             }
         }
-        CustomOperationType::EventHandler => {
+        OperationType::EventHandler => {
             if operation.visibility != OperationVisibility::Private || operation.result.is_some() {
                 return Err(ManifestError::new(
                     ManifestErrorType::InvalidOperation,
@@ -1459,6 +1477,16 @@ fn validate_custom_operation_type(
                 ));
             }
             refuse_command_only_fields(operation_name, operation)?;
+        }
+        OperationType::Get
+        | OperationType::Query
+        | OperationType::Create
+        | OperationType::Update
+        | OperationType::Delete => {
+            return Err(ManifestError::new(
+                ManifestErrorType::InvalidOperation,
+                format!("{operation_name} must declare projection, command, or event_handler"),
+            ));
         }
     }
     Ok(())
@@ -1920,7 +1948,7 @@ fn validate_unconstrained_detail_keys(
 }
 
 fn validate_static_sql_declarations(
-    manifest: &PackageManifest,
+    manifest: &PackageManifest<impl Sized>,
     operation_name: &LocalOperation,
     operation: &CustomOperationDeclaration,
 ) -> Result<(), ManifestError> {
@@ -1946,7 +1974,7 @@ fn validate_static_sql_declarations(
         ));
     }
     if !has_connection && !has_relations && !has_statements {
-        if operation.type_ == CustomOperationType::Command
+        if operation.type_ == OperationType::Command
             && (matching_dependencies == 1
                 || operation.idempotent_by == Some(CommandIdempotence::Stateless)
                 || operation.claims())
@@ -2250,7 +2278,7 @@ pub fn resolve_operation_reference(
     Ok(sealed)
 }
 
-fn validate_base_dependencies(manifest: &PackageManifest) -> Result<(), ManifestError> {
+fn validate_base_dependencies(manifest: &PackageManifest<impl Sized>) -> Result<(), ManifestError> {
     let mut packages = BTreeSet::new();
     for (alias, requirement) in &manifest.base_dependencies {
         if requirement.package == manifest.package.id {
@@ -2350,12 +2378,13 @@ mod tests {
                 "errors": ["invalid_input", "permission_denied", "internal_error"]
             }}
         });
-        super::PackageManifest::from_authored_slice(&serde_json::to_vec(&document).unwrap())
+        super::PackageManifest::<()>::from_authored_slice(&serde_json::to_vec(&document).unwrap())
             .unwrap();
         document["custom_operations"]["file.read"]["visibility"] = serde_json::json!("private");
-        let error =
-            super::PackageManifest::from_authored_slice(&serde_json::to_vec(&document).unwrap())
-                .unwrap_err();
+        let error = super::PackageManifest::<()>::from_authored_slice(
+            &serde_json::to_vec(&document).unwrap(),
+        )
+        .unwrap_err();
         assert_eq!(
             error.error_type(),
             super::ManifestErrorType::InvalidOperation
@@ -2378,7 +2407,9 @@ mod tests {
             }}
         });
         let parse = |document: &serde_json::Value| {
-            super::PackageManifest::from_authored_slice(&serde_json::to_vec(document).unwrap())
+            super::PackageManifest::<()>::from_authored_slice(
+                &serde_json::to_vec(document).unwrap(),
+            )
         };
         let manifest = parse(&document).unwrap();
         let connections = manifest
@@ -2458,7 +2489,7 @@ impl OperationOwners {
     }
 }
 
-impl PackageManifest {
+impl<D> PackageManifest<D> {
     /// The owners of the operation references of this package.
     pub fn operation_owners(&self) -> OperationOwners {
         OperationOwners {
@@ -2544,7 +2575,7 @@ pub struct ModelDeclaration {
 pub enum Target {
     /// The cloud cluster.
     Cloud,
-    /// A local box.
+    /// A local device.
     Local,
 }
 
@@ -3043,7 +3074,7 @@ fn validate_count_text(
 /// an edit or a child table finds its row by it. A row position is no key,
 /// because the same row moves when the list changes.
 fn validate_lists(
-    manifest: &PackageManifest,
+    manifest: &PackageManifest<impl Sized>,
     operation_name: &LocalOperation,
     operation: &CustomOperationDeclaration,
 ) -> Result<(), ManifestError> {
@@ -3053,7 +3084,7 @@ fn validate_lists(
             message,
         ))
     };
-    let table = operation.type_ == CustomOperationType::Projection
+    let table = operation.type_ == OperationType::Projection
         && operation.result.as_ref().is_some_and(|result| {
             matches!(result.class, ResultClass::BoundedList | ResultClass::Page)
         });

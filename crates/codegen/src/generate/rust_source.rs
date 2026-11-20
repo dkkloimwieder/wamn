@@ -2,7 +2,7 @@
 
 use proc_macro2::{Ident, TokenStream};
 use quote::format_ident;
-use wamn_catalog::manifest::binding_identifier;
+use wamn_package::manifest::binding_identifier;
 
 use super::{BTreeMap, GenerateError, GenerateErrorType, insert_bytes};
 

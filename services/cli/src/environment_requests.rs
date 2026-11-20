@@ -14,7 +14,7 @@ pub enum Command {
 pub struct Apply {
     pub file: PathBuf,
     #[arg(long)]
-    pub application: Option<wamn_catalog::ApplicationName>,
+    pub application: Option<wamn_registry::ApplicationName>,
     #[arg(long)]
     pub disposable: bool,
 }

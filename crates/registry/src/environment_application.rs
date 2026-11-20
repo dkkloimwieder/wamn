@@ -152,7 +152,7 @@ mod name_tests {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ApplicationDefinition {
-    pub packages: BTreeSet<crate::PackageName>,
+    pub packages: BTreeSet<wamn_package::PackageName>,
     /// Package connection name to a project integration name.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub connections: BTreeMap<String, String>,
@@ -164,7 +164,7 @@ pub type EnvironmentApplications = BTreeMap<crate::ApplicationName, ApplicationD
 /// The sole application that holds `package`, or `None` for an absent or ambiguous owner.
 pub fn application_for_package<'a>(
     applications: &'a EnvironmentApplications,
-    package: &crate::PackageName,
+    package: &wamn_package::PackageName,
 ) -> Option<&'a crate::ApplicationName> {
     let mut owners = applications
         .iter()

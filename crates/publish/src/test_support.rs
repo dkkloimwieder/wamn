@@ -18,17 +18,19 @@ pub fn copy_schema_fixture(root: &std::path::Path) {
 }
 
 use std::collections::BTreeMap;
-use wamn_catalog::{AdmittedComponent, AdmittedComponentOperation, ComponentPackageCoordinate};
+use wamn_component_policy::{
+    AdmittedComponent, AdmittedComponentOperation, ComponentPackageCoordinate,
+};
 
 pub const DIGEST: &str = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
 pub fn closure_component(
     component: &str,
-    registered_operation: Option<&wamn_catalog::registered_operation::RegisteredOperation>,
+    registered_operation: Option<&wamn_package::registered_operation::RegisteredOperation>,
 ) -> AdmittedComponent {
     let operation = registered_operation.map_or(
         "run",
-        wamn_catalog::registered_operation::RegisteredOperation::as_str,
+        wamn_package::registered_operation::RegisteredOperation::as_str,
     );
     AdmittedComponent {
         data_change: false,
@@ -59,7 +61,7 @@ pub fn closure_component(
     }
 }
 
-pub fn source_manifest() -> wamn_catalog::manifest::PackageManifest {
+pub fn source_manifest() -> wamn_component_policy::PackageManifest {
     serde_json::from_str(include_str!(
         "../tests/fixtures/component_package/generated/wamn.json"
     ))

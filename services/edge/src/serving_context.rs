@@ -1,7 +1,8 @@
 //! Manifest context used by the edge runtime and test fixtures.
 
-use crate::{AdmittedComponent, ServingManifest};
 use std::sync::Arc;
+use wamn_component_policy::{AdmittedComponent, verify_stored_effect_projection};
+use wamn_edge_document::ServingManifest;
 
 /// The project, environment and application a host serves, from the
 /// host configuration.
@@ -18,7 +19,7 @@ pub struct ReleaseTarget {
     pub environment: wamn_registry::EnvName,
     /// The single application name and its packages
     /// (docs/architecture/execution.md#workflows).
-    pub applications: crate::EnvironmentApplications,
+    pub applications: wamn_registry::EnvironmentApplications,
 }
 
 impl ReleaseTarget {
@@ -30,13 +31,16 @@ impl ReleaseTarget {
         Self {
             project_env_key,
             environment,
-            applications: crate::EnvironmentApplications::new(),
+            applications: wamn_registry::EnvironmentApplications::new(),
         }
     }
 
     /// This target with the targeted application membership.
     #[must_use]
-    pub fn with_applications(mut self, applications: crate::EnvironmentApplications) -> Self {
+    pub fn with_applications(
+        mut self,
+        applications: wamn_registry::EnvironmentApplications,
+    ) -> Self {
         self.applications = applications;
         self
     }
@@ -76,7 +80,7 @@ impl ServingContext {
         }
         let components = manifest.admitted_components(&target.project_env_key)?;
         for component in &components {
-            crate::verify_stored_effect_projection(component)?;
+            verify_stored_effect_projection(component)?;
         }
         let release = CarriedRelease {
             manifest_digest: manifest.digest(),

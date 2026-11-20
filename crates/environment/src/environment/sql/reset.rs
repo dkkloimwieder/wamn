@@ -2,7 +2,7 @@
 
 use anyhow::ensure;
 use sqlx::Connection as _;
-use wamn_catalog::lifecycle_lock::LifecycleLock;
+use wamn_registry::lifecycle_lock::LifecycleLock;
 
 /// Delete migration-owned objects and application state. Callers stop users first.
 pub async fn reset_database(

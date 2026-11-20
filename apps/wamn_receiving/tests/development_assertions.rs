@@ -94,7 +94,9 @@ pub(super) async fn verify_dev_target_package_and_acl_state(
     use sqlx::migrate::Migrate as _;
     for source in sources {
         let directory = wamn_publish::package_source::read_package_directory(source)?;
-        let metadata = wamn_catalog::package_schema::package_metadata(&directory)?;
+        let metadata = wamn_package::package_schema::package_metadata::<
+            wamn_component_policy::ComponentDescriptor,
+        >(&directory)?;
         let expected = wamn_codegen::migrations::migrator(
             &wamn_publish::package_source::migration_root(source),
         )

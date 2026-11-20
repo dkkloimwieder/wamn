@@ -3,7 +3,7 @@
 use super::Platform;
 use anyhow::Context as _;
 use std::time::{Duration, Instant};
-use wamn_catalog::ApplicationName;
+use wamn_registry::ApplicationName;
 use wamn_registry::EnvName;
 
 /// One application run that still needs a host.

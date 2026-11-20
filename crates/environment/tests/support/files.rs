@@ -52,7 +52,7 @@ pub async fn fixture(name: &str) -> anyhow::Result<Fixture> {
     .execute(&mut observer)
     .await
     .map(drop)?;
-    sqlx::raw_sql(wamn_catalog::CATALOG_SCHEMA_SQL)
+    sqlx::raw_sql(wamn_provision::CATALOG_SCHEMA_SQL)
         .execute(&mut observer)
         .await
         .map(drop)?;

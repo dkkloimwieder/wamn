@@ -571,7 +571,7 @@ impl Constraint {
     }
 }
 
-use wamn_catalog::schema::ForeignKeyColumn;
+use wamn_package::schema::ForeignKeyColumn;
 
 /// PostgreSQL foreign-key action.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]

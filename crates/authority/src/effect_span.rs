@@ -136,8 +136,8 @@ pub struct EffectWiring<'a> {
 /// The typed identity written to the published `wamn.package_id` trace field.
 #[derive(Clone, Copy, Debug)]
 pub enum EffectSource<'a> {
-    Package(&'a wamn_catalog::PackageName),
-    Application(&'a wamn_catalog::ApplicationName),
+    Package(&'a wamn_package::PackageName),
+    Application(&'a wamn_registry::ApplicationName),
 }
 
 impl<'a> EffectSource<'a> {

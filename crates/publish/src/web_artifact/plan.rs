@@ -6,7 +6,7 @@ pub(super) fn web_manifest(
     digest: wamn_digest::Digest,
     version: String,
 ) -> anyhow::Result<WebManifest> {
-    let manifest = wamn_catalog::manifest::PackageManifest::from_slice(compiled)?;
+    let manifest = wamn_component_policy::PackageManifest::from_slice(compiled)?;
     let client = manifest.client_package.with_context(|| {
         format!(
             "package {}@{} has no client_package and no web artifact",
@@ -16,7 +16,7 @@ pub(super) fn web_manifest(
     Ok(WebManifest {
         client_package: client.name,
         version,
-        package: wamn_catalog::PackageCoordinate::new(
+        package: wamn_package::PackageCoordinate::new(
             manifest.package.id,
             manifest.package.version,
         )?,

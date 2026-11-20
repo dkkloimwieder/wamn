@@ -15,7 +15,7 @@ pub struct RequestHead {
     pub headers: Vec<Header>,
 }
 
-#[path = "../../../crates/catalog/src/http_route_data.rs"]
+#[path = "../../../crates/routes/src/http_route_data.rs"]
 pub mod route_data;
 pub use route_data::RouteDefinition;
 
@@ -453,7 +453,7 @@ mod guest;
 #[cfg(any(target_arch = "wasm32", test))]
 mod entry_response;
 
-#[path = "../../../crates/catalog/src/read_query.rs"]
+#[path = "../../../crates/routes/src/read_query.rs"]
 mod read_query;
 
 #[allow(

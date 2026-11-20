@@ -58,7 +58,7 @@ pub(crate) async fn ensure_live_user_rows(admin_url: &str, principals: &[&str]) 
     for sql in [
         ENSURE_GUEST_ACL_ROLE_SQL,
         wamn_provision::sql::ensure_project_roles_sql(),
-        wamn_catalog::CATALOG_SCHEMA_SQL,
+        wamn_provision::CATALOG_SCHEMA_SQL,
         wamn_provision::APP_SCHEMA_SQL,
     ] {
         sqlx::raw_sql(sqlx::AssertSqlSafe(sql))
@@ -221,7 +221,7 @@ async fn user_operation_permissions_reuse_only_the_callable_http_authority() {
     ));
     let database = Arc::new(OperationDatabase::new(Arc::clone(&pools)));
     let authorization = Authorization::new(pools, database);
-    let application = wamn_catalog::application_config::ApplicationConfig {
+    let application = wamn_engine::application_config::ApplicationConfig {
         org: "org".parse().unwrap(),
         project: (*DEFAULT_PROJECT).clone(),
         environment: "a".parse().unwrap(),
@@ -817,7 +817,7 @@ async fn live_a_transaction_carries_only_the_application_its_host_bound(pool: sq
     })
     .expect("the plugin builds from the guest generation's url");
     let pg = OperationHost::new(Arc::new(pools), None);
-    let identity = |application: &wamn_catalog::ApplicationName| SessionIdentity {
+    let identity = |application: &wamn_registry::ApplicationName| SessionIdentity {
         project_env_key: Some(PROJECT_ENV_KEY.parse().unwrap()),
         user_id: Some(LIVE_PRINCIPAL.parse().unwrap()),
         application: Some(application.clone()),

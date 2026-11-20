@@ -5,10 +5,10 @@ use anyhow::Context as _;
 pub(super) fn release_values(
     document: &EnvironmentDocument,
     platform_domain: &wamn_registry::platform_domain::PlatformDomain,
-    application: &wamn_catalog::ApplicationName,
+    application: &wamn_registry::ApplicationName,
     package_manifests: &std::collections::BTreeMap<
-        wamn_catalog::PackageName,
-        wamn_catalog::manifest::PackageManifest,
+        wamn_package::PackageName,
+        wamn_component_policy::PackageManifest,
     >,
     package_digest: &wamn_digest::Digest,
     bindings: &[super::super::bindings::Binding],
@@ -21,9 +21,9 @@ pub(super) fn release_values(
     let roles = release_chart::roles(
         package_manifests,
         package_digest,
-        &document.org,
-        &document.project,
-        &document.env,
+        &document.settings.org,
+        &document.settings.project,
+        &document.settings.env,
         application,
         seconds,
         bindings,
@@ -33,15 +33,15 @@ pub(super) fn release_values(
     let selection = &document.applications[application];
     let applications = std::collections::BTreeMap::from([(
         application.to_owned(),
-        wamn_catalog::ApplicationDefinition {
+        wamn_registry::ApplicationDefinition {
             packages: package_manifests.keys().cloned().collect(),
             connections: std::collections::BTreeMap::new(),
         },
     )]);
     let mut rendered = release_chart::values(&ValuesInput {
-        org: document.org.clone(),
-        project: document.project.clone(),
-        env: document.env.clone(),
+        org: document.settings.org.clone(),
+        project: document.settings.project.clone(),
+        env: document.settings.env.clone(),
         manifest_digest: *package_digest,
         route_label: &selection.label,
         platform_domain,

@@ -1,9 +1,9 @@
 //! Submit and run platform SQL, environment, and project operation Jobs.
 
+use wamn_registry::lifecycle_lock::LifecycleLock;
 use anyhow::{Context as _, ensure};
 use serde::Deserialize;
 use serde_json::{Value, json};
-use wamn_catalog::lifecycle_lock::LifecycleLock;
 use wamn_environment::environment::document::EnvironmentFile;
 use wamn_provision::migrations::MigrationDatabase;
 
@@ -21,7 +21,7 @@ enum Request {
         project: wamn_registry::ProjectId,
         env: wamn_registry::EnvName,
         document: Option<Value>,
-        application: Option<wamn_catalog::ApplicationName>,
+        application: Option<wamn_registry::ApplicationName>,
         disposable: Option<bool>,
         #[serde(default)]
         data: bool,
@@ -39,7 +39,7 @@ enum Request {
 impl Execution {
     pub(crate) async fn platform_schema(
         &self,
-        operation: &wamn_catalog::canonical_name::CanonicalName,
+        operation: &wamn_package::canonical_name::CanonicalName,
         payload: &str,
     ) -> anyhow::Result<Value> {
         if operation.as_str() == "platform.operation_status" {
@@ -62,7 +62,7 @@ impl Execution {
 
     async fn operation_job(
         &self,
-        operation: &wamn_catalog::canonical_name::CanonicalName,
+        operation: &wamn_package::canonical_name::CanonicalName,
         payload: &str,
     ) -> anyhow::Result<Value> {
         let api = wamn_kubernetes::kubernetes_api::KubernetesApi::in_cluster()?;
@@ -267,7 +267,7 @@ async fn project_schema(
 impl Execution {
     pub(crate) async fn environment(
         &self,
-        operation: &wamn_catalog::canonical_name::CanonicalName,
+        operation: &wamn_package::canonical_name::CanonicalName,
         payload: &str,
     ) -> anyhow::Result<Value> {
         if operation.as_str().ends_with("operation_status") {
@@ -279,7 +279,7 @@ impl Execution {
             project: wamn_registry::ProjectId,
             env: wamn_registry::EnvName,
             document: Option<Value>,
-            application: Option<wamn_catalog::ApplicationName>,
+            application: Option<wamn_registry::ApplicationName>,
             disposable: Option<bool>,
             #[serde(default)]
             data: bool,

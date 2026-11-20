@@ -105,7 +105,7 @@ const RELEASE_SQL: &str = "DELETE FROM platform.write_log \
 
 /// The write log operation of one operation: the operation without its
 /// `@version`.
-fn log_operation(operation: &wamn_catalog::canonical_name::CanonicalName) -> &str {
+fn log_operation(operation: &wamn_package::canonical_name::CanonicalName) -> &str {
     operation
         .as_str()
         .split_once('@')
@@ -114,7 +114,7 @@ fn log_operation(operation: &wamn_catalog::canonical_name::CanonicalName) -> &st
 
 /// Claim opaque request bytes on either the operation transaction or an autocommit connection.
 async fn claim_with<F, Fut>(
-    operation: &wamn_catalog::canonical_name::CanonicalName,
+    operation: &wamn_package::canonical_name::CanonicalName,
     key: &str,
     request: Vec<u8>,
     run: F,
@@ -177,7 +177,7 @@ fn unfinished(age_seconds: f64) -> Claim {
 
 /// Return whether completing the claim changed an open record.
 async fn complete_with<F, Fut>(
-    operation: &wamn_catalog::canonical_name::CanonicalName,
+    operation: &wamn_package::canonical_name::CanonicalName,
     key: &str,
     result: String,
     run: F,
@@ -202,7 +202,7 @@ impl OperationTransaction {
     /// Claim application-owned bytes without interpreting the hash or result.
     pub async fn begin_opaque(
         &self,
-        operation: &wamn_catalog::canonical_name::CanonicalName,
+        operation: &wamn_package::canonical_name::CanonicalName,
         key: &str,
         request: Vec<u8>,
     ) -> Result<Claim, PgError> {
@@ -222,7 +222,7 @@ impl OperationTransaction {
     /// Stage the application's result text for the existing commit pipeline.
     pub(super) fn finish_opaque(
         &self,
-        operation: &wamn_catalog::canonical_name::CanonicalName,
+        operation: &wamn_package::canonical_name::CanonicalName,
         key: &str,
         result: String,
     ) {
@@ -233,7 +233,7 @@ impl OperationTransaction {
 
     fn stage_finish(
         &self,
-        operation: &wamn_catalog::canonical_name::CanonicalName,
+        operation: &wamn_package::canonical_name::CanonicalName,
         key: &str,
         result: String,
     ) {
@@ -332,7 +332,7 @@ impl WriteLogStore {
     /// Commit a claim before a call that has external effects.
     pub async fn claim(
         &self,
-        operation: &wamn_catalog::canonical_name::CanonicalName,
+        operation: &wamn_package::canonical_name::CanonicalName,
         key: &str,
         request: Vec<u8>,
     ) -> Result<Claim, PgError> {
@@ -346,7 +346,7 @@ impl WriteLogStore {
     /// Record late completion without changing an already completed outcome.
     pub async fn complete(
         &self,
-        operation: &wamn_catalog::canonical_name::CanonicalName,
+        operation: &wamn_package::canonical_name::CanonicalName,
         key: &str,
         result: String,
     ) -> Result<(), PgError> {
@@ -356,7 +356,7 @@ impl WriteLogStore {
 
     async fn complete_claim(
         &self,
-        operation: &wamn_catalog::canonical_name::CanonicalName,
+        operation: &wamn_package::canonical_name::CanonicalName,
         key: &str,
         result: String,
     ) -> Result<bool, PgError> {
@@ -369,7 +369,7 @@ impl WriteLogStore {
     /// Release a refused external claim without recording a result.
     pub async fn release_claim(
         &self,
-        operation: &wamn_catalog::canonical_name::CanonicalName,
+        operation: &wamn_package::canonical_name::CanonicalName,
         key: &str,
     ) -> Result<(), PgError> {
         let changed = self.release_open_claim(operation, key).await?;
@@ -378,7 +378,7 @@ impl WriteLogStore {
 
     async fn release_open_claim(
         &self,
-        operation: &wamn_catalog::canonical_name::CanonicalName,
+        operation: &wamn_package::canonical_name::CanonicalName,
         key: &str,
     ) -> Result<bool, PgError> {
         let rows = self

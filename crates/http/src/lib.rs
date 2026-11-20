@@ -69,7 +69,7 @@ pub const CONNECTION_HTTP_ID: &str = "wamn-connection-http";
 #[derive(Debug)]
 struct ApplicationBinding {
     workload: String,
-    application: wamn_catalog::application_config::ApplicationConfig,
+    application: Arc<wamn_engine::application_config::ApplicationConfig>,
 }
 
 /// HTTP host plugin. Only importing components receive its linker entries.
@@ -118,7 +118,7 @@ impl ConnectionHttp {
                 .as_ref()
                 .and_then(|id| applications.get(id))
                 .ok_or(ConnectionError::Unbound)?;
-            if application.application != *context.release {
+            if application.application != context.release {
                 return Err(ConnectionError::AttestationInvalid);
             }
             invocation
@@ -491,14 +491,9 @@ impl HostPlugin for ConnectionHttp {
             .values()
             .find(|component| component.name() == "ingress")
             .context("ingress missing")?;
-        let application: wamn_catalog::application_config::ApplicationConfig =
-            serde_json::from_str(
-                route
-                    .local_resources()
-                    .config
-                    .get(wamn_catalog::application_config::APPLICATION_CONFIG)
-                    .context("wamn.application missing")?,
-            )?;
+        let application =
+            wamn_engine::application::bound_application_config(&self.scopes, route.id())
+                .context("wamn.application missing")?;
         if application
             .components
             .iter()

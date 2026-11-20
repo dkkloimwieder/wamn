@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use wamn_schema_introspection::ir::{CatalogIr, ConstraintType, Table};
 
-use wamn_catalog::manifest::PackageManifest;
+use wamn_component_policy::PackageManifest;
 
 /// Project installed schema objects to one package and its declared base owners.
 ///
@@ -20,10 +20,10 @@ pub fn project_package_catalog(
     target: &PackageManifest,
     installed: &[PackageManifest],
 ) -> anyhow::Result<CatalogIr> {
-    let mut relation_owners = BTreeMap::<(String, String), wamn_catalog::PackageName>::new();
-    let mut field_owners = BTreeMap::<(String, String, String), wamn_catalog::PackageName>::new();
+    let mut relation_owners = BTreeMap::<(String, String), wamn_package::PackageName>::new();
+    let mut field_owners = BTreeMap::<(String, String, String), wamn_package::PackageName>::new();
     let mut constraint_owners =
-        BTreeMap::<(String, String, String), wamn_catalog::PackageName>::new();
+        BTreeMap::<(String, String, String), wamn_package::PackageName>::new();
     for package in installed {
         for model in package.models.values() {
             relation_owners

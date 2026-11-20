@@ -5,7 +5,7 @@ use oas3::Map;
 use oas3::spec::{ObjectOrReference, ObjectSchema, Schema, SchemaType, SchemaTypeSet};
 use serde::Deserialize;
 use serde_json::{Value, json};
-use wamn_catalog::{HostRouteSet, host_route_package, host_route_version};
+use wamn_routes::{HostRouteSet, host_route_package, host_route_version};
 
 use crate::openapi::{add_route, document, scalar};
 

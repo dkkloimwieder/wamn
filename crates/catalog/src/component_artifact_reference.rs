@@ -25,6 +25,11 @@ impl ComponentArtifactReferenceError {
         self.type_
     }
 
+    /// The reference rule that refused the input.
+    pub fn reason(&self) -> &'static str {
+        self.reason
+    }
+
     fn new(type_: ComponentArtifactReferenceErrorType, reason: &'static str) -> Self {
         Self { type_, reason }
     }
@@ -216,6 +221,30 @@ pub fn validate_composed_entry_path(
             "invalid SHA-256 identity",
         )
     })
+}
+
+/// Validate the local or relative composed-entry reference in a serving document.
+pub fn validate_serving_entry_reference(
+    reference: &str,
+) -> Result<(), ComponentArtifactReferenceError> {
+    if let Some(path) = reference.strip_prefix("file:") {
+        if std::path::Path::new(path).is_absolute() {
+            return Ok(());
+        }
+        return Err(ComponentArtifactReferenceError::new(
+            ComponentArtifactReferenceErrorType::InvalidBase,
+            "a local composed entry must name an absolute file",
+        ));
+    }
+    validate_composed_entry_path(reference)
+        .map(|_| ())
+        .map_err(|error| {
+            ComponentArtifactReferenceError::new(
+                error.error_type(),
+                "a composed entry requires the path entries@sha256:<manifest digest> \
+             relative to the component artifact base",
+            )
+        })
 }
 
 /// The reference a host starts for the recorded composed entry.

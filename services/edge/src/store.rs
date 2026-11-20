@@ -133,7 +133,7 @@ impl EdgeStore {
     pub async fn claim(
         &self,
         partition: &wamn_registry::OrgId,
-        operation: &wamn_catalog::canonical_name::CanonicalName,
+        operation: &wamn_package::canonical_name::CanonicalName,
         key: &str,
         request: &[u8],
     ) -> anyhow::Result<Claim> {

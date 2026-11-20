@@ -1,55 +1,18 @@
 [package]
 name = "wamn-catalog"
-description = "Canonical immutable catalog identities and definition hashing"
+description = "Portable connections and component artifact references."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
-# M-TEST-UTIL: from-parts construction of identity documents is reachable only
-# under this feature, so misuse from production code is a compile error rather
-# than a convention. Visibility is keyed to build configuration, not module
-# geography: `pub(crate)` would leave from-parts construction open to every
-# future in-crate production module on nothing but discipline.
-#
-# NEVER move this onto a normal dependency of any crate. That silently deletes
-# the fence for the whole dependency graph.
-[features]
-sqlx = []
-# `test-util` also provides the project test database minimum (`test_database`),
-# which installs the catalog on a supplied test connection.
-test-util = []
-
 [dependencies]
-wamn-role.workspace = true
-wamn-identity-protocol.workspace = true
-wit-parser.workspace = true
-hex.workspace = true
-tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
+wamn-digest.workspace = true
 wamn-registry.workspace = true
-anyhow.workspace = true
-wamn-scalar.workspace = true
-wamn-digest = { workspace = true, features = ["sqlx"] }
-wamn-record-history = { workspace = true }
-croner = { workspace = true }
-boon = { workspace = true }
-schemars = { workspace = true }
+wamn-package.workspace = true
+schemars.workspace = true
+serde_json.workspace = true
+url.workspace = true
 serde = { workspace = true, features = ["derive"] }
-serde_json = { workspace = true, features = ["float_roundtrip"] }
-url = { workspace = true }
-wamn-component-policy = { workspace = true }
-sqlx = { workspace = true, features = ["postgres"] }
-
-# A self dev-dependency, so this crate's own `tests/` directory — a separate
-# compilation unit that cannot see its parent's features — builds with
-# `test-util` under a plain `cargo test -p wamn-catalog`. Requiring
-# `--features test-util` on every invocation instead would break every existing
-# sweep command and condition recipe. Under resolver 2 a dev-dependency feature does
-# not reach a lib-only build, so `cargo check -p wamn-catalog` remains the
-# production configuration.
-[dev-dependencies]
-wamn-postgres.workspace = true
-sqlx = { workspace = true, features = ["macros", "migrate"] }
-wamn-catalog = { path = ".", features = ["test-util"] }
 
 [lints]
 workspace = true

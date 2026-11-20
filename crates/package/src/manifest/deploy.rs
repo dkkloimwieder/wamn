@@ -7,20 +7,18 @@ use wamn_digest::Digest;
 
 use super::source_name::SourceName;
 use crate::canonical_name::CanonicalName;
-use crate::{
-    ComponentConnection, ComponentDescriptor, ComponentOperationDeclaration, ServingAttachment,
-};
+use crate::{ComponentConnection, ComponentOperationDeclaration, ServingAttachment};
 
 /// Build output carries route and component declarations. Publication replaces
 /// the component declarations with admitted facts and pins the OCI images.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct CompiledDeploy {
+#[serde(deny_unknown_fields, bound(deserialize = "D: Deserialize<'de>"))]
+pub struct CompiledDeploy<D> {
     pub routes: BTreeMap<CanonicalName, ServingAttachment>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub declarations: BTreeMap<CanonicalName, CompiledComponentDeclaration>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub components: BTreeMap<CanonicalName, PublishedComponent>,
+    pub components: BTreeMap<CanonicalName, PublishedComponent<D>>,
     /// Package OCI digests keyed by the aliases in `base_dependencies`.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub base_packages: BTreeMap<SourceName, Digest>,
@@ -38,7 +36,7 @@ pub struct CompiledComponentDeclaration {
 /// The admitted facts of a component and the digest of its stock OCI image.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct PublishedComponent {
-    pub descriptor: ComponentDescriptor,
+pub struct PublishedComponent<D> {
+    pub descriptor: D,
     pub image_digest: Digest,
 }

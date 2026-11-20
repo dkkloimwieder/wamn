@@ -10,6 +10,11 @@ default = []
 test-util = ["dep:wamn-fixture-package", "dep:wamn-test-infrastructure", "wamn-oci/test-util"]
 
 [dependencies]
+wamn-package.workspace = true
+wamn-catalog.workspace = true
+wamn-component-policy.workspace = true
+wamn-routes.workspace = true
+wamn-edge-document.workspace = true
 wash-runtime = { workspace = true, features = ["washlet"] }
 chrono = { workspace = true, features = ["clock"] }
 sqlx = { workspace = true, features = ["migrate", "postgres", "runtime-tokio", "tls-rustls", "chrono", "uuid", "json", "bigdecimal"] }
@@ -24,7 +29,6 @@ serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 tar = { workspace = true }
 tokio = { workspace = true, features = ["fs", "io-util", "macros", "process", "rt", "signal", "sync", "time"] }
-wamn-catalog = { workspace = true }
 wasmparser = { workspace = true }
 wamn-oci = { workspace = true }
 wamn-registry = { workspace = true }
@@ -42,7 +46,6 @@ wat = "=1.254.2"
 wamn-oci = { workspace = true, features = ["test-util"] }
 wamn-fixture-package = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "sync", "test-util", "time"] }
-wamn-catalog = { workspace = true, features = ["test-util"] }
 wamn-identity = { workspace = true, features = ["test-util"] }
 wamn-test-infrastructure = { workspace = true }
 wit-component = { workspace = true, features = ["dummy-module"] }

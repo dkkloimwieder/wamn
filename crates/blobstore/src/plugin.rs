@@ -128,7 +128,7 @@ impl WamnBlobstore {
     pub(super) async fn container_for(
         &self,
         component_id: &str,
-        alias: &wamn_catalog::canonical_name::CanonicalName,
+        alias: &wamn_package::canonical_name::CanonicalName,
     ) -> Result<BoundContainer, BindingError> {
         let resolve = async {
             let context =

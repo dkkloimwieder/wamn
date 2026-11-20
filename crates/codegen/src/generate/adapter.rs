@@ -9,8 +9,8 @@ use super::rust_source::{check_column_name, insert_rust, rust_ident};
 use super::typed_exports::{emit_error_mapper, emit_export_adapter, emit_row_adapter};
 use super::wit::{access_error_literal, crud_is_keyed, custom_is_keyed, detail_name, model_column};
 use crate::client_ir::FieldIr;
-use wamn_catalog::manifest::ManifestError as GenerateError;
-use wamn_catalog::manifest::{
+use wamn_package::manifest::ManifestError as GenerateError;
+use wamn_package::manifest::{
     AccessOperationErrorLiteral, ContractFieldDeclaration, CrudAction, FilterMatch,
     OperationDeclaration, OperationErrorDetailDeclaration, OperationErrorDetailKey,
     rust_type_identifier,

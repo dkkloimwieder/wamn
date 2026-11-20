@@ -5,8 +5,8 @@ pub use recovery::{
     CloseCaptureGapRequest, ClosedCaptureGap, RecoverCaptureGapRequest, RecoveredCaptureGap,
 };
 use serde_json::json;
-use wamn_catalog::lifecycle_lock::LifecycleLock;
 use wamn_registry::Triple;
+use wamn_registry::lifecycle_lock::LifecycleLock;
 
 mod plan;
 mod recovery;

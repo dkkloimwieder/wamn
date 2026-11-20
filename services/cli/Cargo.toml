@@ -10,6 +10,8 @@ name = "wamn"
 path = "src/bin/wamn.rs"
 
 [dependencies]
+wamn-routes.workspace = true
+wamn-package.workspace = true
 wamn-build.workspace = true
 wamn-digest = { workspace = true, features = ["sqlx"] }
 anyhow = { workspace = true }
@@ -31,7 +33,6 @@ hyper = { workspace = true, features = ["client", "http1"] }
 rustls = { workspace = true, features = ["aws_lc_rs", "std", "tls12"] }
 # CF-DEF-ID: immutable flow registration uses the canonical artifact identity
 # implemented by the catalog model; the writer never re-derives that hash.
-wamn-catalog = { workspace = true }
 # `wamn build` calls the two-pass package build.
 # The control operations that the verbs call.
 wamn-publish = { workspace = true }
@@ -66,7 +67,6 @@ wamn-fixture-package = { workspace = true }
 postgres-protocol = { workspace = true }
 wamn-environment = { workspace = true, features = ["test-util"] }
 wamn-dev.workspace = true
-wamn-catalog = { workspace = true, features = ["test-util"] }
 wamn-provision = { workspace = true, features = ["test-util"] }
 wamn-identity = { workspace = true, features = ["test-util"] }
 wamn-test-infrastructure = { workspace = true }

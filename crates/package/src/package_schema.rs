@@ -54,8 +54,10 @@ pub struct PackageMetadata {
 }
 
 /// Read package declarations. SQLx resolves migration files when execution is prepared.
-pub fn package_metadata(directory: &PackageDirectory) -> anyhow::Result<PackageMetadata> {
-    let manifest = PackageManifest::from_slice(&directory.manifest_bytes)?;
+pub fn package_metadata<D: serde::de::DeserializeOwned>(
+    directory: &PackageDirectory,
+) -> anyhow::Result<PackageMetadata> {
+    let manifest = PackageManifest::<D>::from_slice(&directory.manifest_bytes)?;
     let coordinate = PackageCoordinate::new(manifest.package.id, manifest.package.version)?;
     let mut models = Vec::new();
     let mut cdc_excluded_relations = Vec::new();

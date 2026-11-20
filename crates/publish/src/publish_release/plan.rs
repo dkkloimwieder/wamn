@@ -14,9 +14,9 @@ pub fn parse_package(value: &str) -> Result<PackageCoordinate, String> {
     PackageCoordinate::new(
         package_id
             .parse()
-            .map_err(|error: wamn_catalog::ParsePackageNameError| error.to_string())?,
+            .map_err(|error: wamn_package::ParsePackageNameError| error.to_string())?,
         package_version
-            .parse::<wamn_catalog::package_version::PackageVersion>()
+            .parse::<wamn_package::package_version::PackageVersion>()
             .map_err(|error| error.to_string())?,
     )
     .map_err(|error| error.to_string())
@@ -47,8 +47,8 @@ pub(super) fn validate_request(
 
 /// Derive the one schema that an application's SQL resolves against.
 pub(crate) fn application_runtime_schema(
-    manifest: &wamn_catalog::manifest::PackageManifest,
-    manifests: &BTreeMap<wamn_catalog::PackageName, wamn_catalog::manifest::PackageManifest>,
+    manifest: &wamn_component_policy::PackageManifest,
+    manifests: &BTreeMap<wamn_package::PackageName, wamn_component_policy::PackageManifest>,
     components: &BTreeSet<ServingComponent>,
 ) -> anyhow::Result<Option<String>> {
     runtime_schema(manifest, manifests, |dependency| {
@@ -63,8 +63,8 @@ pub(crate) fn application_runtime_schema(
 }
 
 fn has_base_exports<'a>(
-    dependency: &wamn_catalog::manifest::BaseDependencyRequirement,
-    mut operations: impl Iterator<Item = &'a wamn_catalog::canonical_name::CanonicalName>,
+    dependency: &wamn_package::manifest::BaseDependencyRequirement,
+    mut operations: impl Iterator<Item = &'a wamn_package::canonical_name::CanonicalName>,
 ) -> bool {
     let prefix = format!("{}:", dependency.package.as_str().replace('_', "-"));
     let version = format!("@{}", dependency.version);
@@ -72,9 +72,9 @@ fn has_base_exports<'a>(
 }
 
 fn runtime_schema<'a>(
-    manifest: &'a wamn_catalog::manifest::PackageManifest,
-    manifests: &'a BTreeMap<wamn_catalog::PackageName, wamn_catalog::manifest::PackageManifest>,
-    composes: impl Fn(&wamn_catalog::manifest::BaseDependencyRequirement) -> bool,
+    manifest: &'a wamn_component_policy::PackageManifest,
+    manifests: &'a BTreeMap<wamn_package::PackageName, wamn_component_policy::PackageManifest>,
+    composes: impl Fn(&wamn_package::manifest::BaseDependencyRequirement) -> bool,
 ) -> anyhow::Result<Option<String>> {
     let mut members = vec![manifest];
     for dependency in manifest
@@ -120,8 +120,8 @@ fn runtime_schema<'a>(
 }
 
 fn deployed_exports(
-    manifest: &wamn_catalog::manifest::PackageManifest,
-) -> impl Iterator<Item = &wamn_catalog::canonical_name::CanonicalName> {
+    manifest: &wamn_component_policy::PackageManifest,
+) -> impl Iterator<Item = &wamn_package::canonical_name::CanonicalName> {
     manifest
         .deploy
         .iter()
@@ -130,7 +130,7 @@ fn deployed_exports(
 }
 
 /// Return whether the deployed package composes the integration base.
-pub fn composes_integration(manifest: &wamn_catalog::manifest::PackageManifest) -> bool {
+pub fn composes_integration(manifest: &wamn_component_policy::PackageManifest) -> bool {
     manifest.base_dependencies.values().any(|dependency| {
         dependency.package.as_str() == "wamn_integration"
             && has_base_exports(dependency, deployed_exports(manifest))
@@ -139,8 +139,8 @@ pub fn composes_integration(manifest: &wamn_catalog::manifest::PackageManifest) 
 
 /// Derive the workload schema from its admitted exports and the closure's SQL.
 pub fn deploy_runtime_schema(
-    manifest: &wamn_catalog::manifest::PackageManifest,
-    manifests: &BTreeMap<wamn_catalog::PackageName, wamn_catalog::manifest::PackageManifest>,
+    manifest: &wamn_component_policy::PackageManifest,
+    manifests: &BTreeMap<wamn_package::PackageName, wamn_component_policy::PackageManifest>,
 ) -> anyhow::Result<Option<String>> {
     runtime_schema(manifest, manifests, |dependency| {
         has_base_exports(dependency, deployed_exports(manifest))
@@ -150,8 +150,8 @@ pub fn deploy_runtime_schema(
 /// Resolve the declared dependency permissions of an integration application.
 /// Publication resolves them against the released package manifests.
 pub fn application_dependency_permissions(
-    manifest: &wamn_catalog::manifest::PackageManifest,
-    manifests: &BTreeMap<&wamn_catalog::PackageName, &wamn_catalog::manifest::PackageManifest>,
+    manifest: &wamn_component_policy::PackageManifest,
+    manifests: &BTreeMap<&wamn_package::PackageName, &wamn_component_policy::PackageManifest>,
 ) -> anyhow::Result<BTreeSet<String>> {
     let mut permissions = BTreeSet::new();
     for dependency in manifest.base_dependencies.values() {
@@ -182,10 +182,8 @@ pub fn application_dependency_permissions(
                     )
                 })?;
             if registered {
-                let canonical = wamn_catalog::manifest::canonical_operation_identity(
-                    &base.package,
-                    operation,
-                )?;
+                let canonical =
+                    wamn_package::manifest::canonical_operation_identity(&base.package, operation)?;
                 permissions.insert(
                     canonical
                         .as_str()
@@ -202,7 +200,7 @@ pub fn application_dependency_permissions(
 
 pub(super) fn pin_runtime_schemas(
     components: BTreeSet<ServingComponent>,
-    manifests: &BTreeMap<wamn_catalog::PackageName, wamn_catalog::manifest::PackageManifest>,
+    manifests: &BTreeMap<wamn_package::PackageName, wamn_component_policy::PackageManifest>,
 ) -> Result<BTreeSet<ServingComponent>, PublishManifestError> {
     let dependency_manifests = manifests.iter().collect();
     let schemas = manifests
@@ -261,10 +259,7 @@ pub(super) fn project_routes(
     request: &PublishReleaseManifest<'_>,
     route_contracts: &RouteContracts,
     component_facts: &ReleaseComponents,
-    package_manifests: &BTreeMap<
-        wamn_catalog::PackageName,
-        wamn_catalog::manifest::PackageManifest,
-    >,
+    package_manifests: &BTreeMap<wamn_package::PackageName, wamn_component_policy::PackageManifest>,
     components: &mut BTreeSet<ServingComponent>,
 ) -> Result<BTreeSet<ServingRoute>, PublishManifestError> {
     let rule = DependencyDigestRule::for_environment(request.environment_is_disposable);
@@ -337,7 +332,7 @@ pub(super) fn project_routes(
             else {
                 continue;
             };
-            if contract.type_ == wamn_catalog::OperationType::EventHandler {
+            if contract.type_ == wamn_package::OperationType::EventHandler {
                 continue;
             }
             routes.insert(ServingRoute {

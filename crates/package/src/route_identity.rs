@@ -36,29 +36,6 @@ pub fn sealed_operation_reference(sealed: &str) -> &str {
     split_sealed_operation(sealed).map_or(sealed, |(reference, _)| reference)
 }
 
-/// The route path `<path_prefix>/<model>/<action>`.
-pub fn route_path(path_prefix: &str, model: &str, action: &str) -> String {
-    format!("{path_prefix}/{model}/{action}")
-}
-
-/// The attachment id `<id_prefix>-<model>-<action>-http`, or
-/// `<model>-<action>-http` when the prefix is empty. The model is written in
-/// kebab case.
-pub fn route_attachment_id(
-    id_prefix: &str,
-    model: &str,
-    action: &str,
-) -> crate::canonical_name::CanonicalName {
-    let model = model.replace('_', "-");
-    let text = if id_prefix.is_empty() {
-        format!("{model}-{action}-http")
-    } else {
-        format!("{id_prefix}-{model}-{action}-http")
-    };
-    text.parse()
-        .expect("validated route parts make a canonical attachment name")
-}
-
 /// The compiler's description of one operation in the compiled package document.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -134,20 +111,4 @@ pub struct StatementValue {
     #[serde(rename = "type")]
     pub ty: wamn_scalar::SqlValueType,
     pub nullable: bool,
-}
-
-impl crate::OperationType {
-    /// Frozen operation type literal.
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Get => "get",
-            Self::Query => "query",
-            Self::Create => "create",
-            Self::Update => "update",
-            Self::Delete => "delete",
-            Self::Command => "command",
-            Self::Projection => "projection",
-            Self::EventHandler => "event_handler",
-        }
-    }
 }

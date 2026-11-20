@@ -11,11 +11,13 @@ test-util = []
 wasm_component_model_implements = ["wash-runtime/wasm_component_model_implements"]
 
 [dependencies]
+wamn-catalog.workspace = true
+wamn-package.workspace = true
+wamn-routes.workspace = true
 wamn-registry.workspace = true
 wamn-digest.workspace = true
 wash-runtime.workspace = true
 wasmtime = { workspace = true }
-wamn-catalog = { workspace = true }
 wamn-component-policy = { workspace = true }
 # `invoke_operation` takes the intent store trait. Run-state is pure.
 # A route delivery derives its causation, and a registration source names the
@@ -52,9 +54,6 @@ tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "sync"
 wat = "=1.254.2"
 wit-component = { workspace = true, features = ["dummy-module"] }
 wit-parser = { workspace = true }
-# The release-manifest tests build manifests from parts, which wamn-catalog
-# conditions behind `test-util`. Never add this feature to the normal dependency.
-wamn-catalog = { workspace = true, features = ["test-util"] }
 
 [lints]
 workspace = true

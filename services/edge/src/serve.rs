@@ -367,8 +367,8 @@ fn ingress_workload(release: &EdgeRelease, route_host: &str) -> WorkloadStartReq
                 digest: Some(bytes_sha256(release.ingress()).to_string()),
                 local_resources: LocalResources {
                     config: std::collections::BTreeMap::from([(
-                        wamn_catalog::http_routes::HTTP_ROUTES_CONFIG.into(),
-                        serde_json::to_string(&wamn_catalog::http_routes::route_data(
+                        wamn_routes::HTTP_ROUTES_CONFIG.into(),
+                        serde_json::to_string(&wamn_edge_document::http_routes::route_data(
                             release.release().manifest(),
                             &release.release().release().manifest_digest,
                         ))

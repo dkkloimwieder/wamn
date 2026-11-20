@@ -8,22 +8,22 @@ use std::{
 #[derive(Debug, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct PaletteDeclaration {
-    pub component: wamn_catalog::canonical_name::CanonicalName,
-    pub interface_version: wamn_catalog::canonical_name::CanonicalName,
+    pub component: wamn_package::canonical_name::CanonicalName,
+    pub interface_version: wamn_package::canonical_name::CanonicalName,
     #[serde(default)]
-    pub connections: Vec<wamn_catalog::ComponentConnection>,
+    pub connections: Vec<wamn_package::ComponentConnection>,
     pub operations: std::collections::BTreeMap<
-        wamn_catalog::canonical_name::CanonicalName,
-        wamn_catalog::ComponentOperationDeclaration,
+        wamn_package::canonical_name::CanonicalName,
+        wamn_package::ComponentOperationDeclaration,
     >,
 }
 
 /// One platform palette component and its declaration.
 #[derive(Debug)]
 pub struct PaletteComponent {
-    pub name: wamn_catalog::canonical_name::CanonicalName,
+    pub name: wamn_package::canonical_name::CanonicalName,
     pub file: PathBuf,
-    pub declaration: wamn_catalog::ComponentDescriptor,
+    pub declaration: wamn_component_policy::ComponentDescriptor,
 }
 
 fn sources(repository: &Path) -> Result<Vec<(PathBuf, String, PaletteDeclaration)>> {
@@ -47,7 +47,7 @@ fn sources(repository: &Path) -> Result<Vec<(PathBuf, String, PaletteDeclaration
 }
 
 /// Platform component names, without reading application package declarations.
-pub fn names(repository: &Path) -> Result<Vec<wamn_catalog::canonical_name::CanonicalName>> {
+pub fn names(repository: &Path) -> Result<Vec<wamn_package::canonical_name::CanonicalName>> {
     Ok(sources(repository)?
         .into_iter()
         .map(|(_, _, declaration)| declaration.component)
@@ -58,7 +58,7 @@ pub fn names(repository: &Path) -> Result<Vec<wamn_catalog::canonical_name::Cano
 fn seal(
     bytes: &[u8],
     declaration: PaletteDeclaration,
-) -> Result<wamn_catalog::ComponentDescriptor> {
+) -> Result<wamn_component_policy::ComponentDescriptor> {
     let engine = wamn_engine::build_engine(&[])?;
     let admitted_platform_packages = declaration
         .operations
@@ -80,9 +80,9 @@ fn seal(
         &engine,
         bytes,
         wamn_engine::component_admission::ComponentAdmissionRequest {
-            declaration: wamn_catalog::ComponentDeclaration {
+            declaration: wamn_package::ComponentDeclaration {
                 data_change: false,
-                target: wamn_catalog::palette_package(),
+                target: wamn_package::palette_package(),
                 component: declaration.component,
                 interface_version: declaration.interface_version,
                 operations: declaration.operations,

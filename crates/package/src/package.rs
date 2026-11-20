@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Deserializer, Serialize};
 
-use crate::CatalogIdentityError;
+use crate::PackageIdentityError;
 
 use std::{borrow::Borrow, fmt, str::FromStr};
 
@@ -152,11 +152,11 @@ mod name_tests {
 }
 
 /// Validate one operation token against its package-owned coordinate.
-pub(crate) fn validate_canonical_operation_for_package(
+pub fn validate_canonical_operation_for_package(
     value: &crate::registered_operation::RegisteredOperation,
     package_id: &crate::PackageName,
     package_version: &crate::package_version::PackageVersion,
-) -> Result<(), CatalogIdentityError> {
+) -> Result<(), PackageIdentityError> {
     let native_package_id = package_id.as_str().replace('_', "-");
     let expected_prefix = format!("{native_package_id}:");
     let expected_suffix = format!("@{package_version}");
@@ -169,8 +169,8 @@ pub(crate) fn validate_canonical_operation_for_package(
     Ok(())
 }
 
-pub(crate) fn invalid<T>(message: impl Into<String>) -> Result<T, CatalogIdentityError> {
-    Err(CatalogIdentityError::InvalidDefinition {
+pub(crate) fn invalid<T>(message: impl Into<String>) -> Result<T, PackageIdentityError> {
+    Err(PackageIdentityError {
         message: message.into(),
     })
 }
@@ -205,7 +205,7 @@ impl PackageCoordinate {
     pub fn new(
         package_id: crate::PackageName,
         package_version: crate::package_version::PackageVersion,
-    ) -> Result<Self, CatalogIdentityError> {
+    ) -> Result<Self, PackageIdentityError> {
         Ok(Self {
             package_id,
             package_version,

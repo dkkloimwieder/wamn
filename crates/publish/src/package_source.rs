@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Context as _;
 
-use wamn_catalog::package_schema::{MigrationSource, PackageDirectory};
+use wamn_package::package_schema::{MigrationSource, PackageDirectory};
 
 /// A package tree and the digest of the verified package artifact it was
 /// opened from. The opener holds the digest in memory and passes it here; no

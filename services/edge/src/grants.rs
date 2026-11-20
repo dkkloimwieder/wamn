@@ -7,8 +7,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use wamn_catalog::ServingManifest;
-use wamn_catalog::edge_bundle::{EdgeGrants, GRANTS_FILE_NAME};
+use wamn_edge_document::ServingManifest;
+use wamn_edge_document::edge_bundle::{EdgeGrants, GRANTS_FILE_NAME};
 use wamn_identity_protocol::RoleName;
 
 use crate::release::{EdgeReleaseError, EdgeReleaseErrorType};
@@ -35,7 +35,7 @@ impl Grants {
             .iter()
             .flat_map(|component| component.descriptor.operations.values())
             .filter_map(|operation| operation.registered_operation.as_ref())
-            .map(wamn_catalog::registered_operation::RegisteredOperation::as_str)
+            .map(wamn_package::registered_operation::RegisteredOperation::as_str)
             .collect();
         for (role, permissions) in &document.roles {
             if !role

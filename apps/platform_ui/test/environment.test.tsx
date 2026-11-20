@@ -288,12 +288,12 @@ describe("Environment", () => {
 
 const operationContracts = import.meta.glob<{
   fields: { path: string; nullable: boolean }[];
-}>("../../../crates/catalog/src/host_route/control/contracts/{application,schema}/*.input.json", {
+}>("../../../crates/routes/src/host_route/control/contracts/{application,schema}/*.input.json", {
   eager: true,
   import: "default",
 });
 const statusContract = import.meta.glob<{ fields: { path: string }[] }>(
-  "../../../crates/catalog/src/host_route/control/contracts/operation/status.input.json",
+  "../../../crates/routes/src/host_route/control/contracts/operation/status.input.json",
   { eager: true, import: "default" },
 );
 const releaseDigest = `sha256:${"a".repeat(64)}`;

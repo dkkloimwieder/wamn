@@ -1,12 +1,13 @@
 //! Build and publish one application's source before the shared deployment path.
 
+use wamn_package::PackageName;
+use wamn_package::manifest::BaseDependencyRequirement;
+use wamn_package::manifest::PackageIdentity;
+use wamn_component_policy::PackageManifest;
+use wamn_package::manifest::source_name::SourceName;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use wamn_build::{BuildMode, BuildRequest, DescribeMode, PreparedSource, build_prepared};
-use wamn_catalog::PackageName;
-use wamn_catalog::manifest::{
-    BaseDependencyRequirement, PackageIdentity, PackageManifest, source_name::SourceName,
-};
 use wamn_codegen::{
     build::{default_output_root, package_output},
     fingerprint,
@@ -21,26 +22,26 @@ pub async fn publish_from_env(
     document: &EnvironmentDocument,
     root: &Path,
     describe: DescribeMode<'_>,
-) -> anyhow::Result<(wamn_catalog::ApplicationName, wamn_digest::Digest)> {
+) -> anyhow::Result<(wamn_registry::ApplicationName, wamn_digest::Digest)> {
     let (application, sources) = sources(document, root).await?;
     build_and_publish(application, sources, BuildMode::Published, describe).await
 }
 
 /// Build and publish the source documents already compiled for this dev pass.
 pub async fn publish_development(
-    application: wamn_catalog::ApplicationName,
+    application: wamn_registry::ApplicationName,
     sources: Vec<PreparedSource>,
     describe: DescribeMode<'_>,
-) -> anyhow::Result<(wamn_catalog::ApplicationName, wamn_digest::Digest)> {
+) -> anyhow::Result<(wamn_registry::ApplicationName, wamn_digest::Digest)> {
     build_and_publish(application, sources, BuildMode::Development, describe).await
 }
 
 async fn build_and_publish(
-    application: wamn_catalog::ApplicationName,
+    application: wamn_registry::ApplicationName,
     sources: Vec<PreparedSource>,
     mode: BuildMode,
     describe: DescribeMode<'_>,
-) -> anyhow::Result<(wamn_catalog::ApplicationName, wamn_digest::Digest)> {
+) -> anyhow::Result<(wamn_registry::ApplicationName, wamn_digest::Digest)> {
     let mut roots = Vec::with_capacity(sources.len());
     for source in sources {
         let root = default_output_root(source.root());
@@ -127,7 +128,7 @@ async fn publish_built(
 pub async fn sources(
     document: &EnvironmentDocument,
     root: &Path,
-) -> anyhow::Result<(wamn_catalog::ApplicationName, Vec<PreparedSource>)> {
+) -> anyhow::Result<(wamn_registry::ApplicationName, Vec<PreparedSource>)> {
     let root = root
         .canonicalize()
         .context("resolve selected package root")?;
@@ -144,7 +145,7 @@ pub async fn sources(
 
 fn selected_application(
     document: &EnvironmentDocument,
-) -> anyhow::Result<&wamn_catalog::ApplicationName> {
+) -> anyhow::Result<&wamn_registry::ApplicationName> {
     ensure!(
         document.applications.len() == 1,
         "select one application before publishing source"

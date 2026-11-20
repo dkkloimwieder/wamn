@@ -8,13 +8,13 @@ use tokio::process::Command;
 
 const COMPILED_MANIFEST_NAME: &str = "wamn.json";
 use crate::{BuildMode, PreparedSource, package_output};
-use wamn_catalog::PackageName;
-use wamn_catalog::manifest::PackageManifest;
-use wamn_catalog::manifest::{
+use wamn_codegen::fingerprint;
+use wamn_component_policy::PackageManifest;
+use wamn_digest::{Digest, bytes_sha256};
+use wamn_package::PackageName;
+use wamn_package::manifest::{
     ManifestError as GenerateError, ManifestErrorType as GenerateErrorType,
 };
-use wamn_codegen::fingerprint;
-use wamn_digest::{Digest, bytes_sha256};
 
 /// Where the components lie in a package's build output.
 const COMPONENTS: &str = "components";

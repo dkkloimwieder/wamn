@@ -16,7 +16,7 @@ impl RouteAuthenticator for EdgeAuthenticator {
         request: AuthenticationRequest<'_>,
     ) -> Result<Option<AuthenticatedCaller>, AuthRejection> {
         Err(match request.policy {
-            wamn_catalog::AttachmentAuthPolicy::Signature { .. } => signature_unauthorized(),
+            wamn_package::AttachmentAuthPolicy::Signature { .. } => signature_unauthorized(),
             _ => unauthorized(),
         })
     }

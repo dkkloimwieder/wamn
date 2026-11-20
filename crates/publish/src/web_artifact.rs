@@ -40,19 +40,19 @@ const EMPTY_CONFIG: &[u8] = b"{}";
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WebManifest {
-    pub client_package: wamn_catalog::client_package_name::ClientPackageName,
+    pub client_package: wamn_package::client_package_name::ClientPackageName,
     /// The version from the package's `web/package.json`.
     pub version: String,
     /// `<package id>@<package version>` from the package build record.
     #[serde(with = "package_coordinate_wire")]
-    pub package: wamn_catalog::PackageCoordinate,
+    pub package: wamn_package::PackageCoordinate,
     /// `outputs.manifest`, the digest of the compiled canonical `wamn.json`.
     pub contract_digest: wamn_digest::Digest,
 }
 
 mod package_coordinate_wire {
     use serde::{Deserialize as _, Deserializer, Serializer};
-    use wamn_catalog::PackageCoordinate;
+    use wamn_package::PackageCoordinate;
 
     pub(super) fn serialize<S: Serializer>(
         value: &PackageCoordinate,
@@ -435,7 +435,7 @@ async fn pull_archive(
 /// The package, destination, and completion state of an artifact upload.
 #[derive(Debug)]
 pub struct UploadedClient {
-    pub package: wamn_catalog::PackageName,
+    pub package: wamn_package::PackageName,
     pub location: String,
     pub written: bool,
 }
@@ -474,7 +474,7 @@ pub async fn upload_web_to_store(
     digest: &wamn_digest::Digest,
     prefix: &str,
     store: &dyn ObjectStore,
-) -> anyhow::Result<(wamn_catalog::PackageName, String, bool)> {
+) -> anyhow::Result<(wamn_package::PackageName, String, bool)> {
     let (metadata, tar) = pull_web(registry, digest).await?;
     let package = metadata.package.package_id();
     let root = [

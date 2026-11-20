@@ -19,7 +19,7 @@ pub struct DeployArgs {
     pub release: Option<wamn_digest::Digest>,
     /// The application to deploy.
     #[arg(long)]
-    pub application: wamn_catalog::ApplicationName,
+    pub application: wamn_registry::ApplicationName,
     /// The target environment file.
     #[arg(long)]
     pub env: PathBuf,
@@ -29,7 +29,7 @@ pub struct DeployArgs {
 
 #[derive(Debug, Args)]
 pub struct RollbackArgs {
-    pub application: wamn_catalog::ApplicationName,
+    pub application: wamn_registry::ApplicationName,
     /// Restore the content of this Helm revision.
     #[arg(long)]
     pub revision: Option<std::num::NonZeroU32>,
@@ -41,7 +41,7 @@ pub struct RollbackArgs {
 #[derive(Debug, Args)]
 pub struct StatusArgs {
     /// Restrict status to this application's project.
-    pub application: Option<wamn_catalog::ApplicationName>,
+    pub application: Option<wamn_registry::ApplicationName>,
     /// The target environment file.
     #[arg(long)]
     pub env: PathBuf,

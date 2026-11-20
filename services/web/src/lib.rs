@@ -70,7 +70,7 @@ struct Route {
 struct LiveRelease {
     host: String,
     digest: wamn_digest::Digest,
-    clients: BTreeMap<String, wamn_catalog::PackageName>,
+    clients: BTreeMap<String, wamn_package::PackageName>,
     webs: BTreeMap<String, wamn_digest::Digest>,
     platform_ui: Option<wamn_digest::Digest>,
     org: wamn_registry::OrgId,

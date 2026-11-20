@@ -6,23 +6,31 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 use sqlx::{Connection as _, Row as _};
 
-use wamn_registry::Triple;
+use crate::Triple;
 
-/// The non-secret configuration of one project deployment.
+/// Settings shared by applied configuration and deploy input.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EnvironmentSettings {
+    pub org: crate::OrgId,
+    pub project: crate::ProjectId,
+    pub env: crate::EnvName,
+    /// The immutable deployment target name.
+    pub target: String,
+    #[serde(default)]
+    pub schema: Schema,
+    #[serde(default)]
+    pub integrations: BTreeMap<String, Integration>,
+}
+
+/// The non-secret configuration for one project deployment.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EnvironmentConfiguration {
-    pub org: wamn_registry::OrgId,
-    pub project: wamn_registry::ProjectId,
-    pub env: wamn_registry::EnvName,
-    pub target: String,
+    #[serde(flatten)]
+    pub settings: EnvironmentSettings,
     pub readiness_budget_seconds: i32,
     pub drain_bound_seconds: i32,
-    #[serde(default)]
-    pub schema: Schema,
     pub applications: BTreeMap<crate::ApplicationName, ApplicationConfiguration>,
-    #[serde(default)]
-    pub integrations: BTreeMap<String, Integration>,
 }
 
 /// Configuration shared by all releases of an application.
@@ -99,7 +107,7 @@ pub enum SchemaMode {
 #[serde(deny_unknown_fields)]
 pub struct Client {
     #[schemars(with = "String")]
-    pub package: crate::PackageName,
+    pub package: wamn_package::PackageName,
     #[schemars(with = "String", regex(pattern = "^sha256:[0-9a-f]{64}$"))]
     pub web: wamn_digest::Digest,
 }
@@ -147,20 +155,22 @@ pub async fn read(
         Some(_) => return Err(sqlx::Error::Decode("invalid stored schema mode".into())),
     };
     let mut configuration = EnvironmentConfiguration {
-        org: triple.org.clone(),
-        env: triple.env.clone(),
-        project: triple.project.clone(),
-        target: row.try_get("target")?,
+        settings: EnvironmentSettings {
+            org: triple.org.clone(),
+            env: triple.env.clone(),
+            project: triple.project.clone(),
+            target: row.try_get("target")?,
+            schema: Schema { mode },
+            integrations: BTreeMap::new(),
+        },
         readiness_budget_seconds: row.try_get("readiness_budget_seconds")?,
         drain_bound_seconds: row.try_get("drain_bound_seconds")?,
-        schema: Schema { mode },
         applications: BTreeMap::new(),
-        integrations: BTreeMap::new(),
     };
     for row in rows {
         match row.try_get::<Option<i32>, _>("record_type")? {
             Some(1) => {
-                let package: Option<crate::PackageName> = row.try_get("client_package")?;
+                let package: Option<wamn_package::PackageName> = row.try_get("client_package")?;
                 let client = package
                     .map(|package| {
                         Ok::<_, sqlx::Error>(Client {
@@ -191,7 +201,7 @@ pub async fn read(
                     );
             }
             Some(3) => {
-                configuration.integrations.insert(
+                configuration.settings.integrations.insert(
                     row.try_get("name")?,
                     Integration {
                         version: row.try_get("version")?,
@@ -216,7 +226,7 @@ pub async fn write(
 ) -> Result<bool, sqlx::Error> {
     let mut transaction = connection.begin().await?;
     let c = configuration;
-    let mode = c.schema.mode.map(|mode| match mode {
+    let mode = c.settings.schema.mode.map(|mode| match mode {
         SchemaMode::Reset => "reset",
         SchemaMode::Migrate => "migrate",
     });
@@ -226,9 +236,9 @@ pub async fn write(
           FROM registry.environments e WHERE e.org=p.org AND e.env=p.env)) \
          WHERE org=$1 AND env=$2 AND project=$3",
     )
-    .bind(&c.org)
-    .bind(&c.env)
-    .bind(&c.project)
+    .bind(&c.settings.org)
+    .bind(&c.settings.env)
+    .bind(&c.settings.project)
     .bind(mode)
     .execute(&mut *transaction)
     .await?;
@@ -238,7 +248,7 @@ pub async fn write(
     }
     // The shared environment owns the readiness budget, drain bound, and target.
     let target: String = sqlx::query_scalar("SELECT id::text FROM registry.target WHERE name=$1")
-        .bind(&c.target)
+        .bind(&c.settings.target)
         .fetch_one(&mut *transaction)
         .await?;
     sqlx::query(
@@ -246,23 +256,23 @@ pub async fn write(
          SET readiness_budget_seconds=$3, drain_bound_seconds=$4, target_id=$5::text::uuid
          WHERE org=$1 AND env=$2",
     )
-    .bind(&c.org)
-    .bind(&c.env)
+    .bind(&c.settings.org)
+    .bind(&c.settings.env)
     .bind(c.readiness_budget_seconds)
     .bind(c.drain_bound_seconds)
     .bind(target)
     .execute(&mut *transaction)
     .await?;
-    for (name, integration) in &c.integrations {
+    for (name, integration) in &c.settings.integrations {
         sqlx::query("INSERT INTO registry.environment_integrations (org,env,name,version) VALUES ($1,$2,$3,$4) \
                      ON CONFLICT (org,env,name) DO UPDATE SET version=EXCLUDED.version")
-            .bind(&c.org).bind(&c.env).bind(name).bind(integration.version).execute(&mut *transaction).await?;
+            .bind(&c.settings.org).bind(&c.settings.env).bind(name).bind(integration.version).execute(&mut *transaction).await?;
     }
     let applications: Vec<&crate::ApplicationName> = c.applications.keys().collect();
     sqlx::query("DELETE FROM registry.environment_applications WHERE org=$1 AND env=$2 AND project=$3 AND NOT(application=ANY($4))")
-        .bind(&c.org).bind(&c.env).bind(&c.project).bind(&applications).execute(&mut *transaction).await?;
+        .bind(&c.settings.org).bind(&c.settings.env).bind(&c.settings.project).bind(&applications).execute(&mut *transaction).await?;
     sqlx::query("DELETE FROM registry.environment_application_connections WHERE org=$1 AND env=$2 AND project=$3")
-        .bind(&c.org).bind(&c.env).bind(&c.project).execute(&mut *transaction).await?;
+        .bind(&c.settings.org).bind(&c.settings.env).bind(&c.settings.project).execute(&mut *transaction).await?;
     for (name, application) in &c.applications {
         sqlx::query(
             "INSERT INTO registry.environment_applications \
@@ -271,7 +281,11 @@ pub async fn write(
              ON CONFLICT (org,env,project,application) DO UPDATE SET label=EXCLUDED.label, \
              client_package=EXCLUDED.client_package, client_web=EXCLUDED.client_web",
         )
-        .bind(&c.org).bind(&c.env).bind(&c.project).bind(name).bind(&application.label)
+        .bind(&c.settings.org)
+        .bind(&c.settings.env)
+        .bind(&c.settings.project)
+        .bind(name)
+        .bind(&application.label)
         .bind(application.client.as_ref().map(|client| &client.package))
         .bind(application.client.as_ref().map(|client| &client.web))
         .execute(&mut *transaction).await?;
@@ -280,7 +294,7 @@ pub async fn write(
                 "INSERT INTO registry.environment_application_connections (org,env,project,application,alias,connection_name) \
                  VALUES ($1,$2,$3,$4,$5,$6)",
             )
-            .bind(&c.org).bind(&c.env).bind(&c.project).bind(name)
+            .bind(&c.settings.org).bind(&c.settings.env).bind(&c.settings.project).bind(name)
             .bind(alias).bind(connection.as_str()).execute(&mut *transaction).await?;
         }
     }
@@ -291,8 +305,8 @@ pub async fn write(
 /// Remove stale pins after all of an environment's project binding writes succeed.
 pub async fn retain_integrations(
     connection: &mut sqlx::PgConnection,
-    org: &wamn_registry::OrgId,
-    env: &wamn_registry::EnvName,
+    org: &crate::OrgId,
+    env: &crate::EnvName,
     names: &[&str],
 ) -> Result<(), sqlx::Error> {
     sqlx::query("DELETE FROM registry.environment_integrations WHERE org=$1 AND env=$2 AND NOT(name=ANY($3))")

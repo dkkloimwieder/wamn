@@ -1,25 +1,70 @@
 //! Host request facts read from the route component's workload configuration.
 
+use crate::application_config::APPLICATION_CONFIG;
+use crate::application_config::ApplicationConfig;
 use crate::ingress::{RoutePolicy, RouteProvider};
+use crate::invocation_scope::{InvocationAuthority, InvocationScopes};
 use std::collections::HashMap;
-use wamn_catalog::application_config::{APPLICATION_CONFIG, ApplicationConfig};
-use wamn_catalog::http_routes::{HTTP_ROUTES_CONFIG, RouteDefinition};
+use std::sync::Arc;
+use wamn_routes::HTTP_ROUTES_CONFIG;
+use wamn_routes::http_route_data::RouteDefinition;
+use wash_runtime::engine::workload::WorkloadItem;
+
+#[derive(Default)]
+struct BoundApplication(Option<Arc<ApplicationConfig>>);
+
+impl InvocationAuthority for BoundApplication {}
+
+/// Decode the application once, on the first bind that needs its configuration.
+pub fn bind_application_config(
+    scopes: &InvocationScopes,
+    item: &WorkloadItem<'_>,
+) -> anyhow::Result<Option<Arc<ApplicationConfig>>> {
+    let Some(document) = item.local_resources().config.get(APPLICATION_CONFIG) else {
+        return Ok(None);
+    };
+    let application = scopes.update::<BoundApplication, _>(item.id(), |bound| {
+        if let Some(application) = &bound.0 {
+            return Ok(Arc::clone(application));
+        }
+        let application = Arc::new(serde_json::from_str(document)?);
+        bound.0 = Some(Arc::clone(&application));
+        Ok::<_, serde_json::Error>(application)
+    });
+    match application {
+        Ok(application) => {
+            scopes.bind_workload(item.id(), item.workload_id());
+            Ok(Some(application))
+        }
+        Err(error) => {
+            scopes.revoke(item.id());
+            Err(error.into())
+        }
+    }
+}
+
+/// Read the configuration retained during component binding.
+pub fn bound_application_config(
+    scopes: &InvocationScopes,
+    component_id: &str,
+) -> Option<Arc<ApplicationConfig>> {
+    scopes.read::<BoundApplication, _>(component_id, |bound| bound.0.as_ref().map(Arc::clone))?
+}
 
 /// The application and route facts shared by host request readers.
 #[derive(Debug)]
 pub struct WorkloadRoutes {
-    pub application: ApplicationConfig,
+    pub application: Arc<ApplicationConfig>,
     pub routes: Vec<RouteDefinition>,
     pub project_env_key: wamn_registry::ProjectEnvKey,
 }
 
 impl WorkloadRoutes {
-    /// Read the deploy's two config documents, when this component carries them.
-    pub fn read(config: &HashMap<String, String>) -> anyhow::Result<Option<Self>> {
-        let Some(application) = config.get(APPLICATION_CONFIG) else {
-            return Ok(None);
-        };
-        let application: ApplicationConfig = serde_json::from_str(application)?;
+    /// Read the HTTP route table for the bound application.
+    pub fn read(
+        config: &HashMap<String, String>,
+        application: Arc<ApplicationConfig>,
+    ) -> anyhow::Result<Self> {
         let routes = serde_json::from_str(
             config
                 .get(HTTP_ROUTES_CONFIG)
@@ -30,11 +75,11 @@ impl WorkloadRoutes {
             &application.project,
             &application.environment,
         );
-        Ok(Some(Self {
+        Ok(Self {
             application,
             routes,
             project_env_key,
-        }))
+        })
     }
 }
 
@@ -43,7 +88,7 @@ impl RouteProvider for WorkloadRoutes {
         &self.project_env_key
     }
 
-    fn route(&self, id: &wamn_catalog::canonical_name::CanonicalName) -> Option<RoutePolicy<'_>> {
+    fn route(&self, id: &wamn_package::canonical_name::CanonicalName) -> Option<RoutePolicy<'_>> {
         let route = self
             .routes
             .iter()

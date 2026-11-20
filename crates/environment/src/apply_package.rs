@@ -4,8 +4,8 @@ use std::collections::BTreeSet;
 
 use anyhow::{Context as _, ensure};
 
-use wamn_catalog::package_schema::{PackageDirectory, package_metadata};
-use wamn_catalog::manifest::PackageManifest;
+use wamn_component_policy::PackageManifest;
+use wamn_package::package_schema::{PackageDirectory, package_metadata};
 use wamn_provision::{PlatformComponent, bind_platform_principal};
 
 mod entity_maps;
@@ -55,10 +55,10 @@ impl ApplyPackageRequest {
 #[derive(Debug)]
 pub struct ApplyOutcome {
     /// Package id of the applied coordinate.
-    pub package_id: wamn_catalog::PackageName,
+    pub package_id: wamn_package::PackageName,
 
     /// Package version of the applied coordinate.
-    pub package_version: wamn_catalog::package_version::PackageVersion,
+    pub package_version: wamn_package::package_version::PackageVersion,
 
     /// Number of pending migrations this application ran.
     pub migrations_applied: usize,
@@ -78,7 +78,8 @@ pub(crate) struct PreparedPackage {
 /// Validate one package directory before opening an application transaction.
 pub(crate) async fn prepare_package(root: &PackageRoot) -> anyhow::Result<PreparedPackage> {
     let directory = read_package_root(root)?;
-    package_metadata(&directory).context("validate package directory before database work")?;
+    package_metadata::<wamn_component_policy::ComponentDescriptor>(&directory)
+        .context("validate package directory before database work")?;
     let manifest = PackageManifest::from_slice(&directory.manifest_bytes)
         .context("parse strict package manifest for definition ownership")?;
     let migration_root = wamn_publish::package_source::migration_root(&root.path);
@@ -123,7 +124,7 @@ async fn apply(
     project_env_key: &wamn_registry::ProjectEnvKey,
     package: PreparedPackage,
 ) -> anyhow::Result<ApplyOutcome> {
-    let plan = package_metadata(&package.directory)?;
+    let plan = package_metadata::<wamn_component_policy::ComponentDescriptor>(&package.directory)?;
     let package_id = plan.coordinate.package_id().to_owned();
     let package_version = plan.coordinate.package_version().to_owned();
     let coordinate = format!("{package_id}@{package_version}");
@@ -256,7 +257,7 @@ pub(crate) async fn bind_apply_package_principal(
 
 async fn ensure_model_schemas(
     connection: &mut sqlx::PgConnection,
-    plan: &wamn_catalog::package_schema::PackageMetadata,
+    plan: &wamn_package::package_schema::PackageMetadata,
     login: &wamn_identity_protocol::LoginName,
 ) -> anyhow::Result<()> {
     let schemas = plan

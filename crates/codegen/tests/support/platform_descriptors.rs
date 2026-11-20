@@ -16,7 +16,7 @@ fn platform_fixture_generates_client_descriptors() {
         .operations()
         .iter()
         .filter(|(_, description)| {
-            description.operation.type_ != wamn_catalog::OperationType::EventHandler
+            description.operation.type_ != wamn_package::OperationType::EventHandler
                 && description.operation.visibility.as_deref() != Some("private")
         })
         .filter_map(|(local, _)| local.as_str().strip_prefix("widget."))

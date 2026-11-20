@@ -95,7 +95,7 @@ pub async fn install_project(client: &mut sqlx::PgConnection) -> anyhow::Result<
         .await?;
     if !present {
         for sql in [
-            wamn_catalog::CATALOG_SCHEMA_SQL,
+            wamn_provision::CATALOG_SCHEMA_SQL,
             wamn_provision::APP_SCHEMA_SQL,
             include_str!("../../../deploy/sql/run-state.sql"),
             include_str!("../../../deploy/sql/run-queue.sql"),
