@@ -379,4 +379,4 @@ where
     Ok(true)
 }
 
-pub const APPLY_MANAGER: &str = "kubectl";
+pub const APPLY_MANAGER: &str = "wamn";
