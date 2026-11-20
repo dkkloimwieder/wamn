@@ -6,8 +6,8 @@ use std::time::{Duration, Instant};
 use bytes::Bytes;
 use hyper::Request;
 use tokio::sync::{Mutex, OnceCell};
+use wamn_http_client::HttpClient;
 
-use crate::package_artifact::http_client::HttpClient;
 use crate::package_artifact::registry_credentials::METADATA_HOST_ENV;
 
 const TIMEOUT: Duration = Duration::from_secs(5);

@@ -11,7 +11,7 @@ path = "src/main.rs"
 test = false
 
 [dependencies]
-wamn-kubernetes.workspace = true
+wamn-http-client.workspace = true
 sqlx = { workspace = true, features = ["sqlite"] }
 wamn-digest = { workspace = true, features = ["sqlx"] }
 # The edge links the engine without cloud service plugins.

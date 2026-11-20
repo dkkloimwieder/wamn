@@ -61,6 +61,7 @@ wamn-build.workspace = true
 object_store.workspace = true
 sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "macros", "migrate"] }
 wamn-oci = { workspace = true, features = ["test-util"] }
+wamn-http-client = { workspace = true, features = ["tls12"] }
 wamn-authority = { workspace = true, features = ["test-util"] }
 wamn-connection = { workspace = true, features = ["test-util"] }
 wamn-sql = { workspace = true, features = ["test-util"] }

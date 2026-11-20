@@ -40,7 +40,7 @@ use rustls::pki_types::pem::PemObject as _;
 use serde_json::{Map, Value, json};
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
-use wamn_kubernetes::http_transport::{self, Protocols, Schemes};
+use wamn_http_client::{self as http_transport, Protocols, Schemes};
 
 use crate::config::ForwardConfig;
 use crate::samples::{Sample, SampleStore};
