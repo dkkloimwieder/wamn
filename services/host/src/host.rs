@@ -27,6 +27,7 @@ mod commands;
 mod files;
 mod host_route;
 mod platform_http;
+mod route_refusal;
 mod workflow;
 
 use wamn_authentication::access_token::AccessTokenVerifier;

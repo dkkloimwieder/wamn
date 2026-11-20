@@ -107,7 +107,7 @@ pub(crate) async fn live_guest_url(
     );
     let mut admin = connect_raw(admin_url).await;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (&format!(
+        format!(
             // The tests in this module run in PARALLEL against one cluster
             // and roles are cluster-wide, so IF NOT EXISTS races: two
             // sessions both see the role absent and both create it. The
@@ -121,8 +121,7 @@ pub(crate) async fn live_guest_url(
                    END; \
                  END $$; \
                  GRANT wamn_app TO \"{role}\";"
-        ))
-            .to_string(),
+        ),
     ))
     .execute(&mut admin)
     .await
@@ -303,7 +302,7 @@ async fn live_a_second_project_env_key_is_refused_rather_than_served_the_first_p
     );
     let mut admin = connect_raw(admin_url).await;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (&credential_refusal_fixture_sql(&schema, &role_a)).to_string(),
+        credential_refusal_fixture_sql(&schema, &role_a),
     ))
     .execute(&mut admin)
     .await
@@ -394,11 +393,10 @@ async fn live_a_second_project_env_key_is_refused_rather_than_served_the_first_p
     );
 
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (&format!(
+        format!(
             "DROP SCHEMA {schema} CASCADE; \
                  DROP OWNED BY {role_a}; DROP ROLE {role_a};"
-        ))
-            .to_string(),
+        ),
     ))
     .execute(&mut admin)
     .await
@@ -463,7 +461,7 @@ async fn live_a_cold_connection_parses_inside_the_identity_transaction(pool: sql
     ensure_live_user_rows(admin_url, &[LIVE_PRINCIPAL]).await;
     let mut admin = connect_raw(admin_url).await;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (&cold_parse_fixture_sql(&schema, &role)).to_string(),
+        cold_parse_fixture_sql(&schema, &role),
     ))
     .execute(&mut admin)
     .await
@@ -511,8 +509,7 @@ async fn live_a_cold_connection_parses_inside_the_identity_transaction(pool: sql
     assert_eq!(again.len(), 2);
 
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (&format!("DROP SCHEMA {schema} CASCADE; DROP OWNED BY \"{role}\"; DROP ROLE \"{role}\";"))
-            .to_string(),
+        format!("DROP SCHEMA {schema} CASCADE; DROP OWNED BY \"{role}\"; DROP ROLE \"{role}\";"),
     ))
     .execute(&mut admin)
     .await
