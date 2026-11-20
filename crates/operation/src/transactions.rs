@@ -9,6 +9,7 @@ use wamn_identity_protocol::AuthorityClass;
 
 use crate::PgError;
 use crate::scope_registry::{valid_runner, valid_schema};
+use wamn_postgres::transaction_identity_sql;
 use wamn_postgres::types::map_pg_error;
 
 pub(super) fn causation_sql(run: &Causation) -> String {
@@ -142,20 +143,15 @@ pub(super) fn prepare_identity(
     } else {
         BEGIN_READ_COMMITTED
     };
-    let operation = operation.map(|operation| escape::escape_literal(operation.as_str()));
-    let runner = runner.map(escape::escape_literal);
-    let schema = schema.map(escape::escape_literal);
-    let mut batch = format!(
-        "{begin}; INSERT INTO platform.tx_identity \
-             (xid, principal_id, role, application, operation, runner) \
-             VALUES (pg_current_xact_id(), '{principal}'::uuid, {role}, {application}, {operation}, {runner}) \
-             RETURNING pg_current_xact_id()::text;",
-        role = escape::escape_literal(role.unwrap_or_default()),
-        application =
-            escape::escape_literal(application.map_or("", wamn_catalog::ApplicationName::as_str)),
-        operation = operation.as_deref().unwrap_or("NULL"),
-        runner = runner.as_deref().unwrap_or("NULL"),
+    let bind = transaction_identity_sql(
+        principal,
+        role.unwrap_or_default(),
+        application.map_or("", wamn_catalog::ApplicationName::as_str),
+        operation.map(wamn_catalog::canonical_name::CanonicalName::as_str),
+        runner,
     );
+    let schema = schema.map(escape::escape_literal);
+    let mut batch = format!("{begin}; {bind} RETURNING pg_current_xact_id()::text;");
     if read {
         batch.push_str("SET TRANSACTION READ ONLY;");
     }
