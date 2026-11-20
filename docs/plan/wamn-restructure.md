@@ -182,7 +182,11 @@ Org → environment → project → application. One boundary per level.
 - The developer writes SQL migrations, the SQL file for each declared statement (checked by SQLx at build), hand-written WIT for each custom operation (input, result and errors), and `wamn.k`.
 - `wamn.k` holds no types. It holds package and base pins, model overrides, routes and field labels, statement lists, idempotency key fields, connections and components. Routes default from operation names. Modbus retains its integer range check in `wamn.k`.
 - Each statement entry holds its name, fetch class and bind names (K1). Types and nullability come from the WIT input. The operation and statement names determine the SQL path. An idempotency key names a field in the WIT input.
+- A computed bind (a bind with no input field of the same name) takes its type from SQLx describe, as non-null. A renamed bind takes the name of its input field in the bind list. Binds are positional, so the SQL does not change.
+- Result column nullability that SQLx cannot infer uses SQLx's own aliases in the SQL file: `"col!"` (not null) and `"col?"` (nullable). A result column type comes from a real SQL cast, not from a type-override alias.
 - Generated: model WIT from the schema (with named `id` and `revision` types), Rust bindings, and statement result types from SQLx describe. Value lists use WIT enums. Use named WIT aliases for `uuid`, `numeric` and `timestamp`. Custom-operation WIT is not generated.
+- WIT enum cases go on the wire in snake_case: the generated Rust enum carries `#[serde(rename_all = "snake_case")]`.
+- Authored WIT files carry no package line. Only the generated `package.wit` declares the package and its version, and the development-build version rewrite touches only that file.
 - Generate Rust with `quote` and format it with `prettyplease`. Start the formatted Rust with a fixed `// @generated` line. Spell keywords and dotted names as wit-bindgen does.
 - Generate WIT with `wit-encoder =0.254.2`. A labeled world import is one identifier. It is the only WIT string fragment and carries a comment.
 - Generate each application's `openapi.json` with typed OpenAPI 3.1 structs from `oas3`. Generate control's OpenAPI from the contract JSON files. Keep those files and `contract_files.rs`.
@@ -315,6 +319,7 @@ End of the epic: the standard checks, the preflight and the short smoke run.
   - `platform.tx_identity` stamps: either state them as tamper-evident only within one project database, or bind the identity through a definer function.
   - Org quotas count CPU and memory, with a LimitRange, and requests on control and the CDC reader.
 - Possible future exploration, not scheduled: a wamn hey-api plugin.
+- `wamn eject component` returns only if a component generator is built.
 - Typed control inputs, then OpenAPI derived with `schemars`.
 - The JSONata output check: P146 says output is validated at run time, but `walk.rs::invoke` only checks that the output is JSON.
 - Where `revocation_seconds` lives: P43 and P336 set the grant cache lifetime per project, but the environment file has one top-level `revocation_seconds`.
@@ -1974,3 +1979,10 @@ Epic 9 closed at 01bb4a1e2: review accepted, main fast-forwarded. The applicatio
   - Control is in the platform chart: doc fix, it is in the org chart.
   - "Every Kubernetes object comes from a chart": doc fix that states the exceptions, `platform-install/org.rs::create` and `environment/broker.rs::ensure_user`.
   - One writer for `platform."user"`: a 3.7b open item (`identity/application.rs::write_user`).
+
+**Ruled (D, 2026-11-20): Epic 11 questions 1 to 5.**
+- 1: a bind with no input field of the same name. A computed bind takes its type from SQLx describe, as non-null. A renamed bind takes the name of its input field in the `wamn.k` bind list, and the SQL does not change, because binds are positional. If a computed bind can be null, the work stops for a ruling. Reason: SQLx describe gives positional bind types, and the handler computes these values, so no WIT input owns them.
+- 2: result columns that SQLx cannot type for null use SQLx's own aliases, `"col!"` and `"col?"`, with no new convention. `inventory.merge` `transaction_ids` gets a real SQL cast to `uuid[]` so that describe returns the right type, with no type-override alias. Reason: the SQL file owns statement types.
+- 3: `not_required`: the generated Rust enum carries `#[serde(rename_all = "snake_case")]`, so the WIT case `not-required` goes on the wire as `not_required`. The wire does not change, and no other mapping code is added. Reason: WIT requires kebab-case cases.
+- 4: version rewrite: authored WIT files carry no package line. Only the generated `package.wit` declares the package and its version, and the development-build rewrite touches only that file. Reason: the WIT spec requires at least one file in a package directory to declare the package, and the others can leave the line out, so authored files are never rewritten.
+- 5: `wamn eject component` is retired. Its only producer, the TypeScript emitter, was deleted in 11.2, so it fails today. `wamn eject action` stays.
