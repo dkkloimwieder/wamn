@@ -16,6 +16,13 @@
 {{- $token := dict "audience" "wamn-identity" "path" "token" "expirationSeconds" 3600 }}
 {{- $volumes = append $volumes (dict "name" "identity-token" "projected" (dict "sources" (list (dict "serviceAccountToken" $token)))) }}
 {{- $mounts = append $mounts (dict "name" "identity-token" "mountPath" "/var/run/secrets/wamn-identity" "readOnly" true) }}
+{{- $apiSources := list
+    (dict "serviceAccountToken" (dict "path" "token" "expirationSeconds" 3600))
+    (dict "configMap" (dict "name" "kube-root-ca.crt" "items" (list (dict "key" "ca.crt" "path" "ca.crt"))))
+    (dict "downwardAPI" (dict "items" (list (dict "fieldRef" (dict "fieldPath" "metadata.namespace") "path" "namespace"))))
+}}
+{{- $volumes = append $volumes (dict "name" "kube-api-access" "projected" (dict "sources" $apiSources)) }}
+{{- $mounts = append $mounts (dict "name" "kube-api-access" "mountPath" "/var/run/secrets/kubernetes.io/serviceaccount" "readOnly" true) }}
 {{- if eq (dig "provider" "" (.Values.oauthEncryption | default dict)) "local" }}
 {{- $volumes = append $volumes (dict "name" "oauth-key" "secret" (dict "secretName" "wamn-oauth" "defaultMode" 384)) }}
 {{- $mounts = append $mounts (dict "name" "oauth-key" "mountPath" "/etc/wamn/oauth" "readOnly" true) }}
