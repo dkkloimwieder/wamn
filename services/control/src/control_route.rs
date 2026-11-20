@@ -38,6 +38,8 @@ use sqlx::PgConnection as Client;
 use sqlx::{Connection as _, Row as _};
 mod connection_test;
 mod integration;
+pub(crate) mod oauth_authorization;
+pub(crate) mod oauth_callback;
 pub(crate) mod operations;
 pub(crate) mod users;
 
@@ -172,7 +174,7 @@ pub(crate) struct ControlRoutes<'a> {
     pub(crate) worker: Option<&'a wamn_kubernetes::job::Worker>,
     pub(crate) operation_jobs: Option<&'a wamn_kubernetes::kubernetes_api::KubernetesApi>,
     pub(crate) org: &'a wamn_registry::OrgId,
-    pub(crate) oauth: Option<&'a wamn_http::oauth_authorization::Authorization>,
+    pub(crate) oauth: Option<&'a oauth_authorization::Authorization>,
     pub(crate) connection_health: Option<&'a crate::connection_health::ConnectionHealth>,
 }
 

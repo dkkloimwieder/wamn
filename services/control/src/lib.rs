@@ -206,7 +206,7 @@ pub async fn serve(config: Configuration) -> anyhow::Result<()> {
                 }
             }?;
             let envelope = Arc::new(envelope);
-            wamn_http::oauth_authorization::Authorization::new(&config.public_origin, envelope)
+            control_route::oauth_authorization::Authorization::new(&config.public_origin, envelope)
                 .map(Arc::new)
         })
         .transpose()?;
@@ -277,7 +277,7 @@ pub async fn serve(config: Configuration) -> anyhow::Result<()> {
                         async move {
                             let request = request.map(|body| body.map_err(wasmtime_wasi_http::Error::from).boxed_unsync());
                             let response = if request.uri().path() == "/oauth/callback" && let Some(oauth) = oauth {
-                                wamn_http::oauth_callback::response(&oauth, &callback_databases, request).await
+                                control_route::oauth_callback::response(&oauth, &callback_databases, request).await
                             } else { handlers.http(request).await };
                             Ok::<_, std::convert::Infallible>(response)
                         }

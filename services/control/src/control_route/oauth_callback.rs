@@ -1,8 +1,9 @@
 //! Public control callback pages. The pending state supplies all authority.
 
 use http_body_util::{BodyExt as _, Full};
-use crate::oauth_authorization::Authorization;
 use wasmtime_wasi_http::WasiBody;
+
+use super::oauth_authorization::{Authorization, callback_target};
 
 /// Answer only the exact callback path and GET method, without a session.
 pub async fn response(
@@ -17,7 +18,7 @@ pub async fn response(
         return page(405, "OAuth callback requires GET");
     }
     let query = request.uri().query().unwrap_or_default();
-    let (project, environment) = match crate::oauth_authorization::callback_target(query) {
+    let (project, environment) = match callback_target(query) {
         Ok(target) => target,
         Err(error) => return page(400, &error.reason),
     };

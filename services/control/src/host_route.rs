@@ -21,7 +21,7 @@ use wamn_identity_client::users::UserClient;
 use wamn_identity_protocol::PrincipalId;
 
 use crate::Writer;
-use crate::control_route::{ControlRoutes, Refusal, control_page};
+use crate::control_route::{ControlRoutes, Refusal, control_page, oauth_authorization};
 
 /// Native control execution after the route checks the caller's current authority.
 #[async_trait::async_trait]
@@ -70,7 +70,7 @@ pub struct HostRouteDelivery {
     execution: Option<Arc<dyn ControlExecution>>,
     handlers: HostRouteHandlers,
     connection_health: Option<Arc<crate::connection_health::ConnectionHealth>>,
-    oauth: Option<Arc<wamn_http::oauth_authorization::Authorization>>,
+    oauth: Option<Arc<oauth_authorization::Authorization>>,
     control_authenticator:
         Option<Arc<wamn_authentication::route_authentication::ControlRouteAuthenticator>>,
 }
@@ -118,9 +118,9 @@ impl HostRouteDelivery {
     }
 
     /// Share the control callback configuration with the administration routes.
-    pub fn with_oauth(
+    pub(crate) fn with_oauth(
         mut self,
-        oauth: Option<Arc<wamn_http::oauth_authorization::Authorization>>,
+        oauth: Option<Arc<oauth_authorization::Authorization>>,
     ) -> Self {
         self.oauth = oauth;
         self

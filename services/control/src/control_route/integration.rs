@@ -4,7 +4,7 @@ use super::{ControlRoutes, ProjectTarget, Refusal, parse};
 use serde_json::{Value, json};
 use sqlx::{Connection as _, Row as _};
 use wamn_catalog::HostAttachment;
-use wamn_connection::connections::{ConnectionError, administration};
+use wamn_environment::connections::{ConnectionError, administration, references};
 use wamn_identity_protocol::PrincipalId;
 
 impl From<ConnectionError> for Refusal {
@@ -159,7 +159,7 @@ impl ControlRoutes<'_> {
         }
         project.commit().await?;
         if let Some(credentials) = result.get("credentials") {
-            wamn_connection::connections::references::destroy_credentials(credentials).await?;
+            references::destroy_credentials(credentials).await?;
         }
         if let Some(row) = result.as_object_mut() {
             let _ = row.remove("credentials");

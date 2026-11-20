@@ -1,7 +1,7 @@
 //! Each environment reference prevents deletion before authority changes.
 
 use sqlx::Connection as _;
-use wamn_connection::connections::references::refuse_environment_references;
+use wamn_environment::connections::references::refuse_environment_references;
 
 async fn refusal(pool: &sqlx::PgPool, relation: &str, expected: &str) {
     let _lock = wamn_test_postgres::lock();

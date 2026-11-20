@@ -148,7 +148,7 @@ pub async fn analyse(
             .as_object_mut()
             .ok_or_else(|| refuse("connection_parameters_invalid", name))?;
         values.remove("auth");
-        if !wamn_connection::connections::administration::validates(&parameters, &schema) {
+        if !crate::connections::administration::validates(&parameters, &schema) {
             return Err(refuse("connection_parameters_invalid", name));
         }
         selected.insert(name.as_str(), (row, connection.get::<Option<String>, _>(5)));
