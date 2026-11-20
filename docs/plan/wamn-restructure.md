@@ -2,7 +2,7 @@
 
 Nov 16, 2026 · @D Kloimwieder
 
-Branch `worktree-arch-review` at bf8f13b7. Part 1 states only what is ruled now. Part 2 is the review log: research, evidence and the history of each ruling. Where they differ, Part 1 rules.
+Part 1 holds the current rules. Each new ruling edits Part 1 in the same commit. Part 2 holds the reasons.
 
 # Part 1: Current state
 
@@ -13,7 +13,7 @@ Branch `worktree-arch-review` at bf8f13b7. Part 1 states only what is ruled now.
 - One owner per fact. If two places state the same fact, one goes or is derived.
 - No runtime checks for developer practices.
 - Generated files are never edited; hand-written files are never generated.
-- Names say what a thing is. Names are singular. Directory names equal crate names. No "ctl".
+- Names say what a thing is. Names are singular. Directory names equal crate names without the `wamn-` prefix. No "ctl".
 
 ## Hierarchy and isolation
 
@@ -21,69 +21,93 @@ Org → environment → project → application. One boundary per level.
 
 | Level | Boundary |
 | --- | --- |
-| Org | Kubernetes namespace with RBAC (every Role names its Secrets with `resourceNames`), a quota and a default-deny NetworkPolicy. `wamn-platform-observer` goes. The `control_org` row policy stays in the system database. |
-| Environment | A NATS account with JetStream limits, and its own host group. One host serves all applications of the environment. Each CDC reader has its own credential in the account. |
+| Org | Kubernetes namespace with RBAC, a quota and a default-deny NetworkPolicy. `wamn-platform-observer` goes. The system database scopes org control and apply through `registry.login_org()` and org row policies. |
+| Environment | A NATS account with JetStream limits, and its own host group. The host group serves all applications of the environment. It defaults to one replica. Each CDC reader has its own credential in the account. |
 | Project | One CloudNativePG `Cluster` per project database (backup and restore per project). One owner role per database. |
 | Application | The host's permission check and the wasm sandbox. The project is the trust unit. |
 
 - The system database (`registry`, `identity`) has its own cluster in namespace `platform`.
-- Logins per project database: migration (owner), application, read-only (dynamic SQL), platform (all host platform work, retention included), and the CDC replication login. Until 3.6 each login is suffixed per project database and inherits the plain NOLOGIN group role; plain login names come with one cluster per project database. One system database reader per environment. Each login has a connection limit (3.6).
-- One operation service account per project.
+- Logins per project database: migration (owner), application, read-only (dynamic SQL), platform (all host platform work, retention included), and the CDC replication login. Each project Cluster declares `wamn_migration`, `wamn_app_login`, `wamn_query_login`, `wamn_platform_login` and `wamn_cdc` with connection limits. Hosts use project database logins. Org control and apply use separate system database logins.
+- One schema-diff service account per project. Jobs that run Helm use the org worker.
 - `project_env_key` is not stored in project databases (no column, no row policy, no `project_key()` functions).
 - Shared platform components (infrastructure operators, NATS, identity, edge, web) are trusted, run across all namespaces and know orgs only as run-time data. Adding an org changes no shared config and restarts no shared pod. Least privilege applies to the actors inside each org: org workers, hosts, control and users (T1).
 - Orgs are data in the system Postgres (`registry.orgs`). No chart values list orgs (T2).
-- NATS runs in operator (JWT) mode with the full resolver. Accounts and users are signed JWTs, pushed to the running server. One account per environment plus `PLATFORM`. JetStream limits and user permissions, including each user's inbox prefix, live in the JWTs. Clients connect with creds files; TLS stays, for encryption only (T3).
+- NATS runs in operator (JWT) mode with the full resolver. Identity pushes signed account JWTs to the running server and returns signed user JWTs to callers. One account per environment plus `PLATFORM` and the system account. JetStream limits and user permissions, including each user's inbox prefix, live in the JWTs. Clients use creds files or a JWT and local signing key over TLS (T3).
+- Scope Secrets by `resourceNames` where possible. The org worker can get, create, patch and delete Secrets throughout its org. It can list release Secrets in the separate `wamn-helm-<org>` namespace, which holds only Helm records.
+- Helm uses server-side apply. Org charts name the target namespace on their objects. WAMN's own charts grant no Secret watch. The org worker has no Ingress or `escalate` rights. Scope explicit `bind` rights by name. Public integration egress uses declared ports and `allowedHosts`.
+- The runtime operator watches all namespaces. Its `-host-namespaces` argument stays fixed (T4). Web retries failed connections before it forwards a request, with a one-second connect timeout.
+- Control uses `<org>.<base>`. Application hosts use `<label>--<org>.<base>`. Labels are unique within an org. Web checks the host against the route's namespace.
+- Each host sets its runtime ID from its pod name. Identity signs a separate scheduler user in `PLATFORM` after TokenReview checks the pod-bound token and host service account. The user has rights for its host subjects, its inbox and the fixed operator replies.
+- The default host data user is in the environment account and cannot publish. Environment apply creates the account. Org creation makes no NATS calls.
+- Environment account storage is 256 MiB per project. Connection, subscription and payload limits scale by project count. Identity signs the account again when the count changes.
+- The environment account JWT sets `data: -1` (no limit). NATS does not enforce it.
 
 ## Database, identity in SQL, grants
 
-- The Postgres capability follows upstream `wasmcloud:postgres`, plus identity, the host operation transaction and pools. Two interfaces: `client` (query only, on the read-only login, in a host read transaction) and `statements` (operation transaction, `query`, `query-batch`, upstream result shape). No guest begin. Composed apps share one host transaction.
+- The Postgres capability follows upstream `wasmcloud:postgres`, plus identity, the host operation transaction and pools. Two interfaces: `client` (query only, on the read-only login, in a host read transaction that binds identity before it becomes read-only) and `statements` (operation transaction, `query`, `query-batch`, upstream result shape). No guest begin. Composed apps share one host transaction.
 - Identity is "first insert wins": each transaction first inserts `platform.tx_identity` (unlogged, `xid8` key). `wamn_authority.current_identity()` reads it. Migration and platform logins resolve their identity through `platform.login_principal`.
-- A guest `COMMIT` is caught at host commit, not by a SQL text check: the finish statement requires the `platform.tx_identity` row for `pg_current_xact_id()`. If it is missing, the invocation fails and the connection is discarded (W41).
-- SECURITY DEFINER functions are owned by their database's owner (`datdba`), set `search_path=pg_catalog`, have no PUBLIC EXECUTE and are not grantable. Grant tests are refusal tests plus invariants derived from the role model.
-- Grants: one project database read, cached in the host's local `moka` cache. One lifetime per project, written by the deploy into the workload config, positive answers only. No NATS replica, no drop notices.
-- Admin inheritance (org, environment, project admin) is stored as rows in each project database. No system database read per request.
-- `platform."user"` keeps `id` (UUID) as primary key and is unique on `(issuer, sub)`. One writer: `wamn_environment::application`. The four platform principals are seed rows in the schema.
-- Roles and ACLs are run-time data. The permission vocabulary is derived from the schema and the operations. Applications ship with an `admin` role only. Bounds on calls are a project setting.
+- A guest `COMMIT` is caught at host commit, not by a SQL text check: the finish statement compares the resolved identity's transaction ID with the starting ID. If the check fails, the invocation fails and the connection is discarded (W41).
+- SECURITY DEFINER functions are owned by their database's owner (`datdba`), set `search_path=pg_catalog`, have no PUBLIC EXECUTE or grant option. Named roles can execute the functions they need. Grant tests are refusal tests plus invariants derived from the role model.
+- Grants: one project database read, cached in the host's local `moka` cache. Deploy takes one `revocation_seconds` value from the environment file and writes it into each project's workload config. The cache holds positive answers only. No NATS replica, no drop notices.
+- Admin inheritance (org and project admin) is stored as rows in each project database. No system database read per request.
+- `platform."user"` keeps `id` (UUID) as primary key and is unique on `(issuer, sub)`. The four platform principals and the workflow service principal are seed rows in the schema.
+- Roles and ACLs are run-time data. The permission vocabulary is derived from the schema and the operations. Applications ship with an `admin` role only.
 - Guest SQL (`wamn_app`, `wamn_query`) gets no grant on `platform.credential`, `platform.oauth_token` or `platform.oauth_authorization`.
+- Foreign keys and audit stamps on user rows use `id`. Only inherited grants can give users the `admin` role. The user list reports that role as `admin_covered`.
+- The project database owner is the migration login. `wamn_app_login`, `wamn_query_login` and `wamn_platform_login` inherit their group roles. `project_env_key` stays in shared stores and resource names.
+- Identity calls `platform.prune_tx_identity()` every 60 seconds in the system database. Org control handles cleanup in project databases.
 
 ## Request path
 
 - One stock wasmCloud `WorkloadDeployment` per application: the route guest, the application components (stock `application/wasm` artifacts) and one workflow service component. The operator pulls and starts them.
 - The route guest calls `invoke` (JSON); the host reaches the component through `dispatch_target`. The host has no loader, OCI pull or warm list of its own.
-- The deploy writes into the workload config what exists nowhere else: the route table; for each operation public or private, host transaction, read or write, idempotency key field; the application's database schema; connection bindings and integration type digests. No release manifest, no `catalog.releases`, no entry image. The Helm revision is the release.
+- The deploy writes into the workload config what exists nowhere else: the route table; for each operation public or private, host transaction, read or write, idempotency key field; the application's database schema; connection bindings and integration type digests. Cluster deploy uses workload configuration and annotations. Edge tooling keeps `ServingManifest` until the edge design replaces it. There is no `catalog.releases` or entry image. The Helm revision is the release.
 - Fixed statements of a transaction go as one batch at begin and one at commit. `begin-operation` reuses the authenticated caller.
-- Features (connections, files, integrations) are built only when the application declares them.
+- The host registers shared plugins. Deploy adds optional workload bindings from component imports and declared connections.
 - File routes register on the wasmCloud router per workload. No second listener.
+- The route guest gets the route table in `wamn.http.routes` and deploy facts in `wamn.application`. The latter also carries the application coordinates, serving components, file policy and grant cache lifetime. Delete is its own operation type.
+- `wamn-sql` owns `wamn:operation` and `wamn-engine` holds dispatch targets. Deploy refuses duplicate typed operation names and two versions of one host interface package. Palette exports are exempt from the operation name rule.
+- The host registers `/wamn_control` and file and workflow paths per workload. It removes them on unbind. `sign-result` signs file results and leaves results without signed fields alone. Control builds its own route set directly.
 
 ## Connections
 
 - A connection belongs to one project in one environment. Its tables live in the project database; the integration table folds into `connection`. Integration types and auth types stay in the system database.
 - A connection's type and auth type never change.
-- Per call: binding from the workload config, connection row from the local cache, secret, send. No snapshot, no hashes, no candidate bindings.
-- Exclusive resources: a local mutex per resource plus a blocking `pg_advisory_lock` with a lock timeout, held for the call.
-- HTTP client cache key: invocation scope, target, connection id, generation. No in-flight semaphores.
+- Per call: binding from the workload config, connection row and generation from the host authorization cache, then the secret and send. The host caches credential payloads separately and reads the Secret by name on a miss. No snapshot, no hashes, no candidate bindings.
+- Connection creation and deploy refuse exclusive connections in cloud environments. The host holds no database guard across an external call.
+- Each HTTP send builds a client and pins the selected peer address. The transport uses the invocation deadline and bounds headers and body. No in-flight semaphores.
 - The environment file states each connection's version once.
 - A physical resource belongs to one project: `(target_id, resource_key)` is unique within one project database.
-- A connection's service principal stays in the system database. `registry.connection_principal` links it to its org, project and environment for control row security.
+- Connection and application service principals live in the project database. `platform.connection` records the connection's principal ID.
+- The connection authority is fixed. A new authority needs a new connection. Create, edit and deploy refuse IPv6 literal authorities for Wasm connections. Cloud calls allow public addresses and refuse special addresses.
+- Deploy refuses a connection bound to a different target, a name bound to two connections, or a name shared with another component.
+- A Wasm integration is a sibling component. Deploy pins it by digest, sets `allowedHosts` to the connection authority and sets `wamn.integration` to its connection ID. wasmCloud links the labeled import.
+- `wamn:integration/bound.begin` checks connection status and reads the cached generation and credential. A 401 or 403 invalidates the cached HTTP connection facts and triggers one fresh read.
 
 ## Workflows
 
 - A workflow's first node is its entry node:
-  - Request: a synchronous call, which needs a Response node
+  - Request: a synchronous call, with a Response at the end of every terminating path
   - Schedule: a five-field cron, in UTC
   - Data change: CDC on one entity, with ops and an optional condition
   - Topic: a message on a subject, later work
   There is no Manual entry. "Run now" is an admin action for any workflow.
-- A Request workflow is addressed by a path under `/api/<application>/flow/`. Calling it is a permission granted to roles, like an operation. It runs as the caller (invoker) by default, or as its `execution_role`. The Response sets a status and a JSON body. With no Response within 30 seconds, the call is refused with a timeout. A Request call writes a run row only when the graph continues after its Response or writes data.
+- A Request workflow is addressed by a path under `/api/<application>/flow/`. Calling it is a permission granted to roles, like an operation. It runs as the caller (invoker) by default, or as its `execution_role`. The Response sets a status and a JSON body. With no Response within 30 seconds, the call is refused with a timeout. A Request call admits a durable run at the start if any reachable node can write.
 - The graph owns the trigger. The author step derives the index columns that the host queries.
 - Workflows are authored, enabled and disabled through host routes of the application. Enabling a Data change workflow creates one NATS pull consumer filtered to its entity, and disabling deletes it. The service pulls from these consumers through stock `wasmcloud:nats`: it admits each run through the host, acks, then runs it. Events committed before the enable are skipped by their LSN.
 - A workflow service component runs in every application workload. It walks graphs and calls nodes through the host.
-  - A Data change or Schedule run executes at once, in the invocation that admitted it.
+  - A Data change or Schedule run starts after admission.
   - A Request run executes inline.
-  - The queue is used only to take back a run whose host died. A recovery check runs every 30 seconds.
+  - Every 30 seconds the service takes back runs with expired leases.
 - Runs use a small host interface. The run SQL and its login stay in the host. Each node call carries the run's identity and role.
 - A run executes on the live release. `runs.manifest_digest` and `runs.node_digests_json` go.
 - Not built now (future work): state after each node, backoff, the approval waiting state.
+- The graph format is 0.2. Only Request graphs use Response nodes. Request paths are unique among enabled workflows in an application. Publish reserves the Request workflow prefix.
+- Application host routes also list workflows. Run now admits a durable run and returns its ID. The admin picks the caller or the workflow role.
+- Enable checks the graph under the project database's environment lock. It reads the last source sequence before the enable LSN and starts the consumer after that sequence. It filters by entity and operation.
+- The service polls schedules each minute. It refreshes consumers every 30 seconds and uses a 30-second pull wait. Schedule and Data change use the workflow principal with its configured role.
+- Build the workflow service for `wasm32-wasip3`. It exports `wamn:workflow/entry` with `call` and `run`. Host dispatch selects the exact sibling and export. The default node policy allows three attempts.
+- Deploy and rollback check enabled graphs under the environment lock. They refuse a release that removes a sibling or export in use. Environment apply and delete also hold the affected project locks.
 
 ## Data change in applications
 
@@ -91,704 +115,109 @@ Org → environment → project → application. One boundary per level.
 - Deploy renders one durable JetStream subscription for each declared (model, op) into the workload config, aimed at the route guest `ingress`, which exports the stock `wasmcloud:nats/jetstream-handler`. The stock plugin creates the consumers. Only declared models get consumers. `ingress` checks the owner package and dispatches to the declared component through the operation path, as the `workflow` user with the declared role.
 - One handler for each (owner package, model, op) in an application: deploy refuses two. A developer who wants two reactions puts them in one component. The host accepts `dispatch-data-change` only from `ingress`.
 - Delivery is at least once, with no run row. The message id lets a handler skip repeats. A handler has the same host-transaction setting as an operation, on by default: one transaction for each delivery, committed when the handler returns ok and rolled back on an error. Turn it off for handlers that make long external calls.
-- One NATS account per environment. The environment host group has one stock `wasmcloud-nats` entry, and each workload narrows its grants to its project's stream and subjects.
-- Each CDC reader has its own publish-only user in the environment account. The source stream keeps messages for 7 days, under a byte limit below the account's limit.
+- One NATS account per environment. The environment host group has one stock `wasmcloud-nats` entry. Each workload narrows its grants to its project's stream and subjects. Each workload has an unnamed binding on the default data connection. The workflow service and Data change handlers use named bindings.
+- Each CDC reader has its own publish-only user in the environment account. The source stream keeps messages for 7 days and up to 256 MiB.
+- Components export `wamn:handler@0.1.0/data-change` for Data change. The handler uses the component's own connection bindings. The subscription uses the `<application>-<entity>-<op>` queue group.
+- The project chart creates the publication and CDC reader when deployed models need change capture. The recovery user can read only its project's stream and its own replies.
 
 ## Identity and login
 
 - wamn keeps its own identity service for now, built so a SaaS provider can replace it.
-- The host verifies standard JWTs from settings (issuer, JWKS address, audience, algorithms) with `jsonwebtoken` and a small JWKS fetcher (configured CA only, a fetch again on an unknown kid), with RFC 9068 checks, and reads only `iss`, `sub`, `aud`, `exp`. Roles come from the project database.
-- One token audience for each org: one login gives one token for every environment of the org and for the control routes.
+- Host and control verify RFC 9068 JWTs with `jsonwebtoken` and a small JWKS fetcher (configured CA only, a fetch again on an unknown kid). They check `typ: at+jwt`, EdDSA, `kid`, and `iss`, `sub`, `aud`, `exp`, `iat`, `jti` and `client_id`. The host derives the JWKS URL and the audience from its issuer and org. Roles come from the project database.
+- One token audience for each org (`urn:wamn:org:<org>`): one login gives one token for every environment of the org and for the control routes.
 - Cookies and CSRF live in `wamn-web`; the host sees only bearer tokens.
 - Session liveness is the provider's job: 15-minute tokens, no renewal after logout or disable.
-- User management (create, invite, disable, list) goes through control routes and one adapter. The installer and `api_service` stop calling identity over the operator-certificate HTTP hop.
+- User management (create, invite, disable, list) goes through control routes and one adapter. Identity checks control and worker service account tokens through TokenReview and requires a registered org. Control checks the owner invitation Job's token through TokenReview (T5).
 - API users are service principals with PATs. Service principals and their PATs live only in the project database (`platform."user"` type `service` with issuer `wamn`, and `platform.pat`). The host checks them with its project login.
-- Fixes due: environment login works; one control-eligibility rule; the PAT route checks the certificate subject until that hop goes; `x-forwarded-for` trusted only from known proxies; a route for disabling a user; the signing key encrypted; one Argon2 check per login; two identity replicas.
-- Edge: no user login while it cannot reach identity (E1). The offline window is an environment setting, default 24 hours; identity publishes the next key that far ahead. Future options: longer edge sessions (E2), local login on the device (E3).
+- Identity serves environment logins, trusts `x-forwarded-for` only from configured proxy hops, and uses one Argon2 check per login. It encrypts its signing keys and runs two replicas. Control checks eligibility in the system database.
+- Edge: no user login while it cannot reach identity (E1). Identity publishes the next key ahead of activation by the JWKS cache lifetime plus a margin. The edge design owns the offline window. Future options: longer edge sessions (E2), local login on the device (E3).
+- The JWKS fetcher uses the response lifetime up to 300 seconds. The verifier allows 30 seconds of clock tolerance for `exp` and `iat` and requires a nonempty `sub`, `jti` and `client_id`. The host looks up the active project user by issuer and subject.
+- Web proxies login, renewal and logout. The session and renewal cookies are `__Host-`, `Secure` and `HttpOnly`. The readable CSRF cookie is signed against the session `jti` and a random value. Unsafe methods require the signed cookie and matching header. Login, enrollment, recovery and reset require a same-origin `Origin`. The platform chart creates or reuses `wamn-web-csrf` and mounts it in web.
+- The host checks the PAT prefix, hash, expiry, revocation and the principal's type and status. An org control login changes only principals whose memberships all belong to that org.
 
 ## Deploy
 
-- `deploy <dir>` builds once, publishes once, then runs SQL and code as one operation. `publish <build dir>` pushes a finished build without building again and prints the top package digest. `schema apply` and a deploy without `<dir>` take that digest; the top package pins its bases.
+- `wamn deploy --application <application> --env <file>` takes a positional source directory or `--release <digest>`. The source form builds once, publishes once, then runs SQL and code as one operation. `publish <build dir>` pushes a finished build without building again and prints the top package digest. `schema apply` takes that digest through `--release`. The top package pins its bases.
 - A deploy verb goes CLI → control service → one Job. The deployer needs only a wamn token. No nested Job; the document is a mounted file; the CLI poll has a limit.
-- Every Kubernetes object comes from a chart, with one upgrade per chart. Rust runs SQL and NATS calls only. Six charts: infrastructure, platform (installation, identity, edge, control service), org, environment (host group), project (cluster, database, publication, certificates), application.
-- One wasmCloud version for the operator chart and the runtime crates.
+- Charts define persistent resources, with one upgrade per chart. The six charts are infrastructure, platform (shared services and system database), org (control and the org boundary), environment (host group), project (cluster, database, publication, certificates and CDC reader) and application.
+- One stock wasmCloud version for both runtime-operator charts and the runtime crates.
 - One environment file per environment (YAML with a JSON schema), with its projects and applications inside.
-- Rollback is `helm rollback`. No pull-back after push; append check against the previous version only; one pull per package per operation; one KCL compile per build; one check per fact; no `helm template` pre-check and no `helm get values` read-back; one value each for the NATS, issuer and registry addresses.
+- Rollback is `helm rollback`. No pull-back after push. Check migration appends against the previous digest under the same tag. Pull each package once per operation and compile KCL once per build. The CLI validates input, control authorizes the target, and the worker checks the bound target and package. No `helm template` pre-check. Rollback alone reads prior Helm manifests and values. Project updates can use `--reuse-values` within the same release. One value each for the NATS, issuer and registry addresses.
 - Components: stock `push_component`. Package artifact: two layers (`wamn.json`, migrations tar).
 - Build: codegen's describe cache (`.wamn/describe/`, committed and checked current); a database only when SQL changes; skip unchanged builds; `wamn dev` applies new migrations. `build.json` goes (overlay builds hash the base files).
+- Helm writes its release records and can create the initial platform namespace. The org installer creates the org Helm storage namespace, an optional pull Secret, the org SQL Job and the invitation Job. Control creates operation Jobs and their Job-owned input ConfigMaps. Environment apply creates NATS user credential Secrets.
+- Org provisioning fills chart-created login and local OAuth Secrets. The org installer patches the control Deployment to reload credentials. Identity fills the NATS operator and runtime-operator Secrets. Control patches the chart-created project credential Secret. Environment deletion removes its entry from the control administration ConfigMap.
+- Deploy applies SQL before code. Migrations must work with the previous code. Deploy never resets the database. WorkloadDeployment annotations carry the package digest and content revision. Rollback without a revision selects the newest earlier deploy revision.
+- The environment file lists projects in apply order. Apply reserves the selected projects, configures NATS and starts the host chart upgrade. Then it applies each project chart and its SQL, and waits for the host. A rerun completes projects left reserved after a failure.
+- The application and environment charts use the kstatus watcher. The project and org charts use bounded named waits in Rust. Wait for the project database before SQL and for the workload's `Ready=True` condition.
+- A plain environment delete keeps the Cluster and ObjectStore. Reapply starts a new generation. Delete with `--data` removes kept data. Restore copies back into the live database at the same endpoint.
+- Capture-gap recovery and close use operation Jobs. The project chart keeps the CDC reader paused while a gap is open.
 
 ## Install and configuration
 
 | Layer | Tool | Owns |
 | --- | --- | --- |
-| Infrastructure | OpenTofu, written by hand | Project, network, cluster; writes `infra.values.yaml` |
+| Infrastructure (future) | OpenTofu, written by hand | Project, network and cluster. Writes `infra.values.yaml`. |
 | Platform install | Helm values, one file per installation, with `values.schema.json` | Chart settings |
-| Applications | KCL (`wamn.k`) | Metadata and policy, no types: routes and field labels (overrides on derived defaults), statement lists with fetch class, idempotency key fields |
+| Applications | KCL (`wamn.k`) | Metadata and policy, no types: routes and field labels (overrides on derived defaults), statement names, fetch classes and bind names, idempotency key fields |
 | Environments | YAML environment file | Projects, applications, bindings, environment settings |
 | Run-time data | SQL | Roles, ACLs, connections, app data |
 | Credentials | Kubernetes Secrets, CloudNativePG managed roles | Passwords, keys, tokens |
 
-- Install: one infrastructure release (operators and resource types first), then one platform release with identity, control and edge on; one wait at the end. One SQL Job. Identity makes its own first signing key. One owner-invitation Job. All logins in the first install of their chart. No superuser SQL from the developer machine.
+- Install: one infrastructure release (operators and resource types first), then one platform release with identity and edge. Wait for CloudNativePG before installing the platform. Wait for rollouts and the system SQL Job. Identity makes its own first signing key. No superuser SQL from the developer machine.
 - Each service reads one rendered settings file with its real inputs; constant flags become code defaults.
-- `wamn platform deploy <values>` is the install entry point. It runs the infrastructure chart, then the platform chart, with one wait at the end (Q1 a).
-- `wamn org create <org> --owner <email>` creates an org (T2).
+- `wamn platform deploy <values> --chart <bundle>` is the install entry point (Q1 a). `WAMN_RELEASE_CHART` can supply the bundle. `--only infrastructure|platform` selects one shared chart. Hosts update through `env apply`.
+- `wamn org create <org> --owner <email>` creates an org (T2). It creates Helm storage and installs the org chart. The platform Job creates the org row and both system database logins and fills their Secrets. The installer restarts that org's control and runs the owner invitation Job.
 - The host's settings file arrives through the stock runtime-operator `volumes`/`volumeMounts` and an extra `--settings` argument; the stock host arguments stay (Q3 a).
 - Kind cluster and local registry creation is an `xtask` step. Provider differences are two values files. No key-parity check.
-- Step 3.6 makes sure three install defects found by reading are gone (L1): the issuer Job's missing `--db-host`, `wamn-oauth` written to the wrong namespace, `platform status` reading the database in the wrong namespace.
+- The platform values schema checks the GCP project ID, zone and bucket names. The install sizes JetStream storage from `maxProjects`. The org SQL Job fills the org's `wamn-oauth` Secret when OAuth uses local encryption. The platform chart supplies identity's envelope settings.
+- System migrations run only in the platform SQL Job. The platform seeds integration types in system SQL. Org control cannot publish them.
+- The environment file supplies project database sizes. The project chart uses `initdb` and creates the ObjectStore and ScheduledBackup when backup is enabled.
+- Direct platform and project database logins use client certificates. Each project Cluster has its own CA, and the host mounts `tls.crt` and `tls.key`. Use namespaced issuers for trusted platform identities.
+- The org control and apply logins use passwords outside Helm records. They use separate single-replica CloudNativePG Poolers in session mode. Control has a per-login limit of 8, apply has 16, and apply can wait 15 minutes. The chart derives the system connection limit from its budgets. The apply Job reuses its lock-holding connection.
+- The host chart sets the HTTP listener and uses the configured NATS address. Environment apply writes the project's `registry.event_readers` row.
 
 ## Contracts, codegen, KCL
 
 - The developer writes SQL migrations, the SQL file for each declared statement (checked by SQLx at build), hand-written WIT for each custom operation (input, result and errors), and `wamn.k`.
-- `wamn.k` holds no types. It holds: package and base pins; model overrides; routes and field labels (derived defaults, a route from the operation name, overridden here); for each custom operation, its statement list (name and fetch class; the SQL file path comes from the operation and statement name) and its idempotency key field (a field of the WIT input); connections; components.
-- Generated: model WIT from the schema (with named `id` and `revision` types), Rust bindings, statement types from SQLx describe. Custom-operation WIT is not generated.
-- Codegen uses `prettyplease` (Rust), `wit-encoder` (WIT) and typed OpenAPI 3.1 structs from `oas3`; the TypeScript client comes from an off-the-shelf generator fed by `openapi.json`. SQL templates stay.
+- `wamn.k` holds no types. It holds package and base pins, model overrides, routes and field labels, statement lists, idempotency key fields, connections and components. Routes default from operation names. Modbus retains its integer range check in `wamn.k`.
+- Each statement entry holds its name, fetch class and bind names (K1). Types and nullability come from the WIT input. The operation and statement names determine the SQL path. An idempotency key names a field in the WIT input.
+- Generated: model WIT from the schema (with named `id` and `revision` types), Rust bindings, and statement result types from SQLx describe. Value lists use WIT enums. Use named WIT aliases for `uuid`, `numeric` and `timestamp`. Custom-operation WIT is not generated.
+- Generate Rust with `quote` and format it with `prettyplease`. Start the formatted Rust with a fixed `// @generated` line. Spell keywords and dotted names as wit-bindgen does.
+- Generate WIT with `wit-encoder =0.254.2`. A labeled world import is one identifier. It is the only WIT string fragment and carries a comment.
+- Generate each application's `openapi.json` with typed OpenAPI 3.1 structs from `oas3`. Generate control's OpenAPI from the contract JSON files. Keep those files and `contract_files.rs`.
+- Pin `@hey-api/openapi-ts` and use only its type, SDK and fetch-client plugins. Use the `@wamn/web-runtime` transport as fetch, and call `toWire` and `reviveOutcome` in interceptors. The client serializer JSON-encodes query values as `readQuery.ts` does. Reads use `readQuery` and `readCache`. The server keeps its query format.
+- A pnpm script in `apps/platform_ui` runs the generator from the existing build. It writes `src/generated/{wamn_control,wamn_control_org}`. Keep the examples under `web/wfe` as they are.
+- SQL templates stay.
 - KCL holds overrides on schema-derived defaults, is never generated, and refuses names that match nothing in the schema or WIT.
-- JSONata transforms declare input and output schemas, with no examples; output is validated at run time.
+- Keep matching Rust or SQL checks where the runtime accepts the same input.
+- JSONata transforms declare input and output schemas, with no examples. The workflow must validate the output against its schema. It currently checks only that the output is JSON.
 - Sync: only the server-side change feed on list reads.
 
 ## Crates and names
 
 - Renames: `wamn-ctl` → `wamn-cli`; `wamn-control-provision` → `wamn-provision`; `wamn-compiler` → `wamn-codegen`; `wamn-connections` → `wamn-connection`; `wamn-web-front` → `wamn-web`; `wamn-platform-identity` → `wamn-identity`; identity service package → `wamn-identity-service` in `services/identity-service`.
-- Merges: artifact crates → `wamn-oci`; `wamn-postgres-statements` + `wamn-data-access` → `wamn-guest`; build + composer → `crates/build`. `wamn-release-control` goes. Role names collect in `wamn-role` in 3.1, with the T2 login set. The `wamn-events` and `wamn-event-wire` merge waits for 3.4 (it made a dependency cycle in Epic 2).
-- Splits: `wamn-execution-host` goes: file route → `wamn-blobstore`, number counter → `wamn-sql`, OAuth callback → `wamn-http`, credential cleanup → `wamn-connection`; control route, host route, application route, environment status and connection health → control service. `crates/identity` keeps passwords, sessions, PATs, principals, org membership and control eligibility; connection administration → `wamn-connection`; project database rows, configuration rows and environment fill → `wamn-environment`. The `wamn.json` model moves to `wamn-catalog`.
-- Dependency fixes, in phase 3: no `wamn-postgres` → `wamn-kubernetes`; no `wamn-oci` → `wamn-kubernetes` (use `oci-client`); no `wamn-kubernetes` → `wamn-registry` (3.5).
-- Docs: this doc lives at `docs/plan/wamn-restructure.md`. Everything else in `docs/plan` goes, and so do `docs/history` and `docs/audit`; no stray files at the top of `docs/`. This doc and `rulings.md` are the authority until the restructure lands; where they differ, this doc rules.
+- Merges: artifact crates → `wamn-oci`; `wamn-postgres-statements` + `wamn-data-access` → `wamn-guest`; build + composer → `crates/build`. `wamn-release-control` goes. `wamn-role` owns Postgres role names. `wamn-event` owns shared event types.
+- Splits: `wamn-execution-host` goes: file route → `wamn-blobstore`, number counter → `wamn-sql`, OAuth callback → `wamn-http`, credential cleanup → `wamn-connection`; control routes, environment status and connection health → control service. Application routes → host. `crates/identity` keeps passwords, sessions, principals, org membership and control eligibility, plus the project service-principal and PAT SQL; connection administration → `wamn-connection`; project database rows, configuration rows and environment fill → `wamn-environment`. The `wamn.json` model moves to `wamn-catalog`.
+- `wamn-postgres` uses mounted credentials and has no `wamn-kubernetes` dependency. `wamn-kubernetes` has no `wamn-registry` or `wamn-catalog` dependency. In 3.7b, remove the `wamn-oci` dependency on `wamn-kubernetes` (use `oci-client`).
+- Docs: this doc lives at `docs/plan/wamn-restructure.md`. Everything else in `docs/plan` goes, and so do `docs/history` and `docs/audit`; no stray files at the top of `docs/`.
+- The CLI binary is `wamn`, the identity service binary is `wamn-identity`, and the web binary is `wamn-web`.
 
 ## Tests
 
 - Three levels: unit (no services); service tests with real Postgres and NATS from testcontainers, marked `#[ignore]`, one per contract; journey tests on kind through `wamn deploy`, observed with a read-only login.
-- Stock `cargo test` and `cargo test -- --ignored`; an `xtask` command maps changed files to packages. Fixture applications are built in one step before the run; a test whose input is missing fails. `#[sqlx::test]` gives each test its own database. Timing tests use `tokio`'s paused clock. No `test-util` features; helpers in `tests/common/` or one dev-only crate. One SQL crate for grant refusals.
+- Stock `cargo test` and `cargo test -- --ignored`; Step 3.8 restores the `xtask` command that maps changed files to packages. Fixture applications are built in one step before the run; a test whose input is missing fails. `#[sqlx::test]` gives each test its own database. Timing tests use `tokio`'s paused clock. Step 3.8 removes `test-util` features and puts helpers in `tests/common/` or one dev-only crate. One SQL crate for grant refusals.
 - During phases 1 and 2 testing is minimal: a step is checked by `cargo build` and `cargo clippy` only; tests that stop compiling are deleted; no new tests until step 3.8.
+- Standard epic checks include build, clippy, `cargo xtask build-platform`, applying the schema to a fresh local Postgres, and checking the largest application fixture's Helm release records against the 1 MiB limit.
+- Before a kind install, build platform images and check that every rendered image resolves. Use `kubectl apply --dry-run=server` with the CRDs installed. Run each rendered WAMN container command with `--help` appended and check the exit code.
+- Before an epic merges, the short smoke run installs the platform, creates an org, applies an environment and deploys an application. Call the application and control through web. At each step, collect all pod failures before stopping. Local kind has standing approval. Other clusters need owner approval.
+- For a wasmCloud chart update, render the environment and platform charts with both versions and the same values. Review the object diff before merge.
 
 ## Order of work
 
 Phase 1 deletion, phase 2 restructure (no behaviour change), phase 3 code editing. All deletion up front; the project may be non-functional across epics; every step compiles. One epic is fully scoped at a time, the next after review; work inside an epic runs in parallel.
 
-Phase 3 steps, in dependency order: 3.1 database model; 3.2 request path (Epic 4: the host serves one application; Epic 5: connections, files, integrations, application host routes); 3.3 identity; 3.4 workflow service; 3.5 deploy; 3.6 install and isolation (Epic 9 isolation, then Epic 10 install); 3.7 codegen; 3.7b crate boundaries; 3.8 tests.
-
-## Epic 1: phase 1 deletion
-
-Merged to main.
-
-Rules: done means `cargo build` and `cargo clippy` pass; deletion plus the smallest caller edit only; a test that stops compiling is deleted; an issue edits only the files it owns; a symbol with callers in a file another wave-1 issue owns becomes an empty no-op in wave 1 and is deleted in wave 2.
-
-Decisions: `AuthDrops`/`ConnectionDrops` become no-ops (parameters removed in phase 2); only the publication side of the release document goes (`ServingManifest`, `LoadedRelease` go in 3.2); the edge keeps the component loader; `build.json`, the component media types and the package layers wait for phase 3; `lock()` calls go in 3.8; `wamn_app_owner` is the parent role of every migration login (`workload_role.rs::acl_role`), so it goes in 3.1 with T2 and S; `cluster.k` and `ClusterDocument` stay until 3.6 (read by `services/ctl`, `services/control`, `xtask` and `test-support`), and Epic 1 deletes only the `project.k` chain.
-
-Wave 1 (parallel):
-
-| Issue | Owns | Deletes |
-| --- | --- | --- |
-| 1.1 Environment and install | `crates/environment`, `crates/platform-install`, `crates/release`, `crates/catalog/src/configuration.rs`, `services/control/src/main.rs`, `services/ctl/src/{provisioning_verbs,identity_verbs}.rs` and their `main.rs` entries, `deploy/gcp/environments`, `deploy/charts/installation/values.yaml`, `deploy/charts/release/values.yaml`, `deploy/infra/kind-config.yaml`, the named receiving and REST connector fixtures | Uncalled provisioning path; `environment/sql.rs::initialize`, `environment/stage.rs::initialize`; `environment/status.rs`, `environment/rollback.rs`, `environment/mod.rs::dry_run`, `environment/show.rs::show`, `environment/runtime.rs::resolve`; `legacy_release`; `component_source_from_env`; `ReleaseCarrier` and `wamn_release_control::delivery::ReleaseIdentity` (not `wamn_authority::identity::ReleaseIdentity`, which stays); `platform/operations.rs::provision`; `org::recovery_values`, `oauth::dev_key`; environment KCL; nested bootstrap Job; `require_chart_references`; `hostConfiguration` read-back; `write_selection`; `Provider` branches inside `platform-install`; install Jobs and port-forward SQL; bootstrap verbs; unused release chart values. Moves `kind-config.yaml` to `deploy/kind`. Keeps `cluster.k` and `ClusterDocument`. |
-| 1.2 Build and test runner | `crates/compiler`, `crates/catalog/src/route_identity.rs`, `crates/publish`, `crates/package-artifact`, `xtask/build`, `xtask/src/{lib,selection,platform,platform_project,platform_project_commands,platform_tofu,platform_pools}.rs`, `xtask/kcl/project`, `deploy/gcp/project.k`, `tests/selection.toml`, `justfile`, TypeScript packages using generated clients, named overlay and WMS test files | `classify_statements` and the `transactional` field; `required-schema-contract.json`; `rustfmt.rs`; TypeScript and sync client generators; `package_artifact_digest`; pull-back after push; `validate_append` over all versions; `read_descriptors`, `load_component_facts`; the custom test runner; the `project.k` chain (`ProjectDocument`, `platform_tofu.rs`, `platform_pools.rs` with `wake`/`sleep`, `xtask/kcl/project`, `deploy/gcp/project.k`, the `Project` and `Platform` tasks in `lib.rs`). Keeps `openapi.json` and `xtask build-platform`. |
-| 1.3 Host cut | `services/host`, `deploy/charts/release/templates`, `file_route.rs::serve_selected`, the `release_digest` column | Host release selection; second file listener and `-files` Service; host spawns of queue, schedule and event tasks; `replicate` calls; `lease_tests.rs` |
-| 1.4 Auth caches | `crates/authority`, `crates/authentication`, `sql/session_identity.rs`, `connections/{connection_memory,connection_facts}.rs`, broker bucket code, `services/identity/src/cli.rs`, `http/src/lib.rs` (`oauth_ticket`), `execution-host/src/application_route.rs` (cache clear) | NATS KV replica and buckets; connection KV memory; host liveness read; `inherits_administration`. `AuthDrops`, `ConnectionDrops`, `Publisher`, `replicate` become no-ops. Stale identity comments. |
-| 1.5 HTTP transport | `http/src/transport.rs` | The five semaphores |
-| 1.6 Login roles | `crates/provision`, grant lines in `deploy/sql` | `ServiceReader`; the dead `wamn_administration` grant; `DELETE` on `runs` for `wamn_app` |
-| 1.7 Tests, files, docs | Stub test files outside other issues, `test-support`, identity `mail.rs`, `crates/catalog/Cargo.toml`, `deploy/platform`, `deploy/infra` (except `kind-config.yaml`), the example RBAC template, `docs/{history,plan,audit,testing}`, `CLAUDE.md`, `AGENTS.md`, `app-schema.sql` comments, `rulings.md` | `panic!` stubs; unused `test-support` items; mail back door; `proptest`; loose YAML; docs/history, docs/audit and everything in docs/plan except wamn-restructure.md (CLAUDE.md and AGENTS.md point to it); dead links; stale comments; superseded W37 sentences |
-
-Wave 2 (in sequence, after wave 1):
-
-1. **2.1 Workflow library:** queue, `RouterDriver`, `contract.rs`, `read_compiled_wiring_document`, `production_lease.rs`, `release_lease`, three unused `FailType` variants, `catalog.wiring_tombstones`, five unused `runs` columns, advisory stream, `reconcile_replica_identity`, publication SQL builders and their CDC tests, the `ExecutorDatabase` impl, the `workflow.park`/`release`/`runs` operations.
-2. **2.2 Invocation path:** connection snapshot and candidate types, the three hashes, `connection_generation.rs`, `resource_lease.rs`, `connection_projection.rs`, `sql/connection_binding.rs`, `ClientIdentity`/`ConnectionIdentity`, the host-path component loader and warm list, `NativeInput::Typed`; the login families the host opens pools for and the org chart templates; the no-op `replicate` and the `Provider` type.
-3. **2.3 Release publication:** release OCI artifact, `catalog.releases`, `stage::write_release`, `run_queue::release_bytes`, `compose_application`, `entry_publication`, the entry image.
-
-## Epic 2: phase 2 restructure
-
-Merged to main.
-
-Rules:
-- No behaviour change. Allowed: moves, merges, renames, and deleting code that a move leaves with no caller. No new types, no new logic.
-- Done = `cargo build --workspace` and `cargo clippy --workspace --all-targets` with no new error compared with the 45 existing ones; the same in `apps/`. A local Postgres container is allowed for the `wamn build` that check needs, and only for that. Run no tests, no kind or cluster runs, nothing on GCP.
-- If a test stops compiling and an import path change does not fix it, delete the test.
-- An issue may edit any file, but only to change import paths, Cargo dependency lines and workspace members for what it moved. Resolve conflicts in those lines at merge, and regenerate Cargo.lock.
-- Moved modules keep their names and structure unless stated.
-- Generated code is regenerated, never edited by hand.
-
-Decisions:
-- `wamn-execution-host` goes. The host no longer links it, and the control service is its only user.
-- `org.rs`, `control.rs` and `paging.rs` stay in `wamn-identity`.
-- Deferred: `wamn-role` to 3.1; name builders out of `wamn-kubernetes` to 3.5; test layout (`test-util` features, test file names) and the `test-support/resources` name to 3.8.
-
-Issues:
-- 2.1 Remove change notices. Runs first, alone. Delete `AuthDrops`, `ConnectionDrops`, `Publisher`, `crates/broker/src/{auth_changes,connection_changes}.rs`, and every parameter, field and call that carries them.
-- 2.2 to 2.6 run in parallel after 2.1:
-  - 2.2 Split `wamn-execution-host`:
-    - `file_route.rs` → `wamn-blobstore`
-    - `number_counter.rs` → `wamn-sql`
-    - `oauth_callback.rs` → `wamn-http`
-    - `credential_cleanup.rs` → `wamn-connections`
-    - `control_route.rs` with `control_route/`, `host_route.rs`, `application_route.rs`, `environment_status.rs` and `connection_health.rs` → `services/control`
-    - Delete `operation.rs` (`OperationHost`), `platform_http.rs`, `file_collector.rs` and `file_collection.rs`; none has a production caller. Then delete the crate.
-  - 2.3 Split `crates/identity`:
-    - `connections.rs` and `connections/` → `wamn-connections`
-    - `application.rs`, `configuration.rs` and `environment.rs` → `wamn-environment`
-    - Everything else stays.
-    - Move `test-support/resources/credentials.rs` into `wamn-connections` under `test-util`.
-  - 2.4 Remove `wamn-release-control`, and move build:
-    - `release_chart::{uninstall, recover_pending}` → `wamn-kubernetes::helm`
-    - `chart_version`, `read_platform_version`, `ImageSet`, `image_set` and `stamp` → `wamn-platform-install`
-    - `values`, `roles`, `release_name`, `workload_name`, `ValuesInput`, `Role`, `RoleName`, and `TELEMETRY_VARIABLES` → `wamn-environment`; `env_policies.rs` → `wamn-control-provision`
-    - Callers use `wamn_kubernetes::Target` directly. Delete the crate.
-    - Move `xtask/build` (`wamn-build`) to `crates/build`, and fold `wamn-component-composer` into it.
-  - 2.5 Move the `wamn.json` model: `compiler/src/{manifest,manifest_error,source_name}.rs` → `wamn-catalog`, merged into the existing `wamn_catalog::manifest` module. The existing smaller types in `wamn_catalog::manifest` move unchanged to `wamn_catalog::manifest::installation`.
-  - 2.6 Merges:
-    - `component-artifact` + `package-artifact` → `wamn-oci` in `crates/oci`
-    - `postgres-statements` + `data-access` → `wamn-guest` in `crates/guest`, in the apps workspace. The generator's `wamn_postgres_statements::` paths become `wamn_guest::`.
-- 2.7 Renames. Runs last, alone. Directory names equal crate names.
-  - `wamn-ctl` → `wamn-cli` in `services/cli`; the binary stays `wamn`
-  - `wamn-control-provision` → `wamn-provision`
-  - `wamn-compiler` → `wamn-codegen` in `crates/codegen`
-  - `wamn-connections` → `wamn-connection` in `crates/connection`
-  - `wamn-web-front` → `wamn-web` in `services/web`; the binary is `wamn-web`
-  - The identity service package `wamn-identity` → `wamn-identity-service` in `services/identity-service`; the binary stays `wamn-identity`. Then `wamn-platform-identity` → `wamn-identity` in `crates/identity`.
-  - `guests/jsonata` → `guests/jsonata-expression`
-  - Package `wamn-modbus` → `modbus`
-  - Update the Dockerfile, chart, xtask and docs references to match. The `wamn-ctl` NATS certificate in the installation chart stays until 3.6.
-
-## Epic 3: step 3.1 database model
-
-Merged to main.
-
-Rules:
-- Only the work listed here. Nothing from 3.2 or later.
-- Schema changes edit the files in `deploy/sql` directly. There is no migration chain.
-- Done means all three pass:
-  - `cargo build --workspace` and `cargo clippy --workspace --all-targets`, with no new error compared with the epic's base. The same in `apps/`.
-  - The product's own code that applies `deploy/sql` runs against a fresh local Postgres, for the system database and one project database, with no error. Use one local Postgres container, for these checks only.
-- Run no tests and write no new tests (tests come in 3.8). If a test stops compiling and changing a column, a role name or an import does not fix it, delete the test.
-- Generated code is regenerated, never edited by hand.
-
-Issues:
-
-3.1a `project_env_key` leaves project databases. Runs first, alone.
-- SQL: drop the column, and its place in keys and indexes, from `catalog.packages`, `catalog.connection_requirement`, `catalog.release_connection`, `catalog.connection_binding`, `catalog.workflows`, `wamn_run.runs` and `wamn_run.run_queue`.
-- SQL: drop the row policies by project on `catalog.*` and `wamn_run.*`, keeping the part that requires an identity. Drop all three `wamn_authority.project_key()` definitions (`app-schema.sql`, `catalog-schema-prefix.sql`, `run-state.sql`), `current_project_key()`, and the `project_key` expression indexes.
-- Rust: remove the key from every statement and binding against these tables.
-- The key stays wherever several deployments share a store: system database rows, NATS subjects and keys, resource names, login names.
-
-3.1b to 3.1d run in parallel after 3.1a:
-
-3.1b Connection tables move to the project database.
-- In the project database (`platform` schema): `connection`, with the four integration fields (name, type, auth type, external system) as its columns; `connection_generation`; `external_system`; the credential reference (today `identity.credential`); `oauth_token`; `oauth_authorization`.
-- Delete: `registry.{external_system,integration,connection,connection_generation}`, `identity.{credential,oauth_token,oauth_authorization}`, and `platform.integration`.
-- `integration_type`, `integration_type_version` and `auth_type` stay in the system database.
-- Move every writer and reader to the project database: connection administration (`wamn_connection::connections`), OAuth (`wamn-http`, `wamn_connection::oauth_token`), connection credentials (`wamn_connection::connection_credentials`), `wamn-blobstore`, environment bindings (`wamn_environment::environment::{bindings,connections}`) and the control routes.
-- The connection reader login goes.
-
-3.1c Login set T2 and role names.
-- New crate `wamn-role` in `crates/role`. It holds every Postgres role name and nothing else. Remove the copies in `wamn-identity-protocol`, `wamn-provision`, `wamn-record-history` and `wamn-schema-introspection`.
-- Project database logins:
-  - migration: owner of the database and of every object in it. It replaces `wamn_db_owner` and `wamn_app_owner`, which both go.
-  - application: `wamn_app`
-  - read-only: `wamn_query`
-  - platform: `wamn_platform`
-- `AuthorityClass` keeps `GuestSql` and `DynamicSql`. `ExecutorPlatform`, `CallableHttp` and `Administration` become one `Platform` class on `wamn_platform`.
-- System database: one reader login per environment for the host's system reads.
-- Each role is created in exactly one SQL file.
-- Every SECURITY DEFINER function is owned by its database's owner (`datdba`), sets `search_path=pg_catalog`, has no PUBLIC EXECUTE and is not grantable.
-- Logins are still created by the current provisioning code under their `wamn-role` names. Creating them in charts is step 3.6.
-
-3.1d `platform."user"` key and its writer.
-- Add `issuer` and `sub` (text, NOT NULL) with `UNIQUE (issuer, sub)`. `id` stays the primary key. Foreign keys, `user_role` and the `created_by`/`updated_by` stamps keep using `id`.
-- For wamn identity, `issuer` is the identity issuer address and `sub` is the principal id.
-- One writer: `wamn_environment::application::{write_user, write_service}`. `wamn_environment::environment::stage` writes through it.
-- The four platform principals (`wamn:provisioning`, `wamn:apply-package`, `wamn:executor`, `wamn:audit-retention`) become seed rows in `app-schema.sql`, with the ids already fixed in `user_platform_principal_check`. Delete `wamn_provision::platform_principals`.
-- The host's lookup by `(iss, sub)` is step 3.3. Do not change it here.
-
-Rulings on the scout questions (D, 2026-11-16): logins stay suffixed per project database until 3.6; `registry.connection_principal` keeps control row security for connection principals; `configuration.rs` loses its external system, integration and connection writes; the workflow user is a fifth seed row; stage and the control service take the issuer from the identity issuer address setting; the `Database` owner in `database.yaml` is the project's migration login, and `clusters.yaml` waits for 3.6.
-
-## Epic 4: step 3.2, part 1, the host serves one application
-
-Rules:
-- Only the work listed here. Connections, file routes, integrations and features built only when declared are Epic 5. The workflow service is 3.4.
-- Done means all of these pass:
-  - `cargo build --workspace` and `cargo clippy --workspace --all-targets`, with no new error compared with the epic's base. The same in `apps/`.
-  - The schema-apply check from Epic 3.
-  - `helm template` of the release chart, with values for the largest fixture application in `apps/`. The rendered values must stay under Helm's 1 MiB release limit. Report the size.
-  - A local Postgres container is allowed for these checks only.
-- Run no tests and write no new tests (3.8). If a test stops compiling and an import or name change does not fix it, delete the test.
-- No kind or cluster runs, nothing on GCP.
-- Generated code is regenerated, never edited by hand.
-
-Issues:
-
-4.1 Application workload. Runs first, alone.
-- The release chart (`deploy/charts/release/templates`) renders one `WorkloadDeployment` per application. The last version of that template is `workloads.yaml` at commit 6b6d9c22; use it as the starting point. The workload holds:
-  - the route guest
-  - every application component, by stock OCI reference and digest
-  - host interfaces: `wasi:http` handler with `config.host`, `wamn:ingress`, `wasi:config`, `wamn:operation`, and the `wamn:postgres` interfaces the components import
-- Components are published with stock `push_component` (`application/wasm`). The wamn component media types (`COMPONENT_LAYER_MEDIA_TYPE`, `COMPONENT_CONFIG_MEDIA_TYPE`) and `pull_verified` leave the publish and host paths.
-- The route guest is the platform's one pinned image. If `xtask build-platform` does not publish it, stop and ask.
-- The deploy (`wamn_environment::release_chart` and `environment::write`) writes two config keys on the route guest:
-  - `wamn.http.routes`: the route table, as today
-  - `wamn.application`, one JSON document holding:
-    - for each operation: public or private, whether the host begins the transaction, read or write, and the idempotency key field
-    - the application's database schema
-    - the project's grant cache lifetime
-    - for each operation, the component that serves it
-    - the org, project, environment and application names
-    - delete as its own operation type
-- The grant cache lifetime moves into the workload config, and these go:
-  - `registry.environment_projects.revocation_seconds`
-  - `registry.environment_applications.revocation_seconds`
-  - the `revocation-seconds` rows written by `environment/document.rs::write_revocation_configuration`, and that function
-  - the application-level field in the environment input
-  The project-level value in the environment input stays, as the deploy's input.
-
-4.2 to 4.4 run in parallel after 4.1:
-
-4.2 Host operation plugin.
-- A `wamn:operation` plugin in `wamn-engine`, registered in `services/host`. For each application component, it resolves `ResolvedWorkload::dispatch_target` in `on_workload_resolved` and holds it for the binding. `invoke` calls the component through it.
-- JSON conversion stays (`engine/operation/json.rs`).
-- Delete the host's own component handling: `engine/operation/native_workload.rs`, its pull of application components, the warm list, and the repeated `NativePolicy::admit` (one check per invocation).
-- Code the edge still uses moves into `services/edge` (4.4 rule).
-- `wamn-sql` keeps the `wamn:operation` interface; `wamn-engine` holds the dispatch targets and `invoke` calls through them. No connection state on the invoke path until Epic 5.
-
-4.3 SQL and auth.
-- The fixed statements of a transaction go as one batch at begin and one at commit (`wamn-sql`: operation transaction, write log).
-- `begin-operation` reuses the caller that `authenticate` produced. The second grants read goes.
-- Grants, environment status, PAT admission and session answers live in one local `moka` cache, with the project lifetime from `wamn.application`. It caches positive answers only.
-- Environment status comes from that cache.
-- `services/host/src/host/projects.rs` reads the projects file once, not on each request.
-
-4.4 The release document leaves the request path.
-- Delete `LoadedRelease` (`wamn_engine::release_manifest`). Remove the release document from host routing, authentication, authority, SQL and the control routes; they read the workload config written in 4.1.
-- The control service builds its routes from `HostRouteSet::Control` directly. `LoadedRelease::control_root()` goes.
-- `ServingManifest` stays in `wamn-catalog` for its remaining readers: workflow (3.4), deploy identity (3.5) and connection and file readers (Epic 5).
-- The parts of `LoadedRelease` and the wamn component pull (`pull_verified`) that `services/edge` uses move into `services/edge`, unchanged, until the edge design. `crates/dev/src/dev/edge_bundle.rs` stays.
-
-## Epic 5: step 3.2, part 2, connections, files and application host routes
-
-Rules:
-- Only the work listed here. The workflow service is 3.4. The environment file and the registry binding tables are 3.5.
-- Done means all of these pass:
-  - `cargo build --workspace` and `cargo clippy --workspace --all-targets`, with no new error compared with the epic's base. The same in `apps/`.
-  - The schema-apply check from Epic 3.
-  - `helm template` of the release chart with values for the largest application in `apps/` that builds. The Helm release record must stay under 1 MiB. Report the size.
-  - A local Postgres container is allowed for these checks only.
-- Run no tests and write no new tests (3.8). If a test stops compiling and an import or name change does not fix it, delete the test.
-- No kind or cluster runs, nothing on GCP.
-- Generated code is regenerated, never edited by hand.
-- Each issue deletes the `ServingContext` and `ServingManifest` readers it replaces. The readers for workflow (3.4), deploy identity (3.5) and the edge stay.
-
-Issues:
-
-5.1 Deploy facts for connections and files. Runs first, alone.
-- `wamn.application` gains, for each component:
-  - `connections`: for each declared connection name, the connection id, read or write mode, the interface, and the integration type digest when the type is wasm or native
-  - the file facts that the file routes and the blobstore plugin need and that today come from the release document
-- The deploy takes the bindings from `environment/bindings.rs::analyse` and writes them into `wamn.application`. `bindings::write` stops writing the catalog. `catalog.release_connection` and `catalog.connection_binding` go, with their grants, writers and readers. `catalog.connection_requirement` stays.
-- The chart's host interfaces are the route guest's set plus each platform package the components import (`wamn:postgres`, `wamn:connection`, `wasmcloud:blobstore`, `wamn:integration`). A package that no component imports is not rendered.
-- Each declared connection of a wasm integration type becomes a sibling component in the workload. It is named after the declared connection name, pinned by digest, has `allowedHosts` set to the connection's authority, and has `wamn.integration` set to the connection id. wasmCloud links the application's labelled import to it.
-- The deploy refuses one declared name bound to two connections in one workload, and a declared name equal to another component's name.
-- The authority is fixed on `platform.connection`. A new host is a new connection.
-- Connection create, connection edit and the deploy refuse an IPv6 literal authority for wasm types, because the operator CRD's `allowedHosts` pattern has no bracketed IPv6 form. A hostname that resolves to the device works.
-- The deploy refuses a binding whose connection's target is not the environment's target, for every connection type. A connection meant only for a local target never reaches a cloud workload.
-- The deploy refuses two versions of one host interface package, because the operator allows only one unnamed entry for each namespace and package.
-- The deploy refuses an operation name that two components declare, among operations that have a type. Palette exports are exempt.
-
-5.2 Connections on the call path. After 5.1; runs in parallel with 5.3.
-- Host plugins for `wamn:connection/http` and `wamn:integration`, registered in `services/host`. They link only for components that import them. The host builds connection state for a workload only when `wamn.application` declares connections.
-- Per call: the binding from `wamn.application` for the component and the declared name; the connection row, its generation and its secret from the host's local `moka` cache, with the project lifetime and positive answers only; then send. A 401 or 403 removes the cached row from the local cache and reads it once again.
-- Connection answers use the same `moka` cache as grants (`services/host/src/host/authentication.rs`).
-- These go: `ConnectionFacts::release`, `ConnectionFacts::version`, `ConnectionFacts::release_component_bindings_ready`, and what is left in `ConnectionMemory` from the deleted replica. The host makes no system database read for connections.
-- The host's integration loader goes. wamn does not pull or compile integration code.
-- `wamn:integration/bound` gains `begin`, which returns a `call` resource for each call. `begin` checks the connection status and reads the generation and credential from the cache. It sends no guard SQL and holds no connection during the external call. A cache miss fills the 5.2 cache with short reads.
-- Control `connection_test` refuses wasm types until the open item on health probes resolves.
-- The host socket floor stays (`allow_private: false`, `deny_special: true`). Integration siblings in the cloud reach public addresses only.
-- No exclusive lock in the host. Exclusive connections are refused in cloud environments (5.5).
-- HTTP client cache key: no change. No client is kept from one send to the next.
-- The invoke path carries the connection invocation again (the `Scope` record in `sql/invocation.rs`).
-- `session_operation_permissions` caches a grant set only under the same condition as `principal_grants`.
-
-5.3 File routes. After 5.1; runs in parallel with 5.2.
-- The blobstore host plugin is registered in `services/host` and links only for components that import `wasmcloud:blobstore`.
-- When an application workload resolves, the host registers a native path on the wasmCloud router for that workload. On unbind, it removes the path. The prior art is `crates/execution-host/src/platform_http.rs` at 6b6d9c22 (`on_service_http_resolved`, `ServiceHttpJob`).
-- File routes are served on that path. There is no second listener.
-- `sign-result` signs file results again.
-
-5.4 Application host routes. After 5.3.
-- The host serves `HostRouteSet::Application` (permission.mine, roles, grants, users, counters) on the path from 5.3, built from `wamn.application`.
-- The Application half of `services/control/src/host_route.rs` and `application_route.rs` moves into `services/host`. The control service keeps the Control half.
-- `workflow.start` refuses with the existing unavailable refusal until 3.4, and the `workflow` field leaves the handler.
-- `user.list` lists users and roles from the project database, without the `admin_covered` field until 3.3. The host has no system database login.
-
-5.5 Exclusive connections are refused in the cloud.
-- The deploy refuses a binding to an exclusive connection, and connection create refuses an exclusive connection, when the environment's target type is `cloud`. This covers every connection type.
-- The call limit, `platform.call_slot` and the host's exclusive lock are removed. The platform pool keeps its default size.
-
-Rulings on the scout questions (D, 2026-11-17):
-- Plugin code that Epic 1 deleted is restored from 0943187e1^, without snapshots, candidate bindings, hashes, semaphores or the KV replica.
-- 5.1:
-  - gives the host its project database logins through a `wamn-postgres` entry in the host group's `plugins` (ruled 2026-11-17, Part 2)
-  - adds runtime type, exclusivity, target type, signed-result facts and the full integration reference to `wamn.application`
-  - moves every binding-table reader to `wamn.application`
-  - defines the one binding lookup that 5.2 and 5.3 use
-- `release_values` takes the bindings as input, and its caller is 3.5.
-- The check on the connection principal's status goes; only `platform.connection.status` counts.
-- `sign-result` returns a result with no signed fields unchanged.
-- The shared cache is a trait in `wamn-connection`, implemented by the host.
-- `wamn-sql` owns a signing trait, and the host supplies its implementation.
-- The host registers `/wamn_control` and the file stream prefix as `<workload>/platform-http` through a `HostHandler` wrapper. The `files` field leaves `route.json`.
-- `workflow.start` answers `workflow_not_served`.
-
-## Epic 6: step 3.3, identity
-
-Rules:
-- Only the work listed here. The edge device design, and the edge publishing keys ahead, are later work.
-- Done means all of these pass:
-  - `cargo build --workspace` and `cargo clippy --workspace --all-targets`, with no new error compared with the epic's base. The same in `apps/`.
-  - The schema-apply check.
-  - `helm template` of the release chart with values for the largest application in `apps/` that builds. The Helm release record must stay under 1 MiB. Report the size.
-  - A local Postgres container is allowed for these checks only.
-- Run no tests and write no new tests (3.8). If a test stops compiling and an import or name change does not fix it, delete the test.
-- No kind or cluster runs, nothing on GCP.
-- Generated code is regenerated, never edited by hand.
-
-Issues:
-
-6.1 Token profile. Runs first.
-- Identity signs RFC 9068 access tokens:
-  - header `typ: at+jwt`, `alg: EdDSA`, `kid`
-  - claims `iss`, `sub` (the principal id), `aud`, `exp`, `iat`, `jti`, `client_id` (`wamn-web`)
-  - no `roles`, `org`, `authority` or `csrf` claims
-- `aud` is one audience for each org: the value that `control_audience(org)` produces today, renamed the org audience.
-- One login is one password check (one Argon2 check) and gives one org token. Session targets, `with_session_targets` and `/password/environments` go.
-- The lifetime stays 900 seconds. Renewal is refused after logout or disable.
-- The `wamn-session+jwt` profile and its types in `wamn-identity-protocol` go.
-- The login request names the org audience in `aud`. Any active org member may log in. Identity activates only keys published at least the JWKS cache lifetime plus a margin earlier.
-
-6.2 Verification in the host and control.
-- Host and control verify tokens with `jsonwebtoken` and a small JWKS fetcher (jsonwebtoken 11 `JwkSet`, the host's moka cache, a reqwest 0.13 client with only the configured CA, a fetch again on an unknown kid), from settings:
-  - issuer, JWKS address, audience and allowed algorithms (`EdDSA`)
-  - the CA bundle that the JWKS fetch trusts
-- RFC 9068 checks: `typ`, an exact `iss`, `aud`, `exp` with 30 seconds of tolerance, and `iat` not in the future.
-- The host resolves the caller to `platform."user"` by `(iss, sub)` in the project database, cached in the host's moka cache (positive answers only). A missing row or an inactive status is refused.
-- Sessions and PATs both read grants with `user_operation_permissions`. These go:
-  - `session_operation_permissions`, `session_grants` and roles read from tokens
-  - `IssuerKeys` (`authentication/session_keys.rs`), `SessionVerifier` and `VerifiedSession`
-  - `session_is_active` and `control_session_is_active`
-- Cookie and CSRF handling leave the host (`engine/ingress.rs`). The host accepts only `Authorization: Bearer`.
-- Control keeps its control-eligibility read on the system database.
-- The environment host group defaults carry the verifier settings. The edge refuses protected routes until the edge design is done.
-
-6.3 Cookies and CSRF in `wamn-web`.
-- `wamn-web` proxies login, renewal and logout. It takes the tokens from identity's JSON response and sets these `__Host-` cookies:
-  - the session token: HttpOnly, Secure
-  - the renewal token: HttpOnly, Secure
-  - a readable CSRF token, which is a signed double submit: an HMAC with the web service's key over the session token's `jti` and a random value
-- For unsafe methods, `wamn-web` requires the CSRF header to match the cookie and the signature.
-- When it forwards a request, `wamn-web` replaces the cookies with `Authorization: Bearer`.
-- The HMAC key is a Secret that the web chart mounts.
-- Identity's cookie carrier (`password.rs`, `CSRF_COOKIE`, `cookie_response`) goes. Identity returns tokens as JSON only.
-- Login, enrollment, recovery and reset require a same-origin `Origin` header in place of the signed CSRF check. The cookies live until the login deadline. platform-install writes the Secret `wamn-web-csrf`.
-
-6.4 Admin rows for users.
-- `project_authority` writes the `admin` user role row for a user who holds org admin or project admin, and removes it when the user stops holding it. Every path that changes org or project admin calls it.
-- Admin grants and revokes through `mutate_grant` stay refused, so every `admin` row is inherited.
-- `user.list` puts `admin_covered` back, as "holds `admin`".
-- Blocked by 6.7.
-
-6.5 Service principals and PATs in the project database.
-- `app-schema.sql` gets `platform.pat`:
-  - `id`, `user_id` (references `platform."user"`), a unique `prefix`, `hash`, `label`, `expires_at`, `revoked_at`, plus the history stamps
-  - the platform login gets SELECT, INSERT and UPDATE
-  - no grant to `wamn_app` or `wamn_query`
-- The PAT token format and hash from `wamn-identity-protocol` are reused.
-- Service principals are `platform."user"` rows with `type = 'service'`, `issuer = 'wamn'`, and `sub` set to today's subject strings (for example `connection-<id>`).
-- Control routes create and disable service principals, and issue, list and revoke their PATs, for one project environment.
-- The host checks a PAT on its project login:
-  - the prefix lookup, the hash, the expiry, the revocation, and the row's type and status
-  - the existing connection-principal check
-  - cached like grants
-- These go:
-  - the service principal rows and `create_service` in identity
-  - `issue_pat`, `authenticate_pat`, `authenticate_route_pat`, `list_pats` and `revoke_pat`
-  - the `identity.pats` table and the `/pats` route
-  - `identity-client`'s PAT issuer
-  - the host's `identity_reader`
-- `api_service.rs` and `provision_project_env/pat_secrets.rs` use the new path.
-- Connection principals and application principals also live only in the project database. `registry.connection_principal` goes.
-- The operator PAT and the management-author PAT are retired. Nothing in production issued them.
-
-6.6 User management through control.
-- Control routes for users: create, invite, disable and list.
-- One adapter in the control service calls identity over the operator-certificate HTTPS hop. Identity checks that the certificate subject is the control service's. Control is the only caller.
-- The installer and `api_service` stop calling identity directly and use control routes.
-- Identity gets a route for `disable_principal`. A disabled user cannot renew.
-- Control uses its own certificate, `CN=control-<org>`. `user.disable` refuses while the user has an active membership in another org.
-
-6.7 Identity fixes.
-- Identity trusts `x-forwarded-for` only from a configured number of trusted proxy hops, the way `wamn-web` does.
-- The signing private key is encrypted with the envelope that OAuth tokens use, moved into the new crate `wamn-envelope`, and stored in `identity.session_keys.private_key_envelope`.
-- Two identity replicas (`deploy/charts/identity`). Password requests use a database pool, not a new connection for each request. Key rotation stays correct with two replicas.
-- One control-eligibility rule: `environment-admin` goes, with its table, the SQL branch (`system-schema.sql`, near line 1222), `grant_environment_admin` and `revoke_environment_admin`.
-
-6.8 Leftovers in `crates/identity` (N6).
-- `set_environment_status`, `status_environments`, `org_environments` and `create_project` move from `wamn_identity::org` to `wamn-environment`.
-
-## Epic 7: step 3.4, the workflow service
-
-Rules:
-- Only the work listed here. The Topic entry node is later work.
-- Done means all of these pass:
-  - `cargo build --workspace` and `cargo clippy --workspace --all-targets`, with no new error compared with the epic's base. The same in `apps/`.
-  - `guests/workflow-service` builds for `wasm32-wasip3`.
-  - The schema-apply check.
-  - `helm template` of the release chart with values for the largest application in `apps/` that builds. The Helm release record must stay under 1 MiB. Report the size.
-  - A local Postgres container is allowed for these checks only.
-- Run no tests and write no new tests (3.8). If a test stops compiling and an import or name change does not fix it, delete the test.
-- No kind or cluster runs, nothing on GCP.
-- Generated code is regenerated, never edited by hand.
-
-Issues:
-
-7.1 Run interface in the host. Runs first.
-- A new WIT package, `wamn:workflow@0.1.0`, served by a host plugin in `services/host`:
-  - `run`: admit due schedule runs for a given time, admit runs for one data-change message, take a run whose lease expired, renew, and finish
-  - `node`: call one sibling's export with JSON input for a run or a Request call. The host dispatches through the engine's dispatch targets and resolves components from `wamn.application`.
-- The service exports `entry`:
-  - `call`: a Request, synchronous
-  - `run`: a durable run that the host admitted, for "run now"
-- Identity for node calls:
-  - Request: the caller, or the workflow's `execution_role`
-  - Schedule and Data change: the `workflow` user with its `execution_role`
-  - Run now: the admin's choice, under the same `execution_type` rule
-- The run SQL stays in `wamn-run-state` on the host's platform login.
-- `runs.manifest_digest` and `runs.node_digests_json` go, and leases carry no digest.
-- `catalog.workflows`:
-  - the trigger becomes `request`, `schedule` or `data_change`
-  - add `path` for Request workflows, unique among the enabled workflows of one environment and application
-  - the trigger columns are written only by the author step (7.5)
-  - add the enable LSN; `enable_sequence` goes
-
-7.2 Workflow service guest.
-- `guests/workflow-service`, for `wasm32-wasip3`. It runs as the WorkloadDeployment `service`.
-- A loop:
-  - each minute, admit the due schedules and run them at once
-  - every 30 seconds, take runs whose lease expired and run them
-- It pulls from the consumer of each enabled Data change workflow through stock `wasmcloud:nats/jetstream`: admit the run through the host, ack, then run it. It refreshes its consumer list every 30 seconds and pulls with a 30-second long wait.
-- It exports `wamn:workflow` `entry`.
-- The graph walk is ported from the router deleted in 07c1f3ee3 (`07c1f3ee3^`), with the same node retries (3 by default).
-- Response node: status and a JSON body. Nodes after a Response continue as a durable run.
-- A Request call with no Response within 30 seconds is refused with a timeout.
-
-7.3 Chart, deploy and the environment NATS account.
-- `workloads.yaml` adds the workflow service as the `service` of every application WorkloadDeployment. The image is a platform image, built and pinned like the route guest.
-- F7's NATS part: one NATS account and user per environment, the project source streams in that account, the environment Certificate in the org namespace; the per-project NATS users and Certificates go.
-- The host group gets one stock `wasmcloud-nats` entry on the environment credential. Each application workload narrows `stream-allow` and `subject-allow` to its project.
-- A `PLATFORM` account for the platform users, and one `ENV_<org>_<env>` account per environment, with limits fixed in code. The configure Job creates streams with the environment credential. Each CDC reader gets a publish-only user. The source stream gets a 7-day age limit and a byte limit.
-- The CDC reader Deployment comes back through the environment chart. The fresh-install bootstrap writes the accounts document. Both runtime-operator charts move to 2.12.1.
-- The workflow consumer created at enable has one filter subject per op.
-
-7.4 Workflow routes in the host.
-- The host registers the native prefix `/api/<application>/flow/` on the path from 5.3. For each call it:
-  - authenticates the bearer token
-  - resolves the enabled Request workflow by path
-  - checks the caller holds the workflow's permission
-  - dispatches to the service's `entry.call`
-- Publish refuses authored routes under that prefix.
-- An application host route `workflow.run` (admin only) admits a durable run, dispatches it to `entry.run`, and returns the run id.
-- `workflow.author`, `workflow.enable`, `workflow.disable` and `workflow.list` are application host routes (admin only). Enable takes the environment key on the project database, checks the graph against the host's `wamn.application`, reads the source stream's last sequence and then the LSN, stores the LSN, and creates the workflow's consumer starting one after that sequence. Environment apply and delete also take that key on each project database they change. Disable deletes it.
-- `workflow.start` goes: its route, its contract, its CLI verb and the `workflow_not_served` refusal.
-
-7.5 Authoring check and CLI.
-- `workflow.author` checks the graph:
-  - exactly one entry node
-  - a Request workflow has a Response on every path that ends
-  - a Response appears only in a Request workflow
-  - a Request path is unique
-  Then it derives the index columns.
-- Control's workflow routes go.
-- The CLI verbs follow the routes.
-
-7.6 Workflow leaves the release document.
-- Node resolution comes from `wamn.application`. Palette nodes are dispatched by component.
-- Delete the workflow readers of `ServingManifest` and `ServingContext` (`workflow/admission.rs`, `workflow/resolution.rs`, `events/transport/admission.rs` and their callers). Afterwards only deploy identity (3.5) and the edge read them.
-
-7.8 Data change handlers in application components. Runs after 7.3.
-- The route guest is renamed `ingress` (component name, `guests/ingress`, WIT `wamn:ingress`), because from 7.8 it receives HTTP and NATS and dispatches both.
-- `wamn.k` declares model, ops (`insert`, `update`, `delete`) and role for a component, which exports a wamn handler interface taking the event as JSON.
-- Release planning renders one durable `jetstream-subscriptions` entry for each (model, op) into the workload config, targeted at `ingress`, which exports the stock `jetstream-handler`. `ingress` checks the owner package and dispatches through the operation path.
-- One entry for each (application, model, op), with queue group `<application>-<model>-<op>`. Release planning refuses two components that declare the same (owner package, model, op).
-- The export is `wamn:handler@0.1.0/data-change` (`handle(event: string) -> result<_, string>`). `wamn:operation` gets `dispatch-data-change(component, event)`, which the host accepts only from `ingress`.
-- At least once, no run row. Handler calls to wamn host functions run as the `workflow` user with the declared role.
-- The invocation authority gets a handler case: connections come from the component's own bindings, and no per-operation grant check applies. Each handler has the operation host-transaction setting, on by default; when on, the transaction commits on ok and rolls back on an error.
-
-7.7 Event crate merge. Runs last.
-- `wamn-events` and `wamn-event-wire` merge into `wamn-event`, and the event transport code that nothing calls is deleted.
-
-## Epic 8: step 3.5, deploy
-
-Rules:
-- Only the work listed here. The `platform` chart (merging `installation`, `identity` and `edge`), install (J) and settings (K) are 3.6.
-- Done means all of these pass:
-  - `cargo build --workspace` and `cargo clippy --workspace --all-targets`, with no new error compared with the epic's base. The same in `apps/`.
-  - The schema-apply check.
-  - `helm template` of every changed chart, with values for the largest application in `apps/` that builds. Each Helm release record stays under 1 MiB. Report the sizes.
-  - A local Postgres container is allowed for these checks only.
-- Run no tests and write no new tests (3.8). If a test stops compiling and an import or name change does not fix it, delete the test.
-- No kind or cluster runs, nothing on GCP. The first kind run comes after 3.6, with D's approval.
-- Generated code is regenerated, never edited by hand.
-
-Issues:
-
-8.1 Environment file.
-- The environment file is YAML with a JSON schema (D2). Today `document.rs::compile` reads JSON.
-- The registry binding tables (`registry.environment_application_connections`, `registry.environment_integrations`) follow the file: one version for each connection name, stated once in the environment file. This is the version authority for integrations.
-- Each KCL `check:` rule in `wamn.k` also exists in Rust or SQL.
-- `catalog/configuration.rs::read` stops selecting `release_digest`. The Helm revision is the release; its callers (`control_route/operations.rs`, `environment/document.rs`) read it from Helm.
-
-8.2 Deploy flow.
-- `deploy <dir>` builds once, publishes once, then runs SQL and code as one operation (B1). `publish <build dir>` pushes a finished build and prints the top package digest. `schema apply` and a deploy without `<dir>` take that digest.
-- A1: CLI → control service → one Job. No Job starts a second Job. The environment document reaches the Job as a mounted file, not a command argument. The CLI poll (`operation_verbs.rs::run_value`) gets a limit.
-- One check for each fact (application declared, environment exists, org matches). One pull of each package for each operation.
-- `release_values` gets its caller here, with the bindings as input.
-- A deploy checks the enabled workflows against the new `wamn.application`, under the environment key on the project database, and refuses when an enabled workflow names a sibling or export the release removes.
-- Deploy creates the operation service accounts (`<env>-sql`, `<env>-code`) and the application principals, through charts and SQL.
-- `/_wamn/residency` goes unless the deploy flow needs it.
-- `wamn rollback [--revision N]` runs `helm rollback` in the worker Job, under the lock, after the enabled-workflow check. The application chart puts the top package digest and `.Release.Revision` on the WorkloadDeployment, and control reads them there.
-- Rollback reads revision N's package digest with `helm get values --revision N`, a recorded exception for rollback only. The `wamn.release-revision` annotation names the revision whose content is live. Without `--revision`, the target is the newest earlier revision that was a deploy, not a rollback.
-- `capture_gap.recover` and `capture_gap.close` are operation Jobs. The project chart's `pause` value stops the CDC reader, and the values builder keeps it paused while a capture gap is open. Rust no longer scales the reader.
-- `capture_gap.recover` reads the project's source stream with a per-project recovery user: stream info and message get on its own stream only, replies on its own inbox prefix. Control's `event_observer` setting goes.
-- Every restricted NATS user receives replies only on its own inbox prefix (`_INBOX_<user>.>`) and has no `_INBOX.>` subscribe right. The environment user is the one exception: it holds full rights in its own environment account.
-
-8.3 Publish and artifacts.
-- Publish does not pull back what it pushed. Tags are mutable: a publish under an existing tag with new content runs the append check against the digest the tag points to now, then moves the tag. A new tag has no append check.
-- Components are pushed with stock `push_component` (`application/wasm`). The package artifact has two layers: `wamn.json` and the migrations tar.
-- `wamn_catalog::manifest::installation` goes; its readers use the full package model.
-- The deploy-identity readers of `ServingManifest` go. Afterwards only the edge reads it.
-
-8.4 Charts.
-- C1: every Kubernetes object comes from a chart, including the Secrets and ConfigMaps that Rust makes with `kubectl` or the Kubernetes API today. Rust runs SQL and NATS calls only. One upgrade for each chart.
-- `release` becomes `application`. `environment` splits into `environment` (host group) and `project` (database, publication, accounts, certificates).
-- No `helm template` pre-check and no `helm get values` read-back.
-- One value each for the NATS address, the identity issuer address and the registry address.
-- Delete the `wamn-platform-observer` Role, RoleBinding and ClusterRole with the read-back; today they let every service account in an org namespace read the installation namespace's Secrets.
-- Control gets its own system-database login, a member of `wamn_control`, with the Secret `wamn-control-db` from the org chart. The settings generator writes `database` and `public_origin`, which control requires to start (missing since Epic 1).
-- Env apply order, under the environment lock: reserve the registry rows of every selected project; one org chart upgrade with all their logins; submit the one host chart upgrade; then the project loop (one project chart upgrade and its SQL per project, stopping at the first error); then wait for the host. The first project waits for the broker certificate itself, with a bounded wait. Projects after a failure stay reserved and unconfigured, and a rerun finishes them.
-
-8.5 Build.
-- Codegen's describe cache (`.wamn/describe/`, committed, with a refresh flag and a check that it is current). The build uses a database only when SQL changes. The build is skipped when its inputs are unchanged.
-- `wamn dev` applies new migrations.
-- `build.json` goes. An overlay build reads the base's built wasm and `wamn.json` directly and hashes them.
-- One KCL compile for each build.
-
-8.6 `wamn-kubernetes` dependencies.
-- The name builders leave `wamn-kubernetes`, so it drops `wamn-registry` and `wamn-catalog` (today one type, `ApplicationName`).
-
-## Epic 9: step 3.6, isolation
-
-Rules:
-- Only the work listed here. The `platform` chart, install (J), settings (K), K4, K5, the install defects (L1), the bootstrap items and NATS volume sizing are Epic 10.
-- Done means all of these pass:
-  - `cargo build --workspace` and `cargo clippy --workspace --all-targets`, with no new error compared with the epic's base. The same in `apps/`.
-  - The schema-apply check.
-  - `helm template` of every changed chart. Each Helm release record stays under 1 MiB. Report the sizes.
-  - A local Postgres container is allowed for these checks only.
-- Run no tests and write no new tests (3.8). If a test stops compiling and an import or name change does not fix it, delete the test.
-- No kind or cluster runs, nothing on GCP.
-- Generated code is regenerated, never edited by hand.
-
-Issues:
-
-9.1 One CloudNativePG Cluster per project database (W2).
-- The `project` chart renders the project's `Cluster`, its `Database`, its backup objects and its logins. Sizing (instances, storage, CPU, memory) comes from the environment file.
-- Each project Cluster declares that project's logins in its own managed-role list, each with a connection limit: migration (owner), application, read-only, platform, CDC replication. Login names lose their per-database suffix.
-- The `org` chart's cluster list, its `trials`, `standard` and `dedicated` templates, and its login Secrets go.
-- The system database cluster moves to namespace `platform`. Until Epic 10, the `installation` chart renders it.
-- Env apply drops any step that existed only because the `org` chart held every project's logins.
-- Fixed logins (`wamn_app_login`, `wamn_query_login`, `wamn_platform_login`, `wamn_migration`, `wamn_cdc`) as members of the group roles, with derived connection limits. One database block per environment in the environment file. One ObjectStore and ScheduledBackup per project, prefixes in a shared bucket. `initdb` creates the database; Cluster and ObjectStore are kept unless `--data`. System login Secrets are rendered in `platform` and in each org from one value.
-
-9.2 The org boundary (Q, K7b).
-- The `org` chart renders the namespace, the RBAC, a quota and a default-deny NetworkPolicy, with the allow rules the platform needs.
-- Every Role in wamn's own charts names its Secrets with `resourceNames`. The account running Helm keeps the recorded exception until 9.3.
-- `wamn-platform-operations` loses full Secret writes, and `bind` and `escalate`, unless the scout shows a need. Control's org Role loses `get` on every Secret.
-- Default-deny NetworkPolicy with named allow rules; public egress only on the ports integrations declare, with wash-runtime's `allowedHosts`. No `escalate`; `bind` only with `resourceNames`. `wamn-credential-<project>` is created empty by the project chart and written by control under server-side apply.
-
-9.3 Helm release storage.
-- Each org's Helm releases are stored in their own namespace, which holds only release records. Each chart places its objects in the org namespace explicitly (`metadata.namespace`).
-- The account running Helm gets Secret `list` only in that namespace, and name-scoped rights in the org namespace.
-- Releases are stored in `wamn-helm-<org>`; Helm runs with `--server-side=true`. Watched charts keep `list` and `watch` on their non-Secret kinds, a recorded exception.
-
-9.4 NATS (R).
-- The environment user splits into a restricted workload user for the hosts and an admin user for Rust tooling (`ensure_stream` and others). The workload user receives replies only on its own inbox prefix.
-- `wamn-nats-authorization` is rendered by a chart, ending its C1 exception.
-- The workflow service and `ingress` use named NATS bindings with inbox prefixes under the workload user. Each org's NATS accounts live in their own Secret, included by the server's base config.
-
-9.5 Connection secrets.
-- The host stops reading connection secrets from the Kubernetes API on each call, by the option D rules after the scout.
-
-9.6 `wamn-postgres` loses `wamn-kubernetes` (P5).
-- Its credentials come from mounted files, as the host's project logins already do.
-
-## Epic 10: step 3.6, part 2, install and tenancy
-
-Rule: adding an org changes no pod spec in the platform or infrastructure chart.
-
-Issues:
-
-10.1 `platform` chart.
-- Merge `installation`, `identity`, `edge` and control. No per-org values: no `.Values.org`, and every per-org object moves to the org chart.
-- `values.schema.json` (K5), with one kind values file and one GCP values file (K4).
-- Delete `cluster.k`, `ClusterDocument`, `platform show`, and in `platform-install`: `artifact_plan`, `installation`, `oauth`, `edge`, `status`, `resources`, `operations`. Delete the duplicate registry-helper.
-- Platform NetworkPolicies select org namespaces by label.
-
-10.2 NATS operator mode (T3).
-- Server config, `PLATFORM` users (operator `-nats-creds`; host `--scheduler-nats-creds` and `--data-nats-creds`, the same names as stock `wash host`).
-- Environment accounts pushed at `env apply`, environment user creds Secrets in the org namespace, named bindings using the stock `creds` field.
-- Delete Epic 9's file-based accounts.
-- Identity signs accounts and users (A); keys as in B; claims as in C. No NATS step at `org create` (D).
-- Each host group gets its own PLATFORM user with the shared scheduler rights (stated exception to T1).
-
-10.3 `wamn platform deploy <values>`.
-- One SQL Job. Identity creates its own first key; `Publish` and `Activate` go.
-- A readiness probe replaces the probe Job. Confirm that L1 is gone.
-- System migrations run only here (A).
-- Identity calls `platform.prune_tx_identity()` every 60 s (Q1). Integration types are seed data in the system SQL (Q4).
-
-10.4 `wamn org create <org> --owner <email>`.
-- The org row, the invitation Job's service account (E), `wamn-helm-<org>`, then the org chart: namespace, quota, RBAC, NetworkPolicy, Helm storage, worker, control, system login Secrets, identity CA and the control administration map.
-- Then the owner invitation Job.
-- One Job in `platform` makes the org's control login and the `registry.orgs` row, and patches the password into the Secret that the org chart creates empty.
-- The org SQL Job also makes the org's apply login (A). Control's host name is `<org>.<base>` (C).
-- Org-scoped grants on the system database, as ruled on 2026-11-19.
-
-10.5 Settings (K).
-- One settings file each for host, control, identity, cdc-reader and web. Constant flags become code defaults.
-- One NATS address and one identity issuer address (E6). Hosts get a default HTTP listener (D6).
-- The environment chart renders the host group from its own values, and `environment/ensure.rs` stops building it.
-
-10.6 Operator and traffic (T4, T5).
-- `watchNamespaces` empty; fixed `-host-namespaces`.
-- The web proxy retries on connection failure, with a 1 s connect timeout.
-- Identity and control check service account tokens through TokenReview; the namespace must be an org in `registry.orgs`.
-
-10.7 Remaining items.
-- `--only` (Q5 a); D7 (`env apply` writes the `registry.event_readers` row); K4 (xtask creates the kind cluster and the local registry); the xtask dependency check on `wamn-edge`; NATS volume sizing (Q6); GCP schema patterns (Q6).
-
-10.8 Database logins by client certificate.
-- One cert-manager `Certificate` per login; `pg_hba` requires `cert` for each login; roles have no password Secrets.
-- `wamn-postgres` uses `ssl_client_cert` and `ssl_client_key`.
-- Platform logins on the system database and every project database login use certificates. The org's control login on the system database keeps a password (G).
-- One CA per project Cluster (B).
-- Project Helm Jobs stay on the org worker (Q3).
-
-10.9 Certificate trust (G).
-- Namespaced platform issuers, no ClusterIssuer for trusted identities, `ingresses` removed from the org worker, the edge's ACME issuer namespaced. TokenReview rights for identity and control.
-
-10.10 Host names (E). `<label>--<org>.<base>` in the environment file and the registry; web drops routes whose host does not match their namespace.
-- Web also accepts exactly `<namespace>.<base>` for control (Q2).
-
-10.11 System database Poolers (two, session mode).
-
-10.12 Platform logins use certificates.
-
-10.13 NATS users per host pod, the data user in the environment account, finite account limits (NATS and tenancy review). Built after the first kind run report.
-
-Merged to main on 2026-11-19 after review. The first kind run waits for D's approval.
-
-Closed on 2026-11-20 after the first kind run passed on the short path.
+Phase 3 steps, in dependency order: 3.1 database model; 3.2 request path (workloads, connections, files, integrations and application host routes); 3.3 identity; 3.4 workflow service; 3.5 deploy; 3.6 isolation, then install; 3.7 codegen; 3.7b crate boundaries; 3.8 tests.
 
 ## Epic 11: step 3.7, codegen
 
@@ -800,7 +229,7 @@ Issues:
 
 11.1 O12: the application host root returns 404, not 502, when no web client is pinned.
 
-11.2 Delete: the host route contract copies (`crates/catalog/src/host_route/contract_files.rs`) and the TypeScript emitter (`crates/codegen/src/client_ts.rs`), with everything only they use; the `integration.*` route aliases; the leftovers in the application chart; the host shutdown code for the deleted queue; the test support files with no `mod`.
+11.2 Delete: the TypeScript emitter (`crates/codegen/src/client_ts.rs`), with everything only it uses; the `integration.*` route aliases; the leftovers in the application chart; the host shutdown code for the deleted queue; the test support files with no `mod`.
 
 11.3 Rust output is generated with `quote` and `prettyplease`. No Rust as strings.
 
@@ -814,8 +243,10 @@ End of the epic: the standard checks, the preflight and the short smoke run.
 
 ## Open items
 
-- Checks in phase 3: Helm values size for the largest application (3.2).
-- wasip3: needed by the workflow service. wash-runtime 2.12.1 has `p3` on by default with p3 service tests; Rust 1.100 has `wasm32-wasip3`.
+- The local mutex and Postgres advisory lock for exclusive connection calls are not built. The existing advisory lock in `sql/session_identity.rs::lock_file` serves file operations.
+- The HTTP client cache key by invocation scope, target, connection ID and generation is not built.
+- `registry.connection_principal` is not built. Project connection rows carry the principal ID.
+- 3.7b: Give `platform."user"` one write owner. Current writers are `identity/application.rs::{write_user,remove_user}`, `identity/application/service.rs::{write_service,disable}` and the disable SQL in `environment/delete.rs`. `app-schema.sql` seeds principal rows.
 - Deferred: the edge device after the restructure; the four workflow behaviours.
 - 3.8: these tests compile but use SQL on tables Epic 1 dropped (`catalog.releases`, `catalog.wiring_tombstones`): `crates/provision/tests/{deploy_sql_authority,family_denial_matrix,record_history}.rs`, `crates/provision/tests/fixtures/catalog_record_history.sql`, `crates/identity/tests/fixtures/connections.sql`.
 - 3.8: `crates/dev/tests/support/platform_schema.rs` and `platform_upgrade.rs` run the binary `wamn-ctl`, which Epic 1 deleted.
@@ -823,8 +254,6 @@ End of the epic: the standard checks, the preflight and the short smoke run.
 - Journey tests on kind, deferred from the first kind run: rollback, `env delete`, apply again, and `env delete --data` after a plain delete; the Data change check for `client_acme_receiving` (K24); the 10.13 per-pod scheduler users beyond host start; the Pooler per-login limits and waits under load.
 - 3.7b: `cargo xtask build-platform` skips images whose inputs did not change, so short smoke runs rebuild only what changed.
 - Clippy has 45 errors in test code that predate Epic 1. Epic 1 counted green as no new error.
-- After 3.5 only the edge reads `ServingManifest`. It goes with the edge design.
-- 3.6: the control service takes the issuer from `session_issuer` and stage takes it from `platform.identity_issuer`. They become the one identity issuer address setting (E6, K).
 - 3.8: `deploy/sql/postgres-init.sql` is an old test fixture that still defines `project_key()`, `current_project_key()`, the old row policies and its own roles. Only `crates/provision/tests/{family_denial_matrix,deploy_sql_authority}.rs` load it; it goes with them or is rewritten.
 - Health probes for wasm integration types: `connection_test` cannot run integration code outside an application workload. To be designed.
 - Edge device design: plant-network devices such as Modbus run at the edge, and the edge runtime gets its own address rule. A cloud integration that needs a private address (a customer network linked by VPN) is decided when a real case appears.
@@ -833,7 +262,6 @@ End of the epic: the standard checks, the preflight and the short smoke run.
 - Edge device design: how exclusive connections are enforced at the edge (inference: one edge runtime for each site, so a local mutex may be enough).
 - A call limit for each application, if a real case appears: either a per-host semaphore named as per-host, or a Postgres design decided with real numbers.
 - 3.6: nothing in the install fills the `wamn-control-administration-<org>` map that control reads its project logins from.
-- 3.6: the first signing key and the installer source for the identity envelope settings.
 - Topic entry node: after 3.4. Topics use stock `wasmcloud:nats`: application components publish within their workload's grants, and a Topic workflow pulls from its own consumer like Data change.
 - 3.7b: split `wamn-sql`. `WamnPostgres` has 77 inherent methods mixing pools, auth lookups, per-component scope state, plugin glue and workflow node dispatch, and eight modules form one cycle (crate root, `executor`, `invocation`, `operation`, `operation_transaction`, `resources`, `session_identity`, `write_log`).
   1. `pool`, `host_project` and `types` move into `wamn-postgres`, after it loses `wamn-kubernetes` (P5).
@@ -850,24 +278,16 @@ End of the epic: the standard checks, the preflight and the short smoke run.
 - 3.7b: the identity service writes users and passwords as `PlatformComponent::Provisioning` (`users.rs`, `password.rs`) and depends on `wamn-provision` for it. It uses its own principal, and principal ids move to a small crate.
 - 3.7b: `Refusal` moves out of `services/host/src/host/application_route.rs` into a module that both route modules use; today `host/workflow/lifecycle.rs` imports it upward from `application_route`. Optional, for a clear boundary only: `host::workflow` becomes its own crate. The host binary links it either way.
 - 3.7b runs before 3.8, so service tests are written once, against the final crates.
-- With P5: `wamn-kubernetes` drops its `wamn-catalog` dependency. Its only use is the type `wamn_catalog::ApplicationName`, in 3 places.
 - Edge device: the edge runs the cluster `ingress.wasm` and turns every import it does not provide into a trap (`define_unknown_imports_as_traps` in `services/edge/src/serve.rs`). Risk: a capability missing on the edge fails on the first call, not at load. The stock `wasmcloud_nats` plugin cannot fill the NATS imports on the edge, because it needs a `servers` value and connects at bind. The edge design decides between a real NATS server on the edge (see the next item) and an HTTP-only build of `ingress`.
 - Edge device, if the edge needs NATS: use the stock NATS way. A leaf node on the device with its own JetStream domain, one per edge environment. Mirror cloud streams to the edge, and source edge streams into the cloud. The edge then binds the stock `wasmcloud_nats` plugin to the local server, which also fills `ingress`'s NATS imports, and the guest code does not change. Not ruled; the edge design decides.
 - After 3.6, with D's approval: the first kind run deploys through the new install and deploy paths, and covers a Data change handler (the subscription and the dispatch through `ingress`).
-- 3.6: the NATS volume (10 Gi today) must hold the sum of all environment accounts, which is 256 MiB times the number of projects across all environments. Size it at install.
-- 3.6: `cluster.k` checks the GCP project ID, the zone and the bucket names, but no Rust or SQL code does. Add the three checks in Rust.
 - The xtask dependency check fails on `wamn-edge`, which links `oci-client` through wash-runtime. This predates Epic 7. Fix the check's allowance or the dependency.
-- Recorded exceptions to C1 until 3.6: operation Jobs and their per-request input ConfigMaps, `wamn-credential-*` (written by connection administration at run time), and `wamn-nats-authorization`.
-- Epic 10: `wamn platform deploy --only` (updating control, identity or a host in place) returns with the `platform` chart. Epic 9 deleted the control Job path and its `helm get values` read-back.
 - After 3.6, first kind run: verify the kstatus waits on the `application` and `environment` charts, and the explicit Rust waits on the `project` and `org` charts (Certificate, Database connection, the CDC reader's wait for its replication slot, CDC reader rollout, Cluster).
 - After 3.6, first kind run: The two Poolers: session mode with the org logins, the auth query, waiting at the per-login limit, and the 15-minute apply wait.
 - After 3.6, first kind run: Pooler certificate renewal: renew one Pooler certificate, restart the CloudNativePG operator to force a reconcile, and confirm that PgBouncer serves the new certificate.
 - When Helm ships readiness annotations (HIP 25, a draft today; Helm v4.2.2 has none) and no waited chart renders a Secret, revisit Helm waits for the `project` and `org` charts.
 - After the first kind run: hand-written OpenTofu for GCP (A1, K10) and `infra.values.yaml`. Epic 10 targets kind, with a GCP values file checked by `values.schema.json`.
-- Epic 10: D6, the host NATS URLs default to `nats.<release namespace>` while the service is `wamn-nats.platform`, and hosts start no HTTP listener. D7, `registry.event_readers` has no writer, so capture-gap recovery refuses on a fresh project.
 - After the first kind run: three NATS pods with three-replica streams.
-- Epic 10: the trusted install entry point installs the org chart (namespace, quota, base RBAC, default deny) and creates `wamn-helm-<org>` before it.
-- Epic 10 (10.8): database logins by client certificate. Each project chart renders a cert-manager `Certificate` per login, Postgres authenticates by certificate, and hosts mount `tls.crt` and `tls.key`. Release records then hold no passwords, project accounts can run their own Helm Jobs again, and nothing needs password rotation. Check CloudNativePG's support for certificate auth on managed roles and `wamn-postgres` connecting with a client certificate.
 - Later option: custom domains for applications through a verified-domain list (E).
 - Later option: integration types owned by one org (Q4).
 - Later option: users in more than one org, through an invitation the user accepts (grant ruling, change 1).
@@ -901,7 +321,6 @@ End of the epic: the standard checks, the preflight and the short smoke run.
 - After the first kind run:
   - Fold the review's accidental-complexity items into 3.7b: the `wamn-catalog` split, and the duplicated operation and environment types.
   - Charts: `enablePDB: false` for single-instance project clusters; delete the dropped `affinity` and `topologySpreadConstraints` host values, or render them.
-  - Check whether `crates/kubernetes/src/helm.rs::update_values` with `--reuse-values` is a read-back of Helm values, which is banned, and remove it if so.
 
 # Part 2: Review log
 
@@ -2199,7 +1618,7 @@ Recommend a.
 
 **Ruled (D, 2026-11-16): Epic 3 scope.** `platform."user"` keeps `id` and adds `UNIQUE (issuer, sub)` (1a); the platform principals are seed rows (2a); connection limits wait for 3.6 (3a); the epic is checked by applying the schema to a fresh local Postgres (4a); `catalog.release_connection` and `catalog.connection_binding` lose `project_env_key` now and are deleted in 3.2 (5a). Fact: admin inheritance is already stored as rows (`application::project_authority`, run on org and project admin grants), so N3 needs no work.
 
-**Ruled (D, 2026-11-16): Epic 3 scout questions.** 21 questions answered (see the Epic 3 section of Part 1). Facts behind the changed answers: project databases share the org cluster, so logins span all of them (11); `control_principal` is the row policy of `identity.principals` (Q1, Q3); `configuration.rs` connection writes have no caller with rows (10); `workflow_user_id()` is a fixed constant (17).
+**Ruled (D, 2026-11-16): Epic 3 scout questions.** 21 questions answered (see the Epic 3 section in revision `375315958`). Facts behind the changed answers: project databases share the org cluster, so logins span all of them (11); `control_principal` is the row policy of `identity.principals` (Q1, Q3); `configuration.rs` connection writes have no caller with rows (10); `workflow_user_id()` is a fixed constant (17).
 
 **Ruled (D, 2026-11-16): Epic 4 scope.** Step 3.2 splits into Epic 4 (workload, invoke, SQL and auth, release document) and Epic 5 (connections, file routes, integrations, features built only when declared). Deploy facts reach the host in config key `wamn.application`, and the guest keeps `wamn.http.routes`. The grant cache lifetime travels in the workload config, and its registry columns and `platform.setting` rows go. The edge keeps what it uses of the release document and the wamn component pull, moved into `services/edge`. The control service uses `HostRouteSet::Control` directly. The epic checks the rendered Helm values size. No new tests until 3.8.
 
