@@ -262,7 +262,6 @@ End of the epic: the standard checks, the preflight and the short smoke run.
 - 3.8: `crates/dev/tests/support/platform_schema.rs` and `platform_upgrade.rs` run the binary `wamn-ctl`, which Epic 1 deleted.
 - 3.8: `docs/operations/running-tests.md` describes test targets that no longer exist.
 - Journey tests on kind, deferred from the first kind run: rollback, `env delete`, apply again, and `env delete --data` after a plain delete; the Data change check for `client_acme_receiving` (K24); the 10.13 per-pod scheduler users beyond host start; the Pooler per-login limits and waits under load; that kind's CNI enforces NetworkPolicy, and that an environment's host cannot reach another environment's host, Postgres or Services.
-- Clippy has 28 errors in test code that predate Epic 1. Epic 1 counted green as no new error.
 - 3.8: `deploy/sql/postgres-init.sql` is an old test fixture that still defines `project_key()`, `current_project_key()`, the old row policies and its own roles. Only `crates/provision/tests/{family_denial_matrix,deploy_sql_authority}.rs` load it; it goes with them or is rewritten.
 - Health probes for wasm integration types: `connection_test` cannot run integration code outside an application workload. To be designed.
 - Edge device design: plant-network devices such as Modbus run at the edge, and the edge runtime gets its own address rule. A cloud integration that needs a private address (a customer network linked by VPN) is decided when a real case appears.
