@@ -7,10 +7,9 @@
 
 use serde_json::{Map, Value, json};
 
-use super::wit::{CRUD_REQUEST_ELEMENTS_MAXIMUM, CRUD_REQUEST_ELEMENTS_MINIMUM};
+use crate::openapi::scalar;
 
-/// A canonical hyphenated UUID, the form every generated client sends.
-const UUID_PATTERN: &str = "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$";
+use super::wit::{CRUD_REQUEST_ELEMENTS_MAXIMUM, CRUD_REQUEST_ELEMENTS_MINIMUM};
 
 /// The route input schema of one generated operation, from its input contract.
 pub(super) fn route_input_schema(contract: &Value) -> Value {
@@ -191,22 +190,6 @@ fn members<'a>(contract: &'a Value, name: &str) -> impl Iterator<Item = &'a Valu
 }
 
 /// The JSON form of one contract type, as the generated operation reads it.
-pub(crate) fn scalar(ty: &str) -> Value {
-    match ty {
-        "uuid" => json!({"type": "string", "pattern": UUID_PATTERN}),
-        "int32" => json!({"type": "integer"}),
-        "float64" => json!({"type": "number"}),
-        "boolean" => json!({"type": "boolean"}),
-        "timestamptz" => json!({"type": "string", "format": "date-time"}),
-        "bytes" => {
-            json!({"type": "array", "items": {"type": "integer", "minimum": 0, "maximum": 255}})
-        }
-        "json" => json!({}),
-        // text, string, numeric, and int64, which a decimal string carries.
-        _ => json!({"type": "string"}),
-    }
-}
-
 /// A required free-text input is not empty.
 fn present(mut schema: Value, ty: &str, required: bool) -> Value {
     if required && matches!(ty, "text" | "string") && schema.get("enum").is_none() {

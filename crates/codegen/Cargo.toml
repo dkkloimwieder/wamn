@@ -14,6 +14,7 @@ wamn-scalar.workspace = true
 wamn-digest = { workspace = true, features = ["sqlx"] }
 wamn-identity-protocol = { workspace = true, features = ["sqlx"] }
 anyhow.workspace = true
+oas3.workspace = true
 pg_query = "=6.2.1"
 prettyplease = "=0.3.0"
 proc-macro2.workspace = true

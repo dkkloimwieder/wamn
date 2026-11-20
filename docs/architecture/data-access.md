@@ -1133,7 +1133,6 @@ An overlay history read uses the same rule with its own columns.
 
 The compiler uses `pg_query` to read PostgreSQL syntax.
 A whole-row reference reads every column of its relation.
-Release profiles read compiled relation facts and recorded view dependencies.
 
 The [`wamn-record-history`](../../crates/record-history/src/lib.rs) crate holds the one fold, and both workspaces register it for guests, the client, and tests.
 `state_at` takes every row of every page and returns `Present`, `Absent`, or `Unavailable` at a per-row position.

@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from "@solidjs/testing-library";
 import { describe, expect, it } from "vitest";
 import { flush } from "solid-js";
-import { orgAdmin, user } from "../src/generated/wamn_control_org/index.js";
+import { orgAdmin, user } from "../src/control-client";
 import { createTransport } from "@wamn/web-runtime";
 import { controlHolds, Shell } from "../src/shell";
 // The shell loads its layout lazily. Loading it here keeps module transform
@@ -26,12 +26,12 @@ const props = { holds: admin, params: {}, search: {}, open: () => {}, close: () 
 const completed = (value: unknown, requestId?: string) =>
   new Response(JSON.stringify([{ value, ...(requestId ? { request_id: requestId } : {}) }]));
 const operations = [
-  user.USER_LIST_ROUTE.operation,
-  user.USER_INVITE_ROUTE.operation,
-  user.USER_ACTIVATE_ROUTE.operation,
-  user.USER_DEACTIVATE_ROUTE.operation,
-  orgAdmin.ORG_ADMIN_GRANT_ROUTE.operation,
-  orgAdmin.ORG_ADMIN_REVOKE_ROUTE.operation,
+  user.list.route.operation,
+  user.invite.route.operation,
+  user.activate.route.operation,
+  user.deactivate.route.operation,
+  orgAdmin.grant.route.operation,
+  orgAdmin.revoke.route.operation,
 ];
 
 describe("Users authority", () => {
@@ -159,7 +159,7 @@ describe("Users decisions", () => {
           JSON.stringify([
             {
               request_id: request.request_id,
-              error: { code: "permission_denied", detail: { operation: user.USER_INVITE_ROUTE.operation } },
+              error: { code: "permission_denied", detail: { operation: user.invite.route.operation } },
             },
           ]),
         );
@@ -243,7 +243,7 @@ describe("Users decisions", () => {
           JSON.stringify([
             {
               request_id: request.request_id,
-              error: { code: "permission_denied", detail: { operation: user.USER_DEACTIVATE_ROUTE.operation } },
+              error: { code: "permission_denied", detail: { operation: user.deactivate.route.operation } },
             },
           ]),
         );

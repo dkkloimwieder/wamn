@@ -199,6 +199,7 @@ rustls-platform-verifier = "0.7"
 rustix = { version = "1", features = ["fs", "process"] }
 schemars = "0.8"
 serde = "1"
+oas3 = { version = "=0.22.0", default-features = false }
 serde_json = "1"
 serde_yaml = "=0.9.34"
 sha2 = "0.11"

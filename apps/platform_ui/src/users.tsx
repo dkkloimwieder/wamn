@@ -6,7 +6,18 @@ import { FormView, type CustomFieldProps, type FormDescription } from "@wfe/gene
 import { createServerPage, Records } from "./records";
 import { emailError } from "./email";
 import { createForm } from "@wfe/form";
-import { environment, member, orgAdmin, project, projectAdmin, user } from "./generated/wamn_control_org/index.js";
+import {
+  environment,
+  member,
+  orgAdmin,
+  project,
+  projectAdmin,
+  user,
+  type EnvironmentListResultEnvironments,
+  type MemberListResultMembers,
+  type ProjectListResultProjects,
+  type UserListResultUsers,
+} from "./control-client";
 import type { Outcome } from "@wamn/web-runtime";
 import { MissingPage, Page, RecordLink } from "./page";
 import { GrantMembership } from "./membership";
@@ -14,7 +25,7 @@ import { value } from "./outcome";
 import type { ScreenProps, ShellSection } from "./shell";
 
 export function Users(props: ScreenProps): JSX.Element {
-  const page = createServerPage<user.UserListResultUsers>(async (input) => {
+  const page = createServerPage<UserListResultUsers>(async (input) => {
     const result = value(await user.list(props.transport, [input]));
     return { ...result, rows: result.users };
   });
@@ -38,7 +49,7 @@ export function Users(props: ScreenProps): JSX.Element {
         id="users"
         title="Users"
         create={
-          props.holds(user.USER_INVITE_ROUTE.operation)
+          props.holds(user.invite.route.operation)
             ? { label: "Invite user", run: () => props.open("invite-user") }
             : undefined
         }
@@ -127,15 +138,15 @@ export function InviteUser(props: ScreenProps): JSX.Element {
 
 interface ProjectAccess {
   readonly project: string;
-  readonly state: project.ProjectListResultProjects["state"];
-  readonly environments: readonly environment.EnvironmentListResultEnvironments[];
-  readonly member?: member.MemberListResultMembers;
+  readonly state: ProjectListResultProjects["state"];
+  readonly environments: readonly EnvironmentListResultEnvironments[];
+  readonly member?: MemberListResultMembers;
 }
 
 export function User(props: ScreenProps & { table?: "projects" | "memberships" }): JSX.Element {
   const principalId = () => props.params.principal!;
   const base = () => `users/${encodeURIComponent(principalId())}`;
-  const [person, setPerson] = createSignal<user.UserListResultUsers>();
+  const [person, setPerson] = createSignal<UserListResultUsers>();
   const [projects, setProjects] = createSignal<readonly ProjectAccess[]>([]);
   const [missing, setMissing] = createSignal(false);
   const [trouble, setTrouble] = createSignal<string>();
@@ -145,7 +156,7 @@ export function User(props: ScreenProps & { table?: "projects" | "memberships" }
   onCleanup(() => {
     active = false;
   });
-  const readAccess = async (listed: readonly project.ProjectListResultProjects[]) => {
+  const readAccess = async (listed: readonly ProjectListResultProjects[]) => {
     return Promise.all(
       listed
         .filter((entry) => !props.params.project || entry.name === props.params.project)
@@ -234,9 +245,7 @@ export function User(props: ScreenProps & { table?: "projects" | "memberships" }
                   <>
                     <Show
                       when={props.holds(
-                        current().status === "active"
-                          ? user.USER_DEACTIVATE_ROUTE.operation
-                          : user.USER_ACTIVATE_ROUTE.operation,
+                        current().status === "active" ? user.deactivate.route.operation : user.activate.route.operation,
                       )}
                     >
                       <Button
@@ -254,9 +263,7 @@ export function User(props: ScreenProps & { table?: "projects" | "memberships" }
                     </Show>
                     <Show
                       when={props.holds(
-                        current().orgAdmin
-                          ? orgAdmin.ORG_ADMIN_REVOKE_ROUTE.operation
-                          : orgAdmin.ORG_ADMIN_GRANT_ROUTE.operation,
+                        current().orgAdmin ? orgAdmin.revoke.route.operation : orgAdmin.grant.route.operation,
                       )}
                     >
                       <Button
@@ -346,8 +353,8 @@ export function User(props: ScreenProps & { table?: "projects" | "memberships" }
                       <Show
                         when={props.holds(
                           entry().member?.projectAdmin
-                            ? projectAdmin.PROJECT_ADMIN_REVOKE_ROUTE.operation
-                            : projectAdmin.PROJECT_ADMIN_GRANT_ROUTE.operation,
+                            ? projectAdmin.revoke.route.operation
+                            : projectAdmin.grant.route.operation,
                           entry().project,
                         )}
                       >
@@ -380,7 +387,7 @@ export function User(props: ScreenProps & { table?: "projects" | "memberships" }
                   id="user-environments"
                   title="Memberships"
                   create={
-                    props.holds(member.MEMBER_GRANT_ROUTE.operation, props.params.project)
+                    props.holds(member.grant.route.operation, props.params.project)
                       ? { label: "Grant membership", run: () => props.open(`${membershipPath()}/grant`) }
                       : undefined
                   }
@@ -413,7 +420,7 @@ export function User(props: ScreenProps & { table?: "projects" | "memberships" }
                       </RecordLink>
                     ),
                     revoke: (cell) => (
-                      <Show when={props.holds(member.MEMBER_REVOKE_ROUTE.operation, cell.row.project)}>
+                      <Show when={props.holds(member.revoke.route.operation, cell.row.project)}>
                         <Button
                           class="ui-icon-button"
                           aria-label="Revoke membership"
@@ -449,35 +456,35 @@ export const userSections: readonly ShellSection[] = [
   {
     label: "Users",
     screens: [
-      { path: "users", label: "Users", operation: user.USER_LIST_ROUTE.operation, component: Users, scroll: "content" },
+      { path: "users", label: "Users", operation: user.list.route.operation, component: Users, scroll: "content" },
     ],
     routes: [
-      { path: "invite-user", label: "Invite user", operation: user.USER_INVITE_ROUTE.operation, component: InviteUser },
-      { path: "users/:principal", operation: user.USER_LIST_ROUTE.operation, component: User },
+      { path: "invite-user", label: "Invite user", operation: user.invite.route.operation, component: InviteUser },
+      { path: "users/:principal", operation: user.list.route.operation, component: User },
       {
         path: "users/:principal/projects",
         label: "Project access",
-        operation: user.USER_LIST_ROUTE.operation,
+        operation: user.list.route.operation,
         component: (props) => <User {...props} table="projects" />,
         scroll: "content",
       },
       {
         path: "users/:principal/memberships",
         label: "Memberships",
-        operation: user.USER_LIST_ROUTE.operation,
+        operation: user.list.route.operation,
         component: (props) => <User {...props} table="memberships" />,
         scroll: "content",
       },
       {
         path: "users/:principal/projects/:project",
-        operation: user.USER_LIST_ROUTE.operation,
+        operation: user.list.route.operation,
         component: (props) => <User {...props} table="memberships" />,
         scroll: "content",
       },
       {
         path: "users/:principal/memberships/grant",
         label: "Grant membership",
-        operation: user.USER_LIST_ROUTE.operation,
+        operation: user.list.route.operation,
         component: (props) => (
           <GrantMembership {...props} returnTo={`users/${encodeURIComponent(props.params.principal!)}/memberships`} />
         ),
@@ -485,7 +492,7 @@ export const userSections: readonly ShellSection[] = [
       {
         path: "users/:principal/projects/:project/grant",
         label: "Grant membership",
-        operation: user.USER_LIST_ROUTE.operation,
+        operation: user.list.route.operation,
         component: (props) => (
           <GrantMembership
             {...props}

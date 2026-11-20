@@ -142,10 +142,9 @@ Any other payload answers 400 `delivery-invalid-payload`.
 | `wamn-control:org-admin/grant@0.9.0` | Takes `principal_id` of an active member and writes only the explicit `org-admin` grant. Authorization derives access below it. |
 | `wamn-control:org-admin/revoke@0.9.0` | Takes `principal_id` and removes only `org-admin`. Other explicit grants stay. |
 | `wamn-control:environment/list@0.9.0` | Takes `project`. Answers `environments`: environments of the project as `{name, state}`. |
-| `wamn-control:environment/status@0.9.0` | Answers the shared host rollout, workload conditions, resident releases, and unfinished-run pins for one project of an environment. Adds nullable counts `users_with_role`, `roles`, and `memberships`. |
+| `wamn-control:environment/status@0.9.0` | Answers the shared host rollout, workload conditions, package digests, and revisions for one project of an environment. Adds nullable counts `users_with_role`, `roles`, and `memberships`. |
 | `wamn-control:connection/test@0.9.0` | Requires project-admin authority. Takes `project`, `env`, integration `name`, candidate `parameters`, optional `credential`, and optional `version`. Answers `{ok: true}` or `{ok: false, error}`. Writes nothing and stops after ten seconds. |
 | `wamn-control:project/create@0.9.0` | Creates a project with no environment. An invalid project name returns `invalid_input` with `detail.field` set to `project`. |
-| `wamn-control:release/profile@0.9.0` | Takes `project`, `env` and the `digest` of an installed release. Answers its exported operations with their package and component, and the operations each role holds. The `admin` role holds every operation of the release. Writes nothing. |
 | `wamn-control:member/list@0.9.0` | Takes `project` and an optional `environment`. Answers `members`: each user with a membership or `project-admin` in the project, with `principal_id`, `email`, `display_name`, `org_admin`, `project_admin` and `environments`. |
 | `wamn-control:member/grant@0.9.0` | Takes `project`, `env` and `principal_id` of an active member, and writes the membership of that environment. |
 | `wamn-control:member/revoke@0.9.0` | Takes `project`, `env` and `principal_id`, and removes the membership of that environment. It refuses while org or project administration covers the membership. |
@@ -195,7 +194,7 @@ Users and members sort by email, then principal UUID. SQL comparisons use the sa
 Cursors encode canonical compact JSON as unpadded base64url and bind the operation, authenticated principal, org, applicable project, the `member.list` environment or its absence, and order.
 Malformed or mismatched cursors return `invalid_input` with `detail.field` set to `cursor`. Bad limits name `limit` in that field.
 Every page repeats authorization. Pages reflect current data, so an email change can move a user between pages.
-The contracts retain version 0.9.0. `environment.status` and `release.profile` retain their whole-result contracts.
+The contracts retain version 0.9.0. `environment.status` retains its whole-result contract.
 
 `control.mine` reads `wamn_system` through the `control` login of the org.
 
