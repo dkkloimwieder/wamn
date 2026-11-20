@@ -11,6 +11,7 @@ use std::{
 
 use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
+use tokio::time::Instant;
 use wamn_catalog::{
     ApplicationName, PackageName, WiringDocument,
     application_config::{APPLICATION_CONFIG, ApplicationConfig},
@@ -18,6 +19,7 @@ use wamn_catalog::{
     manifest::PackageManifest,
 };
 use wamn_digest::Digest;
+use wamn_kubernetes::{job, kubernetes_api::KubernetesApi};
 use wamn_platform_install::release_chart::bundle::{SelectedChart, pod_registry_reference};
 use wamn_publish::package_artifact::{OpenedPackage, open_package_digest};
 use wamn_registry::Triple;
@@ -130,6 +132,28 @@ impl Packages {
     }
 }
 
+async fn deploy_job_deadline() -> anyhow::Result<Instant> {
+    let job = job::current(&KubernetesApi::in_cluster()?).await?;
+    let start = job["status"]["startTime"]
+        .as_str()
+        .context("deploy Job start time is absent")?;
+    let start =
+        chrono::DateTime::parse_from_rfc3339(start).context("invalid deploy Job start time")?;
+    let budget = job["spec"]["activeDeadlineSeconds"]
+        .as_i64()
+        .and_then(chrono::TimeDelta::try_seconds)
+        .context("invalid deploy Job activeDeadlineSeconds")?;
+    let deadline = start
+        .checked_add_signed(budget)
+        .context("invalid deploy Job deadline")?;
+    let now = Instant::now();
+    let remaining = (deadline.to_utc() - chrono::Utc::now())
+        .to_std()
+        .context("deploy Job deadline elapsed")?;
+    now.checked_add(remaining)
+        .context("invalid deploy Job deadline")
+}
+
 /// Execute an application operation using its applied project document.
 pub async fn application(
     platform: &Platform,
@@ -233,6 +257,7 @@ pub async fn application(
                             chart.directory(),
                             &release,
                             &values,
+                            deploy_job_deadline().await?,
                         )
                         .await?;
                         for role in roles {

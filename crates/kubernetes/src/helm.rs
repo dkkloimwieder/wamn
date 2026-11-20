@@ -3,6 +3,7 @@ pub(super) mod plan;
 use anyhow::{Context as _, ensure};
 use serde_json::Value;
 use std::{borrow::Cow, ffi::OsStr, process::Stdio};
+use tokio::time::Instant;
 
 /// The Helm storage namespace for releases owned by an org.
 pub fn org_release_namespace(org_namespace: &str) -> Cow<'_, str> {
@@ -89,13 +90,15 @@ pub fn template(entry: &serde_json::Value) -> anyhow::Result<Vec<serde_json::Val
 pub enum Wait {
     None,
     Watcher,
+    /// Use the watcher and cap the upgrade timeout at this deadline.
+    WatcherUntil(Instant),
 }
 
 impl Wait {
     fn argument(self) -> Option<&'static OsStr> {
         match self {
             Self::None => None,
-            Self::Watcher => Some(OsStr::new("--wait=watcher")),
+            Self::Watcher | Self::WatcherUntil(_) => Some(OsStr::new("--wait=watcher")),
         }
     }
 }
@@ -150,6 +153,18 @@ pub async fn upgrade(
     wait: Wait,
     install: Install,
 ) -> anyhow::Result<()> {
+    let timeout = match wait {
+        Wait::WatcherUntil(deadline) => deadline
+            .saturating_duration_since(Instant::now())
+            .as_secs()
+            .min(600),
+        Wait::None | Wait::Watcher => 600,
+    };
+    ensure!(
+        timeout > 0,
+        "no time left to upgrade Helm release {namespace}/{name}"
+    );
+    let timeout = format!("{timeout}s");
     let mut arguments = vec![
         "--kubeconfig".as_ref(),
         target.kubeconfig.as_os_str(),
@@ -163,7 +178,7 @@ pub async fn upgrade(
         name.as_ref(),
         chart.as_os_str(),
         "--timeout".as_ref(),
-        "600s".as_ref(),
+        timeout.as_ref(),
         "--history-max".as_ref(),
         "50".as_ref(),
     ];

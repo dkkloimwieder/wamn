@@ -313,6 +313,44 @@ pub async fn submit(
     Ok(json!({"job":name(job)}))
 }
 
+/// Read the Job that controls the current worker Pod.
+pub async fn current(api: &crate::kubernetes_api::KubernetesApi) -> anyhow::Result<Value> {
+    // Operation Pods use the default hostname, which Kubernetes sets to the Pod name.
+    let hostname = std::fs::read_to_string("/proc/sys/kernel/hostname")
+        .context("read operation Pod hostname")?;
+    let pod = hostname.trim();
+    ensure!(kubernetes_name(pod), "invalid operation Pod name");
+    let namespace = &api.namespace;
+    let pod = api
+        .get(format!("/api/v1/namespaces/{namespace}/pods/{pod}"))
+        .await?;
+    let owner = pod["metadata"]["ownerReferences"]
+        .as_array()
+        .and_then(|owners| {
+            owners.iter().find(|owner| {
+                owner["controller"] == true
+                    && owner["kind"] == "Job"
+                    && owner["apiVersion"] == "batch/v1"
+            })
+        })
+        .context("operation Pod has no controlling Job")?;
+    let name = owner["name"]
+        .as_str()
+        .filter(|name| kubernetes_name(name))
+        .context("invalid operation Job name")?;
+    let job = api
+        .get_job(namespace, name)
+        .await?
+        .context("operation Job is absent")?;
+    ensure!(
+        owner["uid"]
+            .as_str()
+            .is_some_and(|uid| job["metadata"]["uid"] == uid),
+        "operation Job {namespace}/{name} UID does not match its Pod's owner"
+    );
+    Ok(job)
+}
+
 /// A refused observation never reveals a Job outside the authorized target.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ObservationErrorType {
