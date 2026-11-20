@@ -76,15 +76,13 @@ fn seal(
                 .map(|connection| connection.requirement_type.import_package().to_owned()),
         )
         .collect();
-    let facts = wamn_engine::component_admission::validate_component_admission(
+    let descriptor = wamn_engine::component_admission::validate_component_admission(
         &engine,
         bytes,
         wamn_engine::component_admission::ComponentAdmissionRequest {
             declaration: wamn_catalog::ComponentDeclaration {
                 data_change: false,
-                target: wamn_catalog::palette_target(
-                    &wamn_registry::ProjectEnvKey::platform_palette(),
-                ),
+                target: wamn_catalog::palette_package(),
                 component: declaration.component,
                 interface_version: declaration.interface_version,
                 operations: declaration.operations,
@@ -94,10 +92,7 @@ fn seal(
             base_digests: std::collections::BTreeSet::new(),
         },
     )?;
-    Ok(wamn_catalog::ComponentDescriptor::new(
-        facts.component,
-        facts.connections,
-    ))
+    Ok(descriptor)
 }
 
 /// Build palette guests once through the shared compiler, independently of applications.

@@ -21,7 +21,7 @@ use wamn_catalog::ConnectionTypeDescriptor;
 use wamn_catalog::package_schema::package_metadata;
 use wamn_catalog::{
     AdmittedComponent, ComponentConnection, ComponentConnectionType, ComponentDeclaration,
-    ComponentDescriptor,
+    ComponentDescriptor, ComponentPackageCoordinate,
 };
 use wamn_engine::component_admission::validate_component_admission;
 
@@ -149,14 +149,6 @@ impl ComponentAdmission {
         ComponentDescriptor::new(self.component.clone(), self.connections.to_vec())
     }
 
-    /// Move admitted facts and the exact saved bytes into a package publication.
-    pub(crate) fn into_descriptor_and_bytes(self) -> (ComponentDescriptor, Box<[u8]>) {
-        (
-            ComponentDescriptor::new(self.component, self.connections.into_vec()),
-            self.component_bytes,
-        )
-    }
-
     /// Exact package identity carried by the admitted component facts.
     pub fn package_id(&self) -> &wamn_catalog::PackageName {
         &self.component.target.package_id
@@ -192,37 +184,46 @@ pub fn admit_component(args: AdmitComponentRequest) -> anyhow::Result<ComponentA
         .with_context(|| format!("read component declaration {}", args.declaration.display()))?;
     let document: serde_json::Value = serde_json::from_slice(&declaration_bytes)
         .with_context(|| format!("parse component declaration {}", args.declaration.display()))?;
-    let mut declaration: ComponentDeclaration = serde_json::from_value(document)
-        .with_context(|| format!("parse component declaration {}", args.declaration.display()))?;
+    let mut declaration: ComponentDeclaration<ComponentPackageCoordinate> =
+        serde_json::from_value(document).with_context(|| {
+            format!("parse component declaration {}", args.declaration.display())
+        })?;
 
     declaration.data_change = package_manifest.components
         .get(declaration.component.as_str())
         .is_some_and(|component| component.data_change.is_some());
 
-    let admission = admit(
+    let (declaration, target) = declaration.split_target();
+    let (descriptor, requirements) = admit(
         &package_manifest,
-        component_bytes,
+        &component_bytes,
         declaration,
         args.admitted_platform_packages.into_iter().collect(),
         args.base_digests,
     )?;
-    ensure_component_package_matches(admission.facts(), &package.coordinate)?;
-    Ok(admission)
+    let facts = descriptor.into_admitted(target);
+    ensure_component_package_matches(&facts.component, &package.coordinate)?;
+    Ok(ComponentAdmission {
+        component_bytes: component_bytes.into_boxed_slice(),
+        component: facts.component,
+        connections: facts.connections.into_boxed_slice(),
+        requirements: requirements.into_boxed_slice(),
+    })
 }
 
 pub(crate) fn admit(
     package_manifest: &wamn_catalog::manifest::PackageManifest,
-    component_bytes: Vec<u8>,
+    component_bytes: &[u8],
     declaration: ComponentDeclaration,
     admitted_platform_packages: BTreeSet<String>,
     base_digests: BTreeSet<wamn_digest::Digest>,
-) -> anyhow::Result<ComponentAdmission> {
-    wamn_build::composer::validate_application_member(&component_bytes)
+) -> anyhow::Result<(ComponentDescriptor, Vec<ComponentConnectionRequirement>)> {
+    wamn_build::composer::validate_application_member(component_bytes)
         .context("refuse application-owned entry authority")?;
     let engine = wamn_engine::build_engine(&[]).context("build component admission engine")?;
-    let facts = validate_component_admission(
+    let mut admitted = validate_component_admission(
         &engine,
-        &component_bytes,
+        component_bytes,
         wamn_engine::component_admission::ComponentAdmissionRequest {
             declaration,
             admitted_platform_packages,
@@ -230,7 +231,6 @@ pub(crate) fn admit(
         },
     )
     .context("validate exact component bytes")?;
-    let mut admitted = facts.component;
     let expected = expected_operation_contracts(package_manifest)?;
     let selected = validate_component_operation_assignment(package_manifest, &admitted, &expected)?;
     let host_transactions = host_transaction_exports(package_manifest, &selected)?;
@@ -239,7 +239,7 @@ pub(crate) fn admit(
     }
     bind_signed_file_results(&mut admitted, package_manifest)
         .context("bind package signed file results")?;
-    let requirements = facts
+    let requirements = admitted
         .connections
         .iter()
         .map(|connection| {
@@ -254,8 +254,7 @@ pub(crate) fn admit(
             ))
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
-    let mut connections = facts.connections;
-    for connection in &mut connections {
+    for connection in &mut admitted.connections {
         let alias = connection
             .store_alias
             .name()
@@ -269,14 +268,10 @@ pub(crate) fn admit(
             wamn_catalog::manifest::ConnectionMode::Write => wamn_catalog::ConnectionMode::Write,
         };
     }
-    connections.sort_by(|left, right| left.store_alias.cmp(&right.store_alias));
-
-    Ok(ComponentAdmission {
-        component_bytes: component_bytes.into_boxed_slice(),
-        component: admitted,
-        connections: connections.into_boxed_slice(),
-        requirements: requirements.into_boxed_slice(),
-    })
+    admitted
+        .connections
+        .sort_by(|left, right| left.store_alias.cmp(&right.store_alias));
+    Ok((admitted, requirements))
 }
 
 #[derive(Debug)]
@@ -287,9 +282,7 @@ struct ExpectedOperationContract {
 
 #[cfg(test)]
 mod tests {
-    use wamn_catalog::{
-        AdmittedComponentOperation, ComponentOperationDeclaration, ComponentPackageCoordinate,
-    };
+    use wamn_catalog::AdmittedComponentOperation;
 
     use super::*;
 
@@ -327,13 +320,9 @@ mod tests {
         let manifest: wamn_catalog::manifest::PackageManifest =
             serde_json::from_value(document).expect("two-component manifest parses");
         let operation = "observer-fixture:audit/observe@3.0.0".parse().unwrap();
-        let component = AdmittedComponent {
+        let component = ComponentDescriptor {
             data_change: false,
-            target: wamn_catalog::ComponentPackageCoordinate {
-                project_env_key: "org-a--dev--project".parse().unwrap(),
-                package_id: manifest.package.id.clone(),
-                package_version: manifest.package.version.clone(),
-            },
+            connections: Vec::new(),
             component: primary.parse().unwrap(),
             interface_version: "0.1.0".parse().unwrap(),
             operations: BTreeMap::from([(
@@ -390,7 +379,7 @@ mod tests {
             &"audit.observe".parse().unwrap(),
         )
         .unwrap();
-        let mut component = stranger(&manifest, "observer_fixture", Some(&export));
+        let mut component = stranger("observer_fixture", Some(&export));
         let (_, mut operation) = component.operations.pop_first().unwrap();
         operation
             .output_ports
@@ -446,17 +435,12 @@ mod tests {
     /// A component absent from the manifest, exporting one handler and
     /// registering nothing: the palette-node shape.
     fn stranger(
-        manifest: &wamn_catalog::manifest::PackageManifest,
         name: &str,
         registered: Option<&wamn_catalog::registered_operation::RegisteredOperation>,
-    ) -> AdmittedComponent {
-        AdmittedComponent {
+    ) -> ComponentDescriptor {
+        ComponentDescriptor {
             data_change: false,
-            target: wamn_catalog::ComponentPackageCoordinate {
-                project_env_key: "org-a--dev--project".parse().unwrap(),
-                package_id: manifest.package.id.clone(),
-                package_version: manifest.package.version.clone(),
-            },
+            connections: Vec::new(),
             component: name.parse().unwrap(),
             interface_version: "0.1.0".parse().unwrap(),
             operations: BTreeMap::from([(
@@ -491,7 +475,7 @@ mod tests {
 
         let served = validate_component_operation_assignment(
             &manifest,
-            &stranger(&manifest, "label-render", None),
+            &stranger("label-render", None),
             &expected,
         )
         .expect("an unregistered palette node is admitted without manifest membership");
@@ -517,7 +501,7 @@ mod tests {
 
         let error = validate_component_operation_assignment(
             &manifest,
-            &stranger(&manifest, "stranger", Some(&registered)),
+            &stranger("stranger", Some(&registered)),
             &expected,
         )
         .expect_err("a stranger registering a manifest operation was admitted");
