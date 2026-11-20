@@ -2,7 +2,11 @@
 
 mod rollback;
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::Mutex,
+    time::Duration,
+};
 
 use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
@@ -189,7 +193,7 @@ pub async fn application(
                             packages.manifests.values(),
                         )
                         .await?;
-                        let (values, _) = write::release_values(
+                        let (values, roles) = write::release_values(
                             &document,
                             &platform_domain,
                             name,
@@ -215,6 +219,8 @@ pub async fn application(
                             &packages.manifests,
                         )
                         .await?;
+                        let timeout =
+                            Duration::from_secs(u64::try_from(document.readiness_budget_seconds)?);
                         wamn_platform_install::environment::apply_application(
                             &platform.target,
                             &platform.chart,
@@ -222,6 +228,10 @@ pub async fn application(
                             &values,
                         )
                         .await?;
+                        for role in roles {
+                            let workload = crate::release_chart::workload_name(&release, role);
+                            wait_workload_ready(&platform.target, &workload, timeout).await?;
+                        }
                         Ok(json!({"release":digest}))
                     }
                     Application::Apply(digest) => {
@@ -291,6 +301,61 @@ pub async fn application(
         },
     )
     .await
+}
+
+async fn wait_workload_ready(
+    target: &wamn_kubernetes::Target,
+    name: &str,
+    timeout: Duration,
+) -> anyhow::Result<()> {
+    let diagnostics = Mutex::new(String::new());
+    wamn_kubernetes::kubectl::wait_named(
+        target,
+        "workloaddeployments.runtime.wasmcloud.dev",
+        name,
+        timeout,
+        |object| {
+            let conditions = object["status"]["conditions"]
+                .as_array()
+                .map_or(&[][..], Vec::as_slice);
+            if conditions
+                .iter()
+                .any(|condition| condition["type"] == "Ready" && condition["status"] == "True")
+            {
+                return true;
+            }
+            let messages = conditions
+                .iter()
+                .filter_map(|condition| {
+                    let kind = condition["type"].as_str()?;
+                    let status = condition["status"].as_str()?;
+                    let message = condition["message"].as_str().unwrap_or_default();
+                    (kind == "Ready" || matches!(status, "False" | "Unknown"))
+                        .then(|| format!("{kind}={status} {message:?}"))
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            *diagnostics.lock().expect("lock workload diagnostics") = messages;
+            false
+        },
+    )
+    .await
+    .map_err(|error| {
+        if error.is::<tokio::time::error::Elapsed>() {
+            let diagnostics = diagnostics.into_inner().expect("read workload diagnostics");
+            let diagnostics = if diagnostics.is_empty() {
+                "no Ready, False, or Unknown conditions observed"
+            } else {
+                &diagnostics
+            };
+            error.context(format!(
+                "WorkloadDeployment {name} did not become Ready within {} seconds ({diagnostics})",
+                timeout.as_secs()
+            ))
+        } else {
+            error
+        }
+    })
 }
 
 fn application_config(values: &serde_yaml::Value) -> anyhow::Result<ApplicationConfig> {
