@@ -11,6 +11,7 @@ wamn-digest = { workspace = true, features = ["sqlx"] }
 anyhow.workspace = true
 uuid = { workspace = true, features = ["v4"] }
 sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls", "json"] }
+rustls = { workspace = true, features = ["aws-lc-rs"] }
 clap = { workspace = true, features = ["derive"] }
 http-body-util.workspace = true
 hyper = { workspace = true, features = ["server", "http1"] }

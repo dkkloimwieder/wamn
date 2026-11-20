@@ -39,6 +39,8 @@ enum Command {
 static ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 fn main() -> anyhow::Result<()> {
+    wash_runtime::init_crypto();
+
     let cli = Cli::parse();
     // wash-runtime builds its log filter from RUST_LOG, else from the level,
     // and then quiets `async_nats` to error. The more specific directive keeps

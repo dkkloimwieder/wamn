@@ -465,7 +465,6 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         settings.projects.is_empty() || settings.identity_issuer.is_some(),
         "project hosts require an identity issuer"
     );
-    wash_runtime::init_crypto();
 
     // Trust roots are a property of the host, not of any one pull, so they are
     // installed once here rather than carried to every construction site. This
