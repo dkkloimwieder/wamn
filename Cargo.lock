@@ -5777,6 +5777,7 @@ dependencies = [
  "hyper-util",
  "moka",
  "oci-client",
+ "rustls",
  "serde",
  "serde_json",
  "sqlx",
