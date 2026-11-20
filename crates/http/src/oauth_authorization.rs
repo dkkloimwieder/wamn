@@ -189,9 +189,14 @@ impl Authorization {
         if !row.get::<bool, _>("unexpired") {
             return Err(refused("expired state"));
         }
-        sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1,'','','connection.oauth_callback')")
-            .bind(row.get::<wamn_identity_protocol::PrincipalId, _>("created_by"))
-            .execute(&mut **tx)
+        wamn_postgres::bind_transaction_identity(
+            tx,
+            &row.get::<wamn_identity_protocol::PrincipalId, _>("created_by"),
+            "",
+            "",
+            Some("connection.oauth_callback"),
+            None,
+        )
             .await
             .map_err(|error| failed("callback identity failed", error))?;
         let connection: uuid::Uuid = row.get("connection_id");

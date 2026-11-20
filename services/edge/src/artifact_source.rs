@@ -154,21 +154,25 @@ mod tests {
     use serde_json::json;
     use wamn_catalog::{
         ComponentDeclaration, ComponentOperationDeclaration, ComponentPackageCoordinate,
-        ComponentPortDeclaration, normalize_component_fact,
+        ComponentPortDeclaration, PackageCoordinate, normalize_component_fact,
     };
 
     use super::*;
 
     fn admitted(bytes: &[u8]) -> AdmittedComponent {
+        let target = ComponentPackageCoordinate {
+            project_env_key: "org-a--dev--project".parse().unwrap(),
+            package_id: "orders".parse().unwrap(),
+            package_version: "1.0.0".parse().unwrap(),
+        };
+        let package =
+            PackageCoordinate::new(target.package_id.clone(), target.package_version.clone())
+                .unwrap();
         normalize_component_fact(
             ComponentDeclaration {
                 data_change: false,
                 connections: Vec::new(),
-                target: ComponentPackageCoordinate {
-                    project_env_key: "org-a--dev--project".parse().unwrap(),
-                    package_id: "orders".parse().unwrap(),
-                    package_version: "1.0.0".parse().unwrap(),
-                },
+                target: package,
                 component: "transform".parse().unwrap(),
                 interface_version: "0.1.0".parse().unwrap(),
                 operations: BTreeMap::from([(
@@ -190,6 +194,7 @@ mod tests {
             Vec::new(),
         )
         .expect("fixture admits")
+        .into_admitted(target)
         .component
     }
 

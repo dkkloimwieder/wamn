@@ -104,12 +104,10 @@ pub async fn fill(
     let mut system = system.begin().await?;
     wamn_identity::org::lock_org_memberships(&mut system, target.org).await?;
     let mut project = project.begin().await?;
-    sqlx::raw_sql(sqlx::AssertSqlSafe(
-        wamn_provision::bind_platform_principal_sql(
-            wamn_provision::PlatformComponent::Provisioning,
-        ),
-    ))
-    .execute(&mut *project)
+    wamn_provision::bind_platform_principal(
+        &mut project,
+        wamn_provision::PlatformComponent::Provisioning,
+    )
     .await?;
     let mut principals = BTreeSet::new();
     principals.extend(

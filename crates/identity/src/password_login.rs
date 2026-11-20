@@ -158,7 +158,7 @@ pub async fn renewal_principal(
     let Ok(token) = SecretToken::parse(SecretType::Renewal, secret) else {
         return Ok(None);
     };
-    let actor = wamn_identity_protocol::PlatformComponent::Provisioning.principal_id();
+    let actor = wamn_identity_protocol::PlatformComponent::IdentityService.principal_id();
     let mut transaction = crate::transaction::read_connection(connection, &actor)
         .await
         .map_err(|error| database(&error))?;
@@ -183,9 +183,7 @@ pub async fn authenticate_renewal(
     audience: &str,
     secret: &str,
 ) -> Result<Option<AuthenticatedPrincipal>, IdentityError> {
-    sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application) VALUES($1,'','')")
-        .bind(principal)
-        .execute(&mut **tx)
+    wamn_postgres::bind_transaction_identity(tx, principal, "", "", None, None)
         .await
         .map_err(|error| database(&error))?;
     let Some(digest) = SecretToken::parse(SecretType::Renewal, secret)

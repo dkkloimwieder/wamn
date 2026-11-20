@@ -302,22 +302,14 @@ async fn delete_locked(
         {
             let mut project = lock.client().await;
             let mut transaction = project.begin().await?;
-            sqlx::raw_sql(sqlx::AssertSqlSafe(
-                wamn_provision::bind_platform_principal_sql(
-                    wamn_provision::PlatformComponent::Provisioning,
-                ),
-            ))
-            .execute(&mut *transaction)
-            .await?;
-            sqlx::query(
-                r#"UPDATE platform."user" u SET status='disabled'
-                   FROM platform.connection c
-                   WHERE u.id=c.service_principal_id AND u.issuer='wamn'
-                     AND u.type='service' AND u.status<>'disabled'"#,
+            wamn_provision::bind_platform_principal(
+                &mut transaction,
+                wamn_provision::PlatformComponent::Provisioning,
             )
-            .execute(&mut *transaction)
-            .await
-            .context("disable the retained database's connection principals")?;
+            .await?;
+            wamn_identity::application::disable_connection_services(&mut transaction)
+                .await
+                .context("disable the retained database's connection principals")?;
             transaction.commit().await?;
         }
         Ok(())

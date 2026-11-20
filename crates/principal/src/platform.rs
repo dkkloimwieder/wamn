@@ -1,4 +1,4 @@
-//! Reserved application principals and the built-in role.
+//! Reserved platform principals in system and project databases.
 
 /// The fixed WAMN namespace for platform principal ids. Every project and every
 /// deployment derives the same id from the same name, so no configuration
@@ -14,9 +14,7 @@ pub const WAMN_NAMESPACE: uuid::Uuid =
 /// and no version. A project or application cannot create a name with this prefix.
 pub const PLATFORM_PRINCIPAL_PREFIX: &str = "wamn:";
 
-/// A platform component that writes under its own `platform."user"` row.
-///
-/// The row names the component, never the invocation. The list is closed.
+/// A platform component that writes under its own principal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PlatformComponent {
     /// Project provisioning. Its row is the first row in a project database.
@@ -27,10 +25,12 @@ pub enum PlatformComponent {
     Executor,
     /// The record history retention task, which removes expired log entries.
     AuditRetention,
+    /// The identity issuer in the system database.
+    IdentityService,
 }
 
 impl PlatformComponent {
-    /// Every component. Order is presentational.
+    /// Components seeded in each project database.
     pub const ALL: [PlatformComponent; 4] = [
         PlatformComponent::Provisioning,
         PlatformComponent::ApplyPackage,
@@ -45,6 +45,7 @@ impl PlatformComponent {
             PlatformComponent::ApplyPackage => "apply-package",
             PlatformComponent::Executor => "executor",
             PlatformComponent::AuditRetention => "audit-retention",
+            PlatformComponent::IdentityService => "identity-service",
         }
     }
 
@@ -53,8 +54,7 @@ impl PlatformComponent {
         format!("{PLATFORM_PRINCIPAL_PREFIX}{}", self.as_str())
     }
 
-    /// The `platform."user"` id: the UUIDv5 of [`Self::principal_name`] under
-    /// [`WAMN_NAMESPACE`].
+    /// Derive the principal UUID from [`Self::principal_name`] and [`WAMN_NAMESPACE`].
     pub fn principal_id(self) -> crate::PrincipalId {
         uuid::Uuid::new_v5(&WAMN_NAMESPACE, self.principal_name().as_bytes()).into()
     }
@@ -70,6 +70,3 @@ pub const WORKFLOW_USER_NAME: &str = "workflow";
 pub fn workflow_user_id() -> crate::PrincipalId {
     uuid::Uuid::new_v5(&WAMN_NAMESPACE, WORKFLOW_USER_NAME.as_bytes()).into()
 }
-
-/// The built-in role with all served operations.
-pub const ADMIN_ROLE: &str = "admin";

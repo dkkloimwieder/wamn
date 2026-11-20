@@ -9,7 +9,7 @@ use boon::{Compiler, Draft, Schemas};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 
-use crate::CatalogIdentityError;
+use crate::{CatalogIdentityError, PackageCoordinate};
 use crate::package::validate_canonical_operation_for_package;
 
 const JSON_SCHEMA_2020_12: &str = "https://json-schema.org/draft/2020-12/schema";
@@ -268,17 +268,47 @@ pub struct ComponentOperationDeclaration {
 /// operations leave the authorization identity absent.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub struct ComponentDeclaration {
+pub struct ComponentDeclaration<T = PackageCoordinate> {
     /// Whether the verified package manifest declares a data change handler.
     #[serde(skip)]
     pub data_change: bool,
-    pub target: ComponentPackageCoordinate,
+    pub target: T,
     pub component: CanonicalName,
     pub interface_version: CanonicalName,
     pub operations: BTreeMap<CanonicalName, ComponentOperationDeclaration>,
     /// External connections available to every operation of this component.
     #[serde(default)]
     pub connections: Vec<ComponentConnection>,
+}
+
+impl ComponentDeclaration<ComponentPackageCoordinate> {
+    /// Separate the package identity used for admission from the deployment target.
+    pub fn split_target(self) -> (ComponentDeclaration, ComponentPackageCoordinate) {
+        let package = PackageCoordinate::new(
+            self.target.package_id.clone(),
+            self.target.package_version.clone(),
+        )
+        .expect("valid package coordinate");
+        let Self {
+            data_change,
+            target,
+            component,
+            interface_version,
+            operations,
+            connections,
+        } = self;
+        (
+            ComponentDeclaration {
+                data_change,
+                target: package,
+                component,
+                interface_version,
+                operations,
+                connections,
+            },
+            target,
+        )
+    }
 }
 
 /// A compiled-valid JSON Schema document.
@@ -356,11 +386,7 @@ pub struct AdmittedComponentOperation {
     pub parameters: Vec<AdmittedComponentParameter>,
 }
 
-/// Complete package-owned fact that byte admission produces.
-///
-/// Environment is deliberately absent: an environment selects a wiring, while
-/// component admission is owned by an exact package version. No timestamp is
-/// part of the fact, so admission stays clock-free.
+/// An admitted component with its deployment coordinate.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct AdmittedComponent {
@@ -384,7 +410,7 @@ impl AdmittedComponent {
     }
 }
 
-/// Everything one byte-verified component admission mints.
+/// The deployed component and its portable connection requirements.
 ///
 /// The two halves land in two relations — the library row and the portable
 /// connection requirements keyed by `(component-digest, store-alias)` — so they
@@ -553,7 +579,7 @@ pub fn normalize_component_fact(
     component_digest: wamn_digest::Digest,
     imports: impl IntoIterator<Item = String>,
     effects: Vec<AdmittedComponentEffect>,
-) -> Result<AdmittedComponentFacts, ComponentFactError> {
+) -> Result<ComponentDescriptor, ComponentFactError> {
     if declaration.operations.is_empty() && !declaration.data_change {
         return Err(ComponentFactError::new(
             ComponentFactErrorType::EmptyOperationSet,
@@ -564,8 +590,8 @@ pub fn normalize_component_fact(
     let mut operations = BTreeMap::new();
     for (export, operation) in declaration.operations {
         validate_registered_operation_target(
-            &declaration.target.package_id,
-            &declaration.target.package_version,
+            declaration.target.package_id(),
+            declaration.target.package_version(),
             &export,
             operation.registered_operation.as_ref(),
         )?;
@@ -609,18 +635,15 @@ pub fn normalize_component_fact(
     let effects = normalize_effects(effects, &imports)?;
     let connections = normalize_connections(declaration.connections, &effects)?;
 
-    Ok(AdmittedComponentFacts {
-        component: AdmittedComponent {
-            data_change: declaration.data_change,
-            target: declaration.target,
-            component: declaration.component,
-            interface_version: declaration.interface_version,
-            operations,
-            component_digest,
-            imports,
-            imports_fingerprint,
-            effects,
-        },
+    Ok(ComponentDescriptor {
+        data_change: declaration.data_change,
+        component: declaration.component,
+        interface_version: declaration.interface_version,
+        operations,
+        component_digest,
+        imports,
+        imports_fingerprint,
+        effects,
         connections,
     })
 }
@@ -974,11 +997,8 @@ mod tests {
         ComponentDeclaration {
             data_change: false,
             connections: Vec::new(),
-            target: ComponentPackageCoordinate {
-                project_env_key: "org-a--dev--project".parse().unwrap(),
-                package_id: "orders".parse().unwrap(),
-                package_version: "1.2.0".parse().unwrap(),
-            },
+            target: PackageCoordinate::new("orders".parse().unwrap(), "1.2.0".parse().unwrap())
+                .unwrap(),
             component: "transform".parse().unwrap(),
             interface_version: "0.1.0".parse().unwrap(),
             operations: BTreeMap::from([(
@@ -1024,6 +1044,14 @@ mod tests {
         }
     }
 
+    fn deployment() -> ComponentPackageCoordinate {
+        ComponentPackageCoordinate {
+            project_env_key: "org-a--dev--project".parse().unwrap(),
+            package_id: "orders".parse().unwrap(),
+            package_version: "1.2.0".parse().unwrap(),
+        }
+    }
+
     #[test]
     fn normalization_is_sorted_and_carries_every_component_owned_fact() {
         let facts = normalize_component_fact(
@@ -1037,7 +1065,8 @@ mod tests {
             ],
             vec![postgres_effect()],
         )
-        .expect("component fact normalizes");
+        .expect("component fact normalizes")
+        .into_admitted(deployment());
         let fact = facts.component;
 
         assert_eq!(fact.target.package_version, "1.2.0".parse().unwrap());
@@ -1069,7 +1098,8 @@ mod tests {
             ["wamn:postgres/client@0.1.0".to_string()],
             vec![postgres_effect()],
         )
-        .expect("component fact normalizes");
+        .expect("component fact normalizes")
+        .into_admitted(deployment());
         let connections = vec![ComponentConnection {
             store_alias: "labels"
                 .parse::<crate::canonical_name::CanonicalName>()
@@ -1119,8 +1149,8 @@ mod tests {
         )
         .expect("a pure component normalizes");
 
-        assert!(facts.component.effects.is_empty());
-        assert_eq!(facts.component.imports.len(), 1);
+        assert!(facts.effects.is_empty());
+        assert_eq!(facts.imports.len(), 1);
     }
 
     #[test]
@@ -1176,12 +1206,12 @@ mod tests {
             Vec::new(),
         )
         .expect("a declared committed result admits");
-        let schema = facts.component.operations[registered]
+        let schema = facts.operations[registered]
             .committed_result_schema
             .as_ref()
             .unwrap();
         assert_eq!(schema.schema, success);
-        verify_stored_effect_projection(&facts.component)
+        verify_stored_effect_projection(&facts.into_admitted(deployment()).component)
             .expect("stored committed facts remain valid");
 
         for (schema, type_) in [
@@ -1234,9 +1264,7 @@ mod tests {
         )
         .expect("canonical registered operation is admitted");
         assert_eq!(
-            facts.component.operations[registered]
-                .registered_operation
-                .as_ref(),
+            facts.operations[registered].registered_operation.as_ref(),
             Some(&registered.parse().unwrap())
         );
 
@@ -1295,11 +1323,7 @@ mod tests {
     fn migration_defaulted_fact(imports: &[&str]) -> AdmittedComponent {
         AdmittedComponent {
             data_change: false,
-            target: ComponentPackageCoordinate {
-                project_env_key: "org-a--dev--project".parse().unwrap(),
-                package_id: "orders".parse().unwrap(),
-                package_version: "1.2.0".parse().unwrap(),
-            },
+            target: deployment(),
             component: "transform".parse().unwrap(),
             interface_version: "0.1.0".parse().unwrap(),
             operations: BTreeMap::from([(
@@ -1511,8 +1535,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
         )
-        .unwrap()
-        .component;
+        .unwrap();
         let right = normalize_component_fact(
             right,
             (format!("sha256:{}", "c".repeat(64)))
@@ -1521,8 +1544,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
         )
-        .unwrap()
-        .component;
+        .unwrap();
         assert_eq!(
             left.operations["map"].input_ports[0].schema,
             right.operations["map"].input_ports[0].schema

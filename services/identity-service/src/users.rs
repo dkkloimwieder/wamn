@@ -8,9 +8,8 @@ use hyper::{Request, Response, StatusCode, body::Incoming};
 use sqlx::{Connection as _, PgConnection as Client};
 use wamn_identity::password::{RefusalCause, issue_invitation};
 use wamn_identity::{IdentityErrorType, IdentityRefusal, create_or_reuse_user};
-use wamn_identity_protocol::PrincipalId;
+use wamn_identity_protocol::{PlatformComponent, PrincipalId};
 use wamn_identity_protocol::wire::{PrincipalRequest, UserRequest, UserResponse};
-use wamn_provision::PlatformComponent;
 use wamn_registry::OrgId;
 
 use crate::{
@@ -146,12 +145,15 @@ async fn begin(client: &mut Client) -> Result<sqlx::Transaction<'_, sqlx::Postgr
     let mut tx = client
         .begin_with("BEGIN ISOLATION LEVEL READ COMMITTED")
         .await?;
-    sqlx::query(
-        "INSERT INTO platform.tx_identity(principal_id,role,application,operation)
-         VALUES($1,'','identity','wamn:provisioning')",
+    let actor = PlatformComponent::IdentityService;
+    wamn_postgres::bind_transaction_identity(
+        &mut tx,
+        &actor.principal_id(),
+        "",
+        "identity",
+        Some(&actor.principal_name()),
+        None,
     )
-    .bind(PlatformComponent::Provisioning.principal_id())
-    .execute(&mut *tx)
     .await?;
     Ok(tx)
 }
@@ -193,7 +195,7 @@ async fn invite(
 ) -> Response<Full<Bytes>> {
     let Ok(mut read) = wamn_identity::transaction::read_connection(
         client,
-        &PlatformComponent::Provisioning.principal_id(),
+        &PlatformComponent::IdentityService.principal_id(),
     )
     .await
     else {
@@ -219,7 +221,7 @@ async fn invite(
         tracing::info!(principal = %principal, cause = %RefusalCause::NoSuchAccount, "password request refused");
         return invalid();
     };
-    let actor: PrincipalId = PlatformComponent::Provisioning.principal_id();
+    let actor: PrincipalId = PlatformComponent::IdentityService.principal_id();
     let invitation = match issue_invitation(client, &actor, &principal).await {
         Ok(value) => value,
         Err(error) => return refusal(&error, &email),
@@ -258,7 +260,7 @@ async fn invite(
     )
 }
 
-/// Create or reuse the user of one email, as `wamn:provisioning`, and reply
+/// Create or reuse the user of one email, as `wamn:identity-service`, and reply
 /// with the principal and whether it has a password credential.
 async fn create_user(client: &mut Client, request: &UserRequest) -> Response<Full<Bytes>> {
     let Ok(mut tx) = begin(client).await else {

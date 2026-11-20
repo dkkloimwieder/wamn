@@ -2,7 +2,6 @@
 
 pub mod forward;
 pub mod helm;
-pub mod http_transport;
 pub mod job;
 pub mod kubectl;
 pub mod kubernetes;

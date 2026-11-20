@@ -8,17 +8,19 @@ pub const PAT_TOKEN_PREFIX: &str = "wamn_pat_";
 mod login;
 pub use login::{LoginName, ParseLoginNameError};
 
-mod principal;
-pub use principal::{ParseIdentityError, PrincipalId, RoleName};
+mod role;
+pub use role::RoleName;
 pub mod pat_prefix;
 pub mod secret;
 pub mod wire;
 
-mod platform;
-pub use platform::{
-    ADMIN_ROLE, PLATFORM_PRINCIPAL_PREFIX, PlatformComponent, WAMN_NAMESPACE, WORKFLOW_USER_NAME,
-    workflow_user_id,
+pub use wamn_principal::{
+    PLATFORM_PRINCIPAL_PREFIX, ParseIdentityError, PlatformComponent, PrincipalId, WAMN_NAMESPACE,
+    WORKFLOW_USER_NAME, workflow_user_id,
 };
+
+/// The built-in role with all served operations.
+pub const ADMIN_ROLE: &str = "admin";
 
 pub mod keys;
 

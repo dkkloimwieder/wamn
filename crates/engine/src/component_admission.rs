@@ -6,8 +6,8 @@ use std::fmt;
 use wamn_catalog::canonical_name::CanonicalName;
 
 use wamn_catalog::{
-    AdmittedComponentEffect, AdmittedComponentFacts, ComponentDeclaration,
-    ComponentEffectProvenance, normalize_component_fact,
+    AdmittedComponentEffect, ComponentDeclaration, ComponentDescriptor, ComponentEffectProvenance,
+    normalize_component_fact,
 };
 use wash_runtime::engine::Engine;
 use wash_runtime::wasmtime::component::Component;
@@ -84,18 +84,18 @@ impl std::error::Error for ComponentAdmissionError {
     }
 }
 
-/// Validate exact component bytes and mint their complete catalog facts.
+/// Validate exact component bytes and return their sealed descriptor.
 ///
 /// This function performs no network, storage, clock, or publication work. The
 /// caller supplies the configured validation engine, exact bytes, declaration,
 /// and the closed platform import set. Publication is the separate owner of
 /// persisting a successful result — both halves of it: the library fact and the
-/// portable connection requirements the declaration's aliases mint.
+/// portable connection requirements the declaration's aliases describe.
 pub fn validate_component_admission(
     engine: &Engine,
     component_bytes: &[u8],
     request: ComponentAdmissionRequest,
-) -> Result<AdmittedComponentFacts, ComponentAdmissionError> {
+) -> Result<ComponentDescriptor, ComponentAdmissionError> {
     let component_name = request.declaration.component.clone();
     let component = Component::new(engine.inner(), component_bytes).map_err(|source| {
         ComponentAdmissionError::new(
@@ -328,7 +328,7 @@ pub fn validate_component_admission(
     })?;
 
     let component_digest = wamn_digest::bytes_sha256(component_bytes);
-    let facts = normalize_component_fact(
+    normalize_component_fact(
         request.declaration,
         component_digest,
         imports,
@@ -340,8 +340,7 @@ pub fn validate_component_admission(
             component_name.as_str(),
             source,
         )
-    })?;
-    Ok(facts)
+    })
 }
 
 fn validate_data_change_signature(
@@ -575,8 +574,7 @@ mod tests {
 
     use serde_json::json;
     use wamn_catalog::{
-        ComponentOperationDeclaration, ComponentPackageCoordinate, ComponentParameterDeclaration,
-        ComponentPortDeclaration,
+        ComponentOperationDeclaration, ComponentParameterDeclaration, ComponentPortDeclaration,
     };
     use wit_component::{ComponentEncoder, StringEncoding, dummy_module, embed_component_metadata};
     use wit_parser::{LiftLowerAbi, ManglingAndAbi, Resolve};
@@ -709,11 +707,11 @@ mod tests {
             declaration: ComponentDeclaration {
                 data_change: false,
                 connections: Vec::new(),
-                target: ComponentPackageCoordinate {
-                    project_env_key: "org-a--dev--project".parse().unwrap(),
-                    package_id: "orders".parse().unwrap(),
-                    package_version: "1.0.0".parse().unwrap(),
-                },
+                target: wamn_catalog::PackageCoordinate::new(
+                    "orders".parse().unwrap(),
+                    "1.0.0".parse().unwrap(),
+                )
+                .unwrap(),
                 component: "transform".parse().unwrap(),
                 interface_version: "0.1.0".parse().unwrap(),
                 operations: BTreeMap::from([(
@@ -1096,8 +1094,7 @@ mod tests {
         let bytes = composed(&component_bytes(""), &base);
 
         let component = validate_component_admission(&engine, &bytes, request_pinning(&base))
-            .expect("a composed pinned base admits")
-            .component;
+            .expect("a composed pinned base admits");
 
         assert_eq!(component.imports, [NODE_TYPES_IMPORT.to_string()]);
         assert!(component.effects.is_empty());
@@ -1150,8 +1147,7 @@ mod tests {
             .insert("second".parse().unwrap(), second);
 
         let component = validate_component_admission(&engine, &bytes, request)
-            .expect("both exports of a composition admit")
-            .component;
+            .expect("both exports of a composition admit");
 
         assert!(component.operations.contains_key(OPERATION));
         assert!(component.operations.contains_key("second"));
@@ -1233,7 +1229,7 @@ mod tests {
             .expect("an effectful component with a declared connection admits");
 
         assert_eq!(
-            facts.component.effects,
+            facts.effects,
             vec![
                 AdmittedComponentEffect {
                     package: "wamn:connection".parse().unwrap(),
@@ -1247,7 +1243,7 @@ mod tests {
                 },
             ]
         );
-        assert_eq!(facts.component.imports.len(), 4);
+        assert_eq!(facts.imports.len(), 4);
         assert_eq!(facts.connections.len(), 1);
         assert_eq!(
             facts.connections[0]
@@ -1271,8 +1267,7 @@ mod tests {
             &base,
         );
         let component = validate_component_admission(&engine, &bytes, request_pinning(&base))
-            .expect("a composition over an effect-free base admits")
-            .component;
+            .expect("a composition over an effect-free base admits");
 
         assert!(
             component.effects.is_empty(),

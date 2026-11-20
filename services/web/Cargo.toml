@@ -15,6 +15,7 @@ wamn-registry.workspace = true
 wamn-catalog.workspace = true
 wamn-digest.workspace = true
 wamn-kubernetes.workspace = true
+wamn-http-client.workspace = true
 anyhow.workspace = true
 base64.workspace = true
 bytes.workspace = true

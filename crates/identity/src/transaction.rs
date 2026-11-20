@@ -32,8 +32,15 @@ async fn read<'connection>(
     mut transaction: sqlx::Transaction<'connection, sqlx::Postgres>,
     principal: &wamn_identity_protocol::PrincipalId,
 ) -> Result<sqlx::Transaction<'connection, sqlx::Postgres>, sqlx::Error> {
-    sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1,'','','admin:authority-read')")
-        .bind(principal).execute(&mut *transaction).await?;
+    wamn_postgres::bind_transaction_identity(
+        &mut transaction,
+        principal,
+        "",
+        "",
+        Some("admin:authority-read"),
+        None,
+    )
+    .await?;
     sqlx::query("SET TRANSACTION READ ONLY")
         .execute(&mut *transaction)
         .await?;

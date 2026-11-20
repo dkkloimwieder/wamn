@@ -446,7 +446,7 @@ async fn bind_actor(
     caller: PrincipalId,
     operation: &str,
 ) -> Result<(), ConnectionError> {
-    sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1,'','',$2)").bind(caller).bind(operation).execute(&mut **tx).await?;
+    wamn_postgres::bind_transaction_identity(tx, &caller, "", "", Some(operation), None).await?;
     Ok(())
 }
 

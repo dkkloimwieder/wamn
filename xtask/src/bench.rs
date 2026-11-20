@@ -103,7 +103,7 @@ struct Order {
 /// The shared parts of every call.
 #[derive(Debug)]
 struct Target {
-    client: wamn_oci::package_artifact::http_client::HttpClient,
+    client: wamn_http_client::HttpClient,
     base: String,
     authorization: String,
 }
@@ -257,7 +257,7 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
         headers.insert(hyper::header::HOST, args.host.parse()?);
     }
     let target = Arc::new(Target {
-        client: wamn_oci::package_artifact::http_client::HttpClient::builder()
+        client: wamn_http_client::HttpClient::builder()
             .default_headers(headers)
             .pool_max_idle_per_host(args.concurrency)
             .timeout(Duration::from_secs(30))
@@ -750,7 +750,7 @@ async fn post(target: &Target, path: &str, items: &Value) -> anyhow::Result<Valu
 /// The value of the one outcome, or an error for any status, transport or
 /// refusal.
 async fn outcome(
-    response: wamn_oci::package_artifact::http_client::HttpResponse,
+    response: wamn_http_client::HttpResponse,
 ) -> anyhow::Result<Value> {
     let status = response.status();
     let body: Value = response.json().await?;

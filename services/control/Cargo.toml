@@ -29,7 +29,7 @@ wamn-engine.workspace = true
 wamn-environment = { workspace = true, features = ["ops"] }
 wamn-platform-install.workspace = true
 async-trait.workspace = true
-wamn-oci.workspace = true
+wamn-http-client = { workspace = true, features = ["tls12"] }
 wamn-blobstore.workspace = true
 bytes.workspace = true
 boon.workspace = true

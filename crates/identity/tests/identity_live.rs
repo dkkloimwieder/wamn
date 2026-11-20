@@ -527,8 +527,7 @@ async fn provisioning_principal_is_seeded(client: &mut sqlx::PgConnection) -> Pr
     let component = PlatformComponent::Provisioning;
     let id: PrincipalId = component.principal_id();
     let row = sqlx::query(
-        "SELECT subject, display_name, created_by::text, updated_by::text, \
-                    (SELECT count(*) FROM identity.principals) \
+        "SELECT subject, display_name, created_by::text, updated_by::text \
              FROM identity.principals WHERE id = $1::text::uuid",
     )
     .bind(&id.to_string().as_str())
@@ -539,11 +538,6 @@ async fn provisioning_principal_is_seeded(client: &mut sqlx::PgConnection) -> Pr
     assert_eq!(row.get::<String, _>(1), component.principal_name());
     assert_eq!(row.get::<String, _>(2), id.to_string().as_str());
     assert_eq!(row.get::<String, _>(3), id.to_string().as_str());
-    assert_eq!(
-        row.get::<i64, _>(4),
-        1,
-        "only the wamn:provisioning row is seeded"
-    );
     let principal = resolve_principal(client, &id)
         .await
         .expect("resolve the platform principal")
@@ -587,9 +581,8 @@ async fn unbound_identity_writes_refuse(client: &mut sqlx::PgConnection) {
     }
 }
 
-/// `principals_platform_principal_check` admits only the pinned
-/// wamn:provisioning row for type platform, and the other types refuse a
-/// `wamn:` name.
+/// `principals_platform_principal_check` reserves the platform principal rows
+/// and their `wamn:` names.
 ///
 /// The last row checks that a user needs an email.
 async fn platform_principal_constraint_refuses_other_rows(client: &mut sqlx::PgConnection) {

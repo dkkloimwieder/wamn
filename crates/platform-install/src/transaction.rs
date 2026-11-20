@@ -1,7 +1,7 @@
 //! Provisioning transaction authority.
 use anyhow::Context as _;
 use sqlx::{Connection as _, PgConnection as Client};
-use wamn_provision::{PlatformComponent, bind_platform_principal_sql};
+use wamn_provision::{PlatformComponent, bind_platform_principal};
 /// Begin a system database transaction that writes as `wamn:provisioning`.
 ///
 /// The identity relations stamp the bound actor. The binding ends with the
@@ -13,12 +13,8 @@ pub async fn provisioning_transaction(
         .begin()
         .await
         .context("begin a system database write transaction")?;
-    sqlx::raw_sql(sqlx::AssertSqlSafe(bind_platform_principal_sql(
-        PlatformComponent::Provisioning,
-    )))
-    .execute(&mut *transaction)
-    .await
-    .map(drop)
-    .context("bind wamn:provisioning as the actor")?;
+    bind_platform_principal(&mut transaction, PlatformComponent::Provisioning)
+        .await
+        .context("bind wamn:provisioning as the actor")?;
     Ok(transaction)
 }

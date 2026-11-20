@@ -2,7 +2,6 @@
 
 use crate::{
     CredentialSecret, Store as _,
-    http_transport::{self, Protocols, Schemes},
     kubernetes::KubernetesStore,
     kubernetes_api::KubernetesApi,
 };
@@ -18,6 +17,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 use tokio::net::TcpListener;
+use wamn_http_client::{self as http_transport, Protocols, Schemes};
 
 struct Api {
     store: KubernetesStore,

@@ -36,9 +36,7 @@ use wamn_provision::audit_retention::{
     AUDIT_RETENTION_LOCK_SQL, AUDIT_RETENTION_TARGETS_SQL, WRITE_LOG_RETENTION_SQL,
     WRITE_LOG_RETENTION_TARGET_SQL,
 };
-use wamn_provision::{
-    PlatformComponent, bind_platform_principal_sql,
-};
+use wamn_provision::{PlatformComponent, bind_platform_principal};
 
 /// Inputs of one record history retention run.
 #[derive(Debug)]
@@ -106,13 +104,9 @@ pub async fn prune(client: &mut Client) -> anyhow::Result<Vec<PrunedHistory>> {
             .begin()
             .await
             .context("begin a record history retention transaction")?;
-        sqlx::raw_sql(sqlx::AssertSqlSafe(bind_platform_principal_sql(
-            PlatformComponent::AuditRetention,
-        )))
-        .execute(&mut *transaction)
-        .await
-        .map(drop)
-        .context("bind wamn:audit-retention as the actor")?;
+        bind_platform_principal(&mut transaction, PlatformComponent::AuditRetention)
+            .await
+            .context("bind wamn:audit-retention as the actor")?;
         sqlx::raw_sql("SET LOCAL TimeZone = 'UTC'")
             .execute(&mut *transaction)
             .await

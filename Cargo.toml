@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/role", "crates/jsonata", "crates/event", "crates/postgres", "crates/digest", "crates/scalar", "services/host", "services/control", "services/edge", "services/web", "services/identity-service", "services/cli", "services/cdc-reader", "xtask", "crates/build", "tests/journeys", "test-support/application", "test-support/fixtures/package", "test-support/resources", "test-support/postgres", "apps/wamn_receiving/tests", "apps/wamn_wms/tests", "crates/catalog", "crates/run-state", "crates/codegen", "crates/schema-introspection", "crates/number-pattern", "crates/component-policy", "crates/engine", "crates/authority", "crates/connection", "crates/envelope", "crates/operation", "crates/http", "crates/blobstore", "crates/authentication", "crates/publish", "crates/environment", "crates/platform-install", "crates/dev", "crates/provision", "crates/registry", "crates/identity", "crates/identity-client", "crates/identity-protocol", "crates/kubernetes", "crates/broker", "crates/oci"]
+members = ["crates/role", "crates/jsonata", "crates/event", "crates/postgres", "crates/digest", "crates/scalar", "services/host", "services/control", "services/edge", "services/web", "services/identity-service", "services/cli", "services/cdc-reader", "xtask", "crates/build", "tests/journeys", "test-support/application", "test-support/fixtures/package", "test-support/resources", "test-support/postgres", "apps/wamn_receiving/tests", "apps/wamn_wms/tests", "crates/catalog", "crates/run-state", "crates/codegen", "crates/schema-introspection", "crates/number-pattern", "crates/component-policy", "crates/engine", "crates/authority", "crates/connection", "crates/envelope", "crates/operation", "crates/http", "crates/http-client", "crates/blobstore", "crates/authentication", "crates/publish", "crates/environment", "crates/platform-install", "crates/dev", "crates/provision", "crates/registry", "crates/identity", "crates/identity-client", "crates/identity-protocol", "crates/principal", "crates/kubernetes", "crates/broker", "crates/oci"]
 default-members = [
   "crates/catalog",
   "crates/run-state",
@@ -121,6 +121,7 @@ wit-component = "=0.254.2"
 wit-encoder = { version = "=0.254.2", default-features = false }
 wit-parser = "=0.254.2"
 wamn-kubernetes = { path = "crates/kubernetes", version = "0.1.0" }
+wamn-http-client = { path = "crates/http-client", version = "0.1.0" }
 mimalloc = "0.1.52"
 # Direct upstream v2.11.0, with zero patches. Source identity and evidence
 # are recorded in docs/architecture/native-alignment.md.
@@ -245,6 +246,7 @@ wamn-number-pattern = { path = "crates/number-pattern", version = "0.1.0" }
 wamn-identity = { path = "crates/identity", version = "0.1.0" }
 wamn-identity-client = { path = "crates/identity-client", version = "0.1.0" }
 wamn-identity-protocol = { path = "crates/identity-protocol", version = "0.1.0" }
+wamn-principal = { path = "crates/principal", version = "0.1.0" }
 wamn-record-history = { path = "crates/record-history", version = "0.1.0" }
 wamn-run-state = { path = "crates/run-state", version = "0.1.0" }
 wamn-authority = { path = "crates/authority", version = "0.1.0" }

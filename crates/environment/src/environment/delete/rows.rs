@@ -18,17 +18,6 @@ pub async fn delete_registry_rows(
         .await
         .context("begin the row delete")?;
     sqlx::query(
-        "DELETE FROM wamn_authority.author_login_projects \
-              WHERE org_id=$1 AND project_id=$2 AND environment=$3",
-    )
-    .bind(org)
-    .bind(project)
-    .bind(env)
-    .execute(&mut *transaction)
-    .await
-    .map(|result| result.rows_affected())
-    .context("delete the environment's control login mappings")?;
-    sqlx::query(
         wamn_registry::sql::CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_DELETE_ROWS_DELETE_REGISTRY_ROWS,
     )
     .bind(org)

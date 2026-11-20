@@ -1,6 +1,6 @@
 -- The per-project SYSTEM SCHEMA v1 (wamn-as5, docs/archive/platform-plan.md §2.4). The
 -- application-facing auth/RBAC/config tables that live IN a project database:
--- user, role (+ the user↔role linkage, user_role), permission, api_key, and
+-- user, role (+ the user↔role linkage, user_role), permission, and
 -- environment, and the platform configuration tables of
 -- docs/plan/platform-config.md (PLATFORM CONFIGURATION, at the end).
 --
@@ -56,9 +56,6 @@
 --   platform identity, not on this grant. The application advances
 --   number_counter through platform.bump_counter, platform.assign_counter and
 --   platform.set_counter, the three routines it can EXECUTE in this schema.
---
---   NO GRANT — api_key. No runtime code reads it, so wamn_app holds nothing
---   on it.
 --
 --   WRITE LOG — write_log. INSERT, SELECT, UPDATE (result) and DELETE only.
 --   The engine claims the key of every create, update, delete and command here. It is outside
@@ -246,36 +243,6 @@ CREATE TRIGGER wamn_record_history_stamp
 GRANT SELECT ON platform.permission TO wamn_app;
 
 -- ---------------------------------------------------------------------------
--- API keys — the api-key substrate. `key_hash` is a one-way digest (the raw key
--- is shown once at creation, never stored); `prefix` is a short NON-secret
--- lookup prefix so verification finds the candidate row before the hash compare.
--- A key authenticates AS a user (FK ON DELETE CASCADE). `revoked_at` /
--- `expires_at` condition validity (enforced by 4.2). key_hash is unique in the database.
--- ---------------------------------------------------------------------------
-CREATE TABLE platform.api_key (
-    id           uuid NOT NULL DEFAULT gen_random_uuid(),
-    user_id      uuid NOT NULL,
-    name         text NOT NULL,
-    key_hash     text NOT NULL,
-    prefix       text NOT NULL,
-    last_used_at timestamptz,
-    expires_at   timestamptz,
-    revoked_at   timestamptz,
-    created_at   timestamptz NOT NULL,
-    created_by   uuid NOT NULL,
-    updated_at   timestamptz NOT NULL,
-    updated_by   uuid NOT NULL,
-    PRIMARY KEY (id),
-    UNIQUE (key_hash),
-    FOREIGN KEY (user_id)
-        REFERENCES platform."user" (id) ON DELETE CASCADE
-);
-CREATE TRIGGER wamn_record_history_stamp
-    BEFORE INSERT OR UPDATE ON platform.api_key
-    FOR EACH ROW
-    EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
-
--- ---------------------------------------------------------------------------
 -- Environment — the status of this environment, mirrored from
 -- registry.environments.status in the system database (docs/plan/platform-ui.md
 -- §5.4, owner rulings of 2026-10-02 on wamn-zua8.2). The host reads it as
@@ -305,8 +272,7 @@ GRANT SELECT ON platform.environment TO wamn_app;
 DO $history_tables$ BEGIN
   PERFORM wamn_history.create_history_table('platform', 'user', false);
   PERFORM wamn_history.create_history_table('platform', relation, false)
-     FROM unnest(ARRAY['role', 'user_role', 'permission',
-                       'api_key', 'environment']) AS relation;
+     FROM unnest(ARRAY['role', 'user_role', 'permission', 'environment']) AS relation;
 END $history_tables$;
 
 CREATE TRIGGER wamn_record_history_log
@@ -326,11 +292,6 @@ CREATE TRIGGER wamn_record_history_log
 
 CREATE TRIGGER wamn_record_history_log
     AFTER INSERT OR UPDATE OR DELETE ON platform.permission
-    FOR EACH ROW
-    EXECUTE FUNCTION wamn_history.log_row_change('unlimited');
-
-CREATE TRIGGER wamn_record_history_log
-    AFTER INSERT OR UPDATE OR DELETE ON platform.api_key
     FOR EACH ROW
     EXECUTE FUNCTION wamn_history.log_row_change('unlimited');
 

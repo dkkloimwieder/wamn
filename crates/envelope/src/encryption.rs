@@ -13,7 +13,7 @@ use ring::{
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use tokio::sync::Mutex;
-use wamn_oci::package_artifact::http_client::HttpClient;
+use wamn_http_client::HttpClient;
 use zeroize::Zeroizing;
 
 const CACHE_ENTRIES: usize = 1024;

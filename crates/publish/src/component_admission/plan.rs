@@ -1,13 +1,13 @@
 use super::{
     AdmittedComponent, BTreeMap, BTreeSet, ComponentConnection, ComponentConnectionRequirement,
-    ComponentConnectionType, ComponentProjectionError, ComponentProjectionErrorType,
-    ConnectionTypeDescriptor, ExpectedOperationContract,
+    ComponentConnectionType, ComponentDescriptor, ComponentProjectionError,
+    ComponentProjectionErrorType, ConnectionTypeDescriptor, ExpectedOperationContract,
 };
 use wamn_catalog::registered_operation::RegisteredOperation;
 
 /// Bind result signing only from the package's verified typed result fields.
 pub(super) fn bind_signed_file_results(
-    component: &mut AdmittedComponent,
+    component: &mut ComponentDescriptor,
     manifest: &wamn_catalog::manifest::PackageManifest,
 ) -> Result<(), ComponentProjectionError> {
     use wamn_catalog::{
@@ -157,7 +157,7 @@ pub(super) fn host_transaction_exports(
 /// not serve; it is not a bypass of admission.
 pub(super) fn validate_component_operation_assignment(
     manifest: &wamn_catalog::manifest::PackageManifest,
-    component: &AdmittedComponent,
+    component: &ComponentDescriptor,
     expected: &BTreeMap<RegisteredOperation, ExpectedOperationContract>,
 ) -> Result<BTreeSet<RegisteredOperation>, ComponentProjectionError> {
     if !manifest

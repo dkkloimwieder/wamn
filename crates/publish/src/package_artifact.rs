@@ -39,12 +39,6 @@ const MANIFEST_TITLE: &str = "wamn.json";
 const MIGRATIONS_TITLE: &str = "migrations";
 const MIGRATION_PATHS: [&str; 2] = ["migrations", "history"];
 
-/// The project that admission writes into a component target. A package
-/// artifact is project-free, and a descriptor drops the target.
-fn admission_project_env_key() -> wamn_registry::ProjectEnvKey {
-    wamn_registry::ProjectEnvKey::package_admission()
-}
-
 /// The platform packages a package-owned component is admitted with.
 const OWNED_PLATFORM_PACKAGES: [&str; 2] = ["wamn:node", "wamn:postgres"];
 
@@ -229,13 +223,17 @@ fn verify_package(
         .map(Into::into)
         .collect::<Vec<wamn_catalog::canonical_name::CanonicalName>>();
     for name in names {
-        let declaration = package_declaration(manifest, &name, &admission_project_env_key())?;
+        let target = PackageCoordinate::new(
+            manifest.package.id.clone(),
+            manifest.package.version.clone(),
+        )?;
+        let declaration = package_declaration(manifest, &name, target)?;
         let path = wamn_build::component_path(name.as_str());
         let file = output.join(&path);
         let bytes = std::fs::read(&file).with_context(|| format!("read {}", file.display()))?;
-        let admission = admit(
+        let (descriptor, _) = admit(
             manifest,
-            bytes,
+            &bytes,
             declaration,
             OWNED_PLATFORM_PACKAGES
                 .into_iter()
@@ -244,7 +242,6 @@ fn verify_package(
             base_digests.clone(),
         )
         .with_context(|| format!("admit component {name}"))?;
-        let (descriptor, bytes) = admission.into_descriptor_and_bytes();
         wamn_codegen::fingerprint::verify_digest(
             output, finished, &path, descriptor.component_digest,
         )?;
@@ -256,7 +253,10 @@ fn verify_package(
                 &declaration.connections,
             )?;
         }
-        components.push(VerifiedComponent { descriptor, bytes });
+        components.push(VerifiedComponent {
+            descriptor,
+            bytes: bytes.into_boxed_slice(),
+        });
     }
     ensure!(
         manifest

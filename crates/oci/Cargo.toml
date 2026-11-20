@@ -22,19 +22,13 @@ serde_json = { workspace = true }
 tokio = { workspace = true, features = ["time", "fs", "net", "io-util", "rt", "macros", "sync"] }
 wamn-catalog = { workspace = true }
 sqlx = { workspace = true, optional = true, features = ["postgres"] }
-wamn-kubernetes = { workspace = true }
-tower-service = { workspace = true }
+wamn-http-client = { workspace = true, features = ["tls12"] }
 http-auth = { version = "0.1.10", default-features = false }
 base64 = { workspace = true }
 url = { workspace = true }
 anyhow = { workspace = true }
 bytes = { workspace = true }
-http-body-util = { workspace = true }
-hyper = { workspace = true, features = ["client", "http1", "http2"] }
-hyper-util = { workspace = true, features = ["client-legacy", "http1", "http2", "tokio"] }
-hyper-rustls = { workspace = true, features = ["http1", "http2", "tls12"] }
-rustls = { workspace = true, features = ["aws_lc_rs", "std", "tls12"] }
-rustls-platform-verifier = { workspace = true }
+hyper = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 tracing = { workspace = true }
 
@@ -47,7 +41,9 @@ tokio = { workspace = true, features = ["test-util", "macros", "net", "io-util",
 wamn-catalog = { workspace = true, features = ["test-util"] }
 wamn-engine = { workspace = true, features = ["test-util"] }
 wat = "=1.254.2"
-hyper = { workspace = true, features = ["server"] }
+hyper = { workspace = true, features = ["server", "http1"] }
+hyper-util = { workspace = true, features = ["tokio"] }
+http-body-util = { workspace = true }
 
 [lints]
 workspace = true

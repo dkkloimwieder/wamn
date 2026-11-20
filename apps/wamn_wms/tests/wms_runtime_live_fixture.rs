@@ -22,7 +22,7 @@ use anyhow::Context as _;
 use serde_json::{Value, json};
 
 use crate::business_fixture::RuntimePhase;
-use wamn_oci::package_artifact::http_client::HttpClient;
+use wamn_http_client::HttpClient;
 
 const REQUEST_ID_A: &str = "contention-a";
 const REQUEST_ID_B: &str = "contention-b";

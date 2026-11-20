@@ -6,7 +6,7 @@ use anyhow::{Context as _, ensure};
 
 use wamn_catalog::package_schema::{PackageDirectory, package_metadata};
 use wamn_catalog::manifest::PackageManifest;
-use wamn_provision::{PlatformComponent, bind_platform_principal_sql};
+use wamn_provision::{PlatformComponent, bind_platform_principal};
 
 mod entity_maps;
 mod error;
@@ -249,13 +249,9 @@ fn validate_append(
 pub(crate) async fn bind_apply_package_principal(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
 ) -> anyhow::Result<()> {
-    sqlx::raw_sql(sqlx::AssertSqlSafe(bind_platform_principal_sql(
-        PlatformComponent::ApplyPackage,
-    )))
-    .execute(&mut **tx)
-    .await
-    .map(drop)
-    .context("bind wamn:apply-package as the transaction actor and operation")
+    bind_platform_principal(tx, PlatformComponent::ApplyPackage)
+        .await
+        .context("bind wamn:apply-package as the transaction actor and operation")
 }
 
 async fn ensure_model_schemas(

@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use anyhow::Context as _;
 use url::Url;
-use wamn_oci::package_artifact::http_client::{HttpClient, HttpResponse, Redirects};
+use wamn_http_client::{HttpClient, HttpResponse, Redirects};
 
 /// Audience of the service account token projected for identity callers.
 pub const TOKEN_AUDIENCE: &str = "wamn-identity";

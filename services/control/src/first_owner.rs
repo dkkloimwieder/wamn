@@ -69,7 +69,7 @@ pub(crate) async fn respond(
 }
 
 pub async fn invite(org: &OrgId, email: &str) -> anyhow::Result<()> {
-    use wamn_oci::package_artifact::http_client::{HttpClient, Redirects};
+    use wamn_http_client::{HttpClient, Redirects};
 
     let token = tokio::fs::read_to_string(CONTROL_TOKEN_PATH)
         .await

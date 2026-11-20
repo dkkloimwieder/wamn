@@ -25,7 +25,7 @@ use tokio::net::TcpListener;
 #[cfg(test)]
 use tokio::sync::RwLock;
 use tower_service::Service;
-use wamn_kubernetes::http_transport::{self, Protocols, Schemes};
+use wamn_http_client::{self as http_transport, Protocols, Schemes};
 use wamn_registry::platform_domain::PlatformDomain;
 
 const LISTEN_PORT: u16 = 8080;

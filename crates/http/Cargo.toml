@@ -51,7 +51,7 @@ wamn-provision = { workspace = true, optional = true }
 wamn-engine = { workspace = true }
 wamn-identity-protocol = { workspace = true, features = ["sqlx"] }
 wamn-kubernetes = { workspace = true }
-wamn-oci = { workspace = true }
+wamn-http-client = { workspace = true, features = ["tls12"] }
 wamn-postgres = { workspace = true }
 wamn-operation = { workspace = true, optional = true }
 wamn-registry = { workspace = true }
@@ -68,7 +68,6 @@ wamn-provision = { workspace = true, features = ["test-util"] }
 wamn-engine = { workspace = true, features = ["test-util"] }
 wamn-http = { path = ".", features = ["test-util"] }
 wamn-kubernetes = { workspace = true, features = ["test-util"] }
-wamn-oci = { workspace = true, features = ["test-util"] }
 
 [lints]
 workspace = true

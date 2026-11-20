@@ -206,7 +206,7 @@ async fn handle(
             }
             let Ok(mut read) = wamn_identity::transaction::read_connection(
                 &mut *database,
-                &PlatformComponent::Provisioning.principal_id(),
+                &PlatformComponent::IdentityService.principal_id(),
             )
             .await
             else {
@@ -240,8 +240,19 @@ async fn handle(
             let Ok(mut tx) = database.begin().await else {
                 return unavailable();
             };
-            if sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1,'','identity','wamn:provisioning')")
-                .bind(id).execute(&mut *tx).await.is_err() { return unavailable(); }
+            if wamn_postgres::bind_transaction_identity(
+                &mut tx,
+                &id,
+                "",
+                "identity",
+                Some(&PlatformComponent::IdentityService.principal_name()),
+                None,
+            )
+            .await
+            .is_err()
+            {
+                return unavailable();
+            }
             if password_login::lock_principal(&mut tx, &id).await.is_err() {
                 return unavailable();
             }
@@ -305,7 +316,7 @@ async fn handle(
             let action = async {
                 let Ok(mut read) = wamn_identity::transaction::read_connection(
                     &mut *database,
-                    &PlatformComponent::Provisioning.principal_id(),
+                    &PlatformComponent::IdentityService.principal_id(),
                 )
                 .await
                 else {
@@ -334,7 +345,7 @@ async fn handle(
                     let notified = state.mail.password_changed(&email).await.is_ok();
                     return response(StatusCode::OK, "application/json", serde_json::to_vec(&serde_json::json!({"status":"password_reset", "notification": if notified { "accepted_for_delivery" } else { "unavailable" }})).expect("fixed response"));
                 }
-                let actor: PrincipalId = PlatformComponent::Provisioning.principal_id();
+                let actor: PrincipalId = PlatformComponent::IdentityService.principal_id();
                 let token = match issue_reset(&mut *database, &actor, &principal, &email).await {
                     Ok(token) => token,
                     Err(error) => {
@@ -350,7 +361,16 @@ async fn handle(
                 {
                     let hash = wamn_digest::bytes_sha256(token.secret().as_bytes());
                     if let Ok(mut tx) = database.begin().await
-                        && sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1,'','identity','wamn:provisioning')").bind(actor).execute(&mut *tx).await.map(|result| result.rows_affected()).is_ok()
+                        && wamn_postgres::bind_transaction_identity(
+                            &mut tx,
+                            &actor,
+                            "",
+                            "identity",
+                            Some(&PlatformComponent::IdentityService.principal_name()),
+                            None,
+                        )
+                        .await
+                        .is_ok()
                         && sqlx::query("UPDATE identity.password_tokens SET consumed_at=clock_timestamp() WHERE token_hash=$1 AND consumed_at IS NULL").bind(hash).execute(&mut *tx).await.map(|result| result.rows_affected()).is_ok() { let _ = tx.commit().await; }
                 }
                 response(StatusCode::ACCEPTED, "application/json", Vec::new())
@@ -530,12 +550,16 @@ async fn admit(
     issuer: &str,
 ) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
     let mut tx = client.begin().await?;
-    let actor = PlatformComponent::Provisioning.principal_id();
-    sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1,'','identity','wamn:provisioning')")
-        .bind(actor)
-        .execute(&mut *tx)
-        .await
-        .map(|result| result.rows_affected())?;
+    let actor = PlatformComponent::IdentityService;
+    wamn_postgres::bind_transaction_identity(
+        &mut tx,
+        &actor.principal_id(),
+        "",
+        "identity",
+        Some(&actor.principal_name()),
+        None,
+    )
+    .await?;
 
     // Fixed-window resets do not extend on refused attempts. Global admission
     // bounds source/account row creation; pruning retains at most two minutes.
@@ -643,7 +667,7 @@ mod tests {
     use std::convert::Infallible;
     use std::sync::Arc;
     use tokio::net::TcpListener;
-    use wamn_oci::package_artifact::http_client::HttpClient;
+    use wamn_http_client::HttpClient;
     use wamn_provision::identity_role::identity_issuer_login;
 
     #[sqlx::test(migrations = false)]
@@ -669,7 +693,7 @@ mod tests {
                     .unwrap()
             );
         }
-        let actor = PlatformComponent::Provisioning.principal_id();
+        let actor = PlatformComponent::IdentityService.principal_id();
         wamn_test_infrastructure::record_history::assert_stamp(
             &mut client,
             "identity.password_attempts",
@@ -787,7 +811,7 @@ mod tests {
         .unwrap();
         let review_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let review_endpoint = format!("http://{}", review_listener.local_addr().unwrap());
-        let connector = wamn_kubernetes::http_transport::tls_connector(
+        let connector = wamn_http_client::tls_connector(
             rustls::ClientConfig::builder_with_provider(Arc::new(
                 rustls::crypto::aws_lc_rs::default_provider(),
             ))
@@ -796,12 +820,12 @@ mod tests {
             .with_root_certificates(rustls::RootCertStore::empty())
             .with_no_client_auth(),
             hyper_util::client::legacy::connect::HttpConnector::new(),
-            wamn_kubernetes::http_transport::Schemes::HttpAndHttps,
-            wamn_kubernetes::http_transport::Protocols::Http1,
+            wamn_http_client::Schemes::HttpAndHttps,
+            wamn_http_client::Protocols::Http1,
         );
         let state = Arc::get_mut(&mut service.inner).unwrap();
         state.kubernetes = Some(wamn_kubernetes::kubernetes_api::KubernetesApi::with_client(
-            wamn_kubernetes::http_transport::client(connector, |_| {}),
+            wamn_http_client::client(connector, |_| {}),
             review_endpoint,
             "fixture-reviewer".into(),
             "platform".into(),
