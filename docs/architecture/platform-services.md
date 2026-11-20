@@ -315,8 +315,8 @@ The stream keeps messages for up to seven days and holds up to 256 MiB. It disca
 
 The platform runs one NATS server in operator mode. TLS protects the connection, and NATS user JWTs authenticate clients.
 Identity signs account and user JWTs. NATS stores account JWTs in its full resolver.
-The `PLATFORM` account contains a user for the runtime operator and separate scheduler and data users for each host group.
-Each environment has its own account for project events.
+The `PLATFORM` account contains a user for the runtime operator and a scheduler user for each host group.
+Each environment has its own account for project events and for the host group's data user.
 Its JetStream file storage limit is 256 MiB times the number of projects in the environment.
 It has zero memory storage and unlimited stream and consumer counts.
 The account contains all the environment's project streams. Accounts exchange no imports or exports.
