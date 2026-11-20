@@ -90,7 +90,6 @@ impl WamnPostgres {
                 AuthorityClass::Platform => wamn_role::PLATFORM_LOGIN,
             }
             .parse()?;
-            let password = wamn_postgres::read_password(&directory, &username).await?;
             let mut url = url::Url::parse("postgres://localhost")?;
             url.set_host(Some(&config.host))
                 .map_err(|_| anyhow::anyhow!("invalid project database host"))?;
@@ -99,10 +98,31 @@ impl WamnPostgres {
             url.set_path(&config.database);
             url.set_username(username.as_str())
                 .map_err(|()| anyhow::anyhow!("invalid database username"))?;
-            url.set_password(Some(&password))
-                .map_err(|()| anyhow::anyhow!("invalid database password"))?;
             url.query_pairs_mut()
                 .append_pair("sslrootcert", &directory.join("ca.crt").to_string_lossy());
+            let credential_exists = async |path: &std::path::Path| {
+                tokio::fs::try_exists(path)
+                    .await
+                    .with_context(|| format!("inspect database credential {}", path.display()))
+            };
+            let cert = directory.join("tls.crt");
+            let key = directory.join("tls.key");
+            let has_cert = credential_exists(&cert).await?;
+            let has_key = credential_exists(&key).await?;
+            if !has_cert && !has_key {
+                let password = wamn_postgres::read_password(&directory, &username).await?;
+                url.set_password(Some(&password))
+                    .map_err(|()| anyhow::anyhow!("invalid database password"))?;
+            } else {
+                anyhow::ensure!(
+                    has_cert && has_key && !credential_exists(&directory.join("password")).await?,
+                    "database credential {} requires tls.crt and tls.key together without a password file",
+                    directory.display()
+                );
+                url.query_pairs_mut()
+                    .append_pair("sslcert", &cert.to_string_lossy())
+                    .append_pair("sslkey", &key.to_string_lossy());
+            }
             urls = urls.with_class(class, String::from(url));
         }
         let next = ProjectConfig {
