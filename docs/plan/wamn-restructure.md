@@ -788,6 +788,8 @@ Issues:
 
 Merged to main on 2026-11-19 after review. The first kind run waits for D's approval.
 
+Closed on 2026-11-20 after the first kind run passed on the short path.
+
 ## Open items
 
 - Checks in phase 3: Helm values size for the largest application (3.2).
@@ -797,6 +799,8 @@ Merged to main on 2026-11-19 after review. The first kind run waits for D's appr
 - 3.8: `crates/dev/tests/support/platform_schema.rs` and `platform_upgrade.rs` run the binary `wamn-ctl`, which Epic 1 deleted.
 - 3.8: `docs/operations/running-tests.md` describes test targets that no longer exist.
 - Journey tests on kind, deferred from the first kind run: rollback, `env delete`, apply again, and `env delete --data` after a plain delete; the Data change check for `client_acme_receiving` (K24); the 10.13 per-pod scheduler users beyond host start; the Pooler per-login limits and waits under load.
+- 3.7, first change: O12, the application host root returns 404, not 502, when no web client is pinned.
+- 3.7b: `cargo xtask build-platform` skips images whose inputs did not change, so short smoke runs rebuild only what changed.
 - Clippy has 45 errors in test code that predate Epic 1. Epic 1 counted green as no new error.
 - After 3.5 only the edge reads `ServingManifest`. It goes with the edge design.
 - 3.6: the control service takes the issuer from `session_issuer` and stage takes it from `platform.identity_issuer`. They become the one identity issuer address setting (E6, K).
@@ -2462,6 +2466,8 @@ Facts:
 - K19: `env apply` after `env delete` makes a new generation; kept Clusters and ObjectStores stay for a manual dump (copy-back ruling), and `env delete --data` after a plain delete removes them and lists what it removed.
 - K20: Rust waits for `Ready=True` on each WorkloadDeployment. Helm's watcher does not check `Ready` on custom resources.
 - K21: the `pg_walstream` fork sends the client certificate and key. It carries two patches, typed keepalive and client certificate.
+- O11: the org invitation Job's first pod can fail while control rolls out; the Job's retry covers it. Kept as is.
+- The first kind run passed on the short path at 822261402 (2026-11-20): `env apply`, host start with its own scheduler user, the `wamn_receiving` deploy, and calls to the application and control through web (401 with no token, 200 with the owner token).
 
 **Ruled (D, 2026-11-19): preflight and smoke runs.**
 - Preflight, run before any kind install:
