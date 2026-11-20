@@ -65,7 +65,7 @@ impl Workflow {
                 };
                 let definition = Definition::from_row(&row)?;
                 let permission =
-                    wamn_catalog::workflow_permission(&app.application, definition.id.as_str());
+                    wamn_routes::workflow_permission(&app.application, definition.id.as_str());
                 if !request.caller.permits(&permission) {
                     return Ok(Err(Refusal::PermissionDenied));
                 }
@@ -77,7 +77,7 @@ impl Workflow {
                 let json = serde_json::from_str(&definition.graph).map_err(|error| {
                     ProductionLeaseError::invalid("decode Request workflow", error)
                 })?;
-                let graph = wamn_catalog::WiringDocument::parse(&json).map_err(|error| {
+                let graph = wamn_routes::WiringDocument::parse(&json).map_err(|error| {
                     ProductionLeaseError::invalid("parse Request workflow", error)
                 })?;
                 if graph.wiring_hash() != definition.hash {

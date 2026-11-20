@@ -26,14 +26,15 @@ use std::fmt;
 use std::path::Path;
 use std::sync::Arc;
 
-use wamn_catalog::edge_bundle::{
+use crate::native_operation::native_workload::NativeComponent;
+use crate::serving_context::{ReleaseTarget, ServingContext};
+use wamn_component_policy::AdmittedComponent;
+use wamn_digest::bytes_sha256;
+use wamn_edge_document::RELEASE_MANIFEST_FILE_NAME;
+use wamn_edge_document::edge_bundle::{
     BUNDLE_FILE_NAME, BUNDLE_FORMAT, COMPONENTS_FILE_NAME, EdgeBundle, GRANTS_FILE_NAME,
     INGRESS_FILE_NAME,
 };
-use wamn_catalog::serving_context::{ReleaseTarget, ServingContext};
-use wamn_catalog::{AdmittedComponent, RELEASE_MANIFEST_FILE_NAME};
-use wamn_digest::bytes_sha256;
-use crate::native_operation::native_workload::NativeComponent;
 
 use crate::grants::Grants;
 
@@ -269,10 +270,11 @@ fn rejected(detail: String) -> EdgeReleaseError {
 pub(crate) mod test_util {
     use super::*;
     use std::collections::BTreeMap;
-    use wamn_catalog::{
+    use wamn_component_policy::{
         AdmittedComponentOperation, ComponentDescriptor, ComponentPackageCoordinate,
-        PackageCoordinate, ServingComponent, ServingManifest, ServingRelease,
     };
+    use wamn_edge_document::{ServingComponent, ServingManifest, ServingRelease};
+    use wamn_package::PackageCoordinate;
 
     pub(crate) const OPERATION: &str = "scale:device/record@1.0.0";
 
@@ -368,7 +370,7 @@ pub(crate) mod test_util {
         )
         .with_applications(BTreeMap::from([(
             "scale".parse().unwrap(),
-            wamn_catalog::ApplicationDefinition {
+            wamn_registry::ApplicationDefinition {
                 packages: BTreeSet::from(["scale".parse().unwrap()]),
                 connections: BTreeMap::new(),
             },

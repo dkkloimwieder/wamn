@@ -14,7 +14,7 @@
 //! The crate also owns the registry credential ([`registry_credentials`]) and
 //! the OCI trust roots ([`read_ca_bundles`]) that every registry client reads,
 //! the host's included. This module does not use the component adapter or
-//! `wamn-engine`; the artifact reference rule is in `wamn-catalog`.
+//! `wamn-engine`; the artifact reference rule is in `wamn-oci-reference`.
 
 pub mod integration;
 pub mod metadata;
@@ -35,7 +35,7 @@ use oci_client::errors::{OciDistributionError, OciErrorCode};
 use oci_client::manifest::{OCI_IMAGE_MEDIA_TYPE, OciDescriptor, OciImageManifest};
 use oci_client::secrets::RegistryAuth;
 use oci_client::{Client as OciClient, Reference};
-use wamn_catalog::parse_component_artifact_base;
+use wamn_oci_reference::parse_component_artifact_base;
 use wamn_digest::bytes_sha256;
 
 use crate::package_artifact::registry_credentials::{RegistryCredentials, read_registry_credentials};
@@ -137,8 +137,8 @@ pub struct PackageRegistry {
 /// internal error.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NoPackageArtifact {
-    pub package_id: wamn_catalog::PackageName,
-    pub version: wamn_catalog::package_version::PackageVersion,
+    pub package_id: wamn_package::PackageName,
+    pub version: wamn_package::package_version::PackageVersion,
 }
 
 impl std::fmt::Display for NoPackageArtifact {
@@ -463,8 +463,8 @@ impl Repository {
 /// the artifact cannot be pulled.
 pub async fn pull_package(
     registry: &PackageRegistry,
-    package_id: &wamn_catalog::PackageName,
-    version: &wamn_catalog::package_version::PackageVersion,
+    package_id: &wamn_package::PackageName,
+    version: &wamn_package::package_version::PackageVersion,
 ) -> anyhow::Result<(wamn_digest::Digest, Vec<PackedLayer>)> {
     Repository::open(
         registry,

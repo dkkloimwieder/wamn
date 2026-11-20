@@ -1,0 +1,23 @@
+[package]
+name = "wamn-package"
+description = "Authored package declarations and compiled package contracts."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+sqlx = []
+
+[dependencies]
+wit-parser.workspace = true
+anyhow.workspace = true
+wamn-identity-protocol.workspace = true
+wamn-record-history.workspace = true
+wamn-digest.workspace = true
+wamn-scalar.workspace = true
+serde_json = { workspace = true, features = ["float_roundtrip"] }
+serde = { workspace = true, features = ["derive"] }
+sqlx = { workspace = true, features = ["postgres"] }
+
+[lints]
+workspace = true

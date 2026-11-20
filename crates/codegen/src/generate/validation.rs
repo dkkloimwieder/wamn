@@ -5,14 +5,17 @@ use super::{
     GenerationInput, QUERY_LIMIT, Table, column, contains_schema_qualified_reference,
     custom_operation_constraint_origin, logged_history_tables, relation, server_owned_fields,
 };
-use wamn_catalog::manifest::FilterMatch;
-use wamn_catalog::manifest::StaticSqlRelationDeclaration;
-use wamn_catalog::manifest::{
+use wamn_component_policy::PackageManifest;
+use wamn_package::manifest::FilterMatch;
+use wamn_package::manifest::StaticSqlRelationDeclaration;
+use wamn_package::manifest::{
     AuthoredSqlDeclaration, CrudAction, CursorDirection, CustomOperationDeclaration, DeleteMode,
-    ModelDeclaration, OperationDeclaration, PackageManifest, RecordHistoryColumn, ResultClass,
-    SortDeclaration, TombstoneColumn, rust_identifier,
+    ModelDeclaration, OperationDeclaration, RecordHistoryColumn, ResultClass, SortDeclaration,
+    TombstoneColumn, rust_identifier,
 };
-use wamn_catalog::manifest::{ManifestError as GenerateError, ManifestErrorType as GenerateErrorType};
+use wamn_package::manifest::{
+    ManifestError as GenerateError, ManifestErrorType as GenerateErrorType,
+};
 use wamn_record_history::HISTORY_COLUMNS;
 use wamn_scalar::SqlValueType;
 use wamn_schema_introspection::ir::ViewColumn;
@@ -54,7 +57,7 @@ pub(super) fn validate(
 fn validate_model(
     catalog: &CatalogIr,
     manifest: &PackageManifest,
-    model_name: &wamn_catalog::manifest::source_name::SourceName,
+    model_name: &wamn_package::manifest::source_name::SourceName,
     model: &ModelDeclaration,
 ) -> Result<(), GenerateError> {
     if let Some(query) = model.operations.get(&CrudAction::Query)
@@ -219,8 +222,8 @@ fn validate_model(
 fn validate_definition_owner(
     model: &str,
     definition: &str,
-    owner: &wamn_catalog::PackageName,
-    admitted: &BTreeSet<&wamn_catalog::PackageName>,
+    owner: &wamn_package::PackageName,
+    admitted: &BTreeSet<&wamn_package::PackageName>,
 ) -> Result<(), GenerateError> {
     if admitted.contains(owner) {
         Ok(())
@@ -233,7 +236,7 @@ fn validate_definition_owner(
 }
 
 fn validate_operation(
-    model_name: &wamn_catalog::manifest::source_name::SourceName,
+    model_name: &wamn_package::manifest::source_name::SourceName,
     model: &ModelDeclaration,
     table: &Table,
     action: CrudAction,
@@ -472,7 +475,7 @@ fn require_column(
 /// keeps a log has a primary key, because each entry keys the row by it.
 fn validate_audit_log_columns(
     manifest: &PackageManifest,
-    model_name: &wamn_catalog::manifest::source_name::SourceName,
+    model_name: &wamn_package::manifest::source_name::SourceName,
     model: &ModelDeclaration,
     table: &Table,
 ) -> Result<(), GenerateError> {
@@ -535,7 +538,7 @@ fn validate_audit_log_columns(
 /// declaration answers for it.
 fn validate_tombstone_columns(
     manifest: &PackageManifest,
-    model_name: &wamn_catalog::manifest::source_name::SourceName,
+    model_name: &wamn_package::manifest::source_name::SourceName,
     model: &ModelDeclaration,
     table: &Table,
 ) -> Result<(), GenerateError> {
@@ -579,7 +582,7 @@ fn validate_tombstone_columns(
 
 fn validate_query(
     model: &ModelDeclaration,
-    model_name: &wamn_catalog::manifest::source_name::SourceName,
+    model_name: &wamn_package::manifest::source_name::SourceName,
     table: &Table,
     operation: &OperationDeclaration,
 ) -> Result<(), GenerateError> {
@@ -742,7 +745,7 @@ fn validate_query(
 fn validate_custom_operation_sql(
     catalog: &CatalogIr,
     manifest: &PackageManifest,
-    operation: &wamn_catalog::local_operation::LocalOperation,
+    operation: &wamn_package::local_operation::LocalOperation,
     declaration: &CustomOperationDeclaration,
 ) -> Result<(), GenerateError> {
     for relation in &declaration.relations {
@@ -804,10 +807,10 @@ fn validate_custom_operation_sql(
 }
 
 fn validate_static_sql_relation_fields(
-    operation: &wamn_catalog::local_operation::LocalOperation,
-    relation: &wamn_catalog::manifest::StaticSqlRelationDeclaration,
+    operation: &wamn_package::local_operation::LocalOperation,
+    relation: &wamn_package::manifest::StaticSqlRelationDeclaration,
     columns: &BTreeSet<&str>,
-    fields: &[wamn_catalog::manifest::source_name::SourceName],
+    fields: &[wamn_package::manifest::source_name::SourceName],
 ) -> Result<(), GenerateError> {
     if let Some(field) = fields
         .iter()
@@ -824,7 +827,7 @@ fn validate_static_sql_relation_fields(
 
 fn validate_constraint_error_mappings(
     catalog: &CatalogIr,
-    operation: &wamn_catalog::local_operation::LocalOperation,
+    operation: &wamn_package::local_operation::LocalOperation,
     declaration: &CustomOperationDeclaration,
 ) -> Result<(), GenerateError> {
     for name in declaration.constraint_errors.keys() {
@@ -850,7 +853,7 @@ fn validate_constraint_error_mappings(
 fn validate_delete_target(
     manifest: &PackageManifest,
     schemas: &BTreeSet<&str>,
-    operation: &wamn_catalog::local_operation::LocalOperation,
+    operation: &wamn_package::local_operation::LocalOperation,
     path: &str,
     target: &str,
 ) -> Result<(), GenerateError> {
@@ -883,14 +886,14 @@ pub(super) fn derive_relation_access(
     catalog: &CatalogIr,
     manifest: &PackageManifest,
     authored_sql: &[AuthoredSql<'_>],
-    operation: &wamn_catalog::local_operation::LocalOperation,
+    operation: &wamn_package::local_operation::LocalOperation,
     declaration: &CustomOperationDeclaration,
 ) -> Result<BTreeMap<String, DerivedRelation>, GenerateError> {
     let relations = package_relations(catalog, manifest, operation.as_str())?;
     let schemas = relations
         .schemas
         .iter()
-        .map(wamn_catalog::canonical_name::CanonicalName::as_str)
+        .map(wamn_package::canonical_name::CanonicalName::as_str)
         .collect::<BTreeSet<_>>();
     let (owners, relation_fields) = (&relations.owners, &relations.fields);
     let mut derived = BTreeMap::<String, DerivedRelation>::new();
@@ -971,7 +974,7 @@ pub(super) fn derive_relation_access(
 /// The relations of the package's own schemas that its SQL can name: each
 /// relation's schema and columns, keyed by name, as SQL analysis reads them.
 struct PackageRelations {
-    schemas: Vec<wamn_catalog::canonical_name::CanonicalName>,
+    schemas: Vec<wamn_package::canonical_name::CanonicalName>,
     owners: BTreeMap<String, String>,
     fields: BTreeMap<String, BTreeSet<String>>,
 }
@@ -988,7 +991,7 @@ fn package_relations(
     let mut relation_fields = BTreeMap::<String, BTreeSet<String>>::new();
     let schema_set = schemas
         .iter()
-        .map(wamn_catalog::canonical_name::CanonicalName::as_str)
+        .map(wamn_package::canonical_name::CanonicalName::as_str)
         .collect::<BTreeSet<_>>();
     let tables = catalog
         .tables()
@@ -1101,7 +1104,7 @@ pub(super) fn derive_relations(
     catalog: &CatalogIr,
     manifest: &PackageManifest,
     authored_sql: &[AuthoredSql<'_>],
-    operation: &wamn_catalog::local_operation::LocalOperation,
+    operation: &wamn_package::local_operation::LocalOperation,
     declaration: &CustomOperationDeclaration,
 ) -> Result<Vec<StaticSqlRelationDeclaration>, GenerateError> {
     let mut derived =
@@ -1136,26 +1139,26 @@ pub(super) fn derive_relations(
                     .access
                     .select_fields
                     .into_iter()
-                    .map(wamn_catalog::manifest::source_name::SourceName::try_from)
+                    .map(wamn_package::manifest::source_name::SourceName::try_from)
                     .collect::<Result<_, _>>()?,
                 insert_fields: relation
                     .access
                     .insert_fields
                     .into_iter()
-                    .map(wamn_catalog::manifest::source_name::SourceName::try_from)
+                    .map(wamn_package::manifest::source_name::SourceName::try_from)
                     .collect::<Result<_, _>>()?,
                 update_fields: relation
                     .access
                     .update_fields
                     .into_iter()
-                    .map(wamn_catalog::manifest::source_name::SourceName::try_from)
+                    .map(wamn_package::manifest::source_name::SourceName::try_from)
                     .collect::<Result<_, _>>()?,
                 delete: relation.access.delete,
                 lock: relation.access.lock,
                 constraints: relation
                     .constraints
                     .into_iter()
-                    .map(wamn_catalog::manifest::source_name::SourceName::try_from)
+                    .map(wamn_package::manifest::source_name::SourceName::try_from)
                     .collect::<Result<_, _>>()?,
             })
         })
@@ -1164,7 +1167,7 @@ pub(super) fn derive_relations(
 
 fn validate_sort_field(
     table: &Table,
-    model_name: &wamn_catalog::manifest::source_name::SourceName,
+    model_name: &wamn_package::manifest::source_name::SourceName,
     context: &str,
     field: &str,
 ) -> Result<(), GenerateError> {
@@ -1432,7 +1435,7 @@ pub(super) fn authored_sql_map(
 
 fn validate_field<'a>(
     table: &'a Table,
-    model_name: &wamn_catalog::manifest::source_name::SourceName,
+    model_name: &wamn_package::manifest::source_name::SourceName,
     field: &str,
 ) -> Result<&'a Column, GenerateError> {
     column(table, field).ok_or_else(|| {
@@ -1460,8 +1463,8 @@ fn safe_sql_path(path: &str) -> bool {
 mod tests {
     use super::{derive_relations, validate_custom_operation_sql};
     use crate::AuthoredSql;
-    use wamn_catalog::manifest::PackageManifest;
     use serde_json::json;
+    use wamn_component_policy::PackageManifest;
     use wamn_scalar::SqlValueType;
     use wamn_schema_introspection::ir::{
         CatalogIr, Column, Table, View, ViewBaseTable, ViewColumn,

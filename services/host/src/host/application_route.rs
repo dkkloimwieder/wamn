@@ -11,6 +11,10 @@
 //! second writer exists. A grant stores one row, and a caller holds exactly
 //! its rows, so a grant works while two releases serve during a rollout.
 //!
+use wamn_routes::HostAttachment;
+use wamn_routes::HostHandler;
+use wamn_routes::HostRouteAuthority;
+use wamn_package::sealed_operation_reference;
 use std::collections::{BTreeMap, BTreeSet};
 use wamn_identity_protocol::ADMIN_ROLE;
 use wamn_identity_protocol::PrincipalId;
@@ -19,8 +23,7 @@ use wamn_identity::application::OPERATION_GRANT_LOCK_SQL;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sqlx::PgConnection as Client;
-use wamn_catalog::application_config::ApplicationConfig;
-use wamn_catalog::{HostAttachment, HostHandler, HostRouteAuthority, sealed_operation_reference};
+use wamn_engine::application_config::ApplicationConfig;
 use wamn_engine::ingress::AuthenticatedCaller;
 use wamn_identity::application::{
     AdministrationError, AdministrationRefusal, GrantAuthority, GrantChange, application_users,
@@ -53,13 +56,13 @@ struct RoleRequest {
 #[serde(deny_unknown_fields)]
 struct PermissionRequest {
     role: String,
-    operation: wamn_catalog::canonical_name::CanonicalName,
+    operation: wamn_package::canonical_name::CanonicalName,
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct CounterSetRequest {
-    application: wamn_catalog::ApplicationName,
+    application: wamn_registry::ApplicationName,
     sequence: String,
     counter: String,
     key: String,
@@ -368,7 +371,7 @@ impl ApplicationRoutes<'_> {
             .map(|(operation, _)| sealed_operation_reference(operation.as_str()))
             .chain(workflows.iter().map(String::as_str))
             .collect();
-        let host: BTreeMap<String, HostRouteAuthority> = wamn_catalog::HostRouteSet::Application
+        let host: BTreeMap<String, HostRouteAuthority> = wamn_routes::HostRouteSet::Application
             .attachments()
             .map(|(_, attachment)| (attachment.reference.clone(), attachment.route.authority))
             .collect();
@@ -397,8 +400,8 @@ impl ApplicationRoutes<'_> {
 }
 
 fn require_counter_application(
-    served: &wamn_catalog::ApplicationName,
-    application: &wamn_catalog::ApplicationName,
+    served: &wamn_registry::ApplicationName,
+    application: &wamn_registry::ApplicationName,
 ) -> Result<(), CounterSetRefusal> {
     if served == application {
         Ok(())

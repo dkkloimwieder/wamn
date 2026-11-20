@@ -6,12 +6,12 @@ use wit_encoder::{
 };
 
 use super::{BTreeMap, Column, insert_bytes};
-use wamn_catalog::manifest::{
+use wamn_package::manifest::{
     AccessOperationErrorLiteral, ContractFieldDeclaration, CrudAction, CustomOperationDeclaration,
     OperationDeclaration, OperationErrorDetailDeclaration, ResultClass,
 };
-use wamn_catalog::manifest::{FilterMatch, OperationErrorDetailKey};
-use wamn_catalog::manifest::{
+use wamn_package::manifest::{FilterMatch, OperationErrorDetailKey};
+use wamn_package::manifest::{
     ManifestError as GenerateError, ManifestErrorType as GenerateErrorType,
 };
 
@@ -392,7 +392,7 @@ pub(super) fn crud_is_keyed(action: CrudAction) -> bool {
 /// Whether the request elements of a custom operation carry a `request_id`: every type
 /// but a projection, which is a read.
 pub(super) fn custom_is_keyed(operation: &CustomOperationDeclaration) -> bool {
-    operation.type_ != wamn_catalog::manifest::CustomOperationType::Projection
+    operation.type_ != wamn_package::OperationType::Projection
 }
 
 pub(super) fn detail_name(key: OperationErrorDetailKey) -> &'static str {

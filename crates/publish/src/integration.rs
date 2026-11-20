@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context as _, ensure};
 use oci_client::manifest::OCI_IMAGE_MEDIA_TYPE;
 use serde_json::json;
-use wamn_catalog::RuntimeType;
+use wamn_connection_type::RuntimeType;
 use wamn_digest::bytes_sha256;
 use wamn_registry::integration_code::IntegrationCode;
 

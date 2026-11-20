@@ -30,7 +30,7 @@ pub(super) fn release(composed: bool) -> ClientContractIr {
                     type_name: "text".to_owned(),
                     nullable: false,
                     required: true,
-                    revision: wamn_catalog::manifest::Revision::default(),
+                    revision: wamn_package::manifest::Revision::default(),
                     children: Vec::new(),
                     minimum: None,
                     maximum: None,

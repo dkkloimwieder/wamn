@@ -5,7 +5,7 @@ use async_nats::jetstream;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::OnceCell;
-use wamn_catalog::canonical_name::CanonicalName;
+use wamn_package::canonical_name::CanonicalName;
 
 use super::Workload;
 
@@ -34,7 +34,7 @@ impl Broker {
         Ok(Consumer {
             context: Arc::clone(context),
             stream: wamn_event::stream_name(&app.org, &app.project, &app.environment),
-            name: wamn_catalog::resource_names::workflow_event_consumer(
+            name: wamn_registry::resource_names::workflow_event_consumer(
                 &app.application,
                 workflow_id,
             ),
@@ -43,7 +43,7 @@ impl Broker {
 
     async fn connect(
         &self,
-        app: &wamn_catalog::application_config::ApplicationConfig,
+        app: &wamn_engine::application_config::ApplicationConfig,
     ) -> anyhow::Result<Arc<jetstream::Context>> {
         let options = wamn_broker::nats::credentials_options(
             async_nats::ConnectOptions::new().ignore_discovered_servers(),

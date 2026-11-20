@@ -15,10 +15,10 @@ pub fn application_release_name(
     org: &wamn_registry::OrgId,
     project: &wamn_registry::ProjectId,
     env: &wamn_registry::EnvName,
-    application: &wamn_catalog::ApplicationName,
+    application: &wamn_registry::ApplicationName,
 ) -> Result<String, ProvisionError> {
     validate_project_env(org, project, env)?;
-    Ok(wamn_catalog::resource_names::application_release_name(
+    Ok(wamn_registry::resource_names::application_release_name(
         org,
         project,
         env,

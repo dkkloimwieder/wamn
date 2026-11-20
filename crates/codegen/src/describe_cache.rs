@@ -12,7 +12,7 @@ use wamn_schema_introspection::ir::CatalogIr;
 
 use crate::describe::DescribedStatement;
 use crate::history::RelationColumn;
-use wamn_catalog::manifest::source_name::SourceName;
+use wamn_package::manifest::source_name::SourceName;
 
 const DIRECTORY: &str = ".wamn/describe";
 const FILE: &str = "v1.json";
@@ -32,7 +32,7 @@ pub(crate) struct Evidence {
 pub(crate) fn inputs(
     root: &Path,
     authored: &Value,
-    bases: &[wamn_catalog::manifest::PackageManifest],
+    bases: &[wamn_component_policy::PackageManifest],
     output_root: &Path,
 ) -> Result<Digest> {
     let mut migrations = BTreeMap::new();

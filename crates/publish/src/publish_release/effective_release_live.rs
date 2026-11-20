@@ -1,12 +1,13 @@
 //! Fresh two-package effective-release test on disposable PostgreSQL.
 
+use wamn_package::package_version::PackageVersion;
+use wamn_package::ComponentDeclaration;
+use wamn_package::OperationType;
+use wamn_package::PackageCoordinate;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
-use wamn_catalog::package_version::PackageVersion;
-use wamn_catalog::{
-    ComponentDeclaration, ComponentPackageCoordinate, OperationType, PackageCoordinate,
-};
+use wamn_component_policy::ComponentPackageCoordinate;
 use wamn_digest::bytes_sha256;
 use wamn_engine::component_admission::{ComponentAdmissionRequest, validate_component_admission};
 
@@ -100,7 +101,7 @@ fn admit_components(
         let declaration: ComponentDeclaration<ComponentPackageCoordinate> =
             serde_json::from_value(declaration)
                 .expect("the package-owned component declaration is strict");
-        let (declaration, target) = declaration.split_target();
+        let (declaration, target) = wamn_component_policy::split_target(declaration);
         let bytes = std::fs::read(&input.component_bytes)
             .unwrap_or_else(|error| panic!("read {}: {error}", input.component_bytes.display()));
         if let Some(expected) = &input.expected_component_digest {

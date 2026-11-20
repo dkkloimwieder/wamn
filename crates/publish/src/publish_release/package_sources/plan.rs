@@ -2,9 +2,9 @@ use super::{PackageContract, PublishManifestError, PublishManifestErrorType, Ser
 
 pub(super) fn package_route(
     contracts: Vec<PackageContract>,
-    package_id: &wamn_catalog::PackageName,
-    component: &wamn_catalog::canonical_name::CanonicalName,
-    operation: &wamn_catalog::registered_operation::RegisteredOperation,
+    package_id: &wamn_package::PackageName,
+    component: &wamn_package::canonical_name::CanonicalName,
+    operation: &wamn_package::registered_operation::RegisteredOperation,
 ) -> Result<ServingRoute, PublishManifestError> {
     let contract = contracts
         .into_iter()

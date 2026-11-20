@@ -6,7 +6,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use wamn_catalog::AdmittedComponent;
+use wamn_component_policy::AdmittedComponent;
 use wash_runtime::plugin::HostPlugin;
 
 use super::native_call::{NativeCallFailure, NativeInvocation};
@@ -24,7 +24,7 @@ pub trait InvocationPolicy: HostPlugin + Sized {
     fn prepare(
         &self,
         _component_id: &str,
-        _operation: &wamn_catalog::canonical_name::CanonicalName,
+        _operation: &wamn_package::canonical_name::CanonicalName,
         facts: &Self::Facts,
     ) -> impl Future<Output = anyhow::Result<Self::Facts>> + Send {
         async { Ok(facts.clone()) }
@@ -59,7 +59,7 @@ pub trait InvocationPolicy: HostPlugin + Sized {
     fn finish_result(
         &self,
         _component_id: &str,
-        _operation: &wamn_catalog::canonical_name::CanonicalName,
+        _operation: &wamn_package::canonical_name::CanonicalName,
         _facts: &Self::Facts,
         outcome: super::native_call::NativeOutcome,
     ) -> impl Future<Output = anyhow::Result<super::native_call::NativeOutcome>> + Send {

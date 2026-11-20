@@ -6,7 +6,7 @@ use wamn_scalar::SqlValueType;
 
 use super::rust_source::rust_ident;
 use super::wit::detail_name;
-use wamn_catalog::manifest::{
+use wamn_package::manifest::{
     OperationErrorDetailDeclaration, OperationErrorDetailKey, rust_type_identifier,
 };
 

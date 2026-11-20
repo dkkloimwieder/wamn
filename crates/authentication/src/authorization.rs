@@ -120,7 +120,7 @@ pub trait AuthorizationStore: std::fmt::Debug + Send + Sync {
     /// Register deploy-owned cache coordinates when an application workload binds.
     fn configure_application(
         &self,
-        _application: &wamn_catalog::application_config::ApplicationConfig,
+        _application: &wamn_engine::application_config::ApplicationConfig,
     ) -> anyhow::Result<()> {
         Ok(())
     }

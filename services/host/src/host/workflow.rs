@@ -13,6 +13,7 @@ mod schedule;
 
 pub(super) use entry::{RequestCall, RunAs, RunNow};
 
+use wamn_package::canonical_name::CanonicalName;
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex, RwLock};
@@ -20,8 +21,7 @@ use std::time::Duration;
 
 use anyhow::Context as _;
 use tokio::time::Instant;
-use wamn_catalog::application_config::ApplicationConfig;
-use wamn_catalog::canonical_name::CanonicalName;
+use wamn_engine::application_config::ApplicationConfig;
 use wamn_engine::operation::WamnOperation;
 use wamn_event::Causation;
 use wamn_identity_protocol::PrincipalId;

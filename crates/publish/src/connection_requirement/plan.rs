@@ -16,10 +16,10 @@ pub(super) fn require_import(
     interface: &str,
 ) -> anyhow::Result<()> {
     ensure!(
-        wamn_catalog::manifest::valid_connection_name(name),
+        wamn_package::manifest::valid_connection_name(name),
         "connection name must match ^[a-z][a-z0-9-]{{0,62}}$: {name}"
     );
-    let host = wamn_catalog::manifest::host_connection_interface(interface);
+    let host = wamn_package::manifest::host_connection_interface(interface);
     let found = resolve.worlds[world].imports.iter().any(|(key, item)| {
         let wit_parser::WorldItem::Interface { id, .. } = item else {
             return false;

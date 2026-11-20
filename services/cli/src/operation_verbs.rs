@@ -120,8 +120,9 @@ impl ControlHost {
 pub(crate) async fn publish(
     document: &EnvironmentDocument,
     package: &Path,
-) -> anyhow::Result<(wamn_catalog::ApplicationName, wamn_digest::Digest)> {
-    wamn_dev::source_deploy::publish_from_env(document, package, wamn_build::DescribeMode::Cached).await
+) -> anyhow::Result<(wamn_registry::ApplicationName, wamn_digest::Digest)> {
+    wamn_dev::source_deploy::publish_from_env(document, package, wamn_build::DescribeMode::Cached)
+        .await
 }
 
 /// Parse the existing org/env/project CLI coordinate.

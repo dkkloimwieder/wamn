@@ -11,9 +11,9 @@
 use std::collections::BTreeSet;
 use std::error::Error as StdError;
 
-use wamn_catalog::manifest::{
-    OperationVisibility, PackageManifest, canonical_operation_identity,
-    validate_operation_vocabulary,
+use wamn_component_policy::PackageManifest;
+use wamn_package::manifest::{
+    OperationVisibility, canonical_operation_identity, validate_operation_vocabulary,
 };
 
 /// Stable refusal when the project database has not installed its base authorization grants.
@@ -54,14 +54,14 @@ pub enum OperationGrantErrorType {
 pub struct OperationGrantError {
     type_: OperationGrantErrorType,
     context: Box<str>,
-    source: Option<wamn_catalog::manifest::ManifestError>,
+    source: Option<wamn_package::manifest::ManifestError>,
 }
 
 impl OperationGrantError {
     fn with_source(
         type_: OperationGrantErrorType,
         context: impl Into<Box<str>>,
-        source: wamn_catalog::manifest::ManifestError,
+        source: wamn_package::manifest::ManifestError,
     ) -> Self {
         Self {
             type_,
@@ -104,7 +104,7 @@ impl StdError for OperationGrantError {
 /// identity.
 pub fn operation_grant_tokens(
     manifest_bytes: &[u8],
-) -> Result<BTreeSet<wamn_catalog::registered_operation::RegisteredOperation>, OperationGrantError>
+) -> Result<BTreeSet<wamn_package::registered_operation::RegisteredOperation>, OperationGrantError>
 {
     let manifest = PackageManifest::from_slice(manifest_bytes).map_err(|source| {
         OperationGrantError::with_source(
@@ -220,7 +220,7 @@ mod tests {
                 "/custom_operations/widget.publish",
                 "component",
                 serde_json::json!("missing"),
-                Some(wamn_catalog::manifest::ManifestErrorType::InvalidComponent),
+                Some(wamn_package::manifest::ManifestErrorType::InvalidComponent),
             ),
         ] {
             let mut manifest = owned_manifest();
@@ -237,7 +237,7 @@ mod tests {
             if let Some(expected) = expected_source {
                 assert_eq!(
                     source
-                        .downcast_ref::<wamn_catalog::manifest::ManifestError>()
+                        .downcast_ref::<wamn_package::manifest::ManifestError>()
                         .unwrap()
                         .error_type(),
                     expected

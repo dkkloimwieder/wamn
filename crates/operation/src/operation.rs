@@ -1,13 +1,13 @@
 //! Entry-owned operations on the Store's host transaction.
 
+use wamn_engine::application_config::{ApplicationComponent, ApplicationOperationType};
+use wamn_package::canonical_name::CanonicalName;
+use wamn_package::registered_operation::RegisteredOperation;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use crate::invocation::{AuthorizedInvocation, InvocationRequest};
 use anyhow::Context as _;
-use wamn_catalog::application_config::ApplicationComponent;
-use wamn_catalog::canonical_name::CanonicalName;
-use wamn_catalog::registered_operation::RegisteredOperation;
 use wamn_connection::connection::{
     ConnectionExecutionClosure, ConnectionInvocation, InvocationEntry,
 };
@@ -62,19 +62,9 @@ impl OperationMetrics {
 pub(super) struct OperationWorkload {
     pub(super) workload: Box<str>,
     identity: SessionIdentity,
-    application: Arc<wamn_catalog::application_config::ApplicationConfig>,
+    application: Arc<wamn_engine::application_config::ApplicationConfig>,
     context: Option<Arc<wamn_connection::invocation::ReleaseContext>>,
-    operations: BTreeMap<CanonicalName, OperationAuthority>,
-}
-
-#[derive(Debug)]
-struct OperationAuthority {
-    read: bool,
-    delete: bool,
-    grant: Option<wamn_catalog::registered_operation::RegisteredOperation>,
-    schema: Option<String>,
-    transaction: bool,
-    signed_fields: bool,
+    operations: BTreeMap<CanonicalName, (usize, Option<RegisteredOperation>)>,
 }
 
 impl OperationHost {
@@ -82,10 +72,8 @@ impl OperationHost {
         &self,
         workload: &str,
         component: &str,
-        config: wamn_catalog::application_config::ApplicationConfig,
+        config: Arc<wamn_engine::application_config::ApplicationConfig>,
     ) -> anyhow::Result<()> {
-        use wamn_catalog::application_config::ApplicationOperationType;
-        let config = Arc::new(config);
         if let Some(cache) = &self.authorization {
             cache.bind_application(workload, &config)?;
         }
@@ -105,7 +93,6 @@ impl OperationHost {
         } else {
             None
         };
-        let application = Arc::clone(&config);
         let identity = SessionIdentity {
             project_env_key: Some(wamn_registry::name::project_env_key(
                 &config.org,
@@ -119,26 +106,14 @@ impl OperationHost {
         let operations = config
             .components
             .iter()
-            .flat_map(|component| {
+            .enumerate()
+            .flat_map(|(index, component)| {
                 component.operations.iter().map(move |(name, operation)| {
                     let grant = operation
                         .public
                         .then(|| name.as_str().parse())
                         .transpose()?;
-                    Ok((
-                        name.clone(),
-                        OperationAuthority {
-                            read: operation.type_ == Some(ApplicationOperationType::Read),
-                            delete: operation.type_ == Some(ApplicationOperationType::Delete),
-                            grant,
-                            schema: component.schema.clone(),
-                            transaction: operation.host_transaction,
-                            signed_fields: operation
-                                .signed_result
-                                .as_ref()
-                                .is_some_and(|result| !result.fields.is_empty()),
-                        },
-                    ))
+                    Ok((name.clone(), (index, grant)))
                 })
             })
             .collect::<anyhow::Result<_>>()?;
@@ -150,7 +125,7 @@ impl OperationHost {
                 Arc::new(OperationWorkload {
                     workload: workload.into(),
                     identity,
-                    application,
+                    application: config,
                     context,
                     operations,
                 }),
@@ -681,11 +656,14 @@ async fn begin(
         .get(workload)
         .cloned()
         .ok_or(Refusal::UnknownOperation)?;
-    let admitted = facts
+    let (component_index, grant) = facts
         .operations
         .get(&operation)
         .ok_or(Refusal::UnknownOperation)?;
-    if admitted.read && !authorize_only {
+    let component = &facts.application.components[*component_index];
+    let policy = &component.operations[&operation];
+    let read = policy.type_ == Some(ApplicationOperationType::Read);
+    if read && !authorize_only {
         return Err(Refusal::ReadsClaimNothing);
     }
     // A caller handle belongs to a configured route of this workload.
@@ -703,7 +681,7 @@ async fn begin(
         |caller| caller.attachment_id().to_owned(),
     );
     let identity = SessionIdentity {
-        schema: admitted
+        schema: component
             .schema
             .clone()
             .or_else(|| facts.identity.schema.clone()),
@@ -718,7 +696,7 @@ async fn begin(
             scope: wamn_engine::operation::next_scope(workload).into_string(),
             identity,
             caller: caller.cloned(),
-            registered_operation: admitted.grant.as_ref(),
+            registered_operation: grant.as_ref(),
             causation: Some(wamn_event::Causation {
                 run: delivery.clone(),
                 root: delivery.clone(),
@@ -731,7 +709,7 @@ async fn begin(
                 )
                 .map_err(|error| binding_error(OperationErrorType::Identity, workload, error))?,
             ),
-            read: admitted.read,
+            read: read,
         },
     )
     .map_err(|error| {
@@ -752,10 +730,14 @@ async fn begin(
         source,
         write: !authorize_only,
         settled: true,
-        signed_result: admitted.signed_fields.then(|| SigningAuthority {
-            workload: Arc::clone(&facts),
-            deadline: tokio::time::Instant::now() + wamn_engine::engine::MAX_HOST_CALL_DURATION,
-        }),
+        signed_result: policy
+            .signed_result
+            .as_ref()
+            .is_some_and(|result| !result.fields.is_empty())
+            .then(|| SigningAuthority {
+                workload: Arc::clone(&facts),
+                deadline: tokio::time::Instant::now() + wamn_engine::engine::MAX_HOST_CALL_DURATION,
+            }),
     };
     if authorize_only {
         let transaction = open
@@ -768,7 +750,13 @@ async fn begin(
         open.settled = false;
         return Ok((Some(open), Begun::New(delivery)));
     }
-    let claim = claim_operation(&open, admitted.transaction, admitted.delete, request).await?;
+    let claim = claim_operation(
+        &open,
+        policy.host_transaction,
+        policy.type_ == Some(ApplicationOperationType::Delete),
+        request,
+    )
+    .await?;
     match claim {
         Claim::New => {
             open.settled = false;
@@ -847,7 +835,7 @@ impl OperationHost {
         self: &Arc<Self>,
         authority: &Arc<AuthorizedInvocation>,
         operation: &CanonicalName,
-        policy: &wamn_catalog::application_config::ApplicationOperation,
+        policy: &wamn_engine::application_config::ApplicationOperation,
         input: &serde_json::Value,
         mut invoke: impl FnMut(&str, String) -> Fut + Send,
     ) -> anyhow::Result<NodeOutcome>
@@ -924,7 +912,7 @@ impl OperationHost {
                 &open,
                 policy.host_transaction,
                 policy.type_
-                    == Some(wamn_catalog::application_config::ApplicationOperationType::Delete),
+                    == Some(wamn_engine::application_config::ApplicationOperationType::Delete),
                 hash.to_string().into_bytes(),
             )
             .await
@@ -1130,7 +1118,7 @@ impl OperationHost {
     pub fn workflow_application(
         &self,
         route: &str,
-    ) -> Option<Arc<wamn_catalog::application_config::ApplicationConfig>> {
+    ) -> Option<Arc<wamn_engine::application_config::ApplicationConfig>> {
         self.operation_workloads
             .read()
             .expect("operation workloads lock poisoned")
@@ -1257,7 +1245,6 @@ impl OperationHost {
     where
         Fut: Future<Output = anyhow::Result<NodeOutcome>> + Send,
     {
-        use wamn_catalog::application_config::ApplicationOperationType;
         use wamn_engine::operation::node_types::{ErrorDetail, NodeError};
         let facts = self.sibling_workload(node.route)?;
         let component = facts.component(node.sibling)?;

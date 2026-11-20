@@ -1,11 +1,11 @@
 //! Service administration selects one database from the org's administration map.
 
+use wamn_package::canonical_name::CanonicalName;
 use anyhow::{Context as _, ensure};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sqlx::Connection as _;
 use std::time::Duration;
-use wamn_catalog::canonical_name::CanonicalName;
 use wamn_environment::api_service;
 use wamn_identity::application::service;
 use wamn_identity_protocol::{PrincipalId, RoleName, pat_prefix::PatPrefix};
@@ -71,9 +71,9 @@ impl Execution {
                 .context("connect the project's administration login")?;
         let mut transaction = project.begin().await?;
         if operation != "pat.list" {
-            let sealed = wamn_catalog::operation_token(
-                wamn_catalog::host_route_package(),
-                wamn_catalog::host_route_version(),
+            let sealed = wamn_package::operation_token(
+                wamn_routes::host_route_package(),
+                wamn_routes::host_route_version(),
                 &operation.as_str().parse()?,
             )?;
             wamn_postgres::bind_transaction_identity(

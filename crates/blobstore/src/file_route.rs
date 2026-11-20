@@ -7,6 +7,8 @@
 //! request body. Its Content-Type supplies the media type. GET
 //! `/api/<application>/files/<id>` streams the stored bytes after session admission.
 
+use wamn_routes::HostAttachment;
+use wamn_routes::HostHandler;
 use crate::files::{FileStorageError, FileStorageErrorType, FileStore, MAX_URL_LIFETIME};
 use crate::plugin::WamnBlobstore;
 use bytes::Bytes;
@@ -26,8 +28,7 @@ use wasmtime_wasi_http::WasiBody;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use uuid::Uuid;
-use wamn_catalog::application_config::ApplicationConfig;
-use wamn_catalog::{HostAttachment, HostHandler};
+use wamn_engine::application_config::ApplicationConfig;
 use wamn_engine::ingress::{
     AuthenticatedCaller, CredentialType, Header, IngressRouting, RoutePolicy,
 };
@@ -194,8 +195,8 @@ pub trait FileConnections: Send + Sync + fmt::Debug {
     /// Resolve an application's binding, or an existing file's active generation.
     async fn lookup(
         &self,
-        application: &wamn_catalog::ApplicationName,
-        binding: Option<&wamn_catalog::canonical_name::CanonicalName>,
+        application: &wamn_registry::ApplicationName,
+        binding: Option<&wamn_package::canonical_name::CanonicalName>,
         pinned: Option<&str>,
     ) -> Result<FileConnection, FileError>;
 }
@@ -260,8 +261,8 @@ impl FileConnections for RegistryFileConnections {
 
     async fn lookup(
         &self,
-        application: &wamn_catalog::ApplicationName,
-        binding: Option<&wamn_catalog::canonical_name::CanonicalName>,
+        application: &wamn_registry::ApplicationName,
+        binding: Option<&wamn_package::canonical_name::CanonicalName>,
         pinned: Option<&str>,
     ) -> Result<FileConnection, FileError> {
         if application != &self.release.application {
@@ -280,7 +281,7 @@ impl FileConnections for RegistryFileConnections {
                     .components
                     .iter()
                     .find_map(|component| {
-                        wamn_catalog::application_config::binding(
+                        wamn_engine::application_config::binding(
                             &self.release,
                             &component.name,
                             name.as_str(),
@@ -335,29 +336,29 @@ impl FileConnections for RegistryFileConnections {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct FileRequest {
-    application: wamn_catalog::ApplicationName,
+    application: wamn_registry::ApplicationName,
     file_id: Uuid,
 }
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct DeleteRequest {
-    application: wamn_catalog::ApplicationName,
+    application: wamn_registry::ApplicationName,
     file_id: Uuid,
-    binding: wamn_catalog::canonical_name::CanonicalName,
+    binding: wamn_package::canonical_name::CanonicalName,
 }
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ExposeRequest {
-    application: wamn_catalog::ApplicationName,
+    application: wamn_registry::ApplicationName,
     file_id: Uuid,
-    binding: wamn_catalog::canonical_name::CanonicalName,
+    binding: wamn_package::canonical_name::CanonicalName,
     exposure: Exposure,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct UploadQuery {
-    binding: wamn_catalog::canonical_name::CanonicalName,
+    binding: wamn_package::canonical_name::CanonicalName,
     name: String,
 }
 
@@ -407,8 +408,8 @@ impl FileRoutes {
 
     async fn store(
         &self,
-        application: &wamn_catalog::ApplicationName,
-        binding: Option<&wamn_catalog::canonical_name::CanonicalName>,
+        application: &wamn_registry::ApplicationName,
+        binding: Option<&wamn_package::canonical_name::CanonicalName>,
         pinned: Option<&str>,
         write: bool,
         deadline: tokio::time::Instant,
@@ -449,7 +450,7 @@ impl FileRoutes {
     async fn record(
         &self,
         principal: &PrincipalId,
-        application: &wamn_catalog::ApplicationName,
+        application: &wamn_registry::ApplicationName,
         id: Uuid,
         action: &str,
     ) -> Result<FileRecord, FileError> {
@@ -465,7 +466,7 @@ impl FileRoutes {
                 principal,
                 &format!(
                     "wamn-control:file/{action}@{}",
-                    wamn_catalog::host_route_version()
+                    wamn_routes::host_route_version()
                 )
                 .parse()
                 .expect("file operation"),
@@ -487,8 +488,8 @@ impl FileRoutes {
     pub async fn put(
         &self,
         caller: &AuthenticatedCaller,
-        application: &wamn_catalog::ApplicationName,
-        binding: &wamn_catalog::canonical_name::CanonicalName,
+        application: &wamn_registry::ApplicationName,
+        binding: &wamn_package::canonical_name::CanonicalName,
         name: &str,
         media_type: &str,
         body: impl AsyncRead + Unpin + Send,
@@ -505,7 +506,7 @@ impl FileRoutes {
         let staged = store.stage(id, body).await?;
         let size = i64::try_from(staged.size).map_err(|error| failed("size", error))?;
         self.postgres.administration_transaction(&self.project, &principal,
-            &format!("wamn-control:file/put@{}", wamn_catalog::host_route_version()).parse().expect("file operation"), async |client| {
+            &format!("wamn-control:file/put@{}", wamn_routes::host_route_version()).parse().expect("file operation"), async |client| {
                 sqlx::query("INSERT INTO platform.file (id, application, connection_id, name, media_type, size, sha256, blob_key, exposure) VALUES ($1::text::uuid,$2,$3::text::uuid,$4,$5,$6,$7,$8,'application')").bind(id.to_string()).bind(application).bind(&connection.id).bind(name).bind(media_type).bind(size).bind(staged.sha256).bind(&staged.blob_key).execute(&mut *client).await.map(|result| result.rows_affected())?;
                 Ok::<_, FileError>(())
             }).await.map_err(|error| failed("catalog", error))??;
@@ -520,7 +521,7 @@ impl FileRoutes {
     async fn get(
         &self,
         caller: &AuthenticatedCaller,
-        application: &wamn_catalog::ApplicationName,
+        application: &wamn_registry::ApplicationName,
         id: Uuid,
     ) -> Result<hyper::Response<WasiBody>, FileError> {
         let deadline = tokio::time::Instant::now() + wamn_engine::engine::MAX_HOST_CALL_DURATION;
@@ -584,7 +585,7 @@ impl FileRoutes {
                 &principal,
                 &format!(
                     "wamn-control:file/delete@{}",
-                    wamn_catalog::host_route_version()
+                    wamn_routes::host_route_version()
                 )
                 .parse()
                 .expect("file operation"),
@@ -656,7 +657,7 @@ impl FileRoutes {
         )
         .await?;
         let written = self.postgres.administration_transaction(&self.project, &principal,
-            &format!("wamn-control:file/expose@{}", wamn_catalog::host_route_version()).parse().expect("file operation"), async |client| {
+            &format!("wamn-control:file/expose@{}", wamn_routes::host_route_version()).parse().expect("file operation"), async |client| {
                 let updated = sqlx::query("UPDATE platform.file SET exposure = $3, url = $4 WHERE id = $1::text::uuid AND application = $2 AND (exposure IS DISTINCT FROM $3 OR url IS DISTINCT FROM $4)").bind(request.file_id.to_string()).bind(&request.application).bind(request.exposure.literal()).bind(&url).execute(&mut *client).await.map(|result| result.rows_affected())?;
                 Ok::<_, FileError>(updated)
             }).await.map_err(|error| failed("catalog", error))?;
@@ -733,7 +734,7 @@ impl FileRoutes {
         routing: &IngressRouting,
         request: hyper::Request<WasiBody>,
     ) -> std::ops::ControlFlow<hyper::Response<WasiBody>, hyper::Request<WasiBody>> {
-        let Some((id, attachment)) = wamn_catalog::HostRouteSet::Application
+        let Some((id, attachment)) = wamn_routes::HostRouteSet::Application
             .attachments()
             .filter(|(_, attachment)| {
                 matches!(
@@ -819,7 +820,7 @@ impl FileRoutes {
             }
         };
         let authorized = wamn_engine::native_routes::resolve_authorized_host_route(
-            wamn_catalog::HostRouteSet::Application,
+            wamn_routes::HostRouteSet::Application,
             id,
             Some(&caller),
         );
@@ -830,7 +831,7 @@ impl FileRoutes {
             ));
         }
         let payload = if read {
-            match wamn_catalog::read_query::decode_read_query(&query) {
+            match wamn_routes::read_query::decode_read_query(&query) {
                 Ok(input) => json!([input]),
                 Err(_) => {
                     return std::ops::ControlFlow::Break(response(
@@ -928,7 +929,7 @@ impl FileRoutes {
                 ),
                 &id,
                 RoutePolicy {
-                    policy: &wamn_catalog::HostRouteSet::Application
+                    policy: &wamn_routes::HostRouteSet::Application
                         .attachment(&id)
                         .expect("file attachment")
                         .auth_policy,
@@ -1021,10 +1022,10 @@ fn principal(caller: &AuthenticatedCaller, action: &str) -> Result<PrincipalId, 
 
 fn declares_store(
     application: &ApplicationConfig,
-    alias: &wamn_catalog::canonical_name::CanonicalName,
+    alias: &wamn_package::canonical_name::CanonicalName,
 ) -> bool {
     application.components.iter().any(|component| {
-        wamn_catalog::application_config::binding(application, &component.name, alias.as_str())
+        wamn_engine::application_config::binding(application, &component.name, alias.as_str())
             .is_some_and(|binding| {
                 binding.interface == "wasmcloud:blobstore" && binding.selector.name() == Some(alias)
             })
@@ -1033,8 +1034,8 @@ fn declares_store(
 
 fn require_binding(
     release: &ApplicationConfig,
-    application: &wamn_catalog::ApplicationName,
-    binding: Option<&wamn_catalog::canonical_name::CanonicalName>,
+    application: &wamn_registry::ApplicationName,
+    binding: Option<&wamn_package::canonical_name::CanonicalName>,
     pinned: Option<&str>,
     connection: &FileConnection,
     write: bool,
@@ -1104,10 +1105,10 @@ fn signed_lifetime(requested: Duration) -> Result<Duration, FileError> {
 enum NativeRoute {
     Invalid,
     Upload {
-        application: wamn_catalog::ApplicationName,
+        application: wamn_registry::ApplicationName,
     },
     Get {
-        application: wamn_catalog::ApplicationName,
+        application: wamn_registry::ApplicationName,
         id: Uuid,
     },
 }
@@ -1193,8 +1194,8 @@ impl AsyncRead for BodyReader {
 mod tests {
     use super::*;
     use std::collections::HashSet;
-    use wamn_catalog::HostRouteSet;
     use wamn_engine::ingress::CredentialType;
+    use wamn_routes::HostRouteSet;
     fn caller(
         action: Option<&str>,
         admin: bool,

@@ -1,9 +1,9 @@
 //! Connection administration against one selected project database.
 
+use wamn_routes::HostAttachment;
 use super::{ControlRoutes, ProjectTarget, Refusal, parse};
 use serde_json::{Value, json};
 use sqlx::{Connection as _, Row as _};
-use wamn_catalog::HostAttachment;
 use wamn_environment::connections::{ConnectionError, administration, references};
 use wamn_identity_protocol::PrincipalId;
 

@@ -4,7 +4,7 @@ use proc_macro2::TokenStream;
 use quote::quote;
 use wamn_scalar::SqlValueType;
 
-use wamn_catalog::manifest::CustomOperationType;
+use wamn_package::OperationType;
 
 use super::rust_source::{insert_rust, rust_ident};
 
@@ -14,8 +14,8 @@ use super::{
     RustVisibility, StaticSqlAccessor, Table, WamnAccessor, WamnApi, column, operation_constraints,
     operation_exclusions, query_variants, sql,
 };
-use wamn_catalog::manifest::ManifestError as GenerateError;
-use wamn_catalog::manifest::{
+use wamn_package::manifest::ManifestError as GenerateError;
+use wamn_package::manifest::{
     CrudAction, CustomOperationDeclaration, ModelDeclaration, OperationDeclaration, StaticSqlFetch,
     rust_type_identifier,
 };
@@ -108,7 +108,7 @@ pub(super) fn emit_static_sql_projection(
     module_name: &str,
     compiled: &super::operations::CustomDescription<'_>,
 ) -> Result<(), GenerateError> {
-    let transactional = compiled.declaration.type_ != CustomOperationType::Projection;
+    let transactional = compiled.declaration.type_ != OperationType::Projection;
     let mut source = if transactional {
         quote!(
             use wamn_guest::postgres_statements::Transaction;
@@ -168,7 +168,7 @@ pub(super) fn emit_static_sql_projection(
 
 pub(super) fn wamn_api(
     catalog: &CatalogIr,
-    model_name: &wamn_catalog::manifest::source_name::SourceName,
+    model_name: &wamn_package::manifest::source_name::SourceName,
     model: &ModelDeclaration,
     table: &Table,
     operation_sql: &BTreeMap<String, Vec<String>>,
@@ -431,7 +431,7 @@ fn filter_binds(operation: &OperationDeclaration) -> Vec<AccessorBind> {
 /// Both statements return one outer row even when no model row matched, so
 /// every column is nullable (`crate::sql::query`, `crate::sql::changes`).
 fn feed_rows(
-    model_name: &wamn_catalog::manifest::source_name::SourceName,
+    model_name: &wamn_package::manifest::source_name::SourceName,
     model: &ModelDeclaration,
     table: &Table,
 ) -> Vec<RustRow> {
@@ -507,7 +507,7 @@ fn feed_rows(
 }
 
 fn operation_result_row(
-    model_name: &wamn_catalog::manifest::source_name::SourceName,
+    model_name: &wamn_package::manifest::source_name::SourceName,
     table: &Table,
     action: CrudAction,
     operation: &OperationDeclaration,

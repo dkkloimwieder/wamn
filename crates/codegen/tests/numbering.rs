@@ -4,7 +4,7 @@
 
 use serde_json::{Value, json};
 use wamn_codegen::GeneratedPackage;
-use wamn_catalog::manifest::ManifestErrorType as GenerateErrorType;
+use wamn_package::manifest::ManifestErrorType as GenerateErrorType;
 use wamn_scalar::SqlValueType;
 use wamn_schema_introspection::ir::{CatalogIr, Column, Constraint};
 
@@ -532,7 +532,7 @@ async fn live_generated_inserts_and_updates_stamp_only_changed_rows() {
                 .url(),
         )
         .unwrap();
-        wamn_catalog::test_database::project(
+        wamn_provision::test_database::project(
             &mut wamn_postgres::connect(database.as_str())
                 .await
                 .expect("connect the test database"),
@@ -607,7 +607,7 @@ async fn live_generated_inserts_and_updates_stamp_only_changed_rows() {
 async fn live_a_numbered_integer_field_inserts_the_rendered_number(pool: sqlx::PgPool) {
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::url(&pool);
-    wamn_catalog::test_database::project(
+    wamn_provision::test_database::project(
         &mut wamn_postgres::connect(database.as_str())
             .await
             .expect("connect the test database"),

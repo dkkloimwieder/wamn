@@ -122,31 +122,13 @@ impl HostHandler for PlatformHttp {
             .iter()
             .find(|interface| interface.is_incoming_http_handler())
             .and_then(|interface| interface.config.get("host"))
+            && let Some(application) = self.routing.application_config(component_id)
         {
-            let components = workload.components();
-            let components = components.read().await;
-            let application = components
-                .get(component_id)
-                .and_then(|component| {
-                    component
-                        .local_resources()
-                        .config
-                        .get(wamn_catalog::application_config::APPLICATION_CONFIG)
-                })
-                .map(|config| {
-                    serde_json::from_str::<wamn_catalog::application_config::ApplicationConfig>(
-                        config,
-                    )
-                })
-                .transpose()?;
-            drop(components);
-            if let Some(application) = application {
-                let files_prefix = format!("/api/{}/files", application.application);
-                let flow_prefix = wamn_catalog::workflow_http_prefix(&application.application);
-                self.files.register(workload.id(), application);
-                self.bind(workload.id(), host, &files_prefix, flow_prefix)
-                    .await?;
-            }
+            let files_prefix = format!("/api/{}/files", application.application);
+            let flow_prefix = wamn_routes::workflow_http_prefix(&application.application);
+            self.files.register(workload.id(), application);
+            self.bind(workload.id(), host, &files_prefix, flow_prefix)
+                .await?;
         }
         Ok(())
     }

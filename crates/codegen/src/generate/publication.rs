@@ -5,8 +5,8 @@ use crate::client_ir::FieldIr;
 use crate::openapi::{add_route, document, scalar};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
-use wamn_catalog::manifest::ManifestError as GenerateError;
-use wamn_catalog::manifest::PackageManifest;
+use wamn_component_policy::PackageManifest;
+use wamn_package::manifest::ManifestError as GenerateError;
 
 pub const ATTACHMENTS: &str = "generated/publication/attachments.json";
 pub const COMPONENTS: &str = "generated/publication/components.json";
@@ -15,15 +15,15 @@ const RAW_BODY_MAXIMUM: u64 = 1_048_576;
 pub(super) fn emit_package_publication(
     files: &mut BTreeMap<String, Vec<u8>>,
     manifest: &PackageManifest,
-    operations: &BTreeMap<wamn_catalog::local_operation::LocalOperation, OperationDescription>,
+    operations: &BTreeMap<wamn_package::local_operation::LocalOperation, OperationDescription>,
 ) -> Result<(), GenerateError> {
     let mut attachments = BTreeMap::new();
     let mut components = BTreeMap::<String, Value>::new();
     for (component, declaration) in &manifest.components {
         for (export, operation) in &declaration.exports {
             if operation.registered_operation.is_some() {
-                return Err(wamn_catalog::manifest::ManifestError::new(
-                    wamn_catalog::manifest::ManifestErrorType::InvalidManifest,
+                return Err(wamn_package::manifest::ManifestError::new(
+                    wamn_package::manifest::ManifestErrorType::InvalidManifest,
                     format!("component export {export} cannot declare a registered operation"),
                 ));
             }
@@ -75,8 +75,8 @@ pub(super) fn emit_package_publication(
             .get_mut(component.as_str())
             .expect("validated component owner");
         if declaration["operations"].get(identity).is_some() {
-            return Err(wamn_catalog::manifest::ManifestError::new(
-                wamn_catalog::manifest::ManifestErrorType::InvalidManifest,
+            return Err(wamn_package::manifest::ManifestError::new(
+                wamn_package::manifest::ManifestErrorType::InvalidManifest,
                 format!("component export {identity} is already generated"),
             ));
         }
@@ -97,32 +97,26 @@ pub(super) fn emit_package_publication(
         if model_operation.is_none() && exposure.is_none() {
             continue;
         }
-        let id = wamn_catalog::route_attachment_id(
+        let id = wamn_routes::route_attachment_id(
             routes.id_prefix.as_deref().unwrap_or(""),
             module,
             action,
         );
         let id = exposure.map_or(id, |exposure| exposure.id.clone());
         let path = exposure.map_or_else(
-            || {
-                wamn_catalog::route_path(
-                    routes.path_prefix.as_deref().unwrap_or(""),
-                    module,
-                    action,
-                )
-            },
+            || wamn_routes::route_path(routes.path_prefix.as_deref().unwrap_or(""), module, action),
             |exposure| exposure.path.clone(),
         );
-        let path = wamn_catalog::exposure::normalize_http_route(
-            &wamn_catalog::exposure::HttpRoute {
+        let path = wamn_routes::exposure::normalize_http_route(
+            &wamn_routes::exposure::HttpRoute {
                 path,
                 method: "POST".to_owned(),
             },
             id.as_str(),
         )
         .map_err(|source| {
-            wamn_catalog::manifest::ManifestError::new(
-                wamn_catalog::manifest::ManifestErrorType::InvalidManifest,
+            wamn_package::manifest::ManifestError::new(
+                wamn_package::manifest::ManifestErrorType::InvalidManifest,
                 source.to_string(),
             )
         })?
@@ -134,8 +128,8 @@ pub(super) fn emit_package_publication(
             "raw-body-bytes": {"maximum": RAW_BODY_MAXIMUM},
         });
         if attachments.contains_key(&id) {
-            return Err(wamn_catalog::manifest::ManifestError::new(
-                wamn_catalog::manifest::ManifestErrorType::InvalidManifest,
+            return Err(wamn_package::manifest::ManifestError::new(
+                wamn_package::manifest::ManifestErrorType::InvalidManifest,
                 format!("duplicate HTTP attachment id {id}"),
             ));
         }
@@ -360,7 +354,7 @@ pub(crate) fn result_schema(description: &OperationDescription) -> Value {
 
 pub(crate) fn openapi(
     manifest: &PackageManifest,
-    operations: &BTreeMap<wamn_catalog::local_operation::LocalOperation, OperationDescription>,
+    operations: &BTreeMap<wamn_package::local_operation::LocalOperation, OperationDescription>,
     attachments: &Value,
     components: &Value,
 ) -> oas3::Spec {
@@ -486,7 +480,7 @@ mod tests {
             .is_err()
         );
 
-        let attachments: BTreeMap<String, wamn_catalog::ServingAttachment> =
+        let attachments: BTreeMap<String, wamn_package::ServingAttachment> =
             serde_json::from_slice(package.file(ATTACHMENTS).unwrap().bytes()).unwrap();
         for attachment in attachments.values().filter(|attachment| {
             attachment.registered_operation.as_ref()

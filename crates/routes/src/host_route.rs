@@ -1,0 +1,1007 @@
+//! The fixed routes that the host runs itself
+//! (docs/architecture/execution.md#host-run-routes).
+//!
+//! A host route has the operation contract, request envelope, result shape,
+//! limits and CSRF treatment of any route, but the host serves it with a
+//! fixed handler instead of a guest component. The platform builds the routes
+//! of each set, and a serving manifest records only which sets it serves.
+//!
+//! The control contract authors its package id, its version and its route
+//! prefixes in `host_route/wamn.json`, as a package does in its `wamn.json`.
+//! Each route derives its operation token, path and attachment id from that
+//! file exactly as a generated package operation does.
+
+mod contract_files;
+
+use crate::{route_attachment_id, route_path};
+use std::collections::BTreeMap;
+use wamn_package::canonical_name::CanonicalName;
+use std::sync::LazyLock;
+
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
+
+use wamn_package::{
+    AttachmentType, OperationType, PAT_AUTHENTICATION_MODE, SESSION_AUTHENTICATION_MODE,
+};
+use wamn_package::{operation_token, sealed_operation_reference};
+
+pub use contract_files::HostRouteContractError;
+
+/// The control contract's manifest: the one place its version is authored.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ControlContract {
+    package: ControlPackage,
+    routes: ControlRoutes,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ControlPackage {
+    id: wamn_package::PackageName,
+    version: wamn_package::package_version::PackageVersion,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ControlRoutes {
+    path_prefix: String,
+    id_prefix: String,
+}
+
+static CONTRACT: LazyLock<ControlContract> = LazyLock::new(|| {
+    serde_json::from_str(include_str!("host_route/wamn.json"))
+        .expect("the control contract manifest is valid")
+});
+
+/// The package of every host route. No application package has this id.
+pub fn host_route_package() -> &'static wamn_package::PackageName {
+    &CONTRACT.package.id
+}
+
+/// The authored version of the host route contract.
+pub fn host_route_version() -> &'static wamn_package::package_version::PackageVersion {
+    &CONTRACT.package.version
+}
+
+/// Whether a stable operation reference or sealed operation id names a host
+/// route. Most host routes are fixed to `admin` or to every member, so no
+/// authored role holds one (docs/architecture/execution.md#host-run-routes). A
+/// [`HostRouteAuthority::Granted`] route is the exception: see
+/// [`is_granted_host_route_operation`].
+pub fn is_host_route_operation(operation: &str) -> bool {
+    static TOKEN_PACKAGE: LazyLock<String> =
+        LazyLock::new(|| CONTRACT.package.id.as_str().replace('_', "-"));
+    operation
+        .split_once(':')
+        .is_some_and(|(package, _)| package == TOKEN_PACKAGE.as_str())
+}
+
+/// Whether a stable operation reference or sealed operation id names a host
+/// route that an authored role holds through a stored permission row
+/// ([`HostRouteAuthority::Granted`]), such as `number_counter.set`.
+pub fn is_granted_host_route_operation(operation: &str) -> bool {
+    let reference = sealed_operation_reference(operation);
+    ATTACHMENTS.values().any(|attachment| {
+        attachment.route.authority == HostRouteAuthority::Granted
+            && attachment.reference == reference
+    })
+}
+
+/// The path prefix of every host route, with its closing `/`. Publish
+/// refuses an authored route under it.
+pub fn host_route_path_prefix() -> &'static str {
+    static PREFIX: LazyLock<String> = LazyLock::new(|| format!("{}/", CONTRACT.routes.path_prefix));
+    &PREFIX
+}
+
+/// One fixed contract of host routes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub enum HostRouteSet {
+    /// The application administration contract, served under every
+    /// application audience against that environment's database.
+    #[serde(rename = "application")]
+    Application,
+    /// The org and project administration contract of the control serving
+    /// root.
+    #[serde(rename = "control")]
+    Control,
+}
+
+/// The host code that serves one host route.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum HostHandler {
+    /// Start or observe one authorized application deployment or schema Job.
+    OperationJob,
+    /// Execute an authenticated native control operation.
+    ControlExecution,
+    /// Project integration and environment connection administration.
+    IntegrationAdministration,
+    /// The caller's effective permission set in this application.
+    PermissionMine,
+    /// The user rows of the application
+    /// (docs/architecture/execution.md#host-run-routes).
+    ApplicationUserList,
+    /// The roles of the application.
+    RoleList,
+    /// Create one empty authored role.
+    RoleCreate,
+    /// Delete one authored role with its assignments and permissions.
+    RoleDelete,
+    /// The permission rows of one role, with the roots that require each.
+    PermissionList,
+    /// Select an operation for a role and write its released closure.
+    PermissionGrant,
+    /// Remove a role's selection of an operation and its closure rows.
+    PermissionRevoke,
+    /// Give a role to an application user.
+    UserRoleGrant,
+    /// Take a role from an application user.
+    UserRoleRevoke,
+    /// The caller's current control authority in the token's org.
+    ControlMine,
+    /// The members of the org
+    /// (docs/architecture/overview.md#organization-membership-and-administration).
+    UserList,
+    /// Create or reuse a user and make it a member of the org.
+    UserCreate,
+    /// Create or reuse a user, make it a member of the org with the
+    /// requested grants, and mail the invitation when it has no password.
+    UserInvite,
+    /// Disable the global principal of a user of the org.
+    UserDisable,
+    /// Make an org membership active.
+    UserActivate,
+    /// Revoke a member's access in the org from the leaves upward.
+    UserDeactivate,
+    /// The projects of the org.
+    ProjectList,
+    /// Grant `org-admin` and its project roles and memberships.
+    OrgAdminGrant,
+    /// Revoke `org-admin` and `project-admin` throughout the org.
+    OrgAdminRevoke,
+    /// The environments of one project
+    /// (docs/architecture/execution.md#host-run-routes).
+    EnvironmentList,
+    /// The current state of one environment in its release namespace: the
+    /// digest, the rollout, the workload conditions and the live set
+    /// (docs/architecture/execution.md#host-run-routes).
+    EnvironmentStatus,
+    /// The users with a membership or `project-admin` in one project.
+    MemberList,
+    /// Grant a membership of one environment to an active org member.
+    MemberGrant,
+    /// Revoke a membership of one environment.
+    MemberRevoke,
+    /// Grant `project-admin` and a membership of every environment of the
+    /// project.
+    ProjectAdminGrant,
+    /// Revoke `project-admin` in one project.
+    ProjectAdminRevoke,
+    /// The exported operations of one release of an environment
+    /// (docs/architecture/execution.md#host-run-routes).
+    /// Make one environment active
+    /// (docs/architecture/execution.md#host-run-routes).
+    EnvironmentActivate,
+    /// Make one environment inactive.
+    EnvironmentInactivate,
+    /// Make every environment of one project active.
+    ProjectActivate,
+    /// Make every environment of one project inactive.
+    ProjectInactivate,
+    /// Create a project with no environment
+    /// (docs/architecture/execution.md#host-run-routes).
+    ProjectCreate,
+    /// Set one counter of a number sequence of the application
+    /// (docs/architecture/data-access.md#setting-a-counter).
+    NumberCounterSet,
+    WorkflowAuthor,
+    WorkflowEnable,
+    WorkflowDisable,
+    WorkflowList,
+    WorkflowRun,
+    /// Stream a file through a declared write binding.
+    FilePut,
+    /// Read a file owned by the application.
+    FileGet,
+    /// Delete a file unless an application row references it.
+    FileDelete,
+    /// Change a file's exposure.
+    FileExpose,
+}
+
+/// Who may call one host route, beside a valid credential.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HostRouteAuthority {
+    /// Every authenticated caller. On the control set, that is a holder of
+    /// `org-admin` in the token's org or of `project-admin` in one of its
+    /// projects, and the handler tests it again.
+    Member,
+    /// A holder of the application role `admin`.
+    Admin,
+    /// A holder of `org-admin` in the token's org. The handler tests the
+    /// role, again in its write transaction.
+    OrgAdmin,
+    /// A holder of `org-admin` in the token's org, or of `project-admin` in
+    /// the project that the request names. The handler tests the role,
+    /// again in its write transaction.
+    ProjectAdmin,
+    /// A holder of `admin`, or of an authored role that holds the route's
+    /// operation as a stored permission row, as for a package operation.
+    /// `permission.grant` gives it to a role
+    /// (docs/architecture/data-access.md#setting-a-counter, wamn-83eth.3).
+    Granted,
+}
+
+/// One fixed host route.
+#[derive(Debug)]
+pub struct HostRoute {
+    pub set: HostRouteSet,
+    /// The model and action, such as `permission.mine`, as a package
+    /// operation names them.
+    pub operation: &'static str,
+    pub type_: OperationType,
+    pub authority: HostRouteAuthority,
+    pub handler: HostHandler,
+}
+
+const ROUTES: &[HostRoute] = &[
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "environment.configure",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::OrgAdmin,
+        handler: HostHandler::ControlExecution,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "environment.delete",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::ProjectAdmin,
+        handler: HostHandler::ControlExecution,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "environment.operation_status",
+        type_: OperationType::Get,
+        authority: HostRouteAuthority::ProjectAdmin,
+        handler: HostHandler::ControlExecution,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "service_principal.create",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::ProjectAdmin,
+        handler: HostHandler::ControlExecution,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "service_principal.disable",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::ProjectAdmin,
+        handler: HostHandler::ControlExecution,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "pat.issue",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::ProjectAdmin,
+        handler: HostHandler::ControlExecution,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "pat.list",
+        type_: OperationType::Get,
+        authority: HostRouteAuthority::ProjectAdmin,
+        handler: HostHandler::ControlExecution,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "pat.revoke",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::OrgAdmin,
+        handler: HostHandler::ControlExecution,
+    },
+    HostRoute {
+        set: HostRouteSet::Application,
+        operation: "file.put",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::Granted,
+        handler: HostHandler::FilePut,
+    },
+    HostRoute {
+        set: HostRouteSet::Application,
+        operation: "file.get",
+        type_: OperationType::Get,
+        authority: HostRouteAuthority::Granted,
+        handler: HostHandler::FileGet,
+    },
+    HostRoute {
+        set: HostRouteSet::Application,
+        operation: "file.delete",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::Granted,
+        handler: HostHandler::FileDelete,
+    },
+    HostRoute {
+        set: HostRouteSet::Application,
+        operation: "file.expose",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::Granted,
+        handler: HostHandler::FileExpose,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "capture_gap.recover",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::ProjectAdmin,
+        handler: HostHandler::OperationJob,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "capture_gap.close",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::ProjectAdmin,
+        handler: HostHandler::OperationJob,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "platform.schema",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::OrgAdmin,
+        handler: HostHandler::ControlExecution,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "platform.operation_status",
+        type_: OperationType::Get,
+        authority: HostRouteAuthority::OrgAdmin,
+        handler: HostHandler::ControlExecution,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "api_service.create",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::ProjectAdmin,
+        handler: HostHandler::ControlExecution,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "application.stop",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::ProjectAdmin,
+        handler: HostHandler::OperationJob,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "application.deploy",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::ProjectAdmin,
+        handler: HostHandler::OperationJob,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "application.rollback",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::ProjectAdmin,
+        handler: HostHandler::OperationJob,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "schema.diff",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::ProjectAdmin,
+        handler: HostHandler::OperationJob,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "schema.apply",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::ProjectAdmin,
+        handler: HostHandler::OperationJob,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "schema.reset",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::ProjectAdmin,
+        handler: HostHandler::OperationJob,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "operation.status",
+        type_: OperationType::Get,
+        authority: HostRouteAuthority::ProjectAdmin,
+        handler: HostHandler::OperationJob,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "integration_type.list",
+        type_: OperationType::Get,
+        authority: HostRouteAuthority::ProjectAdmin,
+        handler: HostHandler::IntegrationAdministration,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "external_system.write",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::ProjectAdmin,
+        handler: HostHandler::IntegrationAdministration,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "external_system.list",
+        type_: OperationType::Get,
+        authority: HostRouteAuthority::ProjectAdmin,
+        handler: HostHandler::IntegrationAdministration,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "external_system.delete",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::ProjectAdmin,
+        handler: HostHandler::IntegrationAdministration,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "connection.write",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::ProjectAdmin,
+        handler: HostHandler::IntegrationAdministration,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "connection.authorize",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::ProjectAdmin,
+        handler: HostHandler::IntegrationAdministration,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "connection.test",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::ProjectAdmin,
+        handler: HostHandler::IntegrationAdministration,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "connection.copy",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::ProjectAdmin,
+        handler: HostHandler::IntegrationAdministration,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "connection.set_credential",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::ProjectAdmin,
+        handler: HostHandler::IntegrationAdministration,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "connection.disable",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::ProjectAdmin,
+        handler: HostHandler::IntegrationAdministration,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "connection.enable",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::ProjectAdmin,
+        handler: HostHandler::IntegrationAdministration,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "connection.delete",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::ProjectAdmin,
+        handler: HostHandler::IntegrationAdministration,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "connection.list",
+        type_: OperationType::Get,
+        authority: HostRouteAuthority::ProjectAdmin,
+        handler: HostHandler::IntegrationAdministration,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "connection.get",
+        type_: OperationType::Get,
+        authority: HostRouteAuthority::ProjectAdmin,
+        handler: HostHandler::IntegrationAdministration,
+    },
+    HostRoute {
+        set: HostRouteSet::Application,
+        operation: "permission.mine",
+        type_: OperationType::Get,
+        authority: HostRouteAuthority::Member,
+        handler: HostHandler::PermissionMine,
+    },
+    HostRoute {
+        set: HostRouteSet::Application,
+        operation: "user.list",
+        type_: OperationType::Get,
+        authority: HostRouteAuthority::Admin,
+        handler: HostHandler::ApplicationUserList,
+    },
+    HostRoute {
+        set: HostRouteSet::Application,
+        operation: "role.list",
+        type_: OperationType::Get,
+        authority: HostRouteAuthority::Admin,
+        handler: HostHandler::RoleList,
+    },
+    HostRoute {
+        set: HostRouteSet::Application,
+        operation: "role.create",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::Admin,
+        handler: HostHandler::RoleCreate,
+    },
+    HostRoute {
+        set: HostRouteSet::Application,
+        operation: "role.delete",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::Admin,
+        handler: HostHandler::RoleDelete,
+    },
+    HostRoute {
+        set: HostRouteSet::Application,
+        operation: "permission.list",
+        type_: OperationType::Get,
+        authority: HostRouteAuthority::Admin,
+        handler: HostHandler::PermissionList,
+    },
+    HostRoute {
+        set: HostRouteSet::Application,
+        operation: "permission.grant",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::Admin,
+        handler: HostHandler::PermissionGrant,
+    },
+    HostRoute {
+        set: HostRouteSet::Application,
+        operation: "permission.revoke",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::Admin,
+        handler: HostHandler::PermissionRevoke,
+    },
+    HostRoute {
+        set: HostRouteSet::Application,
+        operation: "user_role.grant",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::Admin,
+        handler: HostHandler::UserRoleGrant,
+    },
+    HostRoute {
+        set: HostRouteSet::Application,
+        operation: "user_role.revoke",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::Admin,
+        handler: HostHandler::UserRoleRevoke,
+    },
+    HostRoute {
+        set: HostRouteSet::Application,
+        operation: "number_counter.set",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::Granted,
+        handler: HostHandler::NumberCounterSet,
+    },
+    HostRoute {
+        set: HostRouteSet::Application,
+        operation: "workflow.author",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::Admin,
+        handler: HostHandler::WorkflowAuthor,
+    },
+    HostRoute {
+        set: HostRouteSet::Application,
+        operation: "workflow.enable",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::Admin,
+        handler: HostHandler::WorkflowEnable,
+    },
+    HostRoute {
+        set: HostRouteSet::Application,
+        operation: "workflow.disable",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::Admin,
+        handler: HostHandler::WorkflowDisable,
+    },
+    HostRoute {
+        set: HostRouteSet::Application,
+        operation: "workflow.list",
+        type_: OperationType::Get,
+        authority: HostRouteAuthority::Admin,
+        handler: HostHandler::WorkflowList,
+    },
+    HostRoute {
+        set: HostRouteSet::Application,
+        operation: "workflow.run",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::Admin,
+        handler: HostHandler::WorkflowRun,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "control.mine",
+        type_: OperationType::Get,
+        authority: HostRouteAuthority::Member,
+        handler: HostHandler::ControlMine,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "user.list",
+        type_: OperationType::Get,
+        authority: HostRouteAuthority::Member,
+        handler: HostHandler::UserList,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "user.create",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::OrgAdmin,
+        handler: HostHandler::UserCreate,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "user.invite",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::OrgAdmin,
+        handler: HostHandler::UserInvite,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "user.disable",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::OrgAdmin,
+        handler: HostHandler::UserDisable,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "user.activate",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::OrgAdmin,
+        handler: HostHandler::UserActivate,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "user.deactivate",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::OrgAdmin,
+        handler: HostHandler::UserDeactivate,
+    },
+    // project.list state is active when any environment is active, inactive otherwise.
+    // A project with no environments is inactive. registry.project_envs.status owns the state.
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "project.list",
+        type_: OperationType::Get,
+        authority: HostRouteAuthority::OrgAdmin,
+        handler: HostHandler::ProjectList,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "org_admin.grant",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::OrgAdmin,
+        handler: HostHandler::OrgAdminGrant,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "org_admin.revoke",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::OrgAdmin,
+        handler: HostHandler::OrgAdminRevoke,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "environment.list",
+        type_: OperationType::Get,
+        authority: HostRouteAuthority::ProjectAdmin,
+        handler: HostHandler::EnvironmentList,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "environment.status",
+        type_: OperationType::Get,
+        authority: HostRouteAuthority::ProjectAdmin,
+        handler: HostHandler::EnvironmentStatus,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "member.list",
+        type_: OperationType::Get,
+        authority: HostRouteAuthority::ProjectAdmin,
+        handler: HostHandler::MemberList,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "member.grant",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::ProjectAdmin,
+        handler: HostHandler::MemberGrant,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "member.revoke",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::ProjectAdmin,
+        handler: HostHandler::MemberRevoke,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "project_admin.grant",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::ProjectAdmin,
+        handler: HostHandler::ProjectAdminGrant,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "project_admin.revoke",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::ProjectAdmin,
+        handler: HostHandler::ProjectAdminRevoke,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "environment.activate",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::OrgAdmin,
+        handler: HostHandler::EnvironmentActivate,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "environment.inactivate",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::OrgAdmin,
+        handler: HostHandler::EnvironmentInactivate,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "project.activate",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::OrgAdmin,
+        handler: HostHandler::ProjectActivate,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "project.inactivate",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::OrgAdmin,
+        handler: HostHandler::ProjectInactivate,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "project.create",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::OrgAdmin,
+        handler: HostHandler::ProjectCreate,
+    },
+];
+
+/// One host route as an attachment of the route table.
+#[derive(Debug)]
+pub struct HostAttachment {
+    pub route: &'static HostRoute,
+    /// The sealed operation id, such as `wamn-control:permission/mine@0.9.0`.
+    /// A host-run write stamps it.
+    pub operation: wamn_package::registered_operation::RegisteredOperation,
+    /// The operation id without its version, as a stored permission names it.
+    pub reference: String,
+    pub definition: Value,
+    pub auth_policy: Value,
+}
+
+impl HostAttachment {
+    pub fn attachment_type(&self) -> AttachmentType {
+        AttachmentType::Http
+    }
+
+    /// The operation an `admin`-only or a granted route requires. A member
+    /// route requires none.
+    pub fn registered_operation(
+        &self,
+    ) -> Option<&wamn_package::registered_operation::RegisteredOperation> {
+        matches!(
+            self.route.authority,
+            HostRouteAuthority::Admin | HostRouteAuthority::Granted
+        )
+        .then_some(&self.operation)
+    }
+}
+
+/// Every host route by its set and attachment id. The two sets are served
+/// under different audiences, so a route of each set can derive one id, as
+/// `user.list` does.
+static ATTACHMENTS: LazyLock<BTreeMap<(HostRouteSet, CanonicalName), HostAttachment>> =
+    LazyLock::new(|| {
+        ROUTES
+            .iter()
+            .map(|route| {
+                let (model, action) = route
+                    .operation
+                    .split_once('.')
+                    .expect("a host route names its model and action");
+                let id = route_attachment_id(&CONTRACT.routes.id_prefix, model, action);
+                let operation = operation_token(
+                    &CONTRACT.package.id,
+                    &CONTRACT.package.version,
+                    &route.operation.parse().expect("fixed local host operation"),
+                )
+                .expect("fixed registered host operation");
+                let method = if route.type_.is_read() { "GET" } else { "POST" };
+                let modes = match route.set {
+                    HostRouteSet::Application => {
+                        json!([PAT_AUTHENTICATION_MODE, SESSION_AUTHENTICATION_MODE])
+                    }
+                    // A control audience is for browser sessions only.
+                    HostRouteSet::Control => json!([SESSION_AUTHENTICATION_MODE]),
+                };
+                let attachment = HostAttachment {
+                    route,
+                    reference: sealed_operation_reference(operation.as_str()).to_owned(),
+                    operation,
+                    definition: json!({
+                        "id": id,
+                        "type": "http",
+                        "route": {
+                            "host": "*",
+                            "method": method,
+                            "path": route_path(&CONTRACT.routes.path_prefix, model, action),
+                        },
+                    }),
+                    auth_policy: json!({ "modes": modes }),
+                };
+                ((route.set, id), attachment)
+            })
+            .collect()
+    });
+
+impl HostRouteSet {
+    /// Every route of this set, by attachment id.
+    pub fn attachments(
+        self,
+    ) -> impl Iterator<Item = (&'static CanonicalName, &'static HostAttachment)> {
+        ATTACHMENTS
+            .iter()
+            .filter(move |((set, _), _)| *set == self)
+            .map(|((_, id), attachment)| (id, attachment))
+    }
+
+    /// One route of this set by attachment id.
+    pub fn attachment(self, id: &CanonicalName) -> Option<&'static HostAttachment> {
+        self.attachments()
+            .find_map(|(key, attachment)| (key == id).then_some(attachment))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn host_routes_derive_their_ids_from_the_control_contract() {
+        let application = HostRouteSet::Application
+            .attachment(&"wamn-control-permission-mine-http".parse().unwrap())
+            .expect("permission.mine is an application host route");
+        assert_eq!(
+            application.operation,
+            "wamn-control:permission/mine@0.9.0".parse().unwrap()
+        );
+        assert_eq!(application.reference, "wamn-control:permission/mine");
+        assert_eq!(application.registered_operation(), None);
+        assert_eq!(
+            application.definition["route"]["path"],
+            "/wamn_control/permission/mine"
+        );
+        {
+            let observed = &(application.auth_policy);
+            assert_eq!(observed["modes"].as_array().expect("array").len(), 2);
+            assert_eq!(observed["modes"][0], serde_json::json!("pat"));
+            assert_eq!(observed["modes"][1], serde_json::json!("session"));
+        };
+
+        let control = HostRouteSet::Control
+            .attachment(&"wamn-control-control-mine-http".parse().unwrap())
+            .expect("control.mine is a control host route");
+        assert_eq!(
+            control.operation,
+            "wamn-control:control/mine@0.9.0".parse().unwrap()
+        );
+        {
+            let observed = &(control.auth_policy);
+            assert_eq!(observed["modes"].as_array().expect("array").len(), 1);
+            assert_eq!(observed["modes"][0], serde_json::json!("session"));
+        };
+        assert!(
+            HostRouteSet::Application
+                .attachment(&"wamn-control-control-mine-http".parse().unwrap())
+                .is_none(),
+            "an application release never serves a control route"
+        );
+        assert_eq!(host_route_package(), &"wamn_control".parse().unwrap());
+        assert!(is_host_route_operation("wamn-control:role/create"));
+        assert!(is_host_route_operation("wamn-control:role/create@0.9.0"));
+        assert!(!is_host_route_operation("wamn-receiving:receipt/get"));
+
+        let users = HostRouteSet::Application
+            .attachment(&"wamn-control-user-list-http".parse().unwrap())
+            .expect("user.list is an application host route");
+        let members = HostRouteSet::Control
+            .attachment(&"wamn-control-user-list-http".parse().unwrap())
+            .expect("user.list is a control host route");
+        assert_eq!(users.route.handler, HostHandler::ApplicationUserList);
+        assert_eq!(members.route.handler, HostHandler::UserList);
+        assert_eq!(users.operation, members.operation);
+        assert_eq!(
+            users.registered_operation(),
+            Some(&"wamn-control:user/list@0.9.0".parse().unwrap())
+        );
+        assert_eq!(host_route_path_prefix(), "/wamn_control/");
+
+        let counter = HostRouteSet::Application
+            .attachment(&"wamn-control-number-counter-set-http".parse().unwrap())
+            .expect("number_counter.set is an application host route");
+        assert_eq!(counter.reference, "wamn-control:number-counter/set");
+        assert_eq!(
+            counter.registered_operation(),
+            Some(&"wamn-control:number-counter/set@0.9.0".parse().unwrap())
+        );
+        assert!(is_granted_host_route_operation(
+            "wamn-control:number-counter/set"
+        ));
+        assert!(is_granted_host_route_operation(
+            "wamn-control:number-counter/set@0.9.0"
+        ));
+        assert!(!is_granted_host_route_operation("wamn-control:role/create"));
+        assert!(!is_granted_host_route_operation(
+            "wamn-receiving:receipt/get"
+        ));
+    }
+
+    #[test]
+    fn file_operations_are_grantable_and_contracts_carry_no_bytes_or_signed_url_switch() {
+        let contracts = [
+            (
+                "put",
+                include_str!("host_route/contracts/file/put.input.json"),
+            ),
+            (
+                "get",
+                include_str!("host_route/contracts/file/get.input.json"),
+            ),
+            (
+                "delete",
+                include_str!("host_route/contracts/file/delete.input.json"),
+            ),
+            (
+                "expose",
+                include_str!("host_route/contracts/file/expose.input.json"),
+            ),
+        ];
+        for (action, input) in contracts {
+            let id: CanonicalName = format!("wamn-control-file-{action}-http").parse().unwrap();
+            let route = HostRouteSet::Application.attachment(&id).unwrap();
+            assert_eq!(route.route.authority, HostRouteAuthority::Granted);
+            assert!(route.registered_operation().is_some());
+            assert!(is_granted_host_route_operation(&route.reference));
+            assert!(HostRouteSet::Control.attachment(&id).is_none());
+            let input: Value = serde_json::from_str(input).unwrap();
+            let fields = input["fields"].as_array().unwrap();
+            assert!(
+                fields
+                    .iter()
+                    .any(|field| field["path"].as_str().unwrap().ends_with("application"))
+            );
+            assert!(fields.iter().all(|field| {
+                !["bytes", "signed", "lifetime", "url"]
+                    .iter()
+                    .any(|name| field["path"].as_str().unwrap().ends_with(name))
+            }));
+        }
+    }
+}

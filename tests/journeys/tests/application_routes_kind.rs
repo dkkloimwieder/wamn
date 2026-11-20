@@ -190,7 +190,7 @@ async fn get(paths: &Routes, path: &str, body: &Value) -> anyhow::Result<(u16, V
     Ok((response.status().as_u16(), response.json().await?))
 }
 
-async fn fixture(package: &wamn_catalog::PackageName) -> anyhow::Result<Application> {
+async fn fixture(package: &wamn_package::PackageName) -> anyhow::Result<Application> {
     Application::prepare(
         &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../apps")

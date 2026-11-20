@@ -1,6 +1,6 @@
 use serde_json::json;
-use wamn_catalog::manifest::ManifestErrorType as GenerateErrorType;
-use wamn_catalog::manifest::PackageManifest;
+use wamn_component_policy::PackageManifest;
+use wamn_package::manifest::ManifestErrorType as GenerateErrorType;
 
 use super::{description_json, fixture};
 

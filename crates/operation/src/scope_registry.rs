@@ -36,7 +36,7 @@ pub fn bind_test_context(
     scopes: &InvocationScopes,
     scope: &str,
     connections: Arc<wamn_connection::connection_facts::ConnectionFacts>,
-    release: Arc<wamn_catalog::application_config::ApplicationConfig>,
+    release: Arc<wamn_engine::application_config::ApplicationConfig>,
 ) {
     let context = Arc::new(ReleaseContext::new(release, connections).expect("fixture context"));
     scopes.update::<Authority, _>(scope, |record| {
@@ -177,7 +177,7 @@ pub(super) fn user_id_for(
 pub(super) fn operation_for(
     scopes: &InvocationScopes,
     component_id: &str,
-) -> Option<wamn_catalog::canonical_name::CanonicalName> {
+) -> Option<wamn_package::canonical_name::CanonicalName> {
     scopes
         .read::<Authority, _>(component_id, |record| record.identity.operation.clone())
         .flatten()
@@ -186,7 +186,7 @@ pub(super) fn operation_for(
 pub(super) fn application_for(
     scopes: &InvocationScopes,
     component_id: &str,
-) -> Option<wamn_catalog::ApplicationName> {
+) -> Option<wamn_registry::ApplicationName> {
     scopes
         .read::<Authority, _>(component_id, |record| record.identity.application.clone())
         .flatten()

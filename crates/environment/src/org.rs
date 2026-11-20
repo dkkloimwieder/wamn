@@ -4,8 +4,9 @@
 //! under the caller's bound actor.
 
 use sqlx::Row as _;
-use wamn_identity::org::{EnvironmentStatus, lock_org_memberships, project_envs};
+use wamn_identity::org::{lock_org_memberships, project_envs};
 use wamn_identity::{IdentityError, IdentityErrorType, IdentityRefusal, database_error};
+use wamn_registry::EnvironmentStatus;
 
 const PROJECT_IN_ORG_SQL: &str = wamn_registry::sql::IDENTITY_PLATFORM_SRC_ORG_PROJECT_IN_ORG_SQL;
 

@@ -66,7 +66,7 @@ pub async fn require_platform_rows(client: &mut sqlx::PgConnection) -> Result<()
 /// its host reads (docs/architecture/execution.md#routing-and-availability).
 pub async fn write_environment_status(
     client: &mut sqlx::PgConnection,
-    status: crate::org::EnvironmentStatus,
+    status: wamn_registry::EnvironmentStatus,
 ) -> Result<(), IdentityError> {
     sqlx::query(ENVIRONMENT_STATUS_ROW_SQL)
         .bind(status.as_str())
@@ -527,8 +527,8 @@ pub struct GrantOutcome {
 
 /// Whether an authored permission can name this operation.
 pub fn permission_is_grantable(reference: &str) -> bool {
-    !wamn_catalog::is_host_route_operation(reference)
-        || wamn_catalog::is_granted_host_route_operation(reference)
+    !wamn_routes::is_host_route_operation(reference)
+        || wamn_routes::is_granted_host_route_operation(reference)
 }
 
 /// Mutate an authored grant inside the caller's application transaction.

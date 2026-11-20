@@ -1,18 +1,22 @@
 //! A release bundle loaded from a directory, and every refusal of one.
 
-use wamn_catalog::serving_context::ReleaseTarget;
+use wamn_edge::serving_context::ReleaseTarget;
+use wamn_edge_document::edge_bundle::BUNDLE_FILE_NAME;
+use wamn_edge_document::edge_bundle::COMPONENTS_FILE_NAME;
+use wamn_edge_document::edge_bundle::GRANTS_FILE_NAME;
+use wamn_edge_document::edge_bundle::INGRESS_FILE_NAME;
+use wamn_package::PackageCoordinate;
+use wamn_edge_document::RELEASE_MANIFEST_FILE_NAME;
+use wamn_edge_document::ServingComponent;
+use wamn_edge_document::ServingManifest;
+use wamn_edge_document::ServingRelease;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use serde_json::json;
-use wamn_catalog::edge_bundle::{
-    BUNDLE_FILE_NAME, COMPONENTS_FILE_NAME, GRANTS_FILE_NAME, INGRESS_FILE_NAME,
-};
-use wamn_catalog::{
+use wamn_component_policy::{
     AdmittedComponent, AdmittedComponentOperation, ComponentDescriptor, ComponentPackageCoordinate,
-    PackageCoordinate, RELEASE_MANIFEST_FILE_NAME, ServingComponent, ServingManifest,
-    ServingRelease,
 };
 use wamn_digest::bytes_sha256;
 use wamn_edge::release::{EdgeRelease, EdgeReleaseErrorType};
@@ -151,7 +155,7 @@ fn target() -> ReleaseTarget {
     ReleaseTarget::new(PROJECT_ENV_KEY.parse().unwrap(), "edge".parse().unwrap()).with_applications(
         [(
             "weighing".parse().unwrap(),
-            wamn_catalog::ApplicationDefinition {
+            wamn_registry::ApplicationDefinition {
                 connections: std::collections::BTreeMap::new(),
                 packages: [PACKAGE.parse().unwrap()].into(),
             },

@@ -10,7 +10,7 @@ pub fn action(package: &Path, local: &str) -> Result<std::path::PathBuf> {
     let (model, action) = local.split_once('.').context("use model.action")?;
     let output = wamn_codegen::output_root(package);
     let manifest =
-        wamn_catalog::manifest::PackageManifest::from_slice(&fs::read(output.join("wamn.json"))?)?;
+        wamn_component_policy::PackageManifest::from_slice(&fs::read(output.join("wamn.json"))?)?;
     let declaration = manifest
         .models
         .get(model)

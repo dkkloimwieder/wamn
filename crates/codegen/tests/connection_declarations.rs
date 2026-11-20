@@ -1,6 +1,7 @@
 //! Connection declarations carry shape, never deployed catalog authority.
 use serde_json::json;
-use wamn_catalog::manifest::{ConnectionMode, PackageManifest};
+use wamn_component_policy::PackageManifest;
+use wamn_package::manifest::ConnectionMode;
 
 fn manifest() -> serde_json::Value {
     json!({"package":{"id":"fixture","version":"1.0.0"},

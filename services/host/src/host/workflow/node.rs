@@ -1,12 +1,12 @@
 //! Dispatch a node through the exact sibling's SQL and connection authority.
 
+use wamn_package::canonical_name::CanonicalName;
 use super::{SharedCtx, WasmResult, Workflow, Workload, service, wit_node};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 use tokio::time::Instant;
-use wamn_catalog::canonical_name::CanonicalName;
 use wamn_connection::connection::WiringPosition;
 use wamn_engine::native_routes::{OperationRefusal, bounded_node_deadline_ms};
 use wamn_engine::operation::node_types;

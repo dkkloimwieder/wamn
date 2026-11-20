@@ -9,13 +9,13 @@
 //! other key has a `WAMN_EDGE_*` variable. An unknown key is refused.
 //! `services/edge/edge.example.toml` shows every key.
 
+use crate::serving_context::ReleaseTarget;
 use std::net::SocketAddr;
 use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 
 use anyhow::Context as _;
 use serde::Deserialize;
-use wamn_catalog::serving_context::ReleaseTarget;
 use wamn_registry::project_env_key;
 
 /// The variable that names the configuration file.
@@ -172,7 +172,7 @@ impl HttpConfig {
 pub struct DeviceConfig {
     /// The attachment whose operation the loop calls. Its route must change
     /// records and must name no idempotency key.
-    pub attachment: wamn_catalog::canonical_name::CanonicalName,
+    pub attachment: wamn_package::canonical_name::CanonicalName,
     /// The fixed local principal of every device call.
     pub principal: wamn_identity_protocol::PrincipalId,
     /// The role in `grants.json` whose permissions the principal holds.
@@ -269,7 +269,7 @@ mod tests {
     use std::collections::HashMap;
 
     use super::EdgeConfig;
-    use wamn_catalog::serving_context::ReleaseTarget;
+    use crate::serving_context::ReleaseTarget;
 
     const EXAMPLE: &str = include_str!("../edge.example.toml");
 

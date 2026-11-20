@@ -40,7 +40,7 @@ pub struct ResetArgs {
 #[derive(Debug, Args)]
 pub struct SchemaArgs {
     /// The declared application or source directory. Source diff needs current build output.
-    pub application: wamn_catalog::ApplicationName,
+    pub application: wamn_registry::ApplicationName,
     /// The target environment file.
     #[arg(long)]
     pub env: PathBuf,

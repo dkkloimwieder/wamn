@@ -1,5 +1,6 @@
 //! Admit UTC schedule ticks and verified data changes on the project platform login.
 
+use wamn_package::canonical_name::CanonicalName;
 use super::{
     Authority, BoundService, LEASE_MS, LEASE_TTL, Refusal, SharedCtx, WasmResult, Workflow,
     Workload, service, storage_error, wit_run,
@@ -10,7 +11,6 @@ use sqlx::Row as _;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::time::Instant;
-use wamn_catalog::canonical_name::CanonicalName;
 use wamn_event::{Causation, SourceEvent};
 use wamn_identity_protocol::PrincipalId;
 use wamn_identity_protocol::workflow_user_id;
@@ -257,7 +257,7 @@ impl Workflow {
         Ok(workflows
             .into_iter()
             .map(|id| wit_run::DataChangeConsumer {
-                consumer: wamn_catalog::resource_names::workflow_event_consumer(
+                consumer: wamn_registry::resource_names::workflow_event_consumer(
                     &app.application,
                     &id,
                 ),

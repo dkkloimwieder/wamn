@@ -41,7 +41,7 @@ const APP_GENERATION_PASSWORD: &str = "test-owned-app-generation-password";
 fn app_schema_sql() -> String {
     format!(
         "\nDROP SCHEMA IF EXISTS catalog CASCADE;\n{}\n{}",
-        wamn_catalog::CATALOG_SCHEMA_SQL,
+        wamn_provision::CATALOG_SCHEMA_SQL,
         include_str!("../../../deploy/sql/app-schema.sql")
     )
 }

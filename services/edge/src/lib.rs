@@ -57,5 +57,6 @@ pub mod store;
 
 pub mod artifact_source;
 pub mod release_manifest;
+pub mod serving_context;
 
 mod routing;

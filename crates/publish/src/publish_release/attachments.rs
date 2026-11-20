@@ -8,7 +8,7 @@ use super::{
     RouteContracts, ServingAttachment, canonical_http_route_template, normalize_http_route,
 };
 
-use wamn_catalog::AttachmentTarget;
+use wamn_package::AttachmentTarget;
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct AuthoredRoute {
@@ -19,7 +19,7 @@ struct AuthoredRoute {
 pub(super) fn read_package_attachments(
     paths: &[PathBuf],
 ) -> Result<
-    BTreeMap<wamn_catalog::canonical_name::CanonicalName, ServingAttachment>,
+    BTreeMap<wamn_package::canonical_name::CanonicalName, ServingAttachment>,
     PublishManifestError,
 > {
     let documents = paths
@@ -28,7 +28,7 @@ pub(super) fn read_package_attachments(
             let path = wamn_codegen::package_manifest_path(root);
             let read = || -> anyhow::Result<_> {
                 let manifest =
-                    wamn_catalog::manifest::PackageManifest::from_slice(&std::fs::read(&path)?)?;
+                    wamn_component_policy::PackageManifest::from_slice(&std::fs::read(&path)?)?;
                 Ok(manifest
                     .deploy
                     .ok_or_else(|| {

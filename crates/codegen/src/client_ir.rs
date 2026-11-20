@@ -77,7 +77,7 @@ impl ClientIrErrorType {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClientContractIr {
     /// The package this IR was projected from.
-    pub package: wamn_catalog::PackageName,
+    pub package: wamn_package::PackageName,
     /// Models, ordered by name.
     pub models: Vec<ModelIr>,
 }
@@ -111,7 +111,7 @@ pub struct ModelIr {
 /// structurally absent from what we read.
 ///
 /// The template keeps its AUTHORED parameter names. This is deliberately NOT
-/// [`wamn_catalog::exposure::canonical_http_route_template`]:
+/// [`wamn_routes::exposure::canonical_http_route_template`]:
 /// that collapses `{id}` to `{}` to build a route-COLLISION key, and a client
 /// handed the collapsed form would have no name to substitute into.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -178,8 +178,11 @@ pub struct FieldIr {
     /// Whether this signed integer is a revision serialized as a decimal JSON
     /// string, and the input path whose record it guards when the contract
     /// names one.
-    #[serde(default, skip_serializing_if = "wamn_catalog::manifest::Revision::is_absent")]
-    pub revision: wamn_catalog::manifest::Revision,
+    #[serde(
+        default,
+        skip_serializing_if = "wamn_package::manifest::Revision::is_absent"
+    )]
+    pub revision: wamn_package::manifest::Revision,
     /// Object members or repeated item members, ordered by path.
     pub children: Vec<FieldIr>,
     /// Declared repeated-item bounds.
@@ -236,7 +239,7 @@ pub struct ListIr {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
     /// Result fields whose values together name one row.
-    #[serde(with = "wamn_catalog::manifest::row_key")]
+    #[serde(with = "wamn_package::manifest::row_key")]
     pub key_field: Vec<String>,
     /// Result field that carries the text a person reads, when the author
     /// states one. Otherwise the plan displays the declared record key.
@@ -301,11 +304,11 @@ pub struct OperationIr {
     #[serde(rename = "type")]
     pub type_: String,
     /// Canonical operation identity.
-    pub operation: wamn_catalog::registered_operation::RegisteredOperation,
+    pub operation: wamn_package::registered_operation::RegisteredOperation,
     /// The grant a caller needs.
-    pub grant: wamn_catalog::registered_operation::RegisteredOperation,
+    pub grant: wamn_package::registered_operation::RegisteredOperation,
     /// Permission token this operation is authorized by.
-    pub permission_token: wamn_catalog::local_operation::LocalOperation,
+    pub permission_token: wamn_package::local_operation::LocalOperation,
     /// Authored screen label, or the canonical operation identity when absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
@@ -380,7 +383,7 @@ pub struct RecordIr {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct RevisionBindingIr {
-    pub read_operation: wamn_catalog::registered_operation::RegisteredOperation,
+    pub read_operation: wamn_package::registered_operation::RegisteredOperation,
     pub read_key_input: String,
     pub key_field: String,
     pub revision_field: String,
@@ -528,12 +531,12 @@ pub struct ErrorCaseIr {
 impl ClientContractIr {
     /// Project compiled descriptions with the routes that serve them.
     pub fn from_operations(
-        package: &wamn_catalog::PackageName,
+        package: &wamn_package::PackageName,
         operations: &BTreeMap<
-            wamn_catalog::local_operation::LocalOperation,
+            wamn_package::local_operation::LocalOperation,
             crate::OperationDescription,
         >,
-        routes: &BTreeMap<wamn_catalog::registered_operation::RegisteredOperation, RouteIr>,
+        routes: &BTreeMap<wamn_package::registered_operation::RegisteredOperation, RouteIr>,
     ) -> Result<Self, ClientIrError> {
         let mut modules = BTreeMap::<String, BTreeMap<String, &crate::OperationDescription>>::new();
         for (local, operation) in operations {
@@ -550,9 +553,9 @@ impl ClientContractIr {
     }
 
     fn assemble(
-        package: &wamn_catalog::PackageName,
+        package: &wamn_package::PackageName,
         modules: BTreeMap<String, BTreeMap<String, &crate::OperationDescription>>,
-        routes: &BTreeMap<wamn_catalog::registered_operation::RegisteredOperation, RouteIr>,
+        routes: &BTreeMap<wamn_package::registered_operation::RegisteredOperation, RouteIr>,
     ) -> Result<Self, ClientIrError> {
         let mut models = modules
             .into_iter()
@@ -591,7 +594,7 @@ fn default_field_labels(fields: &mut [FieldIr]) {
 fn build_model(
     name: &str,
     operations: BTreeMap<String, &crate::OperationDescription>,
-    routes: &BTreeMap<wamn_catalog::registered_operation::RegisteredOperation, RouteIr>,
+    routes: &BTreeMap<wamn_package::registered_operation::RegisteredOperation, RouteIr>,
 ) -> Result<ModelIr, ClientIrError> {
     let mut built = Vec::with_capacity(operations.len());
     for (operation_name, parts) in operations {
@@ -649,7 +652,7 @@ fn build_operation(
     module: &str,
     name: &str,
     parts: &crate::OperationDescription,
-    routes: &BTreeMap<wamn_catalog::registered_operation::RegisteredOperation, RouteIr>,
+    routes: &BTreeMap<wamn_package::registered_operation::RegisteredOperation, RouteIr>,
 ) -> Result<Option<OperationIr>, ClientIrError> {
     let operation = &parts.operation;
     if operation.visibility.as_deref() == Some("private") {

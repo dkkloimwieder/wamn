@@ -23,6 +23,21 @@
 //! `wasi:sockets@…`) collapses to the same package and is caught by the one
 //! rule.
 
+mod component_facts;
+mod signed_file_read;
+
+pub use component_facts::{
+    AdmittedComponent, AdmittedComponentEffect, AdmittedComponentFacts, AdmittedComponentOperation,
+    AdmittedComponentParameter, AdmittedComponentPort, ComponentDescriptor,
+    ComponentEffectProvenance, ComponentFactError, ComponentFactErrorType,
+    ComponentPackageCoordinate, ComponentSchema, normalize_component_fact, split_target,
+    validate_committed_result_schema, verify_stored_effect_projection,
+};
+pub use signed_file_read::signed_file_reads;
+
+/// The package document with the descriptor publication writes.
+pub type PackageManifest = wamn_package::manifest::PackageManifest<ComponentDescriptor>;
+
 /// Ordered top-level imports declared by a component world.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ComponentImports {

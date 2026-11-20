@@ -1,8 +1,8 @@
 //! The edge's verified serving manifest loader.
-use wamn_catalog::serving_context::{ReleaseTarget, ServingContext};
-use wamn_catalog::{AdmittedComponent, RELEASE_MANIFEST_FILE_NAME, ServingManifest};
+use crate::serving_context::{ReleaseTarget, ServingContext};
 use std::path::Path;
-
+use wamn_component_policy::AdmittedComponent;
+use wamn_edge_document::{RELEASE_MANIFEST_FILE_NAME, ServingManifest};
 
 /// Stable classification for a refused release load.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -97,9 +97,9 @@ pub fn validate_component_in_release(
         .find(|package| package.package_id() == &component.target.package_id)
         .map_or_else(
             || {
-                component.target.package_id.as_str() == wamn_catalog::PALETTE_PACKAGE_ID
+                component.target.package_id.as_str() == wamn_package::PALETTE_PACKAGE_ID
                     && component.target.package_version.as_str()
-                        == wamn_catalog::PALETTE_PACKAGE_VERSION
+                        == wamn_package::PALETTE_PACKAGE_VERSION
             },
             |package| package.package_version() == &component.target.package_version,
         );
@@ -126,10 +126,11 @@ mod tests {
     use std::collections::{BTreeMap, BTreeSet};
     use std::path::PathBuf;
 
-    use wamn_catalog::{
-        AdmittedComponentOperation, PackageCoordinate, ServingComponent, ServingRelease,
-        UNSUPPORTED_SERVING_MANIFEST_VERSION_REFUSAL,
+    use wamn_component_policy::AdmittedComponentOperation;
+    use wamn_edge_document::{
+        ServingComponent, ServingRelease, UNSUPPORTED_SERVING_MANIFEST_VERSION_REFUSAL,
     };
+    use wamn_package::PackageCoordinate;
 
     use super::*;
     use super as loader;
@@ -151,7 +152,7 @@ mod tests {
 
                 package_id: "cat".parse().unwrap(),
                 descriptor: {
-                    let mut descriptor = wamn_catalog::ComponentDescriptor::named(
+                    let mut descriptor = wamn_component_policy::ComponentDescriptor::named(
                         "transform".parse().unwrap(),
                         "0.1".parse().unwrap(),
                         COMPONENT.parse().unwrap(),
@@ -239,7 +240,7 @@ mod tests {
             .with_applications(
                 [(
                     "catalog".parse().unwrap(),
-                    wamn_catalog::ApplicationDefinition {
+                    wamn_registry::ApplicationDefinition {
                         connections: std::collections::BTreeMap::new(),
                         packages: ["cat".parse().unwrap()].into(),
                     },
@@ -395,7 +396,7 @@ mod tests {
     fn carried_fact() -> AdmittedComponent {
         AdmittedComponent {
             data_change: false,
-            target: wamn_catalog::ComponentPackageCoordinate {
+            target: wamn_component_policy::ComponentPackageCoordinate {
                 project_env_key: "t1--dev--project".parse().unwrap(),
                 package_id: "cat".parse().unwrap(),
                 package_version: "1.0.0".parse().unwrap(),
@@ -404,7 +405,7 @@ mod tests {
             interface_version: "0.1".parse().unwrap(),
             operations: BTreeMap::from([(
                 "map".parse().unwrap(),
-                wamn_catalog::AdmittedComponentOperation {
+                wamn_component_policy::AdmittedComponentOperation {
                     registered_operation: None,
                     committed_result_schema: None,
                     host_transaction: false,

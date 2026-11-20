@@ -598,6 +598,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     let ingress_routing = Arc::new(ingress_routing.with_environment_status(status));
     let operations = Arc::new(wamn_engine::operation::WamnOperation::new(
         Arc::clone(&postgres) as Arc<dyn plugin::HostPlugin>,
+        Arc::clone(&postgres.scopes),
     ));
     let workflow = Arc::new(workflow::Workflow::new(
         Arc::clone(&postgres),

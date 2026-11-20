@@ -1,9 +1,9 @@
 //! Server-authorized application Jobs and bounded Kubernetes observations.
 
+use wamn_routes::HostAttachment;
 use anyhow::Context as _;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use wamn_catalog::HostAttachment;
 use wamn_identity_protocol::PrincipalId;
 use wamn_kubernetes::client::KubernetesApi;
 
@@ -18,7 +18,7 @@ pub(crate) struct Request {
     pub(crate) project: wamn_registry::ProjectId,
     pub(crate) env: wamn_registry::EnvName,
     #[serde(default)]
-    pub(crate) application: Option<wamn_catalog::ApplicationName>,
+    pub(crate) application: Option<wamn_registry::ApplicationName>,
     #[serde(default)]
     pub(crate) release: Option<wamn_digest::Digest>,
     #[serde(default)]
@@ -108,7 +108,7 @@ impl ControlRoutes<'_> {
             request.project.clone(),
         );
         if operation.is_some()
-            && wamn_catalog::configuration::read(&mut transaction, &triple)
+            && wamn_registry::configuration::read(&mut transaction, &triple)
                 .await?
                 .is_none()
         {

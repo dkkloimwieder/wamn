@@ -4,8 +4,8 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use serde_json::Value;
-use wamn_catalog::{AttachmentAuthPolicy, parse_attachment_auth_policy};
 use wamn_identity_protocol::PAT_TOKEN_PREFIX;
+use wamn_package::{AttachmentAuthPolicy, parse_attachment_auth_policy};
 use wash_runtime::engine::ctx::{ActiveCtx, SharedCtx, extract_active_ctx};
 use wash_runtime::engine::workload::WorkloadItem;
 use wash_runtime::plugin::{HostPlugin, WitInterfaces};
@@ -43,7 +43,7 @@ const ENVIRONMENT_INACTIVE_CODE: &str = "environment-inactive";
 /// delivery.
 #[derive(Clone)]
 pub struct AuthenticatedCaller {
-    attachment_id: wamn_catalog::canonical_name::CanonicalName,
+    attachment_id: wamn_package::canonical_name::CanonicalName,
     principal_id: wamn_identity_protocol::PrincipalId,
     credential_type: CredentialType,
     admin: bool,
@@ -86,7 +86,7 @@ impl AuthenticatedCaller {
     /// `active_role` is the one role the caller acts with, when it has one
     /// (docs/architecture/execution.md#environment-workflows).
     pub fn new(
-        attachment_id: wamn_catalog::canonical_name::CanonicalName,
+        attachment_id: wamn_package::canonical_name::CanonicalName,
         principal_id: wamn_identity_protocol::PrincipalId,
         credential_type: CredentialType,
         admin: bool,
@@ -104,7 +104,7 @@ impl AuthenticatedCaller {
     }
 
     /// Return the immutable attachment identity whose policy produced this caller record.
-    pub fn attachment_id(&self) -> &wamn_catalog::canonical_name::CanonicalName {
+    pub fn attachment_id(&self) -> &wamn_package::canonical_name::CanonicalName {
         &self.attachment_id
     }
 
@@ -142,11 +142,11 @@ impl AuthenticatedCaller {
     /// (docs/architecture/data-access.md#setting-a-counter).
     pub fn permits(&self, operation: &str) -> bool {
         self.admin
-            || ((!wamn_catalog::is_host_route_operation(operation)
-                || wamn_catalog::is_granted_host_route_operation(operation))
+            || ((!wamn_routes::is_host_route_operation(operation)
+                || wamn_routes::is_granted_host_route_operation(operation))
                 && self
                     .permissions
-                    .contains(wamn_catalog::sealed_operation_reference(operation)))
+                    .contains(wamn_package::sealed_operation_reference(operation)))
     }
 }
 
@@ -159,7 +159,7 @@ pub struct RoutePolicy<'a> {
 /// The host's route policies, supplied by workload config or an edge bundle.
 pub trait RouteProvider: Send + Sync + std::fmt::Debug {
     fn target(&self) -> &wamn_registry::ProjectEnvKey;
-    fn route(&self, id: &wamn_catalog::canonical_name::CanonicalName) -> Option<RoutePolicy<'_>>;
+    fn route(&self, id: &wamn_package::canonical_name::CanonicalName) -> Option<RoutePolicy<'_>>;
 }
 
 /// The host's mechanism for a route whose policy names a credential.
@@ -197,7 +197,7 @@ pub trait EnvironmentStatus: Send + Sync + std::fmt::Debug {
 pub struct AuthenticationRequest<'a> {
     /// The project and environment of the host that serves the route.
     pub target: &'a wamn_registry::ProjectEnvKey,
-    pub attachment_id: &'a wamn_catalog::canonical_name::CanonicalName,
+    pub attachment_id: &'a wamn_package::canonical_name::CanonicalName,
     /// The attachment's parsed policy. It is never `none`.
     pub policy: AttachmentAuthPolicy<'a>,
     pub headers: &'a [Header],
@@ -237,6 +237,14 @@ impl IngressRouting {
             environment: None,
         }
     }
+    /// Read the application facts retained for the bound ingress component.
+    pub fn application_config(
+        &self,
+        component_id: &str,
+    ) -> Option<Arc<crate::application_config::ApplicationConfig>> {
+        crate::application::bound_application_config(&self.scopes, component_id)
+    }
+
     /// Refuse every route while the host's environment is inactive.
     #[must_use]
     pub fn with_environment_status(mut self, environment: Arc<dyn EnvironmentStatus>) -> Self {
@@ -255,7 +263,7 @@ impl IngressRouting {
     pub async fn authenticate_policy(
         &self,
         target: &wamn_registry::ProjectEnvKey,
-        attachment_id: &wamn_catalog::canonical_name::CanonicalName,
+        attachment_id: &wamn_package::canonical_name::CanonicalName,
         route: RoutePolicy<'_>,
         headers: &[Header],
         body: &[u8],
@@ -300,7 +308,7 @@ impl IngressRouting {
     async fn authenticate_accepted(
         &self,
         routes: &dyn RouteProvider,
-        attachment_id: &wamn_catalog::canonical_name::CanonicalName,
+        attachment_id: &wamn_package::canonical_name::CanonicalName,
         accepted: &Value,
         headers: &[Header],
         body: &[u8],
@@ -424,11 +432,13 @@ impl HostPlugin for IngressRouting {
         if !interfaces.contains("wamn", "ingress", &["routing"]) {
             return Ok(());
         }
-        if let Some(routes) =
-            crate::application::WorkloadRoutes::read(&item.local_resources().config)?
+        if let Some(application) = crate::application::bind_application_config(&self.scopes, item)?
         {
+            let routes = crate::application::WorkloadRoutes::read(
+                &item.local_resources().config,
+                application,
+            )?;
             self.scopes.bind_routes(item.id(), Arc::new(routes));
-            self.scopes.bind_workload(item.id(), item.workload_id());
         }
         add_to_linker(item.linker()?)?;
         Ok(())
@@ -456,7 +466,7 @@ impl<T: 'static + Send> routing::HostWithStore<T> for SharedCtx {
     ) -> wash_runtime::wasmtime::Result<Result<Option<Resource<AuthenticatedCaller>>, AuthRejection>>
     {
         let Ok(attachment_id) =
-            attachment_id.parse::<wamn_catalog::canonical_name::CanonicalName>()
+            attachment_id.parse::<wamn_package::canonical_name::CanonicalName>()
         else {
             return Ok(Err(authentication_unavailable()));
         };
@@ -604,7 +614,7 @@ mod tests {
         };
         assert!(!stored.permits("wamn-control:role/create@0.9.0"));
         assert_eq!(
-            wamn_catalog::sealed_operation_reference("platform-fixture:widget/get@1.0.0"),
+            wamn_package::sealed_operation_reference("platform-fixture:widget/get@1.0.0"),
             "platform-fixture:widget/get"
         );
         assert_eq!(caller.credential_type(), CredentialType::Pat);

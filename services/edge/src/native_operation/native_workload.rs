@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use anyhow::Context as _;
-use wamn_catalog::AdmittedComponent;
+use wamn_component_policy::AdmittedComponent;
 use wamn_digest::bytes_sha256;
 use wash_runtime::engine::Engine;
 use wash_runtime::engine::InstancePolicy;

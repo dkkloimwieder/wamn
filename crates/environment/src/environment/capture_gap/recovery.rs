@@ -1,6 +1,7 @@
 //! Repair lost replication slots and record operator resynchronization.
 //! Recovery keeps the reader stopped. Control restarts it after closing the gap.
 
+use wamn_registry::lifecycle_lock::LifecycleLock;
 use super::plan::pg_lsn;
 use sqlx::PgConnection as Client;
 use sqlx::Row as _;
@@ -10,7 +11,6 @@ use async_nats::header::NATS_MESSAGE_ID;
 use async_nats::jetstream::stream::RawMessageErrorKind;
 use chrono::{DateTime, Utc};
 
-use wamn_catalog::lifecycle_lock::LifecycleLock;
 use wamn_event::{SourceEvent, verified_source_event_id};
 use wamn_provision::{cdc_object_name, project_env_database_name, sql, validate_project_env_cdc};
 use wamn_registry::Triple;

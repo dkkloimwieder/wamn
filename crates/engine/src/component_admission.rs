@@ -3,12 +3,13 @@
 use anyhow::Context as _;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
-use wamn_catalog::canonical_name::CanonicalName;
+use wamn_package::canonical_name::CanonicalName;
 
-use wamn_catalog::{
-    AdmittedComponentEffect, ComponentDeclaration, ComponentDescriptor, ComponentEffectProvenance,
+use wamn_component_policy::{
+    AdmittedComponentEffect, ComponentDescriptor, ComponentEffectProvenance,
     normalize_component_fact,
 };
+use wamn_package::ComponentDeclaration;
 use wash_runtime::engine::Engine;
 use wash_runtime::wasmtime::component::Component;
 use wash_runtime::wasmtime::component::types::ComponentItem;
@@ -204,7 +205,7 @@ pub fn validate_component_admission(
             source,
         )
     })?;
-    let handler = component_type.get_export(raw, wamn_catalog::DATA_CHANGE_EXPORT);
+    let handler = component_type.get_export(raw, wamn_package::DATA_CHANGE_EXPORT);
     if request.declaration.data_change != handler.is_some() {
         return Err(ComponentAdmissionError::new(
             ComponentAdmissionErrorType::OperationExportMismatch,
@@ -214,7 +215,11 @@ pub fn validate_component_admission(
     }
     if let Some(handler) = handler {
         validate_data_change_signature(raw, handler.ty).map_err(|error| {
-            operation_signature_mismatch(component_name.as_str(), wamn_catalog::DATA_CHANGE_EXPORT, error)
+            operation_signature_mismatch(
+                component_name.as_str(),
+                wamn_package::DATA_CHANGE_EXPORT,
+                error,
+            )
         })?;
     }
     let declared_exports: BTreeSet<_> = request.declaration.operations.keys().cloned().collect();
@@ -239,7 +244,7 @@ pub fn validate_component_admission(
     let extra: Vec<_> = byte_exports
         .difference(&declared_exports)
         .filter(|export| {
-            export.as_str() != wamn_catalog::DATA_CHANGE_EXPORT
+            export.as_str() != wamn_package::DATA_CHANGE_EXPORT
                 && !embedded.exports.contains(export.as_str())
         })
         .cloned()
@@ -399,7 +404,7 @@ fn owned_operation_value(ty: &wash_runtime::wasmtime::component::Type) -> bool {
 
 /// Whether an import is a cross-package APPLICATION call rather than a
 /// platform import -- the same question, keyed on the same platform
-/// import registry, as `wamn_catalog`'s classifier of the same name.
+/// import registry, as `wamn_component_policy`'s classifier of the same name.
 ///
 /// This copy kept the namespace heuristic ("not `wasi` and not `wamn` ⇒ an
 /// application call") after the catalog's was moved onto the registry, so the
@@ -445,7 +450,7 @@ fn operation_signature_mismatch(
 /// A dependency contributes its PACKAGE and no interface, so its fact carries
 /// the INHERITED provenance and the audited-imports test stays with the
 /// IMPORTED one. The interface this component imports is the dependency
-/// operation itself, and `wamn_catalog` excludes an operation-dependency
+/// operation itself, and `wamn_component_policy` excludes an operation-dependency
 /// import from the effect interfaces by rule. The package never collides with
 /// a platform package: an operation dependency is by construction an
 /// unregistered package.
@@ -573,7 +578,7 @@ mod tests {
     }
 
     use serde_json::json;
-    use wamn_catalog::{
+    use wamn_package::{
         ComponentOperationDeclaration, ComponentParameterDeclaration, ComponentPortDeclaration,
     };
     use wit_component::{ComponentEncoder, StringEncoding, dummy_module, embed_component_metadata};
@@ -707,7 +712,7 @@ mod tests {
             declaration: ComponentDeclaration {
                 data_change: false,
                 connections: Vec::new(),
-                target: wamn_catalog::PackageCoordinate::new(
+                target: wamn_package::PackageCoordinate::new(
                     "orders".parse().unwrap(),
                     "1.0.0".parse().unwrap(),
                 )
@@ -1216,13 +1221,13 @@ mod tests {
             "wamn:postgres".to_string(),
             "wamn:connection".to_string(),
         ]);
-        request.declaration.connections = vec![wamn_catalog::ComponentConnection {
+        request.declaration.connections = vec![wamn_package::ComponentConnection {
             store_alias: "erp"
-                .parse::<wamn_catalog::canonical_name::CanonicalName>()
+                .parse::<wamn_package::canonical_name::CanonicalName>()
                 .unwrap()
                 .into(),
-            requirement_type: wamn_catalog::ComponentConnectionType::Http,
-            mode: wamn_catalog::ConnectionMode::Write,
+            requirement_type: wamn_package::ComponentConnectionType::Http,
+            mode: wamn_package::ConnectionMode::Write,
         }];
 
         let facts = validate_component_admission(&engine, &bytes, request)

@@ -1,15 +1,13 @@
 use super::{BTreeMap, Deserialize, EnvironmentApplications, Serialize, Triple, ensure, fmt};
 use anyhow::Context as _;
+use wamn_registry::configuration::EnvironmentSettings;
 
 /// One environment document.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EnvironmentDocument {
-    pub org: wamn_registry::OrgId,
-    pub project: wamn_registry::ProjectId,
-    pub env: wamn_registry::EnvName,
-    /// The immutable deployment target name.
-    pub target: String,
+    #[serde(flatten)]
+    pub settings: EnvironmentSettings,
     /// Time to wait for changes to control administration.
     #[serde(default = "default_readiness_budget_seconds")]
     pub readiness_budget_seconds: i32,
@@ -19,16 +17,12 @@ pub struct EnvironmentDocument {
     /// Grant cache lifetime from deploy input; absent in applied registry settings.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub revocation_seconds: Option<u32>,
-    #[serde(default)]
-    pub schema: Schema,
     /// Application name to its selection and membership.
     #[serde(deserialize_with = "read_applications")]
-    pub applications: BTreeMap<wamn_catalog::ApplicationName, ApplicationSelection>,
-    #[serde(default)]
-    pub integrations: BTreeMap<String, Integration>,
+    pub applications: BTreeMap<wamn_registry::ApplicationName, ApplicationSelection>,
 }
 
-pub use wamn_catalog::configuration::{
+pub use wamn_registry::configuration::{
     Client, ConnectionReference, Integration, Schema, SchemaMode,
 };
 
@@ -48,12 +42,12 @@ pub struct ApplicationSelection {
     pub client: Option<Client>,
     /// Transient membership from the verified release manifest.
     #[serde(skip)]
-    pub packages: std::collections::BTreeSet<wamn_catalog::PackageName>,
+    pub packages: std::collections::BTreeSet<wamn_package::PackageName>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub connections: BTreeMap<String, ConnectionReference>,
 }
 
-impl From<ApplicationSelection> for wamn_catalog::ApplicationDefinition {
+impl From<ApplicationSelection> for wamn_registry::ApplicationDefinition {
     fn from(application: ApplicationSelection) -> Self {
         Self {
             packages: application.packages,
@@ -68,9 +62,9 @@ impl From<ApplicationSelection> for wamn_catalog::ApplicationDefinition {
 
 fn read_applications<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
-) -> Result<BTreeMap<wamn_catalog::ApplicationName, ApplicationSelection>, D::Error> {
+) -> Result<BTreeMap<wamn_registry::ApplicationName, ApplicationSelection>, D::Error> {
     let values =
-        BTreeMap::<wamn_catalog::ApplicationName, serde_json::Value>::deserialize(deserializer)?;
+        BTreeMap::<wamn_registry::ApplicationName, serde_json::Value>::deserialize(deserializer)?;
     values
         .into_iter()
         .map(|(name, value)| {
@@ -127,11 +121,14 @@ impl EnvironmentDocument {
     /// Resolve an omitted mode from the stored designation, never from a name or version.
     /// An absent environment record preserves data.
     pub fn schema_mode(&self, disposable: Option<bool>) -> SchemaMode {
-        self.schema.mode.unwrap_or(if disposable == Some(true) {
-            SchemaMode::Reset
-        } else {
-            SchemaMode::Migrate
-        })
+        self.settings
+            .schema
+            .mode
+            .unwrap_or(if disposable == Some(true) {
+                SchemaMode::Reset
+            } else {
+                SchemaMode::Migrate
+            })
     }
 
     /// Read a document from its JSON form and require_valid every field.
@@ -150,23 +147,27 @@ impl EnvironmentDocument {
     }
 
     pub(super) fn require_valid(&self) -> anyhow::Result<()> {
-        wamn_provision::validate_project_env(&self.org, &self.project, &self.env)
-            .context("the environment coordinate is not valid")?;
+        wamn_provision::validate_project_env(
+            &self.settings.org,
+            &self.settings.project,
+            &self.settings.env,
+        )
+        .context("the environment coordinate is not valid")?;
         require_settings(
-            &self.target,
+            &self.settings.target,
             self.readiness_budget_seconds,
             self.drain_bound_seconds,
             self.revocation_seconds,
-            &self.integrations,
+            &self.settings.integrations,
         )?;
-        require_applications(&self.applications, &self.integrations)
+        require_applications(&self.applications, &self.settings.integrations)
     }
 
     /// Find the sole application that owns a package.
     pub fn application_for_package(
         &self,
-        package: &wamn_catalog::PackageName,
-    ) -> Option<&wamn_catalog::ApplicationName> {
+        package: &wamn_package::PackageName,
+    ) -> Option<&wamn_registry::ApplicationName> {
         let mut owners = self
             .applications
             .iter()
@@ -183,7 +184,7 @@ impl EnvironmentDocument {
             .map(|(name, application)| {
                 (
                     name.clone(),
-                    wamn_catalog::ApplicationDefinition {
+                    wamn_registry::ApplicationDefinition {
                         packages: application.packages.clone(),
                         connections: application
                             .connections
@@ -198,7 +199,11 @@ impl EnvironmentDocument {
 
     /// The coordinate.
     pub fn triple(&self) -> Triple {
-        Triple::new(self.org.clone(), self.env.clone(), self.project.clone())
+        Triple::new(
+            self.settings.org.clone(),
+            self.settings.env.clone(),
+            self.settings.project.clone(),
+        )
     }
 }
 
@@ -233,7 +238,7 @@ pub(super) fn require_settings(
     );
     for (name, integration) in integrations {
         ensure!(
-            wamn_catalog::configuration::valid_connection_name(name) && integration.version > 0,
+            wamn_registry::configuration::valid_connection_name(name) && integration.version > 0,
             "integration {name} requires a valid connection name and positive version"
         );
     }
@@ -241,7 +246,7 @@ pub(super) fn require_settings(
 }
 
 pub(super) fn require_applications(
-    applications: &BTreeMap<wamn_catalog::ApplicationName, ApplicationSelection>,
+    applications: &BTreeMap<wamn_registry::ApplicationName, ApplicationSelection>,
     integrations: &BTreeMap<String, Integration>,
 ) -> anyhow::Result<()> {
     for (name, application) in applications {

@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 use wamn_authority::effect_span::{EffectEvidence, EffectSource, EffectWiring};
-use wamn_catalog::application_config::{ApplicationConfig, ApplicationConnection};
+use wamn_engine::application_config::{ApplicationConfig, ApplicationConnection};
 
 /// Host-attested identity of one component invocation.
 ///
@@ -14,10 +14,10 @@ use wamn_catalog::application_config::{ApplicationConfig, ApplicationConnection}
 pub struct ConnectionInvocation {
     /// Where the invocation entered the release, unchanged by nested calls.
     pub entry: InvocationEntry,
-    pub package_id: wamn_catalog::PackageName,
+    pub package_id: wamn_package::PackageName,
     pub component_digest: wamn_digest::Digest,
-    pub component: wamn_catalog::canonical_name::CanonicalName,
-    pub operation: Option<wamn_catalog::canonical_name::CanonicalName>,
+    pub component: wamn_package::canonical_name::CanonicalName,
+    pub operation: Option<wamn_package::canonical_name::CanonicalName>,
     pub closure: ConnectionExecutionClosure,
     /// Optional bounded failure evidence owned by this invocation.
     pub effects: Option<EffectEvidence>,
@@ -28,7 +28,7 @@ impl ConnectionInvocation {
     pub fn connection<'a>(
         &self,
         application: &'a ApplicationConfig,
-        alias: &wamn_catalog::canonical_name::CanonicalName,
+        alias: &wamn_package::canonical_name::CanonicalName,
     ) -> Option<&'a ApplicationConnection> {
         let component = application.components.iter().find(|component| {
             component.package == self.package_id
@@ -44,13 +44,13 @@ impl ConnectionInvocation {
             }
             _ => return None,
         }
-        wamn_catalog::application_config::binding(application, &component.name, alias.as_str())
+        wamn_engine::application_config::binding(application, &component.name, alias.as_str())
     }
 
     /// Build call authority from the configured operation and its exact sibling.
     pub fn for_operation(
         application: &ApplicationConfig,
-        operation: &wamn_catalog::canonical_name::CanonicalName,
+        operation: &wamn_package::canonical_name::CanonicalName,
     ) -> anyhow::Result<Self> {
         use anyhow::Context as _;
         let (component, policy) = application
@@ -67,7 +67,7 @@ impl ConnectionInvocation {
             component.name == policy.component,
             "operation component disagrees"
         );
-        let name: wamn_catalog::canonical_name::CanonicalName = component.name.parse()?;
+        let name: wamn_package::canonical_name::CanonicalName = component.name.parse()?;
         Ok(Self {
             entry: InvocationEntry::Route,
             package_id: component.package.clone(),
@@ -134,13 +134,13 @@ pub struct WiringPosition {
     /// The immutable graph hash frozen on the run.
     pub wiring_hash: wamn_digest::Digest,
     /// The application that owns the wiring.
-    pub application: wamn_catalog::ApplicationName,
-    pub wiring_id: wamn_catalog::canonical_name::CanonicalName,
+    pub application: wamn_registry::ApplicationName,
+    pub wiring_id: wamn_package::canonical_name::CanonicalName,
     pub wiring_version: u32,
-    pub node_id: wamn_catalog::canonical_name::CanonicalName,
+    pub node_id: wamn_package::canonical_name::CanonicalName,
     pub occurrence: u32,
     pub configuration: Arc<
-        std::collections::BTreeMap<wamn_catalog::canonical_name::CanonicalName, serde_json::Value>,
+        std::collections::BTreeMap<wamn_package::canonical_name::CanonicalName, serde_json::Value>,
     >,
 }
 

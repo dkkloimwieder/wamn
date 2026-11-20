@@ -1,0 +1,1525 @@
+//! Pure component facts produced by byte admission.
+
+use wamn_package::canonical_name::CanonicalName;
+
+use std::collections::{BTreeMap, BTreeSet};
+use std::fmt;
+
+use boon::{Compiler, Draft, Schemas};
+use serde::{Deserialize, Deserializer, Serialize};
+use serde_json::Value;
+
+use wamn_package::{
+    ComponentConnection, ComponentConnectionAlias, ComponentConnectionType, ComponentDeclaration,
+    ComponentParameterDeclaration, ComponentPortDeclaration, PackageCoordinate,
+    PackageIdentityError, validate_canonical_operation_for_package,
+};
+
+/// Every connection type. A new variant does not compile until it is listed.
+const CONNECTION_TYPES: [ComponentConnectionType; 2] = [
+    ComponentConnectionType::Http,
+    ComponentConnectionType::Blobstore,
+];
+
+/// Separate the package identity used for admission from the deployment target.
+pub fn split_target(
+    declaration: ComponentDeclaration<ComponentPackageCoordinate>,
+) -> (ComponentDeclaration, ComponentPackageCoordinate) {
+    let package = PackageCoordinate::new(
+        declaration.target.package_id.clone(),
+        declaration.target.package_version.clone(),
+    )
+    .expect("valid package coordinate");
+    let ComponentDeclaration {
+        data_change,
+        target,
+        component,
+        interface_version,
+        operations,
+        connections,
+    } = declaration;
+    (
+        ComponentDeclaration {
+            data_change,
+            target: package,
+            component,
+            interface_version,
+            operations,
+            connections,
+        },
+        target,
+    )
+}
+fn validate_alias(alias: &ComponentConnectionAlias) -> Result<(), ComponentFactError> {
+    let name = match alias {
+        ComponentConnectionAlias::Name(name) => name,
+        ComponentConnectionAlias::Configuration { parameter } => parameter,
+    };
+    if name == "__STORE_ALIAS__" {
+        return Err(ComponentFactError::new(
+            ComponentFactErrorType::NonCanonicalIdentity,
+            "connection alias placeholders are not declarations",
+        ));
+    }
+    Ok(())
+}
+
+const JSON_SCHEMA_2020_12: &str = "https://json-schema.org/draft/2020-12/schema";
+const SCHEMA_URI: &str = "mem://wamn-component-schema.json";
+
+/// Package coordinate that owns an admitted component.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ComponentPackageCoordinate {
+    pub project_env_key: wamn_registry::ProjectEnvKey,
+    pub package_id: wamn_package::PackageName,
+    pub package_version: wamn_package::package_version::PackageVersion,
+}
+
+impl ComponentPackageCoordinate {
+    pub fn new(
+        project_env_key: &wamn_registry::ProjectEnvKey,
+        package_id: wamn_package::PackageName,
+        package_version: wamn_package::package_version::PackageVersion,
+    ) -> Result<Self, PackageIdentityError> {
+        let project_env_key = project_env_key.clone();
+        Ok(Self {
+            project_env_key,
+            package_id,
+            package_version,
+        })
+    }
+}
+
+impl Serialize for ComponentPackageCoordinate {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct as _;
+        let mut target = serializer.serialize_struct("ComponentPackageCoordinate", 3)?;
+        target.serialize_field("project_env_key", &self.project_env_key)?;
+        target.serialize_field("package-id", &self.package_id)?;
+        target.serialize_field("package-version", &self.package_version)?;
+        target.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for ComponentPackageCoordinate {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct Fields;
+        impl<'input> serde::de::Visitor<'input> for Fields {
+            type Value = std::collections::BTreeMap<String, String>;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a component target")
+            }
+
+            fn visit_map<M>(self, mut map: M) -> Result<Self::Value, M::Error>
+            where
+                M: serde::de::MapAccess<'input>,
+            {
+                let mut fields = std::collections::BTreeMap::new();
+                while let Some((name, value)) = map.next_entry::<String, String>()? {
+                    match fields.entry(name) {
+                        std::collections::btree_map::Entry::Vacant(entry) => {
+                            entry.insert(value);
+                        }
+                        std::collections::btree_map::Entry::Occupied(entry) => {
+                            return Err(serde::de::Error::custom(format!(
+                                "duplicate field `{}`",
+                                entry.key()
+                            )));
+                        }
+                    }
+                }
+                Ok(fields)
+            }
+        }
+        let mut fields = deserializer.deserialize_map(Fields)?;
+        let mut take = |name| {
+            fields
+                .remove(name)
+                .ok_or_else(|| serde::de::Error::missing_field(name))
+        };
+        let project_env_key = take("project_env_key")?
+            .parse()
+            .map_err(serde::de::Error::custom)?;
+        let package_id = take("package-id")?;
+        let package_version = take("package-version")?
+            .parse()
+            .map_err(serde::de::Error::custom)?;
+        if let Some(name) = fields.keys().next() {
+            return Err(serde::de::Error::unknown_field(
+                name,
+                &["project_env_key", "package-id", "package-version"],
+            ));
+        }
+        Self::new(
+            &project_env_key,
+            package_id.parse().map_err(serde::de::Error::custom)?,
+            package_version,
+        )
+        .map_err(serde::de::Error::custom)
+    }
+}
+
+/// A compiled-valid JSON Schema document.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct ComponentSchema {
+    pub schema: Value,
+}
+
+/// One normalized admitted input or output port.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct AdmittedComponentPort {
+    pub name: CanonicalName,
+    pub schema: ComponentSchema,
+}
+
+/// One normalized admitted component parameter.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct AdmittedComponentParameter {
+    pub name: CanonicalName,
+    pub schema: ComponentSchema,
+    pub required: bool,
+}
+
+/// One authority leaving the host, with the provenance that shows it.
+///
+/// Effects are a projection of the closure, never a second declaration: an
+/// author cannot declare fewer effects than the closure reaches, and an empty
+/// list is the positive statement that the occurrence is pure.
+///
+/// An effect comes from this component's own audited imports, and
+/// `interfaces` names them. A composed base is inside these bytes, so its
+/// imports are this component's imports.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct AdmittedComponentEffect {
+    pub package: CanonicalName,
+    pub provenance: ComponentEffectProvenance,
+    pub interfaces: Vec<String>,
+}
+
+/// What shows one effect fact.
+///
+/// The platform import registry classifies an import by posture, and it is
+/// package-grain and declared. This classifies an effect by provenance on the
+/// same grain.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ComponentEffectProvenance {
+    /// This component's audited imports show the effect, and `interfaces`
+    /// names them.
+    Imported,
+}
+
+/// One normalized operation exported by an admitted component.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct AdmittedComponentOperation {
+    /// Explicit application permission identity. Never inferred from the key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub registered_operation: Option<wamn_package::registered_operation::RegisteredOperation>,
+    /// The admitted success schema for this registered command's committed result.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub committed_result_schema: Option<ComponentSchema>,
+    /// Whether the host begins the request element transaction this export works in: the
+    /// package manifest's `transaction = explicit_per_input` on a command, or a
+    /// generated create, update or delete, or a SQL event handler. Bound from the manifest at
+    /// admission, never authored in a declaration.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub host_transaction: bool,
+    pub input_ports: Vec<AdmittedComponentPort>,
+    pub output_ports: Vec<AdmittedComponentPort>,
+    pub parameters: Vec<AdmittedComponentParameter>,
+}
+
+/// An admitted component with its deployment coordinate.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct AdmittedComponent {
+    /// The component bytes export the data change handler contract.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub data_change: bool,
+    pub target: ComponentPackageCoordinate,
+    pub component: CanonicalName,
+    pub interface_version: CanonicalName,
+    pub operations: BTreeMap<CanonicalName, AdmittedComponentOperation>,
+    pub component_digest: wamn_digest::Digest,
+    pub imports: Vec<String>,
+    pub imports_fingerprint: wamn_digest::Digest,
+    pub effects: Vec<AdmittedComponentEffect>,
+}
+
+impl AdmittedComponent {
+    /// Resolve one exact operation export without inferring authorization.
+    pub fn operation(&self, operation: &CanonicalName) -> Option<&AdmittedComponentOperation> {
+        self.operations.get(operation)
+    }
+}
+
+/// The deployed component and its portable connection requirements.
+///
+/// The two halves land in two relations — the library row and the portable
+/// connection requirements keyed by `(component-digest, store-alias)` — so they
+/// are returned together rather than persisted from two independent decisions.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AdmittedComponentFacts {
+    pub component: AdmittedComponent,
+    pub connections: Vec<ComponentConnection>,
+}
+
+/// Fingerprint of the imported interfaces.
+fn imports_fingerprint(imports: &[String]) -> wamn_digest::Digest {
+    wamn_digest::canonical_json_sha256(
+        &serde_json::to_value(imports).expect("a string list serializes"),
+    )
+}
+
+/// The admitted facts of one component as a package artifact carries them
+/// (docs/operations/building.md#reading-a-pushed-package, contract A): an [`AdmittedComponent`]
+/// without its target, plus its connections. A package artifact is project-free,
+/// so the reader supplies the target.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct ComponentDescriptor {
+    /// The component bytes export the data change handler contract.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub data_change: bool,
+    pub component: CanonicalName,
+    pub interface_version: CanonicalName,
+    pub component_digest: wamn_digest::Digest,
+    pub operations: BTreeMap<CanonicalName, AdmittedComponentOperation>,
+    pub imports: Vec<String>,
+    pub imports_fingerprint: wamn_digest::Digest,
+    pub effects: Vec<AdmittedComponentEffect>,
+    pub connections: Vec<ComponentConnection>,
+}
+
+impl ComponentDescriptor {
+    /// Check the stored admission against its package and audited imports.
+    pub fn verify_projection(
+        &self,
+        package: &wamn_package::PackageName,
+        version: &wamn_package::package_version::PackageVersion,
+    ) -> Result<(), ComponentFactError> {
+        verify_projection(
+            package,
+            version,
+            self.data_change,
+            &self.operations,
+            &self.imports,
+            &self.effects,
+        )
+    }
+
+    /// The descriptor of `component`. Its target is dropped.
+    pub fn new(component: AdmittedComponent, connections: Vec<ComponentConnection>) -> Self {
+        Self {
+            component: component.component,
+            interface_version: component.interface_version,
+            component_digest: component.component_digest,
+            operations: component.operations,
+            imports: component.imports,
+            imports_fingerprint: component.imports_fingerprint,
+            effects: component.effects,
+            data_change: component.data_change,
+            connections,
+        }
+    }
+
+    /// A descriptor of `component` with no operation, import, effect or
+    /// connection, for a test manifest.
+    #[cfg(feature = "test-util")]
+    pub fn named(
+        component: CanonicalName,
+        interface_version: CanonicalName,
+        component_digest: wamn_digest::Digest,
+    ) -> Self {
+        Self {
+            component,
+            interface_version,
+            component_digest,
+            operations: BTreeMap::new(),
+            imports: Vec::new(),
+            imports_fingerprint: imports_fingerprint(&[]),
+            effects: Vec::new(),
+            data_change: false,
+            connections: Vec::new(),
+        }
+    }
+
+    /// The admitted facts of this descriptor in `target`.
+    pub fn into_admitted(self, target: ComponentPackageCoordinate) -> AdmittedComponentFacts {
+        AdmittedComponentFacts {
+            component: AdmittedComponent {
+                target,
+                component: self.component,
+                interface_version: self.interface_version,
+                operations: self.operations,
+                component_digest: self.component_digest,
+                imports: self.imports,
+                imports_fingerprint: self.imports_fingerprint,
+                effects: self.effects,
+                data_change: self.data_change,
+            },
+            connections: self.connections,
+        }
+    }
+}
+
+/// Stable classification for component-fact normalization refusal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ComponentFactErrorType {
+    EmptyOperationSet,
+    NonCanonicalIdentity,
+    RegisteredOperationMismatch,
+    OperationDependencyMismatch,
+    DuplicateInputPort,
+    DuplicateOutputPort,
+    DuplicateParameter,
+    InvalidSchema,
+    RemoteSchemaReference,
+    UnimportedEffect,
+    UnprojectedEffect,
+    DuplicateConnection,
+    UnimportedConnection,
+    UndeclaredConnection,
+}
+
+/// Refusal to build a complete normalized component fact.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ComponentFactError {
+    type_: ComponentFactErrorType,
+    detail: Box<str>,
+}
+
+impl ComponentFactError {
+    /// Stable refusal class for callers that must not match display text.
+    pub fn error_type(&self) -> ComponentFactErrorType {
+        self.type_
+    }
+
+    fn new(type_: ComponentFactErrorType, detail: impl Into<Box<str>>) -> Self {
+        Self {
+            type_,
+            detail: detail.into(),
+        }
+    }
+}
+
+impl fmt::Display for ComponentFactError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.detail)
+    }
+}
+
+impl std::error::Error for ComponentFactError {}
+
+/// Normalize one byte-verified component declaration for catalog persistence.
+///
+/// `imports` and `effects` are both derived from the exact bytes by the caller
+/// that audited them; this function re-tests that every effect interface is
+/// one of those imports, and that declared connections and effect-bearing
+/// imports account for each other in both directions.
+pub fn normalize_component_fact(
+    declaration: ComponentDeclaration,
+    component_digest: wamn_digest::Digest,
+    imports: impl IntoIterator<Item = String>,
+    effects: Vec<AdmittedComponentEffect>,
+) -> Result<ComponentDescriptor, ComponentFactError> {
+    if declaration.operations.is_empty() && !declaration.data_change {
+        return Err(ComponentFactError::new(
+            ComponentFactErrorType::EmptyOperationSet,
+            "component operations must not be empty",
+        ));
+    }
+
+    let mut operations = BTreeMap::new();
+    for (export, operation) in declaration.operations {
+        validate_registered_operation_target(
+            declaration.target.package_id(),
+            declaration.target.package_version(),
+            &export,
+            operation.registered_operation.as_ref(),
+        )?;
+        let committed_result_schema = operation
+            .committed_result_schema
+            .map(|schema| normalize_schema(schema, "committed-result"))
+            .transpose()?;
+        validate_committed_result_schema(
+            operation.registered_operation.as_ref(),
+            committed_result_schema.as_ref(),
+        )?;
+        let input_ports = normalize_ports(
+            operation.input_ports,
+            ComponentFactErrorType::DuplicateInputPort,
+            "input-port",
+        )?;
+        let output_ports = normalize_ports(
+            operation.output_ports,
+            ComponentFactErrorType::DuplicateOutputPort,
+            "output-port",
+        )?;
+        let parameters = normalize_parameters(operation.parameters)?;
+        operations.insert(
+            export,
+            AdmittedComponentOperation {
+                committed_result_schema,
+                registered_operation: operation.registered_operation,
+                host_transaction: false,
+                input_ports,
+                output_ports,
+                parameters,
+            },
+        );
+    }
+
+    let mut imports: Vec<_> = imports.into_iter().collect();
+    imports.sort();
+    imports.dedup();
+    let imports_fingerprint = imports_fingerprint(&imports);
+    refuse_application_operation_imports(&imports)?;
+    let effects = normalize_effects(effects, &imports)?;
+    let connections = normalize_connections(declaration.connections, &effects)?;
+
+    Ok(ComponentDescriptor {
+        data_change: declaration.data_change,
+        component: declaration.component,
+        interface_version: declaration.interface_version,
+        operations,
+        component_digest,
+        imports,
+        imports_fingerprint,
+        effects,
+        connections,
+    })
+}
+
+/// Refuse a stored component fact whose effects its own imports do not derive.
+///
+/// `effects` is a total function of the audited imports, and `imports` is the
+/// half the OCI artifact config digest attests, so re-running the admission
+/// rules over a stored pair decides whether a validator ever derived that
+/// projection — without the component bytes. A row that fails here was written
+/// by something other than the validator (wamn-0h0g.21.10: the converge ALTER
+/// that defaulted pre-existing rows to `'[]'`, the positive assertion of purity)
+/// and its component is unpublishable until it is re-admitted.
+pub fn verify_stored_effect_projection(
+    component: &AdmittedComponent,
+) -> Result<(), ComponentFactError> {
+    verify_projection(
+        &component.target.package_id,
+        &component.target.package_version,
+        component.data_change,
+        &component.operations,
+        &component.imports,
+        &component.effects,
+    )
+}
+
+fn verify_projection(
+    package: &wamn_package::PackageName,
+    version: &wamn_package::package_version::PackageVersion,
+    data_change: bool,
+    operations: &BTreeMap<CanonicalName, AdmittedComponentOperation>,
+    imports: &[String],
+    effects: &[AdmittedComponentEffect],
+) -> Result<(), ComponentFactError> {
+    if operations.is_empty() && !data_change {
+        return Err(ComponentFactError::new(
+            ComponentFactErrorType::EmptyOperationSet,
+            "component operations must not be empty",
+        ));
+    }
+    for (export, operation) in operations {
+        validate_registered_operation_target(
+            package,
+            version,
+            export,
+            operation.registered_operation.as_ref(),
+        )?;
+        validate_committed_result_schema(
+            operation.registered_operation.as_ref(),
+            operation.committed_result_schema.as_ref(),
+        )?;
+        crate::signed_file_reads(operation).map_err(|error| {
+            ComponentFactError::new(ComponentFactErrorType::InvalidSchema, error.to_string())
+        })?;
+    }
+    refuse_application_operation_imports(imports)?;
+    normalize_effects(effects.to_vec(), imports).map(|_| ())
+}
+
+fn validate_registered_operation_target(
+    package: &wamn_package::PackageName,
+    version: &wamn_package::package_version::PackageVersion,
+    export: &CanonicalName,
+    operation: Option<&wamn_package::registered_operation::RegisteredOperation>,
+) -> Result<(), ComponentFactError> {
+    let Some(operation) = operation else {
+        return Ok(());
+    };
+    validate_canonical_operation_for_package(operation, package, version).map_err(|error| {
+        ComponentFactError::new(
+            ComponentFactErrorType::NonCanonicalIdentity,
+            error.to_string(),
+        )
+    })?;
+    if operation.as_str() != export.as_str() {
+        return Err(ComponentFactError::new(
+            ComponentFactErrorType::RegisteredOperationMismatch,
+            format!("registered operation {operation:?} must equal exported operation {export:?}"),
+        ));
+    }
+    Ok(())
+}
+
+/// Refuse an application operation import. A declared dependency composes
+/// into the component bytes at build, so no application operation remains an
+/// import.
+fn refuse_application_operation_imports(imports: &[String]) -> Result<(), ComponentFactError> {
+    let extra = imports
+        .iter()
+        .map(String::as_str)
+        .filter(|import| is_application_operation_import(import))
+        .collect::<Vec<_>>();
+    if !extra.is_empty() {
+        return Err(ComponentFactError::new(
+            ComponentFactErrorType::OperationDependencyMismatch,
+            format!(
+                "declared operation dependencies differ from audited imports: missing=[], extra={extra:?}"
+            ),
+        ));
+    }
+    Ok(())
+}
+
+/// Whether an import is a cross-package APPLICATION call rather than a
+/// platform import.
+///
+/// Keyed on the platform import registry, not on a namespace. This was the LAST
+/// namespace heuristic in the tree, and §2a missed it while deleting
+/// `is_effect_package`: it read "not `wasi` and not `wamn` ⇒ an application
+/// call", which silently misclassified `wasmcloud:blobstore` as a cross-package
+/// operation dependency and made every blobstore-effect component fail its
+/// stored projection with `OperationDependencyMismatch`. §2a's assertion that
+/// interfaces carry name, shape AND posture with no second classifier was not
+/// true until this moved.
+///
+/// Matching is on the registered PACKAGE, at any version, because this asks
+/// what TYPE of import it is and type does not change with version. A
+/// `wasi:clocks` import at an unregistered version is still a platform
+/// import; refusing the version is admission's job, not this classifier's.
+fn is_application_operation_import(name: &str) -> bool {
+    !crate::is_registered_package(name)
+}
+
+/// Sort and deduplicate derived effects, pinning them to platform imports.
+///
+/// Both directions are validated: every interface an effect names is one of
+/// this component's own platform imports, and every effectful
+/// import is in the projection.
+fn normalize_effects(
+    effects: Vec<AdmittedComponentEffect>,
+    imports: &[String],
+) -> Result<Vec<AdmittedComponentEffect>, ComponentFactError> {
+    let mut normalized = Vec::with_capacity(effects.len());
+    for effect in effects {
+        let mut interfaces = effect.interfaces;
+        interfaces.sort();
+        interfaces.dedup();
+        for interface in &interfaces {
+            if !imports.iter().any(|import| import == interface) {
+                return Err(ComponentFactError::new(
+                    ComponentFactErrorType::UnimportedEffect,
+                    format!("effect interface {interface:?} is not an audited platform import"),
+                ));
+            }
+        }
+        normalized.push(AdmittedComponentEffect {
+            package: effect.package,
+            provenance: effect.provenance,
+            interfaces,
+        });
+    }
+    normalized.sort_by(|left, right| left.package.cmp(&right.package));
+    normalized.dedup_by(|left, right| left.package == right.package);
+
+    for import in imports {
+        let package = crate::import_pkg(import);
+        if crate::import_posture(import) != Some(crate::Posture::Effect) {
+            continue;
+        }
+        if !normalized.iter().any(|effect| {
+            effect.package == package
+                && effect
+                    .interfaces
+                    .iter()
+                    .any(|interface| interface == import)
+        }) {
+            return Err(ComponentFactError::new(
+                ComponentFactErrorType::UnprojectedEffect,
+                format!("audited import {import:?} is absent from the effect projection"),
+            ));
+        }
+    }
+    Ok(normalized)
+}
+
+/// Normalize declared connections against the effects the bytes actually show.
+fn normalize_connections(
+    declarations: Vec<ComponentConnection>,
+    effects: &[AdmittedComponentEffect],
+) -> Result<Vec<ComponentConnection>, ComponentFactError> {
+    let mut seen = BTreeSet::new();
+    let mut connections = Vec::with_capacity(declarations.len());
+    for declaration in declarations {
+        validate_alias(&declaration.store_alias)?;
+        if !seen.insert(declaration.store_alias.clone()) {
+            return Err(ComponentFactError::new(
+                ComponentFactErrorType::DuplicateConnection,
+                format!("store-alias {:?} is duplicated", declaration.store_alias),
+            ));
+        }
+        let package = declaration.requirement_type.import_package();
+        if !effects.iter().any(|effect| effect.package == package) {
+            return Err(ComponentFactError::new(
+                ComponentFactErrorType::UnimportedConnection,
+                format!(
+                    "store-alias {:?} requires package {package:?}, which these bytes do not import",
+                    declaration.store_alias
+                ),
+            ));
+        }
+        connections.push(declaration);
+    }
+    connections.sort_by(|left, right| left.store_alias.cmp(&right.store_alias));
+
+    // The reverse direction: connection authority nothing binds is authority
+    // the environment can never satisfy, so it is refused at admission rather
+    // than surfacing as an unresolvable effect at delivery time.
+    for connection_type in CONNECTION_TYPES {
+        let package = connection_type.import_package();
+        if effects.iter().any(|effect| effect.package == package)
+            && !connections
+                .iter()
+                .any(|connection| connection.requirement_type == connection_type)
+        {
+            return Err(ComponentFactError::new(
+                ComponentFactErrorType::UndeclaredConnection,
+                format!("package {package:?} is imported but no store-alias declares it"),
+            ));
+        }
+    }
+    Ok(connections)
+}
+
+fn normalize_ports(
+    declarations: Vec<ComponentPortDeclaration>,
+    duplicate_type: ComponentFactErrorType,
+    field: &'static str,
+) -> Result<Vec<AdmittedComponentPort>, ComponentFactError> {
+    let mut seen = BTreeSet::new();
+    let mut ports = Vec::with_capacity(declarations.len());
+    for declaration in declarations {
+        if !seen.insert(declaration.name.clone()) {
+            return Err(ComponentFactError::new(
+                duplicate_type,
+                format!("{field} {:?} is duplicated", declaration.name),
+            ));
+        }
+        ports.push(AdmittedComponentPort {
+            name: declaration.name,
+            schema: normalize_schema(declaration.schema, field)?,
+        });
+    }
+    ports.sort_by(|left, right| left.name.cmp(&right.name));
+    Ok(ports)
+}
+
+fn normalize_parameters(
+    declarations: Vec<ComponentParameterDeclaration>,
+) -> Result<Vec<AdmittedComponentParameter>, ComponentFactError> {
+    let mut seen = BTreeSet::new();
+    let mut parameters = Vec::with_capacity(declarations.len());
+    for declaration in declarations {
+        if !seen.insert(declaration.name.clone()) {
+            return Err(ComponentFactError::new(
+                ComponentFactErrorType::DuplicateParameter,
+                format!("parameter {:?} is duplicated", declaration.name),
+            ));
+        }
+        parameters.push(AdmittedComponentParameter {
+            name: declaration.name,
+            schema: normalize_schema(declaration.schema, "parameter")?,
+            required: declaration.required,
+        });
+    }
+    parameters.sort_by(|left, right| left.name.cmp(&right.name));
+    Ok(parameters)
+}
+
+pub fn validate_committed_result_schema(
+    registered_operation: Option<&wamn_package::registered_operation::RegisteredOperation>,
+    schema: Option<&ComponentSchema>,
+) -> Result<(), ComponentFactError> {
+    let Some(schema) = schema else {
+        return Ok(());
+    };
+    if registered_operation.is_none() {
+        return Err(ComponentFactError::new(
+            ComponentFactErrorType::RegisteredOperationMismatch,
+            "only a registered operation can declare a committed result",
+        ));
+    }
+    normalize_schema(schema.schema.clone(), "committed-result")?;
+    Ok(())
+}
+
+pub(crate) fn normalize_schema(
+    schema: Value,
+    field: &str,
+) -> Result<ComponentSchema, ComponentFactError> {
+    if let Some(declared) = schema.get("$schema")
+        && declared.as_str() != Some(JSON_SCHEMA_2020_12)
+    {
+        return Err(ComponentFactError::new(
+            ComponentFactErrorType::InvalidSchema,
+            format!("{field} schema must use JSON Schema draft 2020-12"),
+        ));
+    }
+    if has_remote_ref(&schema) {
+        return Err(ComponentFactError::new(
+            ComponentFactErrorType::RemoteSchemaReference,
+            format!("{field} schema may only use document-local references"),
+        ));
+    }
+
+    let mut compiler = Compiler::new();
+    compiler.set_default_draft(Draft::V2020_12);
+    compiler
+        .add_resource(SCHEMA_URI, schema.clone())
+        .map_err(|error| {
+            ComponentFactError::new(
+                ComponentFactErrorType::InvalidSchema,
+                format!("{field} schema is invalid: {error}"),
+            )
+        })?;
+    let mut schemas = Schemas::new();
+    compiler
+        .compile(SCHEMA_URI, &mut schemas)
+        .map_err(|error| {
+            ComponentFactError::new(
+                ComponentFactErrorType::InvalidSchema,
+                format!("{field} schema is invalid: {error}"),
+            )
+        })?;
+
+    Ok(ComponentSchema { schema })
+}
+
+fn has_remote_ref(value: &Value) -> bool {
+    match value {
+        Value::Array(values) => values.iter().any(has_remote_ref),
+        Value::Object(values) => values.iter().any(|(key, value)| {
+            (key == "$ref"
+                && value
+                    .as_str()
+                    .is_none_or(|reference| !reference.starts_with('#')))
+                || has_remote_ref(value)
+        }),
+        _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+    use wamn_package::{ComponentOperationDeclaration, ConnectionMode};
+
+    use super::*;
+
+    fn declaration() -> ComponentDeclaration {
+        ComponentDeclaration {
+            data_change: false,
+            connections: Vec::new(),
+            target: PackageCoordinate::new("orders".parse().unwrap(), "1.2.0".parse().unwrap())
+                .unwrap(),
+            component: "transform".parse().unwrap(),
+            interface_version: "0.1.0".parse().unwrap(),
+            operations: BTreeMap::from([(
+                "map".parse().unwrap(),
+                ComponentOperationDeclaration {
+                    committed_result_schema: None,
+                    registered_operation: None,
+                    input_ports: vec![ComponentPortDeclaration {
+                        name: "input".parse().unwrap(),
+                        schema: json!({
+                            "$schema": JSON_SCHEMA_2020_12,
+                            "type": "object",
+                            "required": ["id"],
+                            "properties": {"id": {"type": "string"}}
+                        }),
+                    }],
+                    output_ports: vec![ComponentPortDeclaration {
+                        name: "main".parse().unwrap(),
+                        schema: json!({"type": "object"}),
+                    }],
+                    parameters: vec![ComponentParameterDeclaration {
+                        name: "mapping".parse().unwrap(),
+                        schema: json!({"type": "object"}),
+                        required: true,
+                    }],
+                },
+            )]),
+        }
+    }
+
+    fn operation_mut(declaration: &mut ComponentDeclaration) -> &mut ComponentOperationDeclaration {
+        declaration
+            .operations
+            .get_mut("map")
+            .expect("map operation")
+    }
+
+    fn postgres_effect() -> AdmittedComponentEffect {
+        AdmittedComponentEffect {
+            package: "wamn:postgres".parse().unwrap(),
+            provenance: ComponentEffectProvenance::Imported,
+            interfaces: vec!["wamn:postgres/client@0.1.0".to_string()],
+        }
+    }
+
+    fn deployment() -> ComponentPackageCoordinate {
+        ComponentPackageCoordinate {
+            project_env_key: "org-a--dev--project".parse().unwrap(),
+            package_id: "orders".parse().unwrap(),
+            package_version: "1.2.0".parse().unwrap(),
+        }
+    }
+
+    #[test]
+    fn normalization_is_sorted_and_carries_every_component_owned_fact() {
+        let facts = normalize_component_fact(
+            declaration(),
+            (format!("sha256:{}", "a".repeat(64)))
+                .parse::<wamn_digest::Digest>()
+                .unwrap(),
+            [
+                "wasi:io/streams@0.2.3".to_string(),
+                "wamn:postgres/client@0.1.0".to_string(),
+            ],
+            vec![postgres_effect()],
+        )
+        .expect("component fact normalizes")
+        .into_admitted(deployment());
+        let fact = facts.component;
+
+        assert_eq!(fact.target.package_version, "1.2.0".parse().unwrap());
+        let operation = fact
+            .operation(&"map".parse().unwrap())
+            .expect("map operation is admitted");
+        assert_eq!(operation.registered_operation, None);
+        assert_eq!(operation.input_ports[0].name, "input");
+        assert_eq!(operation.output_ports[0].name, "main");
+        assert!(operation.parameters[0].required);
+        assert_eq!(
+            fact.component_digest,
+            (format!("sha256:{}", "a".repeat(64)))
+                .parse::<wamn_digest::Digest>()
+                .unwrap()
+        );
+        assert_eq!(fact.imports.len(), 2);
+        assert_eq!(fact.effects, vec![postgres_effect()]);
+        assert!(facts.connections.is_empty());
+    }
+
+    #[test]
+    fn a_component_descriptor_drops_the_target_and_the_reader_supplies_it() {
+        let facts = normalize_component_fact(
+            declaration(),
+            (format!("sha256:{}", "a".repeat(64)))
+                .parse::<wamn_digest::Digest>()
+                .unwrap(),
+            ["wamn:postgres/client@0.1.0".to_string()],
+            vec![postgres_effect()],
+        )
+        .expect("component fact normalizes")
+        .into_admitted(deployment());
+        let connections = vec![ComponentConnection {
+            store_alias: "labels"
+                .parse::<wamn_package::canonical_name::CanonicalName>()
+                .unwrap()
+                .into(),
+            requirement_type: ComponentConnectionType::Blobstore,
+            mode: ConnectionMode::Write,
+        }];
+        let descriptor = ComponentDescriptor::new(facts.component.clone(), connections.clone());
+
+        let document = serde_json::to_value(&descriptor).expect("descriptor serializes");
+        assert!(document.get("target").is_none());
+        let decoded: ComponentDescriptor =
+            serde_json::from_value(document).expect("descriptor decodes");
+        let admitted = decoded.into_admitted(facts.component.target.clone());
+        assert_eq!(admitted.component, facts.component);
+        assert_eq!(admitted.connections, connections);
+    }
+
+    #[test]
+    fn persisted_component_target_refuses_duplicate_fields() {
+        assert!(serde_json::from_str::<ComponentPackageCoordinate>(
+            r#"{"project_env_key":"first--dev--project","project_env_key":"second--dev--project","package-id":"orders","package-version":"1.0.0"}"#
+        ).is_err());
+        assert!(
+            serde_json::from_value::<ComponentPackageCoordinate>(json!({
+                "project_env_key": "org-a--dev--project",
+                "package-id": "not-snake",
+                "package-version": "1.0.0"
+            }))
+            .is_err()
+        );
+    }
+
+    /// A component with no effect-bearing import records the POSITIVE fact that
+    /// it is pure, rather than an absent one — this is what a caller reads to
+    /// decide an occurrence writes no effect table row.
+    #[test]
+    fn a_component_importing_no_authority_admits_as_pure() {
+        let facts = normalize_component_fact(
+            declaration(),
+            (format!("sha256:{}", "a".repeat(64)))
+                .parse::<wamn_digest::Digest>()
+                .unwrap(),
+            ["wasi:clocks/monotonic-clock@0.2.3".to_string()],
+            Vec::new(),
+        )
+        .expect("a pure component normalizes");
+
+        assert!(facts.effects.is_empty());
+        assert_eq!(facts.imports.len(), 1);
+    }
+
+    #[test]
+    fn an_application_operation_import_is_refused() {
+        // A base operation composes into the bytes at build. One left as an
+        // import is an undeclared application call.
+        assert_eq!(
+            normalize_component_fact(
+                declaration(),
+                (format!("sha256:{}", "a".repeat(64)))
+                    .parse::<wamn_digest::Digest>()
+                    .unwrap(),
+                ["platform-fixture:widget/record-batch@1.0.0".to_string()],
+                Vec::new(),
+            )
+            .unwrap_err()
+            .error_type(),
+            ComponentFactErrorType::OperationDependencyMismatch
+        );
+    }
+
+    #[test]
+    fn committed_results_require_registered_operations_and_valid_schema_facts() {
+        let success = json!({"type": "array", "items": {"type": "object"}});
+        let mut palette = declaration();
+        operation_mut(&mut palette).committed_result_schema = Some(success.clone());
+        assert_eq!(
+            normalize_component_fact(
+                palette.clone(),
+                (format!("sha256:{}", "a".repeat(64)))
+                    .parse::<wamn_digest::Digest>()
+                    .unwrap(),
+                Vec::new(),
+                Vec::new(),
+            )
+            .unwrap_err()
+            .error_type(),
+            ComponentFactErrorType::RegisteredOperationMismatch,
+        );
+
+        let registered = "orders:widget/create@1.2.0";
+        let mut operation = palette.operations.remove("map").unwrap();
+        operation.registered_operation = Some(registered.parse().unwrap());
+        palette
+            .operations
+            .insert(registered.parse().unwrap(), operation);
+        let facts = normalize_component_fact(
+            palette.clone(),
+            (format!("sha256:{}", "a".repeat(64)))
+                .parse::<wamn_digest::Digest>()
+                .unwrap(),
+            Vec::new(),
+            Vec::new(),
+        )
+        .expect("a declared committed result admits");
+        let schema = facts.operations[registered]
+            .committed_result_schema
+            .as_ref()
+            .unwrap();
+        assert_eq!(schema.schema, success);
+        verify_stored_effect_projection(&facts.into_admitted(deployment()).component)
+            .expect("stored committed facts remain valid");
+
+        for (schema, type_) in [
+            (
+                json!({"type": "not-a-type"}),
+                ComponentFactErrorType::InvalidSchema,
+            ),
+            (
+                json!({"$ref": "https://example.invalid/schema"}),
+                ComponentFactErrorType::RemoteSchemaReference,
+            ),
+        ] {
+            palette
+                .operations
+                .get_mut(registered)
+                .unwrap()
+                .committed_result_schema = Some(schema);
+            assert_eq!(
+                normalize_component_fact(
+                    palette.clone(),
+                    (format!("sha256:{}", "a".repeat(64)))
+                        .parse::<wamn_digest::Digest>()
+                        .unwrap(),
+                    Vec::new(),
+                    Vec::new(),
+                )
+                .unwrap_err()
+                .error_type(),
+                type_
+            );
+        }
+    }
+
+    #[test]
+    fn registered_operation_is_explicit_and_equals_the_export_token() {
+        let mut declared = declaration();
+        let registered = "orders:widget/get@1.2.0";
+        let mut operation = declared.operations.remove("map").expect("map operation");
+        operation.registered_operation = Some(registered.parse().unwrap());
+        declared
+            .operations
+            .insert(registered.parse().unwrap(), operation);
+        let facts = normalize_component_fact(
+            declared,
+            (format!("sha256:{}", "a".repeat(64)))
+                .parse::<wamn_digest::Digest>()
+                .unwrap(),
+            ["wasi:clocks/monotonic-clock@0.2.3".to_string()],
+            Vec::new(),
+        )
+        .expect("canonical registered operation is admitted");
+        assert_eq!(
+            facts.operations[registered].registered_operation.as_ref(),
+            Some(&registered.parse().unwrap())
+        );
+
+        for operation in ["other:widget/get@1.2.0", "orders:widget/get@2.0.0"] {
+            let mut mismatched = declaration();
+            operation_mut(&mut mismatched).registered_operation = Some(operation.parse().unwrap());
+            assert_eq!(
+                normalize_component_fact(
+                    mismatched,
+                    (format!("sha256:{}", "a".repeat(64)))
+                        .parse::<wamn_digest::Digest>()
+                        .unwrap(),
+                    ["wasi:clocks/monotonic-clock@0.2.3".to_string()],
+                    Vec::new(),
+                )
+                .unwrap_err()
+                .error_type(),
+                ComponentFactErrorType::NonCanonicalIdentity
+            );
+        }
+
+        let mut unequal = declaration();
+        operation_mut(&mut unequal).registered_operation =
+            Some("orders:widget/get@1.2.0".parse().unwrap());
+        assert_eq!(
+            normalize_component_fact(
+                unequal,
+                (format!("sha256:{}", "a".repeat(64)))
+                    .parse::<wamn_digest::Digest>()
+                    .unwrap(),
+                Vec::new(),
+                Vec::new(),
+            )
+            .unwrap_err()
+            .error_type(),
+            ComponentFactErrorType::RegisteredOperationMismatch
+        );
+
+        let mut stored = migration_defaulted_fact(&[]);
+        stored
+            .operations
+            .get_mut("map")
+            .expect("map operation")
+            .registered_operation = Some("other:widget/get@1.2.0".parse().unwrap());
+        assert_eq!(
+            verify_stored_effect_projection(&stored)
+                .unwrap_err()
+                .error_type(),
+            ComponentFactErrorType::NonCanonicalIdentity
+        );
+    }
+
+    /// A stored row exactly as the wamn-0h0g.21.9 converge ALTER leaves one:
+    /// the audited imports it was admitted with, and the `'[]'` the DEFAULT
+    /// wrote over them.
+    fn migration_defaulted_fact(imports: &[&str]) -> AdmittedComponent {
+        AdmittedComponent {
+            data_change: false,
+            target: deployment(),
+            component: "transform".parse().unwrap(),
+            interface_version: "0.1.0".parse().unwrap(),
+            operations: BTreeMap::from([(
+                "map".parse().unwrap(),
+                AdmittedComponentOperation {
+                    committed_result_schema: None,
+                    registered_operation: None,
+                    host_transaction: false,
+                    input_ports: Vec::new(),
+                    output_ports: Vec::new(),
+                    parameters: Vec::new(),
+                },
+            )]),
+            component_digest: (format!("sha256:{}", "a".repeat(64)))
+                .parse::<wamn_digest::Digest>()
+                .unwrap(),
+            imports: imports.iter().map(|name| (*name).to_string()).collect(),
+            imports_fingerprint: (format!("sha256:{}", "b".repeat(64)))
+                .parse::<wamn_digest::Digest>()
+                .unwrap(),
+            effects: Vec::new(),
+        }
+    }
+
+    /// wamn-0h0g.21.10. The converge ALTER defaulted every pre-existing row to
+    /// `'[]'` — the positive assertion of purity — for a component whose own
+    /// audited imports show it reaches Postgres. No validator derived that, so
+    /// reading the row must refuse rather than trust it.
+    #[test]
+    fn a_migration_defaulted_effect_projection_is_refused() {
+        let stored = migration_defaulted_fact(&["wamn:postgres/client@0.1.0"]);
+
+        let error = verify_stored_effect_projection(&stored)
+            .expect_err("an underived purity assertion is refused");
+
+        assert_eq!(
+            error.error_type(),
+            ComponentFactErrorType::UnprojectedEffect
+        );
+    }
+
+    /// The other half of the same guard: a row whose `'[]'` happens to be the
+    /// value its imports do derive is not a fabricated assertion, and stays
+    /// readable. That is what keeps the refusal targeted to exactly the rows a
+    /// validator never produced.
+    #[test]
+    fn a_stored_pure_projection_its_imports_derive_stays_readable() {
+        let stored = migration_defaulted_fact(&["wasi:clocks/monotonic-clock@0.2.3"]);
+
+        verify_stored_effect_projection(&stored).expect("a derived pure projection verifies");
+    }
+
+    /// Admission itself must never produce the shape the migration fabricated.
+    #[test]
+    fn admission_refuses_an_effect_projection_narrower_than_the_imports() {
+        let error = normalize_component_fact(
+            declaration(),
+            (format!("sha256:{}", "a".repeat(64)))
+                .parse::<wamn_digest::Digest>()
+                .unwrap(),
+            ["wamn:postgres/client@0.1.0".to_string()],
+            Vec::new(),
+        )
+        .expect_err("an under-reported projection is refused at admission");
+
+        assert_eq!(
+            error.error_type(),
+            ComponentFactErrorType::UnprojectedEffect
+        );
+    }
+
+    #[test]
+    fn connections_and_effect_imports_must_account_for_each_other() {
+        let http_effect = AdmittedComponentEffect {
+            package: "wamn:connection".parse().unwrap(),
+            provenance: ComponentEffectProvenance::Imported,
+            interfaces: vec!["wamn:connection/http@0.1.0".to_string()],
+        };
+        let imports = ["wamn:connection/http@0.1.0".to_string()];
+        let connection = ComponentConnection {
+            store_alias: "erp"
+                .parse::<wamn_package::canonical_name::CanonicalName>()
+                .unwrap()
+                .into(),
+            requirement_type: ComponentConnectionType::Http,
+            mode: ConnectionMode::Write,
+        };
+
+        let mut declared = declaration();
+        declared.connections = vec![connection.clone()];
+        let facts = normalize_component_fact(
+            declared.clone(),
+            (format!("sha256:{}", "a".repeat(64)))
+                .parse::<wamn_digest::Digest>()
+                .unwrap(),
+            imports.clone(),
+            vec![http_effect.clone()],
+        )
+        .expect("a declared connection backed by its import admits");
+        assert_eq!(facts.connections, vec![connection.clone()]);
+
+        // Imported authority nothing declares.
+        let mut undeclared = declaration();
+        undeclared.connections = Vec::new();
+        assert_eq!(
+            normalize_component_fact(
+                undeclared,
+                (format!("sha256:{}", "b".repeat(64)))
+                    .parse::<wamn_digest::Digest>()
+                    .unwrap(),
+                imports.clone(),
+                vec![http_effect],
+            )
+            .unwrap_err()
+            .error_type(),
+            ComponentFactErrorType::UndeclaredConnection
+        );
+
+        // Declared authority the bytes never import.
+        assert_eq!(
+            normalize_component_fact(
+                declared.clone(),
+                (format!("sha256:{}", "c".repeat(64)))
+                    .parse::<wamn_digest::Digest>()
+                    .unwrap(),
+                Vec::new(),
+                Vec::new(),
+            )
+            .unwrap_err()
+            .error_type(),
+            ComponentFactErrorType::UnimportedConnection
+        );
+
+        let mut duplicate = declared;
+        duplicate.connections.push(connection);
+        assert_eq!(
+            normalize_component_fact(
+                duplicate,
+                (format!("sha256:{}", "d".repeat(64)))
+                    .parse::<wamn_digest::Digest>()
+                    .unwrap(),
+                imports,
+                vec![AdmittedComponentEffect {
+                    package: "wamn:connection".parse().unwrap(),
+                    provenance: ComponentEffectProvenance::Imported,
+                    interfaces: vec!["wamn:connection/http@0.1.0".to_string()],
+                }],
+            )
+            .unwrap_err()
+            .error_type(),
+            ComponentFactErrorType::DuplicateConnection
+        );
+    }
+
+    /// An imported effect is a projection of the audited imports and can never
+    /// widen beyond them, whatever the caller that derived them passes in.
+    /// Provenance moved the inherited case out of this rule and left this one
+    /// exactly where it was.
+    #[test]
+    fn an_imported_effect_interface_absent_from_the_audited_imports_refuses() {
+        assert_eq!(
+            normalize_component_fact(
+                declaration(),
+                (format!("sha256:{}", "a".repeat(64)))
+                    .parse::<wamn_digest::Digest>()
+                    .unwrap(),
+                ["wasi:io/streams@0.2.3".to_string()],
+                vec![postgres_effect()],
+            )
+            .unwrap_err()
+            .error_type(),
+            ComponentFactErrorType::UnimportedEffect
+        );
+    }
+
+    /// The stored shape is what the type doc describes: a package, its
+    /// provenance, and the interfaces that show it. This
+    /// freezes the whole persisted value, so an added, removed or renamed
+    /// field fails here.
+    #[test]
+    fn the_persisted_effect_fact_spells_its_provenance() {
+        {
+            let observed =
+                &(serde_json::to_value(postgres_effect()).expect("an imported effect serializes"));
+            assert_eq!(observed["package"], serde_json::json!("wamn:postgres"));
+            assert_eq!(observed["provenance"], serde_json::json!("imported"));
+            assert_eq!(observed["interfaces"].as_array().expect("array").len(), 1);
+            assert_eq!(
+                observed["interfaces"][0],
+                serde_json::json!("wamn:postgres/client@0.1.0")
+            );
+        };
+    }
+
+    #[test]
+    fn schema_compatibility_is_exact_value_equality() {
+        let mut left = declaration();
+        let mut right = declaration();
+        operation_mut(&mut left).input_ports[0].schema =
+            json!({"type":"object","properties":{"b":{"type":"number"},"a":{"type":"string"}}});
+        operation_mut(&mut right).input_ports[0].schema =
+            json!({"properties":{"a":{"type":"string"},"b":{"type":"number"}},"type":"object"});
+
+        let left = normalize_component_fact(
+            left,
+            (format!("sha256:{}", "b".repeat(64)))
+                .parse::<wamn_digest::Digest>()
+                .unwrap(),
+            Vec::new(),
+            Vec::new(),
+        )
+        .unwrap();
+        let right = normalize_component_fact(
+            right,
+            (format!("sha256:{}", "c".repeat(64)))
+                .parse::<wamn_digest::Digest>()
+                .unwrap(),
+            Vec::new(),
+            Vec::new(),
+        )
+        .unwrap();
+        assert_eq!(
+            left.operations["map"].input_ports[0].schema,
+            right.operations["map"].input_ports[0].schema
+        );
+
+        let different = normalize_schema(json!({"type": "string"}), "input-port").unwrap();
+        assert_ne!(left.operations["map"].input_ports[0].schema, different);
+    }
+
+    #[test]
+    fn partial_or_ambiguous_component_facts_refuse() {
+        let mut empty = declaration();
+        empty.operations.clear();
+        assert_eq!(
+            normalize_component_fact(
+                empty,
+                (format!("sha256:{}", "c".repeat(64)))
+                    .parse::<wamn_digest::Digest>()
+                    .unwrap(),
+                Vec::new(),
+                Vec::new(),
+            )
+            .unwrap_err()
+            .error_type(),
+            ComponentFactErrorType::EmptyOperationSet
+        );
+
+        let mut duplicate = declaration();
+        let duplicate_port = duplicate.operations["map"].input_ports[0].clone();
+        operation_mut(&mut duplicate)
+            .input_ports
+            .push(duplicate_port);
+        assert_eq!(
+            normalize_component_fact(
+                duplicate,
+                (format!("sha256:{}", "d".repeat(64)))
+                    .parse::<wamn_digest::Digest>()
+                    .unwrap(),
+                Vec::new(),
+                Vec::new(),
+            )
+            .unwrap_err()
+            .error_type(),
+            ComponentFactErrorType::DuplicateInputPort
+        );
+
+        let mut remote = declaration();
+        operation_mut(&mut remote).parameters[0].schema =
+            json!({"$ref": "https://example.invalid/schema"});
+        assert_eq!(
+            normalize_component_fact(
+                remote,
+                (format!("sha256:{}", "e".repeat(64)))
+                    .parse::<wamn_digest::Digest>()
+                    .unwrap(),
+                Vec::new(),
+                Vec::new(),
+            )
+            .unwrap_err()
+            .error_type(),
+            ComponentFactErrorType::RemoteSchemaReference
+        );
+    }
+}
+
+#[cfg(test)]
+mod connection_alias_tests {
+    use wamn_package::ConnectionMode;
+    use super::*;
+    #[test]
+    fn configuration_connections_follow_each_nodes_alias() {
+        for parameter in ["store_alias", "requirement"] {
+            let declaration = ComponentConnectionAlias::Configuration {
+                parameter: parameter.parse().unwrap(),
+            };
+            let first = BTreeMap::from([(
+                parameter.parse().unwrap(),
+                Value::String("labels".to_owned()),
+            )]);
+            let second = BTreeMap::from([(
+                parameter.parse().unwrap(),
+                Value::String("archive".to_owned()),
+            )]);
+            let modes = ConnectionMode::ByBinding(BTreeMap::from([(
+                "package".parse().unwrap(),
+                BTreeMap::from([
+                    (declaration.resolve(&first).unwrap(), ConnectionMode::Read),
+                    (declaration.resolve(&second).unwrap(), ConnectionMode::Write),
+                ]),
+            )]));
+            assert_eq!(
+                modes.read_only(
+                    &"package".parse().unwrap(),
+                    &declaration.resolve(&first).unwrap()
+                ),
+                Some(true)
+            );
+            assert_eq!(
+                modes.read_only(
+                    &"package".parse().unwrap(),
+                    &declaration.resolve(&second).unwrap()
+                ),
+                Some(false)
+            );
+            assert!(
+                modes
+                    .read_only(
+                        &"absent".parse().unwrap(),
+                        &declaration.resolve(&first).unwrap()
+                    )
+                    .is_none()
+            );
+            assert_ne!(declaration.resolve(&first), declaration.resolve(&second));
+            assert!(declaration.name().is_none());
+            assert!(declaration.resolve(&BTreeMap::new()).is_none());
+        }
+        assert!(
+            validate_alias(&ComponentConnectionAlias::Name(
+                "__STORE_ALIAS__".parse().unwrap()
+            ))
+            .is_err()
+        );
+    }
+}

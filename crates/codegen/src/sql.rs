@@ -4,8 +4,8 @@ use wamn_schema_introspection::ir::{Column, Table};
 
 use wamn_record_history::history_table_name;
 
-use wamn_catalog::manifest::{CursorDirection, OperationDeclaration};
-use wamn_catalog::manifest::{DeleteMode, FilterMatch, ModelDeclaration};
+use wamn_package::manifest::{CursorDirection, OperationDeclaration};
+use wamn_package::manifest::{DeleteMode, FilterMatch, ModelDeclaration};
 
 // SQL outcomes are shared with the generated result contracts.
 pub(crate) const OUTCOME_NOT_FOUND: &str = "not_found";
@@ -329,7 +329,7 @@ ORDER BY page.change_transaction, page.change_id;
 fn affected_root_keys(
     root: &Table,
     read_set: &[&Table],
-    join_path: &[wamn_catalog::feed::FeedLink],
+    join_path: &[wamn_package::feed::FeedLink],
     transaction: usize,
 ) -> String {
     if !join_path.is_empty() {
@@ -362,7 +362,7 @@ fn history_window(transaction: usize) -> String {
 fn root_paths(
     table: &Table,
     root: &Table,
-    links: &[wamn_catalog::feed::FeedLink],
+    links: &[wamn_package::feed::FeedLink],
     tables: &[&Table],
     seen: &mut Vec<usize>,
 ) -> Vec<Vec<usize>> {
@@ -377,7 +377,7 @@ fn root_paths(
         {
             continue;
         }
-        let parent = if link.direction == wamn_catalog::feed::FeedDirection::ReferencesRoot {
+        let parent = if link.direction == wamn_package::feed::FeedDirection::ReferencesRoot {
             root
         } else {
             tables
@@ -402,12 +402,12 @@ fn root_paths(
 fn joined_root_keys(
     root: &Table,
     read_set: &[&Table],
-    join_path: &[wamn_catalog::feed::FeedLink],
+    join_path: &[wamn_package::feed::FeedLink],
     transaction: usize,
 ) -> String {
-    use wamn_catalog::feed::FeedDirection;
+    use wamn_package::feed::FeedDirection;
 
-    let index = |table: &wamn_catalog::feed::FeedTable| {
+    let index = |table: &wamn_package::feed::FeedTable| {
         read_set
             .iter()
             .position(|candidate| {
@@ -480,7 +480,7 @@ pub(crate) fn authored_page(statement: &str, fields: &[String]) -> String {
 /// Find root keys, restrict the authored read, and emit deletions in one snapshot.
 pub(crate) fn authored_changes(
     catalog: &wamn_schema_introspection::ir::CatalogIr,
-    source: &wamn_catalog::feed::FeedSource,
+    source: &wamn_package::feed::FeedSource,
     statement: &str,
     key: &str,
     fields: &[String],
@@ -703,7 +703,7 @@ const fn sql_direction(direction: CursorDirection) -> &'static str {
 mod tests {
     use super::query;
     use sqlx::Row as _;
-    use wamn_catalog::manifest::{CursorDirection, ModelDeclaration, OperationDeclaration};
+    use wamn_package::manifest::{CursorDirection, ModelDeclaration, OperationDeclaration};
 
     use wamn_scalar::SqlValueType;
     use wamn_schema_introspection::ir::{Column, Constraint, Table};

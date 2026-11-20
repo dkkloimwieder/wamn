@@ -11,7 +11,7 @@ use std::path::Path;
 
 use anyhow::{Context as _, ensure};
 use serde::{Deserialize, Serialize};
-use wamn_catalog::EnvironmentApplications;
+use wamn_registry::EnvironmentApplications;
 use wamn_registry::Triple;
 
 pub use plan::{ApplicationSelection, EnvironmentDocument};
@@ -39,11 +39,11 @@ impl EnvironmentDocument {
 pub(super) async fn read_configuration(
     connection: &mut sqlx::PgConnection,
     triple: &Triple,
-) -> Result<Option<wamn_catalog::configuration::EnvironmentConfiguration>, sqlx::Error> {
+) -> Result<Option<wamn_registry::configuration::EnvironmentConfiguration>, sqlx::Error> {
     let principal = wamn_provision::PlatformComponent::Provisioning.principal_id();
     let mut transaction =
         wamn_identity::transaction::read_connection(connection, &principal).await?;
-    let configuration = wamn_catalog::configuration::read(&mut transaction, triple).await?;
+    let configuration = wamn_registry::configuration::read(&mut transaction, triple).await?;
     transaction.commit().await?;
     Ok(configuration)
 }
@@ -62,23 +62,19 @@ impl EnvironmentDocument {
 
     pub(super) async fn save(&self, connection: &mut sqlx::PgConnection) -> anyhow::Result<()> {
         ensure!(
-            wamn_catalog::configuration::write(connection, &self.configuration()).await?,
+            wamn_registry::configuration::write(connection, &self.configuration()).await?,
             "provision the environment before applying configuration"
         );
         Ok(())
     }
 
     /// Applied settings exclude package membership, which comes from the selected release.
-    pub fn configuration(&self) -> wamn_catalog::configuration::EnvironmentConfiguration {
-        use wamn_catalog::configuration::{ApplicationConfiguration, EnvironmentConfiguration};
+    pub fn configuration(&self) -> wamn_registry::configuration::EnvironmentConfiguration {
+        use wamn_registry::configuration::{ApplicationConfiguration, EnvironmentConfiguration};
         EnvironmentConfiguration {
-            org: self.org.clone(),
-            project: self.project.clone(),
-            env: self.env.clone(),
-            target: self.target.clone(),
+            settings: self.settings.clone(),
             readiness_budget_seconds: self.readiness_budget_seconds,
             drain_bound_seconds: self.drain_bound_seconds,
-            schema: self.schema,
             applications: self
                 .applications
                 .iter()
@@ -93,22 +89,17 @@ impl EnvironmentDocument {
                     )
                 })
                 .collect(),
-            integrations: self.integrations.clone(),
         }
     }
 
     fn from_configuration(
-        configuration: wamn_catalog::configuration::EnvironmentConfiguration,
+        configuration: wamn_registry::configuration::EnvironmentConfiguration,
     ) -> Self {
         Self {
-            org: configuration.org,
-            project: configuration.project,
-            env: configuration.env,
-            target: configuration.target,
+            settings: configuration.settings,
             readiness_budget_seconds: configuration.readiness_budget_seconds,
             drain_bound_seconds: configuration.drain_bound_seconds,
             revocation_seconds: None,
-            schema: configuration.schema,
             applications: configuration
                 .applications
                 .into_iter()
@@ -125,7 +116,6 @@ impl EnvironmentDocument {
                     )
                 })
                 .collect(),
-            integrations: configuration.integrations,
         }
     }
 }
@@ -141,9 +131,9 @@ pub struct WorkloadRelease {
 pub async fn workload_release(
     api: &wamn_kubernetes::client::KubernetesApi,
     triple: &Triple,
-    application: &wamn_catalog::ApplicationName,
+    application: &wamn_registry::ApplicationName,
 ) -> anyhow::Result<Option<WorkloadRelease>> {
-    let release = wamn_catalog::resource_names::application_release_name(
+    let release = wamn_registry::resource_names::application_release_name(
         &triple.org,
         &triple.project,
         &triple.env,
@@ -208,7 +198,7 @@ mod tests {
             (None, SchemaMode::Migrate),
         ] {
             let mut read = read.clone();
-            read.schema.mode = None;
+            read.settings.schema.mode = None;
             assert_eq!(read.schema_mode(disposable), expected);
         }
         Ok(())

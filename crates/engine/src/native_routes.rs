@@ -2,7 +2,8 @@
 use crate::engine::MAX_HOST_CALL_DURATION;
 use crate::ingress::AuthenticatedCaller;
 use std::fmt;
-use wamn_catalog::{AdmittedComponentOperation, HostAttachment, HostRouteSet};
+use wamn_component_policy::AdmittedComponentOperation;
+use wamn_routes::{HostAttachment, HostRouteSet};
 
 pub const OPERATION_METRICS_ID: &str = "wamn-operation";
 pub const PERMISSION_DENIED: &str = "permission-denied";
@@ -11,7 +12,7 @@ pub const FRESH_CREDENTIAL_REQUIRED: &str = "fresh-credential-required";
 
 #[derive(Debug, Clone)]
 pub enum Source {
-    Attachment(wamn_catalog::canonical_name::CanonicalName),
+    Attachment(wamn_package::canonical_name::CanonicalName),
     Registration(String),
 }
 
@@ -72,7 +73,7 @@ pub struct DeliveryReport {
 /// Admit one native platform endpoint under its authenticated attachment.
 pub fn resolve_authorized_host_route(
     routes: HostRouteSet,
-    id: &wamn_catalog::canonical_name::CanonicalName,
+    id: &wamn_package::canonical_name::CanonicalName,
     caller: Option<&AuthenticatedCaller>,
 ) -> Option<Result<&'static HostAttachment, DeliveryError>> {
     let (_, attachment) = routes.attachments().find(|(name, _)| *name == id)?;
@@ -169,7 +170,7 @@ pub fn authorize_released_operation(
 /// Make sure that the originating caller holds the registered operation grant.
 pub fn authorize_registered_operation(
     caller: Option<&AuthenticatedCaller>,
-    operation: Option<&wamn_catalog::registered_operation::RegisteredOperation>,
+    operation: Option<&wamn_package::registered_operation::RegisteredOperation>,
 ) -> Result<(), OperationRefusal> {
     let Some(operation) = operation else {
         return Ok(());

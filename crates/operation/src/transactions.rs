@@ -91,8 +91,8 @@ pub(super) async fn begin_with_identity(
     runner: Option<&str>,
     role: Option<&str>,
     user_id: Option<&wamn_identity_protocol::PrincipalId>,
-    operation: Option<&wamn_catalog::canonical_name::CanonicalName>,
-    application: Option<&wamn_catalog::ApplicationName>,
+    operation: Option<&wamn_package::canonical_name::CanonicalName>,
+    application: Option<&wamn_registry::ApplicationName>,
     run: Option<&Causation>,
     statement_timeout_ms: u32,
 ) -> Result<String, PgError> {
@@ -123,8 +123,8 @@ pub(super) fn prepare_identity(
     runner: Option<&str>,
     role: Option<&str>,
     user_id: Option<&wamn_identity_protocol::PrincipalId>,
-    operation: Option<&wamn_catalog::canonical_name::CanonicalName>,
-    application: Option<&wamn_catalog::ApplicationName>,
+    operation: Option<&wamn_package::canonical_name::CanonicalName>,
+    application: Option<&wamn_registry::ApplicationName>,
     run: Option<&Causation>,
     statement_timeout_ms: u32,
 ) -> Result<BoundIdentity, PgError> {
@@ -146,8 +146,8 @@ pub(super) fn prepare_identity(
     let bind = transaction_identity_sql(
         principal,
         role.unwrap_or_default(),
-        application.map_or("", wamn_catalog::ApplicationName::as_str),
-        operation.map(wamn_catalog::canonical_name::CanonicalName::as_str),
+        application.map_or("", wamn_registry::ApplicationName::as_str),
+        operation.map(wamn_package::canonical_name::CanonicalName::as_str),
         runner,
     );
     let schema = schema.map(escape::escape_literal);
@@ -178,7 +178,7 @@ pub(super) fn validate_session_identity(
     schema: Option<&str>,
     runner: Option<&str>,
     role: Option<&str>,
-    _operation: Option<&wamn_catalog::canonical_name::CanonicalName>,
+    _operation: Option<&wamn_package::canonical_name::CanonicalName>,
 ) -> Result<(), PgError> {
     if let Some(schema) = schema
         && !valid_schema(schema)

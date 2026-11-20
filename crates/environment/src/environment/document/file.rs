@@ -8,7 +8,8 @@ use std::{
 use anyhow::{Context as _, ensure};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use wamn_catalog::ApplicationName;
+use wamn_registry::ApplicationName;
+use wamn_registry::configuration::EnvironmentSettings;
 use wamn_registry::{EnvName, OrgId, ProjectId, Triple};
 
 use super::plan::{default_drain_bound_seconds, default_readiness_budget_seconds};
@@ -197,31 +198,35 @@ impl EnvironmentFile {
         std::mem::take(&mut self.projects)
             .into_iter()
             .map(move |project| EnvironmentDocument {
-                org: self.org.clone(),
-                project: project.name,
-                env: self.env.clone(),
-                target: self.target.clone(),
+                settings: EnvironmentSettings {
+                    org: self.org.clone(),
+                    project: project.name,
+                    env: self.env.clone(),
+                    target: self.target.clone(),
+                    schema: project.schema,
+                    integrations: self.connections.clone(),
+                },
                 readiness_budget_seconds: self.readiness_budget_seconds,
                 drain_bound_seconds: self.drain_bound_seconds,
                 revocation_seconds: Some(self.revocation_seconds),
-                schema: project.schema,
                 applications: project.applications,
-                integrations: self.connections.clone(),
             })
     }
 
     fn project_document(self, project: Project) -> EnvironmentDocument {
         EnvironmentDocument {
-            org: self.org,
-            project: project.name,
-            env: self.env,
-            target: self.target,
+            settings: EnvironmentSettings {
+                org: self.org,
+                project: project.name,
+                env: self.env,
+                target: self.target,
+                schema: project.schema,
+                integrations: self.connections,
+            },
             readiness_budget_seconds: self.readiness_budget_seconds,
             drain_bound_seconds: self.drain_bound_seconds,
             revocation_seconds: Some(self.revocation_seconds),
-            schema: project.schema,
             applications: project.applications,
-            integrations: self.connections,
         }
     }
 }

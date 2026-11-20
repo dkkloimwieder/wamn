@@ -16,7 +16,7 @@ const READ: &str = "example:entry/read-projection@1.0.0";
 const UPDATE: &str = "example:entry/apply-title@1.0.0";
 
 type Contracts =
-    BTreeMap<wamn_catalog::local_operation::LocalOperation, wamn_codegen::OperationDescription>;
+    BTreeMap<wamn_package::local_operation::LocalOperation, wamn_codegen::OperationDescription>;
 
 fn insert_operation(
     contracts: &mut Contracts,
@@ -50,7 +50,7 @@ fn direct_route(operation: &str) -> RouteIr {
 
 fn records() -> (
     Contracts,
-    BTreeMap<wamn_catalog::registered_operation::RegisteredOperation, RouteIr>,
+    BTreeMap<wamn_package::registered_operation::RegisteredOperation, RouteIr>,
 ) {
     let mut contracts = BTreeMap::new();
     insert_operation(
@@ -100,7 +100,7 @@ fn records() -> (
 
 fn project(
     contracts: &Contracts,
-    routes: &BTreeMap<wamn_catalog::registered_operation::RegisteredOperation, RouteIr>,
+    routes: &BTreeMap<wamn_package::registered_operation::RegisteredOperation, RouteIr>,
 ) -> ClientContractIr {
     ClientContractIr::from_operations(&"example".parse().unwrap(), contracts, routes)
         .expect("declared contract projection")
@@ -835,7 +835,7 @@ fn a_published_response_takes_its_text_from_the_terminal() {
         type_name: "text".to_owned(),
         nullable: false,
         required: true,
-        revision: wamn_catalog::manifest::Revision::default(),
+        revision: wamn_package::manifest::Revision::default(),
         children: Vec::new(),
         minimum: None,
         maximum: None,

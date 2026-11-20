@@ -26,7 +26,7 @@ pub type NativeCallFailure = Arc<std::sync::Mutex<Option<anyhow::Error>>>;
 
 /// The request authority and absolute deadline carried into one native node call.
 pub struct NativeInvocation<P: InvocationPolicy> {
-    pub operation: wamn_catalog::canonical_name::CanonicalName,
+    pub operation: wamn_package::canonical_name::CanonicalName,
     pub context: node_types::NodeContext,
     pub input: NativeInput,
     pub deadline: Instant,
@@ -301,7 +301,7 @@ impl GuestCall for ReadinessCall {
 
 /// Retire the native instance selected for a refused invocation.
 struct RefusedCall {
-    operation: wamn_catalog::canonical_name::CanonicalName,
+    operation: wamn_package::canonical_name::CanonicalName,
     deadline: Instant,
 }
 
@@ -326,7 +326,7 @@ impl GuestCall for RefusedCall {
 pub(super) async fn prepare_invocation<P: InvocationPolicy>(
     application: &NativeApplication<P>,
     target: &DispatchTarget,
-    operation: &wamn_catalog::canonical_name::CanonicalName,
+    operation: &wamn_package::canonical_name::CanonicalName,
     facts: &P::Facts,
     deadline: Instant,
 ) -> anyhow::Result<P::Facts> {

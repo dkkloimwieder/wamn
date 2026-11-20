@@ -11,8 +11,8 @@ use tokio::{
     task::JoinSet,
     time::timeout,
 };
-use wamn_catalog::lifecycle_lock::LifecycleLock;
 use wamn_registry::Triple;
+use wamn_registry::lifecycle_lock::LifecycleLock;
 
 #[sqlx::test(migrations = false)]
 async fn a_second_verb_refuses_until_the_holder_is_gone(pool: sqlx::PgPool) {
@@ -204,7 +204,7 @@ async fn abandoned_sessions_expire_even_when_a_proxy_keeps_the_socket_open(pool:
 async fn acquire(
     url: &str,
     triple: &Triple,
-    application: Option<&wamn_catalog::ApplicationName>,
+    application: Option<&wamn_registry::ApplicationName>,
 ) -> LifecycleLock {
     match application {
         Some(application) => {

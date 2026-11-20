@@ -37,6 +37,7 @@
 //! test ignores what is reached only through wash-runtime and pins that list.
 
 pub mod application;
+pub mod application_config;
 pub mod component_admission;
 pub mod engine;
 pub mod entry_operation;

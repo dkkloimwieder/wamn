@@ -135,7 +135,7 @@ async fn product_dev_command_applies_packages_and_cleans_up() -> anyhow::Result<
         "development changed PAT state or database ACLs"
     );
     let document = application.target();
-    let key = wamn_registry::project_env_key(&document.org, &document.project, &document.env);
+    let key = wamn_registry::project_env_key(&document.settings.org, &document.settings.project, &document.settings.env);
     development_assertions::verify_dev_target_package_and_acl_state(
         &mut project,
         &[source.to_owned()],

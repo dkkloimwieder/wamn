@@ -16,14 +16,12 @@ use std::fmt;
 use std::path::PathBuf;
 
 use anyhow::Context as _;
-use wamn_catalog::ComponentConnectionRequirement;
-use wamn_catalog::ConnectionTypeDescriptor;
-use wamn_catalog::package_schema::package_metadata;
-use wamn_catalog::{
-    AdmittedComponent, ComponentConnection, ComponentConnectionType, ComponentDeclaration,
-    ComponentDescriptor, ComponentPackageCoordinate,
-};
+use wamn_connection_type::ComponentConnectionRequirement;
+use wamn_connection_type::ConnectionTypeDescriptor;
+use wamn_component_policy::{AdmittedComponent, ComponentDescriptor, ComponentPackageCoordinate};
 use wamn_engine::component_admission::validate_component_admission;
+use wamn_package::package_schema::package_metadata;
+use wamn_package::{ComponentConnection, ComponentConnectionType, ComponentDeclaration};
 
 /// Stable prefix for package/component projection refusals.
 pub const COMPONENT_PROJECTION_REFUSAL: &str = "component-projection-refused";
@@ -150,17 +148,17 @@ impl ComponentAdmission {
     }
 
     /// Exact package identity carried by the admitted component facts.
-    pub fn package_id(&self) -> &wamn_catalog::PackageName {
+    pub fn package_id(&self) -> &wamn_package::PackageName {
         &self.component.target.package_id
     }
 
     /// Exact package version carried by the admitted component facts.
-    pub fn package_version(&self) -> &wamn_catalog::package_version::PackageVersion {
+    pub fn package_version(&self) -> &wamn_package::package_version::PackageVersion {
         &self.component.target.package_version
     }
 
     /// Package-local component name bound to the admitted bytes.
-    pub fn component(&self) -> &wamn_catalog::canonical_name::CanonicalName {
+    pub fn component(&self) -> &wamn_package::canonical_name::CanonicalName {
         &self.component.component
     }
 
@@ -173,10 +171,10 @@ impl ComponentAdmission {
 /// Validate saved component and package bytes without publication side effects.
 pub fn admit_component(args: AdmitComponentRequest) -> anyhow::Result<ComponentAdmission> {
     let directory = crate::package_source::read_package_directory(&args.package)?;
-    let package = package_metadata(&directory)
+    let package = package_metadata::<wamn_component_policy::ComponentDescriptor>(&directory)
         .context("validate strict package directory before component publication")?;
     let package_manifest =
-        wamn_catalog::manifest::PackageManifest::from_slice(&directory.manifest_bytes)
+        wamn_component_policy::PackageManifest::from_slice(&directory.manifest_bytes)
             .context("parse strict package manifest before component publication")?;
     let component_bytes = std::fs::read(&args.component_bytes)
         .with_context(|| format!("read component bytes {}", args.component_bytes.display()))?;
@@ -193,7 +191,7 @@ pub fn admit_component(args: AdmitComponentRequest) -> anyhow::Result<ComponentA
         .get(declaration.component.as_str())
         .is_some_and(|component| component.data_change.is_some());
 
-    let (declaration, target) = declaration.split_target();
+    let (declaration, target) = wamn_component_policy::split_target(declaration);
     let (descriptor, requirements) = admit(
         &package_manifest,
         &component_bytes,
@@ -212,7 +210,7 @@ pub fn admit_component(args: AdmitComponentRequest) -> anyhow::Result<ComponentA
 }
 
 pub(crate) fn admit(
-    package_manifest: &wamn_catalog::manifest::PackageManifest,
+    package_manifest: &wamn_component_policy::PackageManifest,
     component_bytes: &[u8],
     declaration: ComponentDeclaration,
     admitted_platform_packages: BTreeSet<String>,
@@ -264,8 +262,8 @@ pub(crate) fn admit(
             .get(alias)
             .with_context(|| format!("package declares no connection {alias}"))?;
         connection.mode = match declaration.mode {
-            wamn_catalog::manifest::ConnectionMode::Read => wamn_catalog::ConnectionMode::Read,
-            wamn_catalog::manifest::ConnectionMode::Write => wamn_catalog::ConnectionMode::Write,
+            wamn_package::manifest::ConnectionMode::Read => wamn_package::ConnectionMode::Read,
+            wamn_package::manifest::ConnectionMode::Write => wamn_package::ConnectionMode::Write,
         };
     }
     admitted
@@ -274,15 +272,9 @@ pub(crate) fn admit(
     Ok((admitted, requirements))
 }
 
-#[derive(Debug)]
-struct ExpectedOperationContract {
-    component: wamn_catalog::canonical_name::CanonicalName,
-    public: bool,
-}
-
 #[cfg(test)]
 mod tests {
-    use wamn_catalog::AdmittedComponentOperation;
+    use wamn_component_policy::AdmittedComponentOperation;
 
     use super::*;
 
@@ -317,7 +309,7 @@ mod tests {
         document["components"]["secondary"] = serde_json::json!({});
         document["custom_operations"]["audit.observe"]["component"] =
             serde_json::json!("secondary");
-        let manifest: wamn_catalog::manifest::PackageManifest =
+        let manifest: wamn_component_policy::PackageManifest =
             serde_json::from_value(document).expect("two-component manifest parses");
         let operation = "observer-fixture:audit/observe@3.0.0".parse().unwrap();
         let component = ComponentDescriptor {
@@ -361,8 +353,8 @@ mod tests {
     fn signed_file_result_metadata_is_bound_from_the_package_only() {
         let mut manifest = overlay_manifest();
         let declaration = manifest.custom_operations.get_mut("audit.observe").unwrap();
-        declaration.type_ = wamn_catalog::manifest::CustomOperationType::Projection;
-        declaration.visibility = wamn_catalog::manifest::OperationVisibility::Public;
+        declaration.type_ = wamn_package::OperationType::Projection;
+        declaration.visibility = wamn_package::manifest::OperationVisibility::Public;
         declaration.permission = Some("audit.observe".parse().unwrap());
         declaration
             .errors
@@ -374,7 +366,7 @@ mod tests {
             }))
             .unwrap(),
         );
-        let export = wamn_catalog::manifest::canonical_operation_identity(
+        let export = wamn_package::manifest::canonical_operation_identity(
             &manifest.package,
             &"audit.observe".parse().unwrap(),
         )
@@ -383,9 +375,9 @@ mod tests {
         let (_, mut operation) = component.operations.pop_first().unwrap();
         operation
             .output_ports
-            .push(wamn_catalog::AdmittedComponentPort {
+            .push(wamn_component_policy::AdmittedComponentPort {
                 name: "main".parse().unwrap(),
-                schema: wamn_catalog::ComponentSchema {
+                schema: wamn_component_policy::ComponentSchema {
                     schema: serde_json::json!({"type": "array"}),
                 },
             });
@@ -393,9 +385,10 @@ mod tests {
             .operations
             .insert(export.clone().into(), operation);
         super::bind_signed_file_results(&mut component, &manifest).unwrap();
-        let reads = wamn_catalog::signed_file_reads(&component.operations[export.as_str()])
-            .unwrap()
-            .unwrap();
+        let reads =
+            wamn_component_policy::signed_file_reads(&component.operations[export.as_str()])
+                .unwrap()
+                .unwrap();
 
         assert_eq!(reads.fields[0].read.lifetime_seconds().unwrap(), 12);
         assert!(!reads.fields[0].nullable);
@@ -410,7 +403,7 @@ mod tests {
             .schema
             .as_object_mut()
             .unwrap()
-            .remove(wamn_catalog::SIGNED_FILE_READS);
+            .remove(wamn_package::SIGNED_FILE_READS);
         manifest
             .custom_operations
             .get_mut("audit.observe")
@@ -425,7 +418,7 @@ mod tests {
         assert!(super::bind_signed_file_results(&mut component, &manifest).is_err());
     }
 
-    fn overlay_manifest() -> wamn_catalog::manifest::PackageManifest {
+    fn overlay_manifest() -> wamn_component_policy::PackageManifest {
         serde_json::from_str(include_str!(
             "../tests/fixtures/observer_package/generated/wamn.json"
         ))
@@ -436,7 +429,7 @@ mod tests {
     /// registering nothing: the palette-node shape.
     fn stranger(
         name: &str,
-        registered: Option<&wamn_catalog::registered_operation::RegisteredOperation>,
+        registered: Option<&wamn_package::registered_operation::RegisteredOperation>,
     ) -> ComponentDescriptor {
         ComponentDescriptor {
             data_change: false,

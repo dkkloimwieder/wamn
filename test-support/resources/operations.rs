@@ -7,11 +7,11 @@
 
 use std::path::PathBuf;
 
-use wamn_catalog::manifest::{OperationOwners, resolve_operation_reference};
 use wamn_codegen::package_manifest_path;
+use wamn_package::manifest::{OperationOwners, resolve_operation_reference};
 
 /// The manifest of one repository package, by its package id.
-fn owners(package_id: &wamn_catalog::PackageName) -> OperationOwners {
+fn owners(package_id: &wamn_package::PackageName) -> OperationOwners {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../apps")
         .join(package_id.as_str());
@@ -27,7 +27,7 @@ fn owners(package_id: &wamn_catalog::PackageName) -> OperationOwners {
 /// # Panics
 ///
 /// When the reference names no repository package, or does not resolve.
-pub fn sealed(reference: &str) -> wamn_catalog::registered_operation::RegisteredOperation {
+pub fn sealed(reference: &str) -> wamn_package::registered_operation::RegisteredOperation {
     let (prefix, _) = reference
         .split_once(':')
         .unwrap_or_else(|| panic!("{reference:?} is not an operation reference"));
@@ -49,7 +49,7 @@ pub fn sealed(reference: &str) -> wamn_catalog::registered_operation::Registered
 ///
 /// When no repository package has the id.
 pub fn package_version(
-    package_id: &wamn_catalog::PackageName,
-) -> wamn_catalog::package_version::PackageVersion {
+    package_id: &wamn_package::PackageName,
+) -> wamn_package::package_version::PackageVersion {
     owners(package_id).package.version
 }

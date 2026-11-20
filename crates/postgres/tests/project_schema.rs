@@ -15,7 +15,7 @@ fn deploy_dir() -> std::path::PathBuf {
 fn app_schema_sql() -> String {
     format!(
         "\nDROP SCHEMA IF EXISTS catalog CASCADE;\n{}\n{}",
-        wamn_catalog::CATALOG_SCHEMA_SQL,
+        wamn_provision::CATALOG_SCHEMA_SQL,
         include_str!("../../../deploy/sql/app-schema.sql")
     )
 }

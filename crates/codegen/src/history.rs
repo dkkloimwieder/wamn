@@ -5,9 +5,9 @@ mod sql;
 use anyhow::{Context as _, ensure};
 use sql::{generated_function_name, log_function_sql, stamp_function_sql};
 use std::collections::BTreeMap;
-use wamn_catalog::manifest::{
-    ModelDeclaration, PackageManifest, RecordHistoryColumn, source_name::SourceName,
-};
+use wamn_component_policy::PackageManifest;
+use wamn_package::manifest::source_name::SourceName;
+use wamn_package::manifest::{ModelDeclaration, RecordHistoryColumn};
 use wamn_record_history::{LOG_TRIGGER, STAMP_TRIGGER, history_table_name};
 
 const NAME_BYTE_LIMIT: usize = 64;

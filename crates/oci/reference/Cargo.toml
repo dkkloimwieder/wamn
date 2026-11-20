@@ -1,0 +1,12 @@
+[package]
+name = "wamn-oci-reference"
+description = "Digest-addressed OCI artifact references and validation."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+wamn-digest.workspace = true
+
+[lints]
+workspace = true

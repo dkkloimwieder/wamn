@@ -1,5 +1,6 @@
 //! HTTP and device calls use one operation boundary over the edge's durable store.
 
+use wamn_package::canonical_name::CanonicalName;
 use crate::application::EdgeApplication;
 use crate::policy::EdgeFacts;
 use crate::release::EdgeRelease;
@@ -7,7 +8,6 @@ use crate::store::{Claim, EdgeStore};
 use anyhow::Context as _;
 use std::collections::HashSet;
 use std::sync::Arc;
-use wamn_catalog::canonical_name::CanonicalName;
 use wamn_engine::entry_operation::operation::{self, Begun, Refusal};
 use wamn_engine::entry_operation::postgres_types::PgError;
 use wamn_engine::ingress::AuthenticatedCaller;
@@ -163,7 +163,7 @@ impl EdgeOperation {
             .manifest()
             .attachment(caller.attachment_id())
             .context("device attachment is missing")?;
-        let wamn_catalog::AttachmentTarget::Route { operation, .. } = attachment.target();
+        let wamn_package::AttachmentTarget::Route { operation, .. } = attachment.target();
         let authorized = self
             .authorize(Some(caller), operation, true)
             .map_err(|error| anyhow::anyhow!("device admission refused: {error:?}"))?;

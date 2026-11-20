@@ -1,6 +1,5 @@
-use super::{
-    Authorities, EnvironmentDocument, EnvironmentRow,
-};
+use super::{Authorities, EnvironmentDocument};
+use wamn_registry::EnvironmentRow;
 
 pub(super) fn replica_refusal(connection: &str, replicas: Option<u64>) -> Option<String> {
     (replicas != Some(1)).then(|| {
@@ -47,11 +46,11 @@ pub fn refusals(document: &EnvironmentDocument, authorities: &Authorities) -> Ve
                     if !matches!(
                         (connection.requirement_type, requirement.requirement_type),
                         (
-                            wamn_catalog::RequirementType::Http,
-                            wamn_catalog::ComponentConnectionType::Http
+                            wamn_connection_type::RequirementType::Http,
+                            wamn_package::ComponentConnectionType::Http
                         ) | (
-                            wamn_catalog::RequirementType::Blobstore,
-                            wamn_catalog::ComponentConnectionType::Blobstore
+                            wamn_connection_type::RequirementType::Blobstore,
+                            wamn_package::ComponentConnectionType::Blobstore
                         )
                     ) {
                         refusals.push(format!(

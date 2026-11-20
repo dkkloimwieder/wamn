@@ -24,10 +24,11 @@ use wit_encoder::{Ident, Package, PackageName, World};
 use super::insert_bytes;
 use super::rust_source::{insert_rust, rust_ident};
 use super::wit::wit_ident;
-use wamn_catalog::manifest::FilterMatch;
-use wamn_catalog::manifest::ManifestError as GenerateError;
-use wamn_catalog::manifest::{
-    CrudAction, ModelDeclaration, OperationDeclaration, PackageManifest, rust_type_identifier,
+use wamn_component_policy::PackageManifest;
+use wamn_package::manifest::FilterMatch;
+use wamn_package::manifest::ManifestError as GenerateError;
+use wamn_package::manifest::{
+    CrudAction, ModelDeclaration, OperationDeclaration, rust_type_identifier,
 };
 
 const HEADER: &str = "// @generated from the package manifest; do not edit.\n\n";
@@ -292,7 +293,7 @@ pub(super) fn emit_package_component(
         quote!(#[doc = #doc] pub mod #name { include!(#path); })
     });
     let feeds = feeds.into_iter().map(|(name, _)| {
-        let stem = wamn_catalog::manifest::custom_artifact_stem(name);
+        let stem = wamn_package::manifest::custom_artifact_stem(name);
         let doc = format!(" The authored `{name}` handler.");
         let path = format!("{stem}.rs");
         let module = rust_ident(&stem);
@@ -315,7 +316,7 @@ fn emit_package_world(
     files: &mut BTreeMap<String, Vec<u8>>,
     manifest: &PackageManifest,
     models: &[(
-        &wamn_catalog::manifest::source_name::SourceName,
+        &wamn_package::manifest::source_name::SourceName,
         &ModelDeclaration,
     )],
 ) -> Result<(), GenerateError> {
@@ -323,7 +324,7 @@ fn emit_package_world(
     let namespace = wit_ident(package.id.as_str());
     let mut world = World::new(WORLD_PACKAGE);
     for (name, declaration) in &manifest.connections {
-        if !wamn_catalog::manifest::host_connection_interface(&declaration.interface) {
+        if !wamn_package::manifest::host_connection_interface(&declaration.interface) {
             let label = wit_ident(name.as_str());
             // The encoder takes the label and path as one identifier.
             world.named_interface_import(format!("{label}: {}", declaration.interface));
@@ -394,7 +395,7 @@ fn operation_interface(
     namespace: &Ident,
     group: &Ident,
     name: &Ident,
-    version: &wamn_catalog::package_version::PackageVersion,
+    version: &wamn_package::package_version::PackageVersion,
 ) -> Ident {
     Ident::new(format!("{namespace}:{group}/{name}@{version}"))
 }

@@ -344,13 +344,8 @@ impl HostPlugin for OperationHost {
         item: &mut WorkloadItem<'a>,
         interfaces: WitInterfaces<'_>,
     ) -> anyhow::Result<()> {
-        if let Some(config) = item
-            .local_resources()
-            .config
-            .get(wamn_catalog::application_config::APPLICATION_CONFIG)
-        {
-            let application: wamn_catalog::application_config::ApplicationConfig =
-                serde_json::from_str(config)?;
+        let application = wamn_engine::application::bind_application_config(&self.scopes, item)?;
+        if let Some(application) = &application {
             let key = wamn_registry::name::project_env_key(
                 &application.org,
                 &application.project,
@@ -359,27 +354,16 @@ impl HostPlugin for OperationHost {
             self.pools
                 .bind_host_project(&application.project, &key)
                 .await?;
-        }
-        if let Some(store) = &self.authorization
-            && let Some(config) = item
-                .local_resources()
-                .config
-                .get(wamn_catalog::application_config::APPLICATION_CONFIG)
-        {
-            let application = serde_json::from_str(config)?;
-            store.configure_application(&application)?;
+            if let Some(store) = &self.authorization {
+                store.configure_application(application)?;
+            }
         }
         if interfaces.contains("wamn", "operation", &["operation"]) {
             let WorkloadItem::Component(component) = item else {
                 anyhow::bail!("operation authority requires an entry component");
             };
-            if let Some(config) = component
-                .local_resources()
-                .config
-                .get(wamn_catalog::application_config::APPLICATION_CONFIG)
-            {
-                let config = serde_json::from_str(config)?;
-                self.bind_entry_instance(component.workload_id(), component.id(), config)?;
+            if let Some(application) = application {
+                self.bind_entry_instance(component.workload_id(), component.id(), application)?;
             }
             // A control root links the interface without operation authority.
             // Calls on an unbound instance refuse before accessing SQL or identity.

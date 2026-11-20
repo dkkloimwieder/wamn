@@ -13,7 +13,7 @@ use wamn_registry::Triple;
 pub async fn apply_cdc_sql(
     admin_database_url: &str,
     capture_database_url: &str,
-    schemas: &[wamn_catalog::canonical_name::CanonicalName],
+    schemas: &[wamn_package::canonical_name::CanonicalName],
     cdc_name: &str,
     database: &str,
 ) -> anyhow::Result<()> {
@@ -44,7 +44,7 @@ pub async fn apply_cdc_sql(
 }
 
 fn cdc_schema_sql_bundle(
-    schemas: &[wamn_catalog::canonical_name::CanonicalName],
+    schemas: &[wamn_package::canonical_name::CanonicalName],
     db_name: &str,
 ) -> String {
     let mut bundle = String::new();

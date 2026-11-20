@@ -14,7 +14,7 @@ use super::{
 /// Every package's parsed manifest and the contract type of every operation
 /// the packages generate.
 pub(super) type PackageManifestSources = (
-    BTreeMap<wamn_catalog::PackageName, wamn_catalog::manifest::PackageManifest>,
+    BTreeMap<wamn_package::PackageName, wamn_component_policy::PackageManifest>,
     RouteContracts,
 );
 
@@ -33,16 +33,17 @@ pub(super) fn read_package_manifests(
                 )
             }
         })?;
-        let manifest =
-            wamn_catalog::manifest::PackageManifest::from_slice(&directory.manifest_bytes)
-                .map_err(|error| {
-                    PublishManifestError::with_source(
-                        PublishManifestErrorType::PackageManifest,
-                        format!("parse package manifest {}", path.display()),
-                        error,
-                    )
-                })?;
-        wamn_catalog::manifest::validate_operation_vocabulary(&manifest).map_err(|error| {
+        let manifest = wamn_component_policy::PackageManifest::from_slice(
+            &directory.manifest_bytes,
+        )
+        .map_err(|error| {
+            PublishManifestError::with_source(
+                PublishManifestErrorType::PackageManifest,
+                format!("parse package manifest {}", path.display()),
+                error,
+            )
+        })?;
+        wamn_package::manifest::validate_operation_vocabulary(&manifest).map_err(|error| {
             PublishManifestError::with_source(
                 PublishManifestErrorType::PackageManifest,
                 format!("validate package manifest {}", path.display()),
@@ -63,7 +64,7 @@ pub(super) fn read_package_manifests(
 
 /// Collect the compiled operation contracts for the packages in one deployment.
 pub fn route_contracts(
-    manifests: &BTreeMap<wamn_catalog::PackageName, wamn_catalog::manifest::PackageManifest>,
+    manifests: &BTreeMap<wamn_package::PackageName, wamn_component_policy::PackageManifest>,
 ) -> Result<RouteContracts, PublishManifestError> {
     let mut types = RouteContracts::new();
     for (package_id, manifest) in manifests {
@@ -79,13 +80,13 @@ pub fn route_contracts(
 
 /// One generated contract of a package.
 struct PackageContract {
-    operation: wamn_catalog::registered_operation::RegisteredOperation,
+    operation: wamn_package::registered_operation::RegisteredOperation,
     route: RouteContract,
 }
 
 /// Borrow the operation descriptions compiled into a package document.
 fn operation_contracts(
-    manifest: &wamn_catalog::manifest::PackageManifest,
+    manifest: &wamn_component_policy::PackageManifest,
 ) -> Result<Vec<PackageContract>, PublishManifestError> {
     #[derive(serde::Deserialize)]
     struct Relation<'a> {
@@ -160,12 +161,12 @@ fn operation_contracts(
 /// Returns [`PublishManifestError`] when no generated contract declares the
 /// operation, or a contract cannot be read.
 pub fn package_route(
-    roots: &BTreeMap<wamn_catalog::PackageName, &Path>,
-    package_id: &wamn_catalog::PackageName,
-    component: &wamn_catalog::canonical_name::CanonicalName,
-    operation: &wamn_catalog::registered_operation::RegisteredOperation,
+    roots: &BTreeMap<wamn_package::PackageName, &Path>,
+    package_id: &wamn_package::PackageName,
+    component: &wamn_package::canonical_name::CanonicalName,
+    operation: &wamn_package::registered_operation::RegisteredOperation,
 ) -> Result<ServingRoute, PublishManifestError> {
-    let unassembled = |package: &wamn_catalog::PackageName| {
+    let unassembled = |package: &wamn_package::PackageName| {
         PublishManifestError::new(
             PublishManifestErrorType::PackageManifest,
             format!("package {package:?} is not assembled"),
@@ -183,7 +184,7 @@ pub fn package_route(
         )
     })?;
     let manifest =
-        wamn_catalog::manifest::PackageManifest::from_slice(&bytes).map_err(|source| {
+        wamn_component_policy::PackageManifest::from_slice(&bytes).map_err(|source| {
             PublishManifestError::with_source(
                 PublishManifestErrorType::PackageManifest,
                 format!("parse {}", path.display()),
@@ -199,7 +200,8 @@ mod tests {
     use std::collections::BTreeSet;
     use std::path::Path;
 
-    use wamn_catalog::{OperationType, ServingRelation};
+    use wamn_edge_document::ServingRelation;
+    use wamn_package::OperationType;
     use wamn_test_infrastructure::operations::sealed;
 
     use super::BTreeMap;
@@ -262,10 +264,10 @@ mod tests {
     /// The route of one package, assembled alone.
     fn package_route(
         root: &Path,
-        package_id: &wamn_catalog::PackageName,
-        component: &wamn_catalog::canonical_name::CanonicalName,
-        operation: &wamn_catalog::registered_operation::RegisteredOperation,
-    ) -> Result<wamn_catalog::ServingRoute, super::PublishManifestError> {
+        package_id: &wamn_package::PackageName,
+        component: &wamn_package::canonical_name::CanonicalName,
+        operation: &wamn_package::registered_operation::RegisteredOperation,
+    ) -> Result<wamn_edge_document::ServingRoute, super::PublishManifestError> {
         let roots = BTreeMap::from([(package_id.to_owned(), root)]);
         super::package_route(&roots, package_id, component, operation)
     }
@@ -348,7 +350,7 @@ mod tests {
     #[ignore = "requires: input:wms, input:fixture"]
     fn a_write_route_names_its_idempotency_field() {
         let wms = app("wamn_wms");
-        let route = |operation: &wamn_catalog::registered_operation::RegisteredOperation| {
+        let route = |operation: &wamn_package::registered_operation::RegisteredOperation| {
             package_route(
                 &wms,
                 &"wamn_wms".parse().unwrap(),

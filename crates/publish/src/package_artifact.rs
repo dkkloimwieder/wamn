@@ -2,6 +2,9 @@
 //! Publication admits the build's components and pins the stock OCI images.
 
 pub(super) mod plan;
+use wamn_package::manifest::deploy::PublishedComponent;
+use wamn_package::manifest::PolicyContractState;
+use wamn_package::PackageCoordinate;
 use plan::{
     image_manifest, package_coordinate, refuse_workflow_declarations, tar_layer, validate_append,
 };
@@ -14,9 +17,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use anyhow::{Context as _, bail, ensure};
 use oci_client::Reference;
 use oci_client::manifest::OCI_IMAGE_MEDIA_TYPE;
-use wamn_catalog::manifest::deploy::PublishedComponent;
-use wamn_catalog::manifest::{PackageManifest, PolicyContractState};
-use wamn_catalog::{ComponentDescriptor, PackageCoordinate, component_artifact_reference};
+use wamn_oci_reference::component_artifact_reference;
+use wamn_component_policy::ComponentDescriptor;
+use wamn_component_policy::PackageManifest;
 use wamn_digest::Digest;
 use wamn_oci::package_artifact::registry_credentials::read_registry_credentials;
 
@@ -46,9 +49,9 @@ const OWNED_PLATFORM_PACKAGES: [&str; 2] = ["wamn:node", "wamn:postgres"];
 #[derive(Debug)]
 pub struct PackedPackage {
     /// Package id from the package manifest.
-    pub package_id: wamn_catalog::PackageName,
+    pub package_id: wamn_package::PackageName,
     /// Package version from the package manifest.
-    pub version: wamn_catalog::package_version::PackageVersion,
+    pub version: wamn_package::package_version::PackageVersion,
     /// The layers in order.
     pub layers: Vec<PackedLayer>,
     /// The image manifest bytes.
@@ -221,7 +224,7 @@ fn verify_package(
         .keys()
         .cloned()
         .map(Into::into)
-        .collect::<Vec<wamn_catalog::canonical_name::CanonicalName>>();
+        .collect::<Vec<wamn_package::canonical_name::CanonicalName>>();
     for name in names {
         let target = PackageCoordinate::new(
             manifest.package.id.clone(),
@@ -337,9 +340,11 @@ pub async fn push_package(
         bytes_sha256(&directory.manifest_bytes),
     )?;
     refuse_workflow_declarations(&directory.manifest_bytes)?;
-    let coordinate = wamn_catalog::package_schema::package_metadata(&directory)
-        .context("plan the package migrations")?
-        .coordinate;
+    let coordinate = wamn_package::package_schema::package_metadata::<
+        wamn_component_policy::ComponentDescriptor,
+    >(&directory)
+    .context("plan the package migrations")?
+    .coordinate;
     let mut manifest = PackageManifest::from_slice(&directory.manifest_bytes)
         .context("read the compiled package manifest")?;
     drop(directory);
@@ -483,8 +488,11 @@ fn validate_published(manifest: &PackageManifest) -> anyhow::Result<()> {
         manifest
             .components
             .keys()
-            .map(wamn_catalog::manifest::source_name::SourceName::as_str)
-            .eq(deploy.components.keys().map(wamn_catalog::canonical_name::CanonicalName::as_str))
+            .map(wamn_package::manifest::source_name::SourceName::as_str)
+            .eq(deploy
+                .components
+                .keys()
+                .map(wamn_package::canonical_name::CanonicalName::as_str))
             && deploy
                 .components
                 .iter()
@@ -610,8 +618,8 @@ static UNPACK_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 /// digest.
 pub async fn open_package(
     registry: &PackageRegistry,
-    package_id: &wamn_catalog::PackageName,
-    version: &wamn_catalog::package_version::PackageVersion,
+    package_id: &wamn_package::PackageName,
+    version: &wamn_package::package_version::PackageVersion,
 ) -> anyhow::Result<OpenedPackage> {
     let tag = format!("{package_id}-{version}").parse::<wamn_oci::package_artifact::tag::OciTag>()?;
     let pulled = Repository::open(registry, &tag)?

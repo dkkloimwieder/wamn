@@ -1,9 +1,9 @@
 //! PostgreSQL syntax facts used by compilation and release effect review.
 
-use wamn_catalog::manifest::FilterMatch;
-use wamn_catalog::manifest::{ManifestError, ManifestErrorType};
 use pg_query::{NodeEnum, NodeRef};
 use std::collections::{BTreeMap, BTreeSet};
+use wamn_package::manifest::FilterMatch;
+use wamn_package::manifest::{ManifestError, ManifestErrorType};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RelationAccess {

@@ -13,8 +13,8 @@ test = false
 [dependencies]
 kube = { workspace = true }
 k8s-openapi = { workspace = true }
+wamn-package.workspace = true
 wamn-registry.workspace = true
-wamn-catalog.workspace = true
 wamn-digest.workspace = true
 wamn-kubernetes.workspace = true
 wamn-http-client.workspace = true

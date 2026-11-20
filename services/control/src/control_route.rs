@@ -34,6 +34,10 @@
 //! counts read the environment through its administration login and the
 //! control store through its existing connection. Count failures answer null.
 //!
+use wamn_routes::HostAttachment;
+use wamn_routes::HostHandler;
+use wamn_routes::HostRouteAuthority;
+use wamn_registry::EnvironmentStatus;
 use sqlx::PgConnection as Client;
 use sqlx::{Connection as _, Row as _};
 mod connection_test;
@@ -49,7 +53,6 @@ use std::time::Duration;
 use anyhow::Context as _;
 use serde::Deserialize;
 use serde_json::{Value, json};
-use wamn_catalog::{HostAttachment, HostHandler, HostRouteAuthority};
 use wamn_engine::native_routes::{DeliveryError, PermissionDenial};
 use wamn_environment::org::{
     create_project, org_environments, set_environment_status, status_environments,
@@ -61,8 +64,7 @@ use wamn_identity::control::{
     control_projects_page, is_org_admin, is_project_admin, org_projects_page,
 };
 use wamn_identity::org::{
-    EnvironmentStatus, deactivate_org_membership, grant_member,
-    grant_org_admin, grant_project_admin, org_users_page,
+    deactivate_org_membership, grant_member, grant_org_admin, grant_project_admin, org_users_page,
     project_envs, project_envs_page, project_members_page, reactivate_org_membership,
     revoke_member, revoke_org_admin, revoke_project_admin,
 };
@@ -1151,7 +1153,7 @@ mod tests {
                 .transpose()
                 .unwrap();
             let project = project.as_ref();
-            let attachment = wamn_catalog::HostRouteSet::Control
+            let attachment = wamn_routes::HostRouteSet::Control
                 .attachments()
                 .find(|(_, attachment)| attachment.route.handler == handler)
                 .unwrap()
@@ -1238,7 +1240,7 @@ mod tests {
     fn member_list_cursor_binds_the_environment() {
         let principal: PrincipalId = "00000000-0000-0000-0000-000000000001".parse().unwrap();
         let attachment = |handler| {
-            wamn_catalog::HostRouteSet::Control
+            wamn_routes::HostRouteSet::Control
                 .attachments()
                 .find(|(_, attachment)| attachment.route.handler == handler)
                 .unwrap()

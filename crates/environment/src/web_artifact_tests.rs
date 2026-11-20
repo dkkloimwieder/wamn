@@ -24,7 +24,7 @@ async fn two_environments_with_the_same_web_digest_share_one_completed_upload() 
         "applications": {"fixture": {"label": "dev", "client": {"package": "web_fixture", "web": packed.digest}}}}))
     .unwrap();
     let mut second = first.clone();
-    second.env = "staging".parse().unwrap();
+    second.settings.env = "staging".parse().unwrap();
     second.applications.get_mut("fixture").unwrap().label = "staging".into();
     let store = InMemory::new();
     let web = &first.applications["fixture"].client.as_ref().unwrap().web;

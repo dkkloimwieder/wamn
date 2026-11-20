@@ -37,7 +37,7 @@ pub async fn require_login(
 /// The history table name includes both package and environment identity.
 pub fn history_table(
     project_env_key: &wamn_registry::ProjectEnvKey,
-    package: &wamn_catalog::PackageName,
+    package: &wamn_package::PackageName,
 ) -> String {
     let digest = wamn_digest::canonical_json_sha256(&serde_json::json!([project_env_key, package]));
     format!("wamn_history.migrations_{}", &digest.hex()[..40])

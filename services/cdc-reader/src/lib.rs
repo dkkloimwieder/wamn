@@ -17,9 +17,9 @@ use pg_walstream::{
 };
 
 use postgres_protocol::escape::escape_identifier;
-use wamn_catalog::WiringEventOperation as Op;
-use wamn_catalog::manifest::CONTROL_OWNED_RELATION_TABLES;
 use wamn_event::{Causation, CdcIdentity, Envelope, msg_id, subject};
+use wamn_package::WiringEventOperation as Op;
+use wamn_package::manifest::CONTROL_OWNED_RELATION_TABLES;
 
 use wamn_event::reader::ReaderConfig;
 
@@ -173,13 +173,13 @@ fn relation_classification_lookup_sql(schema: &str) -> String {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct EntityMapping {
-    package_id: wamn_catalog::PackageName,
+    package_id: wamn_package::PackageName,
     entity_id: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct ExcludedRelation {
-    package_id: wamn_catalog::PackageName,
+    package_id: wamn_package::PackageName,
     relation_id: String,
 }
 
@@ -249,11 +249,11 @@ async fn resolve_relation_classification(
     {
         Ok(row) => {
             let entity_package = row
-                .try_get::<Option<wamn_catalog::PackageName>, _>("entity_package_id")
+                .try_get::<Option<wamn_package::PackageName>, _>("entity_package_id")
                 .map_err(|error| ReplicationError::Config(error.to_string()))?;
             let entity_id = row.get::<Option<String>, _>("entity_id");
             let excluded_package = row
-                .try_get::<Option<wamn_catalog::PackageName>, _>("excluded_package_id")
+                .try_get::<Option<wamn_package::PackageName>, _>("excluded_package_id")
                 .map_err(|error| ReplicationError::Config(error.to_string()))?;
             let excluded_relation = row.get::<Option<String>, _>("relation_id");
             match (

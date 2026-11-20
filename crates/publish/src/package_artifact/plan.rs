@@ -37,10 +37,10 @@ pub(super) fn image_manifest(
 pub(super) fn package_coordinate(
     manifest: &[u8],
 ) -> anyhow::Result<(
-    wamn_catalog::PackageName,
-    wamn_catalog::package_version::PackageVersion,
+    wamn_package::PackageName,
+    wamn_package::package_version::PackageVersion,
 )> {
-    let document: wamn_catalog::manifest::OperationOwners = serde_json::from_slice(manifest)?;
+    let document: wamn_package::manifest::OperationOwners = serde_json::from_slice(manifest)?;
     Ok((document.package.id, document.package.version))
 }
 

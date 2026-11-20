@@ -17,7 +17,7 @@ use crate::ir::{
     IndexDirection, IrError, IrErrorType, Table, View, ViewBaseTable, ViewColumn, ViewColumnOrigin,
     postgres_default, postgres_type,
 };
-use wamn_catalog::schema::ForeignKeyColumn;
+use wamn_package::schema::ForeignKeyColumn;
 
 /// Stable class of PostgreSQL catalog refusal.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

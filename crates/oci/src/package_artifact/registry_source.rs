@@ -8,7 +8,7 @@ use oci_client::{Client, errors::OciDistributionError};
 /// Explicit protocol, trust and request deadline for one registry.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct RegistrySource {
-    base: wamn_catalog::ComponentArtifactBase,
+    base: wamn_oci_reference::ComponentArtifactBase,
     insecure: bool,
     timeout: Duration,
     ca_bundles: Vec<Vec<u8>>,
@@ -17,7 +17,7 @@ pub(super) struct RegistrySource {
 impl RegistrySource {
     /// Keep explicit transport inputs. Call `client` to validate its trust roots.
     pub fn new(
-        base: wamn_catalog::ComponentArtifactBase,
+        base: wamn_oci_reference::ComponentArtifactBase,
         insecure: bool,
         timeout: Duration,
     ) -> Self {

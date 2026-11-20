@@ -6,7 +6,7 @@ use kube::Api;
 use sqlx::Row as _;
 
 use anyhow::Context as _;
-use wamn_catalog::lifecycle_lock::LifecycleLock;
+use wamn_registry::lifecycle_lock::LifecycleLock;
 use wamn_registry::{EnvName, OrgId, ProjectId, Triple, name};
 
 use super::Platform;
@@ -239,12 +239,12 @@ pub async fn installed_manifests(
     platform: &Platform,
     system: &LifecycleLock,
     document: &EnvironmentDocument,
-) -> anyhow::Result<Vec<wamn_catalog::manifest::PackageManifest>> {
+) -> anyhow::Result<Vec<wamn_component_policy::PackageManifest>> {
     let mut manifests = Vec::new();
     for (id, baseline) in super::stage::installed(system, document).await? {
         let package = super::stage::open(platform, &id, &baseline.current).await?;
         let path = wamn_codegen::package_manifest_path(package.root());
-        manifests.push(wamn_catalog::manifest::PackageManifest::from_slice(
+        manifests.push(wamn_component_policy::PackageManifest::from_slice(
             &std::fs::read(&path).with_context(|| format!("read {}", path.display()))?,
         )?);
     }
@@ -280,7 +280,7 @@ pub(super) async fn ensure_stream(platform: &Platform, triple: &Triple) -> anyho
 pub async fn cdc_in_place(
     project: &mut sqlx::PgConnection,
     cdc_name: &str,
-    schemas: &[wamn_catalog::canonical_name::CanonicalName],
+    schemas: &[wamn_package::canonical_name::CanonicalName],
 ) -> anyhow::Result<bool> {
     Ok(sqlx::query("SELECT EXISTS (SELECT FROM pg_publication p WHERE p.pubname = $1 \
          AND NOT p.puballtables \
@@ -312,7 +312,7 @@ pub(super) async fn publication_schemas(
     platform: &Platform,
     system: &LifecycleLock,
     document: &EnvironmentDocument,
-) -> anyhow::Result<Vec<wamn_catalog::canonical_name::CanonicalName>> {
+) -> anyhow::Result<Vec<wamn_package::canonical_name::CanonicalName>> {
     Ok(installed_manifests(platform, system, document)
         .await?
         .into_iter()
@@ -333,7 +333,7 @@ pub(super) async fn prepare_cdc(
     capture: &str,
     database: &str,
     publication: &str,
-    schemas: &[wamn_catalog::canonical_name::CanonicalName],
+    schemas: &[wamn_package::canonical_name::CanonicalName],
 ) -> anyhow::Result<()> {
     let mut project = connect(owner).await?;
     tokio::time::timeout(std::time::Duration::from_secs(120), async {

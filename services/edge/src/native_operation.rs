@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context as _;
-use wamn_catalog::AdmittedComponent;
+use wamn_component_policy::AdmittedComponent;
 
 pub mod invocation_policy;
 pub mod native_call;
@@ -55,7 +55,7 @@ impl<P: InvocationPolicy> fmt::Debug for OperationClosure<'_, P> {
 pub struct OperationCall<'a, P: InvocationPolicy> {
     pub closure: OperationClosure<'a, P>,
     pub component: &'a AdmittedComponent,
-    pub operation: &'a wamn_catalog::canonical_name::CanonicalName,
+    pub operation: &'a wamn_package::canonical_name::CanonicalName,
     pub context: node_types::NodeContext,
     pub input: &'a serde_json::Value,
     /// The bounded deadline, the same value as `context.deadline_ms`.

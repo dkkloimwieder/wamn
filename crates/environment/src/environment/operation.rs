@@ -2,6 +2,12 @@
 
 mod rollback;
 
+use wamn_registry::ApplicationName;
+use wamn_package::PackageName;
+use wamn_routes::WiringDocument;
+use wamn_engine::application_config::APPLICATION_CONFIG;
+use wamn_engine::application_config::ApplicationConfig;
+use wamn_registry::lifecycle_lock::LifecycleLock;
 use std::{
     borrow::Cow,
     collections::{BTreeMap, BTreeSet},
@@ -12,12 +18,7 @@ use std::{
 use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
 use tokio::time::Instant;
-use wamn_catalog::{
-    ApplicationName, PackageName, WiringDocument,
-    application_config::{APPLICATION_CONFIG, ApplicationConfig},
-    lifecycle_lock::LifecycleLock,
-    manifest::PackageManifest,
-};
+use wamn_component_policy::PackageManifest;
 use wamn_digest::Digest;
 use wamn_kubernetes::{
     client::{KubernetesApi, wait_named, workloads},
@@ -179,7 +180,7 @@ pub async fn application(
             .await?;
             platform.prepare_database(&connection).await?;
             let owner = connection.to_json()?;
-            let release = wamn_catalog::resource_names::application_release_name(
+            let release = wamn_registry::resource_names::application_release_name(
                 &triple.org,
                 &triple.project,
                 &triple.env,
@@ -429,7 +430,7 @@ async fn check_workflows(
     .await?;
     for (name, value) in graphs {
         let graph = WiringDocument::parse(&value)?;
-        wamn_catalog::application_config::check_workflow_references(app, &graph)
+        wamn_engine::application_config::check_workflow_references(app, &graph)
             .with_context(|| format!("enabled workflow {name}"))?;
     }
     Ok(())
@@ -508,7 +509,7 @@ async fn publication_schemas(
     platform: &Platform,
     owner: &str,
     selected: &BTreeMap<PackageName, PackageManifest>,
-) -> anyhow::Result<Vec<wamn_catalog::canonical_name::CanonicalName>> {
+) -> anyhow::Result<Vec<wamn_package::canonical_name::CanonicalName>> {
     let mut schemas = selected
         .values()
         .flat_map(|package| {

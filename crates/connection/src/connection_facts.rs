@@ -36,7 +36,7 @@ pub trait ConnectionCache: std::fmt::Debug + Send + Sync {
     fn bind_application(
         &self,
         workload: &str,
-        application: &Arc<wamn_catalog::application_config::ApplicationConfig>,
+        application: &Arc<wamn_engine::application_config::ApplicationConfig>,
     ) -> anyhow::Result<()>;
     fn get(
         &self,
@@ -61,7 +61,7 @@ pub trait ConnectionCache: std::fmt::Debug + Send + Sync {
     ) -> anyhow::Result<Arc<ConnectionFacts>>;
     fn facts(
         self: Arc<Self>,
-        application: Arc<wamn_catalog::application_config::ApplicationConfig>,
+        application: Arc<wamn_engine::application_config::ApplicationConfig>,
     ) -> anyhow::Result<Arc<ConnectionFacts>>;
 }
 
@@ -75,7 +75,7 @@ pub struct ConnectionFacts {
     project: wamn_registry::ProjectId,
     environment: wamn_registry::EnvName,
     cache: Option<Arc<dyn ConnectionCache>>,
-    application: Option<Arc<wamn_catalog::application_config::ApplicationConfig>>,
+    application: Option<Arc<wamn_engine::application_config::ApplicationConfig>>,
 }
 
 impl ConnectionFacts {
@@ -106,7 +106,7 @@ impl ConnectionFacts {
     pub fn with_cache(
         mut self,
         cache: Arc<dyn ConnectionCache>,
-        application: Arc<wamn_catalog::application_config::ApplicationConfig>,
+        application: Arc<wamn_engine::application_config::ApplicationConfig>,
     ) -> Self {
         self.cache = Some(cache);
         self.application = Some(application);
@@ -219,9 +219,9 @@ impl ConnectionFacts {
                     .find(|binding| binding.connection_id == connection_id)
             })
             .map_or("", |binding| match binding.runtime_type {
-                wamn_catalog::RuntimeType::Host => "host",
-                wamn_catalog::RuntimeType::Wasm => "wasm",
-                wamn_catalog::RuntimeType::Native => "native",
+                wamn_connection_type::RuntimeType::Host => "host",
+                wamn_connection_type::RuntimeType::Wasm => "wasm",
+                wamn_connection_type::RuntimeType::Native => "native",
             });
         Ok(Generation { runtime_type, data })
     }

@@ -3,10 +3,10 @@
 //! The box carries one release, so the application loads once at start and
 //! serves every call.
 
+use wamn_component_policy::AdmittedComponent;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use wamn_catalog::AdmittedComponent;
 use crate::native_operation::invocation_policy::ApplicationHost;
 use crate::native_operation::native_workload::{
     NativeApplication, NativeWorkloadSpec, load_native_application,

@@ -215,3 +215,7 @@ pub async fn platform_migration_input(
         .map_err(|()| anyhow::anyhow!("fixture password"))?;
     Ok(url.into())
 }
+
+#[path = "../../src/test_database/project.rs"]
+mod project;
+pub use project::project;

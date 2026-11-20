@@ -1,13 +1,16 @@
 //! Author and change the enabled workflow under the project lifecycle lock.
 
+use wamn_package::canonical_name::CanonicalName;
+use wamn_routes::HostAttachment;
+use wamn_routes::HostHandler;
+use wamn_routes::WiringDocument;
+use wamn_routes::WiringEntry;
 use anyhow::Context as _;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sqlx::{PgConnection, Row as _};
 use std::sync::Arc;
-use wamn_catalog::application_config::ApplicationConfig;
-use wamn_catalog::canonical_name::CanonicalName;
-use wamn_catalog::{HostAttachment, HostHandler, WiringDocument, WiringEntry};
+use wamn_engine::application_config::ApplicationConfig;
 use wamn_engine::ingress::AuthenticatedCaller;
 use wamn_engine::native_routes::DeliveryError;
 use wamn_identity_protocol::PrincipalId;
@@ -505,6 +508,6 @@ pub(in crate::host) async fn permissions(
     .await?;
     Ok(ids
         .iter()
-        .map(|id| wamn_catalog::workflow_permission(&app.application, id))
+        .map(|id| wamn_routes::workflow_permission(&app.application, id))
         .collect())
 }

@@ -2,11 +2,11 @@ use sqlx::Row as _;
 use std::collections::BTreeSet;
 
 use anyhow::{Context as _, bail, ensure};
-use wamn_catalog::manifest::PackageManifest;
+use wamn_component_policy::PackageManifest;
 
 pub(super) async fn reconcile_entity_maps(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    plan: &wamn_catalog::package_schema::PackageMetadata,
+    plan: &wamn_package::package_schema::PackageMetadata,
     manifest: &PackageManifest,
 ) -> anyhow::Result<()> {
     let schemas = plan
@@ -75,7 +75,7 @@ pub(super) async fn reconcile_entity_maps(
                 model.table
             );
         };
-        let mapped_package = mapping.try_get::<Option<wamn_catalog::PackageName>, _>(0)?;
+        let mapped_package = mapping.try_get::<Option<wamn_package::PackageName>, _>(0)?;
         let mapped_entity = mapping.get::<Option<String>, _>(1);
         let mapped_table = mapping.get::<Option<String>, _>(2);
         ensure!(
@@ -159,7 +159,7 @@ pub(super) async fn reconcile_entity_maps(
             excluded.schema,
             excluded.table
         );
-        let mapped_package = mapping.try_get::<Option<wamn_catalog::PackageName>, _>(0)?;
+        let mapped_package = mapping.try_get::<Option<wamn_package::PackageName>, _>(0)?;
         let mapped_relation = mapping.get::<Option<String>, _>(1);
         let mapped_table = mapping.get::<Option<String>, _>(2);
         if let (Some(mapped_package), Some(mapped_relation)) =

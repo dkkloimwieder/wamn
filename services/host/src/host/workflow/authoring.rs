@@ -2,9 +2,9 @@
 
 use std::collections::{HashMap, HashSet};
 
-use wamn_catalog::application_config::{ApplicationConfig, ApplicationOperationType};
-use wamn_catalog::canonical_name::CanonicalName;
-use wamn_catalog::{CatalogIdentityError, WiringDocument, WiringEntry, WiringNode};
+use wamn_engine::application_config::{ApplicationConfig, ApplicationOperationType};
+use wamn_package::canonical_name::CanonicalName;
+use wamn_routes::{WiringDocument, WiringEntry, WiringError, WiringNode};
 
 pub(super) struct Checked<'a> {
     pub entry: &'a WiringEntry,
@@ -15,7 +15,7 @@ pub(super) fn check<'a>(
     graph: &'a WiringDocument,
     application: &ApplicationConfig,
     role: Option<&str>,
-) -> Result<Checked<'a>, CatalogIdentityError> {
+) -> Result<Checked<'a>, WiringError> {
     let mut entries = graph.nodes.iter().filter_map(|(id, node)| match node {
         WiringNode::Entry(entry) => Some((id, entry)),
         _ => None,
@@ -39,7 +39,7 @@ pub(super) fn check<'a>(
             }
         }
         WiringEntry::Schedule { cron } => {
-            wamn_catalog::parse_workflow_schedule(cron)?;
+            super::schedule::parse_workflow_schedule(cron)?;
         }
         WiringEntry::DataChange {
             package,
@@ -79,13 +79,13 @@ pub(super) fn check<'a>(
                 sibling, export, ..
             } => {
                 let Some((component, operation)) =
-                    wamn_catalog::application_config::workflow_call(application, sibling, export)
+                    wamn_engine::application_config::workflow_call(application, sibling, export)
                 else {
                     return Err(invalid(format!(
                         "node {id} names an unavailable sibling export"
                     )));
                 };
-                let palette = component.package.as_str() == wamn_catalog::PALETTE_PACKAGE_ID;
+                let palette = component.package.as_str() == wamn_package::PALETTE_PACKAGE_ID;
                 let can_write = match operation.type_ {
                     Some(ApplicationOperationType::Write | ApplicationOperationType::Delete) => {
                         true
@@ -108,7 +108,7 @@ pub(super) fn check<'a>(
 
     let mut outgoing: HashMap<&CanonicalName, Vec<&CanonicalName>> = HashMap::new();
     for edge in &graph.edges {
-        if edge.from == *entry_id && edge.from_port != wamn_catalog::MAIN_PORT {
+        if edge.from == *entry_id && edge.from_port != wamn_routes::MAIN_PORT {
             return Err(invalid("an entry has only a main output"));
         }
         outgoing.entry(&edge.from).or_default().push(&edge.to);
@@ -155,8 +155,8 @@ fn valid_exact_path(path: &str) -> bool {
         && path.parse::<hyper::http::uri::PathAndQuery>().is_ok()
 }
 
-fn invalid(message: impl Into<String>) -> CatalogIdentityError {
-    CatalogIdentityError::InvalidDefinition {
+fn invalid(message: impl Into<String>) -> WiringError {
+    WiringError::InvalidDefinition {
         message: message.into(),
     }
 }

@@ -6,7 +6,7 @@ use super::{
 pub(super) fn render_palette_declaration(
     template: &Path,
     mut document: Value,
-    target: &wamn_catalog::ComponentPackageCoordinate,
+    target: &wamn_component_policy::ComponentPackageCoordinate,
     store_alias: Option<&str>,
 ) -> Result<Value, ComponentDeclarationError> {
     let invalid = |detail: String| {

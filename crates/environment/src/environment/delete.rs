@@ -17,6 +17,7 @@
 //! With `--data`, remove kept generations even when the registry row is gone.
 //! An absent or unreachable project database skips database-side cleanup.
 
+use wamn_registry::lifecycle_lock::LifecycleLock;
 use sqlx::{Connection as _, Row as _};
 mod resources;
 mod rows;
@@ -35,7 +36,6 @@ use wamn_registry::{Triple, instance_suffix::InstanceSuffix, name};
 
 use super::Platform;
 use super::analyse::application_releases;
-use wamn_catalog::lifecycle_lock::LifecycleLock;
 use wamn_kubernetes::{
     client::{delete_named, resource},
     helm,

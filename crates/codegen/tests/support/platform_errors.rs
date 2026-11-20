@@ -1,6 +1,7 @@
 use serde_json::{Value, json};
-use wamn_catalog::manifest::ManifestErrorType as GenerateErrorType;
-use wamn_catalog::manifest::{PackageManifest, validate_operation_vocabulary};
+use wamn_component_policy::PackageManifest;
+use wamn_package::manifest::ManifestErrorType as GenerateErrorType;
+use wamn_package::manifest::validate_operation_vocabulary;
 use wamn_schema_introspection::ir::{CatalogIr, Constraint, Table};
 
 use super::{description_json, fixture, parsed};

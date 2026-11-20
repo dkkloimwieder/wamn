@@ -8,6 +8,10 @@ use serde_json::Value;
 use crate::bindings::wamn::workflow::run::{FailureType, Workflow};
 use crate::walk::WalkError;
 
+#[path = "../../../crates/package/src/wiring_event_operation.rs"]
+mod wiring_event_operation;
+use wiring_event_operation::WiringEventOperation;
+
 pub(crate) const MAIN: &str = "main";
 pub(crate) const ERROR: &str = "error";
 
@@ -47,18 +51,10 @@ pub(crate) enum Trigger {
         #[serde(rename = "entity")]
         _entity: String,
         #[serde(rename = "ops")]
-        _ops: Vec<Operation>,
+        _ops: Vec<WiringEventOperation>,
         #[serde(rename = "condition")]
         _condition: Option<String>,
     },
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub(crate) enum Operation {
-    Insert,
-    Update,
-    Delete,
 }
 
 #[derive(Debug, Deserialize)]

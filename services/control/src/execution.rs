@@ -20,7 +20,7 @@ pub(crate) struct Execution {
 impl crate::host_route::ControlExecution for Execution {
     async fn execute(
         &self,
-        operation: &wamn_catalog::canonical_name::CanonicalName,
+        operation: &wamn_package::canonical_name::CanonicalName,
         caller: &PrincipalId,
         payload: &str,
     ) -> anyhow::Result<Value> {

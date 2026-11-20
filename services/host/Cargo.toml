@@ -6,6 +6,10 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+croner.workspace = true
+wamn-package.workspace = true
+wamn-routes.workspace = true
+wamn-oci-reference.workspace = true
 zeroize.workspace = true
 chrono.workspace = true
 jmespath.workspace = true
@@ -25,7 +29,6 @@ wamn-http.workspace = true
 uuid.workspace = true
 wamn-broker = { workspace = true }
 mimalloc = { workspace = true }
-wamn-catalog = { workspace = true }
 wamn-registry = { workspace = true }
 wamn-identity.workspace = true
 wamn-identity-client.workspace = true
@@ -65,7 +68,6 @@ wamn-operation = { workspace = true, features = ["test-util"] }
 wamn-authentication = { workspace = true, features = ["test-util"] }
 opentelemetry_sdk = { workspace = true, features = ["trace", "testing"] }
 tracing-opentelemetry = { workspace = true }
-wamn-catalog = { workspace = true, features = ["test-util"] }
 wamn-test-postgres = { workspace = true }
 rcgen = { workspace = true }
 rustls = { workspace = true, features = ["aws-lc-rs"] }

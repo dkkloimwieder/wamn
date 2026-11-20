@@ -7,8 +7,8 @@ pub use plan::{apply_order, sequence_defaults};
 use std::collections::BTreeMap;
 
 use anyhow::{Context as _, bail, ensure};
-use wamn_catalog::lifecycle_lock::LifecycleLock;
-use wamn_catalog::manifest::PackageManifest;
+use wamn_component_policy::PackageManifest;
+use wamn_registry::lifecycle_lock::LifecycleLock;
 
 use super::Platform;
 use super::analyse::{self, Installed};
@@ -26,7 +26,7 @@ pub async fn materialize_application_principals(
     domain: &PlatformDomain,
     project_url: &str,
     project_env_key: &wamn_registry::ProjectEnvKey,
-    packages: &BTreeMap<wamn_catalog::PackageName, PackageManifest>,
+    packages: &BTreeMap<wamn_package::PackageName, PackageManifest>,
 ) -> anyhow::Result<()> {
     use wamn_identity_protocol::PlatformComponent;
 
@@ -46,8 +46,10 @@ pub async fn materialize_application_principals(
     wamn_provision::bind_platform_principal(&mut transaction, PlatformComponent::Provisioning)
         .await?;
     for package in &applications {
-        let subject =
-            wamn_catalog::resource_names::application_subject(project_env_key, &package.package.id);
+        let subject = wamn_registry::resource_names::application_subject(
+            project_env_key,
+            &package.package.id,
+        );
         wamn_identity::application::service::write_service(
             &mut transaction,
             domain,
@@ -72,15 +74,17 @@ async fn write_runtime_grants(
     transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     project_env_key: &wamn_registry::ProjectEnvKey,
     applications: &[&PackageManifest],
-    packages: &BTreeMap<wamn_catalog::PackageName, PackageManifest>,
+    packages: &BTreeMap<wamn_package::PackageName, PackageManifest>,
 ) -> anyhow::Result<()> {
     let dependency_manifests = packages
         .values()
         .map(|package| (&package.package.id, package))
         .collect();
     for package in applications {
-        let subject =
-            wamn_catalog::resource_names::application_subject(project_env_key, &package.package.id);
+        let subject = wamn_registry::resource_names::application_subject(
+            project_env_key,
+            &package.package.id,
+        );
         let principal = wamn_identity::application::service::active_service(transaction, &subject)
             .await?
             .with_context(|| format!("application principal {subject} is absent or inactive"))?;
@@ -137,7 +141,7 @@ async fn write_runtime_grants(
 pub(super) async fn installed(
     system: &LifecycleLock,
     document: &EnvironmentDocument,
-) -> anyhow::Result<BTreeMap<wamn_catalog::PackageName, Installed>> {
+) -> anyhow::Result<BTreeMap<wamn_package::PackageName, Installed>> {
     let mut client = system.client().await;
     let mut tx = crate::provision_project_env::provisioning_transaction(&mut client).await?;
     let row = analyse::read_row(&mut tx, document)
@@ -156,8 +160,8 @@ pub(super) async fn installed(
 /// The package artifact `<id>-<version>`, pulled from the registry.
 pub(super) async fn open(
     platform: &Platform,
-    id: &wamn_catalog::PackageName,
-    version: &wamn_catalog::package_version::PackageVersion,
+    id: &wamn_package::PackageName,
+    version: &wamn_package::package_version::PackageVersion,
 ) -> anyhow::Result<OpenedPackage> {
     let Some(base) = &platform.package_artifact_base else {
         bail!(

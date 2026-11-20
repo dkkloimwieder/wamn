@@ -1,5 +1,6 @@
 //! Positive admission facts shared by the host's application workloads.
 
+use wamn_engine::application_config::ApplicationConfig;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock, Weak};
 use std::time::{Duration, Instant, SystemTime};
@@ -7,7 +8,6 @@ use std::time::{Duration, Instant, SystemTime};
 use anyhow::Context as _;
 use moka::sync::Cache;
 use wamn_authority::auth_cache::PrincipalGrants;
-use wamn_catalog::application_config::ApplicationConfig;
 use wamn_connection::connection_credentials::{
     ConnectionCredentials, CredentialReader, CredentialStore,
 };
@@ -313,7 +313,7 @@ impl ConnectionCache for Authorization {
             .flat_map(|component| &component.connections)
             .find(|binding| {
                 binding.connection_id == id
-                    && binding.runtime_type == wamn_catalog::RuntimeType::Wasm
+                    && binding.runtime_type == wamn_connection_type::RuntimeType::Wasm
             })
             .context("integration connection undeclared")?;
         self.facts(application)

@@ -3,9 +3,11 @@
 //! Run `wamn build apps/edge_device` first, and set WAMN_INGRESS_COMPONENT
 //! to the pinned ingress guest. See docs/operations/running-tests.md.
 
+use wamn_edge_document::edge_bundle::BUNDLE_FILE_NAME;
+use wamn_edge_document::edge_bundle::EdgeBundle;
+use wamn_edge_document::edge_bundle::INGRESS_FILE_NAME;
 use std::path::{Path, PathBuf};
 
-use wamn_catalog::edge_bundle::{BUNDLE_FILE_NAME, EdgeBundle, INGRESS_FILE_NAME};
 use wamn_dev::dev::edge_bundle::{EdgeTarget, write_package};
 use wamn_digest::bytes_sha256;
 

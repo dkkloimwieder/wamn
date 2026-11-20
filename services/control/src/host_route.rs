@@ -5,11 +5,13 @@
 //! instead of a component. [`HostRouteDelivery`] serves the native platform
 //! routes of the loaded release.
 
+use wamn_routes::HostAttachment;
+use wamn_routes::HostHandler;
+use wamn_routes::HostRouteSet;
 use std::fmt;
 use std::sync::Arc;
 
 use serde_json::{Value, json};
-use wamn_catalog::{HostAttachment, HostHandler, HostRouteSet};
 use wamn_engine::ingress::AuthenticatedCaller;
 use wamn_engine::native_routes::{
     DeliveryError, DeliveryOutcome, DeliveryReport, DeliveryRequest, Source,
@@ -28,7 +30,7 @@ use crate::control_route::{ControlRoutes, Refusal, control_page, oauth_authoriza
 pub trait ControlExecution: Send + Sync + fmt::Debug {
     async fn execute(
         &self,
-        operation: &wamn_catalog::canonical_name::CanonicalName,
+        operation: &wamn_package::canonical_name::CanonicalName,
         caller: &PrincipalId,
         payload: &str,
     ) -> anyhow::Result<Value>;
@@ -418,7 +420,7 @@ impl HostRouteDelivery {
             Err(error) => return answer(error.status, json!({"error":{"code":error.code}})),
         };
         let payload = if read {
-            let parsed = wamn_catalog::read_query::decode_read_query(&query);
+            let parsed = wamn_routes::read_query::decode_read_query(&query);
             match parsed {
                 Ok(input) => json!([input]),
                 Err(_) => return answer(400, json!({"error":{"code":"invalid-query"}})),

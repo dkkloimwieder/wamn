@@ -224,7 +224,7 @@ async fn positions(admin: &mut Client) -> BTreeMap<String, Vec<i64>> {
 
 async fn wait_for_blocker(
     observer: &mut Client,
-    application: &wamn_catalog::ApplicationName,
+    application: &wamn_registry::ApplicationName,
     blocker: i32,
 ) {
     tokio::time::timeout(std::time::Duration::from_secs(15), async {

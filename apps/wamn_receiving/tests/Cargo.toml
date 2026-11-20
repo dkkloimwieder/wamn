@@ -11,6 +11,8 @@ autotests = false
 path = "lib.rs"
 
 [dev-dependencies]
+wamn-package.workspace = true
+wamn-component-policy.workspace = true
 wamn-postgres.workspace = true
 wamn-kubernetes.workspace = true
 sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls", "chrono", "uuid", "json", "bigdecimal"] }
@@ -29,7 +31,6 @@ serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 tokio = { workspace = true, features = ["fs", "io-util", "net", "process", "signal", "sync", "time", "rt", "macros"] }
 uuid = { workspace = true, features = ["v7"] }
-wamn-catalog = { workspace = true }
 
 async-nats = { workspace = true }
 bytes = { workspace = true }

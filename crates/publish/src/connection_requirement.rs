@@ -6,7 +6,7 @@ pub(super) mod plan;
 use plan::require_imports;
 
 use anyhow::{Context as _, ensure};
-use wamn_catalog::manifest::PackageManifest;
+use wamn_component_policy::PackageManifest;
 
 /// Install admitted connection requirements from the published package.
 pub async fn install(
@@ -37,8 +37,8 @@ pub async fn install(
                 .get(name)
                 .with_context(|| format!("package declares no connection {name}"))?;
             let mode = match declaration.mode {
-                wamn_catalog::manifest::ConnectionMode::Read => "read",
-                wamn_catalog::manifest::ConnectionMode::Write => "write",
+                wamn_package::manifest::ConnectionMode::Read => "read",
+                wamn_package::manifest::ConnectionMode::Write => "write",
             };
             written += sqlx::query("INSERT INTO catalog.connection_requirement (component_digest,package_id,name,interface,mode) \
                  VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING")
@@ -60,14 +60,14 @@ pub async fn install(
 
 /// Select application-owned connections that can supply a platform declaration.
 pub fn palette_connections<'a>(
-    connection: &wamn_catalog::ComponentConnection,
+    connection: &wamn_package::ComponentConnection,
     packages: impl IntoIterator<Item = &'a PackageManifest>,
 ) -> std::collections::BTreeMap<
     (
-        &'a wamn_catalog::PackageName,
-        &'a wamn_catalog::canonical_name::CanonicalName,
+        &'a wamn_package::PackageName,
+        &'a wamn_package::canonical_name::CanonicalName,
     ),
-    &'a wamn_catalog::manifest::ConnectionDeclaration,
+    &'a wamn_package::manifest::ConnectionDeclaration,
 > {
     let mut names = std::collections::BTreeMap::new();
     for package in packages {
@@ -91,7 +91,7 @@ pub fn palette_connections<'a>(
 mod palette_tests {
     #[test]
     fn configured_connections_keep_each_application_declaration_owner() {
-        let packages: Vec<wamn_catalog::manifest::PackageManifest> = ["orders", "shipping"]
+        let packages: Vec<wamn_component_policy::PackageManifest> = ["orders", "shipping"]
             .into_iter()
             .map(|id| {
                 serde_json::from_value(serde_json::json!({
@@ -103,12 +103,12 @@ mod palette_tests {
                 .unwrap()
             })
             .collect();
-        let connection = wamn_catalog::ComponentConnection {
-            store_alias: wamn_catalog::ComponentConnectionAlias::Configuration {
+        let connection = wamn_package::ComponentConnection {
+            store_alias: wamn_package::ComponentConnectionAlias::Configuration {
                 parameter: "store_alias".parse().unwrap(),
             },
-            requirement_type: wamn_catalog::ComponentConnectionType::Blobstore,
-            mode: wamn_catalog::ConnectionMode::Write,
+            requirement_type: wamn_package::ComponentConnectionType::Blobstore,
+            mode: wamn_package::ConnectionMode::Write,
         };
         let selected = super::palette_connections(&connection, &packages);
         for package in &packages {
@@ -126,7 +126,7 @@ mod palette_tests {
 pub(crate) fn validate_connections(
     bytes: &[u8],
     manifest: &PackageManifest,
-    connections: &[wamn_catalog::canonical_name::CanonicalName],
+    connections: &[wamn_package::canonical_name::CanonicalName],
 ) -> anyhow::Result<()> {
     let wit_component::DecodedWasm::Component(resolve, world) = wit_component::decode(bytes)?
     else {
@@ -141,7 +141,7 @@ pub(crate) fn validate_connections(
         let Some(interface) = resolve.id_of(*id) else {
             continue;
         };
-        if wamn_catalog::manifest::host_connection_interface(&interface)
+        if wamn_package::manifest::host_connection_interface(&interface)
             || interface.starts_with("wamn:postgres/")
         {
             continue;

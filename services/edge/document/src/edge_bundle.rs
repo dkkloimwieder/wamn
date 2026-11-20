@@ -1,0 +1,49 @@
+//! The edge release bundle: the files that publish writes for an edge device, and
+//! the one file whose digest pins them (docs/history/edge.md section 4.6).
+//!
+//! The directory holds `edge-release.json`, the canonical serving manifest,
+//! `components.json`, `grants.json`, `ingress.wasm`, and `<sha256>.wasm` for
+//! each component. `ingress.wasm` is the composed entry: the ingress guest
+//! composed with the release's application. The writer is `wamn dev
+//! edge-bundle`, and the reader is `wamn-edge`.
+
+use std::collections::{BTreeMap, BTreeSet};
+
+use serde::{Deserialize, Serialize};
+
+/// The bundle file name inside a release bundle directory.
+pub const BUNDLE_FILE_NAME: &str = "edge-release.json";
+/// The component facts file name inside a release bundle directory.
+pub const COMPONENTS_FILE_NAME: &str = "components.json";
+/// The grants file name inside a release bundle directory.
+pub const GRANTS_FILE_NAME: &str = "grants.json";
+/// The composed entry file name inside a release bundle directory.
+pub const INGRESS_FILE_NAME: &str = "ingress.wasm";
+/// The one bundle format that the writer writes and the edge reads.
+pub const BUNDLE_FORMAT: u32 = 2;
+
+/// `edge-release.json`: the format and the digest of each pinned file.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EdgeBundle {
+    pub format: u32,
+    pub manifest: wamn_digest::Digest,
+    pub components: wamn_digest::Digest,
+    pub grants: wamn_digest::Digest,
+    pub ingress: wamn_digest::Digest,
+}
+
+/// `grants.json`: the permissions of each role on the device.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EdgeGrants {
+    pub roles: BTreeMap<String, BTreeSet<String>>,
+}
+
+/// Exact local filename for an admitted digest, without path interpretation.
+pub fn local_component_path(
+    directory: &std::path::Path,
+    digest: &wamn_digest::Digest,
+) -> std::path::PathBuf {
+    directory.join(format!("{}.wasm", digest.hex()))
+}

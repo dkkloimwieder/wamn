@@ -21,6 +21,6 @@ pub struct SessionIdentity {
     pub runner: Option<String>,
     pub role: Option<String>,
     pub user_id: Option<wamn_identity_protocol::PrincipalId>,
-    pub operation: Option<wamn_catalog::canonical_name::CanonicalName>,
-    pub application: Option<wamn_catalog::ApplicationName>,
+    pub operation: Option<wamn_package::canonical_name::CanonicalName>,
+    pub application: Option<wamn_registry::ApplicationName>,
 }
