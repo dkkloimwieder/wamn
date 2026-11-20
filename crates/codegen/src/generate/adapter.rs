@@ -94,7 +94,7 @@ fn emit_model_export(
             .result
             .fields
             .iter()
-            .map(|f| (f.path.as_str(), f.ty, f.nullable)),
+            .map(|f| (f.path.as_str(), f.ty, f.nullable, None)),
     ));
     source.push_str(&emit_error_mapper(
         &format!("{name}Error"),
@@ -471,12 +471,12 @@ fn emit_custom_export(
         emit_invalid_detail(&mut source, compiled);
         source.push_str(&emit_custom_normalizer(&name, compiled));
         source.push_str(&emit_handler(&name, custom_is_keyed(operation)));
-        source.push_str(&emit_row_adapter(
-            result
-                .fields
-                .iter()
-                .map(|f| (f.path.as_str(), f.ty, f.nullable)),
-        ));
+        let error_name = format!("{name}Error");
+        source.push_str(&emit_row_adapter(result.fields.iter().map(|field| {
+            let enum_error = (operation.feed == Some(true) && !field.values.is_empty())
+                .then_some(error_name.as_str());
+            (field.path.as_str(), field.ty, field.nullable, enum_error)
+        })));
         source.push_str(&emit_error_mapper(
             &format!("{name}Error"),
             compiled
@@ -587,9 +587,6 @@ fn emit_tree_validation(source: &mut String, fields: &[FieldIr], access: &str, i
         let mut conditions = Vec::new();
         if let Some(condition) = scalar_refusal(&field.type_name, "value") {
             conditions.push(condition);
-        }
-        if !field.values.is_empty() {
-            conditions.push(format!("!{:?}.contains(&value.as_str())", field.values));
         }
         if conditions.is_empty() {
             continue;

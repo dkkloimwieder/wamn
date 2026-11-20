@@ -11,7 +11,7 @@ wit_bindgen::generate!({
         "../../../guests/modbus/wit",
         "../../../wit/wamn-node",
         "../../target/wamn/modbus_reader/wit",
-        "wit",
+        "wit/authored.wit",
     ],
     world: "wamn:modbus-example/application",
     generate_all,

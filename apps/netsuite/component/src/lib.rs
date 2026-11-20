@@ -10,7 +10,7 @@ wit_bindgen::generate!({
         "../../../wit/wamn-node",
         "../../target/wamn/wamn_integration/wit/deps/wamn-integration-setting",
         "../../target/wamn/netsuite/wit",
-        "wit",
+        "wit/authored.wit",
     ],
     generate_all,
     async: true,

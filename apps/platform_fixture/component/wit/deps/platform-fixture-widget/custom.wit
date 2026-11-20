@@ -1,0 +1,173 @@
+interface archive {
+  use wamn:node/types@0.1.0.{node-context, node-error, json-value};
+
+  type revision = s32;
+  type uuid = string;
+
+  record archive-request {
+    expected-edit-version: revision,
+    id: uuid,
+  }
+
+  record already-archived-detail {
+    field: string,
+  }
+
+  record concurrency-conflict-detail {
+    expected-row-version: s32,
+    observed-row-version: s32,
+  }
+
+  record invalid-input-detail {
+    field: string,
+  }
+
+  record permission-denied-detail {
+    operation: string,
+  }
+
+  variant archive-error {
+    already-archived(already-archived-detail),
+    concurrency-conflict(concurrency-conflict-detail),
+    internal-error,
+    invalid-input(invalid-input-detail),
+    permission-denied(permission-denied-detail),
+    retry,
+    timeout,
+  }
+
+  record archive-item {
+    request-id: string,
+    input: result<archive-request, invalid-input-detail>,
+  }
+
+  record archive-result {
+    id: uuid,
+    edit-version: revision,
+    note: option<string>,
+  }
+
+  record archive-outcome {
+    request-id: string,
+    outcome: result<archive-result, archive-error>,
+  }
+
+  run: async func(ctx: node-context, input: list<archive-item>) -> result<list<archive-outcome>, node-error>;
+}
+
+interface %list {
+  use wamn:node/types@0.1.0.{node-context, node-error, json-value};
+
+  type revision = s32;
+  type uuid = string;
+
+  record %list-request {
+    maker-id: option<uuid>,
+    selector: json-value,
+  }
+
+  record invalid-input-detail {
+    field: string,
+  }
+
+  record permission-denied-detail {
+    operation: string,
+  }
+
+  variant %list-error {
+    internal-error,
+    invalid-input(invalid-input-detail),
+    permission-denied(permission-denied-detail),
+    retry,
+    timeout,
+  }
+
+  record %list-item {
+    input: result<%list-request, invalid-input-detail>,
+  }
+
+  record %list-row {
+    id: uuid,
+    code: string,
+    edit-version: revision,
+    attributes: json-value,
+  }
+
+  record %list-result {
+    rows: list<%list-row>,
+  }
+
+  record %list-outcome {
+    outcome: result<%list-result, %list-error>,
+  }
+
+  run: async func(ctx: node-context, input: list<%list-item>) -> result<list<%list-outcome>, node-error>;
+}
+
+interface record-batch {
+  use wamn:node/types@0.1.0.{node-context, node-error, json-value};
+
+  type numeric = string;
+  type revision-long = s64;
+  type uuid = string;
+
+  enum grade-value {
+    first,
+    second,
+  }
+
+  record record-batch-line {
+    amount: numeric,
+    widget-id: uuid,
+  }
+
+  record record-batch-request {
+    expected-edit-version: revision-long,
+    grade: grade-value,
+    idempotency-key: string,
+    inspector-id: option<uuid>,
+    line: list<record-batch-line>,
+    maker-id: option<uuid>,
+    note: option<string>,
+  }
+
+  record idempotency-conflict-detail {
+    field: string,
+  }
+
+  record invalid-input-detail {
+    field: string,
+    minimum: option<string>,
+    maximum: option<string>,
+    observed: option<string>,
+  }
+
+  record permission-denied-detail {
+    operation: string,
+  }
+
+  variant record-batch-error {
+    idempotency-conflict(idempotency-conflict-detail),
+    internal-error,
+    invalid-input(invalid-input-detail),
+    permission-denied(permission-denied-detail),
+    retry,
+    timeout,
+  }
+
+  record record-batch-item {
+    request-id: string,
+    input: result<record-batch-request, invalid-input-detail>,
+  }
+
+  record record-batch-result {
+    widget-id: uuid,
+  }
+
+  record record-batch-outcome {
+    request-id: string,
+    outcome: result<record-batch-result, record-batch-error>,
+  }
+
+  run: async func(ctx: node-context, input: list<record-batch-item>) -> result<list<record-batch-outcome>, node-error>;
+}

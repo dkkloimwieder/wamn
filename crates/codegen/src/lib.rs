@@ -12,6 +12,7 @@
 //! search path frozen by
 //! `wit/wamn-postgres-0.4/package.wit`.
 
+mod authored_wit;
 mod authoring;
 /// `wamn build`: the two-pass package build (docs/operations/building.md#wamn-build).
 pub mod build;

@@ -387,7 +387,8 @@ fn emit_component(
                 inputs,
                 "{}: request.{}{},",
                 member(field.name.as_str()),
-                wamn_catalog::manifest::binding_identifier(field.name.as_str()).expect("validated input"),
+                wamn_catalog::manifest::binding_identifier(field.name.as_str())
+                    .expect("validated input"),
                 if field.ty == SqlValueType::Json {
                     if field.nullable {
                         ".map(|value| value.encoded_json)"
@@ -406,6 +407,28 @@ fn emit_component(
     } else {
         "change.id"
     };
+    let row = format!("operation::row!(row, contract::{ty}Row)");
+    let (page, changes) = if compiled
+        .result
+        .as_ref()
+        .is_some_and(|result| result.fields.iter().any(|field| !field.values.is_empty()))
+    {
+        (
+            format!(
+                "rows.into_iter().map(|row| Ok({row})).collect::<Result<_, contract::{ty}Error>>()?"
+            ),
+            format!(
+                "changes.rows.into_iter().map(|change| Ok(contract::{ty}Change {{ id: {id}, row_version: change.row_version, data: change.data.map(|row| Ok({row})).transpose()? }})).collect::<Result<_, contract::{ty}Error>>()?"
+            ),
+        )
+    } else {
+        (
+            format!("rows.into_iter().map(|row| {row}).collect()"),
+            format!(
+                "changes.rows.into_iter().map(|change| contract::{ty}Change {{ id: {id}, row_version: change.row_version, data: change.data.map(|row| {row}) }}).collect()"
+            ),
+        )
+    };
     let text = format!(
         r#"// @generated from the authored feed; do not edit.
 use super::data::{stem} as model;
@@ -417,8 +440,8 @@ pub(crate) async fn handle(connection: &mut Connection, request: contract::{ty}R
     let part = request.feed.map(|part| model::FeedInput {{ cursor: part.cursor, limit: i64::from(part.limit.unwrap_or(100)) }});
     let output = model::read(connection, input, part).await.map_err(|error| operation::map_error(error.literal(), |key| error.detail(key)))?;
     Ok(match output {{
-        model::Output::Page {{ rows, cursor }} => contract::{ty}Result::Page(contract::{ty}Page {{ item: rows.into_iter().map(|row| operation::row!(row, contract::{ty}Row)).collect(), next_cursor: None, cursor }}),
-        model::Output::Changes(changes) => contract::{ty}Result::Changes(contract::{ty}Changes {{ rows: changes.rows.into_iter().map(|change| contract::{ty}Change {{ id: {id}, row_version: change.row_version, data: change.data.map(|row| operation::row!(row, contract::{ty}Row)) }}).collect(), next_cursor: changes.next_cursor, complete: changes.complete }}),
+        model::Output::Page {{ rows, cursor }} => contract::{ty}Result::Page(contract::{ty}Page {{ item: {page}, next_cursor: None, cursor }}),
+        model::Output::Changes(changes) => contract::{ty}Result::Changes(contract::{ty}Changes {{ rows: {changes}, next_cursor: changes.next_cursor, complete: changes.complete }}),
     }})
 }}
 operation::export_operation!(crate::Component, contract, crate::wamn::node::types, Connection::new(), handle, operation);

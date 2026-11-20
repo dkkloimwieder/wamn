@@ -24,12 +24,13 @@ wamn-schema-introspection = { workspace = true }
 wamn-catalog = { workspace = true }
 wamn-record-history = { workspace = true }
 wamn-number-pattern = { workspace = true }
+wit-encoder = { workspace = true }
+wit-parser = { workspace = true }
 
 [build-dependencies]
 wamn-digest.workspace = true
 
 [dev-dependencies]
-wit-parser = { workspace = true }
 url.workspace = true
 wamn-guest = { path = "../guest" }
 uuid.workspace = true

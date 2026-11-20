@@ -91,12 +91,12 @@ fn decode(ty: &Type, value: Option<&Value>) -> anyhow::Result<Val> {
             )
         }
         Type::Enum(enumeration) => {
-            let name = value.as_str().ok_or_else(invalid)?;
+            let name = value.as_str().ok_or_else(invalid)?.replace('_', "-");
             ensure!(
                 enumeration.names().any(|candidate| candidate == name),
                 "unknown enum value"
             );
-            Val::Enum(name.to_owned())
+            Val::Enum(name)
         }
         Type::Variant(variant) => {
             let name = value
@@ -120,12 +120,15 @@ fn decode(ty: &Type, value: Option<&Value>) -> anyhow::Result<Val> {
                 .context("flags require a list")?
                 .iter()
                 .map(|v| {
-                    let name = v.as_str().context("flag requires string")?;
+                    let name = v
+                        .as_str()
+                        .context("flag requires string")?
+                        .replace('_', "-");
                     ensure!(
                         flags.names().any(|candidate| candidate == name),
                         "unknown flag"
                     );
-                    Ok(name.to_owned())
+                    Ok(name)
                 })
                 .collect::<anyhow::Result<_>>()?;
             Val::Flags(names)
@@ -323,8 +326,13 @@ pub(super) fn output(value: &Val) -> anyhow::Result<Value> {
         Val::Variant(name, value) => {
             Ok(json!({"type": name, "value": value.as_deref().map(output).transpose()?}))
         }
-        Val::Enum(name) => Ok(json!(name)),
-        Val::Flags(names) => Ok(json!(names)),
+        Val::Enum(name) => Ok(Value::String(name.replace('-', "_"))),
+        Val::Flags(names) => Ok(Value::Array(
+            names
+                .iter()
+                .map(|name| Value::String(name.replace('-', "_")))
+                .collect(),
+        )),
         _ => bail!("WIT value cannot be carried by HTTP JSON"),
     }
 }

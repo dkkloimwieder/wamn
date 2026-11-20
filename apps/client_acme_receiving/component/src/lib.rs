@@ -44,7 +44,7 @@ wit_bindgen::generate!({
         "../../../wit/wamn-postgres-0.4",
         "../../target/wamn/wamn_receiving/wit/deps/wamn-receiving-receiving",
         "../../target/wamn/client_acme_receiving/wit",
-        "wit",
+        "wit/authored.wit",
     ],
     generate_all,
     async: true,
@@ -200,7 +200,14 @@ async fn record_receipt(
     Ok(contract::RecordReceiptResult {
         receipt_id: result.receipt_id,
         purchase_order_id: result.purchase_order_id,
-        purchase_order_status: result.purchase_order_status,
+        purchase_order_status: match result.purchase_order_status {
+            wamn_receiving::receiving::record_receipt::PurchaseOrderStatusValue::Open => {
+                contract::PurchaseOrderStatusValue::Open
+            }
+            wamn_receiving::receiving::record_receipt::PurchaseOrderStatusValue::Complete => {
+                contract::PurchaseOrderStatusValue::Complete
+            }
+        },
         row_version: result.row_version,
     })
 }

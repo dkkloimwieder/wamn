@@ -8,7 +8,7 @@
 
 use std::collections::BTreeMap;
 
-use anyhow::{Context as _, Result, bail};
+use anyhow::{Context as _, Result, bail, ensure};
 use sqlx::{
     AssertSqlSafe, Column as _, Connection as _, Either, Executor as _, SqlSafeStr as _,
     TypeInfo as _,
@@ -36,6 +36,33 @@ pub(crate) struct DescribedColumn {
     pub(crate) nullable: Option<bool>,
     /// The prepared column's relation OID names a view.
     pub(crate) view_column: bool,
+}
+
+impl DescribedColumn {
+    /// SQLx aliases can state only nullability. The SQL type comes from PostgreSQL.
+    pub(crate) fn contract(&self) -> Result<(&str, Option<bool>)> {
+        let name = column_name(&self.name);
+        let nullable = match self.name.as_bytes().last() {
+            Some(b'!') => {
+                ensure!(
+                    self.nullable != Some(true) || self.view_column,
+                    "SQLx describes a nullable column"
+                );
+                Some(false)
+            }
+            Some(b'?') => Some(true),
+            _ => self.nullable,
+        };
+        ensure!(
+            !name.contains([':', '!', '?']),
+            "use only SQLx ! or ? suffixes for nullability"
+        );
+        Ok((name, nullable))
+    }
+}
+
+pub(crate) fn column_name(alias: &str) -> &str {
+    alias.strip_suffix(['!', '?']).unwrap_or(alias)
 }
 
 /// Describe each statement of `corpus` against the database at `database_url`.
@@ -102,6 +129,7 @@ pub(crate) async fn describe_statements<'a>(
 }
 
 pub(crate) use wamn_scalar::postgres_type as column_type;
+pub(crate) use wamn_scalar::postgres_type as result_type;
 
 /// Compare the accessor's value shape with PostgreSQL's description.
 pub(crate) fn validate_contract(
@@ -122,9 +150,11 @@ pub(crate) fn validate_contract(
             .iter()
             .zip(columns)
             .all(|(actual, expected)| {
-                actual.name == expected.name
-                    && column_type(&actual.type_name) == Some(expected.ty)
-                    && (expected.nullable || actual.nullable != Some(true) || actual.view_column)
+                actual.contract().is_ok_and(|(name, nullable)| {
+                    name == expected.name
+                        && result_type(&actual.type_name) == Some(expected.ty)
+                        && (expected.nullable || nullable != Some(true) || actual.view_column)
+                })
             });
     if valid {
         return Ok(());

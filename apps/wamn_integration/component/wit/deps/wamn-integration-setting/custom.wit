@@ -1,0 +1,79 @@
+interface read {
+  use wamn:node/types@0.1.0.{node-context, node-error, json-value};
+
+  record read-request {
+    carry: option<json-value>,
+    key: string,
+  }
+
+  record invalid-input-detail {
+    field: string,
+  }
+
+  variant read-error {
+    internal-error,
+    invalid-input(invalid-input-detail),
+    retry,
+    timeout,
+  }
+
+  record read-item {
+    input: result<read-request, invalid-input-detail>,
+  }
+
+  record read-result {
+    value: option<json-value>,
+    carry: option<json-value>,
+  }
+
+  record read-outcome {
+    outcome: result<read-result, read-error>,
+  }
+
+  run: async func(ctx: node-context, input: list<read-item>) -> result<list<read-outcome>, node-error>;
+}
+
+interface write {
+  use wamn:node/types@0.1.0.{node-context, node-error, json-value};
+
+  record write-request {
+    idempotency-key: string,
+    key: string,
+    value: json-value,
+  }
+
+  record idempotency-conflict-detail {
+    field: string,
+  }
+
+  record invalid-input-detail {
+    field: string,
+    minimum: option<string>,
+    maximum: option<string>,
+    observed: option<string>,
+  }
+
+  variant write-error {
+    idempotency-conflict(idempotency-conflict-detail),
+    internal-error,
+    invalid-input(invalid-input-detail),
+    retry,
+    timeout,
+  }
+
+  record write-item {
+    request-id: string,
+    input: result<write-request, invalid-input-detail>,
+  }
+
+  record write-result {
+    key: string,
+  }
+
+  record write-outcome {
+    request-id: string,
+    outcome: result<write-result, write-error>,
+  }
+
+  run: async func(ctx: node-context, input: list<write-item>) -> result<list<write-outcome>, node-error>;
+}

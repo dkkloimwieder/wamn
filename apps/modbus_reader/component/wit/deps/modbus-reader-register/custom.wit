@@ -1,0 +1,35 @@
+interface read {
+  use wamn:node/types@0.1.0.{node-context, node-error, json-value};
+
+  record read-request {
+    address: s32,
+  }
+
+  record invalid-input-detail {
+    field: string,
+  }
+
+  variant read-error {
+    internal-error,
+    invalid-input(invalid-input-detail),
+    retry,
+    timeout,
+    unavailable,
+  }
+
+  record read-item {
+    request-id: string,
+    input: result<read-request, invalid-input-detail>,
+  }
+
+  record read-result {
+    register: s32,
+  }
+
+  record read-outcome {
+    request-id: string,
+    outcome: result<read-result, read-error>,
+  }
+
+  run: async func(ctx: node-context, input: list<read-item>) -> result<list<read-outcome>, node-error>;
+}

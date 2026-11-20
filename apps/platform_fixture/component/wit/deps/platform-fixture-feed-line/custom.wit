@@ -1,0 +1,75 @@
+interface screen {
+  use wamn:node/types@0.1.0.{node-context, node-error, json-value};
+
+  type uuid = string;
+
+  record screen-feed {
+    cursor: option<string>,
+    limit: option<u32>,
+  }
+
+  record screen-request {
+    order-id: option<uuid>,
+    feed: option<screen-feed>,
+  }
+
+  record invalid-input-detail {
+    field: string,
+  }
+
+  record permission-denied-detail {
+    operation: string,
+  }
+
+  variant screen-error {
+    cursor-expired,
+    internal-error,
+    invalid-input(invalid-input-detail),
+    permission-denied(permission-denied-detail),
+    retry,
+    timeout,
+  }
+
+  record screen-item {
+    input: result<screen-request, invalid-input-detail>,
+  }
+
+  record screen-row {
+    id: uuid,
+    order-id: uuid,
+    item-id: uuid,
+    label: string,
+    order-label: string,
+    item-label: string,
+    row-version: s64,
+  }
+
+  record screen-page {
+    item: list<screen-row>,
+    next-cursor: option<string>,
+    cursor: string,
+  }
+
+  record screen-change {
+    id: string,
+    row-version: s64,
+    data: option<screen-row>,
+  }
+
+  record screen-changes {
+    rows: list<screen-change>,
+    next-cursor: string,
+    complete: bool,
+  }
+
+  variant screen-result {
+    page(screen-page),
+    changes(screen-changes),
+  }
+
+  record screen-outcome {
+    outcome: result<screen-result, screen-error>,
+  }
+
+  run: async func(ctx: node-context, input: list<screen-item>) -> result<list<screen-outcome>, node-error>;
+}

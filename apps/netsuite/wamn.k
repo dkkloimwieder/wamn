@@ -27,13 +27,13 @@ manifest.Package {
     }
     custom_operations = {
         "sync.finish" = manifest.Command("sync.finish") {
-            permission = None
             visibility = "private"
+            permission = None
             connection = None
             idempotent_by = "stateless"
-            input.fields = [manifest.request_id, {path = "value.due", type = "timestamptz"}]
-            result = {class = "one", fields = [{path = "due", type = "timestamptz"}]}
-            errors = ["invalid_input", "retry", "timeout", "internal_error"]
+            input: {
+                request_id = "request_id"
+            }
         }
     }
     connections = {upstream = {interface = "wamn:connection/http@0.1.0", mode = "write"}}

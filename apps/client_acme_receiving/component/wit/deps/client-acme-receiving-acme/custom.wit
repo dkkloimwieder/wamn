@@ -1,0 +1,109 @@
+interface record-receipt {
+  use wamn:node/types@0.1.0.{node-context, node-error, json-value};
+
+  type numeric = string;
+  type revision = s32;
+  type timestamp = string;
+  type uuid = string;
+
+  enum purchase-order-status-value {
+    open,
+    complete,
+  }
+
+  record record-receipt-line {
+    location-id: uuid,
+    purchase-order-line-id: uuid,
+    quantity: numeric,
+  }
+
+  record record-receipt-request {
+    idempotency-key: string,
+    line: list<record-receipt-line>,
+    occurred-at: timestamp,
+    purchase-order-id: uuid,
+    receipt-reference: string,
+  }
+
+  record idempotency-conflict-detail {
+    field: string,
+  }
+
+  record invalid-input-detail {
+    field: string,
+    minimum: option<string>,
+    maximum: option<string>,
+    observed: option<string>,
+  }
+
+  record location-not-found-detail {
+    field: string,
+    id: string,
+  }
+
+  record permission-denied-detail {
+    operation: string,
+  }
+
+  record purchase-order-line-mismatch-detail {
+    field: string,
+    id: string,
+  }
+
+  record purchase-order-line-not-found-detail {
+    field: string,
+    id: string,
+  }
+
+  record purchase-order-not-found-detail {
+    field: string,
+  }
+
+  record purchase-order-not-open-detail {
+    field: string,
+  }
+
+  record quantity-exceeds-remaining-detail {
+    field: string,
+    id: string,
+  }
+
+  record receipt-reference-conflict-detail {
+    constraint: string,
+  }
+
+  variant record-receipt-error {
+    idempotency-conflict(idempotency-conflict-detail),
+    internal-error,
+    invalid-input(invalid-input-detail),
+    location-not-found(location-not-found-detail),
+    permission-denied(permission-denied-detail),
+    purchase-order-line-mismatch(purchase-order-line-mismatch-detail),
+    purchase-order-line-not-found(purchase-order-line-not-found-detail),
+    purchase-order-not-found(purchase-order-not-found-detail),
+    purchase-order-not-open(purchase-order-not-open-detail),
+    quantity-exceeds-remaining(quantity-exceeds-remaining-detail),
+    receipt-reference-conflict(receipt-reference-conflict-detail),
+    retry,
+    timeout,
+  }
+
+  record record-receipt-item {
+    request-id: string,
+    input: result<record-receipt-request, invalid-input-detail>,
+  }
+
+  record record-receipt-result {
+    receipt-id: uuid,
+    purchase-order-id: uuid,
+    purchase-order-status: purchase-order-status-value,
+    row-version: revision,
+  }
+
+  record record-receipt-outcome {
+    request-id: string,
+    outcome: result<record-receipt-result, record-receipt-error>,
+  }
+
+  run: async func(ctx: node-context, input: list<record-receipt-item>) -> result<list<record-receipt-outcome>, node-error>;
+}

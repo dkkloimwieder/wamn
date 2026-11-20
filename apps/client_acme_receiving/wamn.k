@@ -4,8 +4,6 @@
 import manifest
 
 _schema = "receiving"
-_errors_after_input = ["retry", "timeout", "permission_denied", "internal_error"]
-_claim_errors = ["idempotency_conflict", *_errors_after_input]
 
 manifest.Package {
     package = {id = "client_acme_receiving", version = "4.2.4"}
@@ -48,146 +46,37 @@ manifest.Package {
         }
     }
     custom_operations = {
-        # Acme's entry calls Receiving's record_receipt, then records the
-        # inspection in the same host transaction. It claims its key under its
-        # own operation.
         "acme.record_receipt" = manifest.Command("acme.record_receipt") {
-            transaction = "explicit_per_input"
             idempotent_by = "claim"
             input: {
-                line = {minimum = 1, maximum = 100}
-                fields = [
-                    manifest.request_id
-                    manifest.idempotency_key
-                    {path = "value.purchase_order_id", type = "uuid"}
-                    {path = "value.receipt_reference", type = "text"}
-                    manifest.occurred_at
-                    {path = "value.line[].purchase_order_line_id", type = "uuid"}
-                    {path = "value.line[].quantity", type = "numeric"}
-                    {path = "value.line[].location_id", type = "uuid"}
-                ]
+                request_id = "request_id"
+                line = {"minimum" = 1, "maximum" = 100}
+                key = "idempotency_key"
             }
-            result = {
-                class = "one"
-                fields = [
-                    {path = "receipt_id", type = "uuid"}
-                    {path = "purchase_order_id", type = "uuid"}
-                    {path = "purchase_order_status", type = "text", values = ["open", "complete"]}
-                    {path = "row_version", type = "int32", revision = True}
-                ]
-            }
-            errors = [
-                "invalid_input"
-                "purchase_order_not_found"
-                "purchase_order_not_open"
-                "purchase_order_line_not_found"
-                "purchase_order_line_mismatch"
-                "location_not_found"
-                "quantity_exceeds_remaining"
-                "receipt_reference_conflict"
-                *_claim_errors
-            ]
-            error_details = {
-                purchase_order_not_found = {required = ["field"]}
-                purchase_order_not_open = {required = ["field"]}
-                purchase_order_line_not_found = manifest.not_found_details
-                purchase_order_line_mismatch = {required = ["field", "id"]}
-                location_not_found = manifest.not_found_details
-                quantity_exceeds_remaining = {required = ["field", "id"]}
-                receipt_reference_conflict = {required = ["constraint"]}
-            }
-
             statements = {
-                record_inspection = manifest.Statement("command/record_receipt", "record_inspection") {
-                    fetch = "one"
-                    parameters = [manifest.uuid("receipt_id"), manifest.uuid("purchase_order_id")]
-                    row = [manifest.nullable(manifest.text("outcome")), manifest.nullable(manifest.uuid("receipt_id"))]
-                }
+                record_inspection = {fetch = "one", binds = ["receipt_id", "purchase_order_id"]}
             }
         }
         "quality.load_purchase_order_detail" = manifest.Projection("quality.load_purchase_order_detail") {
-            input: {fields = [{path = "purchase_order_id", type = "uuid"}]}
-            result = {
-                class = "one"
-                fields = [
-                    {path = "id", type = "uuid"}
-                    {path = "purchase_order_number", type = "text"}
-                    {path = "supplier_id", type = "uuid"}
-                    {path = "status", type = "text", values = ["open", "complete", "cancelled"]}
-                    {path = "row_version", type = "int32", revision = True}
-                    {path = "acme_inspection_required", type = "boolean"}
-                    {path = "acme_quality_status", type = "text", values = ["not_required", "pending", "approved"]}
-                ]
-            }
-            errors = ["invalid_input", "not_found", *_errors_after_input]
             statements = {
-                load_purchase_order_detail = manifest.Statement("query", "quality_purchase_order_detail") {
-                    fetch = "optional_one"
-                    parameters = [manifest.uuid("purchase_order_id")]
-                    row = [
-                        manifest.uuid("id")
-                        manifest.text("purchase_order_number")
-                        manifest.uuid("supplier_id")
-                        manifest.text("status")
-                        manifest.int32("row_version")
-                        {name = "acme_inspection_required", type = "boolean", nullable = False}
-                        manifest.text("acme_quality_status")
-                    ]
-                }
+                load_purchase_order_detail = {fetch = "optional_one", binds = ["purchase_order_id"]}
             }
         }
         "quality.approve_inspection" = manifest.Command("quality.approve_inspection") {
-            idempotent_by = {state = {guards = {quality_inspection = "expected_row_version"}}}
+            idempotent_by = {"state" = {"guards" = {"quality_inspection" = "expected_row_version"}}}
             input: {
-                fields = [
-                    manifest.request_id
-                    {path = "receipt_id", type = "uuid"}
-                    {path = "expected_row_version", type = "int32", revision = True}
-                ]
+                request_id = "request_id"
             }
-            result = {
-                class = "one"
-                fields = [
-                    {path = "receipt_id", type = "uuid"}
-                    {path = "status", type = "text", values = ["approved"]}
-                    {path = "row_version", type = "int32", revision = True}
-                    {path = "purchase_order_id", type = "uuid"}
-                    {path = "purchase_order_row_version", type = "int32", revision = True}
-                ]
-            }
-            errors = ["invalid_input", "not_found", "concurrency_conflict", *_errors_after_input]
             statements = {
-                approve_inspection = manifest.Statement("command/approve_inspection", "approve_inspection") {
-                    fetch = "one"
-                    parameters = [manifest.uuid("receipt_id"), manifest.int32("expected_row_version")]
-                    row = [
-                        manifest.nullable(manifest.text("outcome"))
-                        manifest.nullable(manifest.int32("observed_row_version"))
-                        manifest.nullable(manifest.uuid("receipt_id"))
-                        manifest.nullable(manifest.text("status"))
-                        manifest.nullable(manifest.int32("row_version"))
-                        manifest.nullable(manifest.uuid("purchase_order_id"))
-                        manifest.nullable(manifest.int32("purchase_order_row_version"))
-                    ]
-                }
+                approve_inspection = {fetch = "one", binds = ["receipt_id", "expected_row_version"]}
             }
         }
         "quality.create_inspection" = manifest.EventHandler("quality.create_inspection") {
-            permission = None
             visibility = "private"
-            input: {fields = [{path = "event", type = "text", values = ["insert"]}, {path = "new.id", type = "uuid"}]}
-            errors = ["invalid_input", "retry", "timeout", "internal_error"]
+            permission = None
             statements = {
-                insert_inspection = manifest.Statement("command/create_inspection", "insert_inspection") {
-                    fetch = "optional_one"
-                    parameters = [manifest.uuid("receipt_id")]
-                    row = [manifest.uuid("receipt_id")]
-                }
-                load_inspection = manifest.Statement("command/create_inspection", "load_inspection") {
-                    fetch = "optional_one"
-                    parameters = [manifest.uuid("receipt_id")]
-                    row = [manifest.uuid("receipt_id")]
-                }
+                insert_inspection = {fetch = "optional_one", binds = ["id"]}
+                load_inspection = {fetch = "optional_one", binds = ["id"]}
             }
         }
     }

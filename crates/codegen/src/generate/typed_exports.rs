@@ -10,12 +10,12 @@ use wamn_catalog::manifest::{
 
 /// Emit a row conversion without requiring an application crate dependency.
 pub(super) fn emit_row_adapter<'a>(
-    fields: impl IntoIterator<Item = (&'a str, SqlValueType, bool)>,
+    fields: impl IntoIterator<Item = (&'a str, SqlValueType, bool, Option<&'a str>)>,
 ) -> String {
     let mut source = String::from(
         "\n#[allow(unused_macros)]\nmacro_rules! row {\n    ($row:expr, $target:path) => {{\n        let row = $row;\n        $target {\n",
     );
-    for (name, ty, nullable) in fields {
+    for (name, ty, nullable, enum_error) in fields {
         // A list result field takes each element the way a single field of
         // its type does.
         let list = name
@@ -24,6 +24,17 @@ pub(super) fn emit_row_adapter<'a>(
         let field = rust_identifier(list.unwrap_or(name)).expect("validated field has a Rust name");
         let member =
             binding_identifier(list.unwrap_or(name)).expect("validated field has a Rust name");
+        if let Some(error) = enum_error {
+            let parse = format!("value.parse().map_err(|_| contract::{error}::InternalError)");
+            let value = if nullable {
+                format!("row.{field}.map(|value| {parse}).transpose()?")
+            } else {
+                parse.replace("value.parse()", &format!("row.{field}.parse()")) + "?"
+            };
+            writeln!(source, "            {member}: {value},")
+                .expect("writing to a String cannot fail");
+            continue;
+        }
         let value = match ty {
             SqlValueType::Uuid | SqlValueType::Numeric | SqlValueType::Timestamptz => "value.0",
             SqlValueType::Json => "crate::wamn::node::types::JsonValue { encoded_json: value.0 }",

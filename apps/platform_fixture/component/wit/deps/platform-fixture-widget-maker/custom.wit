@@ -1,0 +1,42 @@
+interface %list {
+  use wamn:node/types@0.1.0.{node-context, node-error, json-value};
+
+  type uuid = string;
+
+  enum %list-request { request }
+
+  record invalid-input-detail {
+    field: string,
+  }
+
+  record permission-denied-detail {
+    operation: string,
+  }
+
+  variant %list-error {
+    internal-error,
+    invalid-input(invalid-input-detail),
+    permission-denied(permission-denied-detail),
+    retry,
+    timeout,
+  }
+
+  record %list-item {
+    input: result<%list-request, invalid-input-detail>,
+  }
+
+  record %list-row {
+    id: uuid,
+    name: string,
+  }
+
+  record %list-result {
+    rows: list<%list-row>,
+  }
+
+  record %list-outcome {
+    outcome: result<%list-result, %list-error>,
+  }
+
+  run: async func(ctx: node-context, input: list<%list-item>) -> result<list<%list-outcome>, node-error>;
+}

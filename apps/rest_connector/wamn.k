@@ -32,23 +32,22 @@ manifest.Package {
     }
     custom_operations = {
         "sync.finish" = manifest.Command("sync.finish") {
-            permission = None
             visibility = "private"
+            permission = None
             connection = None
             idempotent_by = "stateless"
-            input.fields = [manifest.request_id,
-                {path = "value.keys", type = "json"}]
-            result = {class = "one", fields = [{path = "due", type = "timestamptz"}]}
-            errors = ["invalid_input", "retry", "timeout", "internal_error"]
+            input: {
+                request_id = "request_id"
+            }
         }
         "sync.pushed" = manifest.Command("sync.pushed") {
-            permission = None
             visibility = "private"
+            permission = None
             connection = None
             idempotent_by = "stateless"
-            input.fields = [manifest.request_id, {path = "value.record_id", type = "text"}]
-            result = {class = "one", fields = [{path = "record_id", type = "text"}]}
-            errors = ["invalid_input", "retry", "timeout", "internal_error"]
+            input: {
+                request_id = "request_id"
+            }
         }
     }
     connections = {upstream = {interface = "wamn:connection/http@0.1.0", mode = "read"}}

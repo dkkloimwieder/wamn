@@ -1,0 +1,414 @@
+interface adjust {
+  use wamn:node/types@0.1.0.{node-context, node-error, json-value};
+
+  type numeric = string;
+  type revision = s32;
+  type timestamp = string;
+  type uuid = string;
+
+  enum packaging-status-value {
+    available,
+    held,
+    consumed,
+  }
+
+  enum status-value {
+    available,
+    held,
+  }
+
+  record adjust-request {
+    expected-row-version: revision,
+    idempotency-key: string,
+    occurred-at: timestamp,
+    packaging-id: uuid,
+    product-id: uuid,
+    quantity: numeric,
+    reason-code: string,
+    status: status-value,
+  }
+
+  record concurrency-conflict-detail {
+    expected-row-version: s32,
+    observed-row-version: s32,
+  }
+
+  record idempotency-conflict-detail {
+    field: string,
+  }
+
+  record invalid-input-detail {
+    field: string,
+    minimum: option<string>,
+    maximum: option<string>,
+    observed: option<string>,
+  }
+
+  record packaging-not-found-detail {
+    field: string,
+    id: string,
+  }
+
+  record permission-denied-detail {
+    operation: string,
+  }
+
+  record quantity-not-found-detail {
+    field: string,
+    id: string,
+  }
+
+  variant adjust-error {
+    concurrency-conflict(concurrency-conflict-detail),
+    idempotency-conflict(idempotency-conflict-detail),
+    internal-error,
+    invalid-input(invalid-input-detail),
+    packaging-not-found(packaging-not-found-detail),
+    permission-denied(permission-denied-detail),
+    quantity-not-found(quantity-not-found-detail),
+    retry,
+    timeout,
+  }
+
+  record adjust-item {
+    request-id: string,
+    input: result<adjust-request, invalid-input-detail>,
+  }
+
+  record adjust-result {
+    transaction-ids: list<uuid>,
+    packaging-id: uuid,
+    adjusted-quantity: numeric,
+    packaging-status: packaging-status-value,
+    row-version: revision,
+  }
+
+  record adjust-outcome {
+    request-id: string,
+    outcome: result<adjust-result, adjust-error>,
+  }
+
+  run: async func(ctx: node-context, input: list<adjust-item>) -> result<list<adjust-outcome>, node-error>;
+}
+
+interface aggregate {
+  use wamn:node/types@0.1.0.{node-context, node-error, json-value};
+
+  type numeric = string;
+  type uuid = string;
+
+  enum status-value {
+    available,
+    held,
+  }
+
+  enum aggregate-request { request }
+
+  record invalid-input-detail {
+    field: string,
+  }
+
+  record permission-denied-detail {
+    operation: string,
+  }
+
+  variant aggregate-error {
+    internal-error,
+    invalid-input(invalid-input-detail),
+    permission-denied(permission-denied-detail),
+    retry,
+    timeout,
+  }
+
+  record aggregate-item {
+    input: result<aggregate-request, invalid-input-detail>,
+  }
+
+  record aggregate-row {
+    product-id: uuid,
+    location-id: uuid,
+    status: status-value,
+    quantity: numeric,
+    packaging-count: s32,
+  }
+
+  record aggregate-result {
+    rows: list<aggregate-row>,
+  }
+
+  record aggregate-outcome {
+    outcome: result<aggregate-result, aggregate-error>,
+  }
+
+  run: async func(ctx: node-context, input: list<aggregate-item>) -> result<list<aggregate-outcome>, node-error>;
+}
+
+interface merge {
+  use wamn:node/types@0.1.0.{node-context, node-error, json-value};
+
+  type revision = s32;
+  type timestamp = string;
+  type uuid = string;
+
+  enum target-status-value {
+    available,
+    held,
+    consumed,
+  }
+
+  record merge-request {
+    expected-row-version: revision,
+    idempotency-key: string,
+    occurred-at: timestamp,
+    source-packaging-id: uuid,
+    target-packaging-id: uuid,
+  }
+
+  record concurrency-conflict-detail {
+    expected-row-version: s32,
+    observed-row-version: s32,
+  }
+
+  record idempotency-conflict-detail {
+    field: string,
+  }
+
+  record invalid-input-detail {
+    field: string,
+    minimum: option<string>,
+    maximum: option<string>,
+    observed: option<string>,
+  }
+
+  record packaging-not-found-detail {
+    field: string,
+    id: string,
+  }
+
+  record permission-denied-detail {
+    operation: string,
+  }
+
+  variant merge-error {
+    concurrency-conflict(concurrency-conflict-detail),
+    idempotency-conflict(idempotency-conflict-detail),
+    internal-error,
+    invalid-input(invalid-input-detail),
+    packaging-not-found(packaging-not-found-detail),
+    permission-denied(permission-denied-detail),
+    retry,
+    timeout,
+  }
+
+  record merge-item {
+    request-id: string,
+    input: result<merge-request, invalid-input-detail>,
+  }
+
+  record merge-result {
+    transaction-ids: list<uuid>,
+    source-packaging-id: uuid,
+    target-packaging-id: uuid,
+    target-status: target-status-value,
+    row-version: revision,
+  }
+
+  record merge-outcome {
+    request-id: string,
+    outcome: result<merge-result, merge-error>,
+  }
+
+  run: async func(ctx: node-context, input: list<merge-item>) -> result<list<merge-outcome>, node-error>;
+}
+
+interface move {
+  use wamn:node/types@0.1.0.{node-context, node-error, json-value};
+
+  type revision = s32;
+  type timestamp = string;
+  type uuid = string;
+
+  record move-request {
+    expected-row-version: revision,
+    idempotency-key: string,
+    occurred-at: timestamp,
+    packaging-id: uuid,
+    to-location-id: uuid,
+  }
+
+  record concurrency-conflict-detail {
+    expected-row-version: s32,
+    observed-row-version: s32,
+  }
+
+  record idempotency-conflict-detail {
+    field: string,
+  }
+
+  record invalid-input-detail {
+    field: string,
+    minimum: option<string>,
+    maximum: option<string>,
+    observed: option<string>,
+  }
+
+  record location-not-found-detail {
+    field: string,
+    id: string,
+  }
+
+  record packaging-not-found-detail {
+    field: string,
+    id: string,
+  }
+
+  record permission-denied-detail {
+    operation: string,
+  }
+
+  variant move-error {
+    concurrency-conflict(concurrency-conflict-detail),
+    idempotency-conflict(idempotency-conflict-detail),
+    internal-error,
+    invalid-input(invalid-input-detail),
+    location-not-found(location-not-found-detail),
+    packaging-not-found(packaging-not-found-detail),
+    permission-denied(permission-denied-detail),
+    retry,
+    timeout,
+  }
+
+  record move-item {
+    request-id: string,
+    input: result<move-request, invalid-input-detail>,
+  }
+
+  record move-result {
+    packaging-id: uuid,
+    location-id: uuid,
+    row-version: revision,
+  }
+
+  record move-outcome {
+    request-id: string,
+    outcome: result<move-result, move-error>,
+  }
+
+  run: async func(ctx: node-context, input: list<move-item>) -> result<list<move-outcome>, node-error>;
+}
+
+interface split {
+  use wamn:node/types@0.1.0.{node-context, node-error, json-value};
+
+  type numeric = string;
+  type revision = s32;
+  type timestamp = string;
+  type uuid = string;
+
+  enum new-packaging-type-value {
+    pallet,
+    tote,
+    bin,
+    case,
+    loose,
+  }
+
+  enum source-status-value {
+    available,
+    held,
+    consumed,
+  }
+
+  enum status-value {
+    available,
+    held,
+  }
+
+  record split-request {
+    expected-row-version: revision,
+    idempotency-key: string,
+    new-packaging-code: string,
+    new-packaging-type: new-packaging-type-value,
+    occurred-at: timestamp,
+    product-id: uuid,
+    quantity: numeric,
+    source-packaging-id: uuid,
+    status: status-value,
+    to-location-id: uuid,
+  }
+
+  record concurrency-conflict-detail {
+    expected-row-version: s32,
+    observed-row-version: s32,
+  }
+
+  record idempotency-conflict-detail {
+    field: string,
+  }
+
+  record insufficient-quantity-detail {
+    field: string,
+    maximum: option<string>,
+    observed: option<string>,
+  }
+
+  record invalid-input-detail {
+    field: string,
+    minimum: option<string>,
+    maximum: option<string>,
+    observed: option<string>,
+  }
+
+  record location-not-found-detail {
+    field: string,
+    id: string,
+  }
+
+  record packaging-not-found-detail {
+    field: string,
+    id: string,
+  }
+
+  record permission-denied-detail {
+    operation: string,
+  }
+
+  record quantity-not-found-detail {
+    field: string,
+    id: string,
+  }
+
+  variant split-error {
+    concurrency-conflict(concurrency-conflict-detail),
+    idempotency-conflict(idempotency-conflict-detail),
+    insufficient-quantity(insufficient-quantity-detail),
+    internal-error,
+    invalid-input(invalid-input-detail),
+    location-not-found(location-not-found-detail),
+    packaging-not-found(packaging-not-found-detail),
+    permission-denied(permission-denied-detail),
+    quantity-not-found(quantity-not-found-detail),
+    retry,
+    timeout,
+  }
+
+  record split-item {
+    request-id: string,
+    input: result<split-request, invalid-input-detail>,
+  }
+
+  record split-result {
+    transaction-ids: list<uuid>,
+    source-packaging-id: uuid,
+    new-packaging-id: uuid,
+    source-status: source-status-value,
+    row-version: revision,
+  }
+
+  record split-outcome {
+    request-id: string,
+    outcome: result<split-result, split-error>,
+  }
+
+  run: async func(ctx: node-context, input: list<split-item>) -> result<list<split-outcome>, node-error>;
+}

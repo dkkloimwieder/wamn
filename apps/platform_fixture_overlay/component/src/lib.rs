@@ -37,7 +37,7 @@ wit_bindgen::generate!({
         "../../../wit/wamn-node",
         "../../../wit/wamn-postgres-0.4",
         "../../target/wamn/platform_fixture_overlay/wit",
-        "wit",
+        "wit/authored.wit",
     ],
     generate_all,
     async: true,

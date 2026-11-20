@@ -28,7 +28,7 @@ wit_bindgen::generate!({
         "../../../wit/wamn-node",
         "../../../wit/wamn-postgres-0.4",
         "../../target/wamn/edge_samples/wit",
-        "wit",
+        "wit/authored.wit",
     ],
     generate_all,
     async: true,

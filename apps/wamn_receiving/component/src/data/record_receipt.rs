@@ -10,7 +10,9 @@ use std::fmt;
 use serde_json::{Value, json};
 use uuid::Uuid;
 use wamn_digest::canonical_json_bytes;
-use wamn_guest::postgres_statements::{Json, StatementError, TimestampTz, Transaction, Uuid as WamnUuid};
+use wamn_guest::postgres_statements::{
+    Json, StatementError, TimestampTz, Transaction, Uuid as WamnUuid,
+};
 
 use crate::data::error::{AccessError, AccessErrorType, AllowedConstraints};
 use crate::data::statements::wamn::receiving_record_receipt as generated;
@@ -55,14 +57,6 @@ pub enum PurchaseOrderStatus {
 }
 
 impl PurchaseOrderStatus {
-    /// Frozen serialized result value.
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Open => "open",
-            Self::Complete => "complete",
-        }
-    }
-
     fn parse(value: &str) -> Result<Self, RecordReceiptError> {
         match value {
             "open" => Ok(Self::Open),

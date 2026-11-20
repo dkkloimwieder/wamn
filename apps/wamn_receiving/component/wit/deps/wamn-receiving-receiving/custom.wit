@@ -1,0 +1,408 @@
+interface load-open-receipt-lines {
+  use wamn:node/types@0.1.0.{node-context, node-error, json-value};
+
+  type numeric = string;
+  type revision = s32;
+  type uuid = string;
+
+  enum purchase-order-status-value {
+    open,
+    complete,
+    cancelled,
+  }
+
+  record load-open-receipt-lines-feed {
+    cursor: option<string>,
+    limit: option<u32>,
+  }
+
+  record load-open-receipt-lines-request {
+    feed: option<load-open-receipt-lines-feed>,
+  }
+
+  record invalid-input-detail {
+    field: string,
+  }
+
+  record permission-denied-detail {
+    operation: string,
+  }
+
+  variant load-open-receipt-lines-error {
+    cursor-expired,
+    internal-error,
+    invalid-input(invalid-input-detail),
+    permission-denied(permission-denied-detail),
+    retry,
+    timeout,
+  }
+
+  record load-open-receipt-lines-item {
+    input: result<load-open-receipt-lines-request, invalid-input-detail>,
+  }
+
+  record load-open-receipt-lines-row {
+    purchase-order-id: uuid,
+    purchase-order-number: string,
+    purchase-order-status: purchase-order-status-value,
+    supplier-id: uuid,
+    purchase-order-row-version: revision,
+    line-id: uuid,
+    line-number: s32,
+    item-id: uuid,
+    item-number: string,
+    ordered-quantity: numeric,
+    received-quantity: numeric,
+    remaining-quantity: numeric,
+    row-version: s64,
+  }
+
+  record load-open-receipt-lines-page {
+    item: list<load-open-receipt-lines-row>,
+    next-cursor: option<string>,
+    cursor: string,
+  }
+
+  record load-open-receipt-lines-change {
+    id: string,
+    row-version: s64,
+    data: option<load-open-receipt-lines-row>,
+  }
+
+  record load-open-receipt-lines-changes {
+    rows: list<load-open-receipt-lines-change>,
+    next-cursor: string,
+    complete: bool,
+  }
+
+  variant load-open-receipt-lines-result {
+    page(load-open-receipt-lines-page),
+    changes(load-open-receipt-lines-changes),
+  }
+
+  record load-open-receipt-lines-outcome {
+    outcome: result<load-open-receipt-lines-result, load-open-receipt-lines-error>,
+  }
+
+  run: async func(ctx: node-context, input: list<load-open-receipt-lines-item>) -> result<list<load-open-receipt-lines-outcome>, node-error>;
+}
+
+interface load-purchase-order-history {
+  use wamn:node/types@0.1.0.{node-context, node-error, json-value};
+
+  type timestamp = string;
+  type uuid = string;
+
+  enum type-value {
+    insert,
+    update,
+    delete,
+  }
+
+  record load-purchase-order-history-request {
+    after-cursor: option<string>,
+    id: uuid,
+    limit: s32,
+  }
+
+  record invalid-input-detail {
+    field: string,
+  }
+
+  record permission-denied-detail {
+    operation: string,
+  }
+
+  variant load-purchase-order-history-error {
+    internal-error,
+    invalid-input(invalid-input-detail),
+    permission-denied(permission-denied-detail),
+    retry,
+    timeout,
+  }
+
+  record load-purchase-order-history-item {
+    input: result<load-purchase-order-history-request, invalid-input-detail>,
+  }
+
+  record load-purchase-order-history-row {
+    id: uuid,
+    cursor: string,
+    %type: type-value,
+    operation: string,
+    changed-by: uuid,
+    changed-at: timestamp,
+    before: string,
+    after: string,
+    current: string,
+  }
+
+  record load-purchase-order-history-result {
+    rows: list<load-purchase-order-history-row>,
+  }
+
+  record load-purchase-order-history-outcome {
+    outcome: result<load-purchase-order-history-result, load-purchase-order-history-error>,
+  }
+
+  run: async func(ctx: node-context, input: list<load-purchase-order-history-item>) -> result<list<load-purchase-order-history-outcome>, node-error>;
+}
+
+interface load-receipt-screen {
+  use wamn:node/types@0.1.0.{node-context, node-error, json-value};
+
+  type numeric = string;
+  type revision = s32;
+  type uuid = string;
+
+  enum purchase-order-status-value {
+    open,
+    complete,
+    cancelled,
+  }
+
+  record load-receipt-screen-feed {
+    cursor: option<string>,
+    limit: option<u32>,
+  }
+
+  record load-receipt-screen-request {
+    purchase-order-id: uuid,
+    feed: option<load-receipt-screen-feed>,
+  }
+
+  record invalid-input-detail {
+    field: string,
+  }
+
+  record permission-denied-detail {
+    operation: string,
+  }
+
+  variant load-receipt-screen-error {
+    cursor-expired,
+    internal-error,
+    invalid-input(invalid-input-detail),
+    permission-denied(permission-denied-detail),
+    retry,
+    timeout,
+  }
+
+  record load-receipt-screen-item {
+    input: result<load-receipt-screen-request, invalid-input-detail>,
+  }
+
+  record load-receipt-screen-row {
+    purchase-order-id: uuid,
+    purchase-order-number: string,
+    purchase-order-status: purchase-order-status-value,
+    supplier-id: uuid,
+    purchase-order-row-version: revision,
+    line-id: uuid,
+    line-number: s32,
+    item-id: uuid,
+    item-number: string,
+    ordered-quantity: numeric,
+    received-quantity: numeric,
+    remaining-quantity: numeric,
+    row-version: s64,
+  }
+
+  record load-receipt-screen-page {
+    item: list<load-receipt-screen-row>,
+    next-cursor: option<string>,
+    cursor: string,
+  }
+
+  record load-receipt-screen-change {
+    id: string,
+    row-version: s64,
+    data: option<load-receipt-screen-row>,
+  }
+
+  record load-receipt-screen-changes {
+    rows: list<load-receipt-screen-change>,
+    next-cursor: string,
+    complete: bool,
+  }
+
+  variant load-receipt-screen-result {
+    page(load-receipt-screen-page),
+    changes(load-receipt-screen-changes),
+  }
+
+  record load-receipt-screen-outcome {
+    outcome: result<load-receipt-screen-result, load-receipt-screen-error>,
+  }
+
+  run: async func(ctx: node-context, input: list<load-receipt-screen-item>) -> result<list<load-receipt-screen-outcome>, node-error>;
+}
+
+interface purchase-order-summary {
+  use wamn:node/types@0.1.0.{node-context, node-error, json-value};
+
+  type numeric = string;
+  type uuid = string;
+
+  enum status-value {
+    open,
+    complete,
+    cancelled,
+  }
+
+  record purchase-order-summary-request {
+    status: status-value,
+    supplier-id: uuid,
+  }
+
+  record invalid-input-detail {
+    field: string,
+  }
+
+  record permission-denied-detail {
+    operation: string,
+  }
+
+  variant purchase-order-summary-error {
+    internal-error,
+    invalid-input(invalid-input-detail),
+    permission-denied(permission-denied-detail),
+    retry,
+    timeout,
+  }
+
+  record purchase-order-summary-item {
+    input: result<purchase-order-summary-request, invalid-input-detail>,
+  }
+
+  record purchase-order-summary-row {
+    purchase-order-id: uuid,
+    purchase-order-number: string,
+    status: string,
+    supplier-id: uuid,
+    supplier-name: string,
+    line-count: s64,
+    ordered-quantity: numeric,
+    received-quantity: numeric,
+  }
+
+  record purchase-order-summary-result {
+    rows: list<purchase-order-summary-row>,
+  }
+
+  record purchase-order-summary-outcome {
+    outcome: result<purchase-order-summary-result, purchase-order-summary-error>,
+  }
+
+  run: async func(ctx: node-context, input: list<purchase-order-summary-item>) -> result<list<purchase-order-summary-outcome>, node-error>;
+}
+
+interface record-receipt {
+  use wamn:node/types@0.1.0.{node-context, node-error, json-value};
+
+  type numeric = string;
+  type revision = s32;
+  type timestamp = string;
+  type uuid = string;
+
+  enum purchase-order-status-value {
+    open,
+    complete,
+  }
+
+  record record-receipt-line {
+    location-id: uuid,
+    purchase-order-line-id: uuid,
+    quantity: numeric,
+  }
+
+  record record-receipt-request {
+    idempotency-key: string,
+    line: list<record-receipt-line>,
+    occurred-at: timestamp,
+    purchase-order-id: uuid,
+    receipt-reference: string,
+  }
+
+  record idempotency-conflict-detail {
+    field: string,
+  }
+
+  record invalid-input-detail {
+    field: string,
+    minimum: option<string>,
+    maximum: option<string>,
+    observed: option<string>,
+  }
+
+  record location-not-found-detail {
+    field: string,
+    id: string,
+  }
+
+  record permission-denied-detail {
+    operation: string,
+  }
+
+  record purchase-order-line-mismatch-detail {
+    field: string,
+    id: string,
+  }
+
+  record purchase-order-line-not-found-detail {
+    field: string,
+    id: string,
+  }
+
+  record purchase-order-not-found-detail {
+    field: string,
+  }
+
+  record purchase-order-not-open-detail {
+    field: string,
+  }
+
+  record quantity-exceeds-remaining-detail {
+    field: string,
+    id: string,
+  }
+
+  record receipt-reference-conflict-detail {
+    constraint: string,
+  }
+
+  variant record-receipt-error {
+    idempotency-conflict(idempotency-conflict-detail),
+    internal-error,
+    invalid-input(invalid-input-detail),
+    location-not-found(location-not-found-detail),
+    permission-denied(permission-denied-detail),
+    purchase-order-line-mismatch(purchase-order-line-mismatch-detail),
+    purchase-order-line-not-found(purchase-order-line-not-found-detail),
+    purchase-order-not-found(purchase-order-not-found-detail),
+    purchase-order-not-open(purchase-order-not-open-detail),
+    quantity-exceeds-remaining(quantity-exceeds-remaining-detail),
+    receipt-reference-conflict(receipt-reference-conflict-detail),
+    retry,
+    timeout,
+  }
+
+  record record-receipt-item {
+    request-id: string,
+    input: result<record-receipt-request, invalid-input-detail>,
+  }
+
+  record record-receipt-result {
+    receipt-id: uuid,
+    purchase-order-id: uuid,
+    purchase-order-status: purchase-order-status-value,
+    row-version: revision,
+  }
+
+  record record-receipt-outcome {
+    request-id: string,
+    outcome: result<record-receipt-result, record-receipt-error>,
+  }
+
+  run: async func(ctx: node-context, input: list<record-receipt-item>) -> result<list<record-receipt-outcome>, node-error>;
+}

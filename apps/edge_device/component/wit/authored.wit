@@ -1,0 +1,5 @@
+package edge-device:component@0.1.0;
+
+world device {
+  include edge-device:generated/generated;
+}

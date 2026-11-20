@@ -373,7 +373,7 @@ impl<'a> RowDecoder<'a> {
                 format!("result omitted column `{expected_name}`"),
             )
         })?;
-        if column != expected_name {
+        if column != expected_name && column.strip_suffix(['!', '?']) != Some(expected_name) {
             return Err(StatementError::invalid_result(
                 self.statement,
                 format!("result column `{column}` does not match expected `{expected_name}`"),
