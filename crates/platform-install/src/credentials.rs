@@ -1,6 +1,9 @@
 //! Native CNPG credentials and public connection configuration.
 
+use wamn_kubernetes::client::KubernetesApi;
 use anyhow::Context as _;
+use k8s_openapi::api::core::v1::Secret;
+use kube::Api;
 use std::{sync::Arc, time::Duration};
 use tokio::io::AsyncWriteExt as _;
 use wamn_postgres::{ConnectionConfig, SecretRef};
@@ -84,7 +87,7 @@ pub(crate) async fn connect_with_retry(
 
 /// A worker's Kubernetes access to the database files it stages in its pod.
 #[derive(Debug)]
-pub struct DatabaseFiles(Arc<wamn_kubernetes::kubernetes_api::KubernetesApi>);
+pub struct DatabaseFiles(Arc<KubernetesApi>);
 
 impl Clone for DatabaseFiles {
     fn clone(&self) -> Self {
@@ -95,9 +98,7 @@ impl Clone for DatabaseFiles {
 impl DatabaseFiles {
     /// Open the worker's in-cluster API client.
     pub fn in_cluster() -> anyhow::Result<Self> {
-        Ok(Self(Arc::new(
-            wamn_kubernetes::kubernetes_api::KubernetesApi::in_cluster()?,
-        )))
+        Ok(Self(Arc::new(KubernetesApi::in_cluster()?)))
     }
 
     /// Stage the named login and CA in the worker's database volume.
@@ -122,15 +123,15 @@ impl DatabaseFiles {
         let root = Path::new(wamn_postgres::DATABASE_DIR);
         let directory = wamn_postgres::credential_directory(root, &config.credentials.name)?;
         wamn_postgres::credential_directory(root, &config.server_ca.name)?;
-        let read = |name| {
-            self.0.get(format!(
-                "/api/v1/namespaces/{}/secrets/{name}",
-                self.0.namespace
-            ))
-        };
-        let (login, ca) =
-            tokio::try_join!(read(&config.credentials.name), read(&config.server_ca.name),)?;
-        let credentials = match login["type"].as_str() {
+        let secrets = Api::<Secret>::namespaced(self.0.client(), &self.0.namespace);
+        let (login, ca) = tokio::time::timeout(wamn_kubernetes::client::REQUEST_TIMEOUT, async {
+            tokio::try_join!(
+                secrets.get(&config.credentials.name),
+                secrets.get(&config.server_ca.name)
+            )
+        })
+        .await??;
+        let credentials = match login.type_.as_deref() {
             Some("kubernetes.io/tls") => [
                 ("tls.crt", secret_entry(&login, "tls.crt")?),
                 ("tls.key", secret_entry(&login, "tls.key")?),
@@ -167,7 +168,7 @@ impl DatabaseFiles {
                 .open(&path)
                 .await
                 .with_context(|| format!("open {}", path.display()))?;
-            file.write_all(&bytes)
+            file.write_all(bytes)
                 .await
                 .with_context(|| format!("write {}", path.display()))?;
             file.flush().await?;
@@ -176,15 +177,13 @@ impl DatabaseFiles {
     }
 }
 
-fn secret_entry(secret: &serde_json::Value, key: &str) -> anyhow::Result<Vec<u8>> {
-    use base64::{Engine as _, engine::general_purpose::STANDARD};
-
-    let value = secret["data"][key]
-        .as_str()
-        .with_context(|| format!("database Secret key {key} is absent"))?;
-    Ok(STANDARD
-        .decode(value)
-        .with_context(|| format!("decode database Secret key {key}"))?)
+fn secret_entry<'a>(secret: &'a Secret, key: &str) -> anyhow::Result<&'a [u8]> {
+    secret
+        .data
+        .as_ref()
+        .and_then(|data| data.get(key))
+        .map(|bytes| bytes.0.as_slice())
+        .with_context(|| format!("database Secret key {key} is absent"))
 }
 
 /// The worker could not stage a database's login or CA files.

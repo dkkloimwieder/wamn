@@ -130,38 +130,36 @@ fn valid_route_host(host: &str, namespace: &str, base: &PlatformDomain) -> bool 
 
 #[derive(Debug)]
 struct Releases {
-    api: wamn_kubernetes::kubernetes_api::KubernetesApi,
+    api: wamn_kubernetes::client::KubernetesApi,
     platform_domain: PlatformDomain,
 }
 impl Releases {
     fn in_cluster(platform_domain: PlatformDomain) -> anyhow::Result<Self> {
         Ok(Self {
-            api: wamn_kubernetes::kubernetes_api::KubernetesApi::in_cluster()?,
+            api: wamn_kubernetes::client::KubernetesApi::in_cluster()?,
             platform_domain,
         })
     }
-    async fn request(&self, path: &str) -> anyhow::Result<serde_json::Value> {
-        Ok(self.api.get(path.to_owned()).await?)
-    }
     async fn routes(&self) -> anyhow::Result<BTreeMap<String, Route>> {
-        let mut objects = self
-            .request("/api/v1/configmaps?labelSelector=wamn.route%3Dtrue")
-            .await?;
-        let objects = objects["items"]
-            .as_array_mut()
-            .context("route ConfigMap list has no items")?;
+        use k8s_openapi::api::core::v1::ConfigMap;
+        use kube::{Api, api::ListParams};
+
+        let maps = Api::<ConfigMap>::all(self.api.client());
+        let params = ListParams::default().labels("wamn.route=true");
+        let mut objects =
+            tokio::time::timeout(wamn_kubernetes::client::REQUEST_TIMEOUT, maps.list(&params))
+                .await??
+                .items;
         // Kubernetes list order is unspecified. The lowest ConfigMap name wins.
-        objects.sort_unstable_by(|a, b| {
-            a["metadata"]["name"]
-                .as_str()
-                .cmp(&b["metadata"]["name"].as_str())
-        });
+        objects.sort_unstable_by(|a, b| a.metadata.name.cmp(&b.metadata.name));
         let mut routes = BTreeMap::new();
         for object in objects {
-            let namespace = object["metadata"]["namespace"].as_str().unwrap_or_default();
-            let name = object["metadata"]["name"].as_str().unwrap_or_default();
-            let parsed = object["data"]["route.json"]
-                .as_str()
+            let namespace = object.metadata.namespace.as_deref().unwrap_or_default();
+            let name = object.metadata.name.as_deref().unwrap_or_default();
+            let parsed = object
+                .data
+                .as_ref()
+                .and_then(|data| data.get("route.json"))
                 .context("route ConfigMap lacks route.json")
                 .and_then(|json| serde_json::from_str::<Route>(json).context("invalid route.json"));
             let mut route = match parsed {
@@ -188,12 +186,17 @@ impl Releases {
             segment(namespace) && segment(name),
             "invalid release coordinate"
         );
-        let object = self
-            .request(&format!("/api/v1/namespaces/{namespace}/configmaps/{name}"))
-            .await?;
+        let maps = kube::Api::<k8s_openapi::api::core::v1::ConfigMap>::namespaced(
+            self.api.client(),
+            namespace,
+        );
+        let object = tokio::time::timeout(wamn_kubernetes::client::REQUEST_TIMEOUT, maps.get(name))
+            .await??;
         serde_json::from_str(
-            object["data"]["release.json"]
-                .as_str()
+            object
+                .data
+                .as_ref()
+                .and_then(|data| data.get("release.json"))
                 .context("release ConfigMap lacks release.json")?,
         )
         .context("read the release ConfigMap")
@@ -785,14 +788,11 @@ mod tests {
             client: http_transport::client(Connector(connector.clone()), |_| {}),
             csrf_key: ring::hmac::Key::new(ring::hmac::HMAC_SHA256, &[0; 32]),
         };
+        let mut config = kube::Config::new(endpoint.parse().unwrap());
+        config.default_namespace = "hosts".into();
         let releases = Releases {
             platform_domain: "example".parse().unwrap(),
-            api: wamn_kubernetes::kubernetes_api::KubernetesApi::with_client(
-                http_transport::client(connector, |_| {}),
-                endpoint,
-                String::new(),
-                "hosts".into(),
-            ),
+            api: wamn_kubernetes::client::KubernetesApi::from_config(config).unwrap(),
         };
         let web = Web { store: None };
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();

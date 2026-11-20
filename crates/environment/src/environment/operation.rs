@@ -19,7 +19,10 @@ use wamn_catalog::{
     manifest::PackageManifest,
 };
 use wamn_digest::Digest;
-use wamn_kubernetes::{job, kubernetes_api::KubernetesApi};
+use wamn_kubernetes::{
+    client::{KubernetesApi, wait_named, workloads},
+    job,
+};
 use wamn_platform_install::release_chart::bundle::{SelectedChart, pod_registry_reference};
 use wamn_publish::package_artifact::{OpenedPackage, open_package_digest};
 use wamn_registry::Triple;
@@ -273,7 +276,7 @@ pub async fn application(
                         let digest = if let Some(digest) = digest {
                             digest
                         } else {
-                            let api = wamn_kubernetes::kubernetes_api::KubernetesApi::in_cluster()?;
+                            let api = KubernetesApi::in_cluster()?;
                             super::document::workload_release(&api, &triple, name)
                                 .await?
                                 .context("application has no deployed package")?
@@ -338,36 +341,34 @@ async fn wait_workload_ready(
     timeout: Duration,
 ) -> anyhow::Result<()> {
     let diagnostics = Mutex::new(String::new());
-    wamn_kubernetes::kubectl::wait_named(
-        target,
-        "workloaddeployments.runtime.wasmcloud.dev",
-        name,
-        timeout,
-        |object| {
-            let conditions = object["status"]["conditions"]
-                .as_array()
-                .map_or(&[][..], Vec::as_slice);
-            if conditions
-                .iter()
-                .any(|condition| condition["type"] == "Ready" && condition["status"] == "True")
-            {
-                return true;
-            }
-            let messages = conditions
-                .iter()
-                .filter_map(|condition| {
-                    let kind = condition["type"].as_str()?;
-                    let status = condition["status"].as_str()?;
-                    let message = condition["message"].as_str().unwrap_or_default();
-                    (kind == "Ready" || matches!(status, "False" | "Unknown"))
-                        .then(|| format!("{kind}={status} {message:?}"))
-                })
-                .collect::<Vec<_>>()
-                .join(", ");
-            *diagnostics.lock().expect("lock workload diagnostics") = messages;
-            false
-        },
-    )
+    let workloads = workloads(target.client.client(), &target.namespace);
+    wait_named(&workloads, name, timeout, |object| {
+        let Some(object) = object else {
+            return Ok(None);
+        };
+        let conditions = object.data["status"]["conditions"]
+            .as_array()
+            .map_or(&[][..], Vec::as_slice);
+        if conditions
+            .iter()
+            .any(|condition| condition["type"] == "Ready" && condition["status"] == "True")
+        {
+            return Ok(Some(()));
+        }
+        let messages = conditions
+            .iter()
+            .filter_map(|condition| {
+                let type_ = condition["type"].as_str()?;
+                let status = condition["status"].as_str()?;
+                let message = condition["message"].as_str().unwrap_or_default();
+                (type_ == "Ready" || matches!(status, "False" | "Unknown"))
+                    .then(|| format!("{type_}={status} {message:?}"))
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        *diagnostics.lock().expect("lock workload diagnostics") = messages;
+        Ok(None)
+    })
     .await
     .map_err(|error| {
         if error.is::<tokio::time::error::Elapsed>() {

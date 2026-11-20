@@ -1,10 +1,12 @@
 //! Provision an org's system database logins, registry row, and local OAuth key.
 
 use anyhow::Context as _;
+use k8s_openapi::api::core::v1::Secret;
+use kube::Api;
 use ring::rand::{SecureRandom as _, SystemRandom};
 use std::path::Path;
 use wamn_identity_protocol::LoginName;
-use wamn_kubernetes::kubernetes_api::KubernetesApi;
+use wamn_kubernetes::client::KubernetesApi;
 use wamn_postgres::ConnectionConfig;
 use wamn_registry::OrgId;
 
@@ -57,9 +59,13 @@ pub async fn provision_org(database: &ConnectionConfig, org: &OrgId) -> anyhow::
 
     let random = SystemRandom::new();
     if oauth_encryption["provider"] == "local" {
-        let path = format!("/api/v1/namespaces/{org}/secrets/{OAUTH_SECRET}");
-        let secret = api.get(path).await?;
-        if secret["data"].get("key").is_none() {
+        let secrets = Api::<Secret>::namespaced(api.client(), org.as_str());
+        let secret = tokio::time::timeout(
+            wamn_kubernetes::client::REQUEST_TIMEOUT,
+            secrets.get(OAUTH_SECRET),
+        )
+        .await??;
+        if !secret.data.is_some_and(|data| data.contains_key("key")) {
             // The host's envelope reader requires 32 raw bytes.
             let mut key = [0_u8; 32];
             random

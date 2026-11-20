@@ -139,7 +139,7 @@ pub struct WorkloadRelease {
 
 /// Observe the current package and Helm revision through the existing workload reader.
 pub async fn workload_release(
-    api: &wamn_kubernetes::kubernetes_api::KubernetesApi,
+    api: &wamn_kubernetes::client::KubernetesApi,
     triple: &Triple,
     application: &wamn_catalog::ApplicationName,
 ) -> anyhow::Result<Option<WorkloadRelease>> {
@@ -149,27 +149,29 @@ pub async fn workload_release(
         &triple.env,
         application,
     );
-    let Some(workload) = api
-        .get_workload_deployment(triple.org.as_str(), &format!("{release}-http"))
-        .await?
-    else {
-        return Ok(None);
-    };
-    Ok(Some(workload_release_annotations(&workload)?))
+    let workloads = wamn_kubernetes::client::workloads(api.client(), triple.org.as_str());
+    let workload = tokio::time::timeout(
+        wamn_kubernetes::client::REQUEST_TIMEOUT,
+        workloads.get_opt(&format!("{release}-http")),
+    )
+    .await??;
+    workload
+        .as_ref()
+        .map(workload_release_annotations)
+        .transpose()
 }
 
 /// Decode the live package digest and content revision from workload metadata.
 pub fn workload_release_annotations(
-    workload: &serde_json::Value,
+    workload: &kube::api::DynamicObject,
 ) -> anyhow::Result<WorkloadRelease> {
-    let annotations = &workload["metadata"]["annotations"];
-    let package_digest = annotations["wamn.package-digest"]
-        .as_str()
+    let annotations = workload.metadata.annotations.as_ref();
+    let annotation = |key| annotations.and_then(|values| values.get(key)).map(String::as_str);
+    let package_digest = annotation("wamn.package-digest")
         .context("application workload has no package digest")?
         .parse()
         .context("invalid application workload package digest")?;
-    let revision = annotations["wamn.release-revision"]
-        .as_str()
+    let revision = annotation("wamn.release-revision")
         .context("application workload has no Helm revision")?
         .parse()
         .context("invalid application workload Helm revision")?;

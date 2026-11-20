@@ -21,9 +21,7 @@ sqlx = { workspace = true, features = ["migrate", "macros", "postgres", "runtime
 
 wamn-digest = { workspace = true, features = ["sqlx"] }
 serde = { workspace = true, features = ["derive"] }
-# The per-project-env credential Secrets render as JSON (kubectl apply accepts
-# JSON manifests). No schemars — this is a provisioning tool, not a published
-# contract.
+# The per-project environment credential Secrets render as JSON.
 serde_json = { workspace = true }
 
 # wamn-q3n.6 provision-org: the org Cluster-PAIR renderer takes the registry's

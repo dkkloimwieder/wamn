@@ -811,25 +811,12 @@ mod tests {
         .unwrap();
         let review_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let review_endpoint = format!("http://{}", review_listener.local_addr().unwrap());
-        let connector = wamn_http_client::tls_connector(
-            rustls::ClientConfig::builder_with_provider(Arc::new(
-                rustls::crypto::aws_lc_rs::default_provider(),
-            ))
-            .with_safe_default_protocol_versions()
-            .unwrap()
-            .with_root_certificates(rustls::RootCertStore::empty())
-            .with_no_client_auth(),
-            hyper_util::client::legacy::connect::HttpConnector::new(),
-            wamn_http_client::Schemes::HttpAndHttps,
-            wamn_http_client::Protocols::Http1,
-        );
         let state = Arc::get_mut(&mut service.inner).unwrap();
-        state.kubernetes = Some(wamn_kubernetes::kubernetes_api::KubernetesApi::with_client(
-            wamn_http_client::client(connector, |_| {}),
-            review_endpoint,
-            "fixture-reviewer".into(),
-            "platform".into(),
-        ));
+        let mut config = kube::Config::new(review_endpoint.parse().unwrap());
+        config.default_namespace = "platform".into();
+        config.auth_info.token = Some("fixture-reviewer".into());
+        state.kubernetes =
+            Some(wamn_kubernetes::client::KubernetesApi::from_config(config).unwrap());
         let review_task = tokio::spawn(async move {
             while let Ok((tcp, _)) = review_listener.accept().await {
                 let handler = service_fn(|_: Request<Incoming>| async {

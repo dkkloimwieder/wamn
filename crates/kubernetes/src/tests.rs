@@ -1,15 +1,11 @@
 //! Credential operations through the shared HTTP interface.
 
-use crate::{
-    CredentialSecret, Store as _,
-    kubernetes::KubernetesStore,
-    kubernetes_api::KubernetesApi,
-};
+use crate::{CredentialSecret, Store as _, client::KubernetesApi, kubernetes::KubernetesStore};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use bytes::Bytes;
 use http_body_util::{BodyExt as _, Full};
 use hyper::{Response, service::service_fn};
-use hyper_util::{client::legacy::connect::HttpConnector, rt::TokioIo};
+use hyper_util::rt::TokioIo;
 use serde_json::{Value, json};
 use std::{
     collections::VecDeque,
@@ -17,7 +13,6 @@ use std::{
     sync::{Arc, Mutex},
 };
 use tokio::net::TcpListener;
-use wamn_http_client::{self as http_transport, Protocols, Schemes};
 
 struct Api {
     store: KubernetesStore,
@@ -71,25 +66,9 @@ async fn api(replies: Vec<(u16, Value)>) -> Api {
             });
         }
     });
-    let tls = rustls::ClientConfig::builder_with_provider(Arc::new(
-        rustls::crypto::aws_lc_rs::default_provider(),
-    ))
-    .with_safe_default_protocol_versions()
-    .unwrap()
-    .with_root_certificates(rustls::RootCertStore::empty())
-    .with_no_client_auth();
-    let connector = http_transport::tls_connector(
-        tls,
-        HttpConnector::new(),
-        Schemes::HttpAndHttps,
-        Protocols::Http1,
-    );
-    let api = KubernetesApi::with_client(
-        http_transport::client(connector, |_| {}),
-        format!("http://{address}"),
-        String::new(),
-        "hosts".into(),
-    );
+    let mut config = kube::Config::new(format!("http://{address}").parse().unwrap());
+    config.default_namespace = "hosts".into();
+    let api = KubernetesApi::from_config(config).unwrap();
     Api {
         store: KubernetesStore::new(api),
         requests,

@@ -52,7 +52,7 @@ pub(super) async fn target(
     if let Some(revision) = revision {
         return Ok(revision.get());
     }
-    let api = wamn_kubernetes::kubernetes_api::KubernetesApi::in_cluster()?;
+    let api = wamn_kubernetes::client::KubernetesApi::in_cluster()?;
     let live = crate::environment::document::workload_release(&api, triple, application)
         .await?
         .context("application has no deployed release")?

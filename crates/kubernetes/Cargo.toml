@@ -8,16 +8,16 @@ license.workspace = true
 test-util = []
 
 [dependencies]
-wamn-http-client = { workspace = true }
+kube = { workspace = true }
+k8s-openapi = { workspace = true }
 anyhow = { workspace = true }
 async-trait = { workspace = true }
 base64 = { workspace = true }
 bytes = { workspace = true }
 http-body-util = { workspace = true }
-hyper = { workspace = true, features = ["client", "http1", "http2"] }
-hyper-util = { workspace = true, features = ["client-legacy", "http1", "http2", "tokio"] }
-hyper-rustls = { workspace = true, features = ["http1", "http2", "aws-lc-rs"] }
-rustls = { workspace = true, features = ["aws_lc_rs"] }
+hyper = { workspace = true }
+tower = { version = "0.5", features = ["util"] }
+futures-util = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }
@@ -25,6 +25,7 @@ tokio = { workspace = true, features = ["fs", "io-util", "rt", "time", "process"
 uuid = { workspace = true, features = ["v4"] }
 
 [dev-dependencies]
+hyper-util = { workspace = true, features = ["tokio"] }
 hyper = { workspace = true, features = ["server", "http1"] }
 tokio = { workspace = true, features = ["net"] }
 

@@ -2,26 +2,15 @@
 
 use anyhow::Context as _;
 use serde_json::Value;
-use wamn_kubernetes::helm;
+use k8s_openapi::api::{apps::v1::Deployment, core::v1::Secret};
+use kube::{Api, api::ListParams};
+use wamn_kubernetes::{
+    client::{delete_named, resource},
+    helm,
+};
 use wamn_registry::{Triple, name};
 
 use super::super::Platform;
-
-async fn get(
-    platform: &Platform,
-    namespace: &str,
-    type_: &str,
-    name: &str,
-) -> anyhow::Result<Option<Value>> {
-    wamn_kubernetes::kubectl::get(
-        &platform.target.kubeconfig,
-        &platform.target.context,
-        namespace,
-        type_,
-        name,
-    )
-    .await
-}
 
 /// Refuse foreign resources before the first destructive operation.
 pub(super) async fn require_ownership(
@@ -29,29 +18,41 @@ pub(super) async fn require_ownership(
     triple: &Triple,
     database: &str,
 ) -> anyhow::Result<()> {
-    let namespace = &platform.target.namespace;
+    let target = &platform.target;
     let reader = wamn_provision::cdc_reader_name(&triple.org, &triple.project, &triple.env);
-    if let Some(object) = get(platform, namespace, "deployment", &reader).await? {
+    let deployments = Api::<Deployment>::namespaced(target.client.client(), &target.namespace);
+    if let Some(object) = deployments.get_opt(&reader).await? {
+        let coordinate = triple.to_string();
         anyhow::ensure!(
-            object["metadata"]["annotations"]["wamn.environment"].as_str()
-                == Some(triple.to_string().as_str()),
+            object
+                .metadata
+                .annotations
+                .and_then(|mut values| values.remove("wamn.environment"))
+                .as_deref()
+                == Some(coordinate.as_str()),
             "refused: Deployment {reader} does not belong to {triple}"
         );
     }
-    if let Some(object) = get(
-        platform,
-        &platform.target.namespace,
-        "publication",
-        database,
-    )
-    .await?
-    {
-        let labels = &object["metadata"]["labels"];
+    let publications = resource(
+        target.client.client(),
+        &target.namespace,
+        "postgresql.cnpg.io",
+        "v1",
+        "Publication",
+        "publications",
+    );
+    if let Some(object) = publications.get_opt(database).await? {
+        let labels = object.metadata.labels.as_ref();
+        let label = |key| {
+            labels
+                .and_then(|values| values.get(key))
+                .map(String::as_str)
+        };
         anyhow::ensure!(
-            labels["wamn.org"] == triple.org.as_str()
-                && labels["wamn.project"] == triple.project.as_str()
-                && labels["wamn.env"] == triple.env.as_str()
-                && object["spec"]["dbname"] == database,
+            label("wamn.org") == Some(triple.org.as_str())
+                && label("wamn.project") == Some(triple.project.as_str())
+                && label("wamn.env") == Some(triple.env.as_str())
+                && object.data["spec"]["dbname"] == database,
             "refused: Publication {database} does not belong to {triple}"
         );
     }
@@ -64,23 +65,17 @@ pub(super) async fn delete_reader(
     release: Option<&str>,
 ) -> anyhow::Result<()> {
     let cdc = wamn_provision::cdc_reader_name(&triple.org, &triple.project, &triple.env);
+    let target = &platform.target;
+    let deployments = Api::<Deployment>::namespaced(target.client.client(), &target.namespace);
     if let Some(release) = release
-        && get(platform, &platform.target.namespace, "deployment", &cdc)
-            .await?
-            .is_some()
+        && deployments.get_opt(&cdc).await?.is_some()
     {
         wamn_platform_install::environment::update_project(
             &platform.target, &platform.chart, release,
             serde_json::json!({"cdcReader":{"pause":true},"publication":{"reclaimPolicy":"delete"}}),
         ).await?;
     }
-    crate::environment::cdc_reader::wait_reader_stopped(
-        &platform.target.kubeconfig,
-        &platform.target.context,
-        &platform.target.namespace,
-        triple,
-    )
-    .await
+    crate::environment::cdc_reader::wait_reader_stopped(&platform.target, triple).await
 }
 
 pub(super) async fn project_release_exists(
@@ -132,33 +127,48 @@ pub(super) async fn delete_kept_project_resources(
     triple: &Triple,
     release: &str,
 ) -> anyhow::Result<Vec<String>> {
-    const CLUSTER: &str = "cluster.postgresql.cnpg.io";
-    const STORE: &str = "objectstore.barmancloud.cnpg.io";
-    let namespace = &platform.target.namespace;
+    let target = &platform.target;
+    let namespace = &target.namespace;
     let coordinate = name::project_env_key(&triple.org, &triple.project, &triple.env);
     let mut lines = Vec::new();
-    for kind in [
-        CLUSTER,
-        "certificate.cert-manager.io",
-        "issuer.cert-manager.io",
+    let stores = resource(
+        target.client.client(),
+        namespace,
+        "barmancloud.cnpg.io",
+        "v1",
+        "ObjectStore",
+        "objectstores",
+    );
+    for (group, type_, plural, is_cluster) in [
+        ("postgresql.cnpg.io", "Cluster", "clusters", true),
+        ("cert-manager.io", "Certificate", "certificates", false),
+        ("cert-manager.io", "Issuer", "issuers", false),
     ] {
-        let output = super::kubectl(platform, namespace, &["get", kind, "-o", "json"], None)
+        let objects = resource(
+            target.client.client(),
+            namespace,
+            group,
+            "v1",
+            type_,
+            plural,
+        );
+        let label = format!("{}.{group}", type_.to_ascii_lowercase());
+        let list = objects
+            .list(&ListParams::default())
             .await
-            .with_context(|| format!("list {kind} in {namespace}"))?;
-        let list: Value =
-            serde_json::from_str(&output).with_context(|| format!("decode {kind} list"))?;
-        let items = list["items"]
-            .as_array()
-            .with_context(|| format!("read items in {kind} list"))?;
-        for object in items
+            .with_context(|| format!("list {label} in {namespace}"))?;
+        for object in list
+            .items
             .iter()
             .filter(|object| kept_by_release(object, release))
         {
-            let name = object["metadata"]["name"]
-                .as_str()
-                .with_context(|| format!("kept {kind} has no name"))?;
-            if kind == CLUSTER {
-                let project = object["spec"]["bootstrap"]["initdb"]["database"]
+            let name = object
+                .metadata
+                .name
+                .as_deref()
+                .with_context(|| format!("kept {label} has no name"))?;
+            if is_cluster {
+                let project = object.data["spec"]["bootstrap"]["initdb"]["database"]
                     .as_str()
                     .and_then(name::project_database_key);
                 if project.as_ref() != Some(&coordinate) {
@@ -166,14 +176,23 @@ pub(super) async fn delete_kept_project_resources(
                 }
                 // Remove the store first so a retry can still find it by the Cluster name.
                 let store = format!("{name}-store");
-                if let Some(object) = get(platform, namespace, STORE, &store).await?
+                if let Some(object) = stores.get_opt(&store).await?
                     && kept_by_release(&object, release)
+                    && delete_named(&stores, &store, false)
+                        .await
+                        .with_context(|| {
+                            format!("delete kept objectstore.barmancloud.cnpg.io/{store}")
+                        })?
                 {
-                    // Waiting in kubectl would require list and watch on ObjectStores.
-                    delete_kept_object(platform, STORE, &store, "--wait=false", &mut lines).await?;
+                    lines.push(format!("deleted objectstore.barmancloud.cnpg.io/{store}"));
                 }
             }
-            delete_kept_object(platform, kind, name, "--wait=true", &mut lines).await?;
+            if delete_named(&objects, name, true)
+                .await
+                .with_context(|| format!("delete kept {label}/{name}"))?
+            {
+                lines.push(format!("deleted {label}/{name}"));
+            }
         }
     }
     if lines.is_empty() {
@@ -182,39 +201,16 @@ pub(super) async fn delete_kept_project_resources(
     Ok(lines)
 }
 
-fn kept_by_release(object: &Value, release: &str) -> bool {
-    let annotations = &object["metadata"]["annotations"];
-    annotations["meta.helm.sh/release-name"] == release
-        && annotations["helm.sh/resource-policy"] == "keep"
-}
-
-async fn delete_kept_object(
-    platform: &Platform,
-    kind: &str,
-    name: &str,
-    wait: &str,
-    lines: &mut Vec<String>,
-) -> anyhow::Result<()> {
-    let removed = super::kubectl(
-        platform,
-        &platform.target.namespace,
-        &[
-            "delete",
-            kind,
-            name,
-            "--ignore-not-found",
-            wait,
-            "-o",
-            "name",
-        ],
-        None,
-    )
-    .await
-    .with_context(|| format!("delete kept {kind}/{name}"))?;
-    if !removed.is_empty() {
-        lines.push(format!("deleted {removed}"));
-    }
-    Ok(())
+fn kept_by_release(object: &kube::api::DynamicObject, release: &str) -> bool {
+    object
+        .metadata
+        .annotations
+        .as_ref()
+        .is_some_and(|annotations| {
+            let value = |key| annotations.get(key).map(String::as_str);
+            value("meta.helm.sh/release-name") == Some(release)
+                && value("helm.sh/resource-policy") == Some("keep")
+        })
 }
 
 pub(super) async fn delete_database_certificate_secrets(
@@ -224,11 +220,17 @@ pub(super) async fn delete_database_certificate_secrets(
     // Also remove older Secrets that lack cert-manager's Certificate owner reference.
     let cluster = name::project_cluster(database);
     let root = format!("{cluster}-login-ca");
-    let namespace = &platform.target.namespace;
+    let target = &platform.target;
+    let certificates = resource(
+        target.client.client(),
+        &target.namespace,
+        "cert-manager.io",
+        "v1",
+        "Certificate",
+        "certificates",
+    );
     anyhow::ensure!(
-        get(platform, namespace, "certificate.cert-manager.io", &root)
-            .await?
-            .is_none(),
+        certificates.get_opt(&root).await?.is_none(),
         "cannot remove database certificate Secrets while Certificate {root} exists"
     );
     let secrets: Vec<_> = wamn_provision::WorkloadRoleFamily::ALL
@@ -238,9 +240,9 @@ pub(super) async fn delete_database_certificate_secrets(
         .map(|login| name::project_login_certificate(database, login))
         .chain([root, format!("{cluster}-client-repl")])
         .collect();
-    let mut arguments = vec!["delete", "secret", "--ignore-not-found"];
-    arguments.extend(secrets.iter().map(String::as_str));
-    super::kubectl(platform, namespace, &arguments, None)
-        .await
-        .map(drop)
+    let api = Api::<Secret>::namespaced(target.client.client(), &target.namespace);
+    for name in secrets {
+        delete_named(&api, &name, true).await?;
+    }
+    Ok(())
 }

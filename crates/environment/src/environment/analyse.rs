@@ -7,7 +7,10 @@
 //! the live set. It then tests the document
 //! against them and returns the plan, or the refusals.
 
+use k8s_openapi::api::core::v1::Pod;
+use kube::{Api, api::ListParams};
 use sqlx::{Connection as _, Row as _};
+use wamn_kubernetes::client::workloads;
 pub(super) mod plan;
 pub use plan::refusals;
 pub(crate) use plan::project_url;
@@ -261,15 +264,20 @@ pub(crate) async fn application_releases(
     tx.commit().await?;
     drop(client);
     let coordinate = triple.to_string();
-    let workloads = super::ensure::kubectl(
-        platform, triple.org.as_str(), &["get", "workloaddeployments", "-o", "json"], None,
-    ).await?;
-    let workloads: Value = serde_json::from_str(&workloads)?;
-    for item in workloads["items"].as_array().context("workload list has no items")? {
-        let annotations = &item["metadata"]["annotations"];
-        if annotations["wamn.environment"] == coordinate {
-            applications.insert(annotations["wamn.application"].as_str()
-                .context("workload has no application annotation")?.parse()?);
+    let workloads = workloads(platform.target.client.client(), triple.org.as_str());
+    for item in workloads.list(&ListParams::default()).await?.items {
+        let annotations = item.metadata.annotations.as_ref();
+        let annotation = |key| {
+            annotations
+                .and_then(|values| values.get(key))
+                .map(String::as_str)
+        };
+        if annotation("wamn.environment") == Some(coordinate.as_str()) {
+            applications.insert(
+                annotation("wamn.application")
+                    .context("workload has no application annotation")?
+                    .parse()?,
+            );
         }
     }
     applications.into_iter().map(|application| {
@@ -280,18 +288,12 @@ pub(crate) async fn application_releases(
     }).collect()
 }
 
-/// The host pods of the environment's host group, as `kubectl get pods -o json`.
+/// List the host Pods for the specified host group.
 pub(crate) async fn read_pods(platform: &Platform, release_name: &str) -> anyhow::Result<Value> {
     let selector = wamn_registry::name::host_selector(release_name);
-    let output = wamn_kubernetes::kubectl::kubectl(
-        &platform.target.kubeconfig,
-        &platform.target.context,
-        &platform.target.namespace,
-        &["get", "pods", "-l", &selector, "-o", "json"],
-        None,
-    )
-    .await?;
-    serde_json::from_str(&output).context("decode the pod list")
+    let pods = Api::<Pod>::namespaced(platform.target.client.client(), &platform.target.namespace);
+    let objects = pods.list(&ListParams::default().labels(&selector)).await?;
+    serde_json::to_value(objects).context("encode the pod list")
 }
 
 /// Refuse cloud exclusive bindings unless the supplied host group names one replica.

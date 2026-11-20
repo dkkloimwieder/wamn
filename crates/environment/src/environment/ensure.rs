@@ -1,6 +1,8 @@
 //! Explicit environment provisioning, shared credentials, and CDC resources.
 //! Application activation reads these resources without creating or reconciling them.
 
+use k8s_openapi::api::core::v1::ConfigMap;
+use kube::Api;
 use sqlx::Row as _;
 
 use anyhow::Context as _;
@@ -291,36 +293,18 @@ pub async fn cdc_in_place(
 }
 
 pub(super) async fn postgres_settings(platform: &Platform) -> anyhow::Result<serde_json::Value> {
-    let configuration: serde_json::Value = wamn_kubernetes::kubectl::get(
-        &platform.target.kubeconfig,
-        &platform.target.context,
-        &platform.target.namespace,
-        "configmap",
-        "wamn-platform",
-    )
-    .await?
-    .context("installation configuration is absent")?;
-    let postgres = configuration["data"]["postgres.json"]
-        .as_str()
+    let target = &platform.target;
+    let maps = Api::<ConfigMap>::namespaced(target.client.client(), &target.namespace);
+    let configuration = maps
+        .get_opt("wamn-platform")
+        .await?
+        .context("installation configuration is absent")?;
+    let postgres = configuration
+        .data
+        .as_ref()
+        .and_then(|data| data.get("postgres.json"))
         .context("installation PostgreSQL settings are absent")?;
     serde_json::from_str(postgres).context("decode installation PostgreSQL settings")
-}
-
-/// Run `kubectl` against the platform's cluster in `namespace`.
-pub(crate) async fn kubectl(
-    platform: &Platform,
-    namespace: &str,
-    arguments: &[&str],
-    input: Option<&[u8]>,
-) -> anyhow::Result<String> {
-    wamn_kubernetes::kubectl::kubectl(
-        &platform.target.kubeconfig,
-        &platform.target.context,
-        namespace,
-        arguments,
-        input,
-    )
-    .await
 }
 
 /// Resolve the schemas already recorded in the project database.

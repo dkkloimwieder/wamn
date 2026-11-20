@@ -32,7 +32,7 @@ use tokio_rustls::TlsAcceptor;
 use wamn_identity::session_keys::{
     active_session_key_exists, initialize_session_key, session_jwks,
 };
-use wamn_kubernetes::kubernetes_api::KubernetesApi;
+use wamn_kubernetes::client::KubernetesApi;
 use wamn_provision::identity_role::identity_issuer_login;
 
 // Match the public-key client's total fetch bound. No retry or stale response

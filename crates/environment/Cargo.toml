@@ -11,6 +11,8 @@ test-util = []
 ops = ["wamn-provision/ops"]
 
 [dependencies]
+kube = { workspace = true }
+k8s-openapi = { workspace = true }
 async-trait.workspace = true
 base64.workspace = true
 wamn-role.workspace = true

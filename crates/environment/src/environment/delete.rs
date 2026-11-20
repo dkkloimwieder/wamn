@@ -23,6 +23,8 @@ mod rows;
 pub use rows::delete_registry_rows;
 
 use anyhow::{Context as _, bail};
+use k8s_openapi::api::core::v1::{ConfigMap, Secret};
+use kube::{Api, api::{Patch, PatchParams}};
 use std::time::Duration;
 use wamn_provision::sql::drop_replication_slot_sql;
 
@@ -33,9 +35,11 @@ use wamn_registry::{Triple, instance_suffix::InstanceSuffix, name};
 
 use super::Platform;
 use super::analyse::application_releases;
-use super::ensure::kubectl;
 use wamn_catalog::lifecycle_lock::LifecycleLock;
-use wamn_kubernetes::helm;
+use wamn_kubernetes::{
+    client::{delete_named, resource},
+    helm,
+};
 use wamn_postgres::connect;
 
 /// Delete the environment. With `data`, the database and its roles are
@@ -105,33 +109,31 @@ async fn delete_locked(
 
     resources::require_ownership(platform, triple, &database).await?;
     let applications = application_releases(platform, system, triple).await?;
-    let cr_present = !kubectl(
-        platform,
-        &platform.target.namespace,
-        &[
-            "get",
-            "database",
-            &database,
-            "--ignore-not-found",
-            "-o",
-            "name",
-        ],
-        None,
-    )
-    .await?
-    .is_empty();
+    let target = &platform.target;
+    let databases = resource(
+        target.client.client(),
+        &target.namespace,
+        "postgresql.cnpg.io",
+        "v1",
+        "Database",
+        "databases",
+    );
+    let cr_present = databases.get_opt(&database).await?.is_some();
     let database_managed = cr_present && (!data || release_present);
+    let clusters = resource(
+        target.client.client(),
+        &target.namespace,
+        "postgresql.cnpg.io",
+        "v1",
+        "Cluster",
+        "clusters",
+    );
     let cluster_missing = data
         && database_managed
-        && wamn_kubernetes::kubectl::get::<serde_json::Value>(
-            &platform.target.kubeconfig,
-            &platform.target.context,
-            &platform.target.namespace,
-            "cluster.postgresql.cnpg.io",
-            &name::project_cluster(&database),
-        )
-        .await?
-        .is_none();
+        && clusters
+            .get_opt(&name::project_cluster(&database))
+            .await?
+            .is_none();
     let project_connection = (database_managed && !cluster_missing)
         .then(|| wamn_platform_install::environment::connection_for(triple, &instance));
     let project_lock = if cluster_missing {
@@ -204,41 +206,16 @@ async fn delete_locked(
 
         // The environment's key of the org's control administration Secret.
         let control = control_administration_secret_name(org);
-        let control_present = !kubectl(
-            platform,
-            namespace,
-            &[
-                "get",
-                "configmap",
-                &control,
-                "--ignore-not-found",
-                "-o",
-                "name",
-            ],
-            None,
-        )
-        .await?
-        .is_empty();
-        if control_present {
-            let patch = serde_json::to_vec(
-                &serde_json::json!({"data":{wamn_provision::control_administration_key(&triple.project,&triple.env):null}}),
-            )?;
-            kubectl(
-                platform,
-                namespace,
-                &[
-                    "patch",
-                    "configmap",
-                    &control,
-                    "--type",
-                    "merge",
-                    "--patch-file",
-                    "/dev/stdin",
-                ],
-                Some(&patch),
-            )
-            .await
-            .with_context(|| format!("remove the environment's key of Secret {control}"))?;
+        let maps = Api::<ConfigMap>::namespaced(target.client.client(), namespace);
+        if maps.get_opt(&control).await?.is_some() {
+            let patch = serde_json::json!({"data": {
+                wamn_provision::control_administration_key(&triple.project, &triple.env): null
+            }});
+            maps.patch(&control, &PatchParams::default(), &Patch::Merge(patch))
+                .await
+                .with_context(|| {
+                    format!("remove the environment's key from ConfigMap {control}")
+                })?;
             lines.push(format!("removed the environment's key of Secret {control}"));
         }
 
@@ -333,15 +310,9 @@ async fn delete_locked(
     super::broker::after_delete(platform, triple, remaining).await?;
     // Keep the registry inputs until the credential store and its account are gone.
     let secret = wamn_registry::credential_secret_name(org, project, env);
-    let deleted = kubectl(
-        platform,
-        namespace,
-        &["delete", "secret", &secret, "--ignore-not-found"],
-        None,
-    )
-    .await?;
-    if !deleted.is_empty() {
-        lines.push(deleted);
+    let secrets = Api::<Secret>::namespaced(target.client.client(), namespace);
+    if delete_named(&secrets, &secret, true).await? {
+        lines.push(format!("secret \"{secret}\" deleted from {namespace} namespace"));
     }
     lines.extend(delete_registry_rows(&mut *system.client().await, triple).await?);
     Ok(lines)

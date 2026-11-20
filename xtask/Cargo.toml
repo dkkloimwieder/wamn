@@ -15,6 +15,9 @@ path = "src/main.rs"
 test = false
 
 [dependencies]
+kube = { workspace = true, features = ["ws"] }
+k8s-openapi = { workspace = true }
+tar = { workspace = true }
 wamn-registry.workspace = true
 wamn-component-policy.workspace = true
 wamn-catalog.workspace = true

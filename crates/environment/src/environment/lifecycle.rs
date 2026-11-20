@@ -1,4 +1,5 @@
 //! Authenticated environment configuration through installer-owned resources.
+use wamn_kubernetes::client::{ready, resource, wait_named};
 use super::{
     Platform,
     document::{EnvironmentDocument, EnvironmentFile},
@@ -241,12 +242,18 @@ async fn configure_project(
     )?;
     installer::environment::apply_project(&platform.target, &platform.chart, &release, &values)
         .await?;
-    wamn_kubernetes::kubectl::wait_ready(
-        &platform.target,
-        "cluster.postgresql.cnpg.io",
-        &cluster,
-        Duration::from_secs(120),
-    )
+    let target = &platform.target;
+    let clusters = resource(
+        target.client.client(),
+        &target.namespace,
+        "postgresql.cnpg.io",
+        "v1",
+        "Cluster",
+        "clusters",
+    );
+    wait_named(&clusters, &cluster, Duration::from_secs(120), |object| {
+        Ok(object.filter(ready).map(drop))
+    })
     .await?;
     installer::environment::wait_database_applied(
         &platform.target,
@@ -255,13 +262,18 @@ async fn configure_project(
     )
     .await?;
 
+    let certificates = resource(
+        target.client.client(),
+        &target.namespace,
+        "cert-manager.io",
+        "v1",
+        "Certificate",
+        "certificates",
+    );
     let wait_certificate = |name| {
-        wamn_kubernetes::kubectl::wait_ready(
-            &platform.target,
-            "certificate.cert-manager.io",
-            name,
-            Duration::from_secs(120),
-        )
+        wait_named(&certificates, name, Duration::from_secs(120), |object| {
+            Ok(object.filter(ready).map(drop))
+        })
     };
     tokio::try_join!(
         wait_certificate(&connection.credentials.name),

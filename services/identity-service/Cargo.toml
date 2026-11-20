@@ -44,6 +44,7 @@ wamn-identity-protocol = { workspace = true, features = ["sqlx"] }
 url = { workspace = true }
 
 [dev-dependencies]
+kube = { workspace = true }
 hyper-util = { workspace = true, features = ["client-legacy"] }
 chrono = { workspace = true, features = ["std"] }
 sqlx = { workspace = true, features = ["macros", "migrate"] }

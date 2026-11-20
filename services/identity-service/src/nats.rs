@@ -13,7 +13,7 @@ use wamn_identity_client::nats::{
     Account, ENSURE_ACCOUNT_PATH, EnsureAccount, SIGN_USER_PATH, SignHostUser, SignUser,
     SignedUser, UserKind,
 };
-use wamn_kubernetes::kubernetes_api::KubernetesApi;
+use wamn_kubernetes::client::KubernetesApi;
 use wamn_registry::{OrgId, name};
 
 use crate::{IdentityServiceError, Inner, response, unavailable};
