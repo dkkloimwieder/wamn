@@ -61,6 +61,12 @@ impl ProjectEnvKey {
         Self("wamn--palette--platform".to_owned())
     }
 
+    /// Build the package admission key directly because parsing rejects the reserved `wamn` org.
+    #[must_use]
+    pub fn package_admission() -> Self {
+        Self("wamn--package--artifact".to_owned())
+    }
+
     /// Borrow the persisted and wire spelling.
     pub fn as_str(&self) -> &str {
         &self.0
