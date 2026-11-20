@@ -280,9 +280,7 @@ async fn sign_user(
         permissions: &permissions,
     };
     let signed = match request.kind {
-        UserKind::HostScheduler | UserKind::HostData => {
-            state.authority.platform_user(&user).map(Some)
-        }
+        UserKind::HostScheduler => state.authority.platform_user(&user).map(Some),
         _ => {
             state
                 .authority

@@ -310,6 +310,12 @@ pub fn roles(
     let descriptors =
         published_components(package_manifests).map(|(_, component)| &component.descriptor);
     let mut host_interfaces = host_interfaces(descriptors, !integrations.is_empty())?;
+    host_interfaces.push(serde_json::json!({
+        "namespace": "wasmcloud",
+        "package": "nats",
+        "version": "0.1.3",
+        "interfaces": ["jetstream"],
+    }));
     let subjects = wamn_registry::name::stream_subjects(org, project, env);
     host_interfaces.push(serde_json::json!({
         "namespace": "wasmcloud",
