@@ -222,6 +222,13 @@ impl Web {
         if method != Method::GET && method != Method::HEAD {
             return Ok(empty(StatusCode::METHOD_NOT_ALLOWED));
         }
+        if path == "/"
+            && row.host == host
+            && row.platform_ui.is_none()
+            && (!row.clients.contains_key(host) || !row.webs.contains_key(host))
+        {
+            return Ok(empty(StatusCode::NOT_FOUND));
+        }
         let root = row.root(host)?;
         let path = path.trim_start_matches('/');
         if path.split('/').any(|part| part == "." || part == "..") || path.contains(['%', '\\']) {
