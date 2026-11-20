@@ -3,6 +3,7 @@ use anyhow::Context as _;
 use serde_json::{Value, json};
 use std::path::Path;
 use std::time::Duration;
+use tokio::time::{Instant, timeout_at};
 use wamn_kubernetes::{
     Target,
     helm::{self, Install, Wait},
@@ -45,21 +46,29 @@ pub async fn apply_application(
     chart: &Path,
     name: &str,
     values: &serde_yaml::Value,
+    deadline: Instant,
 ) -> anyhow::Result<()> {
     let directory = tempfile::tempdir()?;
     let path = directory.path().join("application.yaml");
     std::fs::write(&path, serde_yaml::to_string(values)?)?;
     let namespace = helm::org_release_namespace(&target.namespace);
-    helm::upgrade(
-        target,
-        &namespace,
-        &chart.join("platform/application"),
-        name,
-        &[&path],
-        Wait::Watcher,
-        Install::SkipCrds,
-    )
+    timeout_at(deadline, async {
+        helm::recover_pending(target, &namespace, name, Wait::Watcher).await?;
+        helm::upgrade(
+            target,
+            &namespace,
+            &chart.join("platform/application"),
+            name,
+            &[&path],
+            Wait::WatcherUntil(deadline),
+            Install::SkipCrds,
+        )
+        .await
+    })
     .await
+    .with_context(|| {
+        format!("deploy Job deadline reached applying Helm release {namespace}/{name}")
+    })?
 }
 
 /// Submit the project resources before the worker initializes the database and CDC slot.
