@@ -790,6 +790,28 @@ Merged to main on 2026-11-19 after review. The first kind run waits for D's appr
 
 Closed on 2026-11-20 after the first kind run passed on the short path.
 
+## Epic 11: step 3.7, codegen
+
+Rule: codegen follows the existing rules, with stock tools. Unread code is deleted. No new features.
+
+Issues:
+
+11.0 Plan cleanup, doc only, done first. Part 1 keeps current rules only. Resolve its internal contradictions. Check each rule the second review marked contradicted against the code, and fix the doc or the code. After 11.0, the other issues run in parallel.
+
+11.1 O12: the application host root returns 404, not 502, when no web client is pinned.
+
+11.2 Delete: the host route contract copies (`crates/catalog/src/host_route/contract_files.rs`) and the TypeScript emitter (`crates/codegen/src/client_ts.rs`), with everything only they use; the `integration.*` route aliases; the leftovers in the application chart; the host shutdown code for the deleted queue; the test support files with no `mod`.
+
+11.3 Rust output is generated with `quote` and `prettyplease`. No Rust as strings.
+
+11.4 WIT output is generated with `wit-encoder`. No WIT as strings.
+
+11.5 Each application gets `openapi.json`, built from typed `oas3` OpenAPI 3.1 structs. The TypeScript client comes from `@hey-api/openapi-ts` with the `@tanstack/solid-query` plugin, version pinned. `apps/platform_ui` gets its clients again against the new `environment.status` and `application.rollback` contracts.
+
+11.6 `wamn.k` holds no types. Custom-operation WIT is hand-written, so `generate/operations.rs::emit_custom_operation_wit` goes. Every app under `apps/` that has a `wamn.k` is updated.
+
+End of the epic: the standard checks, the preflight and the short smoke run.
+
 ## Open items
 
 - Checks in phase 3: Helm values size for the largest application (3.2).
@@ -799,7 +821,6 @@ Closed on 2026-11-20 after the first kind run passed on the short path.
 - 3.8: `crates/dev/tests/support/platform_schema.rs` and `platform_upgrade.rs` run the binary `wamn-ctl`, which Epic 1 deleted.
 - 3.8: `docs/operations/running-tests.md` describes test targets that no longer exist.
 - Journey tests on kind, deferred from the first kind run: rollback, `env delete`, apply again, and `env delete --data` after a plain delete; the Data change check for `client_acme_receiving` (K24); the 10.13 per-pod scheduler users beyond host start; the Pooler per-login limits and waits under load.
-- 3.7, first change: O12, the application host root returns 404, not 502, when no web client is pinned.
 - 3.7b: `cargo xtask build-platform` skips images whose inputs did not change, so short smoke runs rebuild only what changed.
 - Clippy has 45 errors in test code that predate Epic 1. Epic 1 counted green as no new error.
 - After 3.5 only the edge reads `ServingManifest`. It goes with the edge design.
@@ -811,10 +832,8 @@ Closed on 2026-11-20 after the first kind run passed on the short path.
 - Host component plugins (`host-component-plugins`) suit platform-wide wasm capabilities with fixed bindings. They are not used for connection-bound integrations.
 - Edge device design: how exclusive connections are enforced at the edge (inference: one edge runtime for each site, so a local mutex may be enough).
 - A call limit for each application, if a real case appears: either a per-host semaphore named as per-host, or a Postgres design decided with real numbers.
-- 3.7: nothing writes the host route TypeScript clients since `cargo xtask host-route-clients` was removed.
 - 3.6: nothing in the install fills the `wamn-control-administration-<org>` map that control reads its project logins from.
 - 3.6: the first signing key and the installer source for the identity envelope settings.
-- 3.7: the TypeScript clients cannot be generated again until codegen is reworked (the `admin_covered` contract changed in Epic 6).
 - Topic entry node: after 3.4. Topics use stock `wasmcloud:nats`: application components publish within their workload's grants, and a Topic workflow pulls from its own consumer like Data change.
 - 3.7b: split `wamn-sql`. `WamnPostgres` has 77 inherent methods mixing pools, auth lookups, per-component scope state, plugin glue and workflow node dispatch, and eight modules form one cycle (crate root, `executor`, `invocation`, `operation`, `operation_transaction`, `resources`, `session_identity`, `write_log`).
   1. `pool`, `host_project` and `types` move into `wamn-postgres`, after it loses `wamn-kubernetes` (P5).
@@ -838,7 +857,6 @@ Closed on 2026-11-20 after the first kind run passed on the short path.
 - 3.6: the NATS volume (10 Gi today) must hold the sum of all environment accounts, which is 256 MiB times the number of projects across all environments. Size it at install.
 - 3.6: `cluster.k` checks the GCP project ID, the zone and the bucket names, but no Rust or SQL code does. Add the three checks in Rust.
 - The xtask dependency check fails on `wamn-edge`, which links `oci-client` through wash-runtime. This predates Epic 7. Fix the check's allowance or the dependency.
-- 3.7: `apps/platform_ui` reads residency and live fields from the old status contract. Regenerate its clients against the new `environment.status` and `application.rollback` contracts.
 - Recorded exceptions to C1 until 3.6: operation Jobs and their per-request input ConfigMaps, `wamn-credential-*` (written by connection administration at run time), and `wamn-nats-authorization`.
 - Epic 10: `wamn platform deploy --only` (updating control, identity or a host in place) returns with the `platform` chart. Epic 9 deleted the control Job path and its `helm get values` read-back.
 - After 3.6, first kind run: verify the kstatus waits on the `application` and `environment` charts, and the explicit Rust waits on the `project` and `org` charts (Certificate, Database connection, the CDC reader's wait for its replication slot, CDC reader rollout, Cluster).
@@ -877,8 +895,7 @@ Closed on 2026-11-20 after the first kind run passed on the short path.
   - `platform.tx_identity` stamps: either state them as tamper-evident only within one project database, or bind the identity through a definer function.
   - Org quotas count CPU and memory, with a LimitRange, and requests on control and the CDC reader.
 - After the first kind run:
-  - Plan doc cleanup: Part 1 keeps current rules only. Resolve its internal contradictions, and check each rule the second review marked contradicted against the code, fixing either the doc or the code. Example: control lives in the org chart (T1), not the platform chart.
-  - Fold the review's accidental-complexity items into 3.7 and 3.7b: the host route contract copies read only by tests, the `wamn-catalog` split, the duplicated operation and environment types, the `integration.*` route aliases, the leftovers in the application chart, the host shutdown code for the deleted queue, and the test support files with no `mod`.
+  - Fold the review's accidental-complexity items into 3.7b: the `wamn-catalog` split, and the duplicated operation and environment types.
   - Charts: `enablePDB: false` for single-instance project clusters; delete the dropped `affinity` and `topologySpreadConstraints` host values, or render them.
   - Check whether `crates/kubernetes/src/helm.rs::update_values` with `--reuse-values` is a read-back of Helm values, which is banned, and remove it if so.
 
@@ -2506,3 +2523,8 @@ Facts:
 - Remaining host risk, accepted under wasmCloud's threat model, which trusts hosts: a host's heartbeat carries labels it reports itself (`HostHeartbeat.Labels`), and the operator places workloads by them. So a host taken over by a sandbox escape could announce another org's host group and attract its workloads and traffic. Per-pod users stop it from taking over other hosts' ids and commands, and org NetworkPolicies keep it from other orgs' databases.
 
 Epic 9 closed at 01bb4a1e2: review accepted, main fast-forwarded. The application record is 69,220 B on the 772-route wamn_wms fixture, a different fixture from the Epic 8 one, not growth. The slot cleanup connects to the postgres database, and the deadline for an unreachable database under --data is 10 s.
+
+**Ruled (D, 2026-11-20): Epic 11 scope (step 3.7, codegen), issues 11.0 to 11.6.**
+- Q1: the TypeScript client generator is `@hey-api/openapi-ts` with the `@tanstack/solid-query` plugin, version pinned. The alternative, `openapi-typescript` with `openapi-fetch`, makes types only and no query hooks.
+- Q2: 11.6 (no types in `wamn.k`, hand-written custom-operation WIT, apps updated) is done in this epic, because 11.3 to 11.5 rewrite the same generators.
+- The 3.7b items stay in 3.7b.
