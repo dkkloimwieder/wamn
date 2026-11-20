@@ -109,13 +109,19 @@ pub fn select(chart: &Path) -> anyhow::Result<SelectedChart> {
         None
     };
     let directory = if let Some(download) = &download {
-        let mut entries = std::fs::read_dir(download.path())?;
-        let entry = entries.next().context("chart archive is empty")??;
-        ensure!(
-            entries.next().is_none(),
-            "chart archive must contain one chart"
-        );
-        entry.path()
+        let entries = std::fs::read_dir(download.path()).context("read pulled chart archive")?;
+        let mut chart_directory = None;
+        for entry in entries {
+            let path = entry.context("read pulled chart archive entry")?.path();
+            if path.join("Chart.yaml").is_file() {
+                ensure!(
+                    chart_directory.is_none(),
+                    "pulled archive holds several charts"
+                );
+                chart_directory = Some(path);
+            }
+        }
+        chart_directory.context("pulled archive holds no chart")?
     } else {
         chart
             .canonicalize()
