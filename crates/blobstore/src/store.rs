@@ -413,7 +413,7 @@ mod tests {
         reader: wamn_connection::connection_credentials::ConnectionCredentials,
         project: &wamn_registry::ProjectId,
     ) -> Arc<wamn_connection::connection_facts::ConnectionFacts> {
-        let postgres = wamn_sql::WamnPostgres::new(wamn_sql::WamnPostgresConfig {
+        let postgres = wamn_postgres::WamnPostgres::new(wamn_postgres::WamnPostgresConfig {
             credentials: None,
             guest_pool_max_size: 1,
             platform_pool_max_size: 1,
@@ -421,10 +421,12 @@ mod tests {
             statement_timeout_ms: 1,
         })
         .unwrap();
+        let database: Arc<dyn wamn_connection::database::ProjectDatabase> =
+            Arc::new(wamn_operation::OperationDatabase::new(Arc::new(postgres)));
         Arc::new(wamn_connection::connection_facts::ConnectionFacts::new(
             Arc::new(wamn_connection::connection_memory::ConnectionMemory::default()),
             Arc::new(reader),
-            &Arc::new(postgres),
+            &database,
             &wamn_registry::project_env_key(
                 &"acme".parse().unwrap(),
                 project,

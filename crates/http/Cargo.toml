@@ -6,7 +6,7 @@ edition.workspace = true
 license.workspace = true
 
 [features]
-test-util = ["wamn-provision/test-util", "dep:wamn-provision", "dep:wamn-broker", "wamn-engine/test-util", "wamn-catalog/test-util", "wamn-authority/test-util", "wamn-connection/test-util", "dep:wamn-sql", "wamn-sql/test-util", "dep:tempfile", "dep:wamn-test-postgres", "dep:wamn-test-infrastructure", "dep:rcgen", "dep:wat", "hyper/server"]
+test-util = ["wamn-provision/test-util", "dep:wamn-provision", "dep:wamn-broker", "wamn-engine/test-util", "wamn-catalog/test-util", "wamn-authority/test-util", "wamn-connection/test-util", "dep:wamn-operation", "wamn-operation/test-util", "dep:tempfile", "dep:wamn-test-postgres", "dep:wamn-test-infrastructure", "dep:rcgen", "dep:wat", "hyper/server"]
 
 [dependencies]
 wamn-envelope.workspace = true
@@ -53,7 +53,7 @@ wamn-identity-protocol = { workspace = true, features = ["sqlx"] }
 wamn-kubernetes = { workspace = true }
 wamn-http-client = { workspace = true, features = ["tls12"] }
 wamn-postgres = { workspace = true }
-wamn-sql = { workspace = true, optional = true }
+wamn-operation = { workspace = true, optional = true }
 wamn-registry = { workspace = true }
 wash-runtime = { workspace = true }
 zeroize = { workspace = true }

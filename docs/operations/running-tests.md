@@ -231,7 +231,7 @@ The selector prepares the guest numbering refusal test through `input:numbering-
 
 ```sh
 cargo build --manifest-path apps/Cargo.toml -p wamn-guest --example numbering_refusal --target wasm32-wasip2
-"$CARGO_TARGET_DIR/debug/wamn-test-postgres" --database tests --url-env DATABASE_URL -- cargo test -p wamn-sql --lib query_tests::live_an_invalid_timezone_setting_is_refused -- --ignored --exact
+"$CARGO_TARGET_DIR/debug/wamn-test-postgres" --database tests --url-env DATABASE_URL -- cargo test -p wamn-operation --lib query_tests::live_an_invalid_timezone_setting_is_refused -- --ignored --exact
 ```
 
 The generated exclusion tests in `apps/Cargo.toml` need PostgreSQL diagnostics, so each runs through its own example.

@@ -82,12 +82,12 @@ impl ConnectionFacts {
     pub fn new(
         memory: Arc<ConnectionMemory>,
         reader: Arc<ConnectionCredentials>,
-        postgres: &Arc<impl ProjectDatabase + 'static>,
+        database: &Arc<dyn ProjectDatabase>,
         project_env_key: &wamn_registry::ProjectEnvKey,
         project: &wamn_registry::ProjectId,
         environment: &wamn_registry::EnvName,
     ) -> Self {
-        let database: std::sync::Weak<dyn ProjectDatabase> = Arc::downgrade(postgres) as _;
+        let database = Arc::downgrade(database);
         Self {
             oauth_encryption: None,
             memory,

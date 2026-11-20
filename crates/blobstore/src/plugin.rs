@@ -24,11 +24,11 @@ use wamn_catalog::{BlobstoreDefinition, BlobstoreProvider};
 use wamn_connection::connection::ConnectionInvocation;
 use wamn_connection::connection_facts::{ConnectionAnswer, ConnectionFacts};
 use wamn_connection::connection_memory::ConnectionStatus;
-use wamn_sql::WamnPostgres;
+use wamn_operation::OperationHost;
 
 /// The WAMN blobstore host service.
 pub struct WamnBlobstore {
-    pub(super) postgres: Arc<WamnPostgres>,
+    pub(super) postgres: Arc<OperationHost>,
     stores: moka::sync::Cache<(uuid::Uuid, i64), Arc<StoreClient>>,
 }
 
@@ -44,7 +44,7 @@ impl std::fmt::Debug for WamnBlobstore {
 impl WamnBlobstore {
     /// Build the plugin over the connection-authority reader and the
     /// connection facts.
-    pub fn new(postgres: Arc<WamnPostgres>) -> Self {
+    pub fn new(postgres: Arc<OperationHost>) -> Self {
         Self {
             postgres,
             stores: wamn_connection::connection_memory::bounded(),
@@ -377,7 +377,7 @@ pub(super) fn blobstore_span(
     let span = plugin
         .postgres
         .scopes
-        .read::<wamn_sql::invocation::Authority, _>(component_id, |record| {
+        .read::<wamn_operation::scope_registry::Authority, _>(component_id, |record| {
             make_span(Some(&record.identity))
         })
         .unwrap_or_else(|| make_span(None));

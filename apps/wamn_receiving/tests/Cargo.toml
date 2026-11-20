@@ -48,7 +48,7 @@ wamn-test-application = { workspace = true }
 wamn-test-infrastructure = { workspace = true }
 wamn-test-postgres = { workspace = true }
 wamn-run-state = { workspace = true }
-wamn-sql = { workspace = true, features = ["test-util"] }
+wamn-operation = { workspace = true, features = ["test-util"] }
 wamn-engine = { workspace = true }
 wash-runtime = { workspace = true, features = ["washlet"] }
 wasmtime-wasi = { workspace = true }

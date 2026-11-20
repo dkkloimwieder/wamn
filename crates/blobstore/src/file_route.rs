@@ -32,7 +32,7 @@ use wamn_engine::ingress::{
     AuthenticatedCaller, CredentialType, Header, IngressRouting, RoutePolicy,
 };
 use wamn_identity_protocol::PrincipalId;
-use wamn_sql::WamnPostgres;
+use wamn_operation::OperationHost;
 
 const FILE_COLUMNS: &str =
     "id::text, connection_id::text, media_type, size, exposure, url, blob_key";
@@ -365,7 +365,7 @@ struct UploadQuery {
 pub struct FileRoutes {
     pub(crate) release: Arc<ApplicationConfig>,
     pub(crate) context: Arc<wamn_connection::invocation::ReleaseContext>,
-    pub(crate) postgres: Arc<WamnPostgres>,
+    pub(crate) postgres: Arc<OperationHost>,
     pub(crate) blobstore: Arc<WamnBlobstore>,
     pub(crate) connections: Arc<dyn FileConnections>,
     pub(crate) project: wamn_registry::ProjectId,
@@ -383,7 +383,7 @@ impl fmt::Debug for FileRoutes {
 impl FileRoutes {
     pub fn new(
         context: Arc<wamn_connection::invocation::ReleaseContext>,
-        postgres: Arc<WamnPostgres>,
+        postgres: Arc<OperationHost>,
         blobstore: Arc<WamnBlobstore>,
         connections: Arc<dyn FileConnections>,
         project: wamn_registry::ProjectId,

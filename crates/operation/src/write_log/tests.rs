@@ -5,8 +5,9 @@ use std::sync::Arc;
 use serde_json::json;
 
 use super::WriteLogStore;
-use crate::session_identity::tests::{LIVE_PRINCIPAL, ensure_live_user_rows, live_guest_url};
-use crate::{ClassCredentials, SessionIdentity, WamnPostgres, WamnPostgresConfig};
+use crate::session_identity_tests::{LIVE_PRINCIPAL, ensure_live_user_rows, live_guest_url};
+use crate::{OperationHost, SessionIdentity};
+use wamn_postgres::{ClassCredentials, WamnPostgres, WamnPostgresConfig};
 
 const PROJECT: &str = "default";
 const SCOPE: &str = "write-log-request-element";
@@ -15,20 +16,19 @@ const SCOPE: &str = "write-log-request-element";
 async fn project_env_key_database(
     pool: &sqlx::PgPool,
     project_env_key: &wamn_registry::ProjectEnvKey,
-) -> (url::Url, Arc<WamnPostgres>) {
+) -> (url::Url, Arc<OperationHost>) {
     let database = wamn_test_postgres::url(pool);
     let guest_url = live_guest_url(database.as_str(), project_env_key).await;
     ensure_live_user_rows(database.as_str(), &[LIVE_PRINCIPAL]).await;
-    let postgres = Arc::new(
-        WamnPostgres::new(WamnPostgresConfig {
-            credentials: Some(ClassCredentials::every_class(guest_url)),
-            guest_pool_max_size: 3,
-            platform_pool_max_size: 1,
-            wait_timeout_ms: 2_000,
-            statement_timeout_ms: 5_000,
-        })
-        .expect("live postgres plugin"),
-    );
+    let pools = WamnPostgres::new(WamnPostgresConfig {
+        credentials: Some(ClassCredentials::every_class(guest_url)),
+        guest_pool_max_size: 3,
+        platform_pool_max_size: 1,
+        wait_timeout_ms: 2_000,
+        statement_timeout_ms: 5_000,
+    })
+    .expect("live postgres pools");
+    let postgres = Arc::new(OperationHost::new(Arc::new(pools), None));
     (database, postgres)
 }
 

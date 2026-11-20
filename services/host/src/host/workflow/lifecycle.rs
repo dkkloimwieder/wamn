@@ -12,7 +12,7 @@ use wamn_engine::ingress::AuthenticatedCaller;
 use wamn_engine::native_routes::DeliveryError;
 use wamn_identity_protocol::PrincipalId;
 use wamn_registry::sql::{ENVIRONMENT_LOCK_SQL, ENVIRONMENT_TRANSACTION_LOCK_SQL};
-use wamn_sql::WamnPostgres;
+use wamn_operation::OperationHost;
 
 use super::{
     RunAs, RunNow, Workflow, Workload, authoring,
@@ -146,7 +146,7 @@ enum ConsumerChange {
 }
 
 async fn change(
-    postgres: &WamnPostgres,
+    postgres: &OperationHost,
     broker: &Broker,
     workload: &Workload,
     principal: &PrincipalId,

@@ -1,15 +1,17 @@
 //! Streaming SQL and handles borrowed from the host operation transaction.
 
-use super::pool::{Object, destroy_connection};
-use super::types::map_pg_error;
-use super::{PgError, SqlValue, WAMN_POSTGRES_ID, WamnPostgres, client, statement_wit};
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
+
 use wamn_authority::effect_span::{
     EffectIdentity, EffectRun, effect_span, record_effect_ms, record_wiring,
 };
+use wamn_postgres::{Object, destroy_connection};
+use wamn_postgres::types::{connection_lost, map_pg_error};
 use wash_runtime::engine::ctx::{ActiveCtx, SharedCtx};
 use wash_runtime::wasmtime::component::{Accessor, Resource};
+
+use super::{OperationHost, PgError, SqlValue, WAMN_POSTGRES_ID, client, scope_registry, statement_wit};
 
 #[derive(Debug)]
 pub(super) struct TxnState {
@@ -112,7 +114,7 @@ pub(super) fn take_conn(state: &SharedTxnState) -> Result<Object, PgError> {
 
 /// Run `op` with the transaction's connection. Fatal (connection-level)
 /// errors destroy the connection and poison the transaction; statement-level
-/// errors return the connection to the slot (the transaction is aborted
+/// errors return the connection to the transaction (the transaction is aborted
 /// server-side until the guest rolls back, mirroring libpq semantics).
 pub(super) async fn with_txn_conn<T, F, Fut>(
     state: &SharedTxnState,
@@ -132,7 +134,7 @@ where
         }
         Err(e) => {
             let mapped = map_pg_error(&e);
-            if super::types::connection_lost(&e) {
+            if connection_lost(&e) {
                 if let Ok(mut st) = state.lock() {
                     st.finished = true;
                 }
@@ -145,8 +147,8 @@ where
     }
 }
 
-pub(super) fn plugin_of(ctx: &ActiveCtx<'_>) -> wash_runtime::wasmtime::Result<Arc<WamnPostgres>> {
-    ctx.try_get_plugin::<WamnPostgres>(WAMN_POSTGRES_ID)
+pub(super) fn plugin_of(ctx: &ActiveCtx<'_>) -> wash_runtime::wasmtime::Result<Arc<OperationHost>> {
+    ctx.try_get_plugin::<OperationHost>(WAMN_POSTGRES_ID)
 }
 
 /// [9.8] Guest DB-call latency histogram (ms), labelled by `db.operation`
@@ -195,13 +197,13 @@ pub(super) fn record_query_ms(
 /// The invocation scope supplies causation and wiring for workflow node calls.
 /// SQL uses the transaction identity.
 pub(super) fn db_span_for_project(
-    plugin: &WamnPostgres,
+    plugin: &OperationHost,
     component_id: &str,
     project: &wamn_registry::ProjectId,
     op: &'static str,
 ) -> tracing::Span {
-    let project_env_key = plugin.project_env_key_for(component_id);
-    let run = plugin.current_run_for(component_id);
+    let project_env_key = scope_registry::project_env_key_for(&plugin.scopes, component_id);
+    let run = scope_registry::current_run_for(&plugin.scopes, component_id);
     let span = effect_span!(
         "wamn.postgres",
         EffectIdentity {
@@ -216,7 +218,7 @@ pub(super) fn db_span_for_project(
         db.system = "postgresql",
         db.operation = op,
     );
-    let invocation = plugin.invocation(component_id);
+    let invocation = scope_registry::invocation(&plugin.scopes, component_id);
     record_wiring(
         &span,
         invocation
@@ -227,31 +229,27 @@ pub(super) fn db_span_for_project(
 }
 
 pub(super) async fn prepare_statement_transaction(
-    plugin: &WamnPostgres,
+    plugin: &OperationHost,
     component_id: &str,
     project: &wamn_registry::ProjectId,
-) -> Result<
-    (
-        PgTransaction,
-        super::session_identity::transactions::BoundIdentity,
-    ),
-    PgError,
-> {
-    let project_env_key = plugin.require_project_env_key(component_id)?;
-    let schema = plugin.schema_for(component_id);
-    let runner = plugin.runner_for(component_id);
-    let role = plugin.role_for(component_id);
-    let user_id = plugin.user_id_for(component_id);
-    let operation = plugin.operation_for(component_id);
-    let application = plugin.application_for(component_id);
+) -> Result<(PgTransaction, super::transactions::BoundIdentity), PgError> {
+    let project_env_key = scope_registry::require_project_env_key(&plugin.scopes, component_id)?;
+    let schema = scope_registry::schema_for(&plugin.scopes, component_id);
+    let runner = scope_registry::runner_for(&plugin.scopes, component_id);
+    let role = scope_registry::role_for(&plugin.scopes, component_id);
+    let user_id = scope_registry::user_id_for(&plugin.scopes, component_id);
+    let operation = scope_registry::operation_for(&plugin.scopes, component_id);
+    let application = scope_registry::application_for(&plugin.scopes, component_id);
 
     let (connection, policy, authority) = plugin
+        .pools
         .checkout_workload(component_id, project, &project_env_key)
         .await?;
-    let connection = StatementConnectionGuard::new(connection, Arc::clone(&plugin.destroyed));
-    let identity = WamnPostgres::prepare_identity(
+    let connection =
+        StatementConnectionGuard::new(connection, Arc::clone(plugin.pools.destroyed_connections()));
+    let identity = super::transactions::prepare_identity(
         authority,
-        plugin.active_read(component_id),
+        scope_registry::active_read(&plugin.scopes, component_id),
         schema.as_deref(),
         runner.as_deref(),
         role.as_deref(),
@@ -268,7 +266,7 @@ pub(super) async fn prepare_statement_transaction(
                 xid: None,
                 finished: false,
             })),
-            destroyed: Arc::clone(&plugin.destroyed),
+            destroyed: Arc::clone(plugin.pools.destroyed_connections()),
             lent: false,
         },
         identity,
@@ -336,7 +334,7 @@ async fn lend_operation_transaction<T: 'static>(
         let plugin = plugin_of(&ctx)?;
         let component_id = ctx.component_id.to_string();
         Ok::<_, wash_runtime::wasmtime::Error>((
-            plugin.operation_transaction_for(&component_id),
+            scope_registry::operation_transaction_for(&plugin.scopes, &component_id),
             component_id,
         ))
     })?;
@@ -366,9 +364,7 @@ pub(super) async fn finish_statement_txn(
     verb: &str,
 ) -> Result<(), PgError> {
     let mut connection = StatementConnectionGuard::new(take_conn(state)?, Arc::clone(destroyed));
-    match super::session_identity::transactions::finish_transaction(connection.connection(), verb)
-        .await
-    {
+    match super::transactions::finish_transaction(connection.connection(), verb).await {
         Ok(()) => {
             if let Ok(mut transaction) = state.lock() {
                 transaction.finished = true;

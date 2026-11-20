@@ -9,6 +9,9 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
+use wamn_authentication::authorization::AuthorizationStore as _;
+use wamn_authority::identity::SessionIdentity;
+use wamn_postgres::DEFAULT_PROJECT;
 use wash_runtime::engine::ctx::{SharedCtx, extract_active_ctx};
 use wash_runtime::engine::workload::WorkloadItem;
 use wash_runtime::plugin::{HostPlugin, WitInterfaces};
@@ -16,34 +19,23 @@ use wash_runtime::wasmtime::component::{Component, Linker};
 use wash_runtime::wit::{WitInterface, WitWorld};
 
 mod executor;
-mod host_project;
-pub use host_project::HostProject;
+mod host;
+pub mod invocation;
 pub mod number_counter;
 mod operation;
 mod operation_transaction;
-mod pool;
 mod query;
 mod resources;
 pub mod result_signing;
-mod session_identity;
-mod types;
+pub mod scope_registry;
+mod transactions;
 pub mod write_log;
 
+pub use executor::OperationDatabase;
+pub use host::OperationHost;
 pub use operation::WorkflowNode;
 pub use operation_transaction::{OperationTransaction, PgCommitFailure};
-pub use pool::{
-    ClassCredentials, CredentialProvider, ProjectConfig, ResolvedCredential,
-    StaticCredentialProvider, WamnPostgresConfig,
-};
 pub use resources::{PgStatementTransaction, PgTransaction};
-pub use session_identity::{UnprovisionedPrincipal, WamnPostgres};
-pub use types::canonical_timestamptz;
-/// Re-exported because [`ClassCredentials::with_class`] and
-/// [`ClassCredentials::without_class`] TAKE one: a composer outside this
-/// workspace crate cannot name a family's credential without the class, and
-/// `wamn-0h0g.22.14` ruled the class un-parseable, so it must arrive as a value
-/// from here rather than be reconstructed from a string.
-pub use wamn_identity_protocol::AuthorityClass;
 pub use write_log::WriteLogStore;
 
 #[cfg(not(feature = "wasm_component_model_implements"))]
@@ -141,11 +133,6 @@ pub const PROJECT_CONFIG_KEY: &str = "wamn.project";
 /// It is set by the platform (the workload instance id), never by the guest.
 pub const RUNNER_CONFIG_KEY: &str = "wamn.runner";
 
-/// The project id used when a component names none — the single database a
-/// [`WamnPostgresConfig`] URL points at.
-pub static DEFAULT_PROJECT: std::sync::LazyLock<wamn_registry::ProjectId> =
-    std::sync::LazyLock::new(|| "default".parse().expect("fixed default project"));
-
 // ---------------------------------------------------------------------------
 // Plugin configuration
 // ---------------------------------------------------------------------------
@@ -160,7 +147,7 @@ pub(crate) struct BindCounters {
     scope_registrations: std::sync::atomic::AtomicU64,
 }
 
-impl WamnPostgres {
+impl OperationHost {
     /// The per-REQUEST half of the workload bind: every identity keyed by `scope`.
     ///
     /// Un-fused from [`HostPlugin::on_workload_item_bind`] so the router driver
@@ -184,7 +171,7 @@ impl WamnPostgres {
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         if let Some(project_env_key) = config.get(PROJECT_ENV_KEY_CONFIG_KEY) {
             let project_env_key: wamn_registry::ProjectEnvKey = project_env_key.parse()?;
-            self.set_project_env_key(scope, &project_env_key);
+            scope_registry::set_project_env_key(&self.scopes, scope, &project_env_key);
             tracing::debug!(
                 component = scope,
                 %project_env_key,
@@ -198,7 +185,7 @@ impl WamnPostgres {
         }
         if let Some(project) = config.get(PROJECT_CONFIG_KEY) {
             let project: wamn_registry::ProjectId = project.parse()?;
-            self.set_project(scope, &project)?;
+            scope_registry::set_project(&self.scopes, scope, &project)?;
             tracing::debug!(
                 component = scope,
                 %project,
@@ -207,7 +194,7 @@ impl WamnPostgres {
         }
         if let Some(schema) = config.get(SCHEMA_CONFIG_KEY) {
             let schema = schema.clone();
-            self.set_schema(scope, &schema)?;
+            scope_registry::set_schema(&self.scopes, scope, &schema)?;
             tracing::debug!(
                 component = scope,
                 schema,
@@ -216,7 +203,7 @@ impl WamnPostgres {
         }
         if let Some(runner) = config.get(RUNNER_CONFIG_KEY) {
             let runner = runner.clone();
-            self.set_runner(scope, &runner)?;
+            scope_registry::set_runner(&self.scopes, scope, &runner)?;
             tracing::debug!(
                 component = scope,
                 runner,
@@ -322,15 +309,15 @@ impl WamnPostgres {
 }
 
 #[async_trait::async_trait]
-impl HostPlugin for WamnPostgres {
+impl HostPlugin for OperationHost {
     fn id(&self) -> &'static str {
         WAMN_POSTGRES_ID
     }
 
     fn binding_schema(&self) -> wash_runtime::plugin::BindingSchema {
         wash_runtime::plugin::BindingSchema::with_host_owned_keys(
-            self.host_projects
-                .keys()
+            self.pools
+                .host_projects()
                 .map(wamn_registry::ProjectId::as_str),
         )
     }
@@ -369,9 +356,11 @@ impl HostPlugin for WamnPostgres {
                 &application.project,
                 &application.environment,
             );
-            self.bind_host_project(&application.project, &key).await?;
+            self.pools
+                .bind_host_project(&application.project, &key)
+                .await?;
         }
-        if let Some(store) = self.authorization.get()
+        if let Some(store) = &self.authorization
             && let Some(config) = item
                 .local_resources()
                 .config
@@ -406,7 +395,7 @@ impl HostPlugin for WamnPostgres {
     }
 
     /// R31: on workload teardown, reap the per-component identity registries
-    /// (`WamnPostgres::clear_component_identity`) so a stale project / project /
+    /// (`OperationHost::clear_component_identity`) so a stale project / project /
     /// schema / runner / workload authority / release-identity / causation
     /// identity cannot survive unbind
     /// or be inherited by
@@ -426,10 +415,6 @@ impl HostPlugin for WamnPostgres {
 // Session identity
 // ---------------------------------------------------------------------------
 
-pub use session_identity::valid_runner;
-
-pub(crate) use session_identity::validate_identity;
-
-pub mod invocation;
-
-use wamn_authority::identity::SessionIdentity;
+#[cfg(test)]
+#[path = "session_identity/tests.rs"]
+mod session_identity_tests;

@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use serde_json::{Value, json};
-use wamn_authentication::authorization::AuthorizationStore;
+use wamn_authentication::authorization::{Authorization, AuthorizationStore as _};
 use wamn_catalog::application_config::ApplicationConfig;
 use wamn_catalog::{HostAttachment, HostHandler, HostRouteSet};
 use wamn_engine::ingress::AuthenticatedCaller;
@@ -12,23 +12,29 @@ use wamn_engine::native_routes::{
     DeliveryError, DeliveryOutcome, DeliveryReport, DeliveryRequest, Source,
     resolve_authorized_host_route,
 };
-use wamn_sql::WamnPostgres;
+use wamn_operation::OperationHost;
 
 use super::application_route::{ApplicationRoutes, Refusal};
 use super::workflow::{self, Workflow};
 
 pub(super) struct HostRouteDelivery {
-    postgres: Arc<WamnPostgres>,
+    postgres: Arc<OperationHost>,
+    authorization: Arc<Authorization>,
     config: Arc<ApplicationConfig>,
     project_env_key: wamn_registry::ProjectEnvKey,
 }
 
 impl HostRouteDelivery {
-    pub(super) fn new(postgres: Arc<WamnPostgres>, config: Arc<ApplicationConfig>) -> Self {
+    pub(super) fn new(
+        postgres: Arc<OperationHost>,
+        authorization: Arc<Authorization>,
+        config: Arc<ApplicationConfig>,
+    ) -> Self {
         let project_env_key =
             wamn_registry::project_env_key(&config.org, &config.project, &config.environment);
         Self {
             postgres,
+            authorization,
             config,
             project_env_key,
         }
@@ -45,13 +51,14 @@ impl HostRouteDelivery {
     ) -> Result<Value, Refusal> {
         match attachment.route.handler {
             HostHandler::PermissionMine => {
-                let held = AuthorizationStore::user_operation_permissions(
-                    self.postgres.as_ref(),
-                    &self.config.project,
-                    &self.project_env_key,
-                    caller.principal_id(),
-                )
-                .await?;
+                let held = self
+                    .authorization
+                    .user_operation_permissions(
+                        &self.config.project,
+                        &self.project_env_key,
+                        caller.principal_id(),
+                    )
+                    .await?;
                 let enabled = self
                     .postgres
                     .executor_read(&self.config.project, async |connection| {

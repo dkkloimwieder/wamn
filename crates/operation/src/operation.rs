@@ -18,10 +18,12 @@ use wamn_engine::operation::WamnOperation;
 use wash_runtime::engine::ctx::ActiveCtx;
 use wash_runtime::wasmtime::component::{Accessor, HasData, Resource, ResourceTable};
 
-use super::session_identity::{SessionIdentityError, SessionIdentityErrorType};
+use wamn_authentication::authorization::{SessionIdentityError, SessionIdentityErrorType};
+use wamn_connection::connection_facts::ConnectionCache as _;
+use super::scope_registry;
 use super::write_log::{Claim, WriteLogStore};
 use super::{
-    OperationTransaction, PgCommitFailure, SessionIdentity, WAMN_POSTGRES_ID, WamnPostgres,
+    OperationTransaction, PgCommitFailure, SessionIdentity, WAMN_POSTGRES_ID, OperationHost,
 };
 
 /// Delivery counters shared by all operations of this PostgreSQL plugin.
@@ -75,16 +77,7 @@ struct OperationAuthority {
     signed_fields: bool,
 }
 
-impl WamnPostgres {
-    pub fn set_connection_cache(
-        &self,
-        cache: Arc<dyn wamn_connection::connection_facts::ConnectionCache>,
-    ) {
-        self.connection_cache
-            .set(cache)
-            .expect("connection cache is configured once");
-    }
-
+impl OperationHost {
     pub(super) fn bind_entry_instance(
         &self,
         workload: &str,
@@ -93,7 +86,7 @@ impl WamnPostgres {
     ) -> anyhow::Result<()> {
         use wamn_catalog::application_config::ApplicationOperationType;
         let config = Arc::new(config);
-        if let Some(cache) = self.connection_cache.get() {
+        if let Some(cache) = &self.authorization {
             cache.bind_application(workload, &config)?;
         }
         let context = if config
@@ -102,8 +95,8 @@ impl WamnPostgres {
             .any(|component| !component.connections.is_empty())
         {
             let cache = self
-                .connection_cache
-                .get()
+                .authorization
+                .as_ref()
                 .context("connection cache is not configured")?;
             Some(Arc::new(wamn_connection::invocation::ReleaseContext::new(
                 Arc::clone(&config),
@@ -175,7 +168,7 @@ struct StoreOperation {
 
 #[derive(Debug)]
 struct OpenOperation {
-    postgres: Arc<WamnPostgres>,
+    postgres: Arc<OperationHost>,
     authority: Arc<AuthorizedInvocation>,
     operation: CanonicalName,
     key: String,
@@ -196,12 +189,12 @@ impl OpenOperation {
         self.authority.id()
     }
     fn transaction(&self) -> Option<OperationTransaction> {
-        self.postgres.operation_transaction_for(self.scope())
+        scope_registry::operation_transaction_for(&self.postgres.scopes, self.scope())
     }
     fn end_execution(&self) {
         self.postgres
             .scopes
-            .update_existing::<crate::invocation::Authority, _>(self.scope(), |record| {
+            .update_existing::<crate::scope_registry::Authority, _>(self.scope(), |record| {
                 record.identity = SessionIdentity::default();
                 record.causation = None;
                 record.transaction = None;
@@ -210,9 +203,7 @@ impl OpenOperation {
     }
 
     fn store(&self) -> WriteLogStore {
-        let identity = self
-            .postgres
-            .session_identity(self.scope())
+        let identity = scope_registry::session_identity(&self.postgres.scopes, self.scope())
             .expect("active invocation identity");
         WriteLogStore::new(
             Arc::clone(&self.postgres),
@@ -332,7 +323,7 @@ impl<T: 'static + Send> wit::HostWithStore<T> for PostgresOperation {
             let ctx = access.get();
             Ok::<_, wash_runtime::wasmtime::Error>((
                 ctx.try_get_plugin::<wamn_engine::operation::WamnOperation>("wamn-operation")?,
-                ctx.try_get_plugin::<WamnPostgres>(WAMN_POSTGRES_ID)?,
+                ctx.try_get_plugin::<OperationHost>(WAMN_POSTGRES_ID)?,
             ))
         })?;
         invoker
@@ -356,7 +347,7 @@ impl<T: 'static + Send> wit::HostWithStore<T> for PostgresOperation {
         let (invoker, postgres, ingress) = accessor.with(|mut access| {
             let ctx = access.get();
             let invoker = ctx.try_get_plugin::<WamnOperation>("wamn-operation")?;
-            let postgres = ctx.try_get_plugin::<WamnPostgres>(WAMN_POSTGRES_ID)?;
+            let postgres = ctx.try_get_plugin::<OperationHost>(WAMN_POSTGRES_ID)?;
             let ingress = invoker
                 .is_ingress_caller(&ctx.component_id, &ctx.workload_id)
                 .then(|| Arc::clone(&ctx.component_id));
@@ -624,7 +615,7 @@ async fn enter<T: 'static + Send>(
         else {
             return Ok(Err(Refusal::InvalidCaller));
         };
-        let postgres = ctx.try_get_plugin::<WamnPostgres>(WAMN_POSTGRES_ID)?;
+        let postgres = ctx.try_get_plugin::<OperationHost>(WAMN_POSTGRES_ID)?;
         Ok::<_, wash_runtime::wasmtime::Error>(Ok((postgres, caller)))
     })?;
     let (postgres, caller) = match input {
@@ -675,7 +666,7 @@ async fn enter<T: 'static + Send>(
 }
 
 async fn begin(
-    postgres: Arc<WamnPostgres>,
+    postgres: Arc<OperationHost>,
     workload: &str,
     caller: Option<&AuthenticatedCaller>,
     operation: CanonicalName,
@@ -721,7 +712,7 @@ async fn begin(
         ..facts.identity.clone()
     };
     let authority = AuthorizedInvocation::enter(
-        &postgres,
+        &postgres.scopes,
         InvocationRequest {
             context: facts.context.as_ref().map(Arc::clone),
             scope: wamn_engine::operation::next_scope(workload).into_string(),
@@ -772,8 +763,7 @@ async fn begin(
             .begin_operation_transaction(open.scope())
             .await
             .map_err(Refusal::Postgres)?;
-        open.postgres
-            .bind_operation_transaction(open.scope(), &transaction)
+        scope_registry::bind_operation_transaction(&open.postgres.scopes, open.scope(), &transaction)
             .map_err(|error| binding_error(OperationErrorType::Transaction, open.scope(), error))?;
         open.settled = false;
         return Ok((Some(open), Begun::New(delivery)));
@@ -815,8 +805,7 @@ async fn claim_operation(
             .await
             .map_err(Refusal::Postgres)?;
         if matches!(claim, Claim::New) {
-            open.postgres
-                .bind_operation_transaction(open.scope(), &transaction)
+            scope_registry::bind_operation_transaction(&open.postgres.scopes, open.scope(), &transaction)
                 .map_err(|error| {
                     binding_error(OperationErrorType::Transaction, open.scope(), error)
                 })?;
@@ -853,7 +842,7 @@ type NodeOutcome = Result<
 >;
 
 /// Workflow nodes borrow the same concrete claim and transaction owner as HTTP.
-impl WamnPostgres {
+impl OperationHost {
     async fn invoke_logged_node<Fut>(
         self: &Arc<Self>,
         authority: &Arc<AuthorizedInvocation>,
@@ -920,7 +909,7 @@ impl WamnPostgres {
         let mut answers = Vec::with_capacity(elements.len());
         let mut port = None;
         for (element, id, key, hash) in requests {
-            self.revoke_operation_transaction(authority.id());
+            scope_registry::revoke_operation_transaction(&self.scopes, authority.id());
             let open = OpenOperation {
                 postgres: Arc::clone(self),
                 authority: Arc::clone(authority),
@@ -954,7 +943,7 @@ impl WamnPostgres {
                             if let Some(transaction) = open.transaction() {
                                 transaction.rollback().await?;
                             }
-                            self.revoke_operation_transaction(authority.id());
+                            scope_registry::revoke_operation_transaction(&self.scopes, authority.id());
                             return Ok(Err(node_types::NodeError::Cancelled));
                         }
                         Err(error) => {
@@ -1010,7 +999,7 @@ impl WamnPostgres {
                     }
                 }
             };
-            self.revoke_operation_transaction(authority.id());
+            scope_registry::revoke_operation_transaction(&self.scopes, authority.id());
             let mut answer = body;
             answer
                 .as_object_mut()
@@ -1089,7 +1078,7 @@ impl OperationWorkload {
 
     fn enter_sibling(
         &self,
-        postgres: &WamnPostgres,
+        postgres: &OperationHost,
         ingress: &str,
         component: &ApplicationComponent,
         request: SiblingAuthority<'_>,
@@ -1102,7 +1091,7 @@ impl OperationWorkload {
             ..self.identity.clone()
         };
         AuthorizedInvocation::enter(
-            postgres,
+            &postgres.scopes,
             InvocationRequest {
                 scope: wamn_engine::operation::next_scope(ingress).into_string(),
                 identity,
@@ -1136,7 +1125,7 @@ pub struct WorkflowNode<'a> {
     pub causation: Option<wamn_event::Causation>,
 }
 
-impl WamnPostgres {
+impl OperationHost {
     /// Share the application document already read from the route sibling.
     pub fn workflow_application(
         &self,
@@ -1239,7 +1228,7 @@ impl WamnPostgres {
                     .context("roll back data change transaction")
                     .map_err(settlement)?;
             }
-            self.revoke_operation_transaction(authority.id());
+            scope_registry::revoke_operation_transaction(&self.scopes, authority.id());
         }
         answer.map_err(|source| error(DataChangeErrorType::Dispatch, source))
     }
@@ -1253,7 +1242,7 @@ impl WamnPostgres {
             return Ok(None);
         }
         let transaction = self.begin_operation_transaction(authority.id()).await?;
-        self.bind_operation_transaction(authority.id(), &transaction)?;
+        scope_registry::bind_operation_transaction(&self.scopes, authority.id(), &transaction)?;
         Ok(Some(transaction))
     }
 
@@ -1341,7 +1330,7 @@ impl WamnPostgres {
                     } else {
                         transaction.rollback().await?;
                     }
-                    self.revoke_operation_transaction(authority.id());
+                    scope_registry::revoke_operation_transaction(&self.scopes, authority.id());
                 }
                 outcome
             }

@@ -469,7 +469,7 @@ where
             if plugin
                 .postgres
                 .scopes
-                .read::<wamn_sql::invocation::Authority, _>(&component_id, |record| {
+                .read::<wamn_operation::scope_registry::Authority, _>(&component_id, |record| {
                     record_duration(
                         record
                             .identity

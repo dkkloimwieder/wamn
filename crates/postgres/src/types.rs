@@ -7,16 +7,16 @@ use sqlx::{
     Column as _, Decode, Encode, Row as _, Statement as _, Type, TypeInfo as _, ValueRef as _,
 };
 
-use super::{PgError, SqlValue};
+use wamn_engine::entry_operation::postgres_types::{PgError, SqlValue};
 
-pub(super) fn columns_of(stmt: &PgStatement) -> Vec<String> {
+pub fn columns_of(stmt: &PgStatement) -> Vec<String> {
     stmt.columns()
         .iter()
         .map(|column| column.name().to_owned())
         .collect()
 }
 
-pub(super) fn decode_row(row: &PgRow) -> Result<Vec<SqlValue>, PgError> {
+pub fn decode_row(row: &PgRow) -> Result<Vec<SqlValue>, PgError> {
     (0..row.len())
         .map(|index| {
             let value = row
@@ -72,7 +72,7 @@ pub(super) fn decode_row(row: &PgRow) -> Result<Vec<SqlValue>, PgError> {
         .collect()
 }
 
-pub(super) fn map_pg_error(error: &sqlx::Error) -> PgError {
+pub fn map_pg_error(error: &sqlx::Error) -> PgError {
     if let Some(database) = error.as_database_error() {
         let constraint = || database.constraint().unwrap_or_default().to_owned();
         return match database.code().as_deref().unwrap_or("XX000") {
@@ -92,7 +92,7 @@ pub(super) fn map_pg_error(error: &sqlx::Error) -> PgError {
     PgError::QueryError(("XX000".into(), error.to_string()))
 }
 
-pub(super) fn connection_lost(error: &sqlx::Error) -> bool {
+pub fn connection_lost(error: &sqlx::Error) -> bool {
     matches!(
         error,
         sqlx::Error::Io(_)
@@ -133,10 +133,10 @@ impl<'r> Decode<'r, sqlx::Postgres> for Numeric {
 
 /// A guest value binds with its native PostgreSQL type.
 #[derive(Debug)]
-pub(super) struct PgParam<'a>(pub(super) &'a SqlValue, pub(super) Option<&'a PgTypeInfo>);
+pub struct PgParam<'a>(pub &'a SqlValue, pub Option<&'a PgTypeInfo>);
 
 impl<'a> PgParam<'a> {
-    pub(super) fn prepared(value: &'a SqlValue, statement: &'a PgStatement, index: usize) -> Self {
+    pub fn prepared(value: &'a SqlValue, statement: &'a PgStatement, index: usize) -> Self {
         let ty = match statement.parameters() {
             Some(sqlx::Either::Left(parameters)) => parameters.get(index),
             _ => None,

@@ -1,0 +1,276 @@
+//! Authorization reads under the project's configured database logins.
+
+use std::sync::Arc;
+
+use anyhow::Context as _;
+use tracing::Instrument as _;
+use wamn_engine::entry_operation::postgres_types::PgError;
+use wamn_identity_protocol::AuthorityClass;
+use wamn_postgres::WamnPostgres;
+
+#[derive(Debug)]
+pub struct SessionIdentityError {
+    pub type_: SessionIdentityErrorType,
+    pub context: &'static str,
+    pub source: anyhow::Error,
+}
+
+#[derive(Debug)]
+pub enum SessionIdentityErrorType {
+    Authorization,
+    Infrastructure,
+}
+
+impl std::fmt::Display for SessionIdentityError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}: {}", self.context, self.source)
+    }
+}
+
+impl std::error::Error for SessionIdentityError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(self.source.as_ref())
+    }
+}
+
+fn principal_read_error(context: &'static str, source: sqlx::Error) -> SessionIdentityError {
+    SessionIdentityError {
+        type_: if source
+            .as_database_error()
+            .and_then(sqlx::error::DatabaseError::code)
+            .as_deref()
+            == Some("42501")
+        {
+            SessionIdentityErrorType::Authorization
+        } else {
+            SessionIdentityErrorType::Infrastructure
+        },
+        context,
+        source: source.into(),
+    }
+}
+
+/// The bound principal has no `platform."user"` row for the project environment
+/// (`wamn-0h0g.9.19`).
+///
+/// A credential for such a principal is a provisioning defect: every write it
+/// makes records an actor that names no row. The bind refuses it, and the
+/// operation boundary translates this refusal to `permission-denied`.
+///
+/// It carries the project_env_key, the project database read, and the principal id, so
+/// an operator can find the missing row. It carries no connection material.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnprovisionedPrincipal {
+    project_env_key: wamn_registry::ProjectEnvKey,
+    project: wamn_registry::ProjectId,
+    principal_id: wamn_identity_protocol::PrincipalId,
+}
+
+impl UnprovisionedPrincipal {
+    /// The project_env_key whose `platform."user"` table was read.
+    #[must_use]
+    pub fn project_env_key(&self) -> &wamn_registry::ProjectEnvKey {
+        &self.project_env_key
+    }
+
+    /// The project database the read used.
+    #[must_use]
+    pub fn project(&self) -> &wamn_registry::ProjectId {
+        &self.project
+    }
+
+    /// The caller identity that named no row.
+    #[must_use]
+    pub fn principal_id(&self) -> &wamn_identity_protocol::PrincipalId {
+        &self.principal_id
+    }
+}
+
+impl std::fmt::Display for UnprovisionedPrincipal {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "principal {} has no platform.\"user\" row in project_env_key {} of project {}",
+            self.principal_id, self.project_env_key, self.project
+        )
+    }
+}
+
+impl std::error::Error for UnprovisionedPrincipal {}
+
+/// Read one `platform."user"` row and refuse the principal that owns none
+/// (`wamn-0h0g.9.19`).
+///
+/// The read uses the project_env_key's own guest login, for two reasons. It is the
+/// only authority class every composition root names, because the platform
+/// classes are unnamed when their generation is absent. And it is the
+/// credential that already holds `SELECT` on this table, so the test
+/// needs no new grant. The database is the org boundary.
+///
+/// A read that cannot run refuses the bind with its own error rather than
+/// the `UnprovisionedPrincipal` refusal. An unreachable table is an
+/// infrastructure defect and not an authorization fact, and the bind must
+/// fail closed either way.
+pub async fn require_provisioned_principal(
+    postgres: &WamnPostgres,
+    project_env_key: &wamn_registry::ProjectEnvKey,
+    project: &wamn_registry::ProjectId,
+    principal_id: &wamn_identity_protocol::PrincipalId,
+) -> anyhow::Result<()> {
+    let grants = read_guest_grants(postgres, project, project_env_key, principal_id)
+        .await
+        .map_err(|source| match source.downcast::<PgError>() {
+            Ok(source) => SessionIdentityError {
+                type_: SessionIdentityErrorType::Infrastructure,
+                context: "check out the principal grants connection",
+                source: source.into(),
+            }
+            .into(),
+            Err(source) => source,
+        })?;
+    if !grants.present {
+        tracing::warn!(
+            %project_env_key,
+            %project,
+            %principal_id,
+            "wamn:postgres: refusing a bind for a principal with no platform.\"user\" row"
+        );
+        return Err(UnprovisionedPrincipal {
+            project_env_key: project_env_key.to_owned(),
+            project: project.to_owned(),
+            principal_id: principal_id.to_owned(),
+        }
+        .into());
+    }
+    Ok(())
+}
+
+/// Find the local principal for a verified issuer and subject.
+pub(super) async fn resolve_subject(
+    postgres: &WamnPostgres,
+    project: &wamn_registry::ProjectId,
+    issuer: &str,
+    subject: &str,
+) -> anyhow::Result<Option<wamn_identity_protocol::PrincipalId>> {
+    let (mut connection, _policy) = postgres
+        .checkout_platform(project, AuthorityClass::Platform)
+        .await?;
+    let result = sqlx::query_scalar(
+        "SELECT id FROM platform.\"user\" WHERE issuer = $1 AND sub = $2 AND status = 'active' AND type = 'user'",
+    )
+    .bind(issuer)
+    .bind(subject)
+    .fetch_optional(&mut *connection)
+    .await;
+    match result {
+        Ok(principal) => Ok(principal),
+        Err(error) => {
+            postgres.destroy(connection);
+            Err(principal_read_error("resolve the access token subject", error).into())
+        }
+    }
+}
+
+/// Read PAT admission directly on the project platform login.
+pub(super) async fn read_project_pat(
+    postgres: &WamnPostgres,
+    project: &wamn_registry::ProjectId,
+    token: &wamn_identity_protocol::secret::PatToken,
+) -> anyhow::Result<Option<Arc<super::ProjectPat>>> {
+    let (mut connection, _) = postgres
+        .checkout_platform(project, AuthorityClass::Platform)
+        .await?;
+    match super::project_pat(&mut connection, token).await {
+        Ok(principal) => Ok(principal),
+        Err(error) => {
+            postgres.destroy(connection);
+            Err(principal_read_error("read the project PAT", error).into())
+        }
+    }
+}
+
+/// Read the user row, roles and permissions after a cache miss.
+pub(super) async fn read_platform_grants(
+    postgres: &WamnPostgres,
+    project: &wamn_registry::ProjectId,
+    project_env_key: &wamn_registry::ProjectEnvKey,
+    principal: &wamn_identity_protocol::PrincipalId,
+) -> anyhow::Result<wamn_authority::auth_cache::PrincipalGrants> {
+    read_principal_grants(
+        postgres,
+        project,
+        project_env_key,
+        principal,
+        AuthorityClass::Platform,
+    )
+    .await
+}
+
+async fn read_principal_grants(
+    postgres: &WamnPostgres,
+    project: &wamn_registry::ProjectId,
+    project_env_key: &wamn_registry::ProjectEnvKey,
+    principal: &wamn_identity_protocol::PrincipalId,
+    class: AuthorityClass,
+) -> anyhow::Result<wamn_authority::auth_cache::PrincipalGrants> {
+    let (mut connection, _policy) = match class {
+        AuthorityClass::GuestSql => postgres.checkout_guest(project, project_env_key).await?,
+        _ => postgres.checkout_platform(project, class).await?,
+    };
+    let result = super::principal_grants(&mut connection, principal)
+        .instrument(tracing::info_span!("wamn.auth.perm.query"))
+        .await;
+    let grants = match result {
+        Ok(grants) => grants,
+        Err(error) => {
+            postgres.destroy(connection);
+            return Err(principal_read_error("read the principal grants", error).into());
+        }
+    };
+    Ok(grants)
+}
+
+/// Whether the environment of `project_env_key` is inactive,
+/// from its row of `platform.environment`, read as `wamn_app`
+/// (docs/architecture/execution.md#routing-and-availability). No row means
+/// active. The host keeps the answer in its [auth
+/// memory](wamn_authority::auth_cache).
+pub(super) async fn read_environment_inactive(
+    postgres: &WamnPostgres,
+    project: &wamn_registry::ProjectId,
+    project_env_key: &wamn_registry::ProjectEnvKey,
+) -> anyhow::Result<bool> {
+    let (mut connection, _pool) = postgres
+        .checkout_guest(project, project_env_key)
+        .await
+        .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+    let inactive = match super::environment_inactive(&mut connection).await {
+        Ok(inactive) => inactive,
+        Err(error) => {
+            postgres.destroy(connection);
+            return Err(error).context("read the environment status");
+        }
+    };
+    Ok(inactive)
+}
+
+/// Read the grants used to check a workflow caller's role without consulting the cache.
+pub async fn read_guest_grants(
+    postgres: &WamnPostgres,
+    project: &wamn_registry::ProjectId,
+    key: &wamn_registry::ProjectEnvKey,
+    principal: &wamn_identity_protocol::PrincipalId,
+) -> anyhow::Result<wamn_authority::auth_cache::PrincipalGrants> {
+    read_principal_grants(postgres, project, key, principal, AuthorityClass::GuestSql).await
+}
+
+/// Check out the project's platform login for OAuth's own transaction.
+pub async fn oauth_connection(
+    postgres: &WamnPostgres,
+    project: &wamn_registry::ProjectId,
+) -> anyhow::Result<sqlx::pool::PoolConnection<sqlx::Postgres>> {
+    let (connection, _) = postgres
+        .checkout_platform(project, AuthorityClass::Platform)
+        .await?;
+    Ok(connection)
+}

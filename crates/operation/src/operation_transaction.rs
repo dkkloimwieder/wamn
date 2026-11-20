@@ -3,14 +3,15 @@
 //!
 //! The guest borrows a query handle and must leave completion to the host.
 
-use crate::invocation::Authority;
+use crate::scope_registry;
 use std::sync::{Arc, Mutex};
+use wamn_postgres::types::map_pg_error;
 
 use super::resources::{
     PgTransaction, StatementConnectionGuard, prepare_statement_transaction, take_conn,
     with_txn_conn,
 };
-use super::{PgError, WamnPostgres};
+use super::{PgError, OperationHost};
 
 /// The host transaction of one operation request element.
 ///
@@ -19,7 +20,7 @@ use super::{PgError, WamnPostgres};
 #[derive(Debug, Clone)]
 pub struct OperationTransaction {
     transaction: Arc<PgTransaction>,
-    pub(super) identity: Arc<Mutex<Option<super::session_identity::transactions::BoundIdentity>>>,
+    pub(super) identity: Arc<Mutex<Option<super::transactions::BoundIdentity>>>,
     pub(super) finish: Arc<Mutex<Option<[String; 3]>>>,
     pub(super) known_result: Option<String>,
     causation: Option<wamn_event::Causation>,
@@ -165,7 +166,7 @@ impl OperationTransaction {
                         .is_some_and(|error| error.code().is_some_and(|code| code == "22012"));
                 let answered = error.as_database_error().is_some();
                 drop(connection);
-                let error = super::types::map_pg_error(&error);
+                let error = map_pg_error(&error);
                 Err(if answered && !ended_early {
                     PgCommitFailure::RolledBack(error)
                 } else {
@@ -205,7 +206,7 @@ impl OperationTransaction {
     }
 }
 
-impl WamnPostgres {
+impl OperationHost {
     /// Begin the host transaction of one operation request element under the identity that
     /// `scope` binds.
     ///
@@ -216,61 +217,20 @@ impl WamnPostgres {
         &self,
         scope: &str,
     ) -> Result<OperationTransaction, PgError> {
-        let project = self.project_for(scope);
+        let project = scope_registry::project_for(&self.scopes, scope);
         let (transaction, identity) = prepare_statement_transaction(self, scope, &project).await?;
         let transaction = OperationTransaction {
             transaction: Arc::new(transaction),
             identity: Arc::new(Mutex::new(Some(identity))),
             finish: Arc::new(Mutex::new(None)),
             known_result: None,
-            causation: if self.active_read(scope) {
+            causation: if scope_registry::active_read(&self.scopes, scope) {
                 None
             } else {
-                self.current_run_for(scope)
+                scope_registry::current_run_for(&self.scopes, scope)
             },
         };
         transaction.start().await?;
         Ok(transaction)
-    }
-
-    /// Whether the active operation uses a read transaction.
-    pub(super) fn active_read(&self, scope: &str) -> bool {
-        self.scopes
-            .read::<Authority, _>(scope, |record| record.read)
-            .unwrap_or(false)
-    }
-
-    /// Bind `transaction` as the operation transaction of `scope`.
-    ///
-    /// # Errors
-    ///
-    /// Fails when `scope` already has one.
-    pub fn bind_operation_transaction(
-        &self,
-        scope: &str,
-        transaction: &OperationTransaction,
-    ) -> anyhow::Result<()> {
-        self.scopes
-            .update_existing::<Authority, _>(scope, |record| {
-                anyhow::ensure!(
-                    record.transaction.is_none(),
-                    "operation-transaction-scope-already-bound"
-                );
-                record.transaction = Some(transaction.clone());
-                Ok(())
-            })
-            .unwrap_or_else(|| Err(anyhow::anyhow!("invocation scope was revoked")))
-    }
-
-    /// Drop the binding of `scope`. The transaction stays open for its owner.
-    pub fn revoke_operation_transaction(&self, scope: &str) {
-        self.scopes
-            .update_existing::<Authority, _>(scope, |record| record.transaction = None);
-    }
-
-    pub(super) fn operation_transaction_for(&self, scope: &str) -> Option<OperationTransaction> {
-        self.scopes
-            .read::<Authority, _>(scope, |record| record.transaction.clone())
-            .flatten()
     }
 }

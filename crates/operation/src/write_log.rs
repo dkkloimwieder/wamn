@@ -22,8 +22,8 @@ use std::sync::Arc;
 
 use super::operation_transaction::OperationTransaction;
 use super::resources::{StatementConnectionGuard, take_conn};
-use super::types::PgParam;
-use super::{PgError, SqlValue, WamnPostgres};
+use wamn_postgres::types::{PgParam, map_pg_error};
+use super::{PgError, SqlValue, OperationHost};
 
 /// The complete success body of a generated delete, before request correlation.
 pub const DELETED_RESULT: &str = r#"{"value":{"outcome":"deleted"}}"#;
@@ -79,7 +79,7 @@ pub(super) async fn commit_transaction(
         .expect("writing write log completion to String cannot fail");
     }
     if let Some(run) = run {
-        batch.push_str(&super::session_identity::transactions::causation_sql(run));
+        batch.push_str(&super::transactions::causation_sql(run));
     }
     batch.push_str("COMMIT;");
     let mut results = sqlx::raw_sql(sqlx::AssertSqlSafe(batch)).execute_many(connection);
@@ -264,7 +264,7 @@ impl OperationTransaction {
             query
                 .fetch_all(connection.connection())
                 .await
-                .map_err(|error| super::types::map_pg_error(&error))
+                .map_err(|error| map_pg_error(&error))
         }
         .await;
         match result {
@@ -299,7 +299,7 @@ pub enum Claim {
 /// project database, each statement on a connection of its own.
 #[derive(Debug, Clone)]
 pub struct WriteLogStore {
-    postgres: Arc<WamnPostgres>,
+    postgres: Arc<OperationHost>,
     project: wamn_registry::ProjectId,
     project_env_key: wamn_registry::ProjectEnvKey,
 }
@@ -318,7 +318,7 @@ fn require_open_claim(changed: bool) -> Result<(), PgError> {
 impl WriteLogStore {
     /// The write log of `project_env_key`'s database in `project`.
     pub fn new(
-        postgres: Arc<WamnPostgres>,
+        postgres: Arc<OperationHost>,
         project: wamn_registry::ProjectId,
         project_env_key: wamn_registry::ProjectEnvKey,
     ) -> Self {
@@ -401,7 +401,7 @@ impl WriteLogStore {
     ) -> Result<Vec<Row>, PgError> {
         let (mut connection, _pool) = self
             .postgres
-            .checkout_guest(&self.project, &self.project_env_key)
+            .pools.checkout_guest(&self.project, &self.project_env_key)
             .await?;
         let mut query = sqlx::query(sql);
         for value in &params {
@@ -411,8 +411,8 @@ impl WriteLogStore {
         match result {
             Ok(rows) => Ok(rows),
             Err(error) => {
-                self.postgres.destroy(connection);
-                Err(super::types::map_pg_error(&error))
+                self.postgres.pools.destroy(connection);
+                Err(map_pg_error(&error))
             }
         }
     }

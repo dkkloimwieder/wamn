@@ -64,7 +64,7 @@ wamn-oci = { workspace = true, features = ["test-util"] }
 wamn-http-client = { workspace = true, features = ["tls12"] }
 wamn-authority = { workspace = true, features = ["test-util"] }
 wamn-connection = { workspace = true, features = ["test-util"] }
-wamn-sql = { workspace = true, features = ["test-util"] }
+wamn-operation = { workspace = true, features = ["test-util"] }
 wamn-http = { workspace = true, features = ["test-util"] }
 wamn-blobstore = { workspace = true, features = ["test-util"] }
 wamn-fixture-package = { workspace = true }

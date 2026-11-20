@@ -28,14 +28,14 @@ wamn-registry = { workspace = true }
 wamn-identity.workspace = true
 wamn-identity-client.workspace = true
 wamn-identity-protocol = { workspace = true }
-wamn-sql = { workspace = true, features = ["wasm_component_model_implements"] }
+wamn-operation = { workspace = true, features = ["wasm_component_model_implements"] }
+wamn-postgres.workspace = true
 wamn-authentication = { workspace = true }
 wamn-authority = { workspace = true }
 wamn-digest.workspace = true
 wamn-engine = { workspace = true }
 wash-runtime = { workspace = true, features = ["washlet", "wasi-config", "wasi-logging", "wasi-otel", "wasmcloud-nats", "wasm_component_model_implements"] }
 anyhow = { workspace = true }
-moka = { workspace = true, features = ["sync"] }
 sqlx = { workspace = true }
 async-trait = { workspace = true }
 serde_json = { workspace = true }
@@ -59,7 +59,7 @@ url = { workspace = true }
 wamn-test-infrastructure = { workspace = true }
 futures-util = { workspace = true }
 sqlx = { workspace = true, features = ["macros", "migrate"] }
-wamn-sql = { workspace = true, features = ["test-util"] }
+wamn-operation = { workspace = true, features = ["test-util"] }
 wamn-authentication = { workspace = true, features = ["test-util"] }
 opentelemetry_sdk = { workspace = true, features = ["trace", "testing"] }
 tracing-opentelemetry = { workspace = true }

@@ -3,18 +3,23 @@
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock, Weak};
 use std::time::{Duration, Instant, SystemTime};
-use wamn_connection::connection_credentials::{ConnectionCredentials, CredentialReader};
-use wamn_connection::connection_facts::{ConnectionAnswer, ConnectionCache, ConnectionFacts};
 
 use anyhow::Context as _;
 use moka::sync::Cache;
-use wamn_authentication::authorization::{self, AuthorizationStore, HeldOperationGrants, ProjectPat};
 use wamn_authority::auth_cache::PrincipalGrants;
 use wamn_catalog::application_config::ApplicationConfig;
+use wamn_connection::connection_credentials::{ConnectionCredentials, CredentialReader};
+use wamn_connection::connection_facts::{ConnectionAnswer, ConnectionCache, ConnectionFacts};
+use wamn_connection::database::ProjectDatabase;
 use wamn_identity_protocol::PrincipalId;
 use wamn_identity_protocol::secret::PatToken;
+use wamn_postgres::WamnPostgres;
 use wamn_registry::{ProjectEnvKey, ProjectId};
-use wamn_sql::WamnPostgres;
+
+use super::project_reads::{
+    read_environment_inactive, read_platform_grants, read_project_pat, resolve_subject,
+};
+use super::{AuthorizationStore, HeldOperationGrants, ProjectPat};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 enum Fact {
@@ -53,9 +58,9 @@ impl moka::Expiry<Key, Answer> for Expiry {
 }
 
 /// One local cache; the project lifetime applies equally to every admitted fact.
-#[derive(Debug)]
-pub(super) struct Authorization {
-    postgres: Weak<WamnPostgres>,
+pub struct Authorization {
+    postgres: Arc<WamnPostgres>,
+    database: Arc<dyn ProjectDatabase>,
     envelope: Option<Arc<wamn_envelope::encryption::Envelope>>,
     applications: RwLock<HashMap<String, Weak<ApplicationConfig>>>,
     lifetimes: RwLock<HashMap<ProjectEnvKey, (ProjectId, Duration)>>,
@@ -63,10 +68,20 @@ pub(super) struct Authorization {
     credentials: Arc<CredentialReader>,
 }
 
+impl std::fmt::Debug for Authorization {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("Authorization")
+            .finish_non_exhaustive()
+    }
+}
+
 impl Authorization {
-    pub(super) fn new(postgres: Weak<WamnPostgres>) -> Self {
+    /// Share the project's pools and the authorized connection reader.
+    pub fn new(postgres: Arc<WamnPostgres>, database: Arc<dyn ProjectDatabase>) -> Self {
         Self {
             postgres,
+            database,
             envelope: None,
             lifetimes: RwLock::default(),
             applications: RwLock::default(),
@@ -78,18 +93,13 @@ impl Authorization {
         }
     }
 
-    pub(super) fn with_oauth_encryption(
+    /// Supply the envelope used for OAuth credentials.
+    pub fn with_oauth_encryption(
         mut self,
         envelope: Option<Arc<wamn_envelope::encryption::Envelope>>,
     ) -> Self {
         self.envelope = envelope;
         self
-    }
-
-    fn postgres(&self) -> anyhow::Result<std::sync::Arc<WamnPostgres>> {
-        self.postgres
-            .upgrade()
-            .context("application host has stopped")
     }
 
     fn key(&self, project: &ProjectId, key: &ProjectEnvKey, fact: Fact) -> anyhow::Result<Key> {
@@ -142,10 +152,7 @@ impl AuthorizationStore for Authorization {
         if matches!(self.answers.get(&key), Some(Answer::ActiveEnvironment)) {
             return Ok(false);
         }
-        let inactive = self
-            .postgres()?
-            .environment_inactive(project, project_key)
-            .await?;
+        let inactive = read_environment_inactive(&self.postgres, project, project_key).await?;
         // Positive means admitted: an inactive environment is read again next time.
         if !inactive {
             self.answers.insert(key, Answer::ActiveEnvironment);
@@ -163,10 +170,7 @@ impl AuthorizationStore for Authorization {
         if let Some(Answer::Grants(grants)) = self.answers.get(&key) {
             return Ok(grants);
         }
-        let grants = self
-            .postgres()?
-            .principal_grants(project, project_key, principal)
-            .await?;
+        let grants = read_platform_grants(&self.postgres, project, project_key, principal).await?;
         if grants.present && grants.active && !grants.roles.is_empty() {
             self.answers.insert(key, Answer::Grants(grants.clone()));
         }
@@ -188,10 +192,7 @@ impl AuthorizationStore for Authorization {
         if let Some(Answer::Subject(principal)) = self.answers.get(&key) {
             return Ok(Some(principal));
         }
-        let principal = self
-            .postgres()?
-            .resolve_subject(project, issuer, subject)
-            .await?;
+        let principal = resolve_subject(&self.postgres, project, issuer, subject).await?;
         if let Some(principal) = principal {
             self.answers.insert(key, Answer::Subject(principal));
         }
@@ -207,7 +208,7 @@ impl AuthorizationStore for Authorization {
         let grants = self
             .principal_grants(project, project_key, principal)
             .await?;
-        Ok(authorization::held_grants(&grants))
+        Ok(super::held_grants(&grants))
     }
 
     async fn route_pat(
@@ -220,7 +221,7 @@ impl AuthorizationStore for Authorization {
         if let Some(Answer::Pat(principal)) = self.answers.get(&key) {
             return Ok((SystemTime::now() < principal.deadline).then_some(principal));
         }
-        let principal = self.postgres()?.read_project_pat(project, token).await?;
+        let principal = read_project_pat(&self.postgres, project, token).await?;
         if let Some(principal) = &principal
             && SystemTime::now() < principal.deadline
         {
@@ -331,7 +332,6 @@ impl ConnectionCache for Authorization {
         application: Arc<ApplicationConfig>,
     ) -> anyhow::Result<Arc<ConnectionFacts>> {
         self.configure_application(&application)?;
-        let postgres = self.postgres()?;
         let key = wamn_registry::name::project_env_key(
             &application.org,
             &application.project,
@@ -344,7 +344,7 @@ impl ConnectionCache for Authorization {
                     &application.org,
                     Arc::clone(&self.credentials),
                 )),
-                &postgres,
+                &self.database,
                 &key,
                 &application.project,
                 &application.environment,

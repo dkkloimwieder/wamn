@@ -18,7 +18,8 @@ use super::resources::{
     PgStatementTransaction, SharedTxnState, StatementConnectionGuard, db_span_for_project,
     plugin_of, record_query_ms, restore_connection, take_conn,
 };
-use super::types::{PgParam, columns_of, decode_row, map_pg_error};
+use super::scope_registry;
+use wamn_postgres::types::{PgParam, columns_of, decode_row, map_pg_error};
 use super::{PgError, SqlValue};
 
 type WasmResult<T> = wash_runtime::wasmtime::Result<T>;
@@ -62,22 +63,21 @@ pub(super) async fn dynamic_query<T: 'static + Send>(
     })?;
     let opened = trace
         .run(async {
-            let project = plugin.project_for(&component);
+            let project = scope_registry::project_for(&plugin.scopes, &component);
             let span = db_span_for_project(&plugin, &component, &project, "query");
             let started = std::time::Instant::now();
             let result = async {
-                let project_key = plugin.require_project_env_key(&component)?;
-                let (connection, policy) = plugin.checkout_dynamic(&project, &project_key).await?;
+                let project_key = scope_registry::require_project_env_key(&plugin.scopes, &component)?;
+                let (connection, policy) = plugin.pools.checkout_dynamic(&project, &project_key).await?;
                 let mut connection =
-                    StatementConnectionGuard::new(connection, Arc::clone(&plugin.destroyed));
-                let schema = plugin.schema_for(&component);
-                let runner = plugin.runner_for(&component);
-                let role = plugin.role_for(&component);
-                let user = plugin.user_id_for(&component);
-                let operation = plugin.operation_for(&component);
-                let application = plugin.application_for(&component);
-                let xid = plugin
-                    .begin_with_identity(
+                    StatementConnectionGuard::new(connection, Arc::clone(plugin.pools.destroyed_connections()));
+                let schema = scope_registry::schema_for(&plugin.scopes, &component);
+                let runner = scope_registry::runner_for(&plugin.scopes, &component);
+                let role = scope_registry::role_for(&plugin.scopes, &component);
+                let user = scope_registry::user_id_for(&plugin.scopes, &component);
+                let operation = scope_registry::operation_for(&plugin.scopes, &component);
+                let application = scope_registry::application_for(&plugin.scopes, &component);
+                let xid = super::transactions::begin_with_identity(
                         connection.connection(),
                         wamn_identity_protocol::AuthorityClass::DynamicSql,
                         true,
@@ -120,7 +120,7 @@ pub(super) async fn transaction_query<T: 'static + Send>(
     })?;
     let opened = trace
         .run(async {
-            let project = plugin.project_for(&component);
+            let project = scope_registry::project_for(&plugin.scopes, &component);
             let span = db_span_for_project(&plugin, &component, &project, "statement.txn.run");
             let started = std::time::Instant::now();
             let result = async {

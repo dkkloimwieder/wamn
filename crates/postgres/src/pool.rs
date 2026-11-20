@@ -1,18 +1,17 @@
 //! Connection pools keyed by project and login, credential resolution, and teardown.
-//! Pool and identity methods live on `WamnPostgres` in `session_identity.rs`.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::Context as _;
 use sqlx::PgPool;
-pub(super) type Object = sqlx::pool::PoolConnection<sqlx::Postgres>;
+pub type Object = sqlx::pool::PoolConnection<sqlx::Postgres>;
 
 use wamn_identity_protocol::AuthorityClass;
 #[cfg(test)]
 use wamn_registry::app_identity_hash;
 
-use super::DEFAULT_PROJECT;
 use wamn_engine::engine::MAX_HOST_CALL_DURATION;
 
 const DEFAULT_GUEST_POOL_MAX_SIZE: usize = 14;
@@ -64,7 +63,7 @@ impl WamnPostgresConfig {
             // second source, which is the acceptance-forbidden behaviour.
             credentials: None,
             // Preserve the former total of 16 while reserving one measured
-            // platform operation plus one headroom slot against guest starvation.
+            // platform operation plus capacity against guest starvation.
             guest_pool_max_size: num("WAMN_PG_GUEST_POOL_MAX", DEFAULT_GUEST_POOL_MAX_SIZE),
             platform_pool_max_size: num(
                 "WAMN_PG_PLATFORM_POOL_MAX",
@@ -137,7 +136,7 @@ impl ClassCredentials {
 
     /// UNNAME one class, so `resolve` REFUSES for it (`wamn-0h0g.22.31`).
     ///
-    /// The other half of a family cutover, and it is not the same as leaving
+    /// The other half of a login replacement, and it is not the same as leaving
     /// [`Self::every_class`]'s entry in place. Once a family authenticates as
     /// itself, that shared entry stops being a placeholder for it and becomes A
     /// LOGIN OF ANOTHER AUTHORITY that would still satisfy the map. A composer
@@ -246,7 +245,7 @@ pub trait CredentialProvider: Send + Sync {
     /// work. After `wamn-0h0g.22.6` the guest's project comes from
     /// `current_user`, so for that class THE CREDENTIAL IS THE PROJECT
     /// AUTHORITY: resolution must refuse rather than hand back a credential
-    /// minted for someone else.
+    /// issued for someone else.
     fn resolve(
         &self,
         project: &wamn_registry::ProjectId,
@@ -333,8 +332,10 @@ impl CredentialProvider for StaticCredentialProvider {
                 wamn_role::QUERY_LOGIN
             };
             let options: sqlx::postgres::PgConnectOptions =
-                wamn_postgres::configuration(&resolved.database_url)?.parse()?;
-            let database = options.get_database().context("project database is absent")?;
+                crate::configuration(&resolved.database_url)?.parse()?;
+            let database = options
+                .get_database()
+                .context("project database is absent")?;
             anyhow::ensure!(
                 &triple.project == project
                     && options.get_username() == expected
@@ -350,7 +351,7 @@ impl CredentialProvider for StaticCredentialProvider {
 }
 
 // ---------------------------------------------------------------------------
-// Plugin
+// Pools
 // ---------------------------------------------------------------------------
 
 /// A pool belongs to one project and authenticated login.
@@ -372,20 +373,222 @@ impl PoolKey {
     }
 }
 
-pub(super) struct ProjectPool {
+/// An open project pool and the statement timeout applied to its transactions.
+#[derive(Debug)]
+pub struct ProjectPool {
     pub(super) pool: PgPool,
-    pub(super) statement_timeout_ms: u32,
+    pub statement_timeout_ms: u32,
 }
 
 /// Discard a connection whose transaction outcome or session state is unknown.
-pub(super) fn destroy_connection(obj: Object, counter: &AtomicU64) {
+pub fn destroy_connection(obj: Object, counter: &AtomicU64) {
     counter.fetch_add(1, Ordering::Relaxed);
     drop(obj.detach());
+}
+
+/// The project id used when a component names none — the single database a
+/// [`WamnPostgresConfig`] URL points at.
+pub static DEFAULT_PROJECT: std::sync::LazyLock<wamn_registry::ProjectId> =
+    std::sync::LazyLock::new(|| "default".parse().expect("fixed default project"));
+
+/// Names the shape only: the credential provider and the live pools carry
+/// connection material that must not reach a log.
+impl std::fmt::Debug for WamnPostgres {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("WamnPostgres")
+            .finish_non_exhaustive()
+    }
+}
+
+/// Owns the configured project logins and their lazily opened pools.
+pub struct WamnPostgres {
+    /// Resolves a project id → its database connection + policy.
+    pub(super) provider: Arc<dyn CredentialProvider>,
+    pub(super) host_projects:
+        std::collections::BTreeMap<wamn_registry::ProjectId, crate::host_project::HostProject>,
+    pub(super) host_credentials: Option<Arc<crate::host_project::HostCredentials>>,
+    pub(super) host_project_bind: tokio::sync::Mutex<()>,
+    /// Pools indexed by project and authenticated login.
+    pub(super) pools: std::sync::RwLock<HashMap<PoolKey, Arc<ProjectPool>>>,
+    /// Connections destroyed instead of repooled (chaos-acceptance-test observability).
+    destroyed: Arc<AtomicU64>,
+}
+
+impl WamnPostgres {
+    /// Pools for a single default database (the [`WamnPostgresConfig`]
+    /// credentials). Pools are built lazily; `credentials: None` ⇒ every call
+    /// returns `connection-unavailable`.
+    pub fn new(cfg: WamnPostgresConfig) -> anyhow::Result<Self> {
+        Ok(Self::with_provider(Arc::new(
+            StaticCredentialProvider::default_only(ProjectConfig::from_global_config(cfg)),
+        )))
+    }
+
+    /// Pools for an explicit [`CredentialProvider`] (multi-project / tests).
+    pub fn with_provider(provider: Arc<dyn CredentialProvider>) -> Self {
+        Self {
+            provider,
+            host_projects: std::collections::BTreeMap::new(),
+            host_credentials: None,
+            host_project_bind: tokio::sync::Mutex::new(()),
+            pools: std::sync::RwLock::new(HashMap::new()),
+            destroyed: Arc::new(AtomicU64::new(0)),
+        }
+    }
+
+    /// Read the pool policy from the environment and use the supplied credentials.
+    pub fn from_env(credentials: Option<ClassCredentials>) -> anyhow::Result<Self> {
+        let cfg = WamnPostgresConfig::from_env();
+        let default = credentials.map(|credentials| ProjectConfig::from_global(credentials, &cfg));
+        Ok(Self::with_provider(Arc::new(
+            StaticCredentialProvider::default_only(default),
+        )))
+    }
+
+    /// Projects configured with host-owned database logins.
+    pub fn host_projects(&self) -> impl Iterator<Item = &wamn_registry::ProjectId> {
+        self.host_projects.keys()
+    }
+
+    /// Share the counter with transaction guards that discard uncertain sessions.
+    pub fn destroyed_connections(&self) -> &Arc<AtomicU64> {
+        &self.destroyed
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Guest-sql must never be usable as a platform authority, and the refusal
+    /// must survive `--release`, where a `debug_assert` would not exist.
+    #[tokio::test]
+    async fn a_platform_checkout_refuses_the_guest_authority() {
+        let postgres = WamnPostgres::from_env(Some(ClassCredentials::every_class(
+            "postgres://wamn_app_refusal@localhost/refusal-test",
+        )))
+        .expect("compose");
+        let refused = postgres
+            .checkout_platform(&DEFAULT_PROJECT, AuthorityClass::GuestSql)
+            .await;
+        assert!(
+            refused.is_err(),
+            "platform work under the guest authority must fail closed"
+        );
+    }
+
+    /// REGRESSION GUARD (`wamn-0h0g.22.8.3`).
+    ///
+    /// Removing the ambient read in split B silently cut the HOST's default
+    /// project, because `from_env` derived it from the config field that split
+    /// had just forced to `None`. Nothing in the run exercised that path, so
+    /// the only thing standing between that and a deployed host with no
+    /// database is this test. It asserts the composed credential actually
+    /// reaches resolution, and that composing without one resolves NOTHING
+    /// rather than falling back.
+    /// A guest credential url for `project_env_key` in `database`, named the way
+    /// provisioning names one: the login carries the project_env_key as its scope
+    /// digest (`wamn-0h0g.22.6.4`).
+    fn guest_url(project_env_key: &wamn_registry::ProjectEnvKey, database: &str) -> String {
+        format!(
+            "postgres://wamn_app_{}:pw@db/{database}",
+            wamn_registry::app_identity_hash(project_env_key, database)
+        )
+    }
+
+    /// *** THE REFUSAL THAT MAKES THE CREDENTIAL THE AUTHORITY. ***
+    ///
+    /// After `wamn-0h0g.22.6` a guest's project_env_key is its LOGIN, so handing back a
+    /// credential issued for another project_env_key is not a mis-selection, it is a
+    /// cross-project_env_key read. Resolution refuses instead, and refuses again when the
+    /// caller names no project_env_key at all.
+    #[test]
+    fn a_guest_credential_resolves_for_its_own_project_env_key_and_no_other() {
+        let host = WamnPostgres::from_env(Some(ClassCredentials::every_class(guest_url(
+            &"test--dev--fixture".parse().unwrap(),
+            "host-default",
+        ))))
+        .expect("compose with a credential");
+        assert!(
+            host.provider
+                .resolve(
+                    &DEFAULT_PROJECT,
+                    AuthorityClass::GuestSql,
+                    Some(&"test--dev--fixture".parse().unwrap())
+                )
+                .expect("the credential's own project_env_key resolves")
+                .is_some()
+        );
+        assert!(
+            host.provider
+                .resolve(
+                    &DEFAULT_PROJECT,
+                    AuthorityClass::GuestSql,
+                    Some(&"evil--dev--project".parse().unwrap())
+                )
+                .is_err(),
+            "a credential issued for another project_env_key must be REFUSED, not borrowed"
+        );
+        assert!(
+            host.provider
+                .resolve(&DEFAULT_PROJECT, AuthorityClass::GuestSql, None)
+                .is_err(),
+            "guest resolution without an project_env_key has no authority to validate"
+        );
+        // Platform classes are project-environment scoped, so the project_env_key is not
+        // part of their binding and its absence is not an error.
+        assert!(
+            host.provider
+                .resolve(&DEFAULT_PROJECT, AuthorityClass::Platform, None)
+                .expect("platform resolution needs no project_env_key")
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn the_composed_credential_becomes_the_default_project() {
+        let composed = WamnPostgres::from_env(Some(ClassCredentials::every_class(guest_url(
+            &"test--dev--fixture".parse().unwrap(),
+            "host-default",
+        ))))
+        .expect("compose with a credential");
+        assert!(
+            composed
+                .provider
+                .resolve(
+                    &DEFAULT_PROJECT,
+                    AuthorityClass::GuestSql,
+                    Some(&"test--dev--fixture".parse().unwrap())
+                )
+                .expect("resolve default")
+                .is_some(),
+            "a host composed WITH a credential must resolve the default project; \
+             deploy/platform injects it via secretKeyRef and a host that cannot \
+             resolve it has no database at all"
+        );
+
+        let bare = WamnPostgres::from_env(None).expect("compose without a credential");
+        assert!(
+            bare.provider
+                .resolve(
+                    &DEFAULT_PROJECT,
+                    AuthorityClass::GuestSql,
+                    Some(&"test--dev--fixture".parse().unwrap())
+                )
+                .expect("resolve default")
+                .is_none(),
+            "composing without a credential must resolve nothing, not reach for \
+             an ambient one"
+        );
+    }
+
+    // The identity-time record must match `runs_release_record_check` exactly, or a
+    // identity that would otherwise succeed dies on a CHECK inside the lease grant.
+    // The hand-rolled shape test this used to exercise is retired: the invariant
+    // now rides `wamn_digest::Digest`, so what is pinned here is that the TYPE admits
+    // exactly what the run-plane CHECK admits. Same coupling, one owner.
+    // wamn-cjv.2 — the in-band identity/role mutation guard.
 
     /// Marks the re-exec'd child of the ambient-credential test below.
     const AMBIENT_PROBE_VAR: &str = "WAMN_POOL_AMBIENT_PROBE";
@@ -436,7 +639,7 @@ mod tests {
                     Some(&"acme--dev--project".parse().unwrap())
                 )
                 .is_err(),
-            "the guest credential is minted for another project and must be REFUSED, \
+            "the guest credential is issued for another project and must be REFUSED, \
              not borrowed — reading the platform credential here would admit a \
              cross-project read"
         );
