@@ -92,6 +92,7 @@ function OperationControls(props: ScreenProps) {
             const needsApplication = selected !== "reset";
             const needsRevision = selected === "rollback";
             const needsRelease = selected !== "stop" && selected !== "reset" && !needsRevision;
+            const requiresRelease = selected === "deploy" || selected === "apply";
             const start = async (snapshot: typeof defaults) => {
               if (busy() || controller.signal.aborted || !props.holds(entry.route.operation, config.project)) return;
               setBusy(true);
@@ -160,7 +161,7 @@ function OperationControls(props: ScreenProps) {
               onValuesChange: setValues,
               validate: (snapshot) => {
                 if (needsApplication && !snapshot.application.trim()) return { form: "Enter an application." };
-                if (selected === "deploy" && !snapshot.release.trim()) return { form: "Enter a release digest." };
+                if (requiresRelease && !snapshot.release.trim()) return { form: "Enter a release digest." };
                 const revision = snapshot.revision.trim();
                 if (
                   needsRevision &&
@@ -195,7 +196,7 @@ function OperationControls(props: ScreenProps) {
                           ? [
                               {
                                 field: "release",
-                                label: selected === "deploy" ? "Release digest" : "Release digest (optional)",
+                                label: requiresRelease ? "Release digest" : "Release digest (optional)",
                                 control: "text",
                               } as const,
                             ]
