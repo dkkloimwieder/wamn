@@ -236,7 +236,7 @@ Issues:
 
 12.1 Split `wamn-sql` as ruled on 2026-11-17. `pool`, `host_project` and `types` go to `wamn-postgres`. The auth lookups and the host's authorization cache go to `wamn-authentication`, as the one `AuthorizationStore`. The rest is renamed as the operation host, and `session_identity` splits into the scope registry and the plugin glue.
 
-12.2 Split by plane. Connection administration, the Kubernetes credential code (`connections/{administration,references,credentials,connection_credentials,credential_cleanup}.rs`) and the OAuth flow (`crates/http` `oauth_authorization.rs`, `oauth_callback.rs`) leave the runtime crates. Goal: `cargo tree -e normal -i` shows that `wamn-host` links neither `wamn-kubernetes` nor `wamn-provision`. Paths today: host → envelope → oci → kubernetes; host → blobstore → connection → provision; host → http → provision and kubernetes.
+12.2 Split by plane. Connection administration, the Kubernetes credential code (`connections/{administration,references,credentials,connection_credentials,credential_cleanup}.rs`) and the OAuth flow (`crates/http` `oauth_authorization.rs`, `oauth_callback.rs`) leave the runtime crates. Goal: `cargo tree -e normal -i` shows that `wamn-host` links neither `wamn-kubernetes` nor `wamn-provision`. Paths today: the host links `wamn-kubernetes` through `wamn-connection`, `wamn-http` and `wamn-oci`. It links `wamn-provision` only through optional `test-util` features. `wamn-cdc-reader` already links neither crate. The host links `kube-rs` directly for the run-time read of connection Secrets, with only a typed get on Secrets in its own namespace.
 
 12.3 Infrastructure clients. `wamn-oci` drops `wamn-kubernetes` and uses `oci-client`. The generic HTTP clients (`wamn-kubernetes::http_transport`, `wamn-oci::package_artifact::http_client`) become one small module, or their users call `reqwest` directly.
 
@@ -244,7 +244,7 @@ Issues:
 
 12.5 `Refusal` moves out of `services/host/src/host/application_route.rs` into a module that `host_route.rs` and `workflow/lifecycle.rs` both use.
 
-12.6 All Kubernetes calls move to `kube-rs`. The kubectl error-text matching (`crates/kubernetes/src/kubectl.rs`) and `kubernetes_api.rs` go. `wamn platform deploy` uses Helm's own kstatus wait, so `kubectl::wait_deployment_ready` and `job::clear_finished` go.
+12.6 All Kubernetes calls move to `kube-rs`. The kubectl error-text matching (`crates/kubernetes/src/kubectl.rs`) and `kubernetes_api.rs` go. `wamn platform deploy` uses Helm's own kstatus wait. The old fixed-name system SQL Job gets a typed clear: Rust deletes the finished Job with `kube-rs` before `job.rs::submit` creates the next one. The CDC reader wait stays as a typed `kube-rs` wait, because the project chart renders a Secret and cannot use Helm's wait. Other Rust waits that exist for the same reason also stay as typed `kube-rs` waits. `kubectl::wait_deployment_ready` and `job::clear_finished` go once their callers use these. Pin `kube` 4.2.0 and `k8s-openapi` 0.28.0, with the version feature `v1_35`: the lowest supported Kubernetes is GKE 1.35 (kind nodes run 1.36.1).
 
 12.7 Split `wamn-catalog`. Its eight concerns (package model, edge release document, admission, routes, connection types, settings, locks, schema SQL) go to their owners. The duplicated types go: `Operation` (14 structs, 3 enums) and `Environment` (7 types). `wamn.application` is parsed once per bind, not seven times (`crates/sql/src/lib.rs`, `crates/engine/src/operation.rs`, `crates/http/src/lib.rs`, `services/host/src/host/platform_http.rs`).
 
@@ -297,7 +297,7 @@ End of the epic: the standard checks, the preflight and the short smoke run.
   - Pod security: `pod-security.kubernetes.io/enforce: restricted` on org namespaces, a `securityContext` on every wamn workload, and a non-root `USER` in the Dockerfile. Today a privileged pod in an org namespace would reach the node.
   - The system database: a second instance, an ObjectStore and a ScheduledBackup. It holds the NATS operator and account keys and all users.
   - Backups: one credential per org, scoped to that org's prefix or bucket. Today one credential reaches every org's backups.
-  - The org worker's rights: narrow its Role. Remove `pods/exec` together with `platform/control.rs::wait_administration`, its only user. Review NetworkPolicy, Role and all-Secret rights.
+  - The org worker's rights: narrow its Role. Review NetworkPolicy, Role and all-Secret rights.
   - Ingress policies in `platform` for NATS, the system database and the Poolers.
   - Web reads ConfigMaps through a Role per org namespace, not a ClusterRole.
   - NATS users for Jobs expire, and a revocation list exists.
@@ -1998,3 +1998,11 @@ Epic 11 closed on 2026-11-20 after review. The smoke run on kind passed.
 - Three review items go into issues. 12.6: `wamn platform deploy` uses Helm's own kstatus wait, so `kubectl::wait_deployment_ready` and `job::clear_finished` go. 12.7: `wamn.application` is parsed once per bind, not seven times. 12.8: the dead SQL `platform.api_key` and `wamn_authority.author_login_projects` go.
 - Four review items become Open items: `HostArgs` is a hand-kept copy of the stock host flags; the environment document has two owners; org, project and environment are written five times in workload config and never compared; "wiring" still names workflows. Each needs a design or a schema change, so the freeze keeps them out of Epic 12.
 - Two review items are kept. The migration appliers stay, because system migrations need them. The private stock chart templates in `environment/templates/host.yaml` are an accepted risk, because the chart-update review catches a file move.
+
+**Ruled (D, 2026-11-20): Epic 12 scout questions 1 to 6.**
+- 1: the host links `kube-rs` directly for the run-time read of connection Secrets, with only a typed get on Secrets in its own namespace. It links neither `wamn-kubernetes` nor `wamn-provision`. Reason: the host reads credentials at run time, so it needs a Kubernetes client, but not the control-plane crates.
+- 2: the old fixed-name system SQL Job gets a typed clear. Rust deletes the finished Job with `kube-rs` before `job.rs::submit` creates the next one. The CDC reader wait and the other Rust waits whose chart renders a Secret stay as typed `kube-rs` waits. `kubectl::wait_deployment_ready` and `job::clear_finished` go once their callers use these. Reason: Helm does not delete the old Job, a Job spec is immutable, and Helm cannot wait on a chart that renders a Secret.
+- 3: `wait_administration` (`crates/platform-install/src/platform/control.rs`) and its call in `crates/environment/src/environment/delete.rs` go, and `pods/exec` leaves the org worker's Role in the same commit. Reason: `kube-rs` exec would need a wider permission, and the Open item already planned to remove it.
+- 4: `kube` 4.2.0 and `k8s-openapi` 0.28.0, pinned, with the version feature for the lowest supported Kubernetes, not "latest". Facts: kind nodes run 1.36.1 (the default node image of kind v0.32.0), and the last recorded GKE server is v1.35.8 (6d6b9ce48), so the feature is `v1_35`. Nothing pins kube 1.x: wasmCloud's workspace declares `kube = "1"` and `k8s-openapi = "0.25"`, but no wasmCloud crate uses them and `Cargo.lock` has neither.
+- 5: the identity service writes as a new seeded actor of its own, not `PlatformComponent::Provisioning`. Reason: each writer has one principal.
+- 6: fix all 28 clippy errors, so that clippy exits clean. These are fixes in existing code, not new tests.
