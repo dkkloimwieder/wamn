@@ -860,6 +860,22 @@ Merged to main on 2026-11-19 after review. The first kind run waits for D's appr
 - Before the first production customer: a PriorityClass for production environments, so production outranks dev. The environment values already accept `resources`, `nodeSelector`, `tolerations` and `affinity`.
 - First kind run: confirm that kind's CNI enforces NetworkPolicy, and that an environment's host cannot reach another environment's host, Postgres or Services.
 - `pg_walstream` runs from the fork `dkkloimwieder/pg-walstream` with two patches (typed keepalive, client certificate). The fork is wamn's own.
+- Before any real customer (second review, 2026-11-20, of 02c1a085):
+  - Pod security: `pod-security.kubernetes.io/enforce: restricted` on org namespaces, a `securityContext` on every wamn workload, and a non-root `USER` in the Dockerfile. Today a privileged pod in an org namespace would reach the node.
+  - The system database: a second instance, an ObjectStore and a ScheduledBackup. It holds the NATS operator and account keys and all users.
+  - Backups: one credential per org, scoped to that org's prefix or bucket. Today one credential reaches every org's backups.
+  - The org worker's rights: narrow its Role. Remove `pods/exec` together with `platform/control.rs::wait_administration`, its only user. Review NetworkPolicy, Role and all-Secret rights.
+  - Ingress policies in `platform` for NATS, the system database and the Poolers.
+  - Web reads ConfigMaps through a Role per org namespace, not a ClusterRole.
+  - NATS users for Jobs expire, and a revocation list exists.
+  - CAs come from cert-manager everywhere; no Helm `genCA` keys in release records.
+  - `platform.tx_identity` stamps: either state them as tamper-evident only within one project database, or bind the identity through a definer function.
+  - Org quotas count CPU and memory, with a LimitRange, and requests on control and the CDC reader.
+- After the first kind run:
+  - Plan doc cleanup: Part 1 keeps current rules only. Resolve its internal contradictions, and check each rule the second review marked contradicted against the code, fixing either the doc or the code. Example: control lives in the org chart (T1), not the platform chart.
+  - Fold the review's accidental-complexity items into 3.7 and 3.7b: the host route contract copies read only by tests, the `wamn-catalog` split, the duplicated operation and environment types, the `integration.*` route aliases, the leftovers in the application chart, the host shutdown code for the deleted queue, and the test support files with no `mod`.
+  - Charts: `enablePDB: false` for single-instance project clusters; delete the dropped `affinity` and `topologySpreadConstraints` host values, or render them.
+  - Check whether `crates/kubernetes/src/helm.rs::update_values` with `--reuse-values` is a read-back of Helm values, which is banned, and remove it if so.
 
 # Part 2: Review log
 
