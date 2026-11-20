@@ -43,12 +43,8 @@ pub async fn materialize_application_principals(
         .bind(project_env_key)
         .fetch_one(&mut *transaction)
         .await?;
-    sqlx::raw_sql(sqlx::AssertSqlSafe(
-        wamn_provision::bind_platform_principal_sql(PlatformComponent::Provisioning),
-    ))
-    .execute(&mut *transaction)
-    .await
-    .map(drop)?;
+    wamn_provision::bind_platform_principal(&mut transaction, PlatformComponent::Provisioning)
+        .await?;
     for package in &applications {
         let subject =
             wamn_catalog::resource_names::application_subject(project_env_key, &package.package.id);

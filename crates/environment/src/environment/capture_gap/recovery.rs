@@ -313,12 +313,10 @@ async fn provisioning_transaction(
 ) -> anyhow::Result<sqlx::Transaction<'_, sqlx::Postgres>> {
     use sqlx::Connection as _;
     let mut transaction = client.begin().await?;
-    sqlx::raw_sql(sqlx::AssertSqlSafe(
-        wamn_provision::bind_platform_principal_sql(
-            wamn_provision::PlatformComponent::Provisioning,
-        ),
-    ))
-    .execute(&mut *transaction)
+    wamn_provision::bind_platform_principal(
+        &mut transaction,
+        wamn_provision::PlatformComponent::Provisioning,
+    )
     .await?;
     Ok(transaction)
 }

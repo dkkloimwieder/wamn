@@ -98,7 +98,15 @@ impl ControlRoutes<'_> {
         let login = self.login(&target.project, env).await?;
         let mut client = wamn_postgres::connect(login).await?;
         let mut project = client.begin().await?;
-        sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1,'','',$2)").bind(caller).bind(&attachment.operation).execute(&mut *project).await?;
+        wamn_postgres::bind_transaction_identity(
+            &mut project,
+            caller,
+            "",
+            "",
+            Some(attachment.operation.as_str()),
+            None,
+        )
+        .await?;
         let mut source_client;
         let mut source_tx;
         let source = if operation == "connection.copy" {

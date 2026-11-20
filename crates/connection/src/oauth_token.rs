@@ -166,9 +166,7 @@ where
         .oauth_database(request.project, request.environment)
         .await?;
     let mut tx = database.begin().await?;
-    sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application) VALUES($1,'','')")
-        .bind(request.principal)
-        .execute(&mut *tx)
+    wamn_postgres::bind_transaction_identity(&mut tx, &request.principal, "", "", None, None)
         .await?;
     lock(&mut tx, request).await?;
     let stored = read_row(&mut tx, request.connection, envelope).await?;

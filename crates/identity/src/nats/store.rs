@@ -41,7 +41,7 @@ pub(super) async fn lock(tx: &mut Transaction<'_, Postgres>, scope: &str) -> Res
         .execute(&mut **tx)
         .await
         .map_err(database_error)?;
-    crate::session_keys::bind_provisioning(tx)
+    crate::session_keys::bind_identity_service(tx)
         .await
         .map_err(|source| Error::new("bind NATS key storage authority", source))
 }

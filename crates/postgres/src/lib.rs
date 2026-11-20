@@ -354,3 +354,6 @@ pub fn require_identity(
 }
 
 pub mod schema;
+
+mod transaction_identity;
+pub use transaction_identity::{bind_transaction_identity, transaction_identity_sql};

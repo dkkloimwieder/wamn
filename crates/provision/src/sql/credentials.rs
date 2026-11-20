@@ -78,6 +78,7 @@ pub fn grant_platform_surface_sql() -> String {
          GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA platform, catalog, wamn_run TO {role}; \
          GRANT SELECT, INSERT, UPDATE ON wamn_history.pruning_watermarks TO {role}; \
          REVOKE ALL ON platform.login_principal FROM {role}; \
+         GRANT EXECUTE ON FUNCTION platform.prune_tx_identity() TO {role}; \
          REVOKE DELETE ON platform.pat FROM {role}; \
          GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA wamn_authority TO {role}; \
          GRANT EXECUTE ON FUNCTION wamn_history.row_image(record), \

@@ -22,12 +22,10 @@ pub async fn reset_database(
     sqlx::raw_sql(crate::apply_package::LOCK_SQL)
         .execute(&mut *tx)
         .await?;
-    sqlx::raw_sql(sqlx::AssertSqlSafe(
-        wamn_provision::bind_platform_principal_sql(
-            wamn_provision::PlatformComponent::Provisioning,
-        ),
-    ))
-    .execute(&mut *tx)
+    wamn_provision::bind_platform_principal(
+        &mut tx,
+        wamn_provision::PlatformComponent::Provisioning,
+    )
     .await?;
     let mut migration = wamn_postgres::connect(migration_url).await?;
     let login = wamn_provision::migration::require_login(&mut migration).await?;

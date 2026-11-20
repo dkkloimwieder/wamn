@@ -90,12 +90,10 @@ pub async fn prune(
         .begin()
         .await
         .context("begin run history retention")?;
-    sqlx::raw_sql(sqlx::AssertSqlSafe(
-        wamn_provision::bind_platform_principal_sql(
-            wamn_provision::PlatformComponent::AuditRetention,
-        ),
-    ))
-    .execute(&mut *transaction)
+    wamn_provision::bind_platform_principal(
+        &mut transaction,
+        wamn_provision::PlatformComponent::AuditRetention,
+    )
     .await
     .context("bind retention principal")?;
     sqlx::query("SELECT set_config('search_path', $1, true)")

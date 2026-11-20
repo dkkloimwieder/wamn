@@ -807,8 +807,15 @@ impl ControlRoutes<'_> {
     ) -> Result<(), Refusal> {
         let logins = self.logins(environments).await?;
         let mut system = writer.begin().await?;
-        sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1,'','',$2)")
-            .bind(caller).bind(&attachment.operation).execute(&mut *system).await?;
+        wamn_postgres::bind_transaction_identity(
+            &mut system,
+            caller,
+            "",
+            "",
+            Some(attachment.operation.as_str()),
+            None,
+        )
+        .await?;
         wamn_identity::org::lock_membership(&mut system, principal, self.org).await?;
         let mut completed = Vec::new();
         for ((project, env), login) in environments.iter().zip(logins) {
@@ -865,14 +872,15 @@ impl ControlRoutes<'_> {
         project: Option<&wamn_registry::ProjectId>,
     ) -> Result<sqlx::Transaction<'c, sqlx::Postgres>, Refusal> {
         let mut transaction = writer.begin().await?;
-        sqlx::query(
-            "INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1,'','',$2)",
+        wamn_postgres::bind_transaction_identity(
+            &mut transaction,
+            caller,
+            "",
+            "",
+            Some(attachment.operation.as_str()),
+            None,
         )
-        .bind(caller)
-        .bind(&attachment.operation)
-        .execute(&mut *transaction)
-        .await
-        .map(|result| result.rows_affected())?;
+        .await?;
         if !self.admits(&mut transaction, caller, project).await? {
             return Err(denied(attachment));
         }
@@ -981,7 +989,15 @@ async fn write_application(
 
     let result = async {
         let mut transaction = client.begin().await?;
-        sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1,'','',$2)").bind(caller).bind(&attachment.operation).execute(&mut *transaction).await.map(|result| result.rows_affected())?;
+        wamn_postgres::bind_transaction_identity(
+            &mut transaction,
+            caller,
+            "",
+            "",
+            Some(attachment.operation.as_str()),
+            None,
+        )
+        .await?;
         require_platform_rows(&mut transaction).await?;
         project_authority(system, &mut transaction, target, principal, issuer).await?;
         transaction.commit().await?;
@@ -1005,14 +1021,15 @@ async fn write_status(
 
     let result = async {
         let mut transaction = client.begin().await?;
-        sqlx::query(
-            "INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1,'','',$2)",
+        wamn_postgres::bind_transaction_identity(
+            &mut transaction,
+            caller,
+            "",
+            "",
+            Some(attachment.operation.as_str()),
+            None,
         )
-        .bind(caller)
-        .bind(&attachment.operation)
-        .execute(&mut *transaction)
-        .await
-        .map(|result| result.rows_affected())?;
+        .await?;
         require_platform_rows(&mut transaction).await?;
         write_environment_status(&mut transaction, status).await?;
         transaction.commit().await?;

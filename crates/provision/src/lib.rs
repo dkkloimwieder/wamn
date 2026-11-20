@@ -30,7 +30,7 @@ pub use name::{
     project_env_database_name, project_env_key,
     project_env_namespace, project_env_secret_name, validate_project_env, validate_project_env_cdc,
 };
-pub use transaction_identity::bind_platform_principal_sql;
+pub use transaction_identity::{bind_platform_principal, bind_platform_principal_sql};
 /// The platform component list, for callers that bind a component as the actor.
 pub use wamn_identity_protocol::PlatformComponent;
 pub use workload_role::{

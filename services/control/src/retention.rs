@@ -12,11 +12,9 @@ async fn prune_identities(input: ConnectionInput<'_>) -> anyhow::Result<()> {
         sqlx::raw_sql("SET LOCAL statement_timeout = '5s'")
             .execute(&mut *transaction)
             .await?;
-        sqlx::query(
-            "DELETE FROM platform.tx_identity WHERE xid < pg_snapshot_xmin(pg_current_snapshot())",
-        )
-        .execute(&mut *transaction)
-        .await?;
+        sqlx::query("SELECT platform.prune_tx_identity()")
+            .execute(&mut *transaction)
+            .await?;
         wamn_connection::credential_cleanup::collect(&mut transaction).await?;
         transaction.commit().await?;
         Ok(())

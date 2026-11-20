@@ -8,6 +8,7 @@ license.workspace = true
 [dependencies]
 wamn-identity-protocol = { workspace = true, features = ["sqlx"] }
 postgres-protocol.workspace = true
+wamn-principal = { workspace = true, features = ["sqlx"] }
 url.workspace = true
 tokio = { workspace = true, features = ["fs"] }
 anyhow.workspace = true
