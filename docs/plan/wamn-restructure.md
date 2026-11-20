@@ -2431,6 +2431,9 @@ Facts:
 - K8: `bundle::select` takes the one pulled entry that holds `Chart.yaml`, and refuses zero or several. Cause: Helm 4.2.2 adds an empty `<chart>@sha256:<digest>` folder when it pulls by digest.
 - K9 (fixed by the agent under the standing rule): identity installs the aws-lc-rs rustls crypto provider at start (546ed2004).
 - K10: a project with no deployed schemas has no Publication and no CDC reader. `env apply` waits for the publication only when there are schemas, and the first deploy with models creates both through the deploy path. Cause: an empty `objects: []` was dropped by CloudNativePG, which then refused the Publication.
+- K11 (fixed by the agent): `org_values` writes the event stream policy again (e4320450d).
+- K12: control installs the aws-lc-rs rustls provider in `main`, like identity, cdc-reader and the CLI. Cause: the operation worker panicked on its first TLS connection to NATS.
+- K15 (fixed by the agent): a chart test gives the project chart its environment document (e2846d11f).
 
 **Ruled (D, 2026-11-19): preflight and smoke runs.**
 - Preflight, run before any kind install:
@@ -2442,5 +2445,6 @@ Facts:
 - During a run, collect every failing pod and its cause at each step before stopping, rather than stopping at the first.
 - Reason: the standard checks never built images, pulled images, sent objects to an API server or started a binary, so ten epics of runtime defects surfaced one per round in the first kind run.
 - During a run, the agent fixes a defect without asking when the fix stays inside one function or file, matches the rulings and patterns, and changes no schema, chart values contract, permission or security boundary, dependency or CLI. Each such fix is committed on its own and listed in the report for review afterwards. The agent stops only for design choices, the excluded areas, or a conflict with a ruling. Reason: most defects of the first kind run were small and local, and each one waited for D.
+- A dependency already in the workspace, added with `workspace = true` and no new crate, version or feature set beyond another member's, counts as no new dependency under the run rule.
 
 Epic 9 closed at 01bb4a1e2: review accepted, main fast-forwarded. The application record is 69,220 B on the 772-route wamn_wms fixture, a different fixture from the Epic 8 one, not growth. The slot cleanup connects to the postgres database, and the deadline for an unreachable database under --data is 10 s.
