@@ -253,7 +253,7 @@ Contract list (14.0), by tier:
 
 End of the epic: the standard checks (with `cargo xtask helm-size`), an apps host build with no link failures, `cargo xtask prepare-tests`, `cargo test --workspace`, the ignored run on a machine with Docker, the preflight and the short smoke run.
 
-Next: Epic 15 (step 3.8, third part): the journey harness (`cargo xtask journey-cluster`, a read-only observer login) and the journey tests on kind. The host contracts move there: the host's probes, signals, drain and NATS outage recovery; another project environment's credential is refused and never served; the request path, connection calls, workflows and Data change; the grant cache; result signing; the cold parse, the operation in the transaction and the write log claims; and any other session identity or write log contract that has no production function taking an open connection.
+Next: Epic 15 (step 3.8, third part): the journey harness (`cargo xtask journey-cluster`, a read-only observer login) and the journey tests on kind. The host contracts move there: the host's probes, signals, drain and NATS outage recovery; another project environment's credential is refused and never served; the request path, connection calls, workflows and Data change; the host scheduler user rights; the grant cache; result signing; the cold parse, the operation in the transaction and the write log claims; and any other session identity or write log contract that has no production function taking an open connection.
 
 ## Open items
 
@@ -317,6 +317,7 @@ Next: Epic 15 (step 3.8, third part): the journey harness (`cargo xtask journey-
 - "wiring" still names workflows (`WiringDocument`, `runs.wiring_id`, `catalog.workflows.wiring_hash`; about 213 hits). Rename with a schema change.
 - After the first kind run:
   - Charts: `enablePDB: false` for single-instance project clusters; delete the dropped `affinity` and `topologySpreadConstraints` host values, or render them.
+- An org login (control, apply) can INSERT `identity.principals`, and the policy checks only a bound identity, not the org. Least-privilege check: should these logins insert principals at all?
 - Crate graph review (2026-11-21). For one crate-graph epic after Epic 15.
   - The grant SQL leaves `wamn-identity` for `wamn-authentication`. The host uses `wamn_identity::application::OPERATION_GRANT_LOCK_SQL` and `GrantError` (`services/host/src/host/application_route.rs:21-80`). Authorization belongs with authorization, so identity stays replaceable by a SaaS provider.
   - The cloud metadata client (`wamn_oci::package_artifact::metadata::Metadata`) leaves `wamn-oci`. `wamn-envelope` uses it in `pod_identity.rs:9`, and that pulls the registry client into connection, authentication, operation, http, blobstore and the host.
@@ -2112,3 +2113,11 @@ Epic 13 closed on 2026-11-21 after review. cargo test --workspace: 603 passed. -
 - Question 10: the `watch_liveness` test stays as it is. Reason: the stop when the bound passes is already tested, and the new test covers the other half as far as std `Instant` allows.
 - Question 11: the cold parse, the operation in the transaction and every write log claim move to Epic 15. Reason: `commit_transaction` is `pub(super)`, and no public production function takes an open connection. It is not made public for tests, because that would be a test-only door.
 - `start_nats` comes back with its 14.2 caller. This matches the Epic 13 ruling, which deleted it only because it had no caller.
+
+**Ruled (D, 2026-11-21): Epic 14 questions 1 to 6.**
+- Question 1: the grant in `crates/provision/src/sql/credentials.rs::grant_platform_surface_sql` narrows from all functions in schema `wamn_authority` to the four `current_*` functions that the product calls. Only EXECUTE on the trigger function `check_identity_xid` goes. The check keeps deriving its list from the catalog, with no hand-written exception. Reason: least privilege, as in choice 11. This is a fourth permission change in 14.1, beside the three revokes of choice 11.
+- Question 2: `crates/environment/tests/app_generation_isolation_live.rs` is deleted. Reason: it tests two project databases on one server, a layout that production never runs, because each project database has its own Cluster.
+- Question 3: the three choices in the grant tests stand. The REFERENCES and trigger-function checks skip objects that the login owns. The superuser seeds the rows of the second org. `identity.principals` INSERT gets no cross-org probe, and an Open item asks whether org logins should insert principals at all.
+- Question 4: the host scheduler user rights move to Epic 15. The runtime-operator test stays. `template()` and `sign_host_user` are not made public for a test.
+- Question 5: the test may publish account JWTs on `$SYS.REQ.CLAIMS.UPDATE` with the bootstrap resolver credentials. Reason: it is the NATS resolver protocol, and the JWT comes from the public signing code.
+- Question 6: `cargo xtask helm-size` builds its environment in code. xtask depends on `wamn-engine` with the feature `wasm_component_model_implements`, the same as `services/cli`. `verify_package` runs admission, then the base pin check. Product code refuses `modbus_reader` and `platform_fixture_overlay`, so a read-only scout names the wrong side for each, with one bead per package. helm-size keeps failing on them until D rules, and it does not skip refused packages.
