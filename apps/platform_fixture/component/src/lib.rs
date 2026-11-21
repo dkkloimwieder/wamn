@@ -4,7 +4,10 @@
 )]
 
 //! One package-grain component exporting every platform fixture operation.
-#![expect(unsafe_code, reason = "wit-bindgen generated FFI glue")]
+#![cfg_attr(
+    target_arch = "wasm32",
+    expect(unsafe_code, reason = "wit-bindgen generated FFI glue")
+)]
 #[expect(
     dead_code,
     reason = "private data modules retain the complete generated and authored refusal vocabulary"
@@ -55,6 +58,7 @@ impl generated::widget_maker::get::Action for Component {}
 impl generated::widget_maker::query::Action for Component {}
 impl generated::widget_tag::update::Action for Component {}
 
+#[cfg(target_arch = "wasm32")]
 export!(Component);
 
 /// One declared detail member of a refusal, spelled as the typed exports read it.

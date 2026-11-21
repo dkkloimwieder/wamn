@@ -4,7 +4,10 @@
     clippy::same_length_and_capacity,
     reason = "wit-bindgen emits canonical ABI buffers with equal length and capacity"
 )]
-#![expect(unsafe_code, reason = "wit-bindgen generated FFI glue")]
+#![cfg_attr(
+    target_arch = "wasm32",
+    expect(unsafe_code, reason = "wit-bindgen generated FFI glue")
+)]
 wit_bindgen::generate!({
     path: [
         "../../../wit/wamn-integration",
@@ -24,6 +27,7 @@ use exports::modbus_reader::register::read as contract;
 use registers::{self as read_registers, Error};
 
 struct Application;
+#[cfg(target_arch = "wasm32")]
 export!(Application);
 
 mod operation {

@@ -3,7 +3,10 @@
     clippy::same_length_and_capacity,
     reason = "wit-bindgen emits equal length and capacity"
 )]
-#![expect(unsafe_code, reason = "wit-bindgen generated FFI glue")]
+#![cfg_attr(
+    target_arch = "wasm32",
+    expect(unsafe_code, reason = "wit-bindgen generated FFI glue")
+)]
 wit_bindgen::generate!({
     world: "netsuite:component/netsuite@0.1.0",
     path: [
@@ -21,6 +24,7 @@ use wamn::node::types::{ErrorDetail, NodeContext, NodeError};
 use wamn_integration::setting::write;
 
 struct Component;
+#[cfg(target_arch = "wasm32")]
 export!(Component);
 #[expect(dead_code, unused_imports, reason = "generated API subset")]
 mod finish_operation {
