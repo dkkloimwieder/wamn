@@ -4,6 +4,7 @@ mod bench;
 mod bench_cloud;
 mod bench_data;
 mod helm_size;
+mod journey_cluster;
 mod kind;
 mod measure_tx_identity;
 mod netsuite;
@@ -132,6 +133,8 @@ enum Task {
     KindClusterCreate,
     /// Render the charts, then check their images, arguments, and a server dry run on kind.
     Preflight(preflight::Args),
+    /// Install the local kind platform for journey tests and write their outputs file.
+    JourneyCluster(journey_cluster::Args),
     /// Delete a disposable kind cluster and inspect its resources.
     KindClusterDelete { cluster: String },
     /// Print the environment for an isolated checkout.
@@ -240,6 +243,7 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
         Task::DevCollector { root: output } => tasks::collector(&root, &output),
         Task::KindClusterCreate => kind::create_cluster(&root).await.map(drop),
         Task::Preflight(args) => preflight::run(&root, args).await,
+        Task::JourneyCluster(args) => journey_cluster::run(&root, args).await,
         Task::KindClusterDelete { cluster } => tasks::delete_cluster(&root, &cluster).await,
         Task::LaneStart {
             print_env,

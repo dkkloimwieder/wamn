@@ -6,11 +6,12 @@ use serde_json::Value;
 use std::net::Ipv4Addr;
 use std::path::Path;
 
-const CLUSTER: &str = "wamn-local";
+pub(crate) const CLUSTER: &str = "wamn-local";
 const REGISTRY_PORT: &str = "5001";
 const REGISTRY_NAME: &str = "wamn-registry";
 
 /// The registry address that the kind nodes and pods reach.
+#[derive(Debug)]
 pub(crate) struct RegistryEndpoint {
     pub(crate) address: String,
     pub(crate) port: u16,

@@ -7,23 +7,22 @@ license.workspace = true
 
 [dev-dependencies]
 wamn-package.workspace = true
-wamn-digest.workspace = true
 url.workspace = true
-wamn-oci = { workspace = true }
 anyhow.workspace = true
+serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls"] }
-tokio = { workspace = true, features = ["macros", "process", "rt-multi-thread", "time"] }
+tokio = { workspace = true, features = ["io-util", "macros", "net", "process", "rt-multi-thread", "time"] }
 uuid = { workspace = true, features = ["v4", "v7"] }
 wamn-routes.workspace = true
 wamn-identity-protocol.workspace = true
 wamn-http-client = { workspace = true, features = ["tls12"] }
-wamn-provision.workspace = true
-wamn-environment.workspace = true
 wamn-registry.workspace = true
-wamn-postgres.workspace = true
 wamn-test-infrastructure.workspace = true
 hyper = { workspace = true }
+# Port-forwards and pods/exec use the WebSocket transport, as in xtask.
+kube = { workspace = true, features = ["ws"] }
+k8s-openapi = { workspace = true }
 
 [lints]
 workspace = true
