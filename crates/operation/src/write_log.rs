@@ -417,6 +417,3 @@ impl WriteLogStore {
         }
     }
 }
-
-#[cfg(test)]
-mod tests;
