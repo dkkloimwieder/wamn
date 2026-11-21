@@ -35,6 +35,7 @@ use wamn_package::local_operation::LocalOperation;
 use wamn_registry::{OrgId, Triple};
 use wamn_test_infrastructure::scratch::ScratchRoot;
 
+pub mod host;
 mod routes;
 pub use routes::Routes;
 
