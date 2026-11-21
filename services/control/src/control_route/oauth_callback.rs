@@ -8,7 +8,7 @@ use super::oauth_authorization::{Authorization, callback_target};
 /// Answer only the exact callback path and GET method, without a session.
 pub async fn response(
     oauth: &Authorization,
-    directory: &std::path::Path,
+    logins: &crate::project_login::ProjectLogins,
     request: hyper::Request<WasiBody>,
 ) -> hyper::Response<WasiBody> {
     if request.uri().path() != "/oauth/callback" {
@@ -22,11 +22,7 @@ pub async fn response(
         Ok(target) => target,
         Err(error) => return page(400, &error.reason),
     };
-    let path = directory.join(wamn_registry::name::control_administration_key(
-        &project,
-        &environment,
-    ));
-    let Ok(login) = wamn_postgres::mounted_options(&path).await else {
+    let Ok(login) = logins.options(&project, &environment).await else {
         return page(503, "callback database unavailable");
     };
     let Ok(mut database) = wamn_postgres::connect(login).await else {

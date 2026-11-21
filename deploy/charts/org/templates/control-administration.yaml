@@ -1,7 +1,0 @@
-{{- if .Values.control.image }}
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: wamn-control-administration-{{ .Values.org }}
-  namespace: {{ .Values.org | quote }}
-{{- end }}

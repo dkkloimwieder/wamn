@@ -7,7 +7,7 @@
 //! Delete and drain the CDC reader before removing credentials or replication.
 //! Retire the host and remove the project stream before retiring broker credentials.
 //! Then remove the replication slot, Publication CR, and Database CR.
-//! Remove control logins and, with `--data`, the instance roles.
+//! With `--data`, remove the instance roles.
 //! Remove the credential store Secret and its account before the final transaction.
 //! That transaction removes connection references after external resources are gone.
 //! Delete the applied configuration with the environment row
@@ -24,14 +24,12 @@ mod rows;
 pub use rows::delete_registry_rows;
 
 use anyhow::{Context as _, bail};
-use k8s_openapi::api::core::v1::{ConfigMap, Secret};
-use kube::{Api, api::{Patch, PatchParams}};
+use k8s_openapi::api::core::v1::Secret;
+use kube::Api;
 use std::time::Duration;
 use wamn_provision::sql::drop_replication_slot_sql;
 
-use wamn_provision::{
-    cdc_object_name, control_administration_secret_name, project_env_database_name,
-};
+use wamn_provision::{cdc_object_name, project_env_database_name};
 use wamn_registry::{Triple, instance_suffix::InstanceSuffix, name};
 
 use super::Platform;
@@ -203,21 +201,6 @@ async fn delete_locked(
         lines.push(format!(
             "deleted the CDC reader of {triple} (or it was gone)"
         ));
-
-        // The environment's key of the org's control administration Secret.
-        let control = control_administration_secret_name(org);
-        let maps = Api::<ConfigMap>::namespaced(target.client.client(), namespace);
-        if maps.get_opt(&control).await?.is_some() {
-            let patch = serde_json::json!({"data": {
-                wamn_provision::control_administration_key(&triple.project, &triple.env): null
-            }});
-            maps.patch(&control, &PatchParams::default(), &Patch::Merge(patch))
-                .await
-                .with_context(|| {
-                    format!("remove the environment's key from ConfigMap {control}")
-                })?;
-            lines.push(format!("removed the environment's key of Secret {control}"));
-        }
 
         if let Some(broker) = super::broker::admin(platform, org, env).await? {
             let stream = name::stream_name(org, project, env);

@@ -6,7 +6,7 @@ pub use wamn_registry::identifiers::MAX_PROJECT_ID_LEN;
 pub use wamn_registry::name::{
     CDC_OBJECT_PREFIX, CDC_SECRET_PREFIX, DB_PREFIX, INSTANCE_SUFFIX_LEN,
     MAX_DB_NAME_LEN, MAX_NAMESPACE_LEN, MAX_NAMESPACE_STEM_LEN, NAMESPACE_PREFIX, cdc_object_name,
-    control_administration_key, control_administration_secret_name, cdc_reader_name,
+    cdc_reader_name,
     project_env_database_name, project_env_namespace, project_env_namespace_stem,
     project_env_secret_name,
 };

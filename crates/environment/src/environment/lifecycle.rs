@@ -259,10 +259,12 @@ async fn configure_project(
         "Cluster",
         "clusters",
     );
-    wait_named(&clusters, &cluster, Duration::from_secs(120), |object| {
-        Ok(object.filter(ready).map(drop))
+    let cluster_uid = wait_named(&clusters, &cluster, Duration::from_secs(120), |object| {
+        Ok(object.filter(ready).map(|object| object.metadata.uid))
     })
-    .await?;
+    .await?
+    .with_context(|| format!("Cluster {cluster} has no uid"))?;
+    copy_server_ca(target, &cluster, &connection.server_ca.name, cluster_uid).await?;
     installer::environment::wait_database_applied(
         &platform.target,
         &connection.database,
@@ -388,4 +390,52 @@ async fn reader_values(
         "database": capture,
         "natsUrl": platform.nats_url,
     }))
+}
+
+/// Copy only `ca.crt` of the cluster's server CA Secret into the ConfigMap
+/// that control reads. The Cluster owns the copy, so deleting it removes both.
+async fn copy_server_ca(
+    target: &wamn_kubernetes::Target,
+    cluster: &str,
+    source: &str,
+    cluster_uid: String,
+) -> anyhow::Result<()> {
+    use k8s_openapi::api::core::v1::{ConfigMap, Secret};
+    use k8s_openapi::apimachinery::pkg::apis::meta::v1::{ObjectMeta, OwnerReference};
+    use kube::{Api, api::{Patch, PatchParams}};
+
+    let secrets = Api::<Secret>::namespaced(target.client.client(), &target.namespace);
+    let pem = secrets
+        .get(source)
+        .await
+        .with_context(|| format!("read Secret {source}"))?
+        .data
+        .and_then(|mut data| data.remove("ca.crt"))
+        .with_context(|| format!("Secret {source} has no ca.crt"))?;
+    let name = name::project_server_ca_copy(cluster);
+    let copy = ConfigMap {
+        metadata: ObjectMeta {
+            name: Some(name.clone()),
+            namespace: Some(target.namespace.clone()),
+            owner_references: Some(vec![OwnerReference {
+                api_version: "postgresql.cnpg.io/v1".into(),
+                kind: "Cluster".into(),
+                name: cluster.into(),
+                uid: cluster_uid,
+                ..OwnerReference::default()
+            }]),
+            ..ObjectMeta::default()
+        },
+        data: Some([("ca.crt".into(), String::from_utf8(pem.0)?)].into()),
+        ..ConfigMap::default()
+    };
+    Api::<ConfigMap>::namespaced(target.client.client(), &target.namespace)
+        .patch(
+            &name,
+            &PatchParams::apply(wamn_kubernetes::client::APPLY_MANAGER),
+            &Patch::Apply(copy),
+        )
+        .await
+        .with_context(|| format!("apply ConfigMap {name}"))?;
+    Ok(())
 }

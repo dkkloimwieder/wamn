@@ -1,7 +1,7 @@
-//! Service administration selects one database from the org's administration map.
+//! Service administration selects one project database through its platform login.
 
 use wamn_package::canonical_name::CanonicalName;
-use anyhow::{Context as _, ensure};
+use anyhow::Context as _;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sqlx::Connection as _;
@@ -32,10 +32,6 @@ impl Execution {
         input.remove("env");
         let input = Value::Object(input);
         wamn_provision::validate_project_env(&self.org, &target.project, &target.env)?;
-        let key = wamn_provision::control_administration_key(&target.project, &target.env);
-        let login = wamn_postgres::ConnectionConfig::read(&self.administration.join(key))
-            .await
-            .context("read the project's administration login")?;
         let mut system = wamn_identity::transaction::read_pool(&self.control, caller).await?;
         let instance: wamn_registry::instance_suffix::InstanceSuffix = sqlx::query_scalar(
             "SELECT instance_suffix FROM registry.environment_projects WHERE org=$1 AND project=$2 AND env=$3",
@@ -55,20 +51,15 @@ impl Execution {
             None
         };
         system.commit().await?;
-        let expected = wamn_registry::name::project_env_database_name(
-            &self.org,
-            &target.project,
-            &target.env,
-            &instance,
-        );
-        ensure!(
-            login.database == expected,
-            "administration login names another project database"
-        );
-        let mut project =
-            wamn_postgres::connect(login.mounted_options(&self.administration).await?)
-                .await
-                .context("connect the project's administration login")?;
+        let triple = wamn_registry::Triple::new(self.org.clone(), target.env, target.project);
+        let login = self
+            .logins
+            .login(&triple, &instance)
+            .await
+            .context("read the project's administration login")?;
+        let mut project = wamn_postgres::connect(login)
+            .await
+            .context("connect the project's administration login")?;
         let mut transaction = project.begin().await?;
         if operation != "pat.list" {
             let sealed = wamn_package::operation_token(
@@ -98,14 +89,14 @@ impl Execution {
                 }
                 let request: Request = serde_json::from_value(input)?;
                 let domain = domain.as_ref().expect("service creation read the domain");
-                let key = wamn_registry::project_env_key(&self.org, &target.project, &target.env);
+                let key = wamn_registry::project_env_key(&self.org, &triple.project, &triple.env);
                 let token = api_service::create(
                     &mut transaction,
                     &key,
                     domain,
                     &api_service::Request {
                         org: &self.org,
-                        project: &target.project,
+                        project: &triple.project,
                         name: &request.name,
                         display_name: &request.display_name,
                         roles: &request.roles,

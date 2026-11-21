@@ -12,8 +12,8 @@
 //!
 //! A write that changes administrative authority or membership also changes the
 //! application rows of each environment it covers, with the environment's
-//! `wamn_platform` login from the mounted Secret
-//! `wamn-control-administration-<org>`, one transaction per environment
+//! `wamn_platform` login, built at login from the registry, one transaction
+//! per environment
 //! (docs/architecture/overview.md#organization-membership-and-administration).
 //! Every authority mutation commits system state first. Projection then locks
 //! the org membership and reads current authority before each application write.
@@ -47,7 +47,6 @@ pub(crate) mod oauth_callback;
 pub(crate) mod operations;
 pub(crate) mod users;
 
-use std::path::Path;
 use std::time::Duration;
 
 use anyhow::Context as _;
@@ -73,7 +72,6 @@ use wamn_identity::{IdentityError, IdentityRefusal};
 use wamn_identity_client::users::UserClient;
 use wamn_identity_protocol::PrincipalId;
 use wamn_postgres::ConnectionInput;
-use wamn_provision::control_administration_key;
 
 use crate::Writer;
 
@@ -166,9 +164,8 @@ pub(crate) struct ControlRoutes<'a> {
     /// The identity adapter for user management.
     pub(crate) identity: Option<&'a UserClient>,
     pub(crate) issuer: &'a str,
-    /// The mounted Secret of the org's administration logins, one file per
-    /// environment.
-    pub(crate) administration: Option<&'a Path>,
+    /// The `wamn_platform` login of each project environment.
+    pub(crate) logins: &'a crate::project_login::ProjectLogins,
     /// The runtime reader selected by the host mode.
     pub(crate) status: &'a dyn crate::environment_status::StatusSource,
     pub(crate) registry_token_metadata: bool,
@@ -743,17 +740,12 @@ impl ControlRoutes<'_> {
         project: &wamn_registry::ProjectId,
         env: &wamn_registry::EnvName,
     ) -> Result<ConnectionInput<'static>, Refusal> {
-        let directory = self.administration.ok_or_else(|| {
-            Refusal::Failed(anyhow::anyhow!(
-                "the control host has no administration logins"
-            ))
-        })?;
-        let path = directory.join(control_administration_key(project, env));
-        wamn_postgres::mounted_options(&path)
+        self.logins
+            .options(project, env)
             .await
             .map(ConnectionInput::from)
             .map_err(|error| {
-                tracing::warn!(%error, path = %path.display(), "no administration login");
+                tracing::warn!(error = format!("{error:#}"), %project, %env, "no administration login");
                 incomplete(project, env, &[])
             })
     }

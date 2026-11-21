@@ -7,6 +7,7 @@ mod execution;
 pub mod first_owner;
 mod host_route;
 pub mod platform;
+mod project_login;
 pub mod retention;
 mod worker;
 mod writer;
@@ -28,7 +29,6 @@ use wamn_identity_client::users::UserClient;
 pub use writer::Writer;
 
 const HTTP_PORT: u16 = 80;
-const ADMINISTRATION_DIR: &str = "/etc/wamn/control-administration";
 const REGISTRY_AUTH_FILE: &str = "/credentials/registry/config.json";
 const IDENTITY_CA: &str = "/etc/identity-ca/ca.crt";
 const OAUTH_KEY: &str = "/etc/wamn/oauth/key";
@@ -182,7 +182,11 @@ pub async fn serve(config: Configuration) -> anyhow::Result<()> {
     let writer = wait_for_system_schema(&database).await?;
     // Keep three pooled connections alongside the dedicated writer.
     let pool = wamn_postgres::pool(&database, 3).await?;
-    let identity_databases = Path::new(ADMINISTRATION_DIR);
+    let logins = Arc::new(project_login::ProjectLogins::new(
+        wamn_kubernetes::client::KubernetesApi::in_cluster()?,
+        pool.clone(),
+        config.org.clone(),
+    ));
     let verifier = wamn_authentication::access_token::AccessTokenVerifier::new(
         &config.identity_issuer,
         &format!(
@@ -221,7 +225,7 @@ pub async fn serve(config: Configuration) -> anyhow::Result<()> {
                 Path::new(IDENTITY_CA),
             )?),
             issuer: config.identity_issuer,
-            administration: Some(ADMINISTRATION_DIR.into()),
+            logins: Arc::clone(&logins),
             status: Arc::new(crate::environment_status::KubernetesSource),
             org: config.org.clone(),
         })
@@ -229,7 +233,7 @@ pub async fn serve(config: Configuration) -> anyhow::Result<()> {
         .with_control_execution(Arc::new(execution::Execution {
             org: config.org.clone(),
             worker: worker.clone(),
-            administration: ADMINISTRATION_DIR.into(),
+            logins: Arc::clone(&logins),
             control: pool,
             registry_token_metadata: config.registry_token_metadata,
         }))
@@ -241,16 +245,16 @@ pub async fn serve(config: Configuration) -> anyhow::Result<()> {
         )))
         .with_oauth(oauth.as_ref().map(Arc::clone)),
     );
-    let callback_databases = Arc::new(PathBuf::from(ADMINISTRATION_DIR));
     let listener =
         tokio::net::TcpListener::bind(SocketAddr::from(([0, 0, 0, 0], HTTP_PORT))).await?;
     let mut maintenance = tokio::task::JoinSet::new();
+    let retention_logins = Arc::clone(&logins);
     maintenance.spawn(async move {
         let mut ticks = tokio::time::interval(std::time::Duration::from_secs(60));
         ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             ticks.tick().await;
-            if let Err(error) = retention::identities(identity_databases).await {
+            if let Err(error) = retention::identities(&retention_logins).await {
                 tracing::warn!(%error, "transaction identity retention failed");
             }
         }
@@ -268,16 +272,16 @@ pub async fn serve(config: Configuration) -> anyhow::Result<()> {
                 let (stream, _) = accepted?;
                 let handlers = Arc::clone(&handlers);
                 let oauth = oauth.as_ref().map(Arc::clone);
-                let callback_databases = Arc::clone(&callback_databases);
+                let logins = Arc::clone(&logins);
                 connections.spawn(async move {
                     let service = hyper::service::service_fn(move |request: hyper::Request<hyper::body::Incoming>| {
                         let handlers = Arc::clone(&handlers);
                         let oauth = oauth.as_ref().map(Arc::clone);
-                        let callback_databases = Arc::clone(&callback_databases);
+                        let logins = Arc::clone(&logins);
                         async move {
                             let request = request.map(|body| body.map_err(wasmtime_wasi_http::Error::from).boxed_unsync());
                             let response = if request.uri().path() == "/oauth/callback" && let Some(oauth) = oauth {
-                                control_route::oauth_callback::response(&oauth, &callback_databases, request).await
+                                control_route::oauth_callback::response(&oauth, &logins, request).await
                             } else { handlers.http(request).await };
                             Ok::<_, std::convert::Infallible>(response)
                         }

@@ -166,17 +166,9 @@ pub fn project_env_secret_name(
     project_env_database_stem(org, project, env)
 }
 
-/// The Secret of an org's control host that holds the administration login of
-/// every environment of the org (docs/plan/platform-ui.md §4.4):
-/// `wamn-control-administration-<org>`.
-pub fn control_administration_secret_name(org: &crate::OrgId) -> String {
-    format!("wamn-control-administration-{org}")
-}
-
-/// The key of one environment in [`control_administration_secret_name`]:
-/// `<env>--<project>`, the file name the mounted Secret shows.
-pub fn control_administration_key(project: &crate::ProjectId, env: &crate::EnvName) -> String {
-    format!("{env}--{project}")
+/// The ConfigMap that holds only the `ca.crt` of a project cluster's server CA.
+pub fn project_server_ca_copy(cluster: &str) -> String {
+    format!("{cluster}-ca-crt")
 }
 
 /// The per-project-env Kubernetes namespace:

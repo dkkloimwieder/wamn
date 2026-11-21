@@ -47,9 +47,8 @@ pub struct HostRouteHandlers {
     pub identity: Option<UserClient>,
     /// The configured identity issuer address used for project user rows.
     pub issuer: String,
-    /// The mounted Secret `wamn-control-administration-<org>`: one file
-    /// per environment that holds its administration login.
-    pub administration: Option<std::path::PathBuf>,
+    /// The `wamn_platform` login of each project environment.
+    pub(crate) logins: Arc<crate::project_login::ProjectLogins>,
     /// The runtime status source selected by the serving mode.
     pub status: Arc<dyn crate::environment_status::StatusSource>,
     pub org: wamn_registry::OrgId,
@@ -168,7 +167,7 @@ impl HostRouteDelivery {
             writer,
             identity,
             issuer,
-            administration,
+            logins,
             status,
             org,
         } = &self.handlers;
@@ -226,7 +225,7 @@ impl HostRouteDelivery {
                     writer,
                     identity: identity.as_ref(),
                     issuer,
-                    administration: administration.as_deref(),
+                    logins,
                     status: status.as_ref(),
                     operation_jobs: self.operation_jobs.as_ref(),
                     worker: self.worker.as_ref(),
