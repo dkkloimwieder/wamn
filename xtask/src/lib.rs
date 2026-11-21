@@ -10,6 +10,7 @@ mod process;
 mod repo_policy;
 mod submodule_pins;
 mod tasks;
+mod test_changes;
 
 use clap::{Parser, Subcommand};
 use std::path::{Path, PathBuf};
@@ -95,6 +96,11 @@ enum Task {
     },
     /// Require a passing, nonempty libtest result.
     RequireTestResult(process::TestArgs),
+    /// Print Cargo test commands for packages affected by a Git diff.
+    TestChanges {
+        #[arg(long)]
+        base: String,
+    },
     /// Run repository formatting, Clippy, and policy checks.
     RepoLint(tasks::RunArgs),
     /// Generate or check the authored environment JSON Schema.
@@ -207,6 +213,7 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
             scale,
         } => bench_data::app_result(&work, &output, &http, edge, scale),
         Task::RequireTestResult(args) => process::require(&std::env::current_dir()?, &args).await,
+        Task::TestChanges { base } => test_changes::run(&root, &base),
         Task::RepoLint(args) => tasks::lint(&root, args.mode).await,
         Task::EnvironmentSchema { check } => repo_policy::environment_schema(&root, check),
         Task::RepoLintDependencies => tasks::dependencies(&root).await,
