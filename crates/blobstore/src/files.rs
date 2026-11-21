@@ -666,6 +666,7 @@ impl FileStore {
 
 #[cfg(test)]
 mod tests {
+    use super::super::store::test_binding::admitted;
     use super::*;
     use object_store::{ObjectStore, memory::InMemory, path::Path};
     use std::{
@@ -678,7 +679,7 @@ mod tests {
 
     fn store(read_only: bool, cdn: Option<&str>) -> (FileStore, Arc<InMemory>) {
         let backend = Arc::new(InMemory::new());
-        let bound = BoundContainer::for_test(
+        let bound = admitted(
             Arc::clone(&backend) as Arc<dyn ObjectStore>,
             "bucket",
             "project/app/",
@@ -1034,7 +1035,7 @@ mod tests {
             )))
         }
     }
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn failed_and_cancelled_bodies_leave_no_committed_object() {
         let (files, backend) = store(false, None);
         let too_large =
@@ -1270,7 +1271,7 @@ mod tests {
     async fn expose_and_sign_use_head_and_repair_only_a_missing_live_object() {
         for missing_live in [false, true] {
             let backend = Arc::new(MetadataOnlyStore::default());
-            let bound = BoundContainer::for_test(
+            let bound = admitted(
                 Arc::<MetadataOnlyStore>::clone(&backend),
                 "bucket",
                 "project/app",
@@ -1350,7 +1351,7 @@ mod tests {
         backend
             .fail_head
             .store(true, std::sync::atomic::Ordering::SeqCst);
-        let bound = BoundContainer::for_test(
+        let bound = admitted(
             Arc::<MetadataOnlyStore>::clone(&backend),
             "bucket",
             "project/app",

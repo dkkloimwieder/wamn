@@ -1,4 +1,4 @@
-//! HTTP boundary fixtures shared with invocation tests.
+//! HTTP boundary fixtures for this crate's unit tests.
 use crate::bindings::wamn::connection::http::{Header, Request};
 pub fn interface_address() -> std::net::IpAddr {
     let socket = std::net::UdpSocket::bind("0.0.0.0:0").expect("address selection socket");

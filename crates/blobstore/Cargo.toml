@@ -5,9 +5,6 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
-[features]
-test-util = ["wamn-authority/test-util", "wamn-operation/test-util"]
-
 [dependencies]
 wamn-package.workspace = true
 wamn-connection-type.workspace = true
@@ -40,11 +37,9 @@ wamn-registry = { workspace = true }
 wash-runtime = { workspace = true }
 
 [dev-dependencies]
+wamn-authentication.workspace = true
 wamn-postgres.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
-wamn-blobstore = { path = ".", features = ["test-util"] }
-wamn-oci = { workspace = true, features = ["test-util"] }
-wamn-test-postgres = { workspace = true }
 
 [lints]
 workspace = true

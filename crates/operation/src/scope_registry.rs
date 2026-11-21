@@ -37,9 +37,8 @@ pub struct Authority {
 
 impl wamn_engine::invocation_scope::InvocationAuthority for Authority {}
 
-/// Register the project_env_key identity for a component id. The bench harness calls
-/// this directly; the host path feeds it from workload bind.
-pub fn set_project_env_key(
+/// Register the project_env_key identity for a component id from workload bind.
+pub(crate) fn set_project_env_key(
     scopes: &InvocationScopes,
     component_id: &str,
     project_env_key: &wamn_registry::ProjectEnvKey,
@@ -181,49 +180,19 @@ pub fn invocation(scopes: &InvocationScopes, component_id: &str) -> Option<Conne
     wamn_connection::invocation::invocation(scopes, component_id)
 }
 
-pub(super) fn write_session_identity(
-    scopes: &InvocationScopes,
-    component_id: &str,
-    identity: &SessionIdentity,
-) -> anyhow::Result<()> {
-    validate_identity(identity)?;
-    scopes
-        .read::<wamn_connection::invocation::Scope, _>(component_id, |record| {
-            record
-                .context
-                .as_ref()
-                .map(|context| validate_context(identity, context))
-                .transpose()
-        })
-        .transpose()?;
-    scopes.update::<Authority, _>(component_id, |record| {
-        record.identity = identity.clone();
-        record.causation = None;
-    });
-    Ok(())
-}
-
 /// Read back the identity set one component id currently resolves to.
 ///
 /// `None` is the base denial policy: no project_env_key is bound, so
 /// [`require_project_env_key`] refuses every call made under
 /// this id. That is what an idle, never-acquired execution instance must
 /// report, and it is the read half of the checkout-identity seam — the pair
-/// this and [`crate::OperationHost::bind_session_identity`] form is what
-/// lets a test assert that two concurrent acquisitions never share one
-/// identity.
+/// this and what [`crate::invocation::AuthorizedInvocation::enter`] writes
+/// is what lets a test assert that two concurrent acquisitions never share
+/// one identity.
 pub fn session_identity(scopes: &InvocationScopes, component_id: &str) -> Option<SessionIdentity> {
     scopes
         .read::<Authority, _>(component_id, |record| record.identity.clone())
         .filter(|identity| identity.project_env_key.is_some())
-}
-
-/// End SQL authority while retaining the invocation's result-signing authority.
-pub fn revoke_session_identity(scopes: &InvocationScopes, component_id: &str) {
-    scopes.update_existing::<Authority, _>(component_id, |record| {
-        record.identity = SessionIdentity::default();
-        record.causation = None;
-    });
 }
 
 pub(super) fn require_project_env_key(

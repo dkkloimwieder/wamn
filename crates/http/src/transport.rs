@@ -80,13 +80,7 @@ impl HttpTransport {
         Ok(Self::from_tls(tls))
     }
 
-    /// Use a private trust root in local TLS tests.
-    #[cfg(any(test, feature = "test-util"))]
-    pub fn with_tls_config(tls: rustls::ClientConfig) -> Self {
-        Self::from_tls(tls)
-    }
-
-    fn from_tls(mut tls: rustls::ClientConfig) -> Self {
+    pub(crate) fn from_tls(mut tls: rustls::ClientConfig) -> Self {
         tls.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
         Self {
             inner: Arc::new(Inner { tls: Arc::new(tls) }),

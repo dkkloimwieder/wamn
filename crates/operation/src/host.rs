@@ -6,9 +6,9 @@ use std::sync::Arc;
 use anyhow::Context as _;
 use wamn_authentication::authorization::Authorization;
 use wamn_identity_protocol::AuthorityClass;
-use wamn_postgres::{DEFAULT_PROJECT, WamnPostgres};
+use wamn_postgres::WamnPostgres;
 
-use crate::{SessionIdentity, scope_registry, transactions};
+use crate::transactions;
 
 /// Host plugin for guest and native operations over PostgreSQL.
 pub struct OperationHost {
@@ -76,33 +76,6 @@ impl OperationHost {
             .execute(&mut connection)
             .await?;
         Ok(connection)
-    }
-
-    /// Bind workload identity and verify that its executing principal is provisioned.
-    /// An absent optional member clears that member's previous authority.
-    pub async fn bind_session_identity(
-        &self,
-        component_id: &str,
-        identity: &SessionIdentity,
-    ) -> anyhow::Result<()> {
-        scope_registry::write_session_identity(&self.scopes, component_id, identity)?;
-        // An acquisition that names no principal reads nothing. The
-        // record-history triggers already refuse such a write with
-        // actor-required.
-        if let Some(user_id) = identity.user_id.as_ref() {
-            let project = identity.project.as_ref().unwrap_or(&DEFAULT_PROJECT);
-            wamn_authentication::authorization::require_provisioned_principal(
-                &self.pools,
-                identity
-                    .project_env_key
-                    .as_ref()
-                    .context("project environment identity is absent")?,
-                project,
-                user_id,
-            )
-            .await?;
-        }
-        Ok(())
     }
 
     /// Release every scope owned by a stopped workload.

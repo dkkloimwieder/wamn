@@ -17,10 +17,6 @@ pub struct PrincipalGrants {
     pub roles: BTreeMap<String, BTreeSet<String>>,
 }
 
-/// Live auth-cache fixtures shared by writer tests.
-#[cfg(any(test, feature = "test-util"))]
-pub mod test_util;
-
 /// The caller of a run that executes as `principal_id` with `role` active,
 /// from the roles the principal `held` with their permissions: the
 /// permissions of `role` only, and `admin` only when `role` is `admin`. None

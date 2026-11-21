@@ -5,15 +5,10 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
-[features]
-test-util = ["dep:opentelemetry_sdk", "dep:tracing-subscriber"]
-
 [dependencies]
 wamn-package = { workspace = true, features = ["sqlx"] }
 wamn-connection-type.workspace = true
 wamn-digest.workspace = true
-opentelemetry_sdk = { workspace = true, features = ["trace", "testing"], optional = true }
-tracing-subscriber = { workspace = true, optional = true }
 anyhow = { workspace = true }
 async-nats = { workspace = true, features = ["jetstream", "kv"] }
 futures-util = { workspace = true }
@@ -32,8 +27,6 @@ wamn-registry = { workspace = true }
 wash-runtime = { workspace = true }
 
 [dev-dependencies]
-wamn-authority = { path = ".", features = ["test-util"] }
-
 hyper = { workspace = true, features = ["server"] }
 opentelemetry_sdk = { workspace = true, features = ["trace", "testing"] }
 tokio = { workspace = true, features = ["test-util"] }
