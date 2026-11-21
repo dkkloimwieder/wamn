@@ -1105,7 +1105,7 @@ The [key cache](../../crates/authentication/src/access_token.rs) and [key owner]
 
 ## Operator clients
 
-The [client contract](../../crates/codegen/src/client_ir.rs) describes operations and fields from compiled declarations.
+The [client fields](../../crates/codegen/src/client_fields.rs) describe the fields of each operation from compiled declarations.
 Operation types come from the manifest.
 Record links come from declared relations, keys, and compatible reads.
 The generator never guesses a record from a field name ending in `_id`.

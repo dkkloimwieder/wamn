@@ -51,7 +51,6 @@ See [database tests](database-tests.md#record-history) for the fixture rules and
 
 ## Operator outcomes
 
-Use the [projection tests](../../crates/codegen/tests/client_projection.rs) for declared bindings and screen coverage.
 The [web runtime tests](../../web/runtime/test/classification.test.ts) test response outcomes.
 
 The local component and PostgreSQL journey sends Acme receipts through the published route.
