@@ -229,32 +229,29 @@ Phase 1 deletion, phase 2 restructure (no behaviour change), phase 3 code editin
 
 Phase 3 steps, in dependency order: 3.1 database model; 3.2 request path (workloads, connections, files, integrations and application host routes); 3.3 identity; 3.4 workflow service; 3.5 deploy; 3.6 isolation, then install; 3.7 codegen; 3.7b crate boundaries; 3.8 tests.
 
-## Epic 14: step 3.8, service tests
+## Epic 15: step 3.8, journey tests on kind
 
-Rule: one service test per contract. Service tests call product library code with real Postgres and NATS containers. The host is not started in tests. No new product behaviour.
+Rule: journey tests run on local kind through product commands, observed with a read-only login. Each test has its own org and environment. No new product behaviour.
 
 Issues:
 
-14.0 Plan, doc only, done first. Record the rulings and the contract list below. After 14.0, the other issues run in parallel.
+15.0 Plan, doc only, done first. Record the rulings and the journey contract list from the scout: each contract moved to the journey tier, with the test that will cover it.
 
-14.1 Grant tests in `wamn-test-sql`. Cross-org RLS: a second org (globex) from the public `create_org_logins`, the tables from `pg_policies` and the statements from `has_*_privilege`, with 0 rows, 42501 or 23514 for each acme login and a positive control for each probe. REFERENCES: `has_table_privilege` and `has_any_column_privilege` return no REFERENCES rows for each restricted login. Functions: the full catalog query, with aggregates, trigger functions and pseudo-typed arguments. Extension functions are listed apart, and the test checks that the installed extensions are exactly the production list. PUBLIC EXECUTE is revoked on `registry.retire_project_env`, `wamn_run.guard_event_lineage_immutable` and `wamn_run.guard_run_admission_pins_immutable`. The four tests that build an app login per generation by hand are fixed here if they disagree with the five fixed logins.
+15.1 Harness. `cargo xtask journey-cluster` creates or reuses the local kind cluster and its registry (`xtask/src/kind.rs`), then runs `wamn platform deploy`. `cargo xtask preflight` runs the preflight steps as one command: the charts render, the images resolve, the containers accept their arguments, and the server dry run. The observer uses a real read-only login, which replaces `tests/journeys/tests/common/mod.rs::observer`. Each test makes its own org and environment with `wamn org create` and `wamn env apply`. A test whose input is missing fails. 15.1 comes first after 15.0.
 
-14.2 NATS isolation service tests. A NATS container from the production digest, configured from the rendered platform chart. Accounts and users are signed by `wamn_identity::nats::bootstrap` and the other public signing code, with fresh keys per test. No host, no identity service and no copy of product code. Tests: one account per environment and no cross-account traffic, the scheduler user rights (subscribe and publish lists), and the account limits.
+15.2 Smoke as a test. The short path becomes the first journey test: `wamn org create`, owner enrollment and session, `wamn env apply`, one application deploy, and one call to the application and one to control through web, with 401 without a token and 200 with one. The end-of-epic smoke run is then `cargo test -p wamn-journey-tests -- --ignored`.
 
-14.3 Tests with Postgres only, and unit tests. Session identity and the write log, only through production functions that take an open connection. `login_principal` resolution, the credential tables with no app or query grant, and the refusal of a removed sibling. Unit tests: the `plan.rs::roles` refusals, `valid_route_host`, the grant cache, `access_token.rs`, `browser_session.rs`, `result_signing.rs` and the 256 MiB account limit. The stays-alive half of a NATS outage: a paused-clock unit test on `lifecycle.rs::watch_liveness`. The database installers move from `test-support/sql/tests/common/` into `wamn-test-infrastructure`.
+15.3 Host contracts: probes, signals, drain and NATS outage recovery; the host scheduler user rights; the grant cache; result signing (`operation.rs::sign_result`, `Files::sign`); and startup order, if the runtime-operator and invitation Job restarts repeat.
 
-14.4 Tooling. `cargo xtask helm-size` checks every package under `apps/*/wamn.k` and fails when a release record is over 1 MiB. The manifest step moves into one public `wamn-publish` function that xtask calls. The guests in the apps workspace use the `cfg(target_arch = "wasm32")` pattern of `ingress`, so the host build has no link failures.
+15.4 Request path: another environment's credential is refused and never served; session identity (the cold parse, the operation in the transaction, no identity on a pooled connection, the bound application); the write log claims (commit and rollback, a competing claim waits, a lost session refuses, known results finish at host commit, unfinished claims have a call bound, and claims accept late completion and expire under retention); connection calls; Data change for `client_acme_receiving` (K24); and only the workflow behaviour that exists today.
 
-Contract list (14.0), by tier:
-- Service, Postgres: cross-org RLS, REFERENCES and function EXECUTE (14.1). Session identity and the write log through functions that take an open connection, `login_principal` resolution, the credential tables, and the refusal of a removed sibling (14.3).
-- Service, NATS: one account per environment, no cross-account traffic, the scheduler user rights and the account limits (14.2).
-- Unit: the `plan.rs::roles` refusals, `valid_route_host`, the grant cache, `access_token.rs`, `browser_session.rs`, `result_signing.rs`, the 256 MiB account limit and `watch_liveness` (14.3).
-- Tests that exist and stay: first insert wins (`test-support/sql/tests/project.rs::app_login_refusals`), SECURITY DEFINER (`crates/provision/tests/platform_logins_grants.rs`), no `project_env_key` (`crates/postgres/tests/project_schema.rs`), address pinning (`crates/authority/tests/connection_authority.rs`), web retry (`services/web/src/rollout_tests.rs`), cron (`services/host/src/host/workflow/schedule.rs`) and the drain order (`services/host/src/host/commands.rs`).
-- Journey: every contract of wamn-host, and the rest of Part 1. They come in Epic 15.
+15.2, 15.3 and 15.4 run in parallel on the 15.1 harness.
 
-End of the epic: the standard checks (with `cargo xtask helm-size`), an apps host build with no link failures, `cargo xtask prepare-tests`, `cargo test --workspace`, the ignored run on a machine with Docker, the preflight and the short smoke run.
+Contracts that move here from Epic 14: the host's probes, signals, drain and NATS outage recovery; another project environment's credential is refused and never served; the request path, connection calls, workflows and Data change; the host scheduler user rights; the grant cache; result signing; the cold parse, the operation in the transaction and the write log claims; and any other session identity or write log contract that has no production function taking an open connection.
 
-Next: Epic 15 (step 3.8, third part): the journey harness (`cargo xtask journey-cluster`, a read-only observer login) and the journey tests on kind. The host contracts move there: the host's probes, signals, drain and NATS outage recovery; another project environment's credential is refused and never served; the request path, connection calls, workflows and Data change; the host scheduler user rights; the grant cache; result signing; the cold parse, the operation in the transaction and the write log claims; and any other session identity or write log contract that has no production function taking an open connection.
+End of the epic: the standard checks, `cargo test --workspace`, the ignored run, `cargo xtask preflight`, and `cargo test -p wamn-journey-tests -- --ignored` on kind.
+
+Next: Epic 16 (step 3.8, fourth part): rollback, env delete, apply again and env delete --data; NetworkPolicy and isolation between environments; the Pooler per-login limits under load. Then the crate graph epic.
 
 ## Open items
 
@@ -262,7 +259,7 @@ Next: Epic 15 (step 3.8, third part): the journey harness (`cargo xtask journey-
 - The HTTP client cache key by invocation scope, target, connection ID and generation is not built.
 - `registry.connection_principal` is not built. Project connection rows carry the principal ID.
 - Deferred: the edge device after the restructure; the four workflow behaviours.
-- Journey tests on kind, deferred from the first kind run: rollback, `env delete`, apply again, and `env delete --data` after a plain delete; the Data change check for `client_acme_receiving` (K24); the 10.13 per-pod scheduler users beyond host start; the Pooler per-login limits and waits under load; that kind's CNI enforces NetworkPolicy, and that an environment's host cannot reach another environment's host, Postgres or Services.
+- Journey tests on kind, deferred from the first kind run. Epic 15: the Data change check for `client_acme_receiving` (K24) and the 10.13 per-pod scheduler users beyond host start. Epic 16: rollback, `env delete`, apply again, and `env delete --data` after a plain delete; the Pooler per-login limits and waits under load; that kind's CNI enforces NetworkPolicy, and that an environment's host cannot reach another environment's host, Postgres or Services.
 - Health probes for wasm integration types: `connection_test` cannot run integration code outside an application workload. To be designed.
 - Edge device design: plant-network devices such as Modbus run at the edge, and the edge runtime gets its own address rule. A cloud integration that needs a private address (a customer network linked by VPN) is decided when a real case appears.
 - Native integration types (for example the NetSuite ODBC driver) are native Rust host plugins compiled into the wamn host, as wasmCloud advises for drivers with no WASI binding. Decide this when the first one is built.
@@ -2132,3 +2129,8 @@ Epic 13 closed on 2026-11-21 after review. cargo test --workspace: 603 passed. -
 - The cause of the 606 s run is known. That run compiled the test binaries, ran beside build-platform, and went through the kache test runner on a busy machine. On an idle machine, `cargo test --workspace` takes 59 s after a 71 s build.
 
 Epic 14 closed on 2026-11-21 after review. cargo test --workspace: 617 passed in 59 s on an idle machine. --ignored: 101 passed. helm-size passes on all 12 packages. The apps host build has no link failures. The smoke run on kind passed.
+
+**Ruled (D, 2026-11-21): Epic 15 scope (step 3.8, third part).**
+- Q1: the harness creates a role with SELECT only, through the system admin, in the kind cluster only. Reason: it is test setup in a test cluster. A product read-only login would be a new feature, and the old SET ROLE observer broke the F4 ruling.
+- Q2: one cluster per run, with its own org and environment per test. Reason: tests run in parallel, and this exercises T1: adding an org restarts nothing shared.
+- Q3: 3.8 splits again. Epic 15 is the harness, smoke as a test, the host contracts and the request path. Epic 16 is lifecycle, isolation and load. Reason: load and network tests are the most likely to fail on a laptop cluster.
