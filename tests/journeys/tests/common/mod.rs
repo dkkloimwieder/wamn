@@ -379,25 +379,6 @@ impl Application {
     pub fn caller(&self) -> &PrincipalId {
         &self.caller
     }
-
-    pub async fn call(&self, operation: &str, value: Value) -> anyhow::Result<Value> {
-        let (_, route) = wamn_routes::HostRouteSet::Application
-            .attachments()
-            .find(|(_, route)| route.route.operation == operation)
-            .context("application operation")?;
-        let path = route.definition["route"]["path"]
-            .as_str()
-            .context("application route path")?;
-        let mut answer = self
-            .routes
-            .post(path, json!({"request_id":operation,"value":value}))
-            .await?;
-        answer
-            .as_object_mut()
-            .context("application route answer")?
-            .remove("value")
-            .with_context(|| format!("{operation} refused: {answer}"))
-    }
 }
 
 /// Create the API caller's role on the application host, and grant it each operation that

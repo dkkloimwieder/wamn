@@ -14,7 +14,6 @@ serde_json.workspace = true
 sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls"] }
 tokio = { workspace = true, features = ["io-util", "macros", "net", "process", "rt-multi-thread", "time"] }
 uuid = { workspace = true, features = ["v4", "v7"] }
-wamn-routes.workspace = true
 wamn-identity-protocol.workspace = true
 wamn-http-client = { workspace = true, features = ["tls12"] }
 wamn-registry.workspace = true
