@@ -7,7 +7,6 @@ license.workspace = true
 
 [features]
 default = []
-test-util = []
 ops = ["wamn-provision/ops"]
 
 [dependencies]
@@ -73,7 +72,6 @@ sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "macros", "m
 wamn-oci = { workspace = true, features = ["test-util"] }
 wamn-http-client = { workspace = true, features = ["tls12"] }
 wamn-authority = { workspace = true, features = ["test-util"] }
-wamn-connection = { workspace = true, features = ["test-util"] }
 wamn-operation = { workspace = true, features = ["test-util"] }
 wamn-http = { workspace = true, features = ["test-util"] }
 wamn-blobstore = { workspace = true, features = ["test-util"] }

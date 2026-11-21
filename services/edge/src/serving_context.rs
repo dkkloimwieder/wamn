@@ -109,16 +109,4 @@ impl ServingContext {
     pub fn release(&self) -> &CarriedRelease {
         &self.release
     }
-
-    /// Bind the canonical manifest bytes used by host service fixtures.
-    #[cfg(feature = "test-util")]
-    pub fn load_canonical_bytes(
-        bytes: &[u8],
-        origin: &str,
-        target: ReleaseTarget,
-    ) -> anyhow::Result<Self> {
-        let (manifest, _) = ServingManifest::from_canonical_bytes(bytes)
-            .map_err(|error| anyhow::anyhow!("serving manifest {origin} refused: {error}"))?;
-        Self::new(manifest, target)
-    }
 }

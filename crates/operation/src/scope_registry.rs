@@ -1,13 +1,8 @@
 //! Operation identity and transaction authority stored in invocation scopes.
 
-#[cfg(any(test, feature = "test-util"))]
-use std::sync::Arc;
-
 use crate::{OperationTransaction, PgError, SessionIdentity};
 use wamn_connection::connection::ConnectionInvocation;
 use wamn_connection::invocation::ReleaseContext;
-#[cfg(any(test, feature = "test-util"))]
-use wamn_connection::invocation::Scope;
 use wamn_engine::invocation_scope::InvocationScopes;
 use wamn_event::Causation;
 use wamn_postgres::DEFAULT_PROJECT;
@@ -28,27 +23,6 @@ pub fn validate_context(
         "invocation application authority mismatch"
     );
     Ok(())
-}
-
-/// Bind a host-selected deployment for a host service fixture.
-#[cfg(any(test, feature = "test-util"))]
-pub fn bind_test_context(
-    scopes: &InvocationScopes,
-    scope: &str,
-    connections: Arc<wamn_connection::connection_facts::ConnectionFacts>,
-    release: Arc<wamn_engine::application_config::ApplicationConfig>,
-) {
-    let context = Arc::new(ReleaseContext::new(release, connections).expect("fixture context"));
-    scopes.update::<Authority, _>(scope, |record| {
-        record.identity.project_env_key = Some(wamn_registry::name::project_env_key(
-            &context.release.org,
-            &context.release.project,
-            &context.release.environment,
-        ));
-        record.identity.project = Some(context.connections.project().to_owned());
-        record.identity.application = Some(context.release.application.clone());
-    });
-    scopes.update::<Scope, _>(scope, |record| record.context = Some(context));
 }
 
 /// SQL authority retained through commit and result signing.

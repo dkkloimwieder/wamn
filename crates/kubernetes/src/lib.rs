@@ -7,8 +7,6 @@ pub mod kubernetes;
 pub mod kubernetes_api {
     pub use crate::client::KubernetesApi;
 }
-#[cfg(feature = "test-util")]
-pub mod test_util;
 
 use std::error::Error as StdError;
 use std::fmt;

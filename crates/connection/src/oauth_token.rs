@@ -49,15 +49,6 @@ impl Cache {
             .tokens
             .retain(|(connection, active), _| *connection != id || generation == Some(*active));
     }
-
-    #[cfg(any(test, feature = "test-util"))]
-    pub fn is_empty(&self) -> bool {
-        self.entries
-            .lock()
-            .expect("OAuth token cache lock")
-            .tokens
-            .is_empty()
-    }
 }
 
 /// JSON encrypted in oauth_token.ciphertext, also used by authorization callbacks.
