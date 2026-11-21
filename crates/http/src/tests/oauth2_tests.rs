@@ -90,7 +90,7 @@ impl TlsTokenEndpoint {
         .unwrap()
         .with_root_certificates(roots)
         .with_no_client_auth();
-        let transport = Arc::new(HttpTransport::with_tls_config(client));
+        let transport = Arc::new(HttpTransport::from_tls(client));
         let listener = TcpListener::bind((super::interface_address(), 0))
             .await
             .unwrap();

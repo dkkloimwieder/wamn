@@ -1,17 +1,17 @@
+use crate::invocation::{AuthorizedInvocation, InvocationRequest};
 use crate::scope_registry;
 use crate::transactions::validate_session_identity;
 use crate::{OperationDatabase, OperationHost, PgError, SessionIdentity, SqlValue};
-use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 use wamn_authentication::authorization::{
-    Authorization, AuthorizationStore as _, SessionIdentityError, SessionIdentityErrorType,
-    UnprovisionedPrincipal,
+    Authorization, AuthorizationStore as _, UnprovisionedPrincipal, require_provisioned_principal,
 };
 use wamn_identity_protocol::AuthorityClass;
 use wamn_postgres::{
     ClassCredentials, CredentialProvider, DEFAULT_PROJECT, ResolvedCredential,
     StaticCredentialProvider, WamnPostgres, WamnPostgresConfig,
 };
+use wamn_test_infrastructure::containers::{Postgres, start_postgres};
 
 #[test]
 fn validate_identity_rejects_malformed_identities() {
@@ -32,12 +32,8 @@ fn validate_identity_rejects_malformed_identities() {
 }
 
 // ------------------------------------------------------------------
-// Live-PG tests. Each test owns a database of the test PostgreSQL server
-// and creates + drops its own objects.
+// Live-PG tests. Each test starts its own PostgreSQL server.
 // ------------------------------------------------------------------
-
-/// The project_env_key every live guest checkout in this module authenticates for.
-const LIVE_PROJECT_ENV_KEY: &str = "test--dev--fixture";
 
 /// The executing principal a live transactional statement binds.
 pub(crate) const LIVE_PRINCIPAL: &str = "5c2b7e1a-9d3f-4a6b-8c1e-2f4d6a8b0c3e";
@@ -69,14 +65,59 @@ pub(crate) async fn ensure_live_user_rows(admin_url: &str, principals: &[&str]) 
     sqlx::raw_sql("BEGIN").execute(&mut admin).await.unwrap();
     sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES ($1::text::uuid,'','fixture','admin:identity-fixture')")
         .bind(LIVE_PRINCIPAL).execute(&mut admin).await.unwrap();
-    for principal in principals {
-        sqlx::query("INSERT INTO platform.\"user\" (id,type,email,display_name) VALUES ($1::text::uuid,$2,$1 || '@example.invalid',$3)")
+    // The app schema seeds the platform principals, `wamn:executor` among them.
+    for principal in principals.iter().filter(|principal| **principal != LIVE_PLATFORM_PRINCIPAL) {
+        sqlx::query("INSERT INTO platform.\"user\" (id,issuer,sub,type,email) VALUES ($1::text::uuid,'https://fixture.example',$1,'user',$1 || '@example.invalid')")
             .bind(principal)
-            .bind(if *principal == LIVE_PLATFORM_PRINCIPAL { "platform" } else { "user" })
-            .bind((*principal == LIVE_PLATFORM_PRINCIPAL).then_some("wamn:executor"))
             .execute(&mut admin).await.unwrap();
     }
     sqlx::raw_sql("COMMIT").execute(&mut admin).await.unwrap();
+}
+
+/// Start a private server and return it with the administrator URL of its test database.
+pub(crate) async fn live_server() -> (Postgres, String) {
+    let server = start_postgres()
+        .await
+        .expect("start the test PostgreSQL server");
+    let database = server
+        .create_database("operation")
+        .await
+        .expect("create the test database");
+    (server, database.into())
+}
+
+/// Admit one call's SQL identity the way the operation entry admits it.
+/// Dropping the returned owner ends the call and revokes its scope.
+pub(crate) fn enter(
+    pg: &OperationHost,
+    scope: &str,
+    identity: SessionIdentity,
+) -> Arc<AuthorizedInvocation> {
+    AuthorizedInvocation::enter(
+        &pg.scopes,
+        InvocationRequest {
+            scope: scope.to_owned(),
+            identity,
+            context: None,
+            caller: None,
+            registered_operation: None,
+            causation: None,
+            invocation: None,
+            read: false,
+        },
+    )
+    .expect("the operation entry admits the identity")
+}
+
+/// The guest and query logins of one project, each named for its own class as
+/// the host names a project's mounted logins.
+pub(crate) fn project_credentials(guest_url: &str) -> ClassCredentials {
+    let mut query = url::Url::parse(guest_url).expect("parse the guest url");
+    let login = query.username().replacen("wamn_app_", "wamn_query_", 1);
+    query.set_username(&login).expect("set the query login");
+    ClassCredentials::default()
+        .with_class(AuthorityClass::GuestSql, guest_url)
+        .with_class(AuthorityClass::DynamicSql, query)
 }
 
 fn live_database(admin_url: &str) -> String {
@@ -281,15 +322,14 @@ fn credential_refusal_fixture_sql(schema: &str, role_a: &str) -> String {
 }
 
 /// A host with one project's credential refuses another project before reading rows.
-#[sqlx::test(migrations = false)]
-async fn live_a_second_project_env_key_is_refused_rather_than_served_the_first_project_env_keys_rows(
-    pool: sqlx::PgPool,
-) {
+#[tokio::test]
+#[ignore = "requires: docker"]
+async fn live_a_second_project_env_key_is_refused_rather_than_served_the_first_project_env_keys_rows()
+ {
     const PROJECT_ENV_KEY_A: &str = "test--dev--seam-live-a";
     const PROJECT_ENV_KEY_B: &str = "test--dev--seam-live-b";
 
-    let _lock = wamn_test_postgres::lock();
-    let test_database = wamn_test_postgres::url(&pool);
+    let (_server, test_database) = live_server().await;
     let admin_url = test_database.as_str();
     let suffix = std::process::id();
     let schema = format!("wamn_seam_{suffix}");
@@ -315,7 +355,7 @@ async fn live_a_second_project_env_key_is_refused_rather_than_served_the_first_p
     url.set_password(Some("live-guest"))
         .expect("set A's password");
     let pools = WamnPostgres::new(WamnPostgresConfig {
-        credentials: Some(ClassCredentials::every_class(url.to_string())),
+        credentials: Some(project_credentials(url.as_str())),
         guest_pool_max_size: 2,
         platform_pool_max_size: 2,
         wait_timeout_ms: 2_000,
@@ -332,22 +372,8 @@ async fn live_a_second_project_env_key_is_refused_rather_than_served_the_first_p
         user_id: Some(LIVE_PRINCIPAL.parse().unwrap()),
         ..SessionIdentity::default()
     };
-    pg.bind_session_identity(scope_a, &identity(&PROJECT_ENV_KEY_A.parse().unwrap()))
-        .await
-        .expect("project_env_key A's acquisition binds");
-    let refused = pg
-        .bind_session_identity(scope_b, &identity(&PROJECT_ENV_KEY_B.parse().unwrap()))
-        .await
-        .expect_err("B's principal read requires B's own credential");
-    let refused = refused.downcast_ref::<SessionIdentityError>().unwrap();
-    assert!(matches!(
-        refused.type_,
-        SessionIdentityErrorType::Infrastructure
-    ));
-    assert!(matches!(
-        refused.source.downcast_ref::<PgError>(),
-        Some(PgError::ConnectionUnavailable)
-    ));
+    let invocation_a = enter(&pg, scope_a, identity(&PROJECT_ENV_KEY_A.parse().unwrap()));
+    let _invocation_b = enter(&pg, scope_b, identity(&PROJECT_ENV_KEY_B.parse().unwrap()));
 
     // CONTROL: the table is reachable on this path at all, so the refusal
     // below is a refusal and not a broken fixture or search_path.
@@ -380,7 +406,7 @@ async fn live_a_second_project_env_key_is_refused_rather_than_served_the_first_p
     // Ending A's checkout revokes A's identity and nothing else. Matched on
     // the `WAMN0` code specifically: a revoke that cleared only the
     // search_path would also fail this query, for an unrelated reason.
-    scope_registry::revoke_session_identity(&pg.scopes, scope_a);
+    drop(invocation_a);
     assert_eq!(scope_registry::session_identity(&pg.scopes, scope_a), None);
     let unbound = run_operation(&pg, scope_a, "SELECT id FROM dispositions")
         .await
@@ -391,17 +417,6 @@ async fn live_a_second_project_env_key_is_refused_rather_than_served_the_first_p
         "an instance whose checkout ended must resolve NO project_env_key, not merely \
              fail for some other reason: {unbound:?}"
     );
-
-    sqlx::raw_sql(sqlx::AssertSqlSafe(
-        format!(
-            "DROP SCHEMA {schema} CASCADE; \
-                 DROP OWNED BY {role_a}; DROP ROLE {role_a};"
-        ),
-    ))
-    .execute(&mut admin)
-    .await
-    .map(drop)
-    .expect("drop the fixture");
 }
 
 // ------------------------------------------------------------------
@@ -443,11 +458,11 @@ fn cold_parse_statement() -> &'static str {
 /// guaranteed round trip, and the statement half — polled during that await
 /// — always sends its Parse first. Reverting to that shape, or swapping the
 /// two branches of the `join!`, fails this every run.
-#[sqlx::test(migrations = false)]
-async fn live_a_cold_connection_parses_inside_the_identity_transaction(pool: sqlx::PgPool) {
+#[tokio::test]
+#[ignore = "requires: docker"]
+async fn live_a_cold_connection_parses_inside_the_identity_transaction() {
     const PROJECT_ENV_KEY: &str = "test--dev--coldparse";
-    let _lock = wamn_test_postgres::lock();
-    let database = wamn_test_postgres::url(&pool);
+    let (_server, database) = live_server().await;
     let admin_url = database.as_str();
     let schema = format!("wamn_coldparse_{}", std::process::id());
     let role = format!(
@@ -469,7 +484,7 @@ async fn live_a_cold_connection_parses_inside_the_identity_transaction(pool: sql
     .expect("seed the cold-parse fixture as the superuser owner");
 
     let pools = WamnPostgres::new(WamnPostgresConfig {
-        credentials: Some(ClassCredentials::every_class(guest_url)),
+        credentials: Some(project_credentials(&guest_url)),
         // ONE connection, and a pool built in this test, so the checkout
         // below is guaranteed to be a NEW physical connection with an empty
         // statement cache.
@@ -481,17 +496,16 @@ async fn live_a_cold_connection_parses_inside_the_identity_transaction(pool: sql
     .expect("the plugin builds from the guest generation's url");
     let pg = OperationHost::new(Arc::new(pools), None);
     let scope = "coldparse-instance-0";
-    pg.bind_session_identity(
+    let _invocation = enter(
+        &pg,
         scope,
-        &SessionIdentity {
+        SessionIdentity {
             project_env_key: Some(PROJECT_ENV_KEY.parse().unwrap()),
             schema: Some(schema.clone()),
             user_id: Some(LIVE_PRINCIPAL.parse().unwrap()),
             ..SessionIdentity::default()
         },
-    )
-    .await
-    .expect("the cold-parse scope binds");
+    );
 
     let statement = cold_parse_statement();
     let rows = run_operation(&pg, scope, statement).await.expect(
@@ -507,60 +521,47 @@ async fn live_a_cold_connection_parses_inside_the_identity_transaction(pool: sql
         .await
         .expect("the warm connection runs the pipelined flight");
     assert_eq!(again.len(), 2);
-
-    sqlx::raw_sql(sqlx::AssertSqlSafe(
-        format!("DROP SCHEMA {schema} CASCADE; DROP OWNED BY \"{role}\"; DROP ROLE \"{role}\";"),
-    ))
-    .execute(&mut admin)
-    .await
-    .map(drop)
-    .expect("drop the fixture");
 }
 
-/// The bind refuses a principal that owns no `platform."user"` row in the
-/// project_env_key, and the refusal names the cause (`wamn-0h0g.9.19`).
+/// The principal check refuses a principal that owns no `platform."user"` row
+/// in the project_env_key, and the refusal names the cause (`wamn-0h0g.9.19`).
 ///
 /// The minimum is installed and the row is left out, so the refusal is a
 /// refusal and not a missing table or an unreachable database. The control
-/// half is the same plugin binding a principal that owns a row, which proves
+/// half is the same check admitting a principal that owns a row, which proves
 /// a guard that refused everything would not pass this test.
 ///
 /// The platform principal is the third case: `wamn:executor` carries its own
-/// row, which provisioning writes, so it binds like any other principal.
-#[sqlx::test(migrations = false)]
-async fn live_a_bind_refuses_a_principal_with_no_user_row(pool: sqlx::PgPool) {
+/// row, which provisioning writes, so it passes like any other principal.
+#[tokio::test]
+#[ignore = "requires: docker"]
+async fn live_a_principal_with_no_user_row_is_refused() {
     const PROJECT_ENV_KEY: &str = "test--dev--unprovisioned";
     const ABSENT_PRINCIPAL: &str = "11111111-2222-4333-8444-555555555555";
-    let _lock = wamn_test_postgres::lock();
-    let database = wamn_test_postgres::url(&pool);
+    let (_server, database) = live_server().await;
     let admin_url = database.as_str();
-    let role = format!(
-        "wamn_app_{}",
-        wamn_registry::app_identity_hash(
-            &PROJECT_ENV_KEY.parse().unwrap(),
-            &live_database(admin_url)
-        )
-    );
     let guest_url = live_guest_url(admin_url, &PROJECT_ENV_KEY.parse().unwrap()).await;
     ensure_live_user_rows(admin_url, &[LIVE_PRINCIPAL, LIVE_PLATFORM_PRINCIPAL]).await;
     let pools = WamnPostgres::new(WamnPostgresConfig {
-        credentials: Some(ClassCredentials::every_class(guest_url)),
+        credentials: Some(project_credentials(&guest_url)),
         guest_pool_max_size: 1,
         platform_pool_max_size: 1,
         wait_timeout_ms: 2_000,
         statement_timeout_ms: 5_000,
     })
-    .expect("the plugin builds from the guest generation's url");
-    let pg = OperationHost::new(Arc::new(pools), None);
-    let scope = "unprovisioned-instance-0";
-    let identity = |principal: wamn_identity_protocol::PrincipalId| SessionIdentity {
-        project_env_key: Some(PROJECT_ENV_KEY.parse().unwrap()),
-        user_id: Some(principal),
-        ..SessionIdentity::default()
+    .expect("the pools build from the guest generation's url");
+    let project_env_key: wamn_registry::ProjectEnvKey = PROJECT_ENV_KEY.parse().unwrap();
+    let check = async |principal: &str| {
+        require_provisioned_principal(
+            &pools,
+            &project_env_key,
+            &DEFAULT_PROJECT,
+            &principal.parse().unwrap(),
+        )
+        .await
     };
 
-    let refused = pg
-        .bind_session_identity(scope, &identity(ABSENT_PRINCIPAL.parse().unwrap()))
+    let refused = check(ABSENT_PRINCIPAL)
         .await
         .expect_err("a principal with no user row is refused");
     let denial = refused
@@ -572,34 +573,17 @@ async fn live_a_bind_refuses_a_principal_with_no_user_row(pool: sqlx::PgPool) {
             .parse::<wamn_identity_protocol::PrincipalId>()
             .unwrap()
     );
-    assert_eq!(denial.project_env_key(), &PROJECT_ENV_KEY.parse().unwrap());
+    assert_eq!(denial.project_env_key(), &project_env_key);
     assert_eq!(denial.project(), &*DEFAULT_PROJECT);
 
-    // CONTROL: the provisioned principal binds.
-    pg.bind_session_identity(scope, &identity(LIVE_PRINCIPAL.parse().unwrap()))
+    // CONTROL: the provisioned principal passes.
+    check(LIVE_PRINCIPAL)
         .await
-        .expect("a provisioned principal binds");
-    assert_eq!(scope_registry::user_id_for(&pg.scopes, scope), Some(LIVE_PRINCIPAL.parse().unwrap()));
-    scope_registry::revoke_session_identity(&pg.scopes, scope);
-
+        .expect("a provisioned principal passes");
     // And a platform principal is a principal like any other.
-    pg.bind_session_identity(scope, &identity(LIVE_PLATFORM_PRINCIPAL.parse().unwrap()))
+    check(LIVE_PLATFORM_PRINCIPAL)
         .await
-        .expect("the platform principal's own row binds");
-    assert_eq!(
-        scope_registry::user_id_for(&pg.scopes, scope),
-        Some(LIVE_PLATFORM_PRINCIPAL.parse().unwrap())
-    );
-
-    drop(pg);
-    let mut admin = connect_raw(admin_url).await;
-    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
-        "DROP OWNED BY \"{role}\"; DROP ROLE \"{role}\";"
-    )))
-    .execute(&mut admin)
-    .await
-    .map(drop)
-    .expect("drop the fixture");
+        .expect("the platform principal's own row passes");
 }
 
 /// A statement that reports the transaction operation.
@@ -607,70 +591,18 @@ fn operation_statement() -> &'static str {
     "SELECT COALESCE((SELECT (wamn_authority.current_identity()).operation), '')"
 }
 
-/// An acquisition binds its operation, reads it back, and clears it. A later
-/// acquisition with no operation does not inherit the previous one.
-///
-/// The identity name no executing principal, so the bind stays offline: the
-/// provisioning read of `wamn-0h0g.9.19` runs only for a bind that names one,
-/// and this test owns the operation registry rather than that test.
-#[tokio::test]
-async fn an_acquisition_binds_its_operation_and_the_next_one_does_not_inherit_it() {
-    const OPERATION: &str = "platform-fixture:widget/update@1.0.0";
-    let pools = WamnPostgres::with_provider(Arc::new(StaticCredentialProvider::new(
-        HashMap::new(),
-        None,
-    )));
-    let pg = OperationHost::new(Arc::new(pools), None);
-    let scope = "operation-instance-0";
-    let identity = SessionIdentity {
-        project_env_key: Some(LIVE_PROJECT_ENV_KEY.parse().unwrap()),
-        operation: Some(OPERATION.parse().unwrap()),
-        ..SessionIdentity::default()
-    };
-    pg.bind_session_identity(scope, &identity)
-        .await
-        .expect("the operation binds");
-    assert_eq!(scope_registry::session_identity(&pg.scopes, scope), Some(identity.clone()));
-
-    pg.bind_session_identity(
-        scope,
-        &SessionIdentity {
-            operation: None,
-            ..identity.clone()
-        },
-    )
-    .await
-    .expect("the next acquisition binds");
-    assert_eq!(scope_registry::operation_for(&pg.scopes, scope), None);
-
-    pg.bind_session_identity(scope, &identity)
-        .await
-        .expect("the operation binds again");
-    scope_registry::revoke_session_identity(&pg.scopes, scope);
-    assert_eq!(scope_registry::operation_for(&pg.scopes, scope), None);
-}
-
 /// Reads and writes record their operation. A later transaction inherits none.
-#[sqlx::test(migrations = false)]
-async fn live_a_transaction_binds_the_executing_operation_and_a_pooled_connection_keeps_none(
-    pool: sqlx::PgPool,
-) {
+#[tokio::test]
+#[ignore = "requires: docker"]
+async fn live_a_transaction_binds_the_executing_operation_and_a_pooled_connection_keeps_none() {
     const PROJECT_ENV_KEY: &str = "test--dev--operation";
     const OPERATION: &str = "platform-fixture:widget/update@1.0.0";
-    let _lock = wamn_test_postgres::lock();
-    let database = wamn_test_postgres::url(&pool);
+    let (_server, database) = live_server().await;
     let admin_url = database.as_str();
-    let role = format!(
-        "wamn_app_{}",
-        wamn_registry::app_identity_hash(
-            &PROJECT_ENV_KEY.parse().unwrap(),
-            &live_database(admin_url)
-        )
-    );
     let guest_url = live_guest_url(admin_url, &PROJECT_ENV_KEY.parse().unwrap()).await;
     ensure_live_user_rows(admin_url, &[LIVE_PRINCIPAL]).await;
     let pools = WamnPostgres::new(WamnPostgresConfig {
-        credentials: Some(ClassCredentials::every_class(guest_url)),
+        credentials: Some(project_credentials(&guest_url)),
         guest_pool_max_size: 1,
         platform_pool_max_size: 1,
         wait_timeout_ms: 2_000,
@@ -685,9 +617,7 @@ async fn live_a_transaction_binds_the_executing_operation_and_a_pooled_connectio
         operation: Some(OPERATION.parse().unwrap()),
         ..SessionIdentity::default()
     };
-    pg.bind_session_identity(scope, &identity)
-        .await
-        .expect("the operation scope binds");
+    let invocation = enter(&pg, scope, identity.clone());
 
     let bound = run_operation(&pg, scope, operation_statement())
         .await
@@ -706,15 +636,15 @@ async fn live_a_transaction_binds_the_executing_operation_and_a_pooled_connectio
         read
     );
 
-    pg.bind_session_identity(
+    drop(invocation);
+    let _next = enter(
+        &pg,
         scope,
-        &SessionIdentity {
+        SessionIdentity {
             operation: None,
             ..identity
         },
-    )
-    .await
-    .expect("the next acquisition binds");
+    );
     let next = run_operation(&pg, scope, operation_statement())
         .await
         .expect("the next transactional statement runs");
@@ -728,60 +658,11 @@ async fn live_a_transaction_binds_the_executing_operation_and_a_pooled_connectio
         0,
         "every statement reused the one pooled connection"
     );
-
-    drop(pg);
-    let mut admin = connect_raw(admin_url).await;
-    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
-        "DROP OWNED BY \"{role}\"; DROP ROLE \"{role}\";"
-    )))
-    .execute(&mut admin)
-    .await
-    .map(drop)
-    .expect("drop the fixture");
 }
 
 /// A statement that reports the transaction application.
 fn application_statement() -> &'static str {
     "SELECT COALESCE((SELECT wamn_authority.current_application()), '')"
-}
-
-/// An acquisition binds its application, reads it back, and clears it. A
-/// later acquisition with no application does not inherit the previous one.
-/// The identity name no executing principal, so the bind stays offline.
-#[tokio::test]
-async fn an_acquisition_binds_its_application_and_the_next_one_does_not_inherit_it() {
-    let pools = WamnPostgres::with_provider(Arc::new(StaticCredentialProvider::new(
-        HashMap::new(),
-        None,
-    )));
-    let pg = OperationHost::new(Arc::new(pools), None);
-    let scope = "application-instance-0";
-    let identity = SessionIdentity {
-        project_env_key: Some(LIVE_PROJECT_ENV_KEY.parse().unwrap()),
-        application: Some("platform_fixture".parse().unwrap()),
-        ..SessionIdentity::default()
-    };
-    pg.bind_session_identity(scope, &identity)
-        .await
-        .expect("the application binds");
-    assert_eq!(scope_registry::session_identity(&pg.scopes, scope), Some(identity.clone()));
-
-    pg.bind_session_identity(
-        scope,
-        &SessionIdentity {
-            application: None,
-            ..identity.clone()
-        },
-    )
-    .await
-    .expect("the next acquisition binds");
-    assert_eq!(scope_registry::application_for(&pg.scopes, scope), None);
-
-    pg.bind_session_identity(scope, &identity)
-        .await
-        .expect("the application binds again");
-    scope_registry::revoke_session_identity(&pg.scopes, scope);
-    assert_eq!(scope_registry::application_for(&pg.scopes, scope), None);
 }
 
 /// The identity half of the cross-application refusal
@@ -791,25 +672,18 @@ async fn an_acquisition_binds_its_application_and_the_next_one_does_not_inherit_
 /// the application its host bound and never the other's: not the previous
 /// transaction's, not a session-level value left on the connection, and not a
 /// value that guest SQL names, which the identity guard refuses.
-#[sqlx::test(migrations = false)]
-async fn live_a_transaction_carries_only_the_application_its_host_bound(pool: sqlx::PgPool) {
+#[tokio::test]
+#[ignore = "requires: docker"]
+async fn live_a_transaction_carries_only_the_application_its_host_bound() {
     const PROJECT_ENV_KEY: &str = "test--dev--application";
     const APPLICATION_A: &str = "platform_fixture";
     const APPLICATION_B: &str = "platform_fixture_overlay";
-    let _lock = wamn_test_postgres::lock();
-    let database = wamn_test_postgres::url(&pool);
+    let (_server, database) = live_server().await;
     let admin_url = database.as_str();
-    let role = format!(
-        "wamn_app_{}",
-        wamn_registry::app_identity_hash(
-            &PROJECT_ENV_KEY.parse().unwrap(),
-            &live_database(admin_url)
-        )
-    );
     let guest_url = live_guest_url(admin_url, &PROJECT_ENV_KEY.parse().unwrap()).await;
     ensure_live_user_rows(admin_url, &[LIVE_PRINCIPAL]).await;
     let pools = WamnPostgres::new(WamnPostgresConfig {
-        credentials: Some(ClassCredentials::every_class(guest_url)),
+        credentials: Some(project_credentials(&guest_url)),
         guest_pool_max_size: 1,
         platform_pool_max_size: 1,
         wait_timeout_ms: 2_000,
@@ -824,12 +698,8 @@ async fn live_a_transaction_carries_only_the_application_its_host_bound(pool: sq
         ..SessionIdentity::default()
     };
     let (scope_a, scope_b) = ("application-instance-a", "application-instance-b");
-    pg.bind_session_identity(scope_a, &identity(&APPLICATION_A.parse().unwrap()))
-        .await
-        .expect("application A binds");
-    pg.bind_session_identity(scope_b, &identity(&APPLICATION_B.parse().unwrap()))
-        .await
-        .expect("application B binds");
+    let invocation_a = enter(&pg, scope_a, identity(&APPLICATION_A.parse().unwrap()));
+    let _invocation_b = enter(&pg, scope_b, identity(&APPLICATION_B.parse().unwrap()));
     let carried = async |scope: &str| {
         let result = run_operation(&pg, scope, application_statement())
             .await
@@ -848,15 +718,15 @@ async fn live_a_transaction_carries_only_the_application_its_host_bound(pool: sq
         "B's transaction on the shared connection does not reach A's"
     );
 
-    pg.bind_session_identity(
+    drop(invocation_a);
+    let _next = enter(
+        &pg,
         scope_a,
-        &SessionIdentity {
+        SessionIdentity {
             application: None,
             ..identity(&APPLICATION_A.parse().unwrap())
         },
-    )
-    .await
-    .expect("an acquisition with no application binds");
+    );
     assert_eq!(
         carried(scope_a).await,
         "",
@@ -867,16 +737,6 @@ async fn live_a_transaction_carries_only_the_application_its_host_bound(pool: sq
         0,
         "every statement reused the one pooled connection"
     );
-
-    drop(pg);
-    let mut admin = connect_raw(admin_url).await;
-    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
-        "DROP OWNED BY \"{role}\"; DROP ROLE \"{role}\";"
-    )))
-    .execute(&mut admin)
-    .await
-    .map(drop)
-    .expect("drop the fixture");
 }
 
 #[tokio::test]

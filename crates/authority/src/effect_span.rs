@@ -472,8 +472,8 @@ pub fn record_effect_ms(
 /// It lives beside the vocabulary and not beside one surface. Every surface
 /// freezes the WHOLE span value as a literal, so a second copy of the reader
 /// could disagree with the first about what a trace reader receives.
-#[cfg(any(test, feature = "test-util"))]
-pub mod span_tests {
+#[cfg(test)]
+mod span_tests {
     use opentelemetry_sdk::trace::{InMemorySpanExporter, SdkTracerProvider};
 
     /// The spans one call exported, read back through an in-memory exporter, so
@@ -546,35 +546,6 @@ pub mod span_tests {
             assert_eq!(spans.len(), 1, "exactly one {name} span must be exported");
             spans.pop().expect("the one exported span")
         }
-    }
-
-    /// Expected identity and wiring fields, plus the fields of one surface.
-    pub fn expected_attributes(
-        identity: [&str; 3],
-        wiring: [&str; 8],
-        extra: &[(&str, &str)],
-    ) -> Vec<(String, String)> {
-        let keys = [
-            "wamn.project_env_key",
-            "wamn.project",
-            "wamn.component",
-            "wamn.package_id",
-            "wamn.wiring_id",
-            "wamn.wiring_version",
-            "wamn.node_id",
-            "wamn.occurrence",
-            "wamn.component_digest",
-            "wamn.component_name",
-            "wamn.operation",
-        ];
-        let mut pairs: Vec<(String, String)> = keys
-            .into_iter()
-            .zip(identity.into_iter().chain(wiring))
-            .chain(extra.iter().copied())
-            .map(|(key, value)| (key.to_owned(), value.to_owned()))
-            .collect();
-        pairs.sort();
-        pairs
     }
 }
 

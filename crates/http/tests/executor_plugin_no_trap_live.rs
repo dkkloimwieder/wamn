@@ -46,10 +46,10 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use wamn_engine::engine::build_engine;
-use wamn_operation::{self, OperationHost, WAMN_POSTGRES_ID, scope_registry};
+use wamn_operation::{self, OperationHost, PROJECT_ENV_KEY_CONFIG_KEY, WAMN_POSTGRES_ID};
 use wamn_postgres::{WamnPostgres, WamnPostgresConfig};
 use wash_runtime::engine::ctx::{Ctx, SharedCtx};
-use wash_runtime::plugin::HostPlugin;
+use wash_runtime::plugin::{HostPlugin, WitInterfaces};
 use wash_runtime::wasmtime::Store;
 use wash_runtime::wasmtime::component::{Component as WasmtimeComponent, Linker};
 
@@ -301,7 +301,16 @@ fn postgres_guest() -> String {
 #[tokio::test]
 async fn wamn_postgres_maps_an_unresolvable_project_to_connection_unavailable_not_a_trap() {
     let postgres = Arc::new(offline_postgres());
-    scope_registry::set_project_env_key(&postgres.scopes, GUEST_ID, &"org--dev--a".parse().unwrap());
+    postgres
+        .register_workload_scope(
+            GUEST_ID,
+            &HashMap::from([(
+                PROJECT_ENV_KEY_CONFIG_KEY.to_owned(),
+                "org--dev--a".to_owned(),
+            )]),
+            &WitInterfaces::new(&postgres.world().imports),
+        )
+        .expect("the workload binds its project environment");
     let mut plugins: HashMap<&'static str, Arc<dyn HostPlugin + Send + Sync>> = HashMap::new();
     plugins.insert(
         WAMN_POSTGRES_ID,

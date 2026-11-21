@@ -28,14 +28,5 @@ wamn-digest = { workspace = true, features = ["sqlx"] }
 wamn-postgres.workspace = true
 wamn-registry = { workspace = true }
 
-[dev-dependencies]
-wamn-registry = { workspace = true, features = ["test-util"] }
-sqlx = { workspace = true, features = ["macros", "migrate"] }
-
-tokio = { workspace = true, features = ["test-util"] }
-wamn-identity = { workspace = true, features = ["test-util"] }
-wamn-test-postgres = { workspace = true }
-wat = "=1.254.2"
-
 [lints]
 workspace = true

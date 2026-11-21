@@ -5,23 +5,25 @@ use std::sync::Arc;
 use serde_json::json;
 
 use super::WriteLogStore;
-use crate::session_identity_tests::{LIVE_PRINCIPAL, ensure_live_user_rows, live_guest_url};
+use crate::session_identity_tests::{
+    LIVE_PRINCIPAL, ensure_live_user_rows, enter, live_guest_url, live_server, project_credentials,
+};
 use crate::{OperationHost, SessionIdentity};
-use wamn_postgres::{ClassCredentials, WamnPostgres, WamnPostgresConfig};
+use wamn_postgres::{WamnPostgres, WamnPostgresConfig};
+use wamn_test_infrastructure::containers::Postgres;
 
 const PROJECT: &str = "default";
 const SCOPE: &str = "write-log-request-element";
 
-/// A plugin over a fresh database of `project_env_key`, with the write log installed.
+/// A plugin over a private server's database of `project_env_key`, with the write log installed.
 async fn project_env_key_database(
-    pool: &sqlx::PgPool,
     project_env_key: &wamn_registry::ProjectEnvKey,
-) -> (url::Url, Arc<OperationHost>) {
-    let database = wamn_test_postgres::url(pool);
+) -> (Postgres, String, Arc<OperationHost>) {
+    let (server, database) = live_server().await;
     let guest_url = live_guest_url(database.as_str(), project_env_key).await;
     ensure_live_user_rows(database.as_str(), &[LIVE_PRINCIPAL]).await;
     let pools = WamnPostgres::new(WamnPostgresConfig {
-        credentials: Some(ClassCredentials::every_class(guest_url)),
+        credentials: Some(project_credentials(&guest_url)),
         guest_pool_max_size: 3,
         platform_pool_max_size: 1,
         wait_timeout_ms: 2_000,
@@ -29,28 +31,26 @@ async fn project_env_key_database(
     })
     .expect("live postgres pools");
     let postgres = Arc::new(OperationHost::new(Arc::new(pools), None));
-    (database, postgres)
+    (server, database, postgres)
 }
 
 const OPERATION: &str = "base:widget/create@1.0.0";
 
-#[sqlx::test(migrations = false)]
-async fn claims_commit_with_their_transaction_and_rollback_releases_them(pool: sqlx::PgPool) {
-    let _lock = wamn_test_postgres::lock();
-    let (database, postgres) =
-        project_env_key_database(&pool, &"test--dev--writelogtx".parse().unwrap()).await;
-    postgres
-        .bind_session_identity(
-            SCOPE,
-            &SessionIdentity {
-                project_env_key: Some("test--dev--writelogtx".parse().unwrap()),
-                user_id: Some(LIVE_PRINCIPAL.parse().unwrap()),
-                operation: Some(OPERATION.parse().unwrap()),
-                ..SessionIdentity::default()
-            },
-        )
-        .await
-        .unwrap();
+#[tokio::test]
+#[ignore = "requires: docker"]
+async fn claims_commit_with_their_transaction_and_rollback_releases_them() {
+    let (_server, database, postgres) =
+        project_env_key_database(&"test--dev--writelogtx".parse().unwrap()).await;
+    let _invocation = enter(
+        &postgres,
+        SCOPE,
+        SessionIdentity {
+            project_env_key: Some("test--dev--writelogtx".parse().unwrap()),
+            user_id: Some(LIVE_PRINCIPAL.parse().unwrap()),
+            operation: Some(OPERATION.parse().unwrap()),
+            ..SessionIdentity::default()
+        },
+    );
     let transaction = postgres.begin_operation_transaction(SCOPE).await.unwrap();
     assert!(matches!(
         transaction
@@ -170,23 +170,21 @@ async fn claims_commit_with_their_transaction_and_rollback_releases_them(pool: s
     recovered.rollback().await.unwrap();
 }
 
-#[sqlx::test(migrations = false)]
-async fn known_results_finish_at_host_commit_and_a_missing_finish_rolls_back(pool: sqlx::PgPool) {
-    let _lock = wamn_test_postgres::lock();
-    let (_database, postgres) =
-        project_env_key_database(&pool, &"test--dev--writelogtx".parse().unwrap()).await;
-    postgres
-        .bind_session_identity(
-            SCOPE,
-            &SessionIdentity {
-                project_env_key: Some("test--dev--writelogtx".parse().unwrap()),
-                user_id: Some(LIVE_PRINCIPAL.parse().unwrap()),
-                operation: Some(OPERATION.parse().unwrap()),
-                ..SessionIdentity::default()
-            },
-        )
-        .await
-        .unwrap();
+#[tokio::test]
+#[ignore = "requires: docker"]
+async fn known_results_finish_at_host_commit_and_a_missing_finish_rolls_back() {
+    let (_server, _database, postgres) =
+        project_env_key_database(&"test--dev--writelogtx".parse().unwrap()).await;
+    let _invocation = enter(
+        &postgres,
+        SCOPE,
+        SessionIdentity {
+            project_env_key: Some("test--dev--writelogtx".parse().unwrap()),
+            user_id: Some(LIVE_PRINCIPAL.parse().unwrap()),
+            operation: Some(OPERATION.parse().unwrap()),
+            ..SessionIdentity::default()
+        },
+    );
     let transaction = postgres.begin_operation_transaction(SCOPE).await.unwrap();
     assert!(matches!(
         transaction
@@ -231,11 +229,11 @@ async fn known_results_finish_at_host_commit_and_a_missing_finish_rolls_back(poo
 }
 
 /// The call bound changes the refusal without preventing a late result or expiry.
-#[sqlx::test(migrations = false)]
-async fn unfinished_claims_have_a_call_bound_and_accept_late_completion(pool: sqlx::PgPool) {
-    let _lock = wamn_test_postgres::lock();
-    let (database, postgres) =
-        project_env_key_database(&pool, &"test--dev--writelogtx".parse().unwrap()).await;
+#[tokio::test]
+#[ignore = "requires: docker"]
+async fn unfinished_claims_have_a_call_bound_and_accept_late_completion() {
+    let (_server, database, postgres) =
+        project_env_key_database(&"test--dev--writelogtx".parse().unwrap()).await;
     let store = WriteLogStore::new(
         postgres,
         PROJECT.parse().unwrap(),

@@ -981,6 +981,6 @@ mod connection_mode_tests {
 
 pub mod oauth;
 
-/// Shared HTTP fixtures for host invocation tests.
-#[cfg(any(test, feature = "test-util"))]
-pub mod test_util;
+/// HTTP fixtures for this crate's unit tests.
+#[cfg(test)]
+mod test_util;
