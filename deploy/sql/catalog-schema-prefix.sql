@@ -5,9 +5,6 @@
 -- the same transaction that applies them. Effective releases independently
 -- compose exact package coordinates. No catalog-document, schema-model, or
 -- generated semantic-table registry survives this schema.
---
--- STANDALONE ARTIFACT. This file is not included by
--- postgres-init.sql; the project-environment provisioner applies it whole.
 
 CREATE SCHEMA catalog AUTHORIZATION CURRENT_USER;
 

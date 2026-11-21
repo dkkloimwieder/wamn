@@ -21,12 +21,8 @@
 -- below. Different plane, different owner, different security model — hence a
 -- different file, and deliberately NOT named system-schema.sql.
 --
--- STANDALONE ARTIFACT: like deploy/sql/catalog-schema.sql, this file is NOT included
--- by deploy/sql/postgres-init.sql (which builds the S2–S6 condition fixtures). It is the
--- persistence target a project database provisions; shipping it here keeps the
--- 2.4 schema reviewable in one place without touching the condition fixtures. It
--- assumes a pre-existing wamn_app role (NOSUPERUSER, no BYPASSRLS), as in
--- production and as the live-apply acceptance test provisions.
+-- Project provisioning applies this schema after deploy/sql/catalog-schema.sql.
+-- The restricted wamn_app role must already exist.
 --
 -- RECORD HISTORY: every table carries created_at, created_by, updated_at, and
 -- updated_by as NOT NULL columns, and a wamn_record_history_stamp trigger that calls

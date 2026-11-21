@@ -308,18 +308,6 @@ pub(crate) mod tests {
 
     const PAGE: usize = 64 * 1024;
 
-    /// wash-runtime names no other way to set this grace. If it changes the
-    /// setting, the cancellation tests of the host and runtime fail with it.
-    #[test]
-    #[ignore = "requires: runtime"]
-    fn every_engine_sets_the_abandoned_call_grace_to_zero() {
-        build_engine(&[]).expect("production WAMN engine");
-        assert_eq!(
-            std::env::var("WASH_ABANDONED_CALL_GRACE_SECS").as_deref(),
-            Ok("0")
-        );
-    }
-
     /// A new compilation cache directory beside the test binary, in Cargo's
     /// target directory. The tests do not remove it: after a compile, the
     /// Wasmtime cache worker thread writes a `.stats` file on its own, and

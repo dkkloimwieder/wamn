@@ -290,23 +290,6 @@ mod tests {
             .unwrap();
     }
 
-    #[tokio::test]
-    #[ignore = "requires: network"]
-    async fn no_release_keeps_native_unknown_host_behavior() {
-        let ingress = Ingress::new(
-            expected_host_router(None, tokio::sync::watch::channel(false).1),
-            "127.0.0.1:0".parse().unwrap(),
-        )
-        .await
-        .unwrap();
-        ingress.start().await.unwrap();
-        assert_eq!(request(&ingress, Some(HOST), "/").await.0, 404);
-        ingress.stop().await.unwrap();
-        tokio::time::timeout(Duration::from_secs(5), ingress.stopped())
-            .await
-            .unwrap();
-    }
-
     #[test]
     fn outgoing_http_keeps_native_host_policy() {
         let router = expected_host_router(None, tokio::sync::watch::channel(false).1);

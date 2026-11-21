@@ -6,12 +6,8 @@
 -- Run persistence lives in crates/run-state.
 -- The host grants the first lease during admission. The service takes expired leases.
 --
--- STANDALONE ARTIFACT, ADDITIVE to deploy/sql/run-state.sql: same convention as
--- run-state.sql / catalog-schema.sql — deliberately NOT included by
--- deploy/sql/postgres-init.sql. Assumes deploy/sql/run-state.sql has been applied first
--- (schema `wamn_run` + the `runs` table this FKs, and the `wamn_app` role). The
--- Project-environment provisioning and schema reconciliation apply this artifact
--- after `run-state.sql`; it is not an independent durability domain.
+-- Project provisioning applies this schema after run-state.sql, which creates
+-- the wamn_run schema and the runs table referenced by the queue.
 --
 -- Only host roles can read or write the queue. A project database holds one
 -- project. FORCE RLS requires the protected caller row, and table grants

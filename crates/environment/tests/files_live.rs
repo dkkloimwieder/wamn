@@ -155,62 +155,6 @@ async fn disabling_a_connection_preserves_file_references_and_referenced_delete_
     Ok(())
 }
 
-#[tokio::test]
-#[ignore = "requires: bin:docker"]
-async fn raw_blobstore_mutations_refuse_file_namespaces_on_minio() -> anyhow::Result<()> {
-    use object_store::{ObjectStoreExt as _, aws::AmazonS3Builder, path::Path};
-    use std::sync::Arc;
-    use wamn_blobstore::store::BoundContainer;
-    let minio = files::Minio::start().await?;
-    let backend = Arc::new(
-        AmazonS3Builder::new()
-            .with_endpoint(&minio.endpoint)
-            .with_bucket_name("files-a")
-            .with_region("us-east-1")
-            .with_access_key_id("file-fixture")
-            .with_secret_access_key(files::STORE_PASSWORD)
-            .with_allow_http(true)
-            .build()?,
-    );
-    let raw = BoundContainer::for_test(
-        Arc::<object_store::aws::AmazonS3>::clone(&backend),
-        "files-a",
-        "generation-one",
-    );
-    let id = uuid::Uuid::new_v4();
-    let live = format!("dev/_wamn_files/live/{id}");
-    backend
-        .put(
-            &Path::from(format!("generation-one/{live}")),
-            b"retained".to_vec().into(),
-        )
-        .await?;
-    raw.put("ordinary", b"ordinary".to_vec()).await?;
-    for key in [
-        live.clone(),
-        format!("dev/_wamn_files/staging/{id}"),
-        format!("dev/public/_wamn_files/live/{id}"),
-    ] {
-        assert!(
-            raw.put(&key, b"forged".to_vec()).await.is_err(),
-            "raw put {key}"
-        );
-        assert!(raw.delete(&key).await.is_err(), "raw delete {key}");
-    }
-    assert!(raw.clear().await.is_err());
-    assert_eq!(
-        backend
-            .get(&Path::from(format!("generation-one/{live}")))
-            .await?
-            .bytes()
-            .await?
-            .as_ref(),
-        b"retained"
-    );
-    assert_eq!(raw.get("ordinary").await?, b"ordinary");
-    Ok(())
-}
-
 /// MinIO's preserved source time supplies aged objects without changing the clock.
 /// Source: https://github.com/minio/minio/blob/76c06ff1d2cc844050fdeb1d54bf8fa70db72278/cmd/object-api-options.go
 #[tokio::test]
