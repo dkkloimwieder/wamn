@@ -22,6 +22,12 @@ hyper = { workspace = true }
 # Port-forwards and pods/exec use the WebSocket transport, as in xtask.
 kube = { workspace = true, features = ["ws"] }
 k8s-openapi = { workspace = true }
+# The host user check connects to NATS with a signed user, as the host does.
+async-nats = { workspace = true, features = ["aws-lc-rs", "nkeys"] }
+nkeys.workspace = true
+wamn-identity-client.workspace = true
+# The host journeys find control and application route paths in the route table.
+wamn-routes.workspace = true
 
 [lints]
 workspace = true
