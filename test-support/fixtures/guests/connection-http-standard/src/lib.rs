@@ -6,21 +6,32 @@
 #![expect(unsafe_code, reason = "wit-bindgen generated FFI glue")]
 extern crate alloc;
 
+// Use the standard panic runtime for native workspace checks.
+#[cfg(panic = "unwind")]
+extern crate std as _;
+
 use alloc::string::ToString as _;
 use alloc::vec::Vec;
-use core::alloc::{GlobalAlloc, Layout};
-use core::cell::UnsafeCell;
+use core::alloc::Layout;
 use core::ptr;
-use core::sync::atomic::{AtomicUsize, Ordering};
+#[cfg(panic = "abort")]
+use core::{
+    alloc::GlobalAlloc,
+    cell::UnsafeCell,
+    sync::atomic::{AtomicUsize, Ordering},
+};
 
+#[cfg(panic = "abort")]
 struct BumpAllocator {
     next: AtomicUsize,
     bytes: UnsafeCell<[u8; 65_536]>,
 }
 
 // SAFETY: access to the backing bytes is partitioned by the atomic bump pointer.
+#[cfg(panic = "abort")]
 unsafe impl Sync for BumpAllocator {}
 
+#[cfg(panic = "abort")]
 unsafe impl GlobalAlloc for BumpAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         let align_mask = layout.align() - 1;
@@ -48,6 +59,7 @@ unsafe impl GlobalAlloc for BumpAllocator {
     unsafe fn dealloc(&self, _: *mut u8, _: Layout) {}
 }
 
+#[cfg(panic = "abort")]
 #[global_allocator]
 static ALLOCATOR: BumpAllocator = BumpAllocator {
     next: AtomicUsize::new(0),
@@ -117,6 +129,7 @@ impl bindings::exports::wamn::connection_http_standard_fixture::node::Guest for 
 
 bindings::export!(Component with_types_in bindings);
 
+#[cfg(panic = "abort")]
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
     loop {

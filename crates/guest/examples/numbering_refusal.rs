@@ -1,5 +1,5 @@
 //! Exercise the guest numbering API over the host's real operation transaction.
-#![cfg_attr(target_arch = "wasm32", expect(unsafe_code, reason = "wit-bindgen"))]
+#![expect(unsafe_code, reason = "wit-bindgen emits native and Wasm FFI")]
 
 mod bindings {
     wit_bindgen::generate!({
