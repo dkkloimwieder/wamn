@@ -53,14 +53,19 @@ pub(super) fn run(root: &Path, base: &str) -> Result<()> {
                 .or_insert_with(|| reason("changed", root, path));
             continue;
         }
-        let scope = owner.map(|(workspace, _)| workspace).or_else(|| {
-            workspaces
-                .iter()
-                .enumerate()
-                .filter(|(_, metadata)| path.starts_with(metadata.workspace_root.as_std_path()))
-                .max_by_key(|(_, metadata)| metadata.workspace_root.components().count())
-                .map(|(workspace, _)| workspace)
-        });
+        // A file no package owns can be read by a package of either workspace.
+        let scope = if workspace_file {
+            owner.map(|(workspace, _)| workspace).or_else(|| {
+                workspaces
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, metadata)| path.starts_with(metadata.workspace_root.as_std_path()))
+                    .max_by_key(|(_, metadata)| metadata.workspace_root.components().count())
+                    .map(|(workspace, _)| workspace)
+            })
+        } else {
+            None
+        };
         for (workspace, packages) in members.iter().enumerate() {
             if scope.is_none_or(|scope| scope == workspace) {
                 for package in packages {
