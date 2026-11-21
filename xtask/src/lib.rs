@@ -4,12 +4,15 @@ mod bench;
 mod bench_cloud;
 mod bench_data;
 mod kind;
+mod measure_tx_identity;
 mod netsuite;
 mod platform;
+mod prepare_tests;
 mod process;
 mod repo_policy;
 mod submodule_pins;
 mod tasks;
+mod test_changes;
 
 use clap::{Parser, Subcommand};
 use std::path::{Path, PathBuf};
@@ -54,6 +57,8 @@ enum Task {
     },
     /// Build one component through the shared guest compiler.
     BuildComponent { manifest: PathBuf },
+    /// Build application fixtures and print the paths that tests need.
+    PrepareTests,
     /// Print guest compiler flags.
     GuestRustflags,
     /// Build, push, and stamp one platform chart.
@@ -66,6 +71,8 @@ enum Task {
     BenchTier(bench_cloud::TierArgs),
     /// Measure PostgreSQL replays on the selected cloud deployment.
     BenchPgMinimum(bench_cloud::PgArgs),
+    /// Measure read transaction COMMIT latency on a private PostgreSQL 18 server.
+    MeasureTxIdentity(measure_tx_identity::Args),
     /// Summarize retained benchmark results.
     BenchResult {
         work: PathBuf,
@@ -95,6 +102,11 @@ enum Task {
     },
     /// Require a passing, nonempty libtest result.
     RequireTestResult(process::TestArgs),
+    /// Print Cargo test commands for packages affected by a Git diff.
+    TestChanges {
+        #[arg(long)]
+        base: String,
+    },
     /// Run repository formatting, Clippy, and policy checks.
     RepoLint(tasks::RunArgs),
     /// Generate or check the authored environment JSON Schema.
@@ -173,6 +185,7 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
             );
             Ok(())
         }
+        Task::PrepareTests => prepare_tests::run(&root).await,
         Task::GuestRustflags => {
             println!("{}", guest_rustflags(&root).await?);
             Ok(())
@@ -182,6 +195,7 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
         Task::Bench(args) => bench::run(args).await,
         Task::BenchTier(args) => bench_cloud::tier(&root, &args).await,
         Task::BenchPgMinimum(args) => bench_cloud::pg(&root, &args).await,
+        Task::MeasureTxIdentity(args) => measure_tx_identity::run(&args).await,
         Task::BenchResult {
             work,
             output,
@@ -207,6 +221,7 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
             scale,
         } => bench_data::app_result(&work, &output, &http, edge, scale),
         Task::RequireTestResult(args) => process::require(&std::env::current_dir()?, &args).await,
+        Task::TestChanges { base } => test_changes::run(&root, &base),
         Task::RepoLint(args) => tasks::lint(&root, args.mode).await,
         Task::EnvironmentSchema { check } => repo_policy::environment_schema(&root, check),
         Task::RepoLintDependencies => tasks::dependencies(&root).await,

@@ -1011,14 +1011,15 @@ It connects to each configured project as `wamn_platform_login`.
 It deletes rows with `xid < pg_snapshot_xmin(pg_current_snapshot())`.
 The UNLOGGED table `platform.tx_identity` stays outside CDC publications. A crash discards its rows.
 
-Before merging an identity change, measure read COMMIT latency with the deployed Postgres major version. The private test server is sufficient:
+Before merging an identity change, measure read transaction COMMIT latency on one private PostgreSQL 18 server.
+Set `DATABASE_URL` to the URL for a private database. Use a login that can install the schema and insert identity rows.
 
 ```sh
-wamn-test-postgres --database identity_measurement --url-env DATABASE_URL -- sh -ec '
-  psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f deploy/sql/record-history.sql
-  python3 test-support/measure-tx-identity.py "$DATABASE_URL" --samples 200
-'
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f deploy/sql/record-history.sql
+cargo xtask measure-tx-identity "$DATABASE_URL" --samples 200
 ```
 
-The script needs psycopg 3 and a login that can insert identity rows.
-It reports COMMIT round trips with and without the insert, WAL counters from `pg_stat_wal` and `pg_stat_io`, and the flushed WAL position. It creates no schema and changes no server configuration.
+The command also reads `DATABASE_URL` if you omit the URL argument.
+It compares COMMIT times with and without the insert on the same server.
+It reports synchronous replication settings, WAL counters, and the flushed WAL position.
+It commits the measurement identity rows.
