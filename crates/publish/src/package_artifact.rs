@@ -182,12 +182,82 @@ fn collect_files(
 
 /// One admitted component and its exact bytes, before the registry assigns its image digest.
 #[derive(Debug)]
-struct VerifiedComponent {
-    descriptor: ComponentDescriptor,
+pub struct VerifiedComponent {
+    /// The admitted component descriptor.
+    pub descriptor: ComponentDescriptor,
     bytes: Box<[u8]>,
 }
 
-fn verify_package(
+/// A finished build checked offline, before any registry call.
+#[derive(Debug)]
+pub struct VerifiedPackage {
+    coordinate: PackageCoordinate,
+    /// The compiled manifest; admission has taken out its declarations.
+    pub manifest: PackageManifest,
+    /// The admitted components in manifest order.
+    pub components: Vec<VerifiedComponent>,
+    migrations: BTreeMap<String, Vec<u8>>,
+}
+
+/// Check a finished build offline and admit its components.
+///
+/// The compiled manifest, each component and each migration file must match
+/// the fingerprint of the finished build.
+///
+/// # Errors
+/// When the build is not finished or differs from its fingerprint, or a
+/// component is refused.
+pub fn verify_package(root: &Path) -> anyhow::Result<VerifiedPackage> {
+    let output = wamn_codegen::output_root(root);
+    let finished = wamn_codegen::fingerprint::read(&output)?;
+    let directory = crate::package_source::read_package_directory(root)?;
+    wamn_codegen::fingerprint::verify_digest(
+        &output,
+        &finished,
+        Path::new("wamn.json"),
+        bytes_sha256(&directory.manifest_bytes),
+    )?;
+    refuse_workflow_declarations(&directory.manifest_bytes)?;
+    let coordinate = wamn_package::package_schema::package_metadata::<
+        wamn_component_policy::ComponentDescriptor,
+    >(&directory)
+    .context("plan the package migrations")?
+    .coordinate;
+    let mut manifest = PackageManifest::from_slice(&directory.manifest_bytes)
+        .context("read the compiled package manifest")?;
+    drop(directory);
+    let components = admit_components(&output, &finished, &mut manifest)?;
+    let migrations = migration_files(root)?;
+    let expected_migrations = finished
+        .outputs
+        .keys()
+        .filter(|path| {
+            MIGRATION_PATHS
+                .iter()
+                .any(|directory| path.starts_with(directory))
+        })
+        .count();
+    ensure!(
+        expected_migrations == migrations.len(),
+        "migration files differ from the finished build"
+    );
+    for (path, bytes) in &migrations {
+        wamn_codegen::fingerprint::verify_digest(
+            &output,
+            &finished,
+            Path::new(path),
+            bytes_sha256(bytes),
+        )?;
+    }
+    Ok(VerifiedPackage {
+        coordinate,
+        manifest,
+        components,
+        migrations,
+    })
+}
+
+fn admit_components(
     output: &Path,
     finished: &wamn_codegen::fingerprint::Fingerprint,
     manifest: &mut PackageManifest,
@@ -316,25 +386,12 @@ pub async fn push_package(
     request: &PushPackageRequest,
     bases: &BTreeMap<PackageCoordinate, PushedPackage>,
 ) -> anyhow::Result<PushedPackage> {
-    let root = &request.package;
-    let output = wamn_codegen::output_root(root);
-    let finished = wamn_codegen::fingerprint::read(&output)?;
-    let directory = crate::package_source::read_package_directory(root)?;
-    wamn_codegen::fingerprint::verify_digest(
-        &output,
-        &finished,
-        Path::new("wamn.json"),
-        bytes_sha256(&directory.manifest_bytes),
-    )?;
-    refuse_workflow_declarations(&directory.manifest_bytes)?;
-    let coordinate = wamn_package::package_schema::package_metadata::<
-        wamn_component_policy::ComponentDescriptor,
-    >(&directory)
-    .context("plan the package migrations")?
-    .coordinate;
-    let mut manifest = PackageManifest::from_slice(&directory.manifest_bytes)
-        .context("read the compiled package manifest")?;
-    drop(directory);
+    let VerifiedPackage {
+        coordinate,
+        mut manifest,
+        components,
+        migrations: files,
+    } = verify_package(&request.package)?;
     let mut base_packages = BTreeMap::new();
     for (alias, base) in &manifest.base_dependencies {
         let coordinate = PackageCoordinate::new(base.package.clone(), base.version.clone())?;
@@ -348,7 +405,6 @@ pub async fn push_package(
         );
         base_packages.insert(alias.clone(), published.digest);
     }
-    let components = verify_package(&output, &finished, &mut manifest)?;
     let tag = format!(
         "{}-{}",
         coordinate.package_id(),
@@ -356,29 +412,6 @@ pub async fn push_package(
     )
     .parse::<wamn_oci::package_artifact::tag::OciTag>()?;
     let repository = Repository::open(&request.registry, &tag)?;
-    let files = migration_files(root)?;
-    let expected_migrations = finished
-        .outputs
-        .keys()
-        .filter(|path| {
-            MIGRATION_PATHS
-                .iter()
-                .any(|directory| path.starts_with(directory))
-        })
-        .count();
-    ensure!(
-        expected_migrations == files.len(),
-        "migration files differ from the finished build"
-    );
-
-    for (path, bytes) in &files {
-        wamn_codegen::fingerprint::verify_digest(
-            &output,
-            &finished,
-            Path::new(path),
-            bytes_sha256(bytes),
-        )?;
-    }
     let migrations = migrations_layer(&files)?;
     let (existing, created) = if let Some((raw, digest)) = repository.manifest().await? {
         let (previous, previous_created) = repository
