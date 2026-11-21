@@ -227,31 +227,31 @@ Phase 1 deletion, phase 2 restructure (no behaviour change), phase 3 code editin
 
 Phase 3 steps, in dependency order: 3.1 database model; 3.2 request path (workloads, connections, files, integrations and application host routes); 3.3 identity; 3.4 workflow service; 3.5 deploy; 3.6 isolation, then install; 3.7 codegen; 3.7b crate boundaries; 3.8 tests.
 
-## Epic 12: step 3.7b, crate boundaries
+## Epic 13: step 3.8, test machinery and existing tests
 
-Rule: each crate has one job. The host and the CDC reader link neither `wamn-kubernetes` nor `wamn-provision`. No new features.
+Rule: the F4 test rules, in place. Existing tests that check a current contract pass against the final crates. No new product behaviour.
 
 Issues:
 
-12.0 Plan, doc only, done first. Record the Q1 rulings. Change the clippy count in Open items from 45 to 28. After 12.0, the other issues run in parallel.
+13.0 Plan, doc only, done first. Record the Q1 and Q2 rulings. After 13.0, the other issues run in parallel.
 
-12.1 Split `wamn-sql` as ruled on 2026-11-17. `pool`, `host_project` and `types` go to `wamn-postgres`. The auth lookups and the host's authorization cache go to `wamn-authentication`, as the one `AuthorizationStore`. The rest is renamed as the operation host, and `session_identity` splits into the scope registry and the plugin glue.
+13.1 Delete the tests of code that is gone: `crates/provision/tests/{deploy_sql_authority,family_denial_matrix,record_history}.rs` and their fixtures, which use tables Epic 1 dropped; `crates/dev/tests/support/platform_schema.rs` and `platform_upgrade.rs`, which run the deleted `wamn-ctl`; `deploy/sql/postgres-init.sql`; every `panic!` stub that marks a product gap, with one bead per gap; `test-support/measure-tx-identity.py`, which becomes an `xtask` command if its job is still needed.
 
-12.2 Split by plane. Connection administration, the Kubernetes credential code (`connections/{administration,references,credentials,connection_credentials,credential_cleanup}.rs`) and the OAuth flow (`crates/http` `oauth_authorization.rs`, `oauth_callback.rs`) leave the runtime crates. Goal: `cargo tree -e normal -i` shows that `wamn-host` links neither `wamn-kubernetes` nor `wamn-provision`. Paths today: the host links `wamn-kubernetes` through `wamn-connection`, `wamn-http` and `wamn-oci`. It links `wamn-provision` only through optional `test-util` features. `wamn-cdc-reader` already links neither crate. The host links `kube-rs` directly for the run-time read of connection Secrets, with only a typed get on Secrets in its own namespace.
+13.2 Postgres and NATS come from testcontainers, with a `#[sqlx::test]` database per test. The images are the production digests: Postgres 18.6 and the platform's NATS. `wamn-test-postgres` and every `lock()` call go.
 
-12.3 Infrastructure clients. `wamn-oci` drops `wamn-kubernetes` and uses `oci-client`. The generic HTTP clients (`wamn-kubernetes::http_transport`, `wamn-oci::package_artifact::http_client`) become one small module, or their users call `reqwest` directly.
+13.3 No `test-util` features: all 20 crates that define one lose it. Helpers live in `tests/common/` or one dev-only crate. Test-only constructors and back doors leave production code.
 
-12.4 Identity writes. `platform.tx_identity` has one owner function (today `crates/connection`, `http`, `identity`, `provision`, `sql`, `services/control`, `services/identity-service`). The identity service writes as its own principal, not `PlatformComponent::Provisioning`, and principal ids move to a small crate. `platform."user"` has one writer.
+13.4 Runner: `cargo test`, then `cargo test -- --ignored`. The `xtask` command that maps changed files to packages comes back. Fixture applications are built once before the run, and a test whose input is missing fails. `docs/operations/running-tests.md` is rewritten.
 
-12.5 `Refusal` moves out of `services/host/src/host/application_route.rs` into a module that `host_route.rs` and `workflow/lifecycle.rs` both use.
+13.5 Waits: a sleep followed by an assert that nothing happened becomes a paused clock or an awaited event.
 
-12.6 All Kubernetes calls move to `kube-rs`. The kubectl error-text matching (`crates/kubernetes/src/kubectl.rs`) and `kubernetes_api.rs` go. `wamn platform deploy` uses Helm's own kstatus wait. The old fixed-name system SQL Job gets a typed clear: Rust deletes the finished Job with `kube-rs` before `job.rs::submit` creates the next one. The CDC reader wait stays as a typed `kube-rs` wait, because the project chart renders a Secret and cannot use Helm's wait. Other Rust waits that exist for the same reason also stay as typed `kube-rs` waits. `kubectl::wait_deployment_ready` and `job::clear_finished` go once their callers use these. Pin `kube` =5.1.0 with `k8s-openapi` =0.29.0 (`v1_35`): the lowest supported Kubernetes is GKE 1.35 (kind nodes run 1.36.1).
+13.6 One SQL crate holds the grant refusal tests for every remaining login (AB7).
 
-12.7 Split `wamn-catalog`. Its eight concerns (package model, edge release document, admission, routes, connection types, settings, locks, schema SQL) go to their owners. The duplicated types go: `Operation` (14 structs, 3 enums) and `Environment` (7 types). `wamn.application` is parsed once per bind, not seven times (`crates/sql/src/lib.rs`, `crates/engine/src/operation.rs`, `crates/http/src/lib.rs`, `services/host/src/host/platform_http.rs`). Two new crates take concerns that no existing crate can own without a cycle or a network dependency: `wamn-connection-type` holds the connection types (the portable connection definitions and run-time tags), below `wamn-engine` and `wamn-authority`. `crates/oci/reference` (`wamn-oci-reference`) holds the artifact references and `validate_composed_entry_path`, with no network code, for `wamn-oci` and `wamn-edge`.
+13.7 Small items: apps clippy (the three `unsafe_code` errors in `crates/guest/examples/numbering_refusal.rs:5` and the duplicate `panic_impl` in `test-support/fixtures/guests/connection-http-standard`); the field manager `wamn-control` in `crates/kubernetes/src/kubernetes.rs:67` becomes `wamn`.
 
-12.8 Small items: remove the palette key and `ProjectEnvKey::platform_palette()`; partial build-platform (skip images whose inputs did not change); the xtask dependency check on `wamn-edge`; the `implicit_clone` errors in `crates/guest`; delete the dead SQL `platform.api_key` and `wamn_authority.author_login_projects`.
+End of the epic: the standard checks, `cargo test`, `cargo test -- --ignored` on a machine with Docker, the preflight and the short smoke run.
 
-End of the epic: the standard checks, the preflight and the short smoke run.
+Next: Epic 14 (step 3.8, second part): one service test per contract with a real host in process, and the journey tests on kind.
 
 ## Open items
 
@@ -259,12 +259,7 @@ End of the epic: the standard checks, the preflight and the short smoke run.
 - The HTTP client cache key by invocation scope, target, connection ID and generation is not built.
 - `registry.connection_principal` is not built. Project connection rows carry the principal ID.
 - Deferred: the edge device after the restructure; the four workflow behaviours.
-- 3.8: these tests compile but use SQL on tables Epic 1 dropped (`catalog.releases`, `catalog.wiring_tombstones`): `crates/provision/tests/{deploy_sql_authority,family_denial_matrix,record_history}.rs`, `crates/provision/tests/fixtures/catalog_record_history.sql`, `crates/identity/tests/fixtures/connections.sql`.
-- 3.8: `crates/dev/tests/support/platform_schema.rs` and `platform_upgrade.rs` run the binary `wamn-ctl`, which Epic 1 deleted.
-- 3.8: `docs/operations/running-tests.md` describes test targets that no longer exist.
 - Journey tests on kind, deferred from the first kind run: rollback, `env delete`, apply again, and `env delete --data` after a plain delete; the Data change check for `client_acme_receiving` (K24); the 10.13 per-pod scheduler users beyond host start; the Pooler per-login limits and waits under load; that kind's CNI enforces NetworkPolicy, and that an environment's host cannot reach another environment's host, Postgres or Services.
-- 3.8: `deploy/sql/postgres-init.sql` is an old test fixture that still defines `project_key()`, `current_project_key()`, the old row policies and its own roles. Only `crates/provision/tests/{family_denial_matrix,deploy_sql_authority}.rs` load it; it goes with them or is rewritten.
-- Apps clippy (the second workspace): three unsafe_code errors in crates/guest/examples/numbering_refusal.rs:5 and the duplicate panic_impl in test-support/fixtures/guests/connection-http-standard. Fix in 3.8.
 - Health probes for wasm integration types: `connection_test` cannot run integration code outside an application workload. To be designed.
 - Edge device design: plant-network devices such as Modbus run at the edge, and the edge runtime gets its own address rule. A cloud integration that needs a private address (a customer network linked by VPN) is decided when a real case appears.
 - Native integration types (for example the NetSuite ODBC driver) are native Rust host plugins compiled into the wamn host, as wasmCloud advises for drivers with no WASI binding. Decide this when the first one is built.
@@ -273,8 +268,6 @@ End of the epic: the standard checks, the preflight and the short smoke run.
 - A call limit for each application, if a real case appears: either a per-host semaphore named as per-host, or a Postgres design decided with real numbers.
 - 3.6: nothing in the install fills the `wamn-control-administration-<org>` map that control reads its project logins from.
 - Topic entry node: after 3.4. Topics use stock `wasmcloud:nats`: application components publish within their workload's grants, and a Topic workflow pulls from its own consumer like Data change.
-- 3.8: 19 crates still define a `test-util` feature, against AA. Phase 2.4 did not do this. `wamn-http` and `wamn-publish` enable test crates through it.
-- 3.7b runs before 3.8, so service tests are written once, against the final crates.
 - Edge device: the edge runs the cluster `ingress.wasm` and turns every import it does not provide into a trap (`define_unknown_imports_as_traps` in `services/edge/src/serve.rs`). Risk: a capability missing on the edge fails on the first call, not at load. The stock `wasmcloud_nats` plugin cannot fill the NATS imports on the edge, because it needs a `servers` value and connects at bind. The edge design decides between a real NATS server on the edge (see the next item) and an HTTP-only build of `ingress`.
 - Edge device, if the edge needs NATS: use the stock NATS way. A leaf node on the device with its own JetStream domain, one per edge environment. Mirror cloud streams to the edge, and source edge streams into the cloud. The edge then binds the stock `wasmcloud_nats` plugin to the local server, which also fills `ingress`'s NATS imports, and the guest code does not change. Not ruled; the edge design decides.
 - After 3.6, first kind run: verify the kstatus waits on the `application` and `environment` charts, and the explicit Rust waits on the `project` and `org` charts (Certificate, Database connection, the CDC reader's wait for its replication slot, CDC reader rollout, Cluster).
@@ -2015,3 +2008,7 @@ Epic 11 closed on 2026-11-20 after review. The smoke run on kind passed.
 - With Q2 and Q3 done, `wamn-catalog` is deleted.
 
 Epic 12 closed on 2026-11-20 after review. The smoke run on kind passed.
+
+**Ruled (D, 2026-11-20): Epic 13 scope (step 3.8, first part).**
+- Q1: 3.8 splits into two epics. Epic 13 is the machinery and the existing tests. Epic 14 is service tests per contract and the journey tests on kind. Reason: Epic 14's contract list depends on what Epic 13 leaves standing, and the machinery work stays apart from the test cluster runs.
+- Q2: existing `#[ignore]` service tests that check a current contract are ported; the rest are deleted. Epic 14 adds only what is missing.
