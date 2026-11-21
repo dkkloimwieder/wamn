@@ -242,7 +242,7 @@ Issues:
 - Ruled: history assertions of the deleted provision tests move to `crates/postgres/tests/project_schema.rs`, grant assertions to `wamn-test-sql`.
 - Ruled: no product-gap stubs remain, so no gap beads are filed.
 - Ruled: the Q2 table stands: 108 ignored tests are ported, 14 are deleted. A test that needs only Wasmtime, loopback or a prepared input is ported at the lowest tier.
-- Ruled (2026-11-21): 96 ignored tests are ported. The two stale host tests go (106 ports), then the 3 edge readiness tests and the 7 `client_projection` tests go with the code they test. The release manifest and membership tests that rulings 6 and 7 delete were never ignored.
+- Ruled (2026-11-21): 96 ignored tests are ported. The two stale host tests go (106 ports), then the 3 edge readiness tests and the 7 `client_projection` tests go with the code they test. The release manifest and membership tests that rulings 6 and 7 delete were never ignored. Rulings 11 and 12 then delete 8 operation tests, so the final count is 88.
 
 13.2 Postgres and NATS come from testcontainers. The images are the production digests: Postgres 18.6 and the platform's NATS. `wamn-test-postgres` and every `lock()` call go.
 - Ruled: `testcontainers` =0.28.0 alone, with `GenericImage`. No `testcontainers-modules`.
@@ -272,6 +272,7 @@ Issues:
 End of the epic: the standard checks, `cargo test`, `cargo test -- --ignored` on a machine with Docker, the preflight and the short smoke run.
 
 Next: Epic 14 (step 3.8, second part): one service test per contract with a real host in process, and the journey tests on kind.
+Epic 14 also covers these contracts, whose Epic 13 tests ruling 11 deleted: another project environment's credential is refused and never served; a cold connection parses inside the identity transaction; the transaction carries its operation, and a pooled connection keeps none; the transaction carries only the application its host bound; claims commit with their transaction, a rollback releases them, a competing claim waits and a lost session refuses; known results finish at host commit, and a missing finish rolls back; unfinished claims have a call bound, accept late completion and expire under retention.
 
 ## Open items
 
@@ -2070,3 +2071,9 @@ Epic 12 closed on 2026-11-20 after review. The smoke run on kind passed.
 - Question 10: the deleted `42501` check in `crates/identity/tests/password_live.rs::enrollment_preserves_identity_and_pat_and_consumes_all_invitations` stays deleted. Reason: it was written for `wamn_db_owner`, and 13.6 asserts the refusals of every login.
 - Limits on root's decisions: the `provision_org` and `provision_system` split stays only if production calls the same public functions. The system roles from `helm template` are parsed into typed objects, with no text matching. Project logins log in by password in 13.6, because grants depend on the role, not the login method. Certificate login is tested in Epic 14 on kind.
 - Count: 96 ignored tests are ported.
+
+**Ruled (D, 2026-11-21): Epic 13 questions 11 and 12.**
+- Question 11: each of the eight operation live tests that `StaticCredentialProvider::resolve` refuses is sorted by its cause. A test that supplies a credential that production never issues gets a fixture from the production constructors, where that fits in the test. Otherwise the test is deleted, and its contract goes to Epic 14 by name. If production refuses a credential that production issues, that is a product defect, and the check and the test stay. Reason: under the freeze, a test does not get a credential back door, and Epic 14 has the real host and identity code.
+- Result of question 11: all eight tests made `wamn_app_<hash>` logins on a loopback port, which production never issues. `bind_host_project` issues only `wamn_app_login` or `wamn_query_login` on `<cluster>-rw.<org>.svc.cluster.local` port 5432, so no test container can serve it. Seven tests are deleted, and their contracts are on the Epic 14 line. The eighth is the test of question 12.
+- Question 12: `require_provisioned_principal`, `UnprovisionedPrincipal` and its test in `crates/operation/src/session_identity/tests.rs` are deleted. Reason: production never calls it, and production fails closed. `authorization.rs::held_grants` returns no grants when `!grants.active || !grants.present`, and `authorization/store.rs:182` needs `grants.present && grants.active`. `crates/operation/src/host.rs:185` checks only `grants.active`, but `principal_grants_from_rows` leaves `active` false when no `platform."user"` row exists, so it needs no fix.
+- Count: 88 ignored tests are ported, the 96 of the earlier entry less these 8.
