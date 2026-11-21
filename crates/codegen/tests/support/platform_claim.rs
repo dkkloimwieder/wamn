@@ -14,7 +14,8 @@ pub(super) fn manifest() -> Value {
         "input": {"fields": [
             {"path": "idempotency_key", "type": "text", "nullable": false},
             {"path": "id", "type": "uuid", "nullable": false},
-            {"path": "payload", "type": "text", "nullable": false}]},
+            {"path": "payload", "type": "text", "nullable": false}],
+            "raw_body_maximum": 1_048_576, "envelope": {"minimum": 1, "maximum": 100}},
         "result": {"class": "one", "fields": [
             {"path": "id", "type": "uuid", "nullable": false}]},
         "errors": ["invalid_input", "idempotency_conflict", "retry", "timeout",
@@ -25,7 +26,7 @@ pub(super) fn manifest() -> Value {
             "insert_fields": [], "update_fields": [], "lock": true,
             "constraints": []}],
         "statements": {
-            "archive": {"path": "command/widget/archive.sql", "fetch": "one",
+            "archive": {"path": "command/widget/archive/archive.sql", "fetch": "one",
                 "parameters": [{"name": "id", "type": "uuid", "nullable": false}],
                 "row": [
                     {"name": "id", "type": "uuid", "nullable": false},

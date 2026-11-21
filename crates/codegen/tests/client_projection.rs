@@ -379,7 +379,6 @@ fn release() -> ClientContractIr {
 }
 
 #[test]
-#[ignore = "requires: input:fixture"]
 fn platform_update_preserves_writable_type_presence_and_nullability() {
     let platform = release();
     let update = platform.models[fixture::widget_index(&platform)]
@@ -458,7 +457,6 @@ fn platform_query_closed_sort_domains_remain_typed() {
 }
 
 #[test]
-#[ignore = "requires: input:fixture"]
 fn direct_state_replay_and_composed_routes_remain_distinct() {
     let platform = release();
     let command = operation(&platform, "archive");
@@ -511,38 +509,45 @@ fn direct_state_replay_and_composed_routes_remain_distinct() {
 }
 
 #[test]
-#[ignore = "requires: input:fixture"]
 fn a_direct_route_states_the_relations_it_reads_and_writes() {
     let platform = release();
-    let response = |model: &str, name: &str| {
-        platform
-            .models
-            .iter()
-            .find(|candidate| candidate.name == model)
-            .and_then(|model| model.operations.iter().find(|op| op.name == name))
-            .and_then(|operation| operation.route.as_ref())
-            .unwrap_or_else(|| panic!("{model}/{name} has a route"))
-            .response
-            .clone()
-    };
     let widget = vec!["inventory.widget".to_owned()];
-    for name in ["get", "query", "list"] {
-        let read = response("widget", name);
-        assert_eq!(read.reads, widget, "{name} reads the widget");
-        assert_eq!(read.writes, None);
-    }
-    // A generated write states its relation in the form an authored one does.
-    for name in ["create", "update", "delete"] {
-        let write = response("widget", name);
-        assert!(write.reads.is_empty());
-        assert_eq!(
-            write.writes.as_ref(),
-            Some(&widget),
-            "{name} writes the widget"
-        );
+    for operation in &platform.models[fixture::widget_index(&platform)].operations {
+        let name = &operation.name;
+        let response = &operation
+            .route
+            .as_ref()
+            .unwrap_or_else(|| panic!("widget/{name} has a route"))
+            .response;
+        match operation.type_.as_str() {
+            "get" | "query" | "projection" => {
+                assert_eq!(response.reads, widget, "{name} reads the widget");
+                assert_eq!(response.writes, None);
+            }
+            // A generated write states its relation in the form an authored one does.
+            "create" | "update" | "delete" => {
+                assert!(response.reads.is_empty());
+                assert_eq!(
+                    response.writes.as_ref(),
+                    Some(&widget),
+                    "{name} writes the widget"
+                );
+            }
+            "command" => {}
+            other => panic!("widget/{name} has the unclassified type {other}"),
+        }
     }
     // Archive only locks the widget, so it writes nothing.
-    assert_eq!(response("widget", "archive").writes, Some(Vec::new()));
+    let archive = operation(&platform, "archive");
+    assert_eq!(
+        archive
+            .route
+            .as_ref()
+            .expect("archive is served")
+            .response
+            .writes,
+        Some(Vec::new())
+    );
 
     // A history table is named as its model table, which changes with it.
     // A write whose contract names no relation states none.
@@ -708,7 +713,6 @@ fn leaf<'a>(
 /// The three differ, and a label that arrives on one path alone is a screen
 /// that reads a database in the other two.
 #[test]
-#[ignore = "requires: input:fixture"]
 fn authored_text_reaches_every_field_the_client_reads() {
     let authored = fixture::manifest();
     let ir = fixture::client_release();
@@ -824,7 +828,6 @@ fn authored_text_reaches_every_field_the_client_reads() {
 /// text by decision, so without the join a detail reads field paths while the
 /// table beside it reads labels.
 #[test]
-#[ignore = "requires: input:fixture"]
 fn a_published_response_takes_its_text_from_the_terminal() {
     let authored = fixture::manifest();
     let package = fixture::generate_fixture();
@@ -887,7 +890,6 @@ fn a_published_response_takes_its_text_from_the_terminal() {
 /// an author writes nothing there. A screen cannot tell the two apart, which
 /// is the point.
 #[test]
-#[ignore = "requires: input:fixture"]
 fn an_input_states_the_record_it_names_and_a_read_states_what_it_lists() {
     let ir = fixture::client_release();
     let operation = |name: &str| {
@@ -980,7 +982,6 @@ fn an_input_states_the_record_it_names_and_a_read_states_what_it_lists() {
 /// in the manifest through the errors contract into the IR, on the operation
 /// and on its served response (wamn-ly11.2). A platform code states none.
 #[test]
-#[ignore = "requires: input:fixture"]
 fn authored_refusal_text_reaches_the_client_ir() {
     let manifest = fixture::manifest();
     let expected = manifest["custom_operations"]["widget.archive"]["error_details"]["already_archived"]["text"].as_str().expect("authored refusal text");

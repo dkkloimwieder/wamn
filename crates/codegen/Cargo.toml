@@ -41,7 +41,7 @@ wamn-digest.workspace = true
 wamn-provision = { workspace = true, features = ["test-util"] }
 url.workspace = true
 wamn-guest = { path = "../guest" }
-uuid.workspace = true
+uuid = { workspace = true, features = ["v4"] }
 tokio = { workspace = true, features = ["macros", "rt"] }
 boon.workspace = true
 

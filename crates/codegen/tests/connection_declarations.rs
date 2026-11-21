@@ -59,6 +59,30 @@ fn kcl_requires_interfaces_mode_and_no_values() {
         std::env::temp_dir().join(format!("wamn-connections-kcl-{}", std::process::id()));
     std::fs::create_dir_all(&directory).unwrap();
     let path = directory.join("wamn.k");
+    let wit = directory.join("component/wit/deps/fixture-fixture");
+    std::fs::create_dir_all(&wit).unwrap();
+    std::fs::write(
+        wit.join("custom.wit"),
+        r"
+interface call {
+    use wamn:node/types@0.1.0.{node-context, node-error};
+    type uuid = string;
+    enum call-request { request }
+    record invalid-input-detail { field: string }
+    record permission-denied-detail { operation: string }
+    variant call-error {
+        internal-error,
+        invalid-input(invalid-input-detail),
+        permission-denied(permission-denied-detail),
+    }
+    record call-item { request-id: string, input: result<call-request, invalid-input-detail> }
+    record call-result { id: uuid }
+    record call-outcome { request-id: string, outcome: result<call-result, call-error> }
+    run: async func(ctx: node-context, input: list<call-item>) -> result<list<call-outcome>, node-error>;
+}
+",
+    )
+    .unwrap();
     for (entry, valid) in [
         (
             r#"interface = "example:meter/read@1.0.0", mode = "read""#,
@@ -87,12 +111,11 @@ manifest.Package {{
  required_platform_policy_contract = {{id = "fixture_data_access", state = "satisfied"}}
  models = {{}}
  components = {{fixture = {{}}}}
- custom_operations = {{"fixture.call" = {{
-  type = "command", visibility = "public", permission = "fixture.call"
+ custom_operations = {{"fixture.call" = manifest.Command("fixture.call") {{
   connection = None
-  idempotent_by = "stateless", input = {{fields = []}}
-  result = {{class = "one", fields = [{{path = "id", type = "uuid", nullable = False}}]}}
-  errors = ["invalid_input", "permission_denied", "internal_error"]
+  transaction = None
+  automatic_retry = None
+  idempotent_by = "stateless"
  }}}}
  connections = {{erp = {{{entry}}}}}
 }}

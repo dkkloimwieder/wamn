@@ -130,7 +130,6 @@ mod tests {
     use wamn_schema_introspection::ir::CatalogIr;
 
     #[test]
-    #[ignore = "requires: bin:kcl"]
     fn authored_signed_reads_reach_the_generated_result() {
         let root = std::env::temp_dir().join(format!("wamn-signed-result-{}", std::process::id()));
         fs::create_dir_all(&root).unwrap();
