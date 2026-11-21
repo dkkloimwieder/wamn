@@ -300,6 +300,7 @@ Epic 14 also covers these contracts, whose Epic 13 tests ruling 11 deleted: anot
 - After the first kind run: three NATS pods with three-replica streams.
 - Move the NATS server from 2.12.15 to the vendored chart's 2.15.2. Decide with its own kind run.
 - The Helm size check has no xtask command. Add cargo xtask helm-size, so the standard check is one command.
+- The apps workspace host build tries to link 18 guests that target wasm only. Each fails at link with mold [async-lift]. Build guests for wasm only, or leave them out of the host build.
 - Later option: custom domains for applications through a verified-domain list (E).
 - Later option: integration types owned by one org (Q4).
 - Later option: users in more than one org, through an invitation the user accepts (grant ruling, change 1).
@@ -2080,4 +2081,8 @@ Epic 12 closed on 2026-11-20 after review. The smoke run on kind passed.
 - Question 12: `require_provisioned_principal`, `UnprovisionedPrincipal` and its test in `crates/operation/src/session_identity/tests.rs` are deleted. Reason: production never calls it, and production fails closed. `authorization.rs::held_grants` returns no grants when `!grants.active || !grants.present`, and `authorization/store.rs:182` needs `grants.present && grants.active`. `crates/operation/src/host.rs:185` checks only `grants.active`, but `principal_grants_from_rows` leaves `active` false when no `platform."user"` row exists, so it needs no fix.
 - Count: 88 ignored tests are ported, the 96 of the earlier entry less these 8.
 
-Epic 13 closed on 2026-11-21 after review. cargo test --workspace: 603 passed. --ignored: 93 passed. The smoke run on kind passed.
+**Ruled (D, 2026-11-21): Epic 13 fix 1.**
+- The apps workspace host build has a baseline of 18 link failures. `test-support/fixtures/guests/connection-http-standard` stays as it is, because its panic handler is already correct for both the wasm target and the host target.
+- The review was wrong to call the fixture failure a regression from 13.7. Reason: in Epic 12 the fixture stopped at compile time with the duplicate `panic_impl` error. Now it compiles and fails at link with mold `[async-lift]`, like the other 17 guests.
+
+Epic 13 closed on 2026-11-21 after review. cargo test --workspace: 603 passed. --ignored: 93 passed. The smoke run on kind passed. The apps host build baseline is 18 link failures.
