@@ -1,4 +1,4 @@
-//! Private Postgres and NATS servers using the platform images.
+//! Private Postgres servers using the platform image.
 
 use std::fmt;
 use std::time::Duration;
@@ -17,7 +17,6 @@ use url::Url;
 
 const PLATFORM_VALUES: &str = include_str!("../../deploy/charts/platform/values.yaml");
 const POSTGRES_PORT: u16 = 5432;
-const NATS_PORT: u16 = 4222;
 const CONNECTION_TIMEOUT: Duration = Duration::from_secs(10);
 
 const START_POSTGRES: &str = r#"
@@ -40,31 +39,11 @@ exec postgres -D "$data" -h '*' -k '' \
 struct PlatformValues<'a> {
     #[serde(borrow)]
     postgres: PostgresValues<'a>,
-    #[serde(borrow)]
-    nats: NatsValues<'a>,
 }
 
 #[derive(Deserialize)]
 struct PostgresValues<'a> {
     image: &'a str,
-}
-
-#[derive(Deserialize)]
-struct NatsValues<'a> {
-    #[serde(borrow)]
-    container: NatsContainerValues<'a>,
-}
-
-#[derive(Deserialize)]
-struct NatsContainerValues<'a> {
-    #[serde(borrow)]
-    image: NatsImageValues<'a>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct NatsImageValues<'a> {
-    full_image_name: &'a str,
 }
 
 fn pinned_image(reference: &str) -> Result<GenericImage> {
@@ -255,44 +234,4 @@ fn random_password() -> Result<String> {
     let random = ring::rand::generate::<[u8; 24]>(&ring::rand::SystemRandom::new())
         .map_err(|_| anyhow!("generate test database password"))?;
     Ok(hex::encode(random.expose()))
-}
-
-/// A private NATS server, removed on drop.
-#[derive(Debug)]
-pub struct Nats {
-    _container: ContainerAsync<GenericImage>,
-    url: Url,
-}
-
-impl Nats {
-    /// The server's connection URL.
-    pub fn url(&self) -> &str {
-        self.url.as_str()
-    }
-}
-
-/// Start a NATS server with JetStream and wait for it to answer a client.
-pub async fn start_nats() -> Result<Nats> {
-    let values: PlatformValues<'_> = serde_yaml::from_str(PLATFORM_VALUES)?;
-    let image = pinned_image(values.nats.container.image.full_image_name)?
-        .with_wait_for(WaitFor::message_on_stderr("Server is ready"));
-    let container = publish_on_loopback(image, NATS_PORT)
-        .with_cmd(["nats-server", "--jetstream"])
-        .start()
-        .await
-        .context("start the NATS test container")?;
-    let port = container.get_host_port_ipv4(NATS_PORT).await?;
-    let url = Url::parse(&format!("nats://127.0.0.1:{port}"))?;
-    tokio::time::timeout(CONNECTION_TIMEOUT, async {
-        let client = async_nats::connect(url.as_str()).await?;
-        client.flush().await?;
-        Ok::<(), anyhow::Error>(())
-    })
-    .await
-    .context("wait for the NATS test server connection")?
-    .context("connect to the NATS test server")?;
-    Ok(Nats {
-        _container: container,
-        url,
-    })
 }
