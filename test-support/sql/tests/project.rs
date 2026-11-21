@@ -2,7 +2,7 @@
 
 pub mod common;
 
-use common::{PASSWORD, Project, execute};
+use wamn_test_infrastructure::database::{self, PASSWORD, Project, execute};
 use wamn_provision::WorkloadRoleFamily;
 
 /// Log in as `login`, then check its catalog-derived refusals and the `contract` actions.
@@ -29,7 +29,7 @@ async fn login_refusals(
 #[tokio::test]
 #[ignore = "requires: docker, bin:helm"]
 async fn migration_login_refusals() -> anyhow::Result<()> {
-    let project = common::project().await?;
+    let project = database::project().await?;
     let login = WorkloadRoleFamily::Migration.login_name();
     let mut actor = common::log_in(&project.login_url(login)?).await?;
     wamn_provision::migrations::MigrationDatabase::Project
@@ -46,7 +46,7 @@ async fn migration_login_refusals() -> anyhow::Result<()> {
 async fn app_login_refusals() -> anyhow::Result<()> {
     use sqlx::Connection as _;
 
-    let project = common::project().await?;
+    let project = database::project().await?;
     let login = WorkloadRoleFamily::App.login_name();
     let mut admin = project.admin().await?;
     common::assert_no_grant_options(&mut admin, login).await?;
@@ -150,7 +150,7 @@ async fn app_login_refusals() -> anyhow::Result<()> {
 #[tokio::test]
 #[ignore = "requires: docker, bin:helm"]
 async fn query_login_refusals() -> anyhow::Result<()> {
-    let project = common::project().await?;
+    let project = database::project().await?;
     let login = WorkloadRoleFamily::Query.login_name();
     let mut admin = project.admin().await?;
     common::assert_no_grant_options(&mut admin, login).await?;
@@ -166,7 +166,7 @@ async fn query_login_refusals() -> anyhow::Result<()> {
 #[tokio::test]
 #[ignore = "requires: docker, bin:helm"]
 async fn platform_login_refusals() -> anyhow::Result<()> {
-    let project = common::project().await?;
+    let project = database::project().await?;
     let login = WorkloadRoleFamily::Platform.login_name();
     common::assert_no_grant_options(&mut project.admin().await?, login).await?;
     let checked = login_refusals(&project, login, false, &[]).await?;
@@ -177,7 +177,7 @@ async fn platform_login_refusals() -> anyhow::Result<()> {
 #[tokio::test]
 #[ignore = "requires: docker, bin:helm"]
 async fn cdc_login_refusals() -> anyhow::Result<()> {
-    let project = common::project().await?;
+    let project = database::project().await?;
     let login = wamn_role::CDC_LOGIN;
     common::assert_no_grant_options(&mut project.admin().await?, login).await?;
     let checked = login_refusals(&project, login, true, &[]).await?;
@@ -188,7 +188,7 @@ async fn cdc_login_refusals() -> anyhow::Result<()> {
 #[tokio::test]
 #[ignore = "requires: docker, bin:helm"]
 async fn public_executes_no_project_security_definer() -> anyhow::Result<()> {
-    let project = common::project().await?;
+    let project = database::project().await?;
     let checked = common::assert_public_executes_no_definer(&mut project.admin().await?).await?;
     println!("PUBLIC: {checked} refused actions");
     Ok(())
