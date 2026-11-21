@@ -825,6 +825,7 @@ BEGIN
       ON CONFLICT (org, project, env, instance_suffix) DO NOTHING;
     RETURN OLD;
 END $$;
+REVOKE ALL ON FUNCTION registry.retire_project_env() FROM PUBLIC;
 
 CREATE TRIGGER project_envs_retire_instance
     BEFORE DELETE ON registry.environment_projects

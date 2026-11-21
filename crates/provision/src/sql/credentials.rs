@@ -80,7 +80,8 @@ pub fn grant_platform_surface_sql() -> String {
          REVOKE ALL ON platform.login_principal FROM {role}; \
          GRANT EXECUTE ON FUNCTION platform.prune_tx_identity() TO {role}; \
          REVOKE DELETE ON platform.pat FROM {role}; \
-         GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA wamn_authority TO {role}; \
+         GRANT EXECUTE ON FUNCTION wamn_authority.current_identity(), wamn_authority.current_principal_id(), \
+           wamn_authority.current_role(), wamn_authority.current_application() TO {role}; \
          GRANT EXECUTE ON FUNCTION wamn_history.row_image(record), \
            wamn_history.timestamptz_image(timestamptz) TO {role};",
     )

@@ -193,3 +193,15 @@ async fn public_executes_no_project_security_definer() -> anyhow::Result<()> {
     println!("PUBLIC: {checked} refused actions");
     Ok(())
 }
+
+#[tokio::test]
+#[ignore = "requires: docker, bin:helm"]
+async fn project_extensions_are_the_declared_extensions() -> anyhow::Result<()> {
+    let project = database::project().await?;
+    common::assert_extensions(
+        &project.postgres,
+        &mut project.admin().await?,
+        &project.extensions,
+    )
+    .await
+}
