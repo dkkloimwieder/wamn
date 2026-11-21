@@ -13,7 +13,8 @@ Application upgrades and rollbacks use `--wait=watcher`. The org worker Role gra
 
 Deploy uses the `workflow` NATS binding for the workflow service. It adds the `ingress` binding when the application declares Data change handlers.
 
-Each release with wasm integration authorities adds one egress policy for its environment's host group.
+Each release with wasm integration authorities or bound host HTTP connections adds one egress policy for its environment's host group.
 The deploy resolves each authority to its explicit TCP port or the default socket port for its scheme.
+For a host HTTP connection, `connectionPorts` holds the ports of its primary authority and its OAuth `token_authority`.
 Policies add up across releases and Helm removes a release's policy on uninstall.
 The public IPv4 rule excludes fixed private and special-use ranges. wash-runtime enforces each integration's `allowedHosts`.
