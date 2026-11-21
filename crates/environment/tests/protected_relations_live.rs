@@ -5,8 +5,9 @@ use sqlx::PgConnection as Client;
 use sqlx::Row as _;
 use wamn_provision::sql;
 
-#[sqlx::test(migrations = false)]
-async fn application_mutations_require_row_security_in_each_database(pool: sqlx::PgPool) {
+#[tokio::test]
+#[ignore = "requires: docker"]
+async fn application_mutations_require_row_security_in_each_database() {
     async fn assert_author_sql_boundaries(client: &mut Client) {
         let rows = sqlx::query(
             "WITH mutation_roles AS ( \
@@ -65,38 +66,24 @@ async fn application_mutations_require_row_security_in_each_database(pool: sqlx:
         }
     }
 
-    let _lock = wamn_test_postgres::lock();
-    let url = wamn_test_postgres::url(&pool);
-    wamn_provision::test_database::system(url.as_str()).await;
-    let mut client = wamn_postgres::connect(url.as_str()).await.unwrap();
+    let postgres = wamn_test_infrastructure::containers::start_postgres()
+        .await
+        .unwrap();
+    let migration = postgres.create_project_database("project").await.unwrap();
+    let system = postgres.create_database("system").await.unwrap();
+    wamn_provision::test_database::system(system.as_str()).await;
+    let mut client = wamn_postgres::connect(system.as_str()).await.unwrap();
     sqlx::raw_sql(sqlx::AssertSqlSafe(sql::ensure_app_acl_role_sql()))
         .execute(&mut client)
         .await
         .unwrap();
     assert_author_sql_boundaries(&mut client).await;
-    let database: String = sqlx::query("SELECT current_database()")
-        .fetch_one(&mut client)
-        .await
-        .expect("read the disposable project database name")
-        .get(0);
-    sqlx::raw_sql(sqlx::AssertSqlSafe(sql::set_database_owner_sql(&database)))
-        .execute(&mut client)
-        .await
-        .map(drop)
-        .expect("assign the canonical project database owner before package installation");
-    sqlx::raw_sql(
-        "DROP SCHEMA IF EXISTS platform CASCADE; \
-             DROP SCHEMA IF EXISTS catalog CASCADE; \
-             DROP SCHEMA IF EXISTS wamn_run CASCADE; \
-             DROP SCHEMA IF EXISTS wamn_authority CASCADE; \
-             DROP SCHEMA IF EXISTS wamn_history CASCADE",
-    )
-    .execute(&mut client)
-    .await
-    .map(drop)
-    .expect("remove control schemas before the fresh project install");
-    wamn_environment::platform_migrations::install_project(&mut client)
+    let mut migrator = wamn_postgres::connect(migration.as_str()).await.unwrap();
+    wamn_environment::platform_migrations::install_project(&mut migrator)
         .await
         .expect("install canonical project schemas through reconciler");
+    let mut project = url::Url::parse(postgres.admin_url()).unwrap();
+    project.set_path("project");
+    let mut client = wamn_postgres::connect(project.as_str()).await.unwrap();
     assert_author_sql_boundaries(&mut client).await;
 }

@@ -11,7 +11,7 @@ use sqlx::Row as _;
 mod files;
 
 #[tokio::test]
-#[ignore = "requires: postgres"]
+#[ignore = "requires: docker"]
 async fn application_file_writes_are_refused_and_history_uses_the_standard_contract()
 -> anyhow::Result<()> {
     let mut fixture = files::fixture("file_authority").await?;
@@ -59,7 +59,7 @@ async fn application_file_writes_are_refused_and_history_uses_the_standard_contr
 }
 
 #[tokio::test]
-#[ignore = "requires: postgres"]
+#[ignore = "requires: docker"]
 async fn disabling_a_connection_preserves_file_references_and_referenced_delete_refuses()
 -> anyhow::Result<()> {
     let mut fixture = files::fixture("file_references").await?;
@@ -71,7 +71,7 @@ async fn disabling_a_connection_preserves_file_references_and_referenced_delete_
     .execute(&mut fixture.guest)
     .await
     .map(|result| result.rows_affected())?;
-    let mut writer = wamn_test_postgres::transaction(
+    let mut writer = files::transaction(
         &mut fixture.writer,
         &files::CALLER
             .parse::<wamn_identity_protocol::PrincipalId>()
@@ -93,7 +93,7 @@ async fn disabling_a_connection_preserves_file_references_and_referenced_delete_
     .await?;
     assert_eq!(row.get::<String, _>(0), "disabled");
     assert_eq!(row.get::<String, _>(1), files::CONNECTION);
-    let mut writer = wamn_test_postgres::transaction(
+    let mut writer = files::transaction(
         &mut fixture.writer,
         &files::CALLER
             .parse::<wamn_identity_protocol::PrincipalId>()
@@ -126,7 +126,7 @@ async fn disabling_a_connection_preserves_file_references_and_referenced_delete_
             .get::<i64, _>(0),
         1
     );
-    let mut writer = wamn_test_postgres::transaction(
+    let mut writer = files::transaction(
         &mut fixture.writer,
         &files::CALLER
             .parse::<wamn_identity_protocol::PrincipalId>()
@@ -158,7 +158,7 @@ async fn disabling_a_connection_preserves_file_references_and_referenced_delete_
 /// MinIO's preserved source time supplies aged objects without changing the clock.
 /// Source: https://github.com/minio/minio/blob/76c06ff1d2cc844050fdeb1d54bf8fa70db72278/cmd/object-api-options.go
 #[tokio::test]
-#[ignore = "requires: postgres, bin:docker"]
+#[ignore = "requires: docker"]
 async fn aged_staging_expires_while_unlinked_metadata_and_aged_live_bytes_stay()
 -> anyhow::Result<()> {
     use object_store::{
@@ -204,7 +204,7 @@ async fn aged_staging_expires_while_unlinked_metadata_and_aged_live_bytes_stay()
             response.text().await?
         );
     }
-    let mut transaction = wamn_test_postgres::transaction(
+    let mut transaction = files::transaction(
         &mut metadata.writer,
         &files::CALLER
             .parse::<wamn_identity_protocol::PrincipalId>()

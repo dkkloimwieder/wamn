@@ -18,12 +18,11 @@ fn migrator(sources: &[Migration]) -> Migrator {
     Migrator::with_migrations(sources.to_vec())
 }
 
-#[sqlx::test(migrations = false)]
-async fn sqlx_commits_files_with_their_history_and_refuses_checksum_drift(
-    pool: sqlx::PgPool,
-) -> anyhow::Result<()> {
-    let _lock = wamn_test_postgres::lock();
-    let database = wamn_test_postgres::url(&pool);
+#[tokio::test]
+#[ignore = "requires: docker"]
+async fn sqlx_commits_files_with_their_history_and_refuses_checksum_drift() -> anyhow::Result<()> {
+    let postgres = wamn_test_infrastructure::containers::start_postgres().await?;
+    let database = postgres.create_database("project").await?;
     let mut admin = wamn_postgres::connect(database.as_str()).await?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         wamn_provision::sql::ensure_app_acl_role_sql(),
@@ -188,18 +187,19 @@ async fn sqlx_commits_files_with_their_history_and_refuses_checksum_drift(
     Ok(())
 }
 
-#[sqlx::test(migrations = false)]
-async fn package_apply_refuses_rebinding_an_existing_relation(
-    pool: sqlx::PgPool,
-) -> anyhow::Result<()> {
+#[tokio::test]
+#[ignore = "requires: docker"]
+async fn package_apply_refuses_rebinding_an_existing_relation() -> anyhow::Result<()> {
     use wamn_environment::apply_package::{self, ApplyPackageRequest, PackageRoot};
-    let _lock = wamn_test_postgres::lock();
-    let database = wamn_test_postgres::url(&pool);
-    wamn_identity::test_database::project_platform(database.as_str()).await;
-    let migration_input =
-        wamn_provision::test_database::package_migration_input(database.as_str()).await?;
-    let migration_input =
-        wamn_provision::migrations::MigrationDatabase::Project.configuration(&migration_input)?;
+    let postgres = wamn_test_infrastructure::containers::start_postgres().await?;
+    let migration = postgres.create_project_database("project").await?;
+    wamn_environment::platform_migrations::install_project(
+        &mut wamn_postgres::connect(migration.as_str()).await?,
+    )
+    .await?;
+    let migration_input = String::from(migration);
+    let mut database = url::Url::parse(postgres.admin_url())?;
+    database.set_path("project");
     let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create()?;
     let write_package =
         |name: &str, entity: &str, version: &str, initial: &str| -> anyhow::Result<PackageRoot> {

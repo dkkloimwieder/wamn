@@ -57,7 +57,13 @@ fn the_collector_configuration_passes_the_pinned_image_validate() {
         .args(["run", "--rm", "-v"])
         .arg(format!("{}:/configuration:ro", directory.display()));
     for variable in values {
-        if let (Some(name), Some(value)) = (variable["name"].as_str(), variable["value"].as_str()) {
+        let value = variable["value"].as_str().or_else(|| {
+            let reference = &variable["valueFrom"]["configMapKeyRef"];
+            find(&manifest, "ConfigMap", reference["name"].as_str()?)["data"]
+                [reference["key"].as_str()?]
+            .as_str()
+        });
+        if let (Some(name), Some(value)) = (variable["name"].as_str(), value) {
             docker.arg("-e").arg(format!("{name}={value}"));
         }
     }

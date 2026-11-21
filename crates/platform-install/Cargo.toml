@@ -34,11 +34,8 @@ postgres-protocol.workspace = true
 [dev-dependencies]
 wamn-identity.workspace = true
 toml.workspace = true
-sqlx = { workspace = true, features = ["macros"] }
 wamn-test-infrastructure = { workspace = true }
 wamn-fixture-package = { workspace = true }
-wamn-test-postgres.workspace = true
-wamn-provision = { workspace = true, features = ["test-util"] }
 tempfile.workspace = true
 rcgen.workspace = true
 tokio-rustls.workspace = true

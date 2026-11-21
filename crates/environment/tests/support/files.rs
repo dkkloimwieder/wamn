@@ -19,8 +19,8 @@ pub struct Fixture {
     pub writer: Client,
     pub guest: Client,
     pub migrator: Client,
-    database: wamn_test_postgres::OwnedDatabase,
-    _postgres: wamn_test_postgres::OwnedPostgres,
+    database: url::Url,
+    _postgres: wamn_test_infrastructure::containers::Postgres,
 }
 
 pub async fn connect(url: &str) -> anyhow::Result<Client> {
@@ -38,11 +38,23 @@ fn login(url: &str, role: &wamn_identity_protocol::LoginName) -> anyhow::Result<
     Ok(url.into())
 }
 
+/// Begin a fixture write under its principal and operation.
+pub async fn transaction<'connection>(
+    connection: &'connection mut Client,
+    principal: &wamn_identity_protocol::PrincipalId,
+    operation: &str,
+) -> Result<sqlx::Transaction<'connection, sqlx::Postgres>, sqlx::Error> {
+    let mut transaction = sqlx::Connection::begin(connection).await?;
+    sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1,'','fixture',$2)")
+        .bind(principal).bind(operation).execute(&mut *transaction).await?;
+    Ok(transaction)
+}
+
 /// Install schema as bootstrap, then use targeted logins for every fixture write.
 pub async fn fixture(name: &str) -> anyhow::Result<Fixture> {
-    let mut postgres = wamn_test_postgres::start(&[])?;
+    let postgres = wamn_test_infrastructure::containers::start_postgres().await?;
     let database = postgres.create_database(name).await?;
-    let mut observer = connect(database.url()).await?;
+    let mut observer = connect(database.as_str()).await?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
         "{} CREATE SCHEMA wamn_run",
         wamn_provision::sql::ensure_project_roles_sql()
@@ -71,7 +83,7 @@ pub async fn fixture(name: &str) -> anyhow::Result<Fixture> {
         .execute(&mut observer)
         .await
         .map(drop)?;
-        logins.push(connect(&login(database.url(), &role)?).await?);
+        logins.push(connect(&login(database.as_str(), &role)?).await?);
     }
     sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
         "CREATE ROLE file_fixture_migrator LOGIN PASSWORD 'file-fixture-only' \
@@ -84,7 +96,7 @@ pub async fn fixture(name: &str) -> anyhow::Result<Fixture> {
     .await
     .map(drop)?;
     let mut migrator = connect(&login(
-        database.url(),
+        database.as_str(),
         &"file_fixture_migrator".parse().unwrap(),
     )?)
     .await?;
@@ -162,7 +174,7 @@ pub async fn fixture(name: &str) -> anyhow::Result<Fixture> {
 
 /// Seed metadata for schema tests, without asserting that an object was uploaded.
 pub async fn metadata(writer: &mut Client) -> anyhow::Result<()> {
-    let mut transaction = wamn_test_postgres::transaction(
+    let mut transaction = transaction(
         writer,
         &CALLER
             .parse::<wamn_identity_protocol::PrincipalId>()
@@ -365,7 +377,7 @@ pub async fn age_metadata(fixture: &mut Fixture) -> anyhow::Result<()> {
     .await
     .map(drop)?;
     let mut importer = connect(&login(
-        fixture.database.url(),
+        fixture.database.as_str(),
         &"file_aged_owner".parse().unwrap(),
     )?)
     .await?;

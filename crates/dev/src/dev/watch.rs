@@ -858,10 +858,9 @@ mod tests {
             for output in outputs {
                 fs::write(root.join(output), "rebuilt").expect("rewrite output");
             }
-            assert!(
-                tokio::time::timeout(Duration::from_millis(500), source.next())
-                    .await
-                    .is_err(),
+            assert_eq!(
+                next_batch_after_source_edit(&mut source, &root).await,
+                [DevInvalidation::Rerun],
                 "generated output must remain unwatched"
             );
         }
@@ -918,6 +917,16 @@ mod tests {
                     .contains(&DevInvalidation::Rerun)
             );
         }
+    }
+
+    /// Inotify keeps event order, so the edit's rerun is the whole batch only
+    /// when the writes before it raised no event.
+    async fn next_batch_after_source_edit(
+        source: &mut FilesystemInvalidationSource,
+        package: &Path,
+    ) -> Vec<DevInvalidation> {
+        fs::write(package.join("query/widget_list.sql"), "SELECT 3").expect("edit source");
+        next_batch(source).await
     }
 
     async fn next_batch(source: &mut FilesystemInvalidationSource) -> Vec<DevInvalidation> {
@@ -1038,10 +1047,9 @@ mod tests {
                 for output in &outputs {
                     fs::write(output.join("guest.wasm"), "artifact").expect("write build output");
                 }
-                assert!(
-                    tokio::time::timeout(Duration::from_millis(500), source.next())
-                        .await
-                        .is_err(),
+                assert_eq!(
+                    next_batch_after_source_edit(&mut source, &repository.package()).await,
+                    [DevInvalidation::Rerun],
                     "existing build output must remain unwatched"
                 );
                 for output in &outputs {
@@ -1063,10 +1071,13 @@ mod tests {
                     .iter()
                     .all(|event| *event == DevInvalidation::Ignore)
             );
-            assert!(
-                tokio::time::timeout(Duration::from_millis(500), source.next())
-                    .await
-                    .is_err(),
+            for output in &outputs {
+                fs::write(output.join("wasm32-wasip2/debug/guest.wasm"), "rebuilt")
+                    .expect("rewrite build artifact");
+            }
+            assert_eq!(
+                next_batch_after_source_edit(&mut source, &repository.package()).await,
+                [DevInvalidation::Rerun],
                 "recreated build output must remain unwatched"
             );
         }

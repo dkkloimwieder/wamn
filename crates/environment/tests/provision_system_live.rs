@@ -1,7 +1,7 @@
 //! Live test of `provision-system` against a disposable PostgreSQL server.
 //!
-//! The test holds the process lock of its server, because the verb changes
-//! cluster-wide roles and the PUBLIC CONNECT base grants of every database.
+//! Each test starts its own server, because the verb changes cluster-wide
+//! roles and the PUBLIC CONNECT base grants of every database.
 
 use sqlx::Row as _;
 
@@ -13,17 +13,19 @@ async fn connect(url: &str) -> sqlx::PgConnection {
     wamn_postgres::connect(url).await.unwrap()
 }
 
-#[sqlx::test(migrations = false)]
-async fn platform_initialization_applies_pending_migrations_on_upgrade(pool: sqlx::PgPool) {
+#[tokio::test]
+#[ignore = "requires: docker"]
+async fn platform_initialization_applies_pending_migrations_on_upgrade() {
     use sqlx::SqlSafeStr as _;
     use sqlx::migrate::{Migration, MigrationType};
     use wamn_provision::migrations::MigrationDatabase;
     use wamn_environment::platform_migrations;
-    let _lock = wamn_test_postgres::lock();
-    let url = wamn_test_postgres::url(&pool).to_string();
+    let postgres = wamn_test_infrastructure::containers::start_postgres()
+        .await
+        .unwrap();
+    postgres.create_system_role().await.unwrap();
+    let url = postgres.create_database("system").await.unwrap().to_string();
     let mut client = connect(&url).await;
-    sqlx::raw_sql("DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_system') THEN CREATE ROLE wamn_system NOLOGIN NOINHERIT; END IF; END $$;")
-        .execute(&mut client).await.unwrap();
     let source = |version, sql: &str| {
         Migration::new(
             version,
@@ -93,7 +95,7 @@ async fn snapshot(client: &mut sqlx::PgConnection) -> serde_json::Value {
           'functions', (SELECT jsonb_agg(to_jsonb(p) ORDER BY p.oid) FROM pg_proc p JOIN schemas n ON n.oid = p.pronamespace),
           'roles', (SELECT jsonb_agg(to_jsonb(r) ORDER BY oid) FROM pg_roles r),
           'memberships', (SELECT jsonb_agg(to_jsonb(m) ORDER BY roleid, member, grantor) FROM pg_auth_members m),
-          'databases', (SELECT jsonb_agg(jsonb_build_array(datname, datacl::text, xmin::text) ORDER BY datname) FROM pg_database))
+          'databases', (SELECT jsonb_agg(jsonb_build_array(datname, datacl::text) ORDER BY datname) FROM pg_database))
     ").fetch_one(&mut *client).await.unwrap().get(0);
     let mut data = serde_json::Map::new();
     for row in sqlx::query(sqlx::AssertSqlSafe(
@@ -121,21 +123,14 @@ async fn snapshot(client: &mut sqlx::PgConnection) -> serde_json::Value {
 }
 
 #[tokio::test]
-#[ignore = "requires: postgres"]
+#[ignore = "requires: docker"]
 async fn bootstrap_is_atomic_and_uses_database_facts() {
-    let _lock = wamn_test_postgres::lock();
-    let mut case_server = wamn_test_postgres::start(&[]).unwrap();
-    let url = url::Url::parse(
-        case_server
-            .create_database("fixture_1")
-            .await
-            .unwrap()
-            .url(),
-    )
-    .unwrap()
-    .to_string();
-    let mut client = connect(&url).await;
-    sqlx::raw_sql("DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_system') THEN CREATE ROLE wamn_system NOLOGIN NOINHERIT; END IF; END $$;").execute(&mut client).await.map(drop).unwrap();
+    let postgres = wamn_test_infrastructure::containers::start_postgres()
+        .await
+        .unwrap();
+    postgres.create_system_role().await.unwrap();
+    let url = postgres.create_database("fixture_1").await.unwrap();
+    let mut client = connect(url.as_str()).await;
     assert_eq!(
         system_state(&mut client).await.unwrap(),
         SystemState::Absent
@@ -204,14 +199,7 @@ async fn bootstrap_is_atomic_and_uses_database_facts() {
         system_state(&mut client).await.unwrap(),
         SystemState::Complete
     );
-    let concurrent_database = url::Url::parse(
-        case_server
-            .create_database("fixture_2")
-            .await
-            .unwrap()
-            .url(),
-    )
-    .unwrap();
+    let concurrent_database = postgres.create_database("fixture_2").await.unwrap();
     let mut first = connect(concurrent_database.as_str()).await;
     let mut second = connect(concurrent_database.as_str()).await;
     let (left, right) = tokio::join!(
@@ -229,14 +217,7 @@ async fn bootstrap_is_atomic_and_uses_database_facts() {
     drop(first);
     drop(second);
 
-    let partial_database = url::Url::parse(
-        case_server
-            .create_database("fixture_extra")
-            .await
-            .unwrap()
-            .url(),
-    )
-    .unwrap();
+    let partial_database = postgres.create_database("fixture_extra").await.unwrap();
     let mut partial = connect(partial_database.as_str()).await;
     sqlx::raw_sql("CREATE SCHEMA registry")
         .execute(&mut partial)

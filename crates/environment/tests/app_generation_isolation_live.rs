@@ -27,8 +27,7 @@
 //! PostgreSQL 18 tests database `CONNECT` while it initializes the backend and
 //! reports the failure as `42501`.
 //!
-//! The test runs on the PostgreSQL server of its own test process and holds the
-//! process lock of that server, because it creates cluster-global roles.
+//! The test starts its own PostgreSQL server, because it creates cluster-global roles.
 
 use sqlx::PgConnection as Client;
 use sqlx::Row as _;
@@ -92,13 +91,14 @@ async fn run_alone(superuser: &mut Client, statement: &str) {
         .map_or_else(|error| panic!("{statement}: {error}"), drop);
 }
 
-#[sqlx::test(migrations = false)]
-async fn an_app_generation_cannot_open_a_session_on_a_neighbouring_project_env_database(
-    pool: sqlx::PgPool,
-) {
-    let _lock = wamn_test_postgres::lock();
-    let url = wamn_test_postgres::url(&pool).to_string();
-    let mut superuser = connect(&url).await;
+#[tokio::test]
+#[ignore = "requires: docker"]
+async fn an_app_generation_cannot_open_a_session_on_a_neighbouring_project_env_database() {
+    let postgres = wamn_test_infrastructure::containers::start_postgres()
+        .await
+        .unwrap();
+    let url = postgres.admin_url();
+    let mut superuser = connect(url).await;
 
     let home = project_env_database_name(
         &ORG.parse().unwrap(),
@@ -144,7 +144,7 @@ async fn an_app_generation_cannot_open_a_session_on_a_neighbouring_project_env_d
 
     // THE POSITIVE CONTROL. It runs first and it uses the same credential, so a
     // refusal below cannot be a broken password or a missing role.
-    let mut session = dial(&url, &home, &generation, GENERATION_PROBE_PASSWORD)
+    let mut session = dial(url, &home, &generation, GENERATION_PROBE_PASSWORD)
         .await
         .expect("the minted generation must open a session on its OWN database");
     let who: wamn_identity_protocol::LoginName = sqlx::query("SELECT current_user::text")
@@ -159,7 +159,7 @@ async fn an_app_generation_cannot_open_a_session_on_a_neighbouring_project_env_d
     drop(session);
 
     // THE RULED ASSERTION. The server refuses the session on the neighbour.
-    let refusal = dial(&url, &neighbour, &generation, GENERATION_PROBE_PASSWORD)
+    let refusal = dial(url, &neighbour, &generation, GENERATION_PROBE_PASSWORD)
         .await
         .expect_err(
             "the App generation opened a session on a NEIGHBOURING project-env \

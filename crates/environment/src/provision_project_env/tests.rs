@@ -51,10 +51,13 @@ fn secret_writes_replace_links_without_following_or_sharing_them() {
 
 /// `env apply` passes no marker, so a row `wamn dev up` marked disposable
 /// stays disposable in the environment (wamn-p9xix).
-#[sqlx::test(migrations = false)]
-async fn a_record_without_a_marker_keeps_the_disposable_row(pool: sqlx::PgPool) {
-    let _lock = wamn_test_postgres::lock();
-    let database = wamn_test_postgres::url(&pool);
+#[tokio::test]
+#[ignore = "requires: docker"]
+async fn a_record_without_a_marker_keeps_the_disposable_row() {
+    let postgres = wamn_test_infrastructure::containers::start_postgres()
+        .await
+        .unwrap();
+    let database = postgres.create_database("project").await.unwrap();
     wamn_provision::test_database::system(database.as_str()).await;
     let mut client = wamn_postgres::connect(database.as_str()).await.unwrap();
 

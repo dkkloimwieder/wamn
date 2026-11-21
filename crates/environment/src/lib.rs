@@ -10,7 +10,6 @@ pub mod ident;
 pub mod migrations;
 pub mod org;
 pub mod org_connection;
-pub use wamn_platform_install::platform;
 pub mod platform_migrations;
 pub mod provision_project_env;
 pub use wamn_platform_install::provision_system;
