@@ -39,7 +39,7 @@ tracing-subscriber = { workspace = true }
 wamn-publish = { workspace = true, features = ["test-util"] }
 wamn-identity = { workspace = true }
 wamn-identity-protocol = { workspace = true }
-wamn-provision = { workspace = true, features = ["ops"] }
+wamn-platform-install = { workspace = true }
 wamn-registry = { workspace = true }
 wamn-cdc-reader = { workspace = true }
 wamn-event = { workspace = true }

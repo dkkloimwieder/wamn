@@ -30,7 +30,6 @@ mod tests {
     const HISTORY_SQL: &str =
         include_str!("../../../apps/wamn_receiving/query/receiving/load_purchase_order_history/load_purchase_order_history.sql");
     const UPDATE_SQL: &str = "wamn_receiving/sql/purchase_order/update.sql";
-    const APP_SCHEMA_SQL: &str = include_str!("../../../deploy/sql/app-schema.sql");
     const LOCK_PURCHASE_ORDER_SQL: &str =
         include_str!("../../../apps/wamn_receiving/command/receiving/record_receipt/lock_purchase_order.sql");
     const RECORD_RECEIPT_SQL: &str =
@@ -326,8 +325,8 @@ mod tests {
                 Ok((
                     row.get::<i64, _>("position"),
                     row.get::<String, _>("type"),
-                    declared_image("before")?,
-                    declared_image("current")?,
+                    declared_image("before?")?,
+                    declared_image("current?")?,
                 ))
             })
             .collect::<Result<Vec<_>>>()?;
@@ -365,23 +364,25 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires: docker"]
     async fn enum_and_optimistic_update_outcomes_hold_on_postgres_18() -> Result<()> {
+        // The product installs the project schemas, which the commands bind
+        // their identity in.
         let server = wamn_test_infrastructure::containers::start_postgres().await?;
-        let url = server.create_database("receiving").await?.to_string();
+        let migration = server.create_project_database("receiving").await?;
+        wamn_platform_install::platform_migrations::install_project(
+            &mut wamn_postgres::connect(migration.as_str()).await?,
+        )
+        .await?;
+        let mut url = url::Url::parse(server.admin_url())?;
+        url.set_path("receiving");
+        let url = url.to_string();
         let mut client = connect(&url).await?;
         assert_postgres_18(&mut client).await?;
         assert_fresh_receiving_schema(&mut client).await?;
-        // record-history-app-grants.sql grants to wamn_app, so the role comes first.
-        sqlx::raw_sql(sqlx::AssertSqlSafe(
-            ("CREATE SCHEMA receiving; \
-                 CREATE ROLE wamn_app NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
-                   NOINHERIT NOREPLICATION NOBYPASSRLS; \
-                 ")
-            .to_string(),
-        ))
-        .execute(&mut client)
-        .await
-        .map(drop)
-        .context("create the Receiving schema and the application role")?;
+        sqlx::raw_sql("CREATE SCHEMA receiving")
+            .execute(&mut client)
+            .await
+            .map(drop)
+            .context("create the Receiving schema")?;
         sqlx::raw_sql(sqlx::AssertSqlSafe((MIGRATION).to_string()))
             .execute(&mut client)
             .await
@@ -389,7 +390,7 @@ mod tests {
             .context("apply the exact Receiving migration")?;
 
         install_record_history(&mut client, &generated(MANIFEST)).await?;
-        install_write_log(&mut client).await?;
+        bind_actor(&mut client, FIXTURE_PRINCIPAL).await?;
         select_receiving_schema(&mut client).await?;
 
         assert_status_vocabulary(&mut client).await?;
@@ -498,24 +499,6 @@ mod tests {
         assert_acme_overlay(&mut client).await?;
 
         Ok(())
-    }
-
-    /// Install the catalog and `deploy/sql/app-schema.sql` that the command
-    /// transactions bind their identity in.
-    async fn install_write_log(client: &mut Client) -> Result<()> {
-        sqlx::raw_sql(sqlx::AssertSqlSafe(
-            (wamn_provision::CATALOG_SCHEMA_SQL).to_string(),
-        ))
-        .execute(&mut *client)
-        .await
-        .map(drop)
-        .context("apply the catalog and connection projections")?;
-        sqlx::raw_sql(sqlx::AssertSqlSafe((APP_SCHEMA_SQL).to_string()))
-            .execute(&mut *client)
-            .await
-            .map(drop)
-            .context("apply the app schema and its write log")?;
-        bind_actor(client, FIXTURE_PRINCIPAL).await
     }
 
     /// Install the platform record-history functions, and the history tables and
