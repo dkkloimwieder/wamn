@@ -176,6 +176,10 @@ fn custom_visibility_permissions_and_components_remain_closed() {
         .as_array_mut()
         .unwrap()
         .retain(|error| error != "concurrency_conflict");
+    operation["error_details"]
+        .as_object_mut()
+        .unwrap()
+        .remove("concurrency_conflict");
     validate_operation_vocabulary(&parsed(&projection)).expect("valid read-only projection");
     projection["custom_operations"]["widget.archive"]["relations"][0]["update_fields"] =
         json!(["id"]);

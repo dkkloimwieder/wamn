@@ -617,8 +617,15 @@ pub(crate) fn catalog_with_unread_table() -> CatalogIr {
 /// a different shape changes this value on its own copy.
 ///
 /// # Panics
-/// Panics when the fixture application's manifest is not valid JSON.
+/// Panics when the compiled manifest is missing, and names the command that
+/// builds it, or when the manifest is not valid JSON.
 pub(crate) fn manifest() -> Value {
-    serde_json::from_slice(&wamn_fixture_package::manifest_bytes())
-        .expect("the fixture application manifest is JSON")
+    let path = wamn_fixture_package::manifest_path();
+    let bytes = std::fs::read(&path).unwrap_or_else(|error| {
+        panic!(
+            "the test input {} is missing ({error}); build it with `cargo xtask prepare-tests`",
+            path.display()
+        )
+    });
+    serde_json::from_slice(&bytes).expect("the fixture application manifest is JSON")
 }
