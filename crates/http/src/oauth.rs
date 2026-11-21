@@ -316,7 +316,6 @@ pub async fn exchange_code(
         &authority,
         request.token_authority.as_deref(),
         &request.token_url,
-        None,
     )
     .await
     .map_err(|source| CodeExchangeError {

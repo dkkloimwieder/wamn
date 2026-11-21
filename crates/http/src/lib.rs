@@ -77,20 +77,14 @@ struct ApplicationBinding {
 pub struct ConnectionHttp {
     scopes: Arc<InvocationScopes>,
     transport: Arc<HttpTransport>,
-    allowed_hosts: Arc<[AllowedHost]>,
     applications: Arc<RwLock<HashMap<String, ApplicationBinding>>>,
     component: Option<String>,
 }
 impl ConnectionHttp {
-    pub fn new(
-        scopes: Arc<InvocationScopes>,
-        transport: Arc<HttpTransport>,
-        allowed_hosts: Arc<[AllowedHost]>,
-    ) -> Self {
+    pub fn new(scopes: Arc<InvocationScopes>, transport: Arc<HttpTransport>) -> Self {
         Self {
             scopes,
             transport,
-            allowed_hosts,
             applications: Arc::default(),
             component: None,
         }
@@ -248,7 +242,7 @@ impl ConnectionHttp {
         let mut decision = resolve_http_request(
             &authority,
             &target,
-            &self.allowed_hosts,
+            &[exact_host(&authority)],
             &network_policy::allows,
             &TokioDnsResolver,
         )
@@ -337,7 +331,6 @@ impl ConnectionHttp {
                     authority,
                     request.token_authority.as_deref(),
                     &request.token_url,
-                    Some(&self.allowed_hosts),
                 )
                 .await?;
                 let token = fetch_health_token(transport, decision, &request)
@@ -472,7 +465,6 @@ impl HostPlugin for ConnectionHttp {
         let bound = Arc::new(Self {
             scopes: Arc::clone(&self.scopes),
             transport: Arc::clone(&self.transport),
-            allowed_hosts: Arc::clone(&self.allowed_hosts),
             applications: Arc::clone(&self.applications),
             component: Some(component.id().to_owned()),
         });
@@ -627,29 +619,32 @@ pub(crate) async fn token_endpoint(
     connection: &HttpConnectionAuthority,
     token_authority: Option<&str>,
     token_url: &str,
-    platform_hosts: Option<&[AllowedHost]>,
 ) -> Result<AuthorityDecision, AuthorityError> {
     let (authority, target, endpoint) = bound_oauth_token(connection, token_authority, token_url)?;
-    let url = url::Url::parse(authority.canonical_base_url()).expect("canonical token URL");
-    let exact = [AllowedHost::Authority(
-        format!(
-            "{}:{}",
-            url.host_str().expect("canonical token host"),
-            authority.authority().port()
-        )
-        .parse()
-        .expect("canonical token authority"),
-    )];
     let mut decision = resolve_http_request(
         &authority,
         &target,
-        platform_hosts.unwrap_or(&exact),
+        &[exact_host(&authority)],
         &network_policy::allows,
         &TokioDnsResolver,
     )
     .await?;
     decision.logical_url = endpoint;
     Ok(decision)
+}
+
+/// The one host entry that admits a connection's own authority and no other.
+fn exact_host(authority: &HttpConnectionAuthority) -> AllowedHost {
+    let url = url::Url::parse(authority.canonical_base_url()).expect("canonical connection URL");
+    AllowedHost::Authority(
+        format!(
+            "{}:{}",
+            url.host_str().expect("canonical connection host"),
+            authority.authority().port()
+        )
+        .parse()
+        .expect("canonical connection authority"),
+    )
 }
 
 fn reserved_header(name: &hyper::header::HeaderName) -> bool {
@@ -782,16 +777,11 @@ pub async fn health(
         let authority = wamn_authority::connection_authority::parse_http_definition(parameters)?;
         let url = url::Url::parse(authority.canonical_base_url())?;
         anyhow::ensure!(url.scheme() == "https", "HTTP health requires TLS");
-        let host = url.host_str().context("HTTP authority has no host")?;
-        let port = url
-            .port_or_known_default()
-            .context("HTTP authority has no port")?;
-        let allowed = [AllowedHost::Authority(format!("{host}:{port}").parse()?)];
         let (target, endpoint) = bound_http_target(&authority, authority.canonical_base_url())?;
         let mut decision = resolve_http_request(
             &authority,
             &target,
-            &allowed,
+            &[exact_host(&authority)],
             &network_policy::allows,
             &TokioDnsResolver,
         )
@@ -819,7 +809,6 @@ pub async fn health(
                 &authority,
                 token_request.token_authority.as_deref(),
                 &token_request.token_url,
-                None,
             )
             .await?;
             let token = fetch_health_token(transport, token_decision, &token_request)
