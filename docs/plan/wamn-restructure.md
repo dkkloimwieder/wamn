@@ -79,7 +79,9 @@ Org → environment → project → application. One boundary per level.
 - The environment file states each connection's version once.
 - A physical resource belongs to one project: `(target_id, resource_key)` is unique within one project database.
 - Connection and application service principals live in the project database. `platform.connection` records the connection's principal ID.
-- The connection authority is fixed. A new authority needs a new connection. Create, edit and deploy refuse IPv6 literal authorities for Wasm connections. Cloud calls allow public addresses and refuse special addresses.
+- The connection authority is fixed. A new authority needs a new connection. Create, edit and deploy refuse IPv6 literal authorities for Wasm connections. Cloud calls allow public addresses and refuse private and special addresses.
+- Each host HTTP call is checked against the exact connection authority, in one place. The host has no allowed-hosts list of its own.
+- Egress for host connection calls: the application chart's `allow-public-integration-ports` rule also opens the ports of the bound HTTP connections (`connectionPorts`), to public IPv4 only.
 - Deploy refuses a connection bound to a different target, a name bound to two connections, or a name shared with another component.
 - A package-owned component is admitted with wamn:node, wamn:postgres and the packages of its own declared connections.
 - A Wasm integration is a sibling component. Deploy pins it by digest, sets `allowedHosts` to the connection authority and sets `wamn.integration` to its connection ID. wasmCloud links the labeled import.
@@ -148,7 +150,7 @@ Org → environment → project → application. One boundary per level.
 - Components: stock `push_component`. Package artifact: two layers (`wamn.json`, migrations tar).
 - Build: codegen's describe cache (`.wamn/describe/`, committed and checked current); a database only when SQL changes; skip unchanged builds; `wamn dev` applies new migrations. `build.json` goes (overlay builds hash the base files).
 - Helm writes its release records and can create the initial platform namespace. The org installer creates the org Helm storage namespace, an optional pull Secret, the org SQL Job and the invitation Job. Control creates operation Jobs and their Job-owned input ConfigMaps. Environment apply creates NATS user credential Secrets.
-- Org provisioning fills chart-created login and local OAuth Secrets. The org installer patches the control Deployment to reload credentials. Identity fills the NATS operator and runtime-operator Secrets. Control patches the chart-created project credential Secret. Environment deletion removes its entry from the control administration ConfigMap.
+- Org provisioning fills chart-created login and local OAuth Secrets. The org installer patches the control Deployment to reload credentials. Identity fills the NATS operator and runtime-operator Secrets. Control patches the chart-created project credential Secret. Control builds each project login's connection config at login from `registry.environment_projects`. It reads its platform login certificate Secret and a `ca.crt` copy that `wamn env apply` makes in a ConfigMap. Control has no right on the CA Secret.
 - Deploy applies SQL before code. Migrations must work with the previous code. Deploy never resets the database. WorkloadDeployment annotations carry the package digest and content revision. Rollback without a revision selects the newest earlier deploy revision.
 - The environment file lists projects in apply order. Apply reserves the selected projects, configures NATS and starts the host chart upgrade. Then it applies each project chart and its SQL, and waits for the host. A rerun completes projects left reserved after a failure.
 - The application and environment charts use the kstatus watcher. The project and org charts use bounded named waits in Rust. Wait for the project database before SQL and for the workload's `Ready=True` condition.
@@ -264,6 +266,12 @@ Rulings on the scout (D, 2026-11-21):
 - Kubernetes access from the tests: kube-rs.
 - Host user refusal: the test asks identity for a host user with a pod-bound token.
 - Startup check: journey-cluster records restarts and fails only on a pod that never becomes ready.
+- X1: control builds each project login's config at login and reads its login certificate Secret. env apply copies only `ca.crt` into a ConfigMap. The project chart adds one Role for control, scoped by resource name. The control administration map goes.
+- X2: the host's `allowed_hosts` goes. `ConnectionHttp` checks the exact connection authority. X10, the default port match, is fixed with it.
+- X3: `connectionPorts` in the application chart opens public IPv4 egress on the bound HTTP connection ports.
+- Q-A: cloud calls refuse private address ranges, with a unit test. Q-B: the outside call is a service test with a local server and the edge target's address policy. The journey test checks connection get and the RBAC refusal.
+- Q-C: journey-cluster fails if kind's CNI does not enforce NetworkPolicy.
+- Q-D replaces the values part of C4: after each env apply, the harness creates the observer role through pods/exec and patches the project Cluster's pg_hba with kube-rs. No product code or chart value changes for the observer.
 - Fixtures: data_change for K24, signed_reads, and the missing palette components.
 - The five existing journey tests are rewritten on the new harness.
 
@@ -322,7 +330,7 @@ Next: Epic 16 (step 3.8, fourth part): rollback, env delete, apply again and env
   - Ingress policies in `platform` for NATS, the system database and the Poolers.
   - Web reads ConfigMaps through a Role per org namespace, not a ClusterRole.
   - NATS users for Jobs expire, and a revocation list exists.
-  - CAs come from cert-manager everywhere; no Helm `genCA` keys in release records.
+  - CAs come from cert-manager everywhere; no Helm `genCA` keys in release records. The ca.crt copy that env apply makes for control goes stale when CNPG rotates its CA. A cert-manager CA removes the copy.
   - `platform.tx_identity` stamps: either state them as tamper-evident only within one project database, or bind the identity through a definer function.
   - Org quotas count CPU and memory, with a LimitRange, and requests on control and the CDC reader.
 - Possible future exploration, not scheduled: a wamn hey-api plugin.
@@ -2177,3 +2185,12 @@ Epic 14 closed on 2026-11-21 after review. cargo test --workspace: 617 passed in
 - C14: the startup check records restarts and fails only on a pod that never becomes ready.
 - C16: fixture edits for data_change, signed_reads and the missing palette components. Result signing waits for an object store on kind.
 - C17: the five existing journey tests are rewritten on the new harness.
+
+**Ruled (D, 2026-11-21): Epic 15 X1 to X3 and Q-A to Q-D.**
+- X1: control builds each project login's connection config at login through `environment.rs::connection_for` and reads its own login certificate Secret. env apply copies only `ca.crt` from `<cluster>-ca` into a ConfigMap and refreshes it on each run. One Role, scoped by resource name, gives control the certificate Secret and that ConfigMap. The map, its mount and the delete write go. Reason: a CA key can sign a client certificate for any login, superusers included, so control never reads it (least privilege).
+- X2: `Settings.allowed_hosts` goes, and `ConnectionHttp` checks the exact connection authority, as `health` does. The condition is that raw wasi:http requests from a guest stay refused. X10 is fixed in the same issue. Reason: the list only copied the fixed connection authority.
+- X3: `allow-public-integration-ports` gains `connectionPorts` from `release_chart/plan.rs::roles`. It opens public IPv4 only. Reason: ruling 2026-11-18 allows public egress only on declared ports.
+- Q-A: on cloud, the code refuses private ranges, with a unit test. The edge device rule stays deferred. Reason: Part 1 says so.
+- Q-B: the outside call is a service test with a local server and the edge target's production address policy. Reason: every target that kind can reach is private.
+- Q-C: journey-cluster fails if kind's CNI does not enforce NetworkPolicy. Reason: the egress tests mean nothing without it.
+- Q-D: the harness creates the observer role and patches pg_hba after each env apply, on kind only. Reason: no product code and no chart value change for a test login.
