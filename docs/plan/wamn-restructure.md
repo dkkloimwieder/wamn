@@ -228,52 +228,25 @@ Phase 1 deletion, phase 2 restructure (no behaviour change), phase 3 code editin
 
 Phase 3 steps, in dependency order: 3.1 database model; 3.2 request path (workloads, connections, files, integrations and application host routes); 3.3 identity; 3.4 workflow service; 3.5 deploy; 3.6 isolation, then install; 3.7 codegen; 3.7b crate boundaries; 3.8 tests.
 
-## Epic 13: step 3.8, test machinery and existing tests
+## Epic 14: step 3.8, service tests
 
-Rule: the F4 test rules, in place. Existing tests that check a current contract pass against the final crates. No new product behaviour.
+Rule: one service test per contract, with a real host in process and the real identity code. No new product behaviour.
 
 Issues:
 
-13.0 Plan, doc only, done first. Record the Q1 and Q2 rulings. After 13.0, the other issues run in parallel.
+14.0 Plan, doc only, done first. Record the rulings and the contract list: each contract in Part 1, with the tier that tests it (unit, service or journey) and the test that does or will do it. After 14.0, the other issues run in parallel, and 14.3 waits for the 14.2 harness.
 
-13.1 Delete the tests of code that is gone: `crates/provision/tests/{deploy_sql_authority,family_denial_matrix,record_history}.rs` and their fixtures, which use tables Epic 1 dropped; `crates/dev/tests/support/platform_schema.rs` and `platform_upgrade.rs`, which run the deleted `wamn-ctl`; `deploy/sql/postgres-init.sql`; every `panic!` stub that marks a product gap, with one bead per gap; `test-support/measure-tx-identity.py`, which becomes an `xtask` command if its job is still needed.
-- Ruled: `measure-tx-identity` becomes an `xtask` command, and `docs/operations/deployment.md` calls it. The Python script goes.
-- Ruled: `platform-policy/data-access.json` goes with the two tests in `development_assertions.rs` that read it.
-- Ruled: history assertions of the deleted provision tests move to `crates/postgres/tests/project_schema.rs`, grant assertions to `wamn-test-sql`.
-- Ruled: no product-gap stubs remain, so no gap beads are filed.
-- Ruled: the Q2 table stands: 108 ignored tests are ported, 14 are deleted. A test that needs only Wasmtime, loopback or a prepared input is ported at the lowest tier.
-- Ruled (2026-11-21): 96 ignored tests are ported. The two stale host tests go (106 ports), then the 3 edge readiness tests and the 7 `client_projection` tests go with the code they test. The release manifest and membership tests that rulings 6 and 7 delete were never ignored. Rulings 11 and 12 then delete 8 operation tests, so the final count is 88.
+14.1 Grant tests in `wamn-test-sql` that 13.6 did not probe: cross-org RLS for the control and apply logins (the org boundary in the system database), REFERENCES, and pseudo-typed functions, trigger functions and aggregates.
 
-13.2 Postgres and NATS come from testcontainers. The images are the production digests: Postgres 18.6 and the platform's NATS. `wamn-test-postgres` and every `lock()` call go.
-- Ruled: `testcontainers` =0.28.0 alone, with `GenericImage`. No `testcontainers-modules`.
-- Ruled: Postgres is `ghcr.io/cloudnative-pg/postgresql:18.6@sha256:899d3ed526b659d77935dde0e6bf2d69dbbf17d3d8c6486ca8cfd04bd3c18533` with a test-owned initdb.
-- Ruled (2026-11-21): NATS is `nats:2.12.15-alpine@sha256:b270f5e2428354c0335612694d7dd2fb588148e567a5757fdff325ef9c9332e6`, the version the platform values set, pinned for the server and the init container in the platform chart values. Tests use the same digest.
-- Ruled: each test that needs Postgres or NATS starts its own container through one helper and gets its own server. No `#[sqlx::test]`, cargo runner, custom test main, locks or `RUST_TEST_THREADS`.
+14.2 Service harness in `wamn-test-infrastructure`: a host in process, with Postgres and NATS containers from the production digests. NATS runs in operator JWT mode, with accounts and users signed by the real identity code under a fresh key per test. The harness supplies the identity issuer, the CA file that the host reads (`/etc/identity-ca/ca.crt` today) and `POD_NAME` the way production supplies them, and a fixture app from `cargo xtask prepare-tests`. No stub issuer and no copy of product identity code.
 
-13.3 No `test-util` features: all 20 crates that define one lose it. Helpers live in `tests/common/` or one dev-only crate. Test-only constructors and back doors leave production code.
-- Ruled: the dev-only crate is `wamn-test-infrastructure`. `test-support/application` and `test-support/resources` fold into it. A helper used by one crate only goes into that crate's `tests/common/`.
-- Ruled: back doors are deleted. Tests use the production constructors with real configuration.
+14.3 Service tests, one per contract, for every contract that the 14.0 list gives the service tier. These include the contracts whose Epic 13 tests ruling 11 deleted: another project environment's credential is refused and never served; a cold connection parses inside the identity transaction; the transaction carries its operation, and a pooled connection keeps none; the transaction carries only the application its host bound; claims commit with their transaction, a rollback releases them, a competing claim waits and a lost session refuses; known results finish at host commit, and a missing finish rolls back; unfinished claims have a call bound, accept late completion and expire under retention. They also include the host's probes, signals, drain and NATS outage.
 
-13.4 Runner: `cargo test`, then `cargo test -- --ignored`. The `xtask` command that maps changed files to packages comes back. Fixture applications are built once before the run, and a test whose input is missing fails. `docs/operations/running-tests.md` is rewritten.
-- Ruled: a changed file that no package owns, or a change to `Cargo.toml` or `Cargo.lock`, selects the whole workspace.
-- Ruled: `cargo xtask prepare-tests` builds the fixture applications.
-- Ruled: `cargo test -- --ignored` leaves out the journey and cluster targets by package scope. They come in Epic 14.
+14.4 Tooling: `cargo xtask helm-size`, so the Helm size check is one command. The 18 guests in the apps workspace build for wasm only, so the host build has no link failures.
 
-13.5 Waits: a sleep followed by an assert that nothing happened becomes a paused clock or an awaited event.
-- Ruled: an absence wait with no product event is tested at a lower tier. No product events are added.
+End of the epic: the standard checks (with `cargo xtask helm-size`), `cargo test --workspace`, the ignored run on a machine with Docker, the preflight and the short smoke run.
 
-13.6 One SQL crate holds the grant refusal tests for every remaining login (AB7).
-- Ruled: the crate is `wamn-test-sql` at `test-support/sql/`.
-- Ruled: it covers every restricted deployed login, and each test logs in as the real login. Project: `wamn_migration`, `wamn_app_login`, `wamn_query_login`, `wamn_platform_login`, `wamn_cdc`. System: `wamn_platform_sql_<digest>`, `wamn_identity_issuer_<digest>`, `wamn_pooler_auth`. Per org: `wamn_control_<digest>`, `wamn_apply_<digest>`.
-- Ruled: `wamn_system_reader` is tested through `SET ROLE` and recorded apart.
-
-13.7 Small items: apps clippy (the three `unsafe_code` errors in `crates/guest/examples/numbering_refusal.rs:5` and the duplicate `panic_impl` in `test-support/fixtures/guests/connection-http-standard`); the field manager `wamn-control` in `crates/kubernetes/src/kubernetes.rs:67` becomes `wamn`.
-
-End of the epic: the standard checks, `cargo test`, `cargo test -- --ignored` on a machine with Docker, the preflight and the short smoke run.
-
-Next: Epic 14 (step 3.8, second part): one service test per contract with a real host in process, and the journey tests on kind.
-Grant tests that 13.6 did not probe: cross-org RLS for the control and apply logins (the org boundary in the system database); REFERENCES; pseudo-typed functions, trigger functions and aggregates.
-Epic 14 also covers these contracts, whose Epic 13 tests ruling 11 deleted: another project environment's credential is refused and never served; a cold connection parses inside the identity transaction; the transaction carries its operation, and a pooled connection keeps none; the transaction carries only the application its host bound; claims commit with their transaction, a rollback releases them, a competing claim waits and a lost session refuses; known results finish at host commit, and a missing finish rolls back; unfinished claims have a call bound, accept late completion and expire under retention.
+Next: Epic 15 (step 3.8, third part): the journey harness (`cargo xtask journey-cluster`, a read-only observer login) and the journey tests on kind.
 
 ## Open items
 
@@ -299,8 +272,6 @@ Epic 14 also covers these contracts, whose Epic 13 tests ruling 11 deleted: anot
 - After the first kind run: hand-written OpenTofu for GCP (A1, K10) and `infra.values.yaml`. Epic 10 targets kind, with a GCP values file checked by `values.schema.json`.
 - After the first kind run: three NATS pods with three-replica streams.
 - Move the NATS server from 2.12.15 to the vendored chart's 2.15.2. Decide with its own kind run.
-- The Helm size check has no xtask command. Add cargo xtask helm-size, so the standard check is one command.
-- The apps workspace host build tries to link 18 guests that target wasm only. Each fails at link with mold [async-lift]. Build guests for wasm only, or leave them out of the host build.
 - Later option: custom domains for applications through a verified-domain list (E).
 - Later option: integration types owned by one org (Q4).
 - Later option: users in more than one org, through an invitation the user accepts (grant ruling, change 1).
@@ -2086,3 +2057,8 @@ Epic 12 closed on 2026-11-20 after review. The smoke run on kind passed.
 - The review was wrong to call the fixture failure a regression from 13.7. Reason: in Epic 12 the fixture stopped at compile time with the duplicate `panic_impl` error. Now it compiles and fails at link with mold `[async-lift]`, like the other 17 guests.
 
 Epic 13 closed on 2026-11-21 after review. cargo test --workspace: 603 passed. --ignored: 93 passed. The smoke run on kind passed. The apps host build baseline is 18 link failures.
+
+**Ruled (D, 2026-11-21): Epic 14 scope (step 3.8, second part).**
+- Q1: 3.8 splits again. Epic 14 is the grant tests, the service harness and the service tests. Epic 15 is the journey harness and the journey tests on kind. Reason: the two are separate work with separate failure points, and the kind runs are where churn grew before.
+- Q2: the service harness uses the real identity code with a fresh key per test, not a stub issuer.
+- Q3: `cargo xtask helm-size` and the wasm-only guest build are in this epic.
