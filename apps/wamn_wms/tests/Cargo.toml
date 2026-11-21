@@ -25,7 +25,6 @@ serde_json = { workspace = true }
 serde_yaml = { workspace = true }
 tokio = { workspace = true, features = ["process", "net", "time", "rt", "macros", "io-util", "signal"] }
 uuid = { workspace = true, features = ["v7"] }
-wamn-test-application = { workspace = true }
 
 wamn-identity = { workspace = true }
 wamn-identity-protocol = { workspace = true }

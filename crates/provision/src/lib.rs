@@ -15,10 +15,6 @@ pub mod operation_grants;
 pub mod sql;
 pub mod system_reader;
 pub mod transaction_identity;
-/// Test databases with the system control store minimum.
-#[cfg(feature = "test-util")]
-#[path = "../tests/support/database.rs"]
-pub mod test_database;
 pub mod workload_role;
 
 pub use error::ProvisionError;

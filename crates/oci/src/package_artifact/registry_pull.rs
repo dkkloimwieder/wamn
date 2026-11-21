@@ -109,13 +109,6 @@ fn retry_reason(mut error: &(dyn Error + 'static)) -> Option<(&'static str, Opti
     }
 }
 
-/// The old path of the shared loopback registry, for crates that still enable
-/// `test-util`.
-#[cfg(feature = "test-util")]
-pub mod test_server {
-    pub use wamn_test_infrastructure::publish::Server;
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -5,12 +5,8 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
-[features]
-test-util = ["dep:wamn-provision"]
-
 [dependencies]
 wamn-routes.workspace = true
-wamn-provision = { workspace = true, optional = true, features = ["test-util"] }
 wamn-envelope.workspace = true
 wamn-postgres.workspace = true
 sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls", "chrono", "uuid", "json"] }

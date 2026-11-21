@@ -98,33 +98,6 @@ pub struct ClassCredentials {
 }
 
 impl ClassCredentials {
-    /// Build explicit fixture credentials, including the separate read-only login.
-    #[cfg(feature = "test-util")]
-    pub fn every_class(url: impl Into<String>) -> Self {
-        let url = url.into();
-        let query = url::Url::parse(&url).ok().and_then(|mut input| {
-            let login = input.username().strip_prefix(&format!("{}_", wamn_role::APP_ROLE))?;
-            let login = format!("{}_{login}", wamn_role::QUERY_ROLE);
-            input.set_username(&login).ok()?;
-            Some(String::from(input))
-        });
-        Self {
-            urls: AuthorityClass::ALL
-                .into_iter()
-                .map(|class| {
-                    (
-                        class,
-                        if class == AuthorityClass::DynamicSql {
-                            query.as_ref().unwrap_or(&url).clone()
-                        } else {
-                            url.clone()
-                        },
-                    )
-                })
-                .collect(),
-        }
-    }
-
     /// Name one class's own credential, replacing any previous entry.
     #[must_use]
     pub fn with_class(mut self, class: AuthorityClass, url: impl Into<String>) -> Self {

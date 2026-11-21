@@ -8,8 +8,6 @@ license.workspace = true
 [features]
 default = []
 ops = []
-# The system test database setup (`test_database`) for the tests of other crates.
-test-util = []
 
 [dependencies]
 wamn-package.workspace = true

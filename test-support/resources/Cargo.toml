@@ -38,7 +38,6 @@ wamn-component-policy = { workspace = true }
 oci-client = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "process", "time"] }
 url = { workspace = true }
-wamn-test-postgres = { workspace = true }
 
 [lints]
 workspace = true

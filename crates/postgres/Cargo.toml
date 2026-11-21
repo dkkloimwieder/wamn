@@ -7,7 +7,6 @@ license.workspace = true
 
 [features]
 host = ["dep:chrono", "dep:tracing", "dep:uuid", "dep:wamn-engine", "dep:wamn-registry", "dep:wamn-role", "dep:wamn-scalar", "tokio/sync"]
-test-util = []
 
 [dependencies]
 chrono = { workspace = true, optional = true, features = ["std"] }

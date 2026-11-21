@@ -18,9 +18,6 @@ use std::fmt;
 
 use wamn_identity_protocol::{PrincipalId, RoleName};
 
-#[cfg(feature = "test-util")]
-pub mod test_database;
-
 pub mod application;
 pub mod control;
 pub mod org;

@@ -7091,9 +7091,16 @@ dependencies = [
  "url",
  "uuid",
  "wamn-digest",
+ "wamn-environment",
+ "wamn-http-client",
+ "wamn-identity-protocol",
  "wamn-oci",
  "wamn-package",
- "wamn-test-application",
+ "wamn-postgres",
+ "wamn-provision",
+ "wamn-registry",
+ "wamn-routes",
+ "wamn-test-infrastructure",
 ]
 
 [[package]]
@@ -7407,7 +7414,6 @@ dependencies = [
  "wamn-registry",
  "wamn-run-state",
  "wamn-schema-introspection",
- "wamn-test-application",
  "wamn-test-infrastructure",
  "wash-runtime",
  "wasmtime-wasi",
@@ -7499,25 +7505,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "wamn-test-application"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "serde_json",
- "sqlx",
- "tokio",
- "uuid",
- "wamn-environment",
- "wamn-http-client",
- "wamn-identity-protocol",
- "wamn-postgres",
- "wamn-provision",
- "wamn-registry",
- "wamn-routes",
- "wamn-test-infrastructure",
-]
-
-[[package]]
 name = "wamn-test-infrastructure"
 version = "0.1.0"
 dependencies = [
@@ -7548,23 +7535,6 @@ dependencies = [
  "wamn-package",
  "wamn-postgres",
  "wamn-registry",
- "wamn-test-postgres",
-]
-
-[[package]]
-name = "wamn-test-postgres"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "hex",
- "rcgen",
- "rustix 1.1.6",
- "serde_json",
- "sqlx",
- "tokio",
- "url",
- "wamn-identity-protocol",
- "wamn-postgres",
 ]
 
 [[package]]
@@ -7652,7 +7622,6 @@ dependencies = [
  "wamn-postgres",
  "wamn-provision",
  "wamn-registry",
- "wamn-test-application",
  "wamn-test-infrastructure",
 ]
 
