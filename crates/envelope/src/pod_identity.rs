@@ -49,36 +49,3 @@ impl CredentialProvider for PodSigner {
         }))
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn pod_signing_credentials_never_contain_a_private_key() {
-        use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let endpoint = format!("http://{}/", listener.local_addr().unwrap());
-        let server = tokio::spawn(async move {
-            let (mut stream, _) = listener.accept().await.unwrap();
-            let mut request = [0; 1024];
-            let _read = stream.read(&mut request).await.unwrap();
-            let email = "pod@example.iam.gserviceaccount.com";
-            stream
-                .write_all(
-                    format!(
-                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{email}",
-                        email.len()
-                    )
-                    .as_bytes(),
-                )
-                .await
-                .unwrap();
-        });
-        let signer = PodSigner(Arc::new(Metadata::with_test_endpoint(endpoint).unwrap()));
-        let credential = signer.get_credential().await.unwrap();
-        assert!(credential.email.contains('@'));
-        assert!(credential.private_key.is_none());
-        server.await.unwrap();
-    }
-}

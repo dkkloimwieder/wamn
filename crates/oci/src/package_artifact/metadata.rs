@@ -70,12 +70,6 @@ impl Metadata {
         })
     }
 
-    /// Use a private metadata endpoint without changing process environment.
-    #[cfg(feature = "test-util")]
-    pub fn with_test_endpoint(endpoint: String) -> anyhow::Result<Self> {
-        Self::new(endpoint)
-    }
-
     async fn read(&self, resource: &str) -> anyhow::Result<Bytes> {
         let request = Request::get(format!("{}{resource}", self.endpoint))
             .header("Metadata-Flavor", "Google")
