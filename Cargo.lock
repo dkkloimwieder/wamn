@@ -6778,6 +6778,7 @@ dependencies = [
  "tracing",
  "url",
  "uuid",
+ "wamn-authority",
  "wamn-broker",
  "wamn-build",
  "wamn-codegen",

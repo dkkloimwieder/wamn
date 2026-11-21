@@ -56,6 +56,7 @@ pub fn roles(
     let mut components = Vec::new();
     let mut declared_connections = std::collections::BTreeMap::new();
     let mut integrations = std::collections::BTreeMap::new();
+    let mut connection_ports = BTreeSet::new();
     let component_names: BTreeSet<_> = published_components(package_manifests)
         .map(|(package, component)| component_name(package, &component.descriptor.component))
         .chain(std::iter::once("ingress".to_owned()))
@@ -163,6 +164,16 @@ pub fn roles(
                         "connection": binding.connection_id,
                     })
                 });
+            }
+            if let Some(resolved) = binding.resolved.as_ref().filter(|resolved| {
+                resolved.requirement_type == wamn_connection_type::RequirementType::Http
+            }) {
+                connection_ports.extend(
+                    http_connection_ports(&resolved.definition)
+                        .with_context(|| format!("http connection {}", binding.alias))?
+                        .into_iter()
+                        .flatten(),
+                );
             }
             connections.push(ApplicationConnection {
                 name: alias,
@@ -342,7 +353,29 @@ pub fn roles(
         config,
         host_interfaces,
         integration_components: integrations.into_values().collect(),
+        connection_ports,
     }])
+}
+
+/// The TCP ports of one host HTTP connection: its primary authority and its
+/// OAuth `token_authority` when present, each with the scheme's default port.
+fn http_connection_ports(definition: &serde_json::Value) -> anyhow::Result<[Option<u16>; 2]> {
+    use wamn_authority::connection_authority::{
+        TlsPolicy, parse_http_connection_authority, parse_http_definition,
+    };
+    let primary = parse_http_definition(definition)?.authority().port();
+    let token = definition
+        .pointer("/auth/token_authority")
+        .and_then(serde_json::Value::as_str)
+        .map(|authority| {
+            parse_http_connection_authority(
+                &format!("https://{authority}/"),
+                TlsPolicy::VerifyAuthority,
+            )
+        })
+        .transpose()?
+        .map(|authority| authority.authority().port());
+    Ok([Some(primary), token])
 }
 
 /// Unnamed platform imports, including bound when the workload has integration siblings.
@@ -472,6 +505,16 @@ pub fn values(input: &ValuesInput<'_>) -> anyhow::Result<Value> {
         )?,
     );
     values.insert(
+        "connectionPorts".into(),
+        serde_yaml::to_value(
+            input
+                .roles
+                .iter()
+                .flat_map(|role| &role.connection_ports)
+                .collect::<BTreeSet<_>>(),
+        )?,
+    );
+    values.insert(
         "hostInterfaces".into(),
         serde_yaml::to_value(
             input
@@ -505,6 +548,8 @@ pub struct Role {
     pub config: Mapping,
     pub host_interfaces: Vec<serde_json::Value>,
     pub integration_components: Vec<serde_json::Value>,
+    /// The ports of the bound host HTTP connections, opened to public IPv4.
+    pub connection_ports: BTreeSet<u16>,
 }
 
 /// The roles a release can imply (R4).
@@ -732,6 +777,53 @@ mod tests {
             (component("b", &[], &[], true), &["insert", "update"]),
         ]);
         assert!(render(&duplicate, &[]).is_err());
+    }
+
+    #[test]
+    fn the_connection_ports_are_the_bound_http_authority_ports() {
+        let packages = packages(&[(component("a", &[], &[], false), &[])]);
+        let a = sibling(&packages, "a");
+        let definitions = [
+            serde_json::json!({
+                "primary-authority": "https://api.example.com/v1",
+                "tls-verification": "verify-authority",
+                "auth": {"token_authority": "auth.example.com:8443"},
+            }),
+            serde_json::json!({
+                "primary-authority": "http://plain.example.com:8080/",
+                "tls-verification": "disabled",
+            }),
+            serde_json::json!({
+                "primary-authority": "https://other.example.com/",
+                "tls-verification": "verify-authority",
+            }),
+        ];
+        let expected: std::collections::BTreeSet<u16> = definitions
+            .iter()
+            .flat_map(|definition| {
+                let primary = definition["primary-authority"].as_str().unwrap();
+                let token = definition
+                    .pointer("/auth/token_authority")
+                    .map(|authority| format!("https://{}/", authority.as_str().unwrap()));
+                std::iter::once(primary.to_owned()).chain(token)
+            })
+            .map(|url| url::Url::parse(&url).unwrap().port_or_known_default().unwrap())
+            .collect();
+        let bindings: Vec<_> = definitions
+            .into_iter()
+            .enumerate()
+            .map(|(index, definition)| Binding {
+                resolved: Some(crate::org_connection::ResolvedConnection {
+                    requirement_type: wamn_connection_type::RequirementType::Http,
+                    definition,
+                    credential_handle: None,
+                    org_connection_name: None,
+                }),
+                ..binding(&format!("api{index}"), &format!("c{index}"), &a)
+            })
+            .collect();
+        let roles = render(&packages, &bindings).unwrap();
+        assert_eq!(roles[0].connection_ports, expected);
     }
 
     #[test]

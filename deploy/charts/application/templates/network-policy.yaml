@@ -5,6 +5,9 @@
 {{- $ports = append $ports (required "An integration authority must have a resolved egressPort." .egressPort | int) }}
 {{- end }}
 {{- end }}
+{{- range .Values.connectionPorts }}
+{{- $ports = append $ports (int .) }}
+{{- end }}
 {{- if $ports }}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy

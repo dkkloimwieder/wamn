@@ -13,6 +13,7 @@ ops = ["wamn-provision/ops"]
 kube = { workspace = true }
 k8s-openapi = { workspace = true }
 wamn-connection-type.workspace = true
+wamn-authority.workspace = true
 wamn-oci-reference.workspace = true
 wamn-package = { workspace = true, features = ["sqlx"] }
 wamn-component-policy.workspace = true

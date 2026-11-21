@@ -29,6 +29,8 @@ org: ""
 roles: []
 # Application and integration sibling components pinned by OCI manifest digest.
 components: []
+# TCP ports of the bound host HTTP connections, opened to public IPv4.
+connectionPorts: []
 # Platform interfaces and named NATS bindings for this workload.
 hostInterfaces: []
 
