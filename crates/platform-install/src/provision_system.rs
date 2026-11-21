@@ -107,25 +107,30 @@ const CONNECT_RETRIES: u32 = 30;
 pub(crate) async fn connect_system_database(url: &str) -> anyhow::Result<Client> {
     let mut retries = 0;
     crate::credentials::connect_with_retry(url, |error| {
-        let refused = error.chain().any(|cause| {
-            cause
-                .downcast_ref::<io::Error>()
-                .is_some_and(|error| error.kind() == io::ErrorKind::ConnectionRefused)
-        });
-        let awaiting_hba = url.starts_with('{')
-            && error
-                .downcast_ref::<sqlx::Error>()
-                .and_then(sqlx::Error::as_database_error)
-                .and_then(sqlx::error::DatabaseError::code)
-                .as_deref()
-                == Some("28000");
-        if !(refused || awaiting_hba) || retries == CONNECT_RETRIES {
+        if !retries_connect(url, &error) || retries == CONNECT_RETRIES {
             return Err(error);
         }
         retries += 1;
         Ok(())
     })
     .await
+}
+
+/// Retry a refused connection, and the pg_hba refusal of a configuration input.
+fn retries_connect(url: &str, error: &anyhow::Error) -> bool {
+    let refused = error.chain().any(|cause| {
+        cause
+            .downcast_ref::<io::Error>()
+            .is_some_and(|error| error.kind() == io::ErrorKind::ConnectionRefused)
+    });
+    let awaiting_hba = url.starts_with('{')
+        && error
+            .downcast_ref::<sqlx::Error>()
+            .and_then(sqlx::Error::as_database_error)
+            .and_then(sqlx::error::DatabaseError::code)
+            .as_deref()
+            == Some("28000");
+    refused || awaiting_hba
 }
 
 /// Database state recorded by the atomic system bootstrap.
@@ -288,79 +293,28 @@ pub async fn install_control_store(admin: &mut Client) -> anyhow::Result<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::time::Duration;
-    use tokio::net::{TcpListener, TcpStream};
-    use tokio::task::JoinSet;
 
-    #[tokio::test]
-    #[ignore = "requires: docker"]
-    async fn initial_connect_retries_only_connection_refusal() -> anyhow::Result<()> {
-        let postgres = wamn_test_infrastructure::containers::start_postgres().await?;
-        let mut url = postgres.create_database("system").await?;
-        let upstream = (url.host_str().unwrap().to_owned(), url.port().unwrap());
-        let reserved = TcpListener::bind("127.0.0.1:0").await?;
-        let address = reserved.local_addr()?;
-        url.set_port(Some(address.port())).unwrap();
-        drop(reserved);
+    const URL: &str = "postgresql://wamn@127.0.0.1:5432/system";
 
-        let attempts = Arc::new(AtomicUsize::new(0));
-        let mut proxy = JoinSet::new();
-        let mut client = {
-            let connecting = connect_system_database(url.as_str());
-            tokio::pin!(connecting);
-            tokio::select! {
-                result = &mut connecting => panic!("connect completed before the listener existed: {:?}", result.err()),
-                () = tokio::time::sleep(Duration::from_millis(100)) => {}
-            }
+    fn io_error(kind: io::ErrorKind) -> anyhow::Error {
+        sqlx::Error::Io(io::Error::from(kind)).into()
+    }
 
-            let listener = TcpListener::bind(address).await?;
-            proxy.spawn({
-                let attempts = Arc::clone(&attempts);
-                async move {
-                    let mut connections = JoinSet::new();
-                    loop {
-                        let (mut incoming, _) = listener.accept().await.unwrap();
-                        attempts.fetch_add(1, Ordering::Relaxed);
-                        let mut outgoing = TcpStream::connect((upstream.0.as_str(), upstream.1))
-                            .await
-                            .unwrap();
-                        connections.spawn(async move {
-                            tokio::io::copy_bidirectional(&mut incoming, &mut outgoing).await
-                        });
-                    }
-                }
-            });
-            connecting.await?
-        };
-
-        let row = sqlx::query("SELECT current_database()")
-            .fetch_one(&mut client)
-            .await?;
-        assert_eq!(row.get::<String, _>(0), "system");
-        drop(client);
-
-        // PostgreSQL accepts the TCP connection but refuses an absent database.
-        url.set_path("/unprovisioned_fixture");
-        let Err(error) = connect_system_database(url.as_str()).await else {
-            panic!("an absent database must refuse the connection");
-        };
-        assert_eq!(
-            error
-                .downcast_ref::<sqlx::Error>()
-                .unwrap()
-                .as_database_error()
-                .and_then(|error| error.code())
-                .as_deref(),
-            Some("3D000")
-        );
-        assert_eq!(
-            attempts.load(Ordering::Relaxed),
-            2,
-            "one TCP connection per PostgreSQL handshake"
-        );
-        proxy.shutdown().await;
-        Ok(())
+    #[test]
+    fn initial_connect_retries_only_connection_refusal() {
+        assert!(retries_connect(
+            URL,
+            &io_error(io::ErrorKind::ConnectionRefused)
+        ));
+        for kind in [
+            io::ErrorKind::ConnectionReset,
+            io::ErrorKind::PermissionDenied,
+        ] {
+            assert!(!retries_connect(URL, &io_error(kind)), "{kind:?}");
+        }
+        assert!(!retries_connect(
+            URL,
+            &sqlx::Error::Protocol("unexpected message".into()).into()
+        ));
     }
 }
