@@ -37,6 +37,8 @@ use wamn_provision::{
 };
 use wamn_environment::provision_project_env::{privilege_sql, role_posture_sql};
 
+mod common;
+
 const ORG: &str = "dkzrisolation";
 const PROJECT: &str = "inventory";
 /// The environment the generation is minted for.
@@ -133,7 +135,7 @@ async fn an_app_generation_cannot_open_a_session_on_a_neighbouring_project_env_d
     .expect("the App family takes a project target");
     run_alone(
         &mut superuser,
-        &wamn_provision::test_database::login_sql(
+        &common::login_sql(
             WorkloadRoleFamily::App,
             &home,
             &generation,

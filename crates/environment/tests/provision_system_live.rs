@@ -13,6 +13,30 @@ async fn connect(url: &str) -> sqlx::PgConnection {
     wamn_postgres::connect(url).await.unwrap()
 }
 
+/// Create the system migration login of the database `name` as CNPG would, and return its URL.
+async fn system_migration_login(
+    postgres: &wamn_test_infrastructure::containers::Postgres,
+    name: &str,
+) -> url::Url {
+    use postgres_protocol::escape::escape_identifier;
+    let login = wamn_provision::migrations::MigrationDatabase::System.login(name);
+    let role = escape_identifier(login.as_str());
+    // CNPG grants this membership with SET permission, which ownership transfers require.
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "CREATE ROLE {role} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS \
+         PASSWORD 'platform-migration-fixture'; \
+         GRANT {} TO {role} WITH INHERIT TRUE, SET TRUE; GRANT CONNECT ON DATABASE {} TO {role}",
+        escape_identifier(wamn_role::SYSTEM_ROLE),
+        escape_identifier(name),
+    )))
+    .execute(&mut connect(postgres.admin_url()).await)
+    .await
+    .unwrap();
+    postgres
+        .database_url(name, login.as_str(), "platform-migration-fixture")
+        .unwrap()
+}
+
 #[tokio::test]
 #[ignore = "requires: docker"]
 async fn platform_initialization_applies_pending_migrations_on_upgrade() {
@@ -40,12 +64,7 @@ async fn platform_initialization_applies_pending_migrations_on_upgrade() {
         "CREATE TABLE registry.migration_probe(value int); INSERT INTO registry.migration_probe VALUES (1)",
     );
     let second = source(30, "INSERT INTO registry.migration_probe VALUES (2)");
-    let migration_input = wamn_provision::test_database::platform_migration_input(
-        &*url,
-        MigrationDatabase::System,
-    )
-    .await
-    .unwrap();
+    let migration_input = system_migration_login(&postgres, "system").await;
     assert!(
         platform_migrations::apply_reported(
             &mut client,
@@ -55,11 +74,11 @@ async fn platform_initialization_applies_pending_migrations_on_upgrade() {
         .await
         .is_err()
     );
-    initialize_system(&mut client, &migration_input, std::slice::from_ref(&first))
+    initialize_system(&mut client, migration_input.as_str(), std::slice::from_ref(&first))
         .await
         .unwrap();
     let sources = [first, second];
-    initialize_system(&mut client, &migration_input, &sources)
+    initialize_system(&mut client, migration_input.as_str(), &sources)
         .await
         .unwrap();
     let observed = wamn_environment::platform_migrations::observe(

@@ -70,9 +70,12 @@ async fn application_mutations_require_row_security_in_each_database() {
         .await
         .unwrap();
     let migration = postgres.create_project_database("project").await.unwrap();
-    let system = postgres.create_database("system").await.unwrap();
-    wamn_provision::test_database::system(system.as_str()).await;
+    postgres.create_system_role().await.unwrap();
+    let system = postgres.create_database("wamn_system").await.unwrap();
     let mut client = wamn_postgres::connect(system.as_str()).await.unwrap();
+    wamn_environment::provision_system::install_control_store(&mut client)
+        .await
+        .unwrap();
     sqlx::raw_sql(sqlx::AssertSqlSafe(sql::ensure_app_acl_role_sql()))
         .execute(&mut client)
         .await

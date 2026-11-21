@@ -78,7 +78,7 @@ pub async fn fixture(name: &str) -> anyhow::Result<Fixture> {
         };
         let role = workload_login(family, target)?;
         sqlx::raw_sql(sqlx::AssertSqlSafe(
-            wamn_provision::test_database::login_sql(family, name, &role, "file-fixture-only"),
+            crate::common::login_sql(family, name, &role, "file-fixture-only"),
         ))
         .execute(&mut observer)
         .await
