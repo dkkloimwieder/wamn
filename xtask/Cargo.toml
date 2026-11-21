@@ -44,6 +44,7 @@ tempfile.workspace = true
 wamn-digest = { workspace = true, features = ["sqlx"] }
 wamn-codegen.workspace = true
 wamn-platform-install.workspace = true
+wamn-provision.workspace = true
 wamn-publish.workspace = true
 # Admission parses components with the CLI's component model features.
 wamn-engine = { workspace = true, features = ["wasm_component_model_implements"] }

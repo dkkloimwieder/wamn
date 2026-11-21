@@ -76,7 +76,7 @@ pub(super) async fn run(root: &Path) -> Result<()> {
 }
 
 /// The manifest that publication would write, with placeholder registry digests.
-fn published_manifest(output: &Path) -> Result<PackageManifest> {
+pub(crate) fn published_manifest(output: &Path) -> Result<PackageManifest> {
     let mut verified = wamn_publish::package_artifact::verify_package(output)?;
     let base_packages = verified
         .manifest
@@ -113,7 +113,7 @@ fn published_manifest(output: &Path) -> Result<PackageManifest> {
 }
 
 /// A placeholder for the registry's package artifact digest.
-fn package_digest(id: &PackageName) -> Digest {
+pub(crate) fn package_digest(id: &PackageName) -> Digest {
     bytes_sha256(format!("package {id}").as_bytes())
 }
 

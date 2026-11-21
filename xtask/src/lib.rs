@@ -8,6 +8,7 @@ mod kind;
 mod measure_tx_identity;
 mod netsuite;
 mod platform;
+mod preflight;
 mod prepare_tests;
 mod process;
 mod repo_policy;
@@ -129,6 +130,8 @@ enum Task {
     DevCollector { root: PathBuf },
     /// Create or reuse the local kind cluster and its OCI registry.
     KindClusterCreate,
+    /// Render the charts, then check their images, arguments, and a server dry run on kind.
+    Preflight(preflight::Args),
     /// Delete a disposable kind cluster and inspect its resources.
     KindClusterDelete { cluster: String },
     /// Print the environment for an isolated checkout.
@@ -235,7 +238,8 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
         Task::ContractDiff(args) => tasks::contract(&root, args.mode).await,
         Task::WasmcloudReleaseTests(args) => tasks::upstream(&root, &args).await,
         Task::DevCollector { root: output } => tasks::collector(&root, &output),
-        Task::KindClusterCreate => kind::create_cluster(&root).await,
+        Task::KindClusterCreate => kind::create_cluster(&root).await.map(drop),
+        Task::Preflight(args) => preflight::run(&root, args).await,
         Task::KindClusterDelete { cluster } => tasks::delete_cluster(&root, &cluster).await,
         Task::LaneStart {
             print_env,
