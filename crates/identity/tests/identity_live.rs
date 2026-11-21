@@ -11,30 +11,18 @@ use wamn_identity::{
     revoke_project_env_membership,
 };
 
-#[sqlx::test(migrations = false)]
-async fn platform_identity_round_trip_on_postgres(pool: sqlx::PgPool) {
-    // The system schema creates the cluster-wide wamn_system role.
-    let _serialized = wamn_test_postgres::lock();
-    let test_database = wamn_test_postgres::url(&pool);
-    let url = test_database.as_str().to_owned();
+pub mod common;
 
-    let mut client = wamn_postgres::connect(&url)
+#[tokio::test]
+#[ignore = "requires: docker"]
+async fn platform_identity_round_trip_on_postgres() {
+    let postgres = wamn_test_infrastructure::containers::start_postgres()
+        .await
+        .unwrap();
+    let url = common::system(&postgres).await;
+    let mut client = wamn_postgres::connect(url.as_str())
         .await
         .expect("connect platform identity test database");
-
-    sqlx::raw_sql(sqlx::AssertSqlSafe(
-        ("DROP SCHEMA IF EXISTS identity CASCADE; \
-             DROP SCHEMA IF EXISTS provisioning CASCADE; \
-             DROP SCHEMA IF EXISTS registry CASCADE; \
-             DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_system') \
-             THEN CREATE ROLE wamn_system; END IF; END $$;")
-            .to_string(),
-    ))
-    .execute(&mut client)
-    .await
-    .map(drop)
-    .expect("prepare empty platform schemas");
-    wamn_provision::test_database::system_schema(&url).await;
     let provisioning = provisioning_principal_is_seeded(&mut client).await;
     unbound_identity_writes_refuse(&mut client).await;
     // The fixture is platform setup, so it writes as wamn:provisioning.

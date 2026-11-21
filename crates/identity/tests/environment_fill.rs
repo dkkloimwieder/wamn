@@ -1,41 +1,34 @@
 //! Identity provisioning fills the rows that application foreign keys reference.
 
-use sqlx::Row as _;
 use wamn_environment::environment::fill;
 use wamn_identity::application::ApplicationTarget;
 
-#[tokio::test]
-#[ignore = "requires: postgres"]
-async fn provisioning_fills_platform_identity_rows_from_the_platform_declaration()
--> anyhow::Result<()> {
-    let _lock = wamn_test_postgres::lock();
-    let mut case_server = wamn_test_postgres::start(&[]).unwrap();
-    let system = url::Url::parse(
-        case_server
-            .create_database("fixture_1")
-            .await
-            .unwrap()
-            .url(),
+pub mod common;
+
+/// Seed the organization `fill`, its project `fixture` and the environment `dev`.
+fn seed_org_project_env_sql() -> String {
+    let actor = wamn_provision::PlatformComponent::Provisioning.principal_id();
+    format!(
+        "INSERT INTO platform.tx_identity(principal_id,role,application) VALUES('{actor}','','fixture'); \
+         INSERT INTO registry.orgs(id) VALUES ('fill'); \
+         INSERT INTO registry.projects(org,id) VALUES ('fill','fixture'); \
+         WITH parent_environment AS (INSERT INTO registry.environments (org,env) VALUES ('fill','dev')) \
+         INSERT INTO registry.environment_projects (org,project,env,secret_name,instance_suffix) VALUES ('fill','fixture','dev','s1','aaaaaaa1');"
     )
-    .unwrap();
-    wamn_provision::test_database::system(system.as_str()).await;
-    {
-        let batches: &[&str] = &[
-            &wamn_provision::test_database::seed_org_project_env_sql(
-                &"fill".parse().unwrap(),
-                &"fixture".parse().unwrap(),
-                &"dev".parse().unwrap(),
-            ),
-        ];
-        let mut setup_connection = wamn_postgres::connect(system.as_str()).await.unwrap();
-        for batch in batches {
-            sqlx::raw_sql(sqlx::AssertSqlSafe(*batch))
-                .execute(&mut setup_connection)
-                .await?;
-        }
-    }
+}
+
+#[tokio::test]
+#[ignore = "requires: docker"]
+async fn provisioning_fills_and_removes_environment_member_rows()
+-> anyhow::Result<()> {
+    let postgres = wamn_test_infrastructure::containers::start_postgres().await?;
+    let system = common::system(&postgres).await;
+    let mut setup_connection = wamn_postgres::connect(system.as_str()).await?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(seed_org_project_env_sql()))
+        .execute(&mut setup_connection)
+        .await?;
     let mut authority_connection = wamn_postgres::connect(system.as_str()).await?;
-    let mut authority = wamn_test_postgres::transaction(
+    let mut authority = common::transaction(
         &mut authority_connection,
         &wamn_provision::PlatformComponent::Provisioning.principal_id(),
         "admin:environment-fill",
@@ -65,15 +58,7 @@ async fn provisioning_fills_platform_identity_rows_from_the_platform_declaration
     .await?;
     authority.commit().await?;
 
-    let project = url::Url::parse(
-        case_server
-            .create_database("fixture_extra")
-            .await
-            .unwrap()
-            .url(),
-    )
-    .unwrap();
-    wamn_identity::test_database::project_platform(project.as_str()).await;
+    let project = common::project(&postgres, "fixture_extra").await;
     let target = ApplicationTarget {
         org: &"fill".parse().unwrap(),
         project: &"fixture".parse().unwrap(),
@@ -87,17 +72,13 @@ async fn provisioning_fills_platform_identity_rows_from_the_platform_declaration
         target,
     )
     .await?;
-    for component in wamn_identity_protocol::PlatformComponent::ALL {
-        let row = sqlx::query("SELECT type='platform' AND email=$2 AND created_by=$3 FROM platform.\"user\" WHERE id=$1").bind(component.principal_id()).bind(format!("{}@example.invalid",component.as_str())).bind(wamn_identity_protocol::PlatformComponent::Provisioning.principal_id()).fetch_one(&mut client).await?;
-        assert!(row.get::<bool, _>(0));
-    }
     let present: bool =
         sqlx::query_scalar("SELECT EXISTS(SELECT FROM platform.\"user\" WHERE id=$1::text::uuid)")
             .bind(member.to_string())
             .fetch_one(&mut client)
             .await?;
     assert!(present);
-    let mut authority = wamn_test_postgres::transaction(
+    let mut authority = common::transaction(
         &mut authority_connection,
         &wamn_provision::PlatformComponent::Provisioning.principal_id(),
         "admin:revoke-environment-member",

@@ -22,19 +22,18 @@ async fn admin_write(connection: &mut sqlx::PgConnection) -> Result<(), sqlx::Er
     transaction.commit().await
 }
 
-#[sqlx::test(migrations = false)]
-async fn admin_role_has_no_rows_and_authored_rows_are_grants_live(
-    pool: sqlx::PgPool,
-) -> anyhow::Result<()> {
-    let _serialized = wamn_test_postgres::lock();
-    let mut connection = pool.acquire().await?;
+#[tokio::test]
+#[ignore = "requires: docker"]
+async fn admin_role_has_no_rows_and_authored_rows_are_grants_live() -> anyhow::Result<()> {
+    let postgres = wamn_test_infrastructure::containers::start_postgres().await?;
+    let mut connection = wamn_postgres::connect(postgres.admin_url()).await?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         wamn_provision::sql::ensure_app_acl_role_sql(),
     ))
-    .execute(&mut *connection)
+    .execute(&mut connection)
     .await?;
     sqlx::raw_sql(include_str!("../../../deploy/sql/record-history.sql"))
-        .execute(&mut *connection)
+        .execute(&mut connection)
         .await?;
     let missing = admin_write(&mut connection).await.unwrap_err();
     let missing = missing.as_database_error().unwrap();
@@ -45,7 +44,7 @@ async fn admin_role_has_no_rows_and_authored_rows_are_grants_live(
         include_str!("../../../deploy/sql/app-schema.sql"),
     ] {
         sqlx::raw_sql(sqlx::AssertSqlSafe(batch))
-            .execute(&mut *connection)
+            .execute(&mut connection)
             .await?;
     }
     let mut transaction = connection.begin().await?;
@@ -65,11 +64,11 @@ async fn admin_role_has_no_rows_and_authored_rows_are_grants_live(
     admin_write(&mut connection).await?;
     admin_write(&mut connection).await?;
     let roles: Vec<String> = sqlx::query_scalar("SELECT name FROM platform.role ORDER BY name")
-        .fetch_all(&mut *connection)
+        .fetch_all(&mut connection)
         .await?;
     assert_eq!(roles, ["admin", "clerk"]);
     let permissions: i64 = sqlx::query_scalar("SELECT count(*) FROM platform.permission")
-        .fetch_one(&mut *connection)
+        .fetch_one(&mut connection)
         .await?;
     assert_eq!(permissions, 2);
 
@@ -128,7 +127,7 @@ async fn admin_role_has_no_rows_and_authored_rows_are_grants_live(
     sqlx::query("DELETE FROM platform.permission WHERE role_name='clerk' AND permission='platform-fixture:widget/create'").execute(&mut *transaction).await?;
     transaction.commit().await?;
     let remaining: Vec<String> = sqlx::query_scalar("SELECT permission FROM platform.permission")
-        .fetch_all(&mut *connection)
+        .fetch_all(&mut connection)
         .await?;
     assert_eq!(remaining, ["platform-fixture:widget/get"]);
     Ok(())

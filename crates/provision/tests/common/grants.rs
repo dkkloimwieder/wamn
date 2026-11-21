@@ -2,6 +2,7 @@
 
 use postgres_protocol::escape::escape_identifier;
 use sqlx::Connection as _;
+use wamn_provision::migrations::MigrationDatabase;
 use wamn_provision::workload_role::WorkloadRoleIdentityType;
 use wamn_provision::{
     PlatformComponent, WorkloadRoleFamily, WorkloadRoleIdentity, sql, workload_login,
@@ -21,22 +22,32 @@ pub async fn execute(connection: &mut sqlx::PgConnection, statement: &str) {
         .unwrap_or_else(|error| panic!("{statement}: {error}"));
 }
 
-pub async fn prepare(pool: &sqlx::PgPool, family: WorkloadRoleFamily) -> Fixture {
-    let url = wamn_test_postgres::url(pool);
+/// Install the schemas of `family` on the database of `url` and create its login.
+pub async fn prepare(url: url::Url, family: WorkloadRoleFamily) -> Fixture {
     let database = url.path().trim_start_matches('/');
     let mut admin = wamn_postgres::connect(url.as_str()).await.unwrap();
     match family.identity_type() {
         WorkloadRoleIdentityType::Control | WorkloadRoleIdentityType::Org => {
-            wamn_provision::test_database::system(url.as_str()).await;
+            super::database::system(url.as_str()).await;
         }
         _ => {
+            // As in production, the migration login owns the project database
+            // and installs its schemas.
+            execute(&mut admin, sql::ensure_project_roles_sql()).await;
+            super::database::platform_migration_input(url.as_str(), MigrationDatabase::Project)
+                .await;
+            let owner = MigrationDatabase::Project.login(database);
+            execute(
+                &mut admin,
+                &format!("SET ROLE {}", escape_identifier(owner.as_str())),
+            )
+            .await;
             for batch in [
-                &sql::ensure_app_acl_role_sql(),
-                sql::ensure_project_roles_sql(),
                 wamn_provision::CATALOG_SCHEMA_SQL,
                 include_str!("../../../../deploy/sql/run-state.sql"),
                 include_str!("../../../../deploy/sql/run-queue.sql"),
                 wamn_provision::APP_SCHEMA_SQL,
+                "RESET ROLE",
             ] {
                 execute(&mut admin, batch).await;
             }
@@ -67,7 +78,7 @@ pub async fn prepare(pool: &sqlx::PgPool, family: WorkloadRoleFamily) -> Fixture
     let login = workload_login(family, target).unwrap();
     execute(
         &mut admin,
-        &wamn_provision::test_database::login_sql(family, database, &login, "grants-test"),
+        &super::database::login_sql(family, database, &login, "grants-test"),
     )
     .await;
     if family == WorkloadRoleFamily::Migration {
@@ -188,12 +199,8 @@ pub async fn rules(fixture: &mut Fixture, family: WorkloadRoleFamily) {
     );
 }
 
-pub async fn family(
-    pool: &sqlx::PgPool,
-    family: WorkloadRoleFamily,
-) -> (Fixture, wamn_test_postgres::ProcessLock) {
-    let lock = wamn_test_postgres::lock();
-    let mut fixture = prepare(pool, family).await;
+pub async fn family(url: url::Url, family: WorkloadRoleFamily) -> Fixture {
+    let mut fixture = prepare(url, family).await;
     rules(&mut fixture, family).await;
     // A write rule covers every installed relation and every column grant.
     if matches!(
@@ -238,7 +245,7 @@ pub async fn family(
         &format!(
             "SET ROLE {}",
             escape_identifier(
-                wamn_provision::migrations::MigrationDatabase::Project.login(
+                MigrationDatabase::Project.login(
                     url::Url::parse(&fixture.url)
                         .unwrap()
                         .path()
@@ -249,5 +256,5 @@ pub async fn family(
         ),
     )
     .await;
-    (fixture, lock)
+    fixture
 }

@@ -97,7 +97,7 @@ impl Mailer {
         }
     }
 
-    #[cfg(any(test, feature = "test-util"))]
+    #[cfg(test)]
     pub(super) fn fixture(endpoint: String) -> Self {
         Self::Resend(ResendMailer::fixture(endpoint))
     }
@@ -184,7 +184,7 @@ async fn record(
 pub(super) struct ResendMailer {
     config: ResendConfig,
     client: HttpClient,
-    #[cfg(any(test, feature = "test-util"))]
+    #[cfg(test)]
     endpoint: Option<String>,
 }
 
@@ -207,12 +207,12 @@ impl ResendMailer {
         Ok(Self {
             config,
             client,
-            #[cfg(any(test, feature = "test-util"))]
+            #[cfg(test)]
             endpoint: None,
         })
     }
 
-    #[cfg(any(test, feature = "test-util"))]
+    #[cfg(test)]
     pub(super) fn fixture(endpoint: String) -> Self {
         Self {
             config: ResendConfig::new(
@@ -243,7 +243,7 @@ impl ResendMailer {
             expires_at,
         ));
         let endpoint = "https://api.resend.com/emails";
-        #[cfg(any(test, feature = "test-util"))]
+        #[cfg(test)]
         let endpoint = self.endpoint.as_deref().unwrap_or(endpoint);
         self.send(endpoint, email, "Your WAMN invitation", &text)
             .await
@@ -275,7 +275,7 @@ impl ResendMailer {
         text: &str,
     ) -> Result<(), IdentityServiceError> {
         let endpoint = "https://api.resend.com/emails";
-        #[cfg(any(test, feature = "test-util"))]
+        #[cfg(test)]
         let endpoint = self.endpoint.as_deref().unwrap_or(endpoint);
         self.send(endpoint, email, subject, text).await
     }

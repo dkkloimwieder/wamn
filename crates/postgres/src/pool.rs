@@ -9,8 +9,6 @@ use sqlx::PgPool;
 pub type Object = sqlx::pool::PoolConnection<sqlx::Postgres>;
 
 use wamn_identity_protocol::AuthorityClass;
-#[cfg(test)]
-use wamn_registry::app_identity_hash;
 
 use wamn_engine::engine::MAX_HOST_CALL_DURATION;
 
@@ -101,7 +99,7 @@ pub struct ClassCredentials {
 
 impl ClassCredentials {
     /// Build explicit fixture credentials, including the separate read-only login.
-    #[cfg(any(test, feature = "test-util"))]
+    #[cfg(feature = "test-util")]
     pub fn every_class(url: impl Into<String>) -> Self {
         let url = url.into();
         let query = url::Url::parse(&url).ok().and_then(|mut input| {
@@ -131,21 +129,6 @@ impl ClassCredentials {
     #[must_use]
     pub fn with_class(mut self, class: AuthorityClass, url: impl Into<String>) -> Self {
         self.urls.insert(class, url.into());
-        self
-    }
-
-    /// UNNAME one class, so `resolve` REFUSES for it (`wamn-0h0g.22.31`).
-    ///
-    /// The other half of a login replacement, and it is not the same as leaving
-    /// [`Self::every_class`]'s entry in place. Once a family authenticates as
-    /// itself, that shared entry stops being a placeholder for it and becomes A
-    /// LOGIN OF ANOTHER AUTHORITY that would still satisfy the map. A composer
-    /// that cannot name this family's own credential must therefore ERASE the
-    /// entry rather than keep the shared one, so an unprovisioned family is
-    /// refused at checkout instead of quietly connecting as the guest.
-    #[must_use]
-    pub fn without_class(mut self, class: AuthorityClass) -> Self {
-        self.urls.remove(&class);
         self
     }
 
@@ -465,10 +448,8 @@ mod tests {
     /// must survive `--release`, where a `debug_assert` would not exist.
     #[tokio::test]
     async fn a_platform_checkout_refuses_the_guest_authority() {
-        let postgres = WamnPostgres::from_env(Some(ClassCredentials::every_class(
-            "postgres://wamn_app_refusal@localhost/refusal-test",
-        )))
-        .expect("compose");
+        let postgres = WamnPostgres::from_env(Some(credentials("acme--dev--default")))
+            .expect("compose");
         let refused = postgres
             .checkout_platform(&DEFAULT_PROJECT, AuthorityClass::GuestSql)
             .await;
@@ -487,14 +468,32 @@ mod tests {
     /// database is this test. It asserts the composed credential actually
     /// reaches resolution, and that composing without one resolves NOTHING
     /// rather than falling back.
-    /// A guest credential url for `project_env_key` in `database`, named the way
-    /// provisioning names one: the login carries the project_env_key as its scope
-    /// digest (`wamn-0h0g.22.6.4`).
-    fn guest_url(project_env_key: &wamn_registry::ProjectEnvKey, database: &str) -> String {
+    /// A guest credential for `project_env_key`, named the way a host binds one:
+    /// the application login on the primary of the project's database.
+    fn guest_url(project_env_key: &str) -> String {
+        let key: wamn_registry::ProjectEnvKey = project_env_key.parse().unwrap();
+        let triple = key.triple();
+        let database = wamn_registry::name::project_env_database_name(
+            &triple.org,
+            &triple.project,
+            &triple.env,
+            &"a1b2c3d4".parse().unwrap(),
+        );
         format!(
-            "postgres://wamn_app_{}:pw@db/{database}",
-            wamn_registry::app_identity_hash(project_env_key, database)
+            "postgres://{}:pw@{}:5432/{database}",
+            wamn_role::APP_LOGIN,
+            wamn_registry::name::project_database_host(&database, &triple.org)
         )
+    }
+
+    /// The guest and platform credentials that a host binds for one project.
+    fn credentials(project_env_key: &str) -> ClassCredentials {
+        ClassCredentials::default()
+            .with_class(AuthorityClass::GuestSql, guest_url(project_env_key))
+            .with_class(
+                AuthorityClass::Platform,
+                format!("postgres://{}:pw@db/project", wamn_role::PLATFORM_LOGIN),
+            )
     }
 
     /// *** THE REFUSAL THAT MAKES THE CREDENTIAL THE AUTHORITY. ***
@@ -505,17 +504,14 @@ mod tests {
     /// caller names no project_env_key at all.
     #[test]
     fn a_guest_credential_resolves_for_its_own_project_env_key_and_no_other() {
-        let host = WamnPostgres::from_env(Some(ClassCredentials::every_class(guest_url(
-            &"test--dev--fixture".parse().unwrap(),
-            "host-default",
-        ))))
-        .expect("compose with a credential");
+        let host = WamnPostgres::from_env(Some(credentials("test--dev--default")))
+            .expect("compose with a credential");
         assert!(
             host.provider
                 .resolve(
                     &DEFAULT_PROJECT,
                     AuthorityClass::GuestSql,
-                    Some(&"test--dev--fixture".parse().unwrap())
+                    Some(&"test--dev--default".parse().unwrap())
                 )
                 .expect("the credential's own project_env_key resolves")
                 .is_some()
@@ -525,7 +521,7 @@ mod tests {
                 .resolve(
                     &DEFAULT_PROJECT,
                     AuthorityClass::GuestSql,
-                    Some(&"evil--dev--project".parse().unwrap())
+                    Some(&"evil--dev--default".parse().unwrap())
                 )
                 .is_err(),
             "a credential issued for another project_env_key must be REFUSED, not borrowed"
@@ -548,18 +544,15 @@ mod tests {
 
     #[test]
     fn the_composed_credential_becomes_the_default_project() {
-        let composed = WamnPostgres::from_env(Some(ClassCredentials::every_class(guest_url(
-            &"test--dev--fixture".parse().unwrap(),
-            "host-default",
-        ))))
-        .expect("compose with a credential");
+        let composed = WamnPostgres::from_env(Some(credentials("test--dev--default")))
+            .expect("compose with a credential");
         assert!(
             composed
                 .provider
                 .resolve(
                     &DEFAULT_PROJECT,
                     AuthorityClass::GuestSql,
-                    Some(&"test--dev--fixture".parse().unwrap())
+                    Some(&"test--dev--default".parse().unwrap())
                 )
                 .expect("resolve default")
                 .is_some(),
@@ -574,7 +567,7 @@ mod tests {
                 .resolve(
                     &DEFAULT_PROJECT,
                     AuthorityClass::GuestSql,
-                    Some(&"test--dev--fixture".parse().unwrap())
+                    Some(&"test--dev--default".parse().unwrap())
                 )
                 .expect("resolve default")
                 .is_none(),
@@ -594,7 +587,7 @@ mod tests {
     const AMBIENT_PROBE_VAR: &str = "WAMN_POOL_AMBIENT_PROBE";
 
     fn config(url: &str) -> ProjectConfig {
-        project_config(ClassCredentials::every_class(url))
+        project_config(ClassCredentials::default().with_class(AuthorityClass::Platform, url))
     }
 
     fn project_config(credentials: ClassCredentials) -> ProjectConfig {
@@ -616,17 +609,9 @@ mod tests {
     /// would ADMIT a cross-project guest read. Both directions are asserted.
     #[test]
     fn the_guest_project_env_key_requirement_reads_the_credential_the_guest_would_connect_with() {
-        let credentials = ClassCredentials::every_class(format!(
-            "postgres://wamn_app_{}:pw@db/billing",
-            app_identity_hash(&"acme--dev--project".parse().unwrap(), "billing")
-        ))
-        .with_class(
-            AuthorityClass::GuestSql,
-            format!(
-                "postgres://wamn_app_{}:pw@db/billing",
-                app_identity_hash(&"evil--dev--project".parse().unwrap(), "billing")
-            ),
-        );
+        let credentials = ClassCredentials::default()
+            .with_class(AuthorityClass::Platform, guest_url("acme--dev--billing"))
+            .with_class(AuthorityClass::GuestSql, guest_url("evil--dev--billing"));
         let mut projects = HashMap::new();
         projects.insert("billing".parse().unwrap(), project_config(credentials));
         let provider = StaticCredentialProvider::new(projects, None);
@@ -636,7 +621,7 @@ mod tests {
                 .resolve(
                     &"billing".parse().unwrap(),
                     AuthorityClass::GuestSql,
-                    Some(&"acme--dev--project".parse().unwrap())
+                    Some(&"acme--dev--billing".parse().unwrap())
                 )
                 .is_err(),
             "the guest credential is issued for another project and must be REFUSED, \
@@ -648,7 +633,7 @@ mod tests {
                 .resolve(
                     &"billing".parse().unwrap(),
                     AuthorityClass::GuestSql,
-                    Some(&"evil--dev--project".parse().unwrap())
+                    Some(&"evil--dev--billing".parse().unwrap())
                 )
                 .expect("the guest credential's own project resolves")
                 .is_some()

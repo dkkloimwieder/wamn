@@ -14,10 +14,8 @@
 //! - the history tables take no read and no direct write from an App
 //!   generation.
 //!
-//! Each test runs as the superuser of a test database on the test PostgreSQL
-//! server (the harness prepares one project-targeted App generation) and holds the
-//! process lock, because it changes cluster-wide roles — the `tests/schema.rs`
-//! live-apply convention.
+//! Each test runs as the superuser of a test database on its own PostgreSQL
+//! server, and the harness prepares one project-targeted App generation.
 
 use std::fmt::Write as _;
 
@@ -83,12 +81,7 @@ fn prelude(url: &str) -> (wamn_identity_protocol::LoginName, String) {
         },
     )
     .expect("App accepts project target");
-    let mut script = wamn_provision::test_database::login_sql(
-        WorkloadRoleFamily::App,
-        &database,
-        &app_generation,
-        APP_GENERATION_PASSWORD,
-    );
+    let mut script = app_login_sql(&database, &app_generation);
     script.push_str("\nDROP SCHEMA IF EXISTS platform CASCADE;\n");
     script.push_str(&app_schema_sql());
     writeln!(
@@ -108,6 +101,21 @@ COMMIT;"#
     )
     .expect("writing to a String cannot fail");
     (app_generation, script)
+}
+
+/// Create the App login as CNPG would, with the grants that provisioning adds.
+fn app_login_sql(database: &str, login: &wamn_identity_protocol::LoginName) -> String {
+    use postgres_protocol::escape::{escape_identifier, escape_literal};
+    let family = WorkloadRoleFamily::App;
+    let role = escape_identifier(login.as_str());
+    format!(
+        "{} CREATE ROLE {role} LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD {}; \
+         GRANT {} TO {role} WITH ADMIN FALSE, INHERIT TRUE, SET FALSE; {}",
+        wamn_provision::sql::ensure_workload_acl_role_sql(family),
+        escape_literal(APP_GENERATION_PASSWORD),
+        escape_identifier(family.acl_role()),
+        wamn_provision::sql::grant_workload_login_sql(family, database, login)
+    )
 }
 
 const TEARDOWN: &str = "\nDROP SCHEMA platform CASCADE;\n";
@@ -152,12 +160,13 @@ fn run(url: &str, script: &str) {
 /// not a `WITH CHECK` rejection, which shares the SQLSTATE. That the project base grants
 /// does admit such a row under the App generation is what the counter test shows.
 #[tokio::test]
-#[ignore = "requires: postgres, bin:psql"]
+#[ignore = "requires: docker, bin:psql"]
 async fn author_sql_cannot_write_the_relations_that_authorize_it() {
-    let _serialized = wamn_test_postgres::lock();
-    let mut server = wamn_test_postgres::start(&[]).unwrap();
-    let database = server.create_database("project_authority").await.unwrap();
-    let url = database.url();
+    let postgres = wamn_test_infrastructure::containers::start_postgres()
+        .await
+        .unwrap();
+    let database = postgres.create_database("project_authority").await.unwrap();
+    let url = database.as_str();
 
     let (app_generation, mut script) = prelude(url);
     writeln!(
@@ -244,12 +253,13 @@ ROLLBACK;"#
 /// These history tables have no row security, so `42501` here means that
 /// the caller lacks the privilege to write an entry.
 #[tokio::test]
-#[ignore = "requires: postgres, bin:psql"]
+#[ignore = "requires: docker, bin:psql"]
 async fn author_sql_reads_and_writes_no_history_table() {
-    let _serialized = wamn_test_postgres::lock();
-    let mut server = wamn_test_postgres::start(&[]).unwrap();
-    let database = server.create_database("project_history").await.unwrap();
-    let url = database.url();
+    let postgres = wamn_test_infrastructure::containers::start_postgres()
+        .await
+        .unwrap();
+    let database = postgres.create_database("project_history").await.unwrap();
+    let url = database.as_str();
 
     let (app_generation, mut script) = prelude(url);
     // One direct entry insert. A position also names the position column.

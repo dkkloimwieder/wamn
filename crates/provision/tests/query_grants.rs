@@ -1,10 +1,14 @@
 //! Least privilege through the authenticated login and catalog rules.
 
-#[path = "support/grants.rs"]
-mod grants;
+pub mod common;
 use wamn_provision::WorkloadRoleFamily;
 
-#[sqlx::test(migrations = false)]
-async fn query_refusals_and_catalog_rules(pool: sqlx::PgPool) {
-    grants::family(&pool, WorkloadRoleFamily::Query).await;
+#[tokio::test]
+#[ignore = "requires: docker"]
+async fn query_refusals_and_catalog_rules() {
+    let postgres = wamn_test_infrastructure::containers::start_postgres()
+        .await
+        .unwrap();
+    let url = postgres.create_database("query_grants").await.unwrap();
+    common::grants::family(url, WorkloadRoleFamily::Query).await;
 }

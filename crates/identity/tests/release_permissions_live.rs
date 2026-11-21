@@ -2,14 +2,15 @@
 //! (docs/architecture/execution.md#host-run-routes).
 //!
 //! A grant stores one row, served by a release or not, and a revoke removes
-//! it. The test holds the process lock of its server, because the schema
-//! installer creates cluster-wide roles.
+//! it.
 
 use sqlx::PgConnection as Client;
 use sqlx::{Connection as _, Row as _};
 use std::collections::BTreeSet;
 
 use wamn_identity::application::{create_role, delete_role};
+
+pub mod common;
 
 async fn rows(client: &mut Client) -> BTreeSet<String> {
     sqlx::query(
@@ -50,11 +51,13 @@ macro_rules! change {
     }};
 }
 
-#[sqlx::test(migrations = false)]
-async fn permission_grants_and_revokes_store_rows(pool: sqlx::PgPool) {
-    let _lock = wamn_test_postgres::lock();
-    let database = wamn_test_postgres::url(&pool);
-    wamn_identity::test_database::project_platform(database.as_str()).await;
+#[tokio::test]
+#[ignore = "requires: docker"]
+async fn permission_grants_and_revokes_store_rows() {
+    let postgres = wamn_test_infrastructure::containers::start_postgres()
+        .await
+        .unwrap();
+    let database = common::project(&postgres, "release_permissions").await;
     let mut client = wamn_postgres::connect(database.as_str()).await.unwrap();
     let project_env_key = "t1--dev--project".parse().unwrap();
 

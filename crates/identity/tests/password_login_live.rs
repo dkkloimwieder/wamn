@@ -2,10 +2,12 @@
 
 use sqlx::PgConnection as Client;
 use sqlx::{Connection as _, Row as _};
-use wamn_provision::{identity_role::grant_identity_issuer_surface_sql, test_database};
+use wamn_provision::identity_role::grant_identity_issuer_surface_sql;
 use wamn_identity_protocol::PrincipalId;
 use wamn_identity::password_login::{self as login, Renewal};
 use wamn_identity::{create_user, disable_principal};
+
+pub mod common;
 
 const ISSUER: &str = "https://identity.example.invalid";
 const AUDIENCE: &str = "demo:widgets:dev:a1b2c3d4";
@@ -32,7 +34,7 @@ async fn user(client: &mut Client) -> PrincipalId {
     .id()
 }
 async fn create(client: &mut Client, user: &PrincipalId) -> Renewal {
-    let mut tx = wamn_test_postgres::transaction(
+    let mut tx = common::transaction(
         client,
         &wamn_provision::PlatformComponent::Provisioning.principal_id(),
         "wamn:provisioning",
@@ -47,7 +49,7 @@ async fn create(client: &mut Client, user: &PrincipalId) -> Renewal {
     issued
 }
 async fn rotate(client: &mut Client, secret: &str) -> Option<Renewal> {
-    let mut tx = wamn_test_postgres::transaction(
+    let mut tx = common::transaction(
         client,
         &wamn_provision::PlatformComponent::Provisioning.principal_id(),
         "wamn:provisioning",
@@ -61,11 +63,13 @@ async fn rotate(client: &mut Client, secret: &str) -> Option<Renewal> {
     result
 }
 
-#[sqlx::test(migrations = false)]
-async fn targeted_rotation_preserves_deadline_and_replay_revokes_successor(pool: sqlx::PgPool) {
-    let _lock = wamn_test_postgres::lock();
-    let db = wamn_test_postgres::url(&pool);
-    test_database::system(db.as_str()).await;
+#[tokio::test]
+#[ignore = "requires: docker"]
+async fn targeted_rotation_preserves_deadline_and_replay_revokes_successor() {
+    let postgres = wamn_test_infrastructure::containers::start_postgres()
+        .await
+        .unwrap();
+    let db = common::system(&postgres).await;
     let mut owner = connect(db.as_str(), "wamn_system").await;
     let user = user(&mut owner).await;
     sqlx::raw_sql(sqlx::AssertSqlSafe(grant_identity_issuer_surface_sql()))
@@ -90,7 +94,7 @@ async fn targeted_rotation_preserves_deadline_and_replay_revokes_successor(pool:
             .unwrap()
             .get(0);
     assert_eq!(hash, wamn_digest::bytes_sha256(first.secret().as_bytes()));
-    let mut tx = wamn_test_postgres::transaction(
+    let mut tx = common::transaction(
         &mut issuer,
         &wamn_provision::PlatformComponent::Provisioning.principal_id(),
         "wamn:provisioning",
@@ -110,7 +114,7 @@ async fn targeted_rotation_preserves_deadline_and_replay_revokes_successor(pool:
             .is_none()
     );
     tx.commit().await.unwrap();
-    let mut tx = wamn_test_postgres::transaction(
+    let mut tx = common::transaction(
         &mut issuer,
         &wamn_provision::PlatformComponent::Provisioning.principal_id(),
         "wamn:provisioning",
@@ -165,7 +169,7 @@ async fn targeted_rotation_preserves_deadline_and_replay_revokes_successor(pool:
             .as_deref(),
         Some("42501")
     );
-    let mut tx = wamn_test_postgres::transaction(
+    let mut tx = common::transaction(
         &mut issuer,
         &wamn_provision::PlatformComponent::Provisioning.principal_id(),
         "wamn:provisioning",
@@ -176,11 +180,13 @@ async fn targeted_rotation_preserves_deadline_and_replay_revokes_successor(pool:
     tx.commit().await.unwrap();
 }
 
-#[sqlx::test(migrations = false)]
-async fn inactivity_absolute_expiry_and_bounded_cleanup(pool: sqlx::PgPool) {
-    let _lock = wamn_test_postgres::lock();
-    let db = wamn_test_postgres::url(&pool);
-    test_database::system(db.as_str()).await;
+#[tokio::test]
+#[ignore = "requires: docker"]
+async fn inactivity_absolute_expiry_and_bounded_cleanup() {
+    let postgres = wamn_test_infrastructure::containers::start_postgres()
+        .await
+        .unwrap();
+    let db = common::system(&postgres).await;
     let mut owner = connect(db.as_str(), "wamn_system").await;
     let user = user(&mut owner).await;
     let idle = create(&mut owner, &user).await;
@@ -200,7 +206,7 @@ async fn inactivity_absolute_expiry_and_bounded_cleanup(pool: sqlx::PgPool) {
         .await
         .unwrap();
     let mut issuer = connect(db.as_str(), "wamn_identity_issuer").await;
-    let mut tx = wamn_test_postgres::transaction(
+    let mut tx = common::transaction(
         &mut issuer,
         &wamn_provision::PlatformComponent::Provisioning.principal_id(),
         "wamn:provisioning",
@@ -244,11 +250,13 @@ async fn wait_blocked(observer: &mut Client, pid: i32) {
     .await
     .expect("the second writer waits for the principal lock");
 }
-#[sqlx::test(migrations = false)]
-async fn simultaneous_rotation_and_logout_cannot_leave_a_usable_successor(pool: sqlx::PgPool) {
-    let _lock = wamn_test_postgres::lock();
-    let db = wamn_test_postgres::url(&pool);
-    test_database::system(db.as_str()).await;
+#[tokio::test]
+#[ignore = "requires: docker"]
+async fn simultaneous_rotation_and_logout_cannot_leave_a_usable_successor() {
+    let postgres = wamn_test_infrastructure::containers::start_postgres()
+        .await
+        .unwrap();
+    let db = common::system(&postgres).await;
     let mut first = connect(db.as_str(), "wamn_system").await;
     let mut second = connect(db.as_str(), "wamn_system").await;
     let mut observer = connect(db.as_str(), "wamn_system").await;
@@ -295,11 +303,13 @@ async fn simultaneous_rotation_and_logout_cannot_leave_a_usable_successor(pool: 
     assert!(rotate(&mut first, replacement.secret()).await.is_none());
 }
 
-#[sqlx::test(migrations = false)]
-async fn disable_waits_for_issuance_and_reenable_cannot_restore_a_family(pool: sqlx::PgPool) {
-    let _lock = wamn_test_postgres::lock();
-    let db = wamn_test_postgres::url(&pool);
-    test_database::system(db.as_str()).await;
+#[tokio::test]
+#[ignore = "requires: docker"]
+async fn disable_waits_for_issuance_and_reenable_cannot_restore_a_family() {
+    let postgres = wamn_test_infrastructure::containers::start_postgres()
+        .await
+        .unwrap();
+    let db = common::system(&postgres).await;
     let mut first = connect(db.as_str(), "wamn_system").await;
     let mut second = connect(db.as_str(), "wamn_system").await;
     let mut observer = connect(db.as_str(), "wamn_system").await;

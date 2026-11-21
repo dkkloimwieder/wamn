@@ -1,37 +1,41 @@
 //! Managed platform logins retain component identity without role escalation.
 
-#[path = "support/grants.rs"]
-pub mod grants;
+pub mod common;
+use common::grants;
 use wamn_provision::{
     PlatformComponent, WorkloadRoleFamily, migrations::MigrationDatabase,
 };
 
-#[sqlx::test(migrations = false)]
-async fn platform_security_definers_have_restricted_authority(pool: sqlx::PgPool) {
-    let _lock = wamn_test_postgres::lock();
-    security_definer_rules(&pool, MigrationDatabase::System).await;
+#[tokio::test]
+#[ignore = "requires: docker"]
+async fn platform_security_definers_have_restricted_authority() {
+    security_definer_rules(MigrationDatabase::System).await;
 }
 
-#[sqlx::test(migrations = false)]
-async fn project_platform_security_definers_have_restricted_authority(pool: sqlx::PgPool) {
-    let _lock = wamn_test_postgres::lock();
-    security_definer_rules(&pool, MigrationDatabase::Project).await;
+#[tokio::test]
+#[ignore = "requires: docker"]
+async fn project_platform_security_definers_have_restricted_authority() {
+    security_definer_rules(MigrationDatabase::Project).await;
 }
 
-async fn security_definer_rules(pool: &sqlx::PgPool, scope: MigrationDatabase) {
+async fn security_definer_rules(scope: MigrationDatabase) {
+    let postgres = wamn_test_infrastructure::containers::start_postgres()
+        .await
+        .unwrap();
+    let url = postgres.create_database("platform_logins").await.unwrap();
+    let mut admin = wamn_postgres::connect(url.as_str()).await.unwrap();
     let existing_schemas: Vec<String> =
         sqlx::query_scalar("SELECT nspname::text FROM pg_namespace")
-            .fetch_all(pool)
+            .fetch_all(&mut admin)
             .await
             .unwrap();
     let _fixture = match scope {
         MigrationDatabase::System => {
-            let url = wamn_test_postgres::url(pool);
-            wamn_provision::test_database::system(url.as_str()).await;
+            common::database::system(url.as_str()).await;
             None
         }
         MigrationDatabase::Project => {
-            Some(grants::prepare(pool, WorkloadRoleFamily::Migration).await)
+            Some(grants::prepare(url, WorkloadRoleFamily::Migration).await)
         }
     };
 
@@ -48,7 +52,7 @@ async fn security_definer_rules(pool: &sqlx::PgPool, scope: MigrationDatabase) {
                               OR (a.grantee<>p.proowner AND a.is_grantable)))",
     )
     .bind(&existing_schemas)
-    .fetch_all(pool)
+    .fetch_all(&mut admin)
     .await
     .unwrap();
     assert!(
@@ -57,34 +61,37 @@ async fn security_definer_rules(pool: &sqlx::PgPool, scope: MigrationDatabase) {
     );
 }
 
-#[sqlx::test(migrations = false)]
-async fn project_platform_logins_cannot_escalate(pool: sqlx::PgPool) {
-    let _lock = wamn_test_postgres::lock();
-    let fixture = grants::prepare(&pool, WorkloadRoleFamily::Migration).await;
-    platform_rules(&pool, MigrationDatabase::Project).await;
+#[tokio::test]
+#[ignore = "requires: docker"]
+async fn project_platform_logins_cannot_escalate() {
+    let postgres = wamn_test_infrastructure::containers::start_postgres()
+        .await
+        .unwrap();
+    let url = postgres.create_database("platform_logins").await.unwrap();
+    let fixture = grants::prepare(url.clone(), WorkloadRoleFamily::Migration).await;
+    platform_rules(&url, MigrationDatabase::Project).await;
     drop(fixture);
 }
 
-#[sqlx::test(migrations = false)]
-async fn system_platform_logins_cannot_escalate(pool: sqlx::PgPool) {
-    let _lock = wamn_test_postgres::lock();
-    let url = wamn_test_postgres::url(&pool);
-    wamn_provision::test_database::system(url.as_str()).await;
-    platform_rules(&pool, MigrationDatabase::System).await;
+#[tokio::test]
+#[ignore = "requires: docker"]
+async fn system_platform_logins_cannot_escalate() {
+    let postgres = wamn_test_infrastructure::containers::start_postgres()
+        .await
+        .unwrap();
+    let url = postgres.create_database("platform_logins").await.unwrap();
+    common::database::system(url.as_str()).await;
+    platform_rules(&url, MigrationDatabase::System).await;
 }
 
-async fn platform_rules(pool: &sqlx::PgPool, scope: MigrationDatabase) {
-    let admin = wamn_test_postgres::url(pool);
-    let url =
-        wamn_provision::test_database::platform_migration_input(admin.as_str(), scope)
-            .await
-            .unwrap();
+async fn platform_rules(admin: &url::Url, scope: MigrationDatabase) {
+    let url = common::database::platform_migration_input(admin.as_str(), scope).await;
     let mut connection = wamn_postgres::connect(&url).await.unwrap();
     scope.require_login(&mut connection).await.unwrap();
     let rows: Vec<(wamn_identity_protocol::LoginName, wamn_identity_protocol::PrincipalId, bool)> = sqlx::query_as(
         "SELECT p.login,p.principal_id,NOT (r.rolsuper OR r.rolbypassrls OR r.rolcreatedb OR r.rolcreaterole OR r.rolreplication)
          FROM platform.login_principal p JOIN pg_roles r ON r.rolname=p.login",
-    ).fetch_all(pool).await.unwrap();
+    ).fetch_all(&mut wamn_postgres::connect(admin.as_str()).await.unwrap()).await.unwrap();
     assert!(
         !rows.is_empty(),
         "the product must install its component login mapping"

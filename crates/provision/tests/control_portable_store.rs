@@ -44,11 +44,17 @@ fn psql_ok(url: &str, stage: &str, script: &str) -> String {
     String::from_utf8_lossy(&output.stdout).into_owned()
 }
 
-#[sqlx::test(migrations = false)]
-async fn control_portable_store_enforces_the_current_record_on_postgres(pool: sqlx::PgPool) {
-    let _serialized = wamn_test_postgres::lock();
-    let test_database = wamn_test_postgres::url(&pool);
-    let url = test_database.as_str().to_owned();
+#[tokio::test]
+#[ignore = "requires: docker, bin:psql"]
+async fn control_portable_store_enforces_the_current_record_on_postgres() {
+    let postgres = wamn_test_infrastructure::containers::start_postgres()
+        .await
+        .unwrap();
+    let url = postgres
+        .create_database("control_portable_store")
+        .await
+        .unwrap()
+        .to_string();
     let mut script = String::from(CURRENT_DATABASE_PUBLIC_CONNECT_SQL);
     script.push_str(
         "DROP SCHEMA IF EXISTS catalog CASCADE;\n\

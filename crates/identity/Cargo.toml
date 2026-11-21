@@ -36,18 +36,18 @@ wamn-identity-protocol = { workspace = true, features = ["sqlx"] }
 [dev-dependencies]
 wamn-kubernetes = { workspace = true }
 wamn-environment = { workspace = true }
-wamn-registry = { workspace = true, features = ["test-util"] }
 sqlx = { workspace = true, features = ["macros", "migrate"] }
 url = { workspace = true }
 jsonwebtoken = { workspace = true }
 chrono = { workspace = true }
 async-trait = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time", "net", "io-util", "sync"] }
-# The live tests apply the system schema composition and bind platform principals.
-wamn-provision = { workspace = true, features = ["test-util"] }
-wamn-test-postgres = { workspace = true }
-# The project+platform base grants of the application writers in tests/auth_drops_live.rs.
-wamn-identity = { path = ".", features = ["test-util"] }
+# The live tests bind platform principals and create provisioned logins.
+wamn-provision = { workspace = true }
+# The live tests install the system and project databases with the product installers.
+wamn-platform-install = { workspace = true }
+wamn-test-infrastructure = { workspace = true }
+postgres-protocol = { workspace = true }
 
 [lints]
 workspace = true

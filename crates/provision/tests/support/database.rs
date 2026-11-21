@@ -58,25 +58,6 @@ pub async fn system(database: &str) {
     }
 }
 
-/// Seed one named organization, project and environment for authority tests.
-pub fn seed_org_project_env_sql(
-    org: &wamn_registry::OrgId,
-    project: &wamn_registry::ProjectId,
-    env: &wamn_registry::EnvName,
-) -> String {
-    use postgres_protocol::escape::escape_literal;
-    let org = escape_literal(org.as_str());
-    let project = escape_literal(project.as_str());
-    let env = escape_literal(env.as_str());
-    let actor = crate::PlatformComponent::Provisioning.principal_id();
-    format!(
-        "INSERT INTO platform.tx_identity(principal_id,role,application) VALUES('{actor}','','fixture') ON CONFLICT(xid) DO NOTHING; \
-         INSERT INTO registry.orgs(id) VALUES ({org}) ON CONFLICT DO NOTHING; \
-         INSERT INTO registry.projects(org,id) VALUES ({org},{project}) ON CONFLICT DO NOTHING; \
-         WITH parent_environment AS (INSERT INTO registry.environments (org,env) VALUES ({org},{env}) ON CONFLICT (org,env) DO NOTHING) INSERT INTO registry.environment_projects (org,project,env,secret_name,instance_suffix) VALUES ({org},{project},{env},'s1','aaaaaaa1') ON CONFLICT DO NOTHING;"
-    )
-}
-
 /// Arrange a restricted package login for a local PostgreSQL fixture.
 pub async fn package_migration_input(input: impl AsRef<str>) -> anyhow::Result<String> {
     let input = input.as_ref();
@@ -137,31 +118,6 @@ pub fn membership_sql(
     } else {
         format!("REVOKE {acl} FROM {role}")
     }
-}
-
-/// Install the issuer role for a service interface test.
-pub fn issuer_login_sql(issuer: &str, password: &str) -> anyhow::Result<String> {
-    use postgres_protocol::escape::{escape_identifier, escape_literal};
-    let role = crate::identity_role::identity_issuer_login(issuer)?;
-    Ok(format!(
-        "{} CREATE ROLE {} LOGIN INHERIT PASSWORD {}; GRANT wamn_identity_issuer TO {} WITH ADMIN FALSE, INHERIT TRUE, SET FALSE; GRANT CONNECT ON DATABASE wamn_system TO {};",
-        crate::identity_role::grant_identity_issuer_surface_sql(),
-        escape_identifier(role.as_str()),
-        escape_literal(password),
-        escape_identifier(role.as_str()),
-        escape_identifier(role.as_str())
-    ))
-}
-
-/// Install an isolated replication fixture. CNPG owns production logins.
-pub fn replication_login_sql(role: &str, password: &str) -> String {
-    use postgres_protocol::escape::{escape_identifier, escape_literal};
-    format!(
-        "DO $fixture$ BEGIN IF NOT EXISTS(SELECT FROM pg_roles WHERE rolname={name}) THEN CREATE ROLE {role} LOGIN REPLICATION NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS PASSWORD {password}; END IF; END $fixture$;",
-        name = escape_literal(role),
-        role = escape_identifier(role),
-        password = escape_literal(password)
-    )
 }
 
 /// Arrange the same restricted platform identity when a fixture supplies PostgreSQL instead of CNPG.
