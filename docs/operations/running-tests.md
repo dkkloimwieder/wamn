@@ -98,7 +98,7 @@ Run `prepare-tests` before the printed commands.
 ## Test-database isolation
 
 No test connects to an interactive or shared database.
-Each test that needs PostgreSQL or NATS starts its own container through `wamn-test-infrastructure`.
+Each test that needs PostgreSQL starts its own container through `wamn-test-infrastructure`.
 The test owns the returned value. Dropping the value removes the container.
 There is no shared server, no lock, no `#[sqlx::test]` and no `DATABASE_URL` input.
 Tests run in parallel, because each test has its own server.
@@ -107,13 +107,11 @@ Roles belong to the whole server, so a private server keeps the fixed product ro
 | Helper | Image | Returns |
 | --- | --- | --- |
 | `wamn_test_infrastructure::containers::start_postgres()` | `postgres.image` | `Postgres` |
-| `wamn_test_infrastructure::containers::start_nats()` | `nats.container.image.fullImageName` | `Nats` |
 
-At compile time, the helpers read both images from `deploy/charts/platform/values.yaml`.
-So the tests use the production digests:
+At compile time, the helper reads the image from `deploy/charts/platform/values.yaml`.
+So the tests use the production digest:
 
 - PostgreSQL: `ghcr.io/cloudnative-pg/postgresql:18.6@sha256:899d3ed526b659d77935dde0e6bf2d69dbbf17d3d8c6486ca8cfd04bd3c18533`
-- NATS: `nats:2.12.15-alpine@sha256:b270f5e2428354c0335612694d7dd2fb588148e567a5757fdff325ef9c9332e6`
 
 The CloudNativePG image has no entrypoint that creates a database.
 So the PostgreSQL helper runs its own `initdb` in the container, with these options:
@@ -138,11 +136,8 @@ The server listens on a random port of `127.0.0.1`.
 - `create_system_role()` creates the `wamn_system` role that owns the control store.
 - `create_project_database(name)` creates the project roles and database, and returns the `wamn_migration` URL.
 
-The NATS helper starts `nats-server --jetstream` on a random port of `127.0.0.1`.
-`Nats::url()` gives the client URL.
-
-Both helpers wait until a client connects.
-Over 10 runs one after another, the median start time is 1.05 seconds for PostgreSQL and 0.33 seconds for NATS.
+The helper waits until a client connects.
+Over 10 runs one after another, the median start time of PostgreSQL is 1.05 seconds.
 
 The file store tests start their own MinIO container with `docker run`.
 `crates/environment/tests/support/files.rs` pins its image. At the end of the test, it removes the container.
@@ -436,7 +431,7 @@ pnpm --dir apps/wamn_receiving/web lint
 
 ## Cleanup
 
-The test drops each PostgreSQL and NATS container at its end. Then testcontainers removes the container and its anonymous volumes.
+The test drops each PostgreSQL container at its end. Then testcontainers removes the container and its anonymous volumes.
 A test process that is killed, for example with SIGKILL, does not remove its containers.
 To find leftover test containers, run:
 
