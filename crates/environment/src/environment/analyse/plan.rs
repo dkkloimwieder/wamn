@@ -1,16 +1,6 @@
 use super::{Authorities, EnvironmentDocument};
 use wamn_registry::EnvironmentRow;
 
-pub(super) fn replica_refusal(connection: &str, replicas: Option<u64>) -> Option<String> {
-    (replicas != Some(1)).then(|| {
-        format!(
-            "connection {connection} is exclusive on a cloud target: \
-             WAMN_RELEASE_HOST_GROUP must name replicas: 1"
-        )
-    })
-}
-
-
 /// Resolve the project endpoint from the generation read during analysis.
 pub(crate) fn project_url(
     document: &EnvironmentDocument,

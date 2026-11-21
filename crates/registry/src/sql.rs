@@ -210,10 +210,6 @@ pub const UPDATE_PLATFORM_META_SQL: &str =
 pub const CONTROL_ENVIRONMENT_SRC_PROVISION_PROJECT_ENV_REGISTRY_DO_RECORD_PROJECT_ENV: &str =
     "SELECT id::text FROM registry.target WHERE name = $1";
 
-/// crates/environment/src/environment/analyse.rs::replica_refusals registry statement.
-pub const CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_ANALYSE_REPLICA_REFUSALS: &str =
-    "SELECT type = 'cloud' FROM registry.target WHERE name = $1";
-
 /// crates/environment/src/environment/analyse.rs::read_row registry statement.
 pub const CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_ANALYSE_READ_ROW: &str = "SELECT instance_suffix, disposable FROM registry.environment_projects JOIN registry.environments USING (org,env) \
               WHERE org = $1 AND project = $2 AND env = $3";
