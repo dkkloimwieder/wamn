@@ -346,7 +346,7 @@ mod tests {
     #[test]
     fn reset_validates_selected_sources_without_document_membership() -> anyhow::Result<()> {
         let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create()?;
-        let manifest = wamn_publish::test_support::source_manifest();
+        let manifest = wamn_test_infrastructure::publish::source_manifest();
         std::fs::create_dir_all(scratch.path().join("generated"))?;
         std::fs::write(
             scratch.path().join("generated/wamn.json"),

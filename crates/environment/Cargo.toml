@@ -69,7 +69,6 @@ wash-runtime = { workspace = true, features = ["washlet", "wasi-logging"] }
 wamn-build.workspace = true
 object_store.workspace = true
 sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "migrate"] }
-wamn-oci = { workspace = true, features = ["test-util"] }
 wamn-http-client = { workspace = true, features = ["tls12"] }
 wamn-fixture-package = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "sync", "test-util", "time"] }
@@ -82,7 +81,6 @@ pg_query = "=6.2.1"
 tar = { workspace = true }
 wamn-identity-protocol = { workspace = true }
 wamn-engine = { workspace = true }
-wamn-publish = { workspace = true, features = ["test-util"] }
 
 [lints]
 workspace = true

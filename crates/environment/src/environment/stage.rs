@@ -182,7 +182,7 @@ mod tests {
 
     #[test]
     fn sequence_defaults_use_map_names_and_refuse_conflicting_declarations() {
-        let mut base = wamn_publish::test_support::source_manifest();
+        let mut base = wamn_test_infrastructure::publish::source_manifest();
         base.package.id = "base".parse().expect("valid name");
         base.sequences = serde_json::from_value(serde_json::json!({
             "order": {"pattern": "PO-{seq:po}"}

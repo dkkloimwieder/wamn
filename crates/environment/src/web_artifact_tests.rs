@@ -1,6 +1,5 @@
 use object_store::memory::InMemory;
-use wamn_oci::package_artifact::registry_pull::test_server::Server;
-use wamn_publish::web_artifact::test_support::{artifact_fixture, fixture_registry};
+use wamn_test_infrastructure::publish::{Server, artifact_fixture, fixture_registry};
 use wamn_publish::web_artifact::{pack_web_artifact, upload_web_to_store};
 use wamn_test_infrastructure::scratch::ScratchRoot;
 
