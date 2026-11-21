@@ -7093,10 +7093,12 @@ name = "wamn-journey-tests"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-nats",
  "futures-util",
  "hyper",
  "k8s-openapi",
  "kube",
+ "nkeys",
  "serde",
  "serde_json",
  "sqlx",
@@ -7104,6 +7106,7 @@ dependencies = [
  "url",
  "uuid",
  "wamn-http-client",
+ "wamn-identity-client",
  "wamn-identity-protocol",
  "wamn-package",
  "wamn-registry",

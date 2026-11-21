@@ -237,6 +237,10 @@ pub async fn application(
                             use_pod_registry(chart, &mut values)?;
                         }
                         let app = application_config(&values)?;
+                        let sequences = stage::sequence_defaults(
+                            &document.membership(),
+                            packages.manifests.values(),
+                        )?;
                         check_workflows(&mut *project.client().await, &app).await?;
                         apply_sql(platform, system, &triple, &connection, &owner, &packages)
                             .await?;
@@ -251,6 +255,8 @@ pub async fn application(
                             &packages.manifests,
                         )
                         .await?;
+                        create_number_sequences(&mut *project.client().await, &sequences)
+                            .await?;
                         let timeout =
                             Duration::from_secs(u64::try_from(document.readiness_budget_seconds)?);
                         wamn_platform_install::environment::apply_application(
@@ -414,6 +420,34 @@ fn application_config(values: &serde_yaml::Value) -> anyhow::Result<ApplicationC
         .as_str()
         .context("release has no wamn.application configuration")?;
     Ok(serde_json::from_str(text)?)
+}
+
+/// Create the `platform.number_sequence` row of each sequence default that has none.
+/// A row that exists keeps its pattern (`docs/architecture/data-access.md#numbering`).
+async fn create_number_sequences(
+    project: &mut sqlx::PgConnection,
+    sequences: &[crate::configuration::SequenceDefault],
+) -> anyhow::Result<()> {
+    let mut transaction = sqlx::Connection::begin(project).await?;
+    wamn_provision::bind_platform_principal(
+        &mut transaction,
+        wamn_identity_protocol::PlatformComponent::Provisioning,
+    )
+    .await?;
+    for sequence in sequences {
+        sqlx::query(
+            "INSERT INTO platform.number_sequence (application, name, pattern) \
+             VALUES ($1, $2, $3) ON CONFLICT (application, name) DO NOTHING",
+        )
+        .bind(&sequence.application)
+        .bind(&sequence.name)
+        .bind(&sequence.pattern)
+        .execute(&mut *transaction)
+        .await
+        .with_context(|| format!("create number sequence {}", sequence.name))?;
+    }
+    transaction.commit().await?;
+    Ok(())
 }
 
 async fn check_workflows(

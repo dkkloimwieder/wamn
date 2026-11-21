@@ -125,7 +125,7 @@ nats:
         - '2'
         - -O
         - /dev/null
-        - http://127.0.0.1:8222/healthz
+        - http://127.0.0.1:8222/healthz?js-server-only=true
     livenessProbe:
       exec:
         command:
@@ -135,7 +135,7 @@ nats:
         - '2'
         - -O
         - /dev/null
-        - http://127.0.0.1:8222/healthz
+        - http://127.0.0.1:8222/healthz?js-enabled-only=true
     image:
       fullImageName: nats:2.12.15-alpine@sha256:b270f5e2428354c0335612694d7dd2fb588148e567a5757fdff325ef9c9332e6
     resources:

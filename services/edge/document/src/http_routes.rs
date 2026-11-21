@@ -159,3 +159,40 @@ fn read_cache_control(
         | OperationType::EventHandler => None,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    /// A read's page maximum is its declared maximum, and at most the platform
+    /// ceiling of 50,000 rows (`docs/architecture/execution.md`).
+    #[test]
+    fn a_read_page_maximum_stops_at_the_platform_ceiling() {
+        let operation = crate::ServingRoute {
+            package_id: "base".parse().unwrap(),
+            component: "http-request".parse().unwrap(),
+            operation: "base:widget/query@1.0.0".parse().unwrap(),
+            type_: wamn_package::OperationType::Query,
+            reads: std::collections::BTreeSet::new(),
+            revision: None,
+            idempotency: None,
+        };
+        let digest = wamn_digest::canonical_json_sha256(&json!([]));
+        for (declared, maximum) in [(100, 100), (100_000, 50_000)] {
+            let definition = json!({
+                "route": {"path": "/widget/query", "method": "GET"},
+                "input-schema": {"items": {"properties": {"limit": {"maximum": declared}}}},
+            });
+            let route = super::route_definition(
+                &"widget-query".parse().unwrap(),
+                &definition,
+                &json!({"modes": ["pat"]}),
+                &operation,
+                false,
+                &digest,
+            )
+            .unwrap();
+            assert_eq!(route.read_limits.unwrap().page_maximum, Some(maximum));
+        }
+    }
+}

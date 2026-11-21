@@ -35,9 +35,10 @@ use wamn_package::local_operation::LocalOperation;
 use wamn_registry::{OrgId, Triple};
 use wamn_test_infrastructure::scratch::ScratchRoot;
 
+pub mod host;
+pub mod request;
 mod routes;
 pub use routes::Routes;
-pub mod request;
 
 /// The number of tests that hold an org and environment at one time (Epic 15 ruling C9).
 const CAPACITY: usize = 4;
@@ -379,25 +380,6 @@ impl Application {
     /// The API service principal that the routes' bearer token names.
     pub fn caller(&self) -> &PrincipalId {
         &self.caller
-    }
-
-    pub async fn call(&self, operation: &str, value: Value) -> anyhow::Result<Value> {
-        let (_, route) = wamn_routes::HostRouteSet::Application
-            .attachments()
-            .find(|(_, route)| route.route.operation == operation)
-            .context("application operation")?;
-        let path = route.definition["route"]["path"]
-            .as_str()
-            .context("application route path")?;
-        let mut answer = self
-            .routes
-            .post(path, json!({"request_id":operation,"value":value}))
-            .await?;
-        answer
-            .as_object_mut()
-            .context("application route answer")?
-            .remove("value")
-            .with_context(|| format!("{operation} refused: {answer}"))
     }
 }
 
