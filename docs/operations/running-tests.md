@@ -98,7 +98,7 @@ Run `prepare-tests` before the printed commands.
 ## Test-database isolation
 
 No test connects to an interactive or shared database.
-Each test that needs PostgreSQL starts its own container through `wamn-test-infrastructure`.
+Each test that needs PostgreSQL or NATS starts its own container through `wamn-test-infrastructure`.
 The test owns the returned value. Dropping the value removes the container.
 There is no shared server, no lock, no `#[sqlx::test]` and no `DATABASE_URL` input.
 Tests run in parallel, because each test has its own server.
@@ -107,11 +107,20 @@ Roles belong to the whole server, so a private server keeps the fixed product ro
 | Helper | Image | Returns |
 | --- | --- | --- |
 | `wamn_test_infrastructure::containers::start_postgres()` | `postgres.image` | `Postgres` |
+| `wamn_test_infrastructure::containers::start_nats(platform, operator_include)` | `nats.container.image.fullImageName` | `Nats` |
 
-At compile time, the helper reads the image from `deploy/charts/platform/values.yaml`.
-So the tests use the production digest:
+At compile time, the helpers read the images from `deploy/charts/platform/values.yaml`.
+So the tests use the production digests:
 
 - PostgreSQL: `ghcr.io/cloudnative-pg/postgresql:18.6@sha256:899d3ed526b659d77935dde0e6bf2d69dbbf17d3d8c6486ca8cfd04bd3c18533`
+- NATS: `nats:2.12.15-alpine@sha256:b270f5e2428354c0335612694d7dd2fb588148e567a5757fdff325ef9c9332e6`
+
+`render_platform()` renders the platform chart with its default values through `helm template`, so `helm` is a required input.
+`start_nats` gives the container the rendered mounts, arguments and environment of the NATS server.
+The operator Secret holds `operator_include`, the file that identity bootstrap returns.
+Each Certificate Secret holds a new self-signed certificate.
+`Nats::connect_options()` requires TLS and trusts only that certificate.
+`crates/identity/tests/nats_isolation.rs` holds the NATS isolation tests. Each has the marker `requires: docker, bin:helm`.
 
 The CloudNativePG image has no entrypoint that creates a database.
 So the PostgreSQL helper runs its own `initdb` in the container, with these options:
@@ -222,6 +231,8 @@ The tests make sure of these facts for each login:
 - The test derives from the catalog each action outside the effective privileges of the login.
 - Each such action runs in a rolled-back transaction, and the server refuses it with SQLSTATE `42501`.
 - `PUBLIC` executes no security definer function.
+
+The `project` and `system` targets also hold the cross-org row policy tests, the extension tests and the catalog checks of REFERENCES and function EXECUTE.
 
 `wamn_system_reader` is a group with no deployed login. Its test enters the group with `SET ROLE`.
 
