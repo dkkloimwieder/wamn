@@ -79,7 +79,7 @@ pub(super) struct CustomDescription<'a> {
         wamn_package::manifest::source_name::SourceName,
         wamn_package::manifest::StaticSqlStatementDeclaration,
     >,
-    pub request: Vec<crate::client_ir::FieldIr>,
+    pub request: Vec<crate::client_fields::FieldIr>,
     pub feed_key: Option<SqlValueType>,
     pub result: Option<std::borrow::Cow<'a, CustomOperationResultDeclaration>>,
     pub refusals:

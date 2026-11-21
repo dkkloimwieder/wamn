@@ -957,28 +957,10 @@ async fn create_history_tables(client: &sqlx::PgPool, manifest: &ManifestSources
     .execute(client)
     .await
     .context("create the application role")?;
-    let history = sqlx::raw_sql(AssertSqlSafe((RECORD_HISTORY_SQL).to_owned()).into_sql_str())
+    sqlx::raw_sql(AssertSqlSafe((RECORD_HISTORY_SQL).to_owned()).into_sql_str())
         .execute(client)
-        .await;
-    // The frozen bootstrap's advisory lock is database-local, but roles are
-    // cluster-wide. A concurrent creator has committed before this collision
-    // returns; the failed implicit transaction left no history DDL behind.
-    if history
-        .as_ref()
-        .err()
-        .and_then(sqlx::Error::as_database_error)
-        .is_some_and(|error| {
-            error.code().as_deref() == Some("23505")
-                && error.constraint() == Some("pg_authid_rolname_index")
-        })
-    {
-        sqlx::raw_sql(AssertSqlSafe((RECORD_HISTORY_SQL).to_owned()).into_sql_str())
-            .execute(client)
-            .await
-    } else {
-        history
-    }
-    .context("apply record-history.sql")?;
+        .await
+        .context("apply record-history.sql")?;
     sqlx::raw_sql(AssertSqlSafe((RECORD_HISTORY_APP_GRANTS_SQL).to_owned()).into_sql_str())
         .execute(client)
         .await

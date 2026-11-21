@@ -1,8 +1,9 @@
 //! Projects declared field presence, null values and nested shapes.
 
-use serde_json::Value;
+use std::collections::BTreeSet;
 
-use crate::client_ir::FieldIr;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 fn field(path: String, type_name: String, required: bool, nullable: bool) -> FieldIr {
     FieldIr {
@@ -24,13 +25,13 @@ fn field(path: String, type_name: String, required: bool, nullable: bool) -> Fie
 }
 
 /// Read the record one declared field names, when it names one.
-fn reference(declared: &Value) -> Option<crate::client_ir::ReferenceIr> {
+fn reference(declared: &Value) -> Option<ReferenceIr> {
     let model = declared
         .get("references")?
         .get("model")?
         .as_str()?
         .to_owned();
-    Some(crate::client_ir::ReferenceIr {
+    Some(ReferenceIr {
         model,
         narrowed_by: declared
             .get("references")
@@ -308,160 +309,164 @@ pub(super) fn input_fields_of(contract: &Value) -> Vec<FieldIr> {
     tree
 }
 
-/// A served input schema states property presence and repeated bounds.
-/// Descriptor hints retain UUID, timestamp and numeric types that JSON calls strings.
-pub(super) fn schema_fields(schema: &Value, hints: &[FieldIr]) -> Vec<FieldIr> {
-    // Every node, not only the leaves: a repeated group carries its own
-    // declared text, and the published schema states none. The declaration
-    // means the same thing whether or not the release publishes a schema.
-    let hints = every_field(hints);
-    let unknown = Value::Null;
-    let item = if schema.get("type").and_then(Value::as_str) == Some("array") {
-        schema.get("items").unwrap_or(&unknown)
-    } else {
-        schema
-    };
-    if item.get("properties").is_some() {
-        object_fields(item, "", &hints)
-    } else {
-        vec![schema_field(item, String::new(), true, &hints)]
-    }
+/// One field descriptor.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct FieldIr {
+    /// Dotted path within its carrier, e.g. `value.purchase_order_id`.
+    pub path: String,
+    /// Contract type name, e.g. `uuid`, `text`, `timestamptz`, `int64`.
+    pub type_name: String,
+    /// Whether the contract admits null.
+    pub nullable: bool,
+    /// Whether the property must be present, independently of its null value.
+    pub required: bool,
+    /// Whether this signed integer is a revision serialized as a decimal JSON
+    /// string, and the input path whose record it guards when the contract
+    /// names one.
+    #[serde(
+        default,
+        skip_serializing_if = "wamn_package::manifest::Revision::is_absent"
+    )]
+    pub revision: wamn_package::manifest::Revision,
+    /// Object members or repeated item members, ordered by path.
+    pub children: Vec<FieldIr>,
+    /// Declared repeated-item bounds.
+    pub minimum: Option<u64>,
+    pub maximum: Option<u64>,
+    /// Closed value domain, when the contract declares one. Empty means open.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub values: Vec<String>,
+    /// Authored text, or the exact field path when no label is declared.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    /// Authored selection for generated table and detail fields.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub visible: Option<bool>,
+    /// Authored text for an author, which reaches a comment and no screen.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// The record this input names, when it names one.
+    ///
+    /// An authored operation declares it. A generated action derives it from
+    /// the column's own foreign key, so both arrive here the same way.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub references: Option<ReferenceIr>,
+    /// The model column this input writes, when a generated write states one
+    /// (`writable_fields[].field`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub column: Option<String>,
 }
 
-/// Every node of a hint tree, parents included, children first.
+/// The model whose record one input names.
 ///
-/// A scalar array declares two nodes with one path, the array and its item,
-/// and the item carries the text. Children come first so that a lookup by path
-/// finds the item, and a group node, whose path nothing else carries, is still
-/// found.
-fn every_field(fields: &[FieldIr]) -> Vec<&FieldIr> {
+/// Read straight from the contract file, so its members keep the spelling
+/// `generate/operations.rs` writes.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReferenceIr {
+    /// Model whose record the value names.
+    pub model: String,
+    /// Input path of the same operation that narrows the list, when one does.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub narrowed_by: Option<String>,
+}
+
+/// Leaf descriptors for flat display controls and typed schema hints.
+pub fn leaf_fields(fields: &[FieldIr]) -> Vec<&FieldIr> {
     fields
         .iter()
         .flat_map(|field| {
-            let mut nodes = every_field(&field.children);
-            nodes.push(field);
-            nodes
+            if field.children.is_empty() {
+                vec![field]
+            } else {
+                leaf_fields(&field.children)
+            }
         })
         .collect()
 }
 
-fn object_fields(schema: &Value, prefix: &str, hints: &[&FieldIr]) -> Vec<FieldIr> {
-    let required = values(schema.get("required"));
-    let mut fields: Vec<_> = schema
-        .get("properties")
-        .and_then(Value::as_object)
-        .into_iter()
-        .flatten()
-        .map(|(name, child)| {
-            let path = if prefix.is_empty() {
-                name.clone()
-            } else {
-                format!("{prefix}.{name}")
-            };
-            schema_field(child, path, required.contains(name), hints)
-        })
-        .collect();
-    fields.sort_by(|left, right| left.path.cmp(&right.path));
-    fields
+/// One typed error case.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct ErrorCaseIr {
+    /// The wire literal a client branches on.
+    pub literal: String,
+    /// Declared origins of this outcome, including ambiguous infrastructure failures.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sources: Vec<String>,
+    /// Detail members always present.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub detail_required: Vec<String>,
+    /// Detail members that may be present.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub detail_optional: Vec<String>,
+    /// Authored text a screen shows in place of the code's words.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
 }
 
-fn schema_field(schema: &Value, mut path: String, required: bool, hints: &[&FieldIr]) -> FieldIr {
-    let types = schema.get("type");
-    let nullable = types
+pub(crate) fn errors_of(errors: Option<&Value>) -> Vec<ErrorCaseIr> {
+    let mut cases: Vec<ErrorCaseIr> = errors
+        .and_then(|errors| errors.get("cases"))
         .and_then(Value::as_array)
-        .is_some_and(|types| types.iter().any(|ty| ty == "null"))
-        && schema.get("x-wamn-explicit-null").and_then(Value::as_str) != Some("invalid_input");
-    let ty = types
-        .and_then(Value::as_str)
-        .or_else(|| {
-            let mut alternatives = types
-                .and_then(Value::as_array)?
+        .map_or_default(|cases| {
+            cases
                 .iter()
-                .filter_map(Value::as_str)
-                .filter(|ty| *ty != "null");
-            let first = alternatives.next()?;
-            alternatives.next().is_none().then_some(first)
-        })
-        .or_else(|| {
-            let domain = schema.get("enum")?.as_array()?;
-            (!domain.is_empty() && domain.iter().all(Value::is_string)).then_some("string")
+                .filter_map(|case| {
+                    let detail = case.get("detail");
+                    Some(ErrorCaseIr {
+                        literal: case.get("literal")?.as_str()?.to_owned(),
+                        sources: case.get("from").and_then(Value::as_str).map_or_else(
+                            || string_list(case.get("from")),
+                            |source| vec![source.to_owned()],
+                        ),
+                        detail_required: string_list(detail.and_then(|d| d.get("required"))),
+                        detail_optional: string_list(detail.and_then(|d| d.get("optional"))),
+                        text: case.get("text").and_then(Value::as_str).map(str::to_owned),
+                    })
+                })
+                .collect()
         });
-    let mut result = field(path.clone(), "opaque".into(), required, nullable);
-    if schema.get("oneOf").is_some()
-        || schema.get("anyOf").is_some()
-        || schema.get("$ref").is_some()
-        || schema.get("allOf").is_some()
-    {
-        return result;
-    }
-    match ty {
-        Some("object") => {
-            result.type_name = "object".into();
-            result.children = object_fields(schema, &path, hints);
+    cases.sort_by(|left, right| left.literal.cmp(&right.literal));
+    // One literal can name several constraints, and only some of them name a
+    // field. A key every case requires stays required, and a key that some
+    // case states is optional, so the order of the cases changes nothing.
+    cases.dedup_by(|case, kept| {
+        if case.literal != kept.literal {
+            return false;
         }
-        Some("array") => {
-            path.push_str("[]");
-            result.path.clone_from(&path);
-            result.type_name = "array".into();
-            result.minimum = schema.get("minItems").and_then(Value::as_u64);
-            result.maximum = schema.get("maxItems").and_then(Value::as_u64);
-            if let Some(hint) = hints.iter().find(|hint| hint.path == path) {
-                result.label.clone_from(&hint.label);
-                result.visible = hint.visible;
-                result.description.clone_from(&hint.description);
-            }
-            if let Some(item) = schema.get("items") {
-                result.children = if item.get("type").and_then(Value::as_str) == Some("object") {
-                    object_fields(item, &path, hints)
-                } else {
-                    vec![schema_field(item, path, true, hints)]
-                };
-            }
-        }
-        Some("string" | "integer" | "number" | "boolean") => {
-            result.type_name = hints.iter().find(|hint| hint.path == path).map_or_else(
-                || {
-                    match ty {
-                        // An integer the operation contract declares is int32.
-                        // A model column keeps its own type through its hint,
-                        // so a bigint column still reads as int64 here.
-                        Some("integer") => "int32",
-                        Some("number") => "float64",
-                        Some("boolean") => "boolean",
-                        _ => match schema.get("format").and_then(Value::as_str) {
-                            Some("uuid") => "uuid",
-                            Some("date-time") => "timestamptz",
-                            _ => "text",
-                        },
-                    }
-                    .to_owned()
-                },
-                |hint| hint.type_name.clone(),
-            );
-            result.values = values(schema.get("enum"));
-            if let Some(hint) = hints.iter().find(|hint| hint.path == path) {
-                result.nullable &= hint.nullable;
-                result.revision.clone_from(&hint.revision);
-                result.label.clone_from(&hint.label);
-                result.visible = hint.visible;
-                result.description.clone_from(&hint.description);
-                result.references.clone_from(&hint.references);
-                result.column.clone_from(&hint.column);
-                if !hint.values.is_empty() {
-                    if result.values.is_empty() {
-                        result.values.clone_from(&hint.values);
-                    } else {
-                        result.values.retain(|value| hint.values.contains(value));
-                        if result.values.is_empty() {
-                            result.type_name = "opaque".into();
-                        }
-                    }
-                }
-            }
-        }
-        _ => {}
-    }
-    result
+        let stated = [
+            &kept.detail_required,
+            &kept.detail_optional,
+            &case.detail_required,
+            &case.detail_optional,
+        ]
+        .into_iter()
+        .flatten()
+        .cloned()
+        .collect::<BTreeSet<_>>();
+        kept.detail_required
+            .retain(|key| case.detail_required.contains(key));
+        kept.detail_optional = stated
+            .into_iter()
+            .filter(|key| !kept.detail_required.contains(key))
+            .collect();
+        true
+    });
+    cases
+}
+
+fn string_list(value: Option<&Value>) -> Vec<String> {
+    let mut list: Vec<String> = value.and_then(Value::as_array).map_or_default(|values| {
+        values
+            .iter()
+            .filter_map(|entry| entry.as_str().map(str::to_owned))
+            .collect()
+    });
+    list.sort();
+    list.dedup();
+    list
 }
 
 #[cfg(test)]
@@ -470,82 +475,11 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn presence_and_null_are_independent_in_the_served_schema() {
-        let fields = schema_fields(
-            &json!({
-                "type":"object", "required":["a","b"], "properties":{
-                    "a":{"type":"string"}, "b":{"type":["string","null"]},
-                    "c":{"type":"string"}, "d":{"type":["string","null"]}
-                }
-            }),
-            &[],
-        );
-        assert_eq!(
-            fields
-                .iter()
-                .map(|f| (f.required, f.nullable))
-                .collect::<Vec<_>>(),
-            [(true, false), (true, true), (false, false), (false, true)]
-        );
-    }
-
-    #[test]
-    fn repeated_inputs_keep_children_bounds_and_typed_hints() {
-        let hints = fields_of(
-            &json!({"fields":[{"path":"value.line[].quantity","type":"numeric","nullable":false}]}),
-        );
-        let fields = schema_fields(
-            &json!({"type":"array","items":{
-                "type":"object","required":["value"],"properties":{"value":{
-                    "type":"object","required":["line"],"properties":{"line":{
-                        "type":"array","minItems":1,"maxItems":100,"items":{
-                            "type":"object","required":["quantity"],"properties":{"quantity":{"type":"string"}}
-                        }
-                    }}
-                }}
-            }}),
-            &hints,
-        );
-        let line = &fields[0].children[0];
-        assert_eq!(
-            (&line.path, line.minimum, line.maximum),
-            (&"value.line[]".to_owned(), Some(1), Some(100))
-        );
-        assert_eq!(line.children[0].type_name, "numeric");
-        assert!(line.children[0].required);
-    }
-
-    #[test]
     fn omission_does_not_permit_a_null_writable_value() {
         let fields = input_fields_of(&json!({"writable_fields":[{
             "field":"maker_id","type":"uuid","omitted":"unchanged","explicit_null":"invalid_input"
         }]}));
         assert!(!fields[0].required);
         assert!(!fields[0].nullable);
-    }
-    #[test]
-    fn unsupported_unions_do_not_silently_select_a_text_editor() {
-        for schema in [
-            json!({"type":["string","integer"]}),
-            json!({"type":"string","allOf":[{"minLength":2}]}),
-            json!({"$ref":"https://example.test/schema"}),
-        ] {
-            assert_eq!(schema_fields(&schema, &[])[0].type_name, "opaque");
-        }
-    }
-    #[test]
-    fn typed_contract_constraints_remain_stricter_than_the_transport_schema() {
-        let hints = fields_of(&json!({"fields":[{
-            "path":"status", "type":"text", "nullable":false, "values":["open","closed"]
-        }]}));
-        let fields = schema_fields(
-            &json!({"type":"object","properties":{
-                "status":{"type":["string","null"]}
-            }}),
-            &hints,
-        );
-        assert!(!fields[0].required);
-        assert!(!fields[0].nullable);
-        assert_eq!(fields[0].values, ["closed", "open"]);
     }
 }

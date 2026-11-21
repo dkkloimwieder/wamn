@@ -7,8 +7,6 @@ use wamn_package::manifest::validate_operation_vocabulary;
 mod fixture;
 #[path = "support/platform_claim.rs"]
 mod platform_claim;
-#[path = "support/platform_descriptors.rs"]
-mod platform_descriptors;
 
 #[path = "support/platform_protocol.rs"]
 mod platform_protocol;
