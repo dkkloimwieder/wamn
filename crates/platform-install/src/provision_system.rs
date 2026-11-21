@@ -36,15 +36,39 @@ pub async fn provision_system(request: &ProvisionSystemRequest) -> anyhow::Resul
     crate::credentials::wait_role(&mut client, &scope.login(&request.database.database)).await?;
     crate::credentials::wait_group_role(&mut client, &wamn_role::APPLY_ROLE.parse()?).await?;
     let migration_input = scope.configuration(&database)?;
-
-    initialize_system(
+    let pooler_input = wamn_postgres::database_configuration(&database, "postgres")
+        .context("select postgres for Pooler authentication setup")?;
+    install_system(
         &mut client,
         &migration_input,
-        &crate::platform_migrations::embedded_sources(scope),
+        &pooler_input,
+        &request.platform_domain,
+        request.max_projects,
+    )
+    .await
+}
+
+/// Install the control store, Pooler authentication and the issuer and apply surfaces,
+/// then record the platform domain and stream limit.
+///
+/// `client` is the administrator session of the system database. `migration_input`
+/// names the system migration login, and `pooler_input` the administrator of the
+/// `postgres` database.
+pub async fn install_system(
+    client: &mut Client,
+    migration_input: &str,
+    pooler_input: &str,
+    platform_domain: &wamn_registry::platform_domain::PlatformDomain,
+    max_projects: std::num::NonZeroU32,
+) -> anyhow::Result<()> {
+    initialize_system(
+        client,
+        migration_input,
+        &crate::platform_migrations::embedded_sources(MigrationDatabase::System),
     )
     .await?;
-    install_pooler_auth(&database).await?;
-    let mut transaction = crate::transaction::provisioning_transaction(&mut client).await?;
+    install_pooler_auth(pooler_input).await?;
+    let mut transaction = crate::transaction::provisioning_transaction(client).await?;
     sqlx::raw_sql("SET LOCAL ROLE wamn_system")
         .execute(&mut *transaction)
         .await
@@ -64,8 +88,8 @@ pub async fn provision_system(request: &ProvisionSystemRequest) -> anyhow::Resul
         .await
         .context("grant the apply surface")?;
     let first_limit: Option<bool> = sqlx::query_scalar(wamn_registry::sql::UPDATE_PLATFORM_META_SQL)
-        .bind(&request.platform_domain)
-        .bind(i64::from(request.max_projects.get()))
+        .bind(platform_domain)
+        .bind(i64::from(max_projects.get()))
         .fetch_optional(&mut *transaction)
         .await
         .context("record the platform domain and project stream limit")?;
@@ -79,12 +103,10 @@ pub async fn provision_system(request: &ProvisionSystemRequest) -> anyhow::Resul
     Ok(())
 }
 
-async fn install_pooler_auth(admin_database: &str) -> anyhow::Result<()> {
+async fn install_pooler_auth(database: &str) -> anyhow::Result<()> {
     use sqlx::Connection as _;
 
-    let database = wamn_postgres::database_configuration(admin_database, "postgres")
-        .context("select postgres for Pooler authentication setup")?;
-    let mut admin = connect_system_database(&database)
+    let mut admin = connect_system_database(database)
         .await
         .context("connect to postgres for Pooler authentication setup")?;
     let mut transaction = admin

@@ -3,7 +3,7 @@
 mod output;
 mod plan;
 pub(crate) mod registry;
-pub(crate) mod workload;
+pub mod workload;
 
 pub use output::{ensure_secret_path, write_secret_json};
 pub use plan::{privilege_sql, role_posture_sql};

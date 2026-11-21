@@ -6,7 +6,8 @@ use wamn_postgres::ConnectionConfig;
 use wamn_provision::{WorkloadRoleFamily, sql};
 use wamn_registry::Triple;
 
-pub(crate) fn connections(
+/// The connection of each project login, derived from the owner connection.
+pub fn connections(
     owner: &ConnectionConfig,
 ) -> anyhow::Result<Vec<(WorkloadRoleFamily, ConnectionConfig)>> {
     WorkloadRoleFamily::ALL
@@ -58,7 +59,8 @@ pub(crate) fn configuration_values(
     }))
 }
 
-pub(crate) async fn grant(
+/// Grant each project login its database surface once CloudNativePG has created it.
+pub async fn grant(
     project: &mut sqlx::PgConnection,
     connections: &[(WorkloadRoleFamily, ConnectionConfig)],
 ) -> anyhow::Result<()> {

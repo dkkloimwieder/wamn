@@ -1,0 +1,29 @@
+[package]
+name = "wamn-test-sql"
+description = "Repository-only grant refusal tests for every restricted deployed database login."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dev-dependencies]
+anyhow = { workspace = true }
+postgres-protocol = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls", "uuid"] }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt"] }
+url = { workspace = true }
+wamn-environment = { workspace = true }
+wamn-identity-protocol = { workspace = true, features = ["sqlx"] }
+wamn-platform-install = { workspace = true }
+wamn-postgres = { workspace = true }
+wamn-provision = { workspace = true }
+wamn-registry = { workspace = true }
+wamn-role = { workspace = true }
+wamn-test-infrastructure = { workspace = true }
+
+[lints]
+workspace = true

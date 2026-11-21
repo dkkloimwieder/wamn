@@ -4,6 +4,7 @@ use anyhow::Context as _;
 use k8s_openapi::api::core::v1::Secret;
 use kube::Api;
 use ring::rand::{SecureRandom as _, SystemRandom};
+use std::fmt;
 use std::path::Path;
 use wamn_identity_protocol::LoginName;
 use wamn_kubernetes::client::KubernetesApi;
@@ -48,7 +49,6 @@ pub async fn provision_org(database: &ConnectionConfig, org: &OrgId) -> anyhow::
         .await
         .context("connect to the system database for org provisioning")?;
     let control = control_login(org, &database.database);
-    let apply = apply_login(org, &database.database);
     // Keep concurrent provisioning Jobs ordered through the Secret writes.
     // Dropping the dedicated connection releases this lock on every exit.
     sqlx::query("SELECT pg_advisory_lock(hashtextextended($1, 0))")
@@ -57,7 +57,6 @@ pub async fn provision_org(database: &ConnectionConfig, org: &OrgId) -> anyhow::
         .await
         .context("lock the org login")?;
 
-    let random = SystemRandom::new();
     if oauth_encryption["provider"] == "local" {
         let secrets = Api::<Secret>::namespaced(api.client(), org.as_str());
         let secret = tokio::time::timeout(
@@ -68,7 +67,7 @@ pub async fn provision_org(database: &ConnectionConfig, org: &OrgId) -> anyhow::
         if !secret.data.is_some_and(|data| data.contains_key("key")) {
             // The host's envelope reader requires 32 raw bytes.
             let mut key = [0_u8; 32];
-            random
+            SystemRandom::new()
                 .fill(&mut key)
                 .map_err(|_| anyhow::anyhow!("generate the OAuth encryption key for org {org}"))?;
             api.patch_namespaced_secret_data(org.as_str(), OAUTH_SECRET, "key", &key)
@@ -76,13 +75,51 @@ pub async fn provision_org(database: &ConnectionConfig, org: &OrgId) -> anyhow::
         }
     }
 
+    for login in create_org_logins(&mut connection, org, &database.database).await? {
+        api.patch_namespaced_secret_data(
+            org.as_str(),
+            login.secret,
+            "password",
+            login.password.as_bytes(),
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+/// One org login and the password that provisioning gave it.
+pub struct OrgLogin {
+    pub login: LoginName,
+    /// The org Secret that carries the password.
+    pub secret: &'static str,
+    pub password: String,
+}
+
+/// Names the login only: the password must not reach a log.
+impl fmt::Debug for OrgLogin {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("OrgLogin")
+            .field("login", &self.login)
+            .field("secret", &self.secret)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Create or rotate the org's control and apply logins and record the org, in one transaction.
+pub async fn create_org_logins(
+    connection: &mut sqlx::PgConnection,
+    org: &OrgId,
+    database: &str,
+) -> anyhow::Result<Vec<OrgLogin>> {
+    let random = SystemRandom::new();
     // These limits match the role limits in the platform Poolers.
     let logins = [
-        (control, wamn_role::CONTROL_ROLE, 8_i32, CONTROL_SECRET),
-        (apply, wamn_role::APPLY_ROLE, 16_i32, APPLY_SECRET),
+        (control_login(org, database), wamn_role::CONTROL_ROLE, 8_i32, CONTROL_SECRET),
+        (apply_login(org, database), wamn_role::APPLY_ROLE, 16_i32, APPLY_SECRET),
     ];
     let mut passwords = Vec::with_capacity(logins.len());
-    let mut tx = crate::transaction::provisioning_transaction(&mut connection).await?;
+    let mut tx = crate::transaction::provisioning_transaction(connection).await?;
     for (login, group, limit, secret) in logins {
         let mut entropy = [0_u8; 32];
         random
@@ -130,7 +167,11 @@ pub async fn provision_org(database: &ConnectionConfig, org: &OrgId) -> anyhow::
         .execute(&mut *tx)
         .await
         .map_err(role_error)?;
-        passwords.push((secret, password));
+        passwords.push(OrgLogin {
+            login,
+            secret,
+            password,
+        });
     }
     sqlx::query("INSERT INTO registry.orgs (id) VALUES ($1) ON CONFLICT DO NOTHING")
         .bind(org)
@@ -138,12 +179,7 @@ pub async fn provision_org(database: &ConnectionConfig, org: &OrgId) -> anyhow::
         .await
         .context("record the org in registry.orgs")?;
     tx.commit().await.context("commit org provisioning")?;
-
-    for (secret, password) in passwords {
-        api.patch_namespaced_secret_data(org.as_str(), secret, "password", password.as_bytes())
-            .await?;
-    }
-    Ok(())
+    Ok(passwords)
 }
 
 #[derive(Debug)]

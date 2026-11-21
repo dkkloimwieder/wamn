@@ -43,7 +43,8 @@ pub async fn apply_cdc_sql(
     .context("restore the capture slot")
 }
 
-fn cdc_schema_sql_bundle(
+/// The capture maps and grants of each model schema, or the database grant alone.
+pub fn cdc_schema_sql_bundle(
     schemas: &[wamn_package::canonical_name::CanonicalName],
     db_name: &str,
 ) -> String {

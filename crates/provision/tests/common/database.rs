@@ -55,17 +55,6 @@ pub fn login_sql(
     )
 }
 
-/// Create the issuer login with the identity issuer surface.
-pub fn issuer_login_sql(issuer: &str, password: &str) -> String {
-    let role = wamn_provision::identity_role::identity_issuer_login(issuer).unwrap();
-    let role = escape_identifier(role.as_str());
-    format!(
-        "{} CREATE ROLE {role} LOGIN INHERIT PASSWORD {}; GRANT wamn_identity_issuer TO {role} WITH ADMIN FALSE, INHERIT TRUE, SET FALSE; GRANT CONNECT ON DATABASE wamn_system TO {role};",
-        wamn_provision::identity_role::grant_identity_issuer_surface_sql(),
-        escape_literal(password),
-    )
-}
-
 /// Create the platform migration login of `scope` as CNPG would, and return its URL.
 pub async fn platform_migration_input(input: &str, scope: MigrationDatabase) -> String {
     let options = wamn_postgres::connect_options(input).await.unwrap();

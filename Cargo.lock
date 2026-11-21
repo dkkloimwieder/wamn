@@ -7568,6 +7568,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "wamn-test-sql"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "postgres-protocol",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "sqlx",
+ "tempfile",
+ "tokio",
+ "url",
+ "wamn-environment",
+ "wamn-identity-protocol",
+ "wamn-platform-install",
+ "wamn-postgres",
+ "wamn-provision",
+ "wamn-registry",
+ "wamn-role",
+ "wamn-test-infrastructure",
+]
+
+[[package]]
 name = "wamn-web"
 version = "0.1.0"
 dependencies = [

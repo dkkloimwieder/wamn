@@ -4,7 +4,7 @@ pub mod analyse;
 pub mod bindings;
 mod broker;
 pub mod capture_gap;
-mod cdc_reader;
+pub mod cdc_reader;
 pub mod delete;
 pub mod document;
 pub mod drain;
