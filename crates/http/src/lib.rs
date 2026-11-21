@@ -860,6 +860,7 @@ mod tests {
     use crate::test_util::{effect_request, interface_address};
 
     mod oauth2_tests;
+    mod outside_call_tests;
 
     /// The hash of the fixture wiring's graph, the one the manifest carries.
 

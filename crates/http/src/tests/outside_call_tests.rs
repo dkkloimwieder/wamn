@@ -1,0 +1,131 @@
+//! The outside call of a local-target connection reaches a local server.
+
+use std::convert::Infallible;
+
+use http_body_util::{BodyExt as _, Full};
+use hyper::service::service_fn;
+use hyper_util::rt::TokioIo;
+use tokio::net::TcpListener;
+
+use super::*;
+use crate::test_util::Observed;
+use wamn_connection::connection_credentials::{ConnectionCredentials, ConnectionGeneration};
+use wamn_connection::connection_memory::ConnectionFact;
+use wamn_connection::database::ProjectDatabase;
+
+/// The project database is never read: a call without OAuth reads no connection row.
+fn facts() -> ConnectionFacts {
+    let pools = wamn_postgres::WamnPostgres::new(wamn_postgres::WamnPostgresConfig {
+        credentials: None,
+        guest_pool_max_size: 1,
+        platform_pool_max_size: 1,
+        wait_timeout_ms: 100,
+        statement_timeout_ms: 100,
+    })
+    .expect("offline project pools build");
+    let database: Arc<dyn ProjectDatabase> =
+        Arc::new(wamn_operation::OperationDatabase::new(Arc::new(pools)));
+    let org = "acme".parse().unwrap();
+    ConnectionFacts::new(
+        Arc::default(),
+        Arc::new(ConnectionCredentials::for_org(&org, None)),
+        &database,
+        &"acme--dev--erp".parse().unwrap(),
+        &"erp".parse().unwrap(),
+        &"dev".parse().unwrap(),
+    )
+}
+
+#[tokio::test]
+async fn a_local_target_call_reaches_a_private_server_with_its_credential() {
+    // Loopback is refused on every target, so the server listens on the address
+    // of the interface on the default route.
+    let listener = TcpListener::bind((interface_address(), 0)).await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let observed = Arc::new(Mutex::new(Vec::new()));
+    let recorded = Arc::clone(&observed);
+    let server = tokio::spawn(async move {
+        let (tcp, _) = listener.accept().await.unwrap();
+        hyper::server::conn::http1::Builder::new()
+            .serve_connection(
+                TokioIo::new(tcp),
+                service_fn(move |request: hyper::Request<hyper::body::Incoming>| {
+                    let recorded = Arc::clone(&recorded);
+                    async move {
+                        let (parts, body) = request.into_parts();
+                        let body = body.collect().await.unwrap().to_bytes().to_vec();
+                        recorded.lock().unwrap().push(Observed {
+                            path: parts.uri.to_string(),
+                            method: parts.method.to_string(),
+                            headers: parts.headers,
+                            body,
+                        });
+                        Ok::<_, Infallible>(
+                            hyper::Response::builder()
+                                .header("connection", "close")
+                                .body(Full::new(bytes::Bytes::new()))
+                                .unwrap(),
+                        )
+                    }
+                }),
+            )
+            .await
+            .unwrap();
+    });
+
+    let scopes = Arc::new(InvocationScopes::default());
+    let http = ConnectionHttp::new(scopes, Arc::new(HttpTransport::new().unwrap()));
+    let transport = http.transport.for_invocation(
+        "scope",
+        wamn_engine::invocation_scope::InvocationExecution::new(
+            tokio::time::Instant::now() + std::time::Duration::from_secs(10),
+        ),
+        AddressPolicy::for_target("local").unwrap(),
+    );
+    let answer = ConnectionAnswer {
+        fact: ConnectionFact {
+            active_generation: 1,
+            status: ConnectionStatus::Active,
+            credential_id: Some(uuid::Uuid::new_v4()),
+            service_principal_id: uuid::Uuid::new_v4().to_string().parse().unwrap(),
+            target_id: uuid::Uuid::new_v4(),
+            resource_key: None,
+            authority: None,
+        },
+        generation: Arc::new(ConnectionGeneration {
+            name: "manager".into(),
+            integration_type: "http".parse().unwrap(),
+            auth_type: "http_basic".into(),
+            external_system: None,
+            parameters: serde_json::json!({
+                "primary-authority": format!("http://{address}/"),
+                "tls-verification": "disabled",
+            }),
+        }),
+    };
+
+    let (response, token) = http
+        .attempt(
+            &facts(),
+            uuid::Uuid::new_v4(),
+            &answer,
+            &transport,
+            "scope",
+            &effect_request(Vec::new()),
+            (Some(r#"{"username":"owner","password":"secret"}"#), None),
+        )
+        .await
+        .unwrap();
+    server.await.unwrap();
+
+    assert_eq!(response.status, 200);
+    assert!(token.is_none());
+    let observed = observed.lock().unwrap();
+    let [request] = observed.as_slice() else {
+        panic!("one request reaches the server, got {}", observed.len());
+    };
+    assert_eq!(request.method, "POST");
+    assert_eq!(request.path, "/notify");
+    assert_eq!(request.headers["authorization"], "Basic b3duZXI6c2VjcmV0");
+    assert!(request.body.is_empty());
+}
