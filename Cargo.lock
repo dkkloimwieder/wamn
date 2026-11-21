@@ -7094,6 +7094,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-nats",
+ "futures-util",
  "hyper",
  "k8s-openapi",
  "kube",

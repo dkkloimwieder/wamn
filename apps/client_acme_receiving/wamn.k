@@ -13,8 +13,8 @@ manifest.Package {
         base_receiving = {
             package = "wamn_receiving"
             version = "2.2.11"
-            digest = "sha256:1d13ba86dbcc29d661cb12f22982df9081a0c63e7a5a18c417a2757abb0cb6f5"
-            operations = ["receiving.record_receipt"]
+            digest = "sha256:054035463ce1b51d1e3225c04b14f420f032b6a4b70d47a606969aacc8e3e232"
+            operations = ["item.create", "location.create", "purchase_order.create", "purchase_order_line.create", "receiving.record_receipt", "supplier.create"]
         }
     }
     required_platform_policy_contract = {id = "receiving_data_access", state = "satisfied"}
@@ -36,6 +36,12 @@ manifest.Package {
                     result = "one"
                 }
             }
+        }
+        # The Data change handler reads Receiving's receipt inserts.
+        receipt = manifest.Model("receipt", _schema) {
+            table = "receipt"
+            owner = "wamn_receiving"
+            operations = {}
         }
         quality_inspection = manifest.Model("quality_inspection", _schema) {
             table = "quality_inspection"
@@ -81,7 +87,7 @@ manifest.Package {
         }
     }
     connections = {}
-    components = {client_acme_receiving = {}}
+    components = {client_acme_receiving = {data_change = {role = "admin", models = {receipt = ["insert"]}}}}
     routes = {
         operations = {
             "acme.record_receipt" = {id = "client-acme-receiving-acme-record-receipt-http", path = "/acme/acme/record_receipt"}

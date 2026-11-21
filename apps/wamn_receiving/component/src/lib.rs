@@ -44,10 +44,13 @@ struct Component;
 #[cfg(target_arch = "wasm32")]
 export!(Component);
 
+impl generated::item::create::Action for Component {}
+impl generated::location::create::Action for Component {}
 impl generated::purchase_order::create::Action for Component {}
 impl generated::purchase_order::get::Action for Component {}
 impl generated::purchase_order::query::Action for Component {}
 impl generated::purchase_order::update::Action for Component {}
+impl generated::purchase_order_line::create::Action for Component {}
 impl generated::receipt::get::Action for Component {}
 impl generated::receipt::query::Action for Component {}
 impl generated::supplier::create::Action for Component {}

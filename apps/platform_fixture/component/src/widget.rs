@@ -36,6 +36,35 @@ mod archive {
     );
 }
 
+mod hold {
+    use super::Transaction;
+    use crate::exports::platform_fixture::widget::hold as contract;
+    mod operation {
+        use super::contract;
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../target/wamn/platform_fixture/wit/widget_hold_operation.rs"
+        ));
+    }
+
+    async fn handle(
+        transaction: &mut Transaction,
+        _: contract::HoldRequest,
+    ) -> Result<contract::HoldResult, contract::HoldError> {
+        crate::data::hold(transaction)
+            .await
+            .map(|held| contract::HoldResult { held })
+            .map_err(|_| operation::map_error("internal_error", |_| None))
+    }
+    operation::export_operation!(
+        crate::Component,
+        contract,
+        crate::wamn::node::types,
+        handle,
+        operation
+    );
+}
+
 mod list {
     use super::{Connection, detail, widget};
     use crate::exports::platform_fixture::widget::list as contract;

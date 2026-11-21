@@ -6,4 +6,6 @@ world client-acme-receiving {
   include client-acme-receiving:generated/generated;
   // Acme's record_receipt calls Receiving's operation.
   import wamn-receiving:receiving/record-receipt@2.2.11;
+  // Each Receiving receipt insert creates its inspection.
+  export wamn:handler/data-change@0.1.0;
 }

@@ -21,6 +21,14 @@ pub(crate) mod wamn {
         ));
     }
 
+    /// Generated `widget.hold` accessor.
+    pub(crate) mod widget_hold {
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../target/wamn/platform_fixture/wamn/widget_hold.rs"
+        ));
+    }
+
     /// Generated `widget.list` accessor.
     pub(crate) mod widget_list {
         include!(concat!(
