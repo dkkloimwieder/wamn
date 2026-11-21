@@ -4,26 +4,21 @@ use std::sync::Arc;
 use wamn_component_policy::{AdmittedComponent, verify_stored_effect_projection};
 use wamn_edge_document::ServingManifest;
 
-/// The project, environment and application a host serves, from the
-/// host configuration.
+/// The project and environment a host serves, from the host configuration.
 ///
-/// The serving manifest carries none of them (R1). The host derives the
-/// project from its `(org, project, environment)` coordinate, takes the
-/// targeted application that `environment.k` declares, and every reader takes it
-/// from here.
+/// The serving manifest carries neither of them (R1). The host derives the
+/// project from its `(org, project, environment)` coordinate, and every reader
+/// takes it from here.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReleaseTarget {
     /// The composed `org--env--project` key of the project environment.
     pub project_env_key: wamn_registry::ProjectEnvKey,
     /// The short environment name, such as `dev`.
     pub environment: wamn_registry::EnvName,
-    /// The single application name and its packages
-    /// (docs/architecture/execution.md#workflows).
-    pub applications: wamn_registry::EnvironmentApplications,
 }
 
 impl ReleaseTarget {
-    /// A target of one project and environment that declares no application.
+    /// A target of one project and environment.
     pub fn new(
         project_env_key: wamn_registry::ProjectEnvKey,
         environment: wamn_registry::EnvName,
@@ -31,7 +26,6 @@ impl ReleaseTarget {
         Self {
             project_env_key,
             environment,
-            applications: wamn_registry::EnvironmentApplications::new(),
         }
     }
 }
@@ -54,20 +48,6 @@ pub struct CarriedRelease {
 impl ServingContext {
     /// Bind an admitted manifest to its deployment coordinate.
     pub fn new(manifest: ServingManifest, target: ReleaseTarget) -> anyhow::Result<Self> {
-        anyhow::ensure!(
-            target.applications.len() <= 1,
-            "a loaded release serves at most one application"
-        );
-        if let Some((application, membership)) = target.applications.first_key_value() {
-            anyhow::ensure!(
-                manifest
-                    .release
-                    .packages
-                    .iter()
-                    .all(|package| membership.packages.contains(package.package_id())),
-                "release carries a package outside application {application}"
-            );
-        }
         let components = manifest.admitted_components(&target.project_env_key)?;
         for component in &components {
             verify_stored_effect_projection(component)?;
@@ -87,7 +67,7 @@ impl ServingContext {
     pub fn manifest(&self) -> &ServingManifest {
         &self.manifest
     }
-    /// The deployment coordinate and application membership.
+    /// The deployment coordinate.
     pub fn target(&self) -> &ReleaseTarget {
         &self.target
     }

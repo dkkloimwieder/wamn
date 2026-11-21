@@ -1,14 +1,11 @@
 //! The edge's verified serving manifest loader.
 use crate::serving_context::{ReleaseTarget, ServingContext};
-use std::path::Path;
 use wamn_component_policy::AdmittedComponent;
-use wamn_edge_document::{RELEASE_MANIFEST_FILE_NAME, ServingManifest};
+use wamn_edge_document::ServingManifest;
 
 /// Stable classification for a refused release load.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReleaseLoadErrorType {
-    /// The manifest file is missing or unreadable.
-    ManifestUnreadable,
     /// The manifest bytes failed parsing, validation, or canonicality.
     /// Loading preserves every refusal from [`ServingManifest::from_canonical_bytes`].
     ManifestRejected,
@@ -42,28 +39,6 @@ impl std::fmt::Display for ReleaseLoadError {
 }
 
 impl std::error::Error for ReleaseLoadError {}
-
-/// Load and verify from an explicit mount root.
-///
-/// Reads are blocking `std::fs`: this runs exactly once during host
-/// construction, before the pod serves anything, and never on a request
-/// path.
-pub fn load_from(
-    manifest_root: &Path,
-    target: ReleaseTarget,
-) -> Result<ServingContext, ReleaseLoadError> {
-    // ConfigMap projections are byte-exact, and `from_canonical_bytes` admits
-    // only the canonical encoding — so these bytes are used as read, with no
-    // trimming. A trailing newline is a different document.
-    let manifest_path = manifest_root.join(RELEASE_MANIFEST_FILE_NAME);
-    let bytes = std::fs::read(&manifest_path).map_err(|error| {
-        ReleaseLoadError::new(
-            ReleaseLoadErrorType::ManifestUnreadable,
-            format!("read serving manifest {}: {error}", manifest_path.display()),
-        )
-    })?;
-    load_canonical_bytes(&bytes, &manifest_path.display().to_string(), target)
-}
 
 /// Verify bytes delivered by an edge release bundle.
 pub fn load_canonical_bytes(
@@ -124,13 +99,9 @@ pub fn validate_component_in_release(
 #[cfg(test)]
 mod tests {
     use std::collections::{BTreeMap, BTreeSet};
-    use std::path::PathBuf;
 
     use wamn_component_policy::{AdmittedComponentOperation, ComponentPackageCoordinate};
-    use wamn_edge_document::{
-        SERVING_MANIFEST_FORMAT_VERSION, ServingComponent, ServingRelease,
-        UNSUPPORTED_SERVING_MANIFEST_VERSION_REFUSAL,
-    };
+    use wamn_edge_document::{SERVING_MANIFEST_FORMAT_VERSION, ServingComponent, ServingRelease};
     use wamn_package::PackageCoordinate;
 
     use super::*;
@@ -185,37 +156,6 @@ mod tests {
     }
 
     #[test]
-    fn a_loaded_release_refuses_multiple_applications_and_foreign_packages() {
-        let bytes = fixture().canonical_bytes();
-        let catalog = |packages: BTreeSet<wamn_package::PackageName>| {
-            wamn_registry::ApplicationDefinition {
-                connections: BTreeMap::new(),
-                packages,
-            }
-        };
-        let mut targeted = target();
-        targeted.applications = BTreeMap::from([
-            ("catalog".parse().unwrap(), catalog(["cat".parse().unwrap()].into())),
-            ("other".parse().unwrap(), catalog(["cat".parse().unwrap()].into())),
-        ]);
-        assert_eq!(
-            loader::load_canonical_bytes(&bytes, "fixture", targeted)
-                .unwrap_err()
-                .error_type(),
-            ReleaseLoadErrorType::ManifestRejected
-        );
-        let mut targeted = target();
-        targeted.applications =
-            BTreeMap::from([("catalog".parse().unwrap(), catalog(BTreeSet::new()))]);
-        assert_eq!(
-            loader::load_canonical_bytes(&bytes, "fixture", targeted)
-                .unwrap_err()
-                .error_type(),
-            ReleaseLoadErrorType::ManifestRejected
-        );
-    }
-
-    #[test]
     fn loading_refuses_an_effect_projection_its_imports_do_not_derive() {
         let mut manifest = fixture();
         let mut component = manifest.components.pop_first().unwrap();
@@ -246,150 +186,6 @@ mod tests {
 
     fn target() -> ReleaseTarget {
         ReleaseTarget::new("t1--dev--project".parse().unwrap(), "prod".parse().unwrap())
-    }
-
-    /// A private scratch mount, named for its test so runs cannot collide.
-    struct Mounts {
-        root: PathBuf,
-    }
-
-    impl Mounts {
-        fn new(test: &str) -> Self {
-            let root = std::env::temp_dir()
-                .join(format!("wamn-release-load-{}-{test}", std::process::id()));
-            let _ = std::fs::remove_dir_all(&root);
-            std::fs::create_dir_all(root.join("manifest")).expect("scratch manifest dir");
-            Self { root }
-        }
-
-        fn manifest_dir(&self) -> PathBuf {
-            self.root.join("manifest")
-        }
-
-        fn write_manifest_bytes(&self, bytes: &[u8]) -> &Self {
-            std::fs::write(self.manifest_dir().join(RELEASE_MANIFEST_FILE_NAME), bytes)
-                .expect("write manifest");
-            self
-        }
-
-        fn load(&self) -> Result<ServingContext, ReleaseLoadError> {
-            loader::load_from(&self.manifest_dir(), target())
-        }
-    }
-
-    impl Drop for Mounts {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.root);
-        }
-    }
-
-    #[test]
-    fn a_well_formed_mount_loads_and_verifies_once() {
-        let mounts = Mounts::new("ok");
-        let expected = fixture();
-        mounts.write_manifest_bytes(&expected.canonical_bytes());
-
-        let loaded_release = mounts.load().expect("well-formed mount loads");
-
-        assert_eq!(loaded_release.manifest(), &expected);
-        assert_eq!(
-            loaded_release.manifest().components,
-            expected.components,
-            "the loaded release retains the exact component closure"
-        );
-    }
-
-    #[test]
-    fn the_release_identity_comes_from_the_verified_content() {
-        let mounts = Mounts::new("derived-identity");
-        let expected = fixture();
-        mounts.write_manifest_bytes(&expected.canonical_bytes());
-
-        let loaded_release = mounts.load().expect("well-formed mount loads");
-
-        // No carrier asserts the identity: the digest is over the same bytes the
-        // pod resolves against, so the two are, by construction, the same fact.
-        assert_eq!(loaded_release.release().manifest_digest, expected.digest());
-    }
-
-    #[test]
-    fn an_absent_manifest_refuses() {
-        let mounts = Mounts::new("no-manifest");
-
-        assert_eq!(
-            mounts
-                .load()
-                .expect_err("absent manifest refuses")
-                .error_type(),
-            ReleaseLoadErrorType::ManifestUnreadable
-        );
-    }
-
-    #[test]
-    fn bytes_that_are_not_a_manifest_refuse() {
-        let mounts = Mounts::new("garbage");
-        mounts.write_manifest_bytes(b"{ not a manifest");
-
-        assert_eq!(
-            mounts.load().expect_err("garbage refuses").error_type(),
-            ReleaseLoadErrorType::ManifestRejected
-        );
-    }
-
-    #[test]
-    fn an_unsupported_format_refuses_with_the_frozen_literal() {
-        let mounts = Mounts::new("unsupported-format");
-        mounts.write_manifest_bytes(
-            br#"{"attachments":{},"components":[],"format-version":0,"registrations":{},"release":{"packages":[{"package-id":"cat","package-version":"1.0.0"}]},"wirings":[]}"#,
-        );
-
-        let error = mounts
-            .load()
-            .expect_err("unsupported format refuses at the loaded release");
-        assert_eq!(error.error_type(), ReleaseLoadErrorType::ManifestRejected);
-        assert!(
-            error
-                .to_string()
-                .contains(UNSUPPORTED_SERVING_MANIFEST_VERSION_REFUSAL)
-        );
-    }
-
-    #[test]
-    fn a_trailing_newline_on_the_manifest_refuses() {
-        let mounts = Mounts::new("manifest-newline");
-        let mut bytes = fixture().canonical_bytes();
-        bytes.push(b'\n');
-        mounts.write_manifest_bytes(&bytes);
-
-        // The manifest's encoding IS its identity, so these bytes are never
-        // trimmed and never re-canonicalized: a repaired document would derive a
-        // digest naming content nobody shipped.
-        assert_eq!(
-            mounts
-                .load()
-                .expect_err("trailing newline refuses")
-                .error_type(),
-            ReleaseLoadErrorType::ManifestRejected
-        );
-    }
-
-    #[test]
-    fn a_re_indented_manifest_refuses() {
-        let mounts = Mounts::new("manifest-reindented");
-        let value: serde_json::Value =
-            serde_json::from_slice(&fixture().canonical_bytes()).expect("canonical bytes parse");
-        let pretty = serde_json::to_vec_pretty(&value).expect("re-indent");
-        mounts.write_manifest_bytes(&pretty);
-
-        // Same content, different encoding: refused rather than served under a
-        // digest it would not derive.
-        assert_eq!(
-            mounts
-                .load()
-                .expect_err("non-canonical refuses")
-                .error_type(),
-            ReleaseLoadErrorType::ManifestRejected
-        );
     }
 
     fn carried_fact() -> AdmittedComponent {
