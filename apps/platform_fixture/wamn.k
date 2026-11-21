@@ -156,6 +156,18 @@ manifest.Package {
                 archive = {fetch = "one", binds = ["id"]}
             }
         }
+        # A claim that keeps its transaction open for 4 seconds, so that journey
+        # tests can observe a competing claim and a lost session.
+        "widget.hold" = manifest.Command("widget.hold") {
+            idempotent_by = "claim"
+            input: {
+                request_id = "request_id"
+                key = "idempotency_key"
+            }
+            statements = {
+                hold = {fetch = "one", binds = []}
+            }
+        }
         "widget.list" = manifest.Projection("widget.list") {
             input: {
                 labels = {
@@ -207,6 +219,7 @@ manifest.Package {
     routes = {
         operations = {
             "widget.archive" = {id = "widget-archive-http", path = "/widget/archive"}
+            "widget.hold" = {id = "widget-hold-http", path = "/widget/hold"}
             "widget.list" = {id = "widget-list-http", path = "/widget/list"}
             "widget_maker.list" = {id = "widget-maker-list-http", path = "/widget_maker/list"}
             "widget.record_batch" = {id = "widget-record-batch-http", path = "/widget/record_batch"}

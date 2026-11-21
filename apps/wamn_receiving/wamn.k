@@ -17,7 +17,9 @@ manifest.Package {
             server_owned_fields = []
             field_text = {item_number = {label = "Item number", visible = True}}
             audit_log = {columns = [], retention = "P30D"}
-            operations = {}
+            operations: {
+                create: {writable_fields = ["item_number"], label = "Add an item", result = "one"}
+            }
         }
         location = manifest.Model("location", _schema) {
             table = "location"
@@ -25,7 +27,9 @@ manifest.Package {
             server_owned_fields = []
             field_text = {location_code = {label = "Location code", visible = True}}
             audit_log = {columns = []}
-            operations = {}
+            operations: {
+                create: {writable_fields = ["location_code"], label = "Add a location", result = "one"}
+            }
         }
         purchase_order = manifest.Model("purchase_order", _schema) {
             table = "purchase_order"
@@ -85,7 +89,13 @@ manifest.Package {
                 received_quantity = {label = "Received", visible = True}
             }
             audit_log = {columns = [], retention = "P30D"}
-            operations = {}
+            operations: {
+                create: {
+                    writable_fields = ["purchase_order_id", "line_number", "item_id", "ordered_quantity"]
+                    label = "Add an order line"
+                    result = "one"
+                }
+            }
         }
         receipt = manifest.Model("receipt", _schema) {
             table = "receipt"

@@ -25,6 +25,19 @@ pub async fn count_widgets(
         .map(|row| row.records.expect("COUNT returns a non-null value"))
 }
 
+/// Keep the claim's transaction open for the hold statement's 4 seconds.
+///
+/// # Errors
+///
+/// Returns the statement's database refusal.
+pub async fn hold(
+    transaction: &mut wamn_guest::postgres_statements::Transaction,
+) -> Result<i64, wamn_guest::postgres_statements::StatementError> {
+    statements::wamn::widget_hold::hold(transaction)
+        .await
+        .map(|row| row.held.expect("COUNT returns a non-null value"))
+}
+
 /// The generated operations, one module for each model, and their refusal.
 #[expect(
     unused_imports,

@@ -45,6 +45,7 @@ wit_bindgen::generate!({
     path: [
         "../../../wit/wamn-node",
         "../../../wit/wamn-postgres-0.4",
+        "../../../wit/wamn-handler",
         "../../target/wamn/wamn_receiving/wit/deps/wamn-receiving-receiving",
         "../../target/wamn/client_acme_receiving/wit",
         "wit/authored.wit",
@@ -81,6 +82,23 @@ create_operation::export_operation!(
     quality::handle_create,
     create_operation
 );
+
+/// A Receiving receipt insert creates the receipt's pending inspection.
+impl exports::wamn::handler::data_change::Guest for Component {
+    async fn handle(event: String) -> Result<(), String> {
+        let event: serde_json::Value =
+            serde_json::from_str(&event).map_err(|error| format!("data change event: {error}"))?;
+        let op = event["op"]
+            .as_str()
+            .ok_or("the data change event has no op")?;
+        let receipt_id = event["new"]["id"]
+            .as_str()
+            .ok_or("the data change event has no new.id")?;
+        data::operation::quality_create_inspection(op, receipt_id)
+            .await
+            .map_err(|error| error.context().to_owned())
+    }
+}
 
 fn private_node_error(error: &AccessError) -> NodeError {
     let type_ = error.error_type();

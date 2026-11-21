@@ -55,6 +55,54 @@ interface archive {
   run: async func(ctx: node-context, input: list<archive-item>) -> result<list<archive-outcome>, node-error>;
 }
 
+interface hold {
+  use wamn:node/types@0.1.0.{node-context, node-error, json-value};
+
+  record hold-request {
+    idempotency-key: string,
+  }
+
+  record idempotency-conflict-detail {
+    field: string,
+  }
+
+  record invalid-input-detail {
+    field: string,
+    minimum: option<string>,
+    maximum: option<string>,
+    observed: option<string>,
+  }
+
+  record permission-denied-detail {
+    operation: string,
+  }
+
+  variant hold-error {
+    idempotency-conflict(idempotency-conflict-detail),
+    internal-error,
+    invalid-input(invalid-input-detail),
+    permission-denied(permission-denied-detail),
+    retry,
+    timeout,
+  }
+
+  record hold-item {
+    request-id: string,
+    input: result<hold-request, invalid-input-detail>,
+  }
+
+  record hold-result {
+    held: s64,
+  }
+
+  record hold-outcome {
+    request-id: string,
+    outcome: result<hold-result, hold-error>,
+  }
+
+  run: async func(ctx: node-context, input: list<hold-item>) -> result<list<hold-outcome>, node-error>;
+}
+
 interface %list {
   use wamn:node/types@0.1.0.{node-context, node-error, json-value};
 

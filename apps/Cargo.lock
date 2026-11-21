@@ -126,6 +126,7 @@ dependencies = [
 name = "client-acme-receiving"
 version = "0.1.0"
 dependencies = [
+ "serde_json",
  "uuid",
  "wamn-guest",
  "wit-bindgen",
