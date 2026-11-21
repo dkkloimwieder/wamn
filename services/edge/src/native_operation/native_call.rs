@@ -18,9 +18,6 @@ use super::invocation_policy::{InvocationPolicy, InvocationScope};
 use super::native_workload::NativeApplication;
 use super::node_types;
 
-#[cfg(test)]
-mod tests;
-
 /// Preserve a host failure's Rust type across the native guest trap boundary.
 pub type NativeCallFailure = Arc<std::sync::Mutex<Option<anyhow::Error>>>;
 
@@ -276,29 +273,6 @@ impl<P: InvocationPolicy> GuestCall for NativeCall<P> {
     }
 }
 
-/// Native initialization for readiness, without running an application handler.
-struct ReadinessCall {
-    deadline: Instant,
-}
-
-impl GuestCall for ReadinessCall {
-    fn describe(&self) -> &'static str {
-        "readiness"
-    }
-
-    fn deadline(&self) -> Duration {
-        self.deadline.saturating_duration_since(Instant::now())
-    }
-
-    fn call(
-        self: Box<Self>,
-        _accessor: &Accessor<SharedCtx>,
-        _instance: Instance,
-    ) -> GuestCallFuture<'_> {
-        Box::pin(async { Ok(None) })
-    }
-}
-
 /// Retire the native instance selected for a refused invocation.
 struct RefusedCall {
     operation: wamn_package::canonical_name::CanonicalName,
@@ -359,18 +333,6 @@ pub(super) async fn prepare_invocation<P: InvocationPolicy>(
         .await;
     }
     prepared
-}
-
-/// Instantiate through native dispatch under a bound, without invocation authority.
-pub async fn prepare_native(target: &DispatchTarget, deadline: Instant) -> anyhow::Result<()> {
-    anyhow::ensure!(
-        Instant::now() < deadline,
-        "native-readiness-deadline-exceeded"
-    );
-    timeout_at(deadline, target.dispatch(ReadinessCall { deadline }))
-        .await
-        .context("native readiness enclosing deadline elapsed")?
-        .context("initialize native component for readiness")
 }
 
 /// Dispatch and receive a typed node result under the same enclosing deadline.
