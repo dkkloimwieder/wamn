@@ -273,7 +273,9 @@ pub(crate) mod test_util {
     use wamn_component_policy::{
         AdmittedComponentOperation, ComponentDescriptor, ComponentPackageCoordinate,
     };
-    use wamn_edge_document::{ServingComponent, ServingManifest, ServingRelease};
+    use wamn_edge_document::{
+        SERVING_MANIFEST_FORMAT_VERSION, ServingComponent, ServingManifest, ServingRelease,
+    };
     use wamn_package::PackageCoordinate;
 
     pub(crate) const OPERATION: &str = "scale:device/record@1.0.0";
@@ -312,15 +314,16 @@ pub(crate) mod test_util {
             imports_fingerprint: wamn_digest::canonical_json_sha256(&serde_json::json!([])),
             effects: Vec::new(),
         };
-        let manifest = ServingManifest::new(
-            ServingRelease {
+        let manifest = ServingManifest {
+            format_version: SERVING_MANIFEST_FORMAT_VERSION,
+            release: ServingRelease {
                 packages: BTreeSet::from([PackageCoordinate::new(
                     "scale".parse().unwrap(),
                     "1.0.0".parse().unwrap(),
                 )
                 .unwrap()]),
             },
-            BTreeSet::from([ServingComponent {
+            components: BTreeSet::from([ServingComponent {
                 runtime_schema: None,
                 package_id: "scale".parse().unwrap(),
                 descriptor: {
@@ -334,10 +337,11 @@ pub(crate) mod test_util {
                     descriptor
                 },
             }]),
-            BTreeSet::new(),
-            BTreeMap::new(),
-        )
-        .unwrap();
+            composed_entry: None,
+            routes: BTreeSet::new(),
+            attachments: BTreeMap::new(),
+            host_routes: BTreeSet::new(),
+        };
         let directory =
             std::env::temp_dir().join(format!("edge-auth-bundle-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir(&directory).unwrap();
@@ -367,14 +371,7 @@ pub(crate) mod test_util {
         let target = ReleaseTarget::new(
             "org-a--dev--project".parse().unwrap(),
             "edge".parse().unwrap(),
-        )
-        .with_applications(BTreeMap::from([(
-            "scale".parse().unwrap(),
-            wamn_registry::ApplicationDefinition {
-                packages: BTreeSet::from(["scale".parse().unwrap()]),
-                connections: BTreeMap::new(),
-            },
-        )]));
+        );
         let release = EdgeRelease::load(&directory, &bytes_sha256(&bundle), target)
             .await
             .unwrap();

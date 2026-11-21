@@ -1,13 +1,15 @@
 //! A release bundle loaded from a directory, and every refusal of one.
 
+use wamn_edge::config::TargetConfig;
 use wamn_edge::serving_context::ReleaseTarget;
-use wamn_edge_document::edge_bundle::BUNDLE_FILE_NAME;
+use wamn_edge_document::edge_bundle::{BUNDLE_FILE_NAME, BUNDLE_FORMAT};
 use wamn_edge_document::edge_bundle::COMPONENTS_FILE_NAME;
 use wamn_edge_document::edge_bundle::GRANTS_FILE_NAME;
 use wamn_edge_document::edge_bundle::INGRESS_FILE_NAME;
 use wamn_package::PackageCoordinate;
 use wamn_edge_document::RELEASE_MANIFEST_FILE_NAME;
 use wamn_edge_document::ServingComponent;
+use wamn_edge_document::SERVING_MANIFEST_FORMAT_VERSION;
 use wamn_edge_document::ServingManifest;
 use wamn_edge_document::ServingRelease;
 use std::collections::{BTreeMap, BTreeSet};
@@ -32,15 +34,16 @@ const BODY: &[u8] = b"the device component bytes";
 const INGRESS: &[u8] = b"the route guest bytes";
 
 fn manifest() -> ServingManifest {
-    ServingManifest::new(
-        ServingRelease {
+    ServingManifest {
+        format_version: SERVING_MANIFEST_FORMAT_VERSION,
+        release: ServingRelease {
             packages: BTreeSet::from([PackageCoordinate::new(
                 PACKAGE.parse().unwrap(),
                 VERSION.parse().unwrap(),
             )
             .expect("package")]),
         },
-        BTreeSet::from([ServingComponent {
+        components: BTreeSet::from([ServingComponent {
             runtime_schema: None,
             package_id: PACKAGE.parse().unwrap(),
             descriptor: {
@@ -63,10 +66,11 @@ fn manifest() -> ServingManifest {
                 descriptor
             },
         }]),
-        BTreeSet::new(),
-        BTreeMap::new(),
-    )
-    .expect("the fixture manifest is valid")
+        composed_entry: None,
+        routes: BTreeSet::new(),
+        attachments: BTreeMap::new(),
+        host_routes: BTreeSet::new(),
+    }
 }
 
 fn fact() -> AdmittedComponent {
@@ -128,7 +132,7 @@ impl Bundle {
         ));
         std::fs::create_dir_all(&directory).expect("create the bundle directory");
         let bundle = serde_json::to_vec(&json!({
-            "format": 1,
+            "format": BUNDLE_FORMAT,
             "manifest": bytes_sha256(&self.manifest),
             "components": bytes_sha256(&self.components),
             "grants": bytes_sha256(&self.grants),
@@ -151,17 +155,14 @@ fn write(directory: &Path, name: &str, bytes: &[u8]) {
     std::fs::write(directory.join(name), bytes).expect("write a bundle file");
 }
 
+/// The target of the box `t1/scale/edge`, from its configuration.
 fn target() -> ReleaseTarget {
-    ReleaseTarget::new(PROJECT_ENV_KEY.parse().unwrap(), "edge".parse().unwrap()).with_applications(
-        [(
-            "weighing".parse().unwrap(),
-            wamn_registry::ApplicationDefinition {
-                connections: std::collections::BTreeMap::new(),
-                packages: [PACKAGE.parse().unwrap()].into(),
-            },
-        )]
-        .into(),
-    )
+    TargetConfig {
+        org: "t1".parse().unwrap(),
+        project: PACKAGE.parse().unwrap(),
+        environment: "edge".parse().unwrap(),
+    }
+    .release_target()
 }
 
 async fn refusal(directory: &Path, digest: &wamn_digest::Digest) -> EdgeReleaseErrorType {

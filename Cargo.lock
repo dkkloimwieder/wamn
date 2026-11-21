@@ -6265,7 +6265,6 @@ dependencies = [
  "serde_json",
  "wamn-component-policy",
  "wamn-digest",
- "wamn-edge-document",
  "wamn-oci-reference",
  "wamn-package",
  "wamn-registry",

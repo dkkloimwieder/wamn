@@ -375,7 +375,6 @@ async fn until(platform: &Platform, what: &str, done: impl Fn(&Received) -> bool
 /// applies each key once, and the export ran once per frame. A frame that the
 /// platform refuses is stored as refused and sent once.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: input:edge-application, env:WAMN_INGRESS_COMPONENT"]
 async fn a_sample_is_forwarded_once_across_kills() {
     let (directory, digest) = bundle("forward");
     let (mut controller, device) = pseudo_terminal();
@@ -495,10 +494,10 @@ async fn a_sample_is_forwarded_once_across_kills() {
 }
 
 /// With `credential_bound` 1, the first 401 stops the forward. The device loop
-/// still stores each frame, no second request reaches the platform after the
-/// first backoff would end, and the samples stay pending, never refused.
+/// still stores each frame, the platform saw one request, and the samples stay
+/// pending, never refused. The unit test of `stops_at_bound` in
+/// `src/forward.rs` holds the count of failures in a row.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: input:edge-application, env:WAMN_INGRESS_COMPONENT"]
 async fn a_refused_pat_stops_the_forward_at_the_bound() {
     let (directory, digest) = bundle("forward-credential");
     let (mut controller, device) = pseudo_terminal();
@@ -538,8 +537,6 @@ async fn a_refused_pat_stops_the_forward_at_the_bound() {
         assert_eq!(observed["pending"], serde_json::json!(2));
         assert!(observed["refused"].as_array().expect("array").is_empty());
     };
-    // Without the stop, the forward sends again after the first 5 s backoff.
-    tokio::time::sleep(Duration::from_secs(7)).await;
     edge.kill();
     assert_eq!(
         platform.received().requests,

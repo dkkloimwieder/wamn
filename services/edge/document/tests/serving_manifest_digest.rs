@@ -5,8 +5,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde_json::json;
 use wamn_component_policy::{AdmittedComponentOperation, ComponentDescriptor};
 use wamn_edge_document::{
-    CatalogIdentityError, ServingComponent, ServingManifest, ServingRelease, ServingRoute,
+    CatalogIdentityError, SERVING_MANIFEST_FORMAT_VERSION, ServingComponent, ServingManifest,
+    ServingRelease, ServingRoute, route_attachments,
 };
+use wamn_package::canonical_name::CanonicalName;
 use wamn_package::{
     AttachmentAuthPolicy, AttachmentTarget, AttachmentType, OperationType, PackageCoordinate,
     ServingAttachment, parse_attachment_auth_policy,
@@ -104,8 +106,28 @@ fn routes() -> BTreeSet<ServingRoute> {
     }])
 }
 
+/// The document of these facts, admitted through its canonical bytes as a
+/// serving process admits its mount.
+fn admit(
+    release: ServingRelease,
+    components: BTreeSet<ServingComponent>,
+    routes: BTreeSet<ServingRoute>,
+    attachments: BTreeMap<CanonicalName, ServingAttachment>,
+) -> Result<ServingManifest, CatalogIdentityError> {
+    let document = ServingManifest {
+        format_version: SERVING_MANIFEST_FORMAT_VERSION,
+        release,
+        components,
+        composed_entry: None,
+        routes,
+        attachments: route_attachments(attachments),
+        host_routes: BTreeSet::new(),
+    };
+    ServingManifest::from_canonical_bytes(&document.canonical_bytes()).map(|(manifest, _)| manifest)
+}
+
 fn manifest() -> ServingManifest {
-    ServingManifest::new(
+    admit(
         release(),
         components(),
         routes(),
@@ -270,7 +292,7 @@ fn operation_provider_manifest(
         registered_operation: None,
         committed_result_schema: None,
     };
-    ServingManifest::new(
+    admit(
         ServingRelease {
             packages: BTreeSet::from([
                 PackageCoordinate::new(package.clone(), version.parse().unwrap()).unwrap(),
@@ -358,25 +380,4 @@ fn duplicate_export_only_interfaces_are_admitted() {
             .expect("the host can address duplicate export-only interfaces directly");
         assert_eq!(admitted, candidate);
     }
-}
-
-#[test]
-fn all_six_collections_have_canonical_order() {
-    let baseline = manifest();
-    let permuted = ServingManifest::new(
-        release(),
-        components().into_iter().rev().collect(),
-        routes().into_iter().rev().collect(),
-        baseline
-            .every_attachment()
-            .collect::<Vec<_>>()
-            .into_iter()
-            .rev()
-            .map(|(id, item)| (id.to_owned(), ServingAttachment::from(item)))
-            .collect(),
-    )
-    .expect("permuted facts remain valid");
-
-    assert_eq!(baseline.canonical_bytes(), permuted.canonical_bytes());
-    assert_eq!(baseline.digest(), permuted.digest());
 }

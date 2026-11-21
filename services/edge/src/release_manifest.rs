@@ -128,7 +128,8 @@ mod tests {
 
     use wamn_component_policy::AdmittedComponentOperation;
     use wamn_edge_document::{
-        ServingComponent, ServingRelease, UNSUPPORTED_SERVING_MANIFEST_VERSION_REFUSAL,
+        SERVING_MANIFEST_FORMAT_VERSION, ServingComponent, ServingRelease,
+        UNSUPPORTED_SERVING_MANIFEST_VERSION_REFUSAL,
     };
     use wamn_package::PackageCoordinate;
 
@@ -139,15 +140,16 @@ mod tests {
         "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
     fn fixture() -> ServingManifest {
-        ServingManifest::new(
-            ServingRelease {
+        ServingManifest {
+            format_version: SERVING_MANIFEST_FORMAT_VERSION,
+            release: ServingRelease {
                 packages: BTreeSet::from([PackageCoordinate::new(
                     "cat".parse().unwrap(),
                     "1.0.0".parse().unwrap(),
                 )
                 .unwrap()]),
             },
-            BTreeSet::from([ServingComponent {
+            components: BTreeSet::from([ServingComponent {
                 runtime_schema: None,
 
                 package_id: "cat".parse().unwrap(),
@@ -171,20 +173,27 @@ mod tests {
                     descriptor
                 },
             }]),
-            BTreeSet::new(),
-            BTreeMap::new(),
-        )
-        .expect("fixture manifest is valid")
+            composed_entry: None,
+            routes: BTreeSet::new(),
+            attachments: BTreeMap::new(),
+            host_routes: BTreeSet::new(),
+        }
     }
 
     #[test]
     fn a_loaded_release_refuses_multiple_applications_and_foreign_packages() {
         let bytes = fixture().canonical_bytes();
+        let catalog = |packages: BTreeSet<wamn_package::PackageName>| {
+            wamn_registry::ApplicationDefinition {
+                connections: BTreeMap::new(),
+                packages,
+            }
+        };
         let mut targeted = target();
-        targeted.applications.insert(
-            "other".parse().unwrap(),
-            targeted.applications["catalog"].clone(),
-        );
+        targeted.applications = BTreeMap::from([
+            ("catalog".parse().unwrap(), catalog(["cat".parse().unwrap()].into())),
+            ("other".parse().unwrap(), catalog(["cat".parse().unwrap()].into())),
+        ]);
         assert_eq!(
             loader::load_canonical_bytes(&bytes, "fixture", targeted)
                 .unwrap_err()
@@ -192,12 +201,8 @@ mod tests {
             ReleaseLoadErrorType::ManifestRejected
         );
         let mut targeted = target();
-        targeted
-            .applications
-            .get_mut("catalog")
-            .unwrap()
-            .packages
-            .clear();
+        targeted.applications =
+            BTreeMap::from([("catalog".parse().unwrap(), catalog(BTreeSet::new()))]);
         assert_eq!(
             loader::load_canonical_bytes(&bytes, "fixture", targeted)
                 .unwrap_err()
@@ -237,16 +242,6 @@ mod tests {
 
     fn target() -> ReleaseTarget {
         ReleaseTarget::new("t1--dev--project".parse().unwrap(), "prod".parse().unwrap())
-            .with_applications(
-                [(
-                    "catalog".parse().unwrap(),
-                    wamn_registry::ApplicationDefinition {
-                        connections: std::collections::BTreeMap::new(),
-                        packages: ["cat".parse().unwrap()].into(),
-                    },
-                )]
-                .into(),
-            )
     }
 
     /// A private scratch mount, named for its test so runs cannot collide.
