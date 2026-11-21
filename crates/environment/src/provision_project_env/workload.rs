@@ -24,7 +24,8 @@ pub fn connections(
         .collect()
 }
 
-pub(crate) fn configuration_values(
+/// The project chart's `databaseConfig` value: one connection file for each login.
+pub fn configuration_values(
     triple: &Triple,
     instance: &wamn_registry::instance_suffix::InstanceSuffix,
     connections: &[(WorkloadRoleFamily, ConnectionConfig)],

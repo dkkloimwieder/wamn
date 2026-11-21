@@ -9017,6 +9017,7 @@ dependencies = [
  "wamn-package",
  "wamn-platform-install",
  "wamn-postgres",
+ "wamn-provision",
  "wamn-publish",
  "wamn-registry",
  "wamn-routes",

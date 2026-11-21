@@ -194,7 +194,8 @@ fn registry_token_metadata(inputs: &Value) -> anyhow::Result<bool> {
     Ok(field(inputs, "provider")? != "kind")
 }
 
-fn org_values(
+/// The org chart values from the platform's public org inputs.
+pub fn org_values(
     inputs: &Value,
     database: &ConnectionConfig,
     org: &OrgId,
