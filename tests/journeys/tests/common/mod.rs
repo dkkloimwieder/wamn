@@ -8,6 +8,7 @@
     reason = "each journey target uses a part of the shared harness"
 )]
 
+use std::collections::BTreeSet;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
@@ -30,11 +31,13 @@ use tokio::task::{JoinHandle, JoinSet};
 use tokio::time::Instant;
 use wamn_http_client::HttpClient;
 use wamn_identity_protocol::PrincipalId;
+use wamn_package::local_operation::LocalOperation;
 use wamn_registry::{OrgId, Triple};
 use wamn_test_infrastructure::scratch::ScratchRoot;
 
 mod routes;
 pub use routes::Routes;
+pub mod request;
 
 /// The number of tests that hold an org and environment at one time (Epic 15 ruling C9).
 const CAPACITY: usize = 4;
@@ -44,6 +47,8 @@ const SYSTEM_DATABASE: &str = "wamn_system";
 const ENV: &str = "dev";
 const PROJECT: &str = "fixture";
 const LABEL: &str = "fixture";
+/// The role of the API service that calls the fixture routes.
+const CALLER_ROLE: &str = "route-caller";
 /// How long CloudNativePG takes to apply the observer's pg_hba line.
 const OBSERVER_DEADLINE: Duration = Duration::from_secs(120);
 /// The field manager of the observer's pg_hba patch.
@@ -330,14 +335,19 @@ impl Application {
             .context("fixture directory name")?;
         let environment = Org::create().await?.apply(name).await?;
         environment.deploy(source, name).await?;
-        // The fixture routes accept a PAT only.
+        let org = &environment.org;
+        let outputs = &org.cluster.outputs;
+        let host =
+            wamn_registry::name::application_host(LABEL, &org.name, &outputs.base_domain.parse()?);
+        // The fixture routes accept a PAT only, and an API service cannot hold `admin`.
+        caller_role(&environment, source, name, &host).await?;
         let secret = environment.scratch.path().join("caller.json");
         let triple = &environment.triple;
-        let mut command = environment.org.command();
+        let mut command = org.command();
         command
             .args(["create-api-service", "--project", triple.project.as_str()])
             .args(["--env", triple.env.as_str(), "--name", triple.env.as_str()])
-            .args(["--display-name", "Route fixture", "--role", "admin"])
+            .args(["--display-name", "Route fixture", "--role", CALLER_ROLE])
             .args(["--lifetime-seconds", "900", "--emit-secret"])
             .arg(&secret);
         run(command).await?;
@@ -351,15 +361,9 @@ impl Application {
             .as_str()
             .context("the API service secret has no principal")?
             .parse()?;
-        let org = &environment.org;
-        let outputs = &org.cluster.outputs;
         let routes = Routes {
             endpoint: format!("http://{}/api", outputs.web_address),
-            host: wamn_registry::name::application_host(
-                LABEL,
-                &org.name,
-                &outputs.base_domain.parse()?,
-            ),
+            host,
             bearer,
             client: HttpClient::builder()
                 .timeout(Duration::from_secs(60))
@@ -395,6 +399,62 @@ impl Application {
             .remove("value")
             .with_context(|| format!("{operation} refused: {answer}"))
     }
+}
+
+/// Create the API caller's role on the application host, and grant it each operation that
+/// the fixture's build output serves, its bases' operations included.
+async fn caller_role(
+    environment: &Environment,
+    source: &Path,
+    application: &str,
+    host: &str,
+) -> anyhow::Result<()> {
+    // `wamn deploy` builds the package into `<workspace>/target/wamn/<package>`.
+    let manifest = std::fs::read(
+        source
+            .parent()
+            .context("fixture workspace")?
+            .join("target/wamn")
+            .join(application)
+            .join("wamn.json"),
+    )?;
+    let owners = wamn_package::manifest::OperationOwners::from_slice(&manifest)?;
+    let document: Value = serde_json::from_slice(&manifest)?;
+    let reference = |package, version, local: &LocalOperation| {
+        let token = wamn_package::operation_token(package, version, local)?;
+        anyhow::Ok(wamn_package::sealed_operation_reference(token.as_str()).to_owned())
+    };
+    let mut operations = BTreeSet::new();
+    for local in document["compiled_operations"]
+        .as_object()
+        .context("the fixture build output has no compiled_operations")?
+        .keys()
+    {
+        operations.insert(reference(
+            &owners.package.id,
+            &owners.package.version,
+            &local.parse()?,
+        )?);
+    }
+    for base in owners.base_dependencies.values() {
+        for local in &base.operations {
+            operations.insert(reference(&base.package, &base.version, local)?);
+        }
+    }
+    let host_url = format!("http://{host}");
+    let mut command = environment.org.command();
+    command
+        .args(["create-role", "--host-url", &host_url])
+        .args(["--role", CALLER_ROLE]);
+    run(command).await?;
+    for operation in &operations {
+        let mut command = environment.org.command();
+        command
+            .args(["grant-permission", "--host-url", &host_url])
+            .args(["--role", CALLER_ROLE, "--operation", operation]);
+        run(command).await?;
+    }
+    Ok(())
 }
 
 /// On kind only: create the observer role in the project Cluster, admit it in its pg_hba,

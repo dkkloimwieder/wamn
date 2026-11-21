@@ -7093,6 +7093,7 @@ name = "wamn-journey-tests"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "futures-util",
  "hyper",
  "k8s-openapi",
  "kube",
