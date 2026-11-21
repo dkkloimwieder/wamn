@@ -20,17 +20,17 @@ const GUESTS: [(&str, &str, GuestTarget); 2] = [
 #[derive(Debug, ClapArgs)]
 pub struct Args {
     #[arg(long)]
-    registry: String,
+    pub(crate) registry: String,
     #[arg(long)]
-    out: PathBuf,
+    pub(crate) out: PathBuf,
     #[arg(long, default_value = ".")]
-    repository: PathBuf,
+    pub(crate) repository: PathBuf,
     /// Stamp existing published images without building or pushing.
     #[arg(long)]
-    stamp_only: bool,
+    pub(crate) stamp_only: bool,
     /// Platform Helm values. A GCP web bucket selects the platform UI.
     #[arg(long)]
-    cluster: Option<PathBuf>,
+    pub(crate) cluster: Option<PathBuf>,
 }
 
 pub(crate) fn write_ui_openapi(root: &Path) -> anyhow::Result<()> {

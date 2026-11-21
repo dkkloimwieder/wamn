@@ -6,11 +6,18 @@ use serde_json::Value;
 use std::net::Ipv4Addr;
 use std::path::Path;
 
-const CLUSTER: &str = "wamn-local";
+pub(crate) const CLUSTER: &str = "wamn-local";
 const REGISTRY_PORT: &str = "5001";
 const REGISTRY_NAME: &str = "wamn-registry";
 
-pub async fn create_cluster(root: &Path) -> anyhow::Result<()> {
+/// The registry address and port that kind nodes and pods reach.
+#[derive(Debug)]
+pub(crate) struct RegistryEndpoint {
+    pub(crate) address: String,
+    pub(crate) port: u16,
+}
+
+pub async fn create_cluster(root: &Path) -> anyhow::Result<RegistryEndpoint> {
     let clusters = process::output(root, "kind", &["get", "clusters"]).await?;
     if !clusters.lines().any(|cluster| cluster == CLUSTER) {
         process::run(
@@ -75,7 +82,10 @@ pub async fn create_cluster(root: &Path) -> anyhow::Result<()> {
         .parse()
         .context("read the registry address on the kind network")?;
     println!("registryEndpoint:\n  addressType: IPv4\n  address: {address}\n  port: 5000");
-    Ok(())
+    Ok(RegistryEndpoint {
+        address: address.to_string(),
+        port: 5000,
+    })
 }
 
 async fn ensure_registry(root: &Path) -> anyhow::Result<String> {

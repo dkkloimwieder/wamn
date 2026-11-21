@@ -4,6 +4,7 @@ mod bench;
 mod bench_cloud;
 mod bench_data;
 mod helm_size;
+mod journey_cluster;
 mod kind;
 mod measure_tx_identity;
 mod netsuite;
@@ -129,6 +130,8 @@ enum Task {
     DevCollector { root: PathBuf },
     /// Create or reuse the local kind cluster and its OCI registry.
     KindClusterCreate,
+    /// Install the local kind platform for journey tests and write their outputs file.
+    JourneyCluster(journey_cluster::Args),
     /// Delete a disposable kind cluster and inspect its resources.
     KindClusterDelete { cluster: String },
     /// Print the environment for an isolated checkout.
@@ -235,7 +238,8 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
         Task::ContractDiff(args) => tasks::contract(&root, args.mode).await,
         Task::WasmcloudReleaseTests(args) => tasks::upstream(&root, &args).await,
         Task::DevCollector { root: output } => tasks::collector(&root, &output),
-        Task::KindClusterCreate => kind::create_cluster(&root).await,
+        Task::KindClusterCreate => kind::create_cluster(&root).await.map(drop),
+        Task::JourneyCluster(args) => journey_cluster::run(&root, args).await,
         Task::KindClusterDelete { cluster } => tasks::delete_cluster(&root, &cluster).await,
         Task::LaneStart {
             print_env,
