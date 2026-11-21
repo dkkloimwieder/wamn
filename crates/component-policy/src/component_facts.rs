@@ -335,27 +335,6 @@ impl ComponentDescriptor {
         }
     }
 
-    /// A descriptor of `component` with no operation, import, effect or
-    /// connection, for a test manifest.
-    #[cfg(feature = "test-util")]
-    pub fn named(
-        component: CanonicalName,
-        interface_version: CanonicalName,
-        component_digest: wamn_digest::Digest,
-    ) -> Self {
-        Self {
-            component,
-            interface_version,
-            component_digest,
-            operations: BTreeMap::new(),
-            imports: Vec::new(),
-            imports_fingerprint: imports_fingerprint(&[]),
-            effects: Vec::new(),
-            data_change: false,
-            connections: Vec::new(),
-        }
-    }
-
     /// The admitted facts of this descriptor in `target`.
     pub fn into_admitted(self, target: ComponentPackageCoordinate) -> AdmittedComponentFacts {
         AdmittedComponentFacts {

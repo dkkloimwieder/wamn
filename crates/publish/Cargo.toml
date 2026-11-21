@@ -7,7 +7,6 @@ license.workspace = true
 
 [features]
 default = []
-test-util = ["dep:wamn-test-infrastructure"]
 
 [dependencies]
 wamn-package.workspace = true
@@ -36,7 +35,6 @@ wamn-registry = { workspace = true }
 wamn-record-history = { workspace = true }
 wamn-engine = { workspace = true }
 wamn-codegen = { workspace = true }
-wamn-test-infrastructure = { workspace = true, optional = true }
 hyper = { workspace = true }
 
 [dev-dependencies]

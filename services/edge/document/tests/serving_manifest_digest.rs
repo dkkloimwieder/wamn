@@ -3,7 +3,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::json;
-use wamn_component_policy::{AdmittedComponentOperation, ComponentDescriptor};
+use wamn_component_policy::{
+    AdmittedComponent, AdmittedComponentOperation, ComponentPackageCoordinate,
+};
 use wamn_edge_document::{
     CatalogIdentityError, SERVING_MANIFEST_FORMAT_VERSION, ServingComponent, ServingManifest,
     ServingRelease, ServingRoute, route_attachments,
@@ -39,58 +41,73 @@ fn release() -> ServingRelease {
     }
 }
 
+/// The projection of one admitted component of `package` at `version`.
+fn project(
+    package: wamn_package::PackageName,
+    version: &str,
+    component: &str,
+    interface_version: &str,
+    digest: &str,
+    operations: BTreeMap<CanonicalName, AdmittedComponentOperation>,
+) -> ServingComponent {
+    let fact = AdmittedComponent {
+        data_change: false,
+        target: ComponentPackageCoordinate {
+            project_env_key: "org-a--dev--project".parse().unwrap(),
+            package_id: package,
+            package_version: version.parse().unwrap(),
+        },
+        component: component.parse().unwrap(),
+        interface_version: interface_version.parse().unwrap(),
+        operations,
+        component_digest: digest.parse().unwrap(),
+        imports: Vec::new(),
+        imports_fingerprint: wamn_digest::canonical_json_sha256(&json!([])),
+        effects: Vec::new(),
+    };
+    ServingComponent::project(&fact, Vec::new())
+}
+
 fn components() -> BTreeSet<ServingComponent> {
     BTreeSet::from([
-        ServingComponent {
-            runtime_schema: None,
-
-            package_id: "platform_fixture".parse().unwrap(),
-            descriptor: {
-                let mut descriptor = ComponentDescriptor::named(
-                    "transform".parse().unwrap(),
-                    "0.1".parse().unwrap(),
-                    COMPONENT_B.parse().unwrap(),
-                );
-                descriptor.operations = BTreeMap::from([(
-                    "map".parse().unwrap(),
-                    AdmittedComponentOperation {
-                        host_transaction: false,
-                        input_ports: Vec::new(),
-                        output_ports: Vec::new(),
-                        parameters: Vec::new(),
-                        committed_result_schema: None,
-                        registered_operation: None,
-                    },
-                )]);
-                descriptor
-            },
-        },
-        ServingComponent {
-            runtime_schema: None,
-
-            package_id: "platform_fixture_overlay".parse().unwrap(),
-            descriptor: {
-                let mut descriptor = ComponentDescriptor::named(
-                    "http-request".parse().unwrap(),
-                    "0.1".parse().unwrap(),
-                    COMPONENT_A.parse().unwrap(),
-                );
-                descriptor.operations = BTreeMap::from([(
-                    "platform-fixture-overlay:widget/get@3.0.0".parse().unwrap(),
-                    AdmittedComponentOperation {
-                        host_transaction: false,
-                        input_ports: Vec::new(),
-                        output_ports: Vec::new(),
-                        parameters: Vec::new(),
-                        committed_result_schema: None,
-                        registered_operation: Some(
-                            "platform-fixture-overlay:widget/get@3.0.0".parse().unwrap(),
-                        ),
-                    },
-                )]);
-                descriptor
-            },
-        },
+        project(
+            "platform_fixture".parse().unwrap(),
+            "1.0.0",
+            "transform",
+            "0.1",
+            COMPONENT_B,
+            BTreeMap::from([(
+                "map".parse().unwrap(),
+                AdmittedComponentOperation {
+                    host_transaction: false,
+                    input_ports: Vec::new(),
+                    output_ports: Vec::new(),
+                    parameters: Vec::new(),
+                    committed_result_schema: None,
+                    registered_operation: None,
+                },
+            )]),
+        ),
+        project(
+            "platform_fixture_overlay".parse().unwrap(),
+            "3.0.0",
+            "http-request",
+            "0.1",
+            COMPONENT_A,
+            BTreeMap::from([(
+                "platform-fixture-overlay:widget/get@3.0.0".parse().unwrap(),
+                AdmittedComponentOperation {
+                    host_transaction: false,
+                    input_ports: Vec::new(),
+                    output_ports: Vec::new(),
+                    parameters: Vec::new(),
+                    committed_result_schema: None,
+                    registered_operation: Some(
+                        "platform-fixture-overlay:widget/get@3.0.0".parse().unwrap(),
+                    ),
+                },
+            )]),
+        ),
     ])
 }
 
@@ -301,54 +318,37 @@ fn operation_provider_manifest(
             ]),
         },
         BTreeSet::from([
-            ServingComponent {
-                runtime_schema: None,
+            project(
+                package.clone(),
+                version,
+                "provider",
+                "0.1.0",
+                COMPONENT_A,
+                BTreeMap::from([(
+                    export.parse().unwrap(),
+                    AdmittedComponentOperation {
+                        // Registered only when `package` owns the export's
+                        // namespace, which is the rule
+                        // `validate_canonical_operation_for_package` enforces. A
+                        // platform interface is exported as a palette operation,
+                        // and a palette operation carries no registered
+                        // operation.
+                        registered_operation: export
+                            .starts_with(&format!("{package}:"))
+                            .then(|| export.parse().unwrap()),
 
-                package_id: package.clone(),
-                descriptor: {
-                    let mut descriptor = ComponentDescriptor::named(
-                        "provider".parse().unwrap(),
-                        "0.1.0".parse().unwrap(),
-                        COMPONENT_A.parse().unwrap(),
-                    );
-                    descriptor.operations = BTreeMap::from([(
-                        export.parse().unwrap(),
-                        AdmittedComponentOperation {
-                            host_transaction: false,
-                            input_ports: Vec::new(),
-                            output_ports: Vec::new(),
-                            parameters: Vec::new(),
-                            // Registered only when `package` owns the export's
-                            // namespace, which is the rule
-                            // `validate_canonical_operation_for_package` enforces. A
-                            // platform interface is exported as a palette operation,
-                            // and a palette operation carries no registered
-                            // operation.
-                            registered_operation: export
-                                .starts_with(&format!("{package}:"))
-                                .then(|| export.parse().unwrap()),
-
-                            ..operation.clone()
-                        },
-                    )]);
-                    descriptor
-                },
-            },
-            ServingComponent {
-                runtime_schema: None,
-
-                package_id: "consumer".parse().unwrap(),
-                descriptor: {
-                    let mut descriptor = ComponentDescriptor::named(
-                        "consumer".parse().unwrap(),
-                        "0.1.0".parse().unwrap(),
-                        COMPONENT_B.parse().unwrap(),
-                    );
-                    descriptor.operations =
-                        BTreeMap::from([("consumer:entry/run@1.0.0".parse().unwrap(), operation)]);
-                    descriptor
-                },
-            },
+                        ..operation.clone()
+                    },
+                )]),
+            ),
+            project(
+                "consumer".parse().unwrap(),
+                "1.0.0",
+                "consumer",
+                "0.1.0",
+                COMPONENT_B,
+                BTreeMap::from([("consumer:entry/run@1.0.0".parse().unwrap(), operation)]),
+            ),
         ]),
         BTreeSet::new(),
         BTreeMap::new(),

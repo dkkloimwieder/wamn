@@ -126,7 +126,7 @@ mod tests {
     use std::collections::{BTreeMap, BTreeSet};
     use std::path::PathBuf;
 
-    use wamn_component_policy::AdmittedComponentOperation;
+    use wamn_component_policy::{AdmittedComponentOperation, ComponentPackageCoordinate};
     use wamn_edge_document::{
         SERVING_MANIFEST_FORMAT_VERSION, ServingComponent, ServingRelease,
         UNSUPPORTED_SERVING_MANIFEST_VERSION_REFUSAL,
@@ -149,17 +149,17 @@ mod tests {
                 )
                 .unwrap()]),
             },
-            components: BTreeSet::from([ServingComponent {
-                runtime_schema: None,
-
-                package_id: "cat".parse().unwrap(),
-                descriptor: {
-                    let mut descriptor = wamn_component_policy::ComponentDescriptor::named(
-                        "transform".parse().unwrap(),
-                        "0.1".parse().unwrap(),
-                        COMPONENT.parse().unwrap(),
-                    );
-                    descriptor.operations = BTreeMap::from([(
+            components: BTreeSet::from([ServingComponent::project(
+                &AdmittedComponent {
+                    data_change: false,
+                    target: ComponentPackageCoordinate {
+                        project_env_key: "org-a--dev--project".parse().unwrap(),
+                        package_id: "cat".parse().unwrap(),
+                        package_version: "1.0.0".parse().unwrap(),
+                    },
+                    component: "transform".parse().unwrap(),
+                    interface_version: "0.1".parse().unwrap(),
+                    operations: BTreeMap::from([(
                         "map".parse().unwrap(),
                         AdmittedComponentOperation {
                             host_transaction: false,
@@ -169,10 +169,14 @@ mod tests {
                             committed_result_schema: None,
                             registered_operation: None,
                         },
-                    )]);
-                    descriptor
+                    )]),
+                    component_digest: COMPONENT.parse().unwrap(),
+                    imports: Vec::new(),
+                    imports_fingerprint: wamn_digest::canonical_json_sha256(&serde_json::json!([])),
+                    effects: Vec::new(),
                 },
-            }]),
+                Vec::new(),
+            )]),
             composed_entry: None,
             routes: BTreeSet::new(),
             attachments: BTreeMap::new(),

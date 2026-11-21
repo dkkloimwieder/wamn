@@ -607,13 +607,6 @@ pub fn collect(directory: &Path, files: &mut Vec<PathBuf>) -> anyhow::Result<()>
     Ok(())
 }
 
-/// The old path of the shared web fixtures, for crates that still enable
-/// `test-util`.
-#[cfg(feature = "test-util")]
-pub mod test_support {
-    pub use wamn_test_infrastructure::publish::{artifact_fixture, fixture_registry};
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
