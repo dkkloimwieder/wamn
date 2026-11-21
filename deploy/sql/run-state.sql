@@ -36,6 +36,7 @@ BEGIN
     RETURN NEW;
 END
 $$;
+REVOKE ALL ON FUNCTION wamn_run.guard_event_lineage_immutable() FROM PUBLIC;
 
 -- The workflow version and execution identity are fixed at admission.
 CREATE FUNCTION wamn_run.guard_run_admission_pins_immutable()
@@ -60,6 +61,7 @@ BEGIN
     RETURN NEW;
 END
 $$;
+REVOKE ALL ON FUNCTION wamn_run.guard_run_admission_pins_immutable() FROM PUBLIC;
 
 -- `wamn_platform` holds DELETE for history pruning, and `wamn_app` still
 -- retains it pending the guest-login retirement. The table grant cannot express

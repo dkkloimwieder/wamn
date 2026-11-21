@@ -7,15 +7,37 @@ use postgres_protocol::escape::escape_identifier;
 use sqlx::{Connection as _, PgConnection};
 use url::Url;
 use wamn_test_infrastructure::containers::Postgres;
-use wamn_test_infrastructure::database::execute;
+use wamn_test_infrastructure::database::{self, execute};
 
 /// Schemas that PostgreSQL owns.
 const USER_SCHEMA: &str = "n.nspname <> ALL (ARRAY['pg_catalog', 'information_schema']) \
      AND n.nspname !~ '^pg_(toast|temp)'";
 
+/// The functions of the user schemas, other than extension members. The extension
+/// check covers those. The support functions of a user aggregate are user functions.
+const SCHEMA_FUNCTION: &str = "USER_SCHEMA AND NOT EXISTS (
+    SELECT FROM pg_catalog.pg_depend d
+     WHERE d.classid = 'pg_catalog.pg_proc'::regclass AND d.objid = p.oid AND d.deptype = 'e')";
+
+/// A value built for the pseudo type `t`, or NULL for a pseudo type with no value.
+const PSEUDO_VALUE: &str = "CASE t.typname
+    WHEN 'record' THEN 'ROW(NULL::integer)'
+    WHEN 'any' THEN 'NULL::integer'
+    WHEN 'anyelement' THEN 'NULL::integer'
+    WHEN 'anynonarray' THEN 'NULL::integer'
+    WHEN 'anycompatible' THEN 'NULL::integer'
+    WHEN 'anycompatiblenonarray' THEN 'NULL::integer'
+    WHEN 'anyarray' THEN 'NULL::integer[]'
+    WHEN 'anycompatiblearray' THEN 'NULL::integer[]'
+    WHEN 'anyrange' THEN 'NULL::int4range'
+    WHEN 'anycompatiblerange' THEN 'NULL::int4range'
+    WHEN 'anymultirange' THEN 'NULL::int4multirange'
+    WHEN 'anycompatiblemultirange' THEN 'NULL::int4multirange'
+  END";
+
 /// Every action outside the effective privileges of `$1`, from the catalog of the current
-/// database: column reads and writes, row deletes, truncation, sequence use, function and
-/// procedure calls, object creation, and role changes.
+/// database: column reads and writes, row deletes, truncation, sequence use, function,
+/// aggregate and procedure calls, object creation, and role changes.
 const REFUSED_ACTIONS_SQL: &str = r"
 WITH relation AS (
     SELECT c.oid, c.relkind, format('%I.%I', n.nspname, c.relname) AS name
@@ -32,18 +54,23 @@ WITH relation AS (
            coalesce((SELECT string_agg(
                          CASE WHEN p.provariadic <> 0 AND a.ordinality = p.pronargs
                               THEN 'VARIADIC ' ELSE '' END
-                         || '(SELECT NULL::' || pg_catalog.format_type(a.type, NULL) || ')',
+                         || '(SELECT ' || CASE WHEN t.typtype <> 'p'
+                                               THEN 'NULL::' || pg_catalog.format_type(a.type, NULL)
+                                               ELSE PSEUDO_VALUE END || ')',
                          ', ' ORDER BY a.ordinality)
-                       FROM unnest(p.proargtypes::oid[]) WITH ORDINALITY AS a(type, ordinality)),
+                       FROM unnest(p.proargtypes::oid[]) WITH ORDINALITY AS a(type, ordinality)
+                       JOIN pg_catalog.pg_type t ON t.oid = a.type),
                     '') AS arguments
       FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
-     WHERE USER_SCHEMA AND p.prokind IN ('f', 'p')
+     WHERE SCHEMA_FUNCTION
+       -- A trigger function cannot be called: the function grant check covers it.
        AND p.prorettype <> ALL (ARRAY['trigger'::regtype, 'event_trigger'::regtype])
-       -- A pseudo-typed argument has no typed NULL to call with. Each NULL is a
-       -- subquery, because the planner folds a strict call on a NULL constant
-       -- without the EXECUTE check.
+       -- Each value is a subquery, because the planner folds a strict call on a NULL
+       -- constant without the EXECUTE check. A pseudo type with no value, such as
+       -- internal, is checked in the catalog only.
        AND NOT EXISTS (SELECT FROM unnest(p.proargtypes::oid[]) AS a(type)
-                         JOIN pg_catalog.pg_type t ON t.oid = a.type WHERE t.typtype = 'p')
+                         JOIN pg_catalog.pg_type t ON t.oid = a.type
+                        WHERE t.typtype = 'p' AND PSEUDO_VALUE IS NULL)
 )
 SELECT CASE privilege
          WHEN 'SELECT' THEN format('SELECT %I FROM %s WHERE false', attname, name)
@@ -62,19 +89,6 @@ SELECT format('CREATE TRIGGER wamn_grant_probe BEFORE UPDATE ON %s FOR EACH ROW 
               'EXECUTE FUNCTION pg_catalog.suppress_redundant_updates_trigger()', name)
   FROM relation WHERE relkind IN ('r', 'p') AND NOT has_table_privilege($1::name, oid, 'TRIGGER')
 UNION ALL
--- A reference needs a referencing table. A role that may create no temporary
--- table is refused that first, and the TEMPORARY probe below checks it. A
--- foreign key also needs a unique referenced column, so only those are probed.
-SELECT format('CREATE TEMPORARY TABLE wamn_grant_probe (probe %s REFERENCES %s (%I))',
-              pg_catalog.format_type(a.atttypid, a.atttypmod), r.name, a.attname)
-  FROM relation r
-  JOIN pg_catalog.pg_index i ON i.indrelid = r.oid AND i.indisunique AND i.indnkeyatts = 1
-       AND i.indpred IS NULL AND i.indexprs IS NULL
-  JOIN pg_catalog.pg_attribute a ON a.attrelid = r.oid AND a.attnum = i.indkey[0]
- WHERE r.relkind IN ('r', 'p')
-   AND has_database_privilege($1::name, current_database(), 'TEMPORARY')
-   AND NOT has_column_privilege($1::name, r.oid, a.attname, 'REFERENCES')
-UNION ALL
 SELECT format('SELECT nextval(%L::regclass)', name) FROM relation
  -- CASE orders the checks: has_sequence_privilege refuses a relation of another kind.
  WHERE CASE WHEN relkind = 'S' THEN NOT has_sequence_privilege($1::name, oid, 'USAGE')
@@ -83,7 +97,9 @@ UNION ALL
 SELECT format('SELECT last_value FROM %s', name) FROM relation
  WHERE CASE WHEN relkind = 'S' THEN NOT has_sequence_privilege($1::name, oid, 'SELECT') END
 UNION ALL
-SELECT format(CASE prokind WHEN 'p' THEN 'CALL %I.%I(%s)' ELSE 'SELECT %I.%I(%s)' END,
+SELECT format(CASE prokind WHEN 'p' THEN 'CALL %I.%I(%s)'
+                              WHEN 'w' THEN 'SELECT %I.%I(%s) OVER ()'
+                              ELSE 'SELECT %I.%I(%s)' END,
               nspname, proname, arguments)
   FROM routine WHERE NOT has_function_privilege($1::name, oid, 'EXECUTE')
 UNION ALL
@@ -96,6 +112,24 @@ UNION ALL
 SELECT 'CREATE TEMPORARY TABLE wamn_grant_probe ()'
  WHERE NOT has_database_privilege($1::name, current_database(), 'TEMPORARY')
 ";
+
+/// The tables that `$1` may reference in a foreign key, other than its own.
+const REFERENCES_SQL: &str = "
+SELECT c.oid::regclass::text FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+ WHERE USER_SCHEMA AND c.relkind IN ('r', 'p') AND NOT pg_has_role($1::name, c.relowner, 'USAGE')
+   AND (has_table_privilege($1::name, c.oid, 'REFERENCES')
+        OR has_any_column_privilege($1::name, c.oid, 'REFERENCES'))";
+
+/// The functions, other than its own, that `$1` executes without a grant to a role it uses,
+/// and the trigger functions that it executes at all.
+const FUNCTION_GRANT_SQL: &str = "
+SELECT p.oid::regprocedure::text FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+ WHERE SCHEMA_FUNCTION AND NOT pg_has_role($1::name, p.proowner, 'USAGE')
+   AND has_function_privilege($1::name, p.oid, 'EXECUTE')
+   AND (p.prorettype = ANY (ARRAY['trigger'::regtype, 'event_trigger'::regtype])
+        OR NOT EXISTS (SELECT FROM aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a
+                        WHERE a.privilege_type = 'EXECUTE' AND a.grantee <> 0
+                          AND pg_has_role($1::name, a.grantee, 'USAGE')))";
 
 /// Role changes the session cannot make. PostgreSQL checks SET ROLE against the
 /// session login, so only a login actor runs them.
@@ -149,12 +183,65 @@ pub async fn assert_refused(actor: &mut PgConnection, label: &str, actions: &[St
 ///
 /// The set is empty for a role that owns every object, such as the system migration login.
 pub async fn refused_actions(admin: &mut PgConnection, role: &str) -> Result<Vec<String>> {
-    let actions: Vec<String> =
-        sqlx::query_scalar(sqlx::AssertSqlSafe(REFUSED_ACTIONS_SQL.replace("USER_SCHEMA", USER_SCHEMA)))
-            .bind(role)
-            .fetch_all(&mut *admin)
-            .await?;
+    let sql = REFUSED_ACTIONS_SQL
+        .replace("SCHEMA_FUNCTION", SCHEMA_FUNCTION)
+        .replace("PSEUDO_VALUE", PSEUDO_VALUE)
+        .replace("USER_SCHEMA", USER_SCHEMA);
+    let actions: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
+        .bind(role)
+        .fetch_all(&mut *admin)
+        .await?;
     Ok(actions)
+}
+
+/// Check the refusals that the catalog alone shows for `role`. It may reference no table
+/// that it does not own, it executes no trigger function, and it executes no other
+/// function without a grant to a role that it uses.
+pub async fn assert_catalog_refusals(admin: &mut PgConnection, role: &str) -> Result<()> {
+    let references: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(
+        REFERENCES_SQL.replace("USER_SCHEMA", USER_SCHEMA),
+    ))
+    .bind(role)
+    .fetch_all(&mut *admin)
+    .await?;
+    ensure!(references.is_empty(), "{role} may reference {references:?}");
+    let sql = FUNCTION_GRANT_SQL
+        .replace("SCHEMA_FUNCTION", SCHEMA_FUNCTION)
+        .replace("USER_SCHEMA", USER_SCHEMA);
+    let functions: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
+        .bind(role)
+        .fetch_all(&mut *admin)
+        .await?;
+    ensure!(
+        functions.is_empty(),
+        "{role} executes without a grant to it: {functions:?}"
+    );
+    Ok(())
+}
+
+/// The installed extensions are the server's own, read from template1, and the `declared` ones.
+pub async fn assert_extensions(
+    postgres: &Postgres,
+    admin: &mut PgConnection,
+    declared: &[String],
+) -> Result<()> {
+    let extensions = "SELECT extname::text FROM pg_catalog.pg_extension ORDER BY 1";
+    let mut server =
+        wamn_postgres::connect(database::database_admin_url(postgres, "template1")?.as_str())
+            .await?;
+    let mut expected: Vec<String> = sqlx::query_scalar(extensions)
+        .fetch_all(&mut server)
+        .await?;
+    expected.extend_from_slice(declared);
+    expected.sort();
+    let installed: Vec<String> = sqlx::query_scalar(extensions)
+        .fetch_all(&mut *admin)
+        .await?;
+    ensure!(
+        installed == expected,
+        "installed extensions {installed:?}, expected {expected:?}"
+    );
+    Ok(())
 }
 
 /// Check every refusal of a login: the catalog-derived actions, role changes,
@@ -178,6 +265,7 @@ pub async fn assert_login_refusals(
     }
     actions.extend_from_slice(contract);
     let mut checked = assert_refused(actor, login, &actions).await?;
+    assert_catalog_refusals(admin, login).await?;
 
     let databases: Vec<String> = sqlx::query_scalar(
         "SELECT datname::text FROM pg_catalog.pg_database \

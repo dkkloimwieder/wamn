@@ -111,7 +111,8 @@ pub async fn execute(connection: &mut PgConnection, statement: &str) -> Result<(
     Ok(())
 }
 
-fn database_admin_url(postgres: &Postgres, database: &str) -> Result<Url> {
+/// The superuser URL of `database` on the server.
+pub fn database_admin_url(postgres: &Postgres, database: &str) -> Result<Url> {
     let mut url = Url::parse(postgres.admin_url())?;
     url.path_segments_mut()
         .map_err(|()| anyhow::anyhow!("the server URL has no path"))?
@@ -240,6 +241,8 @@ async fn cloudnative_pg(postgres: &Postgres, resources: &[Resource]) -> Result<(
 pub struct Project {
     pub postgres: Postgres,
     pub database: String,
+    /// The extensions that the rendered Database resources declare.
+    pub extensions: Vec<String>,
 }
 
 impl Project {
@@ -319,7 +322,11 @@ pub async fn project() -> Result<Project> {
         ),
     )
     .await?;
-    Ok(Project { postgres, database })
+    Ok(Project {
+        postgres,
+        database,
+        extensions: declared_extensions(documents),
+    })
 }
 
 /// The system database installed by the product on its own server.
@@ -330,6 +337,8 @@ pub struct System {
     /// The CloudNativePG roles of the rendered system Cluster.
     pub roles: Vec<ManagedRole>,
     pub orgs: Vec<OrgLogin>,
+    /// The extensions that the rendered Database resources declare.
+    pub extensions: Vec<String>,
 }
 
 impl System {
@@ -352,17 +361,34 @@ impl System {
 
     /// The org login of `group` and its password.
     pub fn org_login(&self, group: &str) -> Result<&OrgLogin> {
-        self.orgs
-            .iter()
-            .find(|login| {
-                login
-                    .login
-                    .as_str()
-                    .strip_prefix(group)
-                    .is_some_and(|rest| rest.starts_with('_'))
-            })
-            .with_context(|| format!("no org login in {group}"))
+        org_login(&self.orgs, group)
     }
+}
+
+/// The login of `group` among the org logins that provisioning returned.
+pub fn org_login<'a>(logins: &'a [OrgLogin], group: &str) -> Result<&'a OrgLogin> {
+    logins
+        .iter()
+        .find(|login| {
+            login
+                .login
+                .as_str()
+                .strip_prefix(group)
+                .is_some_and(|rest| rest.starts_with('_'))
+        })
+        .with_context(|| format!("no org login in {group}"))
+}
+
+/// The extension names of the Database resources in `documents`.
+fn declared_extensions(documents: Vec<Resource>) -> Vec<String> {
+    documents
+        .into_iter()
+        .filter_map(|resource| match resource {
+            Resource::Database { spec } => Some(spec),
+            _ => None,
+        })
+        .flat_map(|spec| spec.extensions.into_iter().map(|extension| extension.name))
+        .collect()
 }
 
 /// Install the system database the way the platform SQL and org provisioning Jobs do.
@@ -412,5 +438,6 @@ pub async fn system() -> Result<System> {
         database,
         roles,
         orgs,
+        extensions: declared_extensions(documents),
     })
 }
