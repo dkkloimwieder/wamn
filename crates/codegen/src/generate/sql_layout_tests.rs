@@ -1,7 +1,63 @@
 //! Compile generated SQL accessors against the guest library in both output layouts.
 
 use super::{AuthoredSql, GenerationInput, StatementTransactionality, generate};
-use std::path::Path;
+use std::collections::BTreeSet;
+use std::path::{Path, PathBuf};
+
+/// The guest library and the directories of every library Cargo built with it.
+///
+/// Cargo places each library in a directory of its own, so the test asks
+/// Cargo for the artifacts of the build of this unit test target. That build
+/// is fresh while the test runs, so Cargo only reports the paths.
+fn guest_library() -> (PathBuf, BTreeSet<PathBuf>) {
+    let output =
+        std::process::Command::new(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()))
+            .args([
+                "test",
+                "--no-run",
+                "--quiet",
+                "--message-format=json",
+                "--package",
+                env!("CARGO_PKG_NAME"),
+                "--lib",
+            ])
+            .current_dir(env!("CARGO_MANIFEST_DIR"))
+            // The outer build sets this package's build-script directory. Build
+            // scripts of the dependencies read it, so the report would rebuild them.
+            .env_remove("OUT_DIR")
+            .output()
+            .unwrap();
+    assert!(
+        output.status.success(),
+        "Cargo did not report the test build: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let mut library = None;
+    let mut directories = BTreeSet::new();
+    for line in output.stdout.split(|byte| *byte == b'\n') {
+        let Ok(message) = serde_json::from_slice::<serde_json::Value>(line) else {
+            continue;
+        };
+        if message["reason"] != "compiler-artifact" {
+            continue;
+        }
+        for file in message["filenames"].as_array().into_iter().flatten() {
+            let path = PathBuf::from(file.as_str().unwrap());
+            let extension = path.extension().and_then(|extension| extension.to_str());
+            if !matches!(extension, Some("rlib" | "rmeta" | "so")) {
+                continue;
+            }
+            if extension == Some("rlib") && message["target"]["name"] == "wamn_guest" {
+                library = Some(path.clone());
+            }
+            directories.insert(path.parent().unwrap().to_owned());
+        }
+    }
+    (
+        library.expect("Cargo built the guest library dependency"),
+        directories,
+    )
+}
 
 #[test]
 fn authored_sql_accessors_compile_in_both_output_layouts() {
@@ -47,27 +103,7 @@ fn authored_sql_accessors_compile_in_both_output_layouts() {
     )];
     let transactionality = StatementTransactionality::from_paths(Default::default());
     let root = std::env::temp_dir().join(format!("wamn-sql-layout-{}", uuid::Uuid::new_v4()));
-    let dependencies = std::env::current_exe()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .to_owned();
-    let library = std::fs::read_dir(&dependencies)
-        .unwrap()
-        .map(Result::unwrap)
-        .filter(|entry| {
-            entry
-                .file_name()
-                .to_string_lossy()
-                .starts_with("libwamn_guest-")
-                && entry
-                    .path()
-                    .extension()
-                    .is_some_and(|extension| extension == "rlib")
-        })
-        .max_by_key(|entry| entry.metadata().unwrap().modified().unwrap())
-        .expect("Cargo compiled the guest library dependency")
-        .path();
+    let (library, dependencies) = guest_library();
     let build = root.join("build");
     let unpacked = root.join("unpacked");
     for (generated_root, authored_root) in [
@@ -106,8 +142,12 @@ fn authored_sql_accessors_compile_in_both_output_layouts() {
             ])
             .arg("--extern")
             .arg(format!("wamn_guest={}", library.display()))
-            .arg("-L")
-            .arg(format!("dependency={}", dependencies.display()))
+            .args(dependencies.iter().flat_map(|directory| {
+                [
+                    "-L".to_owned(),
+                    format!("dependency={}", directory.display()),
+                ]
+            }))
             .arg("--out-dir")
             .arg(generated_root)
             .arg(consumer)

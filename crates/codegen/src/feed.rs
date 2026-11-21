@@ -973,10 +973,15 @@ mod tests {
         connection
     }
 
-    #[sqlx::test(migrations = false)]
-    async fn affected_keys_follow_each_link_and_both_images(pool: sqlx::PgPool) {
+    #[tokio::test]
+    #[ignore = "requires: docker"]
+    async fn affected_keys_follow_each_link_and_both_images() {
         use sqlx::Row as _;
-        let _lock = wamn_test_postgres::lock();
+        let server = wamn_test_infrastructure::containers::start_postgres()
+            .await
+            .unwrap();
+        let database = server.create_database("tests").await.unwrap();
+        let pool = wamn_postgres::pool(database.as_str(), 4).await.unwrap();
         let catalog = CatalogIr::new(vec![table("line", &[("order_id", "orders")]), table("orders", &[("item_id", "item")]), table("item", &[])]).with_views(vec![View::new("app", "screen", [("id", "line", "id"), ("order_id", "line", "order_id"), ("item_id", "orders", "item_id")].into_iter().map(|(name, table, field)| ViewColumn::new(name, SqlValueType::Uuid).with_origin(ViewColumnOrigin { schema: "app".into(), table: table.into(), column: field.into() })).collect(), ["line", "orders", "item"].into_iter().map(|name| ViewBaseTable::new("app", name)).collect()).with_definition("SELECT line.id, line.order_id, orders.item_id FROM app.line JOIN app.orders ON orders.id = line.order_id JOIN app.item ON item.id = orders.item_id".into(), false)]);
         let source = derive_sql(&catalog, &manifest(), "SELECT id FROM screen").unwrap();
         let sql = crate::sql::authored_changes(
