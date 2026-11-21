@@ -932,19 +932,30 @@ mod tests {
         [
             (
                 "overlay",
+                "3.0.0",
                 "transform",
                 COMPONENT_B,
                 "overlay:transform/map@3.0.0",
             ),
-            ("base", "http-request", COMPONENT_A, "base:widget/get@1.0.0"),
+            (
+                "base",
+                "1.0.0",
+                "http-request",
+                COMPONENT_A,
+                "base:widget/get@1.0.0",
+            ),
         ]
         .into_iter()
-        .map(|(package, component, digest, operation)| ServingComponent {
-            runtime_schema: None,
-
-            package_id: package.parse().unwrap(),
-            descriptor: ComponentDescriptor {
+        .map(|(package, version, component, digest, operation)| {
+            let fact = AdmittedComponent {
                 data_change: false,
+                target: wamn_component_policy::ComponentPackageCoordinate {
+                    project_env_key: "org-a--dev--project".parse().unwrap(),
+                    package_id: package.parse().unwrap(),
+                    package_version: version.parse().unwrap(),
+                },
+                component: component.parse().unwrap(),
+                interface_version: "0.1".parse().unwrap(),
                 operations: BTreeMap::from([(
                     operation.parse().unwrap(),
                     wamn_component_policy::AdmittedComponentOperation {
@@ -956,12 +967,12 @@ mod tests {
                         parameters: Vec::new(),
                     },
                 )]),
-                ..ComponentDescriptor::named(
-                    component.parse().unwrap(),
-                    "0.1".parse().unwrap(),
-                    digest.parse().unwrap(),
-                )
-            },
+                component_digest: digest.parse().unwrap(),
+                imports: Vec::new(),
+                imports_fingerprint: wamn_digest::canonical_json_sha256(&serde_json::json!([])),
+                effects: Vec::new(),
+            };
+            ServingComponent::project(&fact, Vec::new())
         })
         .collect()
     }

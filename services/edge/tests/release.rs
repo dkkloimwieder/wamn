@@ -18,7 +18,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use serde_json::json;
 use wamn_component_policy::{
-    AdmittedComponent, AdmittedComponentOperation, ComponentDescriptor, ComponentPackageCoordinate,
+    AdmittedComponent, AdmittedComponentOperation, ComponentPackageCoordinate,
 };
 use wamn_digest::bytes_sha256;
 use wamn_edge::release::{EdgeRelease, EdgeReleaseErrorType};
@@ -43,29 +43,7 @@ fn manifest() -> ServingManifest {
             )
             .expect("package")]),
         },
-        components: BTreeSet::from([ServingComponent {
-            runtime_schema: None,
-            package_id: PACKAGE.parse().unwrap(),
-            descriptor: {
-                let mut descriptor = ComponentDescriptor::named(
-                    COMPONENT.parse().unwrap(),
-                    "0.1".parse().unwrap(),
-                    bytes_sha256(BODY),
-                );
-                descriptor.operations = BTreeMap::from([(
-                    OPERATION.parse().unwrap(),
-                    AdmittedComponentOperation {
-                        host_transaction: false,
-                        input_ports: Vec::new(),
-                        output_ports: Vec::new(),
-                        parameters: Vec::new(),
-                        committed_result_schema: None,
-                        registered_operation: Some(PERMISSION.parse().unwrap()),
-                    },
-                )]);
-                descriptor
-            },
-        }]),
+        components: BTreeSet::from([ServingComponent::project(&fact(), Vec::new())]),
         composed_entry: None,
         routes: BTreeSet::new(),
         attachments: BTreeMap::new(),

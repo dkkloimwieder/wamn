@@ -15,8 +15,5 @@ wamn-component-policy.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true, features = ["float_roundtrip"] }
 
-[dev-dependencies]
-wamn-component-policy = { workspace = true, features = ["test-util"] }
-
 [lints]
 workspace = true

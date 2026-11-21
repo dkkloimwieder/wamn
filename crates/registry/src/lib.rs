@@ -27,9 +27,6 @@ mod project_id;
 pub use org_id::{OrgId, ParseOrgIdError};
 pub use project_id::{ParseProjectIdError, ProjectId};
 
-#[cfg(feature = "test-util")]
-pub mod test_util;
-
 mod env_name;
 mod project_env_key;
 pub use env_name::{EnvName, ParseEnvNameError};

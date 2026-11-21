@@ -270,9 +270,7 @@ fn rejected(detail: String) -> EdgeReleaseError {
 pub(crate) mod test_util {
     use super::*;
     use std::collections::BTreeMap;
-    use wamn_component_policy::{
-        AdmittedComponentOperation, ComponentDescriptor, ComponentPackageCoordinate,
-    };
+    use wamn_component_policy::{AdmittedComponentOperation, ComponentPackageCoordinate};
     use wamn_edge_document::{
         SERVING_MANIFEST_FORMAT_VERSION, ServingComponent, ServingManifest, ServingRelease,
     };
@@ -281,14 +279,6 @@ pub(crate) mod test_util {
     pub(crate) const OPERATION: &str = "scale:device/record@1.0.0";
 
     pub(crate) async fn release() -> EdgeRelease {
-        let operation = AdmittedComponentOperation {
-            host_transaction: false,
-            input_ports: Vec::new(),
-            output_ports: Vec::new(),
-            parameters: Vec::new(),
-            registered_operation: Some(OPERATION.parse().unwrap()),
-            committed_result_schema: None,
-        };
         let fact = AdmittedComponent {
             data_change: false,
             target: ComponentPackageCoordinate {
@@ -323,20 +313,7 @@ pub(crate) mod test_util {
                 )
                 .unwrap()]),
             },
-            components: BTreeSet::from([ServingComponent {
-                runtime_schema: None,
-                package_id: "scale".parse().unwrap(),
-                descriptor: {
-                    let mut descriptor = ComponentDescriptor::named(
-                        "device".parse().unwrap(),
-                        "0.1".parse().unwrap(),
-                        fact.component_digest,
-                    );
-                    descriptor.operations =
-                        BTreeMap::from([(OPERATION.parse().unwrap(), operation)]);
-                    descriptor
-                },
-            }]),
+            components: BTreeSet::from([ServingComponent::project(&fact, Vec::new())]),
             composed_entry: None,
             routes: BTreeSet::new(),
             attachments: BTreeMap::new(),
