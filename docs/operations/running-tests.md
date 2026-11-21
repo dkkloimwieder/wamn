@@ -39,6 +39,11 @@ The command then prints one `export` line for each prepared input.
 A test whose prepared input is missing fails. It does not skip.
 After a source change to an application or to `ingress`, run `prepare-tests` again.
 
+After `prepare-tests`, run `cargo xtask helm-size`.
+For each application, it verifies the package and measures the Helm record of its release against the 1 MiB limit.
+It fails on a refused package and does not skip it.
+[Building](building.md#platform-version) describes the command.
+
 The apps workspace is a separate Cargo workspace.
 Run its tests per package, with the commands that [test-changes](#select-the-tests-for-a-change) prints.
 
