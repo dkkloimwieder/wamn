@@ -4,7 +4,10 @@
 )]
 
 //! One package-grain component exporting every WMS operation.
-#![expect(unsafe_code, reason = "wit-bindgen generated FFI glue")]
+#![cfg_attr(
+    target_arch = "wasm32",
+    expect(unsafe_code, reason = "wit-bindgen generated FFI glue")
+)]
 #[expect(
     dead_code,
     reason = "private data modules retain the complete generated and authored refusal vocabulary"
@@ -52,4 +55,5 @@ impl generated::product::query::Action for Component {}
 impl generated::product::create::Action for Component {}
 impl generated::product::update::Action for Component {}
 
+#[cfg(target_arch = "wasm32")]
 export!(Component);

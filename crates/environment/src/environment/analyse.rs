@@ -14,7 +14,6 @@ use wamn_kubernetes::client::workloads;
 pub(super) mod plan;
 pub use plan::refusals;
 pub(crate) use plan::project_url;
-use plan::replica_refusal;
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -289,56 +288,4 @@ pub(crate) async fn read_pods(platform: &Platform, release_name: &str) -> anyhow
     let pods = Api::<Pod>::namespaced(platform.target.client.client(), &platform.target.namespace);
     let objects = pods.list(&ListParams::default().labels(&selector)).await?;
     serde_json::to_value(objects).context("encode the pod list")
-}
-
-/// Refuse cloud exclusive bindings unless the supplied host group names one replica.
-///
-/// # Errors
-///
-/// When the target or the host group body cannot be read.
-pub async fn replica_refusals(
-    system: &mut sqlx::PgConnection,
-    document: &EnvironmentDocument,
-    bindings: &[super::bindings::Binding],
-    path: Option<&std::path::Path>,
-) -> anyhow::Result<Vec<String>> {
-    if !bindings.iter().any(|binding| binding.exclusive) {
-        return Ok(Vec::new());
-    }
-    let cloud: bool = sqlx::query(
-        wamn_registry::sql::CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_ANALYSE_REPLICA_REFUSALS,
-    )
-    .bind(&document.settings.target)
-    .fetch_one(&mut *system)
-    .await
-    .context("read the environment target type")?
-    .get(0);
-    if !cloud {
-        return Ok(Vec::new());
-    }
-    let group = super::write::host_group(path)?;
-    let replicas = group.get("replicas").and_then(serde_yaml::Value::as_u64);
-    Ok(bindings
-        .iter()
-        .filter(|binding| binding.exclusive)
-        .filter_map(|binding| {
-            let connection =
-                &document.applications[&binding.application].connections[&binding.alias];
-            replica_refusal(&connection.to_string(), replicas)
-        })
-        .collect())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn an_exclusive_cloud_connection_requires_one_explicit_replica() {
-        for replicas in [None, Some(0), Some(2)] {
-            assert!(replica_refusal("meter", replicas).is_some());
-        }
-        assert!(replica_refusal("meter", Some(1)).is_none());
-    }
-
 }

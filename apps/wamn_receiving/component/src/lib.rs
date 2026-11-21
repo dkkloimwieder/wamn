@@ -4,7 +4,10 @@
 )]
 
 //! One package-grain component exporting every Receiving operation.
-#![expect(unsafe_code, reason = "wit-bindgen generated FFI glue")]
+#![cfg_attr(
+    target_arch = "wasm32",
+    expect(unsafe_code, reason = "wit-bindgen generated FFI glue")
+)]
 #[expect(
     dead_code,
     reason = "private data modules retain the complete generated and authored refusal vocabulary"
@@ -38,6 +41,7 @@ wit_bindgen::generate!({
 });
 
 struct Component;
+#[cfg(target_arch = "wasm32")]
 export!(Component);
 
 impl generated::purchase_order::create::Action for Component {}

@@ -3,7 +3,10 @@
     clippy::same_length_and_capacity,
     reason = "wit-bindgen emits equal length and capacity"
 )]
-#![expect(unsafe_code, reason = "wit-bindgen generated FFI glue")]
+#![cfg_attr(
+    target_arch = "wasm32",
+    expect(unsafe_code, reason = "wit-bindgen generated FFI glue")
+)]
 wit_bindgen::generate!({
     world: "rest-connector:component/rest-connector@0.1.0",
     path: [
@@ -26,6 +29,7 @@ use wamn_integration::{
 };
 
 struct Component;
+#[cfg(target_arch = "wasm32")]
 export!(Component);
 #[expect(dead_code, unused_imports, reason = "generated API subset")]
 mod finish_operation {
@@ -252,7 +256,7 @@ mod tests {
         let due = "2026-10-21T12:00:00Z";
         for items in [json!([]), json!([{"id": "1", "name": "one"}])] {
             let mapped = evaluate(
-                wiring["nodes"]["rows"]["params"]["expression"]
+                wiring["nodes"]["rows"]["call"]["params"]["expression"]
                     .as_str()
                     .unwrap(),
                 &json!({"carry": due, "external_system_id": "11111111-1111-4111-8111-111111111111", "items": items}),

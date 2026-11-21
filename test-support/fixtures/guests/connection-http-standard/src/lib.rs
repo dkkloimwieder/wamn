@@ -127,6 +127,7 @@ impl bindings::exports::wamn::connection_http_standard_fixture::node::Guest for 
     }
 }
 
+#[cfg(target_arch = "wasm32")]
 bindings::export!(Component with_types_in bindings);
 
 #[cfg(panic = "abort")]

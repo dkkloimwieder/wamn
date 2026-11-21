@@ -4,7 +4,10 @@
 )]
 
 //! One package-grain component for executable Acme Receiving overlay operations.
-#![expect(unsafe_code, reason = "wit-bindgen generated FFI glue")]
+#![cfg_attr(
+    target_arch = "wasm32",
+    expect(unsafe_code, reason = "wit-bindgen generated FFI glue")
+)]
 #[expect(
     dead_code,
     reason = "private data modules retain the complete generated and authored refusal vocabulary"
@@ -309,4 +312,5 @@ fn base_call_error(error: &NodeError) -> contract::RecordReceiptError {
     }
 }
 
+#[cfg(target_arch = "wasm32")]
 export!(Component);

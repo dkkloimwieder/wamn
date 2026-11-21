@@ -5,7 +5,10 @@
 
 //! One package-grain component exporting the edge device operation. It
 //! imports no `wamn:postgres`, so an edge box can load it.
-#![expect(unsafe_code, reason = "wit-bindgen generated FFI glue")]
+#![cfg_attr(
+    target_arch = "wasm32",
+    expect(unsafe_code, reason = "wit-bindgen generated FFI glue")
+)]
 mod sample;
 
 wit_bindgen::generate!({
@@ -21,4 +24,5 @@ wit_bindgen::generate!({
 
 struct Component;
 
+#[cfg(target_arch = "wasm32")]
 export!(Component);

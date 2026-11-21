@@ -1,6 +1,9 @@
 //! Ordinary transform palette component.
 
-#![expect(unsafe_code, reason = "wit-bindgen generated FFI glue")]
+#![cfg_attr(
+    target_arch = "wasm32",
+    expect(unsafe_code, reason = "wit-bindgen generated FFI glue")
+)]
 
 #[allow(
     clippy::same_length_and_capacity,
@@ -59,6 +62,7 @@ fn terminal(code: &str, message: impl Into<String>) -> NodeError {
     })
 }
 
+#[cfg(target_arch = "wasm32")]
 bindings::export!(Component with_types_in bindings);
 
 #[cfg(test)]

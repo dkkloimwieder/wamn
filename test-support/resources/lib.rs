@@ -5,9 +5,7 @@
 pub mod collector;
 pub mod containers;
 pub mod database;
-pub mod event_broker;
 pub mod fixture_digest;
-pub mod nats_tls;
 pub mod operations;
 pub mod process_input;
 pub mod publish;

@@ -44,6 +44,10 @@ wamn-provision = { workspace = true }
 wamn-platform-install = { workspace = true }
 wamn-test-infrastructure = { workspace = true }
 postgres-protocol = { workspace = true }
+# The NATS isolation tests connect signed users to the platform NATS server.
+async-nats = { workspace = true, features = ["aws-lc-rs", "nkeys"] }
+futures-util = { workspace = true }
+tempfile = { workspace = true }
 
 [lints]
 workspace = true

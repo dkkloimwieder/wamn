@@ -253,7 +253,7 @@ Contract list (14.0), by tier:
 
 End of the epic: the standard checks (with `cargo xtask helm-size`), an apps host build with no link failures, `cargo xtask prepare-tests`, `cargo test --workspace`, the ignored run on a machine with Docker, the preflight and the short smoke run.
 
-Next: Epic 15 (step 3.8, third part): the journey harness (`cargo xtask journey-cluster`, a read-only observer login) and the journey tests on kind. The host contracts move there: the host's probes, signals, drain and NATS outage recovery; another project environment's credential is refused and never served; the request path, connection calls, workflows and Data change; and any session identity or write log contract that has no production function taking an open connection.
+Next: Epic 15 (step 3.8, third part): the journey harness (`cargo xtask journey-cluster`, a read-only observer login) and the journey tests on kind. The host contracts move there: the host's probes, signals, drain and NATS outage recovery; another project environment's credential is refused and never served; the request path, connection calls, workflows and Data change; the grant cache; result signing; the cold parse, the operation in the transaction and the write log claims; and any other session identity or write log contract that has no production function taking an open connection.
 
 ## Open items
 
@@ -2104,3 +2104,11 @@ Epic 13 closed on 2026-11-21 after review. cargo test --workspace: 603 passed. -
 - Reason: Epic 14's tests sit in the test crates, and Epic 15's tests go through product commands, so the crate moves barely touch them.
 - Reason: sqlx in the hub crates costs compile time and binary size, but nothing connects through it. The fix waits for the edge device design.
 - The size of `manifest.rs` (3,136 lines) is not a defect by itself, and it is not listed.
+
+**Ruled (D, 2026-11-21): Epic 14 questions 7 to 11.**
+- Question 7: the grant cache moves to Epic 15. Reason: it reads through the `WamnPostgres` pools with a mounted platform credential, which is the fixed-path problem (B2), so a container test would need a back door.
+- Question 8: result signing moves to Epic 15. Reason: `result_signing.rs` is a trait only. The signing decision is in host-only code (`operation.rs::sign_result`, and `Files::sign` in `services/host`), and the admission half already has a unit test in `component-policy`.
+- Question 9: the access token refetch test stays. Reason: its real 1 s wait comes from the product's std `Instant` rate limit, and the test then asserts that a fetch happens. That is a wait for an event, not a sleep followed by an assert that nothing happened.
+- Question 10: the `watch_liveness` test stays as it is. Reason: the stop when the bound passes is already tested, and the new test covers the other half as far as std `Instant` allows.
+- Question 11: the cold parse, the operation in the transaction and every write log claim move to Epic 15. Reason: `commit_transaction` is `pub(super)`, and no public production function takes an open connection. It is not made public for tests, because that would be a test-only door.
+- `start_nats` comes back with its 14.2 caller. This matches the Epic 13 ruling, which deleted it only because it had no caller.
