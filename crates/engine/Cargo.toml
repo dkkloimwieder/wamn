@@ -46,7 +46,7 @@ wit-parser.workspace = true
 
 [dev-dependencies]
 url = { workspace = true }
-tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "sync"] }
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "sync", "test-util"] }
 # The engine tests encode their guests from WAT in-process. Same exact pins as
 # wamn-oci.
 wat = "=1.254.2"

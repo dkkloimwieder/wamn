@@ -315,3 +315,35 @@ fn encode<T: Serialize>(
     URL_SAFE_NO_PAD.encode_string(signature, &mut token);
     Ok(token)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_account_stores_256_mib_per_project_and_sets_no_data_limit() {
+        let operator = KeyPair::new_operator();
+        let account = KeyPair::new_account();
+        for projects in [0, 1, 3] {
+            let jwt = super::account(
+                &operator,
+                &account.public_key(),
+                "env",
+                1,
+                projects,
+                &UNLIMITED_CLIENT_LIMITS,
+                &[],
+            )
+            .unwrap();
+            let payload = jwt.split('.').nth(1).unwrap();
+            let claims: serde_json::Value =
+                serde_json::from_slice(&URL_SAFE_NO_PAD.decode(payload).unwrap()).unwrap();
+            let limits = &claims["nats"]["limits"];
+            assert_eq!(
+                limits["disk_storage"],
+                i64::from(projects) * 256 * 1024 * 1024
+            );
+            assert_eq!(limits["data"], -1);
+        }
+    }
+}

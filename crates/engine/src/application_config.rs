@@ -156,3 +156,69 @@ pub fn check_workflow_references(
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SIBLING: &str = "shop-orders";
+    const EXPORT: &str = "shop:orders/place@1.0.0";
+
+    /// A candidate release whose `exports` lists each sibling and its exports.
+    fn release(exports: &[(&str, &[&str])]) -> ApplicationConfig {
+        ApplicationConfig {
+            org: "acme".parse().unwrap(),
+            project: "shop".parse().unwrap(),
+            environment: "dev".parse().unwrap(),
+            application: "app".parse().unwrap(),
+            grant_cache_seconds: 60,
+            components: exports
+                .iter()
+                .map(|(sibling, operations)| ApplicationComponent {
+                    name: (*sibling).to_owned(),
+                    package: "shop".parse().unwrap(),
+                    digest: wamn_digest::bytes_sha256(sibling.as_bytes()),
+                    connections: Vec::new(),
+                    schema: None,
+                    operations: operations
+                        .iter()
+                        .map(|export| {
+                            let operation = ApplicationOperation {
+                                component: (*sibling).to_owned(),
+                                public: true,
+                                host_transaction: true,
+                                type_: Some(ApplicationOperationType::Write),
+                                idempotency_key: None,
+                                signed_result: None,
+                            };
+                            (export.parse().unwrap(), operation)
+                        })
+                        .collect(),
+                    data_change: None,
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn an_enabled_graph_refuses_a_release_without_its_sibling_or_export() {
+        let graph = wamn_routes::WiringDocument::parse(&serde_json::json!({
+            "format-version": "0.2", "wiring-id": "place", "version": 1,
+            "nodes": {
+                "entry": {"entry": {"request": {"path": "/place"}}},
+                "call": {"call": {"sibling": SIBLING, "export": EXPORT}},
+                "response": {"response": {"status": 200}},
+            },
+            "edges": [{"from": "entry", "to": "call"}, {"from": "call", "to": "response"}],
+        }))
+        .unwrap();
+        check_workflow_references(&release(&[(SIBLING, &[EXPORT])]), &graph).unwrap();
+        for removed in [
+            release(&[]),
+            release(&[("shop-other", &[EXPORT])]),
+            release(&[(SIBLING, &["shop:orders/cancel@1.0.0"])]),
+        ] {
+            assert!(check_workflow_references(&removed, &graph).is_err());
+        }
+    }
+}

@@ -79,6 +79,7 @@ fn liveness_progress(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
 
     #[test]
     fn startup_requires_a_beat_and_stale_detection_preserves_the_native_boundary() {
@@ -109,6 +110,29 @@ mod tests {
         let probes = ProbeState::default();
         let _error = watch_liveness(&liveness, Some(&probes), Duration::ZERO).await;
         assert_eq!(liveness.silence(), None);
+    }
+
+    /// The native command loop beats on every turn, also while NATS is down.
+    /// Time past the budget after the first beat does not stop the host.
+    #[tokio::test(start_paused = true)]
+    async fn a_beating_loop_stays_alive_long_past_the_budget() {
+        let budget = Duration::from_secs(45);
+        let liveness = Liveness::new(budget);
+        liveness.beat();
+        let beating = Arc::clone(&liveness);
+        let beater = tokio::spawn(async move {
+            let mut turn = tokio::time::interval(Duration::from_secs(15));
+            loop {
+                turn.tick().await;
+                beating.beat();
+            }
+        });
+        let observed = Arc::clone(&liveness);
+        let watcher = tokio::spawn(async move { watch_liveness(&observed, None, budget).await });
+        tokio::time::sleep(budget * 20).await;
+        assert!(!watcher.is_finished());
+        watcher.abort();
+        beater.abort();
     }
 
     #[tokio::test]
