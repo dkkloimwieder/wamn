@@ -347,6 +347,30 @@ async fn probe_network_policy(client: &kube::Client) -> anyhow::Result<()> {
         .into_iter()
         .find_map(|pod| pod.spec?.containers.into_iter().next()?.image)
         .context("the cluster has no etcd pod")?;
+    // A new namespace refuses pods until its default ServiceAccount exists.
+    // A watch from resource version 0 first reports the objects that exist.
+    let accounts = Api::<k8s_openapi::api::core::v1::ServiceAccount>::namespaced(
+        client.clone(),
+        NETWORK_CHECK,
+    );
+    let params = kube::api::WatchParams::default().fields("metadata.name=default");
+    tokio::time::timeout(NETWORK_DEADLINE, async {
+        let events = accounts.watch(&params, "0").await?;
+        let mut events = std::pin::pin!(events);
+        while let Some(event) = futures_util::TryStreamExt::try_next(&mut events).await? {
+            if matches!(event, kube::api::WatchEvent::Added(_)) {
+                return anyhow::Ok(());
+            }
+        }
+        anyhow::bail!("the ServiceAccount watch ended before {NETWORK_CHECK}/default existed")
+    })
+    .await
+    .with_context(|| {
+        format!(
+            "{NETWORK_CHECK}/default did not exist within {} s",
+            NETWORK_DEADLINE.as_secs()
+        )
+    })??;
     let pods = Api::<Pod>::namespaced(client.clone(), NETWORK_CHECK);
     for name in ["server", "client"] {
         let pod = serde_json::from_value(serde_json::json!({
