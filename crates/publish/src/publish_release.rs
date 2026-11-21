@@ -202,18 +202,6 @@ pub struct RouteContract {
     pub idempotency: Option<String>,
 }
 
-#[cfg(test)]
-impl From<OperationType> for RouteContract {
-    fn from(type_: OperationType) -> Self {
-        Self {
-            type_,
-            reads: BTreeSet::new(),
-            revision: None,
-            idempotency: None,
-        }
-    }
-}
-
 /// Inputs of one application release publication.
 #[derive(Debug)]
 pub struct PublishReleaseRequest {
@@ -588,7 +576,8 @@ fn validate_release_package_manifests(
 mod tests {
     use super::plan::application_runtime_schema;
     use super::*;
-    use crate::test_support::{closure_component, source_manifest};
+    use crate::test_support::closure_component;
+    use wamn_test_infrastructure::publish::source_manifest;
 
     #[test]
     fn one_application_release_has_one_digest_across_environments() {
@@ -633,6 +622,16 @@ mod tests {
         attachment.definition_hash = wamn_digest::canonical_json_sha256(&attachment.definition);
     }
 
+    /// The contract of a route that reads nothing and names no revision or key.
+    fn route_contract(type_: OperationType) -> RouteContract {
+        RouteContract {
+            type_,
+            reads: BTreeSet::new(),
+            revision: None,
+            idempotency: None,
+        }
+    }
+
     fn fixture_route_contracts(
         attachments: &BTreeMap<wamn_package::canonical_name::CanonicalName, ServingAttachment>,
     ) -> RouteContracts {
@@ -642,7 +641,7 @@ mod tests {
                 let AttachmentTarget::Route { operation, .. } = &attachment.target;
                 (
                     (attachment.package_id.clone(), operation.clone()),
-                    OperationType::Command.into(),
+                    route_contract(OperationType::Command),
                 )
             })
             .collect()
@@ -966,7 +965,7 @@ mod tests {
                     "source_fixture".parse().unwrap(),
                     format!("source-fixture:{operation}@1.0.0").parse().unwrap(),
                 ),
-                RouteContract::from(type_),
+                route_contract(type_),
             )
         })
         .collect();
@@ -1013,10 +1012,9 @@ mod tests {
     /// A package directory whose `descriptors/` holds the canonical descriptor
     /// of `fact` with one connection, as an unpacked artifact holds it.
     fn dependency_manifest(digest: &wamn_digest::Digest) -> wamn_component_policy::PackageManifest {
-        let mut document: serde_json::Value = serde_json::from_str(include_str!(
-            "../tests/fixtures/component_package/generated/wamn.json"
-        ))
-        .expect("the repository package manifest parses as JSON");
+        let mut document: serde_json::Value =
+            serde_json::from_str(wamn_test_infrastructure::publish::SOURCE_MANIFEST)
+                .expect("the repository package manifest parses as JSON");
         document["base_dependencies"] = serde_json::json!({
             "base": {
                 "package": "base",

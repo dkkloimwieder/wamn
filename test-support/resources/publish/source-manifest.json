@@ -50,8 +50,7 @@
               }
             ],
             "name": "get",
-            "path": "generated/sql/item/get.sql",
-            "transactional": false
+            "path": "generated/sql/item/get.sql"
           }
         ],
         "type": "get",

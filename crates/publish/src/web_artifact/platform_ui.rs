@@ -161,10 +161,8 @@ mod tests {
     use futures_util::TryStreamExt as _;
     use object_store::memory::InMemory;
     use wamn_digest::bytes_sha256;
-    use wamn_oci::package_artifact::registry_pull::test_server::Server;
+    use wamn_test_infrastructure::publish::{Server, artifact_fixture, fixture_registry};
     use wamn_test_infrastructure::scratch::ScratchRoot;
-
-    use super::super::test_support::{artifact_fixture, fixture_registry};
 
     #[test]
     fn publication_is_deterministic_and_contains_only_ui_files_and_metadata() {

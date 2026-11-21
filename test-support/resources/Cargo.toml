@@ -34,7 +34,9 @@ serde_yaml = { workspace = true }
 tempfile = { workspace = true }
 testcontainers = { workspace = true }
 wamn-codegen = { workspace = true }
-tokio = { workspace = true, features = ["macros", "rt", "process", "time"] }
+wamn-component-policy = { workspace = true }
+oci-client = { workspace = true }
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "process", "time"] }
 url = { workspace = true }
 wamn-test-postgres = { workspace = true }
 

@@ -1,4 +1,4 @@
-//! Fresh two-package effective-release test on disposable PostgreSQL.
+//! Two-package effective release from the prepared fixture components.
 
 use wamn_package::package_version::PackageVersion;
 use wamn_package::ComponentDeclaration;
@@ -25,7 +25,7 @@ const OVERLAY_WASM_ENV: &str = "WAMN_EFFECTIVE_RELEASE_OVERLAY_COMPONENT_WASM";
 fn package_version() -> &'static PackageVersion {
     static VERSION: std::sync::LazyLock<PackageVersion> = std::sync::LazyLock::new(|| {
         let mut manifest: serde_json::Value =
-            serde_json::from_slice(&crate::test_support::fixture_manifest())
+            serde_json::from_slice(&wamn_fixture_package::manifest_bytes())
                 .expect("the compiled fixture manifest is JSON");
         serde_json::from_value(manifest["package"]["version"].take())
             .expect("the compiled fixture manifest declares a canonical version")
@@ -140,7 +140,6 @@ fn admit_components(
 }
 
 #[test]
-#[ignore = "requires: env:WAMN_EFFECTIVE_RELEASE_BASE_COMPONENT_WASM, env:WAMN_EFFECTIVE_RELEASE_OVERLAY_COMPONENT_WASM, input:fixture"]
 fn base_and_overlay_project_admitted_routes() {
     let inputs = packages();
     let (admitted_digests, components) = admit_components(&inputs);

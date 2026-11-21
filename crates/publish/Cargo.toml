@@ -7,7 +7,7 @@ license.workspace = true
 
 [features]
 default = []
-test-util = ["dep:wamn-fixture-package", "dep:wamn-test-infrastructure", "wamn-oci/test-util"]
+test-util = ["dep:wamn-test-infrastructure"]
 
 [dependencies]
 wamn-package.workspace = true
@@ -36,7 +36,6 @@ wamn-registry = { workspace = true }
 wamn-record-history = { workspace = true }
 wamn-engine = { workspace = true }
 wamn-codegen = { workspace = true }
-wamn-fixture-package = { workspace = true, optional = true }
 wamn-test-infrastructure = { workspace = true, optional = true }
 hyper = { workspace = true }
 
@@ -44,10 +43,8 @@ hyper = { workspace = true }
 ring = { workspace = true }
 hex = { workspace = true }
 wat = "=1.254.2"
-wamn-oci = { workspace = true, features = ["test-util"] }
 wamn-fixture-package = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "sync", "test-util", "time"] }
-wamn-identity = { workspace = true, features = ["test-util"] }
 wamn-test-infrastructure = { workspace = true }
 wit-component = { workspace = true, features = ["dummy-module"] }
 futures-util = { workspace = true }

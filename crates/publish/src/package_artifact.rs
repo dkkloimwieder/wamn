@@ -739,7 +739,7 @@ mod tests {
     #[tokio::test]
     async fn dev_artifact_keeps_its_publication_time_when_opened_and_repacked() -> anyhow::Result<()>
     {
-        use wamn_oci::package_artifact::registry_pull::test_server::Server;
+        use wamn_test_infrastructure::publish::Server;
         let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create()?;
         let root = scratch.path().join("package");
         let version = "1.0.0-dev.h0123456789ab";

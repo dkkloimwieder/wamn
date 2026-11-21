@@ -12,7 +12,7 @@ test = false
 
 [features]
 sqlx = ["dep:sqlx"]
-test-util = ["tokio/io-util", "tokio/net", "tokio/rt"]
+test-util = ["dep:wamn-test-infrastructure"]
 
 [dependencies]
 wamn-oci-reference.workspace = true
@@ -32,6 +32,7 @@ bytes = { workspace = true }
 hyper = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 tracing = { workspace = true }
+wamn-test-infrastructure = { workspace = true, optional = true }
 
 [dev-dependencies]
 wash-runtime = { workspace = true, features = ["oci"] }
@@ -44,6 +45,7 @@ wat = "=1.254.2"
 hyper = { workspace = true, features = ["server", "http1"] }
 hyper-util = { workspace = true, features = ["tokio"] }
 http-body-util = { workspace = true }
+wamn-test-infrastructure = { workspace = true }
 
 [lints]
 workspace = true

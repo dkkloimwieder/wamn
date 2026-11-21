@@ -7,7 +7,7 @@ extern crate alloc;
 mod component {
     use alloc::string::String;
     wit_bindgen::generate!({
-        path: "../../../../../wit/wamn-integration",
+        path: "../../wit/wamn-integration",
         inline: "package test:fixture; world client { import wamn:integration/bound@0.1.0; export wamn:integration/health@0.1.0; }",
         world: "test:fixture/client",
         std_feature,

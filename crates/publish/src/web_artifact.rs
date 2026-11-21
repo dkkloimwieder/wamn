@@ -607,24 +607,47 @@ pub fn collect(directory: &Path, files: &mut Vec<PathBuf>) -> anyhow::Result<()>
     Ok(())
 }
 
-#[cfg(any(test, feature = "test-util"))]
-pub mod test_support;
+/// The old path of the shared web fixtures, for crates that still enable
+/// `test-util`.
+#[cfg(feature = "test-util")]
+pub mod test_support {
+    pub use wamn_test_infrastructure::publish::{artifact_fixture, fixture_registry};
+}
 
 #[cfg(test)]
 mod tests {
-    use super::test_support::{artifact_fixture, build_fixture, fixture_registry};
+    use std::collections::BTreeMap;
     use std::fs;
     use std::path::{Path, PathBuf};
 
     use wamn_codegen::fingerprint::{self, Fingerprint};
     use wamn_digest::{bytes_sha256, canonical_json_bytes};
-    use wamn_oci::package_artifact::registry_pull::test_server::Server;
+    use wamn_test_infrastructure::publish::{
+        Server, WEB_MANIFEST, artifact_fixture, fixture_registry,
+    };
     use wamn_test_infrastructure::scratch::ScratchRoot;
 
     use super::{
         Sink, WEB_MANIFEST_FILE, WebPushDisposition, build_web_artifact, pack_web_artifact,
         pull_web_artifact, push_web_artifact, read_web_manifest,
     };
+
+    fn build_fixture(client: Option<&str>) -> (Fingerprint, Vec<u8>) {
+        let mut manifest = serde_json::json!({
+            "package": {"id": "web_fixture", "version": "1.0.0"},
+            "required_platform_policy_contract": {"id": "web_fixture_data_access", "state": "satisfied"},
+            "models": {}, "components": {}, "connections": {},
+        });
+        if let Some(client) = client {
+            manifest["client_package"] = serde_json::json!({"name": client});
+        }
+        let compiled = canonical_json_bytes(&manifest);
+        let record = Fingerprint {
+            input: bytes_sha256(b"fixture"),
+            outputs: BTreeMap::from([("wamn.json".into(), bytes_sha256(&compiled))]),
+        };
+        (record, compiled)
+    }
 
     fn write_build(scratch: &ScratchRoot, record: &Fingerprint, compiled: &[u8]) -> PathBuf {
         let package = scratch.path().join("apps/web_fixture");
@@ -846,21 +869,8 @@ fs.copyFileSync('index.html', dist + '/index.html');
         assert!(read_web_manifest(&empty.into_inner().unwrap()).is_err());
         for (bytes, copies, _reason) in [
             (b"{}\n".to_vec(), 1, "missing field"),
-            (
-                [
-                    include_bytes!("../../environment/tests/support/web-artifact/web.json")
-                        .as_slice(),
-                    b"\n",
-                ]
-                .concat(),
-                1,
-                "not canonical",
-            ),
-            (
-                include_bytes!("../../environment/tests/support/web-artifact/web.json").to_vec(),
-                2,
-                "repeats web.json",
-            ),
+            ([WEB_MANIFEST, b"\n"].concat(), 1, "not canonical"),
+            (WEB_MANIFEST.to_vec(), 2, "repeats web.json"),
         ] {
             let mut archive = tar::Builder::new(Vec::new());
             for _ in 0..copies {

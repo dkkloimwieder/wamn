@@ -1,14 +1,5 @@
 use super::ensure;
 
-#[cfg(test)]
-pub(super) fn require_imports(bytes: &[u8], name: &str, interface: &str) -> anyhow::Result<()> {
-    let wit_component::DecodedWasm::Component(resolve, world) = wit_component::decode(bytes)?
-    else {
-        anyhow::bail!("connection authority needs a component binary")
-    };
-    require_import(&resolve, world, name, interface)
-}
-
 pub(super) fn require_import(
     resolve: &wit_parser::Resolve,
     world: wit_parser::WorldId,
