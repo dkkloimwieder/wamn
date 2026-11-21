@@ -10,7 +10,5 @@ pub mod nats_tls;
 pub mod operations;
 pub mod process_input;
 pub mod publish;
-pub use wamn_test_postgres as postgres;
-
 pub mod record_history;
 pub mod scratch;

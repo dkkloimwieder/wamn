@@ -7548,23 +7548,6 @@ dependencies = [
  "wamn-package",
  "wamn-postgres",
  "wamn-registry",
- "wamn-test-postgres",
-]
-
-[[package]]
-name = "wamn-test-postgres"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "hex",
- "rcgen",
- "rustix 1.1.6",
- "serde_json",
- "sqlx",
- "tokio",
- "url",
- "wamn-identity-protocol",
- "wamn-postgres",
 ]
 
 [[package]]
