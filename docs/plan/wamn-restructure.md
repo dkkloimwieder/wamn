@@ -249,6 +249,29 @@ Issues:
 
 Contracts that move here from Epic 14: the host's probes, signals, drain and NATS outage recovery; another project environment's credential is refused and never served; the request path, connection calls, workflows and Data change; the host scheduler user rights; the grant cache; result signing; the cold parse, the operation in the transaction and the write log claims; and any other session identity or write log contract that has no production function taking an open connection.
 
+Rulings on the scout (D, 2026-11-21):
+- X1, X2 and X3 are fixed in Epic 15, each after its own proposal. X1: nothing fills `wamn-control-administration-<org>`. X2: the environment chart never sets the host's `allowed_hosts`. X3: the org NetworkPolicy has no egress rule for connection calls.
+- Outputs: `cargo xtask journey-cluster` writes one outputs file that the tests read.
+- Bundle: journey-cluster reuses an existing bundle and builds one only when none is given.
+- Preflight: `cargo xtask preflight` is Rust in xtask.
+- Observer access: the observer pg_hba line is only in `values-kind.yaml`, never in the default or GCP values. The tests connect through a port-forward.
+- Observer rights: `pg_read_all_data` with BYPASSRLS, plus `pg_read_all_stats`, on kind only. The harness creates the role through the system admin.
+- Owner session: a port-forward to identity. Each org has a unique owner email.
+- Cleanup: a plain `wamn env delete`, which also runs when a test fails.
+- 4 test threads.
+- The NATS outage test has its own test target.
+- Grant cache: a journey test. A service test only with production constructors and no back door.
+- Kubernetes access from the tests: kube-rs.
+- Host user refusal: the test asks identity for a host user with a pod-bound token.
+- Startup check: journey-cluster records restarts and fails only on a pod that never becomes ready.
+- Fixtures: data_change for K24, signed_reads, and the missing palette components.
+- The five existing journey tests are rewritten on the new harness.
+
+Waits:
+- The write log expiry contract waits for the X4 Open item.
+- The deleted host pod drain test waits for the X5 Open item. Its own scout comes later.
+- Result signing waits for an object store on kind.
+
 End of the epic: the standard checks, `cargo test --workspace`, the ignored run, `cargo xtask preflight`, and `cargo test -p wamn-journey-tests -- --ignored` on kind.
 
 Next: Epic 16 (step 3.8, fourth part): rollback, env delete, apply again and env delete --data; NetworkPolicy and isolation between environments; the Pooler per-login limits under load. Then the crate graph epic.
@@ -260,6 +283,9 @@ Next: Epic 16 (step 3.8, fourth part): rollback, env delete, apply again and env
 - `registry.connection_principal` is not built. Project connection rows carry the principal ID.
 - Deferred: the edge device after the restructure; the four workflow behaviours.
 - Journey tests on kind, deferred from the first kind run. Epic 15: the Data change check for `client_acme_receiving` (K24) and the 10.13 per-pod scheduler users beyond host start. Epic 16: rollback, `env delete`, apply again, and `env delete --data` after a plain delete; the Pooler per-login limits and waits under load; that kind's CNI enforces NetworkPolicy, and that an environment's host cannot reach another environment's host, Postgres or Services.
+- X4: write log expiry (`crates/provision/src/audit_retention.rs`) runs only in `prune_record_history::prune`, which only `crates/environment/tests/history_retention_live.rs` calls. It has no production caller.
+- X5: `-host-namespaces=` is empty (T4, `hostNamespaces: []`), so the stock operator sends no stops to a deleted host pod in an org namespace. The host then drains the full `drain_bound_seconds` and exits 1. Its own scout comes later.
+- Kind has no object store, so result signing (`signed_reads`) cannot run on kind.
 - Health probes for wasm integration types: `connection_test` cannot run integration code outside an application workload. To be designed.
 - Edge device design: plant-network devices such as Modbus run at the edge, and the edge runtime gets its own address rule. A cloud integration that needs a private address (a customer network linked by VPN) is decided when a real case appears.
 - Native integration types (for example the NetSuite ODBC driver) are native Rust host plugins compiled into the wamn host, as wasmCloud advises for drivers with no WASI binding. Decide this when the first one is built.
@@ -2134,3 +2160,20 @@ Epic 14 closed on 2026-11-21 after review. cargo test --workspace: 617 passed in
 - Q1: the harness creates a role with SELECT only, through the system admin, in the kind cluster only. Reason: it is test setup in a test cluster. A product read-only login would be a new feature, and the old SET ROLE observer broke the F4 ruling.
 - Q2: one cluster per run, with its own org and environment per test. Reason: tests run in parallel, and this exercises T1: adding an org restarts nothing shared.
 - Q3: 3.8 splits again. Epic 15 is the harness, smoke as a test, the host contracts and the request path. Epic 16 is lifecycle, isolation and load. Reason: load and network tests are the most likely to fail on a laptop cluster.
+
+**Ruled (D, 2026-11-21): Epic 15 scout choices.**
+- X1, X2 and X3 are fixed in Epic 15. Each changes a permission, the network boundary or a chart values contract, so each comes first as a proposal. X4 and X5 are Open items. X5 touches T4 and gets its own scout.
+- C1: one outputs file from journey-cluster. Reason: nothing produces the test inputs today, and a missing entry fails.
+- C2: reuse an existing bundle. Reason: build-platform takes minutes.
+- C3: the preflight in Rust. Reason: the shell kit copies the Rust name rules.
+- C4: the observer pg_hba line only in `values-kind.yaml`. Reason: the project pg_hba rejects every undeclared role, and the default and GCP installs keep that boundary.
+- C5: `pg_read_all_data` with BYPASSRLS and `pg_read_all_stats`, on kind only. Reason: forced RLS hides the `wamn_run` rows, and the tests read `pg_locks` and `pg_stat_activity`.
+- C6 and C7: a port-forward to identity, and a unique owner email for each org. Reason: the identity path worked in the smoke runs, and a user belongs to one org.
+- C8: a plain `wamn env delete`. Beads record `env delete --data` without a terminal and `org delete`, which are not built.
+- C9: 4 test threads. Reason: CPU limits the machine to about 4 to 6 tests.
+- C10: the NATS outage test in its own target. Reason: it disturbs the shared NATS.
+- C11: the grant cache stays a journey test. A service test only with production constructors, and ruling 7 of Epic 14 stands otherwise.
+- C12: kube-rs. C13: the host user refusal through identity with a pod-bound token.
+- C14: the startup check records restarts and fails only on a pod that never becomes ready.
+- C16: fixture edits for data_change, signed_reads and the missing palette components. Result signing waits for an object store on kind.
+- C17: the five existing journey tests are rewritten on the new harness.
