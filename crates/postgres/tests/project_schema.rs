@@ -4,6 +4,7 @@ use std::fmt::Write as _;
 
 use std::path::Path;
 
+use postgres_protocol::escape::{escape_identifier, escape_literal};
 use wamn_provision::{WorkloadRoleFamily, WorkloadRoleIdentity, sql, workload_login};
 
 const APP_GENERATION_PASSWORD: &str = "test-owned-app-generation-password";
@@ -68,11 +69,48 @@ fn app_generation(
     .expect("App accepts project target")
 }
 
+/// Create an App login as CNPG would, with the grants that provisioning adds.
+fn app_login_sql(
+    database: &str,
+    login: &wamn_identity_protocol::LoginName,
+    password: &str,
+) -> String {
+    let family = WorkloadRoleFamily::App;
+    let role = escape_identifier(login.as_str());
+    format!(
+        "{} CREATE ROLE {role} LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD {}; \
+         GRANT {} TO {role} WITH ADMIN FALSE, INHERIT TRUE, SET FALSE; {}",
+        sql::ensure_workload_acl_role_sql(family),
+        escape_literal(password),
+        escape_identifier(family.acl_role()),
+        sql::grant_workload_login_sql(family, database, login)
+    )
+}
+
+/// Begin a fixture write under its principal and operation.
+async fn transaction<'connection>(
+    connection: &'connection mut sqlx::PgConnection,
+    principal: &wamn_identity_protocol::PrincipalId,
+    operation: &str,
+) -> Result<sqlx::Transaction<'connection, sqlx::Postgres>, sqlx::Error> {
+    let mut transaction = sqlx::Connection::begin(connection).await?;
+    wamn_postgres::bind_transaction_identity(
+        &mut transaction,
+        principal,
+        "",
+        "fixture",
+        Some(operation),
+        None,
+    )
+    .await?;
+    Ok(transaction)
+}
+
 /// Apply `deploy/sql/app-schema.sql` to a test database and assert the live,
 /// DB-enforced behavior, as the superuser (the harness prepares project-targeted
 /// App generations).
 #[tokio::test]
-#[ignore = "requires: postgres"]
+#[ignore = "requires: docker, bin:psql"]
 async fn app_schema_applies_and_enforces_isolation_on_postgres() {
     const U1: &str = "11111111-1111-1111-1111-111111111111";
     const U2: &str = "22222222-2222-2222-2222-222222222222";
@@ -81,39 +119,24 @@ async fn app_schema_applies_and_enforces_isolation_on_postgres() {
     const PROJECT_ENV_KEY_1: &str = "t1--dev--project";
     const PROJECT_ENV_KEY_2: &str = "t2--dev--project";
 
-    let _serialized = wamn_test_postgres::lock();
-    let mut case_server = wamn_test_postgres::start(&[]).unwrap();
-    let test_database = url::Url::parse(
-        case_server
-            .create_database("fixture_1")
-            .await
-            .unwrap()
-            .url(),
-    )
-    .unwrap();
+    let case_server = wamn_test_infrastructure::containers::start_postgres()
+        .await
+        .unwrap();
+    let test_database = case_server.create_database("fixture_1").await.unwrap();
     let url = test_database.as_str();
 
     let database = current_database(url);
     let project_env_key_1_app = app_generation(&database, &PROJECT_ENV_KEY_1.parse().unwrap());
 
-    let mut other_server = wamn_test_postgres::start(&[]).unwrap();
-    let other = url::Url::parse(
-        other_server
-            .create_database("fixture_extra")
-            .await
-            .unwrap()
-            .url(),
-    )
-    .unwrap();
+    let other_server = wamn_test_infrastructure::containers::start_postgres()
+        .await
+        .unwrap();
+    let other = other_server.create_database("fixture_extra").await.unwrap();
     let other_database = current_database(other.as_str());
     let project_env_key_2_app =
         app_generation(&other_database, &PROJECT_ENV_KEY_2.parse().unwrap());
-    let mut other_script = wamn_provision::test_database::login_sql(
-        WorkloadRoleFamily::App,
-        &other_database,
-        &project_env_key_2_app,
-        OTHER_APP_PASSWORD,
-    );
+    let mut other_script =
+        app_login_sql(&other_database, &project_env_key_2_app, OTHER_APP_PASSWORD);
     other_script.push_str(sql::revoke_public_connect_base_grants_sql());
     other_script.push_str(&record_history_sql());
     other_script.push_str(&record_history_app_grants_sql());
@@ -125,12 +148,7 @@ async fn app_schema_applies_and_enforces_isolation_on_postgres() {
 
     // Production preparation hardens the stable ACL carrier to passwordless
     // NOLOGIN/NOINHERIT and makes each project generation the only LOGIN.
-    let mut script = wamn_provision::test_database::login_sql(
-        WorkloadRoleFamily::App,
-        &database,
-        &project_env_key_1_app,
-        APP_GENERATION_PASSWORD,
-    );
+    let mut script = app_login_sql(&database, &project_env_key_1_app, APP_GENERATION_PASSWORD);
     script.push('\n');
 
     script.push_str(
@@ -317,8 +335,9 @@ fn run(url: &str, script: &str) -> String {
 }
 
 /// Row changes record the actor and operation, including key changes and cascades.
-#[sqlx::test(migrations = false)]
-async fn platform_relations_log_every_row_change_on_postgres(pool: sqlx::PgPool) {
+#[tokio::test]
+#[ignore = "requires: docker, bin:psql"]
+async fn platform_relations_log_every_row_change_on_postgres() {
     const U1: &str = "11111111-1111-1111-1111-111111111111";
     const U2: &str = "22222222-2222-2222-2222-222222222222";
     const U3: &str = "33333333-3333-3333-3333-333333333333";
@@ -326,8 +345,10 @@ async fn platform_relations_log_every_row_change_on_postgres(pool: sqlx::PgPool)
     const CHANGE: &str = "admin:change-history-fixture";
     const REMOVE: &str = "admin:remove-history-fixture";
 
-    let _serialized = wamn_test_postgres::lock();
-    let test_database = wamn_test_postgres::url(&pool);
+    let postgres = wamn_test_infrastructure::containers::start_postgres()
+        .await
+        .unwrap();
+    let test_database = postgres.create_database("history").await.unwrap();
     let url = test_database.as_str();
     let mut script = sql::ensure_app_acl_role_sql();
     script.push_str("\nDROP SCHEMA IF EXISTS platform CASCADE;\n");
@@ -426,13 +447,17 @@ async fn platform_relations_log_every_row_change_on_postgres(pool: sqlx::PgPool)
     run(url, &script);
 }
 
-#[sqlx::test(migrations = false)]
-async fn row_image_spells_timestamptz_as_the_platform_canonicalizer_on_postgres(
-    pool: sqlx::PgPool,
-) {
-    let _serialized = wamn_test_postgres::lock();
-    let test_database = wamn_test_postgres::url(&pool);
-    let url = test_database.as_str().to_owned();
+#[tokio::test]
+#[ignore = "requires: docker, bin:psql"]
+async fn row_image_spells_timestamptz_as_the_platform_canonicalizer_on_postgres() {
+    let postgres = wamn_test_infrastructure::containers::start_postgres()
+        .await
+        .unwrap();
+    let url = postgres
+        .create_database("history")
+        .await
+        .unwrap()
+        .to_string();
 
     let mut script = sql::ensure_app_acl_role_sql();
     script.push('\n');
@@ -472,13 +497,17 @@ async fn row_image_spells_timestamptz_as_the_platform_canonicalizer_on_postgres(
 /// spells the same column. A history read builds its current row image with
 /// this function. The session time zone is not UTC, and the values include
 /// zero and non-zero microseconds and infinity.
-#[sqlx::test(migrations = false)]
-async fn timestamptz_image_spells_timestamptz_as_the_platform_canonicalizer_on_postgres(
-    pool: sqlx::PgPool,
-) {
-    let _serialized = wamn_test_postgres::lock();
-    let test_database = wamn_test_postgres::url(&pool);
-    let url = test_database.as_str().to_owned();
+#[tokio::test]
+#[ignore = "requires: docker, bin:psql"]
+async fn timestamptz_image_spells_timestamptz_as_the_platform_canonicalizer_on_postgres() {
+    let postgres = wamn_test_infrastructure::containers::start_postgres()
+        .await
+        .unwrap();
+    let url = postgres
+        .create_database("history")
+        .await
+        .unwrap()
+        .to_string();
 
     let mut script = sql::ensure_app_acl_role_sql();
     script.push('\n');
@@ -558,11 +587,13 @@ fn install_history_probe(url: &str) {
 }
 
 #[tokio::test]
-#[ignore = "requires: postgres, bin:psql"]
+#[ignore = "requires: docker, bin:psql"]
 async fn application_history_keeps_bound_actor_and_records_scale_changes() {
-    let mut server = wamn_test_postgres::start(&[]).unwrap();
-    let database = server.create_database("application_history").await.unwrap();
-    let url = database.url();
+    let postgres = wamn_test_infrastructure::containers::start_postgres()
+        .await
+        .unwrap();
+    let database = postgres.create_database("application_history").await.unwrap();
+    let url = database.as_str();
     install_history_probe(url);
 
     run(
@@ -645,11 +676,13 @@ COMMIT;
 }
 
 #[tokio::test]
-#[ignore = "requires: postgres, bin:psql"]
+#[ignore = "requires: docker, bin:psql"]
 async fn history_refuses_unattributed_or_invalid_writes_atomically() {
-    let mut server = wamn_test_postgres::start(&[]).unwrap();
-    let database = server.create_database("history_refusal").await.unwrap();
-    let url = database.url();
+    let postgres = wamn_test_infrastructure::containers::start_postgres()
+        .await
+        .unwrap();
+    let database = postgres.create_database("history_refusal").await.unwrap();
+    let url = database.as_str();
     install_history_probe(url);
 
     run(
@@ -731,11 +764,13 @@ END $$;
 }
 
 #[tokio::test]
-#[ignore = "requires: postgres, bin:psql"]
+#[ignore = "requires: docker, bin:psql"]
 async fn history_tables_keep_the_entry_shape_and_reject_truncated_names() {
-    let mut server = wamn_test_postgres::start(&[]).unwrap();
-    let database = server.create_database("history_shape").await.unwrap();
-    let url = database.url();
+    let postgres = wamn_test_infrastructure::containers::start_postgres()
+        .await
+        .unwrap();
+    let database = postgres.create_database("history_shape").await.unwrap();
+    let url = database.as_str();
     install_history_probe(url);
 
     run(
@@ -798,10 +833,12 @@ END $$;
 }
 
 #[tokio::test]
-#[ignore = "requires: postgres, bin:psql"]
+#[ignore = "requires: docker, bin:psql"]
 async fn run_queue_stamps_scheduled_runs() {
-    let mut server = wamn_test_postgres::start(&[]).unwrap();
-    let database = server.create_database("run_queue_history").await.unwrap();
+    let postgres = wamn_test_infrastructure::containers::start_postgres()
+        .await
+        .unwrap();
+    let database = postgres.create_database("run_queue_history").await.unwrap();
     let script = format!(
         r"
 {}
@@ -832,15 +869,17 @@ COMMIT;
         ),
         wamn_provision::PlatformComponent::Provisioning.principal_id(),
     );
-    run(database.url(), &script);
+    run(database.as_str(), &script);
 }
 
 #[tokio::test]
-#[ignore = "requires: postgres, bin:psql"]
+#[ignore = "requires: docker, bin:psql"]
 async fn concurrent_history_uses_the_last_committed_row_image() {
-    let mut server = wamn_test_postgres::start(&[]).unwrap();
-    let database = server.create_database("concurrent_history").await.unwrap();
-    let url = database.url();
+    let postgres = wamn_test_infrastructure::containers::start_postgres()
+        .await
+        .unwrap();
+    let database = postgres.create_database("concurrent_history").await.unwrap();
+    let url = database.as_str();
     install_history_probe(url);
     run(
         url,
@@ -860,7 +899,7 @@ async fn concurrent_history_uses_the_last_committed_row_image() {
 
     for (id, commit_first) in [(1, true), (2, false)] {
         let mut earlier =
-            wamn_test_postgres::transaction(&mut first, &first_actor, "admin:advance-history")
+            transaction(&mut first, &first_actor, "admin:advance-history")
                 .await
                 .unwrap();
         sqlx::query(advance)
@@ -869,7 +908,7 @@ async fn concurrent_history_uses_the_last_committed_row_image() {
             .await
             .unwrap();
         let mut later =
-            wamn_test_postgres::transaction(&mut second, &second_actor, "admin:advance-history")
+            transaction(&mut second, &second_actor, "admin:advance-history")
                 .await
                 .unwrap();
         tokio::time::timeout(std::time::Duration::from_secs(10), async {
@@ -907,11 +946,11 @@ async fn concurrent_history_uses_the_last_committed_row_image() {
     }
 
     let mut earlier =
-        wamn_test_postgres::transaction(&mut first, &first_actor, "admin:advance-history")
+        transaction(&mut first, &first_actor, "admin:advance-history")
             .await
             .unwrap();
     let mut later =
-        wamn_test_postgres::transaction(&mut second, &second_actor, "admin:advance-history")
+        transaction(&mut second, &second_actor, "admin:advance-history")
             .await
             .unwrap();
     sqlx::query(advance)

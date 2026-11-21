@@ -7007,6 +7007,7 @@ dependencies = [
  "data-encoding",
  "jsonwebtoken 11.1.0",
  "nkeys",
+ "postgres-protocol",
  "ring",
  "serde",
  "serde_json",
@@ -7018,14 +7019,14 @@ dependencies = [
  "wamn-digest",
  "wamn-envelope",
  "wamn-environment",
- "wamn-identity",
  "wamn-identity-protocol",
  "wamn-kubernetes",
+ "wamn-platform-install",
  "wamn-postgres",
  "wamn-provision",
  "wamn-registry",
  "wamn-routes",
- "wamn-test-postgres",
+ "wamn-test-infrastructure",
  "zeroize",
 ]
 
@@ -7097,11 +7098,11 @@ dependencies = [
  "wamn-identity-client",
  "wamn-identity-protocol",
  "wamn-kubernetes",
+ "wamn-platform-install",
  "wamn-postgres",
  "wamn-provision",
  "wamn-registry",
  "wamn-test-infrastructure",
- "wamn-test-postgres",
  "zeroize",
 ]
 
@@ -7313,7 +7314,7 @@ dependencies = [
  "wamn-registry",
  "wamn-role",
  "wamn-scalar",
- "wamn-test-postgres",
+ "wamn-test-infrastructure",
 ]
 
 [[package]]
@@ -7346,13 +7347,12 @@ dependencies = [
  "wamn-identity-protocol",
  "wamn-package",
  "wamn-postgres",
- "wamn-provision",
  "wamn-record-history",
  "wamn-registry",
  "wamn-role",
  "wamn-run-state",
  "wamn-scalar",
- "wamn-test-postgres",
+ "wamn-test-infrastructure",
 ]
 
 [[package]]

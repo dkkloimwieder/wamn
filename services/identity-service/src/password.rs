@@ -669,15 +669,37 @@ mod tests {
     use tokio::net::TcpListener;
     use wamn_http_client::HttpClient;
     use wamn_provision::identity_role::identity_issuer_login;
+    use wamn_test_infrastructure::containers::{Postgres, start_postgres};
 
-    #[sqlx::test(migrations = false)]
-    async fn admission_stamps_every_bucket_as_the_platform_principal(pool: sqlx::PgPool) {
-        let _lock = wamn_test_postgres::lock();
-        let database = wamn_test_postgres::url(&pool);
+    /// Install the control store in a new `wamn_system` database and return its administrator URL.
+    async fn system(postgres: &Postgres) -> url::Url {
+        postgres.create_system_role().await.unwrap();
+        let url = postgres.create_database("wamn_system").await.unwrap();
+        let mut admin = wamn_postgres::connect(url.as_str()).await.unwrap();
+        wamn_platform_install::provision_system::install_control_store(&mut admin)
+            .await
+            .unwrap();
+        url
+    }
+
+    /// Create the issuer login as CNPG would, with the identity issuer surface.
+    fn issuer_login_sql(issuer: &str, password: &str) -> String {
+        use postgres_protocol::escape::{escape_identifier, escape_literal};
+        let role = identity_issuer_login(issuer).unwrap();
+        let role = escape_identifier(role.as_str());
+        format!(
+            "{} CREATE ROLE {role} LOGIN INHERIT PASSWORD {}; GRANT wamn_identity_issuer TO {role} WITH ADMIN FALSE, INHERIT TRUE, SET FALSE; GRANT CONNECT ON DATABASE wamn_system TO {role};",
+            wamn_provision::identity_role::grant_identity_issuer_surface_sql(),
+            escape_literal(password),
+        )
+    }
+
+    #[tokio::test]
+    #[ignore = "requires: docker"]
+    async fn admission_stamps_every_bucket_as_the_platform_principal() {
+        let postgres = start_postgres().await.unwrap();
+        let database = system(&postgres).await;
         let mut client = wamn_postgres::connect(database.as_str()).await.unwrap();
-
-        sqlx::raw_sql("DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_system') THEN CREATE ROLE wamn_system; END IF; END $$").execute(&mut client).await.map(drop).unwrap();
-        wamn_provision::test_database::system_schema(database.as_str()).await;
         for buckets in [
             vec![("global", 10)],
             vec![("source:test", 5), ("account:test", 5)],
@@ -713,33 +735,16 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires: postgres"]
+    #[ignore = "requires: docker"]
     async fn operator_invitation_delivery_failure_and_shared_admission() {
-        let mut pg = wamn_test_postgres::start(&[]).expect("owned PostgreSQL");
-        let db = pg.create_database("wamn_system").await.unwrap();
-        let mut admin = connect_database(db.url()).await.unwrap();
-        sqlx::raw_sql(sqlx::AssertSqlSafe(
-            (wamn_provision::sql::ensure_project_roles_sql()).to_string(),
-        ))
-        .execute(&mut admin.client)
-        .await
-        .map(drop)
-        .unwrap();
-        sqlx::raw_sql("CREATE ROLE wamn_system NOLOGIN; GRANT CREATE ON DATABASE wamn_system TO wamn_system; SET ROLE wamn_system").execute(&mut admin.client).await.map(drop).unwrap();
-        sqlx::raw_sql(wamn_provision::SYSTEM_SCHEMA_SQL)
-            .execute(&mut admin.client)
-            .await
-            .map(drop)
-            .unwrap();
-        sqlx::raw_sql("RESET ROLE")
-            .execute(&mut admin.client)
-            .await
-            .map(drop)
-            .unwrap();
+        let postgres = start_postgres().await.unwrap();
+        let mut url = system(&postgres).await;
+        let mut admin = connect_database(url.as_str()).await.unwrap();
         let issuer = "https://password-fixture.invalid";
-        sqlx::raw_sql(sqlx::AssertSqlSafe(
-            wamn_provision::test_database::issuer_login_sql(issuer, "fixture-password").unwrap(),
-        ))
+        sqlx::raw_sql(sqlx::AssertSqlSafe(issuer_login_sql(
+            issuer,
+            "fixture-password",
+        )))
         .execute(&mut admin.client)
         .await
         .map(drop)
@@ -781,7 +786,6 @@ mod tests {
         }
         tx.commit().await.unwrap();
 
-        let mut url = url::Url::parse(db.url()).unwrap();
         url.set_username(identity_issuer_login(issuer).unwrap().as_str())
             .unwrap();
         url.set_password(Some("fixture-password")).unwrap();
@@ -983,7 +987,7 @@ mod tests {
                 "carol@example.invalid",
                 "carol@example.invalid",
                 "Carol",
-                &actor.to_string()
+                &PlatformComponent::IdentityService.principal_id().to_string()
             ]
         );
         wamn_identity::disable_principal(&mut admin.client, bob.id())

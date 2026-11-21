@@ -16,7 +16,7 @@ pub mod sql;
 pub mod system_reader;
 pub mod transaction_identity;
 /// Test databases with the system control store minimum.
-#[cfg(any(test, feature = "test-util"))]
+#[cfg(feature = "test-util")]
 #[path = "../tests/support/database.rs"]
 pub mod test_database;
 pub mod workload_role;

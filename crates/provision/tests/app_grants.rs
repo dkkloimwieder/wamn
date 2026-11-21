@@ -1,15 +1,19 @@
 //! Least privilege through the authenticated login and catalog rules.
 
-#[path = "support/grants.rs"]
-mod grants;
+pub mod common;
+use common::grants;
 use wamn_provision::WorkloadRoleFamily;
 
-#[sqlx::test(migrations = false)]
-async fn application_logins_cannot_reach_mapped_platform_logins(pool: sqlx::PgPool) {
+#[tokio::test]
+#[ignore = "requires: docker"]
+async fn application_logins_cannot_reach_mapped_platform_logins() {
     use wamn_provision::{WorkloadRoleIdentity, workload_login};
 
-    let (mut fixture, _lock) = grants::family(&pool, WorkloadRoleFamily::App).await;
-    let database_url = wamn_test_postgres::url(&pool);
+    let postgres = wamn_test_infrastructure::containers::start_postgres()
+        .await
+        .unwrap();
+    let database_url = postgres.create_database("app_grants").await.unwrap();
+    let mut fixture = grants::family(database_url.clone(), WorkloadRoleFamily::App).await;
     let database = database_url.path().trim_start_matches('/');
     let query_login = workload_login(
         WorkloadRoleFamily::Query,
@@ -21,7 +25,7 @@ async fn application_logins_cannot_reach_mapped_platform_logins(pool: sqlx::PgPo
     .unwrap();
     grants::execute(
         &mut fixture.admin,
-        &wamn_provision::test_database::login_sql(
+        &common::database::login_sql(
             WorkloadRoleFamily::Query,
             database,
             &query_login,
@@ -29,12 +33,11 @@ async fn application_logins_cannot_reach_mapped_platform_logins(pool: sqlx::PgPo
         ),
     )
     .await;
-    wamn_provision::test_database::platform_migration_input(
+    common::database::platform_migration_input(
         database_url.as_str(),
         wamn_provision::migrations::MigrationDatabase::Project,
     )
-    .await
-    .unwrap();
+    .await;
 
     let violations: Vec<(
         wamn_identity_protocol::LoginName,

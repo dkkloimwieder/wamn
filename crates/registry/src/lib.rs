@@ -27,7 +27,7 @@ mod project_id;
 pub use org_id::{OrgId, ParseOrgIdError};
 pub use project_id::{ParseProjectIdError, ProjectId};
 
-#[cfg(any(test, feature = "test-util"))]
+#[cfg(feature = "test-util")]
 pub mod test_util;
 
 mod env_name;

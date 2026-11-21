@@ -3,10 +3,11 @@
 use sqlx::Connection as _;
 use wamn_environment::connections::references::refuse_environment_references;
 
-async fn refusal(pool: &sqlx::PgPool, relation: &str, expected: &str) {
-    let _lock = wamn_test_postgres::lock();
-    let database = wamn_test_postgres::url(pool);
-    let mut client = wamn_postgres::connect(database.as_str()).await.unwrap();
+async fn refusal(relation: &str, expected: &str) {
+    let postgres = wamn_test_infrastructure::containers::start_postgres()
+        .await
+        .unwrap();
+    let mut client = wamn_postgres::connect(postgres.admin_url()).await.unwrap();
 
     sqlx::raw_sql("CREATE SCHEMA platform; CREATE SCHEMA catalog; \
         CREATE TABLE platform.external_system(id uuid PRIMARY KEY); \
@@ -35,12 +36,14 @@ async fn refusal(pool: &sqlx::PgPool, relation: &str, expected: &str) {
     assert_eq!(error.field, expected);
 }
 
-#[sqlx::test(migrations = false)]
-async fn file_refuses_connection_deletion(pool: sqlx::PgPool) {
-    refusal(&pool, "platform.file", "file").await;
+#[tokio::test]
+#[ignore = "requires: docker"]
+async fn file_refuses_connection_deletion() {
+    refusal("platform.file", "file").await;
 }
 
-#[sqlx::test(migrations = false)]
-async fn record_refuses_external_system_deletion(pool: sqlx::PgPool) {
-    refusal(&pool, "platform.record_source", "record").await;
+#[tokio::test]
+#[ignore = "requires: docker"]
+async fn record_refuses_external_system_deletion() {
+    refusal("platform.record_source", "record").await;
 }

@@ -1,26 +1,27 @@
 //! The issuer changes identity state without changing project registry state.
 
-#[path = "support/grants.rs"]
-pub mod grants;
+pub mod common;
+use common::grants;
 
 #[tokio::test]
-#[ignore = "requires: postgres"]
+#[ignore = "requires: docker"]
 async fn identity_issuer_refusals_and_catalog_rules() {
-    let mut server = wamn_test_postgres::start(&[]).unwrap();
-    let database = server
+    let postgres = wamn_test_infrastructure::containers::start_postgres()
+        .await
+        .unwrap();
+    let mut url = postgres
         .create_database(wamn_provision::identity_role::IDENTITY_ISSUER_DATABASE)
         .await
         .unwrap();
-    wamn_provision::test_database::system(database.url()).await;
-    let mut admin = wamn_postgres::connect(database.url()).await.unwrap();
+    common::database::system(url.as_str()).await;
+    let mut admin = wamn_postgres::connect(url.as_str()).await.unwrap();
     let issuer = "https://identity.example.test";
     grants::execute(
         &mut admin,
-        &wamn_provision::test_database::issuer_login_sql(issuer, "issuer-test").unwrap(),
+        &common::database::issuer_login_sql(issuer, "issuer-test"),
     )
     .await;
     let login = wamn_provision::identity_role::identity_issuer_login(issuer).unwrap();
-    let mut url = url::Url::parse(database.url()).unwrap();
     url.set_username(login.as_str()).unwrap();
     url.set_password(Some("issuer-test")).unwrap();
     let mut connection = wamn_postgres::connect(url.as_str()).await.unwrap();

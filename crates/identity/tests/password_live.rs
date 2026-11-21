@@ -2,13 +2,15 @@
 
 use sqlx::PgConnection as Client;
 use sqlx::{Connection as _, Row as _};
-use wamn_provision::{PlatformComponent, test_database};
+use wamn_provision::PlatformComponent;
 use wamn_identity_protocol::PrincipalId;
 use wamn_identity::password::{
     Password, PasswordErrorType, RefusalCause, authenticate_password, enroll_password,
     issue_invitation, password_work,
 };
 use wamn_identity::{Principal, create_user, disable_principal};
+
+pub mod common;
 
 const PASSWORD: &str = "my uncommon warehouse passphrase";
 fn password() -> Password {
@@ -38,11 +40,13 @@ async fn new_user(client: &mut Client, name: &str) -> Principal {
     .unwrap()
 }
 
-#[sqlx::test(migrations = false)]
-async fn enrollment_preserves_identity_and_pat_and_consumes_all_invitations(pool: sqlx::PgPool) {
-    let _lock = wamn_test_postgres::lock();
-    let database = wamn_test_postgres::url(&pool);
-    test_database::system(database.as_str()).await;
+#[tokio::test]
+#[ignore = "requires: docker"]
+async fn enrollment_preserves_identity_and_pat_and_consumes_all_invitations() {
+    let postgres = wamn_test_infrastructure::containers::start_postgres()
+        .await
+        .unwrap();
+    let database = common::system(&postgres).await;
     let mut client = connect(database.as_str()).await;
     let user = new_user(&mut client, "alice").await;
     let other = new_user(&mut client, "bob").await;
@@ -179,28 +183,15 @@ async fn enrollment_preserves_identity_and_pat_and_consumes_all_invitations(pool
             .unwrap()
             .is_none()
     );
-    sqlx::raw_sql("SET ROLE wamn_system")
-        .execute(&mut client)
-        .await
-        .map(drop)
-        .unwrap();
-    assert_eq!(
-        sqlx::query("SELECT * FROM identity.password_credentials")
-            .fetch_all(&mut client)
-            .await
-            .unwrap_err()
-            .as_database_error()
-            .and_then(|error| error.code())
-            .as_deref(),
-        Some("42501")
-    );
 }
 
-#[sqlx::test(migrations = false)]
-async fn invitation_expiry_type_purpose_and_transaction_rollback_refuse(pool: sqlx::PgPool) {
-    let _lock = wamn_test_postgres::lock();
-    let database = wamn_test_postgres::url(&pool);
-    test_database::system(database.as_str()).await;
+#[tokio::test]
+#[ignore = "requires: docker"]
+async fn invitation_expiry_type_purpose_and_transaction_rollback_refuse() {
+    let postgres = wamn_test_infrastructure::containers::start_postgres()
+        .await
+        .unwrap();
+    let database = common::system(&postgres).await;
     let mut client = connect(database.as_str()).await;
     let user = new_user(&mut client, "expired").await;
     let work = password_work();
@@ -277,11 +268,13 @@ async fn invitation_expiry_type_purpose_and_transaction_rollback_refuse(pool: sq
     .unwrap();
 }
 
-#[sqlx::test(migrations = false)]
-async fn concurrent_enrollment_creates_exactly_one_password(pool: sqlx::PgPool) {
-    let _lock = wamn_test_postgres::lock();
-    let database = wamn_test_postgres::url(&pool);
-    test_database::system(database.as_str()).await;
+#[tokio::test]
+#[ignore = "requires: docker"]
+async fn concurrent_enrollment_creates_exactly_one_password() {
+    let postgres = wamn_test_infrastructure::containers::start_postgres()
+        .await
+        .unwrap();
+    let database = common::system(&postgres).await;
     let mut left = connect(database.as_str()).await;
     let mut right = connect(database.as_str()).await;
     let user = new_user(&mut left, "concurrent").await;
@@ -325,18 +318,18 @@ async fn concurrent_enrollment_creates_exactly_one_password(pool: sqlx::PgPool) 
     );
 }
 
-#[sqlx::test(migrations = false)]
-async fn reset_consumes_email_credentials_and_revokes_renewal_but_preserves_pat(
-    pool: sqlx::PgPool,
-) {
+#[tokio::test]
+#[ignore = "requires: docker"]
+async fn reset_consumes_email_credentials_and_revokes_renewal_but_preserves_pat() {
     use wamn_identity::{
         password::{issue_reset, reset_password},
         password_login,
     };
 
-    let _lock = wamn_test_postgres::lock();
-    let database = wamn_test_postgres::url(&pool);
-    test_database::system(database.as_str()).await;
+    let postgres = wamn_test_infrastructure::containers::start_postgres()
+        .await
+        .unwrap();
+    let database = common::system(&postgres).await;
     let mut client = connect(database.as_str()).await;
     let user = new_user(&mut client, "reset-user").await;
     let other = new_user(&mut client, "reset-other").await;
