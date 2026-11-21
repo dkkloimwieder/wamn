@@ -7510,6 +7510,7 @@ dependencies = [
  "hex",
  "hmac 0.13.0",
  "oci-client",
+ "postgres-protocol",
  "rcgen",
  "ring",
  "rustix 1.1.6",
@@ -7526,10 +7527,13 @@ dependencies = [
  "wamn-codegen",
  "wamn-component-policy",
  "wamn-digest",
+ "wamn-environment",
  "wamn-identity-protocol",
  "wamn-kubernetes",
  "wamn-package",
+ "wamn-platform-install",
  "wamn-postgres",
+ "wamn-provision",
  "wamn-registry",
 ]
 
