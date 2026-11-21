@@ -64,7 +64,7 @@ impl KubernetesStore {
             });
         }
         let params = PatchParams {
-            field_manager: Some("wamn-control".into()),
+            field_manager: Some("wamn".into()),
             ..PatchParams::default()
         };
         match tokio::time::timeout(
