@@ -109,8 +109,12 @@ fn retry_reason(mut error: &(dyn Error + 'static)) -> Option<(&'static str, Opti
     }
 }
 
-#[cfg(any(test, feature = "test-util"))]
-pub mod test_server;
+/// The old path of the shared loopback registry, for crates that still enable
+/// `test-util`.
+#[cfg(feature = "test-util")]
+pub mod test_server {
+    pub use wamn_test_infrastructure::publish::Server;
+}
 
 #[cfg(test)]
 mod tests {
@@ -118,7 +122,7 @@ mod tests {
     use crate::package_artifact::{Repository, bytes_sha256};
     use oci_client::client::{ClientConfig, ClientProtocol};
     use oci_client::secrets::RegistryAuth;
-    use test_server::Server;
+    use wamn_test_infrastructure::publish::Server;
 
     fn repository(server: &Server) -> Repository {
         Repository::with_auth(

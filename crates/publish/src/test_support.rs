@@ -1,21 +1,4 @@
-//! Fixture input for control unit tests.
-
-pub fn fixture_manifest() -> Vec<u8> {
-    wamn_fixture_package::manifest_bytes()
-}
-
-/// Copy the compiled schema fixture as an unpacked package.
-pub fn copy_schema_fixture(root: &std::path::Path) {
-    let source =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/apply_package/base");
-    let directory = crate::package_source::read_package_directory(&source).unwrap();
-    std::fs::create_dir_all(root.join("generated")).unwrap();
-    std::fs::create_dir_all(root.join("migrations")).unwrap();
-    std::fs::write(root.join("generated/wamn.json"), directory.manifest_bytes).unwrap();
-    for migration in directory.migrations {
-        std::fs::write(root.join(migration.relative_path), migration.bytes).unwrap();
-    }
-}
+//! Fixture input for publish unit tests.
 
 use std::collections::BTreeMap;
 use wamn_component_policy::{
@@ -59,11 +42,4 @@ pub fn closure_component(
         imports_fingerprint: DIGEST.parse().unwrap(),
         effects: Vec::new(),
     }
-}
-
-pub fn source_manifest() -> wamn_component_policy::PackageManifest {
-    serde_json::from_str(include_str!(
-        "../tests/fixtures/component_package/generated/wamn.json"
-    ))
-    .expect("the fixture source manifest parses")
 }

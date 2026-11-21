@@ -219,10 +219,8 @@ mod tests {
                 "package = {id = \"source_fixture\", version = \"1.0.0\"}\n",
             )
             .unwrap();
-            let mut manifest: serde_json::Value = serde_json::from_slice(include_bytes!(
-                "../../tests/fixtures/component_package/generated/wamn.json"
-            ))
-            .unwrap();
+            let mut manifest: serde_json::Value =
+                serde_json::from_str(wamn_test_infrastructure::publish::SOURCE_MANIFEST).unwrap();
             if with_migrations {
                 std::fs::create_dir(output.join("migrations")).unwrap();
                 std::fs::write(
@@ -285,7 +283,6 @@ mod tests {
     /// A route carries the relations its read reads and the revision field of
     /// its `get`, from the generated contract that publish reads.
     #[test]
-    #[ignore = "requires: input:wms, input:receiving"]
     fn a_read_route_carries_its_relations_and_a_get_its_revision() {
         let wms = app("wamn_wms");
         let get = package_route(
@@ -347,7 +344,6 @@ mod tests {
     /// A write route names the input field of its idempotency key, from the
     /// generated input contract. A read and a keyless write name none.
     #[test]
-    #[ignore = "requires: input:wms, input:fixture"]
     fn a_write_route_names_its_idempotency_field() {
         let wms = app("wamn_wms");
         let route = |operation: &wamn_package::registered_operation::RegisteredOperation| {

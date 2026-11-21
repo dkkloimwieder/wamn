@@ -17,6 +17,14 @@ fn fixture() -> wamn_test_infrastructure::scratch::ScratchRoot {
         )
         .unwrap();
     }
+    // The fixture imports the platform integration interface from the
+    // repository's `wit/`.
+    std::fs::create_dir_all(root.join("wit/wamn-integration")).unwrap();
+    std::fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../wit/wamn-integration/package.wit"),
+        root.join("wit/wamn-integration/package.wit"),
+    )
+    .unwrap();
     // The scratch repository keeps the same pinned Rust toolchain.
     std::fs::copy(
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../rust-toolchain.toml"),

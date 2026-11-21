@@ -2,8 +2,6 @@
 
 use sqlx::Row as _;
 pub(super) mod plan;
-#[cfg(test)]
-use plan::require_imports;
 
 use anyhow::{Context as _, ensure};
 use wamn_component_policy::PackageManifest;
@@ -172,25 +170,20 @@ mod tests {
         let mut resolve = wit_parser::Resolve::new();
         let package = resolve.push_str("typed.wit", "package example:meter@1.0.0; interface read { get: func() -> u16; } world client { import registers: read; }").unwrap();
         let world = resolve.select_world(&[package], Some("client")).unwrap();
-        let mut module =
-            wit_component::dummy_module(&resolve, world, wit_parser::ManglingAndAbi::Standard32);
-        wit_component::embed_component_metadata(
-            &mut module,
-            &resolve,
-            world,
-            wit_component::StringEncoding::UTF8,
-        )
-        .unwrap();
-        let bytes = wit_component::ComponentEncoder::default()
-            .module(&module)
-            .unwrap()
-            .validate(true)
-            .encode()
+        super::plan::require_import(&resolve, world, "registers", "example:meter/read@1.0.0")
             .unwrap();
-        super::require_imports(&bytes, "registers", "example:meter/read@1.0.0").unwrap();
-        assert!(super::require_imports(&bytes, "other", "example:meter/read@1.0.0").is_err());
-        assert!(super::require_imports(&bytes, "bad_name", "example:meter/read@1.0.0").is_err());
-        assert!(super::require_imports(&bytes, "registers", "example:meter/write@1.0.0").is_err());
+        assert!(
+            super::plan::require_import(&resolve, world, "other", "example:meter/read@1.0.0")
+                .is_err()
+        );
+        assert!(
+            super::plan::require_import(&resolve, world, "bad_name", "example:meter/read@1.0.0")
+                .is_err()
+        );
+        assert!(
+            super::plan::require_import(&resolve, world, "registers", "example:meter/write@1.0.0")
+                .is_err()
+        );
     }
 
     #[test]
@@ -208,25 +201,17 @@ mod tests {
             )
             .unwrap();
         let world = resolve.select_world(&[package], Some("client")).unwrap();
-        let mut module =
-            wit_component::dummy_module(&resolve, world, wit_parser::ManglingAndAbi::Standard32);
-        wit_component::embed_component_metadata(
-            &mut module,
-            &resolve,
-            world,
-            wit_component::StringEncoding::UTF8,
-        )
-        .unwrap();
-        let bytes = wit_component::ComponentEncoder::default()
-            .module(&module)
-            .unwrap()
-            .validate(true)
-            .encode()
-            .unwrap();
 
         assert!(
-            super::require_imports(&bytes, "files", "wasmcloud:blobstore/blobstore@0.1.0").is_err()
+            super::plan::require_import(
+                &resolve,
+                world,
+                "files",
+                "wasmcloud:blobstore/blobstore@0.1.0"
+            )
+            .is_err()
         );
-        super::require_imports(&bytes, "upstream", "wamn:connection/http@0.1.0").unwrap();
+        super::plan::require_import(&resolve, world, "upstream", "wamn:connection/http@0.1.0")
+            .unwrap();
     }
 }
