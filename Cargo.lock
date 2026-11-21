@@ -7106,7 +7106,6 @@ dependencies = [
  "wamn-identity-protocol",
  "wamn-package",
  "wamn-registry",
- "wamn-routes",
  "wamn-test-infrastructure",
 ]
 
