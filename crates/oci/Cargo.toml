@@ -12,7 +12,6 @@ test = false
 
 [features]
 sqlx = ["dep:sqlx"]
-test-util = ["dep:wamn-test-infrastructure"]
 
 [dependencies]
 wamn-oci-reference.workspace = true
@@ -32,7 +31,6 @@ bytes = { workspace = true }
 hyper = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 tracing = { workspace = true }
-wamn-test-infrastructure = { workspace = true, optional = true }
 
 [dev-dependencies]
 wash-runtime = { workspace = true, features = ["oci"] }

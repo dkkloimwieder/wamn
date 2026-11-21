@@ -6,8 +6,6 @@ edition.workspace = true
 license.workspace = true
 
 [features]
-# Requested by services/host and apps/wamn_receiving/tests until their groups drop it.
-test-util = []
 wasm_component_model_implements = ["wash-runtime/wasm_component_model_implements", "wamn-engine/wasm_component_model_implements"]
 
 [dependencies]
