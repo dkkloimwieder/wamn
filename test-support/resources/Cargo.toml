@@ -21,10 +21,12 @@ sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls"
 wamn-digest = { workspace = true, features = ["sqlx"] }
 wamn-kubernetes = { workspace = true }
 anyhow = { workspace = true }
+async-nats = { workspace = true, features = ["jetstream", "server_2_10"] }
 base64 = { workspace = true }
 hex = { workspace = true }
 ring = { workspace = true }
 rcgen = { workspace = true }
+rustls = { workspace = true, features = ["aws_lc_rs", "std", "tls12"] }
 wamn-registry = { workspace = true }
 wamn-environment = { workspace = true }
 wamn-platform-install = { workspace = true }
