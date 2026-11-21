@@ -49,6 +49,8 @@ pub(crate) fn inputs(
         .flat_map(|base| base.models.values().map(|model| model.schema.as_str()))
         .collect::<std::collections::BTreeSet<_>>();
     let lock: toml::Value = toml::from_str(include_str!("../../../Cargo.lock"))?;
+    // SQLx describes the statements, so its name, version and source decide
+    // the evidence. Its dependency list changes with unrelated lock edits.
     let sqlx = lock["package"]
         .as_array()
         .context("read SQLx identity")?
@@ -57,6 +59,13 @@ pub(crate) fn inputs(
             package["name"]
                 .as_str()
                 .is_some_and(|name| name.starts_with("sqlx"))
+        })
+        .map(|package| {
+            json!({
+                "name": package.get("name"),
+                "version": package.get("version"),
+                "source": package.get("source"),
+            })
         })
         .collect::<Vec<_>>();
     // Catalog selection and verification scaffolding come from KCL. The
