@@ -1,4 +1,4 @@
-use crate::client_ir::leaf_fields;
+use crate::client_fields::leaf_fields;
 
 /// Contract input paths that carry a platform value instead of operator input.
 const SUPPLIED_PATHS: [(&str, SuppliedType); 5] = [

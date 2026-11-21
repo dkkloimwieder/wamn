@@ -17,7 +17,6 @@ mod authoring;
 /// `wamn build`: the two-pass package build (docs/operations/building.md#wamn-build).
 pub mod build;
 mod client_fields;
-pub mod client_ir;
 pub mod client_plan;
 mod describe;
 mod describe_cache;

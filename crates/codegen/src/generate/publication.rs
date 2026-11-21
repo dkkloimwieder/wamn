@@ -1,7 +1,7 @@
 //! Inline publication schemas and OpenAPI from compiled operations.
 use super::{OperationDescription, insert_json_line};
 use crate::client_fields::{fields_of, input_fields_of};
-use crate::client_ir::FieldIr;
+use crate::client_fields::FieldIr;
 use crate::openapi::{add_route, document, scalar};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
