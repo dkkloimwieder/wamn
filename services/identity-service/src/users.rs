@@ -307,3 +307,53 @@ fn invalid() -> Response<Full<Bytes>> {
         br#"{"error":"invalid user management request"}"#.to_vec(),
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::password::tests::demo_members;
+    use wamn_test_infrastructure::containers::start_postgres;
+
+    #[tokio::test]
+    #[ignore = "requires: docker"]
+    async fn failed_delivery_consumes_only_the_new_invitation() {
+        let postgres = start_postgres().await.unwrap();
+        let (mut admin, url, members) = demo_members(
+            &postgres,
+            "https://invitation-fixture.invalid",
+            &[("alice", "alice@example.invalid", "Alice")],
+        )
+        .await;
+        let principal = *members[0].id();
+        let mut issuer = connect_database(url.as_str()).await.unwrap();
+        let earlier = issue_invitation(
+            &mut issuer.client,
+            &PlatformComponent::IdentityService.principal_id(),
+            &principal,
+        )
+        .await
+        .unwrap();
+        // A full disk refuses the local mail record.
+        let full = std::fs::OpenOptions::new()
+            .write(true)
+            .open("/dev/full")
+            .unwrap();
+        let mail = Mailer::Local(tokio::sync::Mutex::new(tokio::fs::File::from_std(full)));
+        let reply = invite(
+            &mut issuer.client,
+            &mail,
+            &"demo".parse().unwrap(),
+            principal,
+        )
+        .await;
+        assert_eq!(reply.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let unconsumed: Vec<bool> = sqlx::query_scalar(
+            "SELECT token_hash = $1 FROM identity.password_tokens WHERE consumed_at IS NULL",
+        )
+        .bind(wamn_digest::bytes_sha256(earlier.secret().as_bytes()))
+        .fetch_all(&mut admin.client)
+        .await
+        .unwrap();
+        assert_eq!(unconsumed, [true]);
+    }
+}

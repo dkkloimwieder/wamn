@@ -654,7 +654,7 @@ pub(super) fn throttled() -> Response<Full<Bytes>> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use std::io::Write as _;
     use std::os::unix::fs::OpenOptionsExt as _;
 
@@ -734,13 +734,16 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    #[ignore = "requires: docker"]
-    async fn operator_invitation_delivery_failure_and_shared_admission() {
-        let postgres = start_postgres().await.unwrap();
-        let mut url = system(&postgres).await;
+    /// Install the control store with the issuer login and one active member
+    /// of org `demo` per `(subject, email, display name)`. Return the
+    /// administrator connection, the issuer login URL and the members.
+    pub(crate) async fn demo_members(
+        postgres: &Postgres,
+        issuer: &str,
+        users: &[(&str, &str, &str)],
+    ) -> (crate::Database, url::Url, Vec<wamn_identity::Principal>) {
+        let mut url = system(postgres).await;
         let mut admin = connect_database(url.as_str()).await.unwrap();
-        let issuer = "https://password-fixture.invalid";
         sqlx::raw_sql(sqlx::AssertSqlSafe(issuer_login_sql(
             issuer,
             "fixture-password",
@@ -752,19 +755,14 @@ mod tests {
         let actor = PlatformComponent::Provisioning.principal_id();
         sqlx::query("INSERT INTO platform.login_principal(login,principal_id) VALUES(current_user,$1) ON CONFLICT(login) DO UPDATE SET principal_id=EXCLUDED.principal_id")
             .bind(actor).execute(&mut admin.client).await.unwrap();
-
-        let alice = wamn_identity::create_user(
-            &mut admin.client,
-            "alice",
-            "alice@example.invalid",
-            "Alice",
-        )
-        .await
-        .unwrap();
-        let bob =
-            wamn_identity::create_user(&mut admin.client, "bob", "bob@example.invalid", "Bob")
-                .await
-                .unwrap();
+        let mut members = Vec::new();
+        for (subject, email, display_name) in users {
+            members.push(
+                wamn_identity::create_user(&mut admin.client, subject, email, display_name)
+                    .await
+                    .unwrap(),
+            );
+        }
         let mut tx = admin.client.begin().await.unwrap();
         sqlx::query(
             "INSERT INTO platform.tx_identity(principal_id,role,application) VALUES($1,'','')",
@@ -777,18 +775,35 @@ mod tests {
             .execute(&mut *tx)
             .await
             .unwrap();
-        for user in [alice.id(), bob.id()] {
+        for member in &members {
             sqlx::query("INSERT INTO identity.org_memberships (principal_id, org, status) VALUES ($1, 'demo', 'active')")
-                .bind(user)
+                .bind(member.id())
                 .execute(&mut *tx)
                 .await
                 .unwrap();
         }
         tx.commit().await.unwrap();
-
         url.set_username(identity_issuer_login(issuer).unwrap().as_str())
             .unwrap();
         url.set_password(Some("fixture-password")).unwrap();
+        (admin, url, members)
+    }
+
+    #[tokio::test]
+    #[ignore = "requires: docker"]
+    async fn operator_invitation_recovery_and_shared_admission() {
+        let postgres = start_postgres().await.unwrap();
+        let issuer = "https://password-fixture.invalid";
+        let (mut admin, url, members) = demo_members(
+            &postgres,
+            issuer,
+            &[
+                ("alice", "alice@example.invalid", "Alice"),
+                ("bob", "bob@example.invalid", "Bob"),
+            ],
+        )
+        .await;
+        let [alice, bob] = <[_; 2]>::try_from(members).unwrap();
         let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create().unwrap();
         let key = scratch.path().join("envelope-key");
         std::fs::OpenOptions::new()
@@ -799,16 +814,11 @@ mod tests {
             .unwrap()
             .write_all(&[42; 32])
             .unwrap();
+        let mail_path = scratch.path().join("mail.jsonl");
         let mut service = IdentityService::connect(
             IdentityConfig::new(issuer, url.as_str())
                 .unwrap()
-                .with_resend(
-                    crate::mail::ResendConfig::new(
-                        "unused".into(),
-                        "WAMN <fixture@example.invalid>".into(),
-                    )
-                    .unwrap(),
-                ),
+                .with_local_mail(mail_path.clone()),
             wamn_envelope::encryption::Envelope::from_file(&key).unwrap(),
         )
         .await
@@ -842,42 +852,22 @@ mod tests {
                     .unwrap();
             }
         });
-        let mail_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let mail_endpoint = format!("http://{}/emails", mail_listener.local_addr().unwrap());
-        state.passwords.as_mut().unwrap().mail = Mailer::fixture(mail_endpoint);
-        let (sent, mut received) = tokio::sync::mpsc::channel(2);
-        let mail_task = tokio::spawn(async move {
-            for status in [
-                StatusCode::OK,
-                StatusCode::INTERNAL_SERVER_ERROR,
-                StatusCode::OK,
-                StatusCode::OK,
-            ] {
-                let (tcp, _) = mail_listener.accept().await.unwrap();
-                let sent = sent.clone();
-                let handler = service_fn(move |request: Request<Incoming>| {
-                    let sent = sent.clone();
-                    async move {
-                        assert_eq!(request.headers()["authorization"], "Bearer fixture-key");
-                        let bytes = request.into_body().collect().await.unwrap().to_bytes();
-                        sent.send(serde_json::from_slice::<serde_json::Value>(&bytes).unwrap())
-                            .await
-                            .unwrap();
-                        Ok::<_, Infallible>(response(status, "application/json", b"{}".to_vec()))
-                    }
-                });
-                // Close after each response so the next request gets its own status.
-                hyper::server::conn::http1::Builder::new()
-                    .keep_alive(false)
-                    .serve_connection(TokioIo::new(tcp), handler)
-                    .await
-                    .unwrap();
-            }
-        });
+        // Each delivered mail is the next line of the local mail file.
+        let mut delivered = 0;
+        let mut next_mail = || {
+            let line = std::fs::read_to_string(&mail_path)
+                .unwrap()
+                .lines()
+                .nth(delivered)
+                .map(str::to_owned)
+                .unwrap();
+            delivered += 1;
+            serde_json::from_str::<serde_json::Value>(&line).unwrap()
+        };
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let endpoint = format!("http://{}", listener.local_addr().unwrap());
         let requests = tokio::spawn(async move {
-            for _ in 0..13 {
+            for _ in 0..12 {
                 let (tcp, _) = listener.accept().await.unwrap();
                 let service = service.clone();
                 let handler = service_fn(move |request| {
@@ -907,8 +897,8 @@ mod tests {
             reply.json::<serde_json::Value>().await.unwrap()["status"],
             "accepted_for_delivery"
         );
-        let mail = received.recv().await.unwrap();
-        assert_eq!(mail["to"][0], "alice@example.invalid");
+        let mail = next_mail();
+        assert_eq!(mail["to"], "alice@example.invalid");
         let text = mail["text"].as_str().unwrap();
         let secret = text
             .lines()
@@ -917,25 +907,6 @@ mod tests {
             .unwrap();
         let reply = client.post(format!("{endpoint}/password/enroll")).json(&json!({"principal_id":alice.id().to_string().as_str(),"invitation":secret,"password":"a long enough password"})).send().await.unwrap();
         assert_eq!(reply.status(), 204);
-        let reply = client
-            .post(format!("{endpoint}/invitations"))
-            .bearer_auth("fixture-token")
-            .json(&json!({"principal_id":bob.id().to_string().as_str()}))
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(reply.status(), 503);
-        assert_eq!(
-            received.recv().await.unwrap()["to"][0],
-            "bob@example.invalid"
-        );
-        let remaining: i64 =
-            sqlx::query("SELECT count(*) FROM identity.password_tokens WHERE consumed_at IS NULL")
-                .fetch_one(&mut admin.client)
-                .await
-                .unwrap()
-                .get(0);
-        assert_eq!(remaining, 0);
         // `/users` creates a user once, folds its email into the subject and
         // reports whether it has a password credential.
         let mut users = Vec::new();
@@ -1017,7 +988,7 @@ mod tests {
             .unwrap();
         assert_eq!(recovery.status(), 202);
         assert_eq!(recovery.bytes().await.unwrap(), unknown_body);
-        let mail = received.recv().await.unwrap();
+        let mail = next_mail();
         assert!(!mail["subject"].as_str().unwrap().is_empty());
         let secret = mail["text"]
             .as_str()
@@ -1037,7 +1008,7 @@ mod tests {
             reset.json::<serde_json::Value>().await.unwrap()["notification"],
             "accepted_for_delivery"
         );
-        let notification = received.recv().await.unwrap();
+        let notification = next_mail();
         assert!(!notification["subject"].as_str().unwrap().is_empty());
         assert!(!notification["text"].as_str().unwrap().contains(secret));
         let repeated = client
@@ -1048,7 +1019,6 @@ mod tests {
             .unwrap();
         assert_eq!(repeated.status(), 400);
         review_task.abort();
-        mail_task.await.unwrap();
         requests.await.unwrap();
         // Concurrent requests through separate authorized connections share the limit.
         let mut jobs = tokio::task::JoinSet::new();
