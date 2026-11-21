@@ -97,11 +97,6 @@ impl Mailer {
         }
     }
 
-    #[cfg(test)]
-    pub(super) fn fixture(endpoint: String) -> Self {
-        Self::Resend(ResendMailer::fixture(endpoint))
-    }
-
     pub(super) async fn invite(
         &self,
         email: &str,
@@ -184,8 +179,6 @@ async fn record(
 pub(super) struct ResendMailer {
     config: ResendConfig,
     client: HttpClient,
-    #[cfg(test)]
-    endpoint: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -204,29 +197,7 @@ impl ResendMailer {
             .timeout(Duration::from_secs(5))
             .build()
             .map_err(|_| IdentityServiceError::new("Resend client initialization failed"))?;
-        Ok(Self {
-            config,
-            client,
-            #[cfg(test)]
-            endpoint: None,
-        })
-    }
-
-    #[cfg(test)]
-    pub(super) fn fixture(endpoint: String) -> Self {
-        Self {
-            config: ResendConfig::new(
-                "fixture-key".into(),
-                "WAMN <fixture@example.invalid>".into(),
-            )
-            .unwrap(),
-            client: HttpClient::builder()
-                .redirects(Redirects::None)
-                .timeout(Duration::from_secs(2))
-                .build()
-                .unwrap(),
-            endpoint: Some(endpoint),
-        }
+        Ok(Self { config, client })
     }
 
     pub(super) async fn invite(
@@ -243,8 +214,6 @@ impl ResendMailer {
             expires_at,
         ));
         let endpoint = "https://api.resend.com/emails";
-        #[cfg(test)]
-        let endpoint = self.endpoint.as_deref().unwrap_or(endpoint);
         self.send(endpoint, email, "Your WAMN invitation", &text)
             .await
     }
@@ -275,8 +244,6 @@ impl ResendMailer {
         text: &str,
     ) -> Result<(), IdentityServiceError> {
         let endpoint = "https://api.resend.com/emails";
-        #[cfg(test)]
-        let endpoint = self.endpoint.as_deref().unwrap_or(endpoint);
         self.send(endpoint, email, subject, text).await
     }
 
@@ -427,7 +394,6 @@ mod tests {
             .unwrap();
             assert!(!format!("{config:?}").contains("test-secret"));
             let mail = ResendMailer {
-                endpoint: None,
                 config,
                 client: HttpClient::builder()
                     .redirects(Redirects::None)
