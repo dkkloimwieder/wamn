@@ -2,10 +2,13 @@
 use wamn_schema_introspection::postgres::read_catalog;
 
 use sqlx::Row as _;
-#[sqlx::test(migrations = false)]
-async fn provenance_foreign_key_and_namespace_uniqueness_are_live_constraints(pool: sqlx::PgPool) {
-    let _lock = wamn_test_postgres::lock();
-    let database = wamn_test_postgres::url(&pool);
+#[tokio::test]
+#[ignore = "requires: docker"]
+async fn provenance_foreign_key_and_namespace_uniqueness_are_live_constraints() {
+    let server = wamn_test_infrastructure::containers::start_postgres()
+        .await
+        .unwrap();
+    let database = server.create_database("tests").await.unwrap();
     let mut client = wamn_postgres::connect(database.as_str()).await.unwrap();
 
     let reader = wamn_postgres::pool(database.as_str(), 1).await.unwrap();

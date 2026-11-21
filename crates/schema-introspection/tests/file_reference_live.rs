@@ -3,26 +3,27 @@
 use sqlx::Row as _;
 use wamn_schema_introspection::postgres::{PostgresIntrospectionErrorType, read_catalog};
 
-#[sqlx::test(migrations = false)]
-async fn file_reference_is_introspected_and_other_platform_keys_are_refused(pool: sqlx::PgPool) {
-    let _lock = wamn_test_postgres::lock();
-    let database = wamn_test_postgres::url(&pool);
+#[tokio::test]
+#[ignore = "requires: docker"]
+async fn file_reference_is_introspected_and_other_platform_keys_are_refused() {
+    let server = wamn_test_infrastructure::containers::start_postgres()
+        .await
+        .unwrap();
+    let database = server.create_database("tests").await.unwrap();
     let mut client = wamn_postgres::connect(database.as_str()).await.unwrap();
     let reader = wamn_postgres::pool(database.as_str(), 1).await.unwrap();
 
     // Bootstrap creates the target and the migration owner. The application
     // migration runs with REFERENCES(id), with no platform write authority.
-    sqlx::raw_sql(sqlx::AssertSqlSafe(
-        format!(
-            "CREATE SCHEMA platform; \
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "CREATE SCHEMA platform; \
          CREATE TABLE platform.file (id uuid PRIMARY KEY, blob_key text UNIQUE); \
          DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='file_reference_owner') \
            THEN CREATE ROLE file_reference_owner NOLOGIN NOSUPERUSER NOBYPASSRLS; \
          END IF; END $$; \
          GRANT CREATE ON DATABASE \"{}\" TO file_reference_owner;",
-            database.path().trim_start_matches('/')
-        ),
-    ))
+        database.path().trim_start_matches('/')
+    )))
     .execute(&mut client)
     .await
     .map(drop)

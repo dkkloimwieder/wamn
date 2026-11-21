@@ -17,11 +17,10 @@ wamn-record-history = { workspace = true }
 
 [dev-dependencies]
 wamn-postgres.workspace = true
-sqlx = { workspace = true, features = ["macros", "migrate"] }
 url = { workspace = true }
 wamn-fixture-package = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
-wamn-test-postgres = { workspace = true }
+wamn-test-infrastructure = { workspace = true }
 
 [lints]
 workspace = true

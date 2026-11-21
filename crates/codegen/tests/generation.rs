@@ -294,8 +294,14 @@ fn a_revision_carries_the_width_its_column_declares() {
 /// A filter on a text field can match by contains, and exact stays the
 /// default, which the contract leaves unstated (wamn-yxm6). The contract
 /// states the mode and the generated SQL matches a part of the column.
-#[sqlx::test(migrations = false)]
-async fn a_contains_filter_matches_a_part_of_a_text_field(pool: sqlx::PgPool) {
+#[tokio::test]
+#[ignore = "requires: docker"]
+async fn a_contains_filter_matches_a_part_of_a_text_field() {
+    let server = wamn_test_infrastructure::containers::start_postgres()
+        .await
+        .unwrap();
+    let database = server.create_database("tests").await.unwrap();
+    let pool = wamn_postgres::pool(database.as_str(), 4).await.unwrap();
     query_fixture(&pool).await;
     let ir = catalog(false);
     let mut contains = manifest();
@@ -448,8 +454,14 @@ fn prefix_range_and_is_null_filters_match_their_fields() {
 /// A query can search its declared text fields on the server (wamn-3nsf.2).
 /// The search binds after the filters and before the cursor, and it matches
 /// a part of any field in any case.
-#[sqlx::test(migrations = false)]
-async fn a_query_searches_its_declared_text_fields(pool: sqlx::PgPool) {
+#[tokio::test]
+#[ignore = "requires: docker"]
+async fn a_query_searches_its_declared_text_fields() {
+    let server = wamn_test_infrastructure::containers::start_postgres()
+        .await
+        .unwrap();
+    let database = server.create_database("tests").await.unwrap();
+    let pool = wamn_postgres::pool(database.as_str(), 4).await.unwrap();
     query_fixture(&pool).await;
     let ir = catalog_with_columns(&[("note", SqlValueType::Text, true)]);
     let mut search = manifest();
@@ -536,8 +548,14 @@ async fn a_query_searches_its_declared_text_fields(pool: sqlx::PgPool) {
 /// (wamn-3nsf.3). A read without the band reads the default one, as of the
 /// statement. A read that sends the band states its minimum, and a band with
 /// no default is always sent.
-#[sqlx::test(migrations = false)]
-async fn a_required_band_reads_its_default_and_states_its_minimum(pool: sqlx::PgPool) {
+#[tokio::test]
+#[ignore = "requires: docker"]
+async fn a_required_band_reads_its_default_and_states_its_minimum() {
+    let server = wamn_test_infrastructure::containers::start_postgres()
+        .await
+        .unwrap();
+    let database = server.create_database("tests").await.unwrap();
+    let pool = wamn_postgres::pool(database.as_str(), 4).await.unwrap();
     query_fixture(&pool).await;
     let ir = catalog(false);
     let mut band = manifest();

@@ -1092,8 +1092,13 @@ mod tests {
 
     use super::*;
 
-    #[sqlx::test(migrations = false)]
-    async fn verification_migration_accepts_a_platform_file_reference(pool: sqlx::PgPool) {
+    #[tokio::test]
+    #[ignore = "requires: docker"]
+    async fn verification_migration_accepts_a_platform_file_reference() {
+        let server = wamn_test_infrastructure::containers::start_postgres()
+            .await
+            .unwrap();
+        let database = server.create_database("tests").await.unwrap();
         let manifest = json!({
             "package": {"id": "files_fixture", "version": "0.1.0"},
             "required_platform_policy_contract": {"id": "files_fixture_data_access", "state": "satisfied"},
@@ -1111,7 +1116,6 @@ mod tests {
         fs::create_dir_all(root.join("migrations")).unwrap();
         fs::write(root.join("migrations/0001_initial.sql"),
             "CREATE TABLE files_fixture.attachment (id uuid CONSTRAINT attachment_id_pkey PRIMARY KEY, file_id uuid CONSTRAINT attachment_file_id_fkey REFERENCES platform.file(id), created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP)").unwrap();
-        let database = wamn_test_postgres::url(&pool);
         let result = migrate(
             database.as_str(),
             &root,

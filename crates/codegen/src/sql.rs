@@ -708,11 +708,15 @@ mod tests {
     use wamn_scalar::SqlValueType;
     use wamn_schema_introspection::ir::{Column, Constraint, Table};
 
-    #[sqlx::test(migrations = false)]
-    async fn create_returns_database_generated_integer_ids(pool: sqlx::PgPool) {
+    #[tokio::test]
+    #[ignore = "requires: docker"]
+    async fn create_returns_database_generated_integer_ids() {
         use wamn_schema_introspection::ir::{ColumnDefault, ColumnGeneration, IdentityMode};
+        let server = wamn_test_infrastructure::containers::start_postgres()
+            .await
+            .unwrap();
+        let database = server.create_database("tests").await.unwrap();
 
-        let database = wamn_test_postgres::url(&pool);
         let mut client = wamn_postgres::connect(database.as_str()).await.unwrap();
 
         let model: ModelDeclaration = serde_json::from_value(serde_json::json!({
@@ -795,9 +799,13 @@ mod tests {
         drop(client);
     }
 
-    #[sqlx::test(migrations = false)]
-    async fn query_seeks_and_pages_tied_values_in_both_directions(pool: sqlx::PgPool) {
-        let database = wamn_test_postgres::url(&pool);
+    #[tokio::test]
+    #[ignore = "requires: docker"]
+    async fn query_seeks_and_pages_tied_values_in_both_directions() {
+        let server = wamn_test_infrastructure::containers::start_postgres()
+            .await
+            .unwrap();
+        let database = server.create_database("tests").await.unwrap();
         let mut client = wamn_postgres::connect(database.as_str())
             .await
             .expect("connect to the query test database");

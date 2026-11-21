@@ -1,8 +1,8 @@
 //! Live PostgreSQL 18 tests of `wamn build` (docs/operations/building.md#wamn-build).
 //!
 //! Each test copies the platform fixture, without its committed `generated/`,
-//! into a directory of its own and builds it against the server of the test
-//! process. The build creates and drops its own verification database there.
+//! into a directory of its own and builds it against a server of its own. The
+//! build creates and drops its own verification database there.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -12,19 +12,15 @@ use sqlx::Row as _;
 use wamn_codegen::build::{BuildRequest, generate_package, package_output};
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "requires: postgres"]
+#[ignore = "requires: docker"]
 async fn concurrent_builds_initialize_history_on_one_server() -> anyhow::Result<()> {
     use std::time::Duration;
 
-    let mut server = wamn_test_postgres::start(&[])?;
+    let server = wamn_test_infrastructure::containers::start_postgres().await?;
     let first = server.create_database("first").await?;
     let second = server.create_database("second").await?;
-    let mut admin = wamn_postgres::connect(first.url()).await?;
+    let mut admin = wamn_postgres::connect(first.as_str()).await?;
 
-    sqlx::raw_sql("CREATE ROLE wamn_app NOLOGIN NOINHERIT")
-        .execute(&mut admin)
-        .await
-        .map(drop)?;
     // Hold both creators after their absence tests, before either role insert.
     sqlx::raw_sql("BEGIN; LOCK TABLE pg_catalog.pg_authid IN SHARE MODE")
         .execute(&mut admin)
@@ -36,8 +32,8 @@ async fn concurrent_builds_initialize_history_on_one_server() -> anyhow::Result<
     let second_package = second_workspace.package();
     let first_output = first_workspace.root.join("target/wamn");
     let second_output = second_workspace.root.join("target/wamn");
-    let first_request = BuildRequest::refresh(&first_package, &first_output, first.url());
-    let second_request = BuildRequest::refresh(&second_package, &second_output, second.url());
+    let first_request = BuildRequest::refresh(&first_package, &first_output, first.as_str());
+    let second_request = BuildRequest::refresh(&second_package, &second_output, second.as_str());
     let unlock = async {
         let waiting = tokio::time::timeout(Duration::from_secs(30), async {
             loop {
@@ -166,9 +162,13 @@ fn statement<'a>(manifest: &'a Value, operation: &str, name: &str) -> &'a Value 
 /// type is derived; a nullable declaration over a column that SQLx says cannot
 /// be null is kept; a not-null declaration over a column that SQLx says can be
 /// null is refused.
-#[sqlx::test(migrations = false)]
-async fn statement_types_are_derived_and_nullability_only_widens(pool: sqlx::PgPool) {
-    let database = wamn_test_postgres::url(&pool);
+#[tokio::test]
+#[ignore = "requires: docker"]
+async fn statement_types_are_derived_and_nullability_only_widens() {
+    let server = wamn_test_infrastructure::containers::start_postgres()
+        .await
+        .unwrap();
+    let database = server.create_database("tests").await.unwrap();
 
     let accepted = Workspace::new("accepted");
     let archive_sql = accepted
@@ -217,15 +217,38 @@ async fn statement_types_are_derived_and_nullability_only_widens(pool: sqlx::PgP
     .expect_err("a not-null declaration on a nullable column was accepted");
 }
 
+/// The columns of the projection view, with the expression that computes each.
+const PROJECTION_VIEW: [(&str, &str); 4] = [
+    ("id", "id"),
+    ("code", "code"),
+    ("edit_version", "edit_version"),
+    ("attributes", "to_jsonb(widget)"),
+];
+
 fn projection_view_workspace(name: &str) -> Workspace {
     let workspace = Workspace::new(name);
     let migration = workspace.package().join("migrations/0001_initial.sql");
-    let mut sql = fs::read_to_string(&migration).unwrap();
-    sql.push_str("\nCREATE VIEW inventory.widget_screen AS SELECT id, code, edit_version, to_jsonb(widget) AS attributes FROM inventory.widget;\n");
-    fs::write(migration, sql).unwrap();
+    let sql = fs::read_to_string(&migration).unwrap();
+    let columns = PROJECTION_VIEW
+        .iter()
+        .map(|(column, expression)| format!("{expression} AS {column}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    fs::write(
+        migration,
+        format!(
+            "{sql}\nCREATE VIEW inventory.widget_screen AS SELECT {columns} FROM inventory.widget;\n"
+        ),
+    )
+    .unwrap();
+    let selected = PROJECTION_VIEW
+        .iter()
+        .map(|(column, _)| format!(r#"{column} AS "{column}!""#))
+        .collect::<Vec<_>>()
+        .join(", ");
     fs::write(
         workspace.package().join("query/widget/list/list.sql"),
-        r#"SELECT id AS "id!", code AS "code!", edit_version AS "edit_version!", attributes AS "attributes!" FROM widget_screen ORDER BY id;"#,
+        format!("SELECT {selected} FROM widget_screen ORDER BY id;"),
     )
     .unwrap();
     workspace
@@ -259,8 +282,7 @@ const RECEIPT_FEED_VIEW: &str = "SELECT line.id, line.code, line.edit_version,
     JOIN inventory.widget_maker AS orders ON orders.id = line.maker_id
     JOIN inventory.widget_tag AS items ON items.id = line.tag_id";
 
-async fn authored_feed_build(pool: &sqlx::PgPool, workspace: &Workspace) -> anyhow::Result<()> {
-    let database = wamn_test_postgres::url(pool);
+async fn authored_feed_build(database: &url::Url, workspace: &Workspace) -> anyhow::Result<()> {
     let output_root = workspace.root.join("target/wamn");
     generate_package(&BuildRequest::refresh(
         &workspace.package(),
@@ -271,8 +293,13 @@ async fn authored_feed_build(pool: &sqlx::PgPool, workspace: &Workspace) -> anyh
     Ok(())
 }
 
-#[sqlx::test(migrations = false)]
-async fn authored_feed_refuses_a_one_to_many_view_without_grouping(pool: sqlx::PgPool) {
+#[tokio::test]
+#[ignore = "requires: docker"]
+async fn authored_feed_refuses_a_one_to_many_view_without_grouping() {
+    let server = wamn_test_infrastructure::containers::start_postgres()
+        .await
+        .unwrap();
+    let database = server.create_database("tests").await.unwrap();
     let workspace = authored_feed_workspace("feed-many", "SELECT orders.id, orders.name AS code,
         orders.edit_version::int4 AS edit_version, to_jsonb(orders) AS attributes
         FROM inventory.widget_maker AS orders JOIN inventory.widget AS line ON line.maker_id = orders.id");
@@ -280,18 +307,32 @@ async fn authored_feed_refuses_a_one_to_many_view_without_grouping(pool: sqlx::P
         "lists = {\"model\" = \"widget\", \"key_field\" = [\"id\"], \"display_field\" = \"code\"}",
         "lists = {model = \"widget_maker\", key_field = \"id\", display_field = \"code\"}",
     );
-    authored_feed_build(&pool, &workspace).await.unwrap_err();
+    authored_feed_build(&database, &workspace)
+        .await
+        .unwrap_err();
 }
 
-#[sqlx::test(migrations = false)]
-async fn authored_feed_refuses_a_base_table_without_a_link(pool: sqlx::PgPool) {
+#[tokio::test]
+#[ignore = "requires: docker"]
+async fn authored_feed_refuses_a_base_table_without_a_link() {
+    let server = wamn_test_infrastructure::containers::start_postgres()
+        .await
+        .unwrap();
+    let database = server.create_database("tests").await.unwrap();
     let workspace = authored_feed_workspace("feed-no-link", "SELECT line.id, line.code, line.edit_version,
         to_jsonb(items) AS attributes FROM inventory.widget AS line CROSS JOIN inventory.widget_tag AS items");
-    authored_feed_build(&pool, &workspace).await.unwrap_err();
+    authored_feed_build(&database, &workspace)
+        .await
+        .unwrap_err();
 }
 
-#[sqlx::test(migrations = false)]
-async fn authored_feed_refuses_statement_tables_and_joins(pool: sqlx::PgPool) {
+#[tokio::test]
+#[ignore = "requires: docker"]
+async fn authored_feed_refuses_statement_tables_and_joins() {
+    let server = wamn_test_infrastructure::containers::start_postgres()
+        .await
+        .unwrap();
+    let database = server.create_database("tests").await.unwrap();
     for (name, sql) in [
         (
             "table",
@@ -305,12 +346,19 @@ async fn authored_feed_refuses_statement_tables_and_joins(pool: sqlx::PgPool) {
         let workspace =
             authored_feed_workspace(&format!("feed-statement-{name}"), RECEIPT_FEED_VIEW);
         fs::write(workspace.package().join("query/widget/list/list.sql"), sql).unwrap();
-        authored_feed_build(&pool, &workspace).await.unwrap_err();
+        authored_feed_build(&database, &workspace)
+            .await
+            .unwrap_err();
     }
 }
 
-#[sqlx::test(migrations = false)]
-async fn authored_feed_refuses_statement_grouping_windows_and_limits(pool: sqlx::PgPool) {
+#[tokio::test]
+#[ignore = "requires: docker"]
+async fn authored_feed_refuses_statement_grouping_windows_and_limits() {
+    let server = wamn_test_infrastructure::containers::start_postgres()
+        .await
+        .unwrap();
+    let database = server.create_database("tests").await.unwrap();
     for (name, sql) in [
         (
             "group",
@@ -328,12 +376,19 @@ async fn authored_feed_refuses_statement_grouping_windows_and_limits(pool: sqlx:
         let workspace =
             authored_feed_workspace(&format!("feed-statement-{name}"), RECEIPT_FEED_VIEW);
         fs::write(workspace.package().join("query/widget/list/list.sql"), sql).unwrap();
-        authored_feed_build(&pool, &workspace).await.unwrap_err();
+        authored_feed_build(&database, &workspace)
+            .await
+            .unwrap_err();
     }
 }
 
-#[sqlx::test(migrations = false)]
-async fn authored_feed_refuses_a_base_table_without_history(pool: sqlx::PgPool) {
+#[tokio::test]
+#[ignore = "requires: docker"]
+async fn authored_feed_refuses_a_base_table_without_history() {
+    let server = wamn_test_infrastructure::containers::start_postgres()
+        .await
+        .unwrap();
+    let database = server.create_database("tests").await.unwrap();
     let workspace = authored_feed_workspace("feed-no-history", RECEIPT_FEED_VIEW);
     let original = r#"widget_tag = manifest.Model("widget_tag", _schema) {
             table = "widget_tag"
@@ -341,32 +396,39 @@ async fn authored_feed_refuses_a_base_table_without_history(pool: sqlx::PgPool) 
             server_owned_fields = ["edit_version"]
             audit_log = {columns = [], retention = "P30D"}"#;
     workspace.edit_manifest(original, &original.replace("P30D", "none"));
-    authored_feed_build(&pool, &workspace).await.unwrap_err();
+    authored_feed_build(&database, &workspace)
+        .await
+        .unwrap_err();
 }
 
-#[sqlx::test(migrations = false)]
-async fn authored_feed_refuses_a_key_other_than_the_root_id(pool: sqlx::PgPool) {
+#[tokio::test]
+#[ignore = "requires: docker"]
+async fn authored_feed_refuses_a_key_other_than_the_root_id() {
+    let server = wamn_test_infrastructure::containers::start_postgres()
+        .await
+        .unwrap();
+    let database = server.create_database("tests").await.unwrap();
     let workspace = authored_feed_workspace("feed-wrong-key", RECEIPT_FEED_VIEW);
     workspace.edit_manifest(
         "lists = {\"model\" = \"widget\", \"key_field\" = [\"id\"], \"display_field\" = \"code\"}",
         "lists = {\"model\" = \"widget\", \"key_field\" = [\"code\"], \"display_field\" = \"code\"}",
     );
-    authored_feed_build(&pool, &workspace).await.unwrap_err();
+    authored_feed_build(&database, &workspace)
+        .await
+        .unwrap_err();
 }
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "requires: postgres"]
+#[ignore = "requires: docker"]
 async fn projection_view_keeps_non_null_and_nullable_declarations() {
-    for nullable in [false, true] {
-        let mut database_server_database = wamn_test_postgres::start(&[]).unwrap();
-        let database = url::Url::parse(
-            database_server_database
-                .create_database("fixture")
-                .await
-                .unwrap()
-                .url(),
-        )
+    let server = wamn_test_infrastructure::containers::start_postgres()
+        .await
         .unwrap();
+    for nullable in [false, true] {
+        let database = server
+            .create_database(if nullable { "nullable" } else { "required" })
+            .await
+            .unwrap();
         let workspace = projection_view_workspace(if nullable {
             "view-nullable"
         } else {
@@ -399,21 +461,24 @@ async fn projection_view_keeps_non_null_and_nullable_declarations() {
             assert_eq!(field["nullable"], nullable, "{field}");
         }
         assert_eq!(projection["relations"][0]["table"], "widget_screen");
-        {
-            let observed = &(projection["relations"][0]["select_fields"]);
-            assert_eq!(observed.as_array().expect("array").len(), 4);
-            assert_eq!(observed[0], serde_json::json!("attributes"));
-            assert_eq!(observed[1], serde_json::json!("code"));
-            assert_eq!(observed[2], serde_json::json!("edit_version"));
-            assert_eq!(observed[3], serde_json::json!("id"));
-        };
+        let mut columns = PROJECTION_VIEW.map(|(column, _)| column);
+        columns.sort_unstable();
+        assert_eq!(
+            projection["relations"][0]["select_fields"],
+            serde_json::json!(columns)
+        );
     }
 }
 
 /// Owner declarations survive compilation at a caller-selected output root.
-#[sqlx::test(migrations = false)]
-async fn overlay_builds_inherit_owner_fields_from_compiled_manifests(pool: sqlx::PgPool) {
+#[tokio::test]
+#[ignore = "requires: docker"]
+async fn overlay_builds_inherit_owner_fields_from_compiled_manifests() {
     use wamn_codegen::build::generate_package;
+    let server = wamn_test_infrastructure::containers::start_postgres()
+        .await
+        .unwrap();
+    let database = server.create_database("tests").await.unwrap();
 
     let workspace = Workspace::new("inherited-fields");
     workspace.edit_manifest(
@@ -425,7 +490,6 @@ async fn overlay_builds_inherit_owner_fields_from_compiled_manifests(pool: sqlx:
         "ALTER TABLE inventory.widget ADD COLUMN updated_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP, ADD COLUMN updated_by uuid NOT NULL;",
     )
     .unwrap();
-    let database = wamn_test_postgres::url(&pool);
     let output = workspace.root.join("selected-output");
     generate_package(&BuildRequest::refresh(
         &workspace.package(),
@@ -456,9 +520,13 @@ async fn overlay_builds_inherit_owner_fields_from_compiled_manifests(pool: sqlx:
 }
 
 /// PostgreSQL describes the accessor's binds at the build interface.
-#[sqlx::test(migrations = false)]
-async fn a_statement_takes_exactly_the_parameters_its_accessor_binds(pool: sqlx::PgPool) {
-    let database = wamn_test_postgres::url(&pool);
+#[tokio::test]
+#[ignore = "requires: docker"]
+async fn a_statement_takes_exactly_the_parameters_its_accessor_binds() {
+    let server = wamn_test_infrastructure::containers::start_postgres()
+        .await
+        .unwrap();
+    let database = server.create_database("tests").await.unwrap();
     for (label, path, sql) in [
         (
             "list-binds",
@@ -483,11 +551,12 @@ async fn a_statement_takes_exactly_the_parameters_its_accessor_binds(pool: sqlx:
 }
 
 /// A declaration-only change appends a history migration without changing released checksums.
-#[sqlx::test(migrations = false)]
-async fn history_changes_append_immutable_versions_and_execute_during_build(
-    pool: sqlx::PgPool,
-) -> anyhow::Result<()> {
-    let database = wamn_test_postgres::url(&pool);
+#[tokio::test]
+#[ignore = "requires: docker"]
+async fn history_changes_append_immutable_versions_and_execute_during_build() -> anyhow::Result<()>
+{
+    let server = wamn_test_infrastructure::containers::start_postgres().await?;
+    let database = server.create_database("tests").await?;
     let workspace = Workspace::new("history-versions");
     let package = workspace.package();
     let output = workspace.root.join("target/wamn");

@@ -504,12 +504,30 @@ fn an_overlay_command_cannot_write_inherited_number_or_actor_fields() {
     }
 }
 
+/// A server whose project database the product installed, with the
+/// administrator URL of that database for the test's own tables and roles.
+async fn project_database() -> (wamn_test_infrastructure::containers::Postgres, url::Url) {
+    let server = wamn_test_infrastructure::containers::start_postgres()
+        .await
+        .unwrap();
+    let migration = server.create_project_database("fixture").await.unwrap();
+    wamn_platform_install::platform_migrations::install_project(
+        &mut wamn_postgres::connect(migration.as_str())
+            .await
+            .expect("connect the migration login"),
+    )
+    .await
+    .expect("install the project schemas");
+    let mut database = url::Url::parse(server.admin_url()).unwrap();
+    database.set_path("fixture");
+    (server, database)
+}
+
 /// Run the emitted statements under their emitted column grants, including
 /// an overlay that omits the owner's field declarations.
 #[tokio::test]
-#[ignore = "requires: postgres"]
+#[ignore = "requires: docker"]
 async fn live_generated_inserts_and_updates_stamp_only_changed_rows() {
-    let _lock = wamn_test_postgres::lock();
     let base = stamped_numbered();
     for manifest in [
         base.clone(),
@@ -523,21 +541,7 @@ async fn live_generated_inserts_and_updates_stamp_only_changed_rows() {
             std::slice::from_ref(&base),
         )
         .unwrap();
-        let mut database_server_database = wamn_test_postgres::start(&[]).unwrap();
-        let database = url::Url::parse(
-            database_server_database
-                .create_database("fixture")
-                .await
-                .unwrap()
-                .url(),
-        )
-        .unwrap();
-        wamn_provision::test_database::project(
-            &mut wamn_postgres::connect(database.as_str())
-                .await
-                .expect("connect the test database"),
-        )
-        .await;
+        let (_server, database) = project_database().await;
         sqlx::raw_sql("CREATE SCHEMA inventory; CREATE TABLE inventory.gadget (
             id uuid PRIMARY KEY DEFAULT gen_random_uuid(), part_code text UNIQUE NOT NULL,
             stock_id uuid NOT NULL, status text NOT NULL DEFAULT 'open',
@@ -603,16 +607,10 @@ async fn live_generated_inserts_and_updates_stamp_only_changed_rows() {
 }
 
 /// PostgreSQL accepts the generated cast of a rendered number into an integer field.
-#[sqlx::test(migrations = false)]
-async fn live_a_numbered_integer_field_inserts_the_rendered_number(pool: sqlx::PgPool) {
-    let _lock = wamn_test_postgres::lock();
-    let database = wamn_test_postgres::url(&pool);
-    wamn_provision::test_database::project(
-        &mut wamn_postgres::connect(database.as_str())
-            .await
-            .expect("connect the test database"),
-    )
-    .await;
+#[tokio::test]
+#[ignore = "requires: docker"]
+async fn live_a_numbered_integer_field_inserts_the_rendered_number() {
+    let (_server, database) = project_database().await;
     let mut manifest = numbered();
     manifest["sequences"]["gadget_number"]["pattern"] = json!("{seq:n}");
     manifest["models"]["gadget"]["fields"] = json!({"line_no": {"number": "gadget_number"}});

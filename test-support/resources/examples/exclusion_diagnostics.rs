@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 use wamn_codegen::{
     AuthoredSql, GenerationInput, StatementTransactionality, generate, introspect_package,
 };
-use wamn_test_infrastructure::{postgres, scratch::ScratchRoot};
+use wamn_test_infrastructure::{containers, scratch::ScratchRoot};
 
 fn sql_paths(value: &Value, paths: &mut BTreeSet<String>) {
     match value {
@@ -120,9 +120,9 @@ async fn main() -> anyhow::Result<()> {
         std::fs::create_dir_all(destination.parent().context("fixture file parent")?)?;
         std::fs::copy(root.join(name), destination)?;
     }
-    let mut server = postgres::start(&[])?;
+    let server = containers::start_postgres().await?;
     let database = server.create_database("exclusion_diagnostics").await?;
-    let mut client = wamn_postgres::connect(database.url()).await?;
+    let mut client = wamn_postgres::connect(database.as_str()).await?;
 
     sqlx::raw_sql("CREATE SCHEMA inventory; CREATE EXTENSION btree_gist; CREATE ROLE wamn_app; GRANT USAGE ON SCHEMA inventory TO wamn_app;").execute(&mut client).await.map(drop)?;
     sqlx::raw_sql(include_str!(
@@ -141,7 +141,7 @@ async fn main() -> anyhow::Result<()> {
         ALTER TABLE inventory.widget ADD CONSTRAINT widget_maker_id_excl EXCLUDE USING gist (maker_id WITH =);").execute(&mut client).await.map(drop)?;
     let fixture = diagnostic(&mut client, "UPDATE inventory.widget SET maker_id = (SELECT maker_id FROM inventory.widget WHERE code = 'priority') WHERE code = 'standard'").await?;
     generate_fixture(
-        database.url(),
+        database.as_str(),
         &scratch.path().join("apps/platform_fixture"),
     )
     .await?;
@@ -151,7 +151,7 @@ async fn main() -> anyhow::Result<()> {
         serde_json::to_vec(&json!({"fixture": fixture}))?,
     )?;
     drop(client);
-    server.stop()?;
+    drop(server);
     let task_target =
         std::env::var_os("CARGO_TARGET_DIR").map_or_else(|| root.join("target"), PathBuf::from);
     let task_target = if task_target.is_absolute() {

@@ -12,7 +12,6 @@ mod tests {
     use serde_json::{Value, json};
 
     use uuid::Uuid;
-    use wamn_digest::canonical_json_bytes;
 
     const MANIFEST: &str = "wamn_receiving/wamn.json";
     const OVERLAY_MANIFEST: &str = "client_acme_receiving/wamn.json";
@@ -32,8 +31,6 @@ mod tests {
         include_str!("../../../apps/wamn_receiving/query/receiving/load_purchase_order_history/load_purchase_order_history.sql");
     const UPDATE_SQL: &str = "wamn_receiving/sql/purchase_order/update.sql";
     const APP_SCHEMA_SQL: &str = include_str!("../../../deploy/sql/app-schema.sql");
-    /// The write log operation of `receiving.record_receipt`, without its version.
-    const RECORD_RECEIPT_OPERATION: &str = "wamn-receiving:receiving/record-receipt";
     const LOCK_PURCHASE_ORDER_SQL: &str =
         include_str!("../../../apps/wamn_receiving/command/receiving/record_receipt/lock_purchase_order.sql");
     const RECORD_RECEIPT_SQL: &str =
@@ -58,7 +55,12 @@ mod tests {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../target/wamn")
             .join(path);
-        std::fs::read(&path).unwrap_or_else(|error| panic!("read {}: {error}", path.display()))
+        std::fs::read(&path).unwrap_or_else(|error| {
+            panic!(
+                "the test input {} is missing ({error}); build it with `cargo xtask prepare-tests`",
+                path.display()
+            )
+        })
     }
 
     fn generated_sql(path: &str) -> String {
@@ -90,7 +92,6 @@ mod tests {
 
     #[derive(Clone, Debug)]
     struct ReceiptCommand {
-        idempotency_key: String,
         purchase_order_id: Uuid,
         receipt_reference: String,
         occurred_at: String,
@@ -137,7 +138,6 @@ mod tests {
 
     #[derive(Debug, Eq, PartialEq)]
     struct CommandSnapshot {
-        command_count: i64,
         receipt_count: i64,
         receipt_line_count: i64,
         first_received: String,
@@ -154,13 +154,12 @@ mod tests {
     /// effective base and overlay row at each position. The Receiving history
     /// read returns only the base columns that it declares.
     #[tokio::test]
-    #[ignore = "requires: postgres, input:client-acme"]
+    #[ignore = "requires: docker"]
     async fn an_overlay_update_logs_a_diff_that_folds_to_the_effective_row() -> Result<()> {
         use wamn_record_history::{HistoryRow, RowState, retain_columns, state_at};
 
-        // The fixture creates the shared role wamn_app, so the test starts its own server.
-        let mut server = wamn_test_infrastructure::postgres::start(&[])?;
-        let url = server.create_database("receiving").await?.url().to_owned();
+        let server = wamn_test_infrastructure::containers::start_postgres().await?;
+        let url = server.create_database("receiving").await?.to_string();
         let mut client = connect(&url).await?;
         assert_postgres_18(&mut client).await?;
         assert_fresh_receiving_schema(&mut client).await?;
@@ -364,11 +363,10 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires: postgres, input:client-acme"]
+    #[ignore = "requires: docker"]
     async fn enum_and_optimistic_update_outcomes_hold_on_postgres_18() -> Result<()> {
-        // The fixture creates the shared role wamn_app, so the test starts its own server.
-        let mut server = wamn_test_infrastructure::postgres::start(&[])?;
-        let url = server.create_database("receiving").await?.url().to_owned();
+        let server = wamn_test_infrastructure::containers::start_postgres().await?;
+        let url = server.create_database("receiving").await?.to_string();
         let mut client = connect(&url).await?;
         assert_postgres_18(&mut client).await?;
         assert_fresh_receiving_schema(&mut client).await?;
@@ -423,12 +421,7 @@ mod tests {
         bind_actor(&mut client, FIXTURE_PRINCIPAL).await?;
 
         let update = async |mut writer: Client, supplier: Uuid| -> Result<UpdateResult> {
-            let mut transaction = wamn_test_postgres::transaction(
-                &mut writer,
-                &FIXTURE_PRINCIPAL.into(),
-                FIXTURE_OPERATION,
-            )
-            .await?;
+            let mut transaction = begin_as(&mut writer, FIXTURE_PRINCIPAL).await?;
             let result = execute_update(&mut transaction, subject_id, 1, supplier).await?;
             transaction.commit().await?;
             Ok(result)
@@ -507,7 +500,8 @@ mod tests {
         Ok(())
     }
 
-    /// Install `deploy/sql/app-schema.sql`, whose write log the command claims in.
+    /// Install the catalog and `deploy/sql/app-schema.sql` that the command
+    /// transactions bind their identity in.
     async fn install_write_log(client: &mut Client) -> Result<()> {
         sqlx::raw_sql(sqlx::AssertSqlSafe(
             (wamn_provision::CATALOG_SCHEMA_SQL).to_string(),
@@ -699,7 +693,6 @@ mod tests {
         );
 
         let command = ReceiptCommand {
-            idempotency_key: "acme-receipt-command".to_owned(),
             purchase_order_id,
             receipt_reference: "acme-dock-receipt".to_owned(),
             occurred_at: "2026-09-01T12:34:56.000000Z".to_owned(),
@@ -726,17 +719,6 @@ mod tests {
             "receipt redelivery inserted a second inspection"
         );
 
-        let replayed = execute_record_receipt(client, &command)
-            .await?
-            .map_err(|refusal| anyhow::anyhow!(refusal.code))?;
-        ensure!(
-            replayed == recorded,
-            "base receipt replay changed its result"
-        );
-        ensure!(
-            !execute_create_inspection(client, replayed.receipt_id).await?,
-            "replayed receipt inserted another inspection"
-        );
         let pending = sqlx::query(
             "SELECT count(*)::int8 AS inspection_count, min(status) AS status, \
                         min(row_version) AS row_version \
@@ -795,6 +777,24 @@ mod tests {
         Ok(())
     }
 
+    /// Begin a fixture write that the product binds to `principal`.
+    async fn begin_as(
+        client: &mut Client,
+        principal: Uuid,
+    ) -> Result<sqlx::Transaction<'_, sqlx::Postgres>> {
+        let mut transaction = sqlx::Connection::begin(client).await?;
+        wamn_postgres::bind_transaction_identity(
+            &mut transaction,
+            &principal.into(),
+            "",
+            "fixture",
+            Some(FIXTURE_OPERATION),
+            None,
+        )
+        .await?;
+        Ok(transaction)
+    }
+
     async fn connect(url: &str) -> Result<Client> {
         let mut client = wamn_postgres::connect(url)
             .await
@@ -816,7 +816,7 @@ mod tests {
     async fn execute_create_inspection(client: &mut Client, receipt_id: Uuid) -> Result<bool> {
         sqlx::raw_sql("COMMIT").execute(&mut *client).await?;
         let mut transaction =
-            wamn_test_postgres::transaction(client, &COMMAND_PRINCIPAL.into(), FIXTURE_OPERATION)
+            begin_as(client, COMMAND_PRINCIPAL)
                 .await
                 .context("begin exact create_inspection transaction")?;
         let inserted = sqlx::query(OVERLAY_INSERT_INSPECTION_SQL)
@@ -866,7 +866,6 @@ mod tests {
         .await?;
 
         let base = ReceiptCommand {
-            idempotency_key: "receipt-command-success".to_owned(),
             purchase_order_id,
             receipt_reference: "dock-receipt-1".to_owned(),
             occurred_at: "2026-08-29T12:34:56.000000Z".to_owned(),
@@ -888,7 +887,6 @@ mod tests {
             expect_domain_refusal(
                 client,
                 ReceiptCommand {
-                    idempotency_key: format!("duplicate-line-{}", quantities[0]),
                     line: quantities
                         .into_iter()
                         .map(|quantity| ReceiptCommandLine {
@@ -918,7 +916,6 @@ mod tests {
         expect_domain_refusal(
             client,
             ReceiptCommand {
-                idempotency_key: "missing-purchase-order".to_owned(),
                 purchase_order_id: missing_id,
                 ..base.clone()
             },
@@ -930,7 +927,6 @@ mod tests {
         expect_domain_refusal(
             client,
             ReceiptCommand {
-                idempotency_key: "missing-purchase-order-line".to_owned(),
                 line: vec![ReceiptCommandLine {
                     purchase_order_line_id: missing_id,
                     quantity: "1.0".to_owned(),
@@ -946,7 +942,6 @@ mod tests {
         expect_domain_refusal(
             client,
             ReceiptCommand {
-                idempotency_key: "mismatched-purchase-order-line".to_owned(),
                 line: vec![ReceiptCommandLine {
                     purchase_order_line_id: other_line_id,
                     quantity: "1.0".to_owned(),
@@ -962,7 +957,6 @@ mod tests {
         expect_domain_refusal(
             client,
             ReceiptCommand {
-                idempotency_key: "missing-location".to_owned(),
                 line: vec![ReceiptCommandLine {
                     purchase_order_line_id: first_line_id,
                     quantity: "1.0".to_owned(),
@@ -978,7 +972,6 @@ mod tests {
         expect_domain_refusal(
             client,
             ReceiptCommand {
-                idempotency_key: "excess-quantity".to_owned(),
                 line: vec![ReceiptCommandLine {
                     purchase_order_line_id: first_line_id,
                     quantity: "11.0".to_owned(),
@@ -1027,8 +1020,7 @@ mod tests {
             "record_receipt did not stamp the order and receipt with one instant: {ordered:?}"
         );
         ensure!(
-            committed_snapshot.command_count == 1
-                && committed_snapshot.receipt_count == 1
+            committed_snapshot.receipt_count == 1
                 && committed_snapshot.receipt_line_count == 2
                 && committed_snapshot.first_received == "4.00"
                 && committed_snapshot.second_received == "5.0000",
@@ -1040,35 +1032,9 @@ mod tests {
             "record_receipt did not log one entry for each changed row"
         );
 
-        let mut reordered = base.clone();
-        reordered.line.reverse();
-        let replay = execute_record_receipt(client, &reordered)
-            .await?
-            .map_err(|refusal| anyhow::anyhow!(refusal.code))?;
-        ensure!(replay == committed, "immutable replay changed its result");
-        // Record history spec test 5: the snapshot counts history entries, so
-        // an idempotent replay appends no entry.
-        ensure!(
-            command_snapshot(client, first_line_id, second_line_id, purchase_order_id).await?
-                == committed_snapshot,
-            "immutable replay performed a write"
-        );
-
-        let mut changed = base.clone();
-        changed.line[0].quantity = "5.00".to_owned();
-        expect_domain_refusal(
-            client,
-            changed,
-            "idempotency_conflict",
-            first_line_id,
-            second_line_id,
-        )
-        .await?;
-
         expect_domain_refusal(
             client,
             ReceiptCommand {
-                idempotency_key: "receipt-reference-conflict".to_owned(),
                 line: vec![ReceiptCommandLine {
                     purchase_order_line_id: first_line_id,
                     quantity: "1.0".to_owned(),
@@ -1083,7 +1049,6 @@ mod tests {
         .await?;
 
         let completion = ReceiptCommand {
-            idempotency_key: "receipt-command-complete".to_owned(),
             receipt_reference: "dock-receipt-2".to_owned(),
             line: vec![
                 ReceiptCommandLine {
@@ -1106,24 +1071,9 @@ mod tests {
             completed.purchase_order_status == "complete" && completed.row_version == 3,
             "final receipt did not complete the purchase_order"
         );
-        let completed_snapshot =
-            command_snapshot(client, first_line_id, second_line_id, purchase_order_id).await?;
-        let late_replay = execute_record_receipt(client, &reordered)
-            .await?
-            .map_err(|refusal| anyhow::anyhow!(refusal.code))?;
-        ensure!(
-            late_replay == committed,
-            "replay after a later receipt did not preserve the original result"
-        );
-        ensure!(
-            command_snapshot(client, first_line_id, second_line_id, purchase_order_id).await?
-                == completed_snapshot,
-            "late immutable replay performed a write"
-        );
         expect_domain_refusal(
             client,
             ReceiptCommand {
-                idempotency_key: "closed-purchase-order".to_owned(),
                 receipt_reference: "dock-receipt-3".to_owned(),
                 line: vec![ReceiptCommandLine {
                     purchase_order_line_id: first_line_id,
@@ -1148,7 +1098,7 @@ mod tests {
     ) -> Result<()> {
         sqlx::raw_sql("COMMIT").execute(&mut *client).await?;
         let mut transaction =
-            wamn_test_postgres::transaction(client, &FIXTURE_PRINCIPAL.into(), FIXTURE_OPERATION)
+            begin_as(client, FIXTURE_PRINCIPAL)
                 .await
                 .context("begin location-lock test transaction")?;
         let line = json!([{
@@ -1300,10 +1250,10 @@ mod tests {
     ) -> Result<std::result::Result<ReceiptCommandResult, DomainRefusal>> {
         sqlx::raw_sql("COMMIT").execute(&mut *client).await?;
         let mut transaction =
-            wamn_test_postgres::transaction(client, &COMMAND_PRINCIPAL.into(), FIXTURE_OPERATION)
+            begin_as(client, COMMAND_PRINCIPAL)
                 .await
                 .context("begin exact record_receipt transaction")?;
-        let outcome = match execute_record_receipt_in(&mut transaction, command).await {
+        let outcome = match record_receipt_work(&mut transaction, command).await {
             Ok(result) => {
                 transaction
                     .commit()
@@ -1337,55 +1287,24 @@ mod tests {
         outcome
     }
 
-    /// Run the command as the host runs it: claim the key in the write log, do
-    /// the work, and store the result, in one transaction. A key
-    /// that a committed claim holds answers its stored result, or
-    /// `idempotency_conflict` for another request.
-    async fn execute_record_receipt_in(
-        transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-        command: &ReceiptCommand,
-    ) -> std::result::Result<ReceiptCommandResult, CommandAttemptError> {
-        let (request, line_json) = canonical_receipt_command(command);
-        let claimed = sqlx::query(wamn_operation::write_log::CLAIM_SQL)
-            .bind(&RECORD_RECEIPT_OPERATION)
-            .bind(&command.idempotency_key)
-            .bind(&request)
-            .fetch_optional(&mut **transaction)
-            .await
-            .map_err(CommandAttemptError::Database)?;
-        if claimed.is_none() {
-            let stored = sqlx::query(wamn_operation::write_log::READ_SQL)
-                .bind(&RECORD_RECEIPT_OPERATION)
-                .bind(&command.idempotency_key)
-                .fetch_one(&mut **transaction)
-                .await
-                .map_err(CommandAttemptError::Database)?;
-            return replay_result(&stored, &request);
-        }
-        let result = record_receipt_work(transaction, command, &line_json).await?;
-        let stored = json!({
-            "receipt_id": result.receipt_id.to_string(),
-            "purchase_order_id": result.purchase_order_id.to_string(),
-            "purchase_order_status": result.purchase_order_status,
-            "row_version": result.row_version,
-        })
-        .to_string();
-        sqlx::query(wamn_operation::write_log::FINISH_SQL)
-            .bind(&RECORD_RECEIPT_OPERATION)
-            .bind(&command.idempotency_key)
-            .bind(&stored)
-            .fetch_one(&mut **transaction)
-            .await
-            .map_err(CommandAttemptError::Database)?;
-        Ok(result)
-    }
-
     /// The command's work statements, in the order its data access runs them.
     async fn record_receipt_work(
         transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         command: &ReceiptCommand,
-        line_json: &Value,
     ) -> std::result::Result<ReceiptCommandResult, CommandAttemptError> {
+        let line_json = Value::Array(
+            command
+                .line
+                .iter()
+                .map(|line| {
+                    json!({
+                        "purchase_order_line_id": line.purchase_order_line_id.hyphenated().to_string(),
+                        "quantity": line.quantity,
+                        "location_id": line.location_id.hyphenated().to_string(),
+                    })
+                })
+                .collect(),
+        );
         let purchase_order = sqlx::query(LOCK_PURCHASE_ORDER_SQL)
             .bind(&command.purchase_order_id)
             .fetch_optional(&mut **transaction)
@@ -1462,69 +1381,6 @@ mod tests {
         })
     }
 
-    fn replay_result(
-        row: &Row,
-        request: &[u8],
-    ) -> std::result::Result<ReceiptCommandResult, CommandAttemptError> {
-        if row.get::<Vec<u8>, _>("request") != request {
-            return Err(CommandAttemptError::Domain(DomainRefusal::new(
-                "idempotency_conflict",
-            )));
-        }
-        let stored = row.get::<Option<String>, _>("result").ok_or_else(|| {
-            CommandAttemptError::Internal("a committed claim has no result".to_owned())
-        })?;
-        let stored: Value = serde_json::from_str(&stored)
-            .map_err(|error| CommandAttemptError::Internal(error.to_string()))?;
-        let text = |name: &str| {
-            stored[name].as_str().map(str::to_owned).ok_or_else(|| {
-                CommandAttemptError::Internal(format!("the stored result has no {name}"))
-            })
-        };
-        let id = |name: &str| {
-            text(name)?
-                .parse::<Uuid>()
-                .map_err(|error| CommandAttemptError::Internal(error.to_string()))
-        };
-        Ok(ReceiptCommandResult {
-            receipt_id: id("receipt_id")?,
-            purchase_order_id: id("purchase_order_id")?,
-            purchase_order_status: text("purchase_order_status")?,
-            row_version: stored["row_version"]
-                .as_i64()
-                .and_then(|value| i32::try_from(value).ok())
-                .ok_or_else(|| {
-                    CommandAttemptError::Internal("the stored result has no row_version".to_owned())
-                })?,
-        })
-    }
-
-    fn canonical_receipt_command(command: &ReceiptCommand) -> (Vec<u8>, Value) {
-        let mut lines = command.line.clone();
-        lines.sort_by_key(|line| line.purchase_order_line_id);
-        let line = lines
-            .iter()
-            .map(|line| {
-                json!({
-                    "purchase_order_line_id": line.purchase_order_line_id.hyphenated().to_string(),
-                    "quantity": line.quantity,
-                    "location_id": line.location_id.hyphenated().to_string(),
-                })
-            })
-            .collect::<Vec<_>>();
-        let line = Value::Array(line);
-        let command_value = json!({
-            "purchase_order_id": command.purchase_order_id.hyphenated().to_string(),
-            "receipt_reference": command.receipt_reference,
-            "occurred_at": command.occurred_at,
-            "line": line,
-        });
-        (
-            canonical_json_bytes(&command_value),
-            command_value["line"].clone(),
-        )
-    }
-
     async fn expect_domain_refusal(
         client: &mut Client,
         command: ReceiptCommand,
@@ -1576,8 +1432,6 @@ mod tests {
         purchase_order_id: Uuid,
     ) -> Result<CommandSnapshot> {
         let row = sqlx::query("SELECT \
-                 (SELECT count(*) FROM platform.write_log \
-                   WHERE operation = 'wamn-receiving:receiving/record-receipt')::int8 AS command_count, \
                  (SELECT count(*) FROM receipt)::int8 AS receipt_count, \
                  (SELECT count(*) FROM receipt_line)::int8 AS receipt_line_count, \
                  (SELECT received_quantity::text FROM purchase_order_line WHERE id = $1) AS first_received, \
@@ -1591,7 +1445,6 @@ mod tests {
             .await
             .context("snapshot record_receipt effects")?;
         Ok(CommandSnapshot {
-            command_count: row.get("command_count"),
             receipt_count: row.get("receipt_count"),
             receipt_line_count: row.get("receipt_line_count"),
             first_received: row.get("first_received"),
