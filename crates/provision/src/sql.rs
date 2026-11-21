@@ -178,8 +178,10 @@ pub const ADMINISTRATION_RELATIONS: [&str; 14] = [
 //
 // The T1 system database's two read-only consumers both authenticated as
 // `wamn_system`, the AUTHORIZATION owner of all three schemas below.
-// `deploy/sql/system-schema.sql` declares no policy and forces no row-level
-// security, so confinement in this database is PURELY GRANT-SHAPED: there is no
+// `deploy/sql/system-schema.sql` declares the `login_org` policies, but they
+// confine only members of `wamn_control` or `wamn_apply`, and it forces no
+// row-level security, so the owner bypasses them. For these consumers,
+// confinement in this database is PURELY GRANT-SHAPED: there is no
 // project predicate to satisfy and none is invented here. The owner credential is
 // therefore not merely wide, it is unconfined — it can INSERT an identity credential
 // row binding any token digest to any principal, or an `identity.project_roles`
