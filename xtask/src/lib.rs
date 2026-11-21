@@ -6,6 +6,7 @@ mod bench_data;
 mod kind;
 mod netsuite;
 mod platform;
+mod prepare_tests;
 mod process;
 mod repo_policy;
 mod submodule_pins;
@@ -55,6 +56,8 @@ enum Task {
     },
     /// Build one component through the shared guest compiler.
     BuildComponent { manifest: PathBuf },
+    /// Build application fixtures and print the paths that tests need.
+    PrepareTests,
     /// Print guest compiler flags.
     GuestRustflags,
     /// Build, push, and stamp one platform chart.
@@ -179,6 +182,7 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
             );
             Ok(())
         }
+        Task::PrepareTests => prepare_tests::run(&root).await,
         Task::GuestRustflags => {
             println!("{}", guest_rustflags(&root).await?);
             Ok(())
