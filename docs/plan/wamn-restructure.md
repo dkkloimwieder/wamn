@@ -214,7 +214,8 @@ Org → environment → project → application. One boundary per level.
 ## Tests
 
 - Three levels: unit (no services); service tests with real Postgres and NATS from testcontainers, marked `#[ignore]`, one per contract; journey tests on kind through `wamn deploy`, observed with a read-only login.
-- Stock `cargo test` and `cargo test -- --ignored`; Step 3.8 restores the `xtask` command that maps changed files to packages. Fixture applications are built in one step before the run; a test whose input is missing fails. `#[sqlx::test]` gives each test its own database. Timing tests use `tokio`'s paused clock. Step 3.8 removes `test-util` features and puts helpers in `tests/common/` or one dev-only crate. One SQL crate for grant refusals.
+- Stock `cargo test` and `cargo test -- --ignored`; Step 3.8 restores the `xtask` command that maps changed files to packages. Fixture applications are built in one step before the run; a test whose input is missing fails. Each test that needs Postgres or NATS starts its own container from the production digest through one helper in `wamn-test-infrastructure`. No shared server, no locks, no `#[sqlx::test]`. Timing tests use `tokio`'s paused clock. Step 3.8 removes `test-util` features.
+- One dev-only crate, `wamn-test-infrastructure`. A helper used by one crate only lives in that crate's `tests/common/`. Grant refusal tests live in `wamn-test-sql`.
 - During phases 1 and 2 testing is minimal: a step is checked by `cargo build` and `cargo clippy` only; tests that stop compiling are deleted; no new tests until step 3.8.
 - Standard epic checks include build, clippy, `cargo xtask build-platform`, applying the schema to a fresh local Postgres, and checking the largest application fixture's Helm release records against the 1 MiB limit.
 - Before a kind install, build platform images and check that every rendered image resolves. Use `kubectl apply --dry-run=server` with the CRDs installed. Run each rendered WAMN container command with `--help` appended and check the exit code.
@@ -236,16 +237,34 @@ Issues:
 13.0 Plan, doc only, done first. Record the Q1 and Q2 rulings. After 13.0, the other issues run in parallel.
 
 13.1 Delete the tests of code that is gone: `crates/provision/tests/{deploy_sql_authority,family_denial_matrix,record_history}.rs` and their fixtures, which use tables Epic 1 dropped; `crates/dev/tests/support/platform_schema.rs` and `platform_upgrade.rs`, which run the deleted `wamn-ctl`; `deploy/sql/postgres-init.sql`; every `panic!` stub that marks a product gap, with one bead per gap; `test-support/measure-tx-identity.py`, which becomes an `xtask` command if its job is still needed.
+- Ruled: `measure-tx-identity` becomes an `xtask` command, and `docs/operations/deployment.md` calls it. The Python script goes.
+- Ruled: `platform-policy/data-access.json` goes with the two tests in `development_assertions.rs` that read it.
+- Ruled: history assertions of the deleted provision tests move to `crates/postgres/tests/project_schema.rs`, grant assertions to `wamn-test-sql`.
+- Ruled: no product-gap stubs remain, so no gap beads are filed.
+- Ruled: the Q2 table stands: 108 ignored tests are ported, 14 are deleted. A test that needs only Wasmtime, loopback or a prepared input is ported at the lowest tier.
 
-13.2 Postgres and NATS come from testcontainers, with a `#[sqlx::test]` database per test. The images are the production digests: Postgres 18.6 and the platform's NATS. `wamn-test-postgres` and every `lock()` call go.
+13.2 Postgres and NATS come from testcontainers. The images are the production digests: Postgres 18.6 and the platform's NATS. `wamn-test-postgres` and every `lock()` call go.
+- Ruled: `testcontainers` =0.28.0 alone, with `GenericImage`. No `testcontainers-modules`.
+- Ruled: Postgres is `ghcr.io/cloudnative-pg/postgresql:18.6@sha256:899d3ed526b659d77935dde0e6bf2d69dbbf17d3d8c6486ca8cfd04bd3c18533` with a test-owned initdb.
+- Ruled: NATS is `nats:2.15.2-alpine@sha256:afae2fdbe2e326c65e1246cb83b9d05d319188734f3bd577ac8072daae78a10f`, pinned in the platform chart values. Tests use the same digest.
+- Ruled: each test that needs Postgres or NATS starts its own container through one helper and gets its own server. No `#[sqlx::test]`, cargo runner, custom test main, locks or `RUST_TEST_THREADS`.
 
 13.3 No `test-util` features: all 20 crates that define one lose it. Helpers live in `tests/common/` or one dev-only crate. Test-only constructors and back doors leave production code.
+- Ruled: the dev-only crate is `wamn-test-infrastructure`. `test-support/application` and `test-support/resources` fold into it. A helper used by one crate only goes into that crate's `tests/common/`.
+- Ruled: back doors are deleted. Tests use the production constructors with real configuration.
 
 13.4 Runner: `cargo test`, then `cargo test -- --ignored`. The `xtask` command that maps changed files to packages comes back. Fixture applications are built once before the run, and a test whose input is missing fails. `docs/operations/running-tests.md` is rewritten.
+- Ruled: a changed file that no package owns, or a change to `Cargo.toml` or `Cargo.lock`, selects the whole workspace.
+- Ruled: `cargo xtask prepare-tests` builds the fixture applications.
+- Ruled: `cargo test -- --ignored` leaves out the journey and cluster targets by package scope. They come in Epic 14.
 
 13.5 Waits: a sleep followed by an assert that nothing happened becomes a paused clock or an awaited event.
+- Ruled: an absence wait with no product event is tested at a lower tier. No product events are added.
 
 13.6 One SQL crate holds the grant refusal tests for every remaining login (AB7).
+- Ruled: the crate is `wamn-test-sql` at `test-support/sql/`.
+- Ruled: it covers every restricted deployed login, and each test logs in as the real login. Project: `wamn_migration`, `wamn_app_login`, `wamn_query_login`, `wamn_platform_login`, `wamn_cdc`. System: `wamn_platform_sql_<digest>`, `wamn_identity_issuer_<digest>`, `wamn_pooler_auth`. Per org: `wamn_control_<digest>`, `wamn_apply_<digest>`.
+- Ruled: `wamn_system_reader` is tested through `SET ROLE` and recorded apart.
 
 13.7 Small items: apps clippy (the three `unsafe_code` errors in `crates/guest/examples/numbering_refusal.rs:5` and the duplicate `panic_impl` in `test-support/fixtures/guests/connection-http-standard`); the field manager `wamn-control` in `crates/kubernetes/src/kubernetes.rs:67` becomes `wamn`.
 
@@ -2012,3 +2031,26 @@ Epic 12 closed on 2026-11-20 after review. The smoke run on kind passed.
 **Ruled (D, 2026-11-20): Epic 13 scope (step 3.8, first part).**
 - Q1: 3.8 splits into two epics. Epic 13 is the machinery and the existing tests. Epic 14 is service tests per contract and the journey tests on kind. Reason: Epic 14's contract list depends on what Epic 13 leaves standing, and the machinery work stays apart from the test cluster runs.
 - Q2: existing `#[ignore]` service tests that check a current contract are ported; the rest are deleted. Epic 14 adds only what is missing.
+
+**Ruled (D, 2026-11-20): Epic 13 scout choices and questions.**
+- Choice 1: `testcontainers` =0.28.0 alone. No `testcontainers-modules`: Postgres and NATS use `GenericImage`. Reason: the modules crate needs 0.27, and the 0.27.3 of `wash-runtime` is a wasmCloud dev dependency that does not enter the wamn lock.
+- Choice 2: the CNPG digest `ghcr.io/cloudnative-pg/postgresql:18.6@sha256:899d3ed526b659d77935dde0e6bf2d69dbbf17d3d8c6486ca8cfd04bd3c18533` with a test-owned initdb. Reason: tests use the production digest, and the CNPG image has no entrypoint that creates a database.
+- Choice 3: `nats:2.15.2-alpine@sha256:afae2fdbe2e326c65e1246cb83b9d05d319188734f3bd577ac8072daae78a10f` is pinned in the platform chart values. This chart values change is allowed in this epic, because digests are identity in wamn. Tests use the same digest.
+- Choices 4 and 5: neither scout option. Each test that needs Postgres starts its own CNPG container through one helper in the dev crate. The helper runs the test-owned initdb and returns the URL. Each test gets its own server, so tests run in parallel. No `#[sqlx::test]`, cargo runner, custom test main, locks or `RUST_TEST_THREADS`. NATS tests use the same pattern.
+- These two rulings change the F4 text "`#[sqlx::test]` per-test databases" (Z in "Tests (F4): research"). Reasons: `#[sqlx::test]` reads `DATABASE_URL` once, before the test binary starts, so a container that a test starts cannot supply it. Roles are server-wide, and the product installs fixed role names, so per-test databases on one server still collide. A cargo runner also wraps `cargo run` and `cargo bench`.
+- Choice 6: one dev-only crate, `wamn-test-infrastructure`. `test-support/application` and `test-support/resources` fold into it. A helper used by one crate only goes into that crate's `tests/common/`. Reason: this avoids the dev cycles the scout found, for example the provision setup.
+- Choice 7: grant tests go into the new `wamn-test-sql` at `test-support/sql/`, the one SQL crate of AB7.
+- Choice 8: a changed file that no package owns selects the whole workspace.
+- Choice 9: `cargo xtask prepare-tests` builds the fixtures.
+- Choice 10: `measure-tx-identity` becomes an `xtask` command. The Python script goes, and `docs/operations/deployment.md` calls the command.
+- Choice 11: an ignored test that needs only Wasmtime, loopback or a prepared input is ported at the lowest tier.
+- Choice 12: history assertions of the deleted provision tests move to `crates/postgres/tests/project_schema.rs`, and grant assertions move to `wamn-test-sql`.
+- Choice 13: an absence wait with no product event is tested at a lower tier. No product events are added.
+- Choice 14: back doors are deleted. Tests use the production constructors with real configuration. A test that cannot be written that way is reported, not worked around.
+- Question 1: 13.6 covers every restricted deployed login, each through the real login: `wamn_migration`, `wamn_app_login`, `wamn_query_login`, `wamn_platform_login`, `wamn_cdc`, `wamn_platform_sql_<digest>`, `wamn_identity_issuer_<digest>`, `wamn_pooler_auth`, `wamn_control_<digest>` and `wamn_apply_<digest>`. `wamn_system_reader` is tested through `SET ROLE` and recorded apart.
+- Question 2: `cargo test -- --ignored` leaves out the journey and cluster targets by package scope. They come in Epic 14.
+- Question 3: the NATS digest pin is allowed, as choice 3.
+- Question 4: no product-gap stubs remain, so no gap beads are filed.
+- Question 5: `platform-policy/data-access.json` goes with the two tests in `development_assertions.rs` that read it.
+- Question 6: a private Postgres 18 server is enough. The command compares commit cost with and without the identity insert on the same server. Absolute numbers under synchronous standbys belong with the Open item "The system database: a second instance, an ObjectStore and a ScheduledBackup".
+- The Q2 table stands: 108 tests are ported and 14 are deleted.
