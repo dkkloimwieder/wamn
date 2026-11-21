@@ -62,14 +62,9 @@ url = { workspace = true }
 
 [dev-dependencies]
 wamn-test-infrastructure = { workspace = true }
-futures-util = { workspace = true }
 sqlx = { workspace = true, features = ["macros", "migrate"] }
-wamn-operation = { workspace = true, features = ["test-util"] }
 opentelemetry_sdk = { workspace = true, features = ["trace", "testing"] }
 tracing-opentelemetry = { workspace = true }
-wamn-test-postgres = { workspace = true }
-rcgen = { workspace = true }
-rustls = { workspace = true, features = ["aws-lc-rs"] }
 tokio = { workspace = true, features = ["test-util"] }
 
 [lints]
