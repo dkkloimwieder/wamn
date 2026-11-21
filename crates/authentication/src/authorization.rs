@@ -202,7 +202,6 @@ mod project_reads;
 mod store;
 
 pub use project_reads::{
-    SessionIdentityError, SessionIdentityErrorType, UnprovisionedPrincipal, oauth_connection,
-    read_guest_grants, require_provisioned_principal,
+    SessionIdentityError, SessionIdentityErrorType, oauth_connection, read_guest_grants,
 };
 pub use store::Authorization;

@@ -35,7 +35,6 @@ wamn-run-state = { workspace = true }
 wash-runtime = { workspace = true }
 
 [dev-dependencies]
-url.workspace = true
 hmac.workspace = true
 jsonwebtoken.workspace = true
 ingress = { path = "../../guests/ingress" }
@@ -49,8 +48,6 @@ sqlx = { workspace = true, features = ["macros", "migrate"] }
 
 rcgen = { workspace = true }
 tokio = { workspace = true, features = ["test-util"] }
-wamn-provision = { workspace = true }
-wamn-test-infrastructure = { workspace = true }
 
 [lints]
 workspace = true

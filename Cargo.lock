@@ -7199,7 +7199,6 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tracing",
- "url",
  "uuid",
  "wamn-authentication",
  "wamn-authority",
@@ -7211,10 +7210,8 @@ dependencies = [
  "wamn-number-pattern",
  "wamn-package",
  "wamn-postgres",
- "wamn-provision",
  "wamn-registry",
  "wamn-run-state",
- "wamn-test-infrastructure",
  "wash-runtime",
 ]
 

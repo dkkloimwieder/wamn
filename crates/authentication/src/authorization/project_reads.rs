@@ -4,7 +4,6 @@ use std::sync::Arc;
 
 use anyhow::Context as _;
 use tracing::Instrument as _;
-use wamn_engine::entry_operation::postgres_types::PgError;
 use wamn_identity_protocol::AuthorityClass;
 use wamn_postgres::WamnPostgres;
 
@@ -48,101 +47,6 @@ fn principal_read_error(context: &'static str, source: sqlx::Error) -> SessionId
         context,
         source: source.into(),
     }
-}
-
-/// The bound principal has no `platform."user"` row for the project environment
-/// (`wamn-0h0g.9.19`).
-///
-/// A credential for such a principal is a provisioning defect: every write it
-/// makes records an actor that names no row. The bind refuses it, and the
-/// operation boundary translates this refusal to `permission-denied`.
-///
-/// It carries the project_env_key, the project database read, and the principal id, so
-/// an operator can find the missing row. It carries no connection material.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct UnprovisionedPrincipal {
-    project_env_key: wamn_registry::ProjectEnvKey,
-    project: wamn_registry::ProjectId,
-    principal_id: wamn_identity_protocol::PrincipalId,
-}
-
-impl UnprovisionedPrincipal {
-    /// The project_env_key whose `platform."user"` table was read.
-    #[must_use]
-    pub fn project_env_key(&self) -> &wamn_registry::ProjectEnvKey {
-        &self.project_env_key
-    }
-
-    /// The project database the read used.
-    #[must_use]
-    pub fn project(&self) -> &wamn_registry::ProjectId {
-        &self.project
-    }
-
-    /// The caller identity that named no row.
-    #[must_use]
-    pub fn principal_id(&self) -> &wamn_identity_protocol::PrincipalId {
-        &self.principal_id
-    }
-}
-
-impl std::fmt::Display for UnprovisionedPrincipal {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            formatter,
-            "principal {} has no platform.\"user\" row in project_env_key {} of project {}",
-            self.principal_id, self.project_env_key, self.project
-        )
-    }
-}
-
-impl std::error::Error for UnprovisionedPrincipal {}
-
-/// Read one `platform."user"` row and refuse the principal that owns none
-/// (`wamn-0h0g.9.19`).
-///
-/// The read uses the project_env_key's own guest login, for two reasons. It is the
-/// only authority class every composition root names, because the platform
-/// classes are unnamed when their generation is absent. And it is the
-/// credential that already holds `SELECT` on this table, so the test
-/// needs no new grant. The database is the org boundary.
-///
-/// A read that cannot run refuses the bind with its own error rather than
-/// the `UnprovisionedPrincipal` refusal. An unreachable table is an
-/// infrastructure defect and not an authorization fact, and the bind must
-/// fail closed either way.
-pub async fn require_provisioned_principal(
-    postgres: &WamnPostgres,
-    project_env_key: &wamn_registry::ProjectEnvKey,
-    project: &wamn_registry::ProjectId,
-    principal_id: &wamn_identity_protocol::PrincipalId,
-) -> anyhow::Result<()> {
-    let grants = read_guest_grants(postgres, project, project_env_key, principal_id)
-        .await
-        .map_err(|source| match source.downcast::<PgError>() {
-            Ok(source) => SessionIdentityError {
-                type_: SessionIdentityErrorType::Infrastructure,
-                context: "check out the principal grants connection",
-                source: source.into(),
-            }
-            .into(),
-            Err(source) => source,
-        })?;
-    if !grants.present {
-        tracing::warn!(
-            %project_env_key,
-            %project,
-            %principal_id,
-            "wamn:postgres: refusing a bind for a principal with no platform.\"user\" row"
-        );
-        return Err(UnprovisionedPrincipal {
-            project_env_key: project_env_key.to_owned(),
-            project: project.to_owned(),
-            principal_id: principal_id.to_owned(),
-        }
-        .into());
-    }
-    Ok(())
 }
 
 /// Find the local principal for a verified issuer and subject.
