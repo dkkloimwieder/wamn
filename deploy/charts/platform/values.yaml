@@ -88,7 +88,7 @@ nats:
         path: /spec/initContainers
         value:
           - name: wait-for-operator
-            image: nats:2.12.15-alpine
+            image: nats:2.12.15-alpine@sha256:b270f5e2428354c0335612694d7dd2fb588148e567a5757fdff325ef9c9332e6
             command: [sh, -ec]
             args:
               - |
@@ -137,7 +137,7 @@ nats:
         - /dev/null
         - http://127.0.0.1:8222/healthz
     image:
-      fullImageName: nats:2.15.2-alpine@sha256:afae2fdbe2e326c65e1246cb83b9d05d319188734f3bd577ac8072daae78a10f
+      fullImageName: nats:2.12.15-alpine@sha256:b270f5e2428354c0335612694d7dd2fb588148e567a5757fdff325ef9c9332e6
     resources:
       requests:
         cpu: 200m
