@@ -317,6 +317,18 @@ Next: Epic 15 (step 3.8, third part): the journey harness (`cargo xtask journey-
 - "wiring" still names workflows (`WiringDocument`, `runs.wiring_id`, `catalog.workflows.wiring_hash`; about 213 hits). Rename with a schema change.
 - After the first kind run:
   - Charts: `enablePDB: false` for single-instance project clusters; delete the dropped `affinity` and `topologySpreadConstraints` host values, or render them.
+- Crate graph review (2026-11-21). For one crate-graph epic after Epic 15.
+  - The grant SQL leaves `wamn-identity` for `wamn-authentication`. The host uses `wamn_identity::application::OPERATION_GRANT_LOCK_SQL` and `GrantError` (`services/host/src/host/application_route.rs:21-80`). Authorization belongs with authorization, so identity stays replaceable by a SaaS provider.
+  - The cloud metadata client (`wamn_oci::package_artifact::metadata::Metadata`) leaves `wamn-oci`. `wamn-envelope` uses it in `pod_identity.rs:9`, and that pulls the registry client into connection, authentication, operation, http, blobstore and the host.
+  - Rename `test-support/resources` to `test-support/infrastructure`, to match the crate name `wamn-test-infrastructure`.
+  - `wamn-postgres` splits into two crates instead of its `host` feature (engine, registry and pool code). Cargo unifies features within one build, so `wamn-operation` and `wamn-authentication` turn it on for every user.
+  - The plain shared types (for example `application_config.rs` and `native_routes.rs`) leave `wamn-engine`, so control-plane crates (`wamn-environment`, `wamn-connection`, `wamn-control`) stop linking wasmtime and wash-runtime.
+  - `wamn-environment` (24 wamn dependencies, 9,184 lines) splits by job: release chart planning, connection administration, environment lifecycle, package apply, history pruning.
+  - `wiring.rs` (the workflow graph) leaves `wamn-routes`, with the "wiring" rename that is already an Open item.
+  - Record the five dev-dependency cycles (for example `wamn-identity` with `wamn-environment`), and remove them where the move above allows.
+  - Extend the dependency lint (`repo-lint-dependencies` in `xtask/src/tasks.rs`) past its three crates.
+  - `wamn-registry` and `wamn-package` (30 dependents each) link sqlx with postgres, so `wamn-web`, `wamn-edge`, `wamn-event` and `wamn-broker` compile a database driver. The `sqlx::Type` impls must stay with their types (orphan rule), so a fix needs a feature or wrapper types. Decide with the edge device design, and add sqlx to the edge dependency lint then.
+  - "ProjectDatabase lives in wamn-connection": no type with that name exists at 07a737a88. Record it only when the exact type and file are known.
 
 # Part 2: Review log
 
@@ -2086,3 +2098,9 @@ Epic 13 closed on 2026-11-21 after review. cargo test --workspace: 603 passed. -
 - Choice 13: the manifest step moves into one public `wamn-publish` function. `flate2` becomes a direct xtask dependency; it is already in `Cargo.lock`.
 - Choices 1, 2, 3, 5 and 8 are not needed.
 - Fixes under the standing fix rule: delete `replica_refusals` and `test-support/resources/{event_broker,nats_tls}.rs`, which have no caller, and fix the stale comment at `crates/provision/src/sql.rs:181`.
+
+**Ruled (D, 2026-11-21): crate graph review.**
+- The items of the review are accepted as Open items for one crate-graph epic after Epic 15, not into Epic 14, because of the freeze.
+- Reason: Epic 14's tests sit in the test crates, and Epic 15's tests go through product commands, so the crate moves barely touch them.
+- Reason: sqlx in the hub crates costs compile time and binary size, but nothing connects through it. The fix waits for the edge device design.
+- The size of `manifest.rs` (3,136 lines) is not a defect by itself, and it is not listed.
