@@ -17,7 +17,6 @@ sqlx = ["dep:sqlx"]
 wamn-oci-reference.workspace = true
 wamn-package.workspace = true
 wamn-digest = { workspace = true }
-async-trait = { workspace = true }
 oci-client = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true, features = ["time", "fs", "net", "io-util", "rt", "macros", "sync"] }
