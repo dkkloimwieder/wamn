@@ -13,9 +13,16 @@ wamn-oci = { workspace = true }
 anyhow.workspace = true
 serde_json.workspace = true
 sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls"] }
-tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
-uuid = { workspace = true, features = ["v7"] }
-wamn-test-application.workspace = true
+tokio = { workspace = true, features = ["macros", "process", "rt-multi-thread", "time"] }
+uuid = { workspace = true, features = ["v4", "v7"] }
+wamn-routes.workspace = true
+wamn-identity-protocol.workspace = true
+wamn-http-client = { workspace = true, features = ["tls12"] }
+wamn-provision.workspace = true
+wamn-environment.workspace = true
+wamn-registry.workspace = true
+wamn-postgres.workspace = true
+wamn-test-infrastructure.workspace = true
 hyper = { workspace = true }
 
 [lints]

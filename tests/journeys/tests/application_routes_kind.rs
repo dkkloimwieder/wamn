@@ -1,9 +1,11 @@
 //! Route contracts through product deployment; SQL only observes results.
 
+mod common;
+
 use anyhow::Context as _;
+use common::{Application, Routes};
 use serde_json::{Value, json};
 use sqlx::Row as _;
-use wamn_test_application::{Application, Routes};
 
 /// A retry of `widget.record_batch` with its lines in another order and its
 /// amounts spelled another way answers the stored result, because the host

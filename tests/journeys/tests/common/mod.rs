@@ -17,7 +17,6 @@ pub struct Application {
     pub routes: Routes,
     pub caller: wamn_identity_protocol::PrincipalId,
     document: EnvironmentDocument,
-    scratch: ScratchRoot,
 }
 
 impl Application {
@@ -118,7 +117,6 @@ impl Application {
             routes,
             caller,
             document,
-            scratch,
         })
     }
 
@@ -142,18 +140,6 @@ impl Application {
             .await
             .map(drop)?;
         Ok(client)
-    }
-
-    pub fn target(&self) -> &EnvironmentDocument {
-        &self.document
-    }
-
-    pub async fn rebuild(&self, source: &Path) -> anyhow::Result<()> {
-        deploy(&self.scratch.path().join("environment.yaml"), source).await
-    }
-
-    pub async fn audience(&self) -> anyhow::Result<String> {
-        Ok(wamn_registry::name::org_audience(&self.document.settings.org))
     }
 
     async fn instance_suffix(

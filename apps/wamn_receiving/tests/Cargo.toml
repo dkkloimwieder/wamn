@@ -42,7 +42,6 @@ wamn-platform-install = { workspace = true }
 wamn-registry = { workspace = true }
 wamn-cdc-reader = { workspace = true }
 wamn-event = { workspace = true }
-wamn-test-application = { workspace = true }
 wamn-test-infrastructure = { workspace = true }
 wamn-run-state = { workspace = true }
 wamn-engine = { workspace = true }
