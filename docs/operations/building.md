@@ -35,6 +35,11 @@ The platform version lives in `deploy/charts/application/Chart.yaml`.
 The published application chart archive includes the platform charts.
 Application releases install the stamped chart at `platform/application` inside that archive.
 This keeps the platform files out of the Helm release record.
+Helm stores each release record in one Secret.
+A Secret holds at most 1 MiB (1048576 bytes).
+`cargo xtask helm-size` renders the application release of each package under `apps/*/wamn.k` and prints the size of its record.
+If a record is over 1 MiB, a build output is missing or Helm fails, the command fails.
+Run `cargo xtask prepare-tests` first to build the packages.
 Keep `version` and `appVersion` equal.
 `cargo xtask build-platform` reads this version to tag images and role components.
 The published defaults keep the host image at `platform.host.image`.

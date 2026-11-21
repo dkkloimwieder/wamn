@@ -2,18 +2,22 @@
 
 use anyhow::{Context as _, Result, ensure};
 use std::collections::{BTreeMap, VecDeque};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use wamn_build::{BuildMode, BuildRequest, DescribeMode, default_output_root, package_output};
 
-pub(super) async fn run(root: &Path) -> Result<()> {
+/// The application roots: each directory under `apps/` with a `wamn.k`.
+pub(super) fn applications(root: &Path) -> Result<Vec<PathBuf>> {
     let mut applications = std::fs::read_dir(root.join("apps"))?
         .map(|entry| entry.map(|entry| entry.path()))
         .collect::<std::io::Result<Vec<_>>>()?;
     applications.retain(|path| path.join("wamn.k").is_file());
     applications.sort_unstable();
+    Ok(applications)
+}
 
+pub(super) async fn run(root: &Path) -> Result<()> {
     let mut pending = VecDeque::new();
-    for path in applications {
+    for path in applications(root)? {
         let source = wamn_build::prepare_source(&path)
             .await
             .with_context(|| format!("read application {}", path.display()))?;

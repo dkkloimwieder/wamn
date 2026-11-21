@@ -3,6 +3,7 @@
 mod bench;
 mod bench_cloud;
 mod bench_data;
+mod helm_size;
 mod kind;
 mod measure_tx_identity;
 mod netsuite;
@@ -59,6 +60,8 @@ enum Task {
     BuildComponent { manifest: PathBuf },
     /// Build application fixtures and print the paths that tests need.
     PrepareTests,
+    /// Check each application's Helm release record against the 1 MiB limit.
+    HelmSize,
     /// Print guest compiler flags.
     GuestRustflags,
     /// Build, push, and stamp one platform chart.
@@ -186,6 +189,7 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
             Ok(())
         }
         Task::PrepareTests => prepare_tests::run(&root).await,
+        Task::HelmSize => helm_size::run(&root).await,
         Task::GuestRustflags => {
             println!("{}", guest_rustflags(&root).await?);
             Ok(())

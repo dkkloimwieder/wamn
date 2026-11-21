@@ -31,6 +31,7 @@ futures-util.workspace = true
 wamn-kubernetes.workspace = true
 cargo_metadata = "0.23"
 csv = "1"
+flate2 = "1.1.10"
 base64.workspace = true
 url.workspace = true
 clap = { workspace = true, features = ["derive", "env"] }
@@ -44,6 +45,8 @@ wamn-digest = { workspace = true, features = ["sqlx"] }
 wamn-codegen.workspace = true
 wamn-platform-install.workspace = true
 wamn-publish.workspace = true
+# Admission parses components with the CLI's component model features.
+wamn-engine = { workspace = true, features = ["wasm_component_model_implements"] }
 wamn-oci.workspace = true
 wamn-http-client = { workspace = true, features = ["tls12"] }
 wash-runtime = { workspace = true, features = ["oci"] }
