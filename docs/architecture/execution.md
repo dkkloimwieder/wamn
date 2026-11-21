@@ -663,7 +663,7 @@ Already admitted work retains its caller. Revocation does not cancel that work o
 Create an API identity with `wamn create-api-service`.
 Supply the project, environment, name, display name, one or more `--role` values, and `--lifetime-seconds`.
 The verb uses `WAMN_CONTROL_URL` and `WAMN_TOKEN`. The session selects the org.
-Control reads the project login from its administration map.
+Control builds the project login from `registry.environment_projects` when it connects.
 `--emit-secret` names a private JSON output file. The verb prints only the principal id.
 Control creates or reuses the service, grants its roles, and issues its PAT in one project transaction. An API service cannot receive the reserved `admin` role through this verb.
 

@@ -1,7 +1,5 @@
 //! Native operation adapters. Route admission always precedes these calls.
 
-use std::path::PathBuf;
-
 use serde_json::Value;
 use wamn_identity_protocol::PrincipalId;
 
@@ -11,7 +9,7 @@ mod service;
 pub(crate) struct Execution {
     pub org: wamn_registry::OrgId,
     pub worker: wamn_kubernetes::job::Worker,
-    pub administration: PathBuf,
+    pub logins: std::sync::Arc<crate::project_login::ProjectLogins>,
     pub control: sqlx::PgPool,
     pub registry_token_metadata: bool,
 }

@@ -21,8 +21,7 @@ pub use error::ProvisionError;
 pub use name::{
     CDC_OBJECT_PREFIX, CDC_SECRET_PREFIX, DB_PREFIX, INSTANCE_SUFFIX_LEN,
     MAX_DB_NAME_LEN, MAX_NAMESPACE_LEN, MAX_NAMESPACE_STEM_LEN, MAX_PROJECT_ID_LEN,
-    NAMESPACE_PREFIX, cdc_object_name, control_administration_key,
-    control_administration_secret_name, cdc_reader_name,
+    NAMESPACE_PREFIX, cdc_object_name, cdc_reader_name,
     project_env_database_name, project_env_key,
     project_env_namespace, project_env_secret_name, validate_project_env, validate_project_env_cdc,
 };

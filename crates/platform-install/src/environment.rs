@@ -155,6 +155,8 @@ pub fn set_operation_values<'a>(
     values["credentials"] = json!({
         "name":wamn_registry::credential_secret_name(&triple.org, &triple.project, &triple.env),
         "controlAccount":wamn_registry::name::control_service_account(&triple.org),
+        "platformLogin":wamn_registry::name::project_login_certificate(database, wamn_role::PLATFORM_LOGIN),
+        "serverCa":wamn_registry::name::project_server_ca_copy(cluster),
     });
     Ok(())
 }

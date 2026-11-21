@@ -1,7 +1,6 @@
 //! Private worker entry points for the environment chart's retention tasks.
 
 use sqlx::Connection as _;
-use std::path::Path;
 use wamn_postgres::ConnectionInput;
 
 async fn prune_identities(input: ConnectionInput<'_>) -> anyhow::Result<()> {
@@ -23,27 +22,17 @@ async fn prune_identities(input: ConnectionInput<'_>) -> anyhow::Result<()> {
 }
 
 /// Remove identities that no running transaction can still use.
-pub(crate) async fn identities(directory: &Path) -> anyhow::Result<()> {
-    let mut entries = tokio::fs::read_dir(directory).await?;
-    while let Some(entry) = entries.next_entry().await? {
-        let path = entry.path();
-        if entry.file_name().to_string_lossy().starts_with('.')
-            || !tokio::fs::metadata(&path)
-                .await
-                .is_ok_and(|metadata| metadata.is_file())
-        {
-            continue;
-        }
+pub(crate) async fn identities(
+    logins: &crate::project_login::ProjectLogins,
+) -> anyhow::Result<()> {
+    for (triple, instance) in logins.recorded().await? {
         let result = async {
-            let config = wamn_postgres::ConnectionConfig::read(&path).await?;
-            let login = wamn_provision::workload_role::platform_connection(config)?
-                .mounted_options(directory)
-                .await?;
+            let login = logins.login(&triple, &instance).await?;
             prune_identities(login.into()).await
         }
         .await;
         if let Err(error) = result {
-            tracing::warn!(%error, database = ?entry.file_name(), "transaction identity retention failed");
+            tracing::warn!(%error, %triple, "transaction identity retention failed");
         }
     }
     Ok(())

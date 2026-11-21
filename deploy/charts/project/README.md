@@ -16,7 +16,7 @@ It saves the applied environment YAML in the project's operations ConfigMap. Lat
 The CDC reader projects its client certificate and key from `cdcReader.database.credentials` under `/etc/wamn/db/<login-secret>/`. It projects `ca.crt` from `cdcReader.database.server_ca` into the same directory.
 Operation Jobs fetch their named database Secrets and stage the same files in their own volume.
 
-The `credentials` values name the empty Secret for the project release and the control ServiceAccount that can read and patch it.
+The `credentials` values name the empty Secret for the project release and the control ServiceAccount that can read and patch it. `credentials.platformLogin` and `credentials.serverCa` name the platform login certificate Secret and the server CA ConfigMap that the control ServiceAccount can get.
 Control writes data keys after install. Helm uses server-side apply and keeps the Secret on uninstall.
 The project NetworkPolicies allow its host group, control, the worker Jobs, and its CDC reader to reach the project database.
 Set `networkPolicy.objectStorage` to the CIDR and TCP port pairs that the database and backup process use.

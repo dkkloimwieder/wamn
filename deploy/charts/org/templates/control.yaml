@@ -57,7 +57,6 @@ spec:
             - {name: configuration, mountPath: /etc/wamn/control, readOnly: true}
             - {name: work, mountPath: /work}
             - {name: database, mountPath: /etc/wamn/db, readOnly: true}
-            - {name: administration, mountPath: /etc/wamn/control-administration, readOnly: true}
             - {name: identity-ca, mountPath: /etc/identity-ca, readOnly: true}
             - {name: identity-token, mountPath: /var/run/secrets/wamn-identity, readOnly: true}
             - {name: registry, mountPath: /credentials/registry, readOnly: true}
@@ -85,8 +84,6 @@ spec:
                     {{- range list $login $apply }}
                     - {key: ca.crt, path: {{ printf "%s/ca.crt" . | quote }}}
                     {{- end }}
-        - name: administration
-          configMap: {name: wamn-control-administration-{{ $namespace }}}
         - {name: identity-ca, configMap: {name: identity-ca}}
         - name: identity-token
           projected:
