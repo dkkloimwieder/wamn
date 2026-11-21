@@ -272,6 +272,7 @@ Issues:
 End of the epic: the standard checks, `cargo test`, `cargo test -- --ignored` on a machine with Docker, the preflight and the short smoke run.
 
 Next: Epic 14 (step 3.8, second part): one service test per contract with a real host in process, and the journey tests on kind.
+Grant tests that 13.6 did not probe: cross-org RLS for the control and apply logins (the org boundary in the system database); REFERENCES; pseudo-typed functions, trigger functions and aggregates.
 Epic 14 also covers these contracts, whose Epic 13 tests ruling 11 deleted: another project environment's credential is refused and never served; a cold connection parses inside the identity transaction; the transaction carries its operation, and a pooled connection keeps none; the transaction carries only the application its host bound; claims commit with their transaction, a rollback releases them, a competing claim waits and a lost session refuses; known results finish at host commit, and a missing finish rolls back; unfinished claims have a call bound, accept late completion and expire under retention.
 
 ## Open items
@@ -298,6 +299,7 @@ Epic 14 also covers these contracts, whose Epic 13 tests ruling 11 deleted: anot
 - After the first kind run: hand-written OpenTofu for GCP (A1, K10) and `infra.values.yaml`. Epic 10 targets kind, with a GCP values file checked by `values.schema.json`.
 - After the first kind run: three NATS pods with three-replica streams.
 - Move the NATS server from 2.12.15 to the vendored chart's 2.15.2. Decide with its own kind run.
+- The Helm size check has no xtask command. Add cargo xtask helm-size, so the standard check is one command.
 - Later option: custom domains for applications through a verified-domain list (E).
 - Later option: integration types owned by one org (Q4).
 - Later option: users in more than one org, through an invitation the user accepts (grant ruling, change 1).
@@ -2077,3 +2079,5 @@ Epic 12 closed on 2026-11-20 after review. The smoke run on kind passed.
 - Result of question 11: all eight tests made `wamn_app_<hash>` logins on a loopback port, which production never issues. `bind_host_project` issues only `wamn_app_login` or `wamn_query_login` on `<cluster>-rw.<org>.svc.cluster.local` port 5432, so no test container can serve it. Seven tests are deleted, and their contracts are on the Epic 14 line. The eighth is the test of question 12.
 - Question 12: `require_provisioned_principal`, `UnprovisionedPrincipal` and its test in `crates/operation/src/session_identity/tests.rs` are deleted. Reason: production never calls it, and production fails closed. `authorization.rs::held_grants` returns no grants when `!grants.active || !grants.present`, and `authorization/store.rs:182` needs `grants.present && grants.active`. `crates/operation/src/host.rs:185` checks only `grants.active`, but `principal_grants_from_rows` leaves `active` false when no `platform."user"` row exists, so it needs no fix.
 - Count: 88 ignored tests are ported, the 96 of the earlier entry less these 8.
+
+Epic 13 closed on 2026-11-21 after review. cargo test --workspace: 603 passed. --ignored: 93 passed. The smoke run on kind passed.
