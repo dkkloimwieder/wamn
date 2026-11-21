@@ -4,941 +4,368 @@ Run commands from the repository root unless a command changes directories.
 [Testing strategy](../testing/strategy.md) defines what each test method establishes.
 [Building](building.md) lists the toolchain and build prerequisites.
 
-Before a test run, prepare the checkout once from its repository root:
+## Run the tests
+
+Run these commands in this order:
 
 ```bash
-eval "$(cargo xtask lane-start "$PWD")"
+eval "$(cargo xtask prepare-tests)"
+cargo test
+cargo test --workspace --exclude wamn-journey-tests -- --ignored
 ```
 
-The script initializes submodules and selects the Cargo cache directory.
-It runs no builds, web installation, or database.
-It exports `CARGO_TARGET_DIR` and `WAMN_CHECKOUT_KEY`.
-Cargo output lies in `$CARGO_TARGET_DIR`, so the commands below use that path and not `target/` or `apps/target`.
-`wamn build` still writes package output to `apps/target/wamn`.
-After the package build, `cargo xtask test-changes` runs `wamn web build` for each selected application with `web/package.json`.
-The standalone web artifacts supply browser files for the developer session tests.
-Selected tests supply their own preparation from `tests/selection.toml`.
+Run the third command on a machine with Docker.
+The ignored run leaves out `wamn-journey-tests`, because its only test target needs a cluster.
+[Development on kind](#development-on-kind) gives the cluster run.
 
-## Select the relevant tests
+`cargo xtask prepare-tests` builds the test inputs once, before the run.
+It builds every application under `apps/` that has a `wamn.k` file.
+It builds each base before its overlays, with the committed SQL describe evidence and no database.
+The output of each application goes to `apps/target/wamn/<package>`.
+If `WAMN_KCL` is not set, the command installs the pinned KCL compiler under `.tools/kcl/`.
+It also builds the pinned `ingress` guest from `guests/ingress`.
 
-Run only relevant existing tests for a behavior change or a concrete failure.
-For mechanical edits, compare source, paths, and syntax.
-Do not repeat builds or tests without a new behavior change or concrete failure.
-Cleanup boundaries do not require broad test runs.
+The command then prints one `export` line for each prepared input.
+`eval` sets these variables in the current shell:
 
-`cargo xtask test-changes` selects suites and builds their inputs before tests run.
-The change set is the working tree against `git merge-base HEAD main`, or against the commit that `--base REF` names.
-It includes committed, staged, unstaged, deleted, and untracked files.
-
-- A file in a Cargo package selects that package and its dependents in every workspace that resolves it: normal and build dependents transitively, then one development dependent.
-- A file under `apps/<name>/` outside a package selects every package under that directory in every workspace, with their dependents.
-- A workspace `Cargo.toml` or `Cargo.lock` runs that whole workspace.
-- Any `Cargo.toml` or `Cargo.lock` also runs `compile-packages-alone`, which runs `cargo check -p` for each root workspace package on its own. A package that compiles only through a feature that another package turns on fails it. Checks run in parallel, up to the number of available CPU cores. Each worker uses one Cargo build job and its own reusable directory under `CARGO_TARGET_DIR/isolated-checks/`. Stable package assignments preserve these caches between runs. The command prints each check's worker and elapsed time.
-- Canonical interfaces live under repository-root `wit/`. Router and runtime interfaces under `wit/` select all three workspaces because bindings read WIT outside Cargo dependencies.
-- A file under `deploy/`, `web/`, the `Dockerfile`, or a root pnpm file runs the root workspace and the suites that name it, because Rust tests read these files by path.
-- A path that no package owns and no rule names selects every applicable workspace and suite.
-- Documentation-only changes select nothing, including quality, and exit successfully.
-  `tests/selection.toml` defines documentation as `docs/`, `.beads/`, and root Markdown files.
-  A Markdown file below another directory also follows the package rules above.
-
-Cargo metadata supplies executable targets and package dependencies.
-The selector reads each target's test declarations and lists its compiled cases before execution.
-A library can contain tests from several tiers. `--tier` filters individual cases within that library.
-Without `--tier`, the selector includes unit, contract, live-postgres, and live-nats tests.
-Use `--tier T[,T]` to choose tiers.
-
-A test states external needs in its `#[ignore = "requires: ..."]` reason.
-The shared parser in `wamn-test-postgres` derives the tier from these needs:
-
-- `runtime` and `network` select contract for component execution and owned socket fixtures.
-- `postgres` selects live-postgres for a test that owns a private server.
-- `nats` selects live-nats.
-- `cluster` selects the cluster tier, selected with `--tier kind`.
-
-The strongest service determines the tier: cluster, then NATS, then PostgreSQL.
-`#[sqlx::test]` declares PostgreSQL without a repeated service entry.
-The selector runs these cases through `wamn-test-postgres`, with one private server per test binary.
-SQLx owns the separate database for each test.
-Tests without declared needs use unit for library and binary targets, or contract for integration targets.
-Other declared needs select contract when they need no database, broker, or cluster.
-
-An `input:ID` need selects the named preparation recipe when it has no environment output.
-An `env:NAME` need selects its output recipe and requires a nonempty variable after preparation.
-A `bin:PROGRAM` need requires an executable on `PATH` or at the given absolute path.
-For `bin:kcl`, the selector checks `WAMN_KCL`, the pinned installation under `.tools/kcl/`, then `PATH`.
-The selector runs ignored cases only when it can supply their declared inputs.
-KCL-dependent tests in `wamn-platform-install` and `wamn-cli` live in integration targets.
-They declare `bin:kcl`. Chart rendering also declares `bin:helm`.
-For a direct run, prepare KCL with `cargo xtask install-kcl`.
-Then run `cargo test -p PACKAGE --test TARGET CASE -- --ignored --exact`.
-An explicit suite fails when a selected case lacks an input.
-Selected suites own their named cases or filters, so dependency selection runs each case once.
-
-The selector builds test executables together, once per Cargo workspace, with `cargo build --keep-going`.
-For library and binary tests, it adds `--tests` to build test harnesses.
-It runs only the selected executables.
-It combines their package features and target selectors in that build.
-Cargo keeps compiling independent packages after a build failure. The runner still runs the executables that built.
-Each target without a built executable fails and reports the build error.
-The selector preserves the features of the Cargo build when it runs its test executable.
-
-After preparation and compilation, independent targets run in parallel, up to the number of available CPU cores.
-Each target keeps one test thread and, when needed, its own PostgreSQL server.
-Native test processes receive `WASH_ABANDONED_CALL_GRACE_SECS=0` before startup, matching the WAMN engine policy.
-Targets with a `resource_lock`, a cluster need, Docker, or an environment input without a preparation owner run alone.
-This keeps shared brokers, fixed ports, and external fixtures serial.
-Local command suites without a `resource_lock`, including isolated checks and web commands, run alongside test targets.
-Commands within one suite keep their declared order.
-Local command suites with a `resource_lock` run after this independent work.
-Command suites with mode `always` run before test targets.
-The isolated-check suite starts the running xtask binary directly, without another Cargo build.
-Isolated checks report compiler activity as it arrives. They keep the complete compiler output together at completion.
-A cluster selection stays serial and stops at its first failure. Other selections collect every failure.
-
-Each native test target has a ten-minute deadline, including discovery and waiting for its resource lock.
-The whole selection has a thirty-minute deadline, including preparation and compilation.
-Preparation commands, workspace builds, and targets print their elapsed time.
-Build diagnostics remain visible, while Cargo artifact JSON stays out of the run log.
-The runner buffers each target's output and prints it together under its target label.
-Failure reports include that output, including output captured before a timeout.
-A separate supervisor owns each command and adopts its orphaned descendants.
-On timeout or interruption, it ends and reaps all descendants, including separate process groups.
-Guest compiler flag lookups use the selection deadline and the same process cleanup.
-
-The tool builds the guests that selected suites need.
-The `edge-samples` suite builds `apps/edge_samples` through `wamn build`.
-This checks its generated inputs and guest compilation. The guest has no native test cases.
-`cargo xtask repo-lint` also compiles guest targets that disable Cargo tests.
-A passing workspace test result does not establish compilation of those guest targets.
-The platform producer builds both role components through the package component builder.
-`tests/selection.toml` owns suite commands, input rules, and preparation beyond Cargo dependencies.
-Platform fixture and catalog changes select `wamn-provision`.
-SQL changes select the environment retention and protected-relation interfaces with `ops`.
-Control and platform deployment changes select the exact native host case.
-Every change outside documentation selects `environment_render` and `platform_render` in `wamn-environment` through prekind or Cargo selection.
-The release-chart-render suite runs the ignored Helm cases in `release_chart_render`.
-Path rules add to the selected targets and cases.
-The runner combines feature requirements for targets that both Cargo paths and suites select.
-Each selected case runs once through Cargo selection or its suite.
-Web changes select repository web lint, runtime tests, and platform UI lint, tests, and build.
-Full-workspace lint is an explicit integration operation:
-
-```bash
-cargo xtask test-changes --suite quality
-```
-
-The quality suite runs `cargo xtask repo-lint run` without application preparation.
-Prepare generated application inputs through their owning build commands before full-workspace Clippy.
-
-The tool builds native binaries, application packages, and guests only when selected cases need them.
-The selection file names each preparation step, its output variables, and its commands.
-The runner keeps nonempty overrides and skips their preparation commands.
-The pinned HTTP guest keeps its required release artifact. Edge tests read that prepared artifact from `WAMN_INGRESS_COMPONENT`. Other native and standalone guest inputs use debug mode.
-The `jsonata` recipe builds the platform `jsonata-expression` guest directly.
-It builds applications through a private PostgreSQL database.
-Root workspace targets compile without `apps/target/wamn`.
-Preparation follows only cases that match the tier, name, and suite filters.
-Test declarations select named recipes or recipes that supply their environment inputs.
-The `control-binaries` recipe builds `TARGET/debug/wamn`.
-Journey cases request this recipe directly and check those executable paths.
-Package feature entries affect compilation and do not request runtime preparation.
-Application preparation builds each base before its overlays.
-Web consumers share one workspace installation per selection.
-The runner skips that installation when no selected consumer needs it.
-Control and CLI suites enable `ops`.
-Runtime changes also select the ignored JetStream round trip.
-Runtime and host changes also select the exact native host case.
-NATS tests use the broker inputs that their declarations name.
-Tests that own local brokers start and stop them through their shared support.
-The JetStream suite uses the supplied TLS broker address and certificate files.
-Set `WAMN_NATIVE_C_NATS_BIN` to a prebuilt `nats-server`, or put `nats-server` on `PATH`.
-If neither exists, the tool fails and names the variable.
-It never downloads or compiles NATS.
-
-Use `--suite ID[,ID]` to run named suites on any tree, including an unchanged tree.
-This selects only those suites and their preparation steps.
-The database executor suite needs no application, browser, device, or platform preparation:
-
-```bash
-cargo xtask test-changes --suite package-executor
-```
-
-This suite runs `wamn-environment`'s `migrations_live` target.
-It covers SQLx commit and checksum behavior, history write failures, and the restricted migration login.
-A source diff still selects dependent packages and their integration inputs.
-Run the Receiving and WMS proof from the repository root:
-
-```bash
-cargo xtask test-changes --suite receiving-business,wms-local
-```
-
-Append `dry-run` to print the preparation commands and test filters without execution.
-Suites select cases by their names and declared tier, including ignored cases with supplied needs.
-It validates the test result with the same parser as `cargo xtask require-test-result`.
-Only selector discovery uses `--list`, which executes no tests.
-
-For direct Cargo commands or artifact comparisons, set these overrides explicitly.
-The runner also accepts them and preserves every nonempty value.
-In the paths below, `TARGET` means `CARGO_TARGET_DIR`, and `ROOT` means this checkout.
-
-| Override | Default input |
+| Variable | Prepared input |
 | --- | --- |
-| `WAMN_NATIVE_C_NATS_BIN` | `nats-server` |
-| `WAMN_EDGE_DEVICE_COMPONENT` | `ROOT/apps/target/wamn/edge_device/components/device.wasm` |
-| `WAMN_JSONATA_COMPONENT` | `TARGET/wasm32-wasip2/debug/jsonata_expression.wasm` |
-| `WAMN_EFFECTIVE_RELEASE_BASE_COMPONENT_WASM` | `ROOT/apps/target/wamn/platform_fixture/components/fixture.wasm` |
-| `WAMN_EFFECTIVE_RELEASE_OVERLAY_COMPONENT_WASM` | `ROOT/apps/target/wamn/platform_fixture_overlay/components/fixture_overlay.wasm` |
-| `WAMN_GENERATED_WIDGET_UPDATE_SCHEMA` | `ROOT/apps/target/wamn/platform_fixture/routes/widget/update.json` |
-| `WAMN_RECEIVING_DEV_BIN` | `TARGET/debug/wamn` |
-| `WAMN_INGRESS_COMPONENT` | `TARGET/wasm32-wasip2/release/ingress.wasm` |
-| `WAMN_BLOB_PUT_COMPONENT` | `TARGET/apps/wasm32-wasip2/debug/blob_put.wasm` |
-| `WAMN_SYNC_BENCH_DIST` | `TARGET/sync-bench/web` |
-| `WAMN_HOST_LIVE_NATS_SERVER_BIN` | Same input as `WAMN_NATIVE_C_NATS_BIN` |
-| `WAMN_SESSION_EXCHANGE_CTL_BIN` | Same input as `WAMN_RECEIVING_DEV_BIN` |
-| `WAMN_DEV_ENV_INGRESS_COMPONENT` | Same input as `WAMN_INGRESS_COMPONENT` |
-| `WAMN_POSTGRES_BIN_DIR` | `/usr/lib/postgresql/18/bin` |
+| `WAMN_EFFECTIVE_RELEASE_BASE_COMPONENT_WASM` | `apps/target/wamn/platform_fixture/components/fixture.wasm` |
+| `WAMN_EFFECTIVE_RELEASE_OVERLAY_COMPONENT_WASM` | `apps/target/wamn/platform_fixture_overlay/components/fixture_overlay.wasm` |
+| `WAMN_EDGE_DEVICE_COMPONENT` | `apps/target/wamn/edge_device/components/device.wasm` |
+| `WAMN_INGRESS_COMPONENT` | The release build of the `ingress` guest |
 
-The PostgreSQL directory holds `initdb`, `postgres`, `pg_ctl`, and `psql` from PostgreSQL 18.
-An empty override uses the default directory.
-Tests declare credentials, external addresses, and comparison artifacts as `env:` needs.
-The runner preserves supplied values and creates only inputs with a preparation entry.
+A test whose prepared input is missing fails. It does not skip.
+After a source change to an application or to `ingress`, run `prepare-tests` again.
 
-Other cross-package file readers still need explicit path rules.
-`cargo xtask test-changes dry-run` prints the selected commands.
-`cargo xtask test-changes run` reports each step and returns a nonzero status if any command fails.
-Each required command must report at least one executed passing case and exit successfully.
-Missing packages and targets fail selection.
-Exact test names must appear in the compiled binary before that binary runs.
-The same rule applies to the component contract and upstream release commands.
-`cargo xtask require-test-result` prints the captured child output and checks the libtest summary after completion.
-It preserves command failures and refuses absent or entirely ignored test results.
-An explicit dry run or a change set with no selected tests remains a planning result.
-It records no permanent result.
-`cargo xtask test-changes` is the broad test before integration, and it runs once per merge.
-Every merge runs the install render tests in the prekind suite.
-Implementation work runs only fmt, Clippy and the tests of the packages that it changed before handoff.
-Merges are fast-forward after reviewer acceptance.
+The apps workspace is a separate Cargo workspace.
+Run its tests per package, with the commands that [test-changes](#select-the-tests-for-a-change) prints.
 
-The client compatibility test reads the current generated widget update schema at run time.
-Its preparation step builds the platform fixture and supplies the schema path.
+### Apps workspace Clippy
 
-`cargo xtask test-changes --tier kind` selects the kind targets of affected packages.
-It runs ignored cases one at a time.
-When an exact kind suite selects the aggregate journey, that suite owns the target and the root command omits it.
-A name filter that selects focused cases instead omits the aggregate suite.
-The selection runs the aggregate journey or its focused cases once.
-The selector prepares the guest numbering refusal test through `input:numbering-refusal`. For a direct Cargo run, build its Wasm example in the existing target directory first:
-
-```sh
-cargo build --manifest-path apps/Cargo.toml -p wamn-guest --example numbering_refusal --target wasm32-wasip2
-"$CARGO_TARGET_DIR/debug/wamn-test-postgres" --database tests --url-env DATABASE_URL -- cargo test -p wamn-operation --lib query_tests::live_an_invalid_timezone_setting_is_refused -- --ignored --exact
-```
-
-The generated exclusion tests in `apps/Cargo.toml` need PostgreSQL diagnostics, so each runs through its own example.
-The `exclusion_diagnostics` example of `wamn-test-infrastructure` runs the platform fixture test, and the `exclusion_diagnostics` example of `wamn-receiving-tests` runs the Receiving test.
-[Ignored tests](#ignored-tests) gives the commands.
-`--name FILTER` requires `--tier kind`.
-The tool passes the filter to Cargo as the test name filter, which selects the tests whose full names contain it.
-The filter matches only tests in the packages that the change set selects.
-If the change set selects no package, `run` and `dry-run` fail and name the filter.
-The selector lists compiled cases before each binary runs.
-If no case in the selected packages matches, the command fails and names the filter.
-`dry-run` compiles nothing. It reads test declarations and applies the same prerequisite check as `run` after preparation.
-Both modes report each skipped case and name its missing inputs.
-If matching cases are all skipped for missing inputs, `run` reports that reason instead of an unmatched filter.
-
-To run a named ignored test on an unchanged tree, add `--base <revision>` with a revision before a change to its package.
-You can also run the test through Cargo in its package:
+Run `prepare-tests` first, because the apps workspace compiles the generated application code.
+Then run Clippy on the apps workspace:
 
 ```bash
-cargo test --locked --offline -p <package> <test> -- --ignored --test-threads=1
+cargo clippy --manifest-path apps/Cargo.toml --locked --workspace \
+  --exclude connection-http-standard --all-targets -- -D warnings
 ```
 
-Exclusive resource tests use private PostgreSQL databases and the prebuilt NATS server at `WAMN_NATIVE_C_NATS_BIN`.
-The typed call test also needs Docker, the `registry:2` image, and the generated `modbus_reader` component.
-It tests replacement connection Y after disabling X, plus two hosts sharing X for the 30-second refusal.
-The rollout test drives two host owners in one process through the host shutdown function and a real SIGTERM.
-It serves the native `/readyz` endpoint while the second host waits for its lease.
-It checks that the second holder acquires only after the first holder releases its call.
-Run these tests with the build environment in [building](building.md):
+`cargo xtask repo-lint run` runs this command and the other Clippy variants of both workspaces.
+It also runs formatting, dependency boundaries, cargo-deny and the policy checks in xtask.
+`cargo xtask repo-lint dry-run` prints each command and runs none.
+
+## Select the tests for a change
 
 ```bash
-cargo test --locked --offline -p wamn-connection resource_lease::tests -- --test-threads=1
-cargo test --locked --offline -p wamn-environment --test integration_restart_live -- --ignored --test-threads=1
-cargo test --locked --offline -p wamn-host --bin wamn-host host::lease_tests::sigterm_drains_calls_then_hands_the_lease_to_a_ready_host -- --ignored --exact --test-threads=1
+cargo xtask test-changes --base main
 ```
 
-The following commands select individual test targets:
+The command compares the working tree with `--base`. It prints commands and runs no test.
+The change set holds four groups of files:
 
-```bash
-cargo test --locked --offline -p wamn-codegen --test platform_generation
-cargo test --locked --offline -p wamn-wms-tests --lib
-cargo test --manifest-path apps/Cargo.toml --locked --offline \
-  -p receiving --all-targets
-```
+- the files that the commits since the merge base with `--base` change, including deleted files
+- the staged files
+- the unstaged files
+- the untracked files that Git does not ignore
 
-The application READMEs identify additional tests and binary owners.
-Use `cargo xtask repo-lint dry-run` to see its exact commands without executing them.
-`cargo xtask repo-lint run` runs formatting and Clippy across both workspaces.
-It then runs dependency boundaries, cargo-deny, and the policy checks in xtask.
-Interface tests live beside their owning crates. `tests/journeys` owns tests that cross services.
-`wamn-test-application` supplies the shared product deployment fixture.
-`wamn-test-infrastructure` owns the HTTP fixture server and collector rendering.
-It reports each command and returns a nonzero status if any command fails.
-The full schema files own fresh platform installations.
+The command reads the Cargo metadata of both workspaces, `Cargo.toml` and `apps/Cargo.toml`.
+The owner of a file is the package with the deepest directory that holds the file.
+A changed file selects its owner.
+A selected package also selects its normal and build dependents, transitively.
+Then each package with a development dependency on a selected package is also selected.
+Dependents count across both workspaces.
 
-Before integration, `cargo xtask test-changes` runs the submodule guard with Git history and initialized submodules.
-Changed pins require a commit subject that names the submodule path or its last segment and says `bump` or `pin`, plus `revert` when the pin does not descend from main.
+A change to a `Cargo.toml` or a `Cargo.lock` selects every package of its workspace.
+A file that no package owns also selects every package of a workspace.
+The workspace is the one with the deepest directory that holds the file.
+So an unowned file under `apps/` selects the apps workspace, and other unowned files select the root workspace.
+A change set with no files prints nothing.
 
-## What a test asserts
+The command prints one line for each selected package. The fields are separated by tabs:
 
-A test stays only if a realistic defect fails it, and nothing else rejects that defect more strongly.
-The expected value of the test must not come from the code under test.
+1. the workspace manifest
+2. the package name
+3. the reason, which names the changed file or the dependency that selected the package
+4. the test command, `cargo test --manifest-path <manifest> -p <package>`
+5. the same command with `-- --ignored`
 
-- Tests check returned values, error types, parsed contract fields, and database changes.
-- No test compares diagnostics, source text, DDL text, or file contents to a string.
-- Tests do not check test helpers with fabricated failures.
-- A byte or digest test stays only when the bytes are a persisted or wire contract and the expected value is independent.
-- A source or repository policy test is a lint in `cargo xtask repo-lint`, not a test.
-- A schema rule is tested against the installed database: a refused write, a cascade, or a `pg_catalog` fact.
-- A new live test must not repeat an existing one. Extend the existing test when a rule has no other test.
-
-### Decisions: retained text contracts
-
-Exact text remains in the cases below because the bytes or literal are the public value being tested. The linked assertions hold the exact vectors. Do not copy those vectors into another fixture or use these exceptions for diagnostic wording.
-
-- [Record history projection](../../crates/record-history/tests/fold.rs), `retained_columns_keep_their_raw_spelling_and_order` and `retained_timestamptz_columns_take_one_spelling_from_either_spelling`: retained JSON tokens keep their spelling and order. This includes `1.50`, `12.3400`, quoted JSON keys, the canonical UTC timestamp and `infinity`. Ordinary JSON response tests inspect fields.
-- [Connection requirement identity](../../crates/catalog/src/connection.rs), `the_requirement_hash_bytes_are_pinned`, and [catalog serialization](../../crates/schema-introspection/src/ir.rs), `catalog_without_views_keeps_canonical_bytes`: canonical persisted bytes define identity. [Durable JSON identity](../../crates/digest/src/lib.rs) also preserves numeric spelling, signed zero and canonical key order.
-- [SHA-256 vectors](../../crates/digest/src/lib.rs), [Ed25519 vectors](../../crates/identity-protocol/src/token/tests.rs), [HMAC vectors](../../crates/http/src/authentication.rs) and [release label encoding](../../crates/engine/src/release_manifest.rs): independent encoded vectors define the digest, signature or base32 value. A digest comparison is not a source-file snapshot.
-- Frozen serialized variants, refusal codes, media types, SQLSTATEs, reserved input paths, token prefixes and protocol identifiers remain literal comparisons. Their owners are [SQL values](../../crates/scalar/src/lib.rs), [identity protocols](../../crates/identity-protocol/src), [component contracts](../../crates/catalog/src), [host route contracts](../../crates/catalog/src/host_route.rs) and the RFC protocols used by the transport. HTTP request lines, authorization schemes, metadata headers, health response tokens and canonical cache keys are wire values. Security allowlists remain independent of the implementation that installs the grants.
-- [HTML escaping](../../crates/execution-host/src/oauth_callback.rs) and its [HTTP boundary](../../crates/execution-host/tests/support/oauth_authorization.rs): `&lt;script&gt;&quot;&amp;&#39;` and `&lt;script&gt;&amp;&quot;&#39;` encode the supplied attack text. The unescaped text must stay absent.
-- [Receiving decimal arithmetic](../../apps/wamn_receiving/web/test/sync.test.tsx): `3.500`, `6.500`, `0.3`, `-0.25` and `15` are decimal values with the required scale, not formatted diagnostics.
-- [Manifest loading](../../crates/engine/src/release_manifest.rs), `an_unsupported_format_refuses_with_the_frozen_literal`: `unsupported-serving-manifest-version` is the serialized refusal that the loader must preserve.
-- [The log viewer](../../apps/platform_ui/test/environment.test.tsx) must display the supplied log bytes unchanged; its fixture owns those bytes, and the assertions read them from the recorded response.
-- [Descriptor limit observation](../../services/host/tests/native_descriptor_limits.rs): `Max open files` identifies the Linux process limit record. The test parses its two numeric values while the real host runs.
-
-Accessible control names select the action under test. They do not assert diagnostic wording, classes or geometry.
-
-Secret-redaction checks still search for the actual supplied secret. Payload round trips compare the caller's original value. Authored labels and refusal text are compared with their source declarations. None of these checks owns a second wording or document snapshot.
-
-## Local application business tests
-
-Receiving and WMS retain their business assertions.
-The in-process application assembler is removed.
-These scenarios need a product deployment fixture on the development cluster before they can run.
-The native host and private provisioning fixtures no longer supply their prerequisites.
-
-The publish composition, edge bundle, release digest, and control-client cases use the same prepared HTTP guest.
-Their test declarations select the edge component and application recipes.
-The release publication case starts a private registry.
-The HTTP connection reuse case selects the `http-request` preparation.
-It builds the guest through the shared component builder and supplies `WAMN_HTTP_REUSE_COMPONENT_WASM`.
-Set `WAMN_HTTP_REUSE_ARTIFACT_BASE` to a disposable OCI repository before running that case.
-The control-client cases also need the installed web dependencies.
-
-The edge route, device and forward tests run in the workspace run.
-Each test binary builds the edge release bundle of [`apps/edge_device`](../../apps/edge_device/README.md) once, when its first test starts.
-The `edge` preparation step supplies its application component.
-The HTTP guest must match its pin.
-The bundle writer stores the route guest separately. The edge invocation switch follows in S7-D.
-The package bundle writer admits the component and writes the bundle without a development session.
-The tests sign their own sessions.
-The device test writes scale frames into a pseudo-terminal pair, which is its virtual serial port.
-The forward test runs the `wamn-edge` binary as a child, kills it with SIGKILL twice, and serves an HTTPS platform with its own certificate authority.
-
-```bash
-cargo test --locked --offline -p wamn-edge --test route --test device --test forward
-```
-
-The test `samples_reach_a_live_platform_once_across_kills` forwards to a real platform: the `sample.record` route of [`apps/edge_samples`](../../apps/edge_samples/README.md) on a [developer session](development-loop.md).
-Deploy `apps/edge_samples` through the product development command.
-Use its HTTPS application address. Write the caller token to a file with mode 0600.
-Then run the test with the proxy address and the certificate authority of the proxy:
-
-```bash
-WAMN_EDGE_LIVE_URL="https://127.0.0.1:<proxy port>/sample/record" \
-WAMN_EDGE_LIVE_TOKEN_FILE=<token file> WAMN_EDGE_LIVE_CA_FILE=<proxy CA file> \
-  cargo test --locked --offline -p wamn-edge --test forward \
-  samples_reach_a_live_platform_once_across_kills -- --ignored --exact --nocapture
-```
-
-The edge runs the `sample.read` command of the `edge_device` bundle on each frame, and forwards the sample.
-The test sends each of its two samples twice, and prints the tag of its frames.
-Count the rows of that tag in `edge_samples.sample` of the session's target database: the count must be 2.
-
-## Deployed connection and caller tests
-
-`connection_and_caller_kind` uses an installed disposable platform.
-It publishes fixture source and deploys it through authenticated control routes.
-It requires an HTTP connection to reach an installed upstream service.
-A manual workflow that ends in `respond` must refuse with `respond-without-caller`.
-The test observes the final run state in the deployed database.
-
-```bash
-cargo test -p wamn-dev --test platform_apply_kind connection_and_caller_kind -- --ignored --exact --nocapture
-```
-
-Use the same cluster document and prepared artifacts as the other focused platform tests.
+A package whose test targets are all `_kind.rs` files gets no fifth field.
+That package scope keeps the journey and cluster targets out of the ignored run.
+Run `prepare-tests` before the printed commands.
 
 ## Test-database isolation
 
-Tests never connect to or change an interactive development database.
-Run database tests through the `wamn-test-postgres` binary in `test-support/postgres`.
-For Cargo commands, each test binary gets its own PostgreSQL 18 server with TLS and `DATABASE_URL`.
-For other commands, the runner owns one private server. It removes each server when its command exits.
-The crate requires PostgreSQL 18 binaries under `/usr/lib/postgresql/18/bin`.
-`WAMN_POSTGRES_BIN_DIR` can select another directory.
+No test connects to an interactive or shared database.
+Each test that needs PostgreSQL or NATS starts its own container through `wamn-test-infrastructure`.
+The test owns the returned value. Dropping the value removes the container.
+There is no shared server, no lock, no `#[sqlx::test]` and no `DATABASE_URL` input.
+Tests run in parallel, because each test has its own server.
+Roles belong to the whole server, so a private server keeps the fixed product role names apart.
 
-```bash
-cargo build -p wamn-test-postgres --bin wamn-test-postgres
-"$CARGO_TARGET_DIR/debug/wamn-test-postgres" --database tests --url-env DATABASE_URL -- \
-  cargo test -p wamn-catalog --lib
-```
-
-Tests with one database use `#[sqlx::test(migrations = false)]` and accept a `sqlx::PgPool`.
-SQLx creates its database and removes it after success. It retains failed test databases until the private server stops.
-Use the pool directly. If code needs a URL, use `wamn_test_postgres::url(&pool)`.
-This adapter preserves certificate paths when SQLx serializes connection options.
-The runner supplies the private server URL. Do not set it to an interactive database.
-Run the database test commands below through this runner. Their examples show the child command.
-
-Roles and server settings belong to the whole server.
-A test that changes roles, or depends on roles that another test changes, holds `wamn_test_postgres::lock()` for its whole duration.
-The runner runs tests within each binary one at a time because schema setup creates shared roles.
-Test binaries never share a server or its roles.
-
-`wamn_test_postgres::start(settings)` starts a separate server, for example with `("wal_level", "logical")` or `("standard_conforming_strings", "off")`.
-Use the server owner for tests that need several independent databases or change server-wide state.
-Call `server.create_database(name).await` to create each database.
-Dropping the server stops it and removes its directory.
-
-Schema setup functions install SQL on a supplied database.
-The catalog installer takes a connection opened with `wamn_postgres::connect`.
-The other installers take a database URL.
-Each lives beside the crate that owns its SQL, behind that crate's `test-util` feature.
-Enable the feature on a dev-dependency. These functions do not take the process lock or allocate databases.
-
-| Setup | Function | Installs |
+| Helper | Image | Returns |
 | --- | --- | --- |
-| system | `wamn_provision::test_database::system(url).await` | the control store, applied as its database owner `wamn_system` |
-| project | `wamn_catalog::test_database::project(&mut connection).await` | `CATALOG_SCHEMA_SQL` and the `wamn_app` role |
-| project+platform | `wamn_identity::test_database::project_platform(url).await` | the project base grants and `deploy/sql/app-schema.sql` |
+| `wamn_test_infrastructure::containers::start_postgres()` | `postgres.image` | `Postgres` |
+| `wamn_test_infrastructure::containers::start_nats()` | `nats.container.image.fullImageName` | `Nats` |
 
-`wamn-provision --lib` tests names, target documents, templates, and operation grants without Postgres.
-Its database tests live under `crates/provision/tests/`.
-The `apply_grants` target tests the apply login, and `control_grants` tests org isolation.
-Reader grant targets each cover one login family.
+At compile time, the helpers read both images from `deploy/charts/platform/values.yaml`.
+So the tests use the production digests:
 
-A test of provisioning, migrations, or grants executes that operation and starts without a setup function that already performed it.
-Exercise the intended role because a superuser bypasses row security.
-Ignored tests use the same SQLx interface.
+- PostgreSQL: `ghcr.io/cloudnative-pg/postgresql:18.6@sha256:899d3ed526b659d77935dde0e6bf2d69dbbf17d3d8c6486ca8cfd04bd3c18533`
+- NATS: `nats:2.12.15-alpine@sha256:b270f5e2428354c0335612694d7dd2fb588148e567a5757fdff325ef9c9332e6`
 
-The runner also serves delivery tooling and manual generation commands.
-It can create a named database, create a schema, and apply SQL from migration directories before the child starts.
-It removes inherited PostgreSQL variables and sets each `--url-env` variable to its private database URL.
-It stops the command's process group on completion, failure, or handled interruption.
-Application builds own generated history migrations.
+The CloudNativePG image has no entrypoint that creates a database.
+So the PostgreSQL helper runs its own `initdb` in the container, with these options:
 
-## Execution tiers
+| Option | Reason |
+| --- | --- |
+| `initdb --no-sync` | `initdb` does not wait for its files to reach the disk. The server is temporary. |
+| `fsync=off` | The server does no crash recovery, so it does not force writes to the disk. |
+| `full_page_writes=off` | The server does no crash recovery, so WAL holds no full pages. |
+| SCRAM-SHA-256 for TCP logins, local socket logins refused | Each login sends a password over the network, as a product client does. |
+| `ssl=on` with a new self-signed certificate | The product client requires verified TLS. The URL uses `sslmode=verify-full`. |
+| `wal_level=logical`, and a replication line in `pg_hba.conf` | Change capture tests read logical replication. |
 
-Cargo metadata defines executable targets through `test = true`.
-Each test declares its needs beside its body.
-The shared parser assigns the test to the tier of its strongest resource.
-A library can contain cases from several tiers.
-[Select the relevant tests](#select-the-relevant-tests) gives the declarations and defaults.
+Synchronous commit stays on, so logical decoding reads the WAL as soon as a commit returns.
+The server listens on a random port of `127.0.0.1`.
 
-- Unit covers pure decisions and controlled time. It uses no database, broker, network service, subprocess, or component runtime.
-- Contract covers serialized values, WIT, component runtimes, generated artifacts, rendered objects, files, command-line tools, and owned network fixtures.
-- Live-postgres requires private PostgreSQL behavior.
-- Live-nats requires a real NATS broker. A test that also requires PostgreSQL takes this tier.
-- Kind requires Kubernetes.
+`Postgres` gives these functions:
 
-Unit and contract run per issue, live tiers run per merge, and kind runs per epic.
-`platform_apply_kind` runs once at each epic close and once on `main` before a GCP build.
-It never runs for a single fix.
-Both runners use the shared process boundary in `cargo xtask require-test-result`. `WAMN_TEST_SILENCE_SECONDS` sets its silence limit, with a default of 120 seconds. Output on either stream resets the limit. Silence past the limit stops the child process group, names the stage, and fails the run.
-The silence limit and the absolute deadline apply independently. Output cannot extend a deadline.
-The epoch interruption case lives in `wamn-engine --test deadline`.
-The host workflow plugin covers calendar matching in `host::workflow::schedule`.
-Admission authority stays in `wamn-provision --test admission_live`.
-`wamn-provision --test run_state_live` covers atomic admission, lease recovery, fencing and retention.
-Live schedule cases call the service with its real clock and can take several minutes.
-The connection and caller case lives in `wamn-dev --test platform_apply_kind` and requires an installed development cluster.
+- `admin_url()` gives the administrator URL of the `postgres` database.
+- `database_url(database, login, password)` gives a URL for an existing database and login.
+- `create_database(name)` creates an empty database and returns its administrator URL.
+- `create_system_role()` creates the `wamn_system` role that owns the control store.
+- `create_project_database(name)` creates the project roles and database, and returns the `wamn_migration` URL.
+
+The NATS helper starts `nats-server --jetstream` on a random port of `127.0.0.1`.
+`Nats::url()` gives the client URL.
+
+Both helpers wait until a client connects.
+The measured median start time of PostgreSQL is 2.1 seconds. NATS starts in less than 3 seconds.
+
+The file store tests start their own MinIO container with `docker run`.
+`crates/environment/tests/support/files.rs` pins its image. At the end of the test, it removes the container.
 
 ## Ignored tests
 
-An ignore reason lists needs with comma-separated entries after `requires:`.
-Use `runtime`, `network`, `postgres`, `nats`, or `cluster` for resources, `bin:<program>` for programs, and `env:<VARIABLE>` for environment inputs.
-Use `input:<ID>` for a named preparation recipe.
-The shared parser derives the tier and validates these declarations.
-The selector checks required programs and variables before it runs a test.
-[Select the relevant tests](#select-the-relevant-tests) describes the tier rules.
+A test that needs a resource that `cargo test` does not supply is ignored.
+Its marker names each need: `#[ignore = "requires: NAME, NAME"]`.
+Cargo prints the reason with each ignored test.
+A target sits in the tier of its strongest resource.
 
-To run kind targets in selected packages, use `cargo xtask test-changes --tier kind`.
-They run one at a time.
-To select tests by name, add `--name FILTER`, as [select the relevant tests](#select-the-relevant-tests) describes.
+| Name | Need |
+| --- | --- |
+| `docker` | A running Docker daemon. The test starts its own containers. |
+| `bin:psql` | `psql` on `PATH`. The test runs the client on the host. |
+| `bin:helm` | `helm` on `PATH`. The test renders chart templates with `helm template`. |
+| `bin:docker` | The `docker` command on `PATH`. |
+| `cluster` | An installed platform on a kind cluster. |
+| `env:NAME` | The environment variable `NAME`, set to the input that the test reads. |
 
-Run the generated exclusion test of the platform fixture through its PostgreSQL fixture:
+To run one ignored test, give its exact name:
+
+```bash
+cargo test -p <package> --test <target> <test> -- --ignored --exact
+```
+
+For a test in a library target, use `--lib` in place of `--test <target>`.
+An exact filter that matches no test still passes. Make sure that the result names one executed test.
+
+### Generated exclusion test
+
+The platform fixture test `data::error::tests::generated_update_exclusion_from_postgres` needs `env:WAMN_EXCLUSION_DIAGNOSTICS`.
+Run it through its example:
 
 ```bash
 cargo build --locked --offline -p xtask
 cargo run --locked --offline -p wamn-test-infrastructure --example exclusion_diagnostics
 ```
 
-The fixture starts disposable PostgreSQL, applies the platform fixture migration, and adds a test-only exclusion constraint on `widget`.
-It captures actual update failures under a non-superuser role.
-It regenerates the platform fixture code in a temporary copy.
-Then it runs the ignored test `data::error::tests::generated_update_exclusion_from_postgres` of `fixture`.
-`WAMN_EXCLUSION_DIAGNOSTICS` supplies the server diagnostics to that test.
-The fixture removes its database, generated copy, diagnostics, and build output when it finishes.
-The application schemas and generated files in the checkout do not change.
+The example copies the tracked application sources into a temporary directory.
+It starts PostgreSQL, applies the platform fixture migration and adds an exclusion constraint on `widget`.
+It captures the server diagnostics of a refused update, and generates the fixture code again in the copy.
+Then it runs the ignored test with the diagnostics, through `cargo xtask require-test-result`.
+The checkout does not change.
 
-Run the generated exclusion test of Receiving through its own PostgreSQL fixture:
+## Test helpers
+
+Shared test helpers live in `wamn-test-infrastructure`, at `test-support/resources/`.
+It is a development dependency only.
+A helper that one crate uses lives in the `tests/common/` directory of that crate.
+For example, the deployment fixture of `application_routes_kind` lives in `tests/journeys/tests/common/`.
+No crate in either workspace defines a `test-util` feature.
+Tests use the production constructors with real inputs. Production code has no test-only constructor.
+
+## Grant refusal tests
+
+`wamn-test-sql`, at `test-support/sql/`, holds the grant refusal tests of every restricted deployed login.
+Its two targets are `project` and `system`. Each test has the marker `requires: docker, bin:helm`.
 
 ```bash
-cargo build --locked --offline -p xtask
-cargo run --locked --offline -p wamn-receiving-tests --example exclusion_diagnostics
+cargo test -p wamn-test-sql -- --ignored
 ```
 
-The Receiving fixture does the same steps with the Receiving migration and a test-only exclusion constraint on `purchase_order`.
-Then it runs the ignored test `data::error::tests::generated_update_exclusion_from_postgres` of `receiving`.
+Each test starts its own PostgreSQL server.
+It renders the database templates of the `project` or `platform` chart with `helm template`.
+It applies the rendered Cluster and Database resources as CloudNativePG does.
+Then it installs the product SQL through the product functions.
+
+Each test logs in as the real login.
+The project logins are `wamn_migration`, `wamn_app_login`, `wamn_query_login`, `wamn_platform_login` and `wamn_cdc`.
+The system logins are `wamn_platform_sql_<digest>`, `wamn_identity_issuer_<digest>` and `wamn_pooler_auth`.
+The org logins are `wamn_control_<digest>` and `wamn_apply_<digest>`.
+CloudNativePG gives these logins a client certificate. The test gives each one a password, because a grant depends on the role and not on the login method.
+
+The tests make sure of these facts for each login:
+
+- The login has no superuser, role creation, database creation or row-security bypass attribute.
+- The login is a member of no role with one of these attributes.
+- Only `wamn_cdc` has the replication attribute.
+- The login holds no grant option.
+- The test derives from the catalog each action outside the effective privileges of the login.
+- Each such action runs in a rolled-back transaction, and the server refuses it with SQLSTATE `42501`.
+- `PUBLIC` executes no security definer function.
+
+`wamn_system_reader` is a group with no deployed login. Its test enters the group with `SET ROLE`.
+
+## What a test asserts
+
+A test stays only on two conditions. A realistic defect fails it, and nothing else rejects that defect more strongly.
+The expected value of the test does not come from the code under test.
+
+- Tests check returned values, error types, parsed contract fields and database changes.
+- No test compares diagnostics, source text, DDL text or file contents to a string.
+- Tests do not check test helpers with fabricated failures.
+- A byte or digest test stays only for a persisted or wire contract, with an independent expected value.
+- A source or repository policy test is a lint in `cargo xtask repo-lint`, not a test.
+- A schema rule is tested against the installed database: a refused write, a cascade or a `pg_catalog` fact.
+- A new live test does not repeat an existing one. If a rule has no other test, extend the existing test.
+
+### Decisions: retained text contracts
+
+Exact text remains in the cases below, because the bytes or the literal are the public value under test.
+The linked assertions hold the exact vectors. Do not copy those vectors into another fixture.
+Do not use these exceptions for diagnostic wording.
+
+- [Record history projection](../../crates/record-history/tests/fold.rs), `retained_columns_keep_their_raw_spelling_and_order` and `retained_timestamptz_columns_take_one_spelling_from_either_spelling`: retained JSON tokens keep their spelling and order.
+- [Catalog serialization](../../crates/schema-introspection/src/ir.rs), `catalog_without_views_keeps_canonical_bytes`: canonical persisted bytes define identity. [Durable JSON identity](../../crates/digest/src/lib.rs) keeps numeric spelling, signed zero and canonical key order.
+- [SHA-256 vectors](../../crates/digest/src/lib.rs) and [HMAC vectors](../../crates/http/src/authentication.rs): independent encoded vectors define the digest or the signature.
+- Frozen serialized variants, refusal codes, media types, SQLSTATEs, token prefixes and protocol identifiers remain literal comparisons. Their owners include [SQL values](../../crates/scalar/src/lib.rs) and [identity protocols](../../crates/identity-protocol/src).
+- [HTML escaping](../../services/control/src/control_route/oauth_callback.rs): `&lt;script&gt;&quot;&amp;&#39;` encodes the supplied attack text. The unescaped text stays absent.
+- [Manifest loading](../../services/edge/src/release_manifest.rs), `an_unsupported_format_refuses_with_the_frozen_literal`: the loader keeps the serialized refusal literal.
+- [The log viewer](../../apps/platform_ui/test/environment.test.tsx) displays the supplied log bytes unchanged. The assertions read them from the recorded response.
+- [Descriptor limit observation](../../services/host/tests/native_descriptor_limits.rs): `Max open files` identifies the Linux process limit record. The test parses its two numeric values while the real host runs.
+
+Accessible control names select the action under test. They do not assert diagnostic wording, classes or geometry.
+Secret-redaction checks search for the actual supplied secret. Payload round trips compare the original value of the caller.
+
+## Local application business tests
+
+Receiving and WMS keep their business assertions in `wamn-receiving-tests` and `wamn-wms-tests`.
+The Receiving data-access tests have the marker `requires: docker` and start their own PostgreSQL server.
+The WMS business scenarios need a product deployment fixture on a development cluster before they can run.
+No in-process application assembler supplies them.
+
+```bash
+cargo test -p wamn-receiving-tests -- --ignored
+```
+
+The edge tests in `wamn-edge` read `WAMN_INGRESS_COMPONENT` and `WAMN_EDGE_DEVICE_COMPONENT` from `prepare-tests`.
+Each test binary builds the release bundle of [`apps/edge_device`](../../apps/edge_device/README.md) once.
+The `ingress` guest must match its pin in `guests/ingress/ingress.wasm.sha256`.
+
+### Local saved-edit acceptance
+
+No automated test runs the saved-edit case.
+The `wamn dev` tests in `services/cli/tests/dev_command.rs` check only that the command refuses a missing or unreadable environment document.
+[Development loop](development-loop.md) gives the commands that build, publish and deploy one saved edit.
+
+## Development on kind
+
+`wamn-journey-tests --test application_routes_kind` tests application routes through product deployment.
+It covers batch retry, the read ceiling, sequence bindings, overlay actor stamps and a refused feed.
+Each test has the marker `requires: cluster` and four `env:` needs. Supply each variable that the marker names.
+
+```bash
+cargo test -p wamn-journey-tests --test application_routes_kind -- --ignored --nocapture
+```
+
+The test creates its own environment with `wamn env apply --disposable`, and deploys with `wamn dev`.
+It uses SQL only to observe results.
+After success it removes its environment with `wamn env delete`.
+The journey and cluster targets come in Epic 14.
+
+### Platform and environment apply on kind
+
+No test target installs the platform or applies an environment.
+[Deployment](deployment.md#local-platform) gives the `wamn platform deploy` and `wamn env apply` procedure for a local cluster.
+`cargo xtask kind-cluster-create` creates or reuses the `wamn-local` cluster and its registry on port 5001.
+Journey tests that drive these commands come in Epic 14.
+
+### Removed application cluster coverage
+
+The Receiving and WMS cluster suites are removed, with their installers.
+The RC runner and the separate identity and session cluster journey are also removed.
+No test replaces their combinations of command histories, delivery, materialization and host restart.
+Native application, identity, session and render tests remain at their own tiers.
 
 ## Capture a run
 
 Ordinary tests need no result directory.
-Report the command, source revision, and pass, fail, or skip outcome.
-Some cluster tests and tools write diagnostic files.
+Report the command, the source revision, and the pass, fail or skip outcome.
 Run output stays local and does not go into the checkout.
-For a command that needs a new result directory, create a temporary one:
+For a command that needs a result directory, create a temporary one:
 
 ```bash
 WAMN_RESULTS="$(mktemp -d)"
 ```
 
-Keep source unchanged while a command runs.
-Use diagnostic output to understand failures and the actual execution boundary.
+Keep the source unchanged while a command runs.
 Keep credentials in private files and out of shared output.
-No permanent archive or result-only commit is required, except the sweep log of an epic closeout ([the full sweep](#the-full-sweep)).
-[Result interpretation](../testing/evidence.md) defines passes, failures, and unexecuted cases.
+[Result interpretation](../testing/evidence.md) defines passes, failures and unexecuted cases.
 
 ### Acceptance runs
 
-Owner ruling 2026-11-05: the non-kind selection of an acceptance run always runs to completion.
-It does not stop at the first red. Every step runs.
-Report every red together in one report, with its log lines.
-Do all the diagnosis that the reds need in the same pass, without further approval.
-This diagnosis includes single-case reruns that keep their artifacts and builds of the same case at the base commit.
-The result is one run, one complete list of findings, and one ruling session.
-A kind stage or another cluster stage still stops at its first red.
-
-## The full sweep
-
-Workspace sweeps require an explicit user request.
-Do not restart a stopped sweep or start broad runs at cleanup boundaries.
-If the user requests a workspace sweep, use the retained command:
-
-```bash
-cargo test --workspace --locked --offline --features wamn-environment/ops \
-  --no-fail-fast -- --nocapture --test-threads=1 \
-  > "$WAMN_RESULTS/workspace.log" 2>&1
-```
-
-Record its exit status before running another command.
-Do not pipe the command through `tail` or another output filter.
-`--workspace` selects all root members, including members outside Cargo's defaults.
-`--features wamn-environment/ops` builds the targets that require the `ops` feature.
-The kind cases stay ignored, so this command starts no cluster.
-`--no-fail-fast` retains later binary results after a failure.
-
-The sweep runs no [ignored test](#ignored-tests), because each one needs inputs that a general test run does not have.
-The ignored tests run in [the live stage](#the-live-stage).
-`--nocapture` shows the output of each test.
-
-Run selected kind tests separately with `cargo xtask test-changes --tier kind run`.
-Tell other sessions before the run because concurrent clusters overload the machine.
-Receiving and WMS retain their native business cases in the live-nats tier.
-
-Record the start and end time of each run, and time its build apart from its tests.
-
-Keep the sweep log outside the repository.
-Set `WAMN_RESULTS` outside the checkout, so that the run writes nothing into the tree.
-Cite the path of `$WAMN_RESULTS/workspace.log` and the commit that the sweep ran on in the close reason of the epic.
-If the sweep has failures, run the same command once on the base commit of the branch.
-Then list the failures that differ by name.
-Do not compare with the log of an earlier closeout, because the commits of other chains between them add failures that the epic did not cause.
-
-If the user requests the separate contract command, run it after the sweep, including when the sweep fails:
-
-```bash
-cargo xtask contract-diff run > "$WAMN_RESULTS/contract-diff.log" 2>&1
-```
-
-It runs the guest `ingress` adversarial tests.
-The guest test belongs to another workspace, so the root sweep cannot reach it.
-`cargo xtask contract-diff dry-run` only prints the commands.
-
-Report failures, ignored cases, explicit skips, filtered cases, and executed passes separately.
-Report each failure's package, target, full test name, and actual cause.
-A changed test name does not establish a new failure or remove an earlier failure.
-
-## The live stage
-
-The live stage runs named ignored tests with their inputs set, apart from the full sweep.
-A cluster day or a live test cites the live stage on its bead.
-Run each named test with its exact filter:
-
-```bash
-cargo test --locked --offline -p <package> --test <target> <test> \
-  -- --ignored --exact --nocapture --test-threads=1 \
-  > "$WAMN_RESULTS/live.log" 2>&1
-```
-
-For a test in a library target, use `--lib` in place of `--test <target>`.
-Set each input that the ignore reason of the test names before the run.
-The bead names each test, each input by its variable name, and each result.
-A credential, such as `RESEND_API_KEY`, stays in the environment of the stage.
-Never write its value into the bead or the log.
-
-## Live prerequisites and troubleshooting
-
-An exact filter can select zero tests and still return success.
-For a named case, require its exact result row and one executed case.
-An ignored test needs `--ignored` or `--include-ignored` after Cargo's `--` separator.
-Do not infer execution from the aggregate Cargo pass count.
-
-| Existing reference | Current owner and required setup |
-| --- | --- |
-| `[IDENTITY-LIVE]` | Runtime `plugins::wamn_postgres::session_identity::tests` `live_*` cases: run by default on the test server, and the cases that create fixed roles hold the process lock |
-| `[R18-NEG]` | Runtime `plugins::wamn_postgres::session_identity::tests::live_scs_off_server_fails_checkout_closed`: runs by default on a separate server started with `standard_conforming_strings=off` |
-| `[EVT-READER]` | `services/cdc-reader/tests/event_reader_live.rs`: ignored in live-nats, starts its own server with `wal_level=logical`, and needs `WAMN_READER_NATS_URL` |
-
-The source owners declare additional credentials, artifact paths, and selected assertions.
-Do not substitute shared services for missing test inputs.
-For deployed runs, use [cluster commands](cluster-tests.md).
-
-The broker cases in `auth_drops_live` and `connection_drops_live` use the platform NATS client.
-Set `WAMN_NATS_URL`, `WAMN_NATS_TLS_CA`, `WAMN_NATS_TLS_CERT`, and `WAMN_NATS_TLS_KEY` for a private TLS broker.
-Each case creates its memory buckets through the production function and needs permission to create and delete keys.
-Use the installed disposable platform's broker and its normal platform NATS inputs.
-The [development loop](development-loop.md) does not provision a private broker.
-
-### Record history retention test
-
-`crates/environment/tests/history_retention_live.rs` tests record retention through the owning library.
-It creates roles and holds the process lock.
-
-```bash
-cargo test --locked --offline -p wamn-environment --features ops --test history_retention_live -- --nocapture
-```
-
-The cases assert retained rows, credential refusals and database grants.
-
-### Run history retention test
-
-`crates/environment/tests/prune_terminal_run_history_live.rs` tests terminal run retention through the owning library.
-It creates roles and holds the process lock.
-
-```bash
-cargo test --locked --offline -p wamn-environment --features ops --test prune_terminal_run_history_live -- --nocapture
-```
-
-The cases assert retained runs, credential refusals and database grants.
-
-### Development on kind
-
-The development loop uses the installed identity and control services.
-[Development loop](development-loop.md) gives the source publication and deployment commands.
-The focused connection and caller test above uses this product path.
-
-The CLI browser target `receiving_ui_live` also uses this path.
-They call `wamn env apply` and `wamn dev` against an installed disposable platform.
-Supply `WAMN_DEV_ENV`, `WAMN_TIMINGS_ROOT`, and the existing `WAMN_BROWSER_*` sign-in inputs listed in each test.
-The environment directory contains `environment.yaml` for one application.
-The platform browser reads invitation mail from the installed identity service's outbox.
-Receiving browser assertions still require the fixed business dataset. The product has no import route for that dataset.
-
-`wamn-journey-tests --test application_routes_kind` tests batch retry, independent batch outcomes, health requests, read limits, sequence bindings, and overlay actor stamps through deployed routes.
-It uses `WAMN_CTL_BIN` for the product binary and the publication inputs from the development procedure.
-Supply the cluster, environment directory, browser base URL, and `WAMN_SYSTEM_ADMIN_URL` named in its prerequisite list.
-The test creates its own environment through control and uses SQL only to observe results.
-It removes the deployed environment after success. Its database remains for explicit data cleanup.
-
-`wamn-receiving-tests --test receiving_routes_kind` checks purchase-order numbers and caller stamps.
-It creates its supplier through the public create route.
-`wamn-wms-tests --test wms_browser_kind` runs the saved-request and shell-update browser cases against deployed WMS routes.
-It creates locations and packaging through HTTP. It uses SQL only to observe the resulting rows.
-Supply `WAMN_SYNC_BENCH_DIST`, Node.js, and Chrome in addition to the shared platform inputs.
-The environment template must select the application's prepared connection bindings.
-Each fixture copies those bindings through the connection routes into its own environment.
-The browser adapters accept HTTP and HTTPS endpoints, including their application path prefix.
-
-### Platform and environment apply on kind
-
-These tests drive product commands and observe the deployed cluster.
-Select each test by its exact name in the `platform_apply_kind` Cargo target:
-
-| Test | Coverage | Platform |
-| --- | --- | --- |
-| `control_operations_kind` | Authenticated Job credentials, cross-project denial without a Job, two-application selection isolation, rollback, schema mutation and artifact worker | Creates one fresh kind cluster; bounded to 45 minutes |
-| `application_recovery_kind` | Interrupted explicit provisioning and code installation, replacement recovery, canonical reapply, retained data, and application isolation | Attaches to an existing disposable kind platform |
-| `same_name_reset_kind` | Two initial application releases, data, published schema-change reset, interrupted same-name CNPG reset, reconnection, durable refusal, and environment isolation | Attaches to an existing disposable kind platform |
-| `platform_apply_kind` | Normal and interrupted platform installation, retry, status, repair, and owner sign-in | Creates two fresh kind clusters |
-
-The focused application and schema tests never install or rebuild the platform.
-Each focused application invocation creates a unique project, hostnames, and package versions.
-The control operations journey prepares each immutable artifact once.
-Each body starts with an absent environment and installs only its required initial releases.
-The reset body installs no earlier code versions.
-Artifact preparation uses the product build and publication operation before the focused bodies run.
-These tests can run in any order on the same platform.
-The recovery body provisions the environment with `environment::apply` and initializes SQL with `schema apply` before code deployment.
-The reset body uses those same commands.
-Code reapply reads the canonical selection through `status`.
-Platform recovery publishes no applications.
-
-After a body succeeds, product lifecycle cleanup removes its environment, database, and roles.
-The reset case also deletes its isolation environment after all assertions pass.
-Failed bodies retain their resources and logs.
-The old environment worker and its terminal confirmation are removed.
-Creation and deletion journeys need the replacement lifecycle routes before they can run.
-Tests must use those routes for setup and cleanup.
-
-`wamn-environment/tests/migrations_live.rs` covers SQLx checksums, transaction rollback, retry behavior, and failed history writes.
-It also calls package apply to refuse rebinding an existing relation to another package or entity.
-The same target checks direct migration credentials and refuses administrator sessions for platform migrations.
-`wamn-codegen/tests/build_live.rs::history_changes_append_immutable_versions_and_execute_during_build` covers generated history versioning.
-These live targets require PostgreSQL. Compile them without starting a server with `cargo test -p <package> --test <target> --no-run`.
-Workflow authoring now has an authenticated control operation. Its deployed acceptance coverage remains with the workflow owner.
-Reset still asserts old-event disposal and environment isolation.
-`wamn-alrvy.20` (temporary directory leak) and `wamn-alrvy.22` (uncovered lint requirements) remain open.
-The accepted Epic 2 items `wamn-xy404`, `wamn-1riwn`, and `wamn-c361p` remain open.
-`wamn-azv06` remains not reproduced. `wamn-fszfy`, `wamn-m4wnp`, and `wamn-ib8ej` also remain open.
-The platform schema case covers explicit system and project SQL upgrades on kind.
-These tests provide no GCP coverage.
-
-
-All tests require Docker, kind, Helm, kubectl, OpenSSL, and a prepared KCL compiler selected by `WAMN_KCL`.
-Focused application bodies require `script` for product deletion confirmation.
-Build the native `wamn` binary beside the test executable in `$CARGO_TARGET_DIR/debug`.
-Use prepared artifacts from [local platform production](building.md#local-platform-artifacts).
-Keep the complete prepared chart directory and its pinned images unchanged after installation.
-Artifact preparation builds authored scratch packages from `apps/platform_fixture` through product commands.
-Focused application bodies also require these publication inputs:
-
-- Set `DATABASE_URL` to a separate disposable PostgreSQL 18 server with permission to create and drop databases.
-- Set `WAMN_INGRESS_COMPONENT` to the raw pinned `ingress.wasm`.
-- Set `WAMN_PACKAGE_ARTIFACT_BASE`, `WAMN_COMPONENT_ARTIFACT_BASE`, and `WAMN_RELEASE_ARTIFACT_BASE` under the selected kind registry.
-- Set `WAMN_REGISTRY_AUTH_FILE` to the registry's protected `.dockerconfigjson` file.
-
-Use the registry in the platform values file. The kind default is `localhost:5001`.
-Tests read product-created service credentials from Secrets.
-Control routes require a password-login session and refuse a PAT (personal access token).
-Application routes use a project service PAT issued through the control route.
-
-Supply `WAMN_TEST_OWNER_PASSWORD` for the existing platform's owner before the first focused run.
-The first run enrolls an owner without a password through `/password/enroll`, with the product's local invitation.
-It then signs in through `/password/session` for the control audience.
-Later runs observe the stored password credential and skip enrollment without reading or consuming another invitation.
-They obtain the same password from the caller's `WAMN_TEST_OWNER_PASSWORD` and sign in again.
-Tests never print or persist this password and create no saved-step file.
-Each fresh-platform installation generates one password in memory and reuses it after repair.
-
-Use an existing disposable kind platform for the focused cases in Epic 9.
-`wamn platform deploy --only` returns with the Epic 10 `platform` chart.
-Set `PATH` to include the `debug` directory under `CARGO_TARGET_DIR`.
-Use the kubeconfig for the disposable platform.
-After the owner approves the fixture, annotate its `platform` namespace with `wamn.dev/disposable=true`.
-
-The namespace annotation records consent to use this platform as disposable.
-Focused tests refuse an absent or false annotation before any platform mutation.
-
-Before the first focused run, enter the owner password without echoing it:
-
-```bash
-read -r -s -p 'Disposable owner password: ' WAMN_TEST_OWNER_PASSWORD
-printf '\n'
-export WAMN_TEST_OWNER_PASSWORD
-```
-
-Keep that password in your normal secret store.
-In later shells, load the same value into `WAMN_TEST_OWNER_PASSWORD` from that store.
-If the owner already has a password, supply that existing password.
-Run focused application recovery against that platform:
-
-```bash
-cargo test --locked --offline -p wamn-dev --test platform_apply_kind application_recovery_kind -- --ignored --exact --nocapture
-```
-
-Select `same_name_reset_kind` in the same command for reset and CDC tests.
-When the Epic 10 installation path is available, select the prepared chart with `WAMN_RELEASE_CHART` for the normal and interrupted installation case:
-
-```bash
-cargo test --locked --offline -p wamn-dev --test platform_apply_kind platform_apply_kind -- --ignored --exact --nocapture
-```
-
-DEP6's bounded case uses one fresh platform, trusted product commands for its first environment,
-and authenticated control routes for the subsequent deploy, rollback, and schema mutation.
-It reads actual Job pods, the typed applied configuration through `wamn-registry`, and application release ConfigMaps.
-It deletes its publishing checkout before route execution.
-It reads the worker's image, immutable chart inputs, and storage mounts to exclude paths from the submitting machine.
-Kind has no web bucket, so hosted platform UI serving is verified on GCP in DEP7.
-Supply all publication inputs listed above before the run.
-Allow 30–45 minutes with prepared platform artifacts.
-The test enforces a 45-minute limit that includes setup and successful cleanup.
-Run it with this command:
-
-```bash
-cargo test --locked -p wamn-dev --test platform_apply_kind \
-  control_operations_kind -- --ignored --exact --nocapture
-```
-
-The case deletes its cluster after success and retains failed resources with exact cleanup commands.
-It creates another project for the denied caller.
-Cluster deletion removes both projects.
-Project deletion still has no standalone product operation.
-
-A CLI-only change rebuilds the native binaries and the affected test executable.
-It reuses the installed platform and its prepared chart and images.
-An in-cluster deployment change requires a new ctl image.
-Host, identity, and role-component changes require their affected images.
-Produce those artifacts with `cargo xtask build-platform`, then install another disposable platform through the product command.
-Never overwrite the prepared chart of an existing platform.
-A fixture change rebuilds the affected application artifacts through the test's product publication path.
-
-Fresh-platform tests delete their clusters after success.
-Failed runs retain private inputs and logs and print cleanup commands.
-Focused tests never delete the attached platform.
-After its focused runs finish, delete the reusable platform:
-
-```bash
-kind delete cluster --name wamn-test-dep3
-```
-
-The journeys have no saved completion state or resume system.
-Retry product deployment with the same cluster document and prepared chart.
-
-### Removed application cluster coverage
-
-DEP2-02 removes the Receiving and WMS cluster suites and their duplicate installers.
-It also removes the RC runner and the separate identity/session cluster journey.
-
-The historical Receiving cluster combinations covered command histories, membership revocation, postcommit delivery, and materialization.
-The WMS combinations covered deployed routes, label failures after commit, delivery, and host restart with compiled code reuse.
-The old session-profile tests were removed with per-environment session targets. Epic 6 runs build and clippy checks without tests.
-The RC runner combined bootstrap with socket and trace Jobs.
-These historical combinations receive no replacement in Epic 2.
-DEP2-13 supplies focused coverage through product deployment commands.
-
-Native application, identity, session, socket, and trace tests remain.
-Shared business fixtures, registry transport, and image archive tests remain.
-Surviving render cases call the product renderer.
-The native installation sequence test is removed with the private development provisioner.
-
-### Environment deployment coverage
-
-The focused tests above split the DEP2-13 application journey by contract.
-The fresh-platform test covers installation and repair. The focused cases cover application recovery and reset.
-DEP2-09 already removed `environment_reapply.rs`, its synthetic chart, and its direct Helm write and interruption helpers.
-The old connector, file, drain, deletion, and schedule combinations have no replacement in this epic.
-Product rendering, file fixture, and database tests remain at their existing tiers.
-
-### Files on PostgreSQL and MinIO
-
-The C4 tests use disposable PostgreSQL databases. Compile them without starting services:
-
-```bash
-export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER='kache test-runner'
-cargo test --locked --offline -p wamn-environment --test files_live --test platform_grants_live --no-run
-cargo test --locked --offline -p wamn-provision --test family_denial_matrix --test deploy_sql_authority --no-run
-cargo test --locked --offline -p wamn-schema-introspection --test file_reference_live --no-run
-```
-
-The NATS variable selects an existing server binary and prevents a native NATS build.
-
-Run the live cases with Docker and the PostgreSQL binaries:
-
-```bash
-cargo test --locked --offline -p wamn-environment --test files_live --test platform_grants_live -- --nocapture
-cargo test --locked --offline -p wamn-provision --test family_denial_matrix --test deploy_sql_authority -- --nocapture
-cargo test --locked --offline -p wamn-schema-introspection --test file_reference_live -- --nocapture
-```
-
-The file fixture declares read and write S3 bindings, including a binding for a store without a CDN host.
-Its document migration references `platform.file(id)`.
-The metadata tests cover grants, stamps, history, connection disablement, and referenced deletion refusal.
-Registry tests use real targeted logins for `registry.lookup_file_connection`.
-They refuse unmapped logins, forged target, disabled connections, and projects without enablement.
-They also read the recorded generation after a bucket and prefix change.
-
-The native host tests start an owned MinIO container and disposable PostgreSQL servers.
-They require PostgreSQL 18 binaries at `/usr/lib/postgresql/18/bin` and a running Docker daemon.
-They also require the pinned MinIO and mc images in `support/files.rs`.
-The fixture removes its containers and servers after each test.
-Native uploads accept at most 64 MiB. The tests stream uploads, compare hashes, and repair committed staging bytes.
-They enforce sessions, operation grants, file ownership, private exposure, and read binding refusals.
-Signed URL tests call `FileRoutes::signed_url`, then require 403 after expiry and a 900-second lifetime cap.
-The package fixture also declares a public projection with a three-second signed read result.
-The test generates its contracts and admits its Wasm component through the production package admission path.
-It invokes that operation through the shared operation entry as a session caller that holds only the operation grant.
-The returned URL serves the private bytes, then returns 403 after expiry. Direct `file.get` returns 403.
-This test needs no external host, guest build, NATS server, or additional environment variables.
-
-Public exposure tests require anonymous origin reads, the cache header, and origin 404 after unexpose.
-Raw blobstore mutations refuse the reserved private and public keys.
-
-The age test imports a month-old metadata fixture through a non-superuser table owner.
-It restores the stamp trigger in the same transaction before the test actions.
-It seeds aged objects through the `x-minio-source-mtime` header and reads their actual timestamps.
-The [pinned MinIO request parser](https://github.com/minio/minio/blob/76c06ff1d2cc844050fdeb1d54bf8fa70db72278/cmd/object-api-options.go) defines that header.
-The test installs a one-day lifecycle rule for staging only, then requires that live bytes and unlinked metadata stay.
-No clock change or external aged snapshot is required.
+Owner ruling 2026-11-05: the non-cluster selection of an acceptance run always runs to completion.
+It does not stop at the first failure. Every step runs.
+Report every failure together in one report, with its log lines.
+Do all the diagnosis that the failures need in the same pass, without further approval.
+This diagnosis includes single-case reruns that keep their artifacts, and builds of the same case at the base commit.
+The result is one run, one complete list of findings and one ruling session.
+A cluster stage still stops at its first failure.
 
 ## Application generation and SQLx
 
-Follow [test-database isolation](#test-database-isolation) before these database-backed commands.
-
-`wamn build` generates every application ([building](building.md#wamn-build)).
-Its output lies in `apps/target/wamn/<package>`, and Git holds none of it.
-Build every package before you compile the apps workspace, the application test crates, or an application web:
+`cargo xtask prepare-tests` builds every application for a test run.
+To build selected packages, use `wamn build` ([building](building.md#wamn-build)):
 
 ```bash
 cargo run --locked --offline -p wamn-cli --bin wamn -- build \
-  apps/platform_fixture apps/platform_fixture_overlay apps/wamn_receiving \
-  apps/client_acme_receiving apps/wamn_wms apps/edge_samples apps/edge_device
+  apps/platform_fixture apps/platform_fixture_overlay
 ```
 
-The platform fixture is an application too, and it builds the same way.
-The platform owns it, and a platform test takes it instead of an application.
-The crate `wamn-fixture-package` states its paths, so a test reads them without a literal of its own.
+Give each base before its overlays.
+The output goes to `apps/target/wamn/<package>`, and Git holds none of it.
+The crate `wamn-fixture-package` states the platform fixture paths, so a test reads them without a literal of its own.
 Do not edit generated Rust directly.
 
-The publication tests for NetSuite and REST connector build the platform palette through `wamn-build`.
-Release assembly receives that palette separately from application components.
-
-The compiler checks every emitted statement against committed SQLx descriptions before it writes the bindings.
-It records parameter types, selected columns, relation access, and transaction requirements in the compiled package document.
-The compiler emits no native verifier rows, bind fixtures, or source maps.
+The compiler checks every emitted statement against the committed SQLx descriptions before it writes the bindings.
+It records parameter types, selected columns, relation access and transaction needs in the compiled package document.
 
 ### wamn build
 
-The live build tests use PostgreSQL 18. Pass these child commands to the private-server runner:
+The live build tests in `wamn-codegen` have the marker `requires: docker`:
 
 ```bash
-cargo test --locked --offline -p wamn-codegen --test build_live
+cargo test --locked --offline -p wamn-codegen --test build_live -- --ignored
 ```
 
-They copy the platform fixture and build it into their own output root.
-A build with an old manifest and obsolete client output must match a build into an empty target.
-Both builds must emit the authored operation bindings and components, with identical generated bytes.
-The tests also make sure that a left-out statement type is derived and that the nullability rule of [building](building.md#wamn-build) holds.
-One test composes Acme over Receiving into a copy of their build output.
-It requires the composed component to embed the exact bytes of the Receiving component.
-The application preparation step supplies both packages.
+Each test copies the platform fixture into its own directory and builds it against its own server.
+The build creates and drops its own verification database on that server.
 
 ### Web packages
 
 The web packages form one pnpm workspace, which `pnpm-workspace.yaml` at the repository root lists.
-It includes `web/runtime`, `web/shell`, the wfe packages, `apps/platform_ui`, and `apps/wamn_receiving/web`.
 Use pnpm for every command of these packages, not npm.
 Install all of them once, at the repository root:
 
@@ -947,8 +374,8 @@ pnpm install
 ```
 
 The workspace has one lock file, `pnpm-lock.yaml`, at the repository root.
-The scripts of the application web packages write the host route clients with Cargo before they run.
-So these scripts need the Rust toolchain, and the first run compiles the generator.
+The platform UI scripts write their OpenAPI documents with `cargo xtask platform-ui-openapi` before they run.
+So these scripts need the Rust toolchain, and the first run compiles xtask.
 
 Prettier formats the hand-written web code, and ESLint lints it.
 One configuration for each tool is at the repository root: `.prettierrc.json`, `.prettierignore` and `eslint.config.js`.
@@ -992,8 +419,8 @@ pnpm --filter @wamn/platform-ui build
 
 ### Platform sign-in and application screens
 
-Browser sessions use the installed web, identity, and control services.
-Use the [development loop](development-loop.md) to publish and deploy an application before opening its screens.
+Browser sessions use the installed web, identity and control services.
+Use the [development loop](development-loop.md) to publish and deploy an application before you open its screens.
 
 ### Shared Vite tooling and Receiving
 
@@ -1008,45 +435,52 @@ pnpm --dir apps/wamn_receiving/web lint
 
 ## Cleanup
 
-The package-build PostgreSQL fixture and the local package registry use `docker rm -f -v`.
-For a retained platform cluster, use the cleanup command printed by its test.
+The test drops each PostgreSQL and NATS container at its end. Then testcontainers removes the container and its anonymous volumes.
+A test process that is killed, for example with SIGKILL, does not remove its containers.
+To find leftover test containers, run:
+
+```bash
+docker ps -a --filter label=org.testcontainers.managed-by=testcontainers
+docker ps -a --filter name=wamn-files-
+```
+
+The second command finds the MinIO containers of the file store tests.
+Remove only the containers that your run created, by their exact ID:
+
+```bash
+docker rm -f -v <container id>
+```
+
+Make sure that no other test run is active before you identify a container as yours.
+Never use `docker prune`, broad image removal or name-substring cleanup.
+
+For a cluster, find the clusters that your run created with `kind get clusters`.
+Delete only those clusters:
+
+```bash
+cargo xtask kind-cluster-delete <cluster>
+```
+
+The command deletes the cluster. It fails on a container of that cluster that remains.
 Manual platform cleanup keeps the shared build registry, as [deployment](deployment.md#cleanup) describes.
-These commands also remove anonymous volumes, which Docker creates for image-declared data directories.
-Container restarts retain their data until cleanup removes the container.
-Inspect their recorded cleanup result and remaining resource names before reporting completion.
-For manual fixtures, remove only the exact container, cluster, image, volume, and private directory that your run created.
-
-A killed cluster test (SIGKILL) does not run its cleanup, so its cluster and containers stay.
-After a killed run, find the cluster that your run created with `kind get clusters`.
-The historical Receiving/WMS fixture cleanup binary was removed with DEP6-06.
-Use the retained run's exact cluster name and the product provider's cleanup commands.
-For a run that predates product deployment, inspect and remove only that run's sidecars and image tags.
 Never remove a cluster that another session created.
+Use explicit cluster names, kubeconfig paths and contexts for Kubernetes and Helm commands.
 
-Use explicit cluster names, kubeconfig paths, and contexts for Kubernetes and Helm commands.
-Never use `docker prune`, broad image removal, or name-substring cleanup.
-
-Report unresolved cleanup failures and keep only output needed for current work or specifically requested by the user.
-Before removing a worktree, preserve its source changes and branch.
-Remove only that worktree and its owned target after no process uses them.
+Report unresolved cleanup failures.
+Before you remove a worktree, keep its source changes and branch.
+Remove only that worktree and its own target directory, after no process uses them.
 
 ## Benchmarks
 
 `cargo xtask bench` runs benchmarks. The `bench-*` commands collect and summarize measurements. SQL replay inputs live in `xtask/bench/`.
+[Transaction identity retention](deployment.md#transaction-identity-retention) gives `cargo xtask measure-tx-identity`.
 
 ## Host and package runtime
 
-Run the combined host's lifecycle tests:
+Run the lifecycle tests of the combined host:
 
 ```bash
 cargo test --locked --offline -p wamn-host --bin wamn-host host::tests::
 ```
 
-For production authorization, component execution, and database behavior, run the [local application business tests](#local-application-business-tests).
-The focused `platform_apply_kind` cases own product-command observations of deployed startup, readiness, authenticated requests, and cleanup.
-
-### Connection candidates
-
-Set `WAMN_NATIVE_C_NATS_BIN` to that NATS binary.
-The test starts private database, broker, registry, TLS, and Modbus fixtures.
-It tests good and bad candidates, version selection, cached compilation, authority refusal, and unchanged generation and credential counts.
+For authorization, component execution and database behavior, run the [local application business tests](#local-application-business-tests).
