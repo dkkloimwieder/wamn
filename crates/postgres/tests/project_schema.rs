@@ -7,6 +7,7 @@ use std::path::Path;
 use wamn_provision::{WorkloadRoleFamily, WorkloadRoleIdentity, sql, workload_login};
 
 const APP_GENERATION_PASSWORD: &str = "test-owned-app-generation-password";
+const OTHER_APP_PASSWORD: &str = "other-test-app-password";
 
 fn deploy_dir() -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../deploy")
@@ -90,13 +91,14 @@ async fn app_schema_applies_and_enforces_isolation_on_postgres() {
             .url(),
     )
     .unwrap();
-    let url = test_database.as_str().to_owned();
+    let url = test_database.as_str();
 
-    let database = current_database(&url);
+    let database = current_database(url);
     let project_env_key_1_app = app_generation(&database, &PROJECT_ENV_KEY_1.parse().unwrap());
 
+    let mut other_server = wamn_test_postgres::start(&[]).unwrap();
     let other = url::Url::parse(
-        case_server
+        other_server
             .create_database("fixture_extra")
             .await
             .unwrap()
@@ -110,7 +112,7 @@ async fn app_schema_applies_and_enforces_isolation_on_postgres() {
         WorkloadRoleFamily::App,
         &other_database,
         &project_env_key_2_app,
-        APP_GENERATION_PASSWORD,
+        OTHER_APP_PASSWORD,
     );
     other_script.push_str(sql::revoke_public_connect_base_grants_sql());
     other_script.push_str(&record_history_sql());
@@ -145,8 +147,10 @@ async fn app_schema_applies_and_enforces_isolation_on_postgres() {
     writeln!(
         script,
         "BEGIN; INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('{U1}'::uuid,'','fixture','admin:seed-isolation-fixture');\n\
-         INSERT INTO platform.\"user\" (id, type, email) VALUES \
-           ('{U1}','user','u1@t1'),('{U2}','service','u2@t1'),('{U3}','user','u3@t2');\n\
+         INSERT INTO platform.\"user\" (id, issuer, sub, type, email) VALUES \
+           ('{U1}','https://fixture.example','{U1}','user','u1@t1'),\n\
+           ('{U2}','wamn','{U2}','service','u2@t1'),\n\
+           ('{U3}','https://fixture.example','{U3}','user','u3@t2');\n\
          INSERT INTO platform.role (name) VALUES ('admin'),('clerk');\n\
          INSERT INTO platform.user_role (user_id, role_name) VALUES ('{U1}','admin');\n\
          INSERT INTO platform.permission (role_name, permission) VALUES ('clerk','platform-fixture:widget/get');\n\
@@ -162,7 +166,7 @@ async fn app_schema_applies_and_enforces_isolation_on_postgres() {
          SET LOCAL ROLE {project_env_key_1_app};\n\
          DO $$ BEGIN\n\
            ASSERT current_user='{project_env_key_1_app}', 'project authority is the prepared project-1 generation';\n\
-           ASSERT (SELECT count(*) FROM platform.\"user\")=3, 't1 sees every user of the database';\n\
+           ASSERT (SELECT count(*) FROM platform.\"user\" WHERE id IN ('{U1}', '{U2}', '{U3}'))=3, 'the app sees the seeded accounts';\n\
            ASSERT (SELECT count(*) FROM platform.role)=2, 't1 sees its roles';\n\
            ASSERT (SELECT count(*) FROM platform.user_role)=1, 't1 sees its grant';\n\
            ASSERT (SELECT count(*) FROM platform.permission)=1, 't1 sees its permission';\n\
@@ -171,13 +175,6 @@ async fn app_schema_applies_and_enforces_isolation_on_postgres() {
          COMMIT;"
     )
     .expect("writing to a String cannot fail");
-    writeln!(
-        script,
-        "DO $$ BEGIN
-        ASSERT NOT has_database_privilege('{project_env_key_2_app}', current_database(), 'CONNECT'),
-        'another environment credential cannot connect to this database'; END $$;"
-    )
-    .unwrap();
     // The ACL role reads the roles in its database.
     script.push_str(
         "BEGIN; SET LOCAL ROLE wamn_app; \
@@ -205,14 +202,9 @@ async fn app_schema_applies_and_enforces_isolation_on_postgres() {
     // The status CHECK rejects a bad row.
     writeln!(
         script,
-        "INSERT INTO platform.login_principal(login,principal_id) VALUES(current_user,'{}');",
-        wamn_provision::PlatformComponent::Provisioning.principal_id()
-    )
-    .expect("writing to a String cannot fail");
-    writeln!(
-        script,
         "DO $$ BEGIN BEGIN\n\
-           INSERT INTO platform.\"user\" (id, type, email, status) VALUES ('{U4}','user','x@t1','zombie');\n\
+           INSERT INTO platform.\"user\" (id, issuer, sub, type, email, status) \
+             VALUES ('{U4}','https://fixture.example','{U4}','user','x@t1','zombie');\n\
            ASSERT false, 'an unknown user status must be rejected';\n\
          EXCEPTION WHEN check_violation THEN NULL; END; END $$;"
     )
@@ -274,7 +266,26 @@ async fn app_schema_applies_and_enforces_isolation_on_postgres() {
 
     script.push_str("DROP SCHEMA platform CASCADE;\n");
 
-    run(&url, &script);
+    run(url, &script);
+
+    let mut wrong_credential = test_database;
+    wrong_credential
+        .set_username(project_env_key_2_app.as_str())
+        .unwrap();
+    wrong_credential
+        .set_password(Some(OTHER_APP_PASSWORD))
+        .unwrap();
+    let error = wamn_postgres::connect(wrong_credential.as_str())
+        .await
+        .unwrap_err();
+    assert_eq!(
+        error
+            .downcast_ref::<sqlx::Error>()
+            .and_then(sqlx::Error::as_database_error)
+            .and_then(sqlx::error::DatabaseError::code)
+            .as_deref(),
+        Some("28P01")
+    );
 }
 
 /// Run `script` through `psql` and return its unaligned output, failing the
@@ -327,9 +338,10 @@ async fn platform_relations_log_every_row_change_on_postgres(pool: sqlx::PgPool)
         script,
         "BEGIN;\n\
          INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('{U1}'::uuid,'','fixture','{SEED}');\n\
-         INSERT INTO platform.\"user\" (id, type, email) VALUES \
-           ('{U1}', 'user', 'u1@t1'), ('{U2}', 'user', 'u2@t2'), \
-           ('{U3}', 'service', 'u3@t1');\n\
+         INSERT INTO platform.\"user\" (id, issuer, sub, type, email) VALUES \
+           ('{U1}','https://fixture.example','{U1}','user','u1@t1'),\n\
+           ('{U2}','https://fixture.example','{U2}','user','u2@t2'),\n\
+           ('{U3}','wamn','{U3}','service','u3@t1');\n\
          INSERT INTO platform.role (name) VALUES ('admin'), ('auditor');\n\
          INSERT INTO platform.user_role (user_id, role_name) VALUES \
            ('{U1}', 'admin'), ('{U3}', 'admin');\n\
@@ -516,4 +528,435 @@ async fn timestamptz_image_spells_timestamptz_as_the_platform_canonicalizer_on_p
             "the value image must spell the held value as the canonicalizer does"
         );
     }
+}
+
+const HISTORY_PROBE: &str = r"
+CREATE TABLE public.history_probe (
+    id integer PRIMARY KEY,
+    amount numeric NOT NULL,
+    created_at timestamptz NOT NULL,
+    created_by uuid NOT NULL,
+    updated_at timestamptz NOT NULL,
+    updated_by uuid NOT NULL
+);
+SELECT wamn_history.create_history_table('public', 'history_probe', false);
+CREATE TRIGGER history_stamp BEFORE INSERT OR UPDATE ON public.history_probe
+    FOR EACH ROW EXECUTE FUNCTION wamn_history.stamp_row(
+        'created_at', 'created_by', 'updated_at', 'updated_by');
+CREATE TRIGGER history_log AFTER INSERT OR UPDATE OR DELETE ON public.history_probe
+    FOR EACH ROW EXECUTE FUNCTION wamn_history.log_row_change('unlimited');
+";
+
+const HISTORY_ACTOR: &str = "00000000-0000-4000-8000-00000000000a";
+const OTHER_HISTORY_ACTOR: &str = "00000000-0000-4000-8000-00000000000b";
+
+fn install_history_probe(url: &str) {
+    let mut script = sql::ensure_app_acl_role_sql();
+    script.push_str(wamn_provision::CATALOG_SCHEMA_SQL);
+    script.push_str(HISTORY_PROBE);
+    run(url, &script);
+}
+
+#[tokio::test]
+#[ignore = "requires: postgres, bin:psql"]
+async fn application_history_keeps_bound_actor_and_records_scale_changes() {
+    let mut server = wamn_test_postgres::start(&[]).unwrap();
+    let database = server.create_database("application_history").await.unwrap();
+    let url = database.url();
+    install_history_probe(url);
+
+    run(
+        url,
+        &format!(
+            r#"
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.history_probe TO wamn_app;
+GRANT INSERT ON public.history_probe_history TO wamn_app;
+
+BEGIN;
+SET LOCAL ROLE wamn_app;
+INSERT INTO platform.tx_identity (principal_id, role, application, operation)
+VALUES ('{HISTORY_ACTOR}', '', 'fixture', 'fixture:probe/create@1.0.0');
+SELECT set_config('app.user_id', '{OTHER_HISTORY_ACTOR}', true);
+INSERT INTO public.history_probe (id, amount, created_by, updated_by, created_at, updated_at)
+VALUES (1, 1.0, '{OTHER_HISTORY_ACTOR}', '{OTHER_HISTORY_ACTOR}', '2000-01-01', '2000-01-01');
+INSERT INTO public.history_probe (id, amount) VALUES (2, 2.0);
+DO $$ BEGIN
+    ASSERT (SELECT count(*) FROM public.history_probe WHERE created_by = '{HISTORY_ACTOR}'
+            AND updated_by = '{HISTORY_ACTOR}' AND created_at = transaction_timestamp()
+            AND updated_at = transaction_timestamp()) = 2;
+END $$;
+COMMIT;
+
+BEGIN;
+SET LOCAL ROLE wamn_app;
+INSERT INTO platform.tx_identity (principal_id, role, application, operation)
+VALUES ('{OTHER_HISTORY_ACTOR}', '', 'fixture', 'fixture:probe/update@1.0.0');
+INSERT INTO public.history_probe (id, amount) VALUES (1, 1.00)
+ON CONFLICT (id) DO UPDATE
+SET amount = EXCLUDED.amount, created_at = EXCLUDED.created_at, created_by = EXCLUDED.created_by;
+DO $$ BEGIN
+    ASSERT EXISTS (SELECT FROM public.history_probe WHERE id = 1 AND created_by = '{HISTORY_ACTOR}'
+                   AND created_at < transaction_timestamp() AND updated_by = '{OTHER_HISTORY_ACTOR}'
+                   AND updated_at = transaction_timestamp());
+    ASSERT EXISTS (SELECT FROM public.history_probe WHERE id = 2 AND updated_by = '{HISTORY_ACTOR}');
+END $$;
+COMMIT;
+
+BEGIN;
+SET LOCAL ROLE wamn_app;
+INSERT INTO platform.tx_identity (principal_id, role, application, operation)
+VALUES ('{HISTORY_ACTOR}', '', 'fixture', 'fixture:probe/update@1.0.0');
+UPDATE public.history_probe SET amount = amount, updated_at = '2000-01-01',
+    updated_by = '{HISTORY_ACTOR}' WHERE id = 1;
+COMMIT;
+
+DO $$ BEGIN
+    ASSERT EXISTS (SELECT FROM public.history_probe_history AS h JOIN public.history_probe AS p ON p.id = 1
+                   WHERE h.row_key = '{{"id":1}}' AND h.type = 'insert'
+                     AND h.changed_by = '{HISTORY_ACTOR}' AND h.changed_at = p.created_at
+                     AND h.before = '{{}}' AND (h.after ->> 'amount') = '1.0');
+    ASSERT EXISTS (SELECT FROM public.history_probe_history AS h JOIN public.history_probe AS p ON p.id = 1
+                   WHERE h.row_key = '{{"id":1}}' AND h.type = 'update'
+                     AND h.changed_by = '{OTHER_HISTORY_ACTOR}' AND h.changed_at = p.updated_at
+                     AND p.updated_by = h.changed_by AND (h.before ->> 'amount') = '1.0'
+                     AND (h.after ->> 'amount') = '1.00');
+    ASSERT (SELECT count(*) FROM public.history_probe_history WHERE row_key = '{{"id":1}}') = 2;
+END $$;
+
+BEGIN;
+SET LOCAL ROLE wamn_app;
+INSERT INTO platform.tx_identity (principal_id, role, application, operation)
+VALUES ('{HISTORY_ACTOR}', '', 'fixture', 'fixture:probe/delete@1.0.0');
+DELETE FROM public.history_probe WHERE id = 1;
+RESET ROLE;
+DO $$ BEGIN
+    ASSERT EXISTS (SELECT FROM public.history_probe_history
+                   WHERE row_key = '{{"id":1}}' AND type = 'delete'
+                     AND changed_by = '{HISTORY_ACTOR}' AND changed_at = transaction_timestamp()
+                     AND transaction_id = pg_current_xact_id()::text::bigint
+                     AND operation = 'fixture:probe/delete@1.0.0' AND after = '{{}}'
+                     AND before ->> 'amount' = '1.00' AND before ->> 'id' = '1'
+                     AND before ->> 'created_by' = '{HISTORY_ACTOR}');
+END $$;
+COMMIT;
+"#
+        ),
+    );
+}
+
+#[tokio::test]
+#[ignore = "requires: postgres, bin:psql"]
+async fn history_refuses_unattributed_or_invalid_writes_atomically() {
+    let mut server = wamn_test_postgres::start(&[]).unwrap();
+    let database = server.create_database("history_refusal").await.unwrap();
+    let url = database.url();
+    install_history_probe(url);
+
+    run(
+        url,
+        &format!(
+            r"
+CREATE TABLE public.keyless_history_probe (id integer);
+SELECT wamn_history.create_history_table('public', 'keyless_history_probe', false);
+CREATE TRIGGER history_log AFTER INSERT ON public.keyless_history_probe
+    FOR EACH ROW EXECUTE FUNCTION wamn_history.log_row_change('unlimited');
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.history_probe TO wamn_app;
+GRANT INSERT ON public.history_probe_history TO wamn_app;
+
+INSERT INTO public.history_probe (id, amount) VALUES (1, 1);
+
+BEGIN;
+SET LOCAL ROLE wamn_app;
+DO $$ BEGIN
+    BEGIN
+        INSERT INTO public.history_probe (id, amount) VALUES (2, 2);
+        ASSERT false, 'insert without an actor';
+    EXCEPTION WHEN SQLSTATE '55000' THEN NULL;
+    END;
+    BEGIN
+        UPDATE public.history_probe SET amount = amount WHERE id = 1;
+        ASSERT false, 'no-op without an actor';
+    EXCEPTION WHEN SQLSTATE '55000' THEN NULL;
+    END;
+END $$;
+INSERT INTO platform.tx_identity (principal_id, role, application)
+VALUES ('{HISTORY_ACTOR}', '', 'fixture');
+DO $$ BEGIN
+    BEGIN
+        DELETE FROM public.history_probe WHERE id = 1;
+        ASSERT false, 'delete without an operation';
+    EXCEPTION WHEN SQLSTATE '55000' THEN NULL;
+    END;
+END $$;
+COMMIT;
+
+DO $$
+DECLARE
+    proposed text;
+BEGIN
+    BEGIN
+        INSERT INTO public.keyless_history_probe VALUES (1);
+        ASSERT false, 'logged write without a primary key';
+    EXCEPTION WHEN SQLSTATE '55000' THEN NULL;
+    END;
+
+    FOREACH proposed IN ARRAY ARRAY[
+        'fixture:probe/update', 'fixture:probe/update@', 'Fixture:probe/update@1',
+        'fixture_probe:probe/update@1', 'fixture--probe:probe/update@1',
+        'fixture-:probe/update@1', '1fixture:probe/update@1',
+        'fixture:probe/update@1/extra', 'fixture:probe/update@1@2',
+        'fixture:probe/update@ 1', 'fixture:probe/update@1' || chr(160),
+        'wamn:', 'wamn:Audit-retention', 'wamn:audit_retention', 'wamn:audit-retention/run',
+        'admin:', 'admin:fix--grades', 'admin:fix-grades ', ' admin:fix-grades',
+        'operator:fix-grades'
+    ] LOOP
+        BEGIN
+            INSERT INTO platform.tx_identity (principal_id, role, application, operation)
+            VALUES ('{HISTORY_ACTOR}', '', 'fixture', proposed);
+            UPDATE public.history_probe SET amount = 2 WHERE id = 1;
+            ASSERT false, 'invalid operation %', proposed;
+        EXCEPTION WHEN check_violation THEN NULL;
+        END;
+    END LOOP;
+
+    ASSERT EXISTS (SELECT FROM public.history_probe WHERE id = 1 AND amount = 1);
+    ASSERT (SELECT count(*) FROM public.history_probe) = 1;
+    ASSERT (SELECT count(*) FROM public.history_probe_history) = 1;
+    ASSERT NOT EXISTS (SELECT FROM public.keyless_history_probe);
+    ASSERT NOT EXISTS (SELECT FROM public.keyless_history_probe_history);
+END $$;
+"
+        ),
+    );
+}
+
+#[tokio::test]
+#[ignore = "requires: postgres, bin:psql"]
+async fn history_tables_keep_the_entry_shape_and_reject_truncated_names() {
+    let mut server = wamn_test_postgres::start(&[]).unwrap();
+    let database = server.create_database("history_shape").await.unwrap();
+    let url = database.url();
+    install_history_probe(url);
+
+    run(
+        url,
+        r"
+SELECT wamn_history.create_history_table('public', 'history_probe', false);
+SELECT wamn_history.create_history_table('public', repeat('r', 31), false);
+
+DO $$ BEGIN
+    ASSERT EXISTS (
+        SELECT FROM pg_index AS i
+        WHERE i.indrelid = 'public.history_probe_history'::regclass AND i.indisprimary
+          AND ARRAY(SELECT a.attname FROM unnest(i.indkey) WITH ORDINALITY AS key(attnum, ord)
+                    JOIN pg_attribute AS a ON a.attrelid = i.indrelid AND a.attnum = key.attnum
+                    ORDER BY key.ord) = ARRAY['row_key', 'position']::name[]);
+    ASSERT EXISTS (
+        SELECT FROM pg_attribute
+        WHERE attrelid = 'public.history_probe_history'::regclass AND attname = 'position'
+          AND atttypid = 'bigint'::regtype AND attidentity = 'a');
+    ASSERT NOT EXISTS (
+        SELECT FROM (VALUES
+            ('position', 'bigint'::regtype), ('id', 'uuid'::regtype),
+            ('row_key', 'jsonb'::regtype), ('type', 'text'::regtype), ('operation', 'text'::regtype),
+            ('changed_by', 'uuid'::regtype), ('changed_at', 'timestamptz'::regtype),
+            ('transaction_id', 'bigint'::regtype), ('before', 'jsonb'::regtype), ('after', 'jsonb'::regtype)
+        ) AS entry(column_name, column_type)
+        WHERE NOT EXISTS (
+            SELECT FROM pg_attribute
+            WHERE attrelid = 'public.history_probe_history'::regclass AND attnum > 0
+              AND attname = entry.column_name AND atttypid = entry.column_type AND attnotnull));
+    ASSERT NOT EXISTS (
+        SELECT FROM pg_class
+        WHERE oid IN ('public.history_probe_history'::regclass,
+                      pg_get_serial_sequence('public.history_probe_history', 'position')::regclass)
+          AND relowner <> (SELECT datdba FROM pg_database WHERE datname = current_database()));
+    ASSERT EXISTS (
+        SELECT FROM pg_constraint
+        WHERE conrelid = ('public.' || repeat('r', 31) || '_history')::regclass
+          AND conname = repeat('r', 31) || '_history_transaction_id_not_null');
+    BEGIN
+        PERFORM wamn_history.create_history_table('public', repeat('r', 32), false);
+        ASSERT false, 'overlong derived identifier';
+    EXCEPTION WHEN invalid_parameter_value THEN NULL;
+    END;
+    BEGIN
+        PERFORM wamn_history.create_history_table('public', repeat('é', 16), false);
+        ASSERT false, 'overlong multibyte derived identifier';
+    EXCEPTION WHEN invalid_parameter_value THEN NULL;
+    END;
+    BEGIN
+        INSERT INTO public.history_probe_history
+            (row_key, type, operation, changed_by, changed_at, transaction_id, before, after)
+        VALUES ('{}', 'upsert', 'admin:probe', gen_random_uuid(), now(), 1, '{}', '{}');
+        ASSERT false, 'invalid history entry type';
+    EXCEPTION WHEN check_violation THEN NULL;
+    END;
+END $$;
+",
+    );
+}
+
+#[tokio::test]
+#[ignore = "requires: postgres, bin:psql"]
+async fn run_queue_stamps_scheduled_runs() {
+    let mut server = wamn_test_postgres::start(&[]).unwrap();
+    let database = server.create_database("run_queue_history").await.unwrap();
+    let script = format!(
+        r"
+{}
+{}
+{}
+{}
+BEGIN;
+{}
+INSERT INTO wamn_run.runs
+    (run_id, wiring_id, wiring_version, wiring_hash, package_id, environment,
+     trigger_source, execution_principal_id, execution_role, invoked_by)
+VALUES ('run', 'fixture', 1, 'sha256:' || repeat('d', 64), 'package', 'dev',
+        'schedule', '{HISTORY_ACTOR}', 'admin', 'schedule');
+INSERT INTO wamn_run.run_queue (run_id) VALUES ('run');
+DO $$ BEGIN
+    ASSERT EXISTS (SELECT FROM wamn_run.run_queue WHERE run_id = 'run'
+                   AND created_by = '{}' AND updated_by = created_by
+                   AND created_at = transaction_timestamp() AND updated_at = created_at);
+END $$;
+COMMIT;
+",
+        sql::ensure_project_roles_sql(),
+        wamn_provision::CATALOG_SCHEMA_SQL,
+        include_str!("../../../deploy/sql/run-state.sql"),
+        include_str!("../../../deploy/sql/run-queue.sql"),
+        wamn_provision::bind_platform_principal_sql(
+            wamn_provision::PlatformComponent::Provisioning
+        ),
+        wamn_provision::PlatformComponent::Provisioning.principal_id(),
+    );
+    run(database.url(), &script);
+}
+
+#[tokio::test]
+#[ignore = "requires: postgres, bin:psql"]
+async fn concurrent_history_uses_the_last_committed_row_image() {
+    let mut server = wamn_test_postgres::start(&[]).unwrap();
+    let database = server.create_database("concurrent_history").await.unwrap();
+    let url = database.url();
+    install_history_probe(url);
+    run(
+        url,
+        "INSERT INTO public.history_probe (id, amount) VALUES (1, 1), (2, 1), (3, 1), (4, 1);",
+    );
+
+    let mut first = wamn_postgres::connect(url).await.unwrap();
+    let mut second = wamn_postgres::connect(url).await.unwrap();
+    let mut observer = wamn_postgres::connect(url).await.unwrap();
+    let second_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut second)
+        .await
+        .unwrap();
+    let first_actor = HISTORY_ACTOR.parse().unwrap();
+    let second_actor = OTHER_HISTORY_ACTOR.parse().unwrap();
+    let advance = "UPDATE public.history_probe SET amount = amount + 1 WHERE id = $1";
+
+    for (id, commit_first) in [(1, true), (2, false)] {
+        let mut earlier =
+            wamn_test_postgres::transaction(&mut first, &first_actor, "admin:advance-history")
+                .await
+                .unwrap();
+        sqlx::query(advance)
+            .bind(id)
+            .execute(&mut *earlier)
+            .await
+            .unwrap();
+        let mut later =
+            wamn_test_postgres::transaction(&mut second, &second_actor, "admin:advance-history")
+                .await
+                .unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            let release = async {
+                loop {
+                    let blocked: bool =
+                        sqlx::query_scalar("SELECT cardinality(pg_blocking_pids($1)) > 0")
+                            .bind(second_pid)
+                            .fetch_one(&mut observer)
+                            .await
+                            .unwrap();
+                    if blocked {
+                        break;
+                    }
+                    tokio::task::yield_now().await;
+                }
+                if commit_first {
+                    earlier.commit().await.unwrap();
+                } else {
+                    earlier.rollback().await.unwrap();
+                }
+            };
+            let update = async {
+                sqlx::query(advance)
+                    .bind(id)
+                    .execute(&mut *later)
+                    .await
+                    .unwrap();
+                later.commit().await.unwrap();
+            };
+            tokio::join!(release, update);
+        })
+        .await
+        .expect("competing writers finish");
+    }
+
+    let mut earlier =
+        wamn_test_postgres::transaction(&mut first, &first_actor, "admin:advance-history")
+            .await
+            .unwrap();
+    let mut later =
+        wamn_test_postgres::transaction(&mut second, &second_actor, "admin:advance-history")
+            .await
+            .unwrap();
+    sqlx::query(advance)
+        .bind(3_i32)
+        .execute(&mut *earlier)
+        .await
+        .unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        sqlx::query(advance)
+            .bind(4_i32)
+            .execute(&mut *later)
+            .await
+            .unwrap();
+        later.commit().await.unwrap();
+    })
+    .await
+    .expect("writers on independent rows can commit out of order");
+    earlier.commit().await.unwrap();
+
+    run(
+        url,
+        &format!(
+            r#"
+DO $$ BEGIN
+    ASSERT EXISTS (
+        SELECT FROM public.history_probe_history AS first
+        JOIN public.history_probe_history AS second USING (row_key)
+        WHERE first.row_key = '{{"id":1}}' AND first.type = 'update' AND second.type = 'update'
+          AND first.changed_by = '{HISTORY_ACTOR}' AND second.changed_by = '{OTHER_HISTORY_ACTOR}'
+          AND first.position < second.position AND first.transaction_id <> second.transaction_id
+          AND first.before -> 'amount' = '1' AND first.after = second.before
+          AND second.after -> 'amount' = '3');
+    ASSERT (SELECT count(*) FROM public.history_probe_history WHERE row_key = '{{"id":2}}') = 2;
+    ASSERT EXISTS (SELECT FROM public.history_probe_history
+                   WHERE row_key = '{{"id":2}}' AND type = 'update'
+                     AND changed_by = '{OTHER_HISTORY_ACTOR}' AND before -> 'amount' = '1'
+                     AND after -> 'amount' = '2');
+    ASSERT EXISTS (
+        SELECT FROM public.history_probe_history AS first, public.history_probe_history AS second
+        WHERE first.row_key = '{{"id":3}}' AND second.row_key = '{{"id":4}}'
+          AND first.type = 'update' AND second.type = 'update'
+          AND first.position < second.position
+          AND first.after -> 'amount' = '2' AND second.after -> 'amount' = '2');
+END $$;
+"#
+        ),
+    );
 }

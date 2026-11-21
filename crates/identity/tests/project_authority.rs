@@ -94,15 +94,17 @@ fn prelude(url: &str) -> (wamn_identity_protocol::LoginName, String) {
     writeln!(
         script,
         r#"
-INSERT INTO platform.login_principal(login,principal_id) VALUES(current_user,'{U1}'::uuid);
+BEGIN;
 INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('{U1}'::text::uuid,'','fixture','admin:seed-authority-fixture');
-INSERT INTO platform."user" (id, type, email) VALUES ('{U1}','user','u1@t1');
+INSERT INTO platform."user" (id, issuer, sub, type, email)
+  VALUES ('{U1}','https://fixture.example','{U1}','user','u1@t1');
 INSERT INTO platform.role (name) VALUES ('admin'),('auditor');
 INSERT INTO platform.user_role (user_id, role_name) VALUES ('{U1}','admin');
 INSERT INTO platform.permission (role_name, permission) VALUES ('auditor','platform-fixture:widget/get');
 INSERT INTO platform.setting (target_type, target_id, key, value) VALUES ('org','acme','display.theme','"dark"'::jsonb);
 INSERT INTO platform.number_sequence (id, application, name, pattern) VALUES
-  ('{SEQUENCE}','{APPLICATION}','purchase_order','P-{{seq:po,width=8}}');"#
+  ('{SEQUENCE}','{APPLICATION}','purchase_order','P-{{seq:po,width=8}}');
+COMMIT;"#
     )
     .expect("writing to a String cannot fail");
     (app_generation, script)
@@ -149,13 +151,15 @@ fn run(url: &str, script: &str) {
 /// FKs satisfied, no key collision — so `42501` here is the revoked privilege and
 /// not a `WITH CHECK` rejection, which shares the SQLSTATE. That the project base grants
 /// does admit such a row under the App generation is what the counter test shows.
-#[sqlx::test(migrations = false)]
-async fn author_sql_cannot_write_the_relations_that_authorize_it(pool: sqlx::PgPool) {
+#[tokio::test]
+#[ignore = "requires: postgres, bin:psql"]
+async fn author_sql_cannot_write_the_relations_that_authorize_it() {
     let _serialized = wamn_test_postgres::lock();
-    let test_database = wamn_test_postgres::url(&pool);
-    let url = test_database.as_str().to_owned();
+    let mut server = wamn_test_postgres::start(&[]).unwrap();
+    let database = server.create_database("project_authority").await.unwrap();
+    let url = database.url();
 
-    let (app_generation, mut script) = prelude(&url);
+    let (app_generation, mut script) = prelude(url);
     writeln!(
         script,
         r#"
@@ -163,7 +167,7 @@ DO $$
 DECLARE relation text; operation text;
 BEGIN
   FOREACH relation IN ARRAY ARRAY['user','role','user_role','permission','environment',
-                                  'external_system','integration','connection','number_sequence','number_counter',
+                                  'external_system','connection','number_sequence','number_counter',
                                   'setting'] LOOP
     ASSERT has_table_privilege('wamn_app'::name, ('platform.'||relation)::text, 'SELECT'::text),
       format('%s must stay readable — the platform revokes writes, not reads', relation);
@@ -181,7 +185,7 @@ SET LOCAL ROLE {app_generation};
 DO $$ BEGIN
   ASSERT current_user = '{app_generation}',
     'the project authority is the prepared App generation';
-  ASSERT (SELECT count(*) FROM platform."user") = 1,
+  ASSERT EXISTS (SELECT FROM platform."user" WHERE id = '{U1}'),
     'users is still readable';
   ASSERT (SELECT count(*) FROM platform.user_role) = 1,
     'the role linkage 4.2 resolves app.role from is still readable';
@@ -191,8 +195,8 @@ DO $$
 DECLARE probe_sql text;
 BEGIN
   FOREACH probe_sql IN ARRAY ARRAY[
-    'INSERT INTO platform."user" (id, type, email) VALUES (''{U2}'', ''user'', ''intruder@t1'')',
-    'INSERT INTO platform."user" (id, type, email, display_name) VALUES (''{PROVISIONING}'', ''platform'', ''provisioning@example.invalid'', ''wamn:provisioning'')',
+    'INSERT INTO platform."user" (id, issuer, sub, type, email) VALUES (''{U2}'', ''https://fixture.example'', ''{U2}'', ''user'', ''intruder@t1'')',
+    'INSERT INTO platform."user" (id, issuer, sub, type, email, display_name) VALUES (''{PROVISIONING}'', ''wamn:platform'', ''{PROVISIONING}'', ''platform'', ''provisioning@example.invalid'', ''wamn:provisioning'')',
     'UPDATE platform."user" SET status = ''disabled''',
     'UPDATE platform."user" SET display_name = ''wamn:intruder''',
     'DELETE FROM platform."user"',
@@ -213,7 +217,6 @@ BEGIN
     'INSERT INTO platform.setting (target_type, target_id, key, value) VALUES (''org'', ''acme'', ''locale'', ''true'')',
     'UPDATE platform.setting SET locked = true',
     'INSERT INTO platform.external_system (id,name) VALUES (gen_random_uuid(),''forged'')',
-    'INSERT INTO platform.integration (id,integration_type,name,status) VALUES (gen_random_uuid(),''http'',''forged'',''active'')',
     'DELETE FROM platform.connection',
     'INSERT INTO platform.environment (status) VALUES (''active'')',
     'UPDATE platform.environment SET status = ''active''',
@@ -231,7 +234,7 @@ ROLLBACK;"#
     )
     .expect("writing to a String cannot fail");
     script.push_str(TEARDOWN);
-    run(&url, &script);
+    run(url, &script);
 }
 
 /// The history tables of `platform` (epic ruling 76). An App generation
@@ -240,13 +243,15 @@ ROLLBACK;"#
 ///
 /// These history tables have no row security, so `42501` here means that
 /// the caller lacks the privilege to write an entry.
-#[sqlx::test(migrations = false)]
-async fn author_sql_reads_and_writes_no_history_table(pool: sqlx::PgPool) {
+#[tokio::test]
+#[ignore = "requires: postgres, bin:psql"]
+async fn author_sql_reads_and_writes_no_history_table() {
     let _serialized = wamn_test_postgres::lock();
-    let test_database = wamn_test_postgres::url(&pool);
-    let url = test_database.as_str().to_owned();
+    let mut server = wamn_test_postgres::start(&[]).unwrap();
+    let database = server.create_database("project_history").await.unwrap();
+    let url = database.url();
 
-    let (app_generation, mut script) = prelude(&url);
+    let (app_generation, mut script) = prelude(url);
     // One direct entry insert. A position also names the position column.
     let entry = |history: &str, position: Option<i64>, row_key: &str| {
         let (column, value, overriding) = match position {
@@ -349,5 +354,5 @@ ROLLBACK;"
     )
     .expect("writing to a String cannot fail");
     script.push_str(TEARDOWN);
-    run(&url, &script);
+    run(url, &script);
 }
