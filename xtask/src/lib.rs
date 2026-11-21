@@ -4,6 +4,7 @@ mod bench;
 mod bench_cloud;
 mod bench_data;
 mod kind;
+mod measure_tx_identity;
 mod netsuite;
 mod platform;
 mod prepare_tests;
@@ -70,6 +71,8 @@ enum Task {
     BenchTier(bench_cloud::TierArgs),
     /// Measure PostgreSQL replays on the selected cloud deployment.
     BenchPgMinimum(bench_cloud::PgArgs),
+    /// Measure read transaction COMMIT latency on a private PostgreSQL 18 server.
+    MeasureTxIdentity(measure_tx_identity::Args),
     /// Summarize retained benchmark results.
     BenchResult {
         work: PathBuf,
@@ -192,6 +195,7 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
         Task::Bench(args) => bench::run(args).await,
         Task::BenchTier(args) => bench_cloud::tier(&root, &args).await,
         Task::BenchPgMinimum(args) => bench_cloud::pg(&root, &args).await,
+        Task::MeasureTxIdentity(args) => measure_tx_identity::run(&args).await,
         Task::BenchResult {
             work,
             output,
