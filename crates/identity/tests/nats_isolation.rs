@@ -302,7 +302,7 @@ async fn next_error(errors: &mut mpsc::UnboundedReceiver<String>) -> Result<Stri
 }
 
 #[tokio::test]
-#[ignore = "requires: docker, helm"]
+#[ignore = "requires: docker, bin:helm"]
 async fn each_environment_has_one_account_and_no_traffic_crosses_accounts() -> Result<()> {
     let mut platform = platform().await?;
     let (dev, _) = platform.environment("dev").await?;
@@ -339,7 +339,7 @@ async fn each_environment_has_one_account_and_no_traffic_crosses_accounts() -> R
 }
 
 #[tokio::test]
-#[ignore = "requires: docker, helm"]
+#[ignore = "requires: docker, bin:helm"]
 async fn runtime_operator_user_holds_only_its_signed_subjects() -> Result<()> {
     let platform = platform().await?;
     let operator_claims = claims(credentials_jwt(&platform.bootstrap.runtime_operator_creds)?)?;
@@ -397,7 +397,7 @@ async fn runtime_operator_user_holds_only_its_signed_subjects() -> Result<()> {
 }
 
 #[tokio::test]
-#[ignore = "requires: docker, helm"]
+#[ignore = "requires: docker, bin:helm"]
 async fn environment_account_limits_refuse_the_next_connection_and_subscription() -> Result<()> {
     let mut platform = platform().await?;
     let (_, account) = platform.environment("dev").await?;
