@@ -7505,7 +7505,6 @@ name = "wamn-test-infrastructure"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-nats",
  "base64 0.22.1",
  "hex",
  "hmac 0.13.0",
@@ -7513,7 +7512,6 @@ dependencies = [
  "rcgen",
  "ring",
  "rustix 1.1.6",
- "rustls",
  "serde",
  "serde_json",
  "serde_yaml",
