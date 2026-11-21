@@ -242,11 +242,12 @@ Issues:
 - Ruled: history assertions of the deleted provision tests move to `crates/postgres/tests/project_schema.rs`, grant assertions to `wamn-test-sql`.
 - Ruled: no product-gap stubs remain, so no gap beads are filed.
 - Ruled: the Q2 table stands: 108 ignored tests are ported, 14 are deleted. A test that needs only Wasmtime, loopback or a prepared input is ported at the lowest tier.
+- Ruled (2026-11-21): 96 ignored tests are ported. The two stale host tests go (106 ports), then the 3 edge readiness tests and the 7 `client_projection` tests go with the code they test. The release manifest and membership tests that rulings 6 and 7 delete were never ignored.
 
 13.2 Postgres and NATS come from testcontainers. The images are the production digests: Postgres 18.6 and the platform's NATS. `wamn-test-postgres` and every `lock()` call go.
 - Ruled: `testcontainers` =0.28.0 alone, with `GenericImage`. No `testcontainers-modules`.
 - Ruled: Postgres is `ghcr.io/cloudnative-pg/postgresql:18.6@sha256:899d3ed526b659d77935dde0e6bf2d69dbbf17d3d8c6486ca8cfd04bd3c18533` with a test-owned initdb.
-- Ruled: NATS is `nats:2.15.2-alpine@sha256:afae2fdbe2e326c65e1246cb83b9d05d319188734f3bd577ac8072daae78a10f`, pinned in the platform chart values. Tests use the same digest.
+- Ruled (2026-11-21): NATS is `nats:2.12.15-alpine@sha256:b270f5e2428354c0335612694d7dd2fb588148e567a5757fdff325ef9c9332e6`, the version the platform values set, pinned for the server and the init container in the platform chart values. Tests use the same digest.
 - Ruled: each test that needs Postgres or NATS starts its own container through one helper and gets its own server. No `#[sqlx::test]`, cargo runner, custom test main, locks or `RUST_TEST_THREADS`.
 
 13.3 No `test-util` features: all 20 crates that define one lose it. Helpers live in `tests/common/` or one dev-only crate. Test-only constructors and back doors leave production code.
@@ -295,6 +296,7 @@ Next: Epic 14 (step 3.8, second part): one service test per contract with a real
 - When Helm ships readiness annotations (HIP 25, a draft today; Helm v4.2.2 has none) and no waited chart renders a Secret, revisit Helm waits for the `project` and `org` charts.
 - After the first kind run: hand-written OpenTofu for GCP (A1, K10) and `infra.values.yaml`. Epic 10 targets kind, with a GCP values file checked by `values.schema.json`.
 - After the first kind run: three NATS pods with three-replica streams.
+- Move the NATS server from 2.12.15 to the vendored chart's 2.15.2. Decide with its own kind run.
 - Later option: custom domains for applications through a verified-domain list (E).
 - Later option: integration types owned by one org (Q4).
 - Later option: users in more than one org, through an invitation the user accepts (grant ruling, change 1).
@@ -2054,3 +2056,17 @@ Epic 12 closed on 2026-11-20 after review. The smoke run on kind passed.
 - Question 5: `platform-policy/data-access.json` goes with the two tests in `development_assertions.rs` that read it.
 - Question 6: a private Postgres 18 server is enough. The command compares commit cost with and without the identity insert on the same server. Absolute numbers under synchronous standbys belong with the Open item "The system database: a second instance, an ObjectStore and a ScheduledBackup".
 - The Q2 table stands: 108 tests are ported and 14 are deleted.
+
+**Ruled (D, 2026-11-21): Epic 13 questions 1 to 10.** Ruling 1 corrects choice 3 and question 3 of the 2026-11-20 entry.
+- Question 1: NATS stays at 2.12.15. The server, the init container and the NATS test containers use `nats:2.12.15-alpine@sha256:b270f5e2428354c0335612694d7dd2fb588148e567a5757fdff325ef9c9332e6`. Reason: since `a84e44f14` the platform values set 2.12.15, the version stock wasmCloud uses, and every kind run passed on it. Under the freeze, a digest pin must not also change the server version. The move to 2.15.2 is an Open item.
+- Question 2: `services/host/tests/native_lifecycle_live.rs` and `scheduler_nats_move_live.rs` are deleted. Reason: they fail because scheduler NATS signing needs an identity issuer. Their contracts (probes, signals, drain, NATS outage) go to Epic 14, which builds the real host in process with the real identity code.
+- Question 3: `crates/envelope/src/pod_identity.rs::pod_signing_credentials_never_contain_a_private_key` and the `with_test_endpoint` back door are deleted. Reason: its only check is the literal `private_key: None`, and the Q2 table deletes tests that read back a literal.
+- Question 4: `Mailer::fixture` and the `ResendMailer` endpoint override are deleted. The test uses `MailConfig::Local`, and the token cleanup on delivery failure gets a unit test in the invitation code. Reason: ruling 14 deletes back doors.
+- Question 5: `native_call.rs::prepare_native`, `ReadinessCall` and the 3 readiness tests are deleted. Reason: only tests call them.
+- Question 6: `release_manifest::load_from`, `ManifestUnreadable` and their tests are deleted. Reason: only tests call them.
+- Question 7: if nothing fills `ReleaseTarget.applications`, the membership refusal in `ServingContext::new`, its test and the field are deleted. Reason: the refusal cannot fire.
+- Question 8: `crates/codegen/src/client_ir.rs` and all of `client_projection.rs` are deleted, with the 7 tests ported in this epic. Reason: the code is dead, and Part 1 deletes the file.
+- Question 9: the `pg_authid_rolname_index` retry in `crates/codegen/src/build.rs::create_history_tables` is deleted. Reason: the retry is dead.
+- Question 10: the deleted `42501` check in `crates/identity/tests/password_live.rs::enrollment_preserves_identity_and_pat_and_consumes_all_invitations` stays deleted. Reason: it was written for `wamn_db_owner`, and 13.6 asserts the refusals of every login.
+- Limits on root's decisions: the `provision_org` and `provision_system` split stays only if production calls the same public functions. The system roles from `helm template` are parsed into typed objects, with no text matching. Project logins log in by password in 13.6, because grants depend on the role, not the login method. Certificate login is tested in Epic 14 on kind.
+- Count: 96 ignored tests are ported.
