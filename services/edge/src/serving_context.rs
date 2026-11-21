@@ -34,16 +34,6 @@ impl ReleaseTarget {
             applications: wamn_registry::EnvironmentApplications::new(),
         }
     }
-
-    /// This target with the targeted application membership.
-    #[must_use]
-    pub fn with_applications(
-        mut self,
-        applications: wamn_registry::EnvironmentApplications,
-    ) -> Self {
-        self.applications = applications;
-        self
-    }
 }
 
 /// Manifest facts retained until their owning readers leave the release document.

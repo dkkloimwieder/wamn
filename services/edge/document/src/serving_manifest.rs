@@ -426,34 +426,6 @@ impl ServingManifest {
             })
     }
 
-    /// Build and validate a manifest from authoritative current-record facts.
-    ///
-    /// The attachments are the authored ones, and this helper splits them the
-    /// way publish does. This helper is test-only. The production publish
-    /// serializes its projected facts and admits those exact bytes through
-    /// [`Self::from_canonical_bytes`].
-    #[cfg(feature = "test-util")]
-    pub fn new(
-        release: ServingRelease,
-        components: BTreeSet<ServingComponent>,
-        routes: BTreeSet<ServingRoute>,
-        attachments: BTreeMap<CanonicalName, ServingAttachment>,
-    ) -> Result<Self, CatalogIdentityError> {
-        let attachments = route_attachments(attachments);
-        let manifest = Self {
-            format_version: SERVING_MANIFEST_FORMAT_VERSION,
-            release,
-            components,
-            composed_entry: None,
-            routes,
-            attachments,
-            host_routes: BTreeSet::new(),
-        };
-        manifest.validate()?;
-        within_delivery_limit(manifest.canonical_bytes().len())?;
-        Ok(manifest)
-    }
-
     /// One route attachment by id.
     pub fn attachment(&self, id: &CanonicalName) -> Option<AttachmentRef<'_>> {
         self.attachments.get(id).map(AttachmentRef::Route)
@@ -1037,8 +1009,29 @@ mod tests {
         }
     }
 
+    /// The document of these facts, admitted through its canonical bytes as a
+    /// serving process admits its mount.
+    fn admit(
+        release: ServingRelease,
+        components: BTreeSet<ServingComponent>,
+        routes: BTreeSet<ServingRoute>,
+        attachments: BTreeMap<CanonicalName, ServingAttachment>,
+    ) -> Result<ServingManifest, CatalogIdentityError> {
+        let document = ServingManifest {
+            format_version: SERVING_MANIFEST_FORMAT_VERSION,
+            release,
+            components,
+            composed_entry: None,
+            routes,
+            attachments: route_attachments(attachments),
+            host_routes: BTreeSet::new(),
+        };
+        ServingManifest::from_canonical_bytes(&document.canonical_bytes())
+            .map(|(manifest, _)| manifest)
+    }
+
     fn manifest() -> ServingManifest {
-        ServingManifest::new(
+        admit(
             release(),
             components(),
             routes(),
@@ -1276,7 +1269,7 @@ mod tests {
     #[test]
     fn collection_insertion_order_cannot_reach_identity() {
         let forward = manifest();
-        let reversed = ServingManifest::new(
+        let reversed = admit(
             release(),
             components().into_iter().rev().collect(),
             routes().into_iter().rev().collect(),
@@ -1332,7 +1325,7 @@ mod tests {
         for operation in ["overlay:widget/get@3.0.0", "base:widget/get@2.0.0"] {
             let mut mismatched = attachment();
             mismatched.registered_operation = Some(operation.parse().unwrap());
-            let _error = ServingManifest::new(
+            let _error = admit(
                 release(),
                 components(),
                 routes(),
@@ -1355,7 +1348,7 @@ mod tests {
             Some("overlay:widget/get@3.0.0".parse().unwrap());
         mismatched_components.insert(component);
         let _error =
-            ServingManifest::new(release(), mismatched_components, routes(), BTreeMap::new())
+            admit(release(), mismatched_components, routes(), BTreeMap::new())
                 .expect_err("component operation must match its selected package coordinate");
     }
 
@@ -1396,7 +1389,7 @@ mod tests {
         let mut signed = attachment();
         signed.auth_policy = policy;
         let build = |signed| {
-            ServingManifest::new(
+            admit(
                 release(),
                 components(),
                 routes(),
@@ -1444,7 +1437,7 @@ mod tests {
             let mut malformed = attachment();
             malformed.auth_policy = policy;
             assert_eq!(
-                ServingManifest::new(
+                admit(
                     release(),
                     components(),
                     routes(),
@@ -1463,7 +1456,7 @@ mod tests {
         ] {
             let mut authenticated = attachment();
             authenticated.auth_policy = serde_json::json!({"modes": modes});
-            ServingManifest::new(
+            admit(
                 release(),
                 components(),
                 routes(),
@@ -1475,7 +1468,7 @@ mod tests {
         let mut anonymous = attachment();
         anonymous.auth_policy = serde_json::json!({"modes": [NO_AUTHENTICATION_MODE]});
         assert_eq!(
-            ServingManifest::new(
+            admit(
                 release(),
                 components(),
                 routes(),
@@ -1493,7 +1486,7 @@ mod tests {
         duplicate.packages.insert(
             PackageCoordinate::new("base".parse().unwrap(), "2.0.0".parse().unwrap()).unwrap(),
         );
-        let error = ServingManifest::new(duplicate, components(), routes(), BTreeMap::new())
+        let error = admit(duplicate, components(), routes(), BTreeMap::new())
             .expect_err("two versions of one package must refuse");
         assert_eq!(
             error,
@@ -1550,7 +1543,7 @@ mod tests {
         };
         absent.registered_operation = None;
         assert_eq!(
-            ServingManifest::new(
+            admit(
                 release(),
                 components(),
                 routes(),
@@ -1567,7 +1560,7 @@ mod tests {
         other_package.package_id = "overlay".parse().unwrap();
         other_package.registered_operation = None;
         assert!(matches!(
-            ServingManifest::new(
+            admit(
                 release(),
                 components(),
                 routes(),
@@ -1578,7 +1571,7 @@ mod tests {
 
         let mut mismatched = route_attachment();
         mismatched.registered_operation = Some("base:widget/list@1.0.0".parse().unwrap());
-        let _error = ServingManifest::new(
+        let _error = admit(
             release(),
             components(),
             routes(),
@@ -1610,7 +1603,7 @@ mod tests {
             BTreeSet::from([handler]),
             duplicate,
         ] {
-            let _error = ServingManifest::new(release(), components(), routes, BTreeMap::new())
+            let _error = admit(release(), components(), routes, BTreeMap::new())
                 .expect_err("an inexact route must refuse");
         }
     }

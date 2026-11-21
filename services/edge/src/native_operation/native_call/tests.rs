@@ -244,7 +244,7 @@ fn isolated(name: &str, case: Case) {
     if std::env::var(CHILD_MARKER).as_deref() != Ok(name) {
         let full_name = format!("native_operation::native_call::tests::{name}");
         let output = Command::new(std::env::current_exe().expect("test executable"))
-            .args(["--exact", &full_name, "--nocapture", "--include-ignored"])
+            .args(["--exact", &full_name, "--nocapture"])
             .env(CHILD_MARKER, name)
             .output()
             .expect("start isolated readiness test");
@@ -276,7 +276,6 @@ fn isolated(name: &str, case: Case) {
 }
 
 #[test]
-#[ignore = "requires: runtime"]
 fn native_readiness_initializes_without_running_the_handler() {
     isolated(
         "native_readiness_initializes_without_running_the_handler",
@@ -285,7 +284,6 @@ fn native_readiness_initializes_without_running_the_handler() {
 }
 
 #[test]
-#[ignore = "requires: runtime"]
 fn native_readiness_refuses_a_trapping_initializer() {
     isolated(
         "native_readiness_refuses_a_trapping_initializer",
@@ -294,7 +292,6 @@ fn native_readiness_refuses_a_trapping_initializer() {
 }
 
 #[test]
-#[ignore = "requires: runtime"]
 fn native_readiness_bounds_initialization_and_returns_memory() {
     isolated(
         "native_readiness_bounds_initialization_and_returns_memory",

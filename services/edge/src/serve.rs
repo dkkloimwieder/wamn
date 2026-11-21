@@ -338,12 +338,44 @@ impl HostPlugin for NatsTraps {
         item: &mut WorkloadItem<'a>,
         _interfaces: WitInterfaces<'_>,
     ) -> anyhow::Result<()> {
+        use wash_runtime::wasmtime::component::types::ComponentItem;
+        use wash_runtime::wasmtime::component::ResourceType;
+
         let WorkloadItem::Component(component) = item else {
             anyhow::bail!("edge NATS imports belong to ingress");
         };
         anyhow::ensure!(component.name() == INGRESS_WORKLOAD, "edge NATS imports belong to ingress");
+        // Only the NATS instances trap. Every other import keeps the
+        // definition of its provider, and a resource that one interface uses
+        // from another, such as `authenticated-caller`, keeps its real type.
         let guest = component.component().clone();
-        component.linker()?.define_unknown_imports_as_traps(&guest)?;
+        let engine = guest.engine();
+        let linker = component.linker()?;
+        for (name, import) in guest.component_type().imports(engine) {
+            let ComponentItem::ComponentInstance(instance) = import.ty else {
+                continue;
+            };
+            if !name.starts_with("wasmcloud:nats/") {
+                continue;
+            }
+            let mut traps = linker.instance(name)?;
+            for (export, item) in instance.exports(engine) {
+                match item.ty {
+                    ComponentItem::ComponentFunc(_) => {
+                        let call = format!("{name}#{export}");
+                        traps.func_new(export, move |_, _, _, _| {
+                            Err(wash_runtime::wasmtime::format_err!(
+                                "{call} is not available on the edge"
+                            ))
+                        })?;
+                    }
+                    ComponentItem::Resource(_) => {
+                        traps.resource(export, ResourceType::host::<()>(), |_, _| Ok(()))?;
+                    }
+                    _ => {}
+                }
+            }
+        }
         Ok(())
     }
 }

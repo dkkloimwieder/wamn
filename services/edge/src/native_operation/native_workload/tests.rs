@@ -98,7 +98,6 @@ async fn load_with_reuse(
 }
 
 #[tokio::test]
-#[ignore = "requires: runtime"]
 async fn native_loader_allows_repeated_export_only_handlers() {
     let first = component("transform", HANDLER, None, 37);
     let repeat = NativeComponent {
@@ -125,7 +124,6 @@ async fn native_loader_allows_repeated_export_only_handlers() {
 }
 
 #[tokio::test]
-#[ignore = "requires: runtime"]
 async fn native_loader_refuses_ambiguous_imported_operation() {
     for second_value in [37, 91] {
         let first = component("selected", OPERATION, None, 37);
@@ -138,7 +136,6 @@ async fn native_loader_refuses_ambiguous_imported_operation() {
 }
 
 #[tokio::test]
-#[ignore = "requires: runtime"]
 async fn native_loader_requires_matching_repeated_bytes_before_cache_access() {
     let first = component("transform", HANDLER, None, 37);
     let altered = NativeComponent {

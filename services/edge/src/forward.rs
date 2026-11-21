@@ -229,22 +229,15 @@ async fn run(
             pass = forward_pending(&forwarder, &samples, &credential_failures) => pass,
             _ = stopped.wait_for(|stopped| *stopped) => return,
         };
-        match pass {
-            Pass::Done => in_a_row = 0,
-            Pass::Unreachable => {}
-            Pass::Credential => {
-                in_a_row += 1;
-                if in_a_row >= forwarder.credential_bound {
-                    credential_stop.store(true, Ordering::Relaxed);
-                    tracing::error!(
-                        failures = in_a_row,
-                        "the forward stopped: the platform refused the PAT; \
-                         renew the token file and restart the edge"
-                    );
-                    let _ = stopped.wait_for(|stopped| *stopped).await;
-                    return;
-                }
-            }
+        if stops_at_bound(&pass, &mut in_a_row, forwarder.credential_bound) {
+            credential_stop.store(true, Ordering::Relaxed);
+            tracing::error!(
+                failures = in_a_row,
+                "the forward stopped: the platform refused the PAT; \
+                 renew the token file and restart the edge"
+            );
+            let _ = stopped.wait_for(|stopped| *stopped).await;
+            return;
         }
         let reached = pass == Pass::Done;
         let wait = async {
@@ -264,6 +257,19 @@ async fn run(
             (backoff * 2).min(LAST_BACKOFF)
         };
     }
+}
+
+/// Count `pass` into `in_a_row`, the credential failures in a row, and return
+/// whether the forward stops: a credential failure that reaches `bound`. A
+/// pass that reached the platform ends the row, and a pass that did not reach
+/// it leaves the row as it is.
+fn stops_at_bound(pass: &Pass, in_a_row: &mut u32, bound: u32) -> bool {
+    match pass {
+        Pass::Done => *in_a_row = 0,
+        Pass::Unreachable => {}
+        Pass::Credential => *in_a_row += 1,
+    }
+    *pass == Pass::Credential && *in_a_row >= bound
 }
 
 /// Send every pending sample in order. A sample that does not reach the
@@ -435,7 +441,26 @@ mod tests {
     use hyper::StatusCode;
     use serde_json::json;
 
-    use super::{Answer, answer, write_field};
+    use super::{Answer, Pass, answer, stops_at_bound, write_field};
+
+    #[test]
+    fn credential_failures_in_a_row_stop_the_forward_at_the_bound() {
+        let mut in_a_row = 0;
+        assert!(stops_at_bound(&Pass::Credential, &mut in_a_row, 1));
+
+        let mut in_a_row = 0;
+        for pass in [
+            Pass::Credential,
+            Pass::Unreachable,
+            Pass::Credential,
+            Pass::Done,
+            Pass::Credential,
+            Pass::Credential,
+        ] {
+            assert!(!stops_at_bound(&pass, &mut in_a_row, 3), "{pass:?}");
+        }
+        assert!(stops_at_bound(&Pass::Credential, &mut in_a_row, 3));
+    }
 
     #[test]
     fn the_sample_key_is_written_into_the_key_field() {

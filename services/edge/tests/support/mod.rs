@@ -1,9 +1,9 @@
 //! The release bundle of `apps/edge_device` that the edge tests share.
 //!
-//! Each test binary builds the bundle once. It reads the `edge_device`
-//! component from the package's build output, so run
-//! `wamn build apps/edge_device` first. `WAMN_INGRESS_COMPONENT` supplies the
-//! prebuilt route guest, which must match its pin. `write_package` admits the
+//! Each test binary builds the bundle once. `cargo xtask prepare-tests`
+//! builds both inputs and prints their variables: `WAMN_EDGE_DEVICE_COMPONENT`
+//! is the built `edge_device` component, and `WAMN_INGRESS_COMPONENT` is the
+//! route guest, which must match its pin. `write_package` admits the
 //! component and writes the bundle.
 
 #![allow(
@@ -57,10 +57,8 @@ pub fn bundle(test: &str) -> (PathBuf, wamn_digest::Digest) {
 fn build_bundle() -> PathBuf {
     let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let package = repository.join("apps/edge_device");
-    let ingress = PathBuf::from(
-        std::env::var_os("WAMN_INGRESS_COMPONENT")
-            .expect("set WAMN_INGRESS_COMPONENT to the pinned route guest"),
-    );
+    let ingress = prepared("WAMN_INGRESS_COMPONENT");
+    let device = prepared("WAMN_EDGE_DEVICE_COMPONENT");
     let pin = std::fs::read_to_string(repository.join("guests/ingress/ingress.wasm.sha256"))
         .expect("read the ingress pin");
     let ingress_digest = bytes_sha256(&std::fs::read(&ingress).expect("read the route guest"));
@@ -75,7 +73,7 @@ fn build_bundle() -> PathBuf {
     write_package(
         &package,
         &"device".parse().unwrap(),
-        &repository.join("apps/target/wamn/edge_device/components/device.wasm"),
+        &device,
         &ingress,
         &EdgeTarget {
             org: &ORG.parse().unwrap(),
@@ -86,6 +84,14 @@ fn build_bundle() -> PathBuf {
     )
     .expect("write the edge_device bundle");
     out
+}
+
+/// The path in the variable `name`, which `cargo xtask prepare-tests` prints.
+fn prepared(name: &str) -> PathBuf {
+    std::env::var_os(name).map_or_else(
+        || panic!("{name} is not set: run `eval \"$(cargo xtask prepare-tests)\"`"),
+        PathBuf::from,
+    )
 }
 
 /// The configuration of the edge over the bundle in `directory`, with no
