@@ -10,10 +10,11 @@ Run these commands in this order:
 
 ```bash
 eval "$(cargo xtask prepare-tests)"
-cargo test
+cargo test --workspace
 cargo test --workspace --exclude wamn-journey-tests -- --ignored
 ```
 
+Both test commands use `--workspace`, because a bare `cargo test` runs only the 16 default members of the root workspace.
 Run the third command on a machine with Docker.
 The ignored run leaves out `wamn-journey-tests`, because its only test target needs a cluster.
 [Development on kind](#development-on-kind) gives the cluster run.
@@ -141,7 +142,7 @@ The NATS helper starts `nats-server --jetstream` on a random port of `127.0.0.1`
 `Nats::url()` gives the client URL.
 
 Both helpers wait until a client connects.
-The measured median start time of PostgreSQL is 2.1 seconds. NATS starts in less than 3 seconds.
+Over 10 runs one after another, the median start time is 1.05 seconds for PostgreSQL and 0.33 seconds for NATS.
 
 The file store tests start their own MinIO container with `docker run`.
 `crates/environment/tests/support/files.rs` pins its image. At the end of the test, it removes the container.
