@@ -42,7 +42,8 @@ const MANIFEST_TITLE: &str = "wamn.json";
 const MIGRATIONS_TITLE: &str = "migrations";
 const MIGRATION_PATHS: [&str; 2] = ["migrations", "history"];
 
-/// The platform packages a package-owned component is admitted with.
+/// The platform packages every package-owned component is admitted with,
+/// beside the packages of its own declared connections.
 const OWNED_PLATFORM_PACKAGES: [&str; 2] = ["wamn:node", "wamn:postgres"];
 
 /// One package tree packed into its layers and image manifest.
@@ -291,12 +292,19 @@ fn admit_components(
         let path = wamn_build::component_path(name.as_str());
         let file = output.join(&path);
         let bytes = std::fs::read(&file).with_context(|| format!("read {}", file.display()))?;
+        let connection_packages = manifest.components[name.as_str()]
+            .connections
+            .iter()
+            .filter_map(|connection| manifest.connections.get(connection))
+            .filter_map(|declared| declared.interface.split_once('/'))
+            .map(|(package, _)| package);
         let (descriptor, _) = admit(
             manifest,
             &bytes,
             declaration,
             OWNED_PLATFORM_PACKAGES
                 .into_iter()
+                .chain(connection_packages)
                 .map(str::to_owned)
                 .collect(),
             base_digests.clone(),

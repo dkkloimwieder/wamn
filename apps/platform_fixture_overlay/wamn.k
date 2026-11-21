@@ -37,5 +37,5 @@ manifest.Package {
     }
     connections = {}
     components = {fixture_overlay = {}}
-    routes = {auth_modes = ["pat"], path_prefix = "/overlay"}
+    routes = {auth_modes = ["pat"], path_prefix = "/overlay", id_prefix = "platform-fixture-overlay"}
 }
