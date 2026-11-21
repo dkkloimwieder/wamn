@@ -1,5 +1,5 @@
 use super::{provisioning_transaction, registry::record_project_env};
-use sqlx::{Connection as _, Row as _};
+use sqlx::Connection as _;
 
 use super::write_secret_json;
 use serde_json::{Value, json};
@@ -57,9 +57,12 @@ async fn a_record_without_a_marker_keeps_the_disposable_row() {
     let postgres = wamn_test_infrastructure::containers::start_postgres()
         .await
         .unwrap();
-    let database = postgres.create_database("project").await.unwrap();
-    wamn_provision::test_database::system(database.as_str()).await;
+    postgres.create_system_role().await.unwrap();
+    let database = postgres.create_database("wamn_system").await.unwrap();
     let mut client = wamn_postgres::connect(database.as_str()).await.unwrap();
+    crate::provision_system::install_control_store(&mut client)
+        .await
+        .unwrap();
 
     sqlx::raw_sql("SET ROLE wamn_system")
         .execute(&mut client)
@@ -72,7 +75,7 @@ async fn a_record_without_a_marker_keeps_the_disposable_row() {
         .await
         .map(drop)
         .unwrap();
-    sqlx::raw_sql(wamn_registry::test_util::seed_demo_org_sql())
+    sqlx::raw_sql("INSERT INTO registry.orgs (id) VALUES ('demo')")
         .execute(&mut *transaction)
         .await
         .map(drop)
@@ -100,10 +103,8 @@ async fn a_record_without_a_marker_keeps_the_disposable_row() {
         .unwrap();
         transaction.commit().await.unwrap();
     }
-    let registry: bool = sqlx::query(wamn_registry::test_util::disposable_environment_sql())
-        .fetch_one(&mut client)
+    let registry = wamn_registry::deployment::disposable(&mut client, &triple)
         .await
-        .unwrap()
-        .get(0);
+        .unwrap();
     assert!(registry, "a record without a marker keeps the registry row");
 }

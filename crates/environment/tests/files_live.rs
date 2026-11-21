@@ -3,6 +3,7 @@
 
 use sqlx::Row as _;
 
+mod common;
 #[path = "support/files.rs"]
 #[expect(
     dead_code,
