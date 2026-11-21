@@ -15,6 +15,7 @@ cargo test --workspace --exclude wamn-journey-tests -- --ignored
 ```
 
 Both test commands use `--workspace`, because a bare `cargo test` runs only the 16 default members of the root workspace.
+On an idle machine, the plain run takes about 60 s after the build. It is slower under load.
 Run the third command on a machine with Docker.
 The ignored run leaves out `wamn-journey-tests`, because its only test target needs a cluster.
 [Development on kind](#development-on-kind) gives the cluster run.
