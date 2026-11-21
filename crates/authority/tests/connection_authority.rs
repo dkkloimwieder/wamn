@@ -151,6 +151,38 @@ async fn exact_http_service_authority_with_non_default_port_reaches_the_resolver
 }
 
 #[tokio::test]
+async fn an_exact_authority_entry_admits_its_default_port() {
+    for (base, tls, entry, port) in [
+        (
+            "https://erp.example/",
+            TlsPolicy::VerifyAuthority,
+            "erp.example:443",
+            443,
+        ),
+        (
+            "http://erp.example/",
+            TlsPolicy::Disabled,
+            "erp.example:80",
+            80,
+        ),
+    ] {
+        let connection = parse_http_connection_authority(base, tls).expect("connection definition");
+        let selected = socket(1, port);
+        let dns = FixedDns::with("erp.example", vec![selected]);
+
+        resolve_http_request(
+            &connection,
+            &target("/orders"),
+            &[allowed(entry)],
+            &|address| ExactNetwork(vec![selected]).allows(address),
+            &dns,
+        )
+        .await
+        .expect("an entry on the default port admits the URL without a port");
+    }
+}
+
+#[tokio::test]
 async fn request_authority_and_base_path_injection_fail_before_dns() {
     let connection =
         parse_http_connection_authority("https://erp.example/api/", TlsPolicy::VerifyAuthority)

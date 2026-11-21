@@ -189,9 +189,10 @@ impl DnsResolver for TokioDnsResolver {
 pub fn parse_http_definition(
     value: &serde_json::Value,
 ) -> Result<HttpConnectionAuthority, AuthorityError> {
-    let definition = wamn_connection_type::HttpConnectionDefinition::parse(value).map_err(|error| {
-        AuthorityError::new(AuthorityErrorType::InvalidDefinition, error.to_string())
-    })?;
+    let definition =
+        wamn_connection_type::HttpConnectionDefinition::parse(value).map_err(|error| {
+            AuthorityError::new(AuthorityErrorType::InvalidDefinition, error.to_string())
+        })?;
     let tls = match definition.tls_verification {
         wamn_connection_type::HttpTlsVerification::Disabled => TlsPolicy::Disabled,
         wamn_connection_type::HttpTlsVerification::VerifyAuthority => TlsPolicy::VerifyAuthority,
@@ -526,7 +527,20 @@ fn validate_target_url(
 }
 
 fn require_host_policy(url: &Url, platform_hosts: &[AllowedHost]) -> Result<(), AuthorityError> {
-    let uri: Uri = url.as_str().parse().map_err(|error| {
+    // `Url` drops a scheme's default port, and a `host:port` entry matches only
+    // a URI that names its port, so the URI states the port.
+    let (Some(host), Some(port)) = (url.host_str(), url.port_or_known_default()) else {
+        return Err(AuthorityError::new(
+            AuthorityErrorType::InvalidDefinition,
+            "canonical HTTP URL has no host or port",
+        ));
+    };
+    let explicit = format!(
+        "{}://{host}:{port}{}",
+        url.scheme(),
+        &url[url::Position::BeforePath..]
+    );
+    let uri: Uri = explicit.parse().map_err(|error| {
         AuthorityError::new(
             AuthorityErrorType::InvalidDefinition,
             format!("canonical HTTP URL is not a valid URI: {error}"),

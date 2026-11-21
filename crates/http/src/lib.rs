@@ -42,6 +42,7 @@ mod network_policy;
 pub mod transport;
 
 use crate::oauth::{Request as Oauth2Request, Response as Oauth2Token};
+use network_policy::AddressPolicy;
 use transport::HttpTransport;
 
 mod bindings {
@@ -77,20 +78,14 @@ struct ApplicationBinding {
 pub struct ConnectionHttp {
     scopes: Arc<InvocationScopes>,
     transport: Arc<HttpTransport>,
-    allowed_hosts: Arc<[AllowedHost]>,
     applications: Arc<RwLock<HashMap<String, ApplicationBinding>>>,
     component: Option<String>,
 }
 impl ConnectionHttp {
-    pub fn new(
-        scopes: Arc<InvocationScopes>,
-        transport: Arc<HttpTransport>,
-        allowed_hosts: Arc<[AllowedHost]>,
-    ) -> Self {
+    pub fn new(scopes: Arc<InvocationScopes>, transport: Arc<HttpTransport>) -> Self {
         Self {
             scopes,
             transport,
-            allowed_hosts,
             applications: Arc::default(),
             component: None,
         }
@@ -130,6 +125,8 @@ impl ConnectionHttp {
         {
             return Err(ConnectionError::Incompatible);
         }
+        let addresses =
+            AddressPolicy::for_target(&binding.target_type).ok_or(ConnectionError::Incompatible)?;
         let read_only = binding
             .mode
             .read_only(&invocation.package_id, &binding.name)
@@ -153,7 +150,7 @@ impl ConnectionHttp {
             .map_err(|_| ConnectionError::CredentialUnavailable)?
             .filter(|answer| answer.fact.status == ConnectionStatus::Active)
             .ok_or(ConnectionError::Unbound)?;
-        let transport = self.transport.for_invocation(scope, execution);
+        let transport = self.transport.for_invocation(scope, execution, addresses);
         self.send_active(facts, id, answer, &transport, scope, request)
             .await
     }
@@ -248,8 +245,8 @@ impl ConnectionHttp {
         let mut decision = resolve_http_request(
             &authority,
             &target,
-            &self.allowed_hosts,
-            &network_policy::allows,
+            &[exact_host(&authority)],
+            &|address| transport.addresses().allows(address),
             &TokioDnsResolver,
         )
         .await
@@ -337,7 +334,7 @@ impl ConnectionHttp {
                     authority,
                     request.token_authority.as_deref(),
                     &request.token_url,
-                    Some(&self.allowed_hosts),
+                    transport.addresses(),
                 )
                 .await?;
                 let token = fetch_health_token(transport, decision, &request)
@@ -472,7 +469,6 @@ impl HostPlugin for ConnectionHttp {
         let bound = Arc::new(Self {
             scopes: Arc::clone(&self.scopes),
             transport: Arc::clone(&self.transport),
-            allowed_hosts: Arc::clone(&self.allowed_hosts),
             applications: Arc::clone(&self.applications),
             component: Some(component.id().to_owned()),
         });
@@ -627,29 +623,33 @@ pub(crate) async fn token_endpoint(
     connection: &HttpConnectionAuthority,
     token_authority: Option<&str>,
     token_url: &str,
-    platform_hosts: Option<&[AllowedHost]>,
+    addresses: AddressPolicy,
 ) -> Result<AuthorityDecision, AuthorityError> {
     let (authority, target, endpoint) = bound_oauth_token(connection, token_authority, token_url)?;
-    let url = url::Url::parse(authority.canonical_base_url()).expect("canonical token URL");
-    let exact = [AllowedHost::Authority(
-        format!(
-            "{}:{}",
-            url.host_str().expect("canonical token host"),
-            authority.authority().port()
-        )
-        .parse()
-        .expect("canonical token authority"),
-    )];
     let mut decision = resolve_http_request(
         &authority,
         &target,
-        platform_hosts.unwrap_or(&exact),
-        &network_policy::allows,
+        &[exact_host(&authority)],
+        &|address| addresses.allows(address),
         &TokioDnsResolver,
     )
     .await?;
     decision.logical_url = endpoint;
     Ok(decision)
+}
+
+/// The one host entry that admits a connection's own authority and no other.
+fn exact_host(authority: &HttpConnectionAuthority) -> AllowedHost {
+    let url = url::Url::parse(authority.canonical_base_url()).expect("canonical connection URL");
+    AllowedHost::Authority(
+        format!(
+            "{}:{}",
+            url.host_str().expect("canonical connection host"),
+            authority.authority().port()
+        )
+        .parse()
+        .expect("canonical connection authority"),
+    )
 }
 
 fn reserved_header(name: &hyper::header::HeaderName) -> bool {
@@ -782,17 +782,12 @@ pub async fn health(
         let authority = wamn_authority::connection_authority::parse_http_definition(parameters)?;
         let url = url::Url::parse(authority.canonical_base_url())?;
         anyhow::ensure!(url.scheme() == "https", "HTTP health requires TLS");
-        let host = url.host_str().context("HTTP authority has no host")?;
-        let port = url
-            .port_or_known_default()
-            .context("HTTP authority has no port")?;
-        let allowed = [AllowedHost::Authority(format!("{host}:{port}").parse()?)];
         let (target, endpoint) = bound_http_target(&authority, authority.canonical_base_url())?;
         let mut decision = resolve_http_request(
             &authority,
             &target,
-            &allowed,
-            &network_policy::allows,
+            &[exact_host(&authority)],
+            &|address| transport.addresses().allows(address),
             &TokioDnsResolver,
         )
         .await?;
@@ -819,7 +814,7 @@ pub async fn health(
                 &authority,
                 token_request.token_authority.as_deref(),
                 &token_request.token_url,
-                None,
+                transport.addresses(),
             )
             .await?;
             let token = fetch_health_token(transport, token_decision, &token_request)
@@ -865,6 +860,7 @@ mod tests {
     use crate::test_util::{effect_request, interface_address};
 
     mod oauth2_tests;
+    mod outside_call_tests;
 
     /// The hash of the fixture wiring's graph, the one the manifest carries.
 

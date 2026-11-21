@@ -208,8 +208,6 @@ struct Settings {
     insecure_registry: bool,
     oauth_encryption: Option<wamn_envelope::encryption::Configuration>,
     projects: BTreeMap<wamn_registry::ProjectId, wamn_postgres::HostProject>,
-    #[serde(default)]
-    allowed_hosts: Vec<String>,
 }
 
 /// Native plugin declarations and mounted Secret catalogs from the host chart.
@@ -549,12 +547,6 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     let connection_http = Arc::new(wamn_http::ConnectionHttp::new(
         Arc::clone(&postgres.scopes),
         Arc::new(wamn_http::transport::HttpTransport::new()?),
-        settings
-            .allowed_hosts
-            .iter()
-            .map(|host| host.parse())
-            .collect::<Result<Vec<_>, _>>()?
-            .into(),
     ));
     let blobstore = Arc::new(wamn_blobstore::plugin::WamnBlobstore::new(Arc::clone(
         &postgres,
