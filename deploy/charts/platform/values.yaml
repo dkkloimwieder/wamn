@@ -137,7 +137,7 @@ nats:
         - /dev/null
         - http://127.0.0.1:8222/healthz
     image:
-      tag: 2.12.15-alpine
+      fullImageName: nats:2.15.2-alpine@sha256:afae2fdbe2e326c65e1246cb83b9d05d319188734f3bd577ac8072daae78a10f
     resources:
       requests:
         cpu: 200m
