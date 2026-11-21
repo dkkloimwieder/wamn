@@ -33,7 +33,7 @@ use wamn_authority::connection_authority::{AuthorityDecision, HttpScheme, TlsIde
 use wamn_engine::engine::MAX_HOST_CALL_DURATION as REQUEST_TIMEOUT;
 use wamn_engine::invocation_scope::InvocationExecution;
 
-use super::network_policy;
+use super::network_policy::AddressPolicy;
 
 // Owner-approved limits apply across bindings and credential generations.
 pub(crate) const MAX_BODY_BYTES: usize = 8 * 1024 * 1024;
@@ -47,6 +47,7 @@ type BoxError = Box<dyn StdError + Send + Sync>;
 pub struct HttpTransport {
     inner: Arc<Inner>,
     invocation: Option<(Box<str>, InvocationExecution)>,
+    addresses: AddressPolicy,
 }
 
 impl fmt::Debug for HttpTransport {
@@ -77,22 +78,35 @@ impl HttpTransport {
     /// Returns an error if the platform TLS verifier cannot initialize.
     pub fn new() -> anyhow::Result<Self> {
         let tls = wamn_http_client::platform_tls()?;
-        Ok(Self::from_tls(tls))
+        Ok(Self::from_tls(tls, AddressPolicy::Cloud))
     }
 
-    pub(crate) fn from_tls(mut tls: rustls::ClientConfig) -> Self {
+    pub(crate) fn from_tls(mut tls: rustls::ClientConfig, addresses: AddressPolicy) -> Self {
         tls.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
         Self {
             inner: Arc::new(Inner { tls: Arc::new(tls) }),
             invocation: None,
+            addresses,
         }
     }
 
-    pub(crate) fn for_invocation(&self, scope: &str, execution: InvocationExecution) -> Self {
+    /// Scope the transport to one invocation of a connection on a target type.
+    pub(crate) fn for_invocation(
+        &self,
+        scope: &str,
+        execution: InvocationExecution,
+        addresses: AddressPolicy,
+    ) -> Self {
         Self {
             inner: Arc::clone(&self.inner),
             invocation: Some((scope.into(), execution)),
+            addresses,
         }
+    }
+
+    /// The address rule this transport sends under.
+    pub(crate) fn addresses(&self) -> AddressPolicy {
+        self.addresses
     }
 
     fn deadline(&self) -> Instant {
@@ -109,7 +123,7 @@ impl HttpTransport {
         mut request: Request<&[u8]>,
     ) -> Result<Response<Bytes>, TransportError> {
         let deadline = self.deadline();
-        let target = target(decision, request.uri())?;
+        let target = target(decision, request.uri(), self.addresses)?;
         if request.body().len() > MAX_BODY_BYTES {
             return Err(input("HTTP request body limit exceeded"));
         }
@@ -292,9 +306,13 @@ fn head_error(error: hyper_util::client::legacy::Error) -> TransportError {
     TransportError::new(type_, phase, "HTTP request failed").with_source(error)
 }
 
-fn target(decision: &AuthorityDecision, uri: &Uri) -> Result<Target, TransportError> {
+fn target(
+    decision: &AuthorityDecision,
+    uri: &Uri,
+    addresses: AddressPolicy,
+) -> Result<Target, TransportError> {
     let origin = &decision.transport;
-    if !network_policy::allows(origin.address) {
+    if !addresses.allows(origin.address) {
         return Err(input("HTTP destination address denied"));
     }
     let logical_uri: Uri = decision

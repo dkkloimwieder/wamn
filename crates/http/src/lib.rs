@@ -42,6 +42,7 @@ mod network_policy;
 pub mod transport;
 
 use crate::oauth::{Request as Oauth2Request, Response as Oauth2Token};
+use network_policy::AddressPolicy;
 use transport::HttpTransport;
 
 mod bindings {
@@ -124,6 +125,8 @@ impl ConnectionHttp {
         {
             return Err(ConnectionError::Incompatible);
         }
+        let addresses =
+            AddressPolicy::for_target(&binding.target_type).ok_or(ConnectionError::Incompatible)?;
         let read_only = binding
             .mode
             .read_only(&invocation.package_id, &binding.name)
@@ -147,7 +150,7 @@ impl ConnectionHttp {
             .map_err(|_| ConnectionError::CredentialUnavailable)?
             .filter(|answer| answer.fact.status == ConnectionStatus::Active)
             .ok_or(ConnectionError::Unbound)?;
-        let transport = self.transport.for_invocation(scope, execution);
+        let transport = self.transport.for_invocation(scope, execution, addresses);
         self.send_active(facts, id, answer, &transport, scope, request)
             .await
     }
@@ -243,7 +246,7 @@ impl ConnectionHttp {
             &authority,
             &target,
             &[exact_host(&authority)],
-            &network_policy::allows,
+            &|address| transport.addresses().allows(address),
             &TokioDnsResolver,
         )
         .await
@@ -331,6 +334,7 @@ impl ConnectionHttp {
                     authority,
                     request.token_authority.as_deref(),
                     &request.token_url,
+                    transport.addresses(),
                 )
                 .await?;
                 let token = fetch_health_token(transport, decision, &request)
@@ -619,13 +623,14 @@ pub(crate) async fn token_endpoint(
     connection: &HttpConnectionAuthority,
     token_authority: Option<&str>,
     token_url: &str,
+    addresses: AddressPolicy,
 ) -> Result<AuthorityDecision, AuthorityError> {
     let (authority, target, endpoint) = bound_oauth_token(connection, token_authority, token_url)?;
     let mut decision = resolve_http_request(
         &authority,
         &target,
         &[exact_host(&authority)],
-        &network_policy::allows,
+        &|address| addresses.allows(address),
         &TokioDnsResolver,
     )
     .await?;
@@ -782,7 +787,7 @@ pub async fn health(
             &authority,
             &target,
             &[exact_host(&authority)],
-            &network_policy::allows,
+            &|address| transport.addresses().allows(address),
             &TokioDnsResolver,
         )
         .await?;
@@ -809,6 +814,7 @@ pub async fn health(
                 &authority,
                 token_request.token_authority.as_deref(),
                 &token_request.token_url,
+                transport.addresses(),
             )
             .await?;
             let token = fetch_health_token(transport, token_decision, &token_request)
