@@ -4,7 +4,10 @@
 )]
 
 //! One package-grain component exporting every edge samples operation.
-#![expect(unsafe_code, reason = "wit-bindgen generated FFI glue")]
+#![cfg_attr(
+    target_arch = "wasm32",
+    expect(unsafe_code, reason = "wit-bindgen generated FFI glue")
+)]
 #[expect(
     dead_code,
     reason = "private data modules retain the complete generated and authored refusal vocabulary"
@@ -38,4 +41,5 @@ struct Component;
 
 impl generated::sample::get::Action for Component {}
 
+#[cfg(target_arch = "wasm32")]
 export!(Component);

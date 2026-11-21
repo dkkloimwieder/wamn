@@ -39,7 +39,10 @@
 //! invocation. The test below is defence in depth behind that, not the
 //! primary condition.
 
-#![expect(unsafe_code, reason = "wit-bindgen generated FFI glue")]
+#![cfg_attr(
+    target_arch = "wasm32",
+    expect(unsafe_code, reason = "wit-bindgen generated FFI glue")
+)]
 
 mod template;
 
@@ -132,6 +135,7 @@ fn terminal(code: &str, message: &str) -> NodeError {
     })
 }
 
+#[cfg(target_arch = "wasm32")]
 bindings::export!(Component with_types_in bindings);
 
 #[cfg(test)]

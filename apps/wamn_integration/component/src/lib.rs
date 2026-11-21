@@ -3,7 +3,10 @@
     clippy::same_length_and_capacity,
     reason = "wit-bindgen emits equal length and capacity"
 )]
-#![expect(unsafe_code, reason = "wit-bindgen generated FFI glue")]
+#![cfg_attr(
+    target_arch = "wasm32",
+    expect(unsafe_code, reason = "wit-bindgen generated FFI glue")
+)]
 wit_bindgen::generate!({
     world: "wamn-integration:component/wamn-integration@0.1.0",
     path: [
@@ -17,6 +20,7 @@ wit_bindgen::generate!({
 });
 
 struct Component;
+#[cfg(target_arch = "wasm32")]
 export!(Component);
 
 use wamn::node::types::{ErrorDetail, NodeError};

@@ -8,7 +8,10 @@
 //! The overlay declares one operation, `widget.get`, which reads the field the
 //! overlay adds. It is generated whole, and the package has no data-access
 //! crate, so the component includes the generated data functions itself.
-#![expect(unsafe_code, reason = "wit-bindgen generated FFI glue")]
+#![cfg_attr(
+    target_arch = "wasm32",
+    expect(unsafe_code, reason = "wit-bindgen generated FFI glue")
+)]
 /// The generated operations, whole, with their data functions.
 mod generated {
     #[expect(
@@ -48,4 +51,5 @@ struct Component;
 impl generated::numbered_label::create::Action for Component {}
 impl generated::widget::get::Action for Component {}
 
+#[cfg(target_arch = "wasm32")]
 export!(Component);

@@ -1,6 +1,9 @@
 //! Paginated HTTP palette component.
 
-#![expect(unsafe_code, reason = "wit-bindgen generated FFI glue")]
+#![cfg_attr(
+    target_arch = "wasm32",
+    expect(unsafe_code, reason = "wit-bindgen generated FFI glue")
+)]
 
 use bindings::exports::wamn::node::async_handler::{Emission, Guest, NodeContext, NodeError};
 use bindings::wamn::connection::http::{ConnectionError, Header, Request, Response};
@@ -192,6 +195,7 @@ fn terminal(code: &str, message: impl Into<String>) -> NodeError {
     })
 }
 
+#[cfg(target_arch = "wasm32")]
 bindings::export!(Component with_types_in bindings);
 
 /// Collect pages without retaining any transport or run state between calls.
