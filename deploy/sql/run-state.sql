@@ -3,11 +3,7 @@
 -- at-least-once execution. The router is a single-shot in-memory walk; these
 -- tables are the facts its host-owned production driver writes.
 --
--- STANDALONE ARTIFACT: deliberately NOT included by deploy/sql/postgres-init.sql, the
--- same convention as deploy/sql/catalog-schema.sql (3.1/3.4/3.5/3.6). The S3/S6 condition
--- fixtures carry their own `runs` copy (postgres-init.sql schema
--- `s3`) so flowbench exercises the rewired runner; this file is the production schema and the
--- live-apply target. Shared roles are installed by provisioning first.
+-- Project provisioning installs the shared roles before applying this schema.
 --
 -- The database isolates the project. FORCE RLS requires a protected caller identity.
 --

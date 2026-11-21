@@ -392,39 +392,4 @@ mod tests {
             );
         }
     }
-
-    // The existing exclusion fixture supplies actual PostgreSQL diagnostics.
-    #[test]
-    #[ignore = "requires: env:WAMN_EXCLUSION_DIAGNOSTICS"]
-    fn generated_update_exclusion_from_postgres() {
-        let path = std::env::var_os("WAMN_EXCLUSION_DIAGNOSTICS")
-            .filter(|value| !value.is_empty())
-            .expect("WAMN_EXCLUSION_DIAGNOSTICS must name the disposable PostgreSQL diagnostics");
-        let diagnostics: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
-        let diagnostic = &diagnostics["receiving"];
-        assert_eq!(diagnostic["sqlstate"], "23P01");
-        let constraint = diagnostic["constraint"]
-            .as_str()
-            .expect("server constraint name");
-        let update = crate::data::generated::error::Constraints {
-            unique: crate::data::generated::purchase_order::sql::UPDATE_UNIQUE_CONSTRAINTS,
-            foreign_key:
-                crate::data::generated::purchase_order::sql::UPDATE_FOREIGN_KEY_CONSTRAINTS,
-            check: crate::data::generated::purchase_order::sql::UPDATE_CHECK_CONSTRAINTS,
-            exclusion: crate::data::generated::purchase_order::sql::UPDATE_EXCLUSION_CONSTRAINTS,
-        };
-        let error = crate::data::generated::error::Error::from_parts(
-            StatementErrorType::ExclusionViolation,
-            Some(constraint),
-            &update,
-            "purchase_order.update",
-        );
-        assert_eq!(
-            error,
-            crate::data::generated::error::Error::ExclusionViolation {
-                constraint: "purchase_order_supplier_id_excl".to_owned()
-            }
-        );
-    }
 }

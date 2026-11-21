@@ -43,12 +43,10 @@ pub async fn fixture(name: &str) -> anyhow::Result<Fixture> {
     let mut postgres = wamn_test_postgres::start(&[])?;
     let database = postgres.create_database(name).await?;
     let mut observer = connect(database.url()).await?;
-    sqlx::raw_sql(sqlx::AssertSqlSafe(
-        ("CREATE ROLE wamn_query NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS; CREATE ROLE wamn_app NOLOGIN NOINHERIT NOSUPERUSER NOBYPASSRLS; \
-         \
-         CREATE SCHEMA wamn_run")
-            .to_string(),
-    ))
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "{} CREATE SCHEMA wamn_run",
+        wamn_provision::sql::ensure_project_roles_sql()
+    )))
     .execute(&mut observer)
     .await
     .map(drop)?;
@@ -61,36 +59,27 @@ pub async fn fixture(name: &str) -> anyhow::Result<Fixture> {
         .await
         .map(drop)?;
     let mut logins = Vec::new();
-    for (family, target) in [(
-        WorkloadRoleFamily::App,
-        WorkloadRoleIdentity::ProjectEnvKey {
+    for family in [WorkloadRoleFamily::Platform, WorkloadRoleFamily::App] {
+        let target = WorkloadRoleIdentity::ProjectEnvKey {
             project_env_key: &"files--dev--project".parse().unwrap(),
             database: name,
-        },
-    )] {
+        };
         let role = workload_login(family, target)?;
         sqlx::raw_sql(sqlx::AssertSqlSafe(
-            wamn_provision::test_database::login_sql(
-                family,
-                name,
-                &role,
-                "file-fixture-only",
-            ),
+            wamn_provision::test_database::login_sql(family, name, &role, "file-fixture-only"),
         ))
         .execute(&mut observer)
         .await
         .map(drop)?;
         logins.push(connect(&login(database.url(), &role)?).await?);
     }
-    sqlx::raw_sql(sqlx::AssertSqlSafe(
-        format!(
-            "CREATE ROLE file_fixture_migrator LOGIN PASSWORD 'file-fixture-only' \
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "CREATE ROLE file_fixture_migrator LOGIN PASSWORD 'file-fixture-only' \
          NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS; \
          GRANT CREATE ON DATABASE \"{name}\" TO file_fixture_migrator; \
          GRANT USAGE ON SCHEMA platform TO file_fixture_migrator; \
          GRANT REFERENCES (id) ON platform.file TO file_fixture_migrator;"
-        ),
-    ))
+    )))
     .execute(&mut observer)
     .await
     .map(drop)?;
@@ -137,14 +126,23 @@ pub async fn fixture(name: &str) -> anyhow::Result<Fixture> {
     .execute(&mut writer)
     .await
     .map(|result| result.rows_affected())?;
-    sqlx::query("INSERT INTO platform.\"user\" (id,type,email) VALUES ($1::text::uuid,'user','file@example.test')").bind(&CALLER).execute(&mut writer).await.map(|result| result.rows_affected())?;
     sqlx::query(
-        "WITH integration AS (INSERT INTO platform.integration (id,integration_type,name,status) \
-             VALUES ($1::text::uuid,'s3','file-store','active') RETURNING id) \
-             INSERT INTO platform.connection (id,integration_id,integration_type,status) \
-             SELECT $1::text::uuid,id,'s3','active' FROM integration",
+        "INSERT INTO platform.\"user\" (id,issuer,sub,type,email) \
+         VALUES ($1::text::uuid,'https://fixture.example',$1,'user','file@example.test')",
     )
-    .bind(&CONNECTION)
+    .bind(CALLER)
+    .execute(&mut writer)
+    .await?;
+    sqlx::query(
+        "WITH connection AS (INSERT INTO platform.connection \
+             (id,name,integration_type,auth_type,target_id,service_principal_id,active_generation) \
+             VALUES ($1::text::uuid,'file-store','s3','custom',gen_random_uuid(),$2::text::uuid,1) \
+             RETURNING id,active_generation) \
+         INSERT INTO platform.connection_generation (connection_id,generation) \
+         SELECT id,active_generation FROM connection",
+    )
+    .bind(CONNECTION)
+    .bind(CALLER)
     .execute(&mut writer)
     .await
     .map(|result| result.rows_affected())?;

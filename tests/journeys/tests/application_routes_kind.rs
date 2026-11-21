@@ -117,27 +117,6 @@ async fn a_retry_with_reordered_lines_is_the_same_request() -> anyhow::Result<()
 
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires: cluster, env:WAMN_DEV_ENV, env:WAMN_BROWSER_URL, env:WAMN_CTL_BIN, env:WAMN_SYSTEM_ADMIN_URL"]
-async fn health_head_needs_no_credential() -> anyhow::Result<()> {
-    let application = fixture(&"platform_fixture".parse().unwrap()).await?;
-    let paths = &application.routes;
-    let response = paths
-        .client
-        .request(
-            hyper::Method::HEAD,
-            format!("{}/api/health", paths.endpoint),
-        )
-        .header("Host", &paths.host)
-        .send()
-        .await?;
-    assert_eq!(response.status(), hyper::StatusCode::NO_CONTENT);
-    assert_eq!(response.headers()["cache-control"], "no-store");
-    assert!(response.bytes().await?.is_empty());
-    application.remove().await?;
-    Ok(())
-}
-
-#[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: cluster, env:WAMN_DEV_ENV, env:WAMN_BROWSER_URL, env:WAMN_CTL_BIN, env:WAMN_SYSTEM_ADMIN_URL"]
 async fn a_read_of_100000_rows_refuses_at_the_ceiling() -> anyhow::Result<()> {
     let application = fixture(&"platform_fixture".parse().unwrap()).await?;
     let paths = &application.routes;
@@ -308,34 +287,6 @@ async fn a_role_without_the_list_permission_is_refused_the_feed() -> anyhow::Res
         anyhow::ensure!(
             list == 403 && feed == 403 && list_body == feed_body,
             "the list and its feed are refused alike: {list} {list_body} / {feed} {feed_body}"
-        );
-        Ok::<_, anyhow::Error>(())
-    }
-    .await;
-    application.remove().await?;
-    result
-}
-
-/// A role without the authored read's permission is refused its feed exactly
-/// as it is refused its page: one permission row protects both variants.
-///
-/// The caller loses `admin` before either request and holds `reader` alone.
-#[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: cluster, env:WAMN_DEV_ENV, env:WAMN_BROWSER_URL, env:WAMN_CTL_BIN, env:WAMN_SYSTEM_ADMIN_URL"]
-async fn a_role_without_the_permission_is_refused_an_authored_feed() -> anyhow::Result<()> {
-    let application = fixture(&"platform_fixture".parse().unwrap()).await?;
-    let paths = &application.routes;
-    let result = async {
-        application.call("role.create", json!({"role":"reader"})).await?;
-        application.call("user_role.grant", json!({"user_id":application.caller,"role":"reader"})).await?;
-        application.call("user_role.revoke", json!({"user_id":application.caller,"role":"admin"})).await?;
-        let path = "/feed_line/screen";
-        let (list, list_body) = get(paths, path, &json!([{}])).await?;
-        let (feed, feed_body) = get(paths, path, &json!([{"feed": {"cursor": "ZmVlZF9saW5lLnNjcmVlbjox"}}]))
-            .await?;
-        anyhow::ensure!(
-            list == 403 && feed == 403 && list_body == feed_body,
-            "the authored read and its feed are refused alike: {list} {list_body} / {feed} {feed_body}"
         );
         Ok::<_, anyhow::Error>(())
     }

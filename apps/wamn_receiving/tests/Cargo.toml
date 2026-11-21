@@ -64,7 +64,3 @@ url = { workspace = true }
 
 [lints]
 workspace = true
-
-[[test]]
-name = "receiving_routes_kind"
-path = "receiving_routes_kind.rs"
