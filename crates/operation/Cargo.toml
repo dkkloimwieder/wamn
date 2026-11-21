@@ -6,7 +6,7 @@ edition.workspace = true
 license.workspace = true
 
 [features]
-test-util = ["wamn-engine/test-util", "wamn-authority/test-util", "wamn-connection/test-util", "wamn-postgres/test-util"]
+test-util = ["wamn-authority/test-util", "wamn-postgres/test-util"]
 wasm_component_model_implements = ["wash-runtime/wasm_component_model_implements", "wamn-engine/wasm_component_model_implements"]
 
 [dependencies]
@@ -40,7 +40,6 @@ url.workspace = true
 hmac.workspace = true
 jsonwebtoken.workspace = true
 ingress = { path = "../../guests/ingress" }
-wamn-authentication = { workspace = true, features = ["test-util"] }
 tokio-rustls = { workspace = true }
 sha2 = { workspace = true }
 rustls = { workspace = true, features = ["aws_lc_rs", "std", "tls12"] }
@@ -52,7 +51,6 @@ sqlx = { workspace = true, features = ["macros", "migrate"] }
 rcgen = { workspace = true }
 tokio = { workspace = true, features = ["test-util"] }
 wamn-provision = { workspace = true, features = ["test-util"] }
-wamn-engine = { workspace = true, features = ["test-util"] }
 wamn-identity = { workspace = true, features = ["test-util"] }
 wamn-operation = { path = ".", features = ["test-util"] }
 wamn-test-infrastructure = { workspace = true }

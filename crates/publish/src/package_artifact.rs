@@ -98,19 +98,6 @@ fn stamp_created(packed: &mut PackedPackage, created: &str) -> anyhow::Result<()
     Ok(())
 }
 
-/// The package root of a fixture tree that a unit test applies as a release,
-/// with the stand-in artifact digest of
-/// [`wamn_test_infrastructure::fixture_digest::fixture_artifact_digest`].
-#[cfg(any(test, feature = "test-util"))]
-pub fn fixture_package_root(root: &Path) -> anyhow::Result<crate::package_source::PackageRoot> {
-    Ok(crate::package_source::PackageRoot {
-        path: root.to_owned(),
-        artifact_digest: Some(
-            wamn_test_infrastructure::fixture_digest::fixture_artifact_digest(root)?,
-        ),
-    })
-}
-
 /// Read the exact authored and generated SQL files that the package carries.
 fn migration_files(root: &Path) -> anyhow::Result<BTreeMap<String, Vec<u8>>> {
     let root = crate::package_source::migration_root(root);

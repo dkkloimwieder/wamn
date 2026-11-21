@@ -322,16 +322,6 @@ impl InvocationScopes {
             .expect("invocation scopes lock poisoned")
             .is_empty()
     }
-
-    #[cfg(feature = "test-util")]
-    pub fn scopes(&self) -> Vec<String> {
-        self.records
-            .read()
-            .expect("invocation scopes lock poisoned")
-            .keys()
-            .cloned()
-            .collect()
-    }
 }
 
 /// Revokes the complete record on completion or cancellation.

@@ -66,7 +66,6 @@ wit-parser = { workspace = true }
 async-nats = { workspace = true, features = ["jetstream"] }
 wamn-fixture-package = { workspace = true }
 postgres-protocol = { workspace = true }
-wamn-environment = { workspace = true, features = ["test-util"] }
 wamn-dev.workspace = true
 wamn-provision = { workspace = true, features = ["test-util"] }
 wamn-identity = { workspace = true, features = ["test-util"] }

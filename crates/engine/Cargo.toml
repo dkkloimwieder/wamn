@@ -6,8 +6,6 @@ edition.workspace = true
 license.workspace = true
 
 [features]
-# Integration and invocation scope fixtures.
-test-util = []
 wasm_component_model_implements = ["wash-runtime/wasm_component_model_implements"]
 
 [dependencies]

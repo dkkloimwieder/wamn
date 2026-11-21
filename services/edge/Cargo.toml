@@ -10,9 +10,6 @@ name = "wamn-edge"
 path = "src/main.rs"
 test = false
 
-[features]
-test-util = []
-
 [dependencies]
 wamn-edge-document.workspace = true
 wamn-component-policy.workspace = true
