@@ -723,6 +723,36 @@ mod tests {
         response.into_body().collect().await.unwrap().to_bytes()
     }
 
+    #[test]
+    fn a_route_host_must_be_the_control_or_an_application_host_of_its_namespace() {
+        let base: PlatformDomain = "example.test".parse().unwrap();
+        let other: PlatformDomain = "other.test".parse().unwrap();
+        let (acme, globex) = (
+            "acme".parse::<wamn_registry::OrgId>().unwrap(),
+            "globex".parse::<wamn_registry::OrgId>().unwrap(),
+        );
+        let control = format!("{acme}.{base}");
+        let application = wamn_registry::name::application_host("shop", &acme, &base);
+        assert!(valid_route_host(&control, "acme", &base));
+        assert!(valid_route_host(&application, "acme", &base));
+        for host in [
+            format!("{globex}.{base}"),
+            wamn_registry::name::application_host("shop", &globex, &base),
+            format!("{acme}.{other}"),
+            wamn_registry::name::application_host("shop", &acme, &other),
+            wamn_registry::name::application_host("", &acme, &base),
+            wamn_registry::name::application_host("-shop", &acme, &base),
+            wamn_registry::name::application_host("Shop", &acme, &base),
+            wamn_registry::name::application_host(&"a".repeat(58), &acme, &base),
+            format!("shop-{acme}.{base}"),
+            format!("shop.{acme}.{base}"),
+            acme.to_string(),
+        ] {
+            assert!(!valid_route_host(&host, "acme", &base), "{host}");
+        }
+        assert!(!valid_route_host(&control, "", &base));
+    }
+
     #[tokio::test]
     async fn web_only_apply_changes_the_bundle_and_config_but_keeps_the_release() {
         let store = Arc::new(InMemory::new());

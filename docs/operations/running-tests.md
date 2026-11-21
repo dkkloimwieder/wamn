@@ -195,7 +195,8 @@ Tests use the production constructors with real inputs. Production code has no t
 ## Grant refusal tests
 
 `wamn-test-sql`, at `test-support/sql/`, holds the grant refusal tests of every restricted deployed login.
-Its two targets are `project` and `system`. Each test has the marker `requires: docker, bin:helm`.
+Its targets are `project`, `system`, `credential_tables` and `transaction_identity`. Each test has the marker `requires: docker, bin:helm`.
+The installers are `wamn_test_infrastructure::database::project()` and `system()`.
 
 ```bash
 cargo test -p wamn-test-sql -- --ignored
@@ -223,6 +224,10 @@ The tests make sure of these facts for each login:
 - `PUBLIC` executes no security definer function.
 
 `wamn_system_reader` is a group with no deployed login. Its test enters the group with `SET ROLE`.
+
+`credential_tables` makes sure that `wamn_app_login` and `wamn_query_login` have no grant on `platform.credential`, `platform.oauth_token` or `platform.oauth_authorization`.
+`transaction_identity` binds identities with `wamn_postgres::bind_transaction_identity`. A bound identity holds for its own transaction only.
+The migration and platform logins resolve a seeded platform principal through `platform.login_principal`.
 
 ## What a test asserts
 

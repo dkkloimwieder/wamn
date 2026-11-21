@@ -347,3 +347,225 @@ pub(super) async fn respond(
         _ => Ok(response.map(BodyExt::boxed_unsync)),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hyper::service::service_fn;
+    use hyper_util::client::legacy::{Client, connect::HttpConnector};
+    use hyper_util::rt::TokioIo;
+    use std::convert::Infallible;
+    use tokio::net::TcpListener;
+
+    const HOST_NAME: &str = "shop--acme.example.test";
+
+    fn key() -> hmac::Key {
+        hmac::Key::new(hmac::HMAC_SHA256, &[7; 32])
+    }
+
+    /// A JWT-shaped session token whose payload names `jti`.
+    fn session(jti: &str) -> String {
+        let payload = serde_json::json!({ "jti": jti }).to_string();
+        format!(
+            "{}.{}.signature",
+            URL_SAFE_NO_PAD.encode(br#"{"alg":"EdDSA"}"#),
+            URL_SAFE_NO_PAD.encode(payload)
+        )
+    }
+
+    /// Serve each connection with `answer` on a loopback port.
+    async fn serve<F, A>(answer: F) -> (std::net::SocketAddr, tokio::task::JoinHandle<()>)
+    where
+        F: Fn(Request<Incoming>) -> A + Clone + Send + 'static,
+        A: std::future::Future<Output = Response<Full<bytes::Bytes>>> + Send + 'static,
+    {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let task = tokio::spawn(async move {
+            while let Ok((stream, _)) = listener.accept().await {
+                let answer = answer.clone();
+                let service = service_fn(move |request| {
+                    let answer = answer.clone();
+                    async move { Ok::<_, Infallible>(answer(request).await) }
+                });
+                let _ = hyper::server::conn::http1::Builder::new()
+                    .serve_connection(TokioIo::new(stream), service)
+                    .await;
+            }
+        });
+        (address, task)
+    }
+
+    /// Send `request` to `address` with `HOST_NAME` as its host.
+    async fn send(
+        address: std::net::SocketAddr,
+        request: hyper::http::request::Builder,
+    ) -> Response<Incoming> {
+        let request = request
+            .uri(format!("http://{address}/"))
+            .header(HOST, HOST_NAME)
+            .body(Full::new(bytes::Bytes::new()))
+            .unwrap();
+        let client: Client<HttpConnector, Full<bytes::Bytes>> =
+            crate::http_transport::http_client();
+        client.request(request).await.unwrap()
+    }
+
+    /// The headers that web forwards for `request` to `path`, or its refusal.
+    async fn forwarded(
+        path: &'static str,
+        request: hyper::http::request::Builder,
+    ) -> Result<HeaderMap, StatusCode> {
+        let (sender, mut received) = tokio::sync::mpsc::unbounded_channel();
+        let (address, task) = serve(move |mut request: Request<Incoming>| {
+            let sender = sender.clone();
+            async move {
+                *request.uri_mut() = path.parse().unwrap();
+                let route = password_route(&request);
+                let password = path.starts_with("/password/");
+                let forwarded = forward(request, &key(), route, password)
+                    .await
+                    .map(|request| request.into_parts().0.headers);
+                sender.send(forwarded).unwrap();
+                Response::new(Full::default())
+            }
+        })
+        .await;
+        send(address, request).await;
+        task.abort();
+        received.recv().await.unwrap()
+    }
+
+    /// The browser reply to a login that identity answers with `access_token`.
+    async fn login(access_token: &str) -> Response<ProxyBody> {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let body = serde_json::json!({
+            "sub": "subject", "expires_at": now + 900, "login_expires_at": now + 3600,
+            "access_token": access_token, "renewal_token": "renewal",
+        })
+        .to_string();
+        let (address, task) = serve(move |_| {
+            let body = body.clone();
+            async move { Response::new(Full::new(body.into())) }
+        })
+        .await;
+        let response = send(address, Request::builder().method(Method::POST)).await;
+        let reply = respond(Some(PasswordRoute::Login), response, &key())
+            .await
+            .unwrap();
+        task.abort();
+        reply
+    }
+
+    fn set_cookie<'a>(reply: &'a Response<ProxyBody>, name: &str) -> &'a str {
+        reply
+            .headers()
+            .get_all(SET_COOKIE)
+            .iter()
+            .map(|value| value.to_str().unwrap())
+            .find(|cookie| cookie.starts_with(&format!("{name}=")))
+            .unwrap()
+    }
+
+    fn csrf_cookie(reply: &Response<ProxyBody>) -> String {
+        let cookie = set_cookie(reply, CSRF);
+        let (pair, _) = cookie.split_once(';').unwrap();
+        pair[CSRF.len() + 1..].to_owned()
+    }
+
+    #[tokio::test]
+    async fn login_sets_host_prefixed_secure_cookies_and_a_readable_csrf_cookie() {
+        let token = session("a");
+        let reply = login(&token).await;
+        for (name, http_only) in [(SESSION, true), (RENEWAL, true), (CSRF, false)] {
+            let cookie = set_cookie(&reply, name);
+            assert!(name.starts_with("__Host-"), "{name}");
+            let attributes: Vec<_> = cookie.split("; ").skip(1).collect();
+            assert!(attributes.contains(&"Secure"), "{cookie}");
+            assert!(attributes.contains(&"Path=/"), "{cookie}");
+            assert_eq!(attributes.contains(&"HttpOnly"), http_only, "{cookie}");
+        }
+        let body = reply.into_body().collect().await.unwrap().to_bytes();
+        assert!(!String::from_utf8_lossy(&body).contains(&token));
+    }
+
+    #[tokio::test]
+    async fn unsafe_methods_need_the_signed_csrf_cookie_and_its_header() {
+        let (a, b) = (session("a"), session("b"));
+        let (csrf_a, csrf_again, csrf_b) = (
+            csrf_cookie(&login(&a).await),
+            csrf_cookie(&login(&a).await),
+            csrf_cookie(&login(&b).await),
+        );
+        assert_ne!(csrf_a, csrf_again);
+        let request = |method: Method, cookie: &str, header: Option<&str>| {
+            let mut request = Request::builder()
+                .method(method)
+                .header(COOKIE, format!("{SESSION}={a}; {CSRF}={cookie}; other=1"));
+            if let Some(header) = header {
+                request = request.header(CSRF_HEADER, header);
+            }
+            request
+        };
+
+        let headers = forwarded("/api/shop/x", request(Method::POST, &csrf_a, Some(&csrf_a)))
+            .await
+            .unwrap();
+        assert_eq!(headers[AUTHORIZATION], format!("Bearer {a}").as_str());
+        assert_eq!(headers[COOKIE], "other=1");
+        assert!(!headers.contains_key(CSRF_HEADER));
+        forwarded("/api/shop/x", request(Method::GET, "", None))
+            .await
+            .unwrap();
+        for (cookie, header) in [
+            (&csrf_a, None),
+            (&csrf_a, Some(&csrf_again)),
+            (&csrf_b, Some(&csrf_b)),
+        ] {
+            assert_eq!(
+                forwarded(
+                    "/api/shop/x",
+                    request(Method::POST, cookie, header.map(String::as_str))
+                )
+                .await
+                .unwrap_err(),
+                StatusCode::FORBIDDEN
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn login_and_bootstrap_routes_require_a_same_origin_origin() {
+        for path in [
+            "/password/session",
+            "/password/enroll",
+            "/password/recover",
+            "/password/reset",
+        ] {
+            let request = |origin: Option<String>| {
+                let request = Request::builder().method(Method::POST);
+                match origin {
+                    Some(origin) => request.header(ORIGIN, origin),
+                    None => request,
+                }
+            };
+            forwarded(path, request(Some(format!("https://{HOST_NAME}"))))
+                .await
+                .unwrap();
+            for origin in [
+                None,
+                Some(format!("http://{HOST_NAME}")),
+                Some("https://other.example.test".to_owned()),
+            ] {
+                assert_eq!(
+                    forwarded(path, request(origin.clone())).await.unwrap_err(),
+                    StatusCode::FORBIDDEN,
+                    "{path} {origin:?}"
+                );
+            }
+        }
+    }
+}

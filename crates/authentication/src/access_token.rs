@@ -356,3 +356,247 @@ fn https_url(value: &str) -> Option<reqwest::Url> {
             && url.fragment().is_none()
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use base64::Engine as _;
+    use jsonwebtoken::{EncodingKey, Header, encode};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+
+    const ISSUER: &str = "https://identity.example";
+    const AUDIENCE: &str = "urn:wamn:org:acme";
+
+    /// One Ed25519 signing key and its public JWK.
+    struct SigningKey {
+        kid: &'static str,
+        encoding: EncodingKey,
+        jwk: serde_json::Value,
+    }
+
+    fn signing_key(kid: &'static str) -> SigningKey {
+        let pair = rcgen::KeyPair::generate_for(&rcgen::PKCS_ED25519).unwrap();
+        SigningKey {
+            kid,
+            encoding: EncodingKey::from_ed_pem(pair.serialize_pem().as_bytes()).unwrap(),
+            jwk: serde_json::json!({
+                "kty": "OKP", "crv": "Ed25519", "use": "sig", "kid": kid,
+                "x": base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(pair.public_key_raw()),
+            }),
+        }
+    }
+
+    /// A JWKS endpoint over TLS that serves the current key set.
+    struct Issuer {
+        verifier: AccessTokenVerifier,
+        keys: Arc<std::sync::Mutex<Vec<serde_json::Value>>>,
+        fetches: Arc<AtomicUsize>,
+        task: tokio::task::JoinHandle<()>,
+        _directory: tempfile::TempDir,
+    }
+
+    impl Drop for Issuer {
+        fn drop(&mut self) {
+            self.task.abort();
+        }
+    }
+
+    async fn issuer(keys: Vec<serde_json::Value>) -> Issuer {
+        use rcgen::{BasicConstraints, CertificateParams, IsCa, KeyUsagePurpose};
+        let mut ca_params = CertificateParams::new(Vec::<String>::new()).unwrap();
+        ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+        ca_params.key_usages = vec![KeyUsagePurpose::KeyCertSign];
+        let ca_key = rcgen::KeyPair::generate().unwrap();
+        let ca = ca_params.self_signed(&ca_key).unwrap();
+        let ca_issuer = rcgen::Issuer::new(ca_params, ca_key);
+        let server_key = rcgen::KeyPair::generate().unwrap();
+        let server = CertificateParams::new(vec!["127.0.0.1".to_owned()])
+            .unwrap()
+            .signed_by(&server_key, &ca_issuer)
+            .unwrap();
+        let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
+        let tls = rustls::ServerConfig::builder_with_provider(provider)
+            .with_safe_default_protocol_versions()
+            .unwrap()
+            .with_no_client_auth()
+            .with_single_cert(
+                vec![server.der().clone()],
+                rustls::pki_types::PrivatePkcs8KeyDer::from(server_key.serialize_der()).into(),
+            )
+            .unwrap();
+        let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(tls));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let keys = Arc::new(std::sync::Mutex::new(keys));
+        let fetches = Arc::new(AtomicUsize::new(0));
+        let (listed, counted) = (Arc::clone(&keys), Arc::clone(&fetches));
+        let task = tokio::spawn(async move {
+            while let Ok((stream, _)) = listener.accept().await {
+                let Ok(mut stream) = acceptor.accept(stream).await else {
+                    continue;
+                };
+                let mut request = Vec::new();
+                let mut buffer = [0_u8; 1024];
+                while !request.ends_with(b"\r\n\r\n") {
+                    let read = stream.read(&mut buffer).await.unwrap();
+                    assert!(read > 0);
+                    request.extend_from_slice(&buffer[..read]);
+                }
+                counted.fetch_add(1, Ordering::SeqCst);
+                let body = serde_json::json!({"keys": *listed.lock().unwrap()}).to_string();
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nCache-Control: max-age=300\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = stream.write_all(response.as_bytes()).await;
+                let _ = stream.shutdown().await;
+            }
+        });
+        let directory = tempfile::tempdir().unwrap();
+        let ca_path = directory.path().join("ca.pem");
+        std::fs::write(&ca_path, ca.pem()).unwrap();
+        let verifier = AccessTokenVerifier::new(
+            ISSUER,
+            &format!("https://{address}/jwks"),
+            AUDIENCE,
+            &["EdDSA".to_owned()],
+            &ca_path,
+        )
+        .unwrap();
+        Issuer {
+            verifier,
+            keys,
+            fetches,
+            task,
+            _directory: directory,
+        }
+    }
+
+    fn now() -> i64 {
+        i64::try_from(
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+        )
+        .unwrap()
+    }
+
+    fn claims() -> serde_json::Value {
+        serde_json::json!({
+            "iss": ISSUER, "sub": "subject", "aud": AUDIENCE, "exp": now() + 900,
+            "iat": now() - 60, "jti": "token", "client_id": "web",
+        })
+    }
+
+    fn header(kid: &str) -> Header {
+        let mut header = Header::new(Algorithm::EdDSA);
+        header.typ = Some("at+jwt".to_owned());
+        header.kid = Some(kid.to_owned());
+        header
+    }
+
+    fn token(key: &SigningKey, header: &Header, claims: &serde_json::Value) -> String {
+        encode(header, claims, &key.encoding).unwrap()
+    }
+
+    #[tokio::test]
+    async fn only_tokens_of_the_access_token_profile_are_admitted() {
+        let key = signing_key("current");
+        let issuer = issuer(vec![key.jwk.clone()]).await;
+        let verified = issuer
+            .verifier
+            .verify(&token(&key, &header(key.kid), &claims()))
+            .await
+            .unwrap();
+        assert_eq!((verified.issuer(), verified.subject()), (ISSUER, "subject"));
+        // 30 seconds of clock tolerance for exp and iat.
+        for (claim, offset) in [("exp", -20), ("iat", 20)] {
+            let mut tolerated = claims();
+            tolerated[claim] = (now() + offset).into();
+            let token = token(&key, &header(key.kid), &tolerated);
+            issuer.verifier.verify(&token).await.unwrap();
+        }
+
+        let mut refused = Vec::new();
+        for (claim, value) in [
+            ("iss", serde_json::json!("https://other.example")),
+            ("aud", serde_json::json!("urn:wamn:org:globex")),
+            ("exp", serde_json::json!(now() - 40)),
+            ("iat", serde_json::json!(now() + 40)),
+            ("sub", serde_json::json!("")),
+            ("jti", serde_json::json!("")),
+            ("client_id", serde_json::json!("")),
+        ] {
+            let mut changed = claims();
+            changed[claim] = value;
+            refused.push((claim, token(&key, &header(key.kid), &changed)));
+        }
+        for claim in ["iss", "sub", "aud", "exp", "iat", "jti", "client_id"] {
+            let mut missing = claims();
+            missing.as_object_mut().unwrap().remove(claim);
+            refused.push((claim, token(&key, &header(key.kid), &missing)));
+        }
+        let mut untyped = header(key.kid);
+        untyped.typ = Some("JWT".to_owned());
+        refused.push(("typ", token(&key, &untyped, &claims())));
+        let mut unnamed = header(key.kid);
+        unnamed.kid = None;
+        refused.push(("kid", token(&key, &unnamed, &claims())));
+        let mut hmac = header(key.kid);
+        hmac.alg = Algorithm::HS256;
+        refused.push((
+            "alg",
+            encode(&hmac, &claims(), &EncodingKey::from_secret(b"secret")).unwrap(),
+        ));
+        let forged = SigningKey {
+            kid: key.kid,
+            ..signing_key("forged")
+        };
+        refused.push(("signature", token(&forged, &header(key.kid), &claims())));
+        for (case, token) in refused {
+            assert!(issuer.verifier.verify(&token).await.is_err(), "{case}");
+        }
+    }
+
+    #[tokio::test]
+    async fn an_unknown_key_id_fetches_the_key_set_again() {
+        let (current, next) = (signing_key("current"), signing_key("next"));
+        let issuer = issuer(vec![current.jwk.clone()]).await;
+        issuer
+            .verifier
+            .verify(&token(&current, &header(current.kid), &claims()))
+            .await
+            .unwrap();
+        issuer.keys.lock().unwrap().push(next.jwk.clone());
+        // The product spaces fetches by FETCH_INTERVAL on the system clock.
+        tokio::time::sleep(FETCH_INTERVAL).await;
+        issuer
+            .verifier
+            .verify(&token(&next, &header(next.kid), &claims()))
+            .await
+            .unwrap();
+        assert_eq!(issuer.fetches.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn the_key_set_lifetime_follows_max_age_up_to_300_seconds() {
+        let lifetime = |value: Option<&str>| {
+            let mut headers = reqwest::header::HeaderMap::new();
+            if let Some(value) = value {
+                headers.insert(reqwest::header::CACHE_CONTROL, value.parse().unwrap());
+            }
+            jwks_lifetime(&headers).as_secs()
+        };
+        assert_eq!(lifetime(Some("public, max-age=60")), 60);
+        for value in [
+            None,
+            Some("max-age=600"),
+            Some("max-age=-1"),
+            Some("no-cache"),
+        ] {
+            assert_eq!(lifetime(value), 300, "{value:?}");
+        }
+    }
+}

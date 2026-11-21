@@ -550,3 +550,206 @@ pub const TELEMETRY_VARIABLES: [(&str, &str); 4] = [
     ("OTEL_TRACES_SAMPLER", "parentbased_traceidratio"),
     ("OTEL_TRACES_SAMPLER_ARG", "0.1"),
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::{BTreeMap, PackageManifest, PackageName, roles};
+    use crate::environment::bindings::Binding;
+
+    const OPERATION: &str = "source-fixture:item/get@1.0.0";
+
+    /// One admitted component that exports `operations` and imports `imports`.
+    fn component(
+        name: &str,
+        operations: &[&str],
+        imports: &[&str],
+        data_change: bool,
+    ) -> serde_json::Value {
+        let digest = wamn_digest::bytes_sha256(name.as_bytes());
+        serde_json::json!({
+            "descriptor": {
+                "data-change": data_change,
+                "component": name,
+                "interface-version": "1.0.0",
+                "component-digest": digest,
+                "operations": operations.iter().map(|operation| ((*operation).to_owned(), serde_json::json!({
+                    "input-ports": [], "output-ports": [], "parameters": []
+                }))).collect::<serde_json::Map<_, _>>(),
+                "imports": imports,
+                "imports-fingerprint": digest,
+                "effects": [],
+                "connections": [],
+            },
+            "image_digest": digest,
+        })
+    }
+
+    /// The fixture package with `components`, each declared with the data
+    /// change operations it handles on the fixture model.
+    fn packages(
+        components: &[(serde_json::Value, &[&str])],
+    ) -> BTreeMap<PackageName, PackageManifest> {
+        let name = |component: &serde_json::Value| {
+            component["descriptor"]["component"]
+                .as_str()
+                .unwrap()
+                .to_owned()
+        };
+        let mut document =
+            serde_json::to_value(wamn_test_infrastructure::publish::source_manifest()).unwrap();
+        document["components"] = components
+            .iter()
+            .map(|(component, ops)| {
+                let declaration = if ops.is_empty() {
+                    serde_json::json!({})
+                } else {
+                    serde_json::json!({"data_change": {"role": "admin", "models": {"item": ops}}})
+                };
+                (name(component), declaration)
+            })
+            .collect();
+        document["deploy"] = serde_json::json!({
+            "routes": {},
+            "components": components
+                .iter()
+                .map(|(component, _)| (name(component), component.clone()))
+                .collect::<serde_json::Map<_, _>>(),
+        });
+        let manifest: PackageManifest = serde_json::from_value(document).unwrap();
+        BTreeMap::from([(manifest.package.id.clone(), manifest)])
+    }
+
+    /// A host HTTP connection bound by `alias` to component `component`.
+    fn binding(alias: &str, connection_id: &str, component: &str) -> Binding {
+        Binding {
+            application: "app".parse().unwrap(),
+            alias: alias.to_owned(),
+            interface: "wamn:connection/http@0.1.0".to_owned(),
+            components: [component.to_owned()].into(),
+            runtime_type: wamn_connection_type::RuntimeType::Host,
+            target_type: "cloud".to_owned(),
+            connection_id: connection_id.to_owned(),
+            authority: None,
+            integration_type: "http".parse().unwrap(),
+            exclusive: false,
+            generation: 1,
+            mode: wamn_package::manifest::ConnectionMode::Write,
+            digest: None,
+            exports: Vec::new(),
+            write_interfaces: Vec::new(),
+            resolved: None,
+        }
+    }
+
+    fn render(
+        packages: &BTreeMap<PackageName, PackageManifest>,
+        bindings: &[Binding],
+    ) -> anyhow::Result<Vec<super::Role>> {
+        roles(
+            packages,
+            &wamn_digest::bytes_sha256(b"package"),
+            &"acme".parse().unwrap(),
+            &"shop".parse().unwrap(),
+            &"dev".parse().unwrap(),
+            &"app".parse().unwrap(),
+            60,
+            bindings,
+            "registry.example/integrations",
+        )
+    }
+
+    /// The sibling name of `component` in the one fixture package.
+    fn sibling(packages: &BTreeMap<PackageName, PackageManifest>, component: &str) -> String {
+        let (package, _) = packages.first_key_value().unwrap();
+        super::component_name(package, &component.parse().unwrap())
+    }
+
+    #[test]
+    fn a_connection_name_equal_to_a_component_name_is_refused() {
+        let packages = packages(&[(component("a", &[], &[], false), &[])]);
+        let a = sibling(&packages, "a");
+        render(&packages, &[binding("store", "c1", &a)]).unwrap();
+        for name in [a.as_str(), "ingress"] {
+            assert!(
+                render(&packages, &[binding(name, "c1", &a)]).is_err(),
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_name_bound_to_two_connections_is_refused() {
+        let packages = packages(&[
+            (component("a", &[], &[], false), &[]),
+            (component("b", &[], &[], false), &[]),
+        ]);
+        let (a, b) = (sibling(&packages, "a"), sibling(&packages, "b"));
+        render(
+            &packages,
+            &[binding("store", "c1", &a), binding("store", "c1", &b)],
+        )
+        .unwrap();
+        assert!(
+            render(
+                &packages,
+                &[binding("store", "c1", &a), binding("store", "c2", &b)]
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn a_typed_operation_exported_by_two_components_is_refused() {
+        // Palette exports have no operation contract and are exempt.
+        render(
+            &packages(&[
+                (component("a", &[OPERATION], &[], false), &[]),
+                (component("b", &["palette"], &[], false), &[]),
+                (component("c", &["palette"], &[], false), &[]),
+            ]),
+            &[],
+        )
+        .unwrap();
+        let duplicate = packages(&[
+            (component("a", &[OPERATION], &[], false), &[]),
+            (component("b", &[OPERATION], &[], false), &[]),
+        ]);
+        assert!(render(&duplicate, &[]).is_err());
+    }
+
+    #[test]
+    fn two_data_change_handlers_of_one_model_and_operation_are_refused() {
+        render(
+            &packages(&[
+                (component("a", &[], &[], true), &["insert"]),
+                (component("b", &[], &[], true), &["update"]),
+            ]),
+            &[],
+        )
+        .unwrap();
+        let duplicate = packages(&[
+            (component("a", &[], &[], true), &["insert"]),
+            (component("b", &[], &[], true), &["insert", "update"]),
+        ]);
+        assert!(render(&duplicate, &[]).is_err());
+    }
+
+    #[test]
+    fn two_versions_of_one_host_interface_package_are_refused() {
+        let statements = "wamn:postgres/statements@0.1.0";
+        let (current, next) = ("wamn:postgres/client@0.1.0", "wamn:postgres/client@0.2.0");
+        render(
+            &packages(&[
+                (component("a", &[], &[statements], false), &[]),
+                (component("b", &[], &[current], false), &[]),
+            ]),
+            &[],
+        )
+        .unwrap();
+        let mixed = packages(&[
+            (component("a", &[], &[statements], false), &[]),
+            (component("b", &[], &[next], false), &[]),
+        ]);
+        assert!(render(&mixed, &[]).is_err());
+    }
+}
