@@ -18,10 +18,12 @@ A simulated outcome does not establish that a real process recovers or cleans up
 
 ## Completion
 
-Run one case with `cargo xtask test-changes --tier kind --name <test>`, as [cluster tests](../operations/cluster-tests.md) describes.
-A selected case whose declared prerequisite is missing fails and names it.
-Each Receiving and WMS cluster test writes its results to its own new directory and prints the path.
-That directory is inside the parent that `WAMN_RECEIVING_EVIDENCE_DIR` or `WAMN_WMS_EVIDENCE_DIR` names, or inside the system temporary directory when the variable is not set.
+`cargo xtask test-changes --base main` lists the packages that a change selects, with their test commands.
+It prints no ignored command for a package whose test targets are all `_kind.rs` files.
+Run one cluster case by its exact name, as [cluster tests](../operations/cluster-tests.md) describes.
+A cluster case reads each `env:` input with `std::env::var`. A missing variable fails the case with the error `environment variable not found`.
+The error does not name the variable. Compare the marker of the case with the variables that you set.
+The cluster test writes no result directory. Its output is the Cargo test output.
 Use the case's declared finite step, retry, and timeout limits.
 Inspect the runner's cleanup result after success, failure, or handled interruption.
 Record unresolved owned resources as incomplete cleanup.

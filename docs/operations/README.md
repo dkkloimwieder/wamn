@@ -5,7 +5,7 @@ These pages contain current commands and their prerequisites. Start with the dev
 - [development-loop.md](development-loop.md): watch source, publish artifacts, and deploy on `kind`.
 - [building.md](building.md): pinned toolchains, native programs, guests, and artifact comparisons.
 - [running-tests.md](running-tests.md): test selection, database isolation, generation, results, and cleanup.
-- [cluster-tests.md](cluster-tests.md): disposable Receiving, WMS, and native cluster runs.
+- [cluster-tests.md](cluster-tests.md): the cluster test target and the deployed queue recovery case.
 - [deployment.md](deployment.md): provisioning, release carriers, and deployed environments.
 - [web-upload.md](web-upload.md): upload package clients or the platform UI, required inputs, output, and errors.
 - [gcp.md](gcp.md): the Google Cloud deployment in project `wamn-dev`, step by step.

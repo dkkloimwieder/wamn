@@ -42,5 +42,5 @@ Select the relevant instructions:
 - [Building](docs/operations/building.md): Pinned toolchains, native binaries, guest selection, and isolated worktrees.
 - [Development loop](docs/operations/development-loop.md): Developer sessions and operator interfaces.
 - [Running tests](docs/operations/running-tests.md): Test selection, database isolation, generation, SQLx preparation, and live inputs.
-- [Cluster tests](docs/operations/cluster-tests.md): Owned Receiving, WMS, and native test fixtures.
+- [Cluster tests](docs/operations/cluster-tests.md): The cluster test target and the deployed queue recovery case.
 - [Deployment](docs/operations/deployment.md): Provisioning, release carriers, and deployed environments.

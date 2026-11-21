@@ -30,7 +30,6 @@ Each library has one concern. Directory names follow crate names without the `wa
 
 | Directory | Owner and responsibility |
 | --- | --- |
-| `crates/catalog` | `wamn-catalog`: release and route facts, package and application names, environment configuration, and lifecycle locks |
 | `crates/codegen` | `wamn-codegen`: authored model, document rules, SQL descriptions, and generated outputs |
 | `crates/schema-introspection` | `wamn-schema-introspection`: PostgreSQL catalog descriptions |
 | `crates/digest` | `wamn-digest`: canonical JSON and SHA-256 identities |
@@ -79,15 +78,13 @@ Each library has one concern. Directory names follow crate names without the `wa
 | `services/edge` | `wamn-edge`: local application host and device loop |
 | `services/cdc-reader` | `wamn-cdc-reader`: PostgreSQL change capture and broker acknowledgement |
 | `services/cli` | `wamn-cli`: user CLI and internal operation worker; binary `wamn` |
-| `test-support/application` | Shared product deployment fixtures for application tests |
-| `test-support/postgres` | Private TLS Postgres servers, SQLx test runner, and prerequisite parser |
 | `test-support/resources` | Temporary external resources, HTTP fixtures, and shared test adapters |
+| `test-support/sql` | `wamn-test-sql`: grant refusal tests of every restricted deployed login |
 | `test-support/fixtures/package` | Platform fixture application paths and inputs |
 | `test-support/fixtures/guests` | Guest components used by interface tests |
 | `tests/journeys` | Tests across services through product commands and routes |
-| `tests/selection.toml` | Non-Cargo inputs, preparation, and test suites |
 | `xtask` | Repository tasks, build orchestration, and test selection |
-| `xtask/build` | Shared package and guest build implementation |
+| `crates/build` | `wamn-build`: shared package and guest build implementation |
 | `deploy/charts/infrastructure` | Cluster infrastructure chart |
 | `deploy/charts/platform` | Shared identity, edge, NATS, system PostgreSQL, and operators |
 | `deploy/charts/org` | Org resources |
@@ -95,8 +92,6 @@ Each library has one concern. Directory names follow crate names without the `wa
 | `deploy/charts/project` | Project PostgreSQL Cluster, backups, accounts, certificates, and change capture |
 | `deploy/charts/application` | Application release and web selection |
 | `deploy/sql` | Platform schemas and shared SQL definitions |
-| `deploy/infra` | Infrastructure configuration outside charts |
-| `deploy/platform` | Platform configuration outside charts |
 | `deploy/gcp` | Google Cloud deployment inputs |
 | `deploy/kind` | Local cluster deployment inputs |
 | `web` | Browser runtime, wfe packages, and shared browser tooling |
