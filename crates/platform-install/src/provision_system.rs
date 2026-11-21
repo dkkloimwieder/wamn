@@ -294,12 +294,11 @@ mod tests {
     use tokio::net::{TcpListener, TcpStream};
     use tokio::task::JoinSet;
 
-    #[sqlx::test(migrations = false)]
-    async fn initial_connect_retries_only_connection_refusal(
-        pool: sqlx::PgPool,
-    ) -> anyhow::Result<()> {
-        let database = wamn_test_postgres::url(&pool);
-        let mut url = url::Url::parse(database.as_str())?;
+    #[tokio::test]
+    #[ignore = "requires: docker"]
+    async fn initial_connect_retries_only_connection_refusal() -> anyhow::Result<()> {
+        let postgres = wamn_test_infrastructure::containers::start_postgres().await?;
+        let mut url = postgres.create_database("system").await?;
         let upstream = (url.host_str().unwrap().to_owned(), url.port().unwrap());
         let reserved = TcpListener::bind("127.0.0.1:0").await?;
         let address = reserved.local_addr()?;
@@ -339,10 +338,7 @@ mod tests {
         let row = sqlx::query("SELECT current_database()")
             .fetch_one(&mut client)
             .await?;
-        assert_eq!(
-            row.get::<String, _>(0),
-            database.path().trim_start_matches('/')
-        );
+        assert_eq!(row.get::<String, _>(0), "system");
         drop(client);
 
         // PostgreSQL accepts the TCP connection but refuses an absent database.

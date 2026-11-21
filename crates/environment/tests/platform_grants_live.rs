@@ -11,10 +11,14 @@ async fn connect(url: &str) -> Client {
     client
 }
 
-#[sqlx::test(migrations = false)]
-async fn a_fresh_install_keeps_control_plane_tables_out(pool: sqlx::PgPool) {
-    let _lock = wamn_test_postgres::lock();
-    let database = wamn_test_postgres::url(&pool);
+#[tokio::test]
+#[ignore = "requires: docker"]
+async fn a_fresh_install_keeps_control_plane_tables_out() {
+    let postgres = wamn_test_infrastructure::containers::start_postgres()
+        .await
+        .unwrap();
+    postgres.create_system_role().await.unwrap();
+    let database = postgres.create_project_database("project").await.unwrap();
     let mut client = connect(database.as_str()).await;
     wamn_environment::platform_migrations::install_project(&mut client)
         .await
@@ -34,10 +38,13 @@ async fn a_fresh_install_keeps_control_plane_tables_out(pool: sqlx::PgPool) {
 }
 
 /// Effective PostgreSQL privilege tests include inherited roles and PUBLIC.
-#[sqlx::test(migrations = false)]
-async fn credentials_are_inaccessible_to_application_roles(pool: sqlx::PgPool) {
-    let _lock = wamn_test_postgres::lock();
-    let database = wamn_test_postgres::url(&pool);
+#[tokio::test]
+#[ignore = "requires: docker"]
+async fn credentials_are_inaccessible_to_application_roles() {
+    let postgres = wamn_test_infrastructure::containers::start_postgres()
+        .await
+        .unwrap();
+    let database = postgres.create_database("system").await.unwrap();
     wamn_provision::test_database::system(database.as_str()).await;
     let mut client = connect(database.as_str()).await;
     sqlx::raw_sql("DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_app') THEN CREATE ROLE wamn_app NOLOGIN NOINHERIT; END IF; END $$").execute(&mut client).await.map(drop).unwrap();

@@ -135,11 +135,9 @@ fn write_package(root: &Path) {
 ///
 /// The `apply-package` verb takes only a pushed artifact, so the fixture tree
 /// stands in for one under a digest of its own bytes.
-async fn apply(url: &str, package: &Path) -> anyhow::Result<ApplyOutcome> {
+async fn apply(url: &str, migration: &str, package: &Path) -> anyhow::Result<ApplyOutcome> {
     apply_package::apply_package(ApplyPackageRequest {
-        migration_database_url: wamn_provision::test_database::package_migration_input(&url)
-            .await
-            .unwrap(),
+        migration_database_url: migration.to_owned(),
         package: wamn_environment::apply_package::PackageRoot {
             path: package.to_path_buf(),
             artifact_digest: Some(
@@ -249,16 +247,26 @@ async fn wait_for_blocker(
     .expect("the expected process blocks the queued operation");
 }
 
-#[sqlx::test(migrations = false)]
-async fn history_table_creation_waits_for_a_running_prune(pool: sqlx::PgPool) {
-    let _lock = wamn_test_postgres::lock();
-    let url = wamn_test_postgres::url(&pool).to_string();
-    wamn_identity::test_database::project_platform(&url).await;
+#[tokio::test]
+#[ignore = "requires: docker"]
+async fn history_table_creation_waits_for_a_running_prune() {
+    let postgres = wamn_test_infrastructure::containers::start_postgres()
+        .await
+        .unwrap();
+    let migration = postgres.create_project_database("project").await.unwrap();
+    wamn_environment::platform_migrations::install_project(
+        &mut connect(migration.as_str()).await,
+    )
+    .await
+    .unwrap();
+    let mut database = url::Url::parse(postgres.admin_url()).unwrap();
+    database.set_path("project");
+    let url = database.to_string();
     let mut admin = connect(&url).await;
     provision(&mut admin).await;
     let package = fixture_root("prune-record-history-lock");
     write_package(&package);
-    apply(&url, &package)
+    apply(&url, migration.as_str(), &package)
         .await
         .expect("apply the fixture package");
     let expired = seed(
@@ -305,19 +313,38 @@ async fn history_table_creation_waits_for_a_running_prune(pool: sqlx::PgPool) {
     )
     .await;
 
-    let mut applying_url = url::Url::parse(&url).expect("parse the database URL");
-    applying_url
-        .query_pairs_mut()
-        .append_pair("application_name", "history_lock_apply");
+    let mut applying_url = database;
+    let mut applying_migration = migration;
+    for input in [&mut applying_url, &mut applying_migration] {
+        input
+            .query_pairs_mut()
+            .append_pair("application_name", "history_lock_apply");
+    }
     let applying_package = package.clone();
-    let mut applying =
-        tokio::spawn(async move { apply(applying_url.as_str(), &applying_package).await });
-    assert!(
-        tokio::time::timeout(std::time::Duration::from_millis(200), &mut applying)
-            .await
-            .is_err(),
-        "package application must wait for retention"
-    );
+    let applying = tokio::spawn(async move {
+        apply(
+            applying_url.as_str(),
+            applying_migration.as_str(),
+            &applying_package,
+        )
+        .await
+    });
+    // Package application polls its session lock, and reads the holders after each refusal.
+    tokio::time::timeout(std::time::Duration::from_secs(15), async {
+        while !sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS (SELECT FROM pg_catalog.pg_stat_activity \
+                  WHERE application_name = 'history_lock_apply' \
+                  AND query LIKE 'SELECT pid FROM pg_locks %')",
+        )
+        .fetch_one(&mut admin)
+        .await
+        .expect("read the package application session")
+        {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("package application waits for retention");
     held.commit().await.expect("allow pruning to finish");
     let (pruned, applied) = tokio::time::timeout(std::time::Duration::from_secs(15), async {
         tokio::join!(prune, applying)

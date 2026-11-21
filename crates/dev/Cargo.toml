@@ -27,14 +27,11 @@ wamn-registry.workspace = true
 postgres-protocol.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_yaml.workspace = true
-wamn-oci = { workspace = true, features = ["test-util"] }
 
 wamn-fixture-package = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "sync", "test-util", "time"] }
 uuid = { workspace = true }
 tokio-rustls = { workspace = true }
-wamn-provision = { workspace = true, features = ["test-util"] }
-wamn-identity = { workspace = true, features = ["test-util"] }
 wamn-test-infrastructure = { workspace = true }
 wit-component = { workspace = true, features = ["dummy-module"] }
 wit-parser = { workspace = true }
@@ -45,7 +42,6 @@ oci-client = { workspace = true }
 wamn-event = { workspace = true }
 wamn-identity-protocol = { workspace = true }
 wamn-run-state = { workspace = true }
-wamn-publish = { workspace = true, features = ["test-util"] }
 wamn-environment = { workspace = true, features = ["ops"] }
 hyper = { workspace = true }
 

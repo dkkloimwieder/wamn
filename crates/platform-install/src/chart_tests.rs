@@ -136,7 +136,7 @@ fn colliding_coordinates_read_only_their_own_credentials() -> anyhow::Result<()>
                 "image":format!("registry.example/wamn-host:test@sha256:{}", "a".repeat(64)),
                 "drainBoundSeconds":60,
                 "identityIssuer":"https://identity.platform.svc.cluster.local",
-                "natsUrl":crate::platform::identity::NATS_URL,
+                "natsUrl":"nats://wamn-nats.platform.svc.cluster.local:4222",
                 "environmentNats":{
                     "data":"data-nats", "native":"native-nats",
                     "workflow":{"secret":"workflow-nats", "inbox":"_INBOX_workflow"},

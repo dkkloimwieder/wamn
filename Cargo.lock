@@ -6399,9 +6399,7 @@ dependencies = [
  "wamn-event",
  "wamn-package",
  "wamn-postgres",
- "wamn-provision",
  "wamn-registry",
- "wamn-test-postgres",
 ]
 
 [[package]]
@@ -6445,7 +6443,6 @@ dependencies = [
  "wamn-registry",
  "wamn-routes",
  "wamn-test-infrastructure",
- "wamn-test-postgres",
  "wit-component 0.254.2",
  "wit-parser 0.254.2",
 ]
@@ -6621,12 +6618,9 @@ dependencies = [
  "wamn-environment",
  "wamn-event",
  "wamn-fixture-package",
- "wamn-identity",
  "wamn-identity-protocol",
  "wamn-kubernetes",
- "wamn-oci",
  "wamn-package",
- "wamn-provision",
  "wamn-publish",
  "wamn-registry",
  "wamn-run-state",
@@ -6786,8 +6780,6 @@ dependencies = [
  "tracing",
  "url",
  "uuid",
- "wamn-authority",
- "wamn-blobstore",
  "wamn-broker",
  "wamn-build",
  "wamn-codegen",
@@ -6799,7 +6791,6 @@ dependencies = [
  "wamn-envelope",
  "wamn-event",
  "wamn-fixture-package",
- "wamn-http",
  "wamn-http-client",
  "wamn-identity",
  "wamn-identity-client",
@@ -6807,7 +6798,6 @@ dependencies = [
  "wamn-kubernetes",
  "wamn-oci",
  "wamn-oci-reference",
- "wamn-operation",
  "wamn-package",
  "wamn-platform-install",
  "wamn-postgres",
@@ -6819,7 +6809,6 @@ dependencies = [
  "wamn-run-state",
  "wamn-schema-introspection",
  "wamn-test-infrastructure",
- "wamn-test-postgres",
  "wash-runtime",
  "wat",
  "wit-component 0.254.2",
@@ -7120,7 +7109,6 @@ dependencies = [
  "wamn-oci",
  "wamn-package",
  "wamn-test-application",
- "wamn-test-postgres",
 ]
 
 [[package]]
@@ -7289,7 +7277,6 @@ dependencies = [
  "wamn-registry",
  "wamn-role",
  "wamn-test-infrastructure",
- "wamn-test-postgres",
 ]
 
 [[package]]

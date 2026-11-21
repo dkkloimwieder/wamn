@@ -14,9 +14,13 @@ use tokio::{
 use wamn_registry::Triple;
 use wamn_registry::lifecycle_lock::LifecycleLock;
 
-#[sqlx::test(migrations = false)]
-async fn a_second_verb_refuses_until_the_holder_is_gone(pool: sqlx::PgPool) {
-    let database = wamn_test_postgres::url(&pool);
+#[tokio::test]
+#[ignore = "requires: docker"]
+async fn a_second_verb_refuses_until_the_holder_is_gone() {
+    let postgres = wamn_test_infrastructure::containers::start_postgres()
+        .await
+        .unwrap();
+    let database = postgres.create_database("project").await.unwrap();
     let url = database.as_str();
     let prod = Triple::new(
         "acme".parse().unwrap(),
@@ -116,25 +120,49 @@ async fn a_second_verb_refuses_until_the_holder_is_gone(pool: sqlx::PgPool) {
             .await
             .is_err()
     );
-    let waiting = LifecycleLock::acquire_wait(wamn_postgres::connect(url).await.unwrap(), &prod);
-    tokio::pin!(waiting);
-    assert!(
-        timeout(Duration::from_millis(200), &mut waiting)
-            .await
-            .is_err()
+    let mut waiting_url = url::Url::parse(url).unwrap();
+    waiting_url
+        .query_pairs_mut()
+        .append_pair("application_name", "lifecycle_wait");
+    let mut observer = wamn_postgres::connect(url).await.unwrap();
+    let waiting = LifecycleLock::acquire_wait(
+        wamn_postgres::connect(waiting_url.as_str()).await.unwrap(),
+        &prod,
     );
-    job.release().await;
-    timeout(Duration::from_secs(2), waiting)
+    // The job releases only after the waiter has tried the held lock.
+    let release = async {
+        timeout(Duration::from_secs(5), async {
+            while !sqlx::query_scalar::<_, bool>(
+                "SELECT EXISTS (SELECT FROM pg_stat_activity \
+                 WHERE application_name = 'lifecycle_wait' AND query = $1)",
+            )
+            .bind(wamn_registry::sql::ENVIRONMENT_LOCK_SQL)
+            .fetch_one(&mut observer)
+            .await
+            .unwrap()
+            {
+                tokio::task::yield_now().await;
+            }
+        })
         .await
-        .unwrap()
-        .unwrap()
-        .release()
-        .await;
+        .expect("the waiter tries the held lock");
+        job.release().await;
+    };
+    let (waited, ()) = timeout(Duration::from_secs(10), async {
+        tokio::join!(waiting, release)
+    })
+    .await
+    .unwrap();
+    waited.unwrap().release().await;
 }
 
-#[sqlx::test(migrations = false)]
-async fn abandoned_sessions_expire_even_when_a_proxy_keeps_the_socket_open(pool: sqlx::PgPool) {
-    let database = wamn_test_postgres::url(&pool);
+#[tokio::test]
+#[ignore = "requires: docker"]
+async fn abandoned_sessions_expire_even_when_a_proxy_keeps_the_socket_open() {
+    let postgres = wamn_test_infrastructure::containers::start_postgres()
+        .await
+        .unwrap();
+    let database = postgres.create_database("project").await.unwrap();
     let triple = Triple::new(
         "acme".parse().unwrap(),
         "prod".parse().unwrap(),
@@ -220,9 +248,11 @@ async fn acquire(
     .unwrap()
 }
 
-#[sqlx::test(migrations = false)]
-async fn lock_loss_cancels_the_protected_operation(pool: sqlx::PgPool) -> anyhow::Result<()> {
-    let database = wamn_test_postgres::url(&pool);
+#[tokio::test]
+#[ignore = "requires: docker"]
+async fn lock_loss_cancels_the_protected_operation() -> anyhow::Result<()> {
+    let postgres = wamn_test_infrastructure::containers::start_postgres().await?;
+    let database = postgres.create_database("project").await?;
     let triple = Triple::new(
         "acme".parse().unwrap(),
         "prod".parse().unwrap(),

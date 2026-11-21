@@ -68,20 +68,14 @@ wamn-registry = { workspace = true, features = ["test-util"] }
 wash-runtime = { workspace = true, features = ["washlet", "wasi-logging"] }
 wamn-build.workspace = true
 object_store.workspace = true
-sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "macros", "migrate"] }
+sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "migrate"] }
 wamn-oci = { workspace = true, features = ["test-util"] }
 wamn-http-client = { workspace = true, features = ["tls12"] }
-wamn-authority = { workspace = true, features = ["test-util"] }
-wamn-operation = { workspace = true, features = ["test-util"] }
-wamn-http = { workspace = true, features = ["test-util"] }
-wamn-blobstore = { workspace = true, features = ["test-util"] }
 wamn-fixture-package = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "sync", "test-util", "time"] }
 tokio-rustls = { workspace = true }
 wamn-provision = { workspace = true, features = ["test-util"] }
-wamn-identity = { workspace = true, features = ["test-util"] }
 wamn-test-infrastructure = { workspace = true }
-wamn-test-postgres = { workspace = true }
 wit-component = { workspace = true, features = ["dummy-module"] }
 wat = "=1.254.2"
 pg_query = "=6.2.1"
