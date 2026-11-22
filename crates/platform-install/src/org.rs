@@ -32,6 +32,13 @@ const DEADLINE: Duration = Duration::from_secs(300);
 
 /// Install the org release, provision its logins, then invite its owner.
 pub async fn create(org: &OrgId, owner: &str) -> anyhow::Result<()> {
+    use k8s_openapi::api::{apps::v1::ReplicaSet, core::v1::Pod};
+    use kube::{ResourceExt as _, core::Selector};
+    use wamn_kubernetes::client::wait_named;
+
+    const CREDENTIAL_JOB: &str = "wamn.dev/control-credential-job";
+    const REVISION: &str = "deployment.kubernetes.io/revision";
+
     let chart = org_chart()?;
     let mut target = Target::developer(PLATFORM).await?;
     let (inputs, database_config, identity_ca, nats_ca, api_server) = tokio::try_join!(
@@ -143,14 +150,90 @@ pub async fn create(org: &OrgId, owner: &str) -> anyhow::Result<()> {
     let control = wamn_registry::name::control_resource(org);
     let restart = json!({
         "spec": {"template": {"metadata": {"annotations": {
-            "wamn.dev/control-credential-job": sql_job_uid,
+            (CREDENTIAL_JOB): sql_job_uid,
         }}}},
     });
     let deployments = Api::<Deployment>::namespaced(target.client.client(), &target.namespace);
-    deployments
+    let patched = deployments
         .patch(&control, &PatchParams::default(), &Patch::Merge(restart))
         .await
         .context("reload the org database logins")?;
+    let generation = patched
+        .metadata
+        .generation
+        .context("control Deployment has no generation")?;
+    let selector = Selector::try_from(
+        patched
+            .spec
+            .context("control Deployment has no spec")?
+            .selector,
+    )
+    .context("read the control Deployment selector")?;
+    let params = ListParams::default().labels_from(&selector);
+    let replicas = Api::<ReplicaSet>::namespaced(target.client.client(), &target.namespace);
+    let pods = Api::<Pod>::namespaced(target.client.client(), &target.namespace);
+    tokio::time::timeout(DEADLINE, async {
+        loop {
+            let deployment = wait_named(&deployments, &control, DEADLINE, |object| {
+                Ok(object.filter(|deployment| {
+                    let Some((spec, status)) =
+                        deployment.spec.as_ref().zip(deployment.status.as_ref())
+                    else {
+                        return false;
+                    };
+                    let desired = spec.replicas.unwrap_or(1);
+                    deployment
+                        .metadata
+                        .generation
+                        .zip(status.observed_generation)
+                        .is_some_and(|(current, observed)| {
+                            current >= generation && observed >= current
+                        })
+                        && spec
+                            .template
+                            .metadata
+                            .as_ref()
+                            .and_then(|metadata| metadata.annotations.as_ref())
+                            .and_then(|annotations| annotations.get(CREDENTIAL_JOB))
+                            == Some(&sql_job_uid)
+                        && status.updated_replicas.unwrap_or_default() == desired
+                        && status.replicas.unwrap_or_default() == desired
+                        && status.available_replicas.unwrap_or_default() == desired
+                }))
+            })
+            .await?;
+            let uid = deployment
+                .metadata
+                .uid
+                .as_deref()
+                .context("control Deployment has no UID")?;
+            let revision = deployment
+                .annotations()
+                .get(REVISION)
+                .context("control Deployment has no revision")?;
+            let (replicas, pods) = tokio::try_join!(replicas.list(&params), pods.list(&params))
+                .context("list control ReplicaSets and Pods")?;
+            let current = replicas.items.iter().find(|replica| {
+                replica.annotations().get(REVISION) == Some(revision)
+                    && replica
+                        .owner_references()
+                        .iter()
+                        .any(|owner| owner.controller == Some(true) && owner.uid == uid)
+            });
+            if let Some(uid) = current.and_then(|replica| replica.metadata.uid.as_deref())
+                && pods.items.iter().all(|pod| {
+                    pod.owner_references()
+                        .iter()
+                        .any(|owner| owner.controller == Some(true) && owner.uid == uid)
+                })
+            {
+                return Ok::<_, anyhow::Error>(());
+            }
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+    })
+    .await
+    .with_context(|| format!("wait for the control Deployment {org}/{control} rollout"))??;
 
     let mut invitation = org_job(
         INVITATION_ACCOUNT,
