@@ -290,9 +290,8 @@ pub(super) fn output(value: &Val) -> anyhow::Result<Value> {
                     .eq(["id", "row-version", "data"]);
             let mut object = Map::new();
             for (name, value) in fields {
-                if name == "outcome" {
-                    let value = output(value)?;
-                    let Value::Object(value) = value else {
+                if name == "outcome" && matches!(value, Val::Result(_)) {
+                    let Value::Object(value) = output(value)? else {
                         bail!("outcome must be a result")
                     };
                     object.extend(value);
@@ -635,5 +634,18 @@ mod tests {
                 serde_json::json!("unique_name")
             );
         };
+    }
+
+    #[test]
+    fn a_text_outcome_member_stays_an_ordinary_field() {
+        let row = Val::Record(vec![(
+            "outcome".into(),
+            Val::Option(Some(Box::new(Val::String("deleted".into())))),
+        )]);
+        let result = Val::Result(Ok(Some(Box::new(Val::Record(vec![("value".into(), row)])))));
+        assert_eq!(
+            output(&result).unwrap(),
+            json!({"value": {"outcome": "deleted"}})
+        );
     }
 }
