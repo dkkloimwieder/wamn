@@ -180,7 +180,7 @@ Org → environment → project → application. One boundary per level.
 - Migration appliers stay, though `deploy/sql/migrations/system` and `project` are empty. System migrations need them.
 - The environment file supplies project database sizes. The project chart uses `initdb` and creates the ObjectStore and ScheduledBackup when backup is enabled.
 - Direct platform and project database logins use client certificates. Each project Cluster has its own CA, and the host mounts `tls.crt` and `tls.key`. Use namespaced issuers for trusted platform identities.
-- The org control and apply logins use passwords outside Helm records. They use separate single-replica CloudNativePG Poolers in session mode. Control has a per-login limit of 8, apply has 16, and apply can wait 15 minutes. The chart derives the system connection limit from its budgets. The apply Job reuses its lock-holding connection.
+- The org control and apply logins use passwords outside Helm records. They use separate single-replica CloudNativePG Poolers in session mode. Control has a per-login limit of 8, apply has 16, and apply can wait 15 minutes. The chart derives the system connection limit from its budgets. The apply Job reuses its lock-holding connection. The control Pooler sets `query_wait_timeout` 120 explicitly.
 - The host chart sets the HTTP listener and uses the configured NATS address. Environment apply writes the project's `registry.event_readers` row.
 
 ## Contracts, codegen, KCL
@@ -248,6 +248,19 @@ Issues:
 
 16.4 Waits and renewal. In journey-cluster and env apply, the test observes the kstatus waits on the `application` and `environment` charts and the Rust waits on the `project` and `org` charts (Certificate, Database connection, the CDC reader's wait for its replication slot, CDC reader rollout, Cluster). Pooler certificate renewal: renew one Pooler certificate, restart the CloudNativePG operator to force a reconcile, and check that PgBouncer serves the new certificate.
 
+Contracts (scout of 2026-11-22, with D's rulings):
+- C1 Rollback with no failed call: deploy fixture version 1, then version 2 (different component digests, built by `cargo xtask prepare-tests`), then `wamn rollback` to version 1. One client calls the application through the web edge back to back, from a 200 baseline until the Job finishes and version 1 is Ready. Any non-200 status, connection error, per-call timeout or invalid body fails the test, and the epic stops for D's ruling.
+- C2 A plain `wamn env delete` removes the active registry row and keeps the Cluster, Certificates and their Secrets. The observer still reads the row.
+- C3 `wamn env apply` after a plain delete makes a new instance suffix and a new Cluster beside the kept one. It runs in its own org.
+- C4 `wamn env delete --data --confirm <org/env/project>` after a plain delete removes the kept Cluster, its Certificates and Issuers. It runs in its own org.
+- C5 `--confirm` takes what the prompt asks today: the full org/env/project coordinate for `env delete --data`, and the project ID for `schema reset`. A wrong value refuses, and no flag with no terminal still refuses.
+- C6 Isolation, in two topologies: two environments in one org (the selectors inside the shared namespace) and two orgs (the namespace boundary). A one-shot probe Job carries A's host labels and the CloudNativePG PostgreSQL 18.6 image. It connects to A's own database first, then cannot connect to B's host pod (9191, 8081), B's Cluster (5432) or B's application Service (80). A connect timeout means blocked. A refusal counts only with proof that the target is up.
+- C7 Per-login limit: the test scales its org's control Deployment to 0 and opens the limit plus one sessions on each Pooler (control 8, apply 16). The PgBouncer metrics on port 9127 show the extra session waiting, and it completes when one closes. Then control scales back.
+- C8 The auth query admits a provisioned login through each Pooler.
+- C9 `SHOW CONFIG` through pods/exec gives `query_wait_timeout` 120 on control and 900 on apply.
+- C10 Waits: watches start before `journey-cluster`, `wamn env apply` and `wamn deploy`, and the test checks the pending-to-ready order and the end state. The CDC reader rollout wait shows only that the pod runs. `wait_workload_ready` accepts Ready only at the current generation.
+- C11 Pooler certificate renewal, in its own test target: Issuing=True on the Certificate, a new `tls.crt`, a restart of the CloudNativePG operator, then a TLS handshake whose certificate fingerprint (rustls) equals the new `tls.crt`.
+
 After 16.0, 16.1 to 16.4 run in parallel on the Epic 15 harness.
 
 End of the epic: the standard checks, `cargo test --workspace`, the ignored run, `cargo xtask preflight`, and the full journey run (Epics 15 and 16) on fresh kind clusters, up to 12 orgs each.
@@ -257,6 +270,8 @@ Next: the crate graph epic. That ends the restructure.
 ## Open items
 
 - X5: `-host-namespaces=` is empty (T4, `hostNamespaces: []`), so the stock operator sends no stops to a deleted host pod in an org namespace. The host then drains the full `drain_bound_seconds` and exits 1. Its own scout comes later. Measured on kind (Epic 15): every wamn env delete waits about 300 s for the host to drain, and the host then exits with 'service cleanup exceeded its shutdown budget'. That exit is a defect in its own right. X5 gets the next scout after the restructure.
+- The CDC reader has no readiness probe, so its rollout wait shows only that the pod runs, not that it opened its replication session. A probe needs a check in the reader, so it is design work (Epic 16 scout).
+- `wamn env delete --data` with no active row finds an ObjectStore only through its Cluster. If the Cluster is already gone, the ObjectStore stays. Kind has no backups, so no kind test covers it (Epic 16 scout).
 - wamn-44p7o: the Pooler per-login pools and the computed `max_connections` (206) cap the org count near 12 for each system database. This conflicts with T1, where adding an org is a common event. Design a connection budget for each org. Not in Epic 15.
 - The local mutex and Postgres advisory lock for exclusive connection calls are not built. The existing advisory lock in `sql/session_identity.rs::lock_file` serves file operations.
 - The HTTP client cache key by invocation scope, target, connection ID and generation is not built.
@@ -2190,3 +2205,24 @@ Epic 14 closed on 2026-11-21 after review. cargo test --workspace: 617 passed in
 - Q1: `--confirm <name>` on `env delete --data` and `schema reset`, not a bare `--yes`. It keeps the check that the answer names the right environment or project, without a terminal. A bare `--yes` drops that check.
 - Q2: if the rollback test shows a failed call, that is a product defect, and the epic stops for D's ruling. No test change hides it. Reason: D's 2026-11-21 objection that an application must not go down on a rollback.
 - Q3: X5 stays out of Epic 16. Its fix touches T4 (`hostNamespaces: []`), so it is design work. The tests accept the ~300 s env delete.
+
+**Ruled (D, 2026-11-22): Epic 16 scout choices.**
+- D1: two fixture versions with different component digests, built by `cargo xtask prepare-tests`. The rollback test deploys version 1, then version 2, then rolls back to version 1. Reason: the real rollback is of code, and the router risk that the scout named shows only when components change.
+- D2: a failed call is any non-200 status, connection error, per-call timeout or invalid body. One client calls back to back, with a deadline on each call. Reason: each failure kind is a call that a client sees as failed.
+- D3: separate orgs for the apply-again case and the `--data` case. Reason: `--data` then reaches the path with no active row directly.
+- D4: an `Option<String>` replaces the typed answer, with a local branch in each file. `--confirm` takes exactly what the prompt asks today. No flag and no terminal still refuses. Reason: the check stays the same with or without a terminal.
+- D5: both topologies, two environments in one org and two orgs, each with its positive control first. Reason: one org tests the selectors inside the shared namespace, and two orgs test the namespace boundary.
+- D6: the CloudNativePG PostgreSQL 18.6 digest is the probe image. Reason: it is a production digest with bash, and the harness already runs it.
+- D7: a one-shot Job runs the probe. Its host labels also put it behind environment A's host Service while it runs. This is accepted, because A belongs to the test. Reason: the Job owns the pod, so the host ReplicaSet cannot adopt it, and cleanup is bounded.
+- D8: a connect timeout means blocked. A refusal counts only with proof that the target is up. The positive control runs first. Reason: a refusal can also come from a target that is down.
+- D9: the test scales its org's control Deployment to 0 through kube-rs before it fills the control pool, and back after. It does not count live product sessions. The apply pool is idle when no Job runs. Reason: each test has its own org, so nothing else is disturbed, and the count is exact.
+- D10: the PgBouncer metrics on port 9127 prove the wait. D11: `SHOW CONFIG` through pods/exec reads the settings. Reason: `pgbouncer.ini` omits defaults, and the Pooler status has no live values.
+- D12: watches start before the command, plus the end state. Reason: the Rust waits print nothing on success.
+- D13: Issuing=True on the Certificate triggers the renewal. Reason: the old certificate stays in use during issuance. D14: rustls in the journey test crate reads the TLS fingerprint.
+- D15: the generation check in `operation.rs::wait_workload_ready` is a standing fix in 16.4. Ready counts only when its observed generation equals the generation. Reason: without it, a rollout can pass on the old Ready.
+- `wait_role_kind`: the deadline goes around the query, not after it. Standing fix, its own commit. Reason: a stalled query outlasted the 120 s budget.
+- `admit_observer` picks a Cluster by generation and environment, in the shared harness change. Reason: after apply again, or with two environments in one org, a namespace holds more than one Cluster.
+- The CDC reader readiness probe and the ObjectStore lookup with no Cluster go to Open items.
+- The control Pooler sets `query_wait_timeout` 120 explicitly. Ruled chart change, its own commit. Reason: a PgBouncer upgrade cannot move it.
+- The renewal test restarts the CloudNativePG operator, so it has its own test target and never runs at the same time as the Pooler tests.
+- Q2 stands: if C1 sees a failed call, the epic stops for D's ruling. No test change can hide it.
