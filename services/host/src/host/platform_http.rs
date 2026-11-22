@@ -97,6 +97,9 @@ impl HostHandler for PlatformHttp {
     async fn inject_meters(&self, meters: &wash_runtime::observability::Meters) {
         self.ingress.inject_meters(meters).await;
     }
+    fn install_egress_gate(&self, gate: wash_runtime::host::egress_policy::EgressAddressGate) {
+        self.ingress.install_egress_gate(gate);
+    }
     async fn start(&self) -> anyhow::Result<()> {
         self.ingress.start().await
     }
@@ -193,5 +196,89 @@ impl HostHandler for PlatformHttp {
     ) -> wash_runtime::host::http::SendFuture {
         self.ingress
             .outgoing_request(workload_id, request, options, future, allowed_hosts)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wash_runtime::host::allowed_hosts::AllowedHost;
+
+    /// The host's address check reaches the ingress behind the platform
+    /// wrapper, so an `allowedHosts: ["*"]` grant does not reach an address
+    /// the socket policy refuses. `0.0.0.0` is not loopback by name, so only
+    /// the address check refuses it.
+    #[tokio::test]
+    async fn the_platform_handler_checks_egress_addresses() {
+        let pools = Arc::new(
+            wamn_postgres::WamnPostgres::from_host_config(std::collections::BTreeMap::new())
+                .expect("empty pools"),
+        );
+        let database = Arc::new(wamn_operation::OperationDatabase::new(Arc::clone(&pools)));
+        let authorization = Arc::new(wamn_authentication::authorization::Authorization::new(
+            Arc::clone(&pools),
+            database,
+        ));
+        let postgres = Arc::new(wamn_operation::OperationHost::new(pools, None));
+        let blobstore = Arc::new(wamn_blobstore::plugin::WamnBlobstore::new(Arc::clone(
+            &postgres,
+        )));
+        let files = Arc::new(Files::new(&postgres, blobstore, authorization));
+        let routing = Arc::new(IngressRouting::new(Arc::clone(&postgres.scopes)));
+        let operations = Arc::new(wamn_engine::operation::WamnOperation::new(
+            Arc::clone(&postgres) as Arc<dyn wash_runtime::plugin::HostPlugin>,
+            Arc::clone(&postgres.scopes),
+        ));
+        let workflow = Arc::new(Workflow::new(
+            postgres,
+            operations,
+            "nats://nats.example.com:4222".to_owned(),
+            false,
+        ));
+        let (_stop, stopping) = tokio::sync::watch::channel(false);
+        let ingress = wash_runtime::host::http::Ingress::builder(
+            wamn_engine::expected_router::expected_host_router(None, stopping),
+            "127.0.0.1:0".parse().expect("loopback address"),
+        )
+        .build()
+        .await
+        .expect("ingress");
+        let handler: Arc<dyn HostHandler> = Arc::new(PlatformHttp::new(
+            Arc::new(ingress),
+            files,
+            routing,
+            workflow,
+        ));
+        let _host = wash_runtime::host::Host::builder()
+            .with_engine(wamn_engine::engine::build_engine(&[]).expect("production engine"))
+            .with_http_handler(Arc::clone(&handler))
+            .build()
+            .expect("host");
+        // A port nothing listens on: without the address check the kernel
+        // refuses the connection, not the host.
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .and_then(|listener| listener.local_addr())
+            .expect("free port")
+            .port();
+        let request = hyper::Request::builder()
+            .uri(format!("http://0.0.0.0:{port}/"))
+            .body(wasmtime_wasi_http::WasiBody::default())
+            .expect("request");
+        let allowed: [AllowedHost; 1] = ["*".parse().expect("allow any")];
+
+        let sent = Box::into_pin(handler.outgoing_request(
+            "workload",
+            request,
+            None,
+            Box::new(async { Ok(()) }),
+            &allowed,
+        ))
+        .await;
+
+        assert!(
+            matches!(sent, Err(wasmtime_wasi_http::Error::DestinationIpProhibited)),
+            "got {:?}",
+            sent.err()
+        );
     }
 }
