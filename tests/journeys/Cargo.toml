@@ -12,8 +12,10 @@ anyhow.workspace = true
 futures-util.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
+sha2.workspace = true
 sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls"] }
 tokio = { workspace = true, features = ["io-util", "macros", "net", "process", "rt-multi-thread", "time"] }
+tokio-rustls.workspace = true
 uuid = { workspace = true, features = ["v4", "v7"] }
 wamn-identity-protocol.workspace = true
 wamn-http-client = { workspace = true, features = ["tls12"] }
@@ -23,6 +25,7 @@ hyper = { workspace = true }
 # Port-forwards and pods/exec use the WebSocket transport, as in xtask.
 kube = { workspace = true, features = ["ws"] }
 k8s-openapi = { workspace = true }
+rustls.workspace = true
 # The host user check connects to NATS with a signed user, as the host does.
 async-nats = { workspace = true, features = ["aws-lc-rs", "nkeys"] }
 nkeys.workspace = true

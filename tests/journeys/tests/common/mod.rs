@@ -15,10 +15,14 @@ use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::time::Duration;
 
 use anyhow::{Context as _, bail, ensure};
-use k8s_openapi::api::core::v1::{ConfigMap, Pod, Secret, Service};
+use k8s_openapi::api::apps::v1::Deployment;
+use k8s_openapi::api::batch::v1::{Job, JobSpec};
+use k8s_openapi::api::core::v1::{ConfigMap, Pod, PodTemplateSpec, Secret, Service};
+use k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
 use kube::Api;
 use kube::api::{
-    ApiResource, AttachParams, DynamicObject, GroupVersionKind, ListParams, Patch, PatchParams,
+    ApiResource, AttachParams, DeleteParams, DynamicObject, GroupVersionKind, ListParams,
+    LogParams, Patch, PatchParams, PostParams,
 };
 use kube::config::{KubeConfigOptions, Kubeconfig};
 use serde::Deserialize;
@@ -32,7 +36,7 @@ use tokio::time::Instant;
 use wamn_http_client::HttpClient;
 use wamn_identity_protocol::PrincipalId;
 use wamn_package::local_operation::LocalOperation;
-use wamn_registry::{OrgId, Triple};
+use wamn_registry::{OrgId, Triple, deployment, name};
 use wamn_test_infrastructure::scratch::ScratchRoot;
 
 pub mod host;
@@ -52,6 +56,8 @@ const LABEL: &str = "fixture";
 const CALLER_ROLE: &str = "route-caller";
 /// How long CloudNativePG takes to apply the observer's pg_hba line.
 const OBSERVER_DEADLINE: Duration = Duration::from_secs(120);
+/// How long foreground deletion can wait for the probe pod to terminate.
+const PROBE_CLEANUP_DEADLINE: Duration = Duration::from_secs(60);
 /// The field manager of the observer's pg_hba patch.
 const FIELD_MANAGER: &str = "wamn-journey-observer";
 
@@ -144,13 +150,13 @@ impl Cluster {
             .into_iter()
             .find_map(|pod| pod.metadata.name)
             .context("the system Cluster has no primary pod")?;
-        let ca = Api::<Secret>::namespaced(self.client.clone(), PLATFORM)
-            .get(&format!("{SYSTEM_CLUSTER}-ca"))
-            .await?
-            .data
-            .and_then(|mut data| data.remove("ca.crt"))
-            .context("the system database CA has no ca.crt")?
-            .0;
+        let ca = secret_key(
+            &self.client,
+            PLATFORM,
+            &format!("{SYSTEM_CLUSTER}-ca"),
+            "ca.crt",
+        )
+        .await?;
         let outputs = &self.outputs;
         self.observe(
             PLATFORM,
@@ -289,7 +295,7 @@ impl Environment {
     /// Each `wamn env apply` and `wamn deploy` upgrades the project chart, which puts its
     /// pg_hba list back, so the admission runs again on each call.
     pub async fn observe(&self) -> anyhow::Result<Observed> {
-        admit_observer(&self.org).await
+        admit_observer(&self.org.cluster, &self.triple).await
     }
 
     /// Run `wamn deploy` for the application's source package.
@@ -439,24 +445,44 @@ async fn caller_role(
     Ok(())
 }
 
-/// On kind only: create the observer role in the project Cluster, admit it in its pg_hba,
-/// and connect with it.
-async fn admit_observer(org: &Org) -> anyhow::Result<Observed> {
-    let cluster = &org.cluster;
-    let client = &cluster.client;
-    let namespace = org.name.as_str();
+fn postgres_clusters(client: &kube::Client, namespace: &str) -> Api<DynamicObject> {
     let resource = ApiResource::from_gvk_with_plural(
         &GroupVersionKind::gvk("postgresql.cnpg.io", "v1", "Cluster"),
         "clusters",
     );
-    let clusters = Api::<DynamicObject>::namespaced_with(client.clone(), namespace, &resource);
-    let [mut project] = <[_; 1]>::try_from(clusters.list(&ListParams::default()).await?.items)
-        .map_err(|found| anyhow::anyhow!("{namespace} has {} Clusters, not one", found.len()))?;
-    let name = project
-        .metadata
-        .name
-        .take()
-        .context("project Cluster name")?;
+    Api::namespaced_with(client.clone(), namespace, &resource)
+}
+
+/// Resolve the active project Cluster from the registry generation (C2, C3, C6).
+pub async fn active_project_cluster(cluster: &Cluster, triple: &Triple) -> anyhow::Result<String> {
+    let mut system = cluster.observe_system().await?;
+    let instance = deployment::instance_suffix(&mut system.connection, triple)
+        .await
+        .with_context(|| format!("read the active deployment for {triple}"))?
+        .with_context(|| format!("{triple} has no active deployment"))?;
+    let database =
+        name::project_env_database_name(&triple.org, &triple.project, &triple.env, &instance);
+    Ok(name::project_cluster(&database))
+}
+
+/// Admit the read-only observer to the active project Cluster (C2, C3).
+pub async fn admit_observer(cluster: &Cluster, triple: &Triple) -> anyhow::Result<Observed> {
+    let name = active_project_cluster(cluster, triple).await?;
+    observe_project_cluster(cluster, triple.org.as_str(), &name).await
+}
+
+/// Admit the read-only observer to a named project Cluster kept after deletion (C2).
+pub async fn observe_project_cluster(
+    cluster: &Cluster,
+    namespace: &str,
+    name: &str,
+) -> anyhow::Result<Observed> {
+    let client = &cluster.client;
+    let clusters = postgres_clusters(client, namespace);
+    let mut project = clusters
+        .get(name)
+        .await
+        .with_context(|| format!("read Cluster {namespace}/{name}"))?;
     let spec = &mut project.data["spec"];
     let database = spec["bootstrap"]["initdb"]["database"]
         .as_str()
@@ -478,7 +504,7 @@ async fn admit_observer(org: &Org) -> anyhow::Result<Observed> {
         };
         let patched = clusters
             .patch(
-                &name,
+                name,
                 &params,
                 &Patch::Merge(json!({"spec": {"postgresql": {"pg_hba": rules}}})),
             )
@@ -494,7 +520,7 @@ async fn admit_observer(org: &Org) -> anyhow::Result<Observed> {
             .collect();
         clusters
             .patch(
-                &name,
+                name,
                 &params,
                 &Patch::Merge(json!({"metadata": {
                     "managedFields": kept,
@@ -542,13 +568,7 @@ async fn admit_observer(org: &Org) -> anyhow::Result<Observed> {
     )
     .await
     .context("create the observer role in the project Cluster")?;
-    let server_ca = Api::<Secret>::namespaced(client.clone(), namespace)
-        .get(&format!("{name}-ca"))
-        .await?
-        .data
-        .and_then(|mut data| data.remove("ca.crt"))
-        .context("the project database CA has no ca.crt")?
-        .0;
+    let server_ca = secret_key(client, namespace, &format!("{name}-ca"), "ca.crt").await?;
     // CloudNativePG reloads pg_hba after the patch; the first accepted login is the event.
     let deadline = Instant::now() + OBSERVER_DEADLINE;
     loop {
@@ -565,8 +585,217 @@ async fn admit_observer(org: &Org) -> anyhow::Result<Observed> {
     }
 }
 
-/// Run a command in a pod container, and return its output. A nonzero exit fails.
-async fn exec<const N: usize>(
+/// Read the digest-pinned PostgreSQL image from the project Cluster used by the observer (C6).
+pub async fn probe_image(
+    client: &kube::Client,
+    namespace: &str,
+    cluster: &str,
+) -> anyhow::Result<String> {
+    let project = postgres_clusters(client, namespace)
+        .get(cluster)
+        .await
+        .with_context(|| format!("read Cluster {namespace}/{cluster}"))?;
+    project.data["spec"]["imageName"]
+        .as_str()
+        .filter(|image| {
+            image
+                .split_once("@sha256:")
+                .is_some_and(|(reference, digest)| {
+                    !reference.is_empty()
+                        && digest.len() == 64
+                        && digest.bytes().all(|byte| byte.is_ascii_hexdigit())
+                })
+        })
+        .map(str::to_owned)
+        .with_context(|| format!("Cluster {namespace}/{cluster} has no digest-pinned imageName"))
+}
+
+/// Read one Secret key as bytes for Pooler credentials or a certificate (C7, C8, C11).
+pub async fn secret_key(
+    client: &kube::Client,
+    namespace: &str,
+    secret: &str,
+    key: &str,
+) -> anyhow::Result<Vec<u8>> {
+    Api::<Secret>::namespaced(client.clone(), namespace)
+        .get(secret)
+        .await
+        .with_context(|| format!("read key {key} from Secret {namespace}/{secret}"))?
+        .data
+        .and_then(|mut data| data.remove(key))
+        .map(|bytes| bytes.0)
+        .with_context(|| format!("Secret {namespace}/{secret} has no key {key}"))
+}
+
+/// Scale a Deployment such as `wamn_registry::name::control_resource` and wait for readiness (C7).
+pub async fn scale_deployment(
+    client: &kube::Client,
+    namespace: &str,
+    name: &str,
+    replicas: i32,
+    deadline: Duration,
+) -> anyhow::Result<()> {
+    let deployments = Api::<Deployment>::namespaced(client.clone(), namespace);
+    let waiting = format!("Deployment {namespace}/{name} reaches {replicas} ready replicas");
+    tokio::time::timeout(deadline, async {
+        deployments
+            .patch_scale(
+                name,
+                &PatchParams::default(),
+                &Patch::Merge(json!({"spec": {"replicas": replicas}})),
+            )
+            .await
+            .with_context(|| format!("scale Deployment {namespace}/{name} to {replicas}"))?;
+        request::until(deadline, &waiting, || async {
+            let deployment = deployments
+                .get(name)
+                .await
+                .with_context(|| format!("read Deployment {namespace}/{name}"))?;
+            Ok(deployment.status.and_then(|status| {
+                (status.observed_generation == deployment.metadata.generation
+                    && deployment.spec.and_then(|spec| spec.replicas) == Some(replicas)
+                    && status.ready_replicas.unwrap_or(0) == replicas
+                    && (replicas != 0
+                        || (status.replicas.unwrap_or(0) == 0
+                            && status.terminating_replicas.unwrap_or(0) == 0)))
+                    .then_some(())
+            }))
+        })
+        .await
+    })
+    .await
+    .with_context(|| format!("{waiting} within {deadline:?}"))?
+}
+
+/// Run a one-container Job once, collect its exit code and logs, and wait for deletion (C6).
+pub async fn run_job(
+    client: &kube::Client,
+    namespace: &str,
+    mut template: PodTemplateSpec,
+    deadline: Duration,
+) -> anyhow::Result<(i32, String)> {
+    ensure!(
+        template
+            .metadata
+            .as_ref()
+            .and_then(|meta| meta.labels.as_ref())
+            .is_some_and(|labels| !labels.is_empty()),
+        "the probe pod needs labels"
+    );
+    let spec = template.spec.as_mut().context("probe pod spec is absent")?;
+    let [container] = spec.containers.as_slice() else {
+        bail!("the probe pod must have one container");
+    };
+    ensure!(
+        container
+            .image
+            .as_ref()
+            .is_some_and(|image| !image.is_empty())
+            && container
+                .command
+                .as_ref()
+                .is_some_and(|command| !command.is_empty()),
+        "the probe container needs an image and command"
+    );
+    spec.restart_policy = Some("Never".to_owned());
+    let jobs = Api::<Job>::namespaced(client.clone(), namespace);
+    let pods = Api::<Pod>::namespaced(client.clone(), namespace);
+    let job = Job {
+        metadata: ObjectMeta {
+            name: Some(format!("journey-probe-{}", uuid::Uuid::new_v4().simple())),
+            ..ObjectMeta::default()
+        },
+        spec: Some(JobSpec {
+            backoff_limit: Some(0),
+            template,
+            ..JobSpec::default()
+        }),
+        ..Job::default()
+    };
+    let name = job.metadata.name.as_deref().context("the probe Job name")?;
+    let waiting = format!("Job {namespace}/{name} finishes");
+    let result = tokio::time::timeout(deadline, async {
+        let created = jobs.create(&PostParams::default(), &job).await?;
+        let uid = created.metadata.uid.context("the probe Job has no UID")?;
+        request::until(deadline, &waiting, || async {
+            let job = jobs.get(name).await?;
+            Ok(job
+                .status
+                .is_some_and(|status| {
+                    status.conditions.into_iter().flatten().any(|condition| {
+                        matches!(condition.type_.as_str(), "Complete" | "Failed")
+                            && condition.status == "True"
+                    })
+                })
+                .then_some(()))
+        })
+        .await?;
+        // The Job controller sets the pod's controller reference when it creates the pod.
+        let selector =
+            ListParams::default().labels(&format!("batch.kubernetes.io/controller-uid={uid}"));
+        let [pod] = <[_; 1]>::try_from(pods.list(&selector).await?.items).map_err(|found| {
+            anyhow::anyhow!("Job {name} has {} pods, expected one", found.len())
+        })?;
+        let pod_name = pod.metadata.name.context("the probe pod has no name")?;
+        let statuses = pod
+            .status
+            .and_then(|status| status.container_statuses)
+            .with_context(|| format!("probe pod {pod_name} has no container status"))?;
+        let [status] = <[_; 1]>::try_from(statuses).map_err(|found| {
+            anyhow::anyhow!(
+                "probe pod {pod_name} has {} container statuses, expected one",
+                found.len()
+            )
+        })?;
+        let exit = status
+            .state
+            .and_then(|state| state.terminated)
+            .with_context(|| format!("probe pod {pod_name} has no exit status"))?
+            .exit_code;
+        let logs = pods
+            .logs(
+                &pod_name,
+                &LogParams {
+                    container: Some(status.name),
+                    ..LogParams::default()
+                },
+            )
+            .await?;
+        anyhow::Ok((exit, logs))
+    })
+    .await
+    .with_context(|| format!("{waiting} within {deadline:?}"))
+    .flatten()
+    .with_context(|| format!("run probe Job {namespace}/{name}"));
+
+    let removing = format!("Job {namespace}/{name} is deleted");
+    let cleanup = tokio::time::timeout(PROBE_CLEANUP_DEADLINE, async {
+        match jobs.delete(name, &DeleteParams::foreground()).await {
+            Ok(_) => {}
+            Err(kube::Error::Api(error)) if error.code == 404 => return Ok(()),
+            Err(error) => return Err(error.into()),
+        }
+        request::until(PROBE_CLEANUP_DEADLINE, &removing, || async {
+            Ok(jobs.get_opt(name).await?.is_none().then_some(()))
+        })
+        .await
+    })
+    .await
+    .with_context(|| format!("{removing} within {PROBE_CLEANUP_DEADLINE:?}"))
+    .flatten()
+    .with_context(|| format!("delete probe Job {namespace}/{name}"));
+
+    match (result, cleanup) {
+        (result, Ok(())) => result,
+        (Ok((exit, logs)), Err(error)) => {
+            Err(error.context(format!("probe exited {exit}: {logs}")))
+        }
+        (Err(run_error), Err(error)) => Err(run_error.context(format!("{error:#}"))),
+    }
+}
+
+/// Run a pod command such as `SHOW CONFIG` (C9), returning stdout on success.
+pub(crate) async fn exec<const N: usize>(
     pods: &Api<Pod>,
     pod: &str,
     params: &AttachParams,
@@ -743,7 +972,15 @@ pub(crate) struct PortForward {
 }
 
 impl PortForward {
+    /// Forward connections to a named pod and port for metrics or a TLS handshake (C7, C11).
     pub(crate) async fn start(pods: Api<Pod>, pod: &str, port: u16) -> anyhow::Result<Self> {
+        let namespace = pods
+            .namespace()
+            .context("a port-forward needs a namespace")?;
+        ensure!(port != 0, "a port-forward needs a port");
+        pods.get_metadata(pod)
+            .await
+            .with_context(|| format!("read pod {namespace}/{pod} for port-forward"))?;
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await?;
         let address = listener.local_addr()?;
         let pod: Arc<str> = pod.into();
