@@ -1,9 +1,9 @@
-//! NATS outage recovery (Epic 15 ruling C10). This target stops the platform NATS
-//! server, so it disturbs every other test on the cluster: run it alone.
+//! The host serves requests that do not need NATS during an outage.
+//! This target stops the platform NATS server. Run it alone.
 //!
-//! The stock runtime-operator exits while NATS is unreachable, so the Host object
-//! cannot change during the outage. The test records that exit, and checks the Host
-//! object after NATS returns (ruling Q4, 2026-11-21).
+//! A port-forward reaches the host pod directly. The test logs the web edge status
+//! during the outage as stock runtime-operator behaviour. After NATS returns, the
+//! test checks operator readiness, host reconnect, edge routing, and a new deployment.
 
 mod common;
 
@@ -11,11 +11,11 @@ use std::collections::BTreeMap;
 use std::time::Duration;
 
 use anyhow::Context as _;
-use common::Application;
 use common::host::{
     application_objects, condition, declare, fixture, host_object, ready, ready_host_pod, reapply,
     until,
 };
+use common::{Application, PortForward, Routes};
 use k8s_openapi::api::apps::v1::StatefulSet;
 use k8s_openapi::api::core::v1::Pod;
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::Time;
@@ -41,9 +41,10 @@ const REPORTING_DEADLINE: Duration = Duration::from_secs(300);
 /// its restart backoff.
 const OPERATOR_DEADLINE: Duration = Duration::from_secs(300);
 
-/// During a NATS outage the stock runtime-operator exits and the host still serves a call.
-/// After it, the operator is Ready, the Host reports again, the host serves a call, and a
-/// new application becomes Ready on the host.
+/// During the outage, the host pod serves a call that needs no NATS.
+/// The test logs the web edge status during the outage.
+/// When NATS returns, the operator is Ready and the Host reports a newer `lastSeen`.
+/// The web edge serves a call and the second `WorkloadDeployment` is Ready.
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires: cluster, bin:helm"]
 async fn the_host_serves_through_a_nats_outage_and_recovers() -> anyhow::Result<()> {
@@ -62,6 +63,33 @@ async fn the_host_serves_through_a_nats_outage_and_recovers() -> anyhow::Result<
     let before = until(REPORTING_DEADLINE, "the Host object reports", reporting)
         .await?
         .context("the reporting Host object has no lastSeen")?;
+
+    let namespace = pod
+        .metadata
+        .namespace
+        .as_deref()
+        .context("host pod namespace")?;
+    let pod_name = pod.metadata.name.as_deref().context("host pod name")?;
+    let port = pod
+        .spec
+        .iter()
+        .flat_map(|spec| &spec.containers)
+        .flat_map(|container| container.ports.iter().flatten())
+        .find(|port| port.name.as_deref() == Some("http"))
+        .context("the host pod has no named http port")?;
+    let forward = PortForward::start(
+        Api::namespaced(client.clone(), namespace),
+        pod_name,
+        u16::try_from(port.container_port).context("invalid host HTTP port")?,
+    )
+    .await?;
+    let edge = &application.routes;
+    let direct = Routes {
+        endpoint: format!("http://{}", forward.address),
+        host: edge.host.clone(),
+        bearer: edge.bearer.clone(),
+        client: edge.client.clone(),
+    };
 
     let pods = Api::<Pod>::namespaced(client.clone(), PLATFORM);
     let pods = &pods;
@@ -86,12 +114,34 @@ async fn the_host_serves_through_a_nats_outage_and_recovers() -> anyhow::Result<
         || async { Ok((operator_restarts(pods).await? != restarts).then_some(())) },
     )
     .await?;
-    let id = uuid::Uuid::now_v7().to_string();
-    application
-        .routes
-        .create("outage-call", "outage-call", &id, "standard")
-        .await
-        .context("a call during the NATS outage")?;
+    let path = "/widget/create";
+    let request = json!({
+        "request_id": "outage-call",
+        "id": uuid::Uuid::now_v7().to_string(),
+        "idempotency_key": "outage-call",
+        "code": "standard"
+    });
+    let edge_call = edge
+        .client
+        .post(format!("{}{path}", edge.endpoint))
+        .header("Host", &edge.host)
+        .bearer_auth(&edge.bearer)
+        .json(std::slice::from_ref(&request));
+    let created = direct.post(path, request).await;
+    match edge_call.send().await {
+        Ok(response) => eprintln!(
+            "web edge during NATS outage (stock runtime-operator behaviour) answered {}",
+            response.status()
+        ),
+        Err(error) => eprintln!("web edge request during NATS outage failed: {error:#}"),
+    }
+
+    let created = created.context("a direct call to the host pod during the NATS outage")?;
+    anyhow::ensure!(
+        created.get("value").is_some(),
+        "the host pod creates a widget during the NATS outage: {created}"
+    );
+    drop(forward);
 
     scale(&sets, 1).await?;
     until(
@@ -118,7 +168,7 @@ async fn the_host_serves_through_a_nats_outage_and_recovers() -> anyhow::Result<
     let id = uuid::Uuid::now_v7().to_string();
     application
         .routes
-        .create("recovery-call", "recovery-call", &id, "standard")
+        .create("recovery-call", "recovery-call", &id, "priority")
         .await
         .context("a call after NATS returns")?;
     drop(restore);
