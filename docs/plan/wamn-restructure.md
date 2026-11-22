@@ -79,7 +79,7 @@ Org → environment → project → application. One boundary per level.
 - The environment file states each connection's version once.
 - A physical resource belongs to one project: `(target_id, resource_key)` is unique within one project database.
 - Connection and application service principals live in the project database. `platform.connection` records the connection's principal ID.
-- The connection authority is fixed. A new authority needs a new connection. Create, edit and deploy refuse IPv6 literal authorities for Wasm connections. Cloud calls allow public addresses and refuse private and special addresses.
+- The connection authority is fixed. A new authority needs a new connection. Create, edit and deploy refuse IPv6 literal authorities for Wasm connections. Cloud calls allow public addresses and refuse private and special addresses. Cloud calls use the stock wash-runtime egress address policy. wamn keeps no range list of its own.
 - Each host HTTP call is checked against the exact connection authority, in one place. The host has no allowed-hosts list of its own.
 - Egress for host connection calls: the application chart's `allow-public-integration-ports` rule also opens the ports of the bound HTTP connections (`connectionPorts`), to public IPv4 only.
 - Deploy refuses a connection bound to a different target, a name bound to two connections, or a name shared with another component.
@@ -146,6 +146,7 @@ Org → environment → project → application. One boundary per level.
 - One stock wasmCloud version for both runtime-operator charts and the runtime crates.
 - Accepted risk: `environment/templates/host.yaml` includes the stock chart's private templates by path (`runtime/host-plugin-config.yaml`, `deployment.yaml`, `service.yaml`). A file move in a wasmCloud chart update breaks the render, and the chart-update review catches it.
 - One environment file per environment (YAML with a JSON schema), with its projects and applications inside.
+- `wamn env apply` uninstalls the application releases that the environment file no longer lists, found by wamn's labels. Data stays.
 - Rollback is `helm rollback`. No pull-back after push. Check migration appends against the previous digest under the same tag. Pull each package once per operation and compile KCL once per build. The CLI validates input, control authorizes the target, and the worker checks the bound target and package. No `helm template` pre-check. Rollback alone reads prior Helm manifests and values. Project updates can use `--reuse-values` within the same release. One value each for the NATS, issuer and registry addresses.
 - Components: stock `push_component`. Package artifact: two layers (`wamn.json`, migrations tar).
 - Build: codegen's describe cache (`.wamn/describe/`, committed and checked current); a database only when SQL changes; skip unchanged builds; `wamn dev` applies new migrations. `build.json` goes (overlay builds hash the base files).
@@ -247,7 +248,7 @@ Issues:
 
 15.4 Request path: another environment's credential is refused and never served; session identity (the cold parse, the operation in the transaction, no identity on a pooled connection, the bound application); the write log claims (commit and rollback, a competing claim waits, a lost session refuses, known results finish at host commit, unfinished claims have a call bound, and claims accept late completion and expire under retention); connection calls; Data change for `client_acme_receiving` (K24); and only the workflow behaviour that exists today.
 
-15.5 wasmCloud v2.12.3 (wamn-rd0tv.6). wamn moves to v2.12.3 as a whole: the wash-runtime git tag, the runtime-operator chart and its images by digest, and every other v2.12.2 pin. The upstream tag v2.12.3 is 8358f1f56. wamn follows its breaking changes only as far as wamn needs to build and run. The rule for a wasmCloud chart upgrade applies: render the environment and platform charts with the old and the new chart, and review the diff. Then run the standard checks, `cargo test --workspace` and the ignored run on v2.12.3. Then a read-only scout reads each wamn workaround that v2.12.3 can cover and gives a recommendation for each: X2, Q-A, X10, X1 and the mounted database credentials, X5 and the startup restarts, rollback and one WorkloadReplicaSet for each deployment template, and any other. The scout stops for D's ruling. No wamn code is deleted before that ruling.
+15.5 wasmCloud v2.12.3 (wamn-rd0tv.6). wamn moves to v2.12.3 as a whole: the wash-runtime git tag, the runtime-operator chart and its images by digest, and every other v2.12.2 pin. The upstream tag v2.12.3 is 8358f1f56. wamn follows its breaking changes only as far as wamn needs to build and run. The rule for a wasmCloud chart upgrade applies: render the environment and platform charts with the old and the new chart, and review the diff. Then run the standard checks, `cargo test --workspace` and the ignored run on v2.12.3. Then a read-only scout reads each wamn workaround that v2.12.3 can cover and gives a recommendation for each: X2, Q-A, X10, X1 and the mounted database credentials, X5 and the startup restarts, rollback and one WorkloadReplicaSet for each deployment template, and any other. The scout stops for D's ruling. No wamn code is deleted before that ruling. D ruled on the scout on 2026-11-21 (below).
 
 15.2, 15.3 and 15.4 run in parallel on the 15.1 harness.
 
@@ -283,12 +284,17 @@ Rulings on the questions (D, 2026-11-21):
 - Q3: the removed-application journey test checks `application.stop` through control. That contract stays tested. The test does not stand in for env apply.
 - Q4: the NATS outage test checks the Host status after NATS returns. The runtime-operator stays stock. The test records the runtime-operator's exit during the outage as its behaviour.
 
+Rulings on the 15.5 scout and wamn-86pii (D, 2026-11-21):
+- wamn-86pii is fixed now. `environment/lifecycle.rs::configure_project` uninstalls the application releases that the environment file no longer lists. One journey test checks that a dropped application stops after `wamn env apply` and that its data stays.
+- `platform_http.rs` forwards the upstream address check to the inner ingress. This is a security fix.
+- Q-A: wamn deletes its own private-range code and calls the stock wash-runtime egress address policy. The cloud refusal unit test stays, against the stock call.
+- X2, X10, X1, X5, C14 and the rollback handling stay. v2.12.3 does not cover them.
+- These rulings end the wait on new X2 and Q-A work.
+
 Waits:
 - The write log expiry contract waits for the X4 Open item.
 - The deleted host pod drain test waits for the X5 Open item. Its own scout comes later.
 - Result signing waits for an object store on kind.
-- The env apply stop of an application that the environment file no longer lists waits for wamn-86pii. It is listed as waiting, not tested.
-- New X2 and Q-A work waits for D's ruling on the 15.5 scout.
 
 End of the epic: after D's ruling on the 15.5 scout, the standard checks, `cargo test --workspace`, the ignored run, `cargo xtask preflight`, and `cargo test -p wamn-journey-tests -- --ignored` on v2.12.3, on two fresh kind clusters.
 
@@ -297,7 +303,6 @@ Next: Epic 16 (step 3.8, fourth part): rollback, env delete, apply again and env
 ## Open items
 
 - wamn-44p7o: the Pooler per-login pools and the computed `max_connections` (206) cap the org count near 12 for each system database. This conflicts with T1, where adding an org is a common event. Design a connection budget for each org. Not in Epic 15.
-- wamn-86pii: env apply does not stop an application that the environment file no longer lists. This is a defect if the environment file is the declared list of applications. A read-only scout reports first, then D rules. Until then the contract is waiting, not tested.
 - The local mutex and Postgres advisory lock for exclusive connection calls are not built. The existing advisory lock in `sql/session_identity.rs::lock_file` serves file operations.
 - The HTTP client cache key by invocation scope, target, connection ID and generation is not built.
 - `registry.connection_principal` is not built. Project connection rows carry the principal ID.
@@ -355,7 +360,7 @@ Next: Epic 16 (step 3.8, fourth part): rollback, env delete, apply again and env
 - Typed control inputs, then OpenAPI derived with `schemars`.
 - The JSONata output check: P146 says output is validated at run time, but `walk.rs::invoke` only checks that the output is JSON.
 - Where `revocation_seconds` lives: P43 and P336 set the grant cache lifetime per project, but the environment file has one top-level `revocation_seconds`.
-- `HostArgs` (`services/host/src/host.rs`) is a hand-kept copy of the stock host flags. Check the wash-runtime 2.12.2 interface before changing it.
+- `HostArgs` (`services/host/src/host.rs`) is a hand-kept copy of the stock host flags. Check the wash-runtime 2.12.3 interface before changing it.
 - The environment document has two owners: the ConfigMap from `project/templates/operations.yaml` and the registry rows. Design one owner.
 - Org, project and environment are written five times in workload config (`release_chart/plan.rs::roles`, the `wamn.project_env_key` annotation in `workloads.yaml`) and never compared. Design one source.
 - "wiring" still names workflows (`WiringDocument`, `runs.wiring_id`, `catalog.workflows.wiring_hash`; about 213 hits). Rename with a schema change.
@@ -2213,3 +2218,10 @@ Epic 14 closed on 2026-11-21 after review. cargo test --workspace: 617 passed in
 - Q3: the removed-application journey test checks `application.stop` through control. Reason: that is a real contract, so the test stays. It does not stand in for env apply. wamn-86pii (env apply does not stop an application that the file no longer lists) is a defect if the environment file is the declared list of applications. A read-only scout reports first. Until D rules, that contract is listed as waiting, not tested.
 - Q4: the NATS outage test checks the Host status after NATS returns. The runtime-operator stays stock, and the test records its exit during the outage as its behaviour. The operator does not change. Reason: wamn uses the stock runtime-operator, so its exit is a fact that the test records.
 - 15.5 (wamn-rd0tv.6): wamn moves to wasmCloud v2.12.3 as a whole: the wash-runtime git tag, the runtime-operator chart and its images by digest, and every other v2.12.2 pin. The upstream tag v2.12.3 is 8358f1f56. wamn follows its breaking changes only as far as wamn needs to build and run. The standard checks, `cargo test --workspace` and the ignored run pass on v2.12.3. Then a read-only scout reads each wamn workaround that v2.12.3 can cover, with a recommendation for each: X2, Q-A, X10, X1 and the mounted database credentials, X5 and the startup restarts, rollback and one WorkloadReplicaSet for each deployment template, and any other. The scout stops for D's ruling before any wamn code is deleted. The journey end run happens on v2.12.3 after that ruling. No new X2 or Q-A work starts until D rules on the scout. Reason: the journey tests must run on the version that wamn ships, and v2.12.3 overlaps X2 and Q-A.
+
+**Ruled (D, 2026-11-21): Epic 15 v2.12.3 scout and wamn-86pii.**
+- wamn-86pii is fixed now, as a ruled change. `environment/lifecycle.rs::configure_project` uninstalls each application release that the environment file no longer lists. It uninstalls only releases that wamn made for that environment. It finds them by wamn's labels or annotations, never by a name pattern. It prints each release before the uninstall. The project database and its data stay. One journey test checks that an application dropped from the file stops after `wamn env apply`, and that its data is still there. Reason: the environment file is the declared list of applications (Part 1 Deploy, `environment.schema.json`).
+- `platform_http.rs` forwards the upstream address check to the inner ingress, in one method. This is a ruled security fix. Reason: the wrapper dropped the stock hook, so Wasm siblings got only a name check.
+- Q-A: wamn deletes its own private-range code and calls the stock wash-runtime egress address policy. Cloud calls still refuse private ranges through the stock settings. The edge rule stays deferred. The cloud refusal unit test stays, against the stock call, with cases for NAT64 `64:ff9b::/96`, 6to4 `2002::/16` and `168.63.129.16`. Reason: one owner for the range list, and the stock list covers ranges that wamn's copy missed.
+- X2, X10, X1, X5, C14 and the rollback handling stay. Reason: v2.12.3 does not cover them.
+- These rulings end the wait on new X2 and Q-A work.
