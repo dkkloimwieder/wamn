@@ -7,8 +7,8 @@ This page owns those reasons. Other architecture pages own the behavior itself.
 
 ## Upstream ownership
 
-The root [Cargo manifest](../../Cargo.toml) pins direct wasmCloud `v2.12.2` source at `a8da8ac3472144e63a9a534aa428e32239e0ef88`.
-The resolved Wasmtime family is `48.0.8`.
+The root [Cargo manifest](../../Cargo.toml) pins direct wasmCloud `v2.12.3` source at `8358f1f56a66c43aedc49f30e2c5d4fa2b4f7ca1`.
+The resolved Wasmtime family is `48.0.10`.
 `wash-runtime` resolves directly to that upstream revision without a workspace patch.
 Upstream default providers remain disabled.
 Application components use the upstream linker. Undeclared WASI imports no longer fail at instantiation through a WAMN-targeted linker; application admission still refuses `wasi:sockets`.

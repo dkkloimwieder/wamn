@@ -1,7 +1,7 @@
 dependencies:
 - name: runtime-operator
   repository: oci://ghcr.io/wasmcloud/charts
-  version: 2.12.2
+  version: 2.12.3
 - name: nats
   repository: https://nats-io.github.io/k8s/helm/charts
   version: 2.15.2
@@ -11,5 +11,5 @@ dependencies:
 - name: opentelemetry-collector
   repository: https://open-telemetry.github.io/opentelemetry-helm-charts
   version: 0.178.3
-digest: sha256:da8a14eb902626c7f5f812fa3dcb24069fec4e5fd76cdd1a27e021fe779b0e12
-generated: '2026-11-19T05:15:10.144131+00:00'
+digest: sha256:1225475d4ff9f3446caf239715488e2874d226b899a56d29b93b2fdb19dcd46c
+generated: "2026-11-21T20:31:43.800431603-05:00"
