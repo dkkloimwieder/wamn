@@ -51,24 +51,23 @@ async fn wait_role_kind(
     role: &wamn_identity_protocol::LoginName,
     can_login: bool,
 ) -> anyhow::Result<()> {
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(120);
-    loop {
-        let present: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT FROM pg_roles WHERE rolname=$1 AND rolcanlogin=$2)",
-        )
-        .bind(role)
-        .bind(can_login)
-        .fetch_one(&mut *connection)
-        .await?;
-        if present {
-            return Ok(());
+    tokio::time::timeout(Duration::from_secs(120), async {
+        loop {
+            let present: bool = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT FROM pg_roles WHERE rolname=$1 AND rolcanlogin=$2)",
+            )
+            .bind(role)
+            .bind(can_login)
+            .fetch_one(&mut *connection)
+            .await?;
+            if present {
+                return Ok(());
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
         }
-        anyhow::ensure!(
-            tokio::time::Instant::now() < deadline,
-            "CNPG did not reconcile database role {role}"
-        );
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
+    })
+    .await
+    .map_err(|_| anyhow::anyhow!("CNPG did not reconcile database role {role}"))?
 }
 
 /// Retry opening a connection while the caller accepts connection failures.
