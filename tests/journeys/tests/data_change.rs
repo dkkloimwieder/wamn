@@ -70,8 +70,10 @@ async fn a_receipt_creates_its_inspection() -> anyhow::Result<()> {
                 "request_id": "require",
                 "id": order["id"],
                 "expected_row_version": order["row_version"],
-                "acme_inspection_required": true,
-                "acme_quality_status": "pending",
+                "change": {
+                    "acme_inspection_required": true,
+                    "acme_quality_status": "pending",
+                },
             }),
         )
         .await?;

@@ -213,11 +213,26 @@ pub async fn control(org: &Org, operation: &str, value: Value) -> anyhow::Result
         .as_str()
         .context("control route path")?;
     let outputs = &org.cluster.outputs;
-    let response = web()?
-        .post(format!("http://{}{path}", outputs.web_address))
+    let client = web()?;
+    let mut url = format!("http://{}{path}", outputs.web_address);
+    let request = if attachment.route.type_.is_read() {
+        let input = value.as_object().context("control read request object")?;
+        let query = url::form_urlencoded::Serializer::new(String::new())
+            .extend_pairs(input.iter().map(|(name, value)| (name, value.to_string())))
+            .finish();
+        if !query.is_empty() {
+            url.push('?');
+            url.push_str(&query);
+        }
+        client.get(url)
+    } else {
+        client
+            .post(url)
+            .json(&json!([{"request_id": operation, "value": value}]))
+    };
+    let response = request
         .header("Host", format!("{}.{}", org.name, outputs.base_domain))
         .bearer_auth(&org.token)
-        .json(&json!([{"request_id": operation, "value": value}]))
         .send()
         .await?;
     let status = response.status();
