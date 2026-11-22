@@ -20,6 +20,9 @@ pub(super) async fn suspend_project(
     triple: &Triple,
     drain_bound_seconds: Option<i32>,
 ) -> anyhow::Result<()> {
+    use std::time::Duration;
+    use tokio::time::{Instant, sleep_until, timeout_at};
+
     let name = name::environment_host_name(&triple.org, &triple.env);
     let values = host_values(
         platform,
@@ -41,40 +44,50 @@ pub(super) async fn suspend_project(
     .await?;
     let connection =
         wamn_platform_install::environment::connection(&mut *system.client().await, triple).await?;
-    tokio::time::timeout(std::time::Duration::from_secs(120), async {
-        loop {
-            let pods = super::analyse::read_pods(platform, &name).await?;
-            let mounted = pods["items"]
-                .as_array()
-                .context("host pod list has no items")?
-                .iter()
-                .any(|pod| {
-                    !matches!(
-                        pod["status"]["phase"].as_str(),
-                        Some("Succeeded" | "Failed")
-                    ) && pod["spec"]["volumes"]
-                        .as_array()
-                        .into_iter()
-                        .flatten()
-                        .any(|volume| {
-                            volume["name"] == "project-database"
-                                && volume["projected"]["sources"]
-                                    .as_array()
-                                    .into_iter()
-                                    .flatten()
-                                    .any(|source| {
-                                        source["secret"]["name"] == connection.server_ca.name
-                                    })
-                        })
-                });
-            if !mounted {
-                return Ok::<_, anyhow::Error>(());
-            }
-            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-        }
-    })
-    .await
-    .context("project still has active runtime resources")?
+    let started = Instant::now();
+    let mut deadline = started + Duration::from_secs(120);
+    let mut next_check = started;
+    loop {
+        let pods = timeout_at(deadline, async {
+            sleep_until(next_check).await;
+            super::analyse::read_pods(platform, &name).await
+        })
+        .await
+        .context("project still has active runtime resources")??;
+        let grace = pods["items"]
+            .as_array()
+            .context("host pod list has no items")?
+            .iter()
+            .filter(|pod| {
+                !matches!(
+                    pod["status"]["phase"].as_str(),
+                    Some("Succeeded" | "Failed")
+                ) && pod["spec"]["volumes"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .any(|volume| {
+                        volume["name"] == "project-database"
+                            && volume["projected"]["sources"]
+                                .as_array()
+                                .into_iter()
+                                .flatten()
+                                .any(|source| source["secret"]["name"] == connection.server_ca.name)
+                    })
+            })
+            .map(|pod| {
+                pod["spec"]["terminationGracePeriodSeconds"]
+                    .as_u64()
+                    .unwrap_or(0)
+            })
+            .max();
+        let Some(grace) = grace else {
+            return Ok(());
+        };
+        // Allow time for the pod list to reflect shutdown, as in drain::wait_stopped.
+        deadline = deadline.max(started + Duration::from_secs(grace.saturating_add(15)));
+        next_check = Instant::now() + Duration::from_secs(2);
+    }
 }
 
 /// Prepare the host upgrade with both configured and newly reserved projects.
