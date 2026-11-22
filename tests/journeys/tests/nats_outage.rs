@@ -1,8 +1,13 @@
 //! NATS outage recovery (Epic 15 ruling C10). This target stops the platform NATS
 //! server, so it disturbs every other test on the cluster: run it alone.
+//!
+//! The stock runtime-operator exits while NATS is unreachable, so the Host object
+//! cannot change during the outage. The test records that exit, and checks the Host
+//! object after NATS returns (ruling Q4, 2026-11-21).
 
 mod common;
 
+use std::collections::BTreeMap;
 use std::time::Duration;
 
 use anyhow::Context as _;
@@ -15,13 +20,15 @@ use k8s_openapi::api::apps::v1::StatefulSet;
 use k8s_openapi::api::core::v1::Pod;
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::Time;
 use kube::Api;
-use kube::api::{Patch, PatchParams};
+use kube::api::{ListParams, Patch, PatchParams};
 use serde::Deserialize as _;
 use serde_json::json;
 
 const PLATFORM: &str = "platform";
 const NATS: &str = "wamn-nats";
 const NATS_POD: &str = "wamn-nats-0";
+/// The pod label of the stock runtime-operator Deployment.
+const OPERATOR: &str = "wasmcloud.com/name=runtime-operator";
 /// A second application with the fixture package, applied after the outage.
 const SECOND: &str = "second_fixture";
 /// How long one host pod waits to become the only Ready one after `wamn env apply`.
@@ -30,9 +37,13 @@ const HOST_DEADLINE: Duration = Duration::from_secs(300);
 const NATS_DEADLINE: Duration = Duration::from_secs(300);
 /// How long the operator takes to change the Host object's Reporting condition.
 const REPORTING_DEADLINE: Duration = Duration::from_secs(300);
+/// How long the operator takes to exit without NATS, or to become Ready again after
+/// its restart backoff.
+const OPERATOR_DEADLINE: Duration = Duration::from_secs(300);
 
-/// During a NATS outage the Host object stops reporting and the host still serves a call.
-/// After it, the Host reports again, and a new application becomes Ready on the host.
+/// During a NATS outage the stock runtime-operator exits and the host still serves a call.
+/// After it, the operator is Ready, the Host reports again, the host serves a call, and a
+/// new application becomes Ready on the host.
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires: cluster, bin:helm"]
 async fn the_host_serves_through_a_nats_outage_and_recovers() -> anyhow::Result<()> {
@@ -41,32 +52,38 @@ async fn the_host_serves_through_a_nats_outage_and_recovers() -> anyhow::Result<
     let client = &environment.org.cluster.client;
     let pod = ready_host_pod(environment, HOST_DEADLINE).await?;
     let pod = &pod;
-    let reporting = |want: bool| async move {
+    let reporting = || async move {
         let host = host_object(client, pod).await?;
         Ok(host.and_then(|host| {
-            let reports = condition(&host, "Reporting") == Some("True");
-            let seen = Time::deserialize(&host.data["status"]["lastSeen"]).ok();
-            (reports == want).then_some(seen)
+            (condition(&host, "Reporting") == Some("True"))
+                .then(|| Time::deserialize(&host.data["status"]["lastSeen"]).ok())
         }))
     };
-    let before = until(REPORTING_DEADLINE, "the Host object reports", || {
-        reporting(true)
-    })
-    .await?
-    .context("the reporting Host object has no lastSeen")?;
+    let before = until(REPORTING_DEADLINE, "the Host object reports", reporting)
+        .await?
+        .context("the reporting Host object has no lastSeen")?;
+
+    let pods = Api::<Pod>::namespaced(client.clone(), PLATFORM);
+    let pods = &pods;
+    let restarts = operator_restarts(pods).await?;
+    anyhow::ensure!(
+        !restarts.is_empty(),
+        "no runtime-operator pod in {PLATFORM}"
+    );
 
     let sets = Api::<StatefulSet>::namespaced(client.clone(), PLATFORM);
     let restore = Restore(sets.clone());
     scale(&sets, 0).await?;
-    let pods = Api::<Pod>::namespaced(client.clone(), PLATFORM);
     until(NATS_DEADLINE, "the NATS pod stops", || async {
         Ok(pods.get_opt(NATS_POD).await?.is_none().then_some(()))
     })
     .await?;
+    // The stock behaviour: the runtime-operator exits while NATS is unreachable, so
+    // its pod restarts or is replaced.
     until(
-        REPORTING_DEADLINE,
-        "the Host object leaves Reporting=True",
-        || reporting(false),
+        OPERATOR_DEADLINE,
+        "the runtime-operator exits during the NATS outage",
+        || async { Ok((operator_restarts(pods).await? != restarts).then_some(())) },
     )
     .await?;
     let id = uuid::Uuid::now_v7().to_string();
@@ -77,28 +94,40 @@ async fn the_host_serves_through_a_nats_outage_and_recovers() -> anyhow::Result<
         .context("a call during the NATS outage")?;
 
     scale(&sets, 1).await?;
-    until(NATS_DEADLINE, "the NATS pod is Ready", || async {
-        Ok(pods.get_opt(NATS_POD).await?.filter(ready).map(drop))
-    })
+    until(
+        NATS_DEADLINE,
+        "the NATS pod is Ready after the outage",
+        || async { Ok(pods.get_opt(NATS_POD).await?.filter(ready).map(drop)) },
+    )
     .await?;
     until(
-        REPORTING_DEADLINE,
-        "the Host object reports with a newer lastSeen",
+        OPERATOR_DEADLINE,
+        "the runtime-operator is Ready after NATS returns",
         || async {
-            Ok(reporting(true)
-                .await?
-                .flatten()
-                .filter(|seen| *seen > before))
+            let operators = pods.list(&ListParams::default().labels(OPERATOR)).await?;
+            Ok((!operators.items.is_empty() && operators.items.iter().all(ready)).then_some(()))
         },
     )
     .await?;
+    until(
+        REPORTING_DEADLINE,
+        "the Host object reports with a newer lastSeen after NATS returns",
+        || async { Ok(reporting().await?.flatten().filter(|seen| *seen > before)) },
+    )
+    .await?;
+    let id = uuid::Uuid::now_v7().to_string();
+    application
+        .routes
+        .create("recovery-call", "recovery-call", &id, "standard")
+        .await
+        .context("a call after NATS returns")?;
     drop(restore);
 
     reapply(environment, |file| declare(file, SECOND, "second")).await?;
     environment.deploy(&fixture(), SECOND).await?;
     until(
         HOST_DEADLINE,
-        "the new WorkloadDeployment is Ready",
+        "the WorkloadDeployment applied after the outage is Ready",
         || async {
             let deployments = application_objects(
                 environment,
@@ -115,6 +144,29 @@ async fn the_host_serves_through_a_nats_outage_and_recovers() -> anyhow::Result<
         },
     )
     .await
+}
+
+/// The container restarts of each runtime-operator pod, by pod uid. A changed map
+/// means that the operator exited.
+async fn operator_restarts(pods: &Api<Pod>) -> anyhow::Result<BTreeMap<String, i32>> {
+    pods.list(&ListParams::default().labels(OPERATOR))
+        .await?
+        .items
+        .into_iter()
+        .map(|pod| {
+            let restarts = pod
+                .status
+                .iter()
+                .flat_map(|status| status.container_statuses.iter().flatten())
+                .map(|container| container.restart_count)
+                .sum();
+            let uid = pod
+                .metadata
+                .uid
+                .context("a runtime-operator pod has no uid")?;
+            Ok((uid, restarts))
+        })
+        .collect()
 }
 
 async fn scale(sets: &Api<StatefulSet>, replicas: u32) -> anyhow::Result<()> {
