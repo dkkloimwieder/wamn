@@ -113,6 +113,7 @@ pub fn upsert_cdc_exclusion_map_sql(schema: &str) -> String {
 /// resolvable). No RLS: it holds no project data, and the CDC role's decode
 /// stream sees every row of every table anyway.
 /// The schema owner owns the map, including when an administrator creates it.
+/// The host reads the map to admit Data change runs.
 pub fn ensure_entity_map_sql(schema: &str) -> String {
     format!(
         "CREATE TABLE IF NOT EXISTS {schema}.wamn_entities ( \
@@ -123,9 +124,11 @@ pub fn ensure_entity_map_sql(schema: &str) -> String {
          DO $map_owner$ BEGIN \
            EXECUTE format('ALTER TABLE %I.wamn_entities OWNER TO %I', {schema_lit}, \
              (SELECT pg_get_userbyid(nspowner) FROM pg_namespace WHERE nspname = {schema_lit})); \
-         END $map_owner$;",
+         END $map_owner$; \
+         GRANT SELECT ON {schema}.wamn_entities TO {role};",
         schema = escape_identifier(schema),
         schema_lit = escape_literal(schema),
+        role = escape_identifier(wamn_role::PLATFORM_ROLE),
     )
 }
 
