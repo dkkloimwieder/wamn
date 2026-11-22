@@ -715,11 +715,14 @@ async fn template(
         directory.join(format!("render/{}.yaml", label.replace(' ', "-"))),
         &output,
     )?;
-    let objects = serde_yaml::Deserializer::from_slice(&output)
+    let mut objects = serde_yaml::Deserializer::from_slice(&output)
         .map(|document| -> anyhow::Result<Value> { Ok(serde::Deserialize::deserialize(document)?) })
         .filter(|document| !matches!(document, Ok(Value::Null)))
         .collect::<anyhow::Result<Vec<_>>>()
         .with_context(|| format!("parse the {label} render"))?;
+    for object in &mut objects {
+        normalize_file_modes(object, false);
+    }
     tally.check(
         "render",
         true,
@@ -730,6 +733,41 @@ async fn template(
         namespace: namespace.into(),
         objects,
     })
+}
+
+// serde_yaml hides scalar style, so apply YAML 1.1 octal parsing only to volume file modes.
+fn normalize_file_modes(value: &mut Value, in_file_volume: bool) {
+    match value {
+        Value::Object(fields) => {
+            for (key, child) in fields {
+                if in_file_volume
+                    && matches!(key.as_str(), "defaultMode" | "mode")
+                    && let Some(mode) = child.as_str()
+                    && mode.len() > 1
+                    && mode.starts_with('0')
+                    && let Ok(mode) = u64::from_str_radix(mode, 8)
+                {
+                    *child = mode.into();
+                } else if key == "volumes" && let Some(volumes) = child.as_array_mut() {
+                    for volume in volumes {
+                        for name in ["configMap", "downwardAPI", "projected", "secret"] {
+                            if let Some(source) = volume.get_mut(name) {
+                                normalize_file_modes(source, true);
+                            }
+                        }
+                    }
+                } else {
+                    normalize_file_modes(child, in_file_volume);
+                }
+            }
+        }
+        Value::Array(entries) => {
+            for entry in entries {
+                normalize_file_modes(entry, in_file_volume);
+            }
+        }
+        _ => {}
+    }
 }
 
 /// Check every image reference by the exit code of imagetools inspect.
