@@ -207,10 +207,14 @@ async fn widget_version(routes: &Routes, widget: &str, start: Instant) -> Call {
     let time = start.elapsed();
     let mut status = None;
     let result = async {
+        let mut url = url::Url::parse(&format!("{}/widget/list", routes.endpoint))
+            .context("parse widget list URL")?;
+        url.query_pairs_mut()
+            .extend_pairs(std::iter::empty::<(&str, &str)>());
         // Keep the status even if the body cannot be read within the call deadline.
         let response = routes
             .client
-            .get(format!("{}/widget/list", routes.endpoint))
+            .get(url.as_str())
             .header("Host", &routes.host)
             .bearer_auth(&routes.bearer)
             .send()
