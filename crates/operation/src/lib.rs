@@ -273,15 +273,9 @@ impl OperationHost {
             }
             if has_statements {
                 statement_wit::add_to_linker::<_, SharedCtx>(linker, extract_active_ctx)?;
-            }
-            let has_named_statements = interfaces.iter().any(|interface| {
-                interface.namespace == "wamn"
-                    && interface.package == "postgres"
-                    && interface.interfaces.contains("statements")
-                    && interface.name.is_some()
-            });
-            if has_named_statements {
-                // One instance per import name, each closure holding its name.
+                // One instance per `(implements ..)` import the component itself
+                // declares. The workload's host interface entry is unnamed, so
+                // only the component knows the member import names.
                 bindings::named_imports::wamn::postgres::statements::add_to_linker::<_, SharedCtx>(
                     linker,
                     component,
