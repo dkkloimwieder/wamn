@@ -10,10 +10,14 @@ use std::time::Duration;
 use anyhow::{Context as _, ensure};
 use common::{Environment, Org, active_project_cluster, host, request};
 use futures_util::TryStreamExt as _;
+use k8s_openapi::api::{
+    apps::v1::{Deployment, ReplicaSet},
+    core::v1::Pod,
+};
 use kube::api::{
     ApiResource, DynamicObject, GroupVersionKind, ListParams, WatchEvent, WatchParams,
 };
-use kube::{Api, ResourceExt as _};
+use kube::{Api, ResourceExt as _, core::Selector};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio::time::{Instant, timeout};
@@ -31,6 +35,9 @@ async fn commands_wait_for_their_resources() -> anyhow::Result<()> {
     let org = timeout(COMMAND, Org::create())
         .await
         .context("create the waits org")??;
+    timeout(OBSERVE, check_org(&org))
+        .await
+        .context("read the control rollout after org create")??;
     let mut watches = timeout(OBSERVE, Watches::start(&org))
         .await
         .context("start the rollout watches")??;
@@ -49,6 +56,111 @@ async fn commands_wait_for_their_resources() -> anyhow::Result<()> {
         .await
         .context("reapply the environment")??;
     watches.check(&environment, Stage::Reapply).await
+}
+
+async fn check_org(org: &Org) -> anyhow::Result<()> {
+    const REVISION: &str = "deployment.kubernetes.io/revision";
+
+    let client = &org.cluster.client;
+    let namespace = org.name.as_str();
+    let name = name::control_resource(&org.name);
+    let mut deployment = Api::<Deployment>::namespaced(client.clone(), namespace)
+        .get(&name)
+        .await
+        .with_context(|| format!("read Deployment {namespace}/{name}"))?;
+    let spec = deployment
+        .spec
+        .take()
+        .context("control Deployment has no spec")?;
+    let uid = deployment
+        .metadata
+        .uid
+        .as_deref()
+        .context("control Deployment has no UID")?;
+    let revision = deployment
+        .annotations()
+        .get(REVISION)
+        .context("control Deployment has no revision")?;
+    ensure!(
+        spec.template
+            .metadata
+            .as_ref()
+            .and_then(|metadata| metadata.annotations.as_ref())
+            .and_then(|annotations| annotations.get("wamn.dev/control-credential-job"))
+            .is_some_and(|job| !job.is_empty()),
+        "control Deployment {name} has no credential Job annotation on its template"
+    );
+    let desired = spec
+        .replicas
+        .context("control Deployment has no replica count")?;
+    let status = deployment
+        .status
+        .as_ref()
+        .context("control Deployment has no status")?;
+    ensure!(
+        deployment
+            .metadata
+            .generation
+            .zip(status.observed_generation)
+            .is_some_and(|(generation, observed)| observed >= generation)
+            && status.updated_replicas == Some(desired)
+            && status.replicas == Some(desired)
+            && status.available_replicas == Some(desired),
+        "control Deployment {name} had an incomplete rollout after org create: {status:?}"
+    );
+
+    let selector =
+        Selector::try_from(spec.selector).context("read the control Deployment selector")?;
+    let params = ListParams::default().labels_from(&selector);
+    let replicas = Api::<ReplicaSet>::namespaced(client.clone(), namespace);
+    let pods = Api::<Pod>::namespaced(client.clone(), namespace);
+    let (replicas, pods) = tokio::try_join!(replicas.list(&params), pods.list(&params))
+        .context("list control ReplicaSets and Pods")?;
+    let current = replicas
+        .items
+        .iter()
+        .find(|replica| {
+            replica.annotations().get(REVISION) == Some(revision)
+                && replica
+                    .owner_references()
+                    .iter()
+                    .any(|owner| owner.controller == Some(true) && owner.uid == uid)
+        })
+        .with_context(|| {
+            format!("control Deployment {name} has no ReplicaSet for revision {revision}")
+        })?;
+    let current_uid = current
+        .metadata
+        .uid
+        .as_deref()
+        .context("current control ReplicaSet has no UID")?;
+    ensure!(
+        pods.items.len() == usize::try_from(desired)?,
+        "control Deployment {name} has {} Pods after org create, expected {desired}",
+        pods.items.len()
+    );
+    for pod in &pods.items {
+        ensure!(
+            pod.owner_references()
+                .iter()
+                .any(|owner| owner.controller == Some(true) && owner.uid == current_uid),
+            "control Pod {} does not belong to the current ReplicaSet",
+            pod.name_any()
+        );
+        ensure!(
+            pod.metadata.deletion_timestamp.is_none()
+                && pod
+                    .status
+                    .as_ref()
+                    .and_then(|status| status.conditions.as_ref())
+                    .is_some_and(|conditions| conditions
+                        .iter()
+                        .any(|condition| condition.type_ == "Ready" && condition.status == "True")),
+            "control Pod {} is not Ready after org create",
+            pod.name_any()
+        );
+    }
+    Ok(())
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
