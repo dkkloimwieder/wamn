@@ -3,7 +3,7 @@
 use std::io::{BufRead as _, Read as _, Write as _};
 use std::net::{TcpListener, TcpStream};
 use std::path::Path;
-use std::process::{Command, Output};
+use std::process::{Command, Output, Stdio};
 use std::time::Duration;
 
 use anyhow::Context as _;
@@ -73,15 +73,20 @@ fn command(root: &Path, url: &str, arguments: &[&str]) -> anyhow::Result<Command
             "projects":[{"name":"apps","applications":{"a":{ "label":"a"}}}]
         }))?;
     std::fs::write(&file, document.to_yaml()?)?;
+    let mut command = control_command(root, url);
+    command.args(arguments).arg("--env").arg(file);
+    Ok(command)
+}
+
+fn control_command(root: &Path, url: &str) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_wamn"));
     command
         .current_dir(root)
+        .stdin(Stdio::null())
         .env_clear()
         .env("WAMN_CONTROL_URL", url)
-        .env("WAMN_TOKEN", "caller-session")
-        .args(arguments);
-    command.arg("--env").arg(file);
-    Ok(command)
+        .env("WAMN_TOKEN", "caller-session");
+    command
 }
 
 fn run(
@@ -141,6 +146,68 @@ fn route_denials_and_failed_jobs_exit_nonzero() -> anyhow::Result<()> {
             responses,
         )?;
         assert!(!output.status.success());
+    }
+    Ok(())
+}
+
+const UNREACHABLE_CONTROL_URL: &str = "http://127.0.0.1:0";
+
+fn assert_refuses(command: &mut Command, expected: &str) -> anyhow::Result<()> {
+    let output = command.output()?;
+    let stderr = String::from_utf8(output.stderr)?;
+    assert!(!output.status.success(), "{command:?} succeeded");
+    assert!(stderr.contains(expected), "expected {expected:?}: {stderr}");
+    Ok(())
+}
+
+#[test]
+fn environment_data_deletion_confirmation_without_terminal() -> anyhow::Result<()> {
+    let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create()?;
+    for (confirmation, expected) in [
+        (&[][..], "data deletion requires a terminal confirmation"),
+        (
+            &["--confirm", "apps"][..],
+            "environment confirmation differs",
+        ),
+        (&["--confirm", " acme/dev/apps "][..], "call control route"),
+    ] {
+        assert_refuses(
+            control_command(scratch.path(), UNREACHABLE_CONTROL_URL)
+                .args(["env", "delete", "acme/dev/apps", "--data"])
+                .args(confirmation),
+            expected,
+        )?;
+    }
+    let output = control_command(scratch.path(), UNREACHABLE_CONTROL_URL)
+        .args([
+            "env",
+            "delete",
+            "acme/dev/apps",
+            "--confirm",
+            "acme/dev/apps",
+        ])
+        .output()?;
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+    Ok(())
+}
+
+#[test]
+fn schema_reset_confirmation_without_terminal() -> anyhow::Result<()> {
+    let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create()?;
+    for (confirmation, expected) in [
+        (&[][..], "schema reset requires a terminal confirmation"),
+        (
+            &["--confirm", "acme/dev/apps"][..],
+            "project confirmation differs",
+        ),
+        (&["--confirm", " apps "][..], "call control route"),
+    ] {
+        let mut command = command(
+            scratch.path(),
+            UNREACHABLE_CONTROL_URL,
+            &["schema", "reset", "--project", "apps"],
+        )?;
+        assert_refuses(command.args(confirmation), expected)?;
     }
     Ok(())
 }

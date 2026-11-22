@@ -23,6 +23,9 @@ pub struct Delete {
     pub coordinate: String,
     #[arg(long)]
     pub data: bool,
+    /// The full org/env/project coordinate for data deletion.
+    #[arg(long, value_name = "NAME", requires = "data")]
+    confirm: Option<String>,
 }
 #[derive(Debug, Args)]
 pub struct RevokePat {
@@ -64,13 +67,18 @@ pub async fn run(command: Command) -> anyhow::Result<()> {
         Command::Delete(args) => {
             let triple = parse_coordinate(&args.coordinate)?;
             if args.data {
-                ensure!(
-                    std::io::stdin().is_terminal(),
-                    "data deletion requires a terminal confirmation"
-                );
-                eprintln!("Type {} to delete its data:", args.coordinate);
-                let mut answer = String::new();
-                std::io::stdin().read_line(&mut answer)?;
+                let answer = if let Some(confirm) = args.confirm {
+                    confirm
+                } else {
+                    ensure!(
+                        std::io::stdin().is_terminal(),
+                        "data deletion requires a terminal confirmation"
+                    );
+                    eprintln!("Type {} to delete its data:", args.coordinate);
+                    let mut answer = String::new();
+                    std::io::stdin().read_line(&mut answer)?;
+                    answer
+                };
                 ensure!(
                     answer.trim() == args.coordinate,
                     "environment confirmation differs"

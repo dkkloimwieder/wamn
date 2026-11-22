@@ -348,7 +348,7 @@ Use `wamn env delete ORG/ENV/PROJECT` to remove a project deployment.
 A plain delete keeps the Cluster and ObjectStore for a manual dump. It also keeps the project certificate resources.
 The next `wamn env apply` creates a new database generation with a new Cluster.
 Run `wamn env delete ORG/ENV/PROJECT --data` to remove the kept resources after a plain delete. The command lists each one it deletes.
-The command reads the confirmation from a terminal. At the prompt, type the same `ORG/ENV/PROJECT` value.
+Type the same `ORG/ENV/PROJECT` at the terminal prompt, or pass `--confirm ORG/ENV/PROJECT` with `--data`.
 See [Recover after a plain delete](backup-and-recovery.md#recover-after-a-plain-delete) for cleanup when the Cluster is already gone.
 Delete stops the reader before it removes the stream, then removes the replication slot and publication.
 Delete removes the project’s CDC and recovery credential Secrets. For the last project it also removes the host group, the shared credentials, and the environment account.
@@ -427,7 +427,7 @@ Earlier committed files remain applied.
 ### Reset target and recovery
 
 An explicit schema reset selects the whole project database.
-Type the project name at the terminal prompt. Every application in that project is affected.
+Type the project ID at the terminal prompt, or pass `--confirm PROJECT`. The reset affects every application in that project.
 The registry must authorize data loss by recording the environment as disposable.
 Reset stays within the selected project database.
 

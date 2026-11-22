@@ -35,6 +35,9 @@ pub struct ResetArgs {
     /// The target environment file.
     #[arg(long)]
     pub env: PathBuf,
+    /// The project ID for the database reset.
+    #[arg(long, value_name = "NAME")]
+    confirm: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -62,13 +65,18 @@ pub async fn run(command: SchemaCommand) -> anyhow::Result<()> {
         SchemaCommand::Publish(args) => return publish(args).await,
         SchemaCommand::Reset(args) => {
             let document = EnvironmentFile::compile(&args.env)?.into_project(&args.project)?;
-            ensure!(
-                std::io::stdin().is_terminal(),
-                "schema reset requires a terminal confirmation"
-            );
-            eprintln!("Type project {} to reset its database:", args.project);
-            let mut answer = String::new();
-            std::io::stdin().read_line(&mut answer)?;
+            let answer = if let Some(confirm) = args.confirm {
+                confirm
+            } else {
+                ensure!(
+                    std::io::stdin().is_terminal(),
+                    "schema reset requires a terminal confirmation"
+                );
+                eprintln!("Type project {} to reset its database:", args.project);
+                let mut answer = String::new();
+                std::io::stdin().read_line(&mut answer)?;
+                answer
+            };
             ensure!(
                 answer.trim() == args.project.as_str(),
                 "project confirmation differs"
