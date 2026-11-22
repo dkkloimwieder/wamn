@@ -3,7 +3,9 @@
 use anyhow::{Context as _, Result, ensure};
 use std::collections::{BTreeMap, VecDeque};
 use std::path::{Path, PathBuf};
-use wamn_build::{BuildMode, BuildRequest, DescribeMode, default_output_root, package_output};
+use wamn_build::{
+    BuildMode, BuildRequest, DescribeMode, GuestTarget, default_output_root, package_output,
+};
 
 /// The application roots: each directory under `apps/` with a `wamn.k`.
 pub(super) fn applications(root: &Path) -> Result<Vec<PathBuf>> {
@@ -57,6 +59,14 @@ pub(super) async fn run(root: &Path) -> Result<()> {
     let ingress = wamn_build::build_component(root, &root.join("guests/ingress/Cargo.toml"))
         .await
         .context("build pinned ingress component")?;
+    let workflow = wamn_build::build_guest(
+        root,
+        &root.join("apps/Cargo.toml"),
+        "workflow-service",
+        GuestTarget::WasiP3,
+    )
+    .await
+    .context("build workflow service component")?;
     // The component consumers name these variables and components.
     let mut exports = Vec::new();
     for (name, id, component) in [
@@ -78,6 +88,7 @@ pub(super) async fn run(root: &Path) -> Result<()> {
         exports.push((name, output.join("components").join(component)));
     }
     exports.push(("WAMN_INGRESS_COMPONENT", ingress));
+    exports.push(("WAMN_WORKFLOW_SERVICE_COMPONENT", workflow));
     let mut lines = Vec::new();
     for (name, path) in exports {
         ensure!(path.is_file(), "missing {name} at {}", path.display());
