@@ -254,6 +254,8 @@ impl Watches {
                 ready(object) && current_replica_set(object) == Some(current)
             })?;
             let replicas = self.replicas.get(current).await?;
+            // This check is an observation. Stock WorkloadDeployment has no observed generation,
+            // so wait_workload_ready can report Ready before the new template is live (Epic 16 D15 Open item).
             self.replicas.check(&replicas, returned, fresh, |object| {
                 ready_condition(object).is_some_and(|condition| {
                     object.metadata.generation.is_some_and(|generation| {
