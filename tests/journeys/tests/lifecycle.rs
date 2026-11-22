@@ -209,8 +209,7 @@ async fn widget_version(routes: &Routes, widget: &str, start: Instant) -> Call {
     let result = async {
         let mut url = url::Url::parse(&format!("{}/widget/list", routes.endpoint))
             .context("parse widget list URL")?;
-        url.query_pairs_mut()
-            .extend_pairs(std::iter::empty::<(&str, &str)>());
+        url.query_pairs_mut().append_pair("selector", "{}");
         // Keep the status even if the body cannot be read within the call deadline.
         let response = routes
             .client
