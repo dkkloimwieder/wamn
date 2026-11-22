@@ -233,7 +233,7 @@ Phase 3 steps, in dependency order: 3.1 database model; 3.2 request path (worklo
 
 ## Epic 15: step 3.8, journey tests on kind
 
-Rule: journey tests run on local kind through product commands, observed with a read-only login. Each test has its own org and environment. No new product behaviour.
+Rule: journey tests run on local kind through product commands, observed with a read-only login. One cluster serves a run of up to 12 orgs, with its own org and environment for each test. No new product behaviour.
 
 Issues:
 
@@ -246,6 +246,8 @@ Issues:
 15.3 Host contracts: probes, signals, drain and NATS outage recovery; the host scheduler user rights; the grant cache; result signing (`operation.rs::sign_result`, `Files::sign`); and startup order, if the runtime-operator and invitation Job restarts repeat.
 
 15.4 Request path: another environment's credential is refused and never served; session identity (the cold parse, the operation in the transaction, no identity on a pooled connection, the bound application); the write log claims (commit and rollback, a competing claim waits, a lost session refuses, known results finish at host commit, unfinished claims have a call bound, and claims accept late completion and expire under retention); connection calls; Data change for `client_acme_receiving` (K24); and only the workflow behaviour that exists today.
+
+15.5 wasmCloud v2.12.3 (wamn-rd0tv.6). wamn moves to v2.12.3 as a whole: the wash-runtime git tag, the runtime-operator chart and its images by digest, and every other v2.12.2 pin. The upstream tag v2.12.3 is 8358f1f56. wamn follows its breaking changes only as far as wamn needs to build and run. The rule for a wasmCloud chart upgrade applies: render the environment and platform charts with the old and the new chart, and review the diff. Then run the standard checks, `cargo test --workspace` and the ignored run on v2.12.3. Then a read-only scout reads each wamn workaround that v2.12.3 can cover and gives a recommendation for each: X2, Q-A, X10, X1 and the mounted database credentials, X5 and the startup restarts, rollback and one WorkloadReplicaSet for each deployment template, and any other. The scout stops for D's ruling. No wamn code is deleted before that ruling.
 
 15.2, 15.3 and 15.4 run in parallel on the 15.1 harness.
 
@@ -275,17 +277,27 @@ Rulings on the scout (D, 2026-11-21):
 - Fixtures: data_change for K24, signed_reads, and the missing palette components.
 - The five existing journey tests are rewritten on the new harness.
 
+Rulings on the questions (D, 2026-11-21):
+- Q1: the wit-bindgen dependency in `guests/workflow-service/Cargo.toml` has the `std` feature. This fixes the workflow crash. It landed in 2cbe3539b.
+- Q2: the end run uses two fresh kind clusters, so no cluster holds more than about 12 orgs. The Pooler and `max_connections` values do not change. No test is reported as blocked.
+- Q3: the removed-application journey test checks `application.stop` through control. That contract stays tested. The test does not stand in for env apply.
+- Q4: the NATS outage test checks the Host status after NATS returns. The runtime-operator stays stock. The test records the runtime-operator's exit during the outage as its behaviour.
+
 Waits:
 - The write log expiry contract waits for the X4 Open item.
 - The deleted host pod drain test waits for the X5 Open item. Its own scout comes later.
 - Result signing waits for an object store on kind.
+- The env apply stop of an application that the environment file no longer lists waits for wamn-86pii. It is listed as waiting, not tested.
+- New X2 and Q-A work waits for D's ruling on the 15.5 scout.
 
-End of the epic: the standard checks, `cargo test --workspace`, the ignored run, `cargo xtask preflight`, and `cargo test -p wamn-journey-tests -- --ignored` on kind.
+End of the epic: after D's ruling on the 15.5 scout, the standard checks, `cargo test --workspace`, the ignored run, `cargo xtask preflight`, and `cargo test -p wamn-journey-tests -- --ignored` on v2.12.3, on two fresh kind clusters.
 
 Next: Epic 16 (step 3.8, fourth part): rollback, env delete, apply again and env delete --data; NetworkPolicy and isolation between environments; the Pooler per-login limits under load. Then the crate graph epic.
 
 ## Open items
 
+- wamn-44p7o: the Pooler per-login pools and the computed `max_connections` (206) cap the org count near 12 for each system database. This conflicts with T1, where adding an org is a common event. Design a connection budget for each org. Not in Epic 15.
+- wamn-86pii: env apply does not stop an application that the environment file no longer lists. This is a defect if the environment file is the declared list of applications. A read-only scout reports first, then D rules. Until then the contract is waiting, not tested.
 - The local mutex and Postgres advisory lock for exclusive connection calls are not built. The existing advisory lock in `sql/session_identity.rs::lock_file` serves file operations.
 - The HTTP client cache key by invocation scope, target, connection ID and generation is not built.
 - `registry.connection_principal` is not built. Project connection rows carry the principal ID.
@@ -2166,7 +2178,7 @@ Epic 14 closed on 2026-11-21 after review. cargo test --workspace: 617 passed in
 
 **Ruled (D, 2026-11-21): Epic 15 scope (step 3.8, third part).**
 - Q1: the harness creates a role with SELECT only, through the system admin, in the kind cluster only. Reason: it is test setup in a test cluster. A product read-only login would be a new feature, and the old SET ROLE observer broke the F4 ruling.
-- Q2: one cluster per run, with its own org and environment per test. Reason: tests run in parallel, and this exercises T1: adding an org restarts nothing shared.
+- Q2: one cluster per run of up to 12 orgs, with its own org and environment per test. Reason: tests run in parallel, and this exercises T1: adding an org restarts nothing shared. The limit of 12 orgs comes from the Epic 15 questions ruling below.
 - Q3: 3.8 splits again. Epic 15 is the harness, smoke as a test, the host contracts and the request path. Epic 16 is lifecycle, isolation and load. Reason: load and network tests are the most likely to fail on a laptop cluster.
 
 **Ruled (D, 2026-11-21): Epic 15 scout choices.**
@@ -2194,3 +2206,10 @@ Epic 14 closed on 2026-11-21 after review. cargo test --workspace: 617 passed in
 - Q-B: the outside call is a service test with a local server and the edge target's production address policy. Reason: every target that kind can reach is private.
 - Q-C: journey-cluster fails if kind's CNI does not enforce NetworkPolicy. Reason: the egress tests mean nothing without it.
 - Q-D: the harness creates the observer role and patches pg_hba after each env apply, on kind only. Reason: no product code and no chart value change for a test login.
+
+**Ruled (D, 2026-11-21): Epic 15 questions Q1 to Q4 and the v2.12.3 upgrade.**
+- Q1: `guests/workflow-service/Cargo.toml` adds the `std` feature to wit-bindgen. Reason: it is a feature on an existing dependency, and it fixes the workflow crash. It landed in 2cbe3539b.
+- Q2: the end run uses two fresh kind clusters, so no cluster holds more than about 12 orgs. The scope ruling Q2 becomes one cluster per run of up to 12 orgs, with its own org and environment per test. The Pooler and `max_connections` values do not change, and no test is reported as blocked. Reason: the Pooler per-login pools and the computed `max_connections` (206) cap one system database near 12 orgs. The connection budget for each org is wamn-44p7o, an Open item outside Epic 15.
+- Q3: the removed-application journey test checks `application.stop` through control. Reason: that is a real contract, so the test stays. It does not stand in for env apply. wamn-86pii (env apply does not stop an application that the file no longer lists) is a defect if the environment file is the declared list of applications. A read-only scout reports first. Until D rules, that contract is listed as waiting, not tested.
+- Q4: the NATS outage test checks the Host status after NATS returns. The runtime-operator stays stock, and the test records its exit during the outage as its behaviour. The operator does not change. Reason: wamn uses the stock runtime-operator, so its exit is a fact that the test records.
+- 15.5 (wamn-rd0tv.6): wamn moves to wasmCloud v2.12.3 as a whole: the wash-runtime git tag, the runtime-operator chart and its images by digest, and every other v2.12.2 pin. The upstream tag v2.12.3 is 8358f1f56. wamn follows its breaking changes only as far as wamn needs to build and run. The standard checks, `cargo test --workspace` and the ignored run pass on v2.12.3. Then a read-only scout reads each wamn workaround that v2.12.3 can cover, with a recommendation for each: X2, Q-A, X10, X1 and the mounted database credentials, X5 and the startup restarts, rollback and one WorkloadReplicaSet for each deployment template, and any other. The scout stops for D's ruling before any wamn code is deleted. The journey end run happens on v2.12.3 after that ruling. No new X2 or Q-A work starts until D rules on the scout. Reason: the journey tests must run on the version that wamn ships, and v2.12.3 overlaps X2 and Q-A.
