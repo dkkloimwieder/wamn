@@ -308,6 +308,7 @@ Next: Epic 16 (step 3.8, fourth part): rollback, env delete, apply again and env
 
 ## Open items
 
+- X5: `-host-namespaces=` is empty (T4, `hostNamespaces: []`), so the stock operator sends no stops to a deleted host pod in an org namespace. The host then drains the full `drain_bound_seconds` and exits 1. Its own scout comes later. Measured on kind (Epic 15): every wamn env delete waits about 300 s for the host to drain, and the host then exits with 'service cleanup exceeded its shutdown budget'. That exit is a defect in its own right. X5 gets the next scout after the restructure.
 - wamn-44p7o: the Pooler per-login pools and the computed `max_connections` (206) cap the org count near 12 for each system database. This conflicts with T1, where adding an org is a common event. Design a connection budget for each org. Not in Epic 15.
 - The local mutex and Postgres advisory lock for exclusive connection calls are not built. The existing advisory lock in `sql/session_identity.rs::lock_file` serves file operations.
 - The HTTP client cache key by invocation scope, target, connection ID and generation is not built.
@@ -315,7 +316,6 @@ Next: Epic 16 (step 3.8, fourth part): rollback, env delete, apply again and env
 - Deferred: the edge device after the restructure; the four workflow behaviours.
 - Journey tests on kind, deferred from the first kind run. Epic 15: the Data change check for `client_acme_receiving` (K24) and the 10.13 per-pod scheduler users beyond host start. Epic 16: rollback, `env delete`, apply again, and `env delete --data` after a plain delete; the Pooler per-login limits and waits under load; that kind's CNI enforces NetworkPolicy, and that an environment's host cannot reach another environment's host, Postgres or Services.
 - X4: write log expiry (`crates/provision/src/audit_retention.rs`) runs only in `prune_record_history::prune`, which only `crates/environment/tests/history_retention_live.rs` calls. It has no production caller.
-- X5: `-host-namespaces=` is empty (T4, `hostNamespaces: []`), so the stock operator sends no stops to a deleted host pod in an org namespace. The host then drains the full `drain_bound_seconds` and exits 1. Its own scout comes later.
 - Kind has no object store, so result signing (`signed_reads`) cannot run on kind.
 - Health probes for wasm integration types: `connection_test` cannot run integration code outside an application workload. To be designed.
 - Edge device design: plant-network devices such as Modbus run at the edge, and the edge runtime gets its own address rule. A cloud integration that needs a private address (a customer network linked by VPN) is decided when a real case appears.
@@ -346,7 +346,7 @@ Next: Epic 16 (step 3.8, fourth part): rollback, env delete, apply again and env
 - Before the first production customer: a PriorityClass for production environments, so production outranks dev. The environment values already accept `resources`, `nodeSelector`, `tolerations` and `affinity`.
 - `pg_walstream` runs from the fork `dkkloimwieder/pg-walstream` with two patches (typed keepalive, client certificate). The fork is wamn's own.
 - Before any real customer (second review, 2026-11-20, of 02c1a085):
-  - A scheduler NATS outage removes application endpoints at the edge (stock runtime-operator), so every application is offline at the edge even when a request does not need NATS. Run NATS as a cluster of 3 to make an outage rare. See also the item above about splitting scheduler NATS from data NATS.
+  - A scheduler NATS outage removes application endpoints at the edge (stock runtime-operator), so every application is offline at the edge even when a request does not need NATS. Run NATS as a cluster of 3 to make an outage rare. See also the item above about splitting scheduler NATS from data NATS. Measured on kind (Epic 15): the stock runtime-operator drops the application during the outage and places it on the host again about 3 minutes after the outage begins, so the edge outage outlasts the NATS outage.
   - Pod security: `pod-security.kubernetes.io/enforce: restricted` on org namespaces, a `securityContext` on every wamn workload, and a non-root `USER` in the Dockerfile. Today a privileged pod in an org namespace would reach the node.
   - The system database: a second instance, an ObjectStore and a ScheduledBackup. It holds the NATS operator and account keys and all users.
   - Backups: one credential per org, scoped to that org's prefix or bucket. Today one credential reaches every org's backups.
@@ -2238,3 +2238,5 @@ Epic 14 closed on 2026-11-21 after review. cargo test --workspace: 617 passed in
 - wamn-bck2h: during the outage, the NATS outage test calls the host pod through a port-forward to the pod, not through the web edge. After NATS returns, the test checks that the host reconnects (wamn-wmxp5). Reason: the contract is that the host stays alive and serves a request that does not need NATS. The 502 at the web edge during the outage is stock runtime-operator behaviour, so the test records it and does not fail on it. The operator does not change. The edge outage is an Open item before any real customer.
 - The third cluster, used only for reruns of fixed tests, is accepted. Reason: it reran only the tests that a fix changed.
 - ac58912a8 (env delete waits up to the host's drain grace period) is a standing fix that no cluster showed working. The rerun must show one `wamn env delete` that waits for the drain and then finishes, with its wait time. Reason: a fix is proved on the cluster where its defect appeared.
+
+**Epic 15 closed (2026-11-22).** Epic 15 closed on 2026-11-22 after review. cargo test --workspace: 627 passed. --ignored: 101 passed. Every Epic 15 journey test passed on fresh kind clusters on wasmCloud v2.12.3. Still waiting: X4, X5, result signing.
