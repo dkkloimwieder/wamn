@@ -301,25 +301,48 @@ The `wamn dev` tests in `services/cli/tests/dev_command.rs` check only that the 
 
 ## Development on kind
 
-`wamn-journey-tests --test application_routes_kind` tests application routes through product deployment.
-It covers batch retry, the read ceiling, sequence bindings, overlay actor stamps and a refused feed.
-Each test has the marker `requires: cluster` and four `env:` needs. Supply each variable that the marker names.
+The journey tests in `wamn-journey-tests` run on a local kind cluster through product commands.
+Each test has the marker `requires: cluster, bin:helm`.
+SQL only observes results, through a read-only login and a port-forward.
 
 ```bash
-cargo test -p wamn-journey-tests --test application_routes_kind -- --ignored --nocapture
+cargo xtask preflight
+cargo xtask journey-cluster
+cargo test -p wamn-journey-tests -- --ignored
 ```
 
-The test creates its own environment with `wamn env apply --disposable`, and deploys with `wamn dev`.
-It uses SQL only to observe results.
-After success it removes its environment with `wamn env delete`.
-The journey and cluster targets come in Epic 14.
+`cargo xtask preflight` checks the charts before a platform deploy.
+It renders the charts, and checks that their images resolve and that the wamn containers accept their arguments.
+Then it sends every object to the kind API server in a server-side dry run.
+Without `--chart <bundle>`, it builds a bundle under `target/preflight`.
+With `--print-cluster-requests`, it prints the cluster requests and does not read the cluster.
+
+`cargo xtask journey-cluster` creates the platform that the tests use.
+It creates or reuses the `wamn-local` cluster and its registry on port 5001.
+If the cluster CNI does not enforce NetworkPolicy, it fails.
+It uses the bundle that `--chart <bundle>` names, or builds one under `target/journey/bundle`.
+If the platform does not run that bundle yet, it runs `wamn platform deploy`.
+It records container restarts, and fails only on a platform pod that never becomes ready.
+Then it creates the read-only observer login on the system database.
+It writes `target/journey/kubeconfig` and `target/journey/cluster.json`.
+The tests read `cluster.json`. A missing file or entry fails the test.
+
+Each test creates its own org with `wamn org create` and a unique owner email, and opens the owner session.
+Then it applies its own environment with `wamn env apply`.
+At most 4 tests hold an org at one time.
+At the end of a test, a plain `wamn env delete` removes its environment, also after a failure.
+The org stays.
+One cluster holds up to about 12 orgs, because of the Pooler limits of the system database (wamn-44p7o).
+A run that needs more orgs uses a second fresh cluster.
+
+The `nats_outage` target stops the platform NATS server, so it must run alone.
+Cargo runs the test targets one after another, so the command above runs it alone.
+Do not run it beside another journey run.
 
 ### Platform and environment apply on kind
 
-No test target installs the platform or applies an environment.
 [Deployment](deployment.md#local-platform) gives the `wamn platform deploy` and `wamn env apply` procedure for a local cluster.
 `cargo xtask kind-cluster-create` creates or reuses the `wamn-local` cluster and its registry on port 5001.
-Journey tests that drive these commands come in Epic 14.
 
 ### Removed application cluster coverage
 
