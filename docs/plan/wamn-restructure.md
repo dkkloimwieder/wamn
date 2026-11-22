@@ -249,7 +249,7 @@ Issues:
 16.4 Waits and renewal. In journey-cluster and env apply, the test observes the kstatus waits on the `application` and `environment` charts and the Rust waits on the `project` and `org` charts (Certificate, Database connection, the CDC reader's wait for its replication slot, CDC reader rollout, Cluster). Pooler certificate renewal: renew one Pooler certificate, restart the CloudNativePG operator to force a reconcile, and check that PgBouncer serves the new certificate.
 
 Contracts (scout of 2026-11-22, with D's rulings):
-- C1 Rollback with no failed call: deploy fixture version 1, then version 2 (different component digests, built by `cargo xtask prepare-tests`), then `wamn rollback` to version 1. One client calls the application through the web edge back to back, from a 200 baseline until the Job finishes and version 1 is Ready. Any non-200 status, connection error, per-call timeout or invalid body fails the test, and the epic stops for D's ruling.
+- C1 Rollback with no failed call: deploy fixture version 1, then version 2 (different component digests, built by `cargo xtask prepare-tests`), then `wamn rollback` to version 1. The test checks that version 2 answers before the rollback and that version 1 answers after it, because the deploy wait can report Ready before the new template is live. One client calls the application through the web edge back to back, from a 200 baseline until the Job finishes and version 1 is Ready. Any non-200 status, connection error, per-call timeout or invalid body fails the test, and the epic stops for D's ruling.
 - C2 A plain `wamn env delete` removes the active registry row and keeps the Cluster, Certificates and their Secrets. The observer still reads the row.
 - C3 `wamn env apply` after a plain delete makes a new instance suffix and a new Cluster beside the kept one. It runs in its own org.
 - C4 `wamn env delete --data --confirm <org/env/project>` after a plain delete removes the kept Cluster, its Certificates and Issuers. It runs in its own org.
@@ -258,7 +258,7 @@ Contracts (scout of 2026-11-22, with D's rulings):
 - C7 Per-login limit: the test scales its org's control Deployment to 0 and opens the limit plus one sessions on each Pooler (control 8, apply 16). The PgBouncer metrics on port 9127 show the extra session waiting, and it completes when one closes. Then control scales back.
 - C8 The auth query admits a provisioned login through each Pooler.
 - C9 `SHOW CONFIG` through pods/exec gives `query_wait_timeout` 120 on control and 900 on apply.
-- C10 Waits: watches start before `journey-cluster`, `wamn env apply` and `wamn deploy`, and the test checks the pending-to-ready order and the end state. The CDC reader rollout wait shows only that the pod runs. `wait_workload_ready` accepts Ready only at the current generation.
+- C10 Waits: watches start before `journey-cluster`, `wamn env apply` and `wamn deploy`, and the test checks the pending-to-ready order and the end state. The CDC reader rollout wait shows only that the pod runs. D15 (b): `wait_workload_ready` stays as it is, and the test checks the current WorkloadReplicaSet at its own generation only as an observation, because stock WorkloadDeployment has no observed generation (Open item).
 - C11 Pooler certificate renewal, in its own test target: Issuing=True on the Certificate, a new `tls.crt`, a restart of the CloudNativePG operator, then a TLS handshake whose certificate fingerprint (rustls) equals the new `tls.crt`.
 
 After 16.0, 16.1 to 16.4 run in parallel on the Epic 15 harness.
@@ -272,6 +272,7 @@ Next: the crate graph epic. That ends the restructure.
 - X5: `-host-namespaces=` is empty (T4, `hostNamespaces: []`), so the stock operator sends no stops to a deleted host pod in an org namespace. The host then drains the full `drain_bound_seconds` and exits 1. Its own scout comes later. Measured on kind (Epic 15): every wamn env delete waits about 300 s for the host to drain, and the host then exits with 'service cleanup exceeded its shutdown budget'. That exit is a defect in its own right. X5 gets the next scout after the restructure.
 - The CDC reader has no readiness probe, so its rollout wait shows only that the pod runs, not that it opened its replication session. A probe needs a check in the reader, so it is design work (Epic 16 scout).
 - `wamn env delete --data` with no active row finds an ObjectStore only through its Cluster. If the Cluster is already gone, the ObjectStore stays. Kind has no backups, so no kind test covers it (Epic 16 scout).
+- `wamn deploy` and rollback can report Ready before the new template is live. Stock WorkloadDeployment has no observed generation, and `status.currentReplicaSet` can still name the old ReplicaSet just after the upgrade. Decide with a measured design, for example: wait until a WorkloadReplicaSet controlled by the deployment, Ready at its own generation, serves the new package digest (Epic 16 D15).
 - wamn-44p7o: the Pooler per-login pools and the computed `max_connections` (206) cap the org count near 12 for each system database. This conflicts with T1, where adding an org is a common event. Design a connection budget for each org. Not in Epic 15.
 - The local mutex and Postgres advisory lock for exclusive connection calls are not built. The existing advisory lock in `sql/session_identity.rs::lock_file` serves file operations.
 - The HTTP client cache key by invocation scope, target, connection ID and generation is not built.
@@ -2226,3 +2227,9 @@ Epic 14 closed on 2026-11-21 after review. cargo test --workspace: 617 passed in
 - The control Pooler sets `query_wait_timeout` 120 explicitly. Ruled chart change, its own commit. Reason: a PgBouncer upgrade cannot move it.
 - The renewal test restarts the CloudNativePG operator, so it has its own test target and never runs at the same time as the Pooler tests.
 - Q2 stands: if C1 sees a failed call, the epic stops for D's ruling. No test change can hide it.
+
+**Ruled (D, 2026-11-22): Epic 16 D15.** This replaces the D15 standing fix in the Epic 16 scout choices.
+- D15 is (b): `operation.rs::wait_workload_ready` stays as it is, and option (a) is not built. Reason: stock runtime-operator v2.12.3 stamps no generation on a WorkloadDeployment. `WorkloadDeploymentStatus` has `currentReplicaSet` but no `observedGeneration`, and only the WorkloadReplicaSet controller calls `TrackGeneration`.
+- Option (a) would copy the operator's private rule (`deploymentTemplateHash` plus `apiequality.Semantic.DeepDerivative`, `workload_deployment_controller.go:240-241`) into Rust. A wrong copy makes `wamn deploy` hang or pass early, and an operator upgrade can break it. That breaks "follow stock".
+- The wamn annotations `wamn.package-digest` and `wamn.release-revision` are on the WorkloadDeployment metadata, not in `spec.template`, so they cannot name the new ReplicaSet either.
+- The gap is an Open item. C1 checks that version 2 answers before the rollback and that version 1 answers after it. C10 checks the current WorkloadReplicaSet at its own generation only as an observation.
