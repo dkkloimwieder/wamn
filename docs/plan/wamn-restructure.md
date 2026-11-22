@@ -232,79 +232,27 @@ Phase 1 deletion, phase 2 restructure (no behaviour change), phase 3 code editin
 
 Phase 3 steps, in dependency order: 3.1 database model; 3.2 request path (workloads, connections, files, integrations and application host routes); 3.3 identity; 3.4 workflow service; 3.5 deploy; 3.6 isolation, then install; 3.7 codegen; 3.7b crate boundaries; 3.8 tests.
 
-## Epic 15: step 3.8, journey tests on kind
+## Epic 16: step 3.8, lifecycle, isolation and load on kind
 
-Rule: journey tests run on local kind through product commands, observed with a read-only login. One cluster serves a run of up to 12 orgs, with its own org and environment for each test. No new product behaviour.
+Rule: journey tests on local kind through product commands, observed with the read-only login. Each test has its own org and environment. No new product behaviour except --confirm.
 
 Issues:
 
-15.0 Plan, doc only, done first. Record the rulings and the journey contract list from the scout: each contract moved to the journey tier, with the test that will cover it.
+16.0 Plan, doc only, done first. Record the rulings and the contract list from the scout.
 
-15.1 Harness. `cargo xtask journey-cluster` creates or reuses the local kind cluster and its registry (`xtask/src/kind.rs`), then runs `wamn platform deploy`. `cargo xtask preflight` runs the preflight steps as one command: the charts render, the images resolve, the containers accept their arguments, and the server dry run. The observer uses a real read-only login, which replaces `tests/journeys/tests/common/mod.rs::observer`. Each test makes its own org and environment with `wamn org create` and `wamn env apply`. A test whose input is missing fails. 15.1 comes first after 15.0.
+16.1 Lifecycle journey tests: rollback, apply again, `wamn env delete`, and `wamn env delete --data` after a plain delete. During the rollback, the rollback test calls the application continuously through the web edge and fails on any failed call (Q2). Add `--confirm <name>` (Q1): `wamn env delete --data --confirm <environment>` and `wamn schema reset --confirm <project>`. The command checks the value exactly as it checks the typed answer today. With no flag and no terminal, the command still refuses. The CLI change is committed alone. 16.1 closes wamn-vx6c0.
 
-15.2 Smoke as a test. The short path becomes the first journey test: `wamn org create`, owner enrollment and session, `wamn env apply`, one application deploy, and one call to the application and one to control through web, with 401 without a token and 200 with one. The end-of-epic smoke run is then `cargo test -p wamn-journey-tests -- --ignored`.
+16.2 Isolation journey tests. The CNI check from Epic 15 stays. The harness starts a probe pod in environment A's namespace with A's host pod labels. The test checks that the probe cannot reach environment B's host, Postgres or Services. The probe stands in for the host, whose image has no network tools. It is test setup in a test cluster only.
 
-15.3 Host contracts: probes, signals, drain and NATS outage recovery; the host scheduler user rights; the grant cache; result signing (`operation.rs::sign_result`, `Files::sign`); and startup order, if the runtime-operator and invitation Job restarts repeat.
+16.3 Pooler journey tests. For one control login and one apply login, the test opens the per-login limit plus one session. The extra session waits, then proceeds when one closes. The auth query works. The test reads the 120 s and 900 s wait settings from the running PgBouncer configuration and does not wait them out.
 
-15.4 Request path: another environment's credential is refused and never served; session identity (the cold parse, the operation in the transaction, no identity on a pooled connection, the bound application); the write log claims (commit and rollback, a competing claim waits, a lost session refuses, known results finish at host commit, unfinished claims have a call bound, and claims accept late completion and expire under retention); connection calls; Data change for `client_acme_receiving` (K24); and only the workflow behaviour that exists today.
+16.4 Waits and renewal. In journey-cluster and env apply, the test observes the kstatus waits on the `application` and `environment` charts and the Rust waits on the `project` and `org` charts (Certificate, Database connection, the CDC reader's wait for its replication slot, CDC reader rollout, Cluster). Pooler certificate renewal: renew one Pooler certificate, restart the CloudNativePG operator to force a reconcile, and check that PgBouncer serves the new certificate.
 
-15.5 wasmCloud v2.12.3 (wamn-rd0tv.6). wamn moves to v2.12.3 as a whole: the wash-runtime git tag, the runtime-operator chart and its images by digest, and every other v2.12.2 pin. The upstream tag v2.12.3 is 8358f1f56. wamn follows its breaking changes only as far as wamn needs to build and run. The rule for a wasmCloud chart upgrade applies: render the environment and platform charts with the old and the new chart, and review the diff. Then run the standard checks, `cargo test --workspace` and the ignored run on v2.12.3. Then a read-only scout reads each wamn workaround that v2.12.3 can cover and gives a recommendation for each: X2, Q-A, X10, X1 and the mounted database credentials, X5 and the startup restarts, rollback and one WorkloadReplicaSet for each deployment template, and any other. The scout stops for D's ruling. No wamn code is deleted before that ruling. D ruled on the scout on 2026-11-21 (below).
+After 16.0, 16.1 to 16.4 run in parallel on the Epic 15 harness.
 
-15.2, 15.3 and 15.4 run in parallel on the 15.1 harness.
+End of the epic: the standard checks, `cargo test --workspace`, the ignored run, `cargo xtask preflight`, and the full journey run (Epics 15 and 16) on fresh kind clusters, up to 12 orgs each.
 
-Contracts that move here from Epic 14: the host's probes, signals, drain and NATS outage recovery; another project environment's credential is refused and never served; the request path, connection calls, workflows and Data change; the host scheduler user rights; the grant cache; result signing; the cold parse, the operation in the transaction and the write log claims; and any other session identity or write log contract that has no production function taking an open connection.
-
-Rulings on the scout (D, 2026-11-21):
-- X1, X2 and X3 are fixed in Epic 15, each after its own proposal. X1: nothing fills `wamn-control-administration-<org>`. X2: the environment chart never sets the host's `allowed_hosts`. X3: the org NetworkPolicy has no egress rule for connection calls.
-- Outputs: `cargo xtask journey-cluster` writes one outputs file that the tests read.
-- Bundle: journey-cluster reuses an existing bundle and builds one only when none is given.
-- Preflight: `cargo xtask preflight` is Rust in xtask.
-- Observer access: the observer pg_hba line is only in `values-kind.yaml`, never in the default or GCP values. The tests connect through a port-forward.
-- Observer rights: `pg_read_all_data` with BYPASSRLS, plus `pg_read_all_stats`, on kind only. The harness creates the role through the system admin.
-- Owner session: a port-forward to identity. Each org has a unique owner email.
-- Cleanup: a plain `wamn env delete`, which also runs when a test fails.
-- 4 test threads.
-- The NATS outage test has its own test target.
-- Grant cache: a journey test. A service test only with production constructors and no back door.
-- Kubernetes access from the tests: kube-rs.
-- Host user refusal: the test asks identity for a host user with a pod-bound token.
-- Startup check: journey-cluster records restarts and fails only on a pod that never becomes ready.
-- X1: control builds each project login's config at login and reads its login certificate Secret. env apply copies only `ca.crt` into a ConfigMap. The project chart adds one Role for control, scoped by resource name. The control administration map goes.
-- X2: the host's `allowed_hosts` goes. `ConnectionHttp` checks the exact connection authority. X10, the default port match, is fixed with it.
-- X3: `connectionPorts` in the application chart opens public IPv4 egress on the bound HTTP connection ports.
-- Q-A: cloud calls refuse private address ranges, with a unit test. Q-B: the outside call is a service test with a local server and the edge target's address policy. The journey test checks connection get and the RBAC refusal.
-- Q-C: journey-cluster fails if kind's CNI does not enforce NetworkPolicy.
-- Q-D replaces the values part of C4: after each env apply, the harness creates the observer role through pods/exec and patches the project Cluster's pg_hba with kube-rs. No product code or chart value changes for the observer.
-- Fixtures: data_change for K24, signed_reads, and the missing palette components.
-- The five existing journey tests are rewritten on the new harness.
-
-Rulings on the questions (D, 2026-11-21):
-- Q1: the wit-bindgen dependency in `guests/workflow-service/Cargo.toml` has the `std` feature. This fixes the workflow crash. It landed in 2cbe3539b.
-- Q2: the end run uses two fresh kind clusters, so no cluster holds more than about 12 orgs. The Pooler and `max_connections` values do not change. No test is reported as blocked.
-- Q3: the removed-application journey test checks `application.stop` through control. That contract stays tested. The test does not stand in for env apply.
-- Q4: the NATS outage test checks the Host status after NATS returns. The runtime-operator stays stock. The test records the runtime-operator's exit during the outage as its behaviour.
-
-Rulings on the 15.5 scout and wamn-86pii (D, 2026-11-21):
-- wamn-86pii is fixed now. `environment/lifecycle.rs::configure_project` uninstalls the application releases that the environment file no longer lists. One journey test checks that a dropped application stops after `wamn env apply` and that its data stays.
-- `platform_http.rs` forwards the upstream address check to the inner ingress. This is a security fix.
-- Q-A: wamn deletes its own private-range code and calls the stock wash-runtime egress address policy. The cloud refusal unit test stays, against the stock call.
-- X2, X10, X1, X5, C14 and the rollback handling stay. v2.12.3 does not cover them.
-- These rulings end the wait on new X2 and Q-A work.
-
-Rulings on the journey failures (D, 2026-11-22):
-- wamn-kca0t: `ensure_entity_map_sql` grants SELECT on `wamn_entities` to `wamn_platform`. This is a ruled permission change.
-- wamn-bck2h: during the outage, the NATS outage test calls the host pod through a port-forward. It records the 502 at the web edge as stock runtime-operator behaviour.
-- The third cluster, used only for reruns of fixed tests, is accepted.
-- The rerun shows the drain wait of `wamn env delete` (ac58912a8) once.
-
-Waits:
-- The write log expiry contract waits for the X4 Open item.
-- The deleted host pod drain test waits for the X5 Open item. Its own scout comes later.
-- Result signing waits for an object store on kind.
-
-End of the epic: after D's ruling on the 15.5 scout, the standard checks, `cargo test --workspace`, the ignored run, `cargo xtask preflight`, and `cargo test -p wamn-journey-tests -- --ignored` on v2.12.3, on two fresh kind clusters.
-
-Next: Epic 16 (step 3.8, fourth part): rollback, env delete, apply again and env delete --data; NetworkPolicy and isolation between environments; the Pooler per-login limits under load. Then the crate graph epic.
+Next: the crate graph epic. That ends the restructure.
 
 ## Open items
 
@@ -314,7 +262,7 @@ Next: Epic 16 (step 3.8, fourth part): rollback, env delete, apply again and env
 - The HTTP client cache key by invocation scope, target, connection ID and generation is not built.
 - `registry.connection_principal` is not built. Project connection rows carry the principal ID.
 - Deferred: the edge device after the restructure; the four workflow behaviours.
-- Journey tests on kind, deferred from the first kind run. Epic 15: the Data change check for `client_acme_receiving` (K24) and the 10.13 per-pod scheduler users beyond host start. Epic 16: rollback, `env delete`, apply again, and `env delete --data` after a plain delete; the Pooler per-login limits and waits under load; that kind's CNI enforces NetworkPolicy, and that an environment's host cannot reach another environment's host, Postgres or Services.
+- Journey tests on kind, deferred from the first kind run. Epic 15: the Data change check for `client_acme_receiving` (K24) and the 10.13 per-pod scheduler users beyond host start.
 - X4: write log expiry (`crates/provision/src/audit_retention.rs`) runs only in `prune_record_history::prune`, which only `crates/environment/tests/history_retention_live.rs` calls. It has no production caller.
 - Kind has no object store, so result signing (`signed_reads`) cannot run on kind.
 - Health probes for wasm integration types: `connection_test` cannot run integration code outside an application workload. To be designed.
@@ -327,9 +275,6 @@ Next: Epic 16 (step 3.8, fourth part): rollback, env delete, apply again and env
 - Topic entry node: after 3.4. Topics use stock `wasmcloud:nats`: application components publish within their workload's grants, and a Topic workflow pulls from its own consumer like Data change.
 - Edge device: the edge runs the cluster `ingress.wasm` and turns every import it does not provide into a trap (`define_unknown_imports_as_traps` in `services/edge/src/serve.rs`). Risk: a capability missing on the edge fails on the first call, not at load. The stock `wasmcloud_nats` plugin cannot fill the NATS imports on the edge, because it needs a `servers` value and connects at bind. The edge design decides between a real NATS server on the edge (see the next item) and an HTTP-only build of `ingress`.
 - Edge device, if the edge needs NATS: use the stock NATS way. A leaf node on the device with its own JetStream domain, one per edge environment. Mirror cloud streams to the edge, and source edge streams into the cloud. The edge then binds the stock `wasmcloud_nats` plugin to the local server, which also fills `ingress`'s NATS imports, and the guest code does not change. Not ruled; the edge design decides.
-- After 3.6, first kind run: verify the kstatus waits on the `application` and `environment` charts, and the explicit Rust waits on the `project` and `org` charts (Certificate, Database connection, the CDC reader's wait for its replication slot, CDC reader rollout, Cluster).
-- After 3.6, first kind run: The two Poolers: session mode with the org logins, the auth query, waiting at the per-login limit, and the 15-minute apply wait.
-- After 3.6, first kind run: Pooler certificate renewal: renew one Pooler certificate, restart the CloudNativePG operator to force a reconcile, and confirm that PgBouncer serves the new certificate.
 - When Helm ships readiness annotations (HIP 25, a draft today; Helm v4.2.2 has none) and no waited chart renders a Secret, revisit Helm waits for the `project` and `org` charts.
 - After the first kind run: hand-written OpenTofu for GCP (A1, K10) and `infra.values.yaml`. Epic 10 targets kind, with a GCP values file checked by `values.schema.json`.
 - After the first kind run: three NATS pods with three-replica streams.
@@ -2240,3 +2185,8 @@ Epic 14 closed on 2026-11-21 after review. cargo test --workspace: 617 passed in
 - ac58912a8 (env delete waits up to the host's drain grace period) is a standing fix that no cluster showed working. The rerun must show one `wamn env delete` that waits for the drain and then finishes, with its wait time. Reason: a fix is proved on the cluster where its defect appeared.
 
 **Epic 15 closed (2026-11-22).** Epic 15 closed on 2026-11-22 after review. cargo test --workspace: 627 passed. --ignored: 101 passed. Every Epic 15 journey test passed on fresh kind clusters on wasmCloud v2.12.3. Still waiting: X4, X5, result signing.
+
+**Ruled (D, 2026-11-22): Epic 16 scope (step 3.8, fourth part).**
+- Q1: `--confirm <name>` on `env delete --data` and `schema reset`, not a bare `--yes`. It keeps the check that the answer names the right environment or project, without a terminal. A bare `--yes` drops that check.
+- Q2: if the rollback test shows a failed call, that is a product defect, and the epic stops for D's ruling. No test change hides it. Reason: D's 2026-11-21 objection that an application must not go down on a rollback.
+- Q3: X5 stays out of Epic 16. Its fix touches T4 (`hostNamespaces: []`), so it is design work. The tests accept the ~300 s env delete.
