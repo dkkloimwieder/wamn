@@ -337,10 +337,11 @@
             "control": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["maxUserConnections", "maxDbConnections"],
+              "required": ["maxUserConnections", "maxDbConnections", "queryWaitTimeout"],
               "properties": {
                 "maxUserConnections": {"const": 8},
-                "maxDbConnections": {"type": "integer", "minimum": 8}
+                "maxDbConnections": {"type": "integer", "minimum": 8},
+                "queryWaitTimeout": {"const": 120}
               }
             },
             "apply": {

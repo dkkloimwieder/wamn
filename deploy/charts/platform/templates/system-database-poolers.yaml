@@ -58,8 +58,8 @@ spec:
       max_client_conn: {{ $values.maxClientConnections | quote }}
       max_user_connections: {{ $limits.maxUserConnections | quote }}
       max_db_connections: {{ $limits.maxDbConnections | quote }}
-      {{- if eq $family "apply" }}
       query_wait_timeout: {{ $limits.queryWaitTimeout | quote }}
+      {{- if eq $family "apply" }}
       # The first login for a role can also wait for a backend connection.
       client_login_timeout: {{ $limits.queryWaitTimeout | quote }}
       {{- end }}
