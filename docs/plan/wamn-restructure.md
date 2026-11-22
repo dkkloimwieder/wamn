@@ -155,7 +155,7 @@ Org → environment → project → application. One boundary per level.
 - Deploy applies SQL before code. Migrations must work with the previous code. Deploy never resets the database. WorkloadDeployment annotations carry the package digest and content revision. Rollback without a revision selects the newest earlier deploy revision.
 - The environment file lists projects in apply order. Apply reserves the selected projects, configures NATS and starts the host chart upgrade. Then it applies each project chart and its SQL, and waits for the host. A rerun completes projects left reserved after a failure.
 - The application and environment charts use the kstatus watcher. The project and org charts use bounded named waits in Rust. Wait for the project database before SQL and for the workload's `Ready=True` condition.
-- A plain environment delete keeps the Cluster and ObjectStore. Reapply starts a new generation. Delete with `--data` removes kept data. Restore copies back into the live database at the same endpoint.
+- A plain environment delete keeps the Cluster, the ObjectStore and the one NetworkPolicy that lets the CloudNativePG operator reach the Cluster, named `<cluster>-allow-cnpg-operator`. No client policy is kept. Reapply starts a new generation. Delete with `--data` removes kept data and that policy. Restore copies back into the live database at the same endpoint.
 - Capture-gap recovery and close use operation Jobs. The project chart keeps the CDC reader paused while a gap is open.
 
 ## Install and configuration
@@ -250,7 +250,7 @@ Issues:
 
 Contracts (scout of 2026-11-22, with D's rulings):
 - C1 Rollback with no failed call: deploy fixture version 1, then version 2 (different component digests, built by `cargo xtask prepare-tests`), then `wamn rollback` to version 1. The test checks that version 2 answers before the rollback and that version 1 answers after it, because the deploy wait can report Ready before the new template is live. One client calls the application through the web edge back to back, from a 200 baseline until the Job finishes and version 1 is Ready. Any non-200 status, connection error, per-call timeout or invalid body fails the test, and the epic stops for D's ruling.
-- C2 A plain `wamn env delete` removes the active registry row and keeps the Cluster, Certificates and their Secrets. The observer still reads the row.
+- C2 A plain `wamn env delete` removes the active registry row and keeps the Cluster, Certificates and their Secrets. The kept Cluster is Ready, the observer reads the row through a port-forward, and a product login (for example `wamn_app_login`) cannot connect.
 - C3 `wamn env apply` after a plain delete makes a new instance suffix and a new Cluster beside the kept one. It runs in its own org.
 - C4 `wamn env delete --data --confirm <org/env/project>` after a plain delete removes the kept Cluster, its Certificates and Issuers. It runs in its own org.
 - C5 `--confirm` takes what the prompt asks today: the full org/env/project coordinate for `env delete --data`, and the project ID for `schema reset`. A wrong value refuses, and no flag with no terminal still refuses.
@@ -260,6 +260,12 @@ Contracts (scout of 2026-11-22, with D's rulings):
 - C9 `SHOW CONFIG` through pods/exec gives `query_wait_timeout` 120 on control and 900 on apply.
 - C10 Waits: watches start before `journey-cluster`, `wamn env apply` and `wamn deploy`, and the test checks the pending-to-ready order and the end state. The CDC reader rollout wait shows only that the pod runs. D15 (b): `wait_workload_ready` stays as it is, and the test checks the current WorkloadReplicaSet at its own generation only as an observation, because stock WorkloadDeployment has no observed generation (Open item).
 - C11 Pooler certificate renewal, in its own test target: Issuing=True on the Certificate, a new `tls.crt`, a restart of the CloudNativePG operator, then a TLS handshake whose certificate fingerprint (rustls) equals the new `tls.crt`.
+
+Rulings during the end run (D, 2026-11-22):
+- C1: the client sends the same list query as the other journeys. If a list read through the edge cannot tell the versions apart, the test reads a GET route whose answer differs between the two fixture versions (the D1 fixture edit). No product change.
+- C2: the project chart keeps only the operator NetworkPolicy, named `<cluster>-allow-cnpg-operator`, and `--data` deletes it in `delete/resources.rs::delete_kept_project_resources`.
+- Identity: `crates/identity/src/nats/store.rs::ensure_environment` keeps its NATS lookup inside the global advisory lock, because the lock also guards the revision that the lookup checks (Open item). The worker client timeout stays 5 s.
+- Operator restarts: the stock runtime-operator exits while NATS starts (`dial tcp ...:4222: i/o timeout`), C14 records it, and nothing changes.
 
 After 16.0, 16.1 to 16.4 run in parallel on the Epic 15 harness.
 
@@ -273,6 +279,7 @@ Next: the crate graph epic. That ends the restructure.
 - The CDC reader has no readiness probe, so its rollout wait shows only that the pod runs, not that it opened its replication session. A probe needs a check in the reader, so it is design work (Epic 16 scout).
 - `wamn env delete --data` with no active row finds an ObjectStore only through its Cluster. If the Cluster is already gone, the ObjectStore stays. Kind has no backups, so no kind test covers it (Epic 16 scout).
 - `wamn deploy` and rollback can report Ready before the new template is live. Stock WorkloadDeployment has no observed generation, and `status.currentReplicaSet` can still name the old ReplicaSet just after the upgrade. Decide with a measured design, for example: wait until a WorkloadReplicaSet controlled by the deployment, Ready at its own generation, serves the new package digest (Epic 16 D15).
+- `ensure_environment` takes a global advisory lock, so env applies are serialized across all orgs. Decide whether the lock can be per environment (T1). The lock also guards the NATS lookup: `ensure_environment` reads the account revision (`issued_at`), awaits the lookup, then revises the account. A lookup outside the lock lets two applies sign JWTs at the same revision with different limits. A safe move looks up outside the lock and checks the key and revision again under it, which changes the callback signature (Epic 16 end run).
 - wamn-44p7o: the Pooler per-login pools and the computed `max_connections` (206) cap the org count near 12 for each system database. This conflicts with T1, where adding an org is a common event. Design a connection budget for each org. Not in Epic 15.
 - The local mutex and Postgres advisory lock for exclusive connection calls are not built. The existing advisory lock in `sql/session_identity.rs::lock_file` serves file operations.
 - The HTTP client cache key by invocation scope, target, connection ID and generation is not built.
@@ -2233,3 +2240,14 @@ Epic 14 closed on 2026-11-21 after review. cargo test --workspace: 617 passed in
 - Option (a) would copy the operator's private rule (`deploymentTemplateHash` plus `apiequality.Semantic.DeepDerivative`, `workload_deployment_controller.go:240-241`) into Rust. A wrong copy makes `wamn deploy` hang or pass early, and an operator upgrade can break it. That breaks "follow stock".
 - The wamn annotations `wamn.package-digest` and `wamn.release-revision` are on the WorkloadDeployment metadata, not in `spec.template`, so they cannot name the new ReplicaSet either.
 - The gap is an Open item. C1 checks that version 2 answers before the rollback and that version 1 answers after it. C10 checks the current WorkloadReplicaSet at its own generation only as an observation.
+
+**Ruled (D, 2026-11-22): Epic 16 C1 and C2.**
+- C2: a plain delete keeps the one project NetworkPolicy that lets the CloudNativePG operator reach the instance on port 8000, with `helm.sh/resource-policy: keep` like the Cluster. No client policy is kept, because a deleted environment's database takes no product logins (least privilege). `--data` removes that policy with the Cluster, its Certificates and Issuers. Reason: the kept Cluster exists so its data survives until `--data`. Without the operator's path it goes Ready=False under the org default-deny, so nobody can read the kept data.
+- C2 contract: after a plain delete, the kept Cluster is Ready, the observer reads the row through a port-forward, and a product login cannot connect.
+- C1: the client sends the empty `?` on GET `/widget/list` like the other journeys, a standing fix to the test. Q2 holds.
+
+**Ruled (D, 2026-11-22): Epic 16 policy name, identity lock, version check, operator restarts.**
+- The kept policy is named by its Cluster, `<cluster>-allow-cnpg-operator`, with the Cluster's instance suffix. Reason: the policy has the Cluster's lifetime, so an apply again makes a new policy for the new Cluster and cannot adopt the kept one. The earlier name came from org/env/project, so Helm adopted the kept policy and pointed it at the new Cluster.
+- Identity: `ensure_environment` moves the NATS lookup out of the global advisory lock, so the lock covers only the database step, unless the lock also guards the NATS push. The worker client timeout is not raised. Reason: a worker got "identity HTTPS request failed: HTTP Timeout" from its 5 s client while the lock was held across a NATS lookup of up to 2 s. The lock scope across orgs is an Open item. Result: the lock also guards the revision that the lookup checks, so the code does not change (`store.rs::ensure_environment`, `claims.rs` revision check).
+- C1: if a list read through the edge cannot tell version 1 from version 2, the test uses a GET route whose answer differs between the two fixture versions, made by the fixture edit that D1 allows. No product change. Q2 holds.
+- Operator restarts: if the stock operator exits while NATS starts, C14 records it and nothing changes. Anything else is reported with its logs before a fix.
