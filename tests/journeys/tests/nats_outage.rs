@@ -12,8 +12,8 @@ use std::time::Duration;
 
 use anyhow::Context as _;
 use common::host::{
-    application_objects, condition, declare, fixture, host_object, ready, ready_host_pod, reapply,
-    until,
+    FIXTURE, application_objects, condition, declare, fixture, host_object, ready, ready_host_pod,
+    reapply, until,
 };
 use common::{Application, PortForward, Routes};
 use k8s_openapi::api::apps::v1::StatefulSet;
@@ -31,7 +31,7 @@ const NATS_POD: &str = "wamn-nats-0";
 const OPERATOR: &str = "wasmcloud.com/name=runtime-operator";
 /// A second application with the fixture package, applied after the outage.
 const SECOND: &str = "second_fixture";
-/// How long one host pod waits to become the only Ready one after `wamn env apply`.
+/// How long the host pod or application workloads take to become Ready.
 const HOST_DEADLINE: Duration = Duration::from_secs(300);
 /// How long the NATS pod takes to stop or to become Ready again.
 const NATS_DEADLINE: Duration = Duration::from_secs(300);
@@ -40,10 +40,13 @@ const REPORTING_DEADLINE: Duration = Duration::from_secs(300);
 /// How long the operator takes to exit without NATS, or to become Ready again after
 /// its restart backoff.
 const OPERATOR_DEADLINE: Duration = Duration::from_secs(300);
+/// How long the web edge waits for the recovered Service endpoint.
+const EDGE_DEADLINE: Duration = Duration::from_secs(60);
 
 /// During the outage, the host pod serves a call that needs no NATS.
 /// The test logs the web edge status during the outage.
 /// When NATS returns, the operator is Ready and the Host reports a newer `lastSeen`.
+/// The stock operator places the first application again before the edge call.
 /// The web edge serves a call and the second `WorkloadDeployment` is Ready.
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires: cluster, bin:helm"]
@@ -165,12 +168,40 @@ async fn the_host_serves_through_a_nats_outage_and_recovers() -> anyhow::Result<
         || async { Ok(reporting().await?.flatten().filter(|seen| *seen > before)) },
     )
     .await?;
+    until(
+        HOST_DEADLINE,
+        "the first application's workloads are Ready after NATS returns",
+        || async {
+            let workloads =
+                application_objects(environment, "Workload", "workloads", FIXTURE).await?;
+            Ok((!workloads.is_empty()
+                && workloads
+                    .iter()
+                    .all(|workload| condition(workload, "Ready") == Some("True")))
+            .then_some(()))
+        },
+    )
+    .await?;
     let id = uuid::Uuid::now_v7().to_string();
-    application
-        .routes
-        .create("recovery-call", "recovery-call", &id, "priority")
+    let recovery = until(
+        EDGE_DEADLINE,
+        "the web edge serves a recovery call",
+        || async {
+            match edge
+                .create("recovery-call", "recovery-call", &id, "priority")
+                .await
+            {
+                Ok(response) => Ok(Some(response)),
+                Err(error) => {
+                    eprintln!("web edge recovery call failed: {error:#}");
+                    Ok(None)
+                }
+            }
+        },
+    );
+    tokio::time::timeout(EDGE_DEADLINE, recovery)
         .await
-        .context("a call after NATS returns")?;
+        .context("waiting for the web edge recovery call to complete")??;
     drop(restore);
 
     reapply(environment, |file| declare(file, SECOND, "second")).await?;
