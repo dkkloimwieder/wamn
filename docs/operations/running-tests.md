@@ -25,7 +25,7 @@ It builds every application under `apps/` that has a `wamn.k` file.
 It builds each base before its overlays, with the committed SQL describe evidence and no database.
 The output of each application goes to `apps/target/wamn/<package>`.
 If `WAMN_KCL` is not set, the command installs the pinned KCL compiler under `.tools/kcl/`.
-It also builds the pinned `ingress` guest from `guests/ingress`.
+It also builds the pinned `ingress` guest from `guests/ingress` and the workflow service from `guests/workflow-service`.
 
 The command then prints one `export` line for each prepared input.
 `eval` sets these variables in the current shell:
@@ -36,6 +36,7 @@ The command then prints one `export` line for each prepared input.
 | `WAMN_EFFECTIVE_RELEASE_OVERLAY_COMPONENT_WASM` | `apps/target/wamn/platform_fixture_overlay/components/fixture_overlay.wasm` |
 | `WAMN_EDGE_DEVICE_COMPONENT` | `apps/target/wamn/edge_device/components/device.wasm` |
 | `WAMN_INGRESS_COMPONENT` | The release build of the `ingress` guest |
+| `WAMN_WORKFLOW_SERVICE_COMPONENT` | The release build of the `workflow-service` guest |
 
 A test whose prepared input is missing fails. It does not skip.
 After a source change to an application or to `ingress`, run `prepare-tests` again.

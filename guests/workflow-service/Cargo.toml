@@ -12,7 +12,7 @@ crate-type = ["cdylib"]
 futures = { version = "0.3", default-features = false, features = ["alloc", "async-await"] }
 serde = { workspace = true, features = ["derive", "rc"] }
 serde_json = { workspace = true, features = ["raw_value"] }
-wit-bindgen = { workspace = true, features = ["async-spawn"] }
+wit-bindgen = { workspace = true, features = ["async-spawn", "std"] }
 
 [lints]
 workspace = true
