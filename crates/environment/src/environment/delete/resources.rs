@@ -143,6 +143,7 @@ pub(super) async fn delete_kept_project_resources(
         ("postgresql.cnpg.io", "Cluster", "clusters", true),
         ("cert-manager.io", "Certificate", "certificates", false),
         ("cert-manager.io", "Issuer", "issuers", false),
+        ("networking.k8s.io", "NetworkPolicy", "networkpolicies", false),
     ] {
         let objects = resource(
             target.client.client(),
