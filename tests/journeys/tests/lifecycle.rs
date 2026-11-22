@@ -3,19 +3,22 @@
 mod common;
 
 use std::collections::BTreeMap;
+use std::net::{IpAddr, SocketAddr};
 use std::num::NonZeroU32;
 use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::{Context as _, ensure};
-use common::host::{FIXTURE, fixture, runtime};
+use common::host::{FIXTURE, fixture, ready, runtime};
 use common::request::{output, until, wamn};
 use common::{
     Application, Environment, Org, Routes, active_project_cluster, observe_project_cluster,
+    probe_image, run_job,
 };
 use futures_util::future::try_join_all;
 use hyper::StatusCode;
-use k8s_openapi::api::core::v1::Secret;
+use k8s_openapi::api::core::v1::{Container, Pod, PodSpec, PodTemplateSpec, Secret};
+use k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
 use kube::Api;
 use kube::api::{ApiResource, DynamicObject, GroupVersionKind, ListParams};
 use serde::Deserialize;
@@ -376,6 +379,12 @@ async fn plain_delete_keeps_data_and_apply_creates_a_new_cluster() -> anyhow::Re
         capture,
     )
     .await?;
+    within(
+        OBSERVE_DEADLINE,
+        "probe product access before plain delete",
+        probe_project_primary(environment, &kept, "connected"),
+    )
+    .await?;
 
     plain_delete(environment).await?;
     let retained = async {
@@ -409,6 +418,12 @@ async fn plain_delete_keeps_data_and_apply_creates_a_new_cluster() -> anyhow::Re
         retained,
     )
     .await?;
+    within(
+        OBSERVE_DEADLINE,
+        "probe product access after plain delete",
+        probe_project_primary(environment, &kept, "timeout"),
+    )
+    .await?;
 
     let mut apply = environment.org.command();
     apply.args(["env", "apply"]).arg(&environment.file);
@@ -430,6 +445,102 @@ async fn plain_delete_keeps_data_and_apply_creates_a_new_cluster() -> anyhow::Re
         after_apply,
     )
     .await
+}
+
+async fn probe_project_primary(
+    environment: &Environment,
+    project: &str,
+    expected: &str,
+) -> anyhow::Result<()> {
+    const POSTGRES: u16 = 5432;
+    const PROBE: &str = r#"
+export LC_ALL=C
+host=$1 port=$2
+diagnostic=$(timeout 5s bash -c 'exec 3<>/dev/tcp/$1/$2' bash "$host" "$port" 2>&1)
+status=$?
+if (( status == 0 )); then
+    result=connected
+elif (( status == 124 )); then
+    result=timeout
+elif (( status == 1 )) && [[ $diagnostic == *'Connection refused'* ]]; then
+    result=refused
+else
+    result="error ($status) ${diagnostic//$'\n'/ }"
+fi
+printf '%s %s %s\n' "$host" "$port" "$result"
+"#;
+
+    let triple = &environment.triple;
+    let namespace = triple.org.as_str();
+    let client = &environment.org.cluster.client;
+    let selector = format!("cnpg.io/cluster={project},cnpg.io/instanceRole=primary");
+    let primary = Api::<Pod>::namespaced(client.clone(), namespace)
+        .list(&ListParams::default().labels(&selector))
+        .await
+        .with_context(|| format!("list primary pods for Cluster {namespace}/{project}"))?
+        .items
+        .into_iter()
+        .find(|pod| pod.metadata.deletion_timestamp.is_none() && ready(pod))
+        .with_context(|| format!("Cluster {namespace}/{project} has no Ready primary"))?;
+    let ip = primary
+        .status
+        .and_then(|status| status.pod_ip)
+        .with_context(|| format!("Cluster {namespace}/{project} primary has no pod IP"))?
+        .parse::<IpAddr>()
+        .with_context(|| format!("parse the pod IP for Cluster {namespace}/{project} primary"))?;
+    let address = SocketAddr::new(ip, POSTGRES);
+    let image = probe_image(client, namespace, project).await?;
+    let labels = BTreeMap::from([
+        ("wasmcloud.com/name".into(), "hostgroup".into()),
+        (
+            "wasmcloud.com/hostgroup".into(),
+            name::environment_host_name(&triple.org, &triple.env),
+        ),
+    ]);
+    let template = PodTemplateSpec {
+        metadata: Some(ObjectMeta {
+            labels: Some(labels),
+            ..ObjectMeta::default()
+        }),
+        spec: Some(PodSpec {
+            automount_service_account_token: Some(false),
+            containers: vec![Container {
+                name: "probe".into(),
+                image: Some(image),
+                command: Some(vec![
+                    "bash".into(),
+                    "-c".into(),
+                    PROBE.into(),
+                    "probe".into(),
+                    ip.to_string(),
+                    POSTGRES.to_string(),
+                ]),
+                ..Container::default()
+            }],
+            ..PodSpec::default()
+        }),
+    };
+    let (exit, logs) =
+        Box::pin(run_job(client, namespace, template, Duration::from_mins(2))).await?;
+    ensure!(
+        exit == 0,
+        "{triple} probe to {address} exited {exit}: {logs}"
+    );
+    let prefix = format!("{ip} {POSTGRES} ");
+    let mut lines = logs.lines();
+    let result = lines
+        .next()
+        .and_then(|line| line.strip_prefix(&prefix))
+        .with_context(|| format!("{triple} has no valid probe result for {address}: {logs}"))?;
+    ensure!(
+        result == expected,
+        "{triple} probe to {address} expected {expected}, got {result}"
+    );
+    ensure!(
+        lines.next().is_none(),
+        "{triple} probe emitted extra results: {logs}"
+    );
+    Ok(())
 }
 
 #[tokio::test(flavor = "multi_thread")]
