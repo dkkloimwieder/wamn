@@ -43,6 +43,21 @@ pub(super) async fn unfinished(
     Ok(runs)
 }
 
+/// Uninstall an application's release, and refuse while the application has unfinished runs.
+pub(super) async fn stop(
+    platform: &Platform,
+    project: &mut sqlx::PgConnection,
+    env: &EnvName,
+    application: &ApplicationName,
+    release: &str,
+) -> anyhow::Result<()> {
+    use wamn_kubernetes::helm::{self, Wait};
+    let unfinished = unfinished(project, env, Some(application)).await?;
+    anyhow::ensure!(unfinished.is_empty(), "{}", describe(&unfinished));
+    let namespace = helm::org_release_namespace(&platform.target.namespace);
+    helm::uninstall(&platform.target, &namespace, release, Wait::Watcher).await
+}
+
 /// Wait only for a stopped host Deployment's pods to terminate.
 pub async fn wait_stopped(platform: &Platform, name: &str) -> anyhow::Result<()> {
     let started = Instant::now();

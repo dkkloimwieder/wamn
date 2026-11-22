@@ -215,11 +215,12 @@ async fn token(
         .token)
 }
 
-/// An application removed from the environment file leaves the host at the next
-/// `wamn env apply`: its Workload objects go, and the Host object counts fewer workloads.
+/// An application that the control route `application.stop` stops leaves the host, while
+/// the environment file still lists it: its Workload objects go, and the Host object
+/// counts fewer workloads.
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires: cluster, bin:helm"]
-async fn a_removed_application_leaves_its_host() -> anyhow::Result<()> {
+async fn application_stop_leaves_its_host() -> anyhow::Result<()> {
     let environment = Org::create().await?.apply(FIXTURE).await?;
     reapply(&environment, |file| declare(file, SECOND, "second")).await?;
     environment.deploy(&fixture(), FIXTURE).await?;
@@ -253,15 +254,36 @@ async fn a_removed_application_leaves_its_host() -> anyhow::Result<()> {
     )
     .await?;
 
-    reapply(&environment, |file| {
-        file["projects"][0]["applications"]
-            .as_object_mut()
-            .map(|applications| applications.remove(SECOND));
+    let org = &environment.org;
+    let triple = &environment.triple;
+    let started = control(
+        org,
+        "application.stop",
+        json!({"project": triple.project, "env": triple.env, "application": SECOND}),
+    )
+    .await?;
+    let job = started["job"]
+        .as_str()
+        .with_context(|| format!("application.stop started no Job: {started}"))?;
+    let ended = until(HOST_DEADLINE, "the application.stop Job ends", || async {
+        let status = control(
+            org,
+            "operation.status",
+            json!({"project": triple.project, "env": triple.env, "job": job}),
+        )
+        .await?;
+        let done = matches!(status["state"].as_str(), Some("succeeded" | "failed"));
+        Ok(done.then_some(status))
     })
     .await?;
+    ensure!(
+        ended["state"] == "succeeded",
+        "the application.stop Job {job} failed: {}",
+        ended["log"]
+    );
     until(
         RUNTIME_DEADLINE,
-        "the removed Workload objects go",
+        "the stopped Workload objects go",
         || async {
             let left = workloads.list(&ListParams::default()).await?.items;
             Ok((!left.iter().any(|workload| {
@@ -287,6 +309,55 @@ async fn a_removed_application_leaves_its_host() -> anyhow::Result<()> {
         },
     )
     .await?;
+    Ok(())
+}
+
+/// `wamn env apply` with a file that no longer lists an application uninstalls its
+/// release, and the rows that the application wrote stay in the project database.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires: cluster, bin:helm"]
+async fn env_apply_stops_an_unlisted_application_and_keeps_its_data() -> anyhow::Result<()> {
+    let application = Application::prepare(&fixture()).await?;
+    let environment = &application.environment;
+    let id = uuid::Uuid::now_v7().to_string();
+    let created = application
+        .routes
+        .create("kept", "kept", &id, "standard")
+        .await?;
+    ensure!(
+        created.get("value").is_some(),
+        "the create commits: {created}"
+    );
+    let deployments = || {
+        application_objects(
+            environment,
+            "WorkloadDeployment",
+            "workloaddeployments",
+            FIXTURE,
+        )
+    };
+    ensure!(
+        !deployments().await?.is_empty(),
+        "{FIXTURE} has no WorkloadDeployment"
+    );
+
+    reapply(environment, |file| {
+        file["projects"][0]["applications"] = json!({});
+    })
+    .await?;
+    until(
+        RUNTIME_DEADLINE,
+        "the WorkloadDeployments of the unlisted application go",
+        || async { Ok(deployments().await?.is_empty().then_some(())) },
+    )
+    .await?;
+    let mut database = environment.observe().await?;
+    let kept: bool =
+        sqlx::query_scalar("SELECT EXISTS (SELECT FROM inventory.widget WHERE id = $1::uuid)")
+            .bind(&id)
+            .fetch_one(&mut database.connection)
+            .await?;
+    ensure!(kept, "widget {id} stays after its application stops");
     Ok(())
 }
 
