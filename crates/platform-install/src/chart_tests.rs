@@ -4,6 +4,58 @@ use serde_json::json;
 use std::path::Path;
 
 #[test]
+fn project_retains_only_the_operator_policy_for_each_cluster() -> anyhow::Result<()> {
+    use crate::environment::{connection_for, database_values, entry, set_operation_values};
+    use wamn_registry::name;
+
+    let triple = wamn_registry::Triple::new("acme".parse()?, "dev".parse()?, "billing".parse()?);
+    let release = name::environment_resource_name(&triple.org, &triple.project, &triple.env);
+    let chart = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../deploy/charts/project");
+    let mut names = std::collections::BTreeSet::new();
+    for instance in ["abcdefgh", "ijklmnop"] {
+        let connection = connection_for(&triple, &instance.parse()?);
+        let cluster = name::project_cluster(&connection.database);
+        let mut values = database_values(
+            &connection,
+            1,
+            json!({"instances": 1, "storage": "2Gi", "cpu": "200m", "memory": "256Mi"}),
+            &json!({"image": "registry.example/postgresql:test"}),
+        )?;
+        set_operation_values(
+            &mut values,
+            &triple,
+            &cluster,
+            &connection.database,
+            std::iter::empty(),
+        )?;
+        values["environmentDocument"] =
+            "org: acme\nenv: dev\nprojects:\n  - name: billing\n".into();
+        let entry = entry(&chart, triple.org.as_str(), &release, values)?;
+        let objects = wamn_kubernetes::helm::template(&entry)?;
+        let mut kept = objects.iter().filter(|object| {
+            object["kind"] == "NetworkPolicy"
+                && object["metadata"]["annotations"]["helm.sh/resource-policy"] == "keep"
+        });
+        let policy = kept.next().expect("operator policy must survive uninstall");
+        assert!(
+            kept.next().is_none(),
+            "only the operator policy survives uninstall"
+        );
+        let policy_name = policy["metadata"]["name"].as_str().expect("policy name");
+        assert_eq!(policy_name, format!("{cluster}-allow-cnpg-operator"));
+        assert_eq!(
+            policy["spec"]["podSelector"]["matchLabels"]["cnpg.io/cluster"],
+            cluster
+        );
+        assert!(
+            names.insert(policy_name.to_owned()),
+            "policy name must be unique per Cluster"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn operation_worker_bindings_use_their_own_accounts_and_namespace_resources() -> anyhow::Result<()>
 {
     let document = wamn_registry::Triple::new(
