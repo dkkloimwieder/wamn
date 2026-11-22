@@ -291,6 +291,12 @@ Rulings on the 15.5 scout and wamn-86pii (D, 2026-11-21):
 - X2, X10, X1, X5, C14 and the rollback handling stay. v2.12.3 does not cover them.
 - These rulings end the wait on new X2 and Q-A work.
 
+Rulings on the journey failures (D, 2026-11-22):
+- wamn-kca0t: `ensure_entity_map_sql` grants SELECT on `wamn_entities` to `wamn_platform`. This is a ruled permission change.
+- wamn-bck2h: during the outage, the NATS outage test calls the host pod through a port-forward. It records the 502 at the web edge as stock runtime-operator behaviour.
+- The third cluster, used only for reruns of fixed tests, is accepted.
+- The rerun shows the drain wait of `wamn env delete` (ac58912a8) once.
+
 Waits:
 - The write log expiry contract waits for the X4 Open item.
 - The deleted host pod drain test waits for the X5 Open item. Its own scout comes later.
@@ -340,6 +346,7 @@ Next: Epic 16 (step 3.8, fourth part): rollback, env delete, apply again and env
 - Before the first production customer: a PriorityClass for production environments, so production outranks dev. The environment values already accept `resources`, `nodeSelector`, `tolerations` and `affinity`.
 - `pg_walstream` runs from the fork `dkkloimwieder/pg-walstream` with two patches (typed keepalive, client certificate). The fork is wamn's own.
 - Before any real customer (second review, 2026-11-20, of 02c1a085):
+  - A scheduler NATS outage removes application endpoints at the edge (stock runtime-operator), so every application is offline at the edge even when a request does not need NATS. Run NATS as a cluster of 3 to make an outage rare. See also the item above about splitting scheduler NATS from data NATS.
   - Pod security: `pod-security.kubernetes.io/enforce: restricted` on org namespaces, a `securityContext` on every wamn workload, and a non-root `USER` in the Dockerfile. Today a privileged pod in an org namespace would reach the node.
   - The system database: a second instance, an ObjectStore and a ScheduledBackup. It holds the NATS operator and account keys and all users.
   - Backups: one credential per org, scoped to that org's prefix or bucket. Today one credential reaches every org's backups.
@@ -2225,3 +2232,9 @@ Epic 14 closed on 2026-11-21 after review. cargo test --workspace: 617 passed in
 - Q-A: wamn deletes its own private-range code and calls the stock wash-runtime egress address policy. Cloud calls still refuse private ranges through the stock settings. The edge rule stays deferred. The cloud refusal unit test stays, against the stock call, with cases for NAT64 `64:ff9b::/96`, 6to4 `2002::/16` and `168.63.129.16`. Reason: one owner for the range list, and the stock list covers ranges that wamn's copy missed.
 - X2, X10, X1, X5, C14 and the rollback handling stay. Reason: v2.12.3 does not cover them.
 - These rulings end the wait on new X2 and Q-A work.
+
+**Ruled (D, 2026-11-22): Epic 15 journey failures.**
+- wamn-kca0t: `crates/provision/src/sql/cdc.rs::ensure_entity_map_sql` grants SELECT on `wamn_entities` to `wamn_platform`. This is a ruled permission change, not a standing fix. Reason: the host admits Data change runs and must read the entity map. One SELECT on one table is the smallest right that does that. The 14.1 grant tests derive the allowed set from the production SQL, so they must still pass.
+- wamn-bck2h: during the outage, the NATS outage test calls the host pod through a port-forward to the pod, not through the web edge. After NATS returns, the test checks that the host reconnects (wamn-wmxp5). Reason: the contract is that the host stays alive and serves a request that does not need NATS. The 502 at the web edge during the outage is stock runtime-operator behaviour, so the test records it and does not fail on it. The operator does not change. The edge outage is an Open item before any real customer.
+- The third cluster, used only for reruns of fixed tests, is accepted. Reason: it reran only the tests that a fix changed.
+- ac58912a8 (env delete waits up to the host's drain grace period) is a standing fix that no cluster showed working. The rerun must show one `wamn env delete` that waits for the drain and then finishes, with its wait time. Reason: a fix is proved on the cluster where its defect appeared.
