@@ -227,6 +227,7 @@ postgres:
     control:
       maxUserConnections: 8
       maxDbConnections: 50
+      queryWaitTimeout: 120
     apply:
       maxUserConnections: 16
       maxDbConnections: 100
