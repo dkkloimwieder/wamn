@@ -321,6 +321,7 @@ The kstatus watcher retains `list` and `watch` on the non-Secret kinds that envi
 `wamn env apply environment.yaml` holds one environment lock.
 The worker reserves the selected projects, asks identity to publish the environment account, and writes the host and admin credential Secrets. It starts one environment chart upgrade with `--wait=watcher` before it configures the projects.
 It upgrades one project chart per project and runs that project's SQL in file order.
+If the file no longer lists an application of a project, the worker stops that application. When one of these applications has unfinished runs, the worker refuses before it stops any of them, and names each unfinished run. Otherwise it prints `stopping <application> (release <name>)` and uninstalls each release. The project database and its data stay.
 After the last project succeeds, the worker checks the environment chart's Helm result and removes unused connection pins on a full apply.
 If a project fails, the worker stops and names the project. Fix the error and run the command again to continue.
 New projects later in the file stay reserved without applied configuration.

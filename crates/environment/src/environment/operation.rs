@@ -318,20 +318,14 @@ pub async fn application(
                         Ok(json!({"release":digest,"revision":revision}))
                     }
                     Application::Stop => {
-                        let unfinished = super::drain::unfinished(
+                        super::drain::stop(
+                            platform,
                             &mut *project.client().await,
                             &triple.env,
-                            Some(name),
+                            name,
+                            &release,
                         )
                         .await?;
-                        ensure!(
-                            unfinished.is_empty(),
-                            "{}",
-                            super::drain::describe(&unfinished)
-                        );
-                        use wamn_kubernetes::helm::{self, Wait};
-                        let namespace = helm::org_release_namespace(&platform.target.namespace);
-                        helm::uninstall(&platform.target, &namespace, &release, Wait::Watcher).await?;
                         Ok(json!({"stopped":name}))
                     }
                 },

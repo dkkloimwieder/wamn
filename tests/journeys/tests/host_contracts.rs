@@ -290,6 +290,55 @@ async fn a_removed_application_leaves_its_host() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// `wamn env apply` with a file that no longer lists an application uninstalls its
+/// release, and the rows that the application wrote stay in the project database.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires: cluster, bin:helm"]
+async fn env_apply_stops_an_unlisted_application_and_keeps_its_data() -> anyhow::Result<()> {
+    let application = Application::prepare(&fixture()).await?;
+    let environment = &application.environment;
+    let id = uuid::Uuid::now_v7().to_string();
+    let created = application
+        .routes
+        .create("kept", "kept", &id, "standard")
+        .await?;
+    ensure!(
+        created.get("value").is_some(),
+        "the create commits: {created}"
+    );
+    let deployments = || {
+        application_objects(
+            environment,
+            "WorkloadDeployment",
+            "workloaddeployments",
+            FIXTURE,
+        )
+    };
+    ensure!(
+        !deployments().await?.is_empty(),
+        "{FIXTURE} has no WorkloadDeployment"
+    );
+
+    reapply(environment, |file| {
+        file["projects"][0]["applications"] = json!({});
+    })
+    .await?;
+    until(
+        RUNTIME_DEADLINE,
+        "the WorkloadDeployments of the unlisted application go",
+        || async { Ok(deployments().await?.is_empty().then_some(())) },
+    )
+    .await?;
+    let mut database = environment.observe().await?;
+    let kept: bool =
+        sqlx::query_scalar("SELECT EXISTS (SELECT FROM inventory.widget WHERE id = $1::uuid)")
+            .bind(&id)
+            .fetch_one(&mut database.connection)
+            .await?;
+    ensure!(kept, "widget {id} stays after its application stops");
+    Ok(())
+}
+
 /// A project admin grant reaches the host at once, because the host caches only positive
 /// grants. A revoke reaches it within `revocation_seconds`.
 #[tokio::test(flavor = "multi_thread")]

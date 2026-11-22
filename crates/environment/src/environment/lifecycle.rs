@@ -344,6 +344,40 @@ async fn configure_project(
             if !schemas.is_empty() && !paused {
                 super::cdc_reader::wait_reader_ready(&platform.target, triple).await?;
             }
+            // Stop before save deletes the registry rows, so a failed stop is found again.
+            let removed: Vec<_> = super::analyse::application_releases(platform, lock, triple)
+                .await?
+                .into_iter()
+                .filter(|(application, _)| !document.applications.contains_key(application))
+                .collect();
+            // Refuse before any uninstall, so no removed application stops alone.
+            let mut unfinished = Vec::new();
+            for (application, _) in &removed {
+                unfinished.extend(
+                    super::drain::unfinished(
+                        &mut *project_lock.client().await,
+                        &triple.env,
+                        Some(application),
+                    )
+                    .await?,
+                );
+            }
+            ensure!(
+                unfinished.is_empty(),
+                "{}",
+                super::drain::describe(&unfinished)
+            );
+            for (removed, release) in removed {
+                println!("stopping {removed} (release {release})");
+                super::drain::stop(
+                    platform,
+                    &mut *project_lock.client().await,
+                    &triple.env,
+                    &removed,
+                    &release,
+                )
+                .await?;
+            }
             let mut connection = lock.client().await;
             let mut tx = provision_project_env::provisioning_transaction(&mut connection).await?;
             document.save(&mut tx).await?;
