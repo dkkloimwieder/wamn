@@ -737,13 +737,13 @@ async fn session(
 }
 
 /// A local listener that forwards each connection to one pod port. Drop closes it.
-struct PortForward {
-    address: SocketAddr,
+pub(crate) struct PortForward {
+    pub(crate) address: SocketAddr,
     task: JoinHandle<()>,
 }
 
 impl PortForward {
-    async fn start(pods: Api<Pod>, pod: &str, port: u16) -> anyhow::Result<Self> {
+    pub(crate) async fn start(pods: Api<Pod>, pod: &str, port: u16) -> anyhow::Result<Self> {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await?;
         let address = listener.local_addr()?;
         let pod: Arc<str> = pod.into();
