@@ -266,12 +266,17 @@ Rulings during the end run (D, 2026-11-22):
 - C2: the project chart keeps only the operator NetworkPolicy, named `<cluster>-allow-cnpg-operator`, and `--data` deletes it in `delete/resources.rs::delete_kept_project_resources`.
 - Identity: `crates/identity/src/nats/store.rs::ensure_environment` keeps its NATS lookup inside the global advisory lock, because the lock also guards the revision that the lookup checks (Open item). The worker client timeout stays 5 s.
 - Operator restarts: the stock runtime-operator exits while NATS starts (`dial tcp ...:4222: i/o timeout`), C14 records it, and nothing changes.
+- `wamn org create` waits for the control restart that it starts (`org.rs::create`), and the waits journey checks control at return. Standing fix.
+- `route_authentication.rs::authenticate_control` answers `authentication_unavailable` (503) when it cannot fetch the keys (JWKS), not 401.
+- Identity database connection timeouts under parallel load are an Open item, decided with wamn-44p7o.
+- After a red, the fix comes first, then only that test file runs again on the same cluster. A red that is only the identity load timeout goes in the report.
+- No more full runs on fresh clusters in Epic 16.
 
 After 16.0, 16.1 to 16.4 run in parallel on the Epic 15 harness.
 
-End of the epic: the standard checks, `cargo test --workspace`, the ignored run, `cargo xtask preflight`, and the full journey run (Epics 15 and 16) on fresh kind clusters, up to 12 orgs each.
+End of the epic: the standard checks, `cargo test --workspace`, the ignored run, `cargo xtask preflight`, and each Epic 16 test file green on a local kind cluster. The full journey run on fresh clusters runs once, after the crate graph epic.
 
-Next: the crate graph epic. That ends the restructure.
+Next: the crate graph epic, then the full journey run on fresh clusters. Then the restructure ends.
 
 ## Open items
 
@@ -282,6 +287,7 @@ Next: the crate graph epic. That ends the restructure.
 - The control Deployment has no readiness probe, and control has no health route, so its pod is Ready when the container starts, before control serves. `wamn org create` waits for the control restart (Epic 16 end run), but a client can still reach control in the first moments after the start. A probe needs a route in control, so it is design work.
 - `ensure_environment` takes a global advisory lock, so env applies are serialized across all orgs. Decide whether the lock can be per environment (T1). The lock also guards the NATS lookup: `ensure_environment` reads the account revision (`issued_at`), awaits the lookup, then revises the account. A lookup outside the lock lets two applies sign JWTs at the same revision with different limits. A safe move looks up outside the lock and checks the key and revision again under it, which changes the callback signature (Epic 16 end run).
 - wamn-44p7o: the Pooler per-login pools and the computed `max_connections` (206) cap the org count near 12 for each system database. This conflicts with T1, where adding an org is a common event. Design a connection budget for each org. Not in Epic 15.
+- Identity could not get a database connection under parallel journey load ('identity database connection timed out', 2026-11-22 23:53:35 on kind). Effects seen: the key route (JWKS) failed for a new control process, and a delete Job got 'identity HTTPS request failed: HTTP Timeout'. Decide with the connection budget design (wamn-44p7o): identity's pool, its Pooler or Service, and whether the key route reads the database per request.
 - The local mutex and Postgres advisory lock for exclusive connection calls are not built. The existing advisory lock in `sql/session_identity.rs::lock_file` serves file operations.
 - The HTTP client cache key by invocation scope, target, connection ID and generation is not built.
 - `registry.connection_principal` is not built. Project connection rows carry the principal ID.
@@ -2252,3 +2258,10 @@ Epic 14 closed on 2026-11-21 after review. cargo test --workspace: 617 passed in
 - Identity: `ensure_environment` moves the NATS lookup out of the global advisory lock, so the lock covers only the database step, unless the lock also guards the NATS push. The worker client timeout is not raised. Reason: a worker got "identity HTTPS request failed: HTTP Timeout" from its 5 s client while the lock was held across a NATS lookup of up to 2 s. The lock scope across orgs is an Open item. Result: the lock also guards the revision that the lookup checks, so the code does not change (`store.rs::ensure_environment`, `claims.rs` revision check).
 - C1: if a list read through the edge cannot tell version 1 from version 2, the test uses a GET route whose answer differs between the two fixture versions, made by the fixture edit that D1 allows. No product change. Q2 holds.
 - Operator restarts: if the stock operator exits while NATS starts, C14 records it and nothing changes. Anything else is reported with its logs before a fix.
+
+**Ruled (D, 2026-11-22): finishing Epic 16.**
+- `authenticate_control` answers the existing `authentication_unavailable` (503) when it cannot fetch the keys (JWKS). Reason: a 401 tells the caller that its credentials are wrong when the platform is the problem, and 503 still fails closed.
+- Identity's database connection timeout under parallel load is an Open item next to wamn-44p7o, with no diagnosis now.
+- Rule 5 for the rest of Epic 16: after a red, the fix comes first, then only that test file runs again on the same cluster. A red that is only the identity load timeout goes in the report and does not stop the run.
+- The full journey run on fresh clusters moves to the end of the restructure, once, after the crate graph epic, on the final crates. Reason: the full fresh-cluster runs after every fix caused the churn, and one full run on the final crates checks the whole restructure once.
+- The rulings on the policy name, the identity lock, the version check and the operator restarts stand.
