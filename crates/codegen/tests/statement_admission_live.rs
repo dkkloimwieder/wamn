@@ -79,7 +79,7 @@ async fn generated_crud_outcomes_hold_under_column_grants() -> anyhow::Result<()
     assert!(!privileges.get::<bool, _>(1));
 
     let initial = sqlx::query(sqlx::AssertSqlSafe((get).to_string()))
-        .bind(&id)
+        .bind(id)
         .fetch_one(&mut client)
         .await?;
     assert_eq!(initial.get::<i64, _>("id"), id);
@@ -87,10 +87,10 @@ async fn generated_crud_outcomes_hold_under_column_grants() -> anyhow::Result<()
     assert_eq!(initial.get::<i32, _>("edit_version"), 1);
     let created_at: Timestamp = initial.get("created_at");
     let changed = sqlx::query(sqlx::AssertSqlSafe((update).to_string()))
-        .bind(&id)
-        .bind(&1_i32)
-        .bind(&true)
-        .bind(&"changed")
+        .bind(id)
+        .bind(1_i32)
+        .bind(true)
+        .bind("changed")
         .fetch_one(&mut client)
         .await?;
     assert_eq!(changed.get::<String, _>("outcome"), "updated");
@@ -113,10 +113,10 @@ async fn generated_crud_outcomes_hold_under_column_grants() -> anyhow::Result<()
         (1, true, "changed", "concurrency_conflict", Some(2)),
     ] {
         let row = sqlx::query(sqlx::AssertSqlSafe((update).to_string()))
-            .bind(&id)
-            .bind(&expected)
-            .bind(&present)
-            .bind(&value)
+            .bind(id)
+            .bind(expected)
+            .bind(present)
+            .bind(value)
             .fetch_one(&mut client)
             .await?;
         assert_eq!(row.get::<String, _>("outcome"), outcome);
@@ -139,7 +139,7 @@ async fn generated_crud_outcomes_hold_under_column_grants() -> anyhow::Result<()
             assert_eq!(row.get::<Option<Timestamp>, _>("created_at"), None);
         }
         let stored = sqlx::query(sqlx::AssertSqlSafe((get).to_string()))
-            .bind(&id)
+            .bind(id)
             .fetch_one(&mut client)
             .await?;
         assert_eq!(stored.get::<String, _>("label"), "changed");
@@ -148,8 +148,8 @@ async fn generated_crud_outcomes_hold_under_column_grants() -> anyhow::Result<()
     }
 
     let stale = sqlx::query(sqlx::AssertSqlSafe((delete).to_string()))
-        .bind(&id)
-        .bind(&1_i32)
+        .bind(id)
+        .bind(1_i32)
         .fetch_one(&mut client)
         .await?;
     assert_eq!(stale.get::<String, _>("outcome"), "concurrency_conflict");
@@ -159,7 +159,7 @@ async fn generated_crud_outcomes_hold_under_column_grants() -> anyhow::Result<()
     );
     assert!(
         sqlx::query(sqlx::AssertSqlSafe((get).to_string()))
-            .bind(&id)
+            .bind(id)
             .fetch_optional(&mut client)
             .await?
             .is_some()
@@ -170,7 +170,7 @@ async fn generated_crud_outcomes_hold_under_column_grants() -> anyhow::Result<()
         .map(drop)?;
     assert_eq!(
         sqlx::query("SELECT private_note FROM counter WHERE id = $1")
-            .bind(&id)
+            .bind(id)
             .fetch_one(&mut client)
             .await?
             .get::<String, _>(0),
@@ -182,8 +182,8 @@ async fn generated_crud_outcomes_hold_under_column_grants() -> anyhow::Result<()
         .map(drop)?;
 
     let deleted = sqlx::query(sqlx::AssertSqlSafe((delete).to_string()))
-        .bind(&id)
-        .bind(&2_i32)
+        .bind(id)
+        .bind(2_i32)
         .fetch_one(&mut client)
         .await?;
     assert_eq!(deleted.get::<String, _>("outcome"), "deleted");
@@ -193,16 +193,16 @@ async fn generated_crud_outcomes_hold_under_column_grants() -> anyhow::Result<()
     );
     assert!(
         sqlx::query(sqlx::AssertSqlSafe((get).to_string()))
-            .bind(&id)
+            .bind(id)
             .fetch_optional(&mut client)
             .await?
             .is_none()
     );
     let missing = sqlx::query(sqlx::AssertSqlSafe((update).to_string()))
-        .bind(&id)
-        .bind(&2_i32)
-        .bind(&true)
-        .bind(&"missing")
+        .bind(id)
+        .bind(2_i32)
+        .bind(true)
+        .bind("missing")
         .fetch_one(&mut client)
         .await?;
     assert_eq!(missing.get::<String, _>("outcome"), "not_found");
@@ -212,8 +212,8 @@ async fn generated_crud_outcomes_hold_under_column_grants() -> anyhow::Result<()
     assert_eq!(missing.get::<Option<i32>, _>("edit_version"), None);
     assert_eq!(missing.get::<Option<Timestamp>, _>("created_at"), None);
     let missing = sqlx::query(sqlx::AssertSqlSafe((delete).to_string()))
-        .bind(&id)
-        .bind(&2_i32)
+        .bind(id)
+        .bind(2_i32)
         .fetch_one(&mut client)
         .await?;
     assert_eq!(missing.get::<String, _>("outcome"), "not_found");

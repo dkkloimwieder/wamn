@@ -1,7 +1,7 @@
 //! Compile generated SQL accessors against the guest library in both output layouts.
 
 use super::{AuthoredSql, GenerationInput, StatementTransactionality, generate};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 /// The guest library and the directories of every library Cargo built with it.
@@ -101,7 +101,7 @@ fn authored_sql_accessors_compile_in_both_output_layouts() {
         "query/location.sql",
         b"SELECT 1::integer AS value",
     )];
-    let transactionality = StatementTransactionality::from_paths(Default::default());
+    let transactionality = StatementTransactionality::from_paths(BTreeMap::default());
     let root = std::env::temp_dir().join(format!("wamn-sql-layout-{}", uuid::Uuid::new_v4()));
     let (library, dependencies) = guest_library();
     let build = root.join("build");

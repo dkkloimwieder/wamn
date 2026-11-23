@@ -1817,10 +1817,6 @@ fn generated_operations_require_a_supported_single_column_key() {
         let result = run(&catalog, &manifest, &QUERY_SOURCES);
         if ty == SqlValueType::Uuid {
             result.unwrap();
-        } else if matches!(ty, SqlValueType::Int32 | SqlValueType::Int64) {
-            let error = result.unwrap_err();
-            assert_eq!(error.error_type(), GenerateErrorType::InvalidModel);
-            assert_eq!(error.object(), Some("inventory.gadget.id"));
         } else {
             let error = result.unwrap_err();
             assert_eq!(error.error_type(), GenerateErrorType::InvalidModel);
