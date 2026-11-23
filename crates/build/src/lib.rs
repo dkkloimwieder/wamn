@@ -261,6 +261,8 @@ pub fn source_dependencies(
 
 #[cfg(test)]
 mod source_dependency_tests {
+    use std::fmt::Write as _;
+
     use super::source_dependencies;
 
     #[test]
@@ -281,9 +283,10 @@ mod source_dependency_tests {
             let mut manifest =
                 format!("[package]\nname='{name}'\nversion='0.1.0'\nedition='2024'\n");
             if let Some(dependency) = dependency {
-                manifest.push_str(&format!(
+                write!(
+                    manifest,
                     "[dependencies]\n{dependency}={{path='../{dependency}'}}\n"
-                ));
+                )?;
             }
             std::fs::write(package.join("Cargo.toml"), manifest)?;
             std::fs::write(package.join("src/lib.rs"), "")?;

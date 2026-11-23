@@ -156,7 +156,7 @@ mod tests {
         let source = component_root.join("src/lib.rs");
         fs::write(
             &source,
-            r#"extern crate self as wamn_guest;
+            r"extern crate self as wamn_guest;
             pub use crate as postgres_statements;
             pub struct Connection;
             pub struct Transaction;
@@ -182,7 +182,7 @@ mod tests {
             }
             struct Component;
             impl generated::thing::get::Action for Component {}
-            "#,
+            ",
         )
         .unwrap();
         let output = wamn_codegen::output_root(&package);
