@@ -715,7 +715,7 @@ async fn begin(
                 )
                 .map_err(|error| binding_error(OperationErrorType::Identity, workload, error))?,
             ),
-            read: read,
+            read,
         },
     )
     .map_err(|error| {
@@ -1276,57 +1276,55 @@ impl OperationHost {
                 read: operation.type_ == Some(ApplicationOperationType::Read),
             },
         )?;
-        let mut outcome = match operation.type_ {
-            Some(ApplicationOperationType::Write | ApplicationOperationType::Delete) => {
-                let input = match serde_json::from_str(&input) {
-                    Ok(input) => input,
-                    Err(error) => {
-                        return Ok(Err(NodeError::InvalidInput(ErrorDetail {
-                            code: Some("invalid_input".into()),
-                            message: error.to_string(),
-                        })));
-                    }
-                };
-                self.invoke_logged_node(&authority, node.operation, operation, &input, invoke)
-                    .await?
-            }
-            _ => {
-                let transaction = self
-                    .sibling_transaction(
-                        &authority,
-                        operation.host_transaction
-                            || operation.type_ == Some(ApplicationOperationType::Read),
-                    )
-                    .await?;
-                let outcome = invoke(authority.id(), input).await?;
-                if let Ok(emission) = &outcome {
-                    serde_json::from_str::<serde::de::IgnoredAny>(&emission.payload)
-                        .context("workflow node emitted invalid JSON")?;
+        let mut outcome = if matches!(
+            operation.type_,
+            Some(ApplicationOperationType::Write | ApplicationOperationType::Delete)
+        ) {
+            let input = match serde_json::from_str(&input) {
+                Ok(input) => input,
+                Err(error) => {
+                    return Ok(Err(NodeError::InvalidInput(ErrorDetail {
+                        code: Some("invalid_input".into()),
+                        message: error.to_string(),
+                    })));
                 }
-                if let Some(transaction) = transaction {
-                    if outcome.is_ok() {
-                        if let Err(error) = transaction.commit().await {
-                            let message = error.to_string();
-                            return Ok(Err(match error {
-                                PgCommitFailure::RolledBack(_) => {
-                                    NodeError::Retryable(ErrorDetail {
-                                        code: Some("rolled-back".into()),
-                                        message,
-                                    })
-                                }
-                                PgCommitFailure::Uncertain(_) => NodeError::Terminal(ErrorDetail {
-                                    code: Some("outcome-unknown".into()),
-                                    message,
-                                }),
-                            }));
-                        }
-                    } else {
-                        transaction.rollback().await?;
-                    }
-                    scope_registry::revoke_operation_transaction(&self.scopes, authority.id());
-                }
-                outcome
+            };
+            self.invoke_logged_node(&authority, node.operation, operation, &input, invoke)
+                .await?
+        } else {
+            let transaction = self
+                .sibling_transaction(
+                    &authority,
+                    operation.host_transaction
+                        || operation.type_ == Some(ApplicationOperationType::Read),
+                )
+                .await?;
+            let outcome = invoke(authority.id(), input).await?;
+            if let Ok(emission) = &outcome {
+                serde_json::from_str::<serde::de::IgnoredAny>(&emission.payload)
+                    .context("workflow node emitted invalid JSON")?;
             }
+            if let Some(transaction) = transaction {
+                if outcome.is_ok() {
+                    if let Err(error) = transaction.commit().await {
+                        let message = error.to_string();
+                        return Ok(Err(match error {
+                            PgCommitFailure::RolledBack(_) => NodeError::Retryable(ErrorDetail {
+                                code: Some("rolled-back".into()),
+                                message,
+                            }),
+                            PgCommitFailure::Uncertain(_) => NodeError::Terminal(ErrorDetail {
+                                code: Some("outcome-unknown".into()),
+                                message,
+                            }),
+                        }));
+                    }
+                } else {
+                    transaction.rollback().await?;
+                }
+                scope_registry::revoke_operation_transaction(&self.scopes, authority.id());
+            }
+            outcome
         };
         if let Ok(emission) = &mut outcome
             && let Some(reads) = &operation.signed_result
@@ -1337,7 +1335,7 @@ impl OperationHost {
                 .get()
                 .and_then(std::sync::Weak::upgrade)
                 .context("workflow result signing is unavailable")?;
-            let signed = signer
+            let result = signer
                 .sign(ResultSigning {
                     workload: &facts.workload,
                     operation: node.operation,
@@ -1347,7 +1345,7 @@ impl OperationHost {
                     deadline: deadline.into_std(),
                 })
                 .await;
-            match signed {
+            match result {
                 Ok(payload) => emission.payload = payload,
                 Err(error) => return Ok(Err(error.into())),
             }
