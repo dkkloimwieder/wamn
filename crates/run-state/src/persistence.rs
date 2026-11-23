@@ -493,6 +493,26 @@ pub async fn prune_terminal_runs(
         .map(|result| result.rows_affected())
 }
 
+fn invalid_parameters(detail: &'static str) -> ProductionLeaseError {
+    ProductionLeaseError::new(
+        ProductionLeaseErrorType::Contract,
+        "validate lease parameters",
+        detail,
+    )
+}
+fn validate_generation(generation: i64) -> Result<(), ProductionLeaseError> {
+    if generation <= 0 {
+        return Err(invalid_parameters("lease generation must be positive"));
+    }
+    Ok(())
+}
+fn validate_duration(duration_ms: i64) -> Result<(), ProductionLeaseError> {
+    if duration_ms <= 0 {
+        return Err(invalid_parameters("lease duration must be positive"));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -513,24 +533,4 @@ mod tests {
             assert_eq!(error.error_type(), ProductionLeaseErrorType::GraphIdentity);
         }
     }
-}
-
-fn invalid_parameters(detail: &'static str) -> ProductionLeaseError {
-    ProductionLeaseError::new(
-        ProductionLeaseErrorType::Contract,
-        "validate lease parameters",
-        detail,
-    )
-}
-fn validate_generation(generation: i64) -> Result<(), ProductionLeaseError> {
-    if generation <= 0 {
-        return Err(invalid_parameters("lease generation must be positive"));
-    }
-    Ok(())
-}
-fn validate_duration(duration_ms: i64) -> Result<(), ProductionLeaseError> {
-    if duration_ms <= 0 {
-        return Err(invalid_parameters("lease duration must be positive"));
-    }
-    Ok(())
 }
