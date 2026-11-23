@@ -40,7 +40,7 @@ pub use bindings::wamn::node::types as node_types;
 
 impl From<ResultSigningError> for node_types::NodeError {
     fn from(ResultSigningError { code, message }: ResultSigningError) -> Self {
-        Self::Terminal(node_types::ErrorDetail { code, message })
+        Self::Terminal(node_types::ErrorDetail { message, code })
     }
 }
 
