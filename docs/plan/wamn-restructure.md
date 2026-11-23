@@ -2265,3 +2265,5 @@ Epic 14 closed on 2026-11-21 after review. cargo test --workspace: 617 passed in
 - Rule 5 for the rest of Epic 16: after a red, the fix comes first, then only that test file runs again on the same cluster. A red that is only the identity load timeout goes in the report and does not stop the run.
 - The full journey run on fresh clusters moves to the end of the restructure, once, after the crate graph epic, on the final crates. Reason: the full fresh-cluster runs after every fix caused the churn, and one full run on the final crates checks the whole restructure once.
 - The rulings on the policy name, the identity lock, the version check and the operator restarts stand.
+
+**Epic 16 closed (2026-11-22).** Epic 16 closed on 2026-11-22 after review. cargo test --workspace: 631 passed. --ignored: 101 passed. All five Epic 16 test files passed on kind, with no failed call during the rollback.
