@@ -234,33 +234,13 @@ Phase 3 steps, in dependency order: 3.1 database model; 3.2 request path (worklo
 
 ## Epic 17: crate graph
 
-Rule: each crate has one job, and the dependency lint enforces the graph. No new product behaviour.
+Re-scoped on 2026-11-22 to the ports-and-adapters rule. The issue list follows D's ruling on the re-scout.
 
-Issues:
+Rule (ports and adapters):
 
-17.0 Plan, doc only, done first. Record D's rulings on the scout's choices.
-
-17.1 The grant SQL (`wamn_identity::application::OPERATION_GRANT_LOCK_SQL`, `GrantError`) moves from `wamn-identity` to `wamn-authentication`. The host (`services/host/src/host/application_route.rs`) then links no `wamn-identity`.
-
-17.2 The cloud metadata client (`wamn_oci::package_artifact::metadata::Metadata`) leaves `wamn-oci`, so `wamn-envelope` (`pod_identity.rs`) stops linking the registry client.
-
-17.3 Rename `test-support/resources` to `test-support/infrastructure`, to match `wamn-test-infrastructure`.
-
-17.4 `wamn-postgres` splits into two crates instead of its `host` feature (engine, registry and pool code).
-
-17.5 The plain shared types (for example `application_config.rs` and `native_routes.rs`) leave `wamn-engine`, so `wamn-environment`, `wamn-connection` and `wamn-control` stop linking wasmtime and wash-runtime.
-
-17.6 `wamn-environment` splits by job: release chart planning, connection administration, environment lifecycle, package apply, history pruning.
-
-17.7 `wiring.rs` (the workflow graph) leaves `wamn-routes`, with the "wiring" rename (`WiringDocument`, `runs.wiring_id`, `catalog.workflows.wiring_hash`). It is a schema change. wamn is greenfield, so no migration.
-
-17.8 Remove the dev-dependency cycles (for example `wamn-identity` with `wamn-environment`) where the moves above allow. List the ones left.
-
-17.9 Extend the dependency lint (`repo-lint-dependencies` in `xtask/src/tasks.rs`) to every crate. The host and the CDC reader link no `wamn-kubernetes`, `wamn-provision` or `wamn-identity`. Control-plane crates link no wasmtime. The edge links no network crates.
-
-Not in this epic: sqlx in `wamn-registry` and `wamn-package` (waits for the edge device design), and the "ProjectDatabase" claim (no such type exists).
-
-After 17.0, the issues run in parallel where they share no files. 17.8 and 17.9 come last.
+- Domain crates hold types and traits only. They link no sqlx, kube, k8s-openapi, wasmtime, wasmtime-*, wash-runtime, reqwest, hyper or any other client or runtime crate, and they derive no sqlx traits.
+- Implementation crates implement domain traits for one technology: Postgres, Kubernetes, the wasmCloud host (plugins), HTTP, NATS, OCI. They depend on domain crates, never the reverse.
+- Binaries (`services/*` and the CLI) wire implementations to domains. Tests and xtask are outside the rule.
 
 End of the epic: the standard checks, `cargo test --workspace`, the ignored run, `cargo xtask preflight`, and the full journey run (Epics 15 and 16) on fresh kind clusters, up to 12 orgs each. This is the restructure's closing check.
 
@@ -336,9 +316,7 @@ Next: the restructure ends. The review work in the Claude Doc "wamn review" foll
 - After the first kind run:
   - Charts: `enablePDB: false` for single-instance project clusters; delete the dropped `affinity` and `topologySpreadConstraints` host values, or render them.
 - An org login (control, apply) can INSERT `identity.principals`, and the policy checks only a bound identity, not the org. Least-privilege check: should these logins insert principals at all?
-- Crate graph review (2026-11-21), not in Epic 17:
-  - `wamn-registry` and `wamn-package` (30 dependents each) link sqlx with postgres, so `wamn-web`, `wamn-edge`, `wamn-event` and `wamn-broker` compile a database driver. The `sqlx::Type` impls must stay with their types (orphan rule), so a fix needs a feature or wrapper types. Decide with the edge device design, and add sqlx to the edge dependency lint then.
-  - "ProjectDatabase lives in wamn-connection": no type with that name exists at 07a737a88. Record it only when the exact type and file are known.
+- Crate graph review (2026-11-21): `wamn-registry` and `wamn-package` (30 dependents each) link sqlx with postgres, so `wamn-web`, `wamn-edge`, `wamn-event` and `wamn-broker` compile a database driver. The `sqlx::Type` impls must stay with their types (orphan rule), so a fix needs a feature or wrapper types. The Epic 17 re-scout covers it.
 
 # Part 2: Review log
 
@@ -2250,3 +2228,9 @@ Epic 14 closed on 2026-11-21 after review. cargo test --workspace: 617 passed in
 - Issues 17.0 to 17.9: 17.0 the plan; 17.1 the grant SQL moves to `wamn-authentication`; 17.2 the cloud metadata client leaves `wamn-oci`; 17.3 `test-support/resources` becomes `test-support/infrastructure`; 17.4 `wamn-postgres` splits into two crates; 17.5 the plain shared types leave `wamn-engine`; 17.6 `wamn-environment` splits by job; 17.7 `wiring.rs` leaves `wamn-routes` with the "wiring" rename, a schema change with no migration; 17.8 the dev-dependency cycles go where the moves allow; 17.9 the dependency lint covers every crate. Reason: the crate graph review of 2026-11-21.
 - sqlx in `wamn-registry` and `wamn-package` stays out, because it waits for the edge device design. The "ProjectDatabase" claim stays out, because no such type exists.
 - The full journey run on fresh clusters runs once, at the end of this epic, as the restructure's closing check. Reason: the ruling of 2026-11-22, "finishing Epic 16".
+
+**Ruled (D, 2026-11-22): Epic 17 re-scope.**
+- Rule (ports and adapters). Domain crates hold types and traits only. They link no sqlx, kube, k8s-openapi, wasmtime, wasmtime-*, wash-runtime, reqwest, hyper or any other client or runtime crate, and they derive no sqlx traits. Implementation crates implement domain traits for one technology: Postgres, Kubernetes, the wasmCloud host (plugins), HTTP, NATS, OCI. They depend on domain crates, never the reverse. Binaries (`services/*` and the CLI) wire implementations to domains. Tests and xtask are outside the rule.
+- Reason: the crate graph mixes interfaces with their implementations, so each move cut one edge and nothing kept the next feature from mixing them again. For example, `wamn-registry` has 24 sqlx derives and 26 `sqlx::query` calls while 30 crates take names from it. `wamn-package` has 21 sqlx derives on manifest types. The traits `AuthorizationStore`, `CredentialStore`, `ConnectionCache` and `ProjectDatabase` sit in the same crates as their implementations.
+- Correction: the earlier claim that no type named `ProjectDatabase` exists was wrong. It is a trait in `crates/connection/src/database.rs:8`.
+- The earlier Epic 17 rulings of 2026-11-22 (the scout choices, the crate names, and the correction to 17.4) wait for the re-scout and can change. They are recorded on wamn-rkjb3.
