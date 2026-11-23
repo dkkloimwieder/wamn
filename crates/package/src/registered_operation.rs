@@ -101,6 +101,12 @@ impl<'r> sqlx::Decode<'r, sqlx::Postgres> for RegisteredOperation {
     }
 }
 
+impl std::borrow::Borrow<str> for RegisteredOperation {
+    fn borrow(&self) -> &str {
+        self.as_str()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::RegisteredOperation;
@@ -131,11 +137,5 @@ mod tests {
                 "{input:?}"
             );
         }
-    }
-}
-
-impl std::borrow::Borrow<str> for RegisteredOperation {
-    fn borrow(&self) -> &str {
-        self.as_str()
     }
 }
