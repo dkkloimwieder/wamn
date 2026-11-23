@@ -12,15 +12,13 @@ test = false
 
 [dependencies]
 wamn-oci-reference.workspace = true
+wamn-gcp-metadata.workspace = true
 wamn-package.workspace = true
 wamn-digest = { workspace = true }
 oci-client = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true, features = ["time", "fs", "net", "io-util", "rt", "macros", "sync"] }
-wamn-http-client = { workspace = true, features = ["tls12"] }
 anyhow = { workspace = true }
-bytes = { workspace = true }
-hyper = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 tracing = { workspace = true }
 
@@ -30,9 +28,6 @@ wasmtime = { workspace = true }
 tokio = { workspace = true, features = ["test-util", "macros", "net", "io-util", "rt"] }
 wamn-engine = { workspace = true }
 wat = "=1.254.2"
-hyper = { workspace = true, features = ["server", "http1"] }
-hyper-util = { workspace = true, features = ["tokio"] }
-http-body-util = { workspace = true }
 wamn-test-infrastructure = { workspace = true }
 
 [lints]

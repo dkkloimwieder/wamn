@@ -114,8 +114,8 @@ pub async fn run(cli: Cli) -> Result<(), IdentityServiceError> {
             None => config,
         };
         let envelope = match settings.envelope {
-            Configuration::Local => Envelope::from_file(Path::new(LOCAL_KEY)),
-            configuration @ Configuration::Gcp { .. } => Envelope::open(&configuration),
+            Configuration::Local => wamn_key::from_file(Path::new(LOCAL_KEY)),
+            configuration @ Configuration::Gcp { .. } => wamn_key::open(&configuration),
         }
         .map_err(|_| IdentityServiceError::new("open signing key envelope failed"))?;
         return run_server(config, envelope).await;

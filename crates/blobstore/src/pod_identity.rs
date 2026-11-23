@@ -6,14 +6,14 @@ use object_store::{
     CredentialProvider,
     gcp::{GcpCredential, GcpSigningCredential},
 };
-use wamn_oci::package_artifact::metadata::Metadata;
+use wamn_gcp_metadata::Metadata;
 
 #[derive(Debug)]
-pub struct PodToken(Arc<Metadata>);
+pub(crate) struct PodToken(Arc<Metadata>);
 #[derive(Debug)]
-pub struct PodSigner(Arc<Metadata>);
+pub(crate) struct PodSigner(Arc<Metadata>);
 
-pub fn providers() -> anyhow::Result<(Arc<PodToken>, Arc<PodSigner>)> {
+pub(crate) fn providers() -> anyhow::Result<(Arc<PodToken>, Arc<PodSigner>)> {
     let metadata = Metadata::shared()?;
     Ok((
         Arc::new(PodToken(Arc::clone(&metadata))),

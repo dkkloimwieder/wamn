@@ -12,6 +12,7 @@ test = false
 
 [dependencies]
 wamn-envelope.workspace = true
+wamn-key.workspace = true
 async-nats = { workspace = true, features = ["aws-lc-rs", "nkeys"] }
 wamn-identity-client.workspace = true
 wamn-kubernetes.workspace = true

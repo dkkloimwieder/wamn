@@ -6290,7 +6290,7 @@ dependencies = [
  "wamn-connection-type",
  "wamn-digest",
  "wamn-engine",
- "wamn-envelope",
+ "wamn-gcp-metadata",
  "wamn-identity-protocol",
  "wamn-operation",
  "wamn-package",
@@ -6527,6 +6527,7 @@ dependencies = [
  "wamn-identity",
  "wamn-identity-client",
  "wamn-identity-protocol",
+ "wamn-key",
  "wamn-kubernetes",
  "wamn-package",
  "wamn-platform-install",
@@ -6656,21 +6657,10 @@ dependencies = [
 name = "wamn-envelope"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "async-trait",
- "base64 0.22.1",
- "bytes",
- "hex",
- "hyper",
- "object_store",
  "ring",
  "serde",
- "serde_json",
- "sha2 0.11.0",
- "tempfile",
  "tokio",
- "wamn-http-client",
- "wamn-oci",
  "zeroize",
 ]
 
@@ -6752,6 +6742,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "wamn-gcp-metadata"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "serde",
+ "serde_json",
+ "tokio",
+ "wamn-http-client",
+]
+
+[[package]]
 name = "wamn-grant-tests"
 version = "0.1.0"
 dependencies = [
@@ -6826,6 +6831,7 @@ dependencies = [
  "wamn-identity",
  "wamn-identity-client",
  "wamn-identity-protocol",
+ "wamn-key",
  "wamn-oci-reference",
  "wamn-operation",
  "wamn-package",
@@ -6931,6 +6937,7 @@ dependencies = [
  "wamn-envelope",
  "wamn-environment",
  "wamn-identity-protocol",
+ "wamn-key",
  "wamn-platform-install",
  "wamn-postgres",
  "wamn-provision",
@@ -7003,6 +7010,7 @@ dependencies = [
  "wamn-identity",
  "wamn-identity-client",
  "wamn-identity-protocol",
+ "wamn-key",
  "wamn-kubernetes",
  "wamn-platform-install",
  "wamn-postgres",
@@ -7051,6 +7059,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "wamn-key"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "base64 0.22.1",
+ "bytes",
+ "hex",
+ "hyper",
+ "serde_json",
+ "sha2 0.11.0",
+ "tempfile",
+ "tokio",
+ "wamn-envelope",
+ "wamn-gcp-metadata",
+ "wamn-http-client",
+ "zeroize",
+]
+
+[[package]]
 name = "wamn-kubernetes"
 version = "0.1.0"
 dependencies = [
@@ -7086,10 +7113,6 @@ name = "wamn-oci"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "bytes",
- "http-body-util",
- "hyper",
- "hyper-util",
  "oci-client",
  "serde",
  "serde_json",
@@ -7097,7 +7120,7 @@ dependencies = [
  "tracing",
  "wamn-digest",
  "wamn-engine",
- "wamn-http-client",
+ "wamn-gcp-metadata",
  "wamn-oci-reference",
  "wamn-package",
  "wamn-test-infrastructure",

@@ -29,6 +29,7 @@ wamn-identity-protocol.workspace = true
 # The application role names of a project database.
 
 [dev-dependencies]
+wamn-key.workspace = true
 wamn-environment = { workspace = true }
 sqlx = { workspace = true, features = ["macros", "migrate"] }
 url = { workspace = true }

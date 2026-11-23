@@ -8,13 +8,14 @@ use hyper::Request;
 use tokio::sync::{Mutex, OnceCell};
 use wamn_http_client::HttpClient;
 
-use crate::package_artifact::registry_credentials::METADATA_HOST_ENV;
+const METADATA_HOST_ENV: &str = "GCE_METADATA_HOST";
 
 const TIMEOUT: Duration = Duration::from_secs(5);
 const BODY_LIMIT: usize = 65_536;
 
+/// A malformed or incomplete token returned by the metadata server.
 #[derive(Debug)]
-pub(crate) struct InvalidToken {
+pub struct InvalidToken {
     pub incomplete: bool,
 }
 impl std::fmt::Display for InvalidToken {

@@ -35,6 +35,7 @@ pub mod files;
 mod host;
 pub mod intake;
 pub mod plugin;
+mod pod_identity;
 pub mod store;
 pub mod wit_error;
 

@@ -812,7 +812,7 @@ The host binds the principal that created the state before it reads or writes ot
 Only the host connection role and the control role receive table grants.
 Each row uses a fresh AES-256 data key and AES-256-GCM encryption.
 An envelope key protects that data key.
-The shared [encryption module](../../crates/envelope/src/encryption.rs) supports regional Cloud KMS and a local key file.
+`wamn-key` wraps data keys through regional Cloud KMS or with a key from a local file. [Key providers](../../crates/key/src/lib.rs)
 The host reads its provider from the `oauth_encryption` field in its settings file.
 Use `gcp` for Cloud KMS or `local` for a key file.
 [Deployment instructions](../operations/gcp.md#49-platform-install-inputs) describe that configuration.

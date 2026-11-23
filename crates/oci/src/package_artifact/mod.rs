@@ -17,7 +17,6 @@
 //! `wamn-engine`; the artifact reference rule is in `wamn-oci-reference`.
 
 pub mod integration;
-pub mod metadata;
 pub mod registry_credentials;
 pub mod registry_pull;
 mod registry_source;

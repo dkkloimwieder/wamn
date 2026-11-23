@@ -203,10 +203,10 @@ pub async fn serve(config: Configuration) -> anyhow::Result<()> {
         .map(|configuration| {
             let envelope = match configuration {
                 wamn_envelope::encryption::Configuration::Local => {
-                    wamn_envelope::encryption::Envelope::from_file(Path::new(OAUTH_KEY))
+                    wamn_key::from_file(Path::new(OAUTH_KEY))
                 }
                 wamn_envelope::encryption::Configuration::Gcp { .. } => {
-                    wamn_envelope::encryption::Envelope::open(configuration)
+                    wamn_key::open(configuration)
                 }
             }?;
             let envelope = Arc::new(envelope);

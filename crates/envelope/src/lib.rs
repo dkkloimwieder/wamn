@@ -1,4 +1,3 @@
-//! Envelope encryption and pod credentials shared by identity and connection consumers.
+//! Shared encryption envelopes.
 
 pub mod encryption;
-pub mod pod_identity;

@@ -54,7 +54,9 @@ Each library has one concern. Directory names follow crate names without the `wa
 | `crates/postgres` | `wamn-postgres`: PostgreSQL connection configuration, transport and run storage |
 | `crates/operation` | `wamn-operation`: host operation transactions and database authority |
 | `crates/http` | `wamn-http`: authorized outbound HTTP and OAuth |
-| `crates/envelope` | `wamn-envelope`: shared encryption envelopes and pod credentials |
+| `crates/envelope` | `wamn-envelope` owns envelope encryption and the wrapping key interface |
+| `crates/gcp-metadata` | `wamn-gcp-metadata` reads access tokens and account email from the Google Cloud metadata server |
+| `crates/key` | `wamn-key` wraps data keys with a local key or through Cloud KMS |
 | `crates/connection` | `wamn-connection`: connection facts, credentials, resource leases, invocation context, and bound Wasm import dispatch |
 | `crates/blobstore` | `wamn-blobstore`: authorized object storage |
 | `crates/authentication` | `wamn-authentication`: route authentication and session verification |

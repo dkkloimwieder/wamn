@@ -526,11 +526,9 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         .as_ref()
         .map(|config| match config {
             wamn_envelope::encryption::Configuration::Local => {
-                wamn_envelope::encryption::Envelope::from_file(Path::new(OAUTH_KEY))
+                wamn_key::from_file(Path::new(OAUTH_KEY))
             }
-            wamn_envelope::encryption::Configuration::Gcp { .. } => {
-                wamn_envelope::encryption::Envelope::open(config)
-            }
+            wamn_envelope::encryption::Configuration::Gcp { .. } => wamn_key::open(config),
         })
         .transpose()?
         .map(Arc::new);

@@ -77,7 +77,7 @@ async fn platform() -> Result<Platform> {
     let seed = ring::rand::generate::<[u8; 32]>(&ring::rand::SystemRandom::new())
         .map_err(|_| anyhow::anyhow!("generate the envelope key"))?;
     key.write_all(&seed.expose())?;
-    let envelope = Envelope::from_file(key.path())?;
+    let envelope = wamn_key::from_file(key.path())?;
     let bootstrap = nats::bootstrap(
         &mut db,
         &settings.issuer,

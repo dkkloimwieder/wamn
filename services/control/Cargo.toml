@@ -12,6 +12,7 @@ k8s-openapi = { workspace = true }
 wamn-routes.workspace = true
 wamn-package.workspace = true
 wamn-envelope.workspace = true
+wamn-key.workspace = true
 wamn-digest.workspace = true
 anyhow.workspace = true
 uuid = { workspace = true, features = ["v4"] }

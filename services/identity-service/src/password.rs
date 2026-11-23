@@ -821,7 +821,7 @@ pub(crate) mod tests {
             IdentityConfig::new(issuer, url.as_str())
                 .unwrap()
                 .with_local_mail(mail_path.clone()),
-            wamn_envelope::encryption::Envelope::from_file(&key).unwrap(),
+            wamn_key::from_file(&key).unwrap(),
         )
         .await
         .unwrap();

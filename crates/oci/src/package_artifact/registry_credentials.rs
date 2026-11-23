@@ -6,6 +6,7 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+use wamn_gcp_metadata::{InvalidToken, Metadata};
 
 /// Stable classification of a refused registry credential file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -265,15 +266,12 @@ fn basic_auth<'a>(
     Ok(Some((username, password)))
 }
 
-/// The variable Google's client libraries read for the metadata server's host.
-pub const METADATA_HOST_ENV: &str = "GCE_METADATA_HOST";
-
 /// Ask the shared metadata service for this registry's access token.
 pub async fn read_metadata_registry_credentials(
     registry: &str,
 ) -> Result<RegistryCredentials, RegistryCredentialsError> {
     let unavailable = |source: anyhow::Error| {
-        let token = source.downcast_ref::<crate::package_artifact::metadata::InvalidToken>();
+        let token = source.downcast_ref::<InvalidToken>();
         let malformed = token.is_some_and(|error| !error.incomplete);
         let incomplete = token.is_some_and(|error| error.incomplete);
         RegistryCredentialsError::metadata(
@@ -293,7 +291,7 @@ pub async fn read_metadata_registry_credentials(
             Some(RegistryCredentialsErrorSource::Http(source)),
         )
     };
-    let metadata = crate::package_artifact::metadata::Metadata::shared().map_err(unavailable)?;
+    let metadata = Metadata::shared().map_err(unavailable)?;
     let token = metadata.token().await.map_err(unavailable)?;
     Ok(RegistryCredentials {
         username: "oauth2accesstoken".into(),
