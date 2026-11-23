@@ -1,8 +1,116 @@
-//! Dependency declarations inherit identities from their owning workspace.
+//! Dependency boundaries and identities in each workspace.
 
 use super::Problems;
 use anyhow::{Context as _, ensure};
+use cargo_metadata::{DependencyKind, Metadata, PackageId};
+use std::collections::{HashMap, hash_map::Entry};
 use std::path::Path;
+
+const WORKFLOW_GRAPH_REFUSED: &[&str] = &[
+    "wamn-postgres",
+    "wamn-provision",
+    "wamn-kubernetes",
+    "wamn-engine",
+    "wamn-operation",
+    "wamn-http",
+    "wamn-http-client",
+    "wamn-identity-client",
+    "wamn-broker",
+    "wamn-oci",
+    "wamn-build",
+    "wamn-codegen",
+];
+
+const TEST_INFRASTRUCTURE: &str = "wamn-test-infrastructure";
+const TEST_AND_TOOL_PACKAGES: &[&str] = &[
+    TEST_INFRASTRUCTURE,
+    "wamn-fixture-package",
+    "wamn-grant-tests",
+    "wamn-journey-tests",
+    "wamn-receiving-tests",
+    "wamn-wms-tests",
+    "xtask",
+    "connection-http-standard",
+    "fixture",
+    "fixture-overlay",
+];
+
+pub(crate) fn check_boundaries(root: &Path) -> anyhow::Result<()> {
+    for manifest in ["Cargo.toml", "apps/Cargo.toml"] {
+        check_workspace_boundaries(&root.join(manifest))?;
+    }
+    Ok(())
+}
+
+fn check_workspace_boundaries(manifest: &Path) -> anyhow::Result<()> {
+    let metadata = cargo_metadata::MetadataCommand::new()
+        .manifest_path(manifest)
+        .features(cargo_metadata::CargoOpt::AllFeatures)
+        .other_options(vec!["--locked".into(), "--offline".into()])
+        .exec()
+        .with_context(|| format!("resolve dependencies from {}", manifest.display()))?;
+    let members = metadata.workspace_packages();
+    if let Some(workflow) = members
+        .iter()
+        .find(|package| package.name.as_str() == "wamn-workflow-graph")
+    {
+        check_paths(&metadata, [&workflow.id], WORKFLOW_GRAPH_REFUSED, |edge| {
+            edge == DependencyKind::Normal
+        })?;
+    }
+    let products = members
+        .into_iter()
+        .filter(|package| !TEST_AND_TOOL_PACKAGES.contains(&package.name.as_str()))
+        .map(|package| &package.id);
+    check_paths(&metadata, products, &[TEST_INFRASTRUCTURE], |edge| {
+        matches!(edge, DependencyKind::Normal | DependencyKind::Build)
+    })
+}
+
+fn check_paths<'a>(
+    metadata: &'a Metadata,
+    starts: impl IntoIterator<Item = &'a PackageId>,
+    refused: &[&str],
+    follows: impl Fn(DependencyKind) -> bool,
+) -> anyhow::Result<()> {
+    let resolve = metadata.resolve.as_ref().context("resolved dependencies")?;
+    let nodes: HashMap<_, _> = resolve.nodes.iter().map(|node| (&node.id, node)).collect();
+    let names: HashMap<_, _> = metadata
+        .packages
+        .iter()
+        .map(|package| (&package.id, package.name.as_str()))
+        .collect();
+    let mut parents = HashMap::new();
+    let mut pending = Vec::new();
+    for start in starts {
+        pending.push((start, None));
+        while let Some((id, parent)) = pending.pop() {
+            let Entry::Vacant(entry) = parents.entry(id) else {
+                continue;
+            };
+            entry.insert(parent);
+            let name = names[id];
+            if refused.contains(&name) {
+                let mut path: Vec<_> = std::iter::successors(Some(id), |id| parents[id])
+                    .map(|id| names[id])
+                    .collect();
+                path.reverse();
+                anyhow::bail!(
+                    "{} links forbidden dependency {name}: {}",
+                    names[start],
+                    path.join(" -> ")
+                );
+            }
+            pending.extend(nodes[id].deps.iter().rev().filter_map(|dep| {
+                dep.dep_kinds
+                    .iter()
+                    .any(|edge| follows(edge.kind))
+                    .then_some((&dep.pkg, Some(id)))
+            }));
+        }
+    }
+    Ok(())
+}
 
 pub(super) fn report_problems(root: &Path, problems: &mut Problems) {
     for manifest in ["Cargo.toml", "apps/Cargo.toml"] {
