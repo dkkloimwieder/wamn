@@ -358,18 +358,12 @@ pub mod schema;
 mod transaction_identity;
 pub use transaction_identity::{bind_transaction_identity, transaction_identity_sql};
 
-#[cfg(feature = "host")]
 mod checkout;
-#[cfg(feature = "host")]
 mod host_project;
-#[cfg(feature = "host")]
 mod pool;
-#[cfg(feature = "host")]
-pub mod types;
 
-#[cfg(feature = "host")]
+pub use checkout::CheckoutError;
 pub use host_project::HostProject;
-#[cfg(feature = "host")]
 pub use pool::{
     ClassCredentials, CredentialProvider, DEFAULT_PROJECT, Object, ProjectConfig, ProjectPool,
     ResolvedCredential, StaticCredentialProvider, WamnPostgres, WamnPostgresConfig,

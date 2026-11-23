@@ -7122,6 +7122,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "chrono",
  "futures-util",
  "opentelemetry",
  "postgres-protocol",
@@ -7144,6 +7145,7 @@ dependencies = [
  "wamn-postgres",
  "wamn-registry",
  "wamn-run-state",
+ "wamn-scalar",
  "wash-runtime",
 ]
 
@@ -7205,9 +7207,7 @@ dependencies = [
  "tokio",
  "tracing",
  "url",
- "uuid",
  "wamn-application",
- "wamn-engine",
  "wamn-identity-protocol",
  "wamn-principal",
  "wamn-provision",

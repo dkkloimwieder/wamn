@@ -16,6 +16,7 @@ serde = { workspace = true, features = ["derive"] }
 wamn-authentication = { workspace = true }
 anyhow = { workspace = true }
 async-trait = { workspace = true }
+chrono = { workspace = true, features = ["std"] }
 futures-util = { workspace = true }
 opentelemetry = { workspace = true, features = ["metrics", "trace"] }
 postgres-protocol = { workspace = true }
@@ -30,9 +31,10 @@ wamn-digest = { workspace = true }
 wamn-engine = { workspace = true }
 wamn-event = { workspace = true }
 wamn-identity-protocol = { workspace = true, features = ["sqlx"] }
-wamn-postgres = { workspace = true, features = ["host"] }
+wamn-postgres.workspace = true
 wamn-registry = { workspace = true }
 wamn-run-state = { workspace = true }
+wamn-scalar.workspace = true
 wash-runtime = { workspace = true }
 
 [dev-dependencies]

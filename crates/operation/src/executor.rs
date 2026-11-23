@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use wamn_identity_protocol::{AuthorityClass, PlatformComponent};
 use wamn_postgres::WamnPostgres;
-use wamn_run_state::run_store::{ProductionLeaseError, ProductionLeaseErrorType};
+use wamn_run_state::run_store::ProductionLeaseError;
 
 use super::{OperationHost, resources::StatementConnectionGuard, transactions};
 
@@ -101,13 +101,10 @@ async fn open_executor_transaction(
     identity: ExecutorIdentity<'_>,
     read_only: bool,
 ) -> Result<StatementConnectionGuard, ProductionLeaseError> {
-    let failure = |operation, error| {
-        ProductionLeaseError::with_source(ProductionLeaseErrorType::Storage, operation, error)
-    };
     let (connection, policy) = postgres
         .checkout_platform(project, AuthorityClass::Platform)
         .await
-        .map_err(|error| failure("checkout executor connection", error))?;
+        .map_err(|error| ProductionLeaseError::storage("checkout executor connection", error))?;
     // Cancellation destroys a connection whose transaction has not ended.
     let mut connection =
         StatementConnectionGuard::new(connection, Arc::clone(postgres.destroyed_connections()));
@@ -133,7 +130,7 @@ async fn open_executor_transaction(
         policy.statement_timeout_ms,
     )
     .await
-    .map_err(|error| failure("begin executor transaction", error))?;
+    .map_err(|error| ProductionLeaseError::storage("begin executor transaction", error))?;
     Ok(connection)
 }
 

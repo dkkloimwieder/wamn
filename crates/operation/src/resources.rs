@@ -7,10 +7,10 @@ use wamn_authority::effect_span::{
     EffectIdentity, EffectRun, effect_span, record_effect_ms, record_graph,
 };
 use wamn_postgres::{Object, destroy_connection};
-use wamn_postgres::types::{connection_lost, map_pg_error};
 use wash_runtime::engine::ctx::{ActiveCtx, SharedCtx};
 use wash_runtime::wasmtime::component::{Accessor, Resource};
 
+use super::types::{checkout_pg_error, connection_lost, map_pg_error};
 use super::{OperationHost, PgError, SqlValue, WAMN_POSTGRES_ID, client, scope_registry, statement_wit};
 
 #[derive(Debug)]
@@ -244,7 +244,8 @@ pub(super) async fn prepare_statement_transaction(
     let (connection, policy, authority) = plugin
         .pools
         .checkout_workload(component_id, project, &project_env_key)
-        .await?;
+        .await
+        .map_err(checkout_pg_error)?;
     let connection =
         StatementConnectionGuard::new(connection, Arc::clone(plugin.pools.destroyed_connections()));
     let identity = super::transactions::prepare_identity(

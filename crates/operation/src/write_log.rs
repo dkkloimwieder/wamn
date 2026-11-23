@@ -22,7 +22,7 @@ use std::sync::Arc;
 
 use super::operation_transaction::OperationTransaction;
 use super::resources::{StatementConnectionGuard, take_conn};
-use wamn_postgres::types::{PgParam, map_pg_error};
+use super::types::{PgParam, checkout_pg_error, map_pg_error};
 use super::{PgError, SqlValue, OperationHost};
 
 /// The complete success body of a generated delete, before request correlation.
@@ -401,8 +401,10 @@ impl WriteLogStore {
     ) -> Result<Vec<Row>, PgError> {
         let (mut connection, _pool) = self
             .postgres
-            .pools.checkout_guest(&self.project, &self.project_env_key)
-            .await?;
+            .pools
+            .checkout_guest(&self.project, &self.project_env_key)
+            .await
+            .map_err(checkout_pg_error)?;
         let mut query = sqlx::query(sql);
         for value in &params {
             query = query.bind(PgParam(value, None));

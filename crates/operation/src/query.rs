@@ -19,7 +19,7 @@ use super::resources::{
     plugin_of, record_query_ms, restore_connection, take_conn,
 };
 use super::scope_registry;
-use wamn_postgres::types::{PgParam, columns_of, decode_row, map_pg_error};
+use super::types::{PgParam, checkout_pg_error, columns_of, decode_row, map_pg_error};
 use super::{PgError, SqlValue};
 
 type WasmResult<T> = wash_runtime::wasmtime::Result<T>;
@@ -68,7 +68,11 @@ pub(super) async fn dynamic_query<T: 'static + Send>(
             let started = std::time::Instant::now();
             let result = async {
                 let project_key = scope_registry::require_project_env_key(&plugin.scopes, &component)?;
-                let (connection, policy) = plugin.pools.checkout_dynamic(&project, &project_key).await?;
+                let (connection, policy) = plugin
+                    .pools
+                    .checkout_dynamic(&project, &project_key)
+                    .await
+                    .map_err(checkout_pg_error)?;
                 let mut connection =
                     StatementConnectionGuard::new(connection, Arc::clone(plugin.pools.destroyed_connections()));
                 let schema = scope_registry::schema_for(&plugin.scopes, &component);

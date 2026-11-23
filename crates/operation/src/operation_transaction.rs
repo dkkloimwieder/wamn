@@ -5,12 +5,12 @@
 
 use crate::scope_registry;
 use std::sync::{Arc, Mutex};
-use wamn_postgres::types::map_pg_error;
 
 use super::resources::{
     PgTransaction, StatementConnectionGuard, prepare_statement_transaction, take_conn,
     with_txn_conn,
 };
+use super::types::map_pg_error;
 use super::{PgError, OperationHost};
 
 /// The host transaction of one operation request element.

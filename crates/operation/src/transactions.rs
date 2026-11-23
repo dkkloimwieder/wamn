@@ -10,7 +10,7 @@ use wamn_identity_protocol::AuthorityClass;
 use crate::PgError;
 use crate::scope_registry::{valid_runner, valid_schema};
 use wamn_postgres::transaction_identity_sql;
-use wamn_postgres::types::map_pg_error;
+use super::types::map_pg_error;
 
 pub(super) fn causation_sql(run: &Causation) -> String {
     let json = serde_json::to_string(run).expect("Causation serializes to JSON");

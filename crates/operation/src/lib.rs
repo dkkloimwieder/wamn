@@ -27,6 +27,7 @@ mod query;
 mod resources;
 pub mod scope_registry;
 mod transactions;
+mod types;
 pub mod write_log;
 
 pub use executor::OperationDatabase;

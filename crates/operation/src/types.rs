@@ -7,7 +7,7 @@ use sqlx::{
     Column as _, Decode, Encode, Row as _, Statement as _, Type, TypeInfo as _, ValueRef as _,
 };
 
-use wamn_engine::entry_operation::postgres_types::{PgError, SqlValue};
+use super::{PgError, SqlValue};
 
 pub fn columns_of(stmt: &PgStatement) -> Vec<String> {
     stmt.columns()
@@ -42,7 +42,7 @@ pub fn decode_row(row: &PgRow) -> Result<Vec<SqlValue>, PgError> {
                         .map_err(|e| map_pg_error(&e))?
                         .0,
                 ),
-                "TIMESTAMPTZ" => SqlValue::Timestamptz(canonical_timestamptz(
+                "TIMESTAMPTZ" => SqlValue::Timestamptz(wamn_scalar::format_timestamptz(
                     row.try_get(index).map_err(|e| map_pg_error(&e))?,
                 )),
                 "JSON" | "JSONB" => SqlValue::Json(
@@ -70,6 +70,10 @@ pub fn decode_row(row: &PgRow) -> Result<Vec<SqlValue>, PgError> {
             Ok(decoded)
         })
         .collect()
+}
+
+pub(super) fn checkout_pg_error(_: wamn_postgres::CheckoutError) -> PgError {
+    PgError::ConnectionUnavailable
 }
 
 pub fn map_pg_error(error: &sqlx::Error) -> PgError {
@@ -242,8 +246,4 @@ impl Encode<'_, sqlx::Postgres> for PgParam<'_> {
             ),
         }
     }
-}
-
-pub fn canonical_timestamptz(value: DateTime<Utc>) -> String {
-    wamn_scalar::format_timestamptz(value)
 }

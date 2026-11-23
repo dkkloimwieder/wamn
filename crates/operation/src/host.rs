@@ -7,9 +7,10 @@ use anyhow::Context as _;
 use wamn_application::result_signing::ResultSigner;
 use wamn_authentication::authorization::Authorization;
 use wamn_identity_protocol::AuthorityClass;
-use wamn_postgres::WamnPostgres;
+use wamn_postgres::{CheckoutError, WamnPostgres};
 
 use crate::transactions;
+use crate::types::checkout_pg_error;
 
 /// Host plugin for guest and native operations over PostgreSQL.
 pub struct OperationHost {
@@ -188,7 +189,11 @@ impl OperationHost {
             project_env_key,
             principal_id,
         )
-        .await?;
+        .await
+        .map_err(|error| match error.downcast::<CheckoutError>() {
+            Ok(error) => checkout_pg_error(error).into(),
+            Err(error) => error,
+        })?;
         Ok(grants
             .active
             .then(|| wamn_authority::auth_cache::role_caller(principal_id, role, &grants.roles))

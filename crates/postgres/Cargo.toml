@@ -5,23 +5,16 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
-[features]
-host = ["dep:chrono", "dep:tracing", "dep:uuid", "dep:wamn-application", "dep:wamn-engine", "dep:wamn-registry", "dep:wamn-role", "dep:wamn-scalar", "tokio/sync"]
-
 [dependencies]
-wamn-application = { workspace = true, optional = true }
-chrono = { workspace = true, optional = true, features = ["std"] }
-tracing = { workspace = true, optional = true }
-uuid = { workspace = true, optional = true }
-wamn-engine = { workspace = true, optional = true }
-wamn-registry = { workspace = true, optional = true }
-wamn-role = { workspace = true, optional = true }
-wamn-scalar = { workspace = true, optional = true }
+wamn-application.workspace = true
+tracing.workspace = true
+wamn-registry.workspace = true
+wamn-role.workspace = true
 wamn-identity-protocol = { workspace = true, features = ["sqlx"] }
 postgres-protocol.workspace = true
 wamn-principal = { workspace = true, features = ["sqlx"] }
 url.workspace = true
-tokio = { workspace = true, features = ["fs"] }
+tokio = { workspace = true, features = ["fs", "sync"] }
 anyhow.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
@@ -32,10 +25,11 @@ workspace = true
 
 [[test]]
 name = "project_schema"
-required-features = ["host"]
 
 [dev-dependencies]
+chrono = { workspace = true, features = ["std"] }
 sqlx = { workspace = true, features = ["macros", "migrate"] }
 wamn-provision.workspace = true
+wamn-scalar.workspace = true
 wamn-test-infrastructure.workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }
