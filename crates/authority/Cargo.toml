@@ -10,7 +10,6 @@ wamn-package = { workspace = true, features = ["sqlx"] }
 wamn-connection-type.workspace = true
 wamn-digest.workspace = true
 anyhow = { workspace = true }
-async-nats = { workspace = true, features = ["jetstream", "kv"] }
 futures-util = { workspace = true }
 hyper = { workspace = true, features = ["client", "http1", "http2"] }
 opentelemetry = { workspace = true, features = ["metrics", "trace"] }

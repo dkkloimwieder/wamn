@@ -6237,7 +6237,6 @@ name = "wamn-authority"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-nats",
  "futures-util",
  "hyper",
  "opentelemetry",
@@ -6471,7 +6470,6 @@ name = "wamn-connection"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-nats",
  "async-trait",
  "moka",
  "serde",
