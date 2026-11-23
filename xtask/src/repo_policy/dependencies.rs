@@ -1,9 +1,10 @@
 //! Dependency boundaries and identities in each workspace.
 
 use super::Problems;
+use crate::process;
 use anyhow::{Context as _, ensure};
 use cargo_metadata::{DependencyKind, Metadata, PackageId};
-use std::collections::{HashMap, hash_map::Entry};
+use std::collections::{BTreeSet, HashMap, hash_map::Entry};
 use std::path::Path;
 
 const WORKFLOW_GRAPH_REFUSED: &[&str] = &[
@@ -21,6 +22,8 @@ const WORKFLOW_GRAPH_REFUSED: &[&str] = &[
     "wamn-codegen",
 ];
 
+const WITHOUT_WASM_RUNTIME: &[&str] = &["wamn-application", "wamn-postgres", "wamn-cdc-reader"];
+
 const TEST_INFRASTRUCTURE: &str = "wamn-test-infrastructure";
 const TEST_AND_TOOL_PACKAGES: &[&str] = &[
     TEST_INFRASTRUCTURE,
@@ -35,11 +38,11 @@ const TEST_AND_TOOL_PACKAGES: &[&str] = &[
     "fixture-overlay",
 ];
 
-pub(crate) fn check_boundaries(root: &Path) -> anyhow::Result<()> {
+pub(crate) async fn check_boundaries(root: &Path) -> anyhow::Result<()> {
     for manifest in ["Cargo.toml", "apps/Cargo.toml"] {
         check_workspace_boundaries(&root.join(manifest))?;
     }
-    Ok(())
+    check_shared_docker_build(root).await
 }
 
 fn check_workspace_boundaries(manifest: &Path) -> anyhow::Result<()> {
@@ -54,23 +57,107 @@ fn check_workspace_boundaries(manifest: &Path) -> anyhow::Result<()> {
         .iter()
         .find(|package| package.name.as_str() == "wamn-workflow-graph")
     {
-        check_paths(&metadata, [&workflow.id], WORKFLOW_GRAPH_REFUSED, |edge| {
-            edge == DependencyKind::Normal
-        })?;
+        check_paths(
+            &metadata,
+            [&workflow.id],
+            |name| WORKFLOW_GRAPH_REFUSED.contains(&name),
+            |edge| edge == DependencyKind::Normal,
+        )?;
     }
+    let normal_or_build = |edge| matches!(edge, DependencyKind::Normal | DependencyKind::Build);
+    let without_runtime = members
+        .iter()
+        .filter(|package| WITHOUT_WASM_RUNTIME.contains(&package.name.as_str()))
+        .map(|package| &package.id);
+    check_paths(
+        &metadata,
+        without_runtime,
+        wasm_runtime_refused,
+        normal_or_build,
+    )?;
+
     let products = members
         .into_iter()
         .filter(|package| !TEST_AND_TOOL_PACKAGES.contains(&package.name.as_str()))
         .map(|package| &package.id);
-    check_paths(&metadata, products, &[TEST_INFRASTRUCTURE], |edge| {
-        matches!(edge, DependencyKind::Normal | DependencyKind::Build)
-    })
+    check_paths(
+        &metadata,
+        products,
+        |name| name == TEST_INFRASTRUCTURE,
+        normal_or_build,
+    )
+}
+
+fn wasm_runtime_refused(name: &str) -> bool {
+    matches!(name, "wasmtime" | "wash-runtime") || name.starts_with("wasmtime-")
+}
+
+async fn check_shared_docker_build(root: &Path) -> anyhow::Result<()> {
+    // Dockerfile:58, build-native. Keep Cargo's native target and default features.
+    let mut args = vec![
+        "tree",
+        "--locked",
+        "--offline",
+        "--edges=normal,build",
+        "--prefix=depth",
+        "--format= {p}",
+        "--color=never",
+        "--package=wamn-host",
+        "--package=wamn-control",
+        "--package=wamn-oci",
+        "--package=wamn-cli",
+        "--package=wamn-cdc-reader",
+        "--package=wamn-identity-service",
+    ];
+    let tree = process::output(root, "cargo", &args).await?;
+    let mut refused = BTreeSet::new();
+    for line in tree.lines().filter(|line| !line.is_empty()) {
+        let mut fields = line.split_whitespace().skip(1);
+        let name = fields.next().context("cargo tree package name")?;
+        if wasm_runtime_refused(name) {
+            let version = fields
+                .next()
+                .and_then(|version| version.strip_prefix('v'))
+                .context("cargo tree package version")?;
+            refused.insert(format!("{name}@{version}"));
+        }
+    }
+    if refused.is_empty() {
+        return Ok(());
+    }
+    // Invert from every refused package so deduplication cannot hide a path to a checked crate.
+    for package in &refused {
+        args.extend(["--invert", package]);
+    }
+    let tree = process::output(root, "cargo", &args).await?;
+    let mut path = Vec::new();
+    for line in tree.lines().filter(|line| !line.is_empty()) {
+        let mut fields = line.split_whitespace();
+        let depth: usize = fields.next().context("cargo tree depth")?.parse()?;
+        let name = fields.next().context("cargo tree package name")?;
+        path.truncate(depth);
+        path.push(name);
+        if WITHOUT_WASM_RUNTIME.contains(&name) {
+            path.reverse();
+            return Err(forbidden_dependency(&path));
+        }
+    }
+    Ok(())
+}
+
+fn forbidden_dependency(path: &[&str]) -> anyhow::Error {
+    anyhow::anyhow!(
+        "{} links forbidden dependency {}: {}",
+        path[0],
+        path[path.len() - 1],
+        path.join(" -> ")
+    )
 }
 
 fn check_paths<'a>(
     metadata: &'a Metadata,
     starts: impl IntoIterator<Item = &'a PackageId>,
-    refused: &[&str],
+    refused: impl Fn(&str) -> bool,
     follows: impl Fn(DependencyKind) -> bool,
 ) -> anyhow::Result<()> {
     let resolve = metadata.resolve.as_ref().context("resolved dependencies")?;
@@ -90,16 +177,12 @@ fn check_paths<'a>(
             };
             entry.insert(parent);
             let name = names[id];
-            if refused.contains(&name) {
+            if refused(name) {
                 let mut path: Vec<_> = std::iter::successors(Some(id), |id| parents[id])
                     .map(|id| names[id])
                     .collect();
                 path.reverse();
-                anyhow::bail!(
-                    "{} links forbidden dependency {name}: {}",
-                    names[start],
-                    path.join(" -> ")
-                );
+                return Err(forbidden_dependency(&path));
             }
             pending.extend(nodes[id].deps.iter().rev().filter_map(|dep| {
                 dep.dep_kinds

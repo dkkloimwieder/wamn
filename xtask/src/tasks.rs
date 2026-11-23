@@ -226,7 +226,7 @@ async fn linked(root: &Path, package: &str, extra: &[&str]) -> anyhow::Result<BT
 }
 
 pub async fn dependencies(root: &Path) -> anyhow::Result<()> {
-    crate::repo_policy::dependencies::check_boundaries(root)?;
+    crate::repo_policy::dependencies::check_boundaries(root).await?;
 
     let event = linked(root, "wamn-event", &[]).await?;
     for dependency in ["wamn-broker", "wamn-run-state", "wamn-operation"] {
