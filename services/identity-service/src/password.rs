@@ -164,19 +164,18 @@ async fn handle(
             let password = match Password::new(request.password) {
                 Ok(value) => value,
                 Err(error) => {
-                    return enrollment_refusal(&mut *database, &principal, &error).await;
+                    return enrollment_refusal(&mut database, &principal, &error).await;
                 }
             };
             let bucket = format!("enroll:{principal}");
-            match admit(&mut *database, &[(&bucket, 5)], &inner.issuer).await {
+            match admit(&mut database, &[(&bucket, 5)], &inner.issuer).await {
                 Ok(true) => (),
                 Ok(false) => return throttled(),
                 Err(_) => return unavailable(),
             }
-            match enroll_password(&mut *database, &state.work, &principal, &secret, password).await
-            {
+            match enroll_password(&mut database, &state.work, &principal, &secret, password).await {
                 Ok(()) => response(StatusCode::NO_CONTENT, "application/json", Vec::new()),
-                Err(error) => enrollment_refusal(&mut *database, &principal, &error).await,
+                Err(error) => enrollment_refusal(&mut database, &principal, &error).await,
             }
         }
         "/password/session" => {
@@ -199,13 +198,13 @@ async fn handle(
                 "login:{}",
                 wamn_digest::bytes_sha256(email.as_bytes()).hex()
             );
-            match admit(&mut *database, &[(&bucket, 5)], &inner.issuer).await {
+            match admit(&mut database, &[(&bucket, 5)], &inner.issuer).await {
                 Ok(true) => (),
                 Ok(false) => return throttled(),
                 Err(_) => return unavailable(),
             }
             let Ok(mut read) = wamn_identity::transaction::read_connection(
-                &mut *database,
+                &mut database,
                 &PlatformComponent::IdentityService.principal_id(),
             )
             .await
@@ -305,7 +304,7 @@ async fn handle(
                 "recovery:{}",
                 wamn_digest::bytes_sha256(email.as_bytes()).hex()
             );
-            match admit(&mut *database, &[(&bucket, 5)], &inner.issuer).await {
+            match admit(&mut database, &[(&bucket, 5)], &inner.issuer).await {
                 Ok(true) => (),
                 Ok(false) => return throttled(),
                 Err(_) => return unavailable(),
@@ -315,7 +314,7 @@ async fn handle(
             let deadline = tokio::time::Instant::now() + Duration::from_secs(6);
             let action = async {
                 let Ok(mut read) = wamn_identity::transaction::read_connection(
-                    &mut *database,
+                    &mut database,
                     &PlatformComponent::IdentityService.principal_id(),
                 )
                 .await
@@ -337,7 +336,7 @@ async fn handle(
                         Err(error) => return refusal(&error, &email),
                     };
                     if let Err(error) =
-                        reset_password(&mut *database, &state.work, &principal, &secret, password)
+                        reset_password(&mut database, &state.work, &principal, &secret, password)
                             .await
                     {
                         return refusal(&error, &email);
@@ -346,7 +345,7 @@ async fn handle(
                     return response(StatusCode::OK, "application/json", serde_json::to_vec(&serde_json::json!({"status":"password_reset", "notification": if notified { "accepted_for_delivery" } else { "unavailable" }})).expect("fixed response"));
                 }
                 let actor: PrincipalId = PlatformComponent::IdentityService.principal_id();
-                let token = match issue_reset(&mut *database, &actor, &principal, &email).await {
+                let token = match issue_reset(&mut database, &actor, &principal, &email).await {
                     Ok(token) => token,
                     Err(error) => {
                         log_refusal(&error, &email);
@@ -392,7 +391,7 @@ async fn handle(
             };
             let secret = Zeroizing::new(request.renewal_token);
             let actor = match password_login::renewal_principal(
-                &mut *database,
+                &mut database,
                 &inner.issuer,
                 &request.aud,
                 &secret,
@@ -504,7 +503,7 @@ async fn finish_session(
     if tx.commit().await.is_err() {
         return unavailable();
     }
-    if !session::unix_seconds().is_some_and(|now| now < token.claims().exp) {
+    if session::unix_seconds().is_none_or(|now| now >= token.claims().exp) {
         return unavailable();
     }
     renewable_response(&token, &renewal)
