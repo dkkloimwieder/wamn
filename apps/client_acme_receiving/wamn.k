@@ -13,7 +13,7 @@ manifest.Package {
         base_receiving = {
             package = "wamn_receiving"
             version = "2.2.11"
-            digest = "sha256:57a583c92327c5507fe8df2c32a854220dc7051f5d8032bacaa3b867423592a4"
+            digest = "sha256:43351d3477bb3e5ee7b3a27c0d489541d9d71875008a30e94c6c576c6e9e2b70"
             operations = ["item.create", "location.create", "purchase_order.create", "purchase_order_line.create", "receiving.record_receipt", "supplier.create"]
         }
     }
