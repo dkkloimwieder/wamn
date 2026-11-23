@@ -207,6 +207,7 @@ Org → environment → project → application. One boundary per level.
 
 ## Crates and names
 
+- All code follows [docs/structure.md](../structure.md), and each review checks against it.
 - Renames: `wamn-ctl` → `wamn-cli`; `wamn-control-provision` → `wamn-provision`; `wamn-compiler` → `wamn-codegen`; `wamn-connections` → `wamn-connection`; `wamn-web-front` → `wamn-web`; `wamn-platform-identity` → `wamn-identity`; identity service package → `wamn-identity-service` in `services/identity-service`.
 - Merges: artifact crates → `wamn-oci`; `wamn-postgres-statements` + `wamn-data-access` → `wamn-guest`; build + composer → `crates/build`. `wamn-release-control` goes. `wamn-role` owns Postgres role names. `wamn-event` owns shared event types.
 - Splits: `wamn-execution-host` goes: file route → `wamn-blobstore`, number counter → `wamn-sql`, OAuth callback → `wamn-http`, credential cleanup → `wamn-connection`; control routes, environment status and connection health → control service. Application routes → host. `crates/identity` keeps passwords, sessions, principals, org membership and control eligibility, plus the project service-principal and PAT SQL; connection administration → `wamn-connection`; project database rows, configuration rows and environment fill → `wamn-environment`. The `wamn.json` model moves to `wamn-catalog`.
@@ -232,17 +233,96 @@ Phase 1 deletion, phase 2 restructure (no behaviour change), phase 3 code editin
 
 Phase 3 steps, in dependency order: 3.1 database model; 3.2 request path (workloads, connections, files, integrations and application host routes); 3.3 identity; 3.4 workflow service; 3.5 deploy; 3.6 isolation, then install; 3.7 codegen; 3.7b crate boundaries; 3.8 tests.
 
-## Epic 17: crate graph
+## Epics 17 to 21: crate graph
 
 Re-scoped on 2026-11-22 to the ports-and-adapters rule. The issue list follows D's ruling on the re-scout.
 
 Rule (ports and adapters):
 
-- Domain crates hold types and traits only. They link no sqlx, kube, k8s-openapi, wasmtime, wasmtime-*, wash-runtime, reqwest, hyper or any other client or runtime crate, and they derive no sqlx traits.
-- Implementation crates implement domain traits for one technology: Postgres, Kubernetes, the wasmCloud host (plugins), HTTP, NATS, OCI. They depend on domain crates, never the reverse.
-- Binaries (`services/*` and the CLI) wire implementations to domains. Tests and xtask are outside the rule.
+- Domain crates hold types, traits and product logic that calls only domain traits. They link no sqlx, kube, k8s-openapi, wasmtime, wasmtime-*, wash-runtime, reqwest, hyper or any other client or runtime crate, and they derive no sqlx traits.
+- Implementation crates implement domain traits for one technology: Postgres, Kubernetes, the wasmCloud host (plugins), HTTP, NATS, OCI, object storage. They depend on domain crates, never the reverse.
+- Binaries (`services/*` and the CLI) hold wiring and process setup only. Tests and xtask are outside the rule.
+- The full rules are in [docs/structure.md](../structure.md).
 
-End of the epic: the standard checks, `cargo test --workspace`, the ignored run, `cargo xtask preflight`, and the full journey run (Epics 15 and 16) on fresh kind clusters, up to 12 orgs each. This is the restructure's closing check.
+Target layout. The root workspace has 58 crates and `apps/` has 24.
+
+- Domain: digest, principal, role, scalar, number-pattern, record-history, identity-protocol, package, registry, component-policy, connection-type, routes, workflow-graph (new), application (new), authority, authentication, connection, envelope, blobstore, event, run-state, schema (was schema-introspection), oci-reference, edge-document, release (was publish), environment, application-chart (new), dev, platform-install.
+- Implementation: postgres, provision, kubernetes, engine, plugin (was operation), http-client, http, identity-client, gcp-metadata (new), key (new), storage (new), broker, oci.
+- Build support: build, codegen, jsonata.
+- Binaries: host, control, identity-service, web, edge, cdc-reader, cli.
+- Tests: test-infrastructure (`test-support/infrastructure`), grant-tests (was test-sql, `test-support/grant-tests`), fixture-package, journey-tests, receiving-tests, wms-tests, xtask.
+- wamn-identity goes: its records go to identity-protocol and authentication, its SQL to postgres, and its signing to authentication.
+
+Order: the five epics run one after another, because each one changes the root `Cargo.toml`, `Cargo.lock` and `xtask/src/tasks.rs`. Each issue is its own commit, and each standing fix is its own commit.
+
+End checks of every epic, before merge:
+
+- the standard checks: `cargo build` and `cargo clippy` for both workspaces with zero errors, `cargo xtask build-platform`, the schema apply to a fresh local Postgres, `cargo xtask helm-size`, `cargo xtask repo-lint-dependencies`, and `cargo xtask machete` for both workspaces
+- `cargo test --workspace` and the ignored run
+
+Closing check after Epic 21: `cargo xtask prepare-tests`, `cargo test --workspace`, the ignored run, `cargo xtask preflight`, and the full journey run (Epics 15 and 16) on fresh local kind clusters, up to 12 orgs each.
+
+### Epic 17: names and the workflow graph (wamn-rkjb3)
+
+- 17.1 Remove the unused `async-nats` lines from `crates/authority/Cargo.toml` and `crates/connection/Cargo.toml` (choice 20).
+- 17.2 Renames: `test-support/resources` becomes `test-support/infrastructure`, and `wamn-test-sql` (`test-support/sql`) becomes `wamn-grant-tests` (`test-support/grant-tests`). The root `Cargo.toml`, `docs/operations/running-tests.md` and every other live reference change with them. The Part 2 history and the archived review stay as they are.
+- 17.3 `cargo xtask machete` runs cargo-machete over both workspaces, with its version pinned in `mise.toml`. Each `[package.metadata.cargo-machete] ignored` entry carries a comment that gives the reason. Every finding is fixed, in its own commit before the check.
+- 17.4 A new crate `wamn-workflow-graph` (`crates/workflow-graph`) takes the graph from `crates/routes/src/wiring.rs` as `WorkflowGraph`, with `graph_hash`. The HTTP prefix and permission helpers stay in wamn-routes. The full rename from "wiring" to "workflow graph": the graph JSON (format 0.3), the SQL (`runs.wiring_id`, `wiring_version`, `wiring_hash`, `runs_wiring_identity_check`, `catalog.workflows.wiring_hash`, in `deploy/sql/{run-state,catalog-schema,catalog-schema-prefix}.sql`), the HTTP field, the `node-context` fields with a new `wamn:node` version in `wit/wamn-node/package.wit`, the trace keys, the run result key and the error strings. The guests and apps that use them are rebuilt. wamn is greenfield, so there is no compatibility path and no migration. `.beads/issues.jsonl`, the archived review and the Part 2 history stay as they are.
+- 17.5 The lint lines: wamn-workflow-graph links no implementation crate, and `repo-lint-dependencies` reads both workspaces.
+
+### Epic 18: application and Postgres
+
+- 18.1 A new crate `wamn-application` (`crates/application`) holds the plain application contract from wamn-engine: `application_config`, `native_routes`, the plain part of ingress and its refusals, the callers, the delivery records, the time limits (`MAX_HOST_CALL_DURATION`), the traits `RouteProvider`, `RouteAuthenticator`, `EnvironmentStatus` and `InvocationAuthority`, `ResultSigner` (from wamn-operation), and the plain SQL values of the operation session. The engine converts WIT records at its entry, and `ResultSigner` takes a plain error in place of the generated `NodeError` (choice 2a, rulings 7 and 8).
+- 18.2 The `host` feature of wamn-postgres goes, with every use of it in the Cargo.toml files. `pool.rs` takes the time limit from wamn-application. `checkout.rs` gets its own error type in place of the generated `PgError`. `types.rs` (the SQL value conversion for the `wamn:postgres` guest interface) moves to wamn-operation. `crates/postgres/tests/project_schema.rs` stays and calls `wamn_scalar::format_timestamptz` (corrected ruling 5, ruling 6).
+
+Lint lines: wamn-application, wamn-postgres and wamn-cdc-reader link no wasmtime, `wasmtime-*` or wash-runtime, in the workspace and in the shared Docker build.
+
+### Epic 19: plain data
+
+Row mapping (choice 6a): the query binds and reads plain values, and the domain constructor parses them. `wamn-postgres` keeps private row structs where a record maps often or can fail. Nulls, order, arrays and stored spelling stay the same. At least 55 query expressions change.
+
+- 19.1 The sqlx impls go from `Digest` and `PrincipalId`, with their `sqlx` features.
+- 19.2 The sqlx derive goes from `LoginName` and the impls from `PatPrefix` in wamn-identity-protocol, with its `sqlx` feature.
+- 19.3 The 21 sqlx impls go from wamn-package, with the unconditional sqlx dependency. `ClientPackageName`, `LocalOperation` and `RegisteredOperation` have no production SQL mapping, so their impls go with no replacement.
+- 19.4 The 24 sqlx impls and nine `PgHasArrayType` impls go from wamn-registry. Its 27 SQL calls (`configuration.rs`, `connections.rs`, `deployment.rs`, `lifecycle_lock.rs`, `migrations.rs`) and the lock task move to wamn-postgres behind registry traits.
+- 19.5 The 18 SQL calls of wamn-run-state move to wamn-postgres behind a run store trait. `UnfinishedRun` (`crates/environment/src/environment/drain.rs:10`) and `PatRecord` (`crates/identity/src/application/service.rs:167`) lose `FromRow`, and wamn-postgres gets `UnfinishedRunRow` and `PatRow`.
+- 19.6 `OciTag` moves to wamn-oci-reference, and its sqlx impls go (choice 9a).
+- 19.7 `wamn-schema-introspection` becomes `wamn-schema` (`crates/schema`) with the catalog records only. The catalog reader (`postgres.rs`) moves to wamn-postgres. wamn-codegen gets a trait for live descriptions and checks, which wamn-postgres implements and the CLI wires. The generator fingerprint changes with it (choices 7a and 14a).
+
+Lint lines: digest, principal, identity-protocol, package, registry, run-state, schema and oci-reference, and every domain crate above them, link no sqlx and have no sqlx feature. wamn-web and wamn-broker link no sqlx. wamn-edge links sqlx with the SQLite driver only, and no Postgres driver.
+
+### Epic 20: host, identity and cloud
+
+- 20.1 wamn-authentication: the `Authorization` store moves to wamn-postgres. The key fetch for access tokens moves to wamn-http behind a trait. The grant and administration contracts come from `crates/identity/src/application.rs` (ruling 1, changed: the SQL goes to wamn-postgres).
+- 20.2 wamn-identity goes. Its records go to wamn-identity-protocol and wamn-authentication, and its SQL goes to wamn-postgres, with the shared role SQL (ruling 2). Password, session token and NATS user signing go to wamn-authentication. The NATS key store goes to wamn-postgres.
+- 20.3 The NATS signing messages: `RoleName` and `LoginName` move into wamn-role, which gains a wamn-principal dependency. wamn-registry takes `PrincipalId` from wamn-principal. wamn-package then has no wamn-identity-protocol dependency. wamn-identity-protocol depends on wamn-registry and owns `EnsureAccount`, `SignUser` and `SignHostUser`. wamn-identity-client keeps only the HTTPS client (choice 12, corrected).
+- 20.4 wamn-authority: the host policy moves to wamn-plugin. `TokioDnsResolver` moves to wamn-http, its only user. The WIT error is converted at the runtime entry. The edge policy (`services/edge/src/policy.rs::authorize`) moves in.
+- 20.5 wamn-connection: a credential read trait and a credential write trait, with one Kubernetes implementation in wamn-kubernetes in place of the two `KubernetesCredentials` copies (`crates/environment/src/connections/credentials.rs:10`, `services/host/src/host/credential_store.rs:44`) (choice 5a). `ProjectDatabase` becomes private to wamn-postgres, and cross-crate callers get named connection read and OAuth token operations. The OAuth generation lock scope and the cancel behavior stay the same (choice 4a). The OAuth SQL moves to wamn-postgres. The integration plugin moves to wamn-plugin. The connection administration steps (`crates/environment/src/connections/{administration,credentials,references}.rs`, `credential_cleanup.rs`) move in, and their SQL and Kubernetes calls go to wamn-postgres and wamn-kubernetes (ruling 11, changed by choice A).
+- 20.6 wamn-http: the bound HTTP plugin moves to wamn-plugin. The connection health checks and the HTTP body code move out of control into wamn-http (ruling 9).
+- 20.7 wamn-blobstore keeps the file contracts and `FileConnections`. S3, GCS, signed reads and health checks go to a new crate `wamn-storage` (`crates/storage`). The file row SQL and `RegistryFileConnections` go to wamn-postgres. The file plugin goes to wamn-plugin (choice 15a).
+- 20.8 A new crate `wamn-gcp-metadata` (`crates/gcp-metadata`) takes the GCE metadata client and its test from wamn-oci. A new crate `wamn-key` (`crates/key`) takes the local key and Cloud KMS from wamn-envelope. wamn-envelope keeps the encryption types and trait, and its wamn-oci edge goes (ruling 3, choice 11a).
+- 20.9 wamn-operation becomes `wamn-plugin` (`crates/plugin`): the operation, integration, bound HTTP and file plugins, for the host only. The host supplies Postgres, HTTP and storage through domain traits (choice 15a).
+- 20.10 The CDC reader: the replication input moves to wamn-postgres. The acknowledgement order ("a transaction advances only after every broker acknowledgement settles", `services/cdc-reader/src/lib.rs:2`) and the entity selection move to wamn-event, written against a replication input trait (implemented in wamn-postgres) and an event publisher trait (implemented in wamn-broker). The binary keeps only the wiring and the retry setup (choice A over 17a).
+- 20.11 wamn-host: its 22 inline SQL calls move to wamn-postgres. Graph authoring and schedules go to wamn-workflow-graph, workload admission to wamn-application, and event matching to wamn-event.
+- 20.12 wamn-control: its 21 inline SQL calls move to wamn-postgres. Control admission goes to wamn-authentication, and the status rules go to wamn-environment.
+- 20.13 wamn-identity-service: its 12 inline SQL calls move to wamn-postgres. The session, password and workload rules go to wamn-authentication.
+- 20.14 wamn-web: the host checks (`services/web/src/lib.rs::valid_route_host`) go to wamn-routes. Release discovery uses wamn-kubernetes.
+- 20.15 Binary traits with one implementation (`ControlExecution`, `StatusSource`, `ArtifactSource`, `ApplicationHost`, `InvocationPolicy`) become direct calls. Before a trait goes, the issue lists its test doubles, and those tests move to real containers. SQLite stays private in wamn-edge (choice 16a).
+
+Lint lines: authentication, authority, connection, envelope, blobstore, event, identity-protocol and application link no client or runtime crate. wamn-plugin links no wamn-postgres, wamn-storage or wamn-kubernetes. The host can link wamn-kubernetes for credential reads, and links no wamn-provision (choice 5a replaces the earlier 17.9 rule). wamn-cdc-reader links no wamn-engine, wasmtime, wamn-kubernetes or wamn-provision. wamn-edge and wamn-edge-document link no service clients: tokio-postgres, deadpool-postgres, async-nats, object_store, redis, oci-client, kube, wamn-oci, wamn-broker, wamn-postgres, wamn-kubernetes. Paths through wash-runtime are allowed for wamn-edge (ruling 19).
+
+### Epic 21: deploy and publish
+
+- 21.1 A new crate `wamn-application-chart` (`crates/application-chart`) takes `Binding`, `ResolvedConnection` and `release_chart/plan.rs`, the values for one application release (rulings 10 and 14b).
+- 21.2 wamn-environment keeps the documents and holds the deploy steps against domain traits, with the worker steps from control. Its 126 SQL calls move to wamn-postgres, with the package apply SQL and the history pruning modules and their tests. X4 stays deferred. Kubernetes and Helm calls go to wamn-kubernetes, NATS calls to wamn-broker, and OCI calls to wamn-oci (choice 8b, rulings 12 and 13 changed).
+- 21.3 wamn-platform-install stays as a domain crate with the install and org steps. The Postgres bootstrap goes to wamn-provision and wamn-postgres, Kubernetes and Helm to wamn-kubernetes, and OCI to wamn-oci. The Postgres lock stays across the Secret writes (`provision_org.rs::provision_org`).
+- 21.4 wamn-publish becomes `wamn-release` (`crates/release`) with the release plans, sealed component inputs and results, and the publication traits. Its I/O goes to wamn-oci, wamn-postgres and wamn-storage, including the read and plan code (ruling 9). Component admission stays in wamn-engine behind a trait. The stock push (`wash_runtime::oci::push_component`) stays in the CLI and xtask (choices 9a and 10a).
+- 21.5 wamn-dev stays as a domain crate with the dev steps, written against build, release and deploy traits. `FilesystemInvalidationSource` moves to wamn-build.
+- 21.6 The service principal request steps (`api_service.rs`) go to wamn-authentication. `provision_project_env/output.rs` goes to the CLI (ruling 14, changed by choice A).
+- 21.7 wamn-build reaches component admission through a trait, so it links no wamn-engine (choice 7a).
+- 21.8 Recount the dev-dependency cycles to wamn-test-infrastructure after the moves. The cycles that remain become one Open item (ruling 18).
+
+Lint lines: the full class rules of [docs/structure.md](../structure.md), with the crates of each class named in xtask. wamn-control and wamn-identity-service link no wasmtime, `wasmtime-*` or wash-runtime, and wamn-cli is outside that rule (ruling 20). No product crate links a test crate on a normal edge. The lint checks the manifests (names, aliases and optional features) and the resolved graph of each shipped build.
 
 Next: the restructure ends. The review work in the Claude Doc "wamn review" follows.
 
@@ -316,7 +396,7 @@ Next: the restructure ends. The review work in the Claude Doc "wamn review" foll
 - After the first kind run:
   - Charts: `enablePDB: false` for single-instance project clusters; delete the dropped `affinity` and `topologySpreadConstraints` host values, or render them.
 - An org login (control, apply) can INSERT `identity.principals`, and the policy checks only a bound identity, not the org. Least-privilege check: should these logins insert principals at all?
-- Crate graph review (2026-11-21): `wamn-registry` and `wamn-package` (30 dependents each) link sqlx with postgres, so `wamn-web`, `wamn-edge`, `wamn-event` and `wamn-broker` compile a database driver. The `sqlx::Type` impls must stay with their types (orphan rule), so a fix needs a feature or wrapper types. The Epic 17 re-scout covers it.
+- Crate graph review (2026-11-21): `wamn-registry` and `wamn-package` (30 dependents each) link sqlx with postgres, so `wamn-web`, `wamn-edge`, `wamn-event` and `wamn-broker` compile a database driver. The fix is choice 6a: the sqlx impls go from the domain types, the queries bind and read plain values, and wamn-postgres keeps private row structs. Epic 19 does it.
 
 # Part 2: Review log
 
@@ -2234,3 +2314,19 @@ Epic 14 closed on 2026-11-21 after review. cargo test --workspace: 617 passed in
 - Reason: the crate graph mixes interfaces with their implementations, so each move cut one edge and nothing kept the next feature from mixing them again. For example, `wamn-registry` has 24 sqlx derives and 26 `sqlx::query` calls while 30 crates take names from it. `wamn-package` has 21 sqlx derives on manifest types. The traits `AuthorizationStore`, `CredentialStore`, `ConnectionCache` and `ProjectDatabase` sit in the same crates as their implementations.
 - Correction: the earlier claim that no type named `ProjectDatabase` exists was wrong. It is a trait in `crates/connection/src/database.rs:8`.
 - The earlier Epic 17 rulings of 2026-11-22 (the scout choices, the crate names, and the correction to 17.4) wait for the re-scout and can change. They are recorded on wamn-rkjb3.
+
+**Ruled (D, 2026-11-22): the Epic 17 re-scout.** The re-scout is accepted with these changes. They replace the earlier Epic 17 rulings where the two differ.
+- Choice A (new): domain crates can hold logic that calls only domain traits, and binaries hold wiring and process setup only. So choice 8 becomes (b), and the deploy steps go into a domain crate, not into control or the CLI. The dev steps, the platform-install steps, and password and token signing go into domain crates too. The inline SQL in wamn-host (22 calls), wamn-control (21) and wamn-identity-service (12) moves to wamn-postgres.
+- Placement: the deploy steps go to wamn-environment. The dev steps go to wamn-dev and the platform-install steps to wamn-platform-install, both kept as domain crates. Password, session token and NATS user signing go to wamn-authentication. `TokioDnsResolver` goes to wamn-http. Graph authoring and schedules go to wamn-workflow-graph, and workload admission to wamn-application. Control admission and the session rules go to wamn-authentication. The web host checks go to wamn-routes, and the edge policy to wamn-authority. The root workspace has 58 crates.
+- Choice 12, corrected: wamn-registry takes `PrincipalId` from wamn-principal, and `LoginName` and `RoleName` move into wamn-role, which gains a wamn-principal dependency. wamn-identity-protocol then depends on wamn-registry and owns `EnsureAccount`, `SignUser` and `SignHostUser`. wamn-event does not take them. Reason for `RoleName`: wamn-package uses only `RoleName` from wamn-identity-protocol (`crates/package/src/manifest.rs:3020`), so without the move the new edge makes a loop. The move is in the epic that moves the signing messages (20.3).
+- Choice A wins over choice 17a. The acknowledgement order (`services/cdc-reader/src/lib.rs:2`, "a transaction advances only after every broker acknowledgement settles") goes into wamn-event. It is written against a replication input trait (implemented in wamn-postgres) and an event publisher trait (implemented in wamn-broker). The cdc-reader binary keeps only the wiring and the retry setup.
+- Choice 5 is (a), and it replaces the 17.9 rule that the host links no wamn-kubernetes. Choice 11 is (a), and the name is wamn-gcp-metadata.
+- Choice 16 is (a). Before a trait goes, its test doubles are listed, and those tests move to real containers.
+- Choice 19: the naming rule lets test crates keep the `-tests` ending, so wamn-test-sql becomes wamn-grant-tests, as ruled.
+- Choice 20: the unused `async-nats` lines in wamn-authority and wamn-connection go as the first code commit of Epic 17.
+- Choice 18 is dropped. There are no class declarations and no source parsing. The lint names crates in xtask, as it does today, and each epic adds its lint lines.
+- Choices 1a, 2a, 3a, 4a, 6a, 7a, 9a, 10a, 13a, 14a, 15a and 17a are accepted as recommended, with 17a changed as above.
+- Tests: every epic runs `cargo test --workspace` and the ignored run before merge. The journey run on fresh kind clusters runs once, after the last epic.
+- cargo-machete joins the standard checks for both workspaces, through xtask, with its version pinned. Each ignore entry carries a comment with the reason, and every finding is fixed.
+- The structure rules are in `docs/structure.md`. All code follows them, and each review checks against them.
+- The work splits into five epics, run one after another: 17 names and the workflow graph (wamn-rkjb3), 18 application and Postgres, 19 plain data, 20 host, identity and cloud, 21 deploy and publish.
