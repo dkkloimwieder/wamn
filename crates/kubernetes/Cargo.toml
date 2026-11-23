@@ -19,7 +19,12 @@ serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }
 tokio = { workspace = true, features = ["fs", "io-util", "rt", "time", "process", "macros"] }
+tracing.workspace = true
 uuid = { workspace = true, features = ["v4"] }
+wamn-digest.workspace = true
+wamn-package.workspace = true
+wamn-registry.workspace = true
+wamn-routes.workspace = true
 
 [dev-dependencies]
 hyper-util = { workspace = true, features = ["tokio"] }

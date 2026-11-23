@@ -4,6 +4,7 @@ pub mod client;
 pub mod helm;
 pub mod job;
 pub mod kubernetes;
+pub mod web_release;
 pub mod kubernetes_api {
     pub use crate::client::KubernetesApi;
 }

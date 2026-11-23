@@ -4,6 +4,16 @@ use crate::instance_suffix::InstanceSuffix;
 use crate::platform_domain::PlatformDomain;
 use wamn_digest::sha256;
 
+/// Check whether a resource name can be used as a single path segment.
+pub fn valid_resource_segment(value: &str) -> bool {
+    !value.is_empty()
+        && value != "."
+        && value != ".."
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"._-".contains(&byte))
+}
+
 /// The public host name of an application with a validated label.
 pub fn application_host(label: &str, org: &crate::OrgId, base: &PlatformDomain) -> String {
     format!("{label}--{org}.{base}")

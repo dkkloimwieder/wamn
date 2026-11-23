@@ -80,10 +80,10 @@ async fn host_replacement_routes_the_next_post_to_the_serving_host() {
         });
         let mut config = kube::Config::new(endpoint.parse().unwrap());
         config.default_namespace = "hosts".into();
-        let releases = Releases {
-            platform_domain: "example.test".parse().unwrap(),
-            api: wamn_kubernetes::client::KubernetesApi::from_config(config).unwrap(),
-        };
+        let releases = Releases::new(
+            KubernetesApi::from_config(config).unwrap(),
+            "example.test".parse().unwrap(),
+        );
         let web = Web { store: None };
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let edge = listener.local_addr().unwrap();

@@ -7069,7 +7069,12 @@ dependencies = [
  "serde_yaml",
  "tokio",
  "tower",
+ "tracing",
  "uuid",
+ "wamn-digest",
+ "wamn-package",
+ "wamn-registry",
+ "wamn-routes",
 ]
 
 [[package]]
@@ -7430,7 +7435,6 @@ dependencies = [
  "hyper",
  "hyper-rustls",
  "hyper-util",
- "k8s-openapi",
  "kube",
  "object_store",
  "ring",
@@ -7445,7 +7449,6 @@ dependencies = [
  "wamn-engine",
  "wamn-http-client",
  "wamn-kubernetes",
- "wamn-package",
  "wamn-registry",
  "wash-runtime",
 ]

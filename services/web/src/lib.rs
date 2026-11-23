@@ -1,6 +1,5 @@
 //! Route application hosts through chart-owned route and release ConfigMaps.
 
-use std::collections::BTreeMap;
 use std::convert::Infallible;
 use std::future::poll_fn;
 use std::net::SocketAddr;
@@ -26,7 +25,11 @@ use tokio::net::TcpListener;
 use tokio::sync::RwLock;
 use tower_service::Service;
 use wamn_http_client::{self as http_transport, Protocols, Schemes};
-use wamn_registry::platform_domain::PlatformDomain;
+use wamn_kubernetes::{
+    client::KubernetesApi,
+    web_release::{LiveRelease, Releases},
+};
+use wamn_registry::{name::valid_resource_segment, platform_domain::PlatformDomain};
 
 const LISTEN_PORT: u16 = 8080;
 const IDENTITY_CA: &str = "/etc/wamn-edge/identity-ca/ca.crt";
@@ -54,153 +57,21 @@ pub struct WebConfig {
     pub trusted_proxy_hops: usize,
 }
 
-/// One route discovered from a labelled ConfigMap in an org namespace.
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Route {
-    #[serde(skip)]
-    namespace: String,
-    host: String,
-    release: String,
-    api: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct LiveRelease {
-    host: String,
-    digest: wamn_digest::Digest,
-    clients: BTreeMap<String, wamn_package::PackageName>,
-    webs: BTreeMap<String, wamn_digest::Digest>,
-    platform_ui: Option<wamn_digest::Digest>,
-    org: wamn_registry::OrgId,
-    project: wamn_registry::ProjectId,
-}
-
-impl LiveRelease {
-    fn root(&self, host: &str) -> anyhow::Result<String> {
-        ensure!(self.host == host, "the release does not serve this host");
-        if let Some(platform_ui) = &self.platform_ui {
-            return Ok(format!("platform-ui/sha256-{}", platform_ui.hex()));
-        }
-        let package = self
-            .clients
-            .get(host)
-            .context("the host has no web client")?;
-        let hex = self
-            .webs
-            .get(host)
-            .context("the host has no web client")?
-            .hex();
-        Ok(format!("clients/{package}/{hex}"))
+fn web_root(row: &LiveRelease, host: &str) -> anyhow::Result<String> {
+    ensure!(row.host == host, "the release does not serve this host");
+    if let Some(platform_ui) = &row.platform_ui {
+        return Ok(format!("platform-ui/sha256-{}", platform_ui.hex()));
     }
-}
-
-fn segment(value: &str) -> bool {
-    !value.is_empty()
-        && value != "."
-        && value != ".."
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || b"._-".contains(&byte))
-}
-
-fn valid_route_host(host: &str, namespace: &str, base: &PlatformDomain) -> bool {
-    let Some((label, domain)) = host.split_once('.') else {
-        return false;
-    };
-    if domain != base.as_str() || namespace.is_empty() || label.len() > 63 || host.len() > 253 {
-        return false;
-    }
-    if label == namespace {
-        return true;
-    }
-    label
-        .strip_suffix(namespace)
-        .and_then(|prefix| prefix.strip_suffix("--"))
-        .is_some_and(|prefix| {
-            !prefix.is_empty()
-                && !prefix.starts_with('-')
-                && !prefix.ends_with('-')
-                && prefix
-                    .bytes()
-                    .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
-        })
-}
-
-#[derive(Debug)]
-struct Releases {
-    api: wamn_kubernetes::client::KubernetesApi,
-    platform_domain: PlatformDomain,
-}
-impl Releases {
-    fn in_cluster(platform_domain: PlatformDomain) -> anyhow::Result<Self> {
-        Ok(Self {
-            api: wamn_kubernetes::client::KubernetesApi::in_cluster()?,
-            platform_domain,
-        })
-    }
-    async fn routes(&self) -> anyhow::Result<BTreeMap<String, Route>> {
-        use k8s_openapi::api::core::v1::ConfigMap;
-        use kube::{Api, api::ListParams};
-
-        let maps = Api::<ConfigMap>::all(self.api.client());
-        let params = ListParams::default().labels("wamn.route=true");
-        let mut objects =
-            tokio::time::timeout(wamn_kubernetes::client::REQUEST_TIMEOUT, maps.list(&params))
-                .await??
-                .items;
-        // Kubernetes list order is unspecified. The lowest ConfigMap name wins.
-        objects.sort_unstable_by(|a, b| a.metadata.name.cmp(&b.metadata.name));
-        let mut routes = BTreeMap::new();
-        for object in objects {
-            let namespace = object.metadata.namespace.as_deref().unwrap_or_default();
-            let name = object.metadata.name.as_deref().unwrap_or_default();
-            let parsed = object
-                .data
-                .as_ref()
-                .and_then(|data| data.get("route.json"))
-                .context("route ConfigMap lacks route.json")
-                .and_then(|json| serde_json::from_str::<Route>(json).context("invalid route.json"));
-            let mut route = match parsed {
-                Ok(route) => route,
-                Err(error) => {
-                    tracing::warn!(namespace, name, %error, "dropping malformed route");
-                    continue;
-                }
-            };
-            if !valid_route_host(&route.host, namespace, &self.platform_domain) {
-                tracing::warn!(namespace, name, host = %route.host, "dropping route outside its namespace host pattern");
-                continue;
-            }
-            namespace.clone_into(&mut route.namespace);
-            routes
-                .entry(std::mem::take(&mut route.host))
-                .or_insert(route);
-        }
-        Ok(routes)
-    }
-
-    async fn read(&self, namespace: &str, name: &str) -> anyhow::Result<LiveRelease> {
-        ensure!(
-            segment(namespace) && segment(name),
-            "invalid release coordinate"
-        );
-        let maps = kube::Api::<k8s_openapi::api::core::v1::ConfigMap>::namespaced(
-            self.api.client(),
-            namespace,
-        );
-        let object = tokio::time::timeout(wamn_kubernetes::client::REQUEST_TIMEOUT, maps.get(name))
-            .await??;
-        serde_json::from_str(
-            object
-                .data
-                .as_ref()
-                .and_then(|data| data.get("release.json"))
-                .context("release ConfigMap lacks release.json")?,
-        )
-        .context("read the release ConfigMap")
-    }
+    let package = row
+        .clients
+        .get(host)
+        .context("the host has no web client")?;
+    let hex = row
+        .webs
+        .get(host)
+        .context("the host has no web client")?
+        .hex();
+    Ok(format!("clients/{package}/{hex}"))
 }
 
 #[derive(Debug)]
@@ -232,7 +103,7 @@ impl Web {
         {
             return Ok(empty(StatusCode::NOT_FOUND));
         }
-        let root = row.root(host)?;
+        let root = web_root(row, host)?;
         let path = path.trim_start_matches('/');
         if path.split('/').any(|part| part == "." || part == "..") || path.contains(['%', '\\']) {
             return Ok(empty(StatusCode::BAD_REQUEST));
@@ -591,7 +462,7 @@ pub async fn serve(path: &Path) -> anyhow::Result<()> {
             .bucket
             .strip_prefix("gs://")
             .context("web bucket must use gs://")?;
-        ensure!(segment(bucket), "invalid web bucket");
+        ensure!(valid_resource_segment(bucket), "invalid web bucket");
         Some(Arc::new(
             object_store::gcp::GoogleCloudStorageBuilder::from_env()
                 .with_bucket_name(bucket)
@@ -599,7 +470,10 @@ pub async fn serve(path: &Path) -> anyhow::Result<()> {
         ))
     };
     let web = Arc::new(Web { store });
-    let releases = Arc::new(Releases::in_cluster(config.platform_domain)?);
+    let releases = Arc::new(Releases::new(
+        KubernetesApi::in_cluster()?,
+        config.platform_domain,
+    ));
     ensure!(
         config.identity_issuer.starts_with("https://"),
         "identity must use HTTPS"
@@ -655,7 +529,7 @@ pub async fn serve(path: &Path) -> anyhow::Result<()> {
 /// Returns an error naming the host and path if a response is not successful.
 pub async fn probe(path: &Path) -> anyhow::Result<()> {
     let config: WebConfig = serde_json::from_slice(&std::fs::read(path)?)?;
-    let releases = Releases::in_cluster(config.platform_domain)?;
+    let releases = Releases::new(KubernetesApi::in_cluster()?, config.platform_domain);
     let client: Client<HttpConnector, Empty<Bytes>> = http_transport::http_client();
     for (host, route) in releases.routes().await? {
         let row = releases.read(&route.namespace, &route.release).await?;
@@ -723,36 +597,6 @@ mod tests {
         response.into_body().collect().await.unwrap().to_bytes()
     }
 
-    #[test]
-    fn a_route_host_must_be_the_control_or_an_application_host_of_its_namespace() {
-        let base: PlatformDomain = "example.test".parse().unwrap();
-        let other: PlatformDomain = "other.test".parse().unwrap();
-        let (acme, globex) = (
-            "acme".parse::<wamn_registry::OrgId>().unwrap(),
-            "globex".parse::<wamn_registry::OrgId>().unwrap(),
-        );
-        let control = format!("{acme}.{base}");
-        let application = wamn_registry::name::application_host("shop", &acme, &base);
-        assert!(valid_route_host(&control, "acme", &base));
-        assert!(valid_route_host(&application, "acme", &base));
-        for host in [
-            format!("{globex}.{base}"),
-            wamn_registry::name::application_host("shop", &globex, &base),
-            format!("{acme}.{other}"),
-            wamn_registry::name::application_host("shop", &acme, &other),
-            wamn_registry::name::application_host("", &acme, &base),
-            wamn_registry::name::application_host("-shop", &acme, &base),
-            wamn_registry::name::application_host("Shop", &acme, &base),
-            wamn_registry::name::application_host(&"a".repeat(58), &acme, &base),
-            format!("shop-{acme}.{base}"),
-            format!("shop.{acme}.{base}"),
-            acme.to_string(),
-        ] {
-            assert!(!valid_route_host(&host, "acme", &base), "{host}");
-        }
-        assert!(!valid_route_host(&control, "", &base));
-    }
-
     #[tokio::test]
     async fn web_only_apply_changes_the_bundle_and_config_but_keeps_the_release() {
         let store = Arc::new(InMemory::new());
@@ -762,8 +606,8 @@ mod tests {
         let first = row('a');
         let second = row('b');
         assert_ne!(
-            first.root(&first.host).unwrap(),
-            second.root(&second.host).unwrap()
+            web_root(&first, &first.host).unwrap(),
+            web_root(&second, &second.host).unwrap()
         );
         for row in [&first, &second] {
             let response = web
@@ -820,10 +664,10 @@ mod tests {
         };
         let mut config = kube::Config::new(endpoint.parse().unwrap());
         config.default_namespace = "hosts".into();
-        let releases = Releases {
-            platform_domain: "example".parse().unwrap(),
-            api: wamn_kubernetes::client::KubernetesApi::from_config(config).unwrap(),
-        };
+        let releases = Releases::new(
+            KubernetesApi::from_config(config).unwrap(),
+            "example".parse().unwrap(),
+        );
         let web = Web { store: None };
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let front = format!("http://{}", listener.local_addr().unwrap());
@@ -887,7 +731,7 @@ mod tests {
                 .unwrap(),
         );
         row.org = "acme".parse().unwrap();
-        let root = row.root(&row.host).unwrap();
+        let root = web_root(&row, &row.host).unwrap();
         row.webs.clear();
         put(&store, &root, "index.html", "platform").await;
 
@@ -904,7 +748,7 @@ mod tests {
                 .parse::<wamn_digest::Digest>()
                 .unwrap(),
         );
-        let root = row.root(&row.host).unwrap();
+        let root = web_root(&row, &row.host).unwrap();
         assert_ne!(original_root, root);
         put(&store, &root, "index.html", "new platform").await;
         row.platform_ui = Some(

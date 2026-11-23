@@ -6,6 +6,7 @@ pub mod exposure;
 mod host_route;
 pub mod http_route_data;
 pub mod read_query;
+mod route_host;
 mod route_identity;
 
 pub use host_route::{
@@ -13,6 +14,7 @@ pub use host_route::{
     HostRouteSet, host_route_package, host_route_path_prefix, host_route_version,
     is_granted_host_route_operation, is_host_route_operation,
 };
+pub use route_host::valid_route_host;
 pub use route_identity::{route_attachment_id, route_path};
 
 /// The route configuration key read by the HTTP component.
