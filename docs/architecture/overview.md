@@ -78,8 +78,8 @@ Each library has one concern. Directory names follow crate names without the `wa
 | `services/edge` | `wamn-edge`: local application host and device loop |
 | `services/cdc-reader` | `wamn-cdc-reader`: PostgreSQL change capture and broker acknowledgement |
 | `services/cli` | `wamn-cli`: user CLI and internal operation worker; binary `wamn` |
-| `test-support/resources` | Temporary external resources, HTTP fixtures, and shared test adapters |
-| `test-support/sql` | `wamn-test-sql`: grant refusal tests of every restricted deployed login |
+| `test-support/infrastructure` | Temporary external resources, HTTP fixtures, and shared test adapters |
+| `test-support/grant-tests` | `wamn-grant-tests`: grant refusal tests of every restricted deployed login |
 | `test-support/fixtures/package` | Platform fixture application paths and inputs |
 | `test-support/fixtures/guests` | Guest components used by interface tests |
 | `tests/journeys` | Tests across services through product commands and routes |

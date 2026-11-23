@@ -1,5 +1,5 @@
 [package]
-name = "wamn-test-sql"
+name = "wamn-grant-tests"
 description = "Repository-only grant refusal tests for every restricted deployed database login."
 version.workspace = true
 edition.workspace = true

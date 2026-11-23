@@ -6798,6 +6798,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "wamn-grant-tests"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "postgres-protocol",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "sqlx",
+ "tempfile",
+ "tokio",
+ "url",
+ "wamn-environment",
+ "wamn-identity-protocol",
+ "wamn-platform-install",
+ "wamn-postgres",
+ "wamn-provision",
+ "wamn-registry",
+ "wamn-role",
+ "wamn-test-infrastructure",
+]
+
+[[package]]
 name = "wamn-guest"
 version = "0.1.0"
 dependencies = [
@@ -7512,29 +7535,6 @@ dependencies = [
  "wamn-postgres",
  "wamn-provision",
  "wamn-registry",
-]
-
-[[package]]
-name = "wamn-test-sql"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "postgres-protocol",
- "serde",
- "serde_json",
- "serde_yaml",
- "sqlx",
- "tempfile",
- "tokio",
- "url",
- "wamn-environment",
- "wamn-identity-protocol",
- "wamn-platform-install",
- "wamn-postgres",
- "wamn-provision",
- "wamn-registry",
- "wamn-role",
- "wamn-test-infrastructure",
 ]
 
 [[package]]

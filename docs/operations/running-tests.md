@@ -201,7 +201,7 @@ The checkout does not change.
 
 ## Test helpers
 
-Shared test helpers live in `wamn-test-infrastructure`, at `test-support/resources/`.
+Shared test helpers live in `wamn-test-infrastructure`, at `test-support/infrastructure/`.
 It is a development dependency only.
 A helper that one crate uses lives in the `tests/common/` directory of that crate.
 For example, the deployment fixture of `application_routes_kind` lives in `tests/journeys/tests/common/`.
@@ -210,12 +210,12 @@ Tests use the production constructors with real inputs. Production code has no t
 
 ## Grant refusal tests
 
-`wamn-test-sql`, at `test-support/sql/`, holds the grant refusal tests of every restricted deployed login.
+`wamn-grant-tests`, at `test-support/grant-tests/`, holds the grant refusal tests of every restricted deployed login.
 Its targets are `project`, `system`, `credential_tables` and `transaction_identity`. Each test has the marker `requires: docker, bin:helm`.
 The installers are `wamn_test_infrastructure::database::project()` and `system()`.
 
 ```bash
-cargo test -p wamn-test-sql -- --ignored
+cargo test -p wamn-grant-tests -- --ignored
 ```
 
 Each test starts its own PostgreSQL server.
