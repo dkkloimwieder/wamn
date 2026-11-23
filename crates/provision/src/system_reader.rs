@@ -1,5 +1,7 @@
 //! Grants for the system database reader role.
 
+use std::fmt::Write as _;
+
 use postgres_protocol::escape::escape_identifier;
 
 /// Permit host authentication and integration type reads.
@@ -17,10 +19,12 @@ pub fn grants_sql() -> String {
            registry.auth_type, registry.environment_projects, registry.target TO {role};"
     );
     for relation in crate::sql::IDENTITY_READER_RELATIONS {
-        sql.push_str(&format!(
+        write!(
+            sql,
             " GRANT SELECT ON identity.{} TO {role};",
             escape_identifier(relation),
-        ));
+        )
+        .expect("string write");
     }
     for (relation, columns) in crate::sql::IDENTITY_READER_COLUMNS {
         let columns = columns
@@ -28,10 +32,12 @@ pub fn grants_sql() -> String {
             .map(|column| escape_identifier(column))
             .collect::<Vec<_>>()
             .join(", ");
-        sql.push_str(&format!(
+        write!(
+            sql,
             " GRANT SELECT ({columns}) ON identity.{} TO {role};",
             escape_identifier(relation),
-        ));
+        )
+        .expect("string write");
     }
     sql
 }

@@ -1,5 +1,7 @@
 //! Workload credential preparation, retirement, and observed role state.
 
+use std::fmt::Write as _;
+
 use super::{WorkloadRoleFamily, escape_identifier, escape_literal, stable_surface_sql};
 
 /// Idempotently create or harden one stable workload ACL role as NOLOGIN.
@@ -29,17 +31,21 @@ pub fn grant_workload_login_sql(
         escape_identifier(role.as_str())
     );
     if family == WorkloadRoleFamily::Platform {
-        grants.push_str(&format!(
+        write!(
+            grants,
             "INSERT INTO platform.login_principal(login,principal_id) VALUES ({login}, '{principal}') ON CONFLICT(login) DO UPDATE SET principal_id=EXCLUDED.principal_id;",
             login = escape_literal(role.as_str()),
             principal = crate::PlatformComponent::Executor.principal_id(),
-        ));
+        )
+        .expect("string write");
     }
     if family == WorkloadRoleFamily::Migration {
-        grants.push_str(&format!(
+        write!(
+            grants,
             "ALTER DEFAULT PRIVILEGES FOR ROLE {} REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;",
             escape_identifier(role.as_str())
-        ));
+        )
+        .expect("string write");
     }
     grants
 }

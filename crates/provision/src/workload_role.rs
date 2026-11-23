@@ -28,8 +28,7 @@ impl WorkloadRoleFamily {
         match self {
             Self::App => AuthorityClass::GuestSql.acl_role(),
             Self::Query => AuthorityClass::DynamicSql.acl_role(),
-            Self::Migration => wamn_role::PLATFORM_ROLE,
-            Self::Platform => wamn_role::PLATFORM_ROLE,
+            Self::Migration | Self::Platform => wamn_role::PLATFORM_ROLE,
         }
     }
 
