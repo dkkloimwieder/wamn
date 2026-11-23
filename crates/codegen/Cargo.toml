@@ -15,7 +15,7 @@ tempfile.workspace = true
 postgres-protocol = { workspace = true }
 wamn-scalar.workspace = true
 wamn-digest.workspace = true
-wamn-identity-protocol = { workspace = true, features = ["sqlx"] }
+wamn-identity-protocol.workspace = true
 anyhow.workspace = true
 oas3.workspace = true
 pg_query = "=6.2.1"

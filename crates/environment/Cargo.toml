@@ -54,7 +54,7 @@ wamn-identity = { workspace = true }
 wamn-identity-client.workspace = true
 nkeys.workspace = true
 zeroize.workspace = true
-wamn-identity-protocol = { workspace = true, features = ["sqlx"] }
+wamn-identity-protocol.workspace = true
 wamn-run-state = { workspace = true }
 wamn-codegen = { workspace = true }
 wamn-publish = { workspace = true }

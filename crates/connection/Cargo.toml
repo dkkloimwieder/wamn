@@ -12,7 +12,7 @@ wamn-connection-type.workspace = true
 wamn-envelope.workspace = true
 wamn-engine.workspace = true
 wash-runtime.workspace = true
-wamn-identity-protocol = { workspace = true, features = ["sqlx"] }
+wamn-identity-protocol.workspace = true
 anyhow = { workspace = true }
 async-trait = { workspace = true }
 moka = { workspace = true, features = ["sync"] }

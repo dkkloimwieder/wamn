@@ -6973,7 +6973,6 @@ dependencies = [
  "ring",
  "serde",
  "serde_json",
- "sqlx",
  "subtle",
  "wamn-digest",
  "wamn-principal",

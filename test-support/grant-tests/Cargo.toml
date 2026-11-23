@@ -12,7 +12,7 @@ postgres-protocol = { workspace = true }
 sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls", "uuid"] }
 tokio = { workspace = true, features = ["macros", "rt"] }
 url = { workspace = true }
-wamn-identity-protocol = { workspace = true, features = ["sqlx"] }
+wamn-identity-protocol.workspace = true
 wamn-platform-install = { workspace = true }
 wamn-postgres = { workspace = true }
 wamn-provision = { workspace = true }

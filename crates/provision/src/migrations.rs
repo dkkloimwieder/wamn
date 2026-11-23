@@ -1,5 +1,6 @@
 //! SQLx owns the two independent platform migration scopes.
 
+use anyhow::Context as _;
 use sqlx::migrate::Migrator;
 
 /// The platform SQL scope selected by the environment lifecycle.
@@ -78,13 +79,7 @@ impl MigrationDatabase {
         if self == Self::Project {
             return crate::migration::require_login(connection).await;
         }
-        let (session, current, database, restricted, member): (
-            wamn_identity_protocol::LoginName,
-            wamn_identity_protocol::LoginName,
-            String,
-            bool,
-            bool,
-        ) = sqlx::query_as(
+        let (session, current, database, restricted, member): (String, String, String, bool, bool) = sqlx::query_as(
             "SELECT session_user::text, current_user::text, current_database()::text, \
              NOT (rolsuper OR rolcreatedb OR rolcreaterole OR rolreplication OR rolbypassrls), \
              pg_has_role(session_user,$1,'USAGE') FROM pg_roles WHERE rolname=session_user",
@@ -92,6 +87,10 @@ impl MigrationDatabase {
         .bind(wamn_role::SYSTEM_ROLE)
         .fetch_one(connection)
         .await?;
+        let session = wamn_identity_protocol::LoginName::try_from(session)
+            .context("decode the session login")?;
+        let current = wamn_identity_protocol::LoginName::try_from(current)
+            .context("decode the current login")?;
         anyhow::ensure!(
             session == self.login(&database) && current == session && restricted && member,
             "platform migrations require their direct restricted managed login"

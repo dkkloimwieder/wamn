@@ -56,7 +56,7 @@ async fn wait_role_kind(
             let present: bool = sqlx::query_scalar(
                 "SELECT EXISTS(SELECT FROM pg_roles WHERE rolname=$1 AND rolcanlogin=$2)",
             )
-            .bind(role)
+            .bind(role.as_str())
             .bind(can_login)
             .fetch_one(&mut *connection)
             .await?;

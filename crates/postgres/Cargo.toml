@@ -10,7 +10,7 @@ wamn-application.workspace = true
 tracing.workspace = true
 wamn-registry.workspace = true
 wamn-role.workspace = true
-wamn-identity-protocol = { workspace = true, features = ["sqlx"] }
+wamn-identity-protocol.workspace = true
 postgres-protocol.workspace = true
 wamn-principal.workspace = true
 url.workspace = true

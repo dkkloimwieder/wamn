@@ -37,7 +37,7 @@ uuid = { workspace = true, features = ["serde", "v4"] }
 wamn-authority = { workspace = true }
 wamn-connection = { workspace = true }
 wamn-engine = { workspace = true }
-wamn-identity-protocol = { workspace = true, features = ["sqlx"] }
+wamn-identity-protocol.workspace = true
 wamn-http-client = { workspace = true, features = ["tls12"] }
 wash-runtime = { workspace = true }
 zeroize = { workspace = true }

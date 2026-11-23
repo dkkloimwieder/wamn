@@ -6,8 +6,6 @@ use std::{fmt, str::FromStr};
 /// A PostgreSQL login name, preserved exactly without identifier truncation.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
-#[cfg_attr(feature = "sqlx", derive(sqlx::Type))]
-#[cfg_attr(feature = "sqlx", sqlx(transparent))]
 pub struct LoginName(String);
 
 /// A name that PostgreSQL cannot store as one complete identifier.

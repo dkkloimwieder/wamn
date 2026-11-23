@@ -1,6 +1,6 @@
 //! One restricted migration login per project database.
 
-use anyhow::ensure;
+use anyhow::{Context as _, ensure};
 
 /// The fixed owner login in a project Cluster.
 pub fn login() -> wamn_identity_protocol::LoginName {
@@ -11,17 +11,17 @@ pub fn login() -> wamn_identity_protocol::LoginName {
 pub async fn require_login(
     connection: &mut sqlx::PgConnection,
 ) -> anyhow::Result<wamn_identity_protocol::LoginName> {
-    let (session, current, restricted): (
-        wamn_identity_protocol::LoginName,
-        wamn_identity_protocol::LoginName,
-        bool,
-    ) = sqlx::query_as(
+    let (session, current, restricted): (String, String, bool) = sqlx::query_as(
         "SELECT session_user::text, current_user::text, \
          NOT (rolsuper OR rolcreatedb OR rolcreaterole OR rolreplication OR rolbypassrls) \
          FROM pg_roles WHERE rolname = session_user",
     )
     .fetch_one(&mut *connection)
     .await?;
+    let session =
+        wamn_identity_protocol::LoginName::try_from(session).context("decode the session login")?;
+    let current =
+        wamn_identity_protocol::LoginName::try_from(current).context("decode the current login")?;
     let expected = login();
     ensure!(
         session == expected && current == session && restricted,

@@ -11,7 +11,7 @@ path = "lib.rs"
 [dependencies]
 wamn-package.workspace = true
 
-wamn-identity-protocol = { workspace = true, features = ["sqlx"] }
+wamn-identity-protocol.workspace = true
 
 rustix.workspace = true
 hmac = { workspace = true }

@@ -103,7 +103,7 @@ pub async fn platform_migration_input(input: &str, scope: MigrationDatabase) -> 
             .unwrap();
     if identity_exists {
         sqlx::query("INSERT INTO platform.login_principal(login,principal_id) VALUES($1,$2) ON CONFLICT(login) DO UPDATE SET principal_id=EXCLUDED.principal_id")
-            .bind(&login)
+            .bind(login.as_str())
             .bind(sqlx::types::Uuid::from(PlatformComponent::ApplyPackage.principal_id()))
             .execute(&mut admin)
             .await

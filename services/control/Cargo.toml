@@ -40,7 +40,7 @@ wamn-blobstore.workspace = true
 bytes.workspace = true
 boon.workspace = true
 wamn-identity-client.workspace = true
-wamn-identity-protocol = { workspace = true, features = ["sqlx"] }
+wamn-identity-protocol.workspace = true
 wamn-kubernetes.workspace = true
 wamn-identity.workspace = true
 wamn-postgres.workspace = true

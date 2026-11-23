@@ -52,7 +52,7 @@ pub async fn provision_org(database: &ConnectionConfig, org: &OrgId) -> anyhow::
     // Keep concurrent provisioning Jobs ordered through the Secret writes.
     // Dropping the dedicated connection releases this lock on every exit.
     sqlx::query("SELECT pg_advisory_lock(hashtextextended($1, 0))")
-        .bind(&control)
+        .bind(control.as_str())
         .execute(&mut connection)
         .await
         .context("lock the org login")?;
@@ -138,7 +138,7 @@ pub async fn create_org_logins(
             "SELECT set_config('wamn.org_login', $1, true), set_config('wamn.org_password', $2, true),
                     set_config('wamn.org_group', $3, true), set_config('wamn.org_connection_limit', $4::int::text, true)",
         )
-        .bind(&login)
+        .bind(login.as_str())
         .bind(&password)
         .bind(group)
         .bind(limit)

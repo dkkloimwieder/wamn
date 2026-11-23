@@ -27,7 +27,7 @@ wamn-oci.workspace = true
 wamn-postgres.workspace = true
 wamn-registry.workspace = true
 wamn-provision.workspace = true
-wamn-identity-protocol = { workspace = true, features = ["sqlx"] }
+wamn-identity-protocol.workspace = true
 postgres-protocol.workspace = true
 
 [dev-dependencies]

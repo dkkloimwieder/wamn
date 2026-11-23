@@ -141,7 +141,7 @@ pub async fn issue(
                      to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')"#,
     )
     .bind(Uuid::from(*principal))
-    .bind(token.lookup())
+    .bind(token.lookup().to_string())
     .bind(token.digest().to_string())
     .bind(label)
     .bind(lifetime.as_secs().cast_signed())
@@ -169,6 +169,7 @@ pub async fn issue(
 #[derive(Debug, Serialize, sqlx::FromRow)]
 pub struct PatRecord {
     id: sqlx::types::Uuid,
+    #[sqlx(try_from = "String")]
     token_prefix: PatPrefix,
     label: String,
     created_at: String,
@@ -207,7 +208,7 @@ pub async fn revoke(
            WHERE p.prefix=$1 AND p.user_id=u.id AND u.issuer='wamn' AND u.type='service'
            RETURNING p.id"#,
     )
-    .bind(prefix)
+    .bind(prefix.to_string())
     .fetch_optional(project)
     .await
     .map_err(|source| ServiceError::database("revoke the project PAT", source))?

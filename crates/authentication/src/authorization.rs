@@ -179,7 +179,7 @@ pub async fn project_pat(
            WHERE p.prefix=$1 AND p.revoked_at IS NULL AND p.expires_at > now()
              AND u.issuer='wamn' AND u.type='service' AND u.status='active'"#,
     )
-    .bind(token.lookup())
+    .bind(token.lookup().to_string())
     .fetch_optional(project)
     .await?;
     let Some(row) = row else {

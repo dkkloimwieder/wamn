@@ -27,7 +27,7 @@ wamn-authority = { workspace = true }
 wamn-connection = { workspace = true }
 wamn-envelope.workspace = true
 wamn-postgres.workspace = true
-wamn-identity-protocol = { workspace = true, features = ["sqlx"] }
+wamn-identity-protocol.workspace = true
 wamn-registry = { workspace = true }
 
 [dev-dependencies]
