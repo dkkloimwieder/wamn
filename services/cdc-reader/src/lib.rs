@@ -1456,6 +1456,14 @@ async fn settle_all(
     Ok(())
 }
 
+fn replication_url(input: &str) -> anyhow::Result<String> {
+    let mut input = url::Url::parse(input)?;
+    input
+        .query_pairs_mut()
+        .append_pair("replication", "database");
+    Ok(input.into())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1546,12 +1554,4 @@ mod tests {
     // R11 — the shared reopen backoff/cap ladder. These drive the ladder
     // deterministically with synthetic `Instant`s: the "stubbed stream that
     // opens-then-errs" is modelled by feeding `commits == 0` re-opens.
-}
-
-fn replication_url(input: &str) -> anyhow::Result<String> {
-    let mut input = url::Url::parse(input)?;
-    input
-        .query_pairs_mut()
-        .append_pair("replication", "database");
-    Ok(input.into())
 }
