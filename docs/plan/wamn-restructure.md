@@ -293,6 +293,7 @@ No new lint lines. Epic 21 replaces the per-epic lists with one lint.
 
 ### Epic 20: host, identity and cloud
 
+- 20.0 The first code commit moves the items that generation reads from `crates/postgres/src/lib.rs` to `crates/postgres/src/build_database.rs`. It removes `../postgres/src/lib.rs` from the inputs in `crates/codegen/build.rs`. The commit cites the call that reads each item it moves. If the generator id changes, the same commit refreshes the describe files.
 - 20.1 wamn-authentication: the `Authorization` store moves to wamn-postgres. The key fetch for access tokens moves to wamn-http behind a trait. The grant and administration contracts come from `crates/identity/src/application.rs` (ruling 1, changed: the SQL goes to wamn-postgres).
 - 20.2 wamn-identity goes. Its records go to wamn-identity-protocol and wamn-authentication, and its SQL goes to wamn-postgres, with the shared role SQL (ruling 2). Password, session token and NATS user signing go to wamn-authentication. The NATS key store goes to wamn-postgres.
 - 20.3 The NATS signing messages: `RoleName` and `LoginName` move into wamn-role, which gains a wamn-principal dependency. wamn-registry takes `PrincipalId` from wamn-principal. wamn-package then has no wamn-identity-protocol dependency. wamn-identity-protocol depends on wamn-registry and owns `EnsureAccount`, `SignUser` and `SignHostUser`. wamn-identity-client keeps only the HTTPS client (choice 12, corrected).
@@ -308,6 +309,7 @@ No new lint lines. Epic 21 replaces the per-epic lists with one lint.
 - 20.13 wamn-identity-service: its 12 inline SQL calls move to wamn-postgres. The session, password and workload rules go to wamn-authentication.
 - 20.14 wamn-web: the host checks (`services/web/src/lib.rs::valid_route_host`) go to wamn-routes. Release discovery uses wamn-kubernetes.
 - 20.15 Binary traits with one implementation (`ControlExecution`, `StatusSource`, `ArtifactSource`, `ApplicationHost`, `InvocationPolicy`) become direct calls. Before a trait goes, the issue lists its test doubles, and those tests move to real containers. SQLite stays private in wamn-edge (choice 16a).
+- 20.16 SQL items in `crates/registry/src/sql.rs` move to wamn-postgres with the code that runs them. The identity items move with 20.2. The item used by `crates/environment/src/credential_cleanup.rs` moves with 20.5. The control items move with 20.12. In both epics, a shared constant moves with its first caller. The other callers take it from wamn-postgres in the same change.
 
 No new lint lines. Epic 21 replaces the per-epic lists with one lint.
 
@@ -322,6 +324,7 @@ No new lint lines. Epic 21 replaces the per-epic lists with one lint.
 - 21.7 wamn-build reaches component admission through a trait, so it links no wamn-engine (choice 7a).
 - 21.8 Recount the dev-dependency cycles to wamn-test-infrastructure after the moves. The cycles that remain become one Open item (ruling 18).
 - 21.9 Every member of the apps workspace moves under `apps/`: the guests under `guests/`, `test-support/fixtures/guests/connection-http-standard`, `crates/guest` and `crates/record-history` (for example, to `apps/crates/`). The root crates that use wamn-record-history change only their path dependency. `apps/wamn_wms/tests` and `apps/wamn_receiving/tests` move into the root tree, under `tests/`, with directory names from the naming rule. After the move, `xtask/src/machete.rs` keeps only the version check and one run for each workspace, and the staging code goes (D, 2026-11-23, item 1).
+- 21.10 The environment items in `crates/registry/src/sql.rs` move to wamn-postgres with 21.2. The platform-install items move with 21.3. The provision item used by `crates/provision/src/identity_role.rs` also moves to wamn-postgres. The last move deletes `sql.rs` and its unused items. After that, wamn-registry holds no SQL text.
 
 Epic 21 replaces the per-epic lists with one lint. It uses one list of domain crates and one list of banned technology crates. Domain crates link none of these technology crates (`sqlx`, `kube`, `k8s-openapi`, `wasmtime`, `wasmtime-*`, `wash-runtime`, `reqwest`, `hyper`, `async-nats`, `oci-client`, `object_store`). The lint follows the `cargo metadata` graph with all features enabled. `wamn-control` and `wamn-identity-service` link no `wasmtime`, `wasmtime-*` or `wash-runtime`. `wamn-edge` and `wamn-edge-document` link no service clients. No product crate links `wamn-test-infrastructure`. Keep `xtask/src/repo_policy/dependencies.rs` under 100 lines. Remove `WORKFLOW_GRAPH_REFUSED`, `WITHOUT_WASM_RUNTIME`, `WITHOUT_POSTGRES` and every other per-epic list.
 
@@ -2348,3 +2351,8 @@ Epic 14 closed on 2026-11-21 after review. cargo test --workspace: 617 passed in
 - The 19.7 ruling on the generator fingerprint stands. Narrow the inputs to the files that generation reads. Check the Epic 18 moves. The Open item records the later replacement.
 - D withdraws the edit that added `WITHOUT_POSTGRES` to the Epic 19 lint lines.
 - The per-epic lists made the checks grow faster than the crate structure changed. One dependency check, `cargo xtask machete` and review against `docs/structure.md` enforce the rule.
+
+**Ruled (D, 2026-11-23): review of Epics 18 and 19.**
+- The review found no merge blockers at `cbe015455`. Main fast-forwarded to that commit.
+- Items 20.16 and 21.10 cover the SQL in `crates/registry/src/sql.rs`. Each item moves to wamn-postgres with the code that runs it. The last move deletes the file and its unused items.
+- `crates/codegen/build.rs` hashes `crates/postgres/src/lib.rs`, so adding a store changes the generator id. Item 20.0 narrows the inputs and cites each call that reads a moved item. If the id changes, the same commit refreshes the describe files.
