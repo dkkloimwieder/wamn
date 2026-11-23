@@ -38,8 +38,8 @@ impl ConnectionConfig {
         let contents = tokio::fs::read(path)
             .await
             .with_context(|| format!("read database configuration {}", path.display()))?;
-        Ok(serde_json::from_slice(&contents)
-            .with_context(|| format!("decode database configuration {}", path.display()))?)
+        serde_json::from_slice(&contents)
+            .with_context(|| format!("decode database configuration {}", path.display()))
     }
 
     /// Open options using the named credential directory below the supplied mount root.
