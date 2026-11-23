@@ -2,6 +2,10 @@ use super::{EnvironmentDocument, RoleName, Value, ValuesInput, release_chart};
 use anyhow::Context as _;
 
 /// Build release values from the document, artifact, and host overlay.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the release plan needs separate target, binding, and repository inputs"
+)]
 pub(super) fn release_values(
     document: &EnvironmentDocument,
     platform_domain: &wamn_registry::platform_domain::PlatformDomain,

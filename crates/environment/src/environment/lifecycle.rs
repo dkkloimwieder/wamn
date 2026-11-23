@@ -185,6 +185,10 @@ async fn reserve_project(
     .await
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "configuration needs the project reservation, database values, and held lock"
+)]
 async fn configure_project(
     platform: &Platform,
     document: &EnvironmentDocument,

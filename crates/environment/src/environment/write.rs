@@ -17,6 +17,10 @@ pub fn render(input: &ValuesInput<'_>) -> anyhow::Result<Value> {
 }
 
 /// Build release values from the application selection and artifact repositories.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "release rendering needs separate target, artifact, and repository inputs"
+)]
 pub fn release_values(
     document: &EnvironmentDocument,
     platform_domain: &wamn_registry::platform_domain::PlatformDomain,

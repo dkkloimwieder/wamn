@@ -120,6 +120,10 @@ pub fn validate_request(operation: &str, request: &Value) -> Result<(), Connecti
 }
 
 /// Execute against the selected project; source is the separately opened copy source.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "administration needs separate database, request, and service writer inputs"
+)]
 pub async fn execute(
     project: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     system: &mut sqlx::PgConnection,

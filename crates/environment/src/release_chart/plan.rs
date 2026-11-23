@@ -38,6 +38,10 @@ pub fn workload_name(release_name: &str, role: RoleName) -> String {
 
 /// Every application has one route workload, including applications without HTTP routes.
 /// Each role's configuration derives from the coordinate.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "roles derive from separate project, package, and binding inputs"
+)]
 pub fn roles(
     package_manifests: &BTreeMap<PackageName, PackageManifest>,
     package_digest: &wamn_digest::Digest,
