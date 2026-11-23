@@ -399,13 +399,6 @@ mod tests {
         }
     }
 
-    fn header(name: &str, value: &str) -> Header {
-        Header {
-            name: name.to_string(),
-            value: value.to_string(),
-        }
-    }
-
     #[test]
     fn originating_caller_holds_its_references_or_admin() {
         let caller = AuthenticatedCaller {
