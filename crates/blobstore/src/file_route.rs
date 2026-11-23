@@ -1193,7 +1193,6 @@ impl AsyncRead for BodyReader {
 mod tests {
     use super::*;
     use std::collections::HashSet;
-    use wamn_application::ingress::CredentialType;
     use wamn_routes::HostRouteSet;
     fn caller(
         action: Option<&str>,
