@@ -7,23 +7,12 @@ edition.workspace = true
 license.workspace = true
 autotests = false
 
-[package.metadata.cargo-machete]
-# The CLI query encoder included by the tests uses wamn-digest.
-ignored = ["wamn-digest"]
-
 [lib]
 path = "lib.rs"
 
 [dev-dependencies]
-wamn-postgres.workspace = true
-sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls", "chrono", "uuid", "json", "bigdecimal"] }
-wamn-digest.workspace = true
 anyhow = { workspace = true }
-wamn-http-client = { workspace = true, features = ["tls12"] }
 serde_json = { workspace = true }
-tokio = { workspace = true, features = ["process", "net", "time", "rt", "macros", "io-util", "signal"] }
-uuid = { workspace = true, features = ["v7"] }
-hyper = { workspace = true }
 
 [lints]
 workspace = true

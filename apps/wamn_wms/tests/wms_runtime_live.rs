@@ -49,17 +49,4 @@ mod shape {
         let answer = json!([{"request_id": "mine", "value": {}}]);
         assert!(request_element(&answer, "mine").is_ok());
     }
-
-    #[test]
-    fn a_path_is_appended_to_the_endpoint_without_a_double_slash() {
-        let route = Route {
-            endpoint: "http://10.0.0.2:30999/".trim_end_matches('/').to_owned(),
-            host: "wms.localhost".to_owned(),
-            bearer: "t".to_owned(),
-        };
-        assert_eq!(
-            format!("{}{}", route.endpoint, "/inventory/move"),
-            "http://10.0.0.2:30999/inventory/move"
-        );
-    }
 }

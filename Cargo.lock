@@ -7460,14 +7460,7 @@ name = "wamn-wms-tests"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "hyper",
  "serde_json",
- "sqlx",
- "tokio",
- "uuid",
- "wamn-digest",
- "wamn-http-client",
- "wamn-postgres",
 ]
 
 [[package]]
