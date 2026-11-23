@@ -154,8 +154,7 @@ fn request_head(request: &Request) -> RequestHead {
         headers
             .iter()
             .find(|header| header.name.eq_ignore_ascii_case("host"))
-            .map(|header| header.value.clone())
-            .unwrap_or_default()
+            .map_or_default(|header| header.value.clone())
     });
     RequestHead {
         method,

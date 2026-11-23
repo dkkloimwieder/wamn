@@ -548,7 +548,7 @@ fn a_feed_read_is_revalidated_every_time_under_the_target_of_its_list() {
             match directive.split_once('=') {
                 Some(("max-age", value)) => fresh_for = Some(value.parse::<u64>().unwrap()),
                 Some(("stale-while-revalidate", value)) => {
-                    stale_for = Some(value.parse::<u64>().unwrap())
+                    stale_for = Some(value.parse::<u64>().unwrap());
                 }
                 _ if directive.eq_ignore_ascii_case("public") => visibility = Some(true),
                 _ if directive.eq_ignore_ascii_case("private") => visibility = Some(false),
