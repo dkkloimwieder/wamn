@@ -194,22 +194,34 @@ impl bound::Host for ActiveCtx<'_> {
     }
 }
 impl bound::HostCall for ActiveCtx<'_> {
-    async fn parameters(&mut self, call: Resource<Call>) -> wash_runtime::wasmtime::Result<String> {
-        Ok(self.table.get(&call)?.parameters.clone())
-    }
-    async fn credential(
+    fn parameters(
         &mut self,
         call: Resource<Call>,
-    ) -> wash_runtime::wasmtime::Result<Option<String>> {
-        Ok(self
-            .table
-            .get(&call)?
-            .credential
-            .as_deref()
-            .map(|secret| secret.expose().to_owned()))
+    ) -> impl Future<Output = wash_runtime::wasmtime::Result<String>> {
+        let table = &mut *self.table;
+        async move { Ok(table.get(&call)?.parameters.clone()) }
     }
-    async fn drop(&mut self, call: Resource<Call>) -> wash_runtime::wasmtime::Result<()> {
-        self.table.delete(call)?;
-        Ok(())
+    fn credential(
+        &mut self,
+        call: Resource<Call>,
+    ) -> impl Future<Output = wash_runtime::wasmtime::Result<Option<String>>> {
+        let table = &mut *self.table;
+        async move {
+            Ok(table
+                .get(&call)?
+                .credential
+                .as_deref()
+                .map(|secret| secret.expose().to_owned()))
+        }
+    }
+    fn drop(
+        &mut self,
+        call: Resource<Call>,
+    ) -> impl Future<Output = wash_runtime::wasmtime::Result<()>> {
+        let table = &mut *self.table;
+        async move {
+            table.delete(call)?;
+            Ok(())
+        }
     }
 }

@@ -53,16 +53,9 @@ pub struct EnvConnections {
 }
 
 /// The connection facts one host keeps.
+#[derive(Default)]
 pub struct ConnectionMemory {
     pub oauth_tokens: Arc<crate::oauth_token::Cache>,
-}
-
-impl Default for ConnectionMemory {
-    fn default() -> Self {
-        Self {
-            oauth_tokens: Arc::default(),
-        }
-    }
 }
 
 impl std::fmt::Debug for ConnectionMemory {
