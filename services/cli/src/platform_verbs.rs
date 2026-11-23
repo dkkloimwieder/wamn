@@ -14,7 +14,7 @@ use wamn_platform_install::release_chart::bundle;
 const INFRASTRUCTURE_RELEASE: &str = "wamn-infrastructure";
 const PLATFORM_RELEASE: &str = "wamn";
 const SYSTEM_SQL_JOB: &str = "wamn-system-sql";
-const ROLLOUT_TIMEOUT: Duration = Duration::from_secs(960);
+const ROLLOUT_TIMEOUT: Duration = Duration::from_mins(16);
 
 /// Platform verbs exposed by the product command.
 #[derive(Debug, Subcommand)]

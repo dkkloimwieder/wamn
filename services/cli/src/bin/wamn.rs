@@ -206,10 +206,10 @@ mod tests {
             let Command::Schema(command) = command else {
                 panic!("schema")
             };
-            let args = match command {
-                wamn_cli::schema_verbs::SchemaCommand::Diff(args) => args,
-                wamn_cli::schema_verbs::SchemaCommand::Apply(args) => args,
-                _ => panic!("schema input"),
+            let (wamn_cli::schema_verbs::SchemaCommand::Diff(args)
+            | wamn_cli::schema_verbs::SchemaCommand::Apply(args)) = command
+            else {
+                panic!("schema input")
             };
             assert_eq!(args.application, "orders".parse().unwrap());
             assert_eq!(args.env, std::path::Path::new("environment.k"));

@@ -47,8 +47,8 @@ pub struct Version {
     host: Host,
     #[arg(long)]
     workflow_id: CanonicalName,
-    #[arg(long)]
-    version: i32,
+    #[arg(id = "version", long = "version", value_name = "VERSION")]
+    number: i32,
 }
 
 #[derive(Debug, Args)]
@@ -57,8 +57,8 @@ pub struct Run {
     host: Host,
     #[arg(long)]
     workflow_id: CanonicalName,
-    #[arg(long, value_enum)]
-    run_as: RunAs,
+    #[arg(id = "run_as", long = "run-as", value_name = "RUN_AS", value_enum)]
+    identity: RunAs,
     #[arg(long)]
     idempotency_key: CanonicalName,
     #[arg(long)]
@@ -87,7 +87,7 @@ pub async fn run(command: WorkflowCommand) -> anyhow::Result<()> {
         WorkflowCommand::List(host) => (host, "workflow.list", json!({})),
         WorkflowCommand::Run(args) => {
             let input = read_json(&args.input)?;
-            let run_as = match args.run_as {
+            let run_as = match args.identity {
                 RunAs::Admin => "admin",
                 RunAs::Workflow => "workflow",
             };
@@ -121,7 +121,7 @@ fn version(operation: &'static str, args: Version) -> (Host, &'static str, Value
     (
         args.host,
         operation,
-        json!({"workflow_id": args.workflow_id, "version": args.version}),
+        json!({"workflow_id": args.workflow_id, "version": args.number}),
     )
 }
 

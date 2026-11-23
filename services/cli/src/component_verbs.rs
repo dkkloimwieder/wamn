@@ -215,7 +215,10 @@ mod tests {
         .unwrap();
         assert_eq!(request.method(), hyper::Method::GET);
         assert_eq!(request.uri().path(), "/wamn_control/connection/get");
-        assert!(hyper::body::Body::size_hint(request.body()).exact() == Some(0));
+        assert_eq!(
+            hyper::body::Body::size_hint(request.body()).exact(),
+            Some(0)
+        );
         assert_eq!(
             Value::Object(
                 url::form_urlencoded::parse(request.uri().query().unwrap_or_default().as_bytes())
