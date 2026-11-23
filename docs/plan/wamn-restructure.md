@@ -232,51 +232,39 @@ Phase 1 deletion, phase 2 restructure (no behaviour change), phase 3 code editin
 
 Phase 3 steps, in dependency order: 3.1 database model; 3.2 request path (workloads, connections, files, integrations and application host routes); 3.3 identity; 3.4 workflow service; 3.5 deploy; 3.6 isolation, then install; 3.7 codegen; 3.7b crate boundaries; 3.8 tests.
 
-## Epic 16: step 3.8, lifecycle, isolation and load on kind
+## Epic 17: crate graph
 
-Rule: journey tests on local kind through product commands, observed with the read-only login. Each test has its own org and environment. No new product behaviour except --confirm.
+Rule: each crate has one job, and the dependency lint enforces the graph. No new product behaviour.
 
 Issues:
 
-16.0 Plan, doc only, done first. Record the rulings and the contract list from the scout.
+17.0 Plan, doc only, done first. Record D's rulings on the scout's choices.
 
-16.1 Lifecycle journey tests: rollback, apply again, `wamn env delete`, and `wamn env delete --data` after a plain delete. During the rollback, the rollback test calls the application continuously through the web edge and fails on any failed call (Q2). Add `--confirm <name>` (Q1): `wamn env delete --data --confirm <environment>` and `wamn schema reset --confirm <project>`. The command checks the value exactly as it checks the typed answer today. With no flag and no terminal, the command still refuses. The CLI change is committed alone. 16.1 closes wamn-vx6c0.
+17.1 The grant SQL (`wamn_identity::application::OPERATION_GRANT_LOCK_SQL`, `GrantError`) moves from `wamn-identity` to `wamn-authentication`. The host (`services/host/src/host/application_route.rs`) then links no `wamn-identity`.
 
-16.2 Isolation journey tests. The CNI check from Epic 15 stays. The harness starts a probe pod in environment A's namespace with A's host pod labels. The test checks that the probe cannot reach environment B's host, Postgres or Services. The probe stands in for the host, whose image has no network tools. It is test setup in a test cluster only.
+17.2 The cloud metadata client (`wamn_oci::package_artifact::metadata::Metadata`) leaves `wamn-oci`, so `wamn-envelope` (`pod_identity.rs`) stops linking the registry client.
 
-16.3 Pooler journey tests. For one control login and one apply login, the test opens the per-login limit plus one session. The extra session waits, then proceeds when one closes. The auth query works. The test reads the 120 s and 900 s wait settings from the running PgBouncer configuration and does not wait them out.
+17.3 Rename `test-support/resources` to `test-support/infrastructure`, to match `wamn-test-infrastructure`.
 
-16.4 Waits and renewal. In journey-cluster and env apply, the test observes the kstatus waits on the `application` and `environment` charts and the Rust waits on the `project` and `org` charts (Certificate, Database connection, the CDC reader's wait for its replication slot, CDC reader rollout, Cluster). Pooler certificate renewal: renew one Pooler certificate, restart the CloudNativePG operator to force a reconcile, and check that PgBouncer serves the new certificate.
+17.4 `wamn-postgres` splits into two crates instead of its `host` feature (engine, registry and pool code).
 
-Contracts (scout of 2026-11-22, with D's rulings):
-- C1 Rollback with no failed call: deploy fixture version 1, then version 2 (different component digests, built by `cargo xtask prepare-tests`), then `wamn rollback` to version 1. The test checks that version 2 answers before the rollback and that version 1 answers after it, because the deploy wait can report Ready before the new template is live. One client calls the application through the web edge back to back, from a 200 baseline until the Job finishes and version 1 is Ready. Any non-200 status, connection error, per-call timeout or invalid body fails the test, and the epic stops for D's ruling.
-- C2 A plain `wamn env delete` removes the active registry row and keeps the Cluster, Certificates and their Secrets. The kept Cluster is Ready, the observer reads the row through a port-forward, and a product login (for example `wamn_app_login`) cannot connect.
-- C3 `wamn env apply` after a plain delete makes a new instance suffix and a new Cluster beside the kept one. It runs in its own org.
-- C4 `wamn env delete --data --confirm <org/env/project>` after a plain delete removes the kept Cluster, its Certificates and Issuers. It runs in its own org.
-- C5 `--confirm` takes what the prompt asks today: the full org/env/project coordinate for `env delete --data`, and the project ID for `schema reset`. A wrong value refuses, and no flag with no terminal still refuses.
-- C6 Isolation, in two topologies: two environments in one org (the selectors inside the shared namespace) and two orgs (the namespace boundary). A one-shot probe Job carries A's host labels and the CloudNativePG PostgreSQL 18.6 image. It connects to A's own database first, then cannot connect to B's host pod (9191, 8081), B's Cluster (5432) or B's application Service (80). A connect timeout means blocked. A refusal counts only with proof that the target is up.
-- C7 Per-login limit: the test scales its org's control Deployment to 0 and opens the limit plus one sessions on each Pooler (control 8, apply 16). The PgBouncer metrics on port 9127 show the extra session waiting, and it completes when one closes. Then control scales back.
-- C8 The auth query admits a provisioned login through each Pooler.
-- C9 `SHOW CONFIG` through pods/exec gives `query_wait_timeout` 120 on control and 900 on apply.
-- C10 Waits: watches start before `journey-cluster`, `wamn env apply` and `wamn deploy`, and the test checks the pending-to-ready order and the end state. The CDC reader rollout wait shows only that the pod runs. D15 (b): `wait_workload_ready` stays as it is, and the test checks the current WorkloadReplicaSet at its own generation only as an observation, because stock WorkloadDeployment has no observed generation (Open item).
-- C11 Pooler certificate renewal, in its own test target: Issuing=True on the Certificate, a new `tls.crt`, a restart of the CloudNativePG operator, then a TLS handshake whose certificate fingerprint (rustls) equals the new `tls.crt`.
+17.5 The plain shared types (for example `application_config.rs` and `native_routes.rs`) leave `wamn-engine`, so `wamn-environment`, `wamn-connection` and `wamn-control` stop linking wasmtime and wash-runtime.
 
-Rulings during the end run (D, 2026-11-22):
-- C1: the client sends the same list query as the other journeys. If a list read through the edge cannot tell the versions apart, the test reads a GET route whose answer differs between the two fixture versions (the D1 fixture edit). No product change.
-- C2: the project chart keeps only the operator NetworkPolicy, named `<cluster>-allow-cnpg-operator`, and `--data` deletes it in `delete/resources.rs::delete_kept_project_resources`.
-- Identity: `crates/identity/src/nats/store.rs::ensure_environment` keeps its NATS lookup inside the global advisory lock, because the lock also guards the revision that the lookup checks (Open item). The worker client timeout stays 5 s.
-- Operator restarts: the stock runtime-operator exits while NATS starts (`dial tcp ...:4222: i/o timeout`), C14 records it, and nothing changes.
-- `wamn org create` waits for the control restart that it starts (`org.rs::create`), and the waits journey checks control at return. Standing fix.
-- `route_authentication.rs::authenticate_control` answers `authentication_unavailable` (503) when it cannot fetch the keys (JWKS), not 401.
-- Identity database connection timeouts under parallel load are an Open item, decided with wamn-44p7o.
-- After a red, the fix comes first, then only that test file runs again on the same cluster. A red that is only the identity load timeout goes in the report.
-- No more full runs on fresh clusters in Epic 16.
+17.6 `wamn-environment` splits by job: release chart planning, connection administration, environment lifecycle, package apply, history pruning.
 
-After 16.0, 16.1 to 16.4 run in parallel on the Epic 15 harness.
+17.7 `wiring.rs` (the workflow graph) leaves `wamn-routes`, with the "wiring" rename (`WiringDocument`, `runs.wiring_id`, `catalog.workflows.wiring_hash`). It is a schema change. wamn is greenfield, so no migration.
 
-End of the epic: the standard checks, `cargo test --workspace`, the ignored run, `cargo xtask preflight`, and each Epic 16 test file green on a local kind cluster. The full journey run on fresh clusters runs once, after the crate graph epic.
+17.8 Remove the dev-dependency cycles (for example `wamn-identity` with `wamn-environment`) where the moves above allow. List the ones left.
 
-Next: the crate graph epic, then the full journey run on fresh clusters. Then the restructure ends.
+17.9 Extend the dependency lint (`repo-lint-dependencies` in `xtask/src/tasks.rs`) to every crate. The host and the CDC reader link no `wamn-kubernetes`, `wamn-provision` or `wamn-identity`. Control-plane crates link no wasmtime. The edge links no network crates.
+
+Not in this epic: sqlx in `wamn-registry` and `wamn-package` (waits for the edge device design), and the "ProjectDatabase" claim (no such type exists).
+
+After 17.0, the issues run in parallel where they share no files. 17.8 and 17.9 come last.
+
+End of the epic: the standard checks, `cargo test --workspace`, the ignored run, `cargo xtask preflight`, and the full journey run (Epics 15 and 16) on fresh kind clusters, up to 12 orgs each. This is the restructure's closing check.
+
+Next: the restructure ends. The review work in the Claude Doc "wamn review" follows.
 
 ## Open items
 
@@ -345,20 +333,10 @@ Next: the crate graph epic, then the full journey run on fresh clusters. Then th
 - `HostArgs` (`services/host/src/host.rs`) is a hand-kept copy of the stock host flags. Check the wash-runtime 2.12.3 interface before changing it.
 - The environment document has two owners: the ConfigMap from `project/templates/operations.yaml` and the registry rows. Design one owner.
 - Org, project and environment are written five times in workload config (`release_chart/plan.rs::roles`, the `wamn.project_env_key` annotation in `workloads.yaml`) and never compared. Design one source.
-- "wiring" still names workflows (`WiringDocument`, `runs.wiring_id`, `catalog.workflows.wiring_hash`; about 213 hits). Rename with a schema change.
 - After the first kind run:
   - Charts: `enablePDB: false` for single-instance project clusters; delete the dropped `affinity` and `topologySpreadConstraints` host values, or render them.
 - An org login (control, apply) can INSERT `identity.principals`, and the policy checks only a bound identity, not the org. Least-privilege check: should these logins insert principals at all?
-- Crate graph review (2026-11-21). For one crate-graph epic after Epic 15.
-  - The grant SQL leaves `wamn-identity` for `wamn-authentication`. The host uses `wamn_identity::application::OPERATION_GRANT_LOCK_SQL` and `GrantError` (`services/host/src/host/application_route.rs:21-80`). Authorization belongs with authorization, so identity stays replaceable by a SaaS provider.
-  - The cloud metadata client (`wamn_oci::package_artifact::metadata::Metadata`) leaves `wamn-oci`. `wamn-envelope` uses it in `pod_identity.rs:9`, and that pulls the registry client into connection, authentication, operation, http, blobstore and the host.
-  - Rename `test-support/resources` to `test-support/infrastructure`, to match the crate name `wamn-test-infrastructure`.
-  - `wamn-postgres` splits into two crates instead of its `host` feature (engine, registry and pool code). Cargo unifies features within one build, so `wamn-operation` and `wamn-authentication` turn it on for every user.
-  - The plain shared types (for example `application_config.rs` and `native_routes.rs`) leave `wamn-engine`, so control-plane crates (`wamn-environment`, `wamn-connection`, `wamn-control`) stop linking wasmtime and wash-runtime.
-  - `wamn-environment` (24 wamn dependencies, 9,184 lines) splits by job: release chart planning, connection administration, environment lifecycle, package apply, history pruning.
-  - `wiring.rs` (the workflow graph) leaves `wamn-routes`, with the "wiring" rename that is already an Open item.
-  - Record the five dev-dependency cycles (for example `wamn-identity` with `wamn-environment`), and remove them where the move above allows.
-  - Extend the dependency lint (`repo-lint-dependencies` in `xtask/src/tasks.rs`) past its three crates.
+- Crate graph review (2026-11-21), not in Epic 17:
   - `wamn-registry` and `wamn-package` (30 dependents each) link sqlx with postgres, so `wamn-web`, `wamn-edge`, `wamn-event` and `wamn-broker` compile a database driver. The `sqlx::Type` impls must stay with their types (orphan rule), so a fix needs a feature or wrapper types. Decide with the edge device design, and add sqlx to the edge dependency lint then.
   - "ProjectDatabase lives in wamn-connection": no type with that name exists at 07a737a88. Record it only when the exact type and file are known.
 
@@ -2267,3 +2245,8 @@ Epic 14 closed on 2026-11-21 after review. cargo test --workspace: 617 passed in
 - The rulings on the policy name, the identity lock, the version check and the operator restarts stand.
 
 **Epic 16 closed (2026-11-22).** Epic 16 closed on 2026-11-22 after review. cargo test --workspace: 631 passed. --ignored: 101 passed. All five Epic 16 test files passed on kind, with no failed call during the rollback.
+
+**Ruled (D, 2026-11-22): Epic 17 scope (crate graph).**
+- Issues 17.0 to 17.9: 17.0 the plan; 17.1 the grant SQL moves to `wamn-authentication`; 17.2 the cloud metadata client leaves `wamn-oci`; 17.3 `test-support/resources` becomes `test-support/infrastructure`; 17.4 `wamn-postgres` splits into two crates; 17.5 the plain shared types leave `wamn-engine`; 17.6 `wamn-environment` splits by job; 17.7 `wiring.rs` leaves `wamn-routes` with the "wiring" rename, a schema change with no migration; 17.8 the dev-dependency cycles go where the moves allow; 17.9 the dependency lint covers every crate. Reason: the crate graph review of 2026-11-21.
+- sqlx in `wamn-registry` and `wamn-package` stays out, because it waits for the edge device design. The "ProjectDatabase" claim stays out, because no such type exists.
+- The full journey run on fresh clusters runs once, at the end of this epic, as the restructure's closing check. Reason: the ruling of 2026-11-22, "finishing Epic 16".
