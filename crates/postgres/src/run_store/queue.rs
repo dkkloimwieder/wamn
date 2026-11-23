@@ -5,10 +5,10 @@
 //! plane. The production lease is deliberately split into small statements
 //! composed by one host-owned transaction: lock and replace the expired lease.
 
-use crate::{FailType, RunStatus};
+use wamn_run_state::{FailType, RunStatus};
 
 /// Lock the oldest expired lease for this application.
-pub fn select_production_lease_sql() -> &'static str {
+pub(super) fn select_production_lease_sql() -> &'static str {
     "SELECT q.run_id, r.status, r.input_json::text, r.graph_id, r.graph_version, \
             r.graph_hash, r.execution_principal_id, r.execution_role, \
             r.state_json::text, r.event_root_run_id, r.event_depth \
@@ -28,12 +28,12 @@ pub fn select_production_lease_sql() -> &'static str {
 /// never reach `max_attempts`, the janitor could never reap it, and it stayed
 /// the FIFO head forever (wamn-0h0g.15.69).
 ///
-pub fn advance_lease_attempts_sql() -> &'static str {
+pub(super) fn advance_lease_attempts_sql() -> &'static str {
     "UPDATE run_queue SET attempts = attempts + 1 WHERE run_id = $1 RETURNING attempts"
 }
 
 /// Replace the expired lease selected under the run and queue locks.
-pub fn grant_production_lease_sql() -> &'static str {
+pub(super) fn grant_production_lease_sql() -> &'static str {
     "UPDATE run_queue AS q SET lease_owner = $2, \
            lease_expires_at = clock_timestamp() + ($3::bigint * interval '1 millisecond'), \
            lease_generation = q.lease_generation + 1 \
@@ -45,7 +45,7 @@ pub fn grant_production_lease_sql() -> &'static str {
 /// Params: run id, host-injected lease owner, lease generation, TTL
 /// milliseconds. A missing row is the complete fence-lost result: the caller
 /// must stop the in-flight router walk without another run-store access.
-pub fn renew_production_lease_sql() -> String {
+pub(super) fn renew_production_lease_sql() -> String {
     "UPDATE run_queue AS q \
         SET lease_expires_at = clock_timestamp() \
             + ($4::bigint * interval '1 millisecond') \
@@ -60,7 +60,7 @@ pub fn renew_production_lease_sql() -> String {
 /// Lock one crash-budget-exhausted candidate for host-owned janitor handling.
 ///
 /// Bind the grace period in milliseconds, the application, and the environment.
-pub fn select_exhausted_production_sql() -> String {
+pub(super) fn select_exhausted_production_sql() -> String {
     format!(
         "SELECT q.run_id, selected_run.status, \
                 selected_run.graph_id, \
@@ -87,7 +87,7 @@ pub fn select_exhausted_production_sql() -> String {
 ///
 /// Params: run id, generic failure JSON, terminal
 /// instant. Every exhausted run records its failure and loses its queue row.
-pub fn terminalize_exhausted_production_sql() -> String {
+pub(super) fn terminalize_exhausted_production_sql() -> String {
     terminalize_exhausted_sql(RunStatus::InfrastructureFailure, None)
 }
 

@@ -1,8 +1,9 @@
-//! Completion and error types for the queued-run lifecycle.
+//! Storage contract and results for the queued-run lifecycle.
 
-use std::fmt::{Display, Formatter};
-
+use crate::admission::{RunAdmission, RunAdmitted};
+use crate::persistence::LeaseTurn;
 use crate::{FailType, RunStatus};
+use std::fmt::{Display, Formatter};
 
 /// Stable category for a production-lease failure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -75,19 +76,6 @@ impl ProductionLeaseError {
         source: impl Into<Box<dyn std::error::Error + Send + Sync>>,
     ) -> Self {
         Self::with_source(ProductionLeaseErrorType::Contract, operation, source)
-    }
-
-    /// Preserve the database message and constraint, without row-bearing DETAIL or HINT.
-    /// Run rows contain application inputs, results, and invocation context.
-    pub fn postgres(operation: &'static str, error: &sqlx::Error) -> Self {
-        let detail = match error.as_database_error() {
-            Some(database) => match database.constraint() {
-                Some(constraint) => format!("{} ({constraint})", database.message()),
-                None => database.message().to_owned(),
-            },
-            None => error.to_string(),
-        };
-        ProductionLeaseError::new(ProductionLeaseErrorType::Storage, operation, detail)
     }
 
     /// Return the stable failure category.
@@ -192,4 +180,81 @@ pub enum ProductionReapResult {
     /// The selected row was marked infrastructure-failure and
     /// dequeued under the queue locks.
     Reaped { run_id: String },
+}
+
+/// Run storage operations on the caller’s authorized transaction.
+pub trait RunStore {
+    /// Insert and lease the run atomically on an authorized transaction.
+    fn admit_run(
+        &mut self,
+        run: &RunAdmission<'_>,
+        runner: &str,
+        lease_ttl_ms: i64,
+    ) -> impl Future<Output = Result<RunAdmitted, ProductionLeaseError>> + Send;
+
+    /// Find the history actor for the CDC row when the source has a history table.
+    fn history_actor(
+        &mut self,
+        envelope: &wamn_event::Envelope,
+    ) -> impl Future<
+        Output = Result<Option<wamn_identity_protocol::PrincipalId>, ProductionLeaseError>,
+    > + Send;
+
+    /// Renew a live lease under its owner and generation fence.
+    fn renew(
+        &mut self,
+        run_id: &str,
+        runner: &str,
+        lease_generation: i64,
+        lease_ttl_ms: i64,
+    ) -> impl Future<Output = Result<ProductionLeaseRenewal, ProductionLeaseError>> + Send;
+
+    /// Store the terminal outcome and remove the queue entry under the lease fence.
+    fn complete(
+        &mut self,
+        run_id: &str,
+        runner: &str,
+        lease_generation: i64,
+        completion: &ProductionCompletion,
+    ) -> impl Future<Output = Result<ProductionCompletionResult, ProductionLeaseError>> + Send;
+
+    /// Lease one run. The caller commits both `Leased` and `GrantRefused` turns.
+    fn lease_next(
+        &mut self,
+        runner: &str,
+        application: &wamn_registry::ApplicationName,
+        environment: &wamn_registry::EnvName,
+        lease_ttl_ms: i64,
+    ) -> impl Future<Output = Result<LeaseTurn, ProductionLeaseError>> + Send;
+
+    /// Fail and dequeue one expired run whose retry budget is spent.
+    fn reap_exhausted(
+        &mut self,
+        application: &wamn_registry::ApplicationName,
+        environment: &wamn_registry::EnvName,
+        grace_ms: i64,
+    ) -> impl Future<Output = Result<ProductionReapResult, ProductionLeaseError>> + Send;
+
+    /// Record the Response checkpoint under the live lease fence.
+    fn checkpoint(
+        &mut self,
+        run_id: &str,
+        runner: &str,
+        lease_generation: i64,
+        state: &serde_json::Value,
+    ) -> impl Future<Output = Result<bool, ProductionLeaseError>> + Send;
+
+    /// Check that the host still owns the unexpired lease before dispatching a node.
+    fn lease_remaining_ms(
+        &mut self,
+        run: &str,
+        runner: &str,
+        generation: i64,
+    ) -> impl Future<Output = Result<Option<i64>, ProductionLeaseError>> + Send;
+
+    /// Delete expired terminal history on an authorized retention connection.
+    fn prune_terminal_runs(
+        &mut self,
+        retention_days: u32,
+    ) -> impl Future<Output = Result<u64, ProductionLeaseError>> + Send;
 }

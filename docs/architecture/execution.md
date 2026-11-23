@@ -455,7 +455,8 @@ Cancellation or shutdown revokes both records. Normal completion releases them a
 The release chart starts the workflow component as the `service` of every application WorkloadDeployment.
 It uses the pinned `platform.workflow.image` and imports `wamn:workflow`, `wasi:clocks`, and `wasmcloud:nats/jetstream@0.1.3`.
 The [workflow plugin](../../services/host/src/host/workflow.rs) serves the `wamn:workflow` interfaces.
-`wamn-run-state` owns admission, leases, checkpoints, settlement and pruning.
+`wamn-run-state` defines the run store contract for admission, leases, checkpoints, settlement and pruning.
+`wamn-postgres` implements it on the caller’s authorized connection.
 The host uses the project platform login and binds `wamn_run` as the transaction's search path.
 Admission gives the first lease to the winning insert.
 A recovery call takes an expired lease and preserves the Response checkpoint.

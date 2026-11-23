@@ -1,10 +1,10 @@
 //! SQL for pruning terminal run history.
-use crate::RunStatus;
+use wamn_run_state::RunStatus;
 
 /// Delete terminal runs older than the bound retention period in days.
 /// The caller authorizes the connection and binds days as `$1`.
 /// Queue entries follow their run through `ON DELETE CASCADE`.
-pub fn prune_terminal_runs_sql() -> String {
+pub(super) fn prune_terminal_runs_sql() -> String {
     let terminal: Vec<String> = RunStatus::ALL
         .into_iter()
         .filter(|s| s.is_terminal())

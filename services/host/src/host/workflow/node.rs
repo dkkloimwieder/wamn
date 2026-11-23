@@ -10,8 +10,9 @@ use tokio::time::Instant;
 use wamn_connection::connection::GraphPosition;
 use wamn_application::native_routes::{OperationRefusal, bounded_node_deadline_ms};
 use wamn_engine::operation::node_types;
-use wamn_run_state::persistence;
 use wamn_operation::WorkflowNode;
+use wamn_postgres::run_store::PostgresRunStore;
+use wamn_run_state::run_store::RunStore;
 use wash_runtime::wasmtime::component::Accessor;
 use wit_node::{Detail, Emission, Invocation, NodeError};
 
@@ -42,8 +43,7 @@ impl Workflow {
             let remaining = self
                 .postgres
                 .executor_write(&workload.application.project, async |connection| {
-                    persistence::lease_remaining_ms(
-                        connection,
+                    PostgresRunStore::new(connection).lease_remaining_ms(
                         &authority.delivery,
                         &workload.runner,
                         generation,

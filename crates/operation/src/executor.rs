@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use wamn_identity_protocol::{AuthorityClass, PlatformComponent};
 use wamn_postgres::WamnPostgres;
+use wamn_postgres::run_store::postgres_error;
 use wamn_run_state::run_store::ProductionLeaseError;
 
 use super::{OperationHost, resources::StatementConnectionGuard, transactions};
@@ -74,7 +75,7 @@ where
                 .execute(connection.connection())
                 .await
                 .map_err(|error| {
-                    E::from(ProductionLeaseError::postgres(
+                    E::from(postgres_error(
                         "commit executor transaction",
                         &error,
                     ))

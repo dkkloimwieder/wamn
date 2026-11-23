@@ -1,6 +1,7 @@
 //! Service principals and PAT administration in a project database.
 
 use serde::Serialize;
+use sqlx::FromRow as _;
 use sqlx::types::Uuid;
 use std::{error::Error, fmt, time::Duration};
 use wamn_identity_protocol::{
@@ -166,10 +167,9 @@ pub async fn issue(
 }
 
 /// Public metadata of a stored token.
-#[derive(Debug, Serialize, sqlx::FromRow)]
+#[derive(Debug, Serialize)]
 pub struct PatRecord {
-    id: sqlx::types::Uuid,
-    #[sqlx(try_from = "String")]
+    id: Uuid,
     token_prefix: PatPrefix,
     label: String,
     created_at: String,
@@ -177,12 +177,42 @@ pub struct PatRecord {
     revoked_at: Option<String>,
 }
 
+#[derive(sqlx::FromRow)]
+struct PatRow {
+    id: Uuid,
+    token_prefix: String,
+    label: String,
+    created_at: String,
+    expires_at: String,
+    revoked_at: Option<String>,
+}
+
+impl TryFrom<PatRow> for PatRecord {
+    type Error = sqlx::Error;
+
+    fn try_from(row: PatRow) -> Result<Self, Self::Error> {
+        let token_prefix =
+            PatPrefix::try_from(row.token_prefix).map_err(|source| sqlx::Error::ColumnDecode {
+                index: "token_prefix".into(),
+                source: Box::new(source),
+            })?;
+        Ok(Self {
+            id: row.id,
+            token_prefix,
+            label: row.label,
+            created_at: row.created_at,
+            expires_at: row.expires_at,
+            revoked_at: row.revoked_at,
+        })
+    }
+}
+
 /// List token metadata, newest first.
 pub async fn list(
     project: &mut sqlx::PgConnection,
     principal: &PrincipalId,
 ) -> Result<Vec<PatRecord>, ServiceError> {
-    sqlx::query_as(
+    sqlx::query(
         r#"SELECT p.id, p.prefix AS token_prefix, p.label,
                   to_char(p.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS created_at,
                   to_char(p.expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS expires_at,
@@ -192,6 +222,7 @@ pub async fn list(
            ORDER BY p.created_at DESC, p.id"#,
     )
     .bind(Uuid::from(*principal))
+    .try_map(|row| PatRecord::try_from(PatRow::from_row(&row)?))
     .fetch_all(project)
     .await
     .map_err(|source| ServiceError::database("list the project's service PATs", source))

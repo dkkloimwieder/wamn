@@ -7206,11 +7206,14 @@ dependencies = [
  "tracing",
  "url",
  "wamn-application",
+ "wamn-event",
  "wamn-identity-protocol",
+ "wamn-package",
  "wamn-principal",
  "wamn-provision",
  "wamn-registry",
  "wamn-role",
+ "wamn-run-state",
  "wamn-scalar",
  "wamn-test-infrastructure",
 ]
@@ -7346,11 +7349,8 @@ dependencies = [
 name = "wamn-run-state"
 version = "0.1.0"
 dependencies = [
- "chrono",
- "postgres-protocol",
  "serde",
  "serde_json",
- "sqlx",
  "wamn-digest",
  "wamn-event",
  "wamn-identity-protocol",

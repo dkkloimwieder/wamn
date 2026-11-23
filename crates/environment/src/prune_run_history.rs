@@ -1,5 +1,4 @@
-//! The `prune-run-history` subcommand (9.6 retention, wamn-srb): the effect shell
-//! for the pure `wamn_run_state::sql::prune_terminal_runs_sql` builder.
+//! The `prune-run-history` subcommand uses the PostgreSQL run store.
 //!
 //! Deletes a project-env's TERMINAL run history older than a retention window so
 //! the `runs` HOT store stays bounded (platform-plan risk #5). Only runs in a
@@ -17,6 +16,8 @@
 
 use anyhow::{Context as _, bail};
 use sqlx::Connection as _;
+use wamn_postgres::run_store::PostgresRunStore;
+use wamn_run_state::run_store::RunStore;
 
 /// Inputs of one terminal run history prune.
 #[derive(Debug)]
@@ -101,7 +102,8 @@ pub async fn prune(
         .execute(&mut *transaction)
         .await
         .context("set run history schema")?;
-    let count = wamn_run_state::persistence::prune_terminal_runs(&mut transaction, retention_days)
+    let count = PostgresRunStore::new(&mut transaction)
+        .prune_terminal_runs(retention_days)
         .await
         .context("prune terminal runs")?;
     if apply {

@@ -14,10 +14,12 @@ use tokio::time::Instant;
 use wamn_event::{Causation, SourceEvent};
 use wamn_identity_protocol::PrincipalId;
 use wamn_identity_protocol::workflow_user_id;
-use wamn_run_state::admission::{RunAdmission, RunAdmitted, RunTrigger, admit_run, history_actor};
-use wamn_run_state::persistence::{self, LeaseTurn, ProductionLeaseResult};
+use wamn_postgres::run_store::{PostgresRunStore, postgres_error};
+use wamn_run_state::admission::{RunAdmission, RunAdmitted, RunTrigger};
+use wamn_run_state::persistence::{LeaseTurn, ProductionLeaseResult};
 use wamn_run_state::run_store::{
     ProductionCompletion, ProductionCompletionResult, ProductionLeaseError, ProductionLeaseRenewal,
+    RunStore,
 };
 use wash_runtime::wasmtime::component::Accessor;
 
@@ -125,8 +127,7 @@ impl Workload {
             .map(i32::try_from)
             .transpose()
             .map_err(|error| ProductionLeaseError::invalid("convert workflow depth", error))?;
-        let run = admit_run(
-            connection,
+        let run = PostgresRunStore::new(connection).admit_run(
             &RunAdmission {
                 application: &self.application.application,
                 environment: &self.application.environment,
@@ -203,7 +204,7 @@ impl Workflow {
                 .fetch_all(&mut *connection)
                 .await
                 .map_err(|error| {
-                    ProductionLeaseError::postgres("read enabled schedules", &error)
+                    postgres_error("read enabled schedules", &error)
                 })?;
                 let mut admitted = Vec::new();
                 for row in rows {
@@ -330,14 +331,14 @@ impl Workflow {
             // The ID was checked against the envelope's complete source coordinate.
             .bind(wal_lsn(envelope.identity.commit_lsn))
             .fetch_optional(&mut *connection).await
-            .map_err(|error| ProductionLeaseError::postgres("match data-change workflow", &error))?;
+            .map_err(|error| postgres_error("match data-change workflow", &error))?;
             let Some(row) = row else { return Ok(None) };
             let condition: Option<&str> = row.try_get("condition")
                 .map_err(|error| ProductionLeaseError::storage("read data-change condition", error))?;
             if !super::events::matches(&envelope, condition, &workload.project_key)? {
                 return Ok(None);
             }
-            let actor = history_actor(connection, &envelope).await?;
+            let actor = PostgresRunStore::new(connection).history_actor(&envelope).await?;
             let definition = Definition::from_row(&row)?;
             let role: &str = row.try_get("execution_role")
                 .map_err(|error| ProductionLeaseError::storage("read data-change role", error))?;
@@ -360,10 +361,10 @@ impl Workflow {
         let result = self
             .postgres
             .executor_write(&app.project, async |connection| {
-                persistence::reap_exhausted(connection, &app.application, &app.environment, 0)
+                let mut runs = PostgresRunStore::new(connection);
+                runs.reap_exhausted(&app.application, &app.environment, 0)
                     .await?;
-                let turn = persistence::lease_next(
-                    connection,
+                let turn = runs.lease_next(
                     &workload.runner,
                     &app.application,
                     &app.environment,
@@ -400,7 +401,7 @@ impl Workflow {
                 .fetch_one(connection)
                 .await
                 .map_err(|error| {
-                    ProductionLeaseError::postgres("read the leased workflow version", &error)
+                    postgres_error("read the leased workflow version", &error)
                 })?;
                 Ok(Ok(Some(Admitted {
                     definition: Definition {
@@ -521,8 +522,7 @@ impl<T: Send + 'static> wit_run::HostWithStore<T> for SharedCtx {
             let outcome = plugin
                 .postgres
                 .executor_write(&workload.application.project, async |connection| {
-                    persistence::renew(
-                        connection,
+                    PostgresRunStore::new(connection).renew(
                         &authority.delivery,
                         &workload.runner,
                         generation,
@@ -562,8 +562,7 @@ impl<T: Send + 'static> wit_run::HostWithStore<T> for SharedCtx {
             let stored = plugin
                 .postgres
                 .executor_write(&workload.application.project, async |connection| {
-                    persistence::checkpoint(
-                        connection,
+                    PostgresRunStore::new(connection).checkpoint(
                         &authority.delivery,
                         &workload.runner,
                         generation,
@@ -596,8 +595,7 @@ impl<T: Send + 'static> wit_run::HostWithStore<T> for SharedCtx {
             let finished = plugin
                 .postgres
                 .executor_write(&workload.application.project, async |connection| {
-                    persistence::complete(
-                        connection,
+                    PostgresRunStore::new(connection).complete(
                         &authority.delivery,
                         &workload.runner,
                         generation,

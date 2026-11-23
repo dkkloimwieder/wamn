@@ -11,6 +11,7 @@ use tokio::sync::oneshot;
 use tokio::time::Instant;
 use wamn_application::ingress::AuthenticatedCaller;
 use wamn_identity_protocol::{PrincipalId, workflow_user_id};
+use wamn_postgres::run_store::postgres_error;
 use wamn_run_state::admission::RunTrigger;
 use wamn_run_state::run_store::ProductionLeaseError;
 use wash_runtime::engine::dispatch::{GuestCall, GuestCallFuture};
@@ -60,7 +61,7 @@ impl Workflow {
                     AND enabled AND trigger = 'request' AND path = $3 FOR SHARE"
             ).bind(&app.environment).bind(&app.application).bind(request.path)
                 .fetch_optional(&mut *connection).await
-                .map_err(|error| ProductionLeaseError::postgres("load Request workflow", &error))?;
+                .map_err(|error| postgres_error("load Request workflow", &error))?;
                 let Some(row) = row else {
                     return Ok(Ok(None));
                 };
@@ -204,7 +205,7 @@ impl Workflow {
                     AND enabled AND workflow_id = $3 FOR SHARE"
             ).bind(&app.environment).bind(&app.application).bind(request.workflow_id)
                 .fetch_optional(&mut *connection).await
-                .map_err(|error| ProductionLeaseError::postgres("load run-now workflow", &error))?;
+                .map_err(|error| postgres_error("load run-now workflow", &error))?;
                 let Some(row) = row else {
                     return Ok(Ok(None));
                 };

@@ -12,12 +12,7 @@ wamn-registry.workspace = true
 wamn-digest.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
-sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "chrono", "uuid"] }
-chrono.workspace = true
 wamn-event.workspace = true
-postgres-protocol.workspace = true
-
-[dev-dependencies]
 
 [lints]
 workspace = true
