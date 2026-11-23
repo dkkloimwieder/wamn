@@ -398,6 +398,16 @@ pub fn host_selector(group: &str) -> String {
     format!("wasmcloud.com/hostgroup={group}")
 }
 
+/// The temporary template used to copy a local project database.
+pub fn database_template(database: &str) -> String {
+    format!("{database}--template")
+}
+
+/// The control host release and group of one org.
+pub fn control_resource(org: &crate::OrgId) -> String {
+    format!("c-{org}")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -450,14 +460,4 @@ mod tests {
             )
         );
     }
-}
-
-/// The temporary template used to copy a local project database.
-pub fn database_template(database: &str) -> String {
-    format!("{database}--template")
-}
-
-/// The control host release and group of one org.
-pub fn control_resource(org: &crate::OrgId) -> String {
-    format!("c-{org}")
 }

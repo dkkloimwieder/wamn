@@ -114,6 +114,13 @@ impl std::borrow::Borrow<str> for ProjectId {
         self.as_str()
     }
 }
+
+impl PartialEq<&str> for ProjectId {
+    fn eq(&self, other: &&str) -> bool {
+        self.as_str() == *other
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -138,11 +145,5 @@ mod tests {
             let parsed = value.parse::<super::ProjectId>();
             assert_eq!(parsed.is_ok(), valid, "{value:?}");
         }
-    }
-}
-
-impl PartialEq<&str> for ProjectId {
-    fn eq(&self, other: &&str) -> bool {
-        self.as_str() == *other
     }
 }
