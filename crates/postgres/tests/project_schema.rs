@@ -848,7 +848,7 @@ async fn run_queue_stamps_scheduled_runs() {
 BEGIN;
 {}
 INSERT INTO wamn_run.runs
-    (run_id, wiring_id, wiring_version, wiring_hash, package_id, environment,
+    (run_id, graph_id, graph_version, graph_hash, package_id, environment,
      trigger_source, execution_principal_id, execution_role, invoked_by)
 VALUES ('run', 'fixture', 1, 'sha256:' || repeat('d', 64), 'package', 'dev',
         'schedule', '{HISTORY_ACTOR}', 'admin', 'schedule');

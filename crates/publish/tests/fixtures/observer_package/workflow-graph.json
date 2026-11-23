@@ -1,6 +1,6 @@
 {
-  "format-version": "0.2",
-  "wiring-id": "audit_observe",
+  "format-version": "0.3",
+  "graph-id": "audit_observe",
   "version": 1,
   "nodes": {
     "entry": {

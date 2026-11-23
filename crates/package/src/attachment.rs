@@ -127,7 +127,7 @@ pub struct ServingAttachment {
     pub auth_policy: Value,
     /// Exact operation authority selected by this attachment. Attachments that
     /// do not invoke a package operation carry no token; callers never infer one
-    /// from route, wiring, or component syntax.
+    /// from route, graph, or component syntax.
     pub registered_operation: Option<crate::registered_operation::RegisteredOperation>,
 }
 

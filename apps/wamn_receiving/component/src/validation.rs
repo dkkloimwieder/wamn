@@ -6,8 +6,8 @@ use std::task::{Context, Poll, Waker};
 
 fn context() -> NodeContext {
     NodeContext {
-        wiring_id: String::new(),
-        wiring_version: 0,
+        graph_id: String::new(),
+        graph_version: 0,
         node_id: String::new(),
         delivery_id: String::new(),
         input_port: None,

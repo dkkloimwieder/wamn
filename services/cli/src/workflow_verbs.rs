@@ -75,11 +75,11 @@ pub async fn run(command: WorkflowCommand) -> anyhow::Result<()> {
     use crate::component_verbs::invoke;
     let (host, operation, input) = match command {
         WorkflowCommand::Author(args) => {
-            let document = read_json(&args.document)?;
+            let graph = read_json(&args.document)?;
             (
                 args.host,
                 "workflow.author",
-                json!({"document": document, "execution_role": args.execution_role}),
+                json!({"graph": graph, "execution_role": args.execution_role}),
             )
         }
         WorkflowCommand::Enable(args) => version("workflow.enable", args),

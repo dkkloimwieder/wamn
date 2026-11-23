@@ -9,8 +9,8 @@ use crate::{FailType, RunStatus};
 pub enum ProductionLeaseErrorType {
     /// Required host identity or database role authority was absent.
     Identity,
-    /// The admitted run has no complete, valid frozen wiring identity.
-    WiringIdentity,
+    /// The admitted run has no complete, valid frozen graph identity.
+    GraphIdentity,
     /// PostgreSQL checkout, transaction, query, or commit failed.
     Storage,
     /// Stored data or a typed database result violated the lease contract.

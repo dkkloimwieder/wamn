@@ -1,16 +1,16 @@
 # Request execution
 
 A request enters through a declared route and keeps its caller identity throughout execution.
-The host binds the route to one component operation or to an admitted wiring in the supplied release.
+The host binds the route to one component operation or to an admitted graph in the supplied release.
 A route target calls its operation once, with no graph walk and no retry.
-For a wiring, the router decides which operation runs next. Native dispatch executes each operation.
+For a graph, the router decides which operation runs next. Native dispatch executes each operation.
 A hot HTTP request creates no run or queue row.
 The warm pool holds reusable instances. Overflow calls use fresh stores.
 
 ## Routing and availability
 
 The HTTP ingress path authenticates the caller before invoking application code.
-The host compares the route, operation, permissions, wiring, and release facts before dispatch.
+The host compares the route, operation, permissions, graph, and release facts before dispatch.
 The engine owns HTTP authentication and the generated `wamn:operation` binding.
 The separate HTTP component reads released route data through `wasi:config` and calls typed application exports through that binding.
 The cloud implements the operation boundary over PostgreSQL. The edge implements it over its own SQLx SQLite store.
@@ -31,7 +31,7 @@ The control host and an edge box read no status.
 The [status routes](#host-run-routes) of the control host write the row.
 
 An attachment with auth policy `none` or `signature` has no principal, so it cannot write.
-If the reachable wiring of an anonymous attachment holds a registered operation or a transactional statement, [release publish](../../crates/publish/src/publish_release/components.rs) refuses it.
+If the reachable graph of an anonymous attachment holds a registered operation or a transactional statement, [release publish](../../crates/publish/src/publish_release/components.rs) refuses it.
 
 An authored attachment selects signature authentication with `{"modes":["signature"],"header":"X-Signature","credential":"<handle>"}` in its `auth-policy`.
 The host resolves the handle under its own project through `WamnCredentials`.
@@ -47,7 +47,7 @@ After verification, delivery follows the same JSON mapping and intent rules as a
 Signature authentication adds no timestamp or replay window.
 
 The method of a route follows from the type of its operation, and no author writes it.
-Publish writes GET for a route to a `get`, `query` or `projection` operation, and POST for every other route and every wiring.
+Publish writes GET for a route to a `get`, `query` or `projection` operation, and POST for every other route and every graph.
 A GET carries exactly one request item in its query string.
 The router reads its bounded body for authentication, but takes the operation input from the query string.
 Each top-level member is one parameter, and its value is the compact JSON text of the member.
@@ -126,7 +126,7 @@ Any other payload answers 400 `delivery-invalid-payload`.
 | `wamn-control:user-role/grant@0.9.0` | Takes `user_id` of an application user and `role`, and gives the role. Answers `granted`. |
 | `wamn-control:user-role/revoke@0.9.0` | Takes `user_id` and `role`, and takes the role. Direct `admin` grants and revokes refuse. Administration comes from the system project or org role. Answers `revoked`. |
 | `wamn-control:number-counter/set@0.9.0` | Authority `Granted`. Takes `application`, `sequence`, `counter`, `key` and the `int64` `value`, and sets that counter. Answers `next_number`. Refusals: `invalid_input`, `sequence_not_found`, `counter_not_found`, `counter_assigned_per_key`, `number_live` and `idempotency_conflict`. |
-| `workflow.author` | Application admin. Takes a format 0.2 `document` and optional `execution_role`. Stores a disabled immutable version. |
+| `workflow.author` | Application admin. Takes a format 0.3 `graph` and optional `execution_role`. Stores a disabled immutable version. |
 | `workflow.enable`, `workflow.disable` | Application admin. Take `workflow_id` and `version`. Change which version accepts new runs. |
 | `workflow.list` | Application admin. Lists workflow versions for the application. |
 | `workflow.run` | Application admin. Takes `workflow_id`, `run_as`, `input_json` and `idempotency_key`. Admits a durable run and returns `run_id`. |
@@ -267,7 +267,7 @@ The guest receives the type and fields as data, without application-specific nam
 
 The route projection caps the declared page maximum of a base read at the platform ceiling of 50,000 rows.
 The entry refuses a read whose limit is above that maximum before it authorizes the operation.
-Host routes and wiring attachments carry no entry ceiling.
+Host routes and graph attachments carry no entry ceiling.
 `route-definition.read-limits` carries page bounds and required band starts from the released input schema.
 The entry enforces those bounds and keeps the existing HTTP 400 pointer response.
 
@@ -314,7 +314,7 @@ Publish writes the key field (`idempotency`) into the serving manifest route.
 The server hashes parsed JSON with sorted object keys. It leaves out `request_id` and the key field.
 It preserves scalar spelling and array order. A retry with changed input is an idempotency conflict.
 
-A host or wiring route input that fails its schema returns HTTP 400 with the code `schema-invalid`.
+A host or graph route input that fails its schema returns HTTP 400 with the code `schema-invalid`.
 Base routes keep this response for declared page and band limits.
 Their generated typed exports refuse other invalid input through the operation contract.
 The body carries the RFC 6901 pointer of the offending value in `data.pointer`:
@@ -429,7 +429,7 @@ All cleanup paths retain their resource bounds and return failures to their owne
 The [engine operation module](../../crates/engine/src/operation.rs) dispatches exports through resolved wasmCloud targets.
 The workflow host plugin selects the exact sibling and export using the application configuration on `ingress`.
 It installs the run's SQL and connection authority before each invocation.
-A route reports a retryable or rate-limited error as the failure that a wiring reports after its last attempt.
+A route reports a retryable or rate-limited error as the failure that a graph reports after its last attempt.
 The caller decides whether to send a new request.
 
 Typed operation inputs and successful results contain owned lists or records.
@@ -519,7 +519,7 @@ Edge uses the same `ingress.wasm`. It supplies the otherwise unbound NATS import
 
 A workflow is an authored graph that belongs to one application.
 Its entry is Request, Schedule or Data change.
-The workflow service reads format 0.2 graphs and calls each sibling and export named in the graph through `wamn:workflow/node.call`.
+The workflow service reads format 0.3 graphs and calls each sibling and export named in the graph through `wamn:workflow/node.call`.
 Its labeled JetStream import selects the `workflow` NATS binding.
 The host checks that pair against `wamn.application` on the `ingress` sibling and dispatches to that component.
 The same lookup applies to palette nodes.
@@ -592,7 +592,7 @@ It stores one packaging label for each move, keyed by `{packaging_id}/{row_versi
 ### Environment workflows
 
 Each authored workflow version is one row in `catalog.workflows`.
-The graph, wiring hash, execution policy and trigger columns are immutable.
+The graph, graph hash, execution policy and trigger columns are immutable.
 One version can be enabled for each workflow.
 Enabled Request paths are unique per environment and application.
 For Data change, enable reads the source stream's last sequence before reading the PostgreSQL log sequence number.
@@ -608,7 +608,7 @@ Schedule and Data change also run as the `workflow` user with their execution ro
 The host reads that role's grants directly. Enable grants no role to the `workflow` user.
 An administrator can run an enabled workflow as themselves or as the `workflow` user if the workflow declares a role.
 
-The run stores its workflow version, wiring hash, execution principal and role.
+The run stores its workflow version, graph hash, execution principal and role.
 Before each node call, the host reads the current grants of the selected role.
 Removing an operation grant refuses the next call that needs it.
 
@@ -618,7 +618,7 @@ Packages ship only their own components. The platform build owns palette guests.
 
 ## Results and effects
 
-A wiring edge carries the declared route envelope.
+A graph edge carries the declared route envelope.
 Items contain either `value` or `error`.
 A write item retains its `request_id`. A read item carries none, and its outcomes match its items by position.
 Each node consumes that envelope and emits its declared output port.

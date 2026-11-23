@@ -1,6 +1,6 @@
 //! One export call of one admitted component, shared by every entry.
 //!
-//! The router driver calls [`invoke_operation`] for each node of a wiring walk.
+//! The router driver calls [`invoke_operation`] for each node of a graph walk.
 //! The route path calls it once for a route, with no walk. The deadline and the
 //! native call belong here, so both entries run a component the same way. The
 //! host gives the loaded application through [`ApplicationHost`] and grants the

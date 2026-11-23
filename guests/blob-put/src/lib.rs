@@ -27,7 +27,7 @@
 //!
 //! # Why the container is not named here
 //!
-//! The node names its own declared store ALIAS, from the wiring parameter. The
+//! The node names its own declared store ALIAS, from the graph parameter. The
 //! container is environment-owned, and a guest that could name it would need
 //! the coordinate the confinement exists to keep from it.
 #![cfg_attr(
@@ -58,14 +58,14 @@ mod bindings {
             "wit",
         ],
         generate_all,
-        async: ["export:wamn:node/async-handler@0.1.0#run"],
+        async: ["export:wamn:node/async-handler@0.2.0#run"],
     });
 }
 
 use bindings::exports::wamn::node::async_handler::{Emission, Guest, NodeContext, NodeError};
 use bindings::wamn::node::types::ErrorDetail;
 
-/// One JSON-pointer wiring parameter.
+/// One JSON-pointer graph parameter.
 ///
 /// Same contract as `transform`'s `pointer`: a RFC 6901 pointer, empty meaning
 /// the whole document. Required, because a default would silently pick a
@@ -101,7 +101,7 @@ impl Guest for Component {
             .ok_or_else(|| terminal("invalid_config", "store_alias parameter must be a string"))?
             .to_string();
 
-        // WHERE the key and the body live in the payload is the WIRING's
+        // WHERE the key and the body live in the payload is the graph's
         // business, not this node's. An edge carries an upstream payload
         // verbatim, so a node that insisted on the member names `key` and
         // `body` would only ever compose with a predecessor shaped to please
@@ -286,8 +286,8 @@ mod tests {
 
     fn context() -> NodeContext {
         NodeContext {
-            wiring_id: "test".into(),
-            wiring_version: 1,
+            graph_id: "test".into(),
+            graph_version: 1,
             node_id: "blob".into(),
             delivery_id: "delivery".into(),
             input_port: None,

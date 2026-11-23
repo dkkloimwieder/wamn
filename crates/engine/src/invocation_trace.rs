@@ -31,15 +31,15 @@ pub fn request_trace(headers: &[(String, String)]) -> InvocationTrace {
 
 /// The coordinates of one `wamn.component.invoke` span.
 ///
-/// A route has no wiring position, so it names the empty wiring, version 0
+/// A route has no graph position, so it names the empty graph, version 0
 /// and the empty node, the same as its effect spans.
 #[derive(Debug)]
 pub struct InvocationSite<'a> {
     pub project_env_key: &'a wamn_registry::ProjectEnvKey,
     pub project: &'a wamn_registry::ProjectId,
     pub environment: &'a wamn_registry::EnvName,
-    pub wiring_id: &'a str,
-    pub wiring_version: u32,
+    pub graph_id: &'a str,
+    pub graph_version: u32,
     pub node_id: &'a str,
     pub input_port: Option<&'a str>,
     pub operation: &'a str,
@@ -59,8 +59,8 @@ pub fn invocation_span(
         wamn.project_env_key = %site.project_env_key,
         wamn.project = %site.project,
         wamn.environment = %site.environment,
-        wamn.wiring_id = %site.wiring_id,
-        wamn.wiring_version = site.wiring_version,
+        wamn.graph_id = %site.graph_id,
+        wamn.graph_version = site.graph_version,
         wamn.component_digest = %site.component_digest,
         wamn.node_id = %site.node_id,
         wamn.operation = %site.operation,

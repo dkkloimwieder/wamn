@@ -120,9 +120,9 @@ pub const EXECUTOR_PLATFORM_QUEUE_UPDATE_COLUMNS: [&str; 4] =
 pub const EXECUTOR_PLATFORM_RUN_INSERT_COLUMNS: [&str; 16] = [
     "package_id",
     "environment",
-    "wiring_id",
-    "wiring_version",
-    "wiring_hash",
+    "graph_id",
+    "graph_version",
+    "graph_hash",
     "trigger_source",
     "execution_principal_id",
     "execution_role",

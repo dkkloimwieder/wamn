@@ -23,8 +23,8 @@ pub fn context_value(context: node_types::NodeContext) -> Val {
         Val::Option(value.map(|value| Box::new(Val::String(value))))
     }
     Val::Record(vec![
-        ("wiring-id".into(), Val::String(context.wiring_id)),
-        ("wiring-version".into(), Val::U32(context.wiring_version)),
+        ("graph-id".into(), Val::String(context.graph_id)),
+        ("graph-version".into(), Val::U32(context.graph_version)),
         ("node-id".into(), Val::String(context.node_id)),
         ("delivery-id".into(), Val::String(context.delivery_id)),
         ("input-port".into(), optional_string(context.input_port)),

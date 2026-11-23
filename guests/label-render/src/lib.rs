@@ -1,9 +1,9 @@
 //! Label-render palette component.
 //!
-//! A pure transform: the wiring's `template_id` parameter plus a field record
+//! A pure transform: the graph's `template_id` parameter plus a field record
 //! in, one ZPL label out. It imports only
 //! `wamn:node`, so it holds no authority that leaves the host and its effect
-//! projection is empty — which is what makes a wiring carrying it eligible for
+//! projection is empty — which is what makes a graph carrying it eligible for
 //! the condition's effect-free-case path. Nothing here declares that; it follows
 //! from the imports.
 //!
@@ -14,7 +14,7 @@
 //! **The output ENRICHES the input**: every field the record arrived with, plus
 //! `zpl`. Edges carry payloads verbatim, so a node that replaced its payload
 //! would destroy upstream context at its own hop — and a downstream node could
-//! not recover it, because a wiring parameter can point at a field but cannot
+//! not recover it, because a graph parameter can point at a field but cannot
 //! resurrect one. A palette transform that means to NARROW the payload
 //! declares itself a projection instead.
 //!
@@ -29,11 +29,11 @@
 //! per request element outcome reporting for nodes whose work can fail per request
 //! element.
 //!
-//! `template_id` is a **wiring parameter**, not an input field. Template choice
-//! is authoring intent: a wirer picks "packaging label" once and the wiring then
+//! `template_id` is a **graph parameter**, not an input field. Template choice
+//! is authoring intent: the author picks "packaging label" once and the graph then
 //! declares honestly what it renders, so acceptance test cases can pin golden output per
-//! wiring. Taking it from the input would make every caller a template chooser
-//! and the wiring's behaviour caller-dependent. It also puts the closed set in
+//! graph. Taking it from the input would make every caller a template chooser
+//! and the graph's behaviour caller-dependent. It also puts the closed set in
 //! the declaration's parameter schema as a typed `enum`, so an unknown
 //! template refuses at condition/config-validation time rather than at first
 //! invocation. The test below is defence in depth behind that, not the
@@ -100,7 +100,7 @@ impl Guest for Component {
             // ENRICHING, not replacing. An edge carries a payload verbatim, so
             // a node that emitted `{zpl}` alone would destroy every upstream
             // fact at this hop — the movement id a downstream node needs for
-            // its object key would simply be gone, and no wiring parameter
+            // its object key would simply be gone, and no graph parameter
             // could recover it. A pure transform therefore ADDS its output to
             // the record it was given; a node that means to narrow the payload
             // says so by being a projection.
@@ -144,8 +144,8 @@ mod tests {
 
     fn run(template: &str, fields: &serde_json::Value) -> NodeError {
         let context = NodeContext {
-            wiring_id: "test".into(),
-            wiring_version: 1,
+            graph_id: "test".into(),
+            graph_version: 1,
             node_id: "label".into(),
             delivery_id: "delivery".into(),
             input_port: None,

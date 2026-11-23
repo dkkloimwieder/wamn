@@ -1,7 +1,7 @@
 //! Host-attested connection invocations and application authorization.
 
 use std::sync::Arc;
-use wamn_authority::effect_span::{EffectEvidence, EffectSource, EffectWiring};
+use wamn_authority::effect_span::{EffectEvidence, EffectGraph, EffectSource};
 use wamn_engine::application_config::{ApplicationConfig, ApplicationConnection};
 
 /// Host-attested identity of one component invocation.
@@ -39,7 +39,7 @@ impl ConnectionInvocation {
             (InvocationEntry::DataChange, None) => {
                 component.data_change.as_ref()?;
             }
-            (InvocationEntry::Route | InvocationEntry::Wiring(_), Some(operation)) => {
+            (InvocationEntry::Route | InvocationEntry::Graph(_), Some(operation)) => {
                 component.operations.get(operation)?;
             }
             _ => return None,
@@ -79,22 +79,22 @@ impl ConnectionInvocation {
         })
     }
 
-    /// The span coordinates of this invocation. A route has no wiring
-    /// position, so it records the wiring keys empty.
-    pub fn effect_wiring(&self) -> EffectWiring<'_> {
-        let (wiring_id, wiring_version, node_id, occurrence) = match self.entry.wiring() {
+    /// The span coordinates of this invocation. A route has no graph
+    /// position, so it records the graph keys empty.
+    pub fn effect_graph(&self) -> EffectGraph<'_> {
+        let (graph_id, graph_version, node_id, occurrence) = match self.entry.graph() {
             None => ("", 0, "", 0),
             Some(position) => (
-                position.wiring_id.as_str(),
-                position.wiring_version,
+                position.graph_id.as_str(),
+                position.graph_version,
                 position.node_id.as_str(),
                 position.occurrence,
             ),
         };
-        EffectWiring {
+        EffectGraph {
             source: EffectSource::Package(&self.package_id),
-            wiring_id,
-            wiring_version,
+            graph_id,
+            graph_version,
             node_id,
             occurrence,
             component_digest: Some(&self.component_digest),
@@ -114,29 +114,29 @@ pub enum InvocationEntry {
     Route,
     /// A JetStream delivery to a declared data change handler.
     DataChange,
-    /// One node occurrence of an exact wiring version.
-    Wiring(WiringPosition),
+    /// One node occurrence of an exact graph version.
+    Graph(GraphPosition),
 }
 
 impl InvocationEntry {
-    /// The wiring position, or `None` for a route.
-    pub fn wiring(&self) -> Option<&WiringPosition> {
+    /// The graph position, or `None` for a route.
+    pub fn graph(&self) -> Option<&GraphPosition> {
         match self {
             Self::Route | Self::DataChange => None,
-            Self::Wiring(position) => Some(position),
+            Self::Graph(position) => Some(position),
         }
     }
 }
 
-/// One node occurrence of an exact wiring version.
+/// One node occurrence of an exact graph version.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct WiringPosition {
+pub struct GraphPosition {
     /// The immutable graph hash frozen on the run.
-    pub wiring_hash: wamn_digest::Digest,
-    /// The application that owns the wiring.
+    pub graph_hash: wamn_digest::Digest,
+    /// The application that owns the graph.
     pub application: wamn_registry::ApplicationName,
-    pub wiring_id: wamn_package::canonical_name::CanonicalName,
-    pub wiring_version: u32,
+    pub graph_id: wamn_package::canonical_name::CanonicalName,
+    pub graph_version: u32,
     pub node_id: wamn_package::canonical_name::CanonicalName,
     pub occurrence: u32,
     pub configuration: Arc<

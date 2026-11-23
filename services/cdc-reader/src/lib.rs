@@ -18,7 +18,7 @@ use pg_walstream::{
 
 use postgres_protocol::escape::escape_identifier;
 use wamn_event::{Causation, CdcIdentity, Envelope, msg_id, subject};
-use wamn_package::WiringEventOperation as Op;
+use wamn_package::RowOperation as Op;
 use wamn_package::manifest::CONTROL_OWNED_RELATION_TABLES;
 
 use wamn_event::reader::ReaderConfig;

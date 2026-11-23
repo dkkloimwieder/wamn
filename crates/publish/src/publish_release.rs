@@ -940,9 +940,9 @@ mod tests {
                 "/widget/record",
             ),
             (
-                "wiring-http".parse().unwrap(),
+                "graph-http".parse().unwrap(),
                 package_http_attachment(
-                    "wiring-http",
+                    "graph-http",
                     &"source_fixture".parse().unwrap(),
                     "widget_flow",
                     "source-fixture:widget/flow@1.0.0",
@@ -977,7 +977,7 @@ mod tests {
             ("load-http", hyper::Method::GET),
             ("update-http", hyper::Method::POST),
             ("record-http", hyper::Method::POST),
-            ("wiring-http", hyper::Method::POST),
+            ("graph-http", hyper::Method::POST),
         ] {
             assert_eq!(
                 resolved[id].definition["route"]["method"]

@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 
 use wamn_authority::effect_span::{
-    EffectIdentity, EffectRun, effect_span, record_effect_ms, record_wiring,
+    EffectIdentity, EffectRun, effect_span, record_effect_ms, record_graph,
 };
 use wamn_postgres::{Object, destroy_connection};
 use wamn_postgres::types::{connection_lost, map_pg_error};
@@ -194,7 +194,7 @@ pub(super) fn record_query_ms(
 /// this surface's own, while the `wamn.*` identity block is [`effect_span`]'s, shared with
 /// every other effect surface.
 ///
-/// The invocation scope supplies causation and wiring for workflow node calls.
+/// The invocation scope supplies causation and graph for workflow node calls.
 /// SQL uses the transaction identity.
 pub(super) fn db_span_for_project(
     plugin: &OperationHost,
@@ -219,11 +219,11 @@ pub(super) fn db_span_for_project(
         db.operation = op,
     );
     let invocation = scope_registry::invocation(&plugin.scopes, component_id);
-    record_wiring(
+    record_graph(
         &span,
         invocation
             .as_ref()
-            .map(wamn_connection::connection::ConnectionInvocation::effect_wiring),
+            .map(wamn_connection::connection::ConnectionInvocation::effect_graph),
     );
     span
 }

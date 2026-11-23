@@ -24,7 +24,7 @@ use wash_runtime::wit::{WitInterface, WitWorld};
 pub const EDGE_POLICY_ID: &str = "wamn:edge-operation-policy";
 
 /// The one import an edge application may have: the node ABI types.
-const NODE_TYPES: &str = "wamn:node/types@0.1.0";
+const NODE_TYPES: &str = "wamn:node/types@0.2.0";
 
 /// One admitted component and the operations its release publishes for it.
 #[derive(Debug)]
@@ -235,8 +235,8 @@ mod tests {
         NativeInvocation {
             operation: OPERATION.parse().unwrap(),
             context: node_types::NodeContext {
-                wiring_id: String::new(),
-                wiring_version: 0,
+                graph_id: String::new(),
+                graph_version: 0,
                 node_id: String::new(),
                 delivery_id: "test".into(),
                 input_port: None,

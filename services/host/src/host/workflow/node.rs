@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 use tokio::time::Instant;
-use wamn_connection::connection::WiringPosition;
+use wamn_connection::connection::GraphPosition;
 use wamn_engine::native_routes::{OperationRefusal, bounded_node_deadline_ms};
 use wamn_engine::operation::node_types;
 use wamn_run_state::persistence;
@@ -105,8 +105,8 @@ impl Workflow {
                     terminal("permission-denied", "the execution role is unavailable")
                 })?;
             let context = node_types::NodeContext {
-                wiring_id: String::from(authority.workflow_id.as_str()),
-                wiring_version: authority.version,
+                graph_id: String::from(authority.workflow_id.as_str()),
+                graph_version: authority.version,
                 node_id: String::from(node_id.as_str()),
                 delivery_id: authority.delivery.clone(),
                 input_port: request.input_port,
@@ -132,11 +132,11 @@ impl Workflow {
                         sibling: &request.sibling,
                         operation: &operation,
                         caller,
-                        position: WiringPosition {
-                            wiring_hash: authority.hash,
+                        position: GraphPosition {
+                            graph_hash: authority.hash,
                             application: workload.application.application.clone(),
-                            wiring_id: authority.workflow_id.clone(),
-                            wiring_version: authority.version,
+                            graph_id: authority.workflow_id.clone(),
+                            graph_version: authority.version,
                             node_id,
                             occurrence: request.occurrence,
                             configuration: Arc::new(config),

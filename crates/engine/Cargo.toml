@@ -12,6 +12,7 @@ wasm_component_model_implements = ["wash-runtime/wasm_component_model_implements
 wamn-connection-type.workspace = true
 wamn-package.workspace = true
 wamn-routes.workspace = true
+wamn-workflow-graph.workspace = true
 wamn-registry.workspace = true
 wamn-digest.workspace = true
 wash-runtime.workspace = true

@@ -1,5 +1,5 @@
 interface approve-inspection {
-  use wamn:node/types@0.1.0.{node-context, node-error, json-value};
+  use wamn:node/types@0.2.0.{node-context, node-error, json-value};
 
   type revision = s32;
   type uuid = string;
@@ -63,7 +63,7 @@ interface approve-inspection {
 }
 
 interface create-inspection {
-  use wamn:node/types@0.1.0.{node-context, node-error, json-value};
+  use wamn:node/types@0.2.0.{node-context, node-error, json-value};
 
   type uuid = string;
 
@@ -93,7 +93,7 @@ interface create-inspection {
 }
 
 interface load-purchase-order-detail {
-  use wamn:node/types@0.1.0.{node-context, node-error, json-value};
+  use wamn:node/types@0.2.0.{node-context, node-error, json-value};
 
   type revision = s32;
   type uuid = string;

@@ -1,5 +1,5 @@
 interface load-open-receipt-lines {
-  use wamn:node/types@0.1.0.{node-context, node-error, json-value};
+  use wamn:node/types@0.2.0.{node-context, node-error, json-value};
 
   type numeric = string;
   type revision = s32;
@@ -88,7 +88,7 @@ interface load-open-receipt-lines {
 }
 
 interface load-purchase-order-history {
-  use wamn:node/types@0.1.0.{node-context, node-error, json-value};
+  use wamn:node/types@0.2.0.{node-context, node-error, json-value};
 
   type timestamp = string;
   type uuid = string;
@@ -149,7 +149,7 @@ interface load-purchase-order-history {
 }
 
 interface load-receipt-screen {
-  use wamn:node/types@0.1.0.{node-context, node-error, json-value};
+  use wamn:node/types@0.2.0.{node-context, node-error, json-value};
 
   type numeric = string;
   type revision = s32;
@@ -239,7 +239,7 @@ interface load-receipt-screen {
 }
 
 interface purchase-order-summary {
-  use wamn:node/types@0.1.0.{node-context, node-error, json-value};
+  use wamn:node/types@0.2.0.{node-context, node-error, json-value};
 
   type numeric = string;
   type uuid = string;
@@ -298,7 +298,7 @@ interface purchase-order-summary {
 }
 
 interface record-receipt {
-  use wamn:node/types@0.1.0.{node-context, node-error, json-value};
+  use wamn:node/types@0.2.0.{node-context, node-error, json-value};
 
   type numeric = string;
   type revision = s32;

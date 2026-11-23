@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 /// * A TIMEOUT IS NOT A ROLLBACK. The platform sent the request and got no
 ///   answer. What the far side did with that request is unknown, so
 ///   [`Self::Timeout`] states nothing about the far side.
-/// * A REFUSAL BEFORE DISPATCH IS NOT AN UNDONE COMMAND. A wiring failure
+/// * A REFUSAL BEFORE DISPATCH IS NOT AN UNDONE COMMAND. A graph failure
 ///   refuses one effect. The command that reached the component committed
 ///   already, and [`Self::RefusedBeforeDispatch`] describes the effect alone.
 /// * AN ATTEMPT THAT FAILED IN FLIGHT IS NOT A TIMEOUT. A deadline that never

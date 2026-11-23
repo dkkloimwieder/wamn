@@ -300,7 +300,7 @@ A successful update returns the current revision, so a true no-op returns outcom
 
 Each outer item of a write carries its `request_id`. A read carries none, and its outcomes match its items by position.
 For `per_input` commands, each item owns one transaction on one PostgreSQL connection.
-The transaction resource never crosses a wiring edge, and separate outer items have no shared atomicity.
+The transaction resource never crosses a graph edge, and separate outer items have no shared atomicity.
 An overlay command can call a base command within its transaction.
 The overlay operation imports the base operation, and the overlay package pins the base by digest in `base_dependencies`.
 The overlay build composes the overlay and its pinned base into one component, so the call is a component-model call with no host between.
@@ -402,7 +402,7 @@ The server hashes the parsed request element with sorted object keys.
 It leaves out `request_id` and the route's idempotency key field.
 It preserves scalar spelling and array order before hashing and invocation.
 The hash bytes retain the `sha256:` prefix of the canonical JSON digest.
-Host routes and wiring attachments carry no base-operation rules.
+Host routes and graph attachments carry no base-operation rules.
 The route also carries the host operation deadline in milliseconds.
 All items share that budget, and an unreached item claims no key.
 
@@ -973,7 +973,6 @@ Their stamps apply to administrative writes and future writers that bind an acto
 
 The project catalog stamps `packages` and `releases`.
 Each separate SQLx migration history also carries the actor stamps.
-It also stamps `wiring_tombstones`.
 Each table carries the four stamp columns as `NOT NULL` with no default and a `wamn_record_history_stamp` trigger.
 These tables keep stamps only, with no history table.
 `release_connection` and `connection_binding` carry stamps and record history for changes within a release.
@@ -982,7 +981,6 @@ The system database owns immutable `connection_generation` rows with parameters 
 Package application binds `wamn:apply-package` for migrations and catalog writes.
 Environment staging, connection administration, local development bindings, and minimum recording bind `wamn:provisioning`, as the platform configuration projection does.
 The `platform.connection` projection and `workflows` keep their existing metadata and carry no record history trigger.
-Fresh databases create neither `wirings` nor `event_registrations`.
 
 ### Files
 

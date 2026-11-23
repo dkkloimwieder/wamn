@@ -71,8 +71,8 @@ mod tests {
 
     fn context(config: &str) -> NodeContext {
         NodeContext {
-            wiring_id: "test".into(),
-            wiring_version: 1,
+            graph_id: "test".into(),
+            graph_version: 1,
             node_id: "transform".into(),
             delivery_id: "delivery".into(),
             input_port: None,

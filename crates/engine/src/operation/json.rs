@@ -565,7 +565,7 @@ mod tests {
     }
     #[test]
     fn json_values_and_text_keep_their_distinct_http_shapes() {
-        let ty = argument("use wamn:node/types@0.1.0.{json-value}; type input = json-value;");
+        let ty = argument("use wamn:node/types@0.2.0.{json-value}; type input = json-value;");
         for value in [
             Value::Null,
             json!(true),

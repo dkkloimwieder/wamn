@@ -15,7 +15,7 @@ The Receiving, WMS, RC and combined identity and session cluster runners are rem
 
 This manual case shows what the durable queue does after a host stops during a run.
 It runs on the deployed wamn-dev environment, not on a kind cluster.
-The run is the published WMS wiring `inventory_move_and_label` version 2. It runs no SQL.
+The run is the published WMS workflow graph `inventory_move_and_label` version 2. It runs no SQL.
 It shapes one pallet `update` event, renders a label and stores it in Cloud Storage.
 So nothing holds the run, and the kill must occur while the run shows `running`.
 

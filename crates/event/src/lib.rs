@@ -5,7 +5,7 @@ pub mod reader;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
-pub use wamn_package::WiringEventOperation as Op;
+pub use wamn_package::RowOperation as Op;
 
 /// The v3 §4 causation stamp `{run, root, depth}` — stitched onto a
 /// transaction's envelopes by the reader when the `wamn:postgres` plugin
@@ -19,14 +19,14 @@ pub struct Causation {
     pub depth: u32,
 }
 
-/// One host-published event emitted by a wiring terminal.
+/// One host-published event emitted by a graph terminal.
 ///
 /// This is deliberately not [`Envelope`]. A derived event has no WAL
 /// provenance to report: its identity is the admitted terminal selector, the
 /// author's logical deduplication operand, and the causation the host derives
 /// from the delivery it is completing. The environment key, project, and
-/// environment are copied from bound host identity so no guest or wiring field can redirect the
-/// event; application identity comes from the bound release/run/wiring source the
+/// environment are copied from bound host identity so no guest or graph field can redirect the
+/// event; application identity comes from the bound release/run/graph source the
 /// native host emitter resolved.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

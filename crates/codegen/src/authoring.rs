@@ -155,7 +155,7 @@ manifest.Package {
         fs::create_dir_all(&wit).unwrap();
         fs::write(wit.join("custom.wit"), r"
 interface read {
-    use wamn:node/types@0.1.0.{node-context, node-error};
+    use wamn:node/types@0.2.0.{node-context, node-error};
     type uuid = string;
     enum read-request { request }
     record invalid-input-detail { field: string }

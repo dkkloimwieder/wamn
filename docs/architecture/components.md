@@ -2,7 +2,7 @@
 
 A component is compiled behavior with one digest, import set, and export set.
 A package owns schema contributions, operations, SQL, and contracts.
-A palette component supplies behavior for wiring. The platform seals its ports, parameters, connections and digest in `palette.json`. Release and dev resolution share that reader. Palette calls use the host invocation entry and receive no public HTTP routes.
+A palette component supplies behavior for workflow graphs. The platform seals its ports, parameters, connections and digest in `palette.json`. Release and dev resolution share that reader. Palette calls use the host invocation entry and receive no public HTTP routes.
 The sealed connection declaration names the node parameter that selects an application binding.
 Blob nodes use `store_alias`. HTTP nodes use `requirement`.
 The host reads that parameter from the pinned node configuration and checks the application's declaration and binding.
@@ -49,7 +49,7 @@ It then binds declared host services before preparing dispatch, including compon
 An undeclared import refuses at instantiation, and the error names that import.
 Platform workloads and the separate HTTP route component use their native linkers.
 Synchronous palette nodes export `wamn:node/handler`.
-Asynchronous palette nodes export `wamn:node/async-handler@0.1.0`.
+Asynchronous palette nodes export `wamn:node/async-handler@0.2.0`.
 Application operations use their package interfaces and can await asynchronous host services.
 The P3 HTTP shell separately exports `wasi:http/handler@0.3.0`.
 Production component I/O uses native async calls for HTTP, PostgreSQL, typed operation invocation, and event settlement.
@@ -141,7 +141,7 @@ The operations pages own build commands and artifact comparisons.
 ## Shared label renderer
 
 The label renderer is an effect-free transform from fields to ZPL printer text.
-`template_id` is a wiring parameter, not a caller input field.
+`template_id` is a graph parameter, not a caller input field.
 The closed template set is `packaging`, `location`, and `product`.
 An unknown template refuses during declaration validation or rendering.
 

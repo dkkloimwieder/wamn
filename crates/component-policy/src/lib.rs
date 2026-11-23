@@ -197,7 +197,7 @@ pub const PLATFORM_IMPORT_REGISTRY: [PlatformImportRow; 12] = [
     },
     PlatformImportRow {
         package: "wamn:node",
-        version: "0.1.0",
+        version: "0.2.0",
         posture: Posture::Ambient,
     },
     PlatformImportRow {
@@ -636,7 +636,7 @@ mod tests {
             "wasi:random/random@0.2.12".to_string(),
             "wasi:logging/logging@0.1.0-draft".to_string(),
             "wamn:postgres/statements@0.4.0".to_string(),
-            "wamn:node/types@0.1.0".to_string(),
+            "wamn:node/types@0.2.0".to_string(),
         ]);
 
         assert!(analyze_project(&imports, &admitted, "project-node").is_ok());
@@ -657,7 +657,7 @@ mod tests {
         assert!(analyze_project(&drifted, &BTreeSet::new(), "project-node").is_err());
 
         // Same import list, one authored version off: refused.
-        let drifted = ComponentImports::new(["wamn:node/types@0.1.1".to_string()]);
+        let drifted = ComponentImports::new(["wamn:node/types@0.1.0".to_string()]);
         let error = analyze_project(&drifted, &admitted, "project-node")
             .expect_err("a drifted authored version must refuse");
         assert_eq!(error.error_type(), ProjectImportErrorType::UnadmittedImport);
@@ -691,7 +691,7 @@ mod tests {
     #[test]
     fn posture_is_declared_and_an_unregistered_package_has_none() {
         assert_eq!(
-            import_posture("wamn:node/types@0.1.0"),
+            import_posture("wamn:node/types@0.2.0"),
             Some(Posture::Ambient)
         );
         assert_eq!(
@@ -755,7 +755,7 @@ mod tests {
         let granted = BTreeSet::from(["wamn:postgres".to_string()]);
         assert!(analyze_project(&effect, &granted, "project-node").is_ok());
 
-        let ambient = ComponentImports::new(["wamn:node/types@0.1.0".to_string()]);
+        let ambient = ComponentImports::new(["wamn:node/types@0.2.0".to_string()]);
         assert!(
             analyze_project(&ambient, &BTreeSet::new(), "project-node").is_ok(),
             "an ambient row needs no grant"

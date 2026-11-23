@@ -1,6 +1,6 @@
 {
-  "format-version": "0.2",
-  "wiring-id": "rest_item_pushed",
+  "format-version": "0.3",
+  "graph-id": "rest_item_pushed",
   "version": 1,
   "nodes": {
     "entry": {
@@ -17,7 +17,7 @@
     "row": {
       "call": {
         "sibling": "wamn_palette-jsonata",
-        "export": "wamn:node/handler@0.1.0",
+        "export": "wamn:node/handler@0.2.0",
         "params": {
           "expression": "[{\"request_id\": new.key, \"value\": {\"record_id\": new.key}}]",
           "port": "items",

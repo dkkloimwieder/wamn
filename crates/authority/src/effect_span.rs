@@ -26,7 +26,7 @@
 //! was filed on the premise that widening this block enriches all four surfaces
 //! at once, and an owner ruling refuted that for three of them on 2026-08-26:
 //! DECLARING a field here is one edit, but FILLING it is one per surface, and
-//! only a surface that can SOURCE the fact may fill it. So [`EffectWiring`] is
+//! only a surface that can SOURCE the fact may fill it. So [`EffectGraph`] is
 //! declared here once and filled surface by surface, each on its own bead.
 //! `wamn.connection_http` (`wamn-0h0g.24.12`), `wamn.blobstore` and
 //! `wamn:postgres` (`wamn-0h0g.24.14`) each read back a host-bound
@@ -38,11 +38,11 @@
 //!   component's identity, resolved HOST-side from bind-time identity maps and
 //!   frozen plugin config. The guest supplies none of them and cannot spoof
 //!   them. An empty string means the surface holds no such fact.
-//! - `wamn.package_id` / `wamn.wiring_id` / `wamn.wiring_version` /
+//! - `wamn.package_id` / `wamn.graph_id` / `wamn.graph_version` /
 //!   `wamn.node_id` / `wamn.occurrence` / `wamn.component_digest` /
 //!   `wamn.component_name` / `wamn.operation` — the
 //!   host-attested invocation the effect was raised under, declared `Empty` and
-//!   filled by [`record_wiring`] on a surface holding one. The five coordinates
+//!   filled by [`record_graph`] on a surface holding one. The five coordinates
 //!   `wamn.component.invoke` also carries are spelled exactly as that parent
 //!   spells them, never a second vocabulary for the same position.
 //!   `wamn.package_id` and `wamn.occurrence` come from the same bound
@@ -61,7 +61,7 @@
 //!   records `wamn.requirement` empty, because a DB call is admitted by its
 //!   statement set and not by a named connection requirement. A surface that
 //!   passes `None` records neither key, which is [`record_run`]'s own
-//!   convention and not [`record_wiring`]'s.
+//!   convention and not [`record_graph`]'s.
 //! - `effect.outcome` — what the platform says happened to the effect. One of
 //!   six words and never a seventh, declared `Empty` and filled by
 //!   [`EffectOutcomeGuard`] on the surfaces that run their effect through it.
@@ -102,7 +102,7 @@ pub struct EffectIdentity<'a> {
     pub component: &'a str,
 }
 
-/// The wiring position one effect was raised at, and the package that executed
+/// The graph position one effect was raised at, and the package that executed
 /// it.
 ///
 /// Host-attested: copied down from the invocation the router driver bound before
@@ -111,21 +111,20 @@ pub struct EffectIdentity<'a> {
 /// [`EffectIdentity`] follows.
 ///
 /// `package_id` and `occurrence` sit beside the position because a reader
-/// attributes an effect to one CALL. A wiring id is package-owned, so two
-/// packages name a wiring alike, and one walk visits the same node more than
+/// attributes an effect to one CALL. A graph id is package-owned, so two
+/// packages name a graph alike, and one walk visits the same node more than
 /// once. Without these two fields those calls record identical spans
 /// (`wamn-b2m6.2`).
 ///
 /// `component_name` and `operation` say WHO ran the effect and WHICH node
 /// operation raised it. The digest names the component by the key its manifest
-/// stores it under, and `effect.operation` names the host service method. So
-/// without these two a reader has neither the component name a person calls the
-/// component by nor the operation the wiring ran (`wamn-b2m6.7`).
+/// stores it under, and `effect.operation` names the host service method
+/// (`wamn-b2m6.7`).
 #[derive(Clone, Copy, Debug)]
-pub struct EffectWiring<'a> {
+pub struct EffectGraph<'a> {
     pub source: EffectSource<'a>,
-    pub wiring_id: &'a str,
-    pub wiring_version: u32,
+    pub graph_id: &'a str,
+    pub graph_version: u32,
     pub node_id: &'a str,
     pub occurrence: u32,
     pub component_digest: Option<&'a wamn_digest::Digest>,
@@ -155,7 +154,7 @@ impl<'a> EffectSource<'a> {
 /// that make these coordinates load-bearing live in the plugin, not here.
 ///
 /// `node_id` and `occurrence` are NOT here: one coordinate has one owner, and
-/// the owner is [`EffectWiring`], which the host attests rather than the guest
+/// the owner is [`EffectGraph`], which the host attests rather than the guest
 /// asserts (`wamn-0h0g.24.12`, `wamn-b2m6.2`).
 #[derive(Clone, Copy, Debug)]
 pub struct EffectRun<'a> {
@@ -327,11 +326,11 @@ pub fn record_run(span: &tracing::Span, run: Option<EffectRun<'_>>) {
 }
 
 /// Copy one bound invocation onto the fields [`effect_span`] declared `Empty`,
-/// so an effect span answers "which package, which wiring, which node, which
+/// so an effect span answers "which package, which graph, which node, which
 /// visit" on its own instead of only through its `wamn.component.invoke` parent.
 ///
 /// Called by the surface AFTER the macro rather than from inside it. The macro
-/// takes no wiring argument on purpose: widening its arity would force the two
+/// takes no graph argument on purpose: widening its arity would force the two
 /// surfaces that cannot source these coordinates to pass a placeholder they have
 /// no way to compute, which is exactly the premise `wamn-0h0g.24.12`'s owner
 /// ruling refuted.
@@ -340,37 +339,34 @@ pub fn record_run(span: &tracing::Span, run: Option<EffectRun<'_>>) {
 /// following [`EffectIdentity`]'s convention: one span shape per surface, where
 /// an empty value reads as "this effect holds no such fact" and never as "the
 /// enrichment was dropped".
-pub fn record_wiring(span: &tracing::Span, wiring: Option<EffectWiring<'_>>) {
+pub fn record_graph(span: &tracing::Span, graph: Option<EffectGraph<'_>>) {
     span.record(
         "wamn.package_id",
-        wiring.map_or("", |wiring| wiring.source.as_str()),
+        graph.map_or("", |graph| graph.source.as_str()),
     );
+    span.record("wamn.graph_id", graph.map_or("", |graph| graph.graph_id));
     span.record(
-        "wamn.wiring_id",
-        wiring.map_or("", |wiring| wiring.wiring_id),
+        "wamn.graph_version",
+        graph.map_or(0, |graph| graph.graph_version),
     );
-    span.record(
-        "wamn.wiring_version",
-        wiring.map_or(0, |wiring| wiring.wiring_version),
-    );
-    span.record("wamn.node_id", wiring.map_or("", |wiring| wiring.node_id));
+    span.record("wamn.node_id", graph.map_or("", |graph| graph.node_id));
     span.record(
         "wamn.occurrence",
-        wiring.map_or(0, |wiring| wiring.occurrence),
+        graph.map_or(0, |graph| graph.occurrence),
     );
     span.record(
         "wamn.component_digest",
-        wiring
-            .and_then(|wiring| wiring.component_digest)
+        graph
+            .and_then(|graph| graph.component_digest)
             .map_or_default(std::string::ToString::to_string),
     );
     span.record(
         "wamn.component_name",
-        wiring.map_or("", |wiring| wiring.component_name),
+        graph.map_or("", |graph| graph.component_name),
     );
     span.record(
         "wamn.operation",
-        wiring.map_or("", |wiring| wiring.operation),
+        graph.map_or("", |graph| graph.operation),
     );
 }
 
@@ -391,7 +387,7 @@ pub fn record_wiring(span: &tracing::Span, wiring: Option<EffectWiring<'_>>) {
 /// keeps the exact field order it published. They are spliced as raw tokens, so
 /// the last one must carry a trailing comma.
 ///
-/// A surface that can source its wiring position calls [`record_wiring`] on the
+/// A surface that can source its graph position calls [`record_graph`] on the
 /// returned span; the macro declares those fields but never fills them, because
 /// only the call site knows whether it holds an invocation. `effect.outcome` is
 /// declared the same way and filled by an [`EffectOutcomeGuard`] the call site
@@ -425,8 +421,8 @@ macro_rules! effect_span {
             wamn.project = %identity.project,
             wamn.component = %identity.component,
             wamn.package_id = tracing::field::Empty,
-            wamn.wiring_id = tracing::field::Empty,
-            wamn.wiring_version = tracing::field::Empty,
+            wamn.graph_id = tracing::field::Empty,
+            wamn.graph_version = tracing::field::Empty,
             wamn.node_id = tracing::field::Empty,
             wamn.occurrence = tracing::field::Empty,
             wamn.component_digest = tracing::field::Empty,

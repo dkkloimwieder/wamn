@@ -7,7 +7,7 @@
       "values": []
     },
     {
-      "path": "value.document",
+      "path": "value.graph",
       "type": "json",
       "nullable": false,
       "values": []

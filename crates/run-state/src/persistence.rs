@@ -26,8 +26,8 @@ pub enum ProductionLeaseResult {
         input_json: String,
         checkpoint_json: Option<String>,
         lease_generation: i64,
-        wiring_id: wamn_package::canonical_name::CanonicalName,
-        wiring_version: i32,
+        graph_id: wamn_package::canonical_name::CanonicalName,
+        graph_version: i32,
         workflow: Box<ProductionWorkflow>,
     },
 }
@@ -35,7 +35,7 @@ pub enum ProductionLeaseResult {
 /// The workflow and execution identity fixed at admission.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProductionWorkflow {
-    pub wiring_hash: wamn_digest::Digest,
+    pub graph_hash: wamn_digest::Digest,
     pub execution_principal_id: wamn_identity_protocol::PrincipalId,
     pub execution_role: String,
     pub causation: Option<wamn_event::Causation>,
@@ -62,8 +62,8 @@ struct SelectedLease {
     status: RunStatus,
     input_json: String,
     checkpoint_json: Option<String>,
-    wiring_id: wamn_package::canonical_name::CanonicalName,
-    wiring_version: i32,
+    graph_id: wamn_package::canonical_name::CanonicalName,
+    graph_version: i32,
     workflow: Box<ProductionWorkflow>,
 }
 
@@ -76,8 +76,8 @@ struct ExhaustedLease {
 
 #[derive(Debug)]
 struct ExhaustedExecutionIdentity {
-    wiring_id: wamn_package::canonical_name::CanonicalName,
-    wiring_version: i32,
+    graph_id: wamn_package::canonical_name::CanonicalName,
+    graph_version: i32,
 }
 
 /// Renew a live lease under its owner and generation fence.
@@ -248,8 +248,8 @@ pub async fn lease_next(
         input_json: selected.input_json,
         checkpoint_json: selected.checkpoint_json,
         lease_generation,
-        wiring_id: selected.wiring_id,
-        wiring_version: selected.wiring_version,
+        graph_id: selected.graph_id,
+        graph_version: selected.graph_version,
         workflow: selected.workflow,
     }))
 }
@@ -283,14 +283,14 @@ pub async fn reap_exhausted(
             format!("unknown run status {status_text:?}"),
         )
     })?;
-    let wiring_id: Option<wamn_package::canonical_name::CanonicalName> =
-        row_value(&row, 2, "exhausted wiring id")?;
-    let wiring_version: Option<i32> = row_value(&row, 3, "exhausted wiring version")?;
-    let identity = match (wiring_id, wiring_version) {
-        (Some(wiring_id), Some(wiring_version)) if wiring_version > 0 => {
+    let graph_id: Option<wamn_package::canonical_name::CanonicalName> =
+        row_value(&row, 2, "exhausted graph id")?;
+    let graph_version: Option<i32> = row_value(&row, 3, "exhausted graph version")?;
+    let identity = match (graph_id, graph_version) {
+        (Some(graph_id), Some(graph_version)) if graph_version > 0 => {
             ExhaustedExecutionIdentity {
-                wiring_id,
-                wiring_version,
+                graph_id,
+                graph_version,
             }
         }
         _ => {
@@ -356,8 +356,8 @@ fn generic_failure_outcome(
 ) -> String {
     let coordinate = serde_json::json!({
         "code": code,
-        "wiring-id": identity.wiring_id,
-        "wiring-version": identity.wiring_version,
+        "graph-id": identity.graph_id,
+        "graph-version": identity.graph_version,
         "run-id": run_id,
     });
     let body = serde_json::json!({ "error": coordinate });
@@ -369,13 +369,13 @@ fn decode_selected_lease(row: &Row) -> Result<SelectedLease, ProductionLeaseErro
     let status = RunStatus::from_sql(&status).ok_or_else(|| {
         ProductionLeaseError::contract("decode production lease", "unknown run status")
     })?;
-    let (wiring_id, wiring_version) = decode_wiring_identity(
-        row_value(row, 3, "wiring id")?,
-        row_value(row, 4, "wiring version")?,
+    let (graph_id, graph_version) = decode_graph_identity(
+        row_value(row, 3, "graph id")?,
+        row_value(row, 4, "graph version")?,
     )?;
     let run_id: String = row_value(row, 0, "run id")?;
     let mut workflow = ProductionWorkflow {
-        wiring_hash: row_value(row, 5, "wiring hash")?,
+        graph_hash: row_value(row, 5, "graph hash")?,
         execution_principal_id: row_value(row, 6, "execution principal")?,
         execution_role: row_value(row, 7, "execution role")?,
         causation: None,
@@ -395,36 +395,36 @@ fn decode_selected_lease(row: &Row) -> Result<SelectedLease, ProductionLeaseErro
         status,
         input_json: row_value(row, 2, "input")?,
         checkpoint_json: row_value(row, 8, "response checkpoint")?,
-        wiring_id,
-        wiring_version,
+        graph_id,
+        graph_version,
         workflow: Box::new(workflow),
     })
 }
 
-fn decode_wiring_identity(
-    wiring_id: Option<wamn_package::canonical_name::CanonicalName>,
-    wiring_version: Option<i32>,
+fn decode_graph_identity(
+    graph_id: Option<wamn_package::canonical_name::CanonicalName>,
+    graph_version: Option<i32>,
 ) -> Result<(wamn_package::canonical_name::CanonicalName, i32), ProductionLeaseError> {
-    let (wiring_id, wiring_version) = match (wiring_id, wiring_version) {
-        (Some(wiring_id), Some(wiring_version)) if wiring_version > 0 => {
-            (wiring_id, wiring_version)
+    let (graph_id, graph_version) = match (graph_id, graph_version) {
+        (Some(graph_id), Some(graph_version)) if graph_version > 0 => {
+            (graph_id, graph_version)
         }
         (None, None) => {
             return Err(ProductionLeaseError::new(
-                ProductionLeaseErrorType::WiringIdentity,
+                ProductionLeaseErrorType::GraphIdentity,
                 "decode production lease",
-                "run-wiring-identity-missing",
+                "run-graph-identity-missing",
             ));
         }
         _ => {
             return Err(ProductionLeaseError::new(
-                ProductionLeaseErrorType::WiringIdentity,
+                ProductionLeaseErrorType::GraphIdentity,
                 "decode production lease",
-                "run-wiring-identity-corrupt",
+                "run-graph-identity-corrupt",
             ));
         }
     };
-    Ok((wiring_id, wiring_version))
+    Ok((graph_id, graph_version))
 }
 
 fn row_value<T>(row: &Row, index: usize, field: &'static str) -> Result<T, ProductionLeaseError>
@@ -497,20 +497,20 @@ pub async fn prune_terminal_runs(
 mod tests {
     use super::*;
     #[test]
-    fn missing_and_corrupt_wiring_identity_are_dedicated_stable_refusals() {
-        let missing = decode_wiring_identity(None, None).unwrap_err();
+    fn missing_and_corrupt_graph_identity_are_dedicated_stable_refusals() {
+        let missing = decode_graph_identity(None, None).unwrap_err();
         assert_eq!(
             missing.error_type(),
-            ProductionLeaseErrorType::WiringIdentity
+            ProductionLeaseErrorType::GraphIdentity
         );
 
         for corrupt in [
-            decode_wiring_identity(Some("orders".parse().unwrap()), None),
-            decode_wiring_identity(None, Some(1)),
-            decode_wiring_identity(Some("orders".parse().unwrap()), Some(0)),
+            decode_graph_identity(Some("orders".parse().unwrap()), None),
+            decode_graph_identity(None, Some(1)),
+            decode_graph_identity(Some("orders".parse().unwrap()), Some(0)),
         ] {
             let error = corrupt.unwrap_err();
-            assert_eq!(error.error_type(), ProductionLeaseErrorType::WiringIdentity);
+            assert_eq!(error.error_type(), ProductionLeaseErrorType::GraphIdentity);
         }
     }
 }

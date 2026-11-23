@@ -10,7 +10,7 @@
     { "store-alias": { "parameter": "requirement" }, "requirement-type": "http", "mode": "write" }
   ],
   "operations": {
-    "wamn:node/async-handler@0.1.0": {
+    "wamn:node/async-handler@0.2.0": {
       "input-ports": [
         { "name": "input", "schema": {} }
       ],

@@ -55,7 +55,7 @@ impl DeviceLoop {
 /// Make sure of the device of `config` against the release, open its port, and run
 /// the loop until `stopped` turns true.
 ///
-/// Refuses an attachment that the role cannot call, a wiring target, a route
+/// Refuses an attachment that the role cannot call, a graph target, a route
 /// that changes no records, and a route that names an idempotency key, since
 /// the loop keys each frame by its request id.
 pub fn start(

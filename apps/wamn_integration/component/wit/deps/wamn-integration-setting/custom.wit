@@ -1,5 +1,5 @@
 interface read {
-  use wamn:node/types@0.1.0.{node-context, node-error, json-value};
+  use wamn:node/types@0.2.0.{node-context, node-error, json-value};
 
   record read-request {
     carry: option<json-value>,
@@ -34,7 +34,7 @@ interface read {
 }
 
 interface write {
-  use wamn:node/types@0.1.0.{node-context, node-error, json-value};
+  use wamn:node/types@0.2.0.{node-context, node-error, json-value};
 
   record write-request {
     idempotency-key: string,

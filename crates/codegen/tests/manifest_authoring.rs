@@ -30,7 +30,7 @@ impl Package {
         std::fs::create_dir_all(&wit).unwrap();
         std::fs::write(wit.join("custom.wit"), r"
 interface archive {
-    use wamn:node/types@0.1.0.{node-context, node-error};
+    use wamn:node/types@0.2.0.{node-context, node-error};
     type uuid = string;
     record archive-request { id: uuid }
     record invalid-input-detail { field: string }

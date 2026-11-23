@@ -251,12 +251,12 @@ mod tests {
 
     #[test]
     fn the_authored_mapping_preserves_due_even_without_items() {
-        let wiring: Value =
+        let graph: Value =
             serde_json::from_str(include_str!("../../tests/workflows/rest_item.json")).unwrap();
         let due = "2026-10-21T12:00:00Z";
         for items in [json!([]), json!([{"id": "1", "name": "one"}])] {
             let mapped = evaluate(
-                wiring["nodes"]["rows"]["call"]["params"]["expression"]
+                graph["nodes"]["rows"]["call"]["params"]["expression"]
                     .as_str()
                     .unwrap(),
                 &json!({"carry": due, "external_system_id": "11111111-1111-4111-8111-111111111111", "items": items}),
@@ -307,8 +307,8 @@ mod tests {
             }],
         ] {
             let context = NodeContext {
-                wiring_id: String::new(),
-                wiring_version: 0,
+                graph_id: String::new(),
+                graph_version: 0,
                 node_id: String::new(),
                 delivery_id: String::new(),
                 input_port: None,

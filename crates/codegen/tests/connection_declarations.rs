@@ -65,7 +65,7 @@ fn kcl_requires_interfaces_mode_and_no_values() {
         wit.join("custom.wit"),
         r"
 interface call {
-    use wamn:node/types@0.1.0.{node-context, node-error};
+    use wamn:node/types@0.2.0.{node-context, node-error};
     type uuid = string;
     enum call-request { request }
     record invalid-input-detail { field: string }

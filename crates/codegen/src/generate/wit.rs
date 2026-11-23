@@ -67,7 +67,7 @@ fn crud_interface(
     let name = action.as_str();
     let operation = facts.request;
     let mut interface = Interface::new(name);
-    let mut context = Use::new("wamn:node/types@0.1.0");
+    let mut context = Use::new("wamn:node/types@0.2.0");
     for ty in ["node-context", "node-error", "json-value"] {
         context.item(ty, None);
     }

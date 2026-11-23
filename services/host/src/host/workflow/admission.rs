@@ -36,7 +36,7 @@ impl Definition {
             id: row.try_get("workflow_id").map_err(error)?,
             version: row.try_get("version").map_err(error)?,
             graph: row.try_get("graph").map_err(error)?,
-            hash: row.try_get("wiring_hash").map_err(error)?,
+            hash: row.try_get("graph_hash").map_err(error)?,
             role: row.try_get("execution_role").map_err(error)?,
         })
     }
@@ -120,7 +120,7 @@ impl Workload {
                 environment: &self.application.environment,
                 workflow_id: &definition.id,
                 workflow_version: definition.version,
-                wiring_hash: &definition.hash,
+                graph_hash: &definition.hash,
                 execution_principal_id: &delivery.principal,
                 execution_role: delivery.role,
                 trigger: delivery.trigger,
@@ -180,7 +180,7 @@ impl Workflow {
             .postgres
             .executor_write(&app.project, async |connection| {
                 let rows = sqlx::query(
-                    "SELECT workflow_id, version, graph_json::text AS graph, wiring_hash,
+                    "SELECT workflow_id, version, graph_json::text AS graph, graph_hash,
                         execution_role, schedule
                    FROM catalog.workflows
                   WHERE environment = $1 AND application = $2 AND enabled AND trigger = 'schedule'
@@ -302,7 +302,7 @@ impl Workflow {
         }
         let result = self.postgres.executor_write(&app.project, async |connection| {
             let row = sqlx::query(
-                "SELECT workflow_id, version, graph_json::text AS graph, wiring_hash, execution_role, condition
+                "SELECT workflow_id, version, graph_json::text AS graph, graph_hash, execution_role, condition
                    FROM catalog.workflows
                   WHERE environment = $1 AND application = $2 AND workflow_id = $3
                     AND enabled AND trigger = 'data_change' AND source_package = $4
@@ -368,8 +368,8 @@ impl Workflow {
                     input_json,
                     checkpoint_json,
                     lease_generation,
-                    wiring_id,
-                    wiring_version,
+                    graph_id,
+                    graph_version,
                     workflow,
                 } = outcome
                 else {
@@ -378,13 +378,13 @@ impl Workflow {
                 let graph = sqlx::query_scalar(
                     "SELECT graph_json::text FROM catalog.workflows
                   WHERE environment = $1 AND application = $2 AND workflow_id = $3
-                    AND version = $4 AND wiring_hash = $5",
+                    AND version = $4 AND graph_hash = $5",
                 )
                 .bind(&app.environment)
                 .bind(&app.application)
-                .bind(&wiring_id)
-                .bind(wiring_version)
-                .bind(workflow.wiring_hash)
+                .bind(&graph_id)
+                .bind(graph_version)
+                .bind(workflow.graph_hash)
                 .fetch_one(connection)
                 .await
                 .map_err(|error| {
@@ -392,17 +392,17 @@ impl Workflow {
                 })?;
                 Ok(Ok(Some(Admitted {
                     definition: Definition {
-                        id: wiring_id.clone(),
-                        version: wiring_version,
+                        id: graph_id.clone(),
+                        version: graph_version,
                         graph,
-                        hash: workflow.wiring_hash,
+                        hash: workflow.graph_hash,
                         role: None,
                     },
                     authority: Authority {
                         delivery: run_id,
-                        workflow_id: wiring_id,
-                        version: wiring_version.unsigned_abs(),
-                        hash: workflow.wiring_hash,
+                        workflow_id: graph_id,
+                        version: graph_version.unsigned_abs(),
+                        hash: workflow.graph_hash,
                         principal: workflow.execution_principal_id,
                         role: workflow.execution_role,
                         generation: Some(lease_generation),

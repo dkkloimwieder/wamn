@@ -13,7 +13,7 @@ use wash_runtime::wit::WitInterface;
 
 use super::{NativeComponent, NativeWorkload, NativeWorkloadSpec, load_native_workload};
 
-const HANDLER: &str = "wamn:node/handler@0.1.0";
+const HANDLER: &str = "wamn:node/handler@0.2.0";
 const OPERATION: &str = "palette:entry/run@1.0.0";
 const PARENT: &str = "caller:entry/run@1.0.0";
 

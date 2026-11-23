@@ -1,12 +1,12 @@
 //! `jsonata` — evaluate one JSONata expression on the node input.
 //!
-//! The expression is the wiring parameter `expression`: configuration, not
+//! The expression is the graph parameter `expression`: configuration, not
 //! input. Deliveries evaluate it in the guest sandbox. The node holds no effect authority.
 //!
 //! The node emits the expression's result as it is. A result that JSONata
 //! calls undefined, for example a path that matches nothing, emits `null`.
 //!
-//! The wiring declares `input-schema` and `output-schema` for its port contracts.
+//! The graph declares `input-schema` and `output-schema` for its port contracts.
 //!
 //! An input that is not JSON is `invalid-input`. An expression that does not
 //! parse is a configuration fault, and an evaluation failure repeats on a

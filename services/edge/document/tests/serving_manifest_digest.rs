@@ -176,7 +176,7 @@ fn manifest() -> ServingManifest {
 }
 
 #[test]
-fn the_frozen_format_three_vector_refuses_with_its_version() {
+fn the_format_three_vector_refuses_with_its_version() {
     let error = ServingManifest::from_canonical_bytes(format_three_vector::CANONICAL_BYTES)
         .expect_err("format 9 refuses the frozen format-3 bytes");
     assert!(
@@ -291,7 +291,7 @@ fn malformed_authentication_lists_are_refused_by_parser_and_release_reader() {
 ///
 /// The owning package id is a parameter rather than the export's namespace,
 /// because production does not tie the two together: a component that exports
-/// the platform interface `wamn:node/handler@0.1.0` carries the application's own
+/// the platform interface `wamn:node/handler@0.2.0` carries the application's own
 /// package id, as the fixture of `crates/publish/src/publish_release.rs` shows
 /// with `http-request` under `"package-id":"orders"`. Deriving the id from the
 /// namespace produced the reserved id `wamn`, which is not a manifest any
@@ -361,7 +361,7 @@ fn duplicate_export_only_interfaces_are_admitted() {
     // The platform interface is exported by an application component under the
     // application's own package id, the shape a published manifest carries.
     for (package, export, version) in [
-        ("orders", "wamn:node/handler@0.1.0", "0.1.0"),
+        ("orders", "wamn:node/handler@0.2.0", "0.1.0"),
         ("provider", "provider:entry/run@1.0.0", "1.0.0"),
     ] {
         let mut candidate = operation_provider_manifest(&package.parse().unwrap(), export, version);

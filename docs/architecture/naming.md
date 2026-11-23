@@ -25,7 +25,7 @@ Run records and trace fields also keep their published wire spelling.
 Authored declaration names use `wamn_codegen::source_name::SourceName`.
 A name starts with a lowercase ASCII letter and contains lowercase letters, digits, and isolated underscores.
 It cannot end with an underscore.
-`wamn_catalog::canonical_name::CanonicalName` owns component, port, parameter, wiring, node, and attachment names in compiled facts.
+`wamn_catalog::canonical_name::CanonicalName` owns component, port, parameter, graph, node, and attachment names in compiled facts.
 It refuses empty names, NUL bytes, and surrounding whitespace.
 
 These types parse at input boundaries and serialize as strings.

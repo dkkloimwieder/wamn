@@ -2,7 +2,7 @@
 name = "netsuite"
 version.workspace = true
 edition.workspace = true
-description = "NetSuite wirings with a composed integration state adapter"
+description = "NetSuite workflow graphs with a composed integration state adapter"
 license = "Apache-2.0"
 
 [package.metadata.cargo-machete]

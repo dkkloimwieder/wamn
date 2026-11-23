@@ -4,33 +4,33 @@ use std::collections::{HashMap, HashSet};
 
 use wamn_engine::application_config::{ApplicationConfig, ApplicationOperationType};
 use wamn_package::canonical_name::CanonicalName;
-use wamn_routes::{WiringDocument, WiringEntry, WiringError, WiringNode};
+use wamn_workflow_graph::{GraphError, GraphNode, GraphTrigger, WorkflowGraph};
 
 pub(super) struct Checked<'a> {
-    pub entry: &'a WiringEntry,
+    pub entry: &'a GraphTrigger,
     pub can_write: bool,
 }
 
 pub(super) fn check<'a>(
-    graph: &'a WiringDocument,
+    graph: &'a WorkflowGraph,
     application: &ApplicationConfig,
     role: Option<&str>,
-) -> Result<Checked<'a>, WiringError> {
+) -> Result<Checked<'a>, GraphError> {
     let mut entries = graph.nodes.iter().filter_map(|(id, node)| match node {
-        WiringNode::Entry(entry) => Some((id, entry)),
+        GraphNode::Entry(entry) => Some((id, entry)),
         _ => None,
     });
     let Some((entry_id, entry)) = entries.next().filter(|_| entries.next().is_none()) else {
         return Err(invalid("workflow must have exactly one entry node"));
     };
-    let request = matches!(entry, WiringEntry::Request { .. });
+    let request = matches!(entry, GraphTrigger::Request { .. });
     if role.is_some_and(|role| role.trim().is_empty()) || (!request && role.is_none()) {
         return Err(invalid("workflow requires a nonempty execution_role"));
     }
     match entry {
-        WiringEntry::Request { path } => {
+        GraphTrigger::Request { path } => {
             if !valid_segment(application.application.as_str())
-                || !valid_segment(graph.wiring_id.as_str())
+                || !valid_segment(graph.graph_id.as_str())
                 || !valid_exact_path(path)
             {
                 return Err(invalid(
@@ -38,10 +38,10 @@ pub(super) fn check<'a>(
                 ));
             }
         }
-        WiringEntry::Schedule { cron } => {
+        GraphTrigger::Schedule { cron } => {
             super::schedule::parse_workflow_schedule(cron)?;
         }
-        WiringEntry::DataChange {
+        GraphTrigger::DataChange {
             package,
             entity,
             ops,
@@ -72,10 +72,10 @@ pub(super) fn check<'a>(
     let mut writers = HashSet::new();
     for (id, node) in &graph.nodes {
         match node {
-            WiringNode::Response { .. } if !request => {
+            GraphNode::Response { .. } if !request => {
                 return Err(invalid("a response is only allowed in a Request workflow"));
             }
-            WiringNode::Call {
+            GraphNode::Call {
                 sibling, export, ..
             } => {
                 let Some((component, operation)) =
@@ -108,7 +108,7 @@ pub(super) fn check<'a>(
 
     let mut outgoing: HashMap<&CanonicalName, Vec<&CanonicalName>> = HashMap::new();
     for edge in &graph.edges {
-        if edge.from == *entry_id && edge.from_port != wamn_routes::MAIN_PORT {
+        if edge.from == *entry_id && edge.from_port != wamn_workflow_graph::MAIN_PORT {
             return Err(invalid("an entry has only a main output"));
         }
         outgoing.entry(&edge.from).or_default().push(&edge.to);
@@ -124,7 +124,7 @@ pub(super) fn check<'a>(
         can_write |= writers.contains(id);
         if let Some(successors) = outgoing.get(id) {
             pending.extend(successors);
-        } else if matches!(graph.nodes[id], WiringNode::Response { .. }) {
+        } else if matches!(graph.nodes[id], GraphNode::Response { .. }) {
             reached_response = true;
         } else if request {
             return Err(invalid(format!(
@@ -155,8 +155,8 @@ fn valid_exact_path(path: &str) -> bool {
         && path.parse::<hyper::http::uri::PathAndQuery>().is_ok()
 }
 
-fn invalid(message: impl Into<String>) -> WiringError {
-    WiringError::InvalidDefinition {
+fn invalid(message: impl Into<String>) -> GraphError {
+    GraphError::InvalidDefinition {
         message: message.into(),
     }
 }

@@ -6628,6 +6628,7 @@ dependencies = [
  "wamn-package",
  "wamn-registry",
  "wamn-routes",
+ "wamn-workflow-graph",
  "wash-runtime",
  "wasmparser 0.261.0",
  "wasmtime",
@@ -6712,6 +6713,7 @@ dependencies = [
  "wamn-routes",
  "wamn-run-state",
  "wamn-test-infrastructure",
+ "wamn-workflow-graph",
  "wash-runtime",
  "wit-parser 0.254.2",
  "zeroize",
@@ -6818,6 +6820,7 @@ dependencies = [
  "wamn-routes",
  "wamn-run-state",
  "wamn-test-infrastructure",
+ "wamn-workflow-graph",
  "wash-runtime",
  "wasmtime-wasi-http",
  "zeroize",
@@ -7441,6 +7444,16 @@ dependencies = [
  "wamn-digest",
  "wamn-http-client",
  "wamn-postgres",
+]
+
+[[package]]
+name = "wamn-workflow-graph"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "wamn-digest",
+ "wamn-package",
 ]
 
 [[package]]

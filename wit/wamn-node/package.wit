@@ -1,22 +1,12 @@
-package wamn:node@0.1.0;
+package wamn:node@0.2.0;
 
 /// The typed operation seam the host router invokes once per graph node.
 ///
-/// STATUS: LIVE 0.1.0 (wamn-0h0g.16.2; versioned by wamn-0h0g.16.10). This is
-/// the repository's sole definition of `wamn:node@0.1.0`, against the execution
-/// model of `docs/exe-model.md` rev 4. This revision drops the
-/// payload store, the run/flow/attempt identity, and the durable run context,
-/// and replaces `run-context` with `node-context`.
-///
-/// The archived package was superseded before any deployed 0.1.0 consumer.
-/// The MVP version policy keeps first-party `wamn:*` WIT packages at @0.1.0.
-/// `xtask/src/repo_policy/version_identity.rs` enforces that policy.
-///
-/// SETTLED LOCATION. This package lives with the router crate that invokes and
-/// owns it. Consumer bindgen paths reference this canonical file directly.
+/// Version 0.2.0 names the workflow graph in `node-context`.
+/// Consumers use this package through their binding definitions.
 ///
 /// What the router does with a node is the entire justification for this
-/// surface, and nothing here serves any other reader: resolve the wiring's
+/// surface, and nothing here serves any other reader: resolve the graph's
 /// active version, walk the graph in frontier order, acquire a pooled instance
 /// keyed by the node's component digest, call `run`, route the emission by port,
 /// and classify a `node-error` into retry, throttle, error edge, dead-letter, or
@@ -50,17 +40,17 @@ interface types {
   /// derives a dedup key from this record — the same key `emit` presents at the
   /// boundary for producer dedup.
   record node-context {
-    /// The wiring this delivery is running. With `wiring-version` it targets an
+    /// The graph this delivery is running. With `graph-version` it targets an
     /// authored dedup key to the graph revision that asked for the effect, so a
-    /// pointer flip to a corrected wiring is not suppressed by the superseded
+    /// pointer flip to a corrected graph is not suppressed by the superseded
     /// one's key.
-    wiring-id: string,
-    /// The active wiring version the router resolved for this delivery. Wirings
+    graph-id: string,
+    /// The active graph version the router resolved for this delivery. Graphs
     /// are versioned, conditioned data hot-activated by pointer flip; a delivery runs
     /// against exactly one version, resolved once at its start.
-    wiring-version: u32,
-    /// This node's instance id within the wiring graph. Two instances of the
-    /// same component in one wiring are distinct effects and must not share a
+    graph-version: u32,
+    /// This node's instance id within the graph. Two instances of the
+    /// same component in one graph are distinct effects and must not share a
     /// dedup key.
     node-id: string,
     /// The delivery being walked: stable across redeliveries of the same
@@ -69,7 +59,7 @@ interface types {
     /// basis for one node visit's external effect under at-least-once
     /// redelivery.
     delivery-id: string,
-    /// The target input selected by the incoming wiring edge. The wiring entry
+    /// The target input selected by the incoming graph edge. The graph entry
     /// has no incoming edge and therefore no target input.
     input-port: option<string>,
     /// Which visit of this node in this delivery is running. Merge and loop
@@ -120,7 +110,7 @@ interface types {
     /// the router honours the source's own delay instead of its backoff curve.
     rate-limited(rate-limit-detail),
     /// Permanent for this input. The router stops retrying and routes down the
-    /// wiring's error edge.
+    /// graph's error edge.
     terminal(error-detail),
     /// The input violated this node's declared contract. Never retried and never
     /// merely error-edged: shape safety is the condition's jurisdiction, so reaching

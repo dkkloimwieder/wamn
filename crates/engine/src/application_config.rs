@@ -52,7 +52,7 @@ pub struct DataChangeModel {
     pub owner_package: wamn_package::PackageName,
     pub model: wamn_package::manifest::source_name::SourceName,
     pub entity: wamn_package::manifest::source_name::SourceName,
-    pub ops: Vec<wamn_package::WiringEventOperation>,
+    pub ops: Vec<wamn_package::RowOperation>,
 }
 
 /// The host policy of one component export.
@@ -141,15 +141,15 @@ pub fn workflow_call<'a>(
 /// Verify that every call in an enabled graph is available in the candidate workload.
 pub fn check_workflow_references(
     application: &ApplicationConfig,
-    graph: &wamn_routes::WiringDocument,
-) -> Result<(), wamn_routes::WiringError> {
+    graph: &wamn_workflow_graph::WorkflowGraph,
+) -> Result<(), wamn_workflow_graph::GraphError> {
     for (id, node) in &graph.nodes {
-        if let wamn_routes::WiringNode::Call {
+        if let wamn_workflow_graph::GraphNode::Call {
             sibling, export, ..
         } = node
             && workflow_call(application, sibling, export).is_none()
         {
-            return Err(wamn_routes::WiringError::InvalidDefinition {
+            return Err(wamn_workflow_graph::GraphError::InvalidDefinition {
                 message: format!("node {id} names an unavailable sibling export"),
             });
         }
@@ -202,8 +202,8 @@ mod tests {
 
     #[test]
     fn an_enabled_graph_refuses_a_release_without_its_sibling_or_export() {
-        let graph = wamn_routes::WiringDocument::parse(&serde_json::json!({
-            "format-version": "0.2", "wiring-id": "place", "version": 1,
+        let graph = wamn_workflow_graph::WorkflowGraph::parse(&serde_json::json!({
+            "format-version": "0.3", "graph-id": "place", "version": 1,
             "nodes": {
                 "entry": {"entry": {"request": {"path": "/place"}}},
                 "call": {"call": {"sibling": SIBLING, "export": EXPORT}},

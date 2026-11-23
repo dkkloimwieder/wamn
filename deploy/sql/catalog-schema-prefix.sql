@@ -1,4 +1,4 @@
--- Project-environment package, release, wiring, and registration storage.
+-- Project-environment package, release, graph, and registration storage.
 --
 -- Package directories are the authoring truth: raw `wamn.json` bytes identify
 -- an immutable package coordinate and ordered migration bytes are recorded in

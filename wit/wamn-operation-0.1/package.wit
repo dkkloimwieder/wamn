@@ -4,7 +4,7 @@ package wamn:operation@0.1.0;
 /// without receiving this interface.
 interface operation {
   use wamn:postgres/types@0.4.0.{pg-error};
-  use wamn:node/types@0.1.0.{node-context, emission, node-error};
+  use wamn:node/types@0.2.0.{node-context, emission, node-error};
   use wamn:ingress/routing@0.1.0.{authenticated-caller};
 
   /// The existing operation id text, validated against the loaded release.

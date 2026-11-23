@@ -20,7 +20,7 @@ The platform's own native workloads use their separate publication authority.
 
 | Package | Version | Security class |
 | --- | --- | --- |
-| `wamn:node` | `0.1.0` | Ambient |
+| `wamn:node` | `0.2.0` | Ambient |
 | `wamn:postgres` | `0.1.0` | Effect |
 | `wamn:postgres` | `0.4.0` | Effect |
 | `wamn:connection` | `0.1.0` | Effect |
@@ -48,7 +48,7 @@ The existing code declaration records that decision and does not infer it from a
 
 ## Invocation and connection authority
 
-The host records the original wiring, node occurrence, component digest, operation, and exact dependency path.
+The host records the original graph, node occurrence, component digest, operation, and exact dependency path.
 A guest cannot replace that identity through request fields.
 `InvocationScopes` holds the trusted authority of each workload and invocation.
 Each record selects an immutable release and the connection reader of its project deployment.
@@ -64,7 +64,7 @@ Nested calls retain their original caller and require the destination's authorit
 
 The environment owns concrete endpoints, schemas, container names, prefixes, and credentials.
 Authors declare portable requirement aliases and supported connection types.
-Wiring validation refuses string values with the existing secret prefixes: `Bearer `, `-----BEGIN`, and `AKIA`.
+Graph validation refuses string values with the existing secret prefixes: `Bearer `, `-----BEGIN`, and `AKIA`.
 It inspects nested values, including case inputs, without copying rejected values into errors.
 Reference names remain valid. This pattern test cannot identify every arbitrary secret.
 The platform supplies the complete connection semantics.

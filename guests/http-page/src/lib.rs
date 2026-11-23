@@ -24,7 +24,7 @@ mod bindings {
         generate_all,
         async: [
             "import:wamn:connection/http@0.1.0#send",
-            "export:wamn:node/async-handler@0.1.0#run",
+            "export:wamn:node/async-handler@0.2.0#run",
         ],
     });
 }

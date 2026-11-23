@@ -3,8 +3,7 @@
 use wamn_package::canonical_name::CanonicalName;
 use wamn_routes::HostAttachment;
 use wamn_routes::HostHandler;
-use wamn_routes::WiringDocument;
-use wamn_routes::WiringEntry;
+use wamn_workflow_graph::{GraphTrigger, WorkflowGraph};
 use anyhow::Context as _;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -26,7 +25,7 @@ use crate::host::route_refusal::{Refusal, parse};
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Author {
-    document: Value,
+    graph: Value,
     execution_role: Option<String>,
 }
 
@@ -202,7 +201,7 @@ async fn author(
     caller: &AuthenticatedCaller,
     request: Author,
 ) -> Result<Value, Refusal> {
-    let graph = WiringDocument::parse(&request.document).map_err(invalid_graph)?;
+    let graph = WorkflowGraph::parse(&request.graph).map_err(invalid_graph)?;
     let version = i32::try_from(graph.version).map_err(invalid_graph)?;
     let role = request.execution_role.as_deref();
     let checked = authoring::check(&graph, app, role).map_err(invalid_graph)?;
@@ -213,16 +212,16 @@ async fn author(
     let mut source_ops = None;
     let mut source_condition = None;
     let trigger = match checked.entry {
-        WiringEntry::Request { path: request_path } => {
-            check_path(connection, app, &graph.wiring_id, request_path).await?;
+        GraphTrigger::Request { path: request_path } => {
+            check_path(connection, app, &graph.graph_id, request_path).await?;
             path = Some(request_path);
             "request"
         }
-        WiringEntry::Schedule { cron } => {
+        GraphTrigger::Schedule { cron } => {
             schedule = Some(cron);
             "schedule"
         }
-        WiringEntry::DataChange {
+        GraphTrigger::DataChange {
             package,
             entity,
             ops,
@@ -235,10 +234,10 @@ async fn author(
             "data_change"
         }
     };
-    let hash = graph.wiring_hash();
+    let hash = graph.graph_hash();
     let inserted = sqlx::query(
         "INSERT INTO catalog.workflows
-          (environment, application, workflow_id, version, graph_json, wiring_hash,
+          (environment, application, workflow_id, version, graph_json, graph_hash,
            trigger, path, schedule, source_package, entity, ops, condition,
            execution_type, execution_role, created_by)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
@@ -246,7 +245,7 @@ async fn author(
     )
     .bind(&app.environment)
     .bind(&app.application)
-    .bind(&graph.wiring_id)
+    .bind(&graph.graph_id)
     .bind(version)
     .bind(sqlx::types::Json(&graph))
     .bind(hash)
@@ -269,7 +268,7 @@ async fn author(
             detail: json!({}),
         });
     }
-    Ok(json!({"workflow_id": graph.wiring_id, "version": version, "wiring_hash": hash}))
+    Ok(json!({"workflow_id": graph.graph_id, "version": version, "graph_hash": hash}))
 }
 
 async fn check_path(
@@ -307,7 +306,7 @@ async fn enable(
 ) -> Result<ConsumerChange, Refusal> {
     let app = &workload.application;
     let row = sqlx::query(
-        "SELECT graph_json, wiring_hash, execution_role, enabled FROM catalog.workflows
+        "SELECT graph_json, graph_hash, execution_role, enabled FROM catalog.workflows
           WHERE environment = $1 AND application = $2 AND workflow_id = $3 AND version = $4",
     )
     .bind(&app.environment)
@@ -318,17 +317,17 @@ async fn enable(
     .await?
     .ok_or_else(unknown_version)?;
     let value: Value = row.try_get("graph_json")?;
-    let graph = WiringDocument::parse(&value).map_err(invalid_graph)?;
-    if graph.wiring_hash() != row.try_get::<wamn_digest::Digest, _>("wiring_hash")? {
+    let graph = WorkflowGraph::parse(&value).map_err(invalid_graph)?;
+    if graph.graph_hash() != row.try_get::<wamn_digest::Digest, _>("graph_hash")? {
         return Err(invalid_graph("workflow graph hash does not match"));
     }
     let role: Option<&str> = row.try_get("execution_role")?;
     let checked = authoring::check(&graph, app, role).map_err(invalid_graph)?;
-    if let WiringEntry::Request { path } = checked.entry {
+    if let GraphTrigger::Request { path } = checked.entry {
         check_path(connection, app, &version.workflow_id, path).await?;
     }
     if row.try_get::<bool, _>("enabled")? {
-        if !matches!(checked.entry, WiringEntry::DataChange { .. }) {
+        if !matches!(checked.entry, GraphTrigger::DataChange { .. }) {
             // A retry of a trigger change must finish any post-commit deletion.
             let previously_had_consumer: bool = sqlx::query_scalar(
                 "SELECT EXISTS (SELECT 1 FROM catalog.workflows
@@ -348,7 +347,7 @@ async fn enable(
         }
         return Ok(ConsumerChange::Keep);
     }
-    let data_change = if let WiringEntry::DataChange { entity, ops, .. } = checked.entry {
+    let data_change = if let GraphTrigger::DataChange { entity, ops, .. } = checked.entry {
         let consumer = broker.consumer(workload, &version.workflow_id).await?;
         let start = consumer
             .last_sequence()
@@ -468,7 +467,7 @@ fn version_result(version: Version) -> Value {
 fn invalid_graph(error: impl std::fmt::Display) -> Refusal {
     Refusal::Declared {
         code: "invalid_input",
-        detail: json!({"field": "document", "message": error.to_string()}),
+        detail: json!({"field": "graph", "message": error.to_string()}),
     }
 }
 

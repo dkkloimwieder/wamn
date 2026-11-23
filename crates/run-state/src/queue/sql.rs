@@ -9,8 +9,8 @@ use crate::{FailType, RunStatus};
 
 /// Lock the oldest expired lease for this application.
 pub fn select_production_lease_sql() -> &'static str {
-    "SELECT q.run_id, r.status, r.input_json::text, r.wiring_id, r.wiring_version, \
-            r.wiring_hash, r.execution_principal_id, r.execution_role, \
+    "SELECT q.run_id, r.status, r.input_json::text, r.graph_id, r.graph_version, \
+            r.graph_hash, r.execution_principal_id, r.execution_role, \
             r.state_json::text, r.event_root_run_id, r.event_depth \
        FROM run_queue AS q JOIN runs AS r USING (run_id) \
       WHERE r.package_id = $1 AND r.environment = $2 \
@@ -63,8 +63,8 @@ pub fn renew_production_lease_sql() -> String {
 pub fn select_exhausted_production_sql() -> String {
     format!(
         "SELECT q.run_id, selected_run.status, \
-                selected_run.wiring_id, \
-                selected_run.wiring_version \
+                selected_run.graph_id, \
+                selected_run.graph_version \
            FROM run_queue AS q \
            JOIN runs AS selected_run \
              ON selected_run.run_id = q.run_id \

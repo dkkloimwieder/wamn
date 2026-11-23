@@ -5,7 +5,7 @@ Set `WAMN_TOKEN` to the administrator's session token. Pass the application URL 
 
 ## Author and enable a workflow
 
-Write a format 0.2 graph with one entry node. The entry chooses Request, Schedule or Data change.
+Write a format 0.3 graph with one entry node. The entry chooses Request, Schedule or Data change.
 A Request declares a path such as `/orders/create`. Calls use POST with a JSON body at `/api/orders/flow/orders/create`.
 Give each end of a Request path a Response node.
 A Schedule declares a five-field UTC cron. A Data change entry names the source package, entity and row operations.

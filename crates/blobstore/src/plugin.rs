@@ -4,7 +4,7 @@ use super::binding::BindingError;
 use std::collections::HashSet;
 use std::sync::Arc;
 use wamn_authority::effect_span;
-use wamn_authority::effect_span::{EffectIdentity, record_wiring};
+use wamn_authority::effect_span::{EffectIdentity, record_graph};
 use wash_runtime::engine::ctx::{SharedCtx, extract_active_ctx};
 use wash_runtime::engine::workload::WorkloadItem;
 use wash_runtime::plugin::{HostPlugin, WitInterfaces};
@@ -382,11 +382,11 @@ pub(super) fn blobstore_span(
         })
         .unwrap_or_else(|| make_span(None));
     let invocation = plugin.invocation(component_id);
-    record_wiring(
+    record_graph(
         &span,
         invocation
             .as_ref()
-            .map(wamn_connection::connection::ConnectionInvocation::effect_wiring),
+            .map(wamn_connection::connection::ConnectionInvocation::effect_graph),
     );
     span
 }

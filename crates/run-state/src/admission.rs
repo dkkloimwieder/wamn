@@ -31,7 +31,7 @@ pub struct RunAdmission<'a> {
     pub environment: &'a wamn_registry::EnvName,
     pub workflow_id: &'a wamn_package::canonical_name::CanonicalName,
     pub workflow_version: i32,
-    pub wiring_hash: &'a wamn_digest::Digest,
+    pub graph_hash: &'a wamn_digest::Digest,
     pub execution_principal_id: &'a wamn_identity_protocol::PrincipalId,
     pub execution_role: &'a str,
     pub trigger: RunTrigger,
@@ -54,11 +54,11 @@ pub enum RunAdmitted {
 
 const ADMIT_SQL: &str = "
     WITH admitted AS (
-        INSERT INTO runs (package_id, environment, wiring_id, wiring_version, wiring_hash,
+        INSERT INTO runs (package_id, environment, graph_id, graph_version, graph_hash,
           execution_principal_id, execution_role, trigger_source, invoked_by, invoked_by_user_id,
           idempotency_key, input_json, status, event_source_run_id, event_root_run_id, event_depth)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'running', $13, $14, $15)
-        ON CONFLICT (environment, package_id, wiring_id, wiring_version, trigger_source, idempotency_key)
+        ON CONFLICT (environment, package_id, graph_id, graph_version, trigger_source, idempotency_key)
           WHERE idempotency_key IS NOT NULL DO NOTHING
         RETURNING run_id
     )
@@ -69,7 +69,7 @@ const ADMIT_SQL: &str = "
 
 const EXISTING_SQL: &str = "
     SELECT run_id FROM runs
-     WHERE package_id = $1 AND environment = $2 AND wiring_id = $3 AND wiring_version = $4
+     WHERE package_id = $1 AND environment = $2 AND graph_id = $3 AND graph_version = $4
        AND trigger_source = $5 AND idempotency_key = $6 AND input_json = $7
        AND execution_principal_id = $8 AND execution_role = $9
        AND invoked_by_user_id IS NOT DISTINCT FROM $10";
@@ -87,7 +87,7 @@ pub async fn admit_run(
         .bind(run.environment)
         .bind(run.workflow_id)
         .bind(run.workflow_version)
-        .bind(run.wiring_hash)
+        .bind(run.graph_hash)
         .bind(run.execution_principal_id)
         .bind(run.execution_role)
         .bind(run.trigger.as_sql())
@@ -167,7 +167,7 @@ pub async fn history_actor(
             return Ok(None);
         }
         let image = match envelope.op {
-            wamn_package::WiringEventOperation::Delete => &envelope.old,
+            wamn_package::RowOperation::Delete => &envelope.old,
             _ => &envelope.new,
         }
         .as_ref()

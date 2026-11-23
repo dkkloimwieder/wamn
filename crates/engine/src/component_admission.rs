@@ -17,9 +17,9 @@ use wash_runtime::wasmtime::component::types::ComponentItem;
 use crate::operation::node_types;
 
 /// The async contract for generic nodes. Application operations also support async.
-pub const ASYNC_HANDLER_OPERATION: &str = "wamn:node/async-handler@0.1.0";
+pub const ASYNC_HANDLER_OPERATION: &str = "wamn:node/async-handler@0.2.0";
 const HANDLER_SIGNATURE: &str =
-    "wamn:node/handler@0.1.0::run(node-context, string) -> result<emission, node-error>";
+    "wamn:node/handler@0.2.0::run(node-context, string) -> result<emission, node-error>";
 
 /// Component declaration plus its exact admitted platform imports.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -151,7 +151,7 @@ pub fn validate_component_admission(
             )?;
             let ComponentItem::ComponentInstance(handler) = reference
                 .component_type()
-                .get_export(raw, "wamn:node/handler@0.1.0")
+                .get_export(raw, "wamn:node/handler@0.2.0")
                 .context("node reference has no handler")?
                 .ty
             else {
@@ -189,7 +189,7 @@ pub fn validate_component_admission(
             );
             return Ok(());
         }
-        if run.async_() && export == "wamn:node/handler@0.1.0" {
+        if run.async_() && export == "wamn:node/handler@0.2.0" {
             anyhow::bail!("run uses the async ABI without a typed contract");
         }
         run.typecheck::<
@@ -586,14 +586,14 @@ mod tests {
 
     use super::*;
 
-    const OPERATION: &str = "wamn:node/handler@0.1.0";
+    const OPERATION: &str = "wamn:node/handler@0.2.0";
 
     // Every node component imports this: the handler signature is written in
     // terms of the ABI's own types, so the import is structural, carries no
     // application dependency and leaves the host not at all. It is filtered
     // out of the operation-dependency comparison and reaches component policy
     // like any other non-dependency import.
-    const NODE_TYPES_IMPORT: &str = "wamn:node/types@0.1.0";
+    const NODE_TYPES_IMPORT: &str = "wamn:node/types@0.2.0";
 
     const DEPENDENCY_WITS: [(&str, &str); 7] = [
         (
@@ -630,7 +630,7 @@ mod tests {
             "platform-fixture.wit",
             "package platform-fixture:widget@1.0.0; \
              interface record-batch { \
-               use wamn:node/types@0.1.0.{node-context, emission, node-error}; \
+               use wamn:node/types@0.2.0.{node-context, emission, node-error}; \
                run: func(ctx: node-context, input: string) -> result<emission, node-error>; \
              }",
         ),
@@ -944,7 +944,7 @@ mod tests {
                         r"
                 package platform-fixture:widget@1.0.0;
                 interface record-batch {{
-                    use wamn:node/types@0.1.0.{{node-context, node-error, emission}};
+                    use wamn:node/types@0.2.0.{{node-context, node-error, emission}};
                     resource handle;
                     record item {{ request-id: string, quantity: string }}
                     run: async func(ctx: {context}, input: {input}) -> result<{output}, {refusal}>;
@@ -1111,7 +1111,7 @@ mod tests {
             ComponentAdmissionErrorType::OperationExportMismatch
         );
 
-        // A package can pin a base that its wirings name without composing it.
+        // A package can pin a base that its workflow graphs name without composing it.
         validate_component_admission(&engine, &component_bytes(""), request_pinning(&base))
             .expect("a pinned base that is not composed admits");
     }
@@ -1125,7 +1125,7 @@ mod tests {
         let engine = crate::build_engine(&[]).expect("engine builds");
         let base = base_bytes();
         let bytes = composed(
-            &component_bytes_with_exports("", "export second: wamn:node/handler@0.1.0;"),
+            &component_bytes_with_exports("", "export second: wamn:node/handler@0.2.0;"),
             &base,
         );
         let mut request = request_pinning(&base);
@@ -1198,7 +1198,7 @@ mod tests {
         let engine = crate::build_engine(&[]).expect("engine builds");
         let imports = [
             "wasi:clocks/monotonic-clock@0.2.12",
-            "wamn:node/types@0.1.0",
+            "wamn:node/types@0.2.0",
             "wamn:postgres/statements@0.4.0",
             "wamn:connection/http@0.1.0",
         ];

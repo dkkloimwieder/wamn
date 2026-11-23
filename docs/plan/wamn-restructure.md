@@ -105,7 +105,7 @@ Org → environment → project → application. One boundary per level.
 - Runs use a small host interface. The run SQL and its login stay in the host. Each node call carries the run's identity and role.
 - A run executes on the live release. `runs.manifest_digest` and `runs.node_digests_json` go.
 - Not built now (future work): state after each node, backoff, the approval waiting state.
-- The graph format is 0.2. Only Request graphs use Response nodes. Request paths are unique among enabled workflows in an application. Publish reserves the Request workflow prefix.
+- The graph format is 0.3. Only Request graphs use Response nodes. Request paths are unique among enabled workflows in an application. Publish reserves the Request workflow prefix.
 - Application host routes also list workflows. Run now admits a durable run and returns its ID. The admin picks the caller or the workflow role.
 - Enable checks the graph under the project database's environment lock. It reads the last source sequence before the enable LSN and starts the consumer after that sequence. It filters by entity and operation.
 - The service polls schedules each minute. It refreshes consumers every 30 seconds and uses a 30-second pull wait. Schedule and Data change use the workflow principal with its configured role.

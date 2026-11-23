@@ -18,6 +18,7 @@ wamn-oci-reference.workspace = true
 wamn-package = { workspace = true, features = ["sqlx"] }
 wamn-component-policy.workspace = true
 wamn-routes.workspace = true
+wamn-workflow-graph.workspace = true
 wamn-engine.workspace = true
 async-trait.workspace = true
 wamn-role.workspace = true

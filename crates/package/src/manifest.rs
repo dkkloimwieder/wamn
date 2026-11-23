@@ -3018,7 +3018,7 @@ pub struct ComponentDeclaration {
 #[serde(deny_unknown_fields)]
 pub struct DataChangeDeclaration {
     pub role: wamn_identity_protocol::RoleName,
-    pub models: BTreeMap<SourceName, Vec<crate::WiringEventOperation>>,
+    pub models: BTreeMap<SourceName, Vec<crate::RowOperation>>,
     #[serde(default = "host_transaction_default")]
     pub host_transaction: bool,
 }

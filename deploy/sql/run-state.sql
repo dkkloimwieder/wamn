@@ -46,9 +46,9 @@ AS $$
 BEGIN
     IF NEW.package_id IS DISTINCT FROM OLD.package_id
        OR NEW.environment IS DISTINCT FROM OLD.environment
-       OR NEW.wiring_id IS DISTINCT FROM OLD.wiring_id
-       OR NEW.wiring_version IS DISTINCT FROM OLD.wiring_version
-       OR NEW.wiring_hash IS DISTINCT FROM OLD.wiring_hash
+       OR NEW.graph_id IS DISTINCT FROM OLD.graph_id
+       OR NEW.graph_version IS DISTINCT FROM OLD.graph_version
+       OR NEW.graph_hash IS DISTINCT FROM OLD.graph_hash
        OR NEW.trigger_source IS DISTINCT FROM OLD.trigger_source
        OR NEW.execution_principal_id IS DISTINCT FROM OLD.execution_principal_id
        OR NEW.execution_role IS DISTINCT FROM OLD.execution_role
@@ -119,9 +119,9 @@ CREATE TABLE wamn_run.runs (
     invoked_by      text,
     invoked_by_user_id uuid,
     -- The admission transaction freezes the execution identity.
-    wiring_id       text,
-    wiring_version  int,
-    wiring_hash     text,
+    graph_id       text,
+    graph_version  int,
+    graph_hash     text,
     input_json      jsonb,
     result_json     jsonb,
     deadline_adjustments_json jsonb,
@@ -158,17 +158,17 @@ CREATE TABLE wamn_run.runs (
     -- At insert both columns take the same `now()`, so equal is admitted.
     CONSTRAINT runs_updated_after_created
         CHECK (updated_at >= created_at),
-    CONSTRAINT runs_wiring_identity_check CHECK (
-      (wiring_id IS NULL AND wiring_version IS NULL)
-      OR (wiring_id IS NOT NULL AND wiring_version IS NOT NULL
-          AND wiring_id <> '' AND wiring_version > 0)
+    CONSTRAINT runs_graph_identity_check CHECK (
+      (graph_id IS NULL AND graph_version IS NULL)
+      OR (graph_id IS NOT NULL AND graph_version IS NOT NULL
+          AND graph_id <> '' AND graph_version > 0)
     ),
     -- Only workflow executions enter the durable queue.
     CONSTRAINT runs_execution_grain_check CHECK (
       trigger_source IS NOT NULL AND trigger_source IN ('request', 'schedule', 'event', 'manual')
-      AND wiring_id IS NOT NULL AND wiring_id <> ''
-      AND wiring_version IS NOT NULL AND wiring_version > 0
-      AND wiring_hash IS NOT NULL AND wiring_hash ~ '^sha256:[0-9a-f]{64}$'
+      AND graph_id IS NOT NULL AND graph_id <> ''
+      AND graph_version IS NOT NULL AND graph_version > 0
+      AND graph_hash IS NOT NULL AND graph_hash ~ '^sha256:[0-9a-f]{64}$'
       AND execution_principal_id IS NOT NULL
       AND execution_role IS NOT NULL AND execution_role <> ''
       AND invoked_by IS NOT NULL AND invoked_by <> ''
@@ -180,7 +180,7 @@ CREATE TABLE wamn_run.runs (
 );
 -- At-least-once: a redelivered trigger with the same key collapses to one run.
 CREATE UNIQUE INDEX runs_idempotency ON wamn_run.runs
-    (environment, package_id, wiring_id, wiring_version, trigger_source, idempotency_key)
+    (environment, package_id, graph_id, graph_version, trigger_source, idempotency_key)
     WHERE idempotency_key IS NOT NULL;
 -- History listing and trusted CDC event-causation traversal.
 CREATE INDEX runs_event_root ON wamn_run.runs (event_root_run_id)
@@ -204,8 +204,8 @@ FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_event_lineage_immutable();
 -- here or the transition arm never fires for them.
 CREATE TRIGGER runs_admission_pins_immutable
 BEFORE UPDATE OF package_id, environment,
-                 wiring_id, wiring_version,
-                 wiring_hash, trigger_source,
+                 graph_id, graph_version,
+                 graph_hash, trigger_source,
                  execution_principal_id, execution_role, invoked_by, invoked_by_user_id
 ON wamn_run.runs
 FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_run_admission_pins_immutable();

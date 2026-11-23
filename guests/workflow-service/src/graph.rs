@@ -1,4 +1,4 @@
-//! Private format 0.2 wiring and its ordered outgoing edges.
+//! Private format 0.3 graph and its ordered outgoing edges.
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -8,9 +8,9 @@ use serde_json::Value;
 use crate::bindings::wamn::workflow::run::{FailureType, Workflow};
 use crate::walk::WalkError;
 
-#[path = "../../../crates/package/src/wiring_event_operation.rs"]
-mod wiring_event_operation;
-use wiring_event_operation::WiringEventOperation;
+#[path = "../../../crates/package/src/row_operation.rs"]
+mod row_operation;
+use row_operation::RowOperation;
 
 pub(crate) const MAIN: &str = "main";
 pub(crate) const ERROR: &str = "error";
@@ -19,7 +19,7 @@ pub(crate) const ERROR: &str = "error";
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 struct Document {
     format_version: String,
-    wiring_id: String,
+    graph_id: String,
     version: u32,
     nodes: BTreeMap<String, Node>,
     #[serde(default)]
@@ -51,7 +51,7 @@ pub(crate) enum Trigger {
         #[serde(rename = "entity")]
         _entity: String,
         #[serde(rename = "ops")]
-        _ops: Vec<WiringEventOperation>,
+        _ops: Vec<RowOperation>,
         #[serde(rename = "condition")]
         _condition: Option<String>,
     },
@@ -104,14 +104,14 @@ impl Graph {
     pub(crate) fn parse(definition: &Workflow) -> Result<Self, WalkError> {
         let doc: Document = serde_json::from_str(&definition.graph_json)
             .map_err(|source| WalkError::invalid_json("parse workflow graph", source))?;
-        if doc.format_version != "0.2" {
+        if doc.format_version != "0.3" {
             return Err(WalkError::failed(
                 FailureType::ForeignRevision,
                 "foreign-revision",
                 format!("unsupported workflow format {}", doc.format_version),
             ));
         }
-        if doc.wiring_id != definition.id || doc.version != definition.version || doc.version == 0 {
+        if doc.graph_id != definition.id || doc.version != definition.version || doc.version == 0 {
             return Err(invalid("graph identity differs from the admitted workflow"));
         }
         let mut entries = doc.nodes.iter().filter_map(|(id, node)| match node {

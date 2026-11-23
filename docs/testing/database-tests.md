@@ -21,7 +21,7 @@ Setup writes must be explicit, while tested command histories mutate through rea
 
 Inspect committed state independently of the response.
 Use coherent snapshots for rules spanning multiple tables.
-Each command item owns one transaction, which never crosses a wiring edge.
+Each command item owns one transaction, which never crosses a graph edge.
 Where supported, exercise outer envelopes containing both successful and refused items.
 
 Establish whether a failure occurred before commit, after commit with a lost response, or during downstream work.

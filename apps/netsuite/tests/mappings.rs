@@ -1,10 +1,10 @@
 use serde_json::{Value, json};
 
-fn mapping(wiring: &str, node: &str, input: &Value, parameters: Option<&Value>) -> Value {
+fn mapping(graph: &str, node: &str, input: &Value, parameters: Option<&Value>) -> Value {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join(format!("../tests/workflows/{wiring}.json"));
-    let wiring: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
-    let config = &wiring["nodes"][node]["call"]["params"];
+        .join(format!("../tests/workflows/{graph}.json"));
+    let graph: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+    let config = &graph["nodes"][node]["call"]["params"];
     let parameters = parameters.unwrap_or(&config["parameters"]);
     serde_json::from_str(
         &jsonata_expression::evaluate_with_parameters(
@@ -156,7 +156,7 @@ fn pull_rows_become_one_consumer_batch_and_retain_due() {
 
 #[test]
 fn consumer_error_prevents_checkpoint_mapping() {
-    let wiring: Value =
+    let graph: Value =
         serde_json::from_str(include_str!("../tests/workflows/netsuite_pull.json")).unwrap();
     for input in [
         json!([]),
@@ -165,7 +165,7 @@ fn consumer_error_prevents_checkpoint_mapping() {
     ] {
         assert!(
             jsonata_expression::evaluate(
-                wiring["nodes"]["finish"]["call"]["params"]["expression"]
+                graph["nodes"]["finish"]["call"]["params"]["expression"]
                     .as_str()
                     .unwrap(),
                 &input
@@ -256,9 +256,9 @@ fn a_false_workflow_parameter_cannot_select_consumer_provenance() {
         "../tests/workflows/netsuite_pull.json",
         "../../rest_connector/tests/workflows/rest_item.json",
     ] {
-        let wiring: Value =
+        let graph: Value =
             serde_json::from_slice(&std::fs::read(root.join(path)).unwrap()).unwrap();
-        let expression = wiring["nodes"]["rows"]["call"]["params"]["expression"]
+        let expression = graph["nodes"]["rows"]["call"]["params"]["expression"]
             .as_str()
             .unwrap();
         for items in [json!([]), json!([{"id":"42","name":"Acme"}])] {

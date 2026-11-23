@@ -15,7 +15,7 @@ Start with the [documentation index](docs/README.md) or the [architecture overvi
 | [apps/client_acme_receiving](apps/client_acme_receiving/README.md) | Acme Receiving overlay and its tests |
 | [apps/edge_device](apps/edge_device/README.md) | The application with no SQL that an edge box runs on each device frame |
 | [apps/edge_samples](apps/edge_samples/README.md) | The platform application that receives edge samples |
-| [apps/netsuite](apps/netsuite/README.md) | NetSuite integration that composes `wamn_integration` with JSONata wirings and platform HTTP nodes |
+| [apps/netsuite](apps/netsuite/README.md) | NetSuite integration that composes `wamn_integration` with JSONata workflow graphs and platform HTTP nodes |
 | [apps/platform_ui](apps/platform_ui/README.md) | The shared Solid 2 operator shell |
 | [apps/platform_fixture](apps/platform_fixture/) | The application that platform tests use in place of a real one |
 | [apps/platform_fixture_overlay](apps/platform_fixture_overlay/) | The minimal overlay above the platform fixture |

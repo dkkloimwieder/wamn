@@ -338,8 +338,8 @@ fn context(
     deadline_ms: u64,
 ) -> NodeContext {
     NodeContext {
-        wiring_id: String::new(),
-        wiring_version: 0,
+        graph_id: String::new(),
+        graph_version: 0,
         node_id: String::new(),
         delivery_id,
         input_port: None,

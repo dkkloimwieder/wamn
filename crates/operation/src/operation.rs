@@ -1109,7 +1109,7 @@ pub struct WorkflowNode<'a> {
     pub sibling: &'a str,
     pub operation: &'a CanonicalName,
     pub caller: AuthenticatedCaller,
-    pub position: wamn_connection::connection::WiringPosition,
+    pub position: wamn_connection::connection::GraphPosition,
     pub causation: Option<wamn_event::Causation>,
 }
 
@@ -1263,7 +1263,7 @@ impl OperationHost {
             component,
             SiblingAuthority {
                 caller: node.caller,
-                entry: InvocationEntry::Wiring(node.position),
+                entry: InvocationEntry::Graph(node.position),
                 operation: Some(node.operation),
                 grant: grant.as_ref(),
                 causation: node.causation,

@@ -1,7 +1,7 @@
 # NetSuite
 
 This application composes `wamn_integration` and owns no domain tables.
-The wirings implement every NetSuite request with JSONata and the platform HTTP nodes.
+The workflow graphs implement every NetSuite request with JSONata and the platform HTTP nodes.
 The Rust component forwards `setting.read` to the composed base.
 Its private `sync.finish` command writes `last_synced_at` through the base inside the transaction that the host opens.
 It contains no NetSuite request logic.
@@ -10,7 +10,7 @@ The package pins both base components by version and digest.
 ## Operations
 
 Workflow examples live in `tests/workflows`.
-Copy the format 0.2 examples and edit their parameters. Author them on the application host with `workflow author`.
+Copy the format 0.3 examples and edit their parameters. Author them on the application host with `workflow author`.
 The package build does not publish workflows.
 
 | Operation | Input | Node parameters | Request |

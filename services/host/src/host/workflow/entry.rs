@@ -54,7 +54,7 @@ impl Workflow {
             .postgres
             .executor_write(&app.project, async |connection| {
                 let row = sqlx::query(
-                "SELECT workflow_id, version, graph_json::text AS graph, wiring_hash, execution_role
+                "SELECT workflow_id, version, graph_json::text AS graph, graph_hash, execution_role
                    FROM catalog.workflows WHERE environment = $1 AND application = $2
                     AND enabled AND trigger = 'request' AND path = $3 FOR SHARE"
             ).bind(&app.environment).bind(&app.application).bind(request.path)
@@ -77,10 +77,10 @@ impl Workflow {
                 let json = serde_json::from_str(&definition.graph).map_err(|error| {
                     ProductionLeaseError::invalid("decode Request workflow", error)
                 })?;
-                let graph = wamn_routes::WiringDocument::parse(&json).map_err(|error| {
+                let graph = wamn_workflow_graph::WorkflowGraph::parse(&json).map_err(|error| {
                     ProductionLeaseError::invalid("parse Request workflow", error)
                 })?;
-                if graph.wiring_hash() != definition.hash {
+                if graph.graph_hash() != definition.hash {
                     return Err(ProductionLeaseError::contract(
                         "load Request workflow",
                         "graph hash mismatch",
@@ -198,7 +198,7 @@ impl Workflow {
             .postgres
             .executor_write(&app.project, async |connection| {
                 let row = sqlx::query(
-                "SELECT workflow_id, version, graph_json::text AS graph, wiring_hash, execution_role
+                "SELECT workflow_id, version, graph_json::text AS graph, graph_hash, execution_role
                    FROM catalog.workflows WHERE environment = $1 AND application = $2
                     AND enabled AND workflow_id = $3 FOR SHARE"
             ).bind(&app.environment).bind(&app.application).bind(request.workflow_id)

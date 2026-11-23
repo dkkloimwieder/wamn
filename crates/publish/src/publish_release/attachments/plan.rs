@@ -150,7 +150,7 @@ pub(in super::super) fn resolve_owned_route_methods(
 }
 
 /// The method of one routed attachment: GET for a route to a read operation,
-/// POST for every other route and for every wiring.
+/// POST for every other route and for every graph.
 pub(super) fn route_method(
     attachment_id: &wamn_package::canonical_name::CanonicalName,
     attachment: &ServingAttachment,

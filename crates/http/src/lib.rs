@@ -1,10 +1,10 @@
 //! Environment-bound HTTP for ordinary `wamn:node` components.
 //!
-//! The host binds the exact entry (a route, or a wiring node position and
+//! The host binds the exact entry (a route, or a graph node position and
 //! occurrence) and the component digest before invoking a pooled component. The
 //! guest names only a store alias; the database must resolve that alias at the
 //! component grain and the mounted manifest must contain the exact route or
-//! wiring version/hash and the component tuple. No run, plan, frame or effect
+//! graph version/hash and the component tuple. No run, plan, frame or effect
 //! record participates.
 
 use std::collections::{HashMap, HashSet};
@@ -26,7 +26,7 @@ use tracing::Instrument as _;
 use wamn_authority::EffectOutcome;
 use wamn_authority::effect_span::{
     EFFECT_OPERATION, EffectIdentity, EffectOutcomeGuard, HTTP_EFFECT_DURATION_MS, effect_span,
-    record_effect_ms, record_wiring,
+    record_effect_ms, record_graph,
 };
 
 use wash_runtime::host::allowed_hosts::AllowedHost;
@@ -551,11 +551,11 @@ impl<T: Send + 'static> http::HostWithStore<T> for SharedCtx {
                     effect.operation = "send",
                 );
                 let invocation = wamn_connection::invocation::invocation(&plugin.scopes, &scope);
-                record_wiring(
+                record_graph(
                     &span,
                     invocation
                         .as_ref()
-                        .map(wamn_connection::connection::ConnectionInvocation::effect_wiring),
+                        .map(wamn_connection::connection::ConnectionInvocation::effect_graph),
                 );
                 let mut observed = EffectOutcomeGuard::new(
                     &span,
@@ -862,7 +862,7 @@ mod tests {
     mod oauth2_tests;
     mod outside_call_tests;
 
-    /// The hash of the fixture wiring's graph, the one the manifest carries.
+    /// The hash of the fixture workflow graph, the one the manifest carries.
 
     #[test]
     fn guest_headers_cannot_supply_transport_or_proxy_authority() {

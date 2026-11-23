@@ -1525,15 +1525,15 @@ mod tests {
         let route = serde_json::to_value(route_attachment()).expect("attachment serializes");
         assert_eq!(route["component"], "http-request");
         assert_eq!(route["operation"], "base:widget/get@1.0.0");
-        assert!(route.get("wiring-id").is_none() && route.get("wiring-version").is_none());
+        assert!(route.get("graph-id").is_none() && route.get("graph-version").is_none());
         assert_eq!(
             serde_json::from_value::<ServingAttachment>(route.clone()).unwrap(),
             route_attachment()
         );
 
         let mut both = route.clone();
-        both["wiring-id"] = serde_json::json!("retired");
-        both["wiring-version"] = serde_json::json!(1);
+        both["graph-id"] = serde_json::json!("retired");
+        both["graph-version"] = serde_json::json!(1);
         let mut neither = route.clone();
         neither.as_object_mut().unwrap().remove("component");
         neither.as_object_mut().unwrap().remove("operation");

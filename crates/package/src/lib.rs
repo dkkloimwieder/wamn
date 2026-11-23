@@ -16,7 +16,7 @@ pub mod registered_operation;
 mod route_identity;
 pub mod schema;
 mod signed_file_read;
-pub mod wiring_event_operation;
+pub mod row_operation;
 
 pub use attachment::{
     AttachmentAuthPolicy, AttachmentTarget, AttachmentType, INVALID_ATTACHMENT_AUTH_POLICY_REFUSAL,
@@ -44,7 +44,7 @@ pub use signed_file_read::{
     MAX_SIGNED_FILE_SECONDS, SIGNED_FILE_READS, SignedFileField, SignedFileRead,
     SignedFileReadError, SignedFileReads, SignedFileResultClass,
 };
-pub use wiring_event_operation::WiringEventOperation;
+pub use row_operation::RowOperation;
 
 /// The interface exported by an application data change handler.
 pub const DATA_CHANGE_EXPORT: &str = "wamn:handler/data-change@0.1.0";

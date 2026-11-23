@@ -217,7 +217,7 @@ CREATE TABLE catalog.workflows (
     workflow_id    text        NOT NULL CHECK (workflow_id <> ''),
     version        int         NOT NULL CHECK (version > 0),
     graph_json     jsonb       NOT NULL,
-    wiring_hash    text        NOT NULL CHECK (wiring_hash ~ '^sha256:[0-9a-f]{64}$'),
+    graph_hash    text        NOT NULL CHECK (graph_hash ~ '^sha256:[0-9a-f]{64}$'),
     trigger        text        NOT NULL CHECK (trigger IN ('request', 'schedule', 'data_change')),
     path           text        CHECK (path LIKE '/%'),
     -- The five-field cron, evaluated in UTC, of a schedule trigger.
@@ -269,12 +269,12 @@ LANGUAGE plpgsql
 AS $$
 BEGIN
     IF ROW(NEW.environment, NEW.application, NEW.workflow_id,
-           NEW.version, NEW.graph_json, NEW.wiring_hash, NEW.trigger, NEW.path, NEW.schedule,
+           NEW.version, NEW.graph_json, NEW.graph_hash, NEW.trigger, NEW.path, NEW.schedule,
            NEW.source_package, NEW.entity, NEW.ops, NEW.condition,
            NEW.execution_type, NEW.execution_role, NEW.created_by, NEW.created_at)
        IS DISTINCT FROM
        ROW(OLD.environment, OLD.application, OLD.workflow_id,
-           OLD.version, OLD.graph_json, OLD.wiring_hash, OLD.trigger, OLD.path, OLD.schedule,
+           OLD.version, OLD.graph_json, OLD.graph_hash, OLD.trigger, OLD.path, OLD.schedule,
            OLD.source_package, OLD.entity, OLD.ops, OLD.condition,
            OLD.execution_type, OLD.execution_role, OLD.created_by, OLD.created_at) THEN
         RAISE EXCEPTION USING ERRCODE = '55000',

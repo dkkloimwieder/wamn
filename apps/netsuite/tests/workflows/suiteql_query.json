@@ -1,6 +1,6 @@
 {
-  "format-version": "0.2",
-  "wiring-id": "suiteql_query",
+  "format-version": "0.3",
+  "graph-id": "suiteql_query",
   "version": 1,
   "nodes": {
     "entry": {
@@ -13,7 +13,7 @@
     "map": {
       "call": {
         "sibling": "wamn_palette-jsonata",
-        "export": "wamn:node/handler@0.1.0",
+        "export": "wamn:node/handler@0.2.0",
         "params": {
           "expression": "($assert($type(q) = \"string\" and $contains($lowercase(q), \"order by id\"), \"SuiteQL must order by the stable id key\"); {\"body\": {\"q\": q}, \"due\": null})",
           "input-schema": {
@@ -38,7 +38,7 @@
     "page": {
       "call": {
         "sibling": "wamn_palette-http-page",
-        "export": "wamn:node/async-handler@0.1.0",
+        "export": "wamn:node/async-handler@0.2.0",
         "params": {
           "requirement": "upstream",
           "method": "POST",

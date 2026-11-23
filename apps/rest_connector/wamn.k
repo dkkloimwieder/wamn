@@ -7,13 +7,13 @@ manifest.Package {
         integration = {
             package = "wamn_integration"
             version = "0.1.1"
-            digest = "sha256:d95f7daac04a219ffeb1cb82bfdfd435af972daf786884530999405975300a93"
+            digest = "sha256:bd3b7e81c33ee35e1d00b9122f07db660e96bcd2103b5c8f82adeee3dfc2bc8a"
             operations = ["setting.read", "setting.write", "log.append"]
         }
         consumer = {
             package = "rest_consumer_fixture"
             version = "0.1.1"
-            digest = "sha256:d96dd0f38e26dac1feb7ed0b902e233bab22e2cf6aabc6c2ef81813d93244c11"
+            digest = "sha256:238de47e918adfc5bbccc987dacda54edb192bdbe2c585bb23887af5b347ccca"
             operations = ["item.record"]
         }
     }
@@ -51,5 +51,5 @@ manifest.Package {
         }
     }
     connections = {upstream = {interface = "wamn:connection/http@0.1.0", mode = "read"}}
-    components = {rest_connector = {exports = {"wamn:node/async-handler@0.1.0": {"input-ports": [{"name": "input", "schema": {}}], "output-ports": [{"name": "main", "schema": {}}], "parameters": []}}}}
+    components = {rest_connector = {exports = {"wamn:node/async-handler@0.2.0": {"input-ports": [{"name": "input", "schema": {}}], "output-ports": [{"name": "main", "schema": {}}], "parameters": []}}}}
 }

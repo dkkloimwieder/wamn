@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/role", "crates/jsonata", "crates/event", "crates/postgres", "crates/digest", "crates/scalar", "services/host", "services/control", "services/edge", "services/web", "services/identity-service", "services/cli", "services/cdc-reader", "xtask", "crates/build", "tests/journeys", "test-support/fixtures/package", "test-support/infrastructure", "apps/wamn_receiving/tests", "apps/wamn_wms/tests", "crates/connection-type", "crates/oci/reference", "crates/run-state", "crates/codegen", "crates/schema-introspection", "crates/number-pattern", "crates/component-policy", "crates/engine", "crates/authority", "crates/connection", "crates/envelope", "crates/operation", "crates/http", "crates/http-client", "crates/blobstore", "crates/authentication", "crates/publish", "crates/environment", "crates/platform-install", "crates/dev", "crates/provision", "crates/registry", "crates/identity", "crates/identity-client", "crates/identity-protocol", "crates/principal", "crates/kubernetes", "crates/broker", "crates/oci", "crates/package", "crates/routes", "services/edge/document", "test-support/grant-tests"]
+members = ["crates/role", "crates/jsonata", "crates/event", "crates/postgres", "crates/digest", "crates/scalar", "services/host", "services/control", "services/edge", "services/web", "services/identity-service", "services/cli", "services/cdc-reader", "xtask", "crates/build", "tests/journeys", "test-support/fixtures/package", "test-support/infrastructure", "apps/wamn_receiving/tests", "apps/wamn_wms/tests", "crates/connection-type", "crates/oci/reference", "crates/run-state", "crates/codegen", "crates/schema-introspection", "crates/number-pattern", "crates/component-policy", "crates/engine", "crates/authority", "crates/connection", "crates/envelope", "crates/operation", "crates/http", "crates/http-client", "crates/blobstore", "crates/authentication", "crates/publish", "crates/environment", "crates/platform-install", "crates/dev", "crates/provision", "crates/registry", "crates/identity", "crates/identity-client", "crates/identity-protocol", "crates/principal", "crates/kubernetes", "crates/broker", "crates/oci", "crates/package", "crates/routes", "crates/workflow-graph", "services/edge/document", "test-support/grant-tests"]
 default-members = [
   "crates/connection-type",
   "crates/oci/reference",
@@ -234,6 +234,7 @@ wasmparser = "0.261.0"
 # Every project crate has one canonical path + version identity (M-CRATES-IN-WORKSPACE).
 wamn-package = { path = "crates/package", version = "0.1.0" }
 wamn-routes = { path = "crates/routes", version = "0.1.0" }
+wamn-workflow-graph = { path = "crates/workflow-graph", version = "0.1.0" }
 wamn-edge-document = { path = "services/edge/document", version = "0.1.0" }
 wamn-connection-type = { path = "crates/connection-type", version = "0.1.0" }
 wamn-oci-reference = { path = "crates/oci/reference", version = "0.1.0" }

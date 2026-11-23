@@ -437,7 +437,7 @@ mod tests {
             component: name.parse().unwrap(),
             interface_version: "0.1.0".parse().unwrap(),
             operations: BTreeMap::from([(
-                "wamn:node/handler@0.1.0".parse().unwrap(),
+                "wamn:node/handler@0.2.0".parse().unwrap(),
                 AdmittedComponentOperation {
                     committed_result_schema: None,
                     registered_operation: registered.cloned(),

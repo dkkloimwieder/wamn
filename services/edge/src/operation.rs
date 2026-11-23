@@ -180,8 +180,8 @@ impl EdgeOperation {
             return Ok(());
         };
         let context = node_types::NodeContext {
-            wiring_id: String::new(),
-            wiring_version: 0,
+            graph_id: String::new(),
+            graph_version: 0,
             node_id: String::new(),
             delivery_id,
             input_port: None,

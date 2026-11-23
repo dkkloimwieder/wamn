@@ -1,6 +1,6 @@
 {
-  "format-version": "0.2",
-  "wiring-id": "rest_item",
+  "format-version": "0.3",
+  "graph-id": "rest_item",
   "version": 1,
   "nodes": {
     "entry": {
@@ -13,7 +13,7 @@
     "page": {
       "call": {
         "sibling": "wamn_palette-http-page",
-        "export": "wamn:node/async-handler@0.1.0",
+        "export": "wamn:node/async-handler@0.2.0",
         "params": {
           "requirement": "upstream",
           "path-and-query": "/pages?limit=2",
@@ -30,7 +30,7 @@
     "rows": {
       "call": {
         "sibling": "wamn_palette-jsonata",
-        "export": "wamn:node/handler@0.1.0",
+        "export": "wamn:node/handler@0.2.0",
         "params": {
           "expression": "($assert($type($) = \"object\" and $type(carry) = \"string\" and $type(external_system_id) = \"string\" and $contains(external_system_id, /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/) and $type(items) = \"array\", \"page must contain carry, external_system_id and items\"); [{\"request_id\": carry, \"value\": {\"external_system_id\": external_system_id, \"idempotency_key\": carry, \"items\": [items.{\"key\": id, \"name\": name}]}}])",
           "port": "items",
@@ -84,7 +84,7 @@
     "begin": {
       "call": {
         "sibling": "rest_connector-rest_connector",
-        "export": "wamn:node/async-handler@0.1.0"
+        "export": "wamn:node/async-handler@0.2.0"
       }
     },
     "finish": {
@@ -96,7 +96,7 @@
     "completed": {
       "call": {
         "sibling": "wamn_palette-jsonata",
-        "export": "wamn:node/handler@0.1.0",
+        "export": "wamn:node/handler@0.2.0",
         "params": {
           "expression": "($assert($count($) = 1 and $not($exists($[0].error)), \"consumer command did not succeed\"); $)",
           "port": "items",

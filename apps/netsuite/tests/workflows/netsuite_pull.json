@@ -1,6 +1,6 @@
 {
-  "format-version": "0.2",
-  "wiring-id": "netsuite_pull",
+  "format-version": "0.3",
+  "graph-id": "netsuite_pull",
   "version": 1,
   "nodes": {
     "entry": {
@@ -13,7 +13,7 @@
     "begin": {
       "call": {
         "sibling": "wamn_palette-jsonata",
-        "export": "wamn:node/handler@0.1.0",
+        "export": "wamn:node/handler@0.2.0",
         "params": {
           "expression": "[{\"key\": \"last_synced_at\", \"carry\": due}]",
           "port": "items",
@@ -61,7 +61,7 @@
     "window": {
       "call": {
         "sibling": "wamn_palette-jsonata",
-        "export": "wamn:node/handler@0.1.0",
+        "export": "wamn:node/handler@0.2.0",
         "params": {
           "expression": "($assert($count($) = 1 and $exists($[0].value), \"checkpoint read failed\"); $state := $[0].value; $lower := $state.value != null ? $state.value : \"1970-01-01T00:00:00Z\"; $due := $state.carry; $assert($toMillis($lower) < $toMillis($due), \"window must advance\"); $stamp := function($t) { $replace($substring($fromMillis($toMillis($t)), 0, 19), \"T\", \" \") }; {\"due\": $due, \"body\": {\"q\": \"SELECT id, entityid AS name FROM customer WHERE lastmodifieddate >= TO_DATE('\" & $stamp($lower) & \"', 'YYYY-MM-DD HH24:MI:SS') AND lastmodifieddate < TO_DATE('\" & $stamp($due) & \"', 'YYYY-MM-DD HH24:MI:SS') ORDER BY id\"}})",
           "input-schema": {
@@ -194,7 +194,7 @@
     "page": {
       "call": {
         "sibling": "wamn_palette-http-page",
-        "export": "wamn:node/async-handler@0.1.0",
+        "export": "wamn:node/async-handler@0.2.0",
         "params": {
           "requirement": "upstream",
           "method": "POST",
@@ -217,7 +217,7 @@
     "rows": {
       "call": {
         "sibling": "wamn_palette-jsonata",
-        "export": "wamn:node/handler@0.1.0",
+        "export": "wamn:node/handler@0.2.0",
         "params": {
           "expression": "($assert($type($) = \"object\" and $type(carry) = \"string\" and $type(external_system_id) = \"string\" and $contains(external_system_id, /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/) and $type(items) = \"array\", \"page must contain carry, external_system_id and items\"); [{\"request_id\": carry, \"value\": {\"external_system_id\": external_system_id, \"idempotency_key\": carry, \"items\": [items.{\"key\": $string(id), \"name\": name}]}}])",
           "port": "items",
@@ -271,7 +271,7 @@
     "finish": {
       "call": {
         "sibling": "wamn_palette-jsonata",
-        "export": "wamn:node/handler@0.1.0",
+        "export": "wamn:node/handler@0.2.0",
         "params": {
           "expression": "($assert($count($) = 1 and $type($lookup($[0].value, \"keys\")) = \"array\" and $not($exists($[0].error)), \"consumer command did not succeed\"); [{\"request_id\": $[0].request_id, \"value\": {\"due\": $[0].request_id}}])",
           "port": "items",

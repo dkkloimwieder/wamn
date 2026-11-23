@@ -99,7 +99,7 @@ impl StdError for OperationGrantError {
 ///
 /// Public component `operations` members are the package-local callable-operation
 /// vocabulary. Private custom operations remain callable only from declared
-/// internal wirings and never become role grants. Rendering each public
+/// internal workflow graphs and never become role grants. Rendering each public
 /// member with the package's native extern spelling yields the generated grant
 /// identity.
 pub fn operation_grant_tokens(

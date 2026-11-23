@@ -3,7 +3,7 @@
 use serde::Serialize;
 use serde_json::{Map, Value, json};
 use wamn_event::Envelope;
-use wamn_package::WiringEventOperation as Op;
+use wamn_package::RowOperation as Op;
 
 /// Project deployment identity carried by one CDC image.
 #[derive(Debug, Clone, PartialEq, Eq)]

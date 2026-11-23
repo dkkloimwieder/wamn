@@ -1,14 +1,14 @@
-//! The canonical name in component and wiring facts.
+//! The canonical name in component and graph facts.
 
 use serde::{Deserialize, Serialize};
 use std::{fmt, str::FromStr};
 
-/// The canonical name in component and wiring facts.
+/// The canonical name in component and graph facts.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub struct CanonicalName(Box<str>);
 
-/// Refusal to parse the canonical name in component and wiring facts.
+/// Refusal to parse the canonical name in component and graph facts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ParseCanonicalNameError;
 
@@ -128,7 +128,7 @@ mod tests {
         for (input, accepted) in [
             ("a", true),
             ("port-name", true),
-            ("wamn:node/handler@0.1.0", true),
+            ("wamn:node/handler@0.2.0", true),
             ("a b", true),
             ("a\nb", true),
             ("é", true),

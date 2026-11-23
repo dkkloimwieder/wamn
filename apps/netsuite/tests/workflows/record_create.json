@@ -1,6 +1,6 @@
 {
-  "format-version": "0.2",
-  "wiring-id": "record_create",
+  "format-version": "0.3",
+  "graph-id": "record_create",
   "version": 1,
   "nodes": {
     "entry": {
@@ -13,7 +13,7 @@
     "map": {
       "call": {
         "sibling": "wamn_palette-jsonata",
-        "export": "wamn:node/handler@0.1.0",
+        "export": "wamn:node/handler@0.2.0",
         "params": {
           "expression": "($pointer := $parameters.external_id_input_pointer; $upsert := $exists($pointer); $key := $upsert ? $reduce($split($substring($pointer, 1), \"/\"), function($v, $k) {($k := $replace($replace($k, \"~1\", \"/\"), \"~0\", \"~\"); $type($v) = \"array\" ? $v[$number($k)] : $lookup($v, $k))}, $) : \"\"; $assert($not($upsert) or ($substring($pointer, 0, 1) = \"/\" and $type($key) = \"string\" and $length($key) > 0), \"external id pointer must select a nonempty string\"); [{\"port\": $upsert ? \"items\" : \"main\", \"path\": \"/services/rest/record/v1/\" & $encodeUrlComponent($parameters.record_type) & ($upsert ? \"/eid:\" & $encodeUrlComponent($key) : \"\"), \"body\": body}])",
           "parameters": {
@@ -37,7 +37,7 @@
     "post": {
       "call": {
         "sibling": "wamn_palette-http-request",
-        "export": "wamn:node/async-handler@0.1.0",
+        "export": "wamn:node/async-handler@0.2.0",
         "params": {
           "requirement": "upstream",
           "method": "POST",
@@ -53,7 +53,7 @@
     "put": {
       "call": {
         "sibling": "wamn_palette-http-request",
-        "export": "wamn:node/async-handler@0.1.0",
+        "export": "wamn:node/async-handler@0.2.0",
         "params": {
           "requirement": "upstream",
           "method": "PUT",
@@ -69,7 +69,7 @@
     "unwrap": {
       "call": {
         "sibling": "wamn_palette-jsonata",
-        "export": "wamn:node/handler@0.1.0",
+        "export": "wamn:node/handler@0.2.0",
         "params": {
           "expression": "$[0]",
           "input-schema": {},

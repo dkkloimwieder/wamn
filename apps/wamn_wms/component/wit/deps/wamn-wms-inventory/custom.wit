@@ -1,5 +1,5 @@
 interface adjust {
-  use wamn:node/types@0.1.0.{node-context, node-error, json-value};
+  use wamn:node/types@0.2.0.{node-context, node-error, json-value};
 
   type numeric = string;
   type revision = s32;
@@ -92,7 +92,7 @@ interface adjust {
 }
 
 interface aggregate {
-  use wamn:node/types@0.1.0.{node-context, node-error, json-value};
+  use wamn:node/types@0.2.0.{node-context, node-error, json-value};
 
   type numeric = string;
   type uuid = string;
@@ -144,7 +144,7 @@ interface aggregate {
 }
 
 interface merge {
-  use wamn:node/types@0.1.0.{node-context, node-error, json-value};
+  use wamn:node/types@0.2.0.{node-context, node-error, json-value};
 
   type revision = s32;
   type timestamp = string;
@@ -222,7 +222,7 @@ interface merge {
 }
 
 interface move {
-  use wamn:node/types@0.1.0.{node-context, node-error, json-value};
+  use wamn:node/types@0.2.0.{node-context, node-error, json-value};
 
   type revision = s32;
   type timestamp = string;
@@ -298,7 +298,7 @@ interface move {
 }
 
 interface split {
-  use wamn:node/types@0.1.0.{node-context, node-error, json-value};
+  use wamn:node/types@0.2.0.{node-context, node-error, json-value};
 
   type numeric = string;
   type revision = s32;

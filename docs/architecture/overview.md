@@ -48,6 +48,7 @@ Each library has one concern. Directory names follow crate names without the `wa
 | `crates/component-policy` | `wamn-component-policy`: import admission and platform import declarations |
 | `crates/build` | `wamn-build`: package builds and overlay and base composition |
 | `crates/engine` | `wamn-engine`: native loading, dispatch, and the invocation scope registry |
+| `crates/workflow-graph` | `wamn-workflow-graph` owns authored graphs, validation, and canonical identity |
 | `crates/run-state` | `wamn-run-state`: persisted run admission, leases, and settlement |
 | `crates/authority` | `wamn-authority`: shared invocation identity and effect evidence |
 | `crates/postgres` | `wamn-postgres`: PostgreSQL connection configuration and transport |

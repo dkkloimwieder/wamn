@@ -13,7 +13,7 @@
     }
   ],
   "operations": {
-    "wamn:node/async-handler@0.1.0": {
+    "wamn:node/async-handler@0.2.0": {
       "input-ports": [
         {
           "name": "input",

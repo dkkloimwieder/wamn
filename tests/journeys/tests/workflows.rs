@@ -32,7 +32,7 @@ fn graph(id: &str, entry: &Value, export: &str, respond: bool) -> Value {
         nodes["done"] = json!({"response": {"status": 200}});
         edges.push(json!({"from": "call", "to": "done"}));
     }
-    json!({"format-version": "0.2", "wiring-id": id, "version": 1, "nodes": nodes, "edges": edges})
+    json!({"format-version": "0.3", "graph-id": id, "version": 1, "nodes": nodes, "edges": edges})
 }
 
 fn issue(key: &str) -> Value {
@@ -64,7 +64,7 @@ impl Workflows<'_> {
 
     /// Author a document's version 1 and enable it.
     async fn enable(&self, document: &Value, role: Option<&str>) -> anyhow::Result<()> {
-        let id = document["wiring-id"].as_str().context("wiring id")?;
+        let id = document["graph-id"].as_str().context("graph id")?;
         let file = self.file(&format!("{id}.json"), document)?;
         let mut author = vec!["author", "--document", &file];
         if let Some(role) = role {
@@ -95,7 +95,7 @@ impl Workflows<'_> {
 /// The run rows of one workflow, as (trigger source, status).
 async fn runs(database: &mut common::Observed, id: &str) -> anyhow::Result<Vec<(String, String)>> {
     Ok(sqlx::query_as(
-        "SELECT trigger_source, status FROM wamn_run.runs WHERE wiring_id = $1 ORDER BY created_at",
+        "SELECT trigger_source, status FROM wamn_run.runs WHERE graph_id = $1 ORDER BY created_at",
     )
     .bind(id)
     .fetch_all(&mut database.connection)
