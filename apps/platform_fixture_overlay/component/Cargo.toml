@@ -5,6 +5,10 @@ edition.workspace = true
 description = "Package-grain platform fixture overlay operation component"
 license = "Apache-2.0"
 
+[package.metadata.cargo-machete]
+# The generated data functions and operation adapters call wamn-guest.
+ignored = ["wamn-guest"]
+
 [dependencies]
 wamn-guest = { workspace = true }
 wit-bindgen = { workspace = true }

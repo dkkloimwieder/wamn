@@ -56,7 +56,6 @@ tracing-subscriber = { workspace = true, features = ["env-filter"] }
 
 [dev-dependencies]
 wat = "=1.254.2"
-wamn-codegen.workspace = true
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt"] }
 # The tests write the edge_device bundle with the dev loop's bundle writer.
 wamn-dev = { workspace = true }

@@ -13,7 +13,6 @@ sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls"
 wamn-registry = { workspace = true }
 jsonwebtoken = { workspace = true }
 wamn-digest = { workspace = true, features = ["sqlx"] }
-uuid = { workspace = true }
 anyhow = { workspace = true }
 argon2 = { workspace = true }
 zeroize = { workspace = true }
@@ -30,13 +29,10 @@ wamn-identity-protocol = { workspace = true, features = ["sqlx"] }
 # The application role names of a project database.
 
 [dev-dependencies]
-wamn-kubernetes = { workspace = true }
 wamn-environment = { workspace = true }
 sqlx = { workspace = true, features = ["macros", "migrate"] }
 url = { workspace = true }
 jsonwebtoken = { workspace = true }
-chrono = { workspace = true }
-async-trait = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time", "net", "io-util", "sync"] }
 # The live tests bind platform principals and create provisioned logins.
 wamn-provision = { workspace = true }

@@ -18,7 +18,6 @@ base64 = { workspace = true }
 ring = { workspace = true }
 wamn-principal.workspace = true
 hex = { workspace = true }
-sha2 = { workspace = true }
 subtle = { workspace = true }
 zeroize = { workspace = true }
 serde = { workspace = true, features = ["derive"] }

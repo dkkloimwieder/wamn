@@ -24,8 +24,6 @@ wamn-component-policy.workspace = true
 wasmparser.workspace = true
 wasm-encoder = { workspace = true, features = ["wasmparser"] }
 [dev-dependencies]
-wit-parser.workspace = true
-wit-component = { workspace = true, features = ["dummy-module"] }
 wat = "=1.254.2"
 [lints]
 workspace = true

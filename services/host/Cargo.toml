@@ -36,7 +36,6 @@ wamn-identity-protocol = { workspace = true }
 wamn-operation = { workspace = true, features = ["wasm_component_model_implements"] }
 wamn-postgres.workspace = true
 wamn-authentication = { workspace = true }
-wamn-authority = { workspace = true }
 wamn-digest.workspace = true
 wamn-engine = { workspace = true }
 wash-runtime = { workspace = true, features = ["washlet", "wasi-config", "wasi-logging", "wasi-otel", "wasmcloud-nats", "wasm_component_model_implements"] }
@@ -58,7 +57,6 @@ tracing = { workspace = true }
 # `tracing` does not re-export the `Current` that a wrapping subscriber returns.
 tracing-core = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
-url = { workspace = true }
 
 [dev-dependencies]
 wamn-test-infrastructure = { workspace = true }

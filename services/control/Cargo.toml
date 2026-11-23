@@ -38,8 +38,6 @@ wamn-http-client = { workspace = true, features = ["tls12"] }
 wamn-blobstore.workspace = true
 bytes.workspace = true
 boon.workspace = true
-moka = { workspace = true, features = ["sync"] }
-oci-client.workspace = true
 wamn-identity-client.workspace = true
 wamn-identity-protocol = { workspace = true, features = ["sqlx"] }
 wamn-kubernetes.workspace = true

@@ -18,7 +18,6 @@ wamn-postgres.workspace = true
 sqlx = { workspace = true, features = ["migrate", "macros", "postgres", "runtime-tokio", "tls-rustls", "chrono", "uuid", "json", "bigdecimal"] }
 
 wamn-digest = { workspace = true, features = ["sqlx"] }
-serde = { workspace = true, features = ["derive"] }
 # The per-project environment credential Secrets render as JSON.
 serde_json = { workspace = true }
 
@@ -39,11 +38,6 @@ sha2 = { workspace = true }
 url = { workspace = true }
 
 [dev-dependencies]
-wamn-record-history = { workspace = true }
-wamn-run-state = { workspace = true }
-chrono.workspace = true
-pg_query = "=6.2.1"
-wamn-scalar.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 wamn-test-infrastructure = { workspace = true }
 

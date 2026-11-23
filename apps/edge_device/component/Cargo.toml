@@ -5,6 +5,10 @@ edition.workspace = true
 description = "Package-grain edge device operation component, with no SQL"
 license = "Apache-2.0"
 
+[package.metadata.cargo-machete]
+# The generated sample operation adapter calls wamn-guest.
+ignored = ["wamn-guest"]
+
 [dependencies]
 wamn-guest = { workspace = true }
 wit-bindgen = { workspace = true }

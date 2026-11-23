@@ -38,15 +38,11 @@ wamn-codegen = { workspace = true }
 hyper = { workspace = true }
 
 [dev-dependencies]
-ring = { workspace = true }
-hex = { workspace = true }
-wat = "=1.254.2"
 wamn-fixture-package = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "sync", "test-util", "time"] }
 wamn-test-infrastructure = { workspace = true }
 wit-component = { workspace = true, features = ["dummy-module"] }
 futures-util = { workspace = true }
-url = { workspace = true }
 
 [lints]
 workspace = true

@@ -9,8 +9,6 @@ license.workspace = true
 wamn-package = { workspace = true, features = ["sqlx"] }
 wamn-connection-type.workspace = true
 wamn-digest.workspace = true
-anyhow = { workspace = true }
-futures-util = { workspace = true }
 hyper = { workspace = true, features = ["client", "http1", "http2"] }
 opentelemetry = { workspace = true, features = ["metrics", "trace"] }
 serde = { workspace = true }
@@ -19,7 +17,6 @@ tokio = { workspace = true, features = ["time", "fs", "net", "io-util", "rt", "m
 tracing = { workspace = true }
 tracing-opentelemetry = { workspace = true }
 url = { workspace = true }
-uuid = { workspace = true, features = ["serde", "v4"] }
 wamn-engine = { workspace = true }
 wamn-identity-protocol = { workspace = true }
 wamn-registry = { workspace = true }
@@ -30,7 +27,6 @@ hyper = { workspace = true, features = ["server"] }
 opentelemetry_sdk = { workspace = true, features = ["trace", "testing"] }
 tokio = { workspace = true, features = ["test-util"] }
 tracing-subscriber = { workspace = true }
-wat = "=1.254.2"
 
 [lints]
 workspace = true

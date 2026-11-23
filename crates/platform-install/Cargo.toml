@@ -19,7 +19,6 @@ serde_json.workspace = true
 serde_yaml.workspace = true
 sqlx = { workspace = true, features = ["migrate", "postgres", "runtime-tokio", "tls-rustls", "chrono", "uuid", "json"] }
 tokio = { workspace = true, features = ["fs", "io-util", "macros", "process", "rt", "sync", "time", "net"] }
-url.workspace = true
 oci-client.workspace = true
 tempfile.workspace = true
 wamn-digest = { workspace = true, features = ["sqlx"] }
@@ -32,13 +31,8 @@ wamn-identity-protocol = { workspace = true, features = ["sqlx"] }
 postgres-protocol.workspace = true
 
 [dev-dependencies]
-wamn-identity.workspace = true
-toml.workspace = true
 wamn-test-infrastructure = { workspace = true }
-wamn-fixture-package = { workspace = true }
 tempfile.workspace = true
-rcgen.workspace = true
-tokio-rustls.workspace = true
 
 [lints]
 workspace = true

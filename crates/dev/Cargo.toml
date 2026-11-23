@@ -24,26 +24,9 @@ wamn-publish.workspace = true
 wamn-registry.workspace = true
 
 [dev-dependencies]
-postgres-protocol.workspace = true
-serde = { workspace = true, features = ["derive"] }
-serde_yaml.workspace = true
-
-wamn-fixture-package = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "sync", "test-util", "time"] }
-uuid = { workspace = true }
-tokio-rustls = { workspace = true }
-wamn-test-infrastructure = { workspace = true }
-wit-component = { workspace = true, features = ["dummy-module"] }
-wit-parser = { workspace = true }
-wamn-kubernetes = { workspace = true }
-base64 = { workspace = true }
-chrono = { workspace = true, features = ["clock"] }
-oci-client = { workspace = true }
-wamn-event = { workspace = true }
 wamn-identity-protocol = { workspace = true }
-wamn-run-state = { workspace = true }
 wamn-environment = { workspace = true, features = ["ops"] }
-hyper = { workspace = true }
 
 [lints]
 workspace = true

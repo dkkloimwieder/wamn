@@ -43,10 +43,8 @@ url = { workspace = true }
 [dev-dependencies]
 kube = { workspace = true }
 hyper-util = { workspace = true, features = ["client-legacy"] }
-chrono = { workspace = true, features = ["std"] }
 sqlx = { workspace = true, features = ["macros", "migrate"] }
 wamn-platform-install = { workspace = true }
-jsonwebtoken = { workspace = true }
 wamn-test-infrastructure = { workspace = true }
 wamn-registry = { workspace = true }
 tokio = { workspace = true, features = ["process"] }

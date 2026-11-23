@@ -5,6 +5,10 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[package.metadata.cargo-machete]
+# This enables support for components with multiple handler exports during admission.
+ignored = ["wamn-engine"]
+
 [[bin]]
 name = "wamn"
 path = "src/bin/wamn.rs"
@@ -56,19 +60,10 @@ wamn-identity-protocol = { workspace = true }
 wamn-identity = { workspace = true }
 
 [dev-dependencies]
-wamn-codegen.workspace = true
 url = { workspace = true }
-wamn-broker = { workspace = true }
-wamn-postgres.workspace = true
-sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls", "chrono", "uuid", "json", "bigdecimal", "macros", "migrate"] }
 wamn-oci = { workspace = true }
-wit-parser = { workspace = true }
-async-nats = { workspace = true, features = ["jetstream"] }
-wamn-fixture-package = { workspace = true }
-postgres-protocol = { workspace = true }
 wamn-dev.workspace = true
 wamn-test-infrastructure = { workspace = true }
-wit-component = { workspace = true, features = ["dummy-module"] }
 
 [lints]
 workspace = true

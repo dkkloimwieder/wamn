@@ -7,6 +7,10 @@ edition.workspace = true
 license.workspace = true
 autotests = false
 
+[package.metadata.cargo-machete]
+# The CLI query encoder included by the tests uses wamn-digest.
+ignored = ["wamn-digest"]
+
 [lib]
 path = "lib.rs"
 
@@ -14,33 +18,11 @@ path = "lib.rs"
 wamn-postgres.workspace = true
 sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls", "chrono", "uuid", "json", "bigdecimal"] }
 wamn-digest.workspace = true
-wamn-identity-client = { workspace = true }
-wamn-kubernetes = { workspace = true }
-wamn-codegen = { workspace = true }
-# Event identity and subject tokens shared with application consumers.
-wamn-event = { workspace = true }
 anyhow = { workspace = true }
 wamn-http-client = { workspace = true, features = ["tls12"] }
 serde_json = { workspace = true }
-serde_yaml = { workspace = true }
 tokio = { workspace = true, features = ["process", "net", "time", "rt", "macros", "io-util", "signal"] }
 uuid = { workspace = true, features = ["v7"] }
-
-wamn-identity = { workspace = true }
-wamn-identity-protocol = { workspace = true }
-wamn-provision = { workspace = true }
-wamn-test-infrastructure = { workspace = true }
-
-
-futures-util = { workspace = true }
-hex = { workspace = true }
-ring = { workspace = true }
-sha2 = { workspace = true }
-async-nats = { workspace = true }
-wamn-registry = { workspace = true }
-wamn-cdc-reader = { workspace = true }
-pg_walstream = { workspace = true }
-object_store = { workspace = true }
 hyper = { workspace = true }
 
 [lints]

@@ -5,6 +5,10 @@ edition = "2024"
 description = "Example package that reads a register through a connection binding."
 license = "Apache-2.0"
 
+[package.metadata.cargo-machete]
+# The generated register-read adapter calls wamn-guest.
+ignored = ["wamn-guest"]
+
 [lib]
 crate-type = ["cdylib"]
 test = false

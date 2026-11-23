@@ -5,6 +5,14 @@ edition.workspace = true
 description = "NetSuite wirings with a composed integration state adapter"
 license = "Apache-2.0"
 
+[package.metadata.cargo-machete]
+ignored = [
+    # The mapping tests live outside this directory and use jsonata-expression.
+    "jsonata-expression",
+    # The generated sync operation adapter calls wamn-guest.
+    "wamn-guest",
+]
+
 [dependencies]
 wamn-guest.workspace = true
 chrono = { workspace = true, features = ["std"] }
