@@ -6,6 +6,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+serde = { workspace = true, features = ["derive"] }
 wamn-digest.workspace = true
 
 [lints]

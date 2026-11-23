@@ -115,6 +115,7 @@ mod tests {
     use crate::package_artifact::{Repository, bytes_sha256};
     use oci_client::client::{ClientConfig, ClientProtocol};
     use oci_client::secrets::RegistryAuth;
+    use wamn_oci_reference::OciTag;
     use wamn_test_infrastructure::publish::Server;
 
     fn repository(server: &Server) -> Repository {
@@ -130,12 +131,7 @@ mod tests {
                 insecure_registry: true,
                 oci_ca_paths: Vec::new(),
             },
-            &server
-                .reference
-                .tag()
-                .unwrap()
-                .parse::<crate::package_artifact::tag::OciTag>()
-                .unwrap(),
+            &server.reference.tag().unwrap().parse::<OciTag>().unwrap(),
             RegistryAuth::Anonymous,
         )
         .unwrap()

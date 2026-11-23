@@ -13,6 +13,7 @@ use anyhow::{Context as _, ensure};
 use clap::Args;
 use serde_json::Value;
 use wamn_oci::package_artifact::{PackageRegistry, Repository};
+use wamn_oci_reference::OciTag;
 use wamn_publish::package_artifact::PACKAGE_MANIFEST_MEDIA_TYPE;
 
 use crate::package_verbs::RegistryArgs;
@@ -80,7 +81,7 @@ async fn layer_zero(registry: &PackageRegistry, package: &str) -> anyhow::Result
     let reference = if package.starts_with("sha256:") {
         wamn_oci::package_artifact::ArtifactReference::Digest(package.parse()?)
     } else {
-        tag = package.parse::<wamn_oci::package_artifact::tag::OciTag>()?;
+        tag = package.parse::<OciTag>()?;
         wamn_oci::package_artifact::ArtifactReference::Tag(&tag)
     };
     let artifact = Repository::open(registry, reference)?

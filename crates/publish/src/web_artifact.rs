@@ -22,6 +22,7 @@ use wamn_codegen::fingerprint;
 use wamn_digest::{bytes_sha256, canonical_json_bytes};
 use wamn_oci::package_artifact::registry_credentials::read_registry_credentials;
 use wamn_oci::package_artifact::{Repository, registry_auth};
+use wamn_oci_reference::OciTag;
 
 use crate::package_artifact::PackageRegistry;
 
@@ -163,7 +164,7 @@ pub async fn build_web_artifact(package_root: &Path) -> Result<PathBuf, WebArtif
 /// One deterministic tar and its canonical OCI image manifest.
 #[derive(Debug)]
 pub struct PackedWebArtifact {
-    pub tag: wamn_oci::package_artifact::tag::OciTag,
+    pub tag: OciTag,
     pub digest: wamn_digest::Digest,
     pub manifest: Vec<u8>,
     pub tar: Vec<u8>,
@@ -200,7 +201,7 @@ fn pack_web(root: &Path) -> anyhow::Result<PackedWebArtifact> {
 
     let package = metadata.package.package_id();
     let tag = format!("{package}-web-{}", metadata.version);
-    let tag = tag.parse::<wamn_oci::package_artifact::tag::OciTag>()?;
+    let tag = tag.parse::<OciTag>()?;
     let mut files = std::collections::BTreeMap::new();
     artifact_files(root, Path::new("dist"), &mut files)?;
     ensure!(
@@ -213,7 +214,7 @@ fn pack_web(root: &Path) -> anyhow::Result<PackedWebArtifact> {
 }
 
 fn pack_archive(
-    tag: wamn_oci::package_artifact::tag::OciTag,
+    tag: OciTag,
     files: std::collections::BTreeMap<PathBuf, Vec<u8>>,
     artifact_type: &str,
 ) -> anyhow::Result<PackedWebArtifact> {
@@ -282,7 +283,7 @@ pub enum WebPushDisposition {
 /// The immutable tag and digest after a successful web push.
 #[derive(Debug)]
 pub struct PushedWebArtifact {
-    pub tag: wamn_oci::package_artifact::tag::OciTag,
+    pub tag: OciTag,
     pub digest: wamn_digest::Digest,
     pub disposition: WebPushDisposition,
 }

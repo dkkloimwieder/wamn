@@ -8,6 +8,7 @@ use anyhow::{Context as _, ensure};
 use object_store::{ObjectStore, ObjectStoreExt as _};
 use wamn_digest::canonical_json_bytes;
 use wamn_oci::package_artifact::PackageRegistry;
+use wamn_oci_reference::OciTag;
 
 use super::{
     PackedWebArtifact, Sink, UploadedClient, WEB_MANIFEST_FILE, WebArtifactError,
@@ -20,17 +21,14 @@ const ARTIFACT_TYPE: &str = "application/vnd.wamn.platform-ui.v1";
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Metadata {
-    version: wamn_oci::package_artifact::tag::OciTag,
+    version: OciTag,
 }
 
 /// Pack UI files and UI metadata into the deterministic web archive format.
 ///
 /// # Errors
 /// Refuses missing indexes, links, or unsupported browser files.
-pub fn pack(
-    dist: &Path,
-    version: &wamn_oci::package_artifact::tag::OciTag,
-) -> Result<PackedWebArtifact, WebArtifactError> {
+pub fn pack(dist: &Path, version: &OciTag) -> Result<PackedWebArtifact, WebArtifactError> {
     (|| {
         let mut files = BTreeMap::new();
         artifact_files(dist, Path::new(""), &mut files)?;

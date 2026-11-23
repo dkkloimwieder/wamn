@@ -6396,6 +6396,7 @@ dependencies = [
  "wamn-identity-protocol",
  "wamn-kubernetes",
  "wamn-oci",
+ "wamn-oci-reference",
  "wamn-package",
  "wamn-platform-install",
  "wamn-provision",
@@ -7094,7 +7095,6 @@ dependencies = [
  "oci-client",
  "serde",
  "serde_json",
- "sqlx",
  "tokio",
  "tracing",
  "wamn-digest",
@@ -7112,6 +7112,7 @@ dependencies = [
 name = "wamn-oci-reference"
 version = "0.1.0"
 dependencies = [
+ "serde",
  "wamn-digest",
 ]
 

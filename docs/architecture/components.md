@@ -17,7 +17,7 @@ OCI tags and object paths use its hex digits without the prefix.
 `wamn-catalog` owns `RegisteredOperation` and `PackageVersion`.
 The first stores a versioned package-qualified export. The second stores the authored package version.
 Component facts carry these types. Their JSON fields stay strings.
-`wamn-oci` owns `OciTag`, which registry readers and publishers carry after parsing.
+`wamn-oci-reference` owns `OciTag`, which registry readers and publishers carry after parsing.
 
 ## Grouping and publication
 

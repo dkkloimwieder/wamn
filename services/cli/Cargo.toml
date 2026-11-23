@@ -48,6 +48,7 @@ wamn-kubernetes.workspace = true
 wamn-platform-install.workspace = true
 # `wamn inspect` and `wamn diff` read verified package artifacts.
 wamn-oci = { workspace = true }
+wamn-oci-reference.workspace = true
 wamn-http-client = { workspace = true, features = ["tls12"] }
 # The pure provisioning SQL builders + identifier naming + credential Secret
 # rendering.

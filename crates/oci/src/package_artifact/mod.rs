@@ -22,8 +22,6 @@ pub mod registry_credentials;
 pub mod registry_pull;
 mod registry_source;
 pub mod registry_transport;
-pub mod tag;
-use tag::OciTag;
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -35,8 +33,8 @@ use oci_client::errors::{OciDistributionError, OciErrorCode};
 use oci_client::manifest::{OCI_IMAGE_MEDIA_TYPE, OciDescriptor, OciImageManifest};
 use oci_client::secrets::RegistryAuth;
 use oci_client::{Client as OciClient, Reference};
-use wamn_oci_reference::parse_component_artifact_base;
 use wamn_digest::bytes_sha256;
+use wamn_oci_reference::{OciTag, parse_component_artifact_base};
 
 use crate::package_artifact::registry_credentials::{RegistryCredentials, read_registry_credentials};
 use crate::package_artifact::registry_source::RegistrySource;

@@ -17,11 +17,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use anyhow::{Context as _, bail, ensure};
 use oci_client::Reference;
 use oci_client::manifest::OCI_IMAGE_MEDIA_TYPE;
-use wamn_oci_reference::component_artifact_reference;
 use wamn_component_policy::ComponentDescriptor;
 use wamn_component_policy::PackageManifest;
 use wamn_digest::Digest;
 use wamn_oci::package_artifact::registry_credentials::read_registry_credentials;
+use wamn_oci_reference::{OciTag, ParseOciTagError, component_artifact_reference};
 
 use crate::component_admission::admit;
 use crate::component_declaration::package_declaration;
@@ -66,12 +66,7 @@ impl PackedPackage {
     ///
     /// # Errors
     /// Refuses a coordinate that cannot be used as an OCI tag.
-    pub fn tag(
-        &self,
-    ) -> Result<
-        wamn_oci::package_artifact::tag::OciTag,
-        wamn_oci::package_artifact::tag::ParseOciTagError,
-    > {
+    pub fn tag(&self) -> Result<OciTag, ParseOciTagError> {
         format!("{}-{}", self.package_id, self.version).parse()
     }
 }
@@ -418,7 +413,7 @@ pub async fn push_package(
         coordinate.package_id(),
         coordinate.package_version()
     )
-    .parse::<wamn_oci::package_artifact::tag::OciTag>()?;
+    .parse::<OciTag>()?;
     let repository = Repository::open(&request.registry, &tag)?;
     let migrations = migrations_layer(&files)?;
     let (existing, created) = if let Some((raw, digest)) = repository.manifest().await? {
@@ -552,7 +547,7 @@ async fn component_image(
         insecure_registry: registry.insecure_registry,
         oci_ca_paths: registry.oci_ca_paths.clone(),
     };
-    let tag: wamn_oci::package_artifact::tag::OciTag = artifact.tag().parse()?;
+    let tag: OciTag = artifact.tag().parse()?;
     let auth = wamn_oci::package_artifact::registry_auth(credentials.as_ref());
     let repository = Repository::with_auth(&transport, &tag, auth)?;
     let Some((bytes, image)) = repository.manifest().await? else {
@@ -649,7 +644,7 @@ pub async fn open_package(
     package_id: &wamn_package::PackageName,
     version: &wamn_package::package_version::PackageVersion,
 ) -> anyhow::Result<OpenedPackage> {
-    let tag = format!("{package_id}-{version}").parse::<wamn_oci::package_artifact::tag::OciTag>()?;
+    let tag = format!("{package_id}-{version}").parse::<OciTag>()?;
     let pulled = Repository::open(registry, &tag)?
         .pull()
         .await?
@@ -682,10 +677,7 @@ pub async fn open_package_digest(
 /// Unpack the `layers` of the artifact `tag`, whose manifest digest is
 /// `digest`, into a private temporary directory, which must pack again to
 /// `digest`.
-fn unpack_artifact(
-    tag: &wamn_oci::package_artifact::tag::OciTag,
-    pulled: &PulledPackage,
-) -> anyhow::Result<OpenedPackage> {
+fn unpack_artifact(tag: &OciTag, pulled: &PulledPackage) -> anyhow::Result<OpenedPackage> {
     let PulledPackage {
         digest,
         layers,

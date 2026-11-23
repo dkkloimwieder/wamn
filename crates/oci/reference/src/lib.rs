@@ -3,7 +3,12 @@
 //! package artifacts, and the readers that pull them, derive their references
 //! here, so one rule refuses an ambient or mutable reference.
 
+mod oci_tag;
+
 use std::fmt;
+
+#[doc(inline)]
+pub use oci_tag::{OciTag, ParseOciTagError};
 
 /// Stable classification for an invalid component artifact reference.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

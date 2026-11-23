@@ -10,9 +10,6 @@ name = "docker-credential-wamn"
 path = "src/bin/docker-credential-wamn.rs"
 test = false
 
-[features]
-sqlx = ["dep:sqlx"]
-
 [dependencies]
 wamn-oci-reference.workspace = true
 wamn-package.workspace = true
@@ -20,7 +17,6 @@ wamn-digest = { workspace = true }
 oci-client = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true, features = ["time", "fs", "net", "io-util", "rt", "macros", "sync"] }
-sqlx = { workspace = true, optional = true, features = ["postgres"] }
 wamn-http-client = { workspace = true, features = ["tls12"] }
 anyhow = { workspace = true }
 bytes = { workspace = true }
