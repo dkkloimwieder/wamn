@@ -126,7 +126,7 @@ mod tests {
                     server.reference.repository()
                 ),
                 credentials: None,
-                registry_auth_file: Default::default(),
+                registry_auth_file: std::path::PathBuf::default(),
                 insecure_registry: true,
                 oci_ca_paths: Vec::new(),
             },
