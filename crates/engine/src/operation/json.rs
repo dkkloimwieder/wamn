@@ -526,7 +526,7 @@ mod tests {
             assert_eq!(fields[2].1, expected);
             assert_eq!(fields[3].1, Val::Option(Some(Box::new(Val::U32(100)))));
         }
-        assert!(input(&ty, &json!({"revision": 2147483648_i64, "quantity":"1"})).is_err());
+        assert!(input(&ty, &json!({"revision": 2_147_483_648_i64, "quantity":"1"})).is_err());
         assert!(input(&ty, &json!({"revision": "1", "quantity":"1"})).is_err());
         assert!(input(&ty, &json!({"revision": 1, "quantity":1})).is_err());
         assert_eq!(output(&Val::S32(i32::MAX)).unwrap(), json!(i32::MAX));
