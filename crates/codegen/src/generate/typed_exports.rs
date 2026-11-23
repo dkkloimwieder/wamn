@@ -169,9 +169,12 @@ pub(super) fn emit_export_adapter(type_name: &str, direct: bool, transacted: boo
         )
     };
     quote! {
+        #[allow(dead_code, reason = "authored exports can use the operation helpers directly")]
         pub(crate) type Input = #input;
+        #[allow(dead_code, reason = "authored exports can use the operation helpers directly")]
         pub(crate) type Output = #output;
         #error
+        #[allow(unused_imports, reason = "authored exports can use the operation helpers directly")]
         pub(crate) use wamn_guest::#export as export_operation;
     }
 }

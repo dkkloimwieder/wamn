@@ -61,15 +61,23 @@ fn emit_model_export(
 ) -> TokenStream {
     let name = rust_type_identifier(action.as_str());
     let mut source = support();
-    source.extend(invalid_detail(
-        &facts.refusals[&AccessOperationErrorLiteral::InvalidInput],
-    ));
-    source.extend(emit_crud_normalizer(
+    let validation = emit_crud_validation(
         action,
         &compiled.shape,
         facts.request,
         &facts.result.fields,
         compiled.min_lengths,
+    );
+    if !validation.is_empty() || (action == CrudAction::Query && facts.request.limit.is_some()) {
+        source.extend(invalid_detail(
+            &facts.refusals[&AccessOperationErrorLiteral::InvalidInput],
+        ));
+    }
+    let request = rust_ident(&[&name, "Request"].concat());
+    source.extend(emit_normalizer(
+        &request,
+        &quote!(contract::InvalidInputDetail),
+        &validation,
     ));
     if action == CrudAction::Query {
         source.extend(emit_query_limit(
@@ -150,7 +158,7 @@ fn emit_query_limit(
         let validate = |access: TokenStream, path: &str| {
             quote! {
                 let limit = *#access.get_or_insert(#default);
-                if limit < #minimum || limit > #maximum {
+                if !(#minimum..=#maximum).contains(&limit) {
                     #[allow(unused_mut)]
                     let mut detail = invalid(#path);
                     #min_detail #max_detail #observed
@@ -181,7 +189,7 @@ fn query_export() -> TokenStream {
         pub(crate) async fn run<S, F>(
             request: Result<contract::QueryRequest, contract::InvalidInputDetail>,
             state: &mut S,
-            mut handler: F,
+            handler: F,
         ) -> Result<contract::QueryResult, contract::QueryError>
         where
             F: AsyncFnMut(&mut S, contract::QueryRequest) -> Result<contract::QueryResult, contract::QueryError>,
@@ -248,26 +256,24 @@ fn emit_mutation_validation(
     source
 }
 
-fn emit_crud_normalizer(
+fn emit_crud_validation(
     action: CrudAction,
     table: &ModelShape<'_>,
     operation: &OperationDeclaration,
     fields: &[ContractFieldDeclaration],
     min_lengths: &BTreeMap<String, u32>,
 ) -> TokenStream {
-    let request = rust_ident(&[&rust_type_identifier(action.as_str()), "Request"].concat());
     let mut body = TokenStream::new();
-    if action != CrudAction::Update {
-        body.extend(quote!(let _ = &request;));
-    }
     if (matches!(
         action,
         CrudAction::Get | CrudAction::Update | CrudAction::Delete
     ) || (action == CrudAction::Create && !table.generated_id))
-        && let Some(condition) =
-            scalar_refusal(table.key.column_type().as_str(), &quote!(&mut request.id))
+        && table.key == crate::key::KeyType::Uuid
     {
-        body.extend(quote!(if #condition { return Err(invalid("id")); }));
+        body.extend(quote! {
+            request.id = wamn_guest::data_access::scalar::uuid(&request.id)
+                .map_err(|_| invalid("id"))?.0;
+        });
     }
     if matches!(action, CrudAction::Create | CrudAction::Update) {
         body.extend(emit_mutation_validation(
@@ -315,10 +321,22 @@ fn emit_crud_normalizer(
             }
         }
     }
+    body
+}
+
+fn emit_normalizer(request: &Ident, error: &TokenStream, validation: &TokenStream) -> TokenStream {
+    let (parameter, lint) = if validation.is_empty() {
+        (
+            quote!(_request),
+            quote!(#[allow(clippy::unnecessary_wraps, reason = "dispatch expects the same result type for every request")]),
+        )
+    } else {
+        (quote!(request), TokenStream::new())
+    };
     quote! {
-        #[allow(clippy::unnecessary_wraps)]
-        pub(crate) fn normalize(request: &mut contract::#request) -> Result<(), contract::InvalidInputDetail> {
-            #body
+        #lint
+        pub(crate) fn normalize(#parameter: &mut contract::#request) -> Result<(), #error> {
+            #validation
             Ok(())
         }
     }
@@ -341,10 +359,14 @@ fn invalid_detail(detail: &OperationErrorDetailDeclaration) -> TokenStream {
 }
 
 fn emit_handler(type_name: &str, keyed: bool) -> TokenStream {
-    let (key, outcome_members) = if keyed {
-        (quote!(item.request_id), quote!(request_id, outcome))
+    let (key, correlation, outcome_members) = if keyed {
+        (
+            quote!(item.request_id),
+            quote!(request_id),
+            quote!(request_id, outcome),
+        )
     } else {
-        (quote!(()), quote!(outcome))
+        (quote!(()), quote!(()), quote!(outcome))
     };
     let item = rust_ident(&[type_name, "Item"].concat());
     let outcome = rust_ident(&[type_name, "Outcome"].concat());
@@ -357,10 +379,9 @@ fn emit_handler(type_name: &str, keyed: bool) -> TokenStream {
         where
             F: AsyncFnMut(&mut S, contract::#request) -> Result<contract::#result, contract::#error>,
         {
-            wamn_guest::data_access::operation::dispatch(input.into_iter().map(|item| (#key, item.input)), state, normalize, contract::#error::InvalidInput, handler).await.into_iter().map(|(request_id, outcome)| {
-                let _ = &request_id;
-                contract::#outcome { #outcome_members }
-            }).collect()
+            wamn_guest::data_access::operation::dispatch(input.into_iter().map(|item| (#key, item.input)), state, normalize, contract::#error::InvalidInput, handler)
+                .await.into_iter().map(|(#correlation, outcome)| contract::#outcome { #outcome_members })
+                .collect()
         }
     }
 }
@@ -386,7 +407,7 @@ fn emit_custom_export(local_name: &str, compiled: &CustomDescription<'_>) -> Tok
     let name = rust_type_identifier(local_name);
     let request = rust_ident(&[&name, "Request"].concat());
     let mut source = support();
-    let validation = emit_tree_validation(&compiled.request, &quote!(request));
+    let mut validation = emit_tree_validation(&compiled.request, &quote!(request));
     if let Some(result) = &compiled.result {
         let (min, max) = if operation.feed == Some(true) {
             (1, 1)
@@ -399,17 +420,15 @@ fn emit_custom_export(local_name: &str, compiled: &CustomDescription<'_>) -> Tok
         };
         let item = rust_ident(&[&name, "Item"].concat());
         source.extend(export_prelude(&item, min, max, custom_is_keyed(operation)));
-        source.extend(invalid_detail(&compiled.refusals["invalid_input"]));
-        let limits = custom_limits(compiled);
-        source.extend(quote! {
-            #[allow(clippy::unnecessary_wraps)]
-            pub(crate) fn normalize(request: &mut contract::#request) -> Result<(), contract::InvalidInputDetail> {
-                let _ = &request;
-                #validation
-                #limits
-                Ok(())
-            }
-        });
+        validation.extend(custom_limits(compiled));
+        if !validation.is_empty() {
+            source.extend(invalid_detail(&compiled.refusals["invalid_input"]));
+        }
+        source.extend(emit_normalizer(
+            &request,
+            &quote!(contract::InvalidInputDetail),
+            &validation,
+        ));
         source.extend(emit_handler(&name, custom_is_keyed(operation)));
         let error_name = [&name, "Error"].concat();
         source.extend(emit_row_adapter(result.fields.iter().map(|field| {
@@ -432,13 +451,12 @@ fn emit_custom_export(local_name: &str, compiled: &CustomDescription<'_>) -> Tok
             operation.has_host_transaction(),
         ));
     } else {
-        source.extend(quote! {
-            fn invalid(field: &'static str) -> InputError { InputError::new(field) }
-            pub(crate) fn normalize(request: &mut contract::#request) -> Result<(), InputError> {
-                #validation
-                Ok(())
-            }
-        });
+        if !validation.is_empty() {
+            source.extend(quote! {
+                fn invalid(field: &'static str) -> InputError { InputError::new(field) }
+            });
+        }
+        source.extend(emit_normalizer(&request, &quote!(InputError), &validation));
         source.extend(emit_export_adapter(&name, true, false));
     }
     source
@@ -505,7 +523,9 @@ fn emit_tree_validation(fields: &[FieldIr], access: &TokenStream) -> TokenStream
                     );
                 }
                 let children = emit_tree_validation(&field.children, &quote!(value));
-                source.extend(quote!(for value in &mut #field_access { #children }));
+                if !children.is_empty() {
+                    source.extend(quote!(for value in &mut #field_access { #children }));
+                }
             } else {
                 source.extend(emit_tree_validation(&field.children, &field_access));
             }
