@@ -289,7 +289,7 @@ Row mapping (choice 6a): the query binds and reads plain values, and the domain 
 - 19.6 `OciTag` moves to wamn-oci-reference, and its sqlx impls go (choice 9a).
 - 19.7 `wamn-schema-introspection` becomes `wamn-schema` (`crates/schema`) with the catalog records only. The catalog reader (`postgres.rs`) moves to wamn-postgres. wamn-codegen gets a trait for live descriptions and checks, which wamn-postgres implements and the CLI wires. The generator fingerprint changes with it (choices 7a and 14a).
 
-Lint lines: digest, principal, identity-protocol, package, registry, run-state, schema and oci-reference, and every domain crate above them, link no sqlx and have no sqlx feature. wamn-web and wamn-broker link no sqlx. wamn-edge links sqlx with the SQLite driver only, and no Postgres driver.
+No new lint lines. Epic 21 replaces the per-epic lists with one lint.
 
 ### Epic 20: host, identity and cloud
 
@@ -309,7 +309,7 @@ Lint lines: digest, principal, identity-protocol, package, registry, run-state, 
 - 20.14 wamn-web: the host checks (`services/web/src/lib.rs::valid_route_host`) go to wamn-routes. Release discovery uses wamn-kubernetes.
 - 20.15 Binary traits with one implementation (`ControlExecution`, `StatusSource`, `ArtifactSource`, `ApplicationHost`, `InvocationPolicy`) become direct calls. Before a trait goes, the issue lists its test doubles, and those tests move to real containers. SQLite stays private in wamn-edge (choice 16a).
 
-Lint lines: authentication, authority, connection, envelope, blobstore, event, identity-protocol and application link no client or runtime crate. wamn-plugin links no wamn-postgres, wamn-storage or wamn-kubernetes. The host can link wamn-kubernetes for credential reads, and links no wamn-provision (choice 5a replaces the earlier 17.9 rule). wamn-cdc-reader links no wamn-engine, wasmtime, wamn-kubernetes or wamn-provision. wamn-edge and wamn-edge-document link no service clients: tokio-postgres, deadpool-postgres, async-nats, object_store, redis, oci-client, kube, wamn-oci, wamn-broker, wamn-postgres, wamn-kubernetes. Paths through wash-runtime are allowed for wamn-edge (ruling 19).
+No new lint lines. Epic 21 replaces the per-epic lists with one lint.
 
 ### Epic 21: deploy and publish
 
@@ -323,7 +323,7 @@ Lint lines: authentication, authority, connection, envelope, blobstore, event, i
 - 21.8 Recount the dev-dependency cycles to wamn-test-infrastructure after the moves. The cycles that remain become one Open item (ruling 18).
 - 21.9 Every member of the apps workspace moves under `apps/`: the guests under `guests/`, `test-support/fixtures/guests/connection-http-standard`, `crates/guest` and `crates/record-history` (for example, to `apps/crates/`). The root crates that use wamn-record-history change only their path dependency. `apps/wamn_wms/tests` and `apps/wamn_receiving/tests` move into the root tree, under `tests/`, with directory names from the naming rule. After the move, `xtask/src/machete.rs` keeps only the version check and one run for each workspace, and the staging code goes (D, 2026-11-23, item 1).
 
-Lint lines: the full class rules of [docs/structure.md](../structure.md), with the crates of each class named in xtask. wamn-control and wamn-identity-service link no wasmtime, `wasmtime-*` or wash-runtime, and wamn-cli is outside that rule (ruling 20). No product crate links a test crate on a normal edge. The lint checks the manifests (names, aliases and optional features) and the resolved graph of each shipped build.
+Epic 21 replaces the per-epic lists with one lint. It uses one list of domain crates and one list of banned technology crates. Domain crates link none of these technology crates (`sqlx`, `kube`, `k8s-openapi`, `wasmtime`, `wasmtime-*`, `wash-runtime`, `reqwest`, `hyper`, `async-nats`, `oci-client`, `object_store`). The lint follows the `cargo metadata` graph with all features enabled. `wamn-control` and `wamn-identity-service` link no `wasmtime`, `wasmtime-*` or `wash-runtime`. `wamn-edge` and `wamn-edge-document` link no service clients. No product crate links `wamn-test-infrastructure`. Keep `xtask/src/repo_policy/dependencies.rs` under 100 lines. Remove `WORKFLOW_GRAPH_REFUSED`, `WITHOUT_WASM_RUNTIME`, `WITHOUT_POSTGRES` and every other per-epic list.
 
 Next: the restructure ends. The review work in the Claude Doc "wamn review" follows.
 
@@ -399,6 +399,7 @@ Next: the restructure ends. The review work in the Claude Doc "wamn review" foll
 - An org login (control, apply) can INSERT `identity.principals`, and the policy checks only a bound identity, not the org. Least-privilege check: should these logins insert principals at all?
 - Ruled (D, 2026-11-23), done in Epic 21 (21.9): every member of a workspace moves under the directory of that workspace. Until then, `cargo xtask machete` stages 14 members in a scratch tree, because cargo-machete finds the workspace by walking up from each manifest.
 - Crate graph review (2026-11-21): `wamn-registry` and `wamn-package` (30 dependents each) link sqlx with postgres, so `wamn-web`, `wamn-edge`, `wamn-event` and `wamn-broker` compile a database driver. The fix is choice 6a: the sqlx impls go from the domain types, the queries bind and read plain values, and wamn-postgres keeps private row structs. Epic 19 does it.
+- Replace the generator fingerprint (a hand-written list of source paths in `crates/codegen/build.rs`) with a check that regenerates and compares. After the restructure.
 
 # Part 2: Review log
 
@@ -2340,3 +2341,10 @@ Epic 14 closed on 2026-11-21 after review. cargo test --workspace: 617 passed in
 - Item 4: accepted, as the one named exception to choice A. The SQLite store of the edge stays private in wamn-edge, and the rule that SQL goes to wamn-postgres applies to Postgres only.
 - Item 5: accepted. Directories under `test-support/` drop the `test-` prefix.
 - Item 6: the rule that root writes no fixes covers generated output too. 92a37b8e1 and 94084391f stay, because a wrong digest fails the build. From now on, the agent that changes the inputs runs the refresh and writes the pins in the same commit. Root writes nothing to the repository. There is no new command for writing pins.
+
+**Ruled (D, 2026-11-23): lint scope.**
+- Epics 19 and 20 add no lint lines. They move code and run the existing end checks. Lint lines already committed, including `WITHOUT_POSTGRES` from 19.7, stay until Epic 21.
+- Epic 21 replaces the per-epic lists with one lint. It uses one list of domain crates and one list of banned technology crates. Domain crates link none of these technology crates (`sqlx`, `kube`, `k8s-openapi`, `wasmtime`, `wasmtime-*`, `wash-runtime`, `reqwest`, `hyper`, `async-nats`, `oci-client`, `object_store`). The lint follows the `cargo metadata` graph with all features enabled. `wamn-control` and `wamn-identity-service` link no `wasmtime`, `wasmtime-*` or `wash-runtime`. `wamn-edge` and `wamn-edge-document` link no service clients. No product crate links `wamn-test-infrastructure`. Keep `xtask/src/repo_policy/dependencies.rs` under 100 lines. Remove `WORKFLOW_GRAPH_REFUSED`, `WITHOUT_WASM_RUNTIME`, `WITHOUT_POSTGRES` and every other per-epic list.
+- The 19.7 ruling on the generator fingerprint stands. Narrow the inputs to the files that generation reads. Check the Epic 18 moves. The Open item records the later replacement.
+- D withdraws the edit that added `WITHOUT_POSTGRES` to the Epic 19 lint lines.
+- The per-epic lists made the checks grow faster than the crate structure changed. One dependency check, `cargo xtask machete` and review against `docs/structure.md` enforce the rule.
