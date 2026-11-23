@@ -153,7 +153,7 @@ async fn targeted_rotation_preserves_deadline_and_replay_revokes_successor() {
     assert_eq!(
         error
             .as_database_error()
-            .and_then(|error| error.code())
+            .and_then(sqlx::error::DatabaseError::code)
             .as_deref(),
         Some("42501")
     );
@@ -165,7 +165,7 @@ async fn targeted_rotation_preserves_deadline_and_replay_revokes_successor() {
     assert_eq!(
         error
             .as_database_error()
-            .and_then(|error| error.code())
+            .and_then(sqlx::error::DatabaseError::code)
             .as_deref(),
         Some("42501")
     );
@@ -236,7 +236,7 @@ async fn wait_blocked(observer: &mut Client, pid: i32) {
     tokio::time::timeout(std::time::Duration::from_secs(5), async {
         loop {
             if sqlx::query("SELECT cardinality(pg_blocking_pids($1))>0")
-                .bind(&pid)
+                .bind(pid)
                 .fetch_one(&mut *observer)
                 .await
                 .unwrap()
@@ -335,7 +335,7 @@ async fn disable_waits_for_issuance_and_reenable_cannot_restore_a_family() {
     sqlx::query(
         "UPDATE identity.principals SET status='active',disabled_at=NULL WHERE id=$1::text::uuid",
     )
-    .bind(&user.to_string().as_str())
+    .bind(user.to_string().as_str())
     .execute(&mut first)
     .await
     .map(|result| result.rows_affected())

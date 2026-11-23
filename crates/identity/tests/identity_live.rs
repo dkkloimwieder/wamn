@@ -115,8 +115,8 @@ async fn platform_identity_round_trip_on_postgres() {
                AND p.created_by = $2::text::uuid AND p.updated_by = $2::text::uuid \
                AND r.created_by = $2::text::uuid AND r.updated_by = $2::text::uuid",
     )
-    .bind(&user.id().to_string().as_str())
-    .bind(&provisioning.to_string().as_str())
+    .bind(user.id().to_string().as_str())
+    .bind(provisioning.to_string().as_str())
     .fetch_one(&mut client)
     .await
     .expect("read principal and role stamps");
@@ -170,7 +170,7 @@ async fn one_address_admits_one_user(client: &mut sqlx::PgConnection) {
     .expect("create the first user of the address");
     let stored: String =
         sqlx::query("SELECT email FROM identity.principals WHERE id = $1::text::uuid")
-            .bind(&first.id().to_string().as_str())
+            .bind(first.id().to_string().as_str())
             .fetch_one(&mut *client)
             .await
             .expect("read the stored email")
@@ -196,6 +196,23 @@ async fn project_delete_removes_its_roles_and_memberships(
     client: &mut sqlx::PgConnection,
     user: &Principal,
 ) {
+    async fn rows(
+        client: &mut sqlx::PgConnection,
+        project: &wamn_registry::ProjectId,
+    ) -> (i64, i64) {
+        sqlx::query(
+            "SELECT (SELECT count(*) FROM identity.project_roles \
+                         WHERE org = 'demo' AND project = $1), \
+                        (SELECT count(*) FROM identity.project_env_memberships \
+                         WHERE org = 'demo' AND project = $1)",
+        )
+        .bind(project)
+        .fetch_one(&mut *client)
+        .await
+        .map(|row| (row.get::<i64, _>(0), row.get::<i64, _>(1)))
+        .expect("count project roles and memberships")
+    }
+
     assign_project_role(
         client,
         user.id(),
@@ -214,22 +231,6 @@ async fn project_delete_removes_its_roles_and_memberships(
     )
     .await
     .expect("grant a membership on the project to delete");
-    async fn rows(
-        client: &mut sqlx::PgConnection,
-        project: &wamn_registry::ProjectId,
-    ) -> (i64, i64) {
-        sqlx::query(
-            "SELECT (SELECT count(*) FROM identity.project_roles \
-                         WHERE org = 'demo' AND project = $1), \
-                        (SELECT count(*) FROM identity.project_env_memberships \
-                         WHERE org = 'demo' AND project = $1)",
-        )
-        .bind(&project)
-        .fetch_one(&mut *client)
-        .await
-        .map(|row| (row.get::<i64, _>(0), row.get::<i64, _>(1)))
-        .expect("count project roles and memberships")
-    }
     let widgets = rows(client, &"widgets".parse().unwrap()).await;
     assert_eq!(rows(client, &"inventory".parse().unwrap()).await, (1, 1));
     sqlx::query("DELETE FROM registry.projects WHERE org = 'demo' AND id = 'inventory'")
@@ -491,7 +492,7 @@ async fn project_environment_membership_round_trip(
     .await
     .expect("grant another user before deletion");
     sqlx::query("DELETE FROM identity.principals WHERE id = $1::text::uuid")
-        .bind(&other_user.id().to_string().as_str())
+        .bind(other_user.id().to_string().as_str())
         .execute(&mut *client)
         .await
         .map(|result| result.rows_affected())
@@ -518,7 +519,7 @@ async fn provisioning_principal_is_seeded(client: &mut sqlx::PgConnection) -> Pr
         "SELECT subject, display_name, created_by::text, updated_by::text \
              FROM identity.principals WHERE id = $1::text::uuid",
     )
-    .bind(&id.to_string().as_str())
+    .bind(id.to_string().as_str())
     .fetch_one(&mut *client)
     .await
     .expect("read the seeded wamn:provisioning row");
@@ -561,7 +562,7 @@ async fn unbound_identity_writes_refuse(client: &mut sqlx::PgConnection) {
         assert_eq!(
             error
                 .as_database_error()
-                .and_then(|error| error.code())
+                .and_then(sqlx::error::DatabaseError::code)
                 .as_deref(),
             Some("55000"),
             "{statement}"
@@ -633,11 +634,11 @@ async fn platform_principal_constraint_refuses_other_rows(client: &mut sqlx::PgC
             "INSERT INTO identity.principals (id, type, subject, email, display_name) \
                  VALUES ($1::text::uuid, $2, $3, $4, $5)",
         )
-        .bind(&id)
-        .bind(&type_)
-        .bind(&subject)
-        .bind(&email)
-        .bind(&display_name)
+        .bind(id)
+        .bind(type_)
+        .bind(subject)
+        .bind(email)
+        .bind(display_name)
         .execute(&mut *client)
         .await
         .map(|result| result.rows_affected())
@@ -645,7 +646,7 @@ async fn platform_principal_constraint_refuses_other_rows(client: &mut sqlx::PgC
         assert_eq!(
             error
                 .as_database_error()
-                .and_then(|error| error.code())
+                .and_then(sqlx::error::DatabaseError::code)
                 .as_deref(),
             Some("23514"),
             "{type_} {id} {subject} {display_name}"
