@@ -226,6 +226,10 @@ impl ConnectionHttp {
             Err(error) => Err(error),
         }
     }
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "an attempt needs separate connection, invocation, and request inputs"
+    )]
     async fn attempt(
         &self,
         facts: &ConnectionFacts,
@@ -287,6 +291,10 @@ impl ConnectionHttp {
             .clone_from(&answer.generation.external_system);
         Ok((response, token))
     }
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "token lookup needs separate authority, cache, and transport inputs"
+    )]
     async fn oauth2_token(
         &self,
         facts: &ConnectionFacts,
@@ -406,7 +414,7 @@ async fn execute(
     }
     let method = hyper::Method::from_bytes(request.method.as_bytes())
         .map_err(|_| ConnectionError::Incompatible)?;
-    let headers = outbound_headers(request, credentials).map_err(|error| error)?;
+    let headers = outbound_headers(request, credentials)?;
     let body = request.body.as_deref().unwrap_or_default();
     let mut outbound = hyper::Request::builder()
         .method(method)
@@ -854,7 +862,6 @@ fn health_status(status: u16) -> anyhow::Result<()> {
 mod tests {
 
     use super::*;
-    use crate::bindings::wamn::connection::http::Header;
     use std::sync::Arc;
 
     use crate::test_util::{effect_request, interface_address};
