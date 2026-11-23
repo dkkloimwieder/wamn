@@ -157,10 +157,7 @@ async fn wait_for_system_schema(database: &str) -> anyhow::Result<sqlx::PgConnec
         loop {
             let ready = tokio::time::timeout(Duration::from_secs(5), async {
                 let mut connection = wamn_postgres::connect(database).await?;
-                let domain: Option<String> =
-                    sqlx::query_scalar(wamn_registry::sql::PLATFORM_DOMAIN_SQL)
-                        .fetch_one(&mut connection)
-                        .await?;
+                let domain = wamn_postgres::control::platform_domain(&mut connection).await?;
                 Ok::<_, anyhow::Error>(domain.map(|_| connection))
             })
             .await;

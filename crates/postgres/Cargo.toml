@@ -10,6 +10,7 @@ wamn-application.workspace = true
 wamn-codegen.workspace = true
 wamn-component-policy.workspace = true
 wamn-digest.workspace = true
+wamn-envelope.workspace = true
 wamn-event.workspace = true
 wamn-package.workspace = true
 wamn-record-history.workspace = true

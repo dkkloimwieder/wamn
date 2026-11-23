@@ -1,6 +1,5 @@
 //! Service administration selects one project database through its platform login.
 
-use wamn_package::canonical_name::CanonicalName;
 use anyhow::Context as _;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -9,7 +8,8 @@ use std::time::Duration;
 use wamn_environment::api_service;
 use wamn_identity::application::service;
 use wamn_identity_protocol::{PrincipalId, RoleName, pat_prefix::PatPrefix};
-use wamn_registry::{EnvName, ProjectId};
+use wamn_package::canonical_name::CanonicalName;
+use wamn_registry::{EnvName, ProjectId, Triple, deployment::DeploymentStore as _};
 
 use super::Execution;
 
@@ -33,16 +33,11 @@ impl Execution {
         let input = Value::Object(input);
         wamn_provision::validate_project_env(&self.org, &target.project, &target.env)?;
         let mut system = wamn_identity::transaction::read_pool(&self.control, caller).await?;
-        let instance = sqlx::query_scalar::<_, String>(
-            "SELECT instance_suffix FROM registry.environment_projects WHERE org=$1 AND project=$2 AND env=$3",
-        )
-        .bind(self.org.as_str())
-        .bind(target.project.as_str())
-        .bind(target.env.as_str())
-        .fetch_optional(&mut *system)
-        .await?
-        .context("the project deployment does not exist")?;
-        let instance = wamn_postgres::decode_text(instance, 0)?;
+        let triple = Triple::new(self.org.clone(), target.env, target.project);
+        let instance = wamn_postgres::Registry::new(&mut system)
+            .instance_suffix(&triple)
+            .await?
+            .context("the project deployment does not exist")?;
         let domain = if matches!(
             operation.as_str(),
             "api_service.create" | "service_principal.create"
@@ -52,7 +47,6 @@ impl Execution {
             None
         };
         system.commit().await?;
-        let triple = wamn_registry::Triple::new(self.org.clone(), target.env, target.project);
         let login = self
             .logins
             .login(&triple, &instance)

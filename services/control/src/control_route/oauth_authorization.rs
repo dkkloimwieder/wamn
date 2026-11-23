@@ -4,14 +4,15 @@ use std::{fmt, sync::Arc, time::Duration};
 
 use anyhow::Context as _;
 use serde_json::Value;
-use sqlx::{Connection as _, Row as _};
+use sqlx::Connection as _;
 use url::Url;
 use zeroize::Zeroizing;
 
 use wamn_connection::connection_credentials::CredentialStore as _;
-use wamn_envelope::encryption::{Encrypted, Envelope};
+use wamn_envelope::encryption::Envelope;
 use wamn_environment::connections::KubernetesCredentials;
 use wamn_http::{oauth, transport::HttpTransport};
+use wamn_postgres::oauth_authorization as store;
 
 /// A refusal with a safe public reason. Sources never enter a callback page.
 pub struct Error {
@@ -119,9 +120,9 @@ impl Authorization {
             .encrypt(verifier.as_bytes())
             .await
             .map_err(|error| failed("authorization state encryption failed", error))?;
-        sqlx::query("INSERT INTO platform.oauth_authorization(state,connection_id,generation,code_verifier,wrapped_key,nonce,key_id,created_by,expires_at) \
-            VALUES($1,$2,$3,$4,$5,$6,$7,$8,clock_timestamp()+interval '10 minutes')").bind(&state).bind(connection).bind(generation).bind(&encrypted.ciphertext).bind(&encrypted.wrapped_key).bind(&encrypted.nonce).bind(&encrypted.key_id).bind(uuid::Uuid::from(caller)).execute(&mut **tx)
-            .await.map_err(|error| failed("authorization state write failed", error))?;
+        store::insert(tx, &state, connection, generation, &encrypted, caller)
+            .await
+            .map_err(|error| failed("authorization state write failed", error))?;
         Ok(url)
     }
 
@@ -168,48 +169,40 @@ impl Authorization {
                 .filter(|code| !code.is_empty())
                 .ok_or_else(|| refused("missing authorization code"))?,
         );
-        let row = sqlx::query("SELECT connection_id,generation,code_verifier,wrapped_key,nonce,key_id,created_by,expires_at>clock_timestamp() AS unexpired \
-            FROM platform.oauth_authorization WHERE state=$1 FOR UPDATE").bind(&state).fetch_optional(&mut **tx).await
-            .map_err(|error| failed("authorization state read failed", error))?.ok_or_else(|| refused("unknown or replayed state"))?;
-        if !row.get::<bool, _>("unexpired") {
+        let authorization = store::lock(tx, &state)
+            .await
+            .map_err(|error| failed("authorization state read failed", error))?
+            .ok_or_else(|| refused("unknown or replayed state"))?;
+        if !authorization.unexpired {
             return Err(refused("expired state"));
         }
-        let principal = row
-            .try_get::<uuid::Uuid, _>("created_by")
-            .map(wamn_identity_protocol::PrincipalId::from)
-            .map_err(|error| failed("authorization state read failed", error))?;
         wamn_postgres::bind_transaction_identity(
             tx,
-            &principal,
+            &authorization.principal,
             "",
             "",
             Some("connection.oauth_callback"),
             None,
         )
+        .await
+        .map_err(|error| failed("callback identity failed", error))?;
+        let connection = authorization.connection;
+        let context = store::lock_connection(tx, connection)
             .await
-            .map_err(|error| failed("callback identity failed", error))?;
-        let connection: uuid::Uuid = row.get("connection_id");
-        let context: Value = sqlx::query_scalar("SELECT to_jsonb(c)||jsonb_build_object('parameters',g.parameters,'credential',jsonb_build_object('store',k.store,'ref',k.ref,'version',k.version)) FROM platform.connection c JOIN platform.connection_generation g ON (g.connection_id,g.generation)=(c.id,c.active_generation) LEFT JOIN platform.credential k ON k.id=g.credential_id WHERE c.id=$1 AND c.status='active' FOR NO KEY UPDATE OF c")
-            .bind(connection).fetch_optional(&mut **tx).await.map_err(|error|failed("connection unavailable",error))?.ok_or_else(||refused("connection unavailable"))?;
-        if context["active_generation"].as_i64() != Some(row.get("generation")) {
+            .map_err(|error| failed("connection unavailable", error))?
+            .ok_or_else(|| refused("connection unavailable"))?;
+        if context["active_generation"].as_i64() != Some(authorization.generation) {
             return Err(refused("connection generation changed"));
         }
         if context["auth_type"] != "oauth2_authorization_code" {
             return Err(refused("connection authentication type changed"));
         }
-        sqlx::query("DELETE FROM platform.oauth_authorization WHERE state=$1")
-            .bind(&state)
-            .execute(&mut **tx)
+        store::delete(tx, &state)
             .await
             .map_err(|error| failed("authorization state delete failed", error))?;
         let verifier = self
             .envelope
-            .decrypt(&Encrypted {
-                ciphertext: row.get("code_verifier"),
-                wrapped_key: row.get("wrapped_key"),
-                nonce: row.get("nonce"),
-                key_id: row.get("key_id"),
-            })
+            .decrypt(&authorization.verifier)
             .await
             .map_err(|error| failed("authorization state decryption failed", error))?;
         let verifier = std::str::from_utf8(verifier.expose())

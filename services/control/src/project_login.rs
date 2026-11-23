@@ -3,12 +3,12 @@
 //! and the server CA copy through the Kubernetes API and keeps the PEM bytes
 //! in memory only.
 
-use wamn_registry::deployment::DeploymentStore as _;
 use anyhow::Context as _;
 use k8s_openapi::api::core::v1::{ConfigMap, Secret};
 use kube::Api;
 use sqlx::postgres::{PgConnectOptions, PgSslMode};
 use wamn_kubernetes::client::{KubernetesApi, REQUEST_TIMEOUT};
+use wamn_registry::deployment::DeploymentStore as _;
 use wamn_registry::{EnvName, OrgId, ProjectId, Triple, instance_suffix::InstanceSuffix};
 
 /// Control's reads of its project logins in its org.
@@ -44,20 +44,7 @@ impl ProjectLogins {
 
     /// Every recorded project environment of the org.
     pub(crate) async fn recorded(&self) -> anyhow::Result<Vec<(Triple, InstanceSuffix)>> {
-        let rows = sqlx::query_as::<_, (String, String, String)>(
-            "SELECT project, env, instance_suffix FROM registry.environment_projects WHERE org=$1",
-        )
-        .bind(self.org.as_str())
-        .fetch_all(&self.control)
-        .await?;
-        rows.into_iter()
-            .map(|(project, env, instance)| {
-                let project = wamn_postgres::decode_text(project, 0)?;
-                let env = wamn_postgres::decode_text(env, 1)?;
-                let instance = wamn_postgres::decode_text(instance, 2)?;
-                Ok((Triple::new(self.org.clone(), env, project), instance))
-            })
-            .collect()
+        Ok(wamn_postgres::control::project_deployments(&self.control, &self.org).await?)
     }
 
     /// The login of one project environment generation.

@@ -1,6 +1,5 @@
 //! Control user routes and their identity adapter calls.
 
-use wamn_routes::HostAttachment;
 use anyhow::Context as _;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -12,6 +11,7 @@ use wamn_identity_protocol::{
     PrincipalId,
     wire::{UserRequest, UserResponse},
 };
+use wamn_routes::HostAttachment;
 
 use super::{ControlRoutes, Refusal, parse, principal};
 
@@ -105,12 +105,7 @@ impl ControlRoutes<'_> {
             })?;
         // Activation holds the principal lock. Refuse if disable won the race
         // between identity's successful response and this membership write.
-        let active = sqlx::query_scalar::<_, bool>(
-            "SELECT status = 'active' FROM identity.principals WHERE id = $1",
-        )
-        .bind(uuid::Uuid::from(*user))
-        .fetch_one(&mut *transaction)
-        .await?;
+        let active = wamn_postgres::control::principal_active(&mut transaction, user).await?;
         if !active {
             return Err(user_refused());
         }
@@ -216,27 +211,17 @@ pub(crate) async fn first_owner(
     let org = &handlers.org;
     let mut writer = handlers.writer.lock().await?;
     let mut tx = wamn_platform_install::transaction::provisioning_transaction(&mut writer).await?;
-    let registered: bool = sqlx::query_scalar("SELECT COALESCE(registry.login_org() = $1, false)")
-        .bind(org.as_str())
-        .fetch_one(&mut *tx)
-        .await?;
+    let registered = wamn_postgres::control::login_matches_org(&mut tx, org).await?;
     if !registered {
         return Ok(StatusCode::FORBIDDEN);
     }
-    // Serialize bootstrap requests even across two control processes in a rollout.
-    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
-        .bind(format!("wamn:first-owner:{org}"))
-        .execute(&mut *tx)
-        .await?;
-    let (has_owner, same_owner): (bool, bool) = sqlx::query_as(
-        "SELECT count(*) > 0, COALESCE(bool_or(p.email = $3), false)
-           FROM identity.org_roles r LEFT JOIN identity.principals p ON p.id = r.principal_id
-          WHERE r.org = $1 AND r.role = $2",
+    wamn_postgres::control::lock_first_owner(&mut tx, org).await?;
+    let (has_owner, same_owner) = wamn_postgres::control::org_role_holders(
+        &mut tx,
+        org,
+        ORG_ADMIN_ROLE,
+        &email.trim().to_lowercase(),
     )
-    .bind(org.as_str())
-    .bind(ORG_ADMIN_ROLE)
-    .bind(email.trim().to_lowercase())
-    .fetch_one(&mut *tx)
     .await?;
     if has_owner && !same_owner {
         return Ok(StatusCode::CONFLICT);
@@ -263,11 +248,7 @@ pub(crate) async fn first_owner(
             }
             return Err(error.into());
         }
-        let active: bool =
-            sqlx::query_scalar("SELECT status = 'active' FROM identity.principals WHERE id = $1")
-                .bind(uuid::Uuid::from(user.principal_id))
-                .fetch_one(&mut *tx)
-                .await?;
+        let active = wamn_postgres::control::principal_active(&mut tx, &user.principal_id).await?;
         if !active {
             return Ok(StatusCode::BAD_REQUEST);
         }

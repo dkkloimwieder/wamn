@@ -34,12 +34,12 @@
 //! counts read the environment through its administration login and the
 //! control store through its existing connection. Count failures answer null.
 //!
+use sqlx::Connection as _;
+use sqlx::PgConnection as Client;
+use wamn_registry::EnvironmentStatus;
 use wamn_routes::HostAttachment;
 use wamn_routes::HostHandler;
 use wamn_routes::HostRouteAuthority;
-use wamn_registry::EnvironmentStatus;
-use sqlx::PgConnection as Client;
-use sqlx::{Connection as _, Row as _};
 mod connection_test;
 mod integration;
 pub(crate) mod oauth_authorization;
@@ -47,15 +47,15 @@ pub(crate) mod oauth_callback;
 pub(crate) mod operations;
 pub(crate) mod users;
 
-use std::time::Duration;
-
 use anyhow::Context as _;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use wamn_application::native_routes::{DeliveryError, PermissionDenial};
+use wamn_authentication::control_admission::{self, AdminAdmission};
 use wamn_environment::org::{
     create_project, org_environments, set_environment_status, status_environments,
 };
+use wamn_environment::status;
 use wamn_identity::application::{
     ApplicationTarget, project_authority, require_platform_rows, write_environment_status,
 };
@@ -293,19 +293,22 @@ impl ControlRoutes<'_> {
             // A read for every control caller: `org-admin`, or `project-admin`
             // of a project of the org.
             HostRouteAuthority::Member => {
-                self.read(caller, async |connection| {
-                    self.admits(connection, caller, None).await
-                })
+                let org_admin = self
+                    .read(caller, async |connection| {
+                        self.admits(connection, caller, None).await
+                    })
+                    .await?;
+                control_admission::admits_member(
+                    org_admin,
+                    self.read(caller, async |connection| {
+                        Ok(
+                            !control_projects_page(connection, caller, self.org, None, Some(1))
+                                .await?
+                                .is_empty(),
+                        )
+                    }),
+                )
                 .await?
-                    || !self
-                        .read(caller, async |connection| {
-                            Ok(
-                                control_projects_page(connection, caller, self.org, None, Some(1))
-                                    .await?,
-                            )
-                        })
-                        .await?
-                        .is_empty()
             }
             authority @ (HostRouteAuthority::Admin | HostRouteAuthority::Granted) => {
                 return Err(Refusal::Failed(anyhow::anyhow!(
@@ -460,21 +463,18 @@ impl ControlRoutes<'_> {
                 };
                 let memberships = async {
                     let mut transaction =
-                        wamn_identity::transaction::read_pool(self.control, caller)
-                            .await?;
-                    let row = sqlx::query(
-                        "SELECT count(*)::int4 FROM identity.project_env_memberships \
-                         WHERE org = $1 AND project = $2 AND env = $3",
+                        wamn_identity::transaction::read_pool(self.control, caller).await?;
+                    let count = wamn_postgres::control::membership_count(
+                        &mut transaction,
+                        self.org,
+                        &request.project,
+                        &request.env,
                     )
-                    .bind(self.org.as_str())
-                    .bind(request.project.as_str())
-                    .bind(request.env.as_str())
-                    .fetch_one(&mut *transaction)
                     .await?;
                     transaction.commit().await?;
-                    anyhow::Ok(row.get::<i32, _>(0))
+                    anyhow::Ok(count)
                 };
-                Ok(Box::pin(status_with_counts(
+                Ok(Box::pin(status::status_with_counts(
                     status,
                     &request.project,
                     &request.env,
@@ -651,16 +651,8 @@ impl ControlRoutes<'_> {
                 let mut writer = self.writer.lock().await?;
                 let mut transaction = self.begin(&mut writer, attachment, caller).await?;
                 create_project(&mut transaction, self.org, &project).await?;
-                for row in sqlx::query(
-                    "SELECT principal_id FROM identity.project_roles WHERE org=$1 AND project=$2",
-                )
-                .bind(self.org.as_str())
-                .bind(project.as_str())
-                .fetch_all(&mut *transaction)
-                .await?
-                {
-                    let _principal: uuid::Uuid = row.try_get(0)?;
-                }
+                wamn_postgres::control::check_project_roles(&mut transaction, self.org, &project)
+                    .await?;
                 transaction.commit().await?;
                 Ok(json!({ "project": project }))
             }
@@ -685,32 +677,18 @@ impl ControlRoutes<'_> {
         let mut writer = self.writer.lock().await?;
         let mut transaction = self.begin(&mut writer, attachment, caller).await?;
         let envs = status_environments(&mut transaction, self.org, project, env).await?;
-        let names: Vec<_> = envs.iter().map(wamn_registry::EnvName::as_str).collect();
         let environments =
-            sqlx::query_as::<_, (String, String)>(wamn_registry::sql::ENVIRONMENT_PROJECTS)
-                .bind(self.org.as_str())
-                .bind(names)
-                .fetch_all(&mut *transaction)
-                .await?
-                .into_iter()
-                .map(|(project, env)| {
-                    Ok((
-                        wamn_postgres::decode_text(project, 0)?,
-                        wamn_postgres::decode_text(env, 1)?,
-                    ))
-                })
-                .collect::<Result<Vec<_>, sqlx::Error>>()?;
-        if status == EnvironmentStatus::Inactive {
-            self.write_statuses(attachment, caller, &environments, status)
-                .await?;
-        }
-        set_environment_status(&mut transaction, self.org, project, &envs, status).await?;
-        transaction.commit().await?;
-        if status == EnvironmentStatus::Active {
-            self.write_statuses(attachment, caller, &environments, status)
-                .await?;
-        }
-        Ok(())
+            wamn_postgres::control::environment_projects(&mut transaction, self.org, &envs).await?;
+        status::change_status(
+            status,
+            move || async move {
+                set_environment_status(&mut transaction, self.org, project, &envs, status).await?;
+                transaction.commit().await?;
+                Ok(())
+            },
+            || self.write_statuses(attachment, caller, &environments, status),
+        )
+        .await
     }
 
     /// Write the status row of each environment, one transaction each, in
@@ -900,29 +878,16 @@ impl ControlRoutes<'_> {
         caller: &PrincipalId,
         project: Option<&wamn_registry::ProjectId>,
     ) -> Result<bool, Refusal> {
-        if is_org_admin(client, caller, self.org).await? {
-            return Ok(true);
+        let org_admin = is_org_admin(client, caller, self.org).await?;
+        match control_admission::admin_admission(org_admin, project) {
+            AdminAdmission::Admitted => Ok(true),
+            AdminAdmission::CheckProject(project) => {
+                Ok(is_project_admin(client, caller, self.org, project).await?)
+            }
+            AdminAdmission::Refused => Ok(false),
         }
-        Ok(match project {
-            Some(project) => is_project_admin(client, caller, self.org, project).await?,
-            None => false,
-        })
     }
 }
-
-/// Bound optional count reads to two seconds so unavailable databases do not
-/// prevent the runtime status from answering. Each read has its own deadline.
-const STATUS_COUNTS_TIMEOUT: Duration = Duration::from_secs(2);
-
-// The role rows of the selected environment database. EXISTS counts each
-// human user once even when that user holds several roles, and excludes
-// services.
-const APPLICATION_COUNTS_SQL: &str = "SELECT \
-    (SELECT count(*)::int4 FROM platform.\"user\" u \
-     WHERE u.type = 'user' AND EXISTS \
-       (SELECT 1 FROM platform.user_role r \
-        WHERE r.user_id = u.id)), \
-    (SELECT count(*)::int4 FROM platform.role r)";
 
 async fn application_counts(
     login: ConnectionInput<'_>,
@@ -930,53 +895,9 @@ async fn application_counts(
 ) -> anyhow::Result<(i32, i32)> {
     let mut client = wamn_postgres::connect(login).await?;
     let mut transaction = wamn_identity::transaction::read_connection(&mut client, caller).await?;
-    let row = sqlx::query(APPLICATION_COUNTS_SQL)
-        .fetch_one(&mut *transaction)
-        .await?;
-    let counts = (row.get(0), row.get(1));
+    let counts = wamn_postgres::control::application_counts(&mut transaction).await?;
     transaction.commit().await?;
     Ok(counts)
-}
-
-async fn optional_status_count<T>(
-    project: &wamn_registry::ProjectId,
-    env: &wamn_registry::EnvName,
-    source: &str,
-    read: impl std::future::Future<Output = anyhow::Result<T>>,
-) -> Option<T> {
-    match tokio::time::timeout(STATUS_COUNTS_TIMEOUT, read).await {
-        Ok(Ok(value)) => Some(value),
-        Ok(Err(error)) => {
-            tracing::warn!(%error, %project, %env, source, "environment status count read failed");
-            None
-        }
-        Err(_) => {
-            tracing::warn!(
-                %project,
-                %env,
-                source,
-                "environment status count read timed out"
-            );
-            None
-        }
-    }
-}
-
-async fn status_with_counts(
-    mut status: Value,
-    project: &wamn_registry::ProjectId,
-    env: &wamn_registry::EnvName,
-    application: impl std::future::Future<Output = anyhow::Result<(i32, i32)>>,
-    memberships: impl std::future::Future<Output = anyhow::Result<i32>>,
-) -> Value {
-    let (application, memberships) = tokio::join!(
-        optional_status_count(project, env, "application", application),
-        optional_status_count(project, env, "memberships", memberships),
-    );
-    status["users_with_role"] = json!(application.map(|counts| counts.0));
-    status["roles"] = json!(application.map(|counts| counts.1));
-    status["memberships"] = json!(memberships);
-    status
 }
 
 /// One environment's application write, in its own transaction on its
@@ -1290,43 +1211,5 @@ mod tests {
             ),
             Err(Refusal::Delivery(DeliveryError::InvalidPayload))
         ));
-    }
-
-    #[tokio::test]
-    async fn status_answers_when_count_reads_fail() {
-        let status = json!({"digest": "sha256:live", "workloads": [], "live": [], "rollout": {"replicas": 1}});
-        let answer = status_with_counts(
-            status.clone(),
-            &"billing".parse().unwrap(),
-            &"dev".parse().unwrap(),
-            async { anyhow::bail!("application unavailable") },
-            async { anyhow::bail!("control unavailable") },
-        )
-        .await;
-        for name in ["users_with_role", "roles", "memberships"] {
-            assert!(answer[name].is_null());
-        }
-        for (name, value) in status.as_object().unwrap() {
-            assert_eq!(answer[name], *value, "{name}");
-        }
-    }
-
-    #[tokio::test]
-    async fn status_answers_when_count_reads_time_out() {
-        let status = json!({"digest": "sha256:live"});
-        let answer = status_with_counts(
-            status.clone(),
-            &"billing".parse().unwrap(),
-            &"dev".parse().unwrap(),
-            std::future::pending(),
-            std::future::pending(),
-        )
-        .await;
-        for name in ["users_with_role", "roles", "memberships"] {
-            assert!(answer[name].is_null());
-        }
-        for (name, value) in status.as_object().unwrap() {
-            assert_eq!(answer[name], *value, "{name}");
-        }
     }
 }

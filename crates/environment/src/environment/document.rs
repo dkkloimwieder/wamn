@@ -160,8 +160,17 @@ pub async fn workload_release(
 pub fn workload_release_annotations(
     workload: &kube::api::DynamicObject,
 ) -> anyhow::Result<WorkloadRelease> {
-    let annotations = workload.metadata.annotations.as_ref();
-    let annotation = |key| annotations.and_then(|values| values.get(key)).map(String::as_str);
+    release_annotations(workload.metadata.annotations.as_ref())
+}
+
+pub(crate) fn release_annotations(
+    annotations: Option<&BTreeMap<String, String>>,
+) -> anyhow::Result<WorkloadRelease> {
+    let annotation = |key| {
+        annotations
+            .and_then(|values| values.get(key))
+            .map(String::as_str)
+    };
     let package_digest = annotation("wamn.package-digest")
         .context("application workload has no package digest")?
         .parse()

@@ -1,11 +1,11 @@
 //! Connection administration against one selected project database.
 
-use wamn_routes::HostAttachment;
 use super::{ControlRoutes, ProjectTarget, Refusal, parse};
 use serde_json::{Value, json};
-use sqlx::{Connection as _, Row as _};
+use sqlx::Connection as _;
 use wamn_environment::connections::{ConnectionError, administration, references};
 use wamn_identity_protocol::PrincipalId;
+use wamn_routes::HostAttachment;
 
 impl From<ConnectionError> for Refusal {
     fn from(error: ConnectionError) -> Self {
@@ -38,9 +38,7 @@ impl ControlRoutes<'_> {
         let result = self
             .integration_administration_in(&mut writer, attachment, caller, payload)
             .await;
-        sqlx::query("SELECT pg_advisory_unlock_all()")
-            .fetch_one(&mut *writer)
-            .await?;
+        wamn_postgres::control::unlock_all_advisory_locks(&mut writer).await?;
         result
     }
 
@@ -67,12 +65,13 @@ impl ControlRoutes<'_> {
             )
             .await?;
         if operation == "integration_type.list" {
-            let result = sqlx::query_scalar("SELECT registry.configure_integration_type($1,$2,$3)")
-                .bind(self.org.as_str())
-                .bind(operation)
-                .bind(&request)
-                .fetch_one(&mut *authorized)
-                .await?;
+            let result = wamn_postgres::control::configure_integration_type(
+                &mut authorized,
+                self.org,
+                operation,
+                &request,
+            )
+            .await?;
             authorized.commit().await?;
             return Ok(result);
         }
@@ -81,12 +80,8 @@ impl ControlRoutes<'_> {
             detail: json!({"field":"env"}),
         })?;
         if !attachment.route.type_.is_read() {
-            let held: bool = sqlx::query(wamn_postgres::ENVIRONMENT_LOCK_SQL)
-                .bind(self.org.as_str())
-                .bind(env.as_str())
-                .fetch_one(&mut *authorized)
-                .await?
-                .get(0);
+            let held = wamn_postgres::control::try_environment_lock(&mut authorized, self.org, env)
+                .await?;
             if !held {
                 return Err(Refusal::Declared {
                     code: "deployment_in_progress",

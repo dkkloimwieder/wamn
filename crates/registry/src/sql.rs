@@ -87,10 +87,6 @@ pub const ENVIRONMENT_DISPOSABLE: &str =
 /// crates/execution-host/src/credential_cleanup.rs::collect registry statement.
 pub const EXECUTION_HOST_SRC_CREDENTIAL_CLEANUP_COLLECT: &str = "SELECT k.store,k.ref,k.version FROM platform.credential k JOIN platform.connection c ON c.id=k.connection_id JOIN platform.connection_generation active ON (active.connection_id,active.generation)=(c.id,c.active_generation) JOIN LATERAL (SELECT max(generation) AS generation FROM platform.connection_generation WHERE connection_id=c.id AND credential_id=k.id) last_use ON true JOIN LATERAL (SELECT created_at FROM platform.connection_generation WHERE connection_id=c.id AND generation>last_use.generation ORDER BY generation LIMIT 1) successor ON true WHERE active.credential_id IS DISTINCT FROM k.id AND successor.created_at<now()-interval '5 minutes'";
 
-/// The platform domain used in service principal email addresses.
-pub const PLATFORM_DOMAIN_SQL: &str =
-    "SELECT platform_domain FROM registry.meta";
-
 /// crates/identity/src/control.rs::ORG_PROJECTS_SQL registry statement.
 pub const IDENTITY_PLATFORM_SRC_CONTROL_ORG_PROJECTS_SQL: &str = "SELECT p.id, CASE WHEN EXISTS (SELECT 1 FROM registry.environment_projects e JOIN registry.environments v USING (org,env) \
     WHERE e.org = p.org AND e.project = p.id AND v.status = 'active') \
@@ -183,9 +179,6 @@ pub const CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_DELETE_DELETE_LOCKED: &str = "SELE
 /// crates/environment/src/environment/delete/rows.rs::delete_registry_rows registry statement.
 pub const CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_DELETE_ROWS_DELETE_REGISTRY_ROWS: &str =
     "DELETE FROM registry.environment_projects WHERE org = $1 AND project = $2 AND env = $3";
-
-/// Every project deployment affected by an environment lifecycle change.
-pub const ENVIRONMENT_PROJECTS: &str = "SELECT project,env FROM registry.environment_projects WHERE org=$1 AND env=ANY($2) ORDER BY env,project";
 
 /// Registered orgs whose resources belong to the supplied namespace.
 pub const INSTALL_ORGS: &str = "SELECT id FROM registry.orgs WHERE id=$1 ORDER BY id";

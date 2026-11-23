@@ -7237,6 +7237,7 @@ dependencies = [
  "wamn-codegen",
  "wamn-component-policy",
  "wamn-digest",
+ "wamn-envelope",
  "wamn-event",
  "wamn-fixture-package",
  "wamn-identity-protocol",
