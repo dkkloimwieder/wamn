@@ -80,7 +80,6 @@ mod tests {
     use super::*;
     use super::users::{UserClient, UserRefused, invitation_body};
     use std::io::Write as _;
-    use std::path::PathBuf;
     use wamn_identity_protocol::PrincipalId;
     use std::os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _};
     use std::sync::Arc;
