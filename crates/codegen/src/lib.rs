@@ -1,7 +1,7 @@
 //! Generates deterministic package artifacts from migration-derived schema IR.
 //!
 //! Core generation is a deterministic transformation: callers provide the
-//! normalized [`CatalogIr`](wamn_schema_introspection::ir::CatalogIr), exact manifest bytes, and authored SQL bytes.
+//! normalized [`CatalogIr`](wamn_schema::ir::CatalogIr), exact manifest bytes, and authored SQL bytes.
 //!
 //! Generated identifiers follow
 //! `docs/architecture/naming.md`. Migration introspection owns
@@ -18,11 +18,12 @@ mod authoring;
 pub mod build;
 mod client_fields;
 pub mod client_plan;
+pub mod database;
 mod describe;
 mod describe_cache;
-pub mod fingerprint;
 /// Catalog facts for authored query feeds.
 pub mod feed;
+pub mod fingerprint;
 mod generate;
 mod host_openapi;
 mod inheritance;
@@ -35,6 +36,7 @@ mod package_catalog;
 pub mod publication;
 mod sql;
 mod sql_analysis;
+mod sql_quote;
 
 pub use authoring::{
     AUTHORED_MANIFEST, COMPILED_MANIFEST, compile_manifest, is_authored, is_package_root,

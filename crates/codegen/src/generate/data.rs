@@ -106,7 +106,7 @@ pub(super) fn emit_model_data(
         .columns
         .iter()
         .filter(|column| column.column_type() == SqlValueType::Timestamptz)
-        .map(wamn_schema_introspection::ir::Column::name);
+        .map(wamn_schema::ir::Column::name);
     let permissions = compiled.operations.iter().map(|(action, facts)| {
         let name = permission_constant(*action);
         let value = facts.request.permission.as_str();

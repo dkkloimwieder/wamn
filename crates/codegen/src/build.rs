@@ -1,32 +1,26 @@
 //! Compile package declarations and SQL evidence into one output tree.
 
+use std::collections::{BTreeMap, BTreeSet};
+use std::fs;
+use std::path::{Path, PathBuf};
 use wamn_package::manifest::CrudAction;
 use wamn_package::manifest::ResultClass;
 use wamn_package::manifest::canonical_operation_identity;
-use std::collections::{BTreeMap, BTreeSet};
-use std::fmt::Write as _;
-use std::fs;
-use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::{Context as _, Result, bail, ensure};
 use serde_json::{Value, json};
-use sqlx::{AssertSqlSafe, Row as _, SqlSafeStr as _};
 use wamn_component_policy::PackageManifest;
 use wamn_digest::{Digest, bytes_sha256, canonical_json_bytes};
-use wamn_schema_introspection::ir::CatalogIr;
-use wamn_schema_introspection::postgres::authored_object_name;
+use wamn_schema::ir::CatalogIr;
+use wamn_schema::ir::authored_object_name;
 
 use crate::AuthoredSql;
 use crate::authoring::{COMPILED_MANIFEST_NAME, compile_authored_manifest};
-use crate::describe::{DescribedStatement, column_type, describe_statements};
+use crate::database::{BuildDatabase, HistoryTable};
+use crate::describe::{DescribedStatement, column_type};
 use crate::describe_cache::{self, Evidence};
 use crate::materialize::{expected_files, introspect_with_manifest, write_files};
 use crate::publication::{ATTACHMENTS, COMPONENTS};
-
-const RECORD_HISTORY_SQL: &str = include_str!("../../../deploy/sql/record-history.sql");
-const RECORD_HISTORY_APP_GRANTS_SQL: &str =
-    include_str!("../../../deploy/sql/record-history-app-grants.sql");
 
 /// Identity of the code and SQL helpers compiled into this generator.
 pub const GENERATOR_ID: &str = include_str!(concat!(env!("OUT_DIR"), "/generator-id"));
@@ -184,15 +178,19 @@ pub fn package_output(output_root: &Path, package: &wamn_package::PackageName) -
 }
 
 /// Generate package output without compiling its components.
-pub async fn generate_package(request: &BuildRequest<'_>) -> Result<PackageManifest> {
+pub async fn generate_package(
+    database: &dyn BuildDatabase,
+    request: &BuildRequest<'_>,
+) -> Result<PackageManifest> {
     let source = prepare_source(&request.package_root)?;
     let bases = crate::inheritance::load_base_manifests(&request.output_root, source.bases())?;
-    let (manifest, _) = generate_prepared(request, &source, &bases, None).await?;
+    let (manifest, _) = generate_prepared(database, request, &source, &bases, None).await?;
     Ok(manifest)
 }
 
 /// Generate artifacts from the same authored document that selected the build inputs.
 pub async fn generate_prepared(
+    database: &dyn BuildDatabase,
     request: &BuildRequest<'_>,
     source: &PreparedSource,
     bases: &[PackageManifest],
@@ -224,8 +222,8 @@ pub async fn generate_prepared(
             }
         }
     }
-    crate::migrations::validate_committed(&source.root, root).await?;
-    crate::migrations::validate_history(root).await?;
+    crate::migrations::validate_committed(database, &source.root, root).await?;
+    crate::migrations::validate_history(database, root).await?;
     let sql = provisional.load_sql(root)?;
     let output = package_output(&request.output_root, &provisional.package.id);
     let generation = Generation {
@@ -240,10 +238,11 @@ pub async fn generate_prepared(
             let cached = describe_cache::read(&source.root)?;
             let evidence = describe_cache::decode(&cached, input)?;
             let manifest = typed_manifest(authored, &evidence.statements)?;
-            generate_from_evidence(&generation, manifest, evidence, None).await?
+            generate_from_evidence(database, &generation, manifest, evidence, None).await?
         }
         DescribeMode::Refresh(url) | DescribeMode::Check(url) => {
             let mut built = generate_live(
+                database,
                 url,
                 &generation,
                 provisional,
@@ -261,6 +260,7 @@ pub async fn generate_prepared(
                 let input =
                     describe_cache::inputs(root, &source.document, bases, &request.output_root)?;
                 built = generate_live(
+                    database,
                     url,
                     &generation,
                     provisional,
@@ -461,6 +461,7 @@ fn typed_manifest(
 }
 
 async fn generate_live(
+    database: &dyn BuildDatabase,
     server: &str,
     generation: &Generation<'_>,
     provisional: &ManifestSources,
@@ -474,34 +475,24 @@ async fn generate_live(
         bases,
         ..
     } = *generation;
-    let database = VerificationDatabase::create(server).await?;
+    let verification = database.create_verification_database(server).await?;
     let built = async {
-        let url = database.url.as_str();
-        let mut connection = wamn_postgres::connect(url).await?;
-        let postgres: i32 =
-            sqlx::query_scalar("SELECT current_setting('server_version_num')::integer")
-                .fetch_one(&mut connection)
-                .await?;
-        drop(connection);
-        let postgres = u32::try_from(postgres)?;
+        let url = verification.url.as_str();
+        let postgres = database.server_version(url).await?;
         describe_cache::postgres_identity(postgres)?;
-        migrate(url, root, provisional, bases, output_root).await?;
-        let described = describe_statements(
-            url,
-            sources.iter().map(|source| (&source.path, &source.bytes)),
-        )
-        .await?;
-        let sql_digests = sources
-            .iter()
-            .map(|source| (source.path.clone(), bytes_sha256(&source.bytes)))
-            .collect();
-        let manifest = typed_manifest(authored.clone(), &described)?;
+        migrate(database, url, root, provisional, bases, output_root).await?;
         let sql = sources
             .iter()
             .map(|source| AuthoredSql::new(&source.path, &source.bytes))
             .collect::<Vec<_>>();
-        let catalog = introspect_with_manifest(url, &manifest, &sql).await?;
-        let columns = ordered_columns(url, &manifest).await?;
+        let described = database.describe_statements(url, &sql).await?;
+        let sql_digests = sql
+            .iter()
+            .map(|source| (source.path().to_owned(), bytes_sha256(source.bytes())))
+            .collect();
+        let manifest = typed_manifest(authored.clone(), &described)?;
+        let catalog = introspect_with_manifest(database, url, &manifest, &sql).await?;
+        let columns = database.ordered_columns(url, &manifest).await?;
         let evidence = Evidence {
             inputs: input,
             postgres,
@@ -510,16 +501,19 @@ async fn generate_live(
             sql: sql_digests,
             columns,
         };
-        generate_from_evidence(generation, manifest, evidence, Some(url)).await
+        generate_from_evidence(database, generation, manifest, evidence, Some(url)).await
     }
     .await;
-    let dropped = database.drop().await;
+    let dropped = database
+        .drop_verification_database(server, &verification.name)
+        .await;
     let generated = built?;
     dropped?;
     Ok(generated)
 }
 
 async fn generate_from_evidence(
+    database: &dyn BuildDatabase,
     generation: &Generation<'_>,
     mut manifest: PackageManifest,
     mut evidence: Evidence,
@@ -564,8 +558,9 @@ async fn generate_from_evidence(
             .statements
             .iter()
             .filter(|(path, _)| !evidence.statements.contains_key(*path))
+            .map(|(path, bytes)| AuthoredSql::new(path, bytes))
             .collect::<Vec<_>>();
-        let described = describe_statements(url, remaining).await?;
+        let described = database.describe_statements(url, &remaining).await?;
         for (path, description) in described {
             let sql = bytes_sha256(&corpus.statements[&path]);
             evidence.sql.insert(path.clone(), sql);
@@ -610,8 +605,8 @@ async fn generate_from_evidence(
         .into_iter()
         .map(|(path, bytes)| (path, bytes.to_vec()))
         .collect::<BTreeMap<_, _>>();
-    let history = crate::history::render(root, &manifest, &evidence.columns).await?;
-    let migrations = crate::history::migrations(root, &history).await?;
+    let history = crate::history::render(database, root, &manifest, &evidence.columns).await?;
+    let migrations = crate::history::migrations(database, root, &history).await?;
     let mut appended_history = false;
     for (relative, bytes) in &migrations {
         let path = root.join(relative);
@@ -630,49 +625,6 @@ async fn generate_from_evidence(
         evidence,
         appended_history,
     })
-}
-
-async fn register_verification_principal(connection: &mut sqlx::PgConnection) -> Result<()> {
-    let component = wamn_identity_protocol::PlatformComponent::ApplyPackage;
-    sqlx::query("INSERT INTO platform.login_principal(login,principal_id) VALUES (current_user,$1) ON CONFLICT(login) DO UPDATE SET principal_id=EXCLUDED.principal_id")
-        .bind(sqlx::types::Uuid::from(component.principal_id()))
-        .execute(connection)
-        .await?;
-    Ok(())
-}
-
-async fn ordered_columns(
-    database_url: &str,
-    manifest: &PackageManifest,
-) -> Result<
-    BTreeMap<wamn_package::manifest::source_name::SourceName, Vec<crate::history::RelationColumn>>,
-> {
-    use crate::history::{RelationColumn, SELECT_RELATION_COLUMNS_SQL};
-    let client = wamn_postgres::pool(database_url, 4).await?;
-    let result = async {
-        let mut columns = BTreeMap::new();
-        for (id, model) in &manifest.models {
-            let rows = sqlx::query(SELECT_RELATION_COLUMNS_SQL)
-                .bind(model.schema.as_str())
-                .bind(model.table.as_str())
-                .fetch_all(&client)
-                .await?;
-            columns.insert(
-                id.clone(),
-                rows.iter()
-                    .map(|row| RelationColumn {
-                        name: row.get(0),
-                        primary_key: row.get(1),
-                        timestamptz: row.get(2),
-                    })
-                    .collect(),
-            );
-        }
-        Ok(columns)
-    }
-    .await;
-    client.close().await;
-    result
 }
 
 /// One warning for each allowed sort of a paged query without its
@@ -875,6 +827,7 @@ pub(crate) fn apply_statement_types(
 /// base packages' migrations first, then the package's, then the history
 /// tables of the relations the package keeps a log of.
 async fn migrate(
+    database: &dyn BuildDatabase,
     database_url: &str,
     package_root: &Path,
     manifest: &ManifestSources,
@@ -882,170 +835,31 @@ async fn migrate(
     output_root: &Path,
 ) -> Result<()> {
     let mut schemas = manifest.schemas();
-    let mut directories = Vec::new();
+    let mut base_directories = Vec::new();
     for base in bases {
         schemas.extend(base.models.values().map(|model| model.schema.to_string()));
-        directories.push(package_output(output_root, &base.package.id));
+        base_directories.push(package_output(output_root, &base.package.id));
     }
     schemas.sort();
     schemas.dedup();
-    directories.push(package_root.to_owned());
-
-    let client = wamn_postgres::pool(database_url, 4)
-        .await
-        .context("connect to the verification database")?;
-    let result = async {
-        if !schemas.is_empty() {
-            let quoted = schemas
-                .iter()
-                .map(|schema| postgres_protocol::escape::escape_identifier(schema))
-                .collect::<Vec<_>>();
-            let mut sql = String::new();
-            for schema in &quoted {
-                writeln!(sql, "CREATE SCHEMA {schema};").expect("writing to a String cannot fail");
-            }
-            write!(
-                sql,
-                "ALTER DATABASE {} SET search_path TO {}, public",
-                postgres_protocol::escape::escape_identifier(database_name(database_url)?.as_str()),
-                quoted.join(", ")
-            )
-            .expect("writing to a String cannot fail");
-            sqlx::raw_sql(AssertSqlSafe(sql.clone()).into_sql_str()).execute(&client)
-                .await
-                .context("create the package schemas")?;
-        }
-        // Public platform identity keys support application foreign keys.
-        // These verification relations contain no system database or registry data.
-        sqlx::raw_sql(AssertSqlSafe(("CREATE SCHEMA IF NOT EXISTS platform; CREATE TABLE IF NOT EXISTS platform.external_system (id uuid PRIMARY KEY); CREATE TABLE IF NOT EXISTS platform.file (id uuid PRIMARY KEY)").to_owned()).into_sql_str()).execute(&client).await.context("create platform references for package verification")?;
-        // Platform helpers precede generated SQL in every verification database.
-        create_history_tables(&client, manifest).await?;
-        for (index, directory) in directories.into_iter().enumerate() {
-            let mut migrator = crate::migrations::migrator(&directory).await?;
-            migrator.dangerous_set_table_name(format!("_sqlx_verification_{index}"));
-            let mut connection = wamn_postgres::connect(database_url).await?;
-            register_verification_principal(&mut connection).await?;
-            migrator.run_direct(None, &mut connection, false).await.context("migrate the verification database")?;
-        }
-        create_history_tables(&client, manifest).await
-    }
-    .await;
-    client.close().await;
-    result
-}
-
-/// Create the history table of each relation the package keeps a log of.
-async fn create_history_tables(client: &sqlx::PgPool, manifest: &ManifestSources) -> Result<()> {
-    let logged = manifest
+    let directories = base_directories
+        .iter()
+        .map(PathBuf::as_path)
+        .chain([package_root])
+        .collect::<Vec<_>>();
+    let history = manifest
         .models
         .values()
         .filter(|model| model.owner == manifest.package.id && model.log_retention().is_some())
-        .collect::<Vec<_>>();
-    sqlx::raw_sql(
-        AssertSqlSafe(format!(
-            "DO $application_role$ BEGIN \
-               IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = {literal}) THEN \
-                 CREATE ROLE {role} NOLOGIN; \
-               END IF; \
-             EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; \
-             END $application_role$",
-            literal = postgres_protocol::escape::escape_literal(wamn_role::APP_ROLE),
-            role = postgres_protocol::escape::escape_identifier(wamn_role::APP_ROLE),
-        ))
-        .into_sql_str(),
-    )
-    .execute(client)
-    .await
-    .context("create the application role")?;
-    sqlx::raw_sql(AssertSqlSafe((RECORD_HISTORY_SQL).to_owned()).into_sql_str())
-        .execute(client)
-        .await
-        .context("apply record-history.sql")?;
-    sqlx::raw_sql(AssertSqlSafe((RECORD_HISTORY_APP_GRANTS_SQL).to_owned()).into_sql_str())
-        .execute(client)
-        .await
-        .context("apply record-history-app-grants.sql")?;
-    for model in logged {
-        let exists: bool = sqlx::query_scalar(
-            "SELECT to_regclass(format('%I.%I', $1::text, $2::text)) IS NOT NULL",
-        )
-        .bind(model.schema.as_str())
-        .bind(model.table.as_str())
-        .fetch_one(client)
-        .await?;
-        if !exists {
-            continue;
-        }
-        sqlx::raw_sql(AssertSqlSafe(crate::history::history_table_sql(model)).into_sql_str())
-            .execute(client)
-            .await
-            .with_context(|| format!("create history table of {}.{}", model.schema, model.table))?;
-    }
-    Ok(())
-}
-
-fn database_name(database_url: &str) -> Result<String> {
-    Ok(wamn_postgres::identity(database_url)?.1)
-}
-
-/// A database that one build creates on the server and drops at its end.
-struct VerificationDatabase {
-    server_url: String,
-    name: String,
-    url: String,
-}
-
-impl VerificationDatabase {
-    async fn create(server_url: &str) -> Result<Self> {
-        static NEXT: AtomicU64 = AtomicU64::new(0);
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .context("read the clock")?
-            .as_nanos();
-        let name = format!(
-            "wamn_build_{}_{nanos}_{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        );
-        let url = wamn_postgres::database_configuration(server_url, &name)?;
-        execute_on_server(
-            server_url,
-            &format!(
-                "CREATE DATABASE {}",
-                postgres_protocol::escape::escape_identifier(&name)
-            ),
-        )
-        .await
-        .context("create the verification database")?;
-        Ok(Self {
-            server_url: server_url.to_owned(),
-            name,
-            url,
+        .map(|model| HistoryTable {
+            schema: model.schema.as_str(),
+            table: model.table.as_str(),
+            sql: crate::history::history_table_sql(model),
         })
-    }
-
-    async fn drop(self) -> Result<()> {
-        execute_on_server(
-            &self.server_url,
-            &format!(
-                "DROP DATABASE IF EXISTS {} WITH (FORCE)",
-                postgres_protocol::escape::escape_identifier(&self.name)
-            ),
-        )
+        .collect::<Vec<_>>();
+    database
+        .migrate(database_url, &schemas, &directories, &history)
         .await
-        .with_context(|| format!("drop the verification database {}", self.name))
-    }
-}
-
-async fn execute_on_server(server_url: &str, sql: &str) -> Result<()> {
-    let client = wamn_postgres::pool(server_url, 4)
-        .await
-        .context("connect to the PostgreSQL server")?;
-    let result = sqlx::raw_sql(AssertSqlSafe((sql).to_owned()).into_sql_str())
-        .execute(&client)
-        .await;
-    client.close().await;
-    result.map(|_| ()).with_context(|| format!("execute {sql}"))
 }
 
 /// Write the build output: every generated file, the canonical `wamn.json`,
@@ -1066,59 +880,6 @@ fn write_outputs(
         .into_iter()
         .map(|(path, bytes)| (path, bytes_sha256(bytes)))
         .collect())
-}
-
-#[cfg(test)]
-mod tests {
-    use serde_json::json;
-
-    use super::*;
-
-    #[tokio::test]
-    #[ignore = "requires: docker"]
-    async fn verification_migration_accepts_a_platform_file_reference() {
-        let server = wamn_test_infrastructure::containers::start_postgres()
-            .await
-            .unwrap();
-        let database = server.create_database("tests").await.unwrap();
-        let manifest = json!({
-            "package": {"id": "files_fixture", "version": "0.1.0"},
-            "required_platform_policy_contract": {"id": "files_fixture_data_access", "state": "satisfied"},
-            "connections": {},
-            "components": {},
-            "models": {"attachment": {
-                "schema": "files_fixture", "table": "attachment", "owner": "files_fixture",
-                "audit_log": {"columns": ["created_at"], "retention": "none"},
-                "operations": {}
-            }}
-        });
-        let manifest =
-            PackageManifest::from_slice(&serde_json::to_vec(&manifest).unwrap()).unwrap();
-        let root = std::env::temp_dir().join(format!("wamn-file-reference-{}", std::process::id()));
-        fs::create_dir_all(root.join("migrations")).unwrap();
-        fs::write(root.join("migrations/0001_initial.sql"),
-            "CREATE TABLE files_fixture.attachment (id uuid CONSTRAINT attachment_id_pkey PRIMARY KEY, file_id uuid CONSTRAINT attachment_file_id_fkey REFERENCES platform.file(id), created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP)").unwrap();
-        let result = migrate(
-            database.as_str(),
-            &root,
-            &ManifestSources::from_document(&serde_json::to_value(&manifest).unwrap()).unwrap(),
-            &[],
-            &default_output_root(&root),
-        )
-        .await;
-        fs::remove_dir_all(root).unwrap();
-        result.expect("the verification database permits a platform.file foreign key");
-        let client = wamn_postgres::pool(database.as_str(), 4).await.unwrap();
-        let error = sqlx::raw_sql(AssertSqlSafe(("INSERT INTO files_fixture.attachment(id, file_id) VALUES (gen_random_uuid(), gen_random_uuid())").to_owned()).into_sql_str()).execute(&client).await.unwrap_err();
-        assert_eq!(
-            error
-                .as_database_error()
-                .and_then(sqlx::error::DatabaseError::code)
-                .as_deref(),
-            Some("23503")
-        );
-        client.close().await;
-    }
 }
 
 /// Source metadata used before the database describes statement values.

@@ -9,7 +9,7 @@ use wamn_package::manifest::{
     CrudAction, resolve_operation_reference, validate_operation_vocabulary,
 };
 use wamn_scalar::SqlValueType;
-use wamn_schema_introspection::ir::{CatalogIr, Column, ColumnDefault, Constraint, Table};
+use wamn_schema::ir::{CatalogIr, Column, ColumnDefault, Constraint, Table};
 
 #[path = "support/generation.rs"]
 mod support;
@@ -1007,8 +1007,8 @@ fn typed_crud_contracts_follow_a_second_model_declaration() {
                         ty,
                         false,
                         None,
-                        Some(wamn_schema_introspection::ir::ColumnGeneration::Identity {
-                            mode: wamn_schema_introspection::ir::IdentityMode::Always,
+                        Some(wamn_schema::ir::ColumnGeneration::Identity {
+                            mode: wamn_schema::ir::IdentityMode::Always,
                         }),
                     )
                 } else {
@@ -1623,7 +1623,7 @@ fn a_logged_relation_needs_a_primary_key() {
 
 #[test]
 fn integer_keys_use_typed_data_and_server_generated_create_ids() {
-    use wamn_schema_introspection::ir::{ColumnGeneration, IdentityMode};
+    use wamn_schema::ir::{ColumnGeneration, IdentityMode};
 
     let base = catalog(false);
     let gadget = table(&base, "gadget");

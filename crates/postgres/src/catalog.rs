@@ -10,14 +10,15 @@ use sqlx::{
     AssertSqlSafe, Executor as _, PgPool as Client, Row as _, SqlSafeStr as _, Statement as _,
 };
 use wamn_record_history::is_history_table_name;
+use wamn_schema::ir::authored_object_name;
 
-use crate::ir::{
+use wamn_package::schema::ForeignKeyColumn;
+use wamn_schema::ir::{
     CatalogIr, Column, ColumnGeneration, Constraint, Exclusion, ExclusionAccessMethod,
     ExclusionElement, ExclusionKey, ForeignKeyAction, IdentityMode, Index, IndexColumn,
     IndexDirection, IrError, IrErrorType, Table, View, ViewBaseTable, ViewColumn, ViewColumnOrigin,
     postgres_default, postgres_type,
 };
-use wamn_package::schema::ForeignKeyColumn;
 
 /// Stable class of PostgreSQL catalog refusal.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -870,7 +871,7 @@ async fn catalog_arrays_preserve_values_at_any_lower_bound() {
         .await
         .unwrap();
     let database = server.create_database("tests").await.unwrap();
-    let pool = wamn_postgres::pool(database.as_str(), 4).await.unwrap();
+    let pool = crate::pool(database.as_str(), 4).await.unwrap();
     for lower in [i32::MIN, -7, 0, 1, 42, i32::MAX - 2] {
         let array = format!("[{lower}:{}]={{7,-3}}", lower + 1);
         let binary = sqlx::query(
@@ -1008,15 +1009,6 @@ fn names_for_attributes(
                 })
         })
         .collect()
-}
-
-/// Name an authored object from columns in table-definition order.
-pub fn authored_object_name(table: &str, columns: &[String], suffix: &str) -> String {
-    if columns.is_empty() {
-        format!("{table}_{suffix}")
-    } else {
-        format!("{table}_{}_{suffix}", columns.join("_"))
-    }
 }
 
 fn validate_authored_name(

@@ -1,6 +1,7 @@
 //! Command-line inputs and signals for watched product deployment.
 
 use std::path::PathBuf;
+use wamn_postgres::build_database::PostgresBuildDatabase;
 
 use anyhow::Context as _;
 use clap::Args;
@@ -79,6 +80,7 @@ pub async fn run(args: DevCommandArgs) -> anyhow::Result<()> {
                 source.replace_configuration_files(files)?;
             }
             let (application, digest) = wamn_dev::source_deploy::publish_development(
+                &PostgresBuildDatabase,
                 application,
                 sources,
                 args.describe.mode(false)?,

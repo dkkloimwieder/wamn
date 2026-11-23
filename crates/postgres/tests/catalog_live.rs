@@ -1,10 +1,10 @@
 //! Selected columns supply the generated action's transport types.
 
 use sqlx::{AssertSqlSafe, Row as _, SqlSafeStr as _};
-use wamn_scalar::SqlValueType;
-use wamn_schema_introspection::postgres::{
+use wamn_postgres::catalog::{
     PostgresIntrospectionErrorType, read_catalog, read_catalog_excluding_relations,
 };
+use wamn_scalar::SqlValueType;
 
 #[tokio::test]
 #[ignore = "requires: docker"]
@@ -177,7 +177,7 @@ async fn views_preserve_origins_expansion_dependencies_and_set_returning_functio
     for (view_column, source_column) in [(0, 0), (2, 0), (3, 1)] {
         assert_eq!(
             inner.columns()[view_column].origin(),
-            Some(&wamn_schema_introspection::ir::ViewColumnOrigin {
+            Some(&wamn_schema::ir::ViewColumnOrigin {
                 schema: item.schema().into(),
                 table: item.name().into(),
                 column: item.columns()[source_column].name().into(),
@@ -190,12 +190,12 @@ async fn views_preserve_origins_expansion_dependencies_and_set_returning_functio
         inner
             .base_tables()
             .iter()
-            .map(wamn_schema_introspection::ir::ViewBaseTable::name)
+            .map(wamn_schema::ir::ViewBaseTable::name)
             .collect::<std::collections::BTreeSet<_>>(),
         catalog
             .tables()
             .iter()
-            .map(wamn_schema_introspection::ir::Table::name)
+            .map(wamn_schema::ir::Table::name)
             .collect()
     );
     assert!(view("expanded").has_set_returning_functions());
@@ -208,7 +208,7 @@ async fn views_preserve_origins_expansion_dependencies_and_set_returning_functio
 #[tokio::test]
 #[ignore = "requires: docker"]
 async fn selected_relations_retain_outgoing_and_incoming_foreign_keys() {
-    use wamn_schema_introspection::ir::ConstraintType;
+    use wamn_schema::ir::ConstraintType;
     let server = wamn_test_infrastructure::containers::start_postgres()
         .await
         .unwrap();

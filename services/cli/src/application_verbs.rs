@@ -5,6 +5,7 @@ use clap::Args;
 use serde_json::json;
 use std::path::PathBuf;
 use wamn_environment::environment::{self, document::EnvironmentFile};
+use wamn_postgres::build_database::PostgresBuildDatabase;
 
 use crate::build_verbs::RefreshDescribeArgs;
 use crate::operation_verbs::ControlHost;
@@ -62,6 +63,7 @@ pub async fn deploy(args: DeployArgs) -> anyhow::Result<()> {
                 Some(&args.application),
             )?;
             let published = wamn_dev::source_deploy::publish_from_env(
+                &PostgresBuildDatabase,
                 &document,
                 &package,
                 args.describe.mode(false)?,

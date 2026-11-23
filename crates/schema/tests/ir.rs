@@ -1,6 +1,6 @@
 use wamn_package::schema::ForeignKeyColumn;
 use wamn_scalar::SqlValueType;
-use wamn_schema_introspection::ir::{
+use wamn_schema::ir::{
     CatalogIr, Column, ColumnDefault, ColumnGeneration, Constraint, Exclusion,
     ExclusionAccessMethod, ExclusionElement, ExclusionKey, ForeignKeyAction, IdentityMode, Index,
     IndexColumn, IndexDirection, IrErrorType, Table, postgres_default, postgres_type,

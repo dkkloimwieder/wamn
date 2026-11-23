@@ -1,7 +1,7 @@
 //! File references cross the platform boundary through the approved UUID key.
 
 use sqlx::Row as _;
-use wamn_schema_introspection::postgres::{PostgresIntrospectionErrorType, read_catalog};
+use wamn_postgres::catalog::{PostgresIntrospectionErrorType, read_catalog};
 
 #[tokio::test]
 #[ignore = "requires: docker"]

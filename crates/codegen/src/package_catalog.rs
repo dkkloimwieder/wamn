@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use wamn_schema_introspection::ir::{CatalogIr, ConstraintType, Table};
+use wamn_schema::ir::{CatalogIr, ConstraintType, Table};
 
 use wamn_component_policy::PackageManifest;
 
@@ -97,7 +97,7 @@ pub fn project_package_catalog(
             .collect::<Vec<_>>();
         let column_names = columns
             .iter()
-            .map(wamn_schema_introspection::ir::Column::name)
+            .map(wamn_schema::ir::Column::name)
             .collect::<BTreeSet<_>>();
         let constraints = table
             .constraints()

@@ -31,7 +31,7 @@ Each library has one concern. Directory names follow crate names without the `wa
 | Directory | Owner and responsibility |
 | --- | --- |
 | `crates/codegen` | `wamn-codegen`: authored model, document rules, SQL descriptions, and generated outputs |
-| `crates/schema-introspection` | `wamn-schema-introspection`: PostgreSQL catalog descriptions |
+| `crates/schema` | `wamn-schema`: normalized catalog records |
 | `crates/digest` | `wamn-digest`: canonical JSON and SHA-256 identities |
 | `crates/scalar` | `wamn-scalar`: scalar formats and SQL value types |
 | `crates/number-pattern` | `wamn-number-pattern`: document number pattern parsing |

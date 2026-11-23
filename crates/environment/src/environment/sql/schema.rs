@@ -193,7 +193,7 @@ pub async fn plan(
             wamn_component_policy::ComponentDescriptor,
         >(&candidate.directory)?;
         let id = metadata.coordinate.package_id();
-        let migrator = wamn_codegen::migrations::migrator(
+        let migrator = wamn_postgres::build_database::migrator(
             &wamn_publish::package_source::migration_root(&candidate.root.path),
         )
         .await?;

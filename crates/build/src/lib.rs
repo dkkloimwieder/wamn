@@ -6,7 +6,6 @@ mod guest_workspace;
 mod inputs;
 pub mod kcl;
 pub mod palette;
-use wamn_component_policy::PackageManifest;
 use anyhow::{Context as _, Result};
 pub use components::{GuestTarget, build_guest, component_path, guest_rustflags};
 pub use inputs::paths as build_inputs;
@@ -14,7 +13,9 @@ use std::path::Path;
 pub use wamn_codegen::build::{
     BuildRequest, DescribeMode, PreparedSource, default_output_root, package_output,
 };
+pub use wamn_codegen::database::BuildDatabase;
 use wamn_codegen::fingerprint::{self, Fingerprint};
+use wamn_component_policy::PackageManifest;
 use wamn_digest::Digest;
 
 /// Build a standalone component crate through the shared guest compiler.
@@ -66,13 +67,17 @@ pub async fn prepare_source(root: &Path) -> Result<PreparedSource> {
 }
 
 /// Build into the package workspace output.
-pub async fn build_package(request: &BuildRequest<'_>) -> Result<BuiltPackage> {
+pub async fn build_package(
+    database: &dyn BuildDatabase,
+    request: &BuildRequest<'_>,
+) -> Result<BuiltPackage> {
     let source = prepare_source(&request.package_root).await?;
-    build_prepared(request, &source, BuildMode::Published).await
+    build_prepared(database, request, &source, BuildMode::Published).await
 }
 
 /// Reuse the authored package already compiled during discovery.
 pub async fn build_prepared(
+    database: &dyn BuildDatabase,
     request: &BuildRequest<'_>,
     source: &PreparedSource,
     mode: BuildMode,
@@ -112,9 +117,14 @@ pub async fn build_prepared(
         None
     };
     let development = version.as_ref().map(|version| (version, &bases.pins));
-    let (mut manifest, mut outputs) =
-        wamn_codegen::build::generate_prepared(&request, source, &bases.manifests, development)
-            .await?;
+    let (mut manifest, mut outputs) = wamn_codegen::build::generate_prepared(
+        database,
+        &request,
+        source,
+        &bases.manifests,
+        development,
+    )
+    .await?;
     if matches!(request.describe, DescribeMode::Check(_)) {
         let manifest_digest = wamn_digest::bytes_sha256(&wamn_digest::canonical_json_bytes(
             &serde_json::to_value(&manifest)?,
@@ -136,8 +146,13 @@ pub async fn build_prepared(
         let version = development_version(&source.package().version, &expected)?;
         let cached = BuildRequest::new(source.root(), &request.output_root, DescribeMode::Cached);
         (manifest, outputs) = wamn_codegen::build::generate_prepared(
-            &cached, source, &bases.manifests, Some((&version, &bases.pins)),
-        ).await?;
+            database,
+            &cached,
+            source,
+            &bases.manifests,
+            Some((&version, &bases.pins)),
+        )
+        .await?;
     }
     outputs.extend(
         components::compile_components(source.root(), &output, &manifest, &bases.wasm, &rustflags)

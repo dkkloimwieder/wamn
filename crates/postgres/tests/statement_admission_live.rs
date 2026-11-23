@@ -17,7 +17,7 @@ async fn generated_crud_outcomes_hold_under_column_grants() -> anyhow::Result<()
 
     let mut client = wamn_postgres::connect(database.as_str()).await?;
     wamn_fixture_package::apply_migrations(&mut client).await?;
-    let catalog = wamn_schema_introspection::postgres::read_catalog(
+    let catalog = wamn_postgres::catalog::read_catalog(
         &wamn_postgres::pool(database.as_str(), 1).await?,
         &[wamn_fixture_package::SCHEMA],
     )

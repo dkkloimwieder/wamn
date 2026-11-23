@@ -21,6 +21,8 @@ const WORKFLOW_GRAPH_REFUSED: &[&str] = &[
     "wamn-codegen",
 ];
 
+const WITHOUT_POSTGRES: &[&str] = &["wamn-schema", "wamn-codegen", "wamn-build"];
+
 const WITHOUT_WASM_RUNTIME: &[&str] = &["wamn-application", "wamn-postgres", "wamn-cdc-reader"];
 
 const TEST_INFRASTRUCTURE: &str = "wamn-test-infrastructure";
@@ -64,6 +66,16 @@ fn check_workspace_boundaries(manifest: &Path) -> anyhow::Result<()> {
         )?;
     }
     let normal_or_build = |edge| matches!(edge, DependencyKind::Normal | DependencyKind::Build);
+    let without_postgres = members
+        .iter()
+        .filter(|package| WITHOUT_POSTGRES.contains(&package.name.as_str()))
+        .map(|package| &package.id);
+    check_paths(
+        &metadata,
+        without_postgres,
+        |name| matches!(name, "wamn-postgres" | "postgres-protocol"),
+        normal_or_build,
+    )?;
     let without_runtime = members
         .iter()
         .filter(|package| WITHOUT_WASM_RUNTIME.contains(&package.name.as_str()))

@@ -21,7 +21,7 @@ use std::path::Path;
 use serde::Serialize;
 use serde_json::{Value, json};
 use wamn_record_history::history_table_name;
-use wamn_schema_introspection::ir::{
+use wamn_schema::ir::{
     CatalogIr, Column, Constraint, ConstraintType, Exclusion, ForeignKeyAction, Table,
 };
 

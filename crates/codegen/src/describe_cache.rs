@@ -8,7 +8,7 @@ use anyhow::{Context as _, Result, ensure};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use wamn_digest::{Digest, bytes_sha256, canonical_json_bytes};
-use wamn_schema_introspection::ir::CatalogIr;
+use wamn_schema::ir::CatalogIr;
 
 use crate::describe::DescribedStatement;
 use crate::history::RelationColumn;

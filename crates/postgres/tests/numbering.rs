@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 use wamn_codegen::GeneratedPackage;
 use wamn_package::manifest::ManifestErrorType as GenerateErrorType;
 use wamn_scalar::SqlValueType;
-use wamn_schema_introspection::ir::{CatalogIr, Column, Constraint};
+use wamn_schema::ir::{CatalogIr, Column, Constraint};
 
 #[path = "support/generation.rs"]
 #[expect(
@@ -85,8 +85,8 @@ fn integer_key_catalog() -> CatalogIr {
                     SqlValueType::Int32,
                     false,
                     None,
-                    Some(wamn_schema_introspection::ir::ColumnGeneration::Identity {
-                        mode: wamn_schema_introspection::ir::IdentityMode::Always,
+                    Some(wamn_schema::ir::ColumnGeneration::Identity {
+                        mode: wamn_schema::ir::IdentityMode::Always,
                     }),
                 )
             } else {

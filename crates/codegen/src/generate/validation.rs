@@ -18,7 +18,7 @@ use wamn_package::manifest::{
 };
 use wamn_record_history::HISTORY_COLUMNS;
 use wamn_scalar::SqlValueType;
-use wamn_schema_introspection::ir::ViewColumn;
+use wamn_schema::ir::ViewColumn;
 
 pub(super) fn validate(
     input: &GenerationInput<'_>,
@@ -1466,9 +1466,7 @@ mod tests {
     use serde_json::json;
     use wamn_component_policy::PackageManifest;
     use wamn_scalar::SqlValueType;
-    use wamn_schema_introspection::ir::{
-        CatalogIr, Column, Table, View, ViewBaseTable, ViewColumn,
-    };
+    use wamn_schema::ir::{CatalogIr, Column, Table, View, ViewBaseTable, ViewColumn};
 
     #[test]
     fn authored_view_access_uses_only_selected_columns() {

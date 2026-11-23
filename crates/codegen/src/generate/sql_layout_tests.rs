@@ -61,7 +61,7 @@ fn guest_library() -> (PathBuf, BTreeSet<PathBuf>) {
 
 #[test]
 fn authored_sql_accessors_compile_in_both_output_layouts() {
-    use wamn_schema_introspection::ir::{CatalogIr, Column, ColumnDefault, Constraint, Table};
+    use wamn_schema::ir::{CatalogIr, Column, ColumnDefault, Constraint, Table};
     let catalog = CatalogIr::new(vec![Table::new(
         "warehouse",
         "location",

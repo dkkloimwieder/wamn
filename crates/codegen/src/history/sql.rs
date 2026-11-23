@@ -1,4 +1,5 @@
 use super::{NAME_BYTE_LIMIT, RelationColumn};
+use crate::sql_quote::{escape_identifier, escape_literal};
 use std::fmt::Write as _;
 
 /// The `CREATE OR REPLACE FUNCTION` text of the stamp function of one relation.
@@ -14,7 +15,7 @@ pub fn stamp_function_sql(name: &str, stamped: &[&str], others: &[&str]) -> Stri
             writeln!(
                 text,
                 "        NEW.{} := {};",
-                postgres_protocol::escape::escape_identifier(column),
+                escape_identifier(column),
                 source(column)
             )
             .expect("writing to a String cannot fail");
@@ -28,17 +29,9 @@ pub fn stamp_function_sql(name: &str, stamped: &[&str], others: &[&str]) -> Stri
     let moved = |column: &str| match column {
         "updated_at" => "transaction_timestamp()".to_owned(),
         "updated_by" => "actor".to_owned(),
-        _ => format!(
-            "OLD.{}",
-            postgres_protocol::escape::escape_identifier(column)
-        ),
+        _ => format!("OLD.{}", escape_identifier(column)),
     };
-    let kept = |column: &str| {
-        format!(
-            "OLD.{}",
-            postgres_protocol::escape::escape_identifier(column)
-        )
-    };
+    let kept = |column: &str| format!("OLD.{}", escape_identifier(column));
     let insert = assign(fresh);
     let changed_assign = assign(moved);
     let unchanged = assign(kept);
@@ -92,19 +85,13 @@ pub fn log_function_sql(name: &str, history: &str, columns: &[RelationColumn]) -
         let members = keys
             .iter()
             .map(|column| {
-                let value = format!(
-                    "{row}.{}",
-                    postgres_protocol::escape::escape_identifier(&column.name)
-                );
+                let value = format!("{row}.{}", escape_identifier(&column.name));
                 let value = if column.timestamptz {
                     format!("wamn_history.timestamptz_image({value})")
                 } else {
                     value
                 };
-                format!(
-                    "{}, {value}",
-                    postgres_protocol::escape::escape_literal(&column.name)
-                )
+                format!("{}, {value}", escape_literal(&column.name))
             })
             .collect::<Vec<_>>();
         format!("jsonb_build_object({})", members.join(", "))
@@ -114,15 +101,15 @@ pub fn log_function_sql(name: &str, history: &str, columns: &[RelationColumn]) -
     } else {
         keys.iter()
             .map(|column| {
-                let column = postgres_protocol::escape::escape_identifier(&column.name);
+                let column = escape_identifier(&column.name);
                 format!("to_jsonb(OLD.{column}) = to_jsonb(NEW.{column})")
             })
             .collect::<Vec<_>>()
             .join(" AND ")
     };
     let diff = all.iter().fold(String::new(), |mut text, column| {
-        let name = postgres_protocol::escape::escape_literal(column);
-        let column = postgres_protocol::escape::escape_identifier(column);
+        let name = escape_literal(column);
+        let column = escape_identifier(column);
         writeln!(
             text,
             "            IF NEW.{column}::text IS DISTINCT FROM OLD.{column}::text THEN
@@ -193,7 +180,7 @@ pub fn changed_test(columns: &[&str]) -> String {
     let tests = columns
         .iter()
         .map(|column| {
-            let column = postgres_protocol::escape::escape_identifier(column);
+            let column = escape_identifier(column);
             format!("NEW.{column}::text IS DISTINCT FROM OLD.{column}::text")
         })
         .collect::<Vec<_>>();

@@ -2,6 +2,7 @@
 
 use std::path::Path;
 use std::time::Duration;
+use wamn_postgres::build_database::PostgresBuildDatabase;
 
 use anyhow::{Context as _, bail, ensure};
 use serde_json::{Value, json};
@@ -121,8 +122,13 @@ pub(crate) async fn publish(
     document: &EnvironmentDocument,
     package: &Path,
 ) -> anyhow::Result<(wamn_registry::ApplicationName, wamn_digest::Digest)> {
-    wamn_dev::source_deploy::publish_from_env(document, package, wamn_build::DescribeMode::Cached)
-        .await
+    wamn_dev::source_deploy::publish_from_env(
+        &PostgresBuildDatabase,
+        document,
+        package,
+        wamn_build::DescribeMode::Cached,
+    )
+    .await
 }
 
 /// Parse the existing org/env/project CLI coordinate.

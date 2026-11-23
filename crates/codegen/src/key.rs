@@ -1,7 +1,7 @@
 //! Primary-key facts shared by generated SQL and contracts.
 
 use wamn_scalar::SqlValueType;
-use wamn_schema_introspection::ir::{ConstraintType, Table};
+use wamn_schema::ir::{ConstraintType, Table};
 
 use wamn_package::manifest::{
     ManifestError as GenerateError, ManifestErrorType as GenerateErrorType,

@@ -1,10 +1,10 @@
-use wamn_component_policy::PackageManifest;
 use serde_json::{Value, json};
 use wamn_codegen::{
     AuthoredSql, GeneratedPackage, GenerationInput, StatementTransactionality, generate,
 };
+use wamn_component_policy::PackageManifest;
 use wamn_scalar::SqlValueType;
-use wamn_schema_introspection::ir::{CatalogIr, Column, ColumnDefault, Constraint, Table};
+use wamn_schema::ir::{CatalogIr, Column, ColumnDefault, Constraint, Table};
 
 pub(super) const QUERY_SOURCES: [AuthoredSql<'static>; 6] = [
     AuthoredSql::new(

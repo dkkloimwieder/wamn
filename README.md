@@ -25,6 +25,7 @@ Start with the [documentation index](docs/README.md) or the [architecture overvi
 | [guests](guests/) | Platform components in the guest workspace |
 | [services](services/) | Deployable native processes, including the combined HTTP and queue host, and their service tests |
 | [crates](crates/) | Libraries with one directory per concern |
+| [crates/schema](crates/schema/) | Normalized catalog records |
 | [web](web/README.md) | Browser runtime, wfe packages, shared Vite tooling, and the sync read-shape bench |
 | [xtask](xtask/) | Repository commands, build orchestration, lint, benchmarks, and test selection |
 | [tests](tests/) | Cross-service journeys and test selection |

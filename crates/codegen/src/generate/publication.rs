@@ -1,7 +1,7 @@
 //! Inline publication schemas and OpenAPI from compiled operations.
 use super::{OperationDescription, insert_json_line};
-use crate::client_fields::{fields_of, input_fields_of};
 use crate::client_fields::FieldIr;
+use crate::client_fields::{fields_of, input_fields_of};
 use crate::openapi::{add_route, document, scalar};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
@@ -414,7 +414,7 @@ mod tests {
     use super::*;
     use crate::{GenerationInput, StatementTransactionality, generate};
     use wamn_scalar::SqlValueType;
-    use wamn_schema_introspection::ir::{CatalogIr, Column, ColumnDefault, Constraint, Table};
+    use wamn_schema::ir::{CatalogIr, Column, ColumnDefault, Constraint, Table};
 
     #[test]
     fn published_schemas_accept_outcomes_and_refuse_unbounded_reads() {

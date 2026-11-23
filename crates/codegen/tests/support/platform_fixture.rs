@@ -5,7 +5,7 @@ use serde_json::Value;
 use wamn_codegen::{
     AuthoredSql, GeneratedPackage, GenerationInput, StatementTransactionality, generate,
 };
-use wamn_schema_introspection::ir::{
+use wamn_schema::ir::{
     CatalogIr, Column, ColumnDefault, Constraint, ForeignKeyAction, Index, IndexColumn,
     IndexDirection, Table, View, ViewBaseTable, ViewColumn, ViewColumnOrigin,
 };
@@ -260,8 +260,8 @@ fn catalog_of(note_nullable: bool, maker_key: bool) -> CatalogIr {
                 SqlValueType::Int64,
                 false,
                 None,
-                Some(wamn_schema_introspection::ir::ColumnGeneration::Identity {
-                    mode: wamn_schema_introspection::ir::IdentityMode::Always,
+                Some(wamn_schema::ir::ColumnGeneration::Identity {
+                    mode: wamn_schema::ir::IdentityMode::Always,
                 }),
             ),
             Column::new("label", SqlValueType::Text, false, None, None),

@@ -5,14 +5,12 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 
 use anyhow::{Context as _, Result, ensure};
-use sqlx::{AssertSqlSafe, Row as _, SqlSafeStr as _};
-use wamn_schema_introspection::ir::CatalogIr;
-use wamn_schema_introspection::postgres::read_catalog_excluding_relations;
+use wamn_schema::ir::CatalogIr;
 
 use crate::authoring::package_manifest_path;
+use crate::database::BuildDatabase;
 use crate::{AuthoredSql, GeneratedPackage};
 use wamn_component_policy::PackageManifest;
-use wamn_package::manifest::CONTROL_OWNED_RELATION_TABLES;
 
 #[derive(Debug)]
 pub(crate) struct SourceFile {
@@ -21,27 +19,29 @@ pub(crate) struct SourceFile {
 }
 
 /// Introspect the package-owned schemas in one already-migrated PostgreSQL database.
-pub async fn introspect_package(database_url: &str, package_root: &Path) -> Result<CatalogIr> {
+pub async fn introspect_package(
+    database: &dyn BuildDatabase,
+    database_url: &str,
+    package_root: &Path,
+) -> Result<CatalogIr> {
     let (_, manifest) = load_manifest(package_root)?;
     let sources = load_authored_sql(&crate::output_root(package_root), &manifest)?;
     let authored = sources
         .iter()
         .map(|source| AuthoredSql::new(&source.path, &source.bytes))
         .collect::<Vec<_>>();
-    introspect_with_manifest(database_url, &manifest, &authored).await
+    introspect_with_manifest(database, database_url, &manifest, &authored).await
 }
 
 /// Introspect the schemas that `manifest` names, as [`introspect_package`] does.
 pub(crate) async fn introspect_with_manifest(
+    database: &dyn BuildDatabase,
     database_url: &str,
     manifest: &PackageManifest,
     authored_sql: &[AuthoredSql<'_>],
 ) -> Result<CatalogIr> {
     let schemas = application_schemas(manifest).context("resolve application schemas")?;
 
-    let client = wamn_postgres::pool(database_url, 4)
-        .await
-        .context("connect to the migrated database")?;
     let schema_names = schemas
         .iter()
         .map(wamn_package::canonical_name::CanonicalName::as_str)
@@ -64,30 +64,9 @@ pub(crate) async fn introspect_with_manifest(
         selected.extend(parsed.tables.into_iter().map(|(table, _)| table));
     }
     let selected = selected.into_iter().collect::<Vec<_>>();
-    let unselected = sqlx::query(AssertSqlSafe("SELECT n.nspname::text, c.relname::text FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = ANY($1::text[]) AND c.relname <> ALL($2::text[]) AND c.relkind IN ('r', 'v')".to_owned()).into_sql_str())
-        .bind(&schema_names).bind(selected).fetch_all(&client).await.context("select the package's catalog relations")?;
-    let unselected = unselected
-        .iter()
-        .map(|row| (row.get::<String, _>(0), row.get::<String, _>(1)))
-        .collect::<Vec<_>>();
-    let excluded_relations = schema_names
-        .iter()
-        .flat_map(|schema| {
-            CONTROL_OWNED_RELATION_TABLES
-                .iter()
-                .map(move |table| (*schema, *table))
-        })
-        .chain(
-            unselected
-                .iter()
-                .map(|(schema, table)| (schema.as_str(), table.as_str())),
-        )
-        .collect::<Vec<_>>();
-    let result = read_catalog_excluding_relations(&client, &schema_names, &excluded_relations)
+    database
+        .read_catalog(database_url, &schema_names, &selected)
         .await
-        .context("introspect package schemas");
-    client.close().await;
-    result
 }
 
 /// Generate from compiled manifest bytes that the caller holds. `manifest` is

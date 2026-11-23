@@ -1,22 +1,23 @@
-//! Native SQLx resolution of authored and generated migration directories.
+//! Version checks for authored and generated migration directories.
 
 use anyhow::{Context as _, ensure};
-use sqlx::migrate::Migrator;
 use std::collections::BTreeSet;
 use std::path::Path;
+
+use crate::database::{BuildDatabase, Migration};
 
 pub(crate) const INPUT_VERSIONS_PREFIX: &str = "-- wamn-authored-migration-versions: ";
 
 /// Refuse insertions below the immutable generated checkpoint, including uncommitted history.
-pub(crate) async fn validate_history(root: &Path) -> anyhow::Result<()> {
+pub(crate) async fn validate_history(
+    database: &dyn BuildDatabase,
+    root: &Path,
+) -> anyhow::Result<()> {
     if !root.join("history").is_dir() {
         return Ok(());
     }
-    let history = Migrator::new(root.join("history")).await?;
-    let Some(latest) = history
-        .iter()
-        .rfind(|migration| migration.migration_type.is_up_migration())
-    else {
+    let history = database.migration_directory(&root.join("history")).await?;
+    let Some(latest) = history.iter().rfind(|migration| migration.up) else {
         return Ok(());
     };
     let inputs = latest
@@ -29,39 +30,17 @@ pub(crate) async fn validate_history(root: &Path) -> anyhow::Result<()> {
     let mut versions: BTreeSet<i64> =
         serde_json::from_str(inputs).context("history migration input versions")?;
     versions.extend(history.iter().map(|migration| migration.version));
-    validate_versions(&migrator(root).await?, &versions, root)
-}
-
-/// Resolve both directories through SQLx, including reversible files and ignored entries.
-pub async fn migrator(root: &Path) -> anyhow::Result<Migrator> {
-    let mut migrations = Vec::new();
-    for relative in ["migrations", "history"] {
-        let directory = root.join(relative);
-        if directory.is_dir() {
-            migrations.extend(Migrator::new(directory).await?.migrations.into_owned());
-        }
-    }
-    let mut migrator = Migrator::with_migrations(migrations);
-    let mut versions = BTreeSet::new();
-    for migration in migrator
-        .iter()
-        .filter(|migration| migration.migration_type.is_up_migration())
-    {
-        ensure!(
-            versions.insert(migration.version),
-            "duplicate migration version {} in {}",
-            migration.version,
-            root.display()
-        );
-    }
-    migrator.set_locking(false);
-    Ok(migrator)
+    validate_versions(&database.package_migrations(root).await?, &versions, root)
 }
 
 /// Refuse additions below the highest version in an immutable source snapshot.
-pub async fn validate_append(root: &Path, baseline: &Path) -> anyhow::Result<()> {
-    let current = migrator(root).await?;
-    let previous = migrator(baseline).await?;
+async fn validate_append(
+    database: &dyn BuildDatabase,
+    root: &Path,
+    baseline: &Path,
+) -> anyhow::Result<()> {
+    let current = database.package_migrations(root).await?;
+    let previous = database.package_migrations(baseline).await?;
     let versions = previous
         .iter()
         .map(|migration| migration.version)
@@ -70,12 +49,12 @@ pub async fn validate_append(root: &Path, baseline: &Path) -> anyhow::Result<()>
 }
 
 fn validate_versions(
-    current: &Migrator,
+    current: &[Migration],
     versions: &BTreeSet<i64>,
     root: &Path,
 ) -> anyhow::Result<()> {
     if let Some(highest) = versions.last() {
-        for migration in current.iter() {
+        for migration in current {
             ensure!(
                 versions.contains(&migration.version) || migration.version > *highest,
                 "new migration version {} in {} must exceed {highest}",
@@ -111,7 +90,11 @@ pub fn committed_tree(source: &Path) -> anyhow::Result<Vec<u8>> {
 }
 
 /// Compare a frozen build input with the committed source, independent of build output.
-pub(crate) async fn validate_committed(source: &Path, current: &Path) -> anyhow::Result<()> {
+pub(crate) async fn validate_committed(
+    database: &dyn BuildDatabase,
+    source: &Path,
+    current: &Path,
+) -> anyhow::Result<()> {
     use std::process::Command;
     let baseline = tempfile::tempdir()?;
     for entry in committed_tree(source)?
@@ -143,5 +126,5 @@ pub(crate) async fn validate_committed(source: &Path, current: &Path) -> anyhow:
         std::fs::create_dir_all(destination.parent().context("committed migration parent")?)?;
         std::fs::write(destination, bytes.stdout)?;
     }
-    validate_append(current, baseline.path()).await
+    validate_append(database, current, baseline.path()).await
 }

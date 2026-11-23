@@ -127,7 +127,7 @@ mod tests {
     use crate::{GenerationInput, StatementTransactionality, generate};
     use wamn_component_policy::PackageManifest;
     use wamn_package::manifest::CustomOperationResultDeclaration;
-    use wamn_schema_introspection::ir::CatalogIr;
+    use wamn_schema::ir::CatalogIr;
 
     #[test]
     fn authored_signed_reads_reach_the_generated_result() {

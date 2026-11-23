@@ -968,6 +968,15 @@ fn nonempty_name(name: impl Into<Box<str>>, object: &'static str) -> Result<Box<
     Ok(name)
 }
 
+/// Name an authored object from columns in table-definition order.
+pub fn authored_object_name(table: &str, columns: &[String], suffix: &str) -> String {
+    if columns.is_empty() {
+        format!("{table}_{suffix}")
+    } else {
+        format!("{table}_{}_{suffix}", columns.join("_"))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

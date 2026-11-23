@@ -2,6 +2,8 @@
 
 mod sql;
 
+use crate::database::BuildDatabase;
+use crate::sql_quote::{escape_identifier, escape_literal};
 use anyhow::{Context as _, ensure};
 use sql::{generated_function_name, log_function_sql, stamp_function_sql};
 use std::collections::BTreeMap;
@@ -14,7 +16,7 @@ const NAME_BYTE_LIMIT: usize = 64;
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct RelationColumn {
+pub struct RelationColumn {
     pub name: String,
     pub primary_key: bool,
     pub timestamptz: bool,
@@ -38,7 +40,7 @@ fn quoted_name(name: &str) -> String {
     {
         name.to_owned()
     } else {
-        postgres_protocol::escape::escape_identifier(name)
+        escape_identifier(name)
     }
 }
 
@@ -83,11 +85,11 @@ fn history_triggers(
             "TRIGGER {STAMP_TRIGGER} BEFORE INSERT OR UPDATE ON {quoted} FOR EACH ROW EXECUTE FUNCTION wamn_history.{stamp_ident}()"))
     });
     let log = model.log_retention().map(|retention| {
-        let history = format!("{}.{}", postgres_protocol::escape::escape_identifier(model.schema.as_str()),
-            postgres_protocol::escape::escape_identifier(&history_table_name(model.table.as_str())));
+        let history = format!("{}.{}", escape_identifier(model.schema.as_str()),
+            escape_identifier(&history_table_name(model.table.as_str())));
         (log_function_sql(&log_ident, &history, columns), format!(
             "TRIGGER {LOG_TRIGGER} AFTER INSERT OR DELETE OR UPDATE ON {quoted} FOR EACH ROW EXECUTE FUNCTION wamn_history.{log_ident}({})",
-            postgres_protocol::escape::escape_literal(retention)))
+            escape_literal(retention)))
     });
     Ok([
         HistoryTrigger {
@@ -104,33 +106,22 @@ fn history_triggers(
 }
 
 /// The existing SQL helper remains the sole history-table definition.
-pub fn history_table_sql(model: &ModelDeclaration) -> String {
+pub(crate) fn history_table_sql(model: &ModelDeclaration) -> String {
     format!(
         "SELECT wamn_history.create_history_table({}, {}, false)",
-        postgres_protocol::escape::escape_literal(model.schema.as_str()),
-        postgres_protocol::escape::escape_literal(model.table.as_str())
+        escape_literal(model.schema.as_str()),
+        escape_literal(model.table.as_str())
     )
 }
 
-/// Each column of one relation in attribute order: its name, whether the
-/// primary key holds it, and whether its type is `timestamptz`.
-pub const SELECT_RELATION_COLUMNS_SQL: &str = "\
-SELECT a.attname::text, \
-       COALESCE(a.attnum = ANY (i.indkey), false), \
-       a.atttypid = 'pg_catalog.timestamptz'::pg_catalog.regtype \
-  FROM pg_catalog.pg_attribute AS a \
-  LEFT JOIN pg_catalog.pg_index AS i ON i.indrelid = a.attrelid AND i.indisprimary \
- WHERE a.attrelid = pg_catalog.to_regclass(pg_catalog.format('%I.%I', $1::text, $2::text)) \
-   AND a.attnum > 0 AND NOT a.attisdropped \
- ORDER BY a.attnum";
-
 /// Render a full history change. Disabled triggers are removed by this migration.
 pub(crate) async fn render(
+    database: &dyn BuildDatabase,
     root: &std::path::Path,
     manifest: &PackageManifest,
     columns: &BTreeMap<SourceName, Vec<RelationColumn>>,
 ) -> anyhow::Result<String> {
-    let mut statements = retired_triggers(root, manifest).await?;
+    let mut statements = retired_triggers(database, root, manifest).await?;
     for (id, model) in manifest
         .models
         .iter()
@@ -146,8 +137,8 @@ pub(crate) async fn render(
             statements.push(format!(
                 "DROP TRIGGER IF EXISTS {} ON {}.{}",
                 trigger.name,
-                postgres_protocol::escape::escape_identifier(model.schema.as_str()),
-                postgres_protocol::escape::escape_identifier(model.table.as_str())
+                escape_identifier(model.schema.as_str()),
+                escape_identifier(model.table.as_str())
             ));
             if let Some((function, definition)) = trigger.definition {
                 statements.push(function);
@@ -166,12 +157,14 @@ pub(crate) async fn render(
 /// Preserve generated migrations in the source tree; append each changed history recipe.
 /// The next build and published artifact carry every earlier migration unchanged.
 pub(crate) async fn migrations(
+    database: &dyn BuildDatabase,
     root: &std::path::Path,
     sql: &str,
 ) -> anyhow::Result<BTreeMap<std::path::PathBuf, Vec<u8>>> {
     let authored = root.join("migrations");
     let authored = if authored.is_dir() {
-        sqlx::migrate::Migrator::new(authored)
+        database
+            .migration_directory(&authored)
             .await?
             .iter()
             .map(|migration| migration.version)
@@ -186,7 +179,8 @@ pub(crate) async fn migrations(
         serde_json::to_string(&authored)?
     );
     let mut files = BTreeMap::new();
-    let highest = crate::migrations::migrator(root)
+    let highest = database
+        .package_migrations(root)
         .await?
         .iter()
         .map(|migration| migration.version)
@@ -198,8 +192,8 @@ pub(crate) async fn migrations(
         if !path.is_dir() {
             continue;
         }
-        let sources = sqlx::migrate::Migrator::new(path.as_path()).await?;
-        for migration in sources.iter() {
+        let sources = database.migration_directory(&path).await?;
+        for migration in &sources {
             if directory == "history" {
                 latest = Some(migration.sql.as_str().to_owned());
             }
@@ -240,6 +234,7 @@ pub(crate) async fn migrations(
 
 /// Remove triggers for declarations retired since an earlier immutable migration.
 async fn retired_triggers(
+    database: &dyn BuildDatabase,
     root: &std::path::Path,
     manifest: &PackageManifest,
 ) -> anyhow::Result<Vec<String>> {
@@ -247,9 +242,9 @@ async fn retired_triggers(
     if !directory.is_dir() {
         return Ok(Vec::new());
     }
-    let previous = sqlx::migrate::Migrator::new(directory).await?;
+    let previous = database.migration_directory(&directory).await?;
     let mut retired = std::collections::BTreeSet::new();
-    for migration in previous.iter() {
+    for migration in &previous {
         for raw in pg_query::parse(migration.sql.as_str())?.protobuf.stmts {
             let Some(pg_query::NodeEnum::CreateTrigStmt(trigger)) =
                 raw.stmt.and_then(|node| node.node)
@@ -285,18 +280,18 @@ async fn retired_triggers(
     for (schema, table, trigger, function) in retired {
         let relation = format!(
             "{}.{}",
-            postgres_protocol::escape::escape_identifier(&schema),
-            postgres_protocol::escape::escape_identifier(&table)
+            escape_identifier(&schema),
+            escape_identifier(&table)
         );
         let drop = format!(
             "DROP TRIGGER IF EXISTS {} ON {relation}",
-            postgres_protocol::escape::escape_identifier(&trigger)
+            escape_identifier(&trigger)
         );
         statements.push(format!("DO $history$ BEGIN IF to_regclass({}) IS NOT NULL THEN EXECUTE {}; END IF; END $history$",
-            postgres_protocol::escape::escape_literal(&relation), postgres_protocol::escape::escape_literal(&drop)));
+            escape_literal(&relation), escape_literal(&drop)));
         statements.push(format!(
             "DROP FUNCTION IF EXISTS wamn_history.{}()",
-            postgres_protocol::escape::escape_identifier(&function)
+            escape_identifier(&function)
         ));
     }
     Ok(statements)

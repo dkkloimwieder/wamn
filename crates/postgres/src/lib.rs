@@ -9,6 +9,9 @@ use anyhow::Context as _;
 use serde::{Deserialize, Serialize};
 use sqlx::postgres::{PgConnectOptions, PgSslMode};
 
+pub mod build_database;
+pub mod catalog;
+
 /// Root of the database credential mounts in deployed processes.
 pub const DATABASE_DIR: &str = "/etc/wamn/db";
 

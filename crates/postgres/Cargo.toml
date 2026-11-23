@@ -7,11 +7,17 @@ license.workspace = true
 
 [dependencies]
 wamn-application.workspace = true
+wamn-codegen.workspace = true
+wamn-component-policy.workspace = true
 wamn-digest.workspace = true
 wamn-event.workspace = true
 wamn-package.workspace = true
+wamn-record-history.workspace = true
 wamn-run-state.workspace = true
+wamn-schema.workspace = true
+async-trait.workspace = true
 chrono = { workspace = true, features = ["std"] }
+fallible-iterator = "0.2"
 tracing.workspace = true
 wamn-registry.workspace = true
 wamn-role.workspace = true
@@ -24,7 +30,8 @@ tokio = { workspace = true, features = ["fs", "macros", "rt", "sync", "time"] }
 anyhow.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
-sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls", "chrono", "uuid", "json", "bigdecimal"] }
+# SQLx exposes statement descriptions with the macros feature.
+sqlx = { workspace = true, features = ["macros", "migrate", "postgres", "runtime-tokio", "tls-rustls", "chrono", "uuid", "json", "bigdecimal"] }
 
 [lints]
 workspace = true
@@ -33,7 +40,11 @@ workspace = true
 name = "project_schema"
 
 [dev-dependencies]
-sqlx = { workspace = true, features = ["macros", "migrate"] }
+pg_query = "=6.2.1"
+syn = { workspace = true, features = ["full"] }
+tempfile.workspace = true
+wamn-fixture-package.workspace = true
+wamn-platform-install.workspace = true
 wamn-provision.workspace = true
 wamn-scalar.workspace = true
 wamn-test-infrastructure.workspace = true

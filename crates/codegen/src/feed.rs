@@ -7,7 +7,7 @@ use wamn_scalar::SqlValueType;
 use pg_query::NodeEnum;
 use pg_query::protobuf::{JoinType, Node, RangeVar, SelectStmt, SetOperation};
 use wamn_package::schema::ForeignKeyColumn;
-use wamn_schema_introspection::ir::{CatalogIr, ConstraintType, Table, View, ViewColumnOrigin};
+use wamn_schema::ir::{CatalogIr, ConstraintType, Table, View, ViewColumnOrigin};
 
 use crate::AuthoredSql;
 use wamn_component_policy::PackageManifest;
@@ -660,11 +660,8 @@ pub(crate) fn missing_indexes(
                 }
             });
             if !indexed {
-                let index = wamn_schema_introspection::postgres::authored_object_name(
-                    &from.table,
-                    &[field.to_owned()],
-                    "idx",
-                );
+                let index =
+                    wamn_schema::ir::authored_object_name(&from.table, &[field.to_owned()], "idx");
                 missing.insert(format!("{name} linking column {} on {}.{} has no index. Add to the package's migrations: CREATE INDEX {index} ON {}.{} ({field});", link.linking_column, from.schema, from.table, from.schema, from.table));
             }
         }
@@ -676,7 +673,7 @@ pub(crate) fn missing_indexes(
 mod tests {
     use super::*;
     use serde_json::json;
-    use wamn_schema_introspection::ir::{
+    use wamn_schema::ir::{
         Column, Constraint, ForeignKeyAction, Index, IndexColumn, IndexDirection, ViewBaseTable,
         ViewColumn,
     };
@@ -910,210 +907,6 @@ mod tests {
             let sql = output.file(path).expect("declared statement is emitted");
             pg_query::parse(std::str::from_utf8(sql.bytes()).unwrap()).unwrap();
         }
-    }
-
-    async fn install_feed(
-        pool: &sqlx::PgPool,
-        catalog: &CatalogIr,
-        tables: &str,
-    ) -> sqlx::pool::PoolConnection<sqlx::Postgres> {
-        let mut connection = pool.acquire().await.unwrap();
-        sqlx::raw_sql(include_str!("../../../deploy/sql/record-history.sql"))
-            .execute(&mut *connection)
-            .await
-            .unwrap();
-        sqlx::raw_sql("DROP SCHEMA IF EXISTS app CASCADE; CREATE SCHEMA app; SET search_path=app,public; INSERT INTO platform.login_principal(login,principal_id) VALUES(current_user,'7695180f-4b9a-581f-84ef-d7e9cdbd2b77') ON CONFLICT(login) DO UPDATE SET principal_id=EXCLUDED.principal_id").execute(&mut *connection).await.unwrap();
-        sqlx::raw_sql(sqlx::AssertSqlSafe(tables))
-            .execute(&mut *connection)
-            .await
-            .unwrap();
-        let definition = catalog
-            .views()
-            .first()
-            .map_or("SELECT id FROM app.line", |view| view.definition());
-        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
-            "CREATE VIEW app.screen AS {definition}"
-        )))
-        .execute(&mut *connection)
-        .await
-        .unwrap();
-        let mut manifest = manifest();
-        manifest
-            .models
-            .retain(|name, _| catalog.tables().iter().any(|table| table.name() == name));
-        let columns = catalog
-            .tables()
-            .iter()
-            .map(|table| {
-                (
-                    table.name().parse().unwrap(),
-                    table
-                        .columns()
-                        .iter()
-                        .map(|column| crate::history::RelationColumn {
-                            name: column.name().to_owned(),
-                            primary_key: column.name() == "id",
-                            timestamptz: false,
-                        })
-                        .collect(),
-                )
-            })
-            .collect();
-        let source = crate::history::render(
-            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/support"),
-            &manifest,
-            &columns,
-        )
-        .await
-        .unwrap();
-        sqlx::raw_sql(sqlx::AssertSqlSafe(source))
-            .execute(&mut *connection)
-            .await
-            .unwrap();
-        connection
-    }
-
-    #[tokio::test]
-    #[ignore = "requires: docker"]
-    async fn affected_keys_follow_each_link_and_both_images() {
-        use sqlx::Row as _;
-        let server = wamn_test_infrastructure::containers::start_postgres()
-            .await
-            .unwrap();
-        let database = server.create_database("tests").await.unwrap();
-        let pool = wamn_postgres::pool(database.as_str(), 4).await.unwrap();
-        let catalog = CatalogIr::new(vec![table("line", &[("order_id", "orders")]), table("orders", &[("item_id", "item")]), table("item", &[])]).with_views(vec![View::new("app", "screen", [("id", "line", "id"), ("order_id", "line", "order_id"), ("item_id", "orders", "item_id")].into_iter().map(|(name, table, field)| ViewColumn::new(name, SqlValueType::Uuid).with_origin(ViewColumnOrigin { schema: "app".into(), table: table.into(), column: field.into() })).collect(), ["line", "orders", "item"].into_iter().map(|name| ViewBaseTable::new("app", name)).collect()).with_definition("SELECT line.id, line.order_id, orders.item_id FROM app.line JOIN app.orders ON orders.id = line.order_id JOIN app.item ON item.id = orders.item_id".into(), false)]);
-        let source = derive_sql(&catalog, &manifest(), "SELECT id FROM screen").unwrap();
-        let sql = crate::sql::authored_changes(
-            &catalog,
-            &source,
-            "SELECT id FROM screen",
-            "id",
-            &["id".into()],
-            1,
-        );
-        let mut connection = install_feed(&pool, &catalog,
-            "CREATE TABLE app.line(id uuid PRIMARY KEY, order_id uuid); CREATE TABLE app.orders(id uuid PRIMARY KEY, item_id uuid); CREATE TABLE app.item(id uuid PRIMARY KEY)").await;
-        sqlx::raw_sql("INSERT INTO item VALUES ('00000000-0000-0000-0000-000000000010'); INSERT INTO orders VALUES ('00000000-0000-0000-0000-000000000020','00000000-0000-0000-0000-000000000010'); INSERT INTO line VALUES ('00000000-0000-0000-0000-000000000030','00000000-0000-0000-0000-000000000020')")
-            .execute(&mut *connection).await.unwrap();
-        let cursor: i64 = sqlx::query_scalar("SELECT pg_current_xact_id()::text::int8")
-            .fetch_one(&mut *connection)
-            .await
-            .unwrap();
-        sqlx::raw_sql("DELETE FROM item")
-            .execute(&mut *connection)
-            .await
-            .unwrap();
-        let rows = sqlx::query(sqlx::AssertSqlSafe(sql))
-            .bind(cursor)
-            .bind(None::<uuid::Uuid>)
-            .bind(100_i64)
-            .fetch_all(&mut *connection)
-            .await
-            .unwrap();
-        let changed: Vec<uuid::Uuid> = rows.iter().filter_map(|row| row.get("change_id")).collect();
-        assert_eq!(changed, [uuid::Uuid::from_u128(48)]);
-        drop(connection);
-
-        let catalog = CatalogIr::new(vec![table("line", &[]), table("orders", &[("line_id", "line")])]).with_views(vec![View::new("app", "screen", vec![ViewColumn::new("id", SqlValueType::Uuid).with_origin(ViewColumnOrigin { schema: "app".into(), table: "line".into(), column: "id".into() })], ["line", "orders"].into_iter().map(|name| ViewBaseTable::new("app", name)).collect()).with_definition("SELECT line.id FROM app.line LEFT JOIN app.orders ON orders.line_id = line.id GROUP BY line.id".into(), false)]);
-        let source = derive_sql(&catalog, &manifest(), "SELECT id FROM screen").unwrap();
-        let sql = crate::sql::authored_changes(
-            &catalog,
-            &source,
-            "SELECT id FROM screen",
-            "id",
-            &["id".into()],
-            1,
-        );
-        let mut connection = install_feed(&pool, &catalog,
-            "CREATE TABLE app.line(id uuid PRIMARY KEY); CREATE TABLE app.orders(id uuid PRIMARY KEY, line_id uuid)").await;
-        sqlx::raw_sql("INSERT INTO line VALUES ('00000000-0000-0000-0000-000000000001'),('00000000-0000-0000-0000-000000000002'); INSERT INTO orders VALUES ('00000000-0000-0000-0000-000000000010','00000000-0000-0000-0000-000000000001')")
-            .execute(&mut *connection).await.unwrap();
-        let cursor: i64 = sqlx::query_scalar("SELECT pg_current_xact_id()::text::int8")
-            .fetch_one(&mut *connection)
-            .await
-            .unwrap();
-        sqlx::raw_sql("UPDATE orders SET line_id='00000000-0000-0000-0000-000000000002'")
-            .execute(&mut *connection)
-            .await
-            .unwrap();
-        let rows = sqlx::query(sqlx::AssertSqlSafe(sql))
-            .bind(cursor)
-            .bind(None::<uuid::Uuid>)
-            .bind(100_i64)
-            .fetch_all(&mut *connection)
-            .await
-            .unwrap();
-        let changed: Vec<uuid::Uuid> = rows.iter().filter_map(|row| row.get("change_id")).collect();
-        assert_eq!(
-            changed,
-            [uuid::Uuid::from_u128(1), uuid::Uuid::from_u128(2)]
-        );
-        drop(connection);
-
-        let mut tables = catalog.tables().to_vec();
-        let root = tables
-            .iter_mut()
-            .find(|table| table.name() == "line")
-            .unwrap();
-        *root = Table::new(
-            "app",
-            "line",
-            vec![Column::new(
-                "id",
-                SqlValueType::Int32,
-                false,
-                None,
-                Some(wamn_schema_introspection::ir::ColumnGeneration::Identity {
-                    mode: wamn_schema_introspection::ir::IdentityMode::Always,
-                }),
-            )],
-            root.constraints().to_vec(),
-            Vec::new(),
-        );
-        let child = tables
-            .iter_mut()
-            .find(|table| table.name() == "orders")
-            .unwrap();
-        *child = Table::new(
-            "app",
-            "orders",
-            vec![
-                Column::new("id", SqlValueType::Uuid, false, None, None),
-                Column::new("line_id", SqlValueType::Int64, false, None, None),
-            ],
-            child.constraints().to_vec(),
-            Vec::new(),
-        );
-        let catalog = CatalogIr::new(tables);
-        let sql = crate::sql::authored_changes(
-            &catalog,
-            &source,
-            "SELECT id FROM screen",
-            "id",
-            &["id".into()],
-            1,
-        );
-        let mut connection = install_feed(&pool, &catalog,
-            "CREATE TABLE app.line(id int4 PRIMARY KEY); CREATE TABLE app.orders(id uuid PRIMARY KEY, line_id int8)").await;
-        sqlx::raw_sql("INSERT INTO line VALUES (1),(2); INSERT INTO orders VALUES ('00000000-0000-0000-0000-000000000010',1)").execute(&mut *connection).await.unwrap();
-        let cursor: i64 = sqlx::query_scalar("SELECT pg_current_xact_id()::text::int8")
-            .fetch_one(&mut *connection)
-            .await
-            .unwrap();
-        sqlx::raw_sql("UPDATE orders SET line_id=2")
-            .execute(&mut *connection)
-            .await
-            .unwrap();
-        let rows = sqlx::query(sqlx::AssertSqlSafe(sql))
-            .bind(cursor)
-            .bind(None::<i32>)
-            .bind(100_i64)
-            .fetch_all(&mut *connection)
-            .await
-            .unwrap();
-        let changed: Vec<i32> = rows.iter().filter_map(|row| row.get("change_id")).collect();
-        assert_eq!(changed, [1, 2]);
     }
 
     #[test]

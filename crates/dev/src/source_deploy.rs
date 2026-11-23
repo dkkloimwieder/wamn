@@ -1,42 +1,61 @@
 //! Build and publish one application's source before the shared deployment path.
 
-use wamn_package::PackageName;
-use wamn_package::manifest::BaseDependencyRequirement;
-use wamn_package::manifest::PackageIdentity;
-use wamn_component_policy::PackageManifest;
-use wamn_package::manifest::source_name::SourceName;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
-use wamn_build::{BuildMode, BuildRequest, DescribeMode, PreparedSource, build_prepared};
+use wamn_build::{
+    BuildDatabase, BuildMode, BuildRequest, DescribeMode, PreparedSource, build_prepared,
+};
 use wamn_codegen::{
     build::{default_output_root, package_output},
     fingerprint,
 };
+use wamn_component_policy::PackageManifest;
 use wamn_environment::environment::document::EnvironmentDocument;
+use wamn_package::PackageName;
+use wamn_package::manifest::BaseDependencyRequirement;
+use wamn_package::manifest::PackageIdentity;
+use wamn_package::manifest::source_name::SourceName;
 use wamn_publish::package_artifact::{PackageRegistry, PushPackageRequest, push_package};
 
 use anyhow::{Context as _, ensure};
 
 /// Build and publish source using its committed database evidence.
 pub async fn publish_from_env(
+    database: &dyn BuildDatabase,
     document: &EnvironmentDocument,
     root: &Path,
     describe: DescribeMode<'_>,
 ) -> anyhow::Result<(wamn_registry::ApplicationName, wamn_digest::Digest)> {
     let (application, sources) = sources(document, root).await?;
-    build_and_publish(application, sources, BuildMode::Published, describe).await
+    build_and_publish(
+        database,
+        application,
+        sources,
+        BuildMode::Published,
+        describe,
+    )
+    .await
 }
 
 /// Build and publish the source documents already compiled for this dev pass.
 pub async fn publish_development(
+    database: &dyn BuildDatabase,
     application: wamn_registry::ApplicationName,
     sources: Vec<PreparedSource>,
     describe: DescribeMode<'_>,
 ) -> anyhow::Result<(wamn_registry::ApplicationName, wamn_digest::Digest)> {
-    build_and_publish(application, sources, BuildMode::Development, describe).await
+    build_and_publish(
+        database,
+        application,
+        sources,
+        BuildMode::Development,
+        describe,
+    )
+    .await
 }
 
 async fn build_and_publish(
+    database: &dyn BuildDatabase,
     application: wamn_registry::ApplicationName,
     sources: Vec<PreparedSource>,
     mode: BuildMode,
@@ -46,7 +65,7 @@ async fn build_and_publish(
     for source in sources {
         let root = default_output_root(source.root());
         let request = BuildRequest::new(source.root(), &root, describe);
-        let built = build_prepared(&request, &source, mode).await?;
+        let built = build_prepared(database, &request, &source, mode).await?;
         roots.push(package_output(&root, &built.package.id));
     }
     let digest = publish_source_from_env(roots).await?;

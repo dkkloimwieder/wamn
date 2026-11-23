@@ -268,7 +268,7 @@ The linked assertions hold the exact vectors. Do not copy those vectors into ano
 Do not use these exceptions for diagnostic wording.
 
 - [Record history projection](../../crates/record-history/tests/fold.rs), `retained_columns_keep_their_raw_spelling_and_order` and `retained_timestamptz_columns_take_one_spelling_from_either_spelling`: retained JSON tokens keep their spelling and order.
-- [Catalog serialization](../../crates/schema-introspection/src/ir.rs), `catalog_without_views_keeps_canonical_bytes`: canonical persisted bytes define identity. [Durable JSON identity](../../crates/digest/src/lib.rs) keeps numeric spelling, signed zero and canonical key order.
+- [Catalog serialization](../../crates/schema/src/ir.rs), `catalog_without_views_keeps_canonical_bytes`: canonical persisted bytes define identity. [Durable JSON identity](../../crates/digest/src/lib.rs) keeps numeric spelling, signed zero and canonical key order.
 - [SHA-256 vectors](../../crates/digest/src/lib.rs) and [HMAC vectors](../../crates/http/src/authentication.rs): independent encoded vectors define the digest or the signature.
 - Frozen serialized variants, refusal codes, media types, SQLSTATEs, token prefixes and protocol identifiers remain literal comparisons. Their owners include [SQL values](../../crates/scalar/src/lib.rs) and [identity protocols](../../crates/identity-protocol/src).
 - [HTML escaping](../../services/control/src/control_route/oauth_callback.rs): `&lt;script&gt;&quot;&amp;&#39;` encodes the supplied attack text. The unescaped text stays absent.
@@ -397,10 +397,10 @@ It records parameter types, selected columns, relation access and transaction ne
 
 ### wamn build
 
-The live build tests in `wamn-codegen` have the marker `requires: docker`:
+The live build tests in `wamn-postgres` have the marker `requires: docker`:
 
 ```bash
-cargo test --locked --offline -p wamn-codegen --test build_live -- --ignored
+cargo test --locked --offline -p wamn-postgres --test build_live -- --ignored
 ```
 
 Each test copies the platform fixture into its own directory and builds it against its own server.
