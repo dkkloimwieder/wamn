@@ -138,6 +138,13 @@ pub async fn lint(root: &Path, mode: Mode) -> anyhow::Result<()> {
     if let Err(error) = step(&mut deny, mode).await {
         failures.push(format!("{error:#}"));
     }
+    if matches!(mode, Mode::Run) {
+        if let Err(error) = crate::machete::run(root).await {
+            failures.push(format!("{error:#}"));
+        }
+    } else {
+        println!("cargo xtask machete");
+    }
     ensure!(failures.is_empty(), "{}", failures.join("\n"));
     Ok(())
 }

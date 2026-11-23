@@ -61,6 +61,7 @@ cargo clippy --manifest-path apps/Cargo.toml --locked --workspace \
 
 `cargo xtask repo-lint run` runs this command and the other Clippy variants of both workspaces.
 It also runs formatting, dependency boundaries, cargo-deny and the policy checks in xtask.
+It runs `cargo xtask machete` to check both workspaces for unused dependencies.
 `cargo xtask repo-lint dry-run` prints each command and runs none.
 
 ## Select the tests for a change

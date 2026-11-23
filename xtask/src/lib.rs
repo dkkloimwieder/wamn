@@ -6,6 +6,7 @@ mod bench_data;
 mod helm_size;
 mod journey_cluster;
 mod kind;
+mod machete;
 mod measure_tx_identity;
 mod netsuite;
 mod platform;
@@ -121,6 +122,8 @@ enum Task {
     },
     /// Check dependency boundaries.
     RepoLintDependencies,
+    /// Check both workspaces for unused dependencies.
+    Machete,
     /// Compile each package without other members' features.
     CompilePackagesAlone { manifest: Option<PathBuf> },
     /// Run the HTTP component contract tests.
@@ -235,6 +238,7 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
         Task::RepoLint(args) => tasks::lint(&root, args.mode).await,
         Task::EnvironmentSchema { check } => repo_policy::environment_schema(&root, check),
         Task::RepoLintDependencies => tasks::dependencies(&root).await,
+        Task::Machete => machete::run(&root).await,
         Task::CompilePackagesAlone { manifest } => {
             tasks::packages(&root, manifest.as_deref()).await
         }
