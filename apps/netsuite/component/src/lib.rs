@@ -26,7 +26,13 @@ use wamn_integration::setting::write;
 struct Component;
 #[cfg(target_arch = "wasm32")]
 export!(Component);
-#[expect(dead_code, unused_imports, reason = "generated API subset")]
+#[cfg_attr(
+    not(target_arch = "wasm32"),
+    expect(
+        dead_code,
+        reason = "Wasm exports make the generated validators reachable"
+    )
+)]
 mod finish_operation {
     use super::finish as contract;
     include!(concat!(

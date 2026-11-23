@@ -44,10 +44,6 @@ pub async fn hold(
     reason = "generated data exposes row types for every declared operation"
 )]
 #[expect(
-    clippy::enum_variant_names,
-    reason = "generated refusal names match the closed wire vocabulary"
-)]
-#[expect(
     clippy::option_option,
     reason = "generated updates distinguish an omitted field from an explicit null"
 )]

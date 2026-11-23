@@ -31,7 +31,13 @@ use wamn_integration::{
 struct Component;
 #[cfg(target_arch = "wasm32")]
 export!(Component);
-#[expect(dead_code, unused_imports, reason = "generated API subset")]
+#[cfg_attr(
+    all(not(target_arch = "wasm32"), not(test)),
+    expect(
+        dead_code,
+        reason = "Wasm exports make the generated validators reachable"
+    )
+)]
 mod finish_operation {
     use super::finish as contract;
     include!(concat!(
@@ -39,7 +45,13 @@ mod finish_operation {
         "/../../target/wamn/rest_connector/wit/sync_finish_operation.rs"
     ));
 }
-#[expect(dead_code, unused_imports, reason = "generated API subset")]
+#[cfg_attr(
+    all(not(target_arch = "wasm32"), not(test)),
+    expect(
+        dead_code,
+        reason = "Wasm exports make the generated validators reachable"
+    )
+)]
 mod pushed_operation {
     use super::pushed as contract;
     include!(concat!(

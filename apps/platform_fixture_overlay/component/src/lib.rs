@@ -18,10 +18,6 @@ mod generated {
         dead_code,
         reason = "the generated refusal is the whole closed vocabulary, and a get constructs part of it"
     )]
-    #[expect(
-        clippy::enum_variant_names,
-        reason = "the generated refusal spells each variant as its contract literal, and here it is private"
-    )]
     mod data {
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
