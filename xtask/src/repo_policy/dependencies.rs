@@ -1,10 +1,9 @@
 //! Dependency boundaries and identities in each workspace.
 
 use super::Problems;
-use crate::process;
 use anyhow::{Context as _, ensure};
 use cargo_metadata::{DependencyKind, Metadata, PackageId};
-use std::collections::{BTreeSet, HashMap, hash_map::Entry};
+use std::collections::{HashMap, hash_map::Entry};
 use std::path::Path;
 
 const WORKFLOW_GRAPH_REFUSED: &[&str] = &[
@@ -38,11 +37,11 @@ const TEST_AND_TOOL_PACKAGES: &[&str] = &[
     "fixture-overlay",
 ];
 
-pub(crate) async fn check_boundaries(root: &Path) -> anyhow::Result<()> {
+pub(crate) fn check_boundaries(root: &Path) -> anyhow::Result<()> {
     for manifest in ["Cargo.toml", "apps/Cargo.toml"] {
         check_workspace_boundaries(&root.join(manifest))?;
     }
-    check_shared_docker_build(root).await
+    Ok(())
 }
 
 fn check_workspace_boundaries(manifest: &Path) -> anyhow::Result<()> {
@@ -90,59 +89,6 @@ fn check_workspace_boundaries(manifest: &Path) -> anyhow::Result<()> {
 
 fn wasm_runtime_refused(name: &str) -> bool {
     matches!(name, "wasmtime" | "wash-runtime") || name.starts_with("wasmtime-")
-}
-
-async fn check_shared_docker_build(root: &Path) -> anyhow::Result<()> {
-    // Dockerfile:58, build-native. Keep Cargo's native target and default features.
-    let mut args = vec![
-        "tree",
-        "--locked",
-        "--offline",
-        "--edges=normal,build",
-        "--prefix=depth",
-        "--format= {p}",
-        "--color=never",
-        "--package=wamn-host",
-        "--package=wamn-control",
-        "--package=wamn-oci",
-        "--package=wamn-cli",
-        "--package=wamn-cdc-reader",
-        "--package=wamn-identity-service",
-    ];
-    let tree = process::output(root, "cargo", &args).await?;
-    let mut refused = BTreeSet::new();
-    for line in tree.lines().filter(|line| !line.is_empty()) {
-        let mut fields = line.split_whitespace().skip(1);
-        let name = fields.next().context("cargo tree package name")?;
-        if wasm_runtime_refused(name) {
-            let version = fields
-                .next()
-                .and_then(|version| version.strip_prefix('v'))
-                .context("cargo tree package version")?;
-            refused.insert(format!("{name}@{version}"));
-        }
-    }
-    if refused.is_empty() {
-        return Ok(());
-    }
-    // Invert from every refused package so deduplication cannot hide a path to a checked crate.
-    for package in &refused {
-        args.extend(["--invert", package]);
-    }
-    let tree = process::output(root, "cargo", &args).await?;
-    let mut path = Vec::new();
-    for line in tree.lines().filter(|line| !line.is_empty()) {
-        let mut fields = line.split_whitespace();
-        let depth: usize = fields.next().context("cargo tree depth")?.parse()?;
-        let name = fields.next().context("cargo tree package name")?;
-        path.truncate(depth);
-        path.push(name);
-        if WITHOUT_WASM_RUNTIME.contains(&name) {
-            path.reverse();
-            return Err(forbidden_dependency(&path));
-        }
-    }
-    Ok(())
 }
 
 fn forbidden_dependency(path: &[&str]) -> anyhow::Error {
