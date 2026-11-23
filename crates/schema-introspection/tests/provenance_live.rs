@@ -28,14 +28,14 @@ async fn provenance_foreign_key_and_namespace_uniqueness_are_live_constraints() 
         "00000000-0000-4000-8000-000000000002",
     ] {
         sqlx::query(sqlx::AssertSqlSafe((insert).to_string()))
-            .bind(&source)
+            .bind(source)
             .execute(&mut client)
             .await
             .map(|result| result.rows_affected())
             .unwrap();
     }
     let duplicate = sqlx::query(sqlx::AssertSqlSafe((insert).to_string()))
-        .bind(&"00000000-0000-4000-8000-000000000001")
+        .bind("00000000-0000-4000-8000-000000000001")
         .execute(&mut client)
         .await
         .map(|result| result.rows_affected())
@@ -43,12 +43,12 @@ async fn provenance_foreign_key_and_namespace_uniqueness_are_live_constraints() 
     assert_eq!(
         duplicate
             .as_database_error()
-            .and_then(|error| error.code())
+            .and_then(sqlx::error::DatabaseError::code)
             .as_deref(),
         Some("23505")
     );
     let unknown = sqlx::query(sqlx::AssertSqlSafe((insert).to_string()))
-        .bind(&"00000000-0000-4000-8000-000000000003")
+        .bind("00000000-0000-4000-8000-000000000003")
         .execute(&mut client)
         .await
         .map(|result| result.rows_affected())
@@ -56,7 +56,7 @@ async fn provenance_foreign_key_and_namespace_uniqueness_are_live_constraints() 
     assert_eq!(
         unknown
             .as_database_error()
-            .and_then(|error| error.code())
+            .and_then(sqlx::error::DatabaseError::code)
             .as_deref(),
         Some("23503")
     );

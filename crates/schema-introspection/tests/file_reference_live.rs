@@ -80,7 +80,7 @@ async fn file_reference_is_introspected_and_other_platform_keys_are_refused() {
     assert_eq!(
         missing
             .as_database_error()
-            .and_then(|error| error.code())
+            .and_then(sqlx::error::DatabaseError::code)
             .as_deref(),
         Some("23503")
     );

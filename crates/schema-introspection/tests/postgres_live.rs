@@ -190,9 +190,13 @@ async fn views_preserve_origins_expansion_dependencies_and_set_returning_functio
         inner
             .base_tables()
             .iter()
-            .map(|table| table.name())
+            .map(wamn_schema_introspection::ir::ViewBaseTable::name)
             .collect::<std::collections::BTreeSet<_>>(),
-        catalog.tables().iter().map(|table| table.name()).collect()
+        catalog
+            .tables()
+            .iter()
+            .map(wamn_schema_introspection::ir::Table::name)
+            .collect()
     );
     assert!(view("expanded").has_set_returning_functions());
     assert!(!inner.has_set_returning_functions());
