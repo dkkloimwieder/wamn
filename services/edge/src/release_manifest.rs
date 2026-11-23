@@ -240,7 +240,7 @@ mod tests {
                         .unwrap();
             }),
             ("another component", |fact| {
-                fact.component = "other".parse().unwrap()
+                fact.component = "other".parse().unwrap();
             }),
             ("another operation", |fact| {
                 let operation = fact.operations["map"].clone();

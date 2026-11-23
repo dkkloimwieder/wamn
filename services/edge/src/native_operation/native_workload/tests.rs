@@ -119,7 +119,13 @@ async fn native_loader_allows_repeated_export_only_handlers() {
         .values()
         .map(|fact| fact.component.as_str())
         .collect();
-    assert_eq!(names, expected.iter().map(|name| name.as_str()).collect());
+    assert_eq!(
+        names,
+        expected
+            .iter()
+            .map(wamn_package::canonical_name::CanonicalName::as_str)
+            .collect()
+    );
     workload.unbind_all_plugins().await.expect("unbind");
 }
 
