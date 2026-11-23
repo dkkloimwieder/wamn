@@ -406,11 +406,6 @@ mod tests {
         }
     }
 
-    fn assert_unauthorized(rejection: &AuthRejection) {
-        assert_eq!(rejection.status, UNAUTHORIZED_STATUS);
-        assert_eq!(rejection.code, UNAUTHORIZED_CODE);
-    }
-
     #[test]
     fn originating_caller_holds_its_references_or_admin() {
         let caller = AuthenticatedCaller {
