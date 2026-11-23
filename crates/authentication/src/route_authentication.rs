@@ -357,7 +357,13 @@ impl ControlRouteAuthenticator {
             .verifier
             .verify(required_bearer_token(headers)?)
             .await
-            .map_err(|_| unauthorized())?;
+            .map_err(|error| {
+                if error.key_fetch_failed() {
+                    authentication_unavailable()
+                } else {
+                    unauthorized()
+                }
+            })?;
         let principal = token.subject().parse().map_err(|_| unauthorized())?;
         if !token.is_current() {
             return Err(unauthorized());

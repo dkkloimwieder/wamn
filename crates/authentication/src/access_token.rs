@@ -86,6 +86,12 @@ pub struct AccessTokenError {
     source: Option<Box<dyn std::error::Error + Send + Sync>>,
 }
 
+impl AccessTokenError {
+    pub(crate) fn key_fetch_failed(&self) -> bool {
+        matches!(self.stage, Stage::KeyFetch)
+    }
+}
+
 impl std::fmt::Display for AccessTokenError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:?}: {}", self.stage, self.context)
@@ -364,6 +370,9 @@ mod tests {
     use jsonwebtoken::{EncodingKey, Header, encode};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+    use wamn_engine::ingress::Header as RequestHeader;
+
+    use crate::route_authentication::ControlRouteAuthenticator;
 
     const ISSUER: &str = "https://identity.example";
     const AUDIENCE: &str = "urn:wamn:org:acme";
@@ -389,8 +398,7 @@ mod tests {
 
     /// A JWKS endpoint over TLS that serves the current key set.
     struct Issuer {
-        verifier: AccessTokenVerifier,
-        keys: Arc<std::sync::Mutex<Vec<serde_json::Value>>>,
+        keys: Arc<std::sync::Mutex<Option<Vec<serde_json::Value>>>>,
         fetches: Arc<AtomicUsize>,
         task: tokio::task::JoinHandle<()>,
         _directory: tempfile::TempDir,
@@ -402,7 +410,7 @@ mod tests {
         }
     }
 
-    async fn issuer(keys: Vec<serde_json::Value>) -> Issuer {
+    async fn issuer(keys: Option<Vec<serde_json::Value>>) -> (Issuer, AccessTokenVerifier) {
         use rcgen::{BasicConstraints, CertificateParams, IsCa, KeyUsagePurpose};
         let mut ca_params = CertificateParams::new(Vec::<String>::new()).unwrap();
         ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
@@ -444,11 +452,16 @@ mod tests {
                     request.extend_from_slice(&buffer[..read]);
                 }
                 counted.fetch_add(1, Ordering::SeqCst);
-                let body = serde_json::json!({"keys": *listed.lock().unwrap()}).to_string();
-                let response = format!(
-                    "HTTP/1.1 200 OK\r\nCache-Control: max-age=300\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                    body.len()
-                );
+                let response = match listed.lock().unwrap().as_ref() {
+                    Some(keys) => {
+                        let body = serde_json::json!({"keys": keys}).to_string();
+                        format!(
+                            "HTTP/1.1 200 OK\r\nCache-Control: max-age=300\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                            body.len()
+                        )
+                    }
+                    None => "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_owned(),
+                };
                 let _ = stream.write_all(response.as_bytes()).await;
                 let _ = stream.shutdown().await;
             }
@@ -464,13 +477,13 @@ mod tests {
             &ca_path,
         )
         .unwrap();
-        Issuer {
-            verifier,
+        let issuer = Issuer {
             keys,
             fetches,
             task,
             _directory: directory,
-        }
+        };
+        (issuer, verifier)
     }
 
     fn now() -> i64 {
@@ -502,21 +515,57 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn control_distinguishes_unavailable_keys_from_an_invalid_signature() {
+        let key = signing_key("current");
+        let mut claims = claims();
+        claims["sub"] = serde_json::json!("11111111-1111-4111-8111-111111111111");
+        let attachment = "control-http".parse().unwrap();
+        let bearer = |jwt| {
+            [RequestHeader {
+                name: "authorization".to_owned(),
+                value: format!("Bearer {jwt}"),
+            }]
+        };
+        let valid = bearer(token(&key, &header(key.kid), &claims));
+        let invalid = bearer(token(&signing_key("other"), &header(key.kid), &claims));
+
+        let (_unavailable, verifier) = issuer(None).await;
+        let rejected = ControlRouteAuthenticator::new(verifier)
+            .authenticate_control(&attachment, &valid)
+            .await
+            .unwrap_err();
+        assert_eq!(rejected.status, 503);
+        assert_eq!(rejected.code, "authentication-unavailable");
+
+        let (_available, verifier) = issuer(Some(vec![key.jwk])).await;
+        let authenticator = ControlRouteAuthenticator::new(verifier);
+        let rejected = authenticator
+            .authenticate_control(&attachment, &invalid)
+            .await
+            .unwrap_err();
+        assert_eq!(rejected.status, 401);
+        assert_eq!(rejected.code, "unauthorized");
+        authenticator
+            .authenticate_control(&attachment, &valid)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
     async fn only_tokens_of_the_access_token_profile_are_admitted() {
         let key = signing_key("current");
-        let issuer = issuer(vec![key.jwk.clone()]).await;
-        let verified = issuer
-            .verifier
+        let (_issuer, verifier) = issuer(Some(vec![key.jwk.clone()])).await;
+        let admitted = verifier
             .verify(&token(&key, &header(key.kid), &claims()))
             .await
             .unwrap();
-        assert_eq!((verified.issuer(), verified.subject()), (ISSUER, "subject"));
+        assert_eq!((admitted.issuer(), admitted.subject()), (ISSUER, "subject"));
         // 30 seconds of clock tolerance for exp and iat.
         for (claim, offset) in [("exp", -20), ("iat", 20)] {
             let mut tolerated = claims();
             tolerated[claim] = (now() + offset).into();
             let token = token(&key, &header(key.kid), &tolerated);
-            issuer.verifier.verify(&token).await.unwrap();
+            verifier.verify(&token).await.unwrap();
         }
 
         let mut refused = Vec::new();
@@ -556,27 +605,23 @@ mod tests {
         };
         refused.push(("signature", token(&forged, &header(key.kid), &claims())));
         for (case, token) in refused {
-            assert!(issuer.verifier.verify(&token).await.is_err(), "{case}");
+            assert!(verifier.verify(&token).await.is_err(), "{case}");
         }
     }
 
     #[tokio::test]
     async fn an_unknown_key_id_fetches_the_key_set_again() {
         let (current, next) = (signing_key("current"), signing_key("next"));
-        let issuer = issuer(vec![current.jwk.clone()]).await;
-        issuer
-            .verifier
+        let (issuer, verifier) = issuer(Some(vec![current.jwk.clone()])).await;
+        verifier
             .verify(&token(&current, &header(current.kid), &claims()))
             .await
             .unwrap();
-        issuer.keys.lock().unwrap().push(next.jwk.clone());
+        let next_token = token(&next, &header(next.kid), &claims());
+        issuer.keys.lock().unwrap().as_mut().unwrap().push(next.jwk);
         // The product spaces fetches by FETCH_INTERVAL on the system clock.
         tokio::time::sleep(FETCH_INTERVAL).await;
-        issuer
-            .verifier
-            .verify(&token(&next, &header(next.kid), &claims()))
-            .await
-            .unwrap();
+        verifier.verify(&next_token).await.unwrap();
         assert_eq!(issuer.fetches.load(Ordering::SeqCst), 2);
     }
 
