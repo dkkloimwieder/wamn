@@ -9,7 +9,7 @@ license.workspace = true
 anyhow.workspace = true
 schemars.workspace = true
 tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
-wamn-package = { workspace = true, features = ["sqlx"] }
+wamn-package.workspace = true
 wamn-identity-protocol.workspace = true
 wamn-digest.workspace = true
 hex.workspace = true

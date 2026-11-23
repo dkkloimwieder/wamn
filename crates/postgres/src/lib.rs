@@ -361,10 +361,12 @@ pub use transaction_identity::{bind_transaction_identity, transaction_identity_s
 
 mod checkout;
 mod host_project;
+mod package_catalog;
 mod pool;
 
 pub use checkout::CheckoutError;
 pub use host_project::HostProject;
+pub use package_catalog::installed_package_artifacts;
 pub use pool::{
     ClassCredentials, CredentialProvider, DEFAULT_PROJECT, Object, ProjectConfig, ProjectPool,
     ResolvedCredential, StaticCredentialProvider, WamnPostgres, WamnPostgresConfig,

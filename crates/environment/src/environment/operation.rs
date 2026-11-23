@@ -533,27 +533,6 @@ async fn apply_sql(
     Ok(())
 }
 
-async fn installed_packages(
-    connection: &mut sqlx::PgConnection,
-) -> anyhow::Result<Vec<(PackageName, Option<Digest>)>> {
-    use sqlx::Row as _;
-
-    sqlx::query("SELECT package_id, artifact_digest FROM catalog.packages")
-        .fetch_all(connection)
-        .await?
-        .into_iter()
-        .map(|row| {
-            let id = row.try_get(0)?;
-            let digest = row
-                .try_get::<Option<&str>, _>(1)?
-                .map(str::parse)
-                .transpose()
-                .with_context(|| format!("decode artifact digest for installed package {id}"))?;
-            Ok((id, digest))
-        })
-        .collect()
-}
-
 async fn publication_schemas(
     platform: &Platform,
     owner: &str,
@@ -569,7 +548,7 @@ async fn publication_schemas(
         })
         .collect::<BTreeSet<_>>();
     let mut project = wamn_postgres::connect(owner).await?;
-    let installed = installed_packages(&mut project).await?;
+    let installed = wamn_postgres::installed_package_artifacts(&mut project).await?;
     let base = platform
         .package_artifact_base
         .as_deref()
@@ -624,7 +603,7 @@ pub async fn reset(platform: &Platform, document: &EnvironmentDocument) -> anyho
                         "{}",
                         super::drain::describe(&unfinished)
                     );
-                    let installed = installed_packages(&mut client).await?;
+                    let installed = wamn_postgres::installed_package_artifacts(&mut client).await?;
                     drop(client);
                     let base = platform
                         .package_artifact_base

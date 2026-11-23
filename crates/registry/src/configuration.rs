@@ -170,7 +170,14 @@ pub async fn read(
     for row in rows {
         match row.try_get::<Option<i32>, _>("record_type")? {
             Some(1) => {
-                let package: Option<wamn_package::PackageName> = row.try_get("client_package")?;
+                let package = row
+                    .try_get::<Option<String>, _>("client_package")?
+                    .map(wamn_package::PackageName::try_from)
+                    .transpose()
+                    .map_err(|source| sqlx::Error::ColumnDecode {
+                        index: "\"client_package\"".into(),
+                        source: Box::new(source),
+                    })?;
                 let client = package
                     .map(|package| {
                         Ok::<_, sqlx::Error>(Client {
@@ -291,7 +298,12 @@ pub async fn write(
         .bind(&c.settings.project)
         .bind(name)
         .bind(&application.label)
-        .bind(application.client.as_ref().map(|client| &client.package))
+        .bind(
+            application
+                .client
+                .as_ref()
+                .map(|client| client.package.as_str()),
+        )
         .bind(application.client.as_ref().map(|client| client.web.to_string()))
         .execute(&mut *transaction).await?;
         for (alias, connection) in &application.connections {

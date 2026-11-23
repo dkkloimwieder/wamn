@@ -106,13 +106,16 @@ pub async fn database_state(
             .fetch_all(&mut client)
             .await?
     {
-        let id: wamn_package::PackageName = row.try_get(0)?;
+        let id = wamn_package::PackageName::try_from(row.try_get::<String, _>(0)?)
+            .context("decode package_id")?;
         packages.insert(
             id.clone(),
             AppliedPackage {
                 coordinate: wamn_package::PackageCoordinate::new(
                     id,
-                    row.try_get::<wamn_package::package_version::PackageVersion, _>(1)?,
+                    row.try_get::<String, _>(1)?
+                        .try_into()
+                        .context("decode package_version")?,
                 )?,
                 artifact_digest: row
                     .try_get::<Option<&str>, _>(2)?

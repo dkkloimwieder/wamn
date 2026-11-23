@@ -1,3 +1,4 @@
+use anyhow::Context as _;
 use sqlx::Row as _;
 use wamn_package::package_schema::AppliedPackage;
 
@@ -13,8 +14,8 @@ pub(super) async fn record_package_schema(
         WHERE ROW(catalog.packages.package_version, catalog.packages.artifact_digest) \
         IS DISTINCT FROM ROW(EXCLUDED.package_version, EXCLUDED.artifact_digest)",
     )
-    .bind(coordinate.package_id())
-    .bind(coordinate.package_version())
+    .bind(coordinate.package_id().as_str())
+    .bind(coordinate.package_version().as_str())
     .bind(artifact_digest.map(ToString::to_string))
     .execute(&mut **tx)
     .await?
@@ -55,7 +56,7 @@ async fn read_package(
     query: &str,
 ) -> anyhow::Result<Option<AppliedPackage>> {
     let Some(row) = sqlx::query(sqlx::AssertSqlSafe(query.to_owned()))
-        .bind(package_id)
+        .bind(package_id.as_str())
         .fetch_optional(tx)
         .await?
     else {
@@ -64,7 +65,9 @@ async fn read_package(
     Ok(Some(AppliedPackage {
         coordinate: wamn_package::PackageCoordinate::new(
             package_id.clone(),
-            row.try_get::<wamn_package::package_version::PackageVersion, _>(1)?,
+            row.try_get::<String, _>(1)?
+                .try_into()
+                .context("decode package_version")?,
         )?,
         artifact_digest: row
             .try_get::<Option<&str>, _>(0)?

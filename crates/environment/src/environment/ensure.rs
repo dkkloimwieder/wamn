@@ -295,6 +295,10 @@ pub async fn cdc_in_place(
     cdc_name: &str,
     schemas: &[wamn_package::canonical_name::CanonicalName],
 ) -> anyhow::Result<bool> {
+    let schemas: Vec<_> = schemas
+        .iter()
+        .map(wamn_package::canonical_name::CanonicalName::as_str)
+        .collect();
     Ok(sqlx::query("SELECT EXISTS (SELECT FROM pg_publication p WHERE p.pubname = $1 \
          AND NOT p.puballtables \
          AND coalesce((SELECT array_agg(n.nspname::text ORDER BY n.nspname) \

@@ -51,34 +51,6 @@ impl CanonicalName {
     }
 }
 
-impl sqlx::Type<sqlx::Postgres> for CanonicalName {
-    fn type_info() -> sqlx::postgres::PgTypeInfo {
-        <String as sqlx::Type<sqlx::Postgres>>::type_info()
-    }
-    fn compatible(ty: &sqlx::postgres::PgTypeInfo) -> bool {
-        <String as sqlx::Type<sqlx::Postgres>>::compatible(ty)
-    }
-}
-impl sqlx::postgres::PgHasArrayType for CanonicalName {
-    fn array_type_info() -> sqlx::postgres::PgTypeInfo {
-        <String as sqlx::postgres::PgHasArrayType>::array_type_info()
-    }
-}
-impl sqlx::Encode<'_, sqlx::Postgres> for CanonicalName {
-    fn encode_by_ref(
-        &self,
-        buf: &mut sqlx::postgres::PgArgumentBuffer,
-    ) -> Result<sqlx::encode::IsNull, sqlx::error::BoxDynError> {
-        <Box<str> as sqlx::Encode<sqlx::Postgres>>::encode_by_ref(&self.0, buf)
-    }
-}
-impl<'r> sqlx::Decode<'r, sqlx::Postgres> for CanonicalName {
-    fn decode(value: sqlx::postgres::PgValueRef<'r>) -> Result<Self, sqlx::error::BoxDynError> {
-        let value = <String as sqlx::Decode<sqlx::Postgres>>::decode(value)?;
-        Ok(Self::try_from(value)?)
-    }
-}
-
 impl std::borrow::Borrow<str> for CanonicalName {
     fn borrow(&self) -> &str {
         self.as_str()

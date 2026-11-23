@@ -7,7 +7,7 @@ license.workspace = true
 
 [dependencies]
 wamn-application.workspace = true
-wamn-package = { workspace = true, features = ["sqlx"] }
+wamn-package.workspace = true
 wamn-connection-type.workspace = true
 wamn-digest.workspace = true
 hyper = { workspace = true, features = ["client", "http1", "http2"] }

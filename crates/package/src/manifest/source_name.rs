@@ -56,34 +56,6 @@ impl SourceName {
     }
 }
 
-impl sqlx::Type<sqlx::Postgres> for SourceName {
-    fn type_info() -> sqlx::postgres::PgTypeInfo {
-        <String as sqlx::Type<sqlx::Postgres>>::type_info()
-    }
-    fn compatible(ty: &sqlx::postgres::PgTypeInfo) -> bool {
-        <String as sqlx::Type<sqlx::Postgres>>::compatible(ty)
-    }
-}
-impl sqlx::Encode<'_, sqlx::Postgres> for SourceName {
-    fn encode_by_ref(
-        &self,
-        buf: &mut sqlx::postgres::PgArgumentBuffer,
-    ) -> Result<sqlx::encode::IsNull, sqlx::error::BoxDynError> {
-        <Box<str> as sqlx::Encode<sqlx::Postgres>>::encode_by_ref(&self.0, buf)
-    }
-}
-impl<'r> sqlx::Decode<'r, sqlx::Postgres> for SourceName {
-    fn decode(value: sqlx::postgres::PgValueRef<'r>) -> Result<Self, sqlx::error::BoxDynError> {
-        let value = <String as sqlx::Decode<sqlx::Postgres>>::decode(value)?;
-        Ok(Self::try_from(value)?)
-    }
-}
-
-impl sqlx::postgres::PgHasArrayType for SourceName {
-    fn array_type_info() -> sqlx::postgres::PgTypeInfo {
-        <String as sqlx::postgres::PgHasArrayType>::array_type_info()
-    }
-}
 impl From<ParseSourceNameError> for crate::manifest::ManifestError {
     fn from(source: ParseSourceNameError) -> Self {
         Self::with_source(

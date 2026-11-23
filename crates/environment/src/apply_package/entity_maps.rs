@@ -57,8 +57,8 @@ pub(super) async fn reconcile_entity_maps(
             schema.quoted()
         );
         let Some(mapping) = sqlx::query(sqlx::AssertSqlSafe(mapping_sql.clone()))
-            .bind(&model.schema)
-            .bind(&model.table)
+            .bind(model.schema.as_str())
+            .bind(model.table.as_str())
             .fetch_optional(&mut **tx)
             .await
             .with_context(|| {
@@ -75,7 +75,11 @@ pub(super) async fn reconcile_entity_maps(
                 model.table
             );
         };
-        let mapped_package = mapping.try_get::<Option<wamn_package::PackageName>, _>(0)?;
+        let mapped_package = mapping
+            .try_get::<Option<String>, _>(0)?
+            .map(wamn_package::PackageName::try_from)
+            .transpose()
+            .context("decode mapped package_id")?;
         let mapped_entity = mapping.get::<Option<String>, _>(1);
         let mapped_table = mapping.get::<Option<String>, _>(2);
         ensure!(
@@ -104,9 +108,9 @@ pub(super) async fn reconcile_entity_maps(
         let mapped = sqlx::query(sqlx::AssertSqlSafe(
             wamn_provision::sql::upsert_entity_map_sql(model.schema.as_str()),
         ))
-        .bind(relation_owner)
-        .bind(&model.model_id)
-        .bind(&model.table)
+        .bind(relation_owner.as_str())
+        .bind(model.model_id.as_str())
+        .bind(model.table.as_str())
         .execute(&mut **tx)
         .await
         .map(|result| result.rows_affected())
@@ -135,8 +139,8 @@ pub(super) async fn reconcile_entity_maps(
             schema.quoted()
         );
         let Some(mapping) = sqlx::query(sqlx::AssertSqlSafe(mapping_sql.clone()))
-            .bind(&excluded.schema)
-            .bind(&excluded.table)
+            .bind(excluded.schema.as_str())
+            .bind(excluded.table.as_str())
             .fetch_optional(&mut **tx)
             .await
             .with_context(|| {
@@ -159,7 +163,11 @@ pub(super) async fn reconcile_entity_maps(
             excluded.schema,
             excluded.table
         );
-        let mapped_package = mapping.try_get::<Option<wamn_package::PackageName>, _>(0)?;
+        let mapped_package = mapping
+            .try_get::<Option<String>, _>(0)?
+            .map(wamn_package::PackageName::try_from)
+            .transpose()
+            .context("decode mapped package_id")?;
         let mapped_relation = mapping.get::<Option<String>, _>(1);
         let mapped_table = mapping.get::<Option<String>, _>(2);
         if let (Some(mapped_package), Some(mapped_relation)) =
@@ -183,9 +191,9 @@ pub(super) async fn reconcile_entity_maps(
         let mapped = sqlx::query(sqlx::AssertSqlSafe(
             wamn_provision::sql::upsert_cdc_exclusion_map_sql(excluded.schema.as_str()),
         ))
-        .bind(&manifest.package.id)
-        .bind(&excluded.relation_id)
-        .bind(&excluded.table)
+        .bind(manifest.package.id.as_str())
+        .bind(excluded.relation_id.as_str())
+        .bind(excluded.table.as_str())
         .execute(&mut **tx)
         .await
         .map(|result| result.rows_affected())

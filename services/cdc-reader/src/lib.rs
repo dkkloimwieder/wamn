@@ -249,12 +249,22 @@ async fn resolve_relation_classification(
     {
         Ok(row) => {
             let entity_package = row
-                .try_get::<Option<wamn_package::PackageName>, _>("entity_package_id")
-                .map_err(|error| ReplicationError::Config(error.to_string()))?;
+                .try_get::<Option<String>, _>("entity_package_id")
+                .map_err(|error| ReplicationError::Config(error.to_string()))?
+                .map(wamn_package::PackageName::try_from)
+                .transpose()
+                .map_err(|error| {
+                    ReplicationError::Config(format!("decode entity_package_id: {error}"))
+                })?;
             let entity_id = row.get::<Option<String>, _>("entity_id");
             let excluded_package = row
-                .try_get::<Option<wamn_package::PackageName>, _>("excluded_package_id")
-                .map_err(|error| ReplicationError::Config(error.to_string()))?;
+                .try_get::<Option<String>, _>("excluded_package_id")
+                .map_err(|error| ReplicationError::Config(error.to_string()))?
+                .map(wamn_package::PackageName::try_from)
+                .transpose()
+                .map_err(|error| {
+                    ReplicationError::Config(format!("decode excluded_package_id: {error}"))
+                })?;
             let excluded_relation = row.get::<Option<String>, _>("relation_id");
             match (
                 entity_package,

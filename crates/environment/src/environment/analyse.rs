@@ -213,9 +213,14 @@ pub async fn read_project(url: &str) -> anyhow::Result<Option<ProjectState>> {
         .context("read the installed packages")?
     {
         installed.insert(
-            row.try_get(0)?,
+            row.try_get::<String, _>(0)?
+                .try_into()
+                .context("decode package_id")?,
             Installed {
-                current: row.get(1),
+                current: row
+                    .try_get::<String, _>(1)?
+                    .try_into()
+                    .context("decode package_version")?,
             },
         );
     }

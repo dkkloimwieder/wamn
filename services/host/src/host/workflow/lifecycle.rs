@@ -227,8 +227,8 @@ async fn author(
             ops,
             condition,
         } => {
-            source_package = Some(package);
-            source_entity = Some(entity);
+            source_package = Some(package.as_str());
+            source_entity = Some(entity.as_str());
             source_ops = Some(ops.iter().map(|op| op.as_str()).collect::<Vec<_>>());
             source_condition = condition.as_deref();
             "data_change"
@@ -245,7 +245,7 @@ async fn author(
     )
     .bind(&app.environment)
     .bind(&app.application)
-    .bind(&graph.graph_id)
+    .bind(graph.graph_id.as_str())
     .bind(version)
     .bind(sqlx::types::Json(&graph))
     .bind(hash.to_string())
@@ -285,7 +285,7 @@ async fn check_path(
     .bind(&app.environment)
     .bind(&app.application)
     .bind(path)
-    .bind(id)
+    .bind(id.as_str())
     .fetch_one(connection)
     .await?;
     if taken {
@@ -311,7 +311,7 @@ async fn enable(
     )
     .bind(&app.environment)
     .bind(&app.application)
-    .bind(&version.workflow_id)
+    .bind(version.workflow_id.as_str())
     .bind(version.version)
     .fetch_optional(&mut *connection)
     .await?
@@ -343,7 +343,7 @@ async fn enable(
             )
             .bind(&app.environment)
             .bind(&app.application)
-            .bind(&version.workflow_id)
+            .bind(version.workflow_id.as_str())
             .fetch_one(connection)
             .await?;
             if previously_had_consumer {
@@ -375,7 +375,7 @@ async fn enable(
     )
     .bind(&app.environment)
     .bind(&app.application)
-    .bind(&version.workflow_id)
+    .bind(version.workflow_id.as_str())
     .fetch_optional(&mut *connection)
     .await?;
     sqlx::query(
@@ -384,7 +384,7 @@ async fn enable(
     )
     .bind(&app.environment)
     .bind(&app.application)
-    .bind(&version.workflow_id)
+    .bind(version.workflow_id.as_str())
     .bind(version.version)
     .bind(lsn)
     .execute(connection)
@@ -429,7 +429,7 @@ async fn disable(
     )
     .bind(&app.environment)
     .bind(&app.application)
-    .bind(&version.workflow_id)
+    .bind(version.workflow_id.as_str())
     .bind(version.version)
     .fetch_optional(&mut *connection)
     .await?
@@ -444,7 +444,7 @@ async fn disable(
     )
     .bind(&app.environment)
     .bind(&app.application)
-    .bind(&version.workflow_id)
+    .bind(version.workflow_id.as_str())
     .fetch_one(connection)
     .await?;
     if enabled {

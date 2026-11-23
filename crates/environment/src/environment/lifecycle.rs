@@ -393,7 +393,12 @@ async fn configure_project(
                 .bind(&triple.project)
                 .bind(&triple.env)
                 .bind(&publication)
-                .bind(schemas.as_slice())
+                .bind(
+                    schemas
+                        .iter()
+                        .map(wamn_package::canonical_name::CanonicalName::as_str)
+                        .collect::<Vec<_>>(),
+                )
                 .bind(slot)
                 .bind(stream)
                 .bind(&capture.credentials.name)

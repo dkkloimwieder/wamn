@@ -653,8 +653,8 @@ async fn ordered_columns(
         let mut columns = BTreeMap::new();
         for (id, model) in &manifest.models {
             let rows = sqlx::query(SELECT_RELATION_COLUMNS_SQL)
-                .bind(&model.schema)
-                .bind(&model.table)
+                .bind(model.schema.as_str())
+                .bind(model.table.as_str())
                 .fetch_all(&client)
                 .await?;
             columns.insert(
@@ -969,8 +969,8 @@ async fn create_history_tables(client: &sqlx::PgPool, manifest: &ManifestSources
         let exists: bool = sqlx::query_scalar(
             "SELECT to_regclass(format('%I.%I', $1::text, $2::text)) IS NOT NULL",
         )
-        .bind(&model.schema)
-        .bind(&model.table)
+        .bind(model.schema.as_str())
+        .bind(model.table.as_str())
         .fetch_one(client)
         .await?;
         if !exists {

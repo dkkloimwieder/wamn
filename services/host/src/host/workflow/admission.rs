@@ -31,11 +31,20 @@ pub(super) struct Definition {
     pub role: Option<String>,
 }
 
+fn workflow_id(row: &sqlx::postgres::PgRow) -> Result<CanonicalName, sqlx::Error> {
+    row.try_get::<String, _>("workflow_id")?
+        .try_into()
+        .map_err(|source| sqlx::Error::ColumnDecode {
+            index: "\"workflow_id\"".into(),
+            source: Box::new(source),
+        })
+}
+
 impl Definition {
     pub(super) fn from_row(row: &sqlx::postgres::PgRow) -> Result<Self, ProductionLeaseError> {
         let error = |error| ProductionLeaseError::storage("read workflow version", error);
         Ok(Self {
-            id: row.try_get("workflow_id").map_err(error)?,
+            id: workflow_id(row).map_err(error)?,
             version: row.try_get("version").map_err(error)?,
             graph: row.try_get("graph").map_err(error)?,
             hash: row
@@ -257,11 +266,13 @@ impl Workflow {
     ) -> Result<Vec<wit_run::DataChangeConsumer>, Refusal> {
         let app = &workload.application;
         let workflows = self.postgres.executor_read(&app.project, async |connection| {
-            Ok(sqlx::query_scalar::<_, CanonicalName>(
+            Ok(sqlx::query(
                 "SELECT workflow_id FROM catalog.workflows
                   WHERE environment = $1 AND application = $2 AND enabled AND trigger = 'data_change'
                   ORDER BY workflow_id"
-            ).bind(&app.environment).bind(&app.application).fetch_all(connection).await?)
+            ).bind(&app.environment).bind(&app.application)
+                .try_map(|row| workflow_id(&row))
+                .fetch_all(connection).await?)
         }).await.map_err(|error| {
             tracing::warn!(%error, "read enabled data-change consumers");
             Refusal::Unavailable
@@ -325,7 +336,7 @@ impl Workflow {
             .bind(&app.environment)
             .bind(&app.application)
             .bind(&message.workflow_id)
-            .bind(&envelope.package_id)
+            .bind(envelope.package_id.as_str())
             .bind(&envelope.entity)
             .bind(envelope.op.as_str())
             // The ID was checked against the envelope's complete source coordinate.
@@ -395,7 +406,7 @@ impl Workflow {
                 )
                 .bind(&app.environment)
                 .bind(&app.application)
-                .bind(&graph_id)
+                .bind(graph_id.as_str())
                 .bind(graph_version)
                 .bind(workflow.graph_hash.to_string())
                 .fetch_one(connection)

@@ -76,32 +76,6 @@ impl ClientPackageName {
     }
 }
 
-#[cfg(feature = "sqlx")]
-impl sqlx::Type<sqlx::Postgres> for ClientPackageName {
-    fn type_info() -> sqlx::postgres::PgTypeInfo {
-        <String as sqlx::Type<sqlx::Postgres>>::type_info()
-    }
-    fn compatible(ty: &sqlx::postgres::PgTypeInfo) -> bool {
-        <String as sqlx::Type<sqlx::Postgres>>::compatible(ty)
-    }
-}
-#[cfg(feature = "sqlx")]
-impl sqlx::Encode<'_, sqlx::Postgres> for ClientPackageName {
-    fn encode_by_ref(
-        &self,
-        buf: &mut sqlx::postgres::PgArgumentBuffer,
-    ) -> Result<sqlx::encode::IsNull, sqlx::error::BoxDynError> {
-        <Box<str> as sqlx::Encode<sqlx::Postgres>>::encode_by_ref(&self.0, buf)
-    }
-}
-#[cfg(feature = "sqlx")]
-impl<'r> sqlx::Decode<'r, sqlx::Postgres> for ClientPackageName {
-    fn decode(value: sqlx::postgres::PgValueRef<'r>) -> Result<Self, sqlx::error::BoxDynError> {
-        let value = <String as sqlx::Decode<sqlx::Postgres>>::decode(value)?;
-        Ok(Self::try_from(value)?)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::ClientPackageName;

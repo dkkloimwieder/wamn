@@ -65,7 +65,7 @@ pub(crate) async fn introspect_with_manifest(
     }
     let selected = selected.into_iter().collect::<Vec<_>>();
     let unselected = sqlx::query(AssertSqlSafe("SELECT n.nspname::text, c.relname::text FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = ANY($1::text[]) AND c.relname <> ALL($2::text[]) AND c.relkind IN ('r', 'v')".to_owned()).into_sql_str())
-        .bind(&schemas).bind(selected).fetch_all(&client).await.context("select the package's catalog relations")?;
+        .bind(&schema_names).bind(selected).fetch_all(&client).await.context("select the package's catalog relations")?;
     let unselected = unselected
         .iter()
         .map(|row| (row.get::<String, _>(0), row.get::<String, _>(1)))

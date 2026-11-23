@@ -40,11 +40,11 @@ pub async fn install(
             };
             written += sqlx::query("INSERT INTO catalog.connection_requirement (component_digest,package_id,name,interface,mode) \
                  VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING")
-                .bind(digest.as_str()).bind(&manifest.package.id).bind(name).bind(&declaration.interface).bind(mode)
+                .bind(digest.as_str()).bind(manifest.package.id.as_str()).bind(name.as_str()).bind(&declaration.interface).bind(mode)
                 .execute(&mut **tx).await?.rows_affected();
             let exact: bool = sqlx::query("SELECT EXISTS (SELECT FROM catalog.connection_requirement WHERE component_digest=$1 \
                  AND package_id=$2 AND name=$3 AND interface=$4 AND mode=$5)")
-                .bind(digest.as_str()).bind(&manifest.package.id).bind(name).bind(&declaration.interface).bind(mode)
+                .bind(digest.as_str()).bind(manifest.package.id.as_str()).bind(name.as_str()).bind(&declaration.interface).bind(mode)
                 .fetch_one(&mut **tx).await?.get(0);
             ensure!(
                 exact,
