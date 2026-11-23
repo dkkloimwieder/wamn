@@ -65,9 +65,14 @@ impl Error for ServiceError {
 pub async fn platform_domain(
     system: &mut sqlx::PgConnection,
 ) -> Result<PlatformDomain, ServiceError> {
-    sqlx::query_scalar::<_, Option<PlatformDomain>>(wamn_registry::sql::PLATFORM_DOMAIN_SQL)
+    sqlx::query_scalar::<_, Option<String>>(wamn_registry::sql::PLATFORM_DOMAIN_SQL)
         .fetch_one(system)
         .await
+        .and_then(|domain| {
+            domain
+                .map(|domain| wamn_postgres::decode_text(domain, 0))
+                .transpose()
+        })
         .map_err(|source| ServiceError::database("read the platform domain", source))?
         .ok_or_else(|| {
             ServiceError::refusal(

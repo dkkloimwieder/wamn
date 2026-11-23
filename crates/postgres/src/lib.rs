@@ -372,3 +372,9 @@ pub use pool::{
     ResolvedCredential, StaticCredentialProvider, WamnPostgres, WamnPostgresConfig,
     destroy_connection,
 };
+
+mod registry;
+pub use registry::{
+    ENVIRONMENT_LOCK_SQL, ENVIRONMENT_TRANSACTION_LOCK_SQL, LifecycleLock, REGISTRY_HISTORY_TABLE,
+    Registry, RegistryTransaction, decode_text,
+};

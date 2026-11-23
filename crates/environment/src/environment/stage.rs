@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 
 use anyhow::{Context as _, bail, ensure};
 use wamn_component_policy::PackageManifest;
-use wamn_registry::lifecycle_lock::LifecycleLock;
+use wamn_postgres::LifecycleLock;
 
 use super::Platform;
 use super::analyse::{self, Installed};
@@ -40,7 +40,7 @@ pub async fn materialize_application_principals(
     let mut project = super::analyse::connect_project(project_url).await?;
     let mut transaction = project.begin().await?;
     sqlx::query(wamn_identity::application::OPERATION_GRANT_LOCK_SQL)
-        .bind(project_env_key)
+        .bind(project_env_key.as_str())
         .fetch_one(&mut *transaction)
         .await?;
     wamn_provision::bind_platform_principal(&mut transaction, PlatformComponent::Provisioning)

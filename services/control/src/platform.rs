@@ -1,6 +1,7 @@
 //! Submit and run platform SQL, environment, and project operation Jobs.
 
-use wamn_registry::lifecycle_lock::LifecycleLock;
+use wamn_postgres::LifecycleLock;
+use wamn_registry::lifecycle_lock::LifecycleLocks as _;
 use anyhow::{Context as _, ensure};
 use serde::Deserialize;
 use serde_json::{Value, json};

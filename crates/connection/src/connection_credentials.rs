@@ -1,5 +1,6 @@
 //! Connection rows and credential references read only through the project platform login.
 
+use wamn_registry::connections::ConnectionStore as _;
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::{Arc, Mutex};
@@ -299,7 +300,8 @@ impl ConnectionCredentials {
     ) -> anyhow::Result<Option<crate::connection_memory::ConnectionFact>> {
         let database = self.project_database(project, environment)?;
         let mut local = database.read_connection(project).await?;
-        let row = wamn_registry::connections::fact(local.connection(), id)
+        let row = wamn_postgres::Registry::new(local.connection())
+            .fact(id)
             .await
             .context("read connection fact")?;
         local.commit().await?;
@@ -328,7 +330,8 @@ impl ConnectionCredentials {
     ) -> anyhow::Result<Option<ConnectionGeneration>> {
         let database = self.project_database(project, environment)?;
         let mut local = database.read_connection(project).await?;
-        let row = wamn_registry::connections::generation(local.connection(), id, generation)
+        let row = wamn_postgres::Registry::new(local.connection())
+            .generation(id, generation)
             .await
             .context("read connection generation")?;
         local.commit().await?;
@@ -352,10 +355,10 @@ impl ConnectionCredentials {
             .read((key.to_owned(), credential), rejected, async {
                 let database = self.project_database(project, environment)?;
                 let mut local = database.read_connection(project).await?;
-                let reference =
-                    wamn_registry::connections::credential(local.connection(), &credential)
-                        .await
-                        .context("read credential reference")?;
+                let reference = wamn_postgres::Registry::new(local.connection())
+                    .credential(&credential)
+                    .await
+                    .context("read credential reference")?;
                 local.commit().await?;
                 let reference = reference.context("credential unavailable")?;
                 let name = wamn_registry::credential_secret_name(self.org()?, project, environment);
@@ -377,7 +380,8 @@ impl ConnectionCredentials {
     ) -> anyhow::Result<std::collections::BTreeMap<String, uuid::Uuid>> {
         let database = self.project_database(project, environment)?;
         let mut local = database.read_connection(project).await?;
-        let rows = wamn_registry::connections::environment(local.connection())
+        let rows = wamn_postgres::Registry::new(local.connection())
+            .environment()
             .await
             .context("read environment connections")?;
         local.commit().await?;

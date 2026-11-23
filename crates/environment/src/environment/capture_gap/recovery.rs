@@ -1,7 +1,7 @@
 //! Repair lost replication slots and record operator resynchronization.
 //! Recovery keeps the reader stopped. Control restarts it after closing the gap.
 
-use wamn_registry::lifecycle_lock::LifecycleLock;
+use wamn_postgres::LifecycleLock;
 use super::plan::pg_lsn;
 use sqlx::PgConnection as Client;
 use sqlx::Row as _;
@@ -87,9 +87,9 @@ pub(super) async fn recover_capture_gap(
     let registration = sqlx::query(sqlx::AssertSqlSafe(
         (select_event_reader_origin_sql()).to_string(),
     ))
-    .bind(&triple.org)
-    .bind(&triple.project)
-    .bind(env)
+    .bind(triple.org.as_str())
+    .bind(triple.project.as_str())
+    .bind(env.as_str())
     .fetch_optional(&mut *system.client().await)
     .await
     .context("read the registry.event_readers row")?;
@@ -187,9 +187,9 @@ pub(super) async fn recover_capture_gap(
     let mut transaction = provisioning_transaction(&mut client).await?;
     let created_at: DateTime<Utc> =
         sqlx::query(sqlx::AssertSqlSafe((insert_capture_gap_sql()).to_string()))
-            .bind(&triple.org)
-            .bind(&triple.project)
-            .bind(env)
+            .bind(triple.org.as_str())
+            .bind(triple.project.as_str())
+            .bind(env.as_str())
             .bind(&slot)
             .bind(&start_lsn)
             .bind(start_at)
@@ -223,9 +223,9 @@ pub(super) async fn close_capture_gap(
     let newest = sqlx::query(sqlx::AssertSqlSafe(
         (lock_newest_capture_gap_sql()).to_string(),
     ))
-    .bind(&triple.org)
-    .bind(&triple.project)
-    .bind(env)
+    .bind(triple.org.as_str())
+    .bind(triple.project.as_str())
+    .bind(env.as_str())
     .fetch_optional(&mut *transaction)
     .await
     .context("read the newest registry.capture_gap row")?;
@@ -237,9 +237,9 @@ pub(super) async fn close_capture_gap(
     let resync_at = match newest.get::<Option<DateTime<Utc>>, _>(2) {
         Some(recorded) => recorded,
         None => sqlx::query(sqlx::AssertSqlSafe(close_capture_gap_sql().to_string()))
-            .bind(&triple.org)
-            .bind(&triple.project)
-            .bind(env)
+            .bind(triple.org.as_str())
+            .bind(triple.project.as_str())
+            .bind(env.as_str())
             .bind(created_at)
             .fetch_one(&mut *transaction)
             .await

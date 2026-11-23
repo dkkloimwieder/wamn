@@ -15,7 +15,7 @@ pub async fn observe(
     sources: &[Migration],
 ) -> anyhow::Result<crate::migrations::SchemaReport> {
     let table = match database {
-        MigrationDatabase::System => wamn_registry::migrations::HISTORY_TABLE,
+        MigrationDatabase::System => wamn_postgres::REGISTRY_HISTORY_TABLE,
         MigrationDatabase::Project => "platform._sqlx_migrations",
     };
     crate::migrations::observe(client, table, sources).await

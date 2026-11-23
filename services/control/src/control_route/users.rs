@@ -216,11 +216,10 @@ pub(crate) async fn first_owner(
     let org = &handlers.org;
     let mut writer = handlers.writer.lock().await?;
     let mut tx = wamn_platform_install::transaction::provisioning_transaction(&mut writer).await?;
-    let registered: bool =
-        sqlx::query_scalar("SELECT COALESCE(registry.login_org() = $1, false)")
-            .bind(org)
-            .fetch_one(&mut *tx)
-            .await?;
+    let registered: bool = sqlx::query_scalar("SELECT COALESCE(registry.login_org() = $1, false)")
+        .bind(org.as_str())
+        .fetch_one(&mut *tx)
+        .await?;
     if !registered {
         return Ok(StatusCode::FORBIDDEN);
     }
@@ -234,7 +233,7 @@ pub(crate) async fn first_owner(
            FROM identity.org_roles r LEFT JOIN identity.principals p ON p.id = r.principal_id
           WHERE r.org = $1 AND r.role = $2",
     )
-    .bind(org)
+    .bind(org.as_str())
     .bind(ORG_ADMIN_ROLE)
     .bind(email.trim().to_lowercase())
     .fetch_one(&mut *tx)

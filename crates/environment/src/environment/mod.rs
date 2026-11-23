@@ -114,9 +114,9 @@ pub async fn fill(
         sqlx::query_scalar::<_, uuid::Uuid>(
             "SELECT id FROM identity.principals WHERE identity.has_project_access(id,$1,$2,$3)",
         )
-        .bind(target.org)
-        .bind(target.env)
-        .bind(target.project)
+        .bind(target.org.as_str())
+        .bind(target.env.as_str())
+        .bind(target.project.as_str())
         .fetch_all(&mut *system)
         .await?,
     );

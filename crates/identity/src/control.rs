@@ -55,15 +55,19 @@ pub async fn control_projects_page(
 ) -> Result<Vec<wamn_registry::ProjectId>, IdentityError> {
     sqlx::query(CONTROL_PROJECTS_SQL)
         .bind(Uuid::from(*principal_id))
-        .bind(org)
+        .bind(org.as_str())
         .bind(PROJECT_ADMIN_ROLE)
-        .bind(after)
+        .bind(after.map(wamn_registry::ProjectId::as_str))
         .bind(limit)
         .fetch_all(&mut *client)
         .await
         .map_err(|error| database_error(&error))?
         .iter()
-        .map(|row| row.try_get(0).map_err(|error| database_error(&error)))
+        .map(|row| {
+            row.try_get::<String, _>(0)
+                .and_then(|value| wamn_postgres::decode_text(value, 0))
+                .map_err(|error| database_error(&error))
+        })
         .collect::<Result<_, _>>()
 }
 
@@ -75,7 +79,7 @@ pub async fn is_org_admin(
 ) -> Result<bool, IdentityError> {
     sqlx::query(ORG_ADMIN_SQL)
         .bind(Uuid::from(*principal_id))
-        .bind(org)
+        .bind(org.as_str())
         .bind(ORG_ADMIN_ROLE)
         .fetch_one(&mut *client)
         .await
@@ -94,8 +98,8 @@ pub async fn is_project_admin(
 ) -> Result<bool, IdentityError> {
     sqlx::query(PROJECT_ADMIN_SQL)
         .bind(Uuid::from(*principal_id))
-        .bind(org)
-        .bind(project)
+        .bind(org.as_str())
+        .bind(project.as_str())
         .bind(PROJECT_ADMIN_ROLE)
         .fetch_one(&mut *client)
         .await
@@ -129,7 +133,7 @@ pub async fn org_projects_page(
     limit: Option<i64>,
 ) -> Result<Vec<ProjectSummary>, IdentityError> {
     sqlx::query(ORG_PROJECTS_SQL)
-        .bind(org)
+        .bind(org.as_str())
         .bind(after)
         .bind(limit)
         .fetch_all(&mut *client)
@@ -138,7 +142,10 @@ pub async fn org_projects_page(
         .iter()
         .map(|row| {
             Ok(ProjectSummary {
-                name: row.try_get(0).map_err(|error| database_error(&error))?,
+                name: row
+                    .try_get::<String, _>(0)
+                    .and_then(|value| wamn_postgres::decode_text(value, 0))
+                    .map_err(|error| database_error(&error))?,
                 state: row.try_get(1).map_err(|error| database_error(&error))?,
             })
         })

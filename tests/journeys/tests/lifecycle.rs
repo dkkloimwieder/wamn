@@ -2,6 +2,7 @@
 
 mod common;
 
+use wamn_registry::deployment::DeploymentStore as _;
 use std::collections::BTreeMap;
 use std::net::{IpAddr, SocketAddr};
 use std::num::NonZeroU32;
@@ -26,7 +27,7 @@ use serde_json::Value;
 use tokio::sync::oneshot;
 use tokio::time::{Instant, timeout};
 use wamn_http_client::{HttpClient, Redirects};
-use wamn_registry::{deployment, name, resource_names};
+use wamn_registry::{name, resource_names};
 
 /// The CLI allows 16 minutes for a Job after submission, including the host drain.
 const COMMAND_DEADLINE: Duration = Duration::from_mins(17);
@@ -685,7 +686,8 @@ async fn require_present(api: &Api<DynamicObject>, name: &str) -> anyhow::Result
 async fn require_no_active_project(environment: &Environment) -> anyhow::Result<()> {
     let mut system = environment.org.cluster.observe_system().await?;
     let triple = &environment.triple;
-    let active = deployment::instance_suffix(&mut system.connection, triple)
+    let active = wamn_postgres::Registry::new(&mut system.connection)
+        .instance_suffix(triple)
         .await
         .with_context(|| format!("read registry deployment for {triple}"))?;
     ensure!(

@@ -1,4 +1,5 @@
 //! Stop capture for recovery and retry reader restart after resynchronization.
+use wamn_postgres::LifecycleLock;
 use wamn_kubernetes::client::resource;
 use super::Platform;
 use anyhow::{Context as _, ensure};
@@ -9,7 +10,6 @@ pub use recovery::{
 };
 use serde_json::json;
 use wamn_registry::Triple;
-use wamn_registry::lifecycle_lock::LifecycleLock;
 
 mod plan;
 mod recovery;
@@ -23,9 +23,9 @@ pub(super) async fn is_open(
         "SELECT EXISTS (SELECT FROM registry.capture_gap
          WHERE org = $1 AND project = $2 AND env = $3 AND resync_at IS NULL)",
     )
-    .bind(&triple.org)
-    .bind(&triple.project)
-    .bind(&triple.env)
+    .bind(triple.org.as_str())
+    .bind(triple.project.as_str())
+    .bind(triple.env.as_str())
     .fetch_one(client)
     .await?)
 }

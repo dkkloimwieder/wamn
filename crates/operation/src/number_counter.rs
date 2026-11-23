@@ -305,7 +305,7 @@ async fn set_counter(
     )
     .await?;
     let row = sqlx::query(statement.sql().clone())
-        .bind(&set.application)
+        .bind(set.application.as_str())
         .bind(&set.sequence)
         .fetch_optional(&mut *connection)
         .await?;

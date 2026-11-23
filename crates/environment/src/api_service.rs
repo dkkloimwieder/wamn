@@ -34,7 +34,7 @@ pub async fn create(
         "an API service requires an authored role"
     );
     sqlx::query(wamn_identity::application::OPERATION_GRANT_LOCK_SQL)
-        .bind(key)
+        .bind(key.as_str())
         .execute(&mut **transaction)
         .await?;
     let subject = format!("api.{}.{}.{}", request.org, request.project, request.name);

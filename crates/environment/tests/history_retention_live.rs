@@ -229,7 +229,7 @@ async fn wait_for_blocker(
                 "SELECT EXISTS (SELECT FROM pg_catalog.pg_stat_activity \
                       WHERE application_name = $1 AND $2 = ANY(pg_blocking_pids(pid)))",
             )
-            .bind(application)
+            .bind(application.as_str())
             .bind(blocker)
             .fetch_one(&mut *observer)
             .await

@@ -7,6 +7,7 @@
 //! the live set. It then tests the document
 //! against them and returns the plan, or the refusals.
 
+use wamn_postgres::LifecycleLock;
 use k8s_openapi::api::core::v1::Pod;
 use kube::{Api, api::ListParams};
 use sqlx::{Connection as _, Row as _};
@@ -24,7 +25,6 @@ use wamn_component_policy::PackageManifest;
 use wamn_package::PackageName;
 use wamn_postgres::connect;
 use wamn_registry::EnvironmentRow;
-use wamn_registry::lifecycle_lock::LifecycleLock;
 
 use super::Platform;
 use super::document::EnvironmentDocument;
@@ -172,15 +172,15 @@ pub(crate) async fn read_row(
 ) -> anyhow::Result<Option<EnvironmentRow>> {
     Ok(
         sqlx::query(wamn_registry::sql::CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_ANALYSE_READ_ROW)
-            .bind(&document.settings.org)
-            .bind(&document.settings.project)
-            .bind(&document.settings.env)
+            .bind(document.settings.org.as_str())
+            .bind(document.settings.project.as_str())
+            .bind(document.settings.env.as_str())
             .fetch_optional(&mut *system)
             .await
             .context("read the environment row")?
             .map(|row| {
                 Ok::<_, sqlx::Error>(EnvironmentRow {
-                    instance_suffix: row.try_get(0)?,
+                    instance_suffix: wamn_postgres::decode_text(row.try_get(0)?, 0)?,
                     disposable: row.try_get(1)?,
                 })
             })
@@ -255,11 +255,11 @@ pub(crate) async fn application_releases(
 ) -> anyhow::Result<BTreeMap<wamn_registry::ApplicationName, String>> {
     let mut client = system.client().await;
     let mut tx = crate::provision_project_env::provisioning_transaction(&mut client).await?;
-    let mut applications: BTreeSet<wamn_registry::ApplicationName> = sqlx::query_scalar::<_, wamn_registry::ApplicationName>(
+    let mut applications: BTreeSet<wamn_registry::ApplicationName> = sqlx::query_scalar::<_, String>(
         "SELECT application FROM registry.environment_applications WHERE org=$1 AND env=$2 AND project=$3",
     )
-    .bind(&triple.org).bind(&triple.env).bind(&triple.project)
-    .fetch_all(&mut *tx).await?.into_iter().collect();
+    .bind(triple.org.as_str()).bind(triple.env.as_str()).bind(triple.project.as_str())
+    .fetch_all(&mut *tx).await?.into_iter().map(|name| wamn_postgres::decode_text(name, 0)).collect::<Result<_, _>>()?;
     tx.commit().await?;
     drop(client);
     let coordinate = triple.to_string();

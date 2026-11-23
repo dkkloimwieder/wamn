@@ -349,7 +349,7 @@ impl ApplicationRoutes<'_> {
                 async |client| {
                     if lock {
                         sqlx::query(OPERATION_GRANT_LOCK_SQL)
-                            .bind(project_env_key)
+                            .bind(project_env_key.as_str())
                             .fetch_one(&mut *client)
                             .await?;
                     }

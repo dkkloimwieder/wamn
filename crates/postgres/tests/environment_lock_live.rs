@@ -11,8 +11,9 @@ use tokio::{
     task::JoinSet,
     time::timeout,
 };
+use wamn_postgres::LifecycleLock;
 use wamn_registry::Triple;
-use wamn_registry::lifecycle_lock::LifecycleLock;
+use wamn_registry::lifecycle_lock::LifecycleLocks as _;
 
 #[tokio::test]
 #[ignore = "requires: docker"]
@@ -136,7 +137,7 @@ async fn a_second_verb_refuses_until_the_holder_is_gone() {
                 "SELECT EXISTS (SELECT FROM pg_stat_activity \
                  WHERE application_name = 'lifecycle_wait' AND query = $1)",
             )
-            .bind(wamn_registry::sql::ENVIRONMENT_LOCK_SQL)
+            .bind(wamn_postgres::ENVIRONMENT_LOCK_SQL)
             .fetch_one(&mut observer)
             .await
             .unwrap()

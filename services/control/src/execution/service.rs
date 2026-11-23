@@ -33,15 +33,16 @@ impl Execution {
         let input = Value::Object(input);
         wamn_provision::validate_project_env(&self.org, &target.project, &target.env)?;
         let mut system = wamn_identity::transaction::read_pool(&self.control, caller).await?;
-        let instance: wamn_registry::instance_suffix::InstanceSuffix = sqlx::query_scalar(
+        let instance = sqlx::query_scalar::<_, String>(
             "SELECT instance_suffix FROM registry.environment_projects WHERE org=$1 AND project=$2 AND env=$3",
         )
-        .bind(&self.org)
-        .bind(&target.project)
-        .bind(&target.env)
+        .bind(self.org.as_str())
+        .bind(target.project.as_str())
+        .bind(target.env.as_str())
         .fetch_optional(&mut *system)
         .await?
         .context("the project deployment does not exist")?;
+        let instance = wamn_postgres::decode_text(instance, 0)?;
         let domain = if matches!(
             operation.as_str(),
             "api_service.create" | "service_principal.create"

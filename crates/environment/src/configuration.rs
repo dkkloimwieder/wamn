@@ -64,7 +64,7 @@ pub async fn write_configuration(
     for row in &configuration.number_sequences {
         written += sqlx::query(NUMBER_SEQUENCE_SQL)
             .bind(&row.id)
-            .bind(&row.application)
+            .bind(row.application.as_str())
             .bind(&row.name)
             .bind(&row.pattern)
             .execute(&mut *client)

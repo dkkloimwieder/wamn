@@ -36,7 +36,8 @@ use tokio::time::Instant;
 use wamn_http_client::HttpClient;
 use wamn_identity_protocol::PrincipalId;
 use wamn_package::local_operation::LocalOperation;
-use wamn_registry::{OrgId, Triple, deployment, name};
+use wamn_registry::deployment::DeploymentStore as _;
+use wamn_registry::{OrgId, Triple, name};
 use wamn_test_infrastructure::scratch::ScratchRoot;
 
 pub mod host;
@@ -456,7 +457,8 @@ fn postgres_clusters(client: &kube::Client, namespace: &str) -> Api<DynamicObjec
 /// Resolve the active project Cluster from the registry generation (C2, C3, C6).
 pub async fn active_project_cluster(cluster: &Cluster, triple: &Triple) -> anyhow::Result<String> {
     let mut system = cluster.observe_system().await?;
-    let instance = deployment::instance_suffix(&mut system.connection, triple)
+    let instance = wamn_postgres::Registry::new(&mut system.connection)
+        .instance_suffix(triple)
         .await
         .with_context(|| format!("read the active deployment for {triple}"))?
         .with_context(|| format!("{triple} has no active deployment"))?;

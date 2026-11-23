@@ -19,7 +19,8 @@ wamn-identity-protocol.workspace = true
 postgres-protocol.workspace = true
 wamn-principal.workspace = true
 url.workspace = true
-tokio = { workspace = true, features = ["fs", "sync"] }
+uuid.workspace = true
+tokio = { workspace = true, features = ["fs", "macros", "rt", "sync", "time"] }
 anyhow.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
@@ -36,4 +37,4 @@ sqlx = { workspace = true, features = ["macros", "migrate"] }
 wamn-provision.workspace = true
 wamn-scalar.workspace = true
 wamn-test-infrastructure.workspace = true
-tokio = { workspace = true, features = ["macros", "rt"] }
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt"] }

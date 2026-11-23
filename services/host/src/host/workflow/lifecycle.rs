@@ -13,8 +13,8 @@ use wamn_application::application_config::ApplicationConfig;
 use wamn_application::ingress::AuthenticatedCaller;
 use wamn_application::native_routes::DeliveryError;
 use wamn_identity_protocol::PrincipalId;
-use wamn_registry::sql::{ENVIRONMENT_LOCK_SQL, ENVIRONMENT_TRANSACTION_LOCK_SQL};
 use wamn_operation::OperationHost;
+use wamn_postgres::{ENVIRONMENT_LOCK_SQL, ENVIRONMENT_TRANSACTION_LOCK_SQL};
 
 use super::{
     RunAs, RunNow, Workflow, Workload, authoring,
@@ -123,8 +123,8 @@ async fn lock(
     statement: &'static str,
 ) -> Result<(), Refusal> {
     let held = sqlx::query_scalar(statement)
-        .bind(&app.org)
-        .bind(&app.environment)
+        .bind(app.org.as_str())
+        .bind(app.environment.as_str())
         .fetch_one(connection)
         .await?;
     if held {
@@ -243,8 +243,8 @@ async fn author(
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
          ON CONFLICT (environment, application, workflow_id, version) DO NOTHING",
     )
-    .bind(&app.environment)
-    .bind(&app.application)
+    .bind(app.environment.as_str())
+    .bind(app.application.as_str())
     .bind(graph.graph_id.as_str())
     .bind(version)
     .bind(sqlx::types::Json(&graph))
@@ -282,8 +282,8 @@ async fn check_path(
            WHERE environment = $1 AND application = $2 AND enabled
              AND path = $3 AND workflow_id <> $4)",
     )
-    .bind(&app.environment)
-    .bind(&app.application)
+    .bind(app.environment.as_str())
+    .bind(app.application.as_str())
     .bind(path)
     .bind(id.as_str())
     .fetch_one(connection)
@@ -309,8 +309,8 @@ async fn enable(
         "SELECT graph_json, graph_hash, execution_role, enabled FROM catalog.workflows
           WHERE environment = $1 AND application = $2 AND workflow_id = $3 AND version = $4",
     )
-    .bind(&app.environment)
-    .bind(&app.application)
+    .bind(app.environment.as_str())
+    .bind(app.application.as_str())
     .bind(version.workflow_id.as_str())
     .bind(version.version)
     .fetch_optional(&mut *connection)
@@ -341,8 +341,8 @@ async fn enable(
                   WHERE environment = $1 AND application = $2 AND workflow_id = $3
                     AND trigger = 'data_change' AND enable_lsn IS NOT NULL)",
             )
-            .bind(&app.environment)
-            .bind(&app.application)
+            .bind(app.environment.as_str())
+            .bind(app.application.as_str())
             .bind(version.workflow_id.as_str())
             .fetch_one(connection)
             .await?;
@@ -373,8 +373,8 @@ async fn enable(
           WHERE environment = $1 AND application = $2 AND workflow_id = $3 AND enabled
           RETURNING trigger",
     )
-    .bind(&app.environment)
-    .bind(&app.application)
+    .bind(app.environment.as_str())
+    .bind(app.application.as_str())
     .bind(version.workflow_id.as_str())
     .fetch_optional(&mut *connection)
     .await?;
@@ -382,8 +382,8 @@ async fn enable(
         "UPDATE catalog.workflows SET enabled = true, enable_lsn = $5::pg_lsn
           WHERE environment = $1 AND application = $2 AND workflow_id = $3 AND version = $4",
     )
-    .bind(&app.environment)
-    .bind(&app.application)
+    .bind(app.environment.as_str())
+    .bind(app.application.as_str())
     .bind(version.workflow_id.as_str())
     .bind(version.version)
     .bind(lsn)
@@ -427,8 +427,8 @@ async fn disable(
           WHERE environment = $1 AND application = $2 AND workflow_id = $3 AND version = $4
           RETURNING trigger",
     )
-    .bind(&app.environment)
-    .bind(&app.application)
+    .bind(app.environment.as_str())
+    .bind(app.application.as_str())
     .bind(version.workflow_id.as_str())
     .bind(version.version)
     .fetch_optional(&mut *connection)
@@ -442,8 +442,8 @@ async fn disable(
           WHERE environment = $1 AND application = $2 AND workflow_id = $3
             AND enabled AND trigger = 'data_change')",
     )
-    .bind(&app.environment)
-    .bind(&app.application)
+    .bind(app.environment.as_str())
+    .bind(app.application.as_str())
     .bind(version.workflow_id.as_str())
     .fetch_one(connection)
     .await?;
@@ -460,8 +460,8 @@ async fn list(connection: &mut PgConnection, app: &ApplicationConfig) -> Result<
         "SELECT to_jsonb(w) FROM catalog.workflows w WHERE environment = $1 AND application = $2
           ORDER BY workflow_id, version",
     )
-    .bind(&app.environment)
-    .bind(&app.application)
+    .bind(app.environment.as_str())
+    .bind(app.application.as_str())
     .fetch_all(connection)
     .await?;
     Ok(Value::Array(rows))
@@ -508,8 +508,8 @@ pub(in crate::host) async fn permissions(
         "SELECT workflow_id FROM catalog.workflows
           WHERE environment = $1 AND application = $2 AND enabled AND trigger = 'request'",
     )
-    .bind(&app.environment)
-    .bind(&app.application)
+    .bind(app.environment.as_str())
+    .bind(app.application.as_str())
     .fetch_all(connection)
     .await?;
     Ok(ids

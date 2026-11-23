@@ -208,7 +208,7 @@ async fn project_delete_removes_its_roles_and_memberships(
                         (SELECT count(*) FROM identity.project_env_memberships \
                          WHERE org = 'demo' AND project = $1)",
         )
-        .bind(project)
+        .bind(project.as_str())
         .fetch_one(&mut *client)
         .await
         .map(|row| (row.get::<i64, _>(0), row.get::<i64, _>(1)))

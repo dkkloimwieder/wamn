@@ -1,5 +1,6 @@
 //! Environment instance creation, registry reads, and control-store projection.
 
+use wamn_registry::deployment::DeploymentStore as _;
 use anyhow::Context as _;
 use ring::rand::SecureRandom as _;
 use wamn_registry::instance_suffix::InstanceSuffix;
@@ -61,7 +62,8 @@ pub async fn read_project_env_instance(
     )
     .await?;
     let result = async {
-        let stored = wamn_registry::deployment::instance_suffix(&mut transaction, triple)
+        let stored = wamn_postgres::Registry::new(&mut transaction)
+            .instance_suffix(triple)
             .await
             .context("read project deployment")?
             .with_context(|| format!("project-env {triple} is not recorded"))?;
@@ -87,16 +89,17 @@ pub(crate) async fn record_project_env(
     minted: &InstanceSuffix,
     disposable: Option<bool>,
 ) -> anyhow::Result<InstanceSuffix> {
-    wamn_registry::deployment::record_project(transaction, &triple.org, &triple.project)
+    wamn_postgres::Registry::new(transaction)
+        .record_project(&triple.org, &triple.project)
         .await
         .context("record project")?;
-    let target_id = wamn_registry::deployment::target_id(transaction, target)
+    let target_id = wamn_postgres::Registry::new(transaction)
+        .target_id(target)
         .await
         .context("read deployment target")?
         .with_context(|| format!("target {target:?} is not registered"))?;
-    wamn_registry::deployment::record(
-        transaction,
-        &wamn_registry::deployment::Registration {
+    wamn_postgres::Registry::new(transaction)
+        .record(&wamn_registry::deployment::Registration {
             triple,
             secret_name,
             secret_namespace,
@@ -116,7 +119,7 @@ pub async fn require_connected(
     client: &mut sqlx::PgConnection,
     triple: &Triple,
 ) -> anyhow::Result<()> {
-    let present = wamn_registry::deployment::exists(client, triple).await?;
+    let present = wamn_postgres::Registry::new(client).exists(triple).await?;
     anyhow::ensure!(present, "project environment is not recorded");
     Ok(())
 }

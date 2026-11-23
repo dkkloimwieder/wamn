@@ -1,5 +1,6 @@
 //! Server-authorized application Jobs and bounded Kubernetes observations.
 
+use wamn_registry::configuration::ConfigurationStore as _;
 use wamn_routes::HostAttachment;
 use anyhow::Context as _;
 use serde::{Deserialize, Serialize};
@@ -108,7 +109,8 @@ impl ControlRoutes<'_> {
             request.project.clone(),
         );
         if operation.is_some()
-            && wamn_registry::configuration::read(&mut transaction, &triple)
+            && wamn_postgres::Registry::new(&mut transaction)
+                .read(&triple)
                 .await?
                 .is_none()
         {

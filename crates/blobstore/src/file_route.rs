@@ -472,7 +472,7 @@ impl FileRoutes {
                 async |client| {
                     let row = sqlx::query(sqlx::AssertSqlSafe(sql.clone()))
                         .bind(id.to_string())
-                        .bind(application)
+                        .bind(application.as_str())
                         .fetch_optional(&mut *client)
                         .await?
                         .ok_or_else(|| refused(FileRefusal::NotFound, "file_id"))?;
@@ -506,7 +506,7 @@ impl FileRoutes {
         let size = i64::try_from(staged.size).map_err(|error| failed("size", error))?;
         self.postgres.administration_transaction(&self.project, &principal,
             &format!("wamn-control:file/put@{}", wamn_routes::host_route_version()).parse().expect("file operation"), async |client| {
-                sqlx::query("INSERT INTO platform.file (id, application, connection_id, name, media_type, size, sha256, blob_key, exposure) VALUES ($1::text::uuid,$2,$3::text::uuid,$4,$5,$6,$7,$8,'application')").bind(id.to_string()).bind(application).bind(&connection.id).bind(name).bind(media_type).bind(size).bind(staged.sha256.to_string()).bind(&staged.blob_key).execute(&mut *client).await.map(|result| result.rows_affected())?;
+                sqlx::query("INSERT INTO platform.file (id, application, connection_id, name, media_type, size, sha256, blob_key, exposure) VALUES ($1::text::uuid,$2,$3::text::uuid,$4,$5,$6,$7,$8,'application')").bind(id.to_string()).bind(application.as_str()).bind(&connection.id).bind(name).bind(media_type).bind(size).bind(staged.sha256.to_string()).bind(&staged.blob_key).execute(&mut *client).await.map(|result| result.rows_affected())?;
                 Ok::<_, FileError>(())
             }).await.map_err(|error| failed("catalog", error))??;
         // A committed row remains readable through staging if promotion fails.
@@ -593,7 +593,7 @@ impl FileRoutes {
                         "DELETE FROM platform.file WHERE id = $1::text::uuid AND application = $2",
                     )
                     .bind(request.file_id.to_string())
-                    .bind(&request.application)
+                    .bind(request.application.as_str())
                     .execute(&mut *client)
                     .await
                     .map(|result| result.rows_affected())?;
@@ -657,7 +657,7 @@ impl FileRoutes {
         .await?;
         let written = self.postgres.administration_transaction(&self.project, &principal,
             &format!("wamn-control:file/expose@{}", wamn_routes::host_route_version()).parse().expect("file operation"), async |client| {
-                let updated = sqlx::query("UPDATE platform.file SET exposure = $3, url = $4 WHERE id = $1::text::uuid AND application = $2 AND (exposure IS DISTINCT FROM $3 OR url IS DISTINCT FROM $4)").bind(request.file_id.to_string()).bind(&request.application).bind(request.exposure.literal()).bind(&url).execute(&mut *client).await.map(|result| result.rows_affected())?;
+                let updated = sqlx::query("UPDATE platform.file SET exposure = $3, url = $4 WHERE id = $1::text::uuid AND application = $2 AND (exposure IS DISTINCT FROM $3 OR url IS DISTINCT FROM $4)").bind(request.file_id.to_string()).bind(request.application.as_str()).bind(request.exposure.literal()).bind(&url).execute(&mut *client).await.map(|result| result.rows_affected())?;
                 Ok::<_, FileError>(updated)
             }).await.map_err(|error| failed("catalog", error))?;
         if let Err(error) = written {

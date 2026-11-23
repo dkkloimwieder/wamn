@@ -14,6 +14,9 @@ use serde_json::{Value, json};
 use sqlx::PgConnection;
 use url::Url;
 use wamn_platform_install::provision_org::OrgLogin;
+pub use wamn_platform_install::{
+    provision_system::install_control_store, transaction::provisioning_transaction,
+};
 use wamn_provision::WorkloadRoleFamily;
 use wamn_provision::migrations::MigrationDatabase;
 

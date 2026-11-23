@@ -2,12 +2,13 @@
 
 mod rollback;
 
+use wamn_registry::deployment::DeploymentStore as _;
 use wamn_registry::ApplicationName;
 use wamn_package::PackageName;
 use wamn_workflow_graph::WorkflowGraph;
 use wamn_application::application_config::APPLICATION_CONFIG;
 use wamn_application::application_config::ApplicationConfig;
-use wamn_registry::lifecycle_lock::LifecycleLock;
+use wamn_postgres::LifecycleLock;
 use std::{
     borrow::Cow,
     collections::{BTreeMap, BTreeSet},
@@ -433,7 +434,7 @@ async fn create_number_sequences(
             "INSERT INTO platform.number_sequence (application, name, pattern) \
              VALUES ($1, $2, $3) ON CONFLICT (application, name) DO NOTHING",
         )
-        .bind(&sequence.application)
+        .bind(sequence.application.as_str())
         .bind(&sequence.name)
         .bind(&sequence.pattern)
         .execute(&mut *transaction)
@@ -452,8 +453,8 @@ async fn check_workflows(
         "SELECT workflow_id, graph_json FROM catalog.workflows
          WHERE environment=$1 AND application=$2 AND enabled ORDER BY workflow_id",
     )
-    .bind(&app.environment)
-    .bind(&app.application)
+    .bind(app.environment.as_str())
+    .bind(app.application.as_str())
     .fetch_all(project)
     .await?;
     for (name, value) in graphs {
@@ -491,7 +492,8 @@ async fn apply_sql(
         .name
         .strip_suffix("-ca")
         .context("project cluster CA")?;
-    let instance = wamn_registry::deployment::instance_suffix(&mut *system.client().await, triple)
+    let instance = wamn_postgres::Registry::new(&mut *system.client().await)
+        .instance_suffix(triple)
         .await?
         .context("project deployment instance is absent")?;
     let publication =
@@ -581,7 +583,9 @@ pub async fn reset(platform: &Platform, document: &EnvironmentDocument) -> anyho
         &triple,
         async |system| {
             let mut client = system.client().await;
-            let disposable = wamn_registry::deployment::disposable(&mut client, &triple).await?;
+            let disposable = wamn_postgres::Registry::new(&mut client)
+                .disposable(&triple)
+                .await?;
             ensure!(disposable, "environment is not recorded as disposable");
             drop(client);
             let conn = wamn_platform_install::environment::connection(

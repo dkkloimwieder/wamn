@@ -3,8 +3,8 @@
 pub mod reset;
 pub mod schema;
 
+use wamn_postgres::LifecycleLock;
 use wamn_registry::Triple;
-use wamn_registry::lifecycle_lock::LifecycleLock;
 
 /// Apply or inspect substrate SQL under the caller's environment lock.
 pub async fn project_schema(

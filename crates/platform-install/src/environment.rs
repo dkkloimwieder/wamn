@@ -1,4 +1,5 @@
 //! Helm owns environment resources; credential writes and SQL remain explicit.
+use wamn_registry::deployment::DeploymentStore as _;
 use anyhow::Context as _;
 use serde_json::{Value, json};
 use std::path::Path;
@@ -235,7 +236,8 @@ pub async fn connection(
     registry: &mut sqlx::PgConnection,
     triple: &wamn_registry::Triple,
 ) -> anyhow::Result<wamn_postgres::ConnectionConfig> {
-    let instance = wamn_registry::deployment::instance_suffix(registry, triple)
+    let instance = wamn_postgres::Registry::new(registry)
+        .instance_suffix(triple)
         .await?
         .with_context(|| format!("project deployment {triple} is absent"))?;
     Ok(connection_for(triple, &instance))

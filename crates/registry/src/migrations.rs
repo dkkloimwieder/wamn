@@ -1,14 +1,14 @@
 //! Registry migration history access.
 
-/// SQLx's system history, owned by the registry schema.
-pub const HISTORY_TABLE: &str = "registry._sqlx_migrations";
+/// Registry migration history.
+pub trait MigrationHistory {
+    type Error;
 
-/// Read whether the system migration history exists.
-///
-/// # Errors
-/// Returns database errors.
-pub async fn history_exists(connection: &mut sqlx::PgConnection) -> Result<bool, sqlx::Error> {
-    sqlx::query_scalar("SELECT to_regclass('registry._sqlx_migrations') IS NOT NULL")
-        .fetch_one(connection)
-        .await
+    /// Read whether the system migration history exists.
+    ///
+    /// # Errors
+    /// Returns database errors.
+    fn history_exists(
+        &mut self,
+    ) -> impl std::future::Future<Output = Result<bool, Self::Error>> + Send;
 }

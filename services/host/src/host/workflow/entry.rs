@@ -59,7 +59,7 @@ impl Workflow {
                 "SELECT workflow_id, version, graph_json::text AS graph, graph_hash, execution_role
                    FROM catalog.workflows WHERE environment = $1 AND application = $2
                     AND enabled AND trigger = 'request' AND path = $3 FOR SHARE"
-            ).bind(&app.environment).bind(&app.application).bind(request.path)
+            ).bind(app.environment.as_str()).bind(app.application.as_str()).bind(request.path)
                 .fetch_optional(&mut *connection).await
                 .map_err(|error| postgres_error("load Request workflow", &error))?;
                 let Some(row) = row else {
@@ -203,7 +203,7 @@ impl Workflow {
                 "SELECT workflow_id, version, graph_json::text AS graph, graph_hash, execution_role
                    FROM catalog.workflows WHERE environment = $1 AND application = $2
                     AND enabled AND workflow_id = $3 FOR SHARE"
-            ).bind(&app.environment).bind(&app.application).bind(request.workflow_id)
+            ).bind(app.environment.as_str()).bind(app.application.as_str()).bind(request.workflow_id)
                 .fetch_optional(&mut *connection).await
                 .map_err(|error| postgres_error("load run-now workflow", &error))?;
                 let Some(row) = row else {

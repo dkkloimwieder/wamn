@@ -4,6 +4,7 @@ mod file;
 pub(super) mod plan;
 
 pub use file::{EnvironmentFile, Project, schema_json};
+use wamn_registry::configuration::ConfigurationStore as _;
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -43,7 +44,9 @@ pub(super) async fn read_configuration(
     let principal = wamn_provision::PlatformComponent::Provisioning.principal_id();
     let mut transaction =
         wamn_identity::transaction::read_connection(connection, &principal).await?;
-    let configuration = wamn_registry::configuration::read(&mut transaction, triple).await?;
+    let configuration = wamn_postgres::Registry::new(&mut transaction)
+        .read(triple)
+        .await?;
     transaction.commit().await?;
     Ok(configuration)
 }
@@ -62,7 +65,9 @@ impl EnvironmentDocument {
 
     pub(super) async fn save(&self, connection: &mut sqlx::PgConnection) -> anyhow::Result<()> {
         ensure!(
-            wamn_registry::configuration::write(connection, &self.configuration()).await?,
+            wamn_postgres::Registry::new(connection)
+                .write(&self.configuration())
+                .await?,
             "provision the environment before applying configuration"
         );
         Ok(())

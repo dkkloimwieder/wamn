@@ -208,8 +208,8 @@ impl Workflow {
                   WHERE environment = $1 AND application = $2 AND enabled AND trigger = 'schedule'
                   ORDER BY workflow_id FOR SHARE",
                 )
-                .bind(&app.environment)
-                .bind(&app.application)
+                .bind(app.environment.as_str())
+                .bind(app.application.as_str())
                 .fetch_all(&mut *connection)
                 .await
                 .map_err(|error| {
@@ -270,7 +270,7 @@ impl Workflow {
                 "SELECT workflow_id FROM catalog.workflows
                   WHERE environment = $1 AND application = $2 AND enabled AND trigger = 'data_change'
                   ORDER BY workflow_id"
-            ).bind(&app.environment).bind(&app.application)
+            ).bind(app.environment.as_str()).bind(app.application.as_str())
                 .try_map(|row| workflow_id(&row))
                 .fetch_all(connection).await?)
         }).await.map_err(|error| {
@@ -333,8 +333,8 @@ impl Workflow {
                     AND entity = $5 AND $6 = ANY(ops) AND enable_lsn <= $7::text::pg_lsn
                     FOR SHARE"
             )
-            .bind(&app.environment)
-            .bind(&app.application)
+            .bind(app.environment.as_str())
+            .bind(app.application.as_str())
             .bind(&message.workflow_id)
             .bind(envelope.package_id.as_str())
             .bind(&envelope.entity)
@@ -404,8 +404,8 @@ impl Workflow {
                   WHERE environment = $1 AND application = $2 AND workflow_id = $3
                     AND version = $4 AND graph_hash = $5",
                 )
-                .bind(&app.environment)
-                .bind(&app.application)
+                .bind(app.environment.as_str())
+                .bind(app.application.as_str())
                 .bind(graph_id.as_str())
                 .bind(graph_version)
                 .bind(workflow.graph_hash.to_string())

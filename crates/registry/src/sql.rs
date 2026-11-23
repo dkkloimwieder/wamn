@@ -6,14 +6,6 @@
 //! `provision-org` subcommand) holds the `wamn_system` connection and executes
 //! the statement as the registry owner.
 
-/// Upsert a project row into `registry.projects` (idempotent). Params: `$1` org,
-/// `$2` id. `ON CONFLICT (org, id) DO NOTHING` — a project carries no mutable
-/// placement of its own (placement is per-env), so re-provisioning is a no-op.
-pub fn upsert_project_sql() -> &'static str {
-    "INSERT INTO registry.projects (org, id) VALUES ($1, $2) \
-     ON CONFLICT (org, id) DO NOTHING"
-}
-
 /// The `registry.environment_projects` column list, in the order both reads return and a
 /// row-mapper reads by index. `org` is the caller's key in both reads, so it is
 /// not returned; the remaining columns are exactly what a
@@ -26,30 +18,13 @@ const PROJECT_ENV_COLUMNS: &str = "env, project, secret_name, secret_namespace, 
 /// Read ONE provisioned project-env by its identity triple — the read a consumer
 /// that derives physical names needs, since a triple alone cannot yield the
 /// environment's `instance_suffix` and only the provisioner sees it come back
-/// from [`upsert_project_env_sql`]. Params: `$1` org, `$2` project, `$3` env.
+/// when registration writes it. Params: `$1` org, `$2` project, `$3` env.
 /// Columns: `PROJECT_ENV_COLUMNS`.
 pub fn select_project_env_sql() -> String {
     format!(
         "SELECT {PROJECT_ENV_COLUMNS} FROM registry.environment_projects \
          WHERE org = $1 AND project = $2 AND env = $3"
     )
-}
-
-/// Record the environment, then its project database. Parameters follow the caller's
-/// org, project, environment, Secret, namespace, suffix, disposable, readiness budget,
-/// drain bound, and target values.
-pub fn upsert_project_env_sql() -> &'static str {
-    "WITH parent AS (INSERT INTO registry.environments \
-       (org,env,disposable,readiness_budget_seconds,drain_bound_seconds,target_id) \
-       VALUES ($1,$3,COALESCE($7,false),$8,$9,$10::text::uuid) \
-       ON CONFLICT (org,env) DO UPDATE SET disposable=COALESCE($7,registry.environments.disposable), \
-         target_id=EXCLUDED.target_id RETURNING org,env,disposable), \
-     deployment AS (INSERT INTO registry.environment_projects \
-       (org,env,project,secret_name,secret_namespace,instance_suffix) \
-       SELECT org,env,$2,$4,$5,$6 FROM parent \
-       ON CONFLICT (org,env,project) DO UPDATE SET secret_name=EXCLUDED.secret_name, \
-         secret_namespace=EXCLUDED.secret_namespace RETURNING instance_suffix) \
-     SELECT deployment.instance_suffix,parent.disposable FROM deployment CROSS JOIN parent"
 }
 
 // --- event readers (wamn-l5i9.9, D19 v3) ------------------------------------
@@ -104,19 +79,6 @@ pub fn close_capture_gap_sql() -> &'static str {
      WHERE org = $1 AND project = $2 AND env = $3 AND created_at = $4 \
      RETURNING resync_at"
 }
-
-/// Environment exclusion key shared by lifecycle operations and CDC publication.
-/// Acquire this key before an application key or a database mutation lock.
-pub const ENVIRONMENT_LOCK_SQL: &str =
-    "SELECT pg_try_advisory_lock(hashtextextended('wamn-env/' || $1 || '/' || $2, 0))";
-
-/// Transaction-scoped exclusion for integration mutations. Params: org, environment.
-pub const ENVIRONMENT_TRANSACTION_LOCK_SQL: &str =
-    "SELECT pg_try_advisory_xact_lock(hashtextextended('wamn-env/' || $1 || '/' || $2, 0))";
-
-/// Independent applications and SQL Jobs exclude shared database replacement.
-pub const ENVIRONMENT_SHARED_LOCK_SQL: &str =
-    "SELECT pg_try_advisory_lock_shared(hashtextextended('wamn-env/' || $1 || '/' || $2, 0))";
 
 /// Lifecycle state belongs to the environment.
 pub const ENVIRONMENT_DISPOSABLE: &str =
@@ -205,10 +167,6 @@ pub const UPDATE_PLATFORM_META_SQL: &str =
     "UPDATE registry.meta SET platform_domain = $1, max_projects = $2 \
      WHERE (platform_domain, max_projects) IS DISTINCT FROM ($1, $2) \
      RETURNING old.max_projects IS NULL";
-
-/// crates/environment/src/provision_project_env/registry.rs::do_record_project_env registry statement.
-pub const CONTROL_ENVIRONMENT_SRC_PROVISION_PROJECT_ENV_REGISTRY_DO_RECORD_PROJECT_ENV: &str =
-    "SELECT id::text FROM registry.target WHERE name = $1";
 
 /// crates/environment/src/environment/analyse.rs::read_row registry statement.
 pub const CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_ANALYSE_READ_ROW: &str = "SELECT instance_suffix, disposable FROM registry.environment_projects JOIN registry.environments USING (org,env) \

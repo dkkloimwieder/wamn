@@ -10,7 +10,9 @@ use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
 use std::time::Duration;
 use wamn_platform_install as installer;
-use wamn_registry::lifecycle_lock::LifecycleLock;
+use wamn_postgres::LifecycleLock;
+use wamn_registry::configuration::ConfigurationStore as _;
+use wamn_registry::lifecycle_lock::LifecycleLocks as _;
 use wamn_registry::{Triple, name, sql::upsert_event_reader_sql};
 
 pub async fn configure(
@@ -60,8 +62,8 @@ pub async fn configure(
                          WHERE registered.org = $1 AND registered.env = $2 \
                          AND registered.project = selected.project)",
                 )
-                .bind(&first.settings.org)
-                .bind(&first.settings.env)
+                .bind(first.settings.org.as_str())
+                .bind(first.settings.env.as_str())
                 .bind(&project_names)
                 .fetch_one(&mut *transaction)
                 .await
@@ -140,9 +142,7 @@ pub async fn configure(
                 let mut connection = lock.client().await;
                 let mut transaction =
                     provision_project_env::provisioning_transaction(&mut connection).await?;
-                wamn_registry::configuration::retain_integrations(
-                    &mut transaction,
-                    &first.settings.org,
+                wamn_postgres::Registry::new(&mut transaction).retain_integrations(&first.settings.org,
                     &first.settings.env,
                     &names,
                 )
@@ -389,9 +389,9 @@ async fn configure_project(
             let slot = &publication;
             let stream = wamn_event::stream_name(&triple.org, &triple.project, &triple.env);
             sqlx::query(sqlx::AssertSqlSafe(upsert_event_reader_sql()))
-                .bind(&triple.org)
-                .bind(&triple.project)
-                .bind(&triple.env)
+                .bind(triple.org.as_str())
+                .bind(triple.project.as_str())
+                .bind(triple.env.as_str())
                 .bind(&publication)
                 .bind(
                     schemas

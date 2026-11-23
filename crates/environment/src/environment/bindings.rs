@@ -11,7 +11,7 @@ use std::fmt;
 
 use wamn_component_policy::PackageManifest;
 use wamn_package::manifest::{ConnectionDeclaration, ConnectionMode};
-use wamn_registry::lifecycle_lock::LifecycleLock;
+use wamn_postgres::LifecycleLock;
 
 use super::document::EnvironmentDocument;
 
@@ -86,8 +86,8 @@ pub async fn analyse(
     let environment_target = sqlx::query_scalar::<_, Option<String>>(
         "SELECT target_id::text FROM registry.environments WHERE org=$1 AND env=$2",
     )
-    .bind(&document.settings.org)
-    .bind(&document.settings.env)
+    .bind(document.settings.org.as_str())
+    .bind(document.settings.env.as_str())
     .fetch_optional(&mut *system.client().await)
     .await?;
     if matches!(&environment_target, Some(None)) {
@@ -124,7 +124,7 @@ pub async fn analyse(
             ));
         }
         let row=sqlx::query("SELECT $1::text AS id,t.code,t.runtime_type,$3::jsonb AS parameters,v.parameter_schema,v.digest,v.operations,$6::bigint AS generation,t.exclusive,v.exports,v.write_interfaces,destination.type FROM registry.integration_type t JOIN registry.target destination ON destination.id=$4::text::uuid AND destination.name=$5 AND destination.status='active' JOIN registry.environments e ON e.org=$7 AND e.env=$8 LEFT JOIN registry.integration_type_version v ON v.integration_type=t.code AND v.version=$9 WHERE t.code=$2")
-            .bind(connection.get::<String,_>(0)).bind(connection.get::<String,_>(1)).bind(connection.get::<serde_json::Value,_>(2)).bind(connection_target).bind(&document.settings.target).bind(connection.get::<i64,_>(3)).bind(&document.settings.org).bind(&document.settings.env).bind(version.version)
+            .bind(connection.get::<String,_>(0)).bind(connection.get::<String,_>(1)).bind(connection.get::<serde_json::Value,_>(2)).bind(connection_target).bind(&document.settings.target).bind(connection.get::<i64,_>(3)).bind(document.settings.org.as_str()).bind(document.settings.env.as_str()).bind(version.version)
             .fetch_optional(&mut *system.client().await).await?.ok_or_else(||refuse("connection_unavailable",name))?;
         if row.get::<bool, _>(8) && row.get::<&str, _>(11) == "cloud" {
             return Err(refuse(
@@ -200,7 +200,7 @@ pub async fn analyse(
             let (row, authority, digest) = selected
                 .get(integration.as_str())
                 .ok_or_else(|| refuse("integration_version_missing", &at))?;
-            let integration_type: wamn_registry::integration_code::IntegrationCode = row.get(1);
+            let integration_type = wamn_postgres::decode_text(row.try_get(1)?, 1)?;
             let exports: Vec<String> = row.get(9);
             if !exports_satisfy(&exports, std::slice::from_ref(&declaration.interface)) {
                 return Err(refuse("integration_import_unsatisfied", at));

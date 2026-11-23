@@ -17,8 +17,9 @@
 //! With `--data`, remove kept generations even when the registry row is gone.
 //! An absent or unreachable project database skips database-side cleanup.
 
-use wamn_registry::lifecycle_lock::LifecycleLock;
 use sqlx::{Connection as _, Row as _};
+use wamn_postgres::LifecycleLock;
+use wamn_registry::lifecycle_lock::LifecycleLocks as _;
 mod resources;
 mod rows;
 pub use rows::delete_registry_rows;
@@ -79,12 +80,12 @@ async fn delete_locked(
     let release = name::environment_resource_name(org, project, env);
     let release_present = data && resources::project_release_exists(platform, &release).await?;
     let mut lines = Vec::new();
-    let Some((instance, drain_bound_seconds)) = sqlx::query_as::<_, (InstanceSuffix, i32)>(
+    let Some((instance, drain_bound_seconds)) = sqlx::query_as::<_, (String, i32)>(
         wamn_registry::sql::CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_DELETE_DELETE_LOCKED,
     )
-    .bind(org)
-    .bind(project)
-    .bind(env)
+    .bind(org.as_str())
+    .bind(project.as_str())
+    .bind(env.as_str())
     .fetch_optional(&mut *system.client().await)
     .await
     .context("read the environment row")?
@@ -103,6 +104,8 @@ async fn delete_locked(
         }
         return Ok(lines);
     };
+    let instance: InstanceSuffix =
+        wamn_postgres::decode_text(instance, 0).context("read the environment row")?;
     let database = project_env_database_name(org, project, env, &instance);
 
     resources::require_ownership(platform, triple, &database).await?;

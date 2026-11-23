@@ -174,7 +174,7 @@ pub async fn create_org_logins(
         });
     }
     sqlx::query("INSERT INTO registry.orgs (id) VALUES ($1) ON CONFLICT DO NOTHING")
-        .bind(org)
+        .bind(org.as_str())
         .execute(&mut *tx)
         .await
         .context("record the org in registry.orgs")?;

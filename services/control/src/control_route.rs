@@ -466,9 +466,9 @@ impl ControlRoutes<'_> {
                         "SELECT count(*)::int4 FROM identity.project_env_memberships \
                          WHERE org = $1 AND project = $2 AND env = $3",
                     )
-                    .bind(self.org)
-                    .bind(&request.project)
-                    .bind(&request.env)
+                    .bind(self.org.as_str())
+                    .bind(request.project.as_str())
+                    .bind(request.env.as_str())
                     .fetch_one(&mut *transaction)
                     .await?;
                     transaction.commit().await?;
@@ -654,8 +654,8 @@ impl ControlRoutes<'_> {
                 for row in sqlx::query(
                     "SELECT principal_id FROM identity.project_roles WHERE org=$1 AND project=$2",
                 )
-                .bind(self.org)
-                .bind(&project)
+                .bind(self.org.as_str())
+                .bind(project.as_str())
                 .fetch_all(&mut *transaction)
                 .await?
                 {
@@ -685,12 +685,21 @@ impl ControlRoutes<'_> {
         let mut writer = self.writer.lock().await?;
         let mut transaction = self.begin(&mut writer, attachment, caller).await?;
         let envs = status_environments(&mut transaction, self.org, project, env).await?;
-        let environments: Vec<(wamn_registry::ProjectId, wamn_registry::EnvName)> =
-            sqlx::query_as(wamn_registry::sql::ENVIRONMENT_PROJECTS)
-                .bind(self.org)
-                .bind(&envs)
+        let names: Vec<_> = envs.iter().map(wamn_registry::EnvName::as_str).collect();
+        let environments =
+            sqlx::query_as::<_, (String, String)>(wamn_registry::sql::ENVIRONMENT_PROJECTS)
+                .bind(self.org.as_str())
+                .bind(names)
                 .fetch_all(&mut *transaction)
-                .await?;
+                .await?
+                .into_iter()
+                .map(|(project, env)| {
+                    Ok((
+                        wamn_postgres::decode_text(project, 0)?,
+                        wamn_postgres::decode_text(env, 1)?,
+                    ))
+                })
+                .collect::<Result<Vec<_>, sqlx::Error>>()?;
         if status == EnvironmentStatus::Inactive {
             self.write_statuses(attachment, caller, &environments, status)
                 .await?;

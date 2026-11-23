@@ -192,7 +192,7 @@ pub async fn execute(
                  JOIN registry.target destination ON destination.id=e.target_id \
                  WHERE e.org=$1 AND e.env=$2",
             )
-            .bind(org)
+            .bind(org.as_str())
             .bind(request["env"].as_str())
             .fetch_optional(&mut *tx)
             .await?
@@ -468,7 +468,7 @@ pub async fn configure(
     if operation == "integration_type.list" {
         return Ok(
             sqlx::query_scalar("SELECT registry.configure_integration_type($1,$2,$3)")
-                .bind(org)
+                .bind(org.as_str())
                 .bind(operation)
                 .bind(request)
                 .fetch_one(system)
@@ -632,8 +632,8 @@ pub async fn required_connection_version(
     Ok(sqlx::query_scalar(
         "SELECT version FROM registry.environment_integrations WHERE org=$1 AND env=$2 AND name=$3",
     )
-    .bind(org)
-    .bind(env)
+    .bind(org.as_str())
+    .bind(env.as_str())
     .bind(name)
     .fetch_optional(system)
     .await?)

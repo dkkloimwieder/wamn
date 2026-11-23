@@ -1,12 +1,13 @@
 //! Explicit environment provisioning, shared credentials, and CDC resources.
 //! Application activation reads these resources without creating or reconciling them.
 
+use wamn_registry::deployment::DeploymentStore as _;
 use k8s_openapi::api::core::v1::ConfigMap;
 use kube::Api;
 use sqlx::Row as _;
 
 use anyhow::Context as _;
-use wamn_registry::lifecycle_lock::LifecycleLock;
+use wamn_postgres::LifecycleLock;
 use wamn_registry::{EnvName, OrgId, ProjectId, Triple, name};
 
 use super::Platform;
@@ -143,20 +144,24 @@ async fn host_values(
 
     let mut client = system.client().await;
     let mut tx = crate::provision_project_env::provisioning_transaction(&mut client).await?;
-    let projects: Vec<ProjectId> = sqlx::query_scalar(
+    let projects: Vec<ProjectId> = sqlx::query_scalar::<_, String>(
         "SELECT project FROM registry.environment_projects WHERE org=$1 AND env=$2
          AND ($3::text IS NULL OR project<>$3)
          AND (schema_mode IS NOT NULL OR project=ANY($4)) ORDER BY project",
     )
-    .bind(org)
-    .bind(env)
-    .bind(excluded)
+    .bind(org.as_str())
+    .bind(env.as_str())
+    .bind(excluded.map(wamn_registry::ProjectId::as_str))
     .bind(reserved)
     .fetch_all(&mut *tx)
-    .await?;
+    .await?
+    .into_iter()
+    .map(|project| wamn_postgres::decode_text(project, 0))
+    .collect::<Result<_, _>>()?;
     let drain_bound_seconds = match drain_bound_seconds {
         Some(seconds) => seconds,
-        None => wamn_registry::deployment::drain_bound_seconds(&mut tx, org, env)
+        None => wamn_postgres::Registry::new(&mut tx)
+            .drain_bound_seconds(org, env)
             .await
             .with_context(|| format!("read the host drain bound for {org}/{env}"))?,
     };

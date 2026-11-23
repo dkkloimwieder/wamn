@@ -68,7 +68,7 @@ impl ControlRoutes<'_> {
             .await?;
         if operation == "integration_type.list" {
             let result = sqlx::query_scalar("SELECT registry.configure_integration_type($1,$2,$3)")
-                .bind(self.org)
+                .bind(self.org.as_str())
                 .bind(operation)
                 .bind(&request)
                 .fetch_one(&mut *authorized)
@@ -81,9 +81,9 @@ impl ControlRoutes<'_> {
             detail: json!({"field":"env"}),
         })?;
         if !attachment.route.type_.is_read() {
-            let held: bool = sqlx::query(wamn_registry::sql::ENVIRONMENT_LOCK_SQL)
-                .bind(self.org)
-                .bind(env)
+            let held: bool = sqlx::query(wamn_postgres::ENVIRONMENT_LOCK_SQL)
+                .bind(self.org.as_str())
+                .bind(env.as_str())
                 .fetch_one(&mut *authorized)
                 .await?
                 .get(0);

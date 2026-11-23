@@ -20,9 +20,9 @@ pub async fn delete_registry_rows(
     sqlx::query(
         wamn_registry::sql::CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_DELETE_ROWS_DELETE_REGISTRY_ROWS,
     )
-    .bind(org)
-    .bind(project)
-    .bind(env)
+    .bind(org.as_str())
+    .bind(project.as_str())
+    .bind(env.as_str())
     .execute(&mut *transaction)
     .await
     .map(|result| result.rows_affected())

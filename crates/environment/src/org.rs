@@ -22,8 +22,8 @@ pub async fn create_project(
 ) -> Result<(), IdentityError> {
     lock_org_memberships(client, org).await?;
     let created = sqlx::query(CREATE_PROJECT_SQL)
-        .bind(org)
-        .bind(project)
+        .bind(org.as_str())
+        .bind(project.as_str())
         .execute(&mut *client)
         .await
         .map(|result| result.rows_affected())
@@ -47,11 +47,21 @@ pub async fn org_environments(
     org: &wamn_registry::OrgId,
     project: Option<&wamn_registry::ProjectId>,
 ) -> Result<Vec<(wamn_registry::ProjectId, wamn_registry::EnvName)>, IdentityError> {
-    sqlx::query_as(ORG_ENVIRONMENTS_SQL)
-        .bind(org)
-        .bind(project)
+    sqlx::query_as::<_, (String, String)>(ORG_ENVIRONMENTS_SQL)
+        .bind(org.as_str())
+        .bind(project.map(wamn_registry::ProjectId::as_str))
         .fetch_all(&mut *client)
         .await
+        .and_then(|rows| {
+            rows.into_iter()
+                .map(|(project, env)| {
+                    Ok((
+                        wamn_postgres::decode_text(project, 0)?,
+                        wamn_postgres::decode_text(env, 1)?,
+                    ))
+                })
+                .collect()
+        })
         .map_err(|error| database_error(&error))
 }
 
@@ -67,8 +77,8 @@ pub async fn status_environments(
 ) -> Result<Vec<wamn_registry::EnvName>, IdentityError> {
     let Some(env) = env else {
         let in_org: bool = sqlx::query(PROJECT_IN_ORG_SQL)
-            .bind(org)
-            .bind(project)
+            .bind(org.as_str())
+            .bind(project.as_str())
             .fetch_one(&mut *client)
             .await
             .map_err(|error| database_error(&error))?
@@ -87,9 +97,9 @@ pub async fn status_environments(
             .collect());
     };
     let found: bool = sqlx::query(ENV_IN_PROJECT_SQL)
-        .bind(org)
-        .bind(project)
-        .bind(env)
+        .bind(org.as_str())
+        .bind(project.as_str())
+        .bind(env.as_str())
         .fetch_one(&mut *client)
         .await
         .map_err(|error| database_error(&error))?
@@ -117,9 +127,14 @@ pub async fn set_environment_status(
     status: EnvironmentStatus,
 ) -> Result<(), IdentityError> {
     sqlx::query(ENVIRONMENT_STATUS_SQL)
-        .bind(org)
-        .bind(project)
-        .bind(environments)
+        .bind(org.as_str())
+        .bind(project.as_str())
+        .bind(
+            environments
+                .iter()
+                .map(wamn_registry::EnvName::as_str)
+                .collect::<Vec<_>>(),
+        )
         .bind(status.as_str())
         .execute(&mut *client)
         .await

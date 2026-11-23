@@ -3,6 +3,7 @@
 //! and the server CA copy through the Kubernetes API and keeps the PEM bytes
 //! in memory only.
 
+use wamn_registry::deployment::DeploymentStore as _;
 use anyhow::Context as _;
 use k8s_openapi::api::core::v1::{ConfigMap, Secret};
 use kube::Api;
@@ -34,25 +35,29 @@ impl ProjectLogins {
         env: &EnvName,
     ) -> anyhow::Result<PgConnectOptions> {
         let triple = Triple::new(self.org.clone(), env.clone(), project.clone());
-        let instance =
-            wamn_registry::deployment::instance_suffix(&mut *self.control.acquire().await?, &triple)
-                .await?
-                .with_context(|| format!("project deployment {triple} is absent"))?;
+        let instance = wamn_postgres::Registry::new(&mut *self.control.acquire().await?)
+            .instance_suffix(&triple)
+            .await?
+            .with_context(|| format!("project deployment {triple} is absent"))?;
         self.login(&triple, &instance).await
     }
 
     /// Every recorded project environment of the org.
     pub(crate) async fn recorded(&self) -> anyhow::Result<Vec<(Triple, InstanceSuffix)>> {
-        let rows: Vec<(ProjectId, EnvName, InstanceSuffix)> = sqlx::query_as(
+        let rows = sqlx::query_as::<_, (String, String, String)>(
             "SELECT project, env, instance_suffix FROM registry.environment_projects WHERE org=$1",
         )
-        .bind(&self.org)
+        .bind(self.org.as_str())
         .fetch_all(&self.control)
         .await?;
-        Ok(rows
-            .into_iter()
-            .map(|(project, env, instance)| (Triple::new(self.org.clone(), env, project), instance))
-            .collect())
+        rows.into_iter()
+            .map(|(project, env, instance)| {
+                let project = wamn_postgres::decode_text(project, 0)?;
+                let env = wamn_postgres::decode_text(env, 1)?;
+                let instance = wamn_postgres::decode_text(instance, 2)?;
+                Ok((Triple::new(self.org.clone(), env, project), instance))
+            })
+            .collect()
     }
 
     /// The login of one project environment generation.

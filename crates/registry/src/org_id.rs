@@ -65,33 +65,6 @@ impl fmt::Display for OrgId {
     }
 }
 
-impl sqlx::Type<sqlx::Postgres> for OrgId {
-    fn type_info() -> sqlx::postgres::PgTypeInfo {
-        <String as sqlx::Type<sqlx::Postgres>>::type_info()
-    }
-    fn compatible(ty: &sqlx::postgres::PgTypeInfo) -> bool {
-        <String as sqlx::Type<sqlx::Postgres>>::compatible(ty)
-    }
-}
-impl sqlx::postgres::PgHasArrayType for OrgId {
-    fn array_type_info() -> sqlx::postgres::PgTypeInfo {
-        <String as sqlx::postgres::PgHasArrayType>::array_type_info()
-    }
-}
-impl<'q> sqlx::Encode<'q, sqlx::Postgres> for OrgId {
-    fn encode_by_ref(
-        &self,
-        buffer: &mut sqlx::postgres::PgArgumentBuffer,
-    ) -> Result<sqlx::encode::IsNull, sqlx::error::BoxDynError> {
-        <&str as sqlx::Encode<'q, sqlx::Postgres>>::encode(self.as_str(), buffer)
-    }
-}
-impl<'r> sqlx::Decode<'r, sqlx::Postgres> for OrgId {
-    fn decode(value: sqlx::postgres::PgValueRef<'r>) -> Result<Self, sqlx::error::BoxDynError> {
-        Ok(<String as sqlx::Decode<'r, sqlx::Postgres>>::decode(value)?.try_into()?)
-    }
-}
-
 impl PartialEq<OrgId> for str {
     fn eq(&self, other: &OrgId) -> bool {
         self == other.as_str()

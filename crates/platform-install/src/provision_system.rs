@@ -1,6 +1,7 @@
 //! Install or upgrade the control store using the platform SQL Job.
 
 use std::{fmt, io};
+use wamn_registry::migrations::MigrationHistory as _;
 
 use anyhow::Context as _;
 use sqlx::PgConnection as Client;
@@ -87,12 +88,13 @@ pub async fn install_system(
         .execute(&mut *transaction)
         .await
         .context("grant the apply surface")?;
-    let first_limit: Option<bool> = sqlx::query_scalar(wamn_registry::sql::UPDATE_PLATFORM_META_SQL)
-        .bind(platform_domain)
-        .bind(i64::from(max_projects.get()))
-        .fetch_optional(&mut *transaction)
-        .await
-        .context("record the platform domain and project stream limit")?;
+    let first_limit: Option<bool> =
+        sqlx::query_scalar(wamn_registry::sql::UPDATE_PLATFORM_META_SQL)
+            .bind(platform_domain.as_str())
+            .bind(i64::from(max_projects.get()))
+            .fetch_optional(&mut *transaction)
+            .await
+            .context("record the platform domain and project stream limit")?;
     if first_limit == Some(true) {
         sqlx::raw_sql("ALTER TABLE registry.meta ALTER COLUMN max_projects SET NOT NULL")
             .execute(&mut *transaction)
@@ -194,7 +196,9 @@ pub async fn system_state(client: &mut sqlx::PgConnection) -> anyhow::Result<Sys
     if !present {
         return Ok(SystemState::Absent);
     }
-    let complete = wamn_registry::migrations::history_exists(client).await?;
+    let complete = wamn_postgres::Registry::new(client)
+        .history_exists()
+        .await?;
     Ok(if complete {
         SystemState::Complete
     } else {
@@ -286,7 +290,7 @@ pub async fn install_control_store(admin: &mut Client) -> anyhow::Result<bool> {
             .await?;
             wamn_provision::migration::prepare_history(
                 admin,
-                wamn_registry::migrations::HISTORY_TABLE,
+                wamn_postgres::REGISTRY_HISTORY_TABLE,
                 &wamn_role::SYSTEM_ROLE.parse()?,
             )
             .await?;

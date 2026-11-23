@@ -41,8 +41,8 @@ pub(super) async fn project_count(
     let count: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM registry.environment_projects WHERE org=$1 AND env=$2",
     )
-    .bind(org)
-    .bind(env)
+    .bind(org.as_str())
+    .bind(env.as_str())
     .fetch_one(&mut *tx)
     .await?;
     tx.commit().await?;

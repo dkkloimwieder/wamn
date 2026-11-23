@@ -12,7 +12,7 @@ pub(super) async fn ensure_admin_role(
     project_env_key: &wamn_registry::ProjectEnvKey,
 ) -> anyhow::Result<bool> {
     sqlx::query(OPERATION_GRANT_LOCK_SQL)
-        .bind(project_env_key)
+        .bind(project_env_key.as_str())
         .fetch_one(&mut **tx)
         .await
         .context("lock the project operation-grant carrier")?;
