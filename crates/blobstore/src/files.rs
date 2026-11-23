@@ -29,7 +29,7 @@ pub const FILE_PREFIX: &str = "_wamn_files/";
 pub const MAX_URL_LIFETIME: Duration = Duration::from_mins(15);
 /// Wait one minute beyond the longest invocation before removing uncommitted staging.
 pub const MIN_STAGING_AGE: Duration =
-    wamn_engine::engine::MAX_HOST_CALL_DURATION.saturating_add(Duration::from_mins(1));
+    wamn_application::MAX_HOST_CALL_DURATION.saturating_add(Duration::from_mins(1));
 
 /// One canonical live or staged object returned by the confined collector listing.
 #[derive(Debug)]
@@ -691,7 +691,7 @@ mod tests {
                 Arc::new(RecordingSigner::default()),
                 cdn.map(|host| url::Url::parse(&format!("https://{host}")).unwrap()),
                 &"dev".parse().unwrap(),
-                tokio::time::Instant::now() + wamn_engine::engine::MAX_HOST_CALL_DURATION,
+                tokio::time::Instant::now() + wamn_application::MAX_HOST_CALL_DURATION,
             ),
             backend,
         )
@@ -1281,7 +1281,7 @@ mod tests {
                 Arc::new(RecordingSigner::default()),
                 Some(url::Url::parse("https://cdn.example.com").unwrap()),
                 &"dev".parse().unwrap(),
-                tokio::time::Instant::now() + wamn_engine::engine::MAX_HOST_CALL_DURATION,
+                tokio::time::Instant::now() + wamn_application::MAX_HOST_CALL_DURATION,
             );
             let id = Uuid::new_v4();
             let live = files.path(&live_key(&"dev".parse().unwrap(), id)).unwrap();
@@ -1362,7 +1362,7 @@ mod tests {
             Arc::<RecordingSigner>::clone(&signer),
             Some(url::Url::parse("https://cdn.example.com").unwrap()),
             &"dev".parse().unwrap(),
-            tokio::time::Instant::now() + wamn_engine::engine::MAX_HOST_CALL_DURATION,
+            tokio::time::Instant::now() + wamn_application::MAX_HOST_CALL_DURATION,
         );
         let id = Uuid::new_v4();
         assert_eq!(

@@ -557,7 +557,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         Arc::clone(&authorization),
     ));
     postgres.set_result_signer(
-        &(Arc::clone(&files) as Arc<dyn wamn_operation::result_signing::ResultSigner>),
+        &(Arc::clone(&files) as Arc<dyn wamn_application::result_signing::ResultSigner>),
     );
     let logging = Arc::new(plugin::wasi_logging::TracingLogger::default());
     let verifier = settings
@@ -585,7 +585,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     };
     let ingress_routing = IngressRouting::new(Arc::clone(&postgres.scopes))
         .with_authenticator(authentication as Arc<_>);
-    let status: Arc<dyn wamn_engine::ingress::EnvironmentStatus> =
+    let status: Arc<dyn wamn_application::ingress::EnvironmentStatus> =
         Arc::new(EnvironmentStatusReader::new(Arc::clone(&authorization)));
     let ingress_routing = Arc::new(ingress_routing.with_environment_status(status));
     let operations = Arc::new(wamn_engine::operation::WamnOperation::new(

@@ -1,6 +1,5 @@
 //! Dispatch application operations through the workload's resolved component targets.
 
-use crate::application_config::ApplicationConfig;
 use crate::application::bind_application_config;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -10,6 +9,9 @@ use std::time::Duration;
 use anyhow::Context as _;
 use tokio::sync::oneshot;
 use tokio::time::Instant;
+use wamn_application::application_config::ApplicationConfig;
+use wamn_application::native_routes::bounded_node_deadline_ms;
+use wamn_application::result_signing::ResultSigningError;
 use wamn_package::canonical_name::CanonicalName;
 use wash_runtime::engine::ctx::SharedCtx;
 use wash_runtime::engine::dispatch::{DispatchTarget, GuestCall, GuestCallFuture};
@@ -35,6 +37,12 @@ mod bindings {
 }
 
 pub use bindings::wamn::node::types as node_types;
+
+impl From<ResultSigningError> for node_types::NodeError {
+    fn from(ResultSigningError { code, message }: ResultSigningError) -> Self {
+        Self::Terminal(node_types::ErrorDetail { code, message })
+    }
+}
 
 /// Host plugin that retains application targets; SQL owns the operation interface.
 pub struct WamnOperation {
@@ -139,7 +147,7 @@ impl WamnOperation {
     ) -> anyhow::Result<Result<(), String>> {
         let binding = self.binding(ingress)?;
         let deadline = Instant::now()
-            + Duration::from_millis(crate::native_routes::bounded_node_deadline_ms(None));
+            + Duration::from_millis(bounded_node_deadline_ms(None));
         binding
             .target(sibling)?
             .call(scopes, scope, deadline, move |call| DataChangeInvocation {
@@ -170,7 +178,7 @@ impl Binding {
         input: String,
     ) -> anyhow::Result<Result<node_types::Emission, node_types::NodeError>> {
         let deadline = Instant::now()
-            + Duration::from_millis(crate::native_routes::bounded_node_deadline_ms(
+            + Duration::from_millis(bounded_node_deadline_ms(
                 context.deadline_ms,
             ));
         self.target(sibling)?

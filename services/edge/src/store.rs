@@ -158,7 +158,7 @@ impl EdgeStore {
             } else if let Some(outcome) = row.get::<Option<String>, _>(1) {
                 Claim::Finished(outcome)
             } else if now_ms()?.saturating_sub(row.get(2))
-                > i64::try_from(wamn_engine::engine::MAX_HOST_CALL_DURATION.as_millis())?
+                > i64::try_from(wamn_application::MAX_HOST_CALL_DURATION.as_millis())?
             {
                 Claim::OutcomeUnknown
             } else {

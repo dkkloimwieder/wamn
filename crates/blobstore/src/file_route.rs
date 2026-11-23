@@ -28,10 +28,9 @@ use wasmtime_wasi_http::WasiBody;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use uuid::Uuid;
-use wamn_engine::application_config::ApplicationConfig;
-use wamn_engine::ingress::{
-    AuthenticatedCaller, CredentialType, Header, IngressRouting, RoutePolicy,
-};
+use wamn_application::application_config::ApplicationConfig;
+use wamn_application::ingress::{AuthenticatedCaller, CredentialType, Header, RoutePolicy};
+use wamn_engine::ingress::IngressRouting;
 use wamn_identity_protocol::PrincipalId;
 use wamn_operation::OperationHost;
 
@@ -281,7 +280,7 @@ impl FileConnections for RegistryFileConnections {
                     .components
                     .iter()
                     .find_map(|component| {
-                        wamn_engine::application_config::binding(
+                        wamn_application::application_config::binding(
                             &self.release,
                             &component.name,
                             name.as_str(),
@@ -494,7 +493,7 @@ impl FileRoutes {
         media_type: &str,
         body: impl AsyncRead + Unpin + Send,
     ) -> Result<Uuid, FileError> {
-        let deadline = tokio::time::Instant::now() + wamn_engine::engine::MAX_HOST_CALL_DURATION;
+        let deadline = tokio::time::Instant::now() + wamn_application::MAX_HOST_CALL_DURATION;
         let principal = principal(caller, "put")?;
         if name.is_empty() || name.contains(['\0', '\r', '\n']) || !valid_media_type(media_type) {
             return Err(refused(FileRefusal::InvalidInput, "metadata"));
@@ -524,7 +523,7 @@ impl FileRoutes {
         application: &wamn_registry::ApplicationName,
         id: Uuid,
     ) -> Result<hyper::Response<WasiBody>, FileError> {
-        let deadline = tokio::time::Instant::now() + wamn_engine::engine::MAX_HOST_CALL_DURATION;
+        let deadline = tokio::time::Instant::now() + wamn_application::MAX_HOST_CALL_DURATION;
         let principal = principal(caller, "get")?;
         if caller.credential_type() != CredentialType::Session {
             return Err(refused(FileRefusal::PermissionDenied, "session"));
@@ -564,7 +563,7 @@ impl FileRoutes {
         caller: &AuthenticatedCaller,
         request: DeleteRequest,
     ) -> Result<Value, FileError> {
-        let deadline = tokio::time::Instant::now() + wamn_engine::engine::MAX_HOST_CALL_DURATION;
+        let deadline = tokio::time::Instant::now() + wamn_application::MAX_HOST_CALL_DURATION;
         let principal = principal(caller, "delete")?;
         let _lock = self.lock(request.file_id).await?;
         let row = self
@@ -623,7 +622,7 @@ impl FileRoutes {
         caller: &AuthenticatedCaller,
         request: ExposeRequest,
     ) -> Result<Value, FileError> {
-        let deadline = tokio::time::Instant::now() + wamn_engine::engine::MAX_HOST_CALL_DURATION;
+        let deadline = tokio::time::Instant::now() + wamn_application::MAX_HOST_CALL_DURATION;
         let principal = principal(caller, "expose")?;
         let _lock = self.lock(request.file_id).await?;
         let row = self
@@ -819,7 +818,7 @@ impl FileRoutes {
                 ));
             }
         };
-        let authorized = wamn_engine::native_routes::resolve_authorized_host_route(
+        let authorized = wamn_application::native_routes::resolve_authorized_host_route(
             wamn_routes::HostRouteSet::Application,
             id,
             Some(&caller),
@@ -1025,7 +1024,7 @@ fn declares_store(
     alias: &wamn_package::canonical_name::CanonicalName,
 ) -> bool {
     application.components.iter().any(|component| {
-        wamn_engine::application_config::binding(application, &component.name, alias.as_str())
+        wamn_application::application_config::binding(application, &component.name, alias.as_str())
             .is_some_and(|binding| {
                 binding.interface == "wasmcloud:blobstore" && binding.selector.name() == Some(alias)
             })
@@ -1194,7 +1193,7 @@ impl AsyncRead for BodyReader {
 mod tests {
     use super::*;
     use std::collections::HashSet;
-    use wamn_engine::ingress::CredentialType;
+    use wamn_application::ingress::CredentialType;
     use wamn_routes::HostRouteSet;
     fn caller(
         action: Option<&str>,

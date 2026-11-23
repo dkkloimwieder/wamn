@@ -1,5 +1,5 @@
 //! Native host-route requests and operation authorization.
-use crate::engine::MAX_HOST_CALL_DURATION;
+use crate::MAX_HOST_CALL_DURATION;
 use crate::ingress::AuthenticatedCaller;
 use std::fmt;
 use wamn_component_policy::AdmittedComponentOperation;

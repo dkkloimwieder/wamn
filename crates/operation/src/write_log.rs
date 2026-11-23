@@ -167,7 +167,7 @@ fn opaque_claim(claim: Option<Claim>) -> Result<Claim, PgError> {
 const CLAIM_CLOCK_SKEW: std::time::Duration = std::time::Duration::from_secs(5);
 
 fn unfinished(age_seconds: f64) -> Claim {
-    if age_seconds > (wamn_engine::engine::MAX_HOST_CALL_DURATION + CLAIM_CLOCK_SKEW).as_secs_f64()
+    if age_seconds > (wamn_application::MAX_HOST_CALL_DURATION + CLAIM_CLOCK_SKEW).as_secs_f64()
     {
         Claim::OutcomeUnknown
     } else {

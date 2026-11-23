@@ -59,7 +59,7 @@ async fn user_operation_permissions_reuse_only_the_callable_http_authority() {
     ));
     let database = Arc::new(OperationDatabase::new(Arc::clone(&pools)));
     let authorization = Authorization::new(pools, database);
-    let application = wamn_engine::application_config::ApplicationConfig {
+    let application = wamn_application::application_config::ApplicationConfig {
         org: "org".parse().unwrap(),
         project: (*DEFAULT_PROJECT).clone(),
         environment: "a".parse().unwrap(),

@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 use wamn_authority::effect_span::{EffectEvidence, EffectGraph, EffectSource};
-use wamn_engine::application_config::{ApplicationConfig, ApplicationConnection};
+use wamn_application::application_config::{ApplicationConfig, ApplicationConnection};
 
 /// Host-attested identity of one component invocation.
 ///
@@ -44,7 +44,7 @@ impl ConnectionInvocation {
             }
             _ => return None,
         }
-        wamn_engine::application_config::binding(application, &component.name, alias.as_str())
+        wamn_application::application_config::binding(application, &component.name, alias.as_str())
     }
 
     /// Build call authority from the configured operation and its exact sibling.

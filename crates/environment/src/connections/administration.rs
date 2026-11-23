@@ -128,7 +128,7 @@ pub async fn execute(
     operation: &str,
     payload: &str,
     source: Option<&mut sqlx::PgConnection>,
-    applications: &[wamn_engine::application_config::ApplicationConfig],
+    applications: &[wamn_application::application_config::ApplicationConfig],
     write_service: impl AsyncFnOnce(
         &mut sqlx::PgConnection,
         &mut sqlx::Transaction<'_, sqlx::Postgres>,

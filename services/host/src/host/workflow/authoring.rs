@@ -2,7 +2,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use wamn_engine::application_config::{ApplicationConfig, ApplicationOperationType};
+use wamn_application::application_config::{ApplicationConfig, ApplicationOperationType};
 use wamn_package::canonical_name::CanonicalName;
 use wamn_workflow_graph::{GraphError, GraphNode, GraphTrigger, WorkflowGraph};
 
@@ -79,7 +79,7 @@ pub(super) fn check<'a>(
                 sibling, export, ..
             } => {
                 let Some((component, operation)) =
-                    wamn_engine::application_config::workflow_call(application, sibling, export)
+                    wamn_application::application_config::workflow_call(application, sibling, export)
                 else {
                     return Err(invalid(format!(
                         "node {id} names an unavailable sibling export"

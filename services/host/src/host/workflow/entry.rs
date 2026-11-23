@@ -8,7 +8,7 @@ use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 use tokio::sync::oneshot;
 use tokio::time::Instant;
-use wamn_engine::ingress::AuthenticatedCaller;
+use wamn_application::ingress::AuthenticatedCaller;
 use wamn_identity_protocol::{PrincipalId, workflow_user_id};
 use wamn_run_state::admission::RunTrigger;
 use wamn_run_state::run_store::ProductionLeaseError;

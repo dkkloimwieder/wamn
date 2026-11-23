@@ -25,12 +25,12 @@ pub fn role_caller(
     principal_id: &wamn_identity_protocol::PrincipalId,
     role: &str,
     held: &std::collections::BTreeMap<String, std::collections::BTreeSet<String>>,
-) -> Option<wamn_engine::ingress::AuthenticatedCaller> {
+) -> Option<wamn_application::ingress::AuthenticatedCaller> {
     let permissions = held.get(role)?;
-    Some(wamn_engine::ingress::AuthenticatedCaller::new(
+    Some(wamn_application::ingress::AuthenticatedCaller::new(
         "workflow".parse().unwrap(),
         *principal_id,
-        wamn_engine::ingress::CredentialType::QueuedService,
+        wamn_application::ingress::CredentialType::QueuedService,
         role == wamn_identity_protocol::ADMIN_ROLE,
         permissions.iter().cloned().collect(),
         Some(role.into()),

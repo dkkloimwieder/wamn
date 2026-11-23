@@ -86,7 +86,7 @@ pub async fn invoke_operation<H: ApplicationHost>(
     let component = call.component;
     let operation = call.operation;
     let deadline = tokio::time::Instant::now()
-        + Duration::from_millis(call.deadline_ms).min(wamn_engine::engine::MAX_HOST_CALL_DURATION);
+        + Duration::from_millis(call.deadline_ms).min(wamn_application::MAX_HOST_CALL_DURATION);
     let application = tokio::time::timeout_at(deadline, application_of(host, closure))
         .await
         .context("native application deadline elapsed")??;

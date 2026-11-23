@@ -1,6 +1,5 @@
 //! Native file handlers and result signing for one resolved application workload.
 
-use wamn_engine::application_config::ApplicationConfig;
 use wamn_package::SignedFileField;
 use wamn_package::SignedFileResultClass;
 use std::collections::HashMap;
@@ -10,13 +9,13 @@ use std::time::Duration;
 use anyhow::Context as _;
 use serde_json::Value;
 use wamn_authentication::authorization::Authorization;
+use wamn_application::application_config::ApplicationConfig;
+use wamn_application::result_signing::{ResultSigner, ResultSigning, ResultSigningError};
 use wamn_blobstore::file_route::{FileRoutes, RegistryFileConnections};
 use wamn_blobstore::plugin::WamnBlobstore;
 use wamn_connection::connection_facts::ConnectionCache;
 use wamn_connection::invocation::ReleaseContext;
-use wamn_engine::operation::node_types::{ErrorDetail, NodeError};
 use wamn_operation::OperationHost;
-use wamn_operation::result_signing::{ResultSigner, ResultSigning};
 
 pub(super) struct Routes {
     pub(super) files: FileRoutes,
@@ -125,7 +124,8 @@ impl Files {
 
 #[async_trait::async_trait]
 impl ResultSigner for Files {
-    async fn sign(&self, request: ResultSigning<'_>) -> Result<String, NodeError> {
+    async fn sign(&self, request: ResultSigning<'_>) -> Result<String, ResultSigningError> {
+        let deadline = tokio::time::Instant::from_std(request.deadline);
         let result = async {
             let caller = request
                 .caller
@@ -148,14 +148,14 @@ impl ResultSigner for Files {
                     *target = Value::String(
                         routes
                             .files
-                            .signed_url(caller.principal_id(), id, lifetime, request.deadline)
+                            .signed_url(caller.principal_id(), id, lifetime, deadline)
                             .await?,
                     );
                 }
             }
             serde_json::to_string(&payload).context("encode signed operation result")
         };
-        let outcome = tokio::time::timeout_at(request.deadline, result)
+        let outcome = tokio::time::timeout_at(deadline, result)
             .await
             .map_err(anyhow::Error::from)
             .and_then(std::convert::identity);
@@ -163,10 +163,10 @@ impl ResultSigner for Files {
             Ok(payload) => Ok(payload),
             Err(error) => {
                 tracing::warn!(%error, operation = %request.operation, "file result signing failed");
-                Err(NodeError::Terminal(ErrorDetail {
+                Err(ResultSigningError {
                     code: Some("result_signing_failed".into()),
                     message: "file result signing failed".into(),
-                }))
+                })
             }
         }
     }

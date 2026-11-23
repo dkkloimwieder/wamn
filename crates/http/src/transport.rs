@@ -30,7 +30,7 @@ use tokio_rustls::TlsConnector;
 use tower_service::Service;
 
 use wamn_authority::connection_authority::{AuthorityDecision, HttpScheme, TlsIdentity};
-use wamn_engine::engine::MAX_HOST_CALL_DURATION as REQUEST_TIMEOUT;
+use wamn_application::MAX_HOST_CALL_DURATION as REQUEST_TIMEOUT;
 use wamn_engine::invocation_scope::InvocationExecution;
 
 use super::network_policy::AddressPolicy;

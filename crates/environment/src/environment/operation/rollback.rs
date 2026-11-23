@@ -6,7 +6,7 @@ use anyhow::{Context as _, ensure};
 use serde::Deserialize as _;
 use serde_json::Value;
 use wamn_digest::Digest;
-use wamn_engine::application_config::{APPLICATION_CONFIG, ApplicationConfig};
+use wamn_application::application_config::{APPLICATION_CONFIG, ApplicationConfig};
 use wamn_kubernetes::helm;
 use wamn_registry::ApplicationName;
 use wamn_registry::Triple;

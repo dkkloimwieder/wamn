@@ -3,6 +3,7 @@
 use std::ffi::OsString;
 use std::path::Path;
 use std::sync::{Arc, Once};
+#[cfg(test)]
 use std::time::Duration;
 
 use wash_runtime::engine::guest_memory::GuestMemoryMode;
@@ -25,9 +26,6 @@ pub const MEMORY_CAP_BYTES: usize = 256 << 20;
 /// state remains per-invocation because workload admission keeps `pool_size`
 /// at zero.
 pub const DEFAULT_CORE_INSTANCES: u32 = 512;
-
-/// Hard upper bound for one guest attempt and any host call it starts.
-pub const MAX_HOST_CALL_DURATION: Duration = Duration::from_secs(30);
 
 /// Pooling environment knobs that alter residency or decommit cadence without
 /// changing allocator capacity.

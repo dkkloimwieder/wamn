@@ -11,8 +11,8 @@ use std::sync::{Arc, RwLock};
 use anyhow::Context as _;
 use tokio::time::Instant;
 use wamn_component_policy::AdmittedComponent;
-use wamn_engine::ingress::AuthenticatedCaller;
-use wamn_engine::native_routes::authorize_released_operation;
+use wamn_application::ingress::AuthenticatedCaller;
+use wamn_application::native_routes::authorize_released_operation;
 use crate::native_operation::invocation_policy::{InvocationPolicy, InvocationScope};
 use crate::native_operation::native_call::{NativeCallFailure, NativeInvocation};
 use crate::native_operation::native_workload::native_component_name;
@@ -194,8 +194,8 @@ impl HostPlugin for EdgePolicy {
 mod tests {
     use std::collections::HashMap;
     use std::time::Duration;
-    use wamn_engine::ingress::CredentialType;
-    use wamn_engine::native_routes::{OperationRefusal, OperationRefusalType};
+    use wamn_application::ingress::CredentialType;
+    use wamn_application::native_routes::{OperationRefusal, OperationRefusalType};
     use crate::native_operation::native_workload::{
         NativeApplication, NativeWorkloadSpec, load_native_application,
     };

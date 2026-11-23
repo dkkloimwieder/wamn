@@ -1,6 +1,6 @@
 //! Platform authentication for protected routes.
 //!
-//! The route plugin in [`wamn_engine::ingress`] resolves each
+//! The route plugin resolves each
 //! attachment and its policy. For a policy that names a credential it calls
 //! [`PlatformRouteAuthenticator`]. That authenticator verifies a PAT through
 //! its project database, or an access token through the configured issuer.
@@ -13,7 +13,7 @@ use std::sync::Arc;
 use hmac::{Hmac, KeyInit as _, Mac as _};
 use sha2::Sha256;
 use tracing::Instrument as _;
-use wamn_engine::ingress::{
+use wamn_application::ingress::{
     AuthRejection, AuthenticatedCaller, AuthenticationRequest, CredentialType, Header,
     RouteAuthenticator, RouteCredential, authentication_unavailable, required_bearer_token,
     route_credential, signature_unauthorized, unauthorized,
@@ -48,7 +48,7 @@ impl EnvironmentStatusReader {
 }
 
 #[async_trait::async_trait]
-impl wamn_engine::ingress::EnvironmentStatus for EnvironmentStatusReader {
+impl wamn_application::ingress::EnvironmentStatus for EnvironmentStatusReader {
     async fn inactive(
         &self,
         project_env_key: &wamn_registry::ProjectEnvKey,

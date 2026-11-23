@@ -7,13 +7,13 @@ use wamn_engine::invocation_scope::InvocationScopes;
 /// Immutable application facts and project-owned connection readers for one deployment.
 #[derive(Debug)]
 pub struct ReleaseContext {
-    pub release: Arc<wamn_engine::application_config::ApplicationConfig>,
+    pub release: Arc<wamn_application::application_config::ApplicationConfig>,
     pub connections: Arc<crate::connection_facts::ConnectionFacts>,
 }
 
 impl ReleaseContext {
     pub fn new(
-        release: Arc<wamn_engine::application_config::ApplicationConfig>,
+        release: Arc<wamn_application::application_config::ApplicationConfig>,
         connections: Arc<crate::connection_facts::ConnectionFacts>,
     ) -> anyhow::Result<Self> {
         anyhow::ensure!(
@@ -40,7 +40,7 @@ pub struct Scope {
     pub invocation: Option<ConnectionInvocation>,
 }
 
-impl wamn_engine::invocation_scope::InvocationAuthority for Scope {}
+impl wamn_application::invocation_authority::InvocationAuthority for Scope {}
 
 /// Read the deployment selected by the host for this scope.
 pub fn context(scopes: &InvocationScopes, scope: &str) -> anyhow::Result<Arc<ReleaseContext>> {

@@ -70,7 +70,7 @@ pub const CONNECTION_HTTP_ID: &str = "wamn-connection-http";
 #[derive(Debug)]
 struct ApplicationBinding {
     workload: String,
-    application: Arc<wamn_engine::application_config::ApplicationConfig>,
+    application: Arc<wamn_application::application_config::ApplicationConfig>,
 }
 
 /// HTTP host plugin. Only importing components receive its linker entries.

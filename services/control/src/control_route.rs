@@ -52,7 +52,7 @@ use std::time::Duration;
 use anyhow::Context as _;
 use serde::Deserialize;
 use serde_json::{Value, json};
-use wamn_engine::native_routes::{DeliveryError, PermissionDenial};
+use wamn_application::native_routes::{DeliveryError, PermissionDenial};
 use wamn_environment::org::{
     create_project, org_environments, set_environment_status, status_environments,
 };

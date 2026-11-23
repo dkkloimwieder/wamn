@@ -5,8 +5,8 @@ mod rollback;
 use wamn_registry::ApplicationName;
 use wamn_package::PackageName;
 use wamn_workflow_graph::WorkflowGraph;
-use wamn_engine::application_config::APPLICATION_CONFIG;
-use wamn_engine::application_config::ApplicationConfig;
+use wamn_application::application_config::APPLICATION_CONFIG;
+use wamn_application::application_config::ApplicationConfig;
 use wamn_registry::lifecycle_lock::LifecycleLock;
 use std::{
     borrow::Cow,
@@ -458,7 +458,7 @@ async fn check_workflows(
     .await?;
     for (name, value) in graphs {
         let graph = WorkflowGraph::parse(&value)?;
-        wamn_engine::application_config::check_workflow_references(app, &graph)
+        wamn_application::application_config::check_workflow_references(app, &graph)
             .with_context(|| format!("enabled workflow {name}"))?;
     }
     Ok(())

@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::Context as _;
+use wamn_application::result_signing::ResultSigner;
 use wamn_authentication::authorization::Authorization;
 use wamn_identity_protocol::AuthorityClass;
 use wamn_postgres::WamnPostgres;
@@ -13,8 +14,7 @@ use crate::transactions;
 /// Host plugin for guest and native operations over PostgreSQL.
 pub struct OperationHost {
     pub(super) pools: Arc<WamnPostgres>,
-    pub(super) result_signer:
-        std::sync::OnceLock<std::sync::Weak<dyn crate::result_signing::ResultSigner>>,
+    pub(super) result_signer: std::sync::OnceLock<std::sync::Weak<dyn ResultSigner>>,
     pub(super) authorization: Option<Arc<Authorization>>,
     pub(super) operation_metrics: super::operation::OperationMetrics,
     pub(super) operation_workloads:
@@ -48,7 +48,7 @@ impl OperationHost {
     }
 
     /// Install native result signing before any workloads bind.
-    pub fn set_result_signer(&self, signer: &Arc<dyn crate::result_signing::ResultSigner>) {
+    pub fn set_result_signer(&self, signer: &Arc<dyn ResultSigner>) {
         self.result_signer
             .set(Arc::downgrade(signer))
             .expect("result signer is installed once");
@@ -155,9 +155,9 @@ impl OperationHost {
         project_env_key: &wamn_registry::ProjectEnvKey,
         principal_id: &wamn_identity_protocol::PrincipalId,
         role: &str,
-    ) -> anyhow::Result<Option<wamn_engine::ingress::AuthenticatedCaller>> {
+    ) -> anyhow::Result<Option<wamn_application::ingress::AuthenticatedCaller>> {
         if *principal_id == wamn_identity_protocol::workflow_user_id() {
-            use wamn_engine::ingress::{AuthenticatedCaller, CredentialType};
+            use wamn_application::ingress::{AuthenticatedCaller, CredentialType};
             let permissions = self.executor_read(project, async |connection| {
                 Ok(sqlx::query_scalar::<_, Vec<String>>(
                     "SELECT ARRAY(SELECT permission FROM platform.permission WHERE role_name = r.name)

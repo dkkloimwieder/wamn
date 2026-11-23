@@ -392,7 +392,7 @@ pub(crate) mod test_binding {
         prefix: &str,
         active: bool,
     ) -> BoundContainer {
-        let application = Arc::new(wamn_engine::application_config::ApplicationConfig {
+        let application = Arc::new(wamn_application::application_config::ApplicationConfig {
             org: "acme".parse().unwrap(),
             project: "project-a".parse().unwrap(),
             environment: "dev".parse().unwrap(),

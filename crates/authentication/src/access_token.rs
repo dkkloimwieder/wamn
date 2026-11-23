@@ -370,7 +370,7 @@ mod tests {
     use jsonwebtoken::{EncodingKey, Header, encode};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
-    use wamn_engine::ingress::Header as RequestHeader;
+    use wamn_application::ingress::Header as RequestHeader;
 
     use crate::route_authentication::ControlRouteAuthenticator;
 

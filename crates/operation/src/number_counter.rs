@@ -21,11 +21,11 @@ use serde::Serialize;
 use sqlx::{Row as _, Statement as _};
 use wamn_number_pattern::Policy;
 
-use wamn_authority::identity::SessionIdentity;
+use wamn_application::session_identity::SessionIdentity;
 use crate::OperationHost;
 use crate::write_log::Claim;
 use crate::invocation::{AuthorizedInvocation, InvocationRequest};
-use wamn_engine::ingress::AuthenticatedCaller;
+use wamn_application::ingress::AuthenticatedCaller;
 const SEQUENCE_SQL: &str =
     "SELECT id::text, pattern FROM platform.number_sequence WHERE application = $1 AND name = $2";
 

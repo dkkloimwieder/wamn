@@ -75,7 +75,7 @@ pub async fn refuse_environment_references(
 
 /// A deployed workload retains authority for every connection in its config.
 pub fn refuse_application_references(
-    applications: &[wamn_engine::application_config::ApplicationConfig],
+    applications: &[wamn_application::application_config::ApplicationConfig],
     id: &str,
 ) -> Result<(), ConnectionError> {
     if applications

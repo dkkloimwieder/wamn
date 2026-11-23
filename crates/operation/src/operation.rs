@@ -1,6 +1,5 @@
 //! Entry-owned operations on the Store's host transaction.
 
-use wamn_engine::application_config::{ApplicationComponent, ApplicationOperationType};
 use wamn_package::canonical_name::CanonicalName;
 use wamn_package::registered_operation::RegisteredOperation;
 use std::collections::BTreeMap;
@@ -8,12 +7,17 @@ use std::sync::Arc;
 
 use crate::invocation::{AuthorizedInvocation, InvocationRequest};
 use anyhow::Context as _;
+use wamn_application::application_config::{
+    ApplicationComponent, ApplicationConfig, ApplicationOperation, ApplicationOperationType,
+};
+use wamn_application::ingress::AuthenticatedCaller;
+use wamn_application::native_routes::{DeliveryClass, OPERATION_METRICS_ID, OperationRefusal};
+use wamn_application::result_signing::ResultSigning;
+use wamn_application::session_identity::SessionIdentity;
 use wamn_connection::connection::{
     ConnectionExecutionClosure, ConnectionInvocation, InvocationEntry,
 };
 use wamn_engine::entry_operation::operation::{self as wit, Begun, Refusal};
-use wamn_engine::ingress::AuthenticatedCaller;
-use wamn_engine::native_routes::DeliveryClass;
 use wamn_engine::operation::WamnOperation;
 use wash_runtime::engine::ctx::ActiveCtx;
 use wash_runtime::wasmtime::component::{Accessor, HasData, Resource, ResourceTable};
@@ -23,7 +27,7 @@ use wamn_connection::connection_facts::ConnectionCache as _;
 use super::scope_registry;
 use super::write_log::{Claim, WriteLogStore};
 use super::{
-    OperationTransaction, PgCommitFailure, SessionIdentity, WAMN_POSTGRES_ID, OperationHost,
+    OperationTransaction, PgCommitFailure, WAMN_POSTGRES_ID, OperationHost,
 };
 
 /// Delivery counters shared by all operations of this PostgreSQL plugin.
@@ -35,7 +39,7 @@ pub(super) struct OperationMetrics {
 
 impl Default for OperationMetrics {
     fn default() -> Self {
-        let meter = opentelemetry::global::meter(wamn_engine::native_routes::OPERATION_METRICS_ID);
+        let meter = opentelemetry::global::meter(OPERATION_METRICS_ID);
         Self {
             attempts: meter.u64_counter("wamn.router.delivery.attempts").build(),
             errors: meter.u64_counter("wamn.router.delivery.errors").build(),
@@ -62,7 +66,7 @@ impl OperationMetrics {
 pub(super) struct OperationWorkload {
     pub(super) workload: Box<str>,
     identity: SessionIdentity,
-    application: Arc<wamn_engine::application_config::ApplicationConfig>,
+    application: Arc<ApplicationConfig>,
     context: Option<Arc<wamn_connection::invocation::ReleaseContext>>,
     operations: BTreeMap<CanonicalName, (usize, Option<RegisteredOperation>)>,
 }
@@ -72,7 +76,7 @@ impl OperationHost {
         &self,
         workload: &str,
         component: &str,
-        config: Arc<wamn_engine::application_config::ApplicationConfig>,
+        config: Arc<ApplicationConfig>,
     ) -> anyhow::Result<()> {
         if let Some(cache) = &self.authorization {
             cache.bind_application(workload, &config)?;
@@ -378,7 +382,7 @@ impl<T: 'static + Send> wit::HostWithStore<T> for PostgresOperation {
             ));
         };
         Ok(signer
-            .sign(crate::result_signing::ResultSigning {
+            .sign(ResultSigning {
                 workload: &signing.workload.workload,
                 operation: &current.operation,
                 caller: current.authority.caller.as_ref(),
@@ -395,9 +399,11 @@ impl<T: 'static + Send> wit::HostWithStore<T> for PostgresOperation {
                     .postgres
                     .scopes
                     .execution(current.scope())
-                    .map_or(signing.deadline, |execution| execution.deadline()),
+                    .map_or(signing.deadline, |execution| execution.deadline())
+                    .into_std(),
             })
-            .await)
+            .await
+            .map_err(Into::into))
     }
 
     async fn finish_read(
@@ -714,7 +720,7 @@ async fn begin(
     )
     .map_err(|error| {
         if error
-            .downcast_ref::<wamn_engine::native_routes::OperationRefusal>()
+            .downcast_ref::<OperationRefusal>()
             .is_some()
         {
             Refusal::GrantDenied
@@ -736,7 +742,7 @@ async fn begin(
             .is_some_and(|result| !result.fields.is_empty())
             .then(|| SigningAuthority {
                 workload: Arc::clone(&facts),
-                deadline: tokio::time::Instant::now() + wamn_engine::engine::MAX_HOST_CALL_DURATION,
+                deadline: tokio::time::Instant::now() + wamn_application::MAX_HOST_CALL_DURATION,
             }),
     };
     if authorize_only {
@@ -835,7 +841,7 @@ impl OperationHost {
         self: &Arc<Self>,
         authority: &Arc<AuthorizedInvocation>,
         operation: &CanonicalName,
-        policy: &wamn_engine::application_config::ApplicationOperation,
+        policy: &ApplicationOperation,
         input: &serde_json::Value,
         mut invoke: impl FnMut(&str, String) -> Fut + Send,
     ) -> anyhow::Result<NodeOutcome>
@@ -912,7 +918,7 @@ impl OperationHost {
                 &open,
                 policy.host_transaction,
                 policy.type_
-                    == Some(wamn_engine::application_config::ApplicationOperationType::Delete),
+                    == Some(ApplicationOperationType::Delete),
                 hash.to_string().into_bytes(),
             )
             .await
@@ -1118,7 +1124,7 @@ impl OperationHost {
     pub fn workflow_application(
         &self,
         route: &str,
-    ) -> Option<Arc<wamn_engine::application_config::ApplicationConfig>> {
+    ) -> Option<Arc<ApplicationConfig>> {
         self.operation_workloads
             .read()
             .expect("operation workloads lock poisoned")
@@ -1332,18 +1338,18 @@ impl OperationHost {
                 .and_then(std::sync::Weak::upgrade)
                 .context("workflow result signing is unavailable")?;
             let signed = signer
-                .sign(crate::result_signing::ResultSigning {
+                .sign(ResultSigning {
                     workload: &facts.workload,
                     operation: node.operation,
                     caller: authority.caller.as_ref(),
                     reads,
                     payload: std::mem::take(&mut emission.payload),
-                    deadline,
+                    deadline: deadline.into_std(),
                 })
                 .await;
             match signed {
                 Ok(payload) => emission.payload = payload,
-                Err(error) => return Ok(Err(error)),
+                Err(error) => return Ok(Err(error.into())),
             }
         }
         Ok(outcome)

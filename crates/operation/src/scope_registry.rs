@@ -1,6 +1,7 @@
 //! Operation identity and transaction authority stored in invocation scopes.
 
-use crate::{OperationTransaction, PgError, SessionIdentity};
+use crate::{OperationTransaction, PgError};
+use wamn_application::session_identity::SessionIdentity;
 use wamn_connection::connection::ConnectionInvocation;
 use wamn_connection::invocation::ReleaseContext;
 use wamn_engine::invocation_scope::InvocationScopes;
@@ -35,7 +36,7 @@ pub struct Authority {
     pub(crate) read: bool,
 }
 
-impl wamn_engine::invocation_scope::InvocationAuthority for Authority {}
+impl wamn_application::invocation_authority::InvocationAuthority for Authority {}
 
 /// Register the project_env_key identity for a component id from workload bind.
 pub(crate) fn set_project_env_key(

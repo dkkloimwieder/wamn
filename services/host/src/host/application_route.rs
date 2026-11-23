@@ -23,8 +23,8 @@ use wamn_identity::application::OPERATION_GRANT_LOCK_SQL;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sqlx::PgConnection as Client;
-use wamn_engine::application_config::ApplicationConfig;
-use wamn_engine::ingress::AuthenticatedCaller;
+use wamn_application::application_config::ApplicationConfig;
+use wamn_application::ingress::AuthenticatedCaller;
 use wamn_identity::application::{
     AdministrationError, AdministrationRefusal, GrantAuthority, GrantChange, application_users,
     create_role, delete_role, mutate_grant, permission_is_grantable, permission_rows, role_names,

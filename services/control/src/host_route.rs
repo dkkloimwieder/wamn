@@ -12,8 +12,8 @@ use std::fmt;
 use std::sync::Arc;
 
 use serde_json::{Value, json};
-use wamn_engine::ingress::AuthenticatedCaller;
-use wamn_engine::native_routes::{
+use wamn_application::ingress::AuthenticatedCaller;
+use wamn_application::native_routes::{
     DeliveryError, DeliveryOutcome, DeliveryReport, DeliveryRequest, Source,
     resolve_authorized_host_route,
 };
@@ -386,7 +386,7 @@ impl HostRouteDelivery {
                 value
                     .to_str()
                     .ok()
-                    .map(|value| wamn_engine::ingress::Header {
+                    .map(|value| wamn_application::ingress::Header {
                         name: name.to_string(),
                         value: value.to_owned(),
                     })
@@ -412,7 +412,7 @@ impl HostRouteDelivery {
         }
         let authentication = match &self.control_authenticator {
             Some(authenticator) => authenticator.authenticate_control(id, &headers).await,
-            None => Err(wamn_engine::ingress::authentication_unavailable()),
+            None => Err(wamn_application::ingress::authentication_unavailable()),
         };
         let caller = match authentication {
             Ok(caller) => Some(caller),

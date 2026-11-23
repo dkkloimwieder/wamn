@@ -10,15 +10,10 @@ use tokio::time::Instant;
 use wash_runtime::plugin::HostPlugin;
 use wash_runtime::wit::WitWorld;
 
-use crate::ingress::RouteProvider;
+use wamn_application::MAX_HOST_CALL_DURATION;
+use wamn_application::ingress::RouteProvider;
+use wamn_application::invocation_authority::InvocationAuthority;
 use crate::invocation_trace::InvocationTrace;
-
-/// Host-owned authority exposes routing facts without coupling service types.
-pub trait InvocationAuthority: Any + Send + Sync {
-    fn routes(&self) -> Option<Arc<dyn RouteProvider>> {
-        None
-    }
-}
 
 pub const INVOCATION_SCOPES_ID: &str = "wamn:invocation-scopes";
 
@@ -84,7 +79,7 @@ impl InvocationExecution {
 
 impl Default for InvocationExecution {
     fn default() -> Self {
-        Self::new(Instant::now() + crate::engine::MAX_HOST_CALL_DURATION)
+        Self::new(Instant::now() + MAX_HOST_CALL_DURATION)
     }
 }
 

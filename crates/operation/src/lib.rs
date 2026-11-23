@@ -10,7 +10,6 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use wamn_authentication::authorization::AuthorizationStore as _;
-use wamn_authority::identity::SessionIdentity;
 use wamn_postgres::DEFAULT_PROJECT;
 use wash_runtime::engine::ctx::{SharedCtx, extract_active_ctx};
 use wash_runtime::engine::workload::WorkloadItem;
@@ -26,7 +25,6 @@ mod operation;
 mod operation_transaction;
 mod query;
 mod resources;
-pub mod result_signing;
 pub mod scope_registry;
 mod transactions;
 pub mod write_log;
@@ -54,7 +52,7 @@ mod bindings {
         imports: { default: async | trappable | tracing },
         with: {
             "wamn:postgres/statements.transaction": super::PgStatementTransaction,
-            "wamn:ingress/routing.authenticated-caller": wamn_engine::ingress::AuthenticatedCaller,
+            "wamn:ingress/routing.authenticated-caller": wamn_application::ingress::AuthenticatedCaller,
             // The engine owns the operation binding and the types its refusal names.
             "wamn:postgres/types": wamn_engine::entry_operation::postgres_types,
             "wamn:operation/operation": wamn_engine::entry_operation::operation,
@@ -82,7 +80,7 @@ mod bindings {
         },
         with: {
             "wamn:postgres/statements.transaction": super::PgStatementTransaction,
-            "wamn:ingress/routing.authenticated-caller": wamn_engine::ingress::AuthenticatedCaller,
+            "wamn:ingress/routing.authenticated-caller": wamn_application::ingress::AuthenticatedCaller,
             // The engine owns the operation binding and the types its refusal names.
             "wamn:postgres/types": wamn_engine::entry_operation::postgres_types,
             "wamn:operation/operation": wamn_engine::entry_operation::operation,

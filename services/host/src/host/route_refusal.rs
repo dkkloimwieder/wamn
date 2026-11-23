@@ -1,7 +1,7 @@
 //! Shared host route refusals and JSON payload parsing.
 
 use serde_json::Value;
-use wamn_engine::native_routes::DeliveryError;
+use wamn_application::native_routes::DeliveryError;
 
 /// Why a host route refused a request.
 #[derive(Debug)]

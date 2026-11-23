@@ -6,7 +6,8 @@ use http_body_util::{BodyExt as _, LengthLimitError, Limited};
 use hyper::{Method, Request, Response, StatusCode, header};
 use serde_json::json;
 use tokio::time::Instant;
-use wamn_engine::ingress::{Header, IngressRouting, RoutePolicy};
+use wamn_application::ingress::{Header, RoutePolicy};
+use wamn_engine::ingress::IngressRouting;
 use wamn_package::canonical_name::CanonicalName;
 use wasmtime_wasi_http::WasiBody;
 

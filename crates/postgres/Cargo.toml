@@ -6,9 +6,10 @@ edition.workspace = true
 license.workspace = true
 
 [features]
-host = ["dep:chrono", "dep:tracing", "dep:uuid", "dep:wamn-engine", "dep:wamn-registry", "dep:wamn-role", "dep:wamn-scalar", "tokio/sync"]
+host = ["dep:chrono", "dep:tracing", "dep:uuid", "dep:wamn-application", "dep:wamn-engine", "dep:wamn-registry", "dep:wamn-role", "dep:wamn-scalar", "tokio/sync"]
 
 [dependencies]
+wamn-application = { workspace = true, optional = true }
 chrono = { workspace = true, optional = true, features = ["std"] }
 tracing = { workspace = true, optional = true }
 uuid = { workspace = true, optional = true }

@@ -1,9 +1,9 @@
 //! Host request facts read from the route component's workload configuration.
 
-use crate::application_config::APPLICATION_CONFIG;
-use crate::application_config::ApplicationConfig;
-use crate::ingress::{RoutePolicy, RouteProvider};
-use crate::invocation_scope::{InvocationAuthority, InvocationScopes};
+use crate::invocation_scope::InvocationScopes;
+use wamn_application::application_config::{APPLICATION_CONFIG, ApplicationConfig};
+use wamn_application::ingress::{RoutePolicy, RouteProvider};
+use wamn_application::invocation_authority::InvocationAuthority;
 use std::collections::HashMap;
 use std::sync::Arc;
 use wamn_routes::HTTP_ROUTES_CONFIG;

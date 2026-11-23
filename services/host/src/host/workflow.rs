@@ -21,7 +21,7 @@ use std::time::Duration;
 
 use anyhow::Context as _;
 use tokio::time::Instant;
-use wamn_engine::application_config::ApplicationConfig;
+use wamn_application::application_config::ApplicationConfig;
 use wamn_engine::operation::WamnOperation;
 use wamn_event::Causation;
 use wamn_identity_protocol::PrincipalId;

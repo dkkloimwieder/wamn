@@ -8,7 +8,6 @@
 //! - [`HostPlugin`]: the plugin trait. It is wash-runtime's trait, re-exported.
 //!   The engine owns no plugin trait of its own.
 //! - [`ingress`]: HTTP authentication from workload configuration.
-//! - [`native_routes`]: native host requests and operation authorization.
 //! - [`entry_operation`]: the generated host side of `wamn:operation`, the
 //!   entry-owned operation boundary of the ingress guest. Each host
 //!   implements it over its own store.
@@ -37,7 +36,6 @@
 //! test ignores what is reached only through wash-runtime and pins that list.
 
 pub mod application;
-pub mod application_config;
 pub mod component_admission;
 pub mod engine;
 pub mod entry_operation;
@@ -46,7 +44,6 @@ pub mod ingress;
 pub mod invocation_scope;
 pub mod invocation_trace;
 pub mod lifecycle;
-pub mod native_routes;
 pub mod operation;
 mod route_bindings;
 

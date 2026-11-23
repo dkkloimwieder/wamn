@@ -1,6 +1,6 @@
 //! Positive admission facts shared by the host's application workloads.
 
-use wamn_engine::application_config::ApplicationConfig;
+use wamn_application::application_config::ApplicationConfig;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock, Weak};
 use std::time::{Duration, Instant, SystemTime};

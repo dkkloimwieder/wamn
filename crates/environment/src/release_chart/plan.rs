@@ -49,7 +49,7 @@ pub fn roles(
     bindings: &[crate::environment::bindings::Binding],
     integration_repository: &str,
 ) -> anyhow::Result<Vec<Role>> {
-    use wamn_engine::application_config::{
+    use wamn_application::application_config::{
         ApplicationComponent, ApplicationConfig, ApplicationConnection, ApplicationDataChange,
         ApplicationOperation, ApplicationOperationType, DataChangeModel,
     };
@@ -311,7 +311,7 @@ pub fn roles(
         serde_json::to_string(&routes)?.into(),
     );
     config.insert(
-        wamn_engine::application_config::APPLICATION_CONFIG.into(),
+        wamn_application::application_config::APPLICATION_CONFIG.into(),
         serde_json::to_string(&application)?.into(),
     );
     let descriptors =

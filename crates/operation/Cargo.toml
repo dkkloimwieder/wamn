@@ -9,6 +9,7 @@ license.workspace = true
 wasm_component_model_implements = ["wash-runtime/wasm_component_model_implements", "wamn-engine/wasm_component_model_implements"]
 
 [dependencies]
+wamn-application.workspace = true
 wamn-package = { workspace = true, features = ["sqlx"] }
 wamn-number-pattern.workspace = true
 serde = { workspace = true, features = ["derive"] }

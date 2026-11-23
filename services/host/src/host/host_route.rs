@@ -8,9 +8,9 @@ use std::sync::Arc;
 
 use serde_json::{Value, json};
 use wamn_authentication::authorization::{Authorization, AuthorizationStore as _};
-use wamn_engine::application_config::ApplicationConfig;
-use wamn_engine::ingress::AuthenticatedCaller;
-use wamn_engine::native_routes::{
+use wamn_application::application_config::ApplicationConfig;
+use wamn_application::ingress::AuthenticatedCaller;
+use wamn_application::native_routes::{
     DeliveryError, DeliveryOutcome, DeliveryReport, DeliveryRequest, Source,
     resolve_authorized_host_route,
 };
@@ -272,7 +272,7 @@ impl HostRouteDelivery {
                 value
                     .to_str()
                     .ok()
-                    .map(|value| wamn_engine::ingress::Header {
+                    .map(|value| wamn_application::ingress::Header {
                         name: name.to_string(),
                         value: value.to_owned(),
                     })
@@ -300,7 +300,7 @@ impl HostRouteDelivery {
             .authenticate_policy(
                 &self.project_env_key,
                 id,
-                wamn_engine::ingress::RoutePolicy {
+                wamn_application::ingress::RoutePolicy {
                     policy: &attachment.auth_policy,
                 },
                 &headers,

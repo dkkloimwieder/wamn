@@ -358,7 +358,7 @@ async fn invoke<P: InvocationPolicy>(
 ) -> anyhow::Result<NativeOutcome> {
     let deadline = request
         .deadline
-        .min(Instant::now() + wamn_engine::engine::MAX_HOST_CALL_DURATION);
+        .min(Instant::now() + wamn_application::MAX_HOST_CALL_DURATION);
     request.deadline = deadline;
     anyhow::ensure!(Instant::now() < deadline, "native-node-deadline-exceeded");
     let (reply, response) = oneshot::channel();

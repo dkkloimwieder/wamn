@@ -10,6 +10,7 @@ default = []
 ops = ["wamn-provision/ops"]
 
 [dependencies]
+wamn-application.workspace = true
 kube = { workspace = true }
 k8s-openapi = { workspace = true }
 wamn-connection-type.workspace = true
@@ -19,7 +20,6 @@ wamn-package = { workspace = true, features = ["sqlx"] }
 wamn-component-policy.workspace = true
 wamn-routes.workspace = true
 wamn-workflow-graph.workspace = true
-wamn-engine.workspace = true
 async-trait.workspace = true
 wamn-role.workspace = true
 wamn-connection = { workspace = true }
@@ -68,7 +68,6 @@ wamn-http-client = { workspace = true, features = ["tls12"] }
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "sync", "test-util", "time"] }
 wamn-test-infrastructure = { workspace = true }
 wamn-identity-protocol = { workspace = true }
-wamn-engine = { workspace = true }
 
 [lints]
 workspace = true

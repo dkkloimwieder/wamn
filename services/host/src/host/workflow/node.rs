@@ -8,7 +8,7 @@ use std::sync::atomic::Ordering;
 use std::time::Duration;
 use tokio::time::Instant;
 use wamn_connection::connection::GraphPosition;
-use wamn_engine::native_routes::{OperationRefusal, bounded_node_deadline_ms};
+use wamn_application::native_routes::{OperationRefusal, bounded_node_deadline_ms};
 use wamn_engine::operation::node_types;
 use wamn_run_state::persistence;
 use wamn_operation::WorkflowNode;

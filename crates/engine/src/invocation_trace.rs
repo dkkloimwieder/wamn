@@ -4,21 +4,22 @@
 //! identify existing host invocations; a trace supplies no authorization.
 
 use tracing::{Instrument as _, instrument::WithSubscriber as _};
+use wamn_application::ingress::{AuthenticatedCaller, CredentialType, Header};
 use wash_runtime::engine::ctx::ActiveCtx;
 
 /// Capture incoming HTTP trace fields at the authentication import boundary.
-pub fn request_trace(headers: &[(String, String)]) -> InvocationTrace {
+pub fn request_trace(headers: &[Header]) -> InvocationTrace {
     use tracing_opentelemetry::OpenTelemetrySpanExt as _;
-    struct Headers<'a>(&'a [(String, String)]);
+    struct Headers<'a>(&'a [Header]);
     impl opentelemetry::propagation::Extractor for Headers<'_> {
         fn get(&self, key: &str) -> Option<&str> {
             self.0
                 .iter()
-                .find(|(name, _)| name.eq_ignore_ascii_case(key))
-                .map(|(_, value)| value.as_str())
+                .find(|header| header.name.eq_ignore_ascii_case(key))
+                .map(|header| header.value.as_str())
         }
         fn keys(&self) -> Vec<&str> {
-            self.0.iter().map(|(name, _)| name.as_str()).collect()
+            self.0.iter().map(|header| header.name.as_str()).collect()
         }
     }
     let parent = opentelemetry::global::get_text_map_propagator(|propagator| {
@@ -44,7 +45,7 @@ pub struct InvocationSite<'a> {
     pub input_port: Option<&'a str>,
     pub operation: &'a str,
     pub component_digest: &'a wamn_digest::Digest,
-    pub caller: Option<&'a crate::ingress::AuthenticatedCaller>,
+    pub caller: Option<&'a AuthenticatedCaller>,
 }
 
 /// Open one `wamn.component.invoke` span, under `remote_parent` when given.
@@ -77,10 +78,10 @@ pub fn invocation_span(
         span.record(
             "wamn.caller_credential_type",
             match caller.credential_type() {
-                crate::ingress::CredentialType::Pat => "pat",
-                crate::ingress::CredentialType::Session => "session",
-                crate::ingress::CredentialType::QueuedService => "queued-service",
-                crate::ingress::CredentialType::Connection => "connection",
+                CredentialType::Pat => "pat",
+                CredentialType::Session => "session",
+                CredentialType::QueuedService => "queued-service",
+                CredentialType::Connection => "connection",
             },
         );
     }
