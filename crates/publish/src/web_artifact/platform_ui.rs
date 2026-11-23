@@ -247,7 +247,7 @@ mod tests {
             ])
             .await;
             let store = InMemory::new();
-            let root = format!("platform-ui/{}", format!("sha256-{}", packed.digest.hex()));
+            let root = format!("platform-ui/sha256-{}", packed.digest.hex());
             let files = web_dist_files(&packed.tar).unwrap();
             let (asset, bytes) = files
                 .iter()

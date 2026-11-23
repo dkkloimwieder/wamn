@@ -667,7 +667,7 @@ mod tests {
                 component: component.parse().unwrap(),
                 operation: operation.parse().unwrap(),
             },
-            definition_hash: definition_hash,
+            definition_hash,
             definition,
             auth_policy: serde_json::json!({"modes": ["pat"]}),
             registered_operation: Some(operation.parse().unwrap()),

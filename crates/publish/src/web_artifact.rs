@@ -831,11 +831,7 @@ fs.copyFileSync('index.html', dist + '/index.html');
         artifact_fixture(scratch.path(), false);
         let packed = pack_web_artifact(scratch.path()).unwrap();
         for (responses, digest, _reason) in [
-            (
-                vec![(404, Vec::new())],
-                packed.digest.clone(),
-                "does not exist",
-            ),
+            (vec![(404, Vec::new())], packed.digest, "does not exist"),
             (
                 vec![(200, packed.manifest.clone())],
                 bytes_sha256(b"another manifest"),
@@ -843,7 +839,7 @@ fs.copyFileSync('index.html', dist + '/index.html');
             ),
             (
                 vec![(200, packed.manifest.clone()), (200, b"wrong tar".to_vec())],
-                packed.digest.clone(),
+                packed.digest,
                 "Invalid digest",
             ),
         ] {
@@ -943,7 +939,7 @@ fs.copyFileSync('index.html', dist + '/index.html');
             ),
             (
                 vec![(200, packed.manifest.clone()), (200, b"wrong tar".to_vec())],
-                packed.digest.clone(),
+                packed.digest,
                 "Invalid digest",
             ),
             (
