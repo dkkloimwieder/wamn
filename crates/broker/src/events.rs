@@ -29,7 +29,7 @@ pub fn source_stream_config(
         max_consumers: -1,
         max_messages: -1,
         max_bytes: i64::from(SOURCE_STREAM_MAX_BYTES),
-        max_age: Duration::from_secs(7 * 24 * 60 * 60),
+        max_age: Duration::from_hours(7 * 24),
         discard: stream::DiscardPolicy::Old,
         max_messages_per_subject: -1,
         max_message_size: -1,
