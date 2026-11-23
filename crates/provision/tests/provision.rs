@@ -22,7 +22,7 @@ async fn the_platform_extensions_make_an_exclusion_constraint_reachable() -> any
     assert_eq!(
         missing
             .as_database_error()
-            .and_then(|error| error.code())
+            .and_then(sqlx::error::DatabaseError::code)
             .as_deref(),
         Some("42704")
     );
@@ -39,7 +39,7 @@ async fn the_platform_extensions_make_an_exclusion_constraint_reachable() -> any
     assert_eq!(
         overlap
             .as_database_error()
-            .and_then(|error| error.code())
+            .and_then(sqlx::error::DatabaseError::code)
             .as_deref(),
         Some("23P01")
     );
