@@ -134,7 +134,7 @@ pub async fn fixture(name: &str) -> anyhow::Result<Fixture> {
     sqlx::query(
         "INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1::text::uuid,'','fixture','admin:file-fixture')",
     )
-    .bind(&CALLER)
+    .bind(CALLER)
     .execute(&mut writer)
     .await
     .map(|result| result.rows_affected())?;
@@ -188,9 +188,9 @@ pub async fn metadata(writer: &mut Client) -> anyhow::Result<()> {
          VALUES ($1::text::uuid,$2,$3::text::uuid,'fixture.txt','text/plain',0,'sha256:' || repeat('0',64), \
                  'dev/_wamn_files/live/' || $1)",
     )
-    .bind(&FILE)
-    .bind(&APPLICATION)
-    .bind(&CONNECTION)
+    .bind(FILE)
+    .bind(APPLICATION)
+    .bind(CONNECTION)
     .execute(&mut *transaction)
     .await
     .map(|result| result.rows_affected())?;

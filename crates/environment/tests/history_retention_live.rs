@@ -22,11 +22,9 @@ const RELATIONS: [(&str, &str); 3] = [
 ];
 
 async fn connect(url: &str) -> Client {
-    let client = wamn_postgres::connect(url)
+    wamn_postgres::connect(url)
         .await
-        .expect("connect to disposable PostgreSQL");
-
-    client
+        .expect("connect to disposable PostgreSQL")
 }
 
 /// Install the catalog and the application minimum on a clean database.
@@ -180,8 +178,8 @@ async fn seed(admin: &mut Client, table: &str, statement: &str, age_days: i32) -
                   WHERE position > $2 RETURNING position"
         ),
     ))
-    .bind(&age_days)
-    .bind(&last)
+    .bind(age_days)
+    .bind(last)
     .fetch_all(&mut *admin)
     .await
     .expect("move the new entries into the past")
@@ -231,8 +229,8 @@ async fn wait_for_blocker(
                 "SELECT EXISTS (SELECT FROM pg_catalog.pg_stat_activity \
                       WHERE application_name = $1 AND $2 = ANY(pg_blocking_pids(pid)))",
             )
-            .bind(&application)
-            .bind(&blocker)
+            .bind(application)
+            .bind(blocker)
             .fetch_one(&mut *observer)
             .await
             .expect("read the blocking process")

@@ -36,7 +36,7 @@ async fn application_mutations_require_row_security_in_each_database() {
                  WHERE granted_role.rolname::text = ANY($1) ORDER BY 1,2",
         )
         .bind(
-            &wamn_provision::WorkloadRoleFamily::ALL
+            wamn_provision::WorkloadRoleFamily::ALL
                 .into_iter()
                 .filter(|family| {
                     matches!(
@@ -45,7 +45,7 @@ async fn application_mutations_require_row_security_in_each_database() {
                             | wamn_provision::WorkloadRoleFamily::Query
                     )
                 })
-                .map(|family| family.acl_role())
+                .map(wamn_provision::WorkloadRoleFamily::acl_role)
                 .collect::<Vec<_>>(),
         )
         .fetch_all(&mut *client)

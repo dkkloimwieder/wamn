@@ -208,7 +208,7 @@ async fn abandoned_sessions_expire_even_when_a_proxy_keeps_the_socket_open() {
             .await
             .unwrap()
             .unwrap();
-        assert!(sqlx::query("SELECT EXISTS (SELECT FROM pg_locks WHERE pid = $1 AND locktype = 'advisory' AND granted)").bind(&pid).fetch_one(&mut observer).await.unwrap().get::<bool, _>(0), "the abandoned server session still holds its lock");
+        assert!(sqlx::query("SELECT EXISTS (SELECT FROM pg_locks WHERE pid = $1 AND locktype = 'advisory' AND granted)").bind(pid).fetch_one(&mut observer).await.unwrap().get::<bool, _>(0), "the abandoned server session still holds its lock");
 
         let recovered = timeout(
             Duration::from_secs(7),
@@ -219,7 +219,7 @@ async fn abandoned_sessions_expire_even_when_a_proxy_keeps_the_socket_open() {
         recovered.release().await;
         assert!(
             !sqlx::query("SELECT EXISTS (SELECT FROM pg_stat_activity WHERE pid = $1)")
-                .bind(&pid)
+                .bind(pid)
                 .fetch_one(&mut observer)
                 .await
                 .unwrap()

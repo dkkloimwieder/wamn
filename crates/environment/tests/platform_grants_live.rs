@@ -4,11 +4,9 @@ use sqlx::PgConnection as Client;
 use sqlx::Row as _;
 
 async fn connect(url: &str) -> Client {
-    let client = wamn_postgres::connect(url)
+    wamn_postgres::connect(url)
         .await
-        .expect("connect to the disposable database");
-
-    client
+        .expect("connect to the disposable database")
 }
 
 #[tokio::test]

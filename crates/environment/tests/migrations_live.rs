@@ -21,6 +21,8 @@ fn migrator(sources: &[Migration]) -> Migrator {
 #[tokio::test]
 #[ignore = "requires: docker"]
 async fn sqlx_commits_files_with_their_history_and_refuses_checksum_drift() -> anyhow::Result<()> {
+    use sqlx::migrate::Migrate as _;
+
     let postgres = wamn_test_infrastructure::containers::start_postgres().await?;
     let database = postgres.create_database("project").await?;
     let mut admin = wamn_postgres::connect(database.as_str()).await?;
@@ -77,7 +79,6 @@ async fn sqlx_commits_files_with_their_history_and_refuses_checksum_drift() -> a
         ),
     ];
     migrations::run(&mut admin, migrator(&sources), table.clone()).await?;
-    use sqlx::migrate::Migrate as _;
     let applied = admin.list_applied_migrations(&table).await?;
     for expected in migrator(&sources).iter() {
         assert!(applied.iter().any(
@@ -191,6 +192,8 @@ async fn sqlx_commits_files_with_their_history_and_refuses_checksum_drift() -> a
 #[ignore = "requires: docker"]
 async fn package_apply_refuses_rebinding_an_existing_relation() -> anyhow::Result<()> {
     use wamn_environment::apply_package::{self, ApplyPackageRequest, PackageRoot};
+
+    const INITIAL: &str = "CREATE TABLE fixture_app.item(id int PRIMARY KEY)";
     let postgres = wamn_test_infrastructure::containers::start_postgres().await?;
     let migration = postgres.create_project_database("project").await?;
     wamn_environment::platform_migrations::install_project(
@@ -238,7 +241,6 @@ async fn package_apply_refuses_rebinding_an_existing_relation() -> anyhow::Resul
         project: "fixture".parse().unwrap(),
         environment: "dev".parse().unwrap(),
     };
-    const INITIAL: &str = "CREATE TABLE fixture_app.item(id int PRIMARY KEY)";
     apply_package::apply_package(request(write_package("first", "item", "1.0.0", INITIAL)?))
         .await?;
     let mut admin = wamn_postgres::connect(database.as_str()).await?;

@@ -191,7 +191,7 @@ async fn bootstrap_is_atomic_and_uses_database_facts() {
             .downcast_ref::<sqlx::Error>()
             .unwrap()
             .as_database_error()
-            .and_then(|e| e.code())
+            .and_then(sqlx::error::DatabaseError::code)
             .as_deref(),
         Some("22012")
     );

@@ -32,14 +32,14 @@ async fn application_file_writes_are_refused_and_history_uses_the_standard_contr
         assert_eq!(
             error
                 .as_database_error()
-                .and_then(|error| error.code())
+                .and_then(sqlx::error::DatabaseError::code)
                 .as_deref(),
             Some("42501"),
             "{statement}"
         );
     }
     let row = sqlx::query("SELECT application,connection_id::text,created_by::text, \
-         updated_by::text,created_at=updated_at,exposure,url FROM platform.file WHERE id=$1::text::uuid").bind(&files::FILE).fetch_one(&mut fixture
+         updated_by::text,created_at=updated_at,exposure,url FROM platform.file WHERE id=$1::text::uuid").bind(files::FILE).fetch_one(&mut fixture
         .guest)
         .await?;
     assert_eq!(row.get::<String, _>(0), files::APPLICATION);
@@ -68,7 +68,7 @@ async fn disabling_a_connection_preserves_file_references_and_referenced_delete_
     sqlx::query(
         "INSERT INTO file_fixture.document (id,file_id) VALUES ($1::text::uuid,$1::text::uuid)",
     )
-    .bind(&files::FILE)
+    .bind(files::FILE)
     .execute(&mut fixture.guest)
     .await
     .map(|result| result.rows_affected())?;
@@ -81,7 +81,7 @@ async fn disabling_a_connection_preserves_file_references_and_referenced_delete_
     )
     .await?;
     sqlx::query("UPDATE platform.connection SET status='disabled' WHERE id=$1::text::uuid")
-        .bind(&files::CONNECTION)
+        .bind(files::CONNECTION)
         .execute(&mut *writer)
         .await
         .map(|result| result.rows_affected())?;
@@ -103,7 +103,7 @@ async fn disabling_a_connection_preserves_file_references_and_referenced_delete_
     )
     .await?;
     let error = sqlx::query("DELETE FROM platform.file WHERE id=$1::text::uuid")
-        .bind(&files::FILE)
+        .bind(files::FILE)
         .execute(&mut *writer)
         .await
         .map(|result| result.rows_affected())
@@ -111,7 +111,7 @@ async fn disabling_a_connection_preserves_file_references_and_referenced_delete_
     assert_eq!(
         error
             .as_database_error()
-            .and_then(|error| error.code())
+            .and_then(sqlx::error::DatabaseError::code)
             .as_deref(),
         Some("23503")
     );
@@ -137,7 +137,7 @@ async fn disabling_a_connection_preserves_file_references_and_referenced_delete_
     .await?;
     assert_eq!(
         sqlx::query("DELETE FROM platform.file WHERE id=$1::text::uuid")
-            .bind(&files::FILE)
+            .bind(files::FILE)
             .execute(&mut *writer)
             .await
             .map(|result| result.rows_affected())?,
@@ -214,15 +214,15 @@ async fn aged_staging_expires_while_unlinked_metadata_and_aged_live_bytes_stay()
     )
     .await?;
     sqlx::query("UPDATE platform.file SET size=$1,sha256=$2 WHERE id=$3::text::uuid")
-        .bind(&i64::try_from(b"aged fixture bytes".len())?)
-        .bind(&wamn_digest::bytes_sha256(b"aged fixture bytes"))
-        .bind(&files::FILE)
+        .bind(i64::try_from(b"aged fixture bytes".len())?)
+        .bind(wamn_digest::bytes_sha256(b"aged fixture bytes"))
+        .bind(files::FILE)
         .execute(&mut *transaction)
         .await
         .map(|result| result.rows_affected())?;
     transaction.commit().await?;
     let row = sqlx::query("SELECT created_at FROM platform.file WHERE id=$1::text::uuid")
-        .bind(&files::FILE)
+        .bind(files::FILE)
         .fetch_one(&mut metadata.guest)
         .await?;
     let created: chrono::DateTime<chrono::Utc> = row.get(0);
@@ -281,7 +281,7 @@ async fn aged_staging_expires_while_unlinked_metadata_and_aged_live_bytes_stay()
     );
     assert_eq!(
         sqlx::query("SELECT count(*) FROM platform.file WHERE id=$1::text::uuid")
-            .bind(&files::FILE)
+            .bind(files::FILE)
             .fetch_one(&mut metadata.guest)
             .await?
             .get::<i64, _>(0),
