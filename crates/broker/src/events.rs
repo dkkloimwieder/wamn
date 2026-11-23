@@ -234,9 +234,7 @@ pub fn consumer_config_matches(expected: &pull::Config, actual: &consumer::Confi
 mod tests {
     use super::*;
     use async_nats::jetstream::consumer::IntoConsumerConfig;
-    use async_nats::jetstream::stream::{
-        DiscardPolicy, Placement, Republish, Source, SubjectTransform,
-    };
+    use async_nats::jetstream::stream::{DiscardPolicy, Republish, Source, SubjectTransform};
 
     #[test]
     fn application_consumers_accept_application_names_and_refuse_invalid_source_tokens() {
