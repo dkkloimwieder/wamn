@@ -270,9 +270,6 @@ impl Execution {
         operation: &wamn_package::canonical_name::CanonicalName,
         payload: &str,
     ) -> anyhow::Result<Value> {
-        if operation.as_str().ends_with("operation_status") {
-            return self.operation_job(operation, payload).await;
-        }
         #[derive(Deserialize)]
         #[serde(deny_unknown_fields)]
         struct Input {
@@ -283,6 +280,9 @@ impl Execution {
             disposable: Option<bool>,
             #[serde(default)]
             data: bool,
+        }
+        if operation.as_str().ends_with("operation_status") {
+            return self.operation_job(operation, payload).await;
         }
         let input: Input = serde_json::from_str(payload)?;
         let payload = json!({"type":"environment","operation":operation,"project":input.project,"env":input.env,"document":input.document,"application":input.application,"disposable":input.disposable,"data":input.data});

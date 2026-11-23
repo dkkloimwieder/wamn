@@ -279,14 +279,14 @@ impl ControlRoutes<'_> {
         let admitted = match attachment.route.authority {
             HostRouteAuthority::OrgAdmin => {
                 self.read(caller, async |connection| {
-                    Ok(self.admits(connection, caller, None).await?)
+                    self.admits(connection, caller, None).await
                 })
                 .await?
             }
             HostRouteAuthority::ProjectAdmin => {
                 let project = parse::<ProjectTarget>(payload)?.project;
                 self.read(caller, async |connection| {
-                    Ok(self.admits(connection, caller, Some(&project)).await?)
+                    self.admits(connection, caller, Some(&project)).await
                 })
                 .await?
             }
@@ -294,7 +294,7 @@ impl ControlRoutes<'_> {
             // of a project of the org.
             HostRouteAuthority::Member => {
                 self.read(caller, async |connection| {
-                    Ok(self.admits(connection, caller, None).await?)
+                    self.admits(connection, caller, None).await
                 })
                 .await?
                     || !self
@@ -474,13 +474,13 @@ impl ControlRoutes<'_> {
                     transaction.commit().await?;
                     anyhow::Ok(row.get::<i32, _>(0))
                 };
-                Ok(status_with_counts(
+                Ok(Box::pin(status_with_counts(
                     status,
                     &request.project,
                     &request.env,
                     application,
                     memberships,
-                )
+                ))
                 .await)
             }
             HostHandler::MemberList => {
