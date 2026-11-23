@@ -196,18 +196,16 @@ mod tests {
         .await?;
 
         bind_actor(&mut client, COMMAND_PRINCIPAL).await?;
-        let updated = sqlx::query(sqlx::AssertSqlSafe(
-            generated_sql(OVERLAY_UPDATE_SQL),
-        ))
-        .bind(&id)
-        .bind(&1_i32)
-        .bind(&true)
-        .bind(&Some(true))
-        .bind(&false)
-        .bind(&None::<String>)
-        .fetch_one(&mut client)
-        .await
-        .context("execute exact Acme purchase_order.update SQL")?;
+        let updated = sqlx::query(sqlx::AssertSqlSafe(generated_sql(OVERLAY_UPDATE_SQL)))
+            .bind(id)
+            .bind(1_i32)
+            .bind(true)
+            .bind(Some(true))
+            .bind(false)
+            .bind(&None::<String>)
+            .fetch_one(&mut client)
+            .await
+            .context("execute exact Acme purchase_order.update SQL")?;
         bind_actor(&mut client, FIXTURE_PRINCIPAL).await?;
         ensure!(
             updated.get::<String, _>("outcome") == "updated"
@@ -216,9 +214,9 @@ mod tests {
             "Acme purchase_order.update returned the wrong row"
         );
         let read = sqlx::query(HISTORY_SQL)
-            .bind(&id)
-            .bind(&0_i64)
-            .bind(&100_i32)
+            .bind(id)
+            .bind(0_i64)
+            .bind(100_i32)
             .fetch_all(&mut client)
             .await
             .context("execute the Receiving history read")?;
@@ -231,7 +229,7 @@ mod tests {
                   WHERE row_key = jsonb_build_object('id', $1::uuid) \
                   ORDER BY position",
         )
-        .bind(&id)
+        .bind(id)
         .fetch_all(&mut client)
         .await
         .context("read the logged entries and the effective row")?;
@@ -556,8 +554,8 @@ mod tests {
         sqlx::query(
             "INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1::text::uuid,'','fixture',$2)",
         )
-        .bind(&actor.hyphenated().to_string())
-        .bind(&FIXTURE_OPERATION)
+        .bind(actor.hyphenated().to_string())
+        .bind(FIXTURE_OPERATION)
         .execute(&mut *client)
         .await
         .map(|result| result.rows_affected())
@@ -570,7 +568,7 @@ mod tests {
             "SELECT created_at, created_by, updated_at, updated_by \
                  FROM purchase_order WHERE id = $1",
         )
-        .bind(&id)
+        .bind(id)
         .fetch_one(&mut *client)
         .await
         .context("read purchase_order stamps")?;
@@ -641,18 +639,16 @@ mod tests {
         let enabled = Some(true);
         let before = stamps(client, purchase_order_id).await?;
         bind_actor(client, COMMAND_PRINCIPAL).await?;
-        let updated = sqlx::query(sqlx::AssertSqlSafe(
-            generated_sql(OVERLAY_UPDATE_SQL),
-        ))
-        .bind(&purchase_order_id)
-        .bind(&1_i32)
-        .bind(&true)
-        .bind(&enabled)
-        .bind(&false)
-        .bind(&no_quality_status)
-        .fetch_one(&mut *client)
-        .await
-        .context("execute exact Acme purchase_order.update SQL")?;
+        let updated = sqlx::query(sqlx::AssertSqlSafe(generated_sql(OVERLAY_UPDATE_SQL)))
+            .bind(purchase_order_id)
+            .bind(1_i32)
+            .bind(true)
+            .bind(enabled)
+            .bind(false)
+            .bind(&no_quality_status)
+            .fetch_one(&mut *client)
+            .await
+            .context("execute exact Acme purchase_order.update SQL")?;
         ensure!(
             updated.get::<String, _>("outcome") == "updated"
                 && updated.get::<Option<bool>, _>("acme_inspection_required") == Some(true)
@@ -707,7 +703,7 @@ mod tests {
                         min(row_version) AS row_version \
                    FROM quality_inspection WHERE receipt_id = $1",
         )
-        .bind(&recorded.receipt_id)
+        .bind(recorded.receipt_id)
         .fetch_one(&mut *client)
         .await
         .context("read the idempotent inspection state")?;
@@ -719,7 +715,7 @@ mod tests {
         );
 
         let detail = sqlx::query(OVERLAY_LOAD_DETAIL_SQL)
-            .bind(&purchase_order_id)
+            .bind(purchase_order_id)
             .fetch_one(&mut *client)
             .await
             .context("execute exact Acme load_purchase_order_detail SQL")?;
@@ -731,8 +727,8 @@ mod tests {
         );
 
         let approved = sqlx::query(OVERLAY_APPROVE_INSPECTION_SQL)
-            .bind(&recorded.receipt_id)
-            .bind(&1_i32)
+            .bind(recorded.receipt_id)
+            .bind(1_i32)
             .fetch_one(&mut *client)
             .await
             .context("execute exact Acme approve_inspection SQL")?;
@@ -744,13 +740,11 @@ mod tests {
             "Acme approve_inspection returned the wrong committed state"
         );
 
-        let fetched = sqlx::query(sqlx::AssertSqlSafe(
-            generated_sql(OVERLAY_GET_SQL),
-        ))
-        .bind(&purchase_order_id)
-        .fetch_one(&mut *client)
-        .await
-        .context("execute exact Acme purchase_order.get SQL")?;
+        let fetched = sqlx::query(sqlx::AssertSqlSafe(generated_sql(OVERLAY_GET_SQL)))
+            .bind(purchase_order_id)
+            .fetch_one(&mut *client)
+            .await
+            .context("execute exact Acme purchase_order.get SQL")?;
         ensure!(
             fetched.get::<bool, _>("acme_inspection_required")
                 && fetched.get::<String, _>("acme_quality_status") == "approved"
@@ -803,13 +797,13 @@ mod tests {
                 .await
                 .context("begin exact create_inspection transaction")?;
         let inserted = sqlx::query(OVERLAY_INSERT_INSPECTION_SQL)
-            .bind(&receipt_id)
+            .bind(receipt_id)
             .fetch_optional(&mut *transaction)
             .await
             .context("execute exact create_inspection insert SQL")?
             .is_some();
         let loaded = sqlx::query(OVERLAY_LOAD_INSPECTION_SQL)
-            .bind(&receipt_id)
+            .bind(receipt_id)
             .fetch_optional(&mut *transaction)
             .await
             .context("execute exact create_inspection load SQL")?
@@ -988,7 +982,7 @@ mod tests {
             command_snapshot(client, first_line_id, second_line_id, purchase_order_id).await?;
         // One command transaction stamps the order and its receipt with one instant.
         let receipt = sqlx::query("SELECT created_at, created_by FROM receipt WHERE id = $1")
-            .bind(&committed.receipt_id)
+            .bind(committed.receipt_id)
             .fetch_one(&mut *client)
             .await
             .context("read the recorded receipt stamps")?;
@@ -1090,14 +1084,14 @@ mod tests {
             "location_id": location_id.hyphenated().to_string(),
         }]);
         sqlx::query(LOCK_PURCHASE_ORDER_SQL)
-            .bind(&purchase_order_id)
+            .bind(purchase_order_id)
             .fetch_one(&mut *transaction)
             .await?;
         let validation = sqlx::query(RECORD_RECEIPT_SQL)
-            .bind(&purchase_order_id)
+            .bind(purchase_order_id)
             .bind(&line)
-            .bind(&"location-lock")
-            .bind(&Utc::now())
+            .bind("location-lock")
+            .bind(Utc::now())
             .fetch_one(&mut *transaction)
             .await
             .context("validate lines while holding referenced location locks")?;
@@ -1116,7 +1110,7 @@ mod tests {
         .map(drop)
         .context("bound competing location delete")?;
         let delete = sqlx::query("DELETE FROM location WHERE id = $1")
-            .bind(&location_id)
+            .bind(location_id)
             .execute(&mut contender)
             .await
             .map(|result| result.rows_affected());
@@ -1138,7 +1132,7 @@ mod tests {
             database.code().as_deref().unwrap_or("")
         );
         let location_remains = sqlx::query("SELECT EXISTS (SELECT 1 FROM location WHERE id = $1)")
-            .bind(&location_id)
+            .bind(location_id)
             .fetch_one(&mut contender)
             .await
             .context("verify locked location remains")?
@@ -1175,15 +1169,15 @@ mod tests {
         } = *ids;
         let item_number = format!("item-record-receipt-{item_id}");
         sqlx::query("INSERT INTO item (id, item_number) VALUES ($1, $2)")
-            .bind(&item_id)
+            .bind(item_id)
             .bind(&item_number)
             .execute(&mut *client)
             .await
             .map(|result| result.rows_affected())
             .context("insert record_receipt item fixture")?;
         sqlx::query("INSERT INTO location (id, location_code) VALUES ($1, $2)")
-            .bind(&location_id)
-            .bind(&format!("dock-{location_id}"))
+            .bind(location_id)
+            .bind(format!("dock-{location_id}"))
             .execute(&mut *client)
             .await
             .map(|result| result.rows_affected())
@@ -1214,11 +1208,11 @@ mod tests {
                      (id, purchase_order_id, line_number, item_id, ordered_quantity) \
                      VALUES ($1, $2, $3, $4, $5::text::numeric)",
             )
-            .bind(&id)
-            .bind(&owner)
-            .bind(&line_number)
-            .bind(&item_id)
-            .bind(&quantity)
+            .bind(id)
+            .bind(owner)
+            .bind(line_number)
+            .bind(item_id)
+            .bind(quantity)
             .execute(&mut *client)
             .await
             .map(|result| result.rows_affected())
@@ -1289,7 +1283,7 @@ mod tests {
                 .collect(),
         );
         let purchase_order = sqlx::query(LOCK_PURCHASE_ORDER_SQL)
-            .bind(&command.purchase_order_id)
+            .bind(command.purchase_order_id)
             .fetch_optional(&mut **transaction)
             .await
             .map_err(CommandAttemptError::Database)?
@@ -1305,10 +1299,10 @@ mod tests {
             .map_err(|error| CommandAttemptError::Internal(error.to_string()))?
             .to_utc();
         let recorded = match sqlx::query(RECORD_RECEIPT_SQL)
-            .bind(&command.purchase_order_id)
+            .bind(command.purchase_order_id)
             .bind(&line_json)
             .bind(&command.receipt_reference)
-            .bind(&occurred_at)
+            .bind(occurred_at)
             .fetch_one(&mut **transaction)
             .await
         {
@@ -1424,7 +1418,7 @@ mod tests {
                  (SELECT COALESCE(jsonb_agg(jsonb_build_array(id, created_at, created_by) ORDER BY id), '[]') \
                   FROM receipt) AS receipt_stamps, \
                  ((SELECT count(*) FROM purchase_order_history) \
-                  + (SELECT count(*) FROM purchase_order_line_history))::int8 AS history_entries").bind(&first_line_id).bind(&second_line_id).bind(&purchase_order_id).fetch_one(&mut *client)
+                  + (SELECT count(*) FROM purchase_order_line_history))::int8 AS history_entries").bind(first_line_id).bind(second_line_id).bind(purchase_order_id).fetch_one(&mut *client)
             .await
             .context("snapshot record_receipt effects")?;
         Ok(CommandSnapshot {
@@ -1549,8 +1543,8 @@ mod tests {
             "INSERT INTO supplier (id, name) VALUES ($1, $2) \
                  ON CONFLICT ON CONSTRAINT supplier_id_pkey DO NOTHING",
         )
-        .bind(&id)
-        .bind(&format!("supplier {id}"))
+        .bind(id)
+        .bind(format!("supplier {id}"))
         .execute(&mut *client)
         .await
         .map(|result| result.rows_affected())
@@ -1577,10 +1571,10 @@ mod tests {
                  (id, purchase_order_number, supplier_id, status) \
                  VALUES ($1, $2, $3, $4)",
         )
-        .bind(&id)
-        .bind(&number)
-        .bind(&supplier_id)
-        .bind(&status)
+        .bind(id)
+        .bind(number)
+        .bind(supplier_id)
+        .bind(status)
         .execute(&mut *client)
         .await
         .map(|result| result.rows_affected())
@@ -1596,16 +1590,14 @@ mod tests {
     ) -> Result<UpdateResult> {
         insert_supplier(client, supplier_id).await?;
         let supplier_id = Some(supplier_id);
-        let row = sqlx::query(sqlx::AssertSqlSafe(
-            generated_sql(UPDATE_SQL),
-        ))
-        .bind(&id)
-        .bind(&expected_row_version)
-        .bind(&true)
-        .bind(&supplier_id)
-        .fetch_one(&mut *client)
-        .await
-        .context("execute exact generated purchase_order.update SQL")?;
+        let row = sqlx::query(sqlx::AssertSqlSafe(generated_sql(UPDATE_SQL)))
+            .bind(id)
+            .bind(expected_row_version)
+            .bind(true)
+            .bind(supplier_id)
+            .fetch_one(&mut *client)
+            .await
+            .context("execute exact generated purchase_order.update SQL")?;
         Ok(update_result(&row))
     }
 
@@ -1643,7 +1635,7 @@ mod tests {
 
     async fn persisted_revision(client: &mut Client, id: Uuid) -> Result<(Uuid, i32)> {
         let row = sqlx::query("SELECT supplier_id, row_version FROM purchase_order WHERE id = $1")
-            .bind(&id)
+            .bind(id)
             .fetch_one(&mut *client)
             .await
             .context("read persisted purchase_order revision")?;
