@@ -462,7 +462,7 @@ async fn pod_log(pods: &Api<Pod>, name: &str) -> anyhow::Result<String> {
     let params = LogParams {
         container: Some("operation".into()),
         tail_lines: Some(100),
-        limit_bytes: Some(LIMIT as i64),
+        limit_bytes: Some(i64::try_from(LIMIT)?),
         ..LogParams::default()
     };
     let mut log = Vec::new();
