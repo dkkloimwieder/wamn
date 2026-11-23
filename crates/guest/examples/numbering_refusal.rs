@@ -6,6 +6,8 @@ mod bindings {
         world: "wamn:postgres-statements/numbering-refusal-test@0.3.0",
         path: ["../../wit/wamn-postgres-0.4", "wit"],
         generate_all,
+        // The example uses wamn_guest's SQL imports.
+        skip: ["[method]transaction.query", "[method]transaction.query-batch", "operation-transaction"],
     });
 }
 
