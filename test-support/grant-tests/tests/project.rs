@@ -108,7 +108,7 @@ async fn app_login_refusals() -> anyhow::Result<()> {
         "INSERT INTO platform.tx_identity (xid, principal_id, role, application) \
          VALUES ('1'::xid8, $1, 'viewer', 'fixture')",
     )
-    .bind(principal)
+    .bind(sqlx::types::Uuid::from(principal))
     .execute(&mut *transaction)
     .await
     .unwrap_err();

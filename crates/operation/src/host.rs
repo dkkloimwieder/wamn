@@ -168,7 +168,7 @@ impl OperationHost {
                       )"
                 )
                 .bind(role)
-                .bind(principal_id)
+                .bind(uuid::Uuid::from(*principal_id))
                 .fetch_optional(connection)
                 .await?)
             }).await?;

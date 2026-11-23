@@ -108,7 +108,7 @@ impl ControlRoutes<'_> {
         let active = sqlx::query_scalar::<_, bool>(
             "SELECT status = 'active' FROM identity.principals WHERE id = $1",
         )
-        .bind(user)
+        .bind(uuid::Uuid::from(*user))
         .fetch_one(&mut *transaction)
         .await?;
         if !active {
@@ -266,7 +266,7 @@ pub(crate) async fn first_owner(
         }
         let active: bool =
             sqlx::query_scalar("SELECT status = 'active' FROM identity.principals WHERE id = $1")
-                .bind(user.principal_id)
+                .bind(uuid::Uuid::from(user.principal_id))
                 .fetch_one(&mut *tx)
                 .await?;
         if !active {

@@ -659,7 +659,7 @@ impl ControlRoutes<'_> {
                 .fetch_all(&mut *transaction)
                 .await?
                 {
-                    let _principal: PrincipalId = row.get(0);
+                    let _principal: uuid::Uuid = row.try_get(0)?;
                 }
                 transaction.commit().await?;
                 Ok(json!({ "project": project }))

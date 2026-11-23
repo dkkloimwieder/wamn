@@ -87,13 +87,14 @@ async fn targeted_rotation_preserves_deadline_and_replay_revokes_successor() {
             .unwrap()
             .get(0);
     assert!(!stored.contains(first.secret()));
-    let hash: wamn_digest::Digest =
-        sqlx::query("SELECT token_hash FROM identity.renewal_credentials")
-            .fetch_one(&mut owner)
-            .await
-            .unwrap()
-            .get(0);
-    assert_eq!(hash, wamn_digest::bytes_sha256(first.secret().as_bytes()));
+    let hash: String = sqlx::query_scalar("SELECT token_hash FROM identity.renewal_credentials")
+        .fetch_one(&mut owner)
+        .await
+        .unwrap();
+    assert_eq!(
+        hash.parse::<wamn_digest::Digest>().unwrap(),
+        wamn_digest::bytes_sha256(first.secret().as_bytes())
+    );
     let mut tx = common::transaction(
         &mut issuer,
         &wamn_provision::PlatformComponent::Provisioning.principal_id(),

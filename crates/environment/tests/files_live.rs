@@ -215,7 +215,7 @@ async fn aged_staging_expires_while_unlinked_metadata_and_aged_live_bytes_stay()
     .await?;
     sqlx::query("UPDATE platform.file SET size=$1,sha256=$2 WHERE id=$3::text::uuid")
         .bind(i64::try_from(b"aged fixture bytes".len())?)
-        .bind(wamn_digest::bytes_sha256(b"aged fixture bytes"))
+        .bind(wamn_digest::bytes_sha256(b"aged fixture bytes").to_string())
         .bind(files::FILE)
         .execute(&mut *transaction)
         .await

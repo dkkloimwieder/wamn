@@ -8,6 +8,7 @@
 //! grants are the functions of [`crate::application`].
 
 use sqlx::Row as _;
+use sqlx::types::Uuid;
 
 use crate::{
     IdentityError, IdentityErrorType, IdentityRefusal, PrincipalId, control, database_error,
@@ -55,7 +56,7 @@ pub async fn activate_org_membership(
     org: &wamn_registry::OrgId,
 ) -> Result<(), IdentityError> {
     sqlx::query(ACTIVATE_MEMBERSHIP_SQL)
-        .bind(principal_id)
+        .bind(Uuid::from(*principal_id))
         .bind(org)
         .execute(&mut *client)
         .await
@@ -73,7 +74,7 @@ pub async fn grant_org_admin(
     active_member(client, principal_id, org).await?;
     let principal = principal_id;
     sqlx::query(ORG_ROLE_SQL)
-        .bind(principal)
+        .bind(Uuid::from(*principal))
         .bind(org)
         .bind(ORG_ADMIN_ROLE)
         .execute(&mut *client)
@@ -108,7 +109,7 @@ pub async fn grant_project_admin(
     let principal = principal_id;
     let one = Some(project.as_str());
     sqlx::query(PROJECT_ADMIN_SQL)
-        .bind(principal)
+        .bind(Uuid::from(*principal))
         .bind(org)
         .bind(control::PROJECT_ADMIN_ROLE)
         .bind(one)
@@ -193,7 +194,7 @@ pub async fn revoke_project_admin(
     lock_membership(client, principal_id, org).await?;
     refuse_under_org_admin(client, principal_id, org).await?;
     sqlx::query(DROP_PROJECT_ADMIN_SQL)
-        .bind(principal_id)
+        .bind(Uuid::from(*principal_id))
         .bind(org)
         .bind(project)
         .bind(control::PROJECT_ADMIN_ROLE)
@@ -211,7 +212,7 @@ async fn refuse_under_org_admin(
     org: &wamn_registry::OrgId,
 ) -> Result<(), IdentityError> {
     let covered: bool = sqlx::query(HOLDS_ORG_ADMIN_SQL)
-        .bind(principal_id)
+        .bind(Uuid::from(*principal_id))
         .bind(org)
         .bind(ORG_ADMIN_ROLE)
         .fetch_one(&mut *client)
@@ -316,10 +317,10 @@ pub async fn disable_user(
     principal: &PrincipalId,
     org: &wamn_registry::OrgId,
 ) -> Result<(), IdentityError> {
-    let user = sqlx::query_scalar::<_, PrincipalId>(
+    let user = sqlx::query_scalar::<_, Uuid>(
         "SELECT id FROM identity.principals WHERE id = $1 AND type = 'user' FOR NO KEY UPDATE",
     )
-    .bind(principal)
+    .bind(Uuid::from(*principal))
     .fetch_optional(&mut **tx)
     .await
     .map_err(|error| database_error(&error))?;
@@ -328,7 +329,7 @@ pub async fn disable_user(
                 EXISTS (SELECT FROM identity.org_memberships
                         WHERE principal_id = $1 AND org <> $2 AND status = 'active')",
     )
-    .bind(principal)
+    .bind(Uuid::from(*principal))
     .bind(org)
     .fetch_one(&mut **tx)
     .await
@@ -360,7 +361,7 @@ pub async fn reactivate_org_membership(
 ) -> Result<(), IdentityError> {
     member(client, principal_id, org).await?;
     sqlx::query(REACTIVATE_MEMBERSHIP_SQL)
-        .bind(principal_id)
+        .bind(Uuid::from(*principal_id))
         .bind(org)
         .execute(&mut *client)
         .await
@@ -382,14 +383,14 @@ pub async fn deactivate_org_membership(
     let principal = principal_id;
     let every: Option<&str> = None;
     sqlx::query(DROP_ENV_MEMBERSHIPS_SQL)
-        .bind(principal)
+        .bind(Uuid::from(*principal))
         .bind(org)
         .execute(&mut *client)
         .await
         .map(|result| result.rows_affected())
         .map_err(|error| database_error(&error))?;
     sqlx::query(DROP_PROJECT_ROLES_SQL)
-        .bind(principal)
+        .bind(Uuid::from(*principal))
         .bind(org)
         .bind(every)
         .execute(&mut *client)
@@ -397,7 +398,7 @@ pub async fn deactivate_org_membership(
         .map(|result| result.rows_affected())
         .map_err(|error| database_error(&error))?;
     sqlx::query(DROP_ORG_ROLES_SQL)
-        .bind(principal)
+        .bind(Uuid::from(*principal))
         .bind(org)
         .bind(every)
         .execute(&mut *client)
@@ -405,7 +406,7 @@ pub async fn deactivate_org_membership(
         .map(|result| result.rows_affected())
         .map_err(|error| database_error(&error))?;
     sqlx::query(DEACTIVATE_MEMBERSHIP_SQL)
-        .bind(principal)
+        .bind(Uuid::from(*principal))
         .bind(org)
         .execute(&mut *client)
         .await
@@ -423,7 +424,7 @@ pub async fn revoke_org_admin(
     lock_membership(client, principal_id, org).await?;
     let principal = principal_id;
     sqlx::query(DROP_ORG_ROLES_SQL)
-        .bind(principal)
+        .bind(Uuid::from(*principal))
         .bind(org)
         .bind(Some(ORG_ADMIN_ROLE))
         .execute(&mut *client)
@@ -470,7 +471,7 @@ pub async fn org_users_page(
         .bind(org)
         .bind(ORG_ADMIN_ROLE)
         .bind(after)
-        .bind(after_id)
+        .bind(after_id.copied().map(Uuid::from))
         .bind(limit)
         .fetch_all(&mut *client)
         .await
@@ -478,7 +479,10 @@ pub async fn org_users_page(
         .iter()
         .map(|row| {
             Ok(OrgUser {
-                principal_id: row.try_get(0).map_err(|error| database_error(&error))?,
+                principal_id: PrincipalId::from(
+                    row.try_get::<Uuid, _>(0)
+                        .map_err(|error| database_error(&error))?,
+                ),
                 email: row.try_get(1).map_err(|error| database_error(&error))?,
                 display_name: row.try_get(2).map_err(|error| database_error(&error))?,
                 status: row.try_get(3).map_err(|error| database_error(&error))?,
@@ -508,7 +512,7 @@ pub async fn user_contact(
     principal_id: &PrincipalId,
 ) -> Result<(String, String), IdentityError> {
     let row = sqlx::query(USER_CONTACT_SQL)
-        .bind(principal_id)
+        .bind(Uuid::from(*principal_id))
         .fetch_optional(&mut *client)
         .await
         .map_err(|error| database_error(&error))?
@@ -615,7 +619,7 @@ pub async fn project_members_page(
         .bind(control::PROJECT_ADMIN_ROLE)
         .bind(ORG_ADMIN_ROLE)
         .bind(after)
-        .bind(after_id)
+        .bind(after_id.copied().map(Uuid::from))
         .bind(limit)
         .bind(environment)
         .fetch_all(&mut *client)
@@ -624,7 +628,10 @@ pub async fn project_members_page(
         .iter()
         .map(|row| {
             Ok(ProjectMember {
-                principal_id: row.try_get(0).map_err(|error| database_error(&error))?,
+                principal_id: PrincipalId::from(
+                    row.try_get::<Uuid, _>(0)
+                        .map_err(|error| database_error(&error))?,
+                ),
                 email: row.try_get(1).map_err(|error| database_error(&error))?,
                 display_name: row.try_get(2).map_err(|error| database_error(&error))?,
                 org_admin: row.try_get(3).map_err(|error| database_error(&error))?,
@@ -660,7 +667,7 @@ pub async fn lock_membership(
     org: &wamn_registry::OrgId,
 ) -> Result<Option<String>, IdentityError> {
     sqlx::query(ACTIVE_MEMBER_SQL)
-        .bind(principal)
+        .bind(Uuid::from(*principal))
         .bind(org)
         .fetch_optional(&mut *client)
         .await

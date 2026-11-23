@@ -1,5 +1,6 @@
 //! Writes to project principal rows.
 
+use sqlx::types::Uuid;
 use wamn_identity_protocol::PrincipalId;
 use wamn_registry::platform_domain::PlatformDomain;
 
@@ -29,7 +30,7 @@ pub async fn write_user(
     user: ApplicationUser<'_>,
 ) -> Result<(), IdentityError> {
     sqlx::query(USER_ROW_SQL)
-        .bind(user.principal_id)
+        .bind(Uuid::from(*user.principal_id))
         .bind(issuer)
         .bind(user.principal_id.to_string())
         .bind(user.email)
@@ -48,7 +49,7 @@ pub async fn remove_user(
     principal_id: &PrincipalId,
 ) -> Result<(), IdentityError> {
     sqlx::query(DROP_USER_ROW_SQL)
-        .bind(principal_id)
+        .bind(Uuid::from(*principal_id))
         .execute(&mut *client)
         .await
         .map(|result| result.rows_affected())
@@ -84,7 +85,7 @@ pub async fn write_service(
             "invalid service display name",
         ));
     }
-    let id = sqlx::query_scalar(
+    let id = sqlx::query_scalar::<_, Uuid>(
         r#"INSERT INTO platform."user" (id, issuer, sub, type, email, display_name)
            VALUES (gen_random_uuid(), 'wamn', $1, 'service', $2, $3)
            ON CONFLICT (issuer, sub) DO NOTHING RETURNING id"#,
@@ -96,7 +97,7 @@ pub async fn write_service(
     .await
     .map_err(|source| ServiceError::database("write the project service principal", source))?;
     match id {
-        Some(id) => Ok(id),
+        Some(id) => Ok(PrincipalId::from(id)),
         None => active_service(project, &subject).await?.ok_or_else(|| {
             ServiceError::refusal(
                 ServiceErrorType::NotFound("subject"),
@@ -115,11 +116,11 @@ pub async fn disable(
         r#"UPDATE platform."user" SET status='disabled'
            WHERE id=$1 AND issuer='wamn' AND type='service' RETURNING id"#,
     )
-    .bind(principal)
+    .bind(Uuid::from(*principal))
     .fetch_optional(project)
     .await
     .map_err(|source| ServiceError::database("disable the project service principal", source))?
-    .map(|_: PrincipalId| ())
+    .map(|_: Uuid| ())
     .ok_or_else(|| {
         ServiceError::refusal(
             ServiceErrorType::NotFound("principal_id"),

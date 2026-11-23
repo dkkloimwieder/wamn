@@ -24,13 +24,13 @@ pub async fn assert_stamp(
     assert!(!rows.is_empty(), "{relation}: no stamped rows");
     for row in rows {
         assert_eq!(
-            &row.get::<wamn_identity_protocol::PrincipalId, _>(0),
-            created_by,
+            row.get::<sqlx::types::Uuid, _>(0),
+            sqlx::types::Uuid::from(*created_by),
             "{relation}: created_by"
         );
         assert_eq!(
-            &row.get::<wamn_identity_protocol::PrincipalId, _>(1),
-            updated_by,
+            row.get::<sqlx::types::Uuid, _>(1),
+            sqlx::types::Uuid::from(*updated_by),
             "{relation}: updated_by"
         );
         assert!(row.get::<bool, _>(2), "{relation}: invalid stamp times");

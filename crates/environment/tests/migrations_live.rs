@@ -36,7 +36,7 @@ async fn sqlx_commits_files_with_their_history_and_refuses_checksum_drift() -> a
         .await?;
     let component = wamn_provision::PlatformComponent::ApplyPackage;
     sqlx::query("INSERT INTO platform.login_principal(login,principal_id) VALUES(current_user,$1::text::uuid) ON CONFLICT(login) DO UPDATE SET principal_id=EXCLUDED.principal_id")
-        .bind(component.principal_id())
+        .bind(uuid::Uuid::from(component.principal_id()))
         .execute(&mut admin)
         .await?;
     let table = migration::history_table(
@@ -88,21 +88,21 @@ async fn sqlx_commits_files_with_their_history_and_refuses_checksum_drift() -> a
     let stamps: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT bool_and(created_by=$1 AND updated_by=$1) FROM {table}"
     )))
-    .bind(component.principal_id())
+    .bind(uuid::Uuid::from(component.principal_id()))
     .fetch_one(&mut admin)
     .await?;
     assert!(stamps);
     let actors: bool =
         sqlx::query_scalar("SELECT bool_and(changed_by=$1) FROM public.migration_effect_history")
-            .bind(component.principal_id())
+            .bind(uuid::Uuid::from(component.principal_id()))
             .fetch_one(&mut admin)
             .await?;
     assert!(actors);
-    let principal: wamn_identity_protocol::PrincipalId =
+    let principal: uuid::Uuid =
         sqlx::query_scalar("SELECT updated_by FROM public.migration_effect WHERE id=1")
             .fetch_one(&mut admin)
             .await?;
-    assert_eq!(principal, component.principal_id());
+    assert_eq!(principal, uuid::Uuid::from(component.principal_id()));
     sqlx::raw_sql(
         "GRANT INSERT ON public.migration_effect TO wamn_app; SET ROLE wamn_app;
         DO $$ BEGIN

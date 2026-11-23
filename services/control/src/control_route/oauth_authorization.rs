@@ -120,7 +120,7 @@ impl Authorization {
             .await
             .map_err(|error| failed("authorization state encryption failed", error))?;
         sqlx::query("INSERT INTO platform.oauth_authorization(state,connection_id,generation,code_verifier,wrapped_key,nonce,key_id,created_by,expires_at) \
-            VALUES($1,$2,$3,$4,$5,$6,$7,$8,clock_timestamp()+interval '10 minutes')").bind(&state).bind(connection).bind(generation).bind(&encrypted.ciphertext).bind(&encrypted.wrapped_key).bind(&encrypted.nonce).bind(&encrypted.key_id).bind(caller).execute(&mut **tx)
+            VALUES($1,$2,$3,$4,$5,$6,$7,$8,clock_timestamp()+interval '10 minutes')").bind(&state).bind(connection).bind(generation).bind(&encrypted.ciphertext).bind(&encrypted.wrapped_key).bind(&encrypted.nonce).bind(&encrypted.key_id).bind(uuid::Uuid::from(caller)).execute(&mut **tx)
             .await.map_err(|error| failed("authorization state write failed", error))?;
         Ok(url)
     }
@@ -174,9 +174,13 @@ impl Authorization {
         if !row.get::<bool, _>("unexpired") {
             return Err(refused("expired state"));
         }
+        let principal = row
+            .try_get::<uuid::Uuid, _>("created_by")
+            .map(wamn_identity_protocol::PrincipalId::from)
+            .map_err(|error| failed("authorization state read failed", error))?;
         wamn_postgres::bind_transaction_identity(
             tx,
-            &row.get::<wamn_identity_protocol::PrincipalId, _>("created_by"),
+            &principal,
             "",
             "",
             Some("connection.oauth_callback"),

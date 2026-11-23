@@ -360,7 +360,7 @@ pub async fn mapped_logins_reached(admin: &mut PgConnection, role: &str) -> Resu
 
 /// Every login mapped to a principal is restricted and maps to a platform component.
 pub async fn assert_mapped_logins_are_platform_components(admin: &mut PgConnection) -> Result<()> {
-    let rows: Vec<(String, wamn_identity_protocol::PrincipalId, bool)> = sqlx::query_as(
+    let rows: Vec<(String, sqlx::types::Uuid, bool)> = sqlx::query_as(
         "SELECT p.login::text, p.principal_id,
                 NOT (r.rolsuper OR r.rolbypassrls OR r.rolcreatedb OR r.rolcreaterole OR r.rolreplication)
            FROM platform.login_principal p JOIN pg_catalog.pg_roles r ON r.rolname = p.login",
@@ -373,7 +373,7 @@ pub async fn assert_mapped_logins_are_platform_components(admin: &mut PgConnecti
         ensure!(
             wamn_identity_protocol::PlatformComponent::ALL
                 .into_iter()
-                .any(|component| component.principal_id() == principal),
+                .any(|component| sqlx::types::Uuid::from(component.principal_id()) == principal),
             "{login} maps to an unknown principal {principal}"
         );
     }

@@ -175,7 +175,12 @@ pub async fn read(
                     .map(|package| {
                         Ok::<_, sqlx::Error>(Client {
                             package,
-                            web: row.try_get("client_web")?,
+                            web: row.try_get::<&str, _>("client_web")?.parse().map_err(
+                                |source| sqlx::Error::ColumnDecode {
+                                    index: "client_web".into(),
+                                    source: Box::new(source),
+                                },
+                            )?,
                         })
                     })
                     .transpose()?;
@@ -287,7 +292,7 @@ pub async fn write(
         .bind(name)
         .bind(&application.label)
         .bind(application.client.as_ref().map(|client| &client.package))
-        .bind(application.client.as_ref().map(|client| &client.web))
+        .bind(application.client.as_ref().map(|client| client.web.to_string()))
         .execute(&mut *transaction).await?;
         for (alias, connection) in &application.connections {
             sqlx::query(

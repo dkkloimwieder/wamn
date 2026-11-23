@@ -111,7 +111,7 @@ pub async fn fill(
     .await?;
     let mut principals = BTreeSet::new();
     principals.extend(
-        sqlx::query_scalar::<_, wamn_identity_protocol::PrincipalId>(
+        sqlx::query_scalar::<_, uuid::Uuid>(
             "SELECT id FROM identity.principals WHERE identity.has_project_access(id,$1,$2,$3)",
         )
         .bind(target.org)
@@ -121,13 +121,12 @@ pub async fn fill(
         .await?,
     );
     principals.extend(
-        sqlx::query_scalar::<_, wamn_identity_protocol::PrincipalId>(
-            "SELECT id FROM platform.\"user\" WHERE type='user'",
-        )
-        .fetch_all(&mut *project)
-        .await?,
+        sqlx::query_scalar::<_, uuid::Uuid>("SELECT id FROM platform.\"user\" WHERE type='user'")
+            .fetch_all(&mut *project)
+            .await?,
     );
     for id in principals {
+        let id = wamn_identity_protocol::PrincipalId::from(id);
         application::project_authority(&mut system, &mut project, target, &id, issuer).await?;
     }
     project.commit().await?;

@@ -46,7 +46,7 @@ pub async fn transaction<'connection>(
 ) -> Result<sqlx::Transaction<'connection, sqlx::Postgres>, sqlx::Error> {
     let mut transaction = sqlx::Connection::begin(connection).await?;
     sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1,'','fixture',$2)")
-        .bind(principal).bind(operation).execute(&mut *transaction).await?;
+        .bind(uuid::Uuid::from(*principal)).bind(operation).execute(&mut *transaction).await?;
     Ok(transaction)
 }
 

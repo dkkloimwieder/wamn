@@ -5,6 +5,7 @@
 //! service must share one password-work budget across all its requests.
 
 use sqlx::PgConnection as Client;
+use sqlx::types::Uuid;
 use sqlx::{Connection as _, Row as _};
 use std::error::Error;
 use std::fmt;
@@ -325,7 +326,7 @@ async fn lock_account(
     enrolled: bool,
 ) -> Result<Option<(RefusalCause, Option<&'static str>)>, PasswordError> {
     let row = sqlx::query("SELECT identity.lock_password_principal($1)")
-        .bind(principal)
+        .bind(Uuid::from(*principal))
         .fetch_optional(&mut **tx)
         .await
         .map_err(|source| database(&source))?;
@@ -335,7 +336,7 @@ async fn lock_account(
     let has_password = sqlx::query(
         "SELECT EXISTS (SELECT 1 FROM identity.password_credentials WHERE principal_id = $1)",
     )
-    .bind(principal)
+    .bind(Uuid::from(*principal))
     .fetch_one(&mut **tx)
     .await
     .map_err(|source| database(&source))?
@@ -398,7 +399,7 @@ async fn issue_token(
     }
     if let Some(email) = expected_email {
         let current: String = sqlx::query("SELECT email FROM identity.principals WHERE id=$1")
-            .bind(principal)
+            .bind(Uuid::from(*principal))
             .fetch_one(&mut *tx)
             .await
             .map_err(|source| database(&source))?
@@ -411,7 +412,7 @@ async fn issue_token(
             ));
         }
     }
-    let expires_at: String = sqlx::query("INSERT INTO identity.password_tokens (token_hash, principal_id, purpose, expires_at) VALUES ($1, $2, $3, clock_timestamp() + $4::bigint * interval '1 second') RETURNING to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI')").bind(hash).bind(principal).bind(purpose).bind(lifetime).fetch_one(&mut *tx).await.map_err(|source| database(&source))?.get(0);
+    let expires_at: String = sqlx::query("INSERT INTO identity.password_tokens (token_hash, principal_id, purpose, expires_at) VALUES ($1, $2, $3, clock_timestamp() + $4::bigint * interval '1 second') RETURNING to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI')").bind(hash.to_string()).bind(Uuid::from(*principal)).bind(purpose).bind(lifetime).fetch_one(&mut *tx).await.map_err(|source| database(&source))?.get(0);
     tx.commit().await.map_err(|source| database(&source))?;
     Ok(Invitation { secret, expires_at })
 }
@@ -422,7 +423,7 @@ async fn usable_token(
     hash: &wamn_digest::Digest,
     purpose: &str,
 ) -> Result<Option<RefusalCause>, PasswordError> {
-    let row = sqlx::query("SELECT t.consumed_at IS NOT NULL, t.expires_at <= clock_timestamp(), p.status = 'active' AND p.type = 'user' FROM identity.password_tokens t JOIN identity.principals p ON p.id = t.principal_id WHERE t.token_hash = $1 AND t.principal_id = $2 AND t.purpose = $3").bind(hash).bind(principal).bind(purpose).fetch_optional(&mut *client).await.map_err(|source| database(&source))?;
+    let row = sqlx::query("SELECT t.consumed_at IS NOT NULL, t.expires_at <= clock_timestamp(), p.status = 'active' AND p.type = 'user' FROM identity.password_tokens t JOIN identity.principals p ON p.id = t.principal_id WHERE t.token_hash = $1 AND t.principal_id = $2 AND t.purpose = $3").bind(hash.to_string()).bind(Uuid::from(*principal)).bind(purpose).fetch_optional(&mut *client).await.map_err(|source| database(&source))?;
     let Some(row) = row else {
         return Ok(Some(RefusalCause::UnknownSecret));
     };
@@ -533,7 +534,7 @@ async fn store_password(
         sqlx::query(
             "UPDATE identity.password_credentials SET password_hash=$2 WHERE principal_id=$1",
         )
-        .bind(principal)
+        .bind(Uuid::from(*principal))
         .bind(hash)
         .execute(&mut *tx)
         .await
@@ -544,9 +545,9 @@ async fn store_password(
             .await
             .map_err(|source| infrastructure("reset revocation failed", source))?;
     } else {
-        sqlx::query("INSERT INTO identity.password_credentials (principal_id, password_hash) VALUES ($1, $2)").bind(principal).bind(hash).execute(&mut *tx).await.map(|result| result.rows_affected()).map_err(|source| database(&source))?;
+        sqlx::query("INSERT INTO identity.password_credentials (principal_id, password_hash) VALUES ($1, $2)").bind(Uuid::from(*principal)).bind(hash).execute(&mut *tx).await.map(|result| result.rows_affected()).map_err(|source| database(&source))?;
     }
-    sqlx::query("UPDATE identity.password_tokens SET consumed_at = clock_timestamp() WHERE principal_id = $1 AND consumed_at IS NULL").bind(principal).execute(&mut *tx).await.map(|result| result.rows_affected()).map_err(|source| database(&source))?;
+    sqlx::query("UPDATE identity.password_tokens SET consumed_at = clock_timestamp() WHERE principal_id = $1 AND consumed_at IS NULL").bind(Uuid::from(*principal)).execute(&mut *tx).await.map(|result| result.rows_affected()).map_err(|source| database(&source))?;
     tx.commit().await.map_err(|source| database(&source))
 }
 

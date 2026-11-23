@@ -392,7 +392,7 @@ pub async fn execute(
                 }
             }
             sqlx::query("INSERT INTO platform.connection(id,name,integration_type,auth_type,external_system_id,target_id,resource_key,active_generation,service_principal_id,authority) VALUES($1,$2,$3,$4,$5,$6,$7,1,$8,$9)")
-                .bind(id).bind(request["name"].as_str()).bind(context["integration_type"].as_str()).bind(auth).bind(external).bind(target).bind(resource).bind(principal).bind(authority).execute(&mut **project).await.map_err(connection_write_error)?;
+                .bind(id).bind(request["name"].as_str()).bind(context["integration_type"].as_str()).bind(auth).bind(external).bind(target).bind(resource).bind(Uuid::from(principal)).bind(authority).execute(&mut **project).await.map_err(connection_write_error)?;
         }
         let next: i64=sqlx::query_scalar("SELECT coalesce(max(generation),0)+1 FROM platform.connection_generation WHERE connection_id=$1").bind(id).fetch_one(&mut **project).await?;
         if let Some(stored) = &stored {

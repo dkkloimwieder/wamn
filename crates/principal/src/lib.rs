@@ -13,8 +13,6 @@ pub use platform::{
 /// A principal UUID in lowercase hyphenated wire form.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
-#[cfg_attr(feature = "sqlx", derive(sqlx::Type))]
-#[cfg_attr(feature = "sqlx", sqlx(transparent))]
 pub struct PrincipalId(Uuid);
 
 impl fmt::Display for PrincipalId {
@@ -49,6 +47,12 @@ impl TryFrom<String> for PrincipalId {
 impl From<Uuid> for PrincipalId {
     fn from(value: Uuid) -> Self {
         Self(value)
+    }
+}
+
+impl From<PrincipalId> for Uuid {
+    fn from(value: PrincipalId) -> Self {
+        value.0
     }
 }
 

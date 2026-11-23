@@ -207,7 +207,7 @@ async fn invite(
          WHERE p.id = $1 AND p.type = 'user' AND p.status = 'active'
                AND m.org = $2 AND m.status = 'active'",
     )
-    .bind(principal)
+    .bind(sqlx::types::Uuid::from(principal))
     .bind(org.as_str())
     .fetch_optional(&mut *read)
     .await
@@ -244,7 +244,7 @@ async fn invite(
                 "UPDATE identity.password_tokens SET consumed_at = clock_timestamp()
                  WHERE token_hash = $1 AND consumed_at IS NULL",
             )
-            .bind(hash)
+            .bind(hash.to_string())
             .execute(&mut *tx)
             .await
             .is_ok()
@@ -350,7 +350,7 @@ mod tests {
         let unconsumed: Vec<bool> = sqlx::query_scalar(
             "SELECT token_hash = $1 FROM identity.password_tokens WHERE consumed_at IS NULL",
         )
-        .bind(wamn_digest::bytes_sha256(earlier.secret().as_bytes()))
+        .bind(wamn_digest::bytes_sha256(earlier.secret().as_bytes()).to_string())
         .fetch_all(&mut admin.client)
         .await
         .unwrap();

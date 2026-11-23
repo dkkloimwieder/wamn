@@ -18,7 +18,7 @@ wamn-package.workspace = true
 wamn-routes.workspace = true
 wamn-http-client.workspace = true
 sqlx = { workspace = true, features = ["sqlite"] }
-wamn-digest = { workspace = true, features = ["sqlx"] }
+wamn-digest.workspace = true
 # The edge links the engine without cloud service plugins.
 wamn-engine = { workspace = true }
 # Device identity and role slugs.

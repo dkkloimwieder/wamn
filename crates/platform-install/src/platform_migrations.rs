@@ -60,7 +60,7 @@ pub async fn apply_target(
     let owner = postgres_protocol::escape::escape_identifier(&database.owner_role());
     sqlx::query("INSERT INTO platform.login_principal(login,principal_id) VALUES($1,$2) ON CONFLICT(login) DO UPDATE SET principal_id=EXCLUDED.principal_id")
         .bind(&login)
-        .bind(wamn_provision::PlatformComponent::ApplyPackage.principal_id())
+        .bind(sqlx::types::Uuid::from(wamn_provision::PlatformComponent::ApplyPackage.principal_id()))
         .execute(&mut *client).await?;
     let key = crate::migrations::lock_session(client, lock, &[]).await?;
     let result = async {

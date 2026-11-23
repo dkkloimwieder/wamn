@@ -51,7 +51,9 @@ pub async fn fact(
         target_id: row.try_get("target_id")?,
         resource_key: row.try_get("resource_key")?,
         authority: row.try_get("authority")?,
-        service_principal_id: row.try_get("service_principal_id")?,
+        service_principal_id: wamn_identity_protocol::PrincipalId::from(
+            row.try_get::<uuid::Uuid, _>("service_principal_id")?,
+        ),
     }))
 }
 

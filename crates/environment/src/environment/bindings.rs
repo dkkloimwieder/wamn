@@ -135,7 +135,14 @@ pub async fn analyse(
         let runtime: String = row.get(2);
         let schema: Option<serde_json::Value> = row.get(4);
         let schema = schema.ok_or_else(|| refuse("integration_version_unpublished", name))?;
-        let digest: Option<wamn_digest::Digest> = row.get(5);
+        let digest: Option<wamn_digest::Digest> = row
+            .try_get::<Option<&str>, _>(5)?
+            .map(str::parse)
+            .transpose()
+            .map_err(|source| sqlx::Error::ColumnDecode {
+                index: "digest".into(),
+                source: Box::new(source),
+            })?;
         if (runtime == "host" && version.version != 1)
             || (runtime == "wasm" && digest.is_none())
             || runtime == "native"
@@ -150,7 +157,10 @@ pub async fn analyse(
         if !crate::connections::administration::validates(&parameters, &schema) {
             return Err(refuse("connection_parameters_invalid", name));
         }
-        selected.insert(name.as_str(), (row, connection.get::<Option<String>, _>(5)));
+        selected.insert(
+            name.as_str(),
+            (row, connection.get::<Option<String>, _>(5), digest),
+        );
     }
     let mut bindings = Vec::new();
     for (application, definition) in applications {
@@ -187,7 +197,7 @@ pub async fn analyse(
                 .connections
                 .get(name.as_str())
                 .ok_or_else(|| refuse("connection_unbound", &at))?;
-            let (row, authority) = selected
+            let (row, authority, digest) = selected
                 .get(integration.as_str())
                 .ok_or_else(|| refuse("integration_version_missing", &at))?;
             let integration_type: wamn_registry::integration_code::IntegrationCode = row.get(1);
@@ -240,7 +250,7 @@ pub async fn analyse(
                 exclusive: row.get(8),
                 generation: row.get(7),
                 mode: declaration.mode,
-                digest: row.get(5),
+                digest: *digest,
                 exports,
                 write_interfaces,
                 resolved,

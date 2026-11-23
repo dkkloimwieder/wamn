@@ -1,6 +1,7 @@
 //! Service principals and PAT administration in a project database.
 
 use serde::Serialize;
+use sqlx::types::Uuid;
 use std::{error::Error, fmt, time::Duration};
 use wamn_identity_protocol::{
     PrincipalId, pat_prefix::PatPrefix, secret::PatToken, wire::PatResponse,
@@ -80,7 +81,7 @@ pub async fn active_service(
     project: &mut sqlx::PgConnection,
     subject: &str,
 ) -> Result<Option<PrincipalId>, ServiceError> {
-    sqlx::query_scalar(
+    sqlx::query_scalar::<_, Uuid>(
         r#"SELECT id FROM platform."user"
            WHERE issuer='wamn' AND sub=$1 AND type='service' AND status='active'
            FOR UPDATE"#,
@@ -88,6 +89,7 @@ pub async fn active_service(
     .bind(subject)
     .fetch_optional(project)
     .await
+    .map(|id| id.map(PrincipalId::from))
     .map_err(|source| {
         ServiceError::database("resolve the active project service principal", source)
     })
@@ -138,9 +140,9 @@ pub async fn issue(
            RETURNING to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
                      to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')"#,
     )
-    .bind(principal)
+    .bind(Uuid::from(*principal))
     .bind(token.lookup())
-    .bind(token.digest())
+    .bind(token.digest().to_string())
     .bind(label)
     .bind(lifetime.as_secs().cast_signed())
     .fetch_optional(&mut **project)
@@ -188,7 +190,7 @@ pub async fn list(
            WHERE u.id=$1 AND u.issuer='wamn' AND u.type='service'
            ORDER BY p.created_at DESC, p.id"#,
     )
-    .bind(principal)
+    .bind(Uuid::from(*principal))
     .fetch_all(project)
     .await
     .map_err(|source| ServiceError::database("list the project's service PATs", source))

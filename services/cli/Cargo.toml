@@ -18,7 +18,7 @@ kube = { workspace = true }
 wamn-routes.workspace = true
 wamn-package.workspace = true
 wamn-build.workspace = true
-wamn-digest = { workspace = true, features = ["sqlx"] }
+wamn-digest.workspace = true
 anyhow = { workspace = true }
 # `string`: `wamn-0h0g.22.16` derives the workload-generation flag set from the
 # closed WorkloadRoleFamily vocabulary, so arg ids and long names are computed

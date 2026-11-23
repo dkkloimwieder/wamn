@@ -36,7 +36,19 @@ impl Definition {
             id: row.try_get("workflow_id").map_err(error)?,
             version: row.try_get("version").map_err(error)?,
             graph: row.try_get("graph").map_err(error)?,
-            hash: row.try_get("graph_hash").map_err(error)?,
+            hash: row
+                .try_get::<&str, _>("graph_hash")
+                .map_err(error)?
+                .parse()
+                .map_err(|source| {
+                    ProductionLeaseError::storage(
+                        "read workflow version",
+                        sqlx::Error::ColumnDecode {
+                            index: "graph_hash".into(),
+                            source: Box::new(source),
+                        },
+                    )
+                })?,
             role: row.try_get("execution_role").map_err(error)?,
         })
     }
@@ -384,7 +396,7 @@ impl Workflow {
                 .bind(&app.application)
                 .bind(&graph_id)
                 .bind(graph_version)
-                .bind(workflow.graph_hash)
+                .bind(workflow.graph_hash.to_string())
                 .fetch_one(connection)
                 .await
                 .map_err(|error| {

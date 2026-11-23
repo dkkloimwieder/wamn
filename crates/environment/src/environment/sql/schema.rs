@@ -114,7 +114,10 @@ pub async fn database_state(
                     id,
                     row.try_get::<wamn_package::package_version::PackageVersion, _>(1)?,
                 )?,
-                artifact_digest: row.get(2),
+                artifact_digest: row
+                    .try_get::<Option<&str>, _>(2)?
+                    .map(str::parse)
+                    .transpose()?,
             },
         );
     }

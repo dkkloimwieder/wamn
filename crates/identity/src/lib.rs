@@ -14,6 +14,7 @@
 
 use sqlx::Row as _;
 use sqlx::postgres::PgRow as Row;
+use sqlx::types::Uuid;
 use std::fmt;
 
 use wamn_identity_protocol::{PrincipalId, RoleName};
@@ -390,7 +391,10 @@ pub async fn create_or_reuse_user(
                 "the subject of this email belongs to another principal",
             )
         })?;
-    let principal_id: PrincipalId = row.try_get(0).map_err(|error| database_error(&error))?;
+    let principal_id = PrincipalId::from(
+        row.try_get::<Uuid, _>(0)
+            .map_err(|error| database_error(&error))?,
+    );
     let status: String = row.try_get(1).map_err(|error| database_error(&error))?;
     if status != "active" {
         return Err(IdentityError::new(
@@ -410,7 +414,7 @@ pub async fn resolve_principal(
     id: &PrincipalId,
 ) -> Result<Option<Principal>, IdentityError> {
     sqlx::query(SELECT_PRINCIPAL_BY_ID_SQL)
-        .bind(id)
+        .bind(Uuid::from(*id))
         .fetch_optional(&mut *client)
         .await
         .map_err(|error| database_error(&error))?
@@ -425,7 +429,7 @@ pub async fn disable_principal(
     id: &PrincipalId,
 ) -> Result<Principal, IdentityError> {
     let row = sqlx::query(DISABLE_PRINCIPAL_SQL)
-        .bind(id)
+        .bind(Uuid::from(*id))
         .fetch_optional(&mut *client)
         .await
         .map_err(|error| database_error(&error))?
@@ -446,7 +450,7 @@ pub async fn assign_project_role(
     org::active_member(client, principal_id, org).await?;
     let role = role.parse::<RoleName>()?.to_string();
     sqlx::query(ASSIGN_PROJECT_ROLE_SQL)
-        .bind(principal_id)
+        .bind(Uuid::from(*principal_id))
         .bind(org)
         .bind(project)
         .bind(&role)
@@ -465,7 +469,7 @@ pub async fn project_roles(
     project: &wamn_registry::ProjectId,
 ) -> Result<Vec<RoleName>, IdentityError> {
     let rows = sqlx::query(SELECT_PROJECT_ROLES_SQL)
-        .bind(principal_id)
+        .bind(Uuid::from(*principal_id))
         .bind(org)
         .bind(project)
         .fetch_all(&mut *client)
@@ -496,7 +500,7 @@ pub async fn grant_project_env_membership(
 ) -> Result<(), IdentityError> {
     org::active_member(client, principal_id, org).await?;
     sqlx::query(GRANT_PROJECT_ENV_MEMBERSHIP_SQL)
-        .bind(principal_id)
+        .bind(Uuid::from(*principal_id))
         .bind(org)
         .bind(project)
         .bind(env)
@@ -519,7 +523,7 @@ pub async fn has_project_env_membership(
     env: &wamn_registry::EnvName,
 ) -> Result<bool, IdentityError> {
     sqlx::query(SELECT_PROJECT_ENV_MEMBERSHIP_SQL)
-        .bind(principal_id)
+        .bind(Uuid::from(*principal_id))
         .bind(org)
         .bind(project)
         .bind(env)
@@ -540,7 +544,7 @@ pub async fn revoke_project_env_membership(
 ) -> Result<bool, IdentityError> {
     org::lock_membership(client, principal_id, org).await?;
     let removed = sqlx::query(REVOKE_PROJECT_ENV_MEMBERSHIP_SQL)
-        .bind(principal_id)
+        .bind(Uuid::from(*principal_id))
         .bind(org)
         .bind(project)
         .bind(env)
@@ -552,7 +556,10 @@ pub async fn revoke_project_env_membership(
 }
 
 fn decode_principal(row: &Row) -> Result<Principal, IdentityError> {
-    let id: PrincipalId = row.try_get(0).map_err(|error| database_error(&error))?;
+    let id = PrincipalId::from(
+        row.try_get::<Uuid, _>(0)
+            .map_err(|error| database_error(&error))?,
+    );
     let type_: String = row.try_get(1).map_err(|error| database_error(&error))?;
     let subject: String = row.try_get(2).map_err(|error| database_error(&error))?;
     let display_name: String = row.try_get(3).map_err(|error| database_error(&error))?;

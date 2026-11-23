@@ -635,7 +635,7 @@ async fn generate_from_evidence(
 async fn register_verification_principal(connection: &mut sqlx::PgConnection) -> Result<()> {
     let component = wamn_identity_protocol::PlatformComponent::ApplyPackage;
     sqlx::query("INSERT INTO platform.login_principal(login,principal_id) VALUES (current_user,$1) ON CONFLICT(login) DO UPDATE SET principal_id=EXCLUDED.principal_id")
-        .bind(component.principal_id())
+        .bind(sqlx::types::Uuid::from(component.principal_id()))
         .execute(connection)
         .await?;
     Ok(())

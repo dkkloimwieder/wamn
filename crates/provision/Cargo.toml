@@ -17,7 +17,7 @@ anyhow.workspace = true
 wamn-postgres.workspace = true
 sqlx = { workspace = true, features = ["migrate", "macros", "postgres", "runtime-tokio", "tls-rustls", "chrono", "uuid", "json", "bigdecimal"] }
 
-wamn-digest = { workspace = true, features = ["sqlx"] }
+wamn-digest.workspace = true
 # The per-project environment credential Secrets render as JSON.
 serde_json = { workspace = true }
 

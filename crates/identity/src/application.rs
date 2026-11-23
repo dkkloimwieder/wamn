@@ -12,6 +12,7 @@ mod user;
 pub use user::{ApplicationUser, disable_connection_services, remove_user, write_user};
 
 use sqlx::Row as _;
+use sqlx::types::Uuid;
 use std::fmt;
 
 use crate::{IdentityError, IdentityErrorType, database_error};
@@ -313,7 +314,7 @@ async fn grant_user_role(
     role: &str,
 ) -> Result<bool, AdministrationError> {
     let written = sqlx::query(USER_ROLE_SQL)
-        .bind(user_id)
+        .bind(Uuid::from(*user_id))
         .bind(role)
         .execute(&mut *client)
         .await
@@ -330,7 +331,7 @@ async fn revoke_user_role(
     role: &str,
 ) -> Result<bool, AdministrationError> {
     let removed = sqlx::query(DROP_USER_ROLE_SQL)
-        .bind(user_id)
+        .bind(Uuid::from(*user_id))
         .bind(role)
         .execute(&mut *client)
         .await
@@ -370,7 +371,7 @@ pub async fn require_user(
     user_id: &wamn_identity_protocol::PrincipalId,
 ) -> Result<(), AdministrationError> {
     let exists = sqlx::query(USER_EXISTS_SQL)
-        .bind(user_id)
+        .bind(Uuid::from(*user_id))
         .fetch_optional(&mut *client)
         .await
         .map_err(|error| database_error(&error))?
@@ -389,18 +390,23 @@ pub async fn require_user(
 pub async fn application_users(
     client: &mut sqlx::PgConnection,
 ) -> Result<Vec<ApplicationUserRow>, AdministrationError> {
-    Ok(sqlx::query(USER_LIST_SQL)
+    sqlx::query(USER_LIST_SQL)
         .fetch_all(&mut *client)
         .await
         .map_err(|error| database_error(&error))?
         .iter()
-        .map(|row| ApplicationUserRow {
-            id: row.get(0),
-            email: row.get(1),
-            display_name: row.get(2),
-            roles: row.get(3),
+        .map(|row| {
+            Ok(ApplicationUserRow {
+                id: PrincipalId::from(
+                    row.try_get::<Uuid, _>(0)
+                        .map_err(|error| database_error(&error))?,
+                ),
+                email: row.get(1),
+                display_name: row.get(2),
+                roles: row.get(3),
+            })
         })
-        .collect())
+        .collect()
 }
 
 /// The role names of the database, `admin` included.
@@ -447,7 +453,7 @@ pub async fn project_authority(
          EXISTS (SELECT 1 FROM identity.org_memberships m WHERE m.principal_id=p.id AND m.org=$2 AND m.status='active'), \
          identity.has_project_access(p.id,$2,$4,$3), \
          identity.is_project_admin(p.id,$2,$3) \
-         FROM identity.principals p WHERE p.id=$1").bind(principal).bind(coordinate.org).bind(coordinate.project).bind(coordinate.env).fetch_optional(&mut **system).await.map_err(|error| database_error(&error))?;
+         FROM identity.principals p WHERE p.id=$1").bind(Uuid::from(*principal)).bind(coordinate.org).bind(coordinate.project).bind(coordinate.env).fetch_optional(&mut **system).await.map_err(|error| database_error(&error))?;
     let Some(row) = row else {
         return remove_user(target, principal).await;
     };
@@ -467,7 +473,7 @@ pub async fn project_authority(
     let admin: bool = row.get(6);
     if !admin {
         return sqlx::query(DROP_USER_ROLE_SQL)
-            .bind(principal)
+            .bind(Uuid::from(*principal))
             .bind(ADMIN_ROLE)
             .execute(&mut *target)
             .await
@@ -480,7 +486,7 @@ pub async fn project_authority(
         .await
         .map_err(|error| database_error(&error))?;
     sqlx::query(USER_ROLE_SQL)
-        .bind(principal)
+        .bind(Uuid::from(*principal))
         .bind(ADMIN_ROLE)
         .execute(&mut *target)
         .await
@@ -570,7 +576,7 @@ pub async fn mutate_grant(
             .into());
     }
     if grant && let GrantAuthority::User(actor) = authority {
-            let admin: bool = sqlx::query("SELECT EXISTS (SELECT 1 FROM platform.user_role WHERE user_id=$1 AND role_name='admin')").bind(actor).fetch_one(&mut *client).await.map_err(|error| database_error(&error))?.get(0);
+            let admin: bool = sqlx::query("SELECT EXISTS (SELECT 1 FROM platform.user_role WHERE user_id=$1 AND role_name='admin')").bind(Uuid::from(*actor)).fetch_one(&mut *client).await.map_err(|error| database_error(&error))?.get(0);
             if !admin {
                 let required = match change {
                     GrantChange::Permission { reference, .. } => vec![reference.to_owned()],
@@ -578,7 +584,7 @@ pub async fn mutate_grant(
                 };
                 for reference in required {
                     let held: bool = sqlx::query("SELECT EXISTS (SELECT 1 FROM platform.user_role r JOIN platform.permission p ON p.role_name=r.role_name \
-                         WHERE r.user_id=$1 AND p.permission=$2)").bind(actor).bind(&reference).fetch_one(&mut *client).await.map_err(|error| database_error(&error))?.get(0);
+                         WHERE r.user_id=$1 AND p.permission=$2)").bind(Uuid::from(*actor)).bind(&reference).fetch_one(&mut *client).await.map_err(|error| database_error(&error))?.get(0);
                     if !held || !permission_is_grantable(&reference) {
                         return Err(AdministrationRefusal::NotGrantable { reference }.into());
                     }

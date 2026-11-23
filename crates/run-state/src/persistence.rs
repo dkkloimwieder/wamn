@@ -374,9 +374,15 @@ fn decode_selected_lease(row: &Row) -> Result<SelectedLease, ProductionLeaseErro
         row_value(row, 4, "graph version")?,
     )?;
     let run_id: String = row_value(row, 0, "run id")?;
+    let graph_hash = row_value::<&str>(row, 5, "graph hash")?
+        .parse()
+        .map_err(|error| {
+            ProductionLeaseError::invalid("decode production lease graph hash", error)
+        })?;
+    let principal = row_value::<sqlx::types::Uuid>(row, 6, "execution principal")?;
     let mut workflow = ProductionWorkflow {
-        graph_hash: row_value(row, 5, "graph hash")?,
-        execution_principal_id: row_value(row, 6, "execution principal")?,
+        graph_hash,
+        execution_principal_id: wamn_identity_protocol::PrincipalId::from(principal),
         execution_role: row_value(row, 7, "execution role")?,
         causation: None,
     };
@@ -427,9 +433,13 @@ fn decode_graph_identity(
     Ok((graph_id, graph_version))
 }
 
-fn row_value<T>(row: &Row, index: usize, field: &'static str) -> Result<T, ProductionLeaseError>
+fn row_value<'value, T>(
+    row: &'value Row,
+    index: usize,
+    field: &'static str,
+) -> Result<T, ProductionLeaseError>
 where
-    for<'value> T: Decode<'value, sqlx::Postgres> + Type<sqlx::Postgres>,
+    T: Decode<'value, sqlx::Postgres> + Type<sqlx::Postgres>,
 {
     row.try_get(index).map_err(|error| {
         ProductionLeaseError::new(

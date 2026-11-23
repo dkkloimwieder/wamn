@@ -59,7 +59,7 @@ pub(super) async fn resolve_subject(
     let (mut connection, _policy) = postgres
         .checkout_platform(project, AuthorityClass::Platform)
         .await?;
-    let result = sqlx::query_scalar(
+    let result = sqlx::query_scalar::<_, uuid::Uuid>(
         "SELECT id FROM platform.\"user\" WHERE issuer = $1 AND sub = $2 AND status = 'active' AND type = 'user'",
     )
     .bind(issuer)
@@ -67,7 +67,7 @@ pub(super) async fn resolve_subject(
     .fetch_optional(&mut *connection)
     .await;
     match result {
-        Ok(principal) => Ok(principal),
+        Ok(principal) => Ok(principal.map(wamn_identity_protocol::PrincipalId::from)),
         Err(error) => {
             postgres.destroy(connection);
             Err(principal_read_error("resolve the access token subject", error).into())

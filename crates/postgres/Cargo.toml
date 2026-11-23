@@ -12,7 +12,7 @@ wamn-registry.workspace = true
 wamn-role.workspace = true
 wamn-identity-protocol = { workspace = true, features = ["sqlx"] }
 postgres-protocol.workspace = true
-wamn-principal = { workspace = true, features = ["sqlx"] }
+wamn-principal.workspace = true
 url.workspace = true
 tokio = { workspace = true, features = ["fs", "sync"] }
 anyhow.workspace = true

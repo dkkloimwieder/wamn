@@ -8,6 +8,7 @@
 
 use sqlx::Row as _;
 use sqlx::postgres::PgRow as Row;
+use sqlx::types::Uuid;
 use std::fmt;
 
 use wamn_identity_protocol::secret::{SecretToken, SecretType};
@@ -63,13 +64,16 @@ fn database(error: &sqlx::Error) -> IdentityError {
         ),
     )
 }
-fn decode(row: &Row) -> Login {
-    Login {
+fn decode(row: &Row) -> Result<Login, IdentityError> {
+    Ok(Login {
         id: row.get(0),
-        principal: row.get(1),
+        principal: PrincipalId::from(
+            row.try_get::<Uuid, _>(1)
+                .map_err(|error| database(&error))?,
+        ),
         authenticated_at: row.get(2),
         expires_at: row.get(3),
-    }
+    })
 }
 async fn credential(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
@@ -81,7 +85,7 @@ async fn credential(
     sqlx::query(
         "INSERT INTO identity.renewal_credentials (token_hash,login_id) VALUES ($1,$2::text::uuid)",
     )
-    .bind(digest)
+    .bind(digest.to_string())
     .bind(&login.id)
     .execute(&mut **tx)
     .await
@@ -99,7 +103,7 @@ pub async fn lock_principal(
     principal: &PrincipalId,
 ) -> Result<bool, IdentityError> {
     Ok(sqlx::query("SELECT identity.lock_password_principal($1)")
-        .bind(principal)
+        .bind(Uuid::from(*principal))
         .fetch_one(&mut **tx)
         .await
         .map_err(|error| database(&error))?
@@ -122,8 +126,8 @@ pub async fn create_login(
     let row = sqlx::query("WITH instant AS (SELECT date_trunc('second',clock_timestamp()) AS at) \
          INSERT INTO identity.password_logins (principal_id,issuer,audience,authenticated_at,expires_at,renewal_expires_at) \
          SELECT $1,$2,$3,at,at+($4::bigint*interval '1 second'),at+($5::bigint*interval '1 second') FROM instant \
-         RETURNING id::text,principal_id,extract(epoch FROM authenticated_at)::bigint,extract(epoch FROM expires_at)::bigint").bind(principal).bind(issuer).bind(audience).bind(ABSOLUTE_LIFETIME).bind(INACTIVITY_LIFETIME).fetch_one(&mut **tx).await.map_err(|error| database(&error))?;
-    Ok(Some(credential(tx, decode(&row)).await?))
+         RETURNING id::text,principal_id,extract(epoch FROM authenticated_at)::bigint,extract(epoch FROM expires_at)::bigint").bind(Uuid::from(*principal)).bind(issuer).bind(audience).bind(ABSOLUTE_LIFETIME).bind(INACTIVITY_LIFETIME).fetch_one(&mut **tx).await.map_err(|error| database(&error))?;
+    Ok(Some(credential(tx, decode(&row)?).await?))
 }
 
 // Lookup before locking reveals only the principal to lock. Every credential
@@ -134,17 +138,18 @@ async fn lookup(
     audience: &str,
     digest: &wamn_digest::Digest,
 ) -> Result<Option<(Login, bool, bool)>, IdentityError> {
-    let Some(row) = sqlx::query("SELECT l.principal_id FROM identity.renewal_credentials c JOIN identity.password_logins l ON l.id=c.login_id \
-         WHERE c.token_hash=$1 AND l.issuer=$2 AND l.audience=$3").bind(digest).bind(issuer).bind(audience).fetch_optional(&mut **tx).await.map_err(|error| database(&error))? else { return Ok(None) };
-    let principal: PrincipalId = row.get(0);
+    let digest = digest.to_string();
+    let Some(principal) = sqlx::query_scalar::<_, Uuid>("SELECT l.principal_id FROM identity.renewal_credentials c JOIN identity.password_logins l ON l.id=c.login_id \
+         WHERE c.token_hash=$1 AND l.issuer=$2 AND l.audience=$3").bind(digest.as_str()).bind(issuer).bind(audience).fetch_optional(&mut **tx).await.map_err(|error| database(&error))? else { return Ok(None) };
+    let principal = PrincipalId::from(principal);
     if !lock_principal(tx, &principal).await? {
         return Ok(None);
     }
     let row = sqlx::query("SELECT l.id::text,l.principal_id,extract(epoch FROM l.authenticated_at)::bigint,extract(epoch FROM l.expires_at)::bigint, \
          c.consumed_at IS NOT NULL, l.revoked_at IS NULL AND l.expires_at>clock_timestamp() AND l.renewal_expires_at>clock_timestamp() \
          FROM identity.renewal_credentials c JOIN identity.password_logins l ON l.id=c.login_id \
-         WHERE c.token_hash=$1 AND l.issuer=$2 AND l.audience=$3 FOR UPDATE OF l").bind(digest).bind(issuer).bind(audience).fetch_optional(&mut **tx).await.map_err(|error| database(&error))?;
-    row.map(|row| Ok((decode(&row), row.get(4), row.get(5))))
+         WHERE c.token_hash=$1 AND l.issuer=$2 AND l.audience=$3 FOR UPDATE OF l").bind(digest.as_str()).bind(issuer).bind(audience).fetch_optional(&mut **tx).await.map_err(|error| database(&error))?;
+    row.map(|row| Ok((decode(&row)?, row.get(4), row.get(5))))
         .transpose()
 }
 
@@ -162,14 +167,14 @@ pub async fn renewal_principal(
     let mut transaction = crate::transaction::read_connection(connection, &actor)
         .await
         .map_err(|error| database(&error))?;
-    let row = sqlx::query("SELECT l.principal_id FROM identity.renewal_credentials c JOIN identity.password_logins l ON l.id=c.login_id WHERE c.token_hash=$1 AND l.issuer=$2 AND l.audience=$3")
-        .bind(token.digest()).bind(issuer).bind(audience)
+    let principal = sqlx::query_scalar::<_, Uuid>("SELECT l.principal_id FROM identity.renewal_credentials c JOIN identity.password_logins l ON l.id=c.login_id WHERE c.token_hash=$1 AND l.issuer=$2 AND l.audience=$3")
+        .bind(token.digest().to_string()).bind(issuer).bind(audience)
         .fetch_optional(&mut *transaction).await.map_err(|error| database(&error))?;
     transaction
         .commit()
         .await
         .map_err(|error| database(&error))?;
-    Ok(row.map(|row| row.get(0)))
+    Ok(principal.map(PrincipalId::from))
 }
 
 /// Authenticate a renewal credential and bind its user actor under the principal lock.
@@ -239,7 +244,7 @@ pub async fn rotate_login(
     sqlx::query(
         "UPDATE identity.renewal_credentials SET consumed_at=clock_timestamp() WHERE token_hash=$1",
     )
-    .bind(digest)
+    .bind(digest.to_string())
     .execute(&mut **tx)
     .await
     .map(|result| result.rows_affected())
@@ -280,7 +285,7 @@ pub async fn revoke_all(
     principal: &PrincipalId,
 ) -> Result<(), IdentityError> {
     lock_principal(tx, principal).await?;
-    sqlx::query("UPDATE identity.password_logins SET revoked_at=clock_timestamp() WHERE principal_id=$1 AND revoked_at IS NULL").bind(principal).execute(&mut **tx).await.map(|result| result.rows_affected()).map_err(|error| database(&error))?;
+    sqlx::query("UPDATE identity.password_logins SET revoked_at=clock_timestamp() WHERE principal_id=$1 AND revoked_at IS NULL").bind(Uuid::from(*principal)).execute(&mut **tx).await.map(|result| result.rows_affected()).map_err(|error| database(&error))?;
     Ok(())
 }
 

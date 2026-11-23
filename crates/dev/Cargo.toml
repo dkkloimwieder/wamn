@@ -17,7 +17,7 @@ tracing.workspace = true
 url.workspace = true
 wamn-build.workspace = true
 wamn-codegen.workspace = true
-wamn-digest = { workspace = true, features = ["sqlx"] }
+wamn-digest.workspace = true
 wamn-environment.workspace = true
 wamn-identity-protocol.workspace = true
 wamn-publish.workspace = true

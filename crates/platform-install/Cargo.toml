@@ -21,7 +21,7 @@ sqlx = { workspace = true, features = ["migrate", "postgres", "runtime-tokio", "
 tokio = { workspace = true, features = ["fs", "io-util", "macros", "process", "rt", "sync", "time", "net"] }
 oci-client.workspace = true
 tempfile.workspace = true
-wamn-digest = { workspace = true, features = ["sqlx"] }
+wamn-digest.workspace = true
 wamn-kubernetes.workspace = true
 wamn-oci.workspace = true
 wamn-postgres.workspace = true

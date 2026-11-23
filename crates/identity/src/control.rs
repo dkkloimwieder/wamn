@@ -6,6 +6,7 @@
 //! the org, grants control authority in that org.
 
 use sqlx::Row as _;
+use sqlx::types::Uuid;
 
 use crate::org::ORG_ADMIN_ROLE;
 use crate::{IdentityError, PrincipalId, database_error};
@@ -53,7 +54,7 @@ pub async fn control_projects_page(
     limit: Option<i64>,
 ) -> Result<Vec<wamn_registry::ProjectId>, IdentityError> {
     sqlx::query(CONTROL_PROJECTS_SQL)
-        .bind(principal_id)
+        .bind(Uuid::from(*principal_id))
         .bind(org)
         .bind(PROJECT_ADMIN_ROLE)
         .bind(after)
@@ -73,7 +74,7 @@ pub async fn is_org_admin(
     org: &wamn_registry::OrgId,
 ) -> Result<bool, IdentityError> {
     sqlx::query(ORG_ADMIN_SQL)
-        .bind(principal_id)
+        .bind(Uuid::from(*principal_id))
         .bind(org)
         .bind(ORG_ADMIN_ROLE)
         .fetch_one(&mut *client)
@@ -92,7 +93,7 @@ pub async fn is_project_admin(
     project: &wamn_registry::ProjectId,
 ) -> Result<bool, IdentityError> {
     sqlx::query(PROJECT_ADMIN_SQL)
-        .bind(principal_id)
+        .bind(Uuid::from(*principal_id))
         .bind(org)
         .bind(project)
         .bind(PROJECT_ADMIN_ROLE)

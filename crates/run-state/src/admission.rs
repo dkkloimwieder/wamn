@@ -87,12 +87,12 @@ pub async fn admit_run(
         .bind(run.environment)
         .bind(run.workflow_id)
         .bind(run.workflow_version)
-        .bind(run.graph_hash)
-        .bind(run.execution_principal_id)
+        .bind(run.graph_hash.to_string())
+        .bind(sqlx::types::Uuid::from(*run.execution_principal_id))
         .bind(run.execution_role)
         .bind(run.trigger.as_sql())
         .bind(run.invoked_by)
-        .bind(run.invoked_by_user_id)
+        .bind(run.invoked_by_user_id.copied().map(sqlx::types::Uuid::from))
         .bind(run.idempotency_key)
         .bind(input)
         .bind(run.source_run)
@@ -114,9 +114,9 @@ pub async fn admit_run(
         .bind(run.trigger.as_sql())
         .bind(run.idempotency_key)
         .bind(input)
-        .bind(run.execution_principal_id)
+        .bind(sqlx::types::Uuid::from(*run.execution_principal_id))
         .bind(run.execution_role)
-        .bind(run.invoked_by_user_id)
+        .bind(run.invoked_by_user_id.copied().map(sqlx::types::Uuid::from))
         .fetch_optional(connection)
         .await
         .map_err(|error| ProductionLeaseError::postgres("read original workflow run", &error))?;
@@ -189,14 +189,14 @@ pub async fn history_actor(
         let sql = format!(
             "WITH image AS (SELECT to_jsonb(jsonb_populate_record(NULL::{table}, $3::text::jsonb)) AS value) SELECT h.changed_by FROM {history} h WHERE h.transaction_id % 4294967296 = $1 AND h.type = $2 AND h.row_key = (SELECT jsonb_object_agg(a.attname, CASE WHEN a.atttypid = 'timestamptz'::regtype AND isfinite((image.value ->> a.attname)::timestamptz) THEN to_jsonb(to_char((image.value ->> a.attname)::timestamptz AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"')) ELSE image.value -> a.attname END) FROM image, pg_index i JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey) WHERE i.indrelid = $4 AND i.indisprimary) ORDER BY h.position DESC LIMIT 1"
         );
-        return sqlx::query(sqlx::AssertSqlSafe(sql))
+        return sqlx::query_scalar::<_, Option<sqlx::types::Uuid>>(sqlx::AssertSqlSafe(sql))
             .bind(i64::from(envelope.txid))
             .bind(envelope.op.as_str())
             .bind(&image)
             .bind(oid)
             .fetch_optional(&mut *connection)
             .await
-            .map(|row| row.and_then(|row| row.get(0)))
+            .map(|row| row.flatten().map(wamn_identity_protocol::PrincipalId::from))
             .map_err(|error| ProductionLeaseError::postgres("read event history actor", &error));
     }
     Ok(None)

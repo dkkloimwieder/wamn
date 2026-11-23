@@ -97,8 +97,10 @@ async fn write_runtime_grants(
              AND NOT EXISTS (SELECT FROM platform.user_role WHERE role_name=$1 AND user_id<>$2)",
         )
         .bind(&role)
-        .bind(principal)
-        .bind(wamn_identity_protocol::PlatformComponent::Provisioning.principal_id())
+        .bind(uuid::Uuid::from(principal))
+        .bind(uuid::Uuid::from(
+            wamn_identity_protocol::PlatformComponent::Provisioning.principal_id(),
+        ))
         .fetch_one(&mut **transaction)
         .await?
         .get(0);

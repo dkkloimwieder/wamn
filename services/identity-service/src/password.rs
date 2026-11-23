@@ -329,7 +329,10 @@ async fn handle(
                     tracing::info!(email = %email, cause = %RefusalCause::NoSuchAccount, "password request refused");
                     return invalid();
                 };
-                let principal: PrincipalId = row.get(0);
+                let Ok(id) = row.try_get::<sqlx::types::Uuid, _>(0) else {
+                    return unavailable();
+                };
+                let principal = PrincipalId::from(id);
                 if let Some((secret, password)) = reset {
                     let password = match Password::new(password) {
                         Ok(value) => value,
@@ -370,7 +373,7 @@ async fn handle(
                         )
                         .await
                         .is_ok()
-                        && sqlx::query("UPDATE identity.password_tokens SET consumed_at=clock_timestamp() WHERE token_hash=$1 AND consumed_at IS NULL").bind(hash).execute(&mut *tx).await.map(|result| result.rows_affected()).is_ok() { let _ = tx.commit().await; }
+                        && sqlx::query("UPDATE identity.password_tokens SET consumed_at=clock_timestamp() WHERE token_hash=$1 AND consumed_at IS NULL").bind(hash.to_string()).execute(&mut *tx).await.map(|result| result.rows_affected()).is_ok() { let _ = tx.commit().await; }
                 }
                 response(StatusCode::ACCEPTED, "application/json", Vec::new())
             };
@@ -609,7 +612,7 @@ async fn enrollment_refusal(
             return password_failure(error);
         };
         match sqlx::query("SELECT email FROM identity.principals WHERE id = $1")
-            .bind(principal)
+            .bind(sqlx::types::Uuid::from(*principal))
             .fetch_optional(&mut *read)
             .await
         {
@@ -753,7 +756,7 @@ pub(crate) mod tests {
         .unwrap();
         let actor = PlatformComponent::Provisioning.principal_id();
         sqlx::query("INSERT INTO platform.login_principal(login,principal_id) VALUES(current_user,$1) ON CONFLICT(login) DO UPDATE SET principal_id=EXCLUDED.principal_id")
-            .bind(actor).execute(&mut admin.client).await.unwrap();
+            .bind(sqlx::types::Uuid::from(actor)).execute(&mut admin.client).await.unwrap();
         let mut members = Vec::new();
         for (subject, email, display_name) in users {
             members.push(
@@ -766,7 +769,7 @@ pub(crate) mod tests {
         sqlx::query(
             "INSERT INTO platform.tx_identity(principal_id,role,application) VALUES($1,'','')",
         )
-        .bind(actor)
+        .bind(sqlx::types::Uuid::from(actor))
         .execute(&mut *tx)
         .await
         .unwrap();
@@ -776,7 +779,7 @@ pub(crate) mod tests {
             .unwrap();
         for member in &members {
             sqlx::query("INSERT INTO identity.org_memberships (principal_id, org, status) VALUES ($1, 'demo', 'active')")
-                .bind(member.id())
+                .bind(sqlx::types::Uuid::from(*member.id()))
                 .execute(&mut *tx)
                 .await
                 .unwrap();
@@ -947,7 +950,9 @@ pub(crate) mod tests {
             "SELECT subject, email, display_name, updated_by::text \
                  FROM identity.principals WHERE id = $1",
         )
-        .bind(carol.parse::<PrincipalId>().unwrap())
+        .bind(sqlx::types::Uuid::from(
+            carol.parse::<PrincipalId>().unwrap(),
+        ))
         .fetch_one(&mut admin.client)
         .await
         .unwrap();

@@ -44,7 +44,7 @@ pub async fn principal_grants(
     user_id: &wamn_identity_protocol::PrincipalId,
 ) -> Result<PrincipalGrants, sqlx::Error> {
     let rows = sqlx::query(PRINCIPAL_GRANTS_SQL)
-        .bind(user_id)
+        .bind(uuid::Uuid::from(*user_id))
         .fetch_all(connection)
         .await?;
     principal_grants_from_rows(&rows)
@@ -185,14 +185,20 @@ pub async fn project_pat(
     let Some(row) = row else {
         return Ok(None);
     };
-    let hash: wamn_digest::Digest = row.try_get("hash")?;
+    let hash =
+        row.try_get::<&str, _>("hash")?
+            .parse()
+            .map_err(|source| sqlx::Error::ColumnDecode {
+                index: "hash".into(),
+                source: Box::new(source),
+            })?;
     if !token.matches(&hash) {
         return Ok(None);
     }
     let deadline: sqlx::types::chrono::DateTime<sqlx::types::chrono::Utc> =
         row.try_get("expires_at")?;
     Ok(Some(Arc::new(ProjectPat {
-        principal: row.try_get("id")?,
+        principal: PrincipalId::from(row.try_get::<uuid::Uuid, _>("id")?),
         subject: row.try_get::<&str, _>("sub")?.into(),
         deadline: deadline.into(),
     })))

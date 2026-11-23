@@ -38,7 +38,7 @@ pub(super) async fn claims_for_audience(
         type_: FailureType::Unauthorized,
     })?;
     let member: bool = sqlx::query("SELECT EXISTS (SELECT 1 FROM identity.org_memberships m JOIN identity.principals p ON p.id=m.principal_id WHERE m.principal_id=$1 AND m.org=$2 AND m.status='active' AND p.type='user' AND p.status='active')")
-        .bind(principal.principal().id()).bind(&org).fetch_one(&mut *client).await.map_err(|_| failed())?.get(0);
+        .bind(sqlx::types::Uuid::from(*principal.principal().id())).bind(&org).fetch_one(&mut *client).await.map_err(|_| failed())?.get(0);
     if !member {
         return Err(ExchangeFailure {
             type_: FailureType::Unauthorized,

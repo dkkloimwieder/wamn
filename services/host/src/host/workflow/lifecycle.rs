@@ -248,7 +248,7 @@ async fn author(
     .bind(&graph.graph_id)
     .bind(version)
     .bind(sqlx::types::Json(&graph))
-    .bind(hash)
+    .bind(hash.to_string())
     .bind(trigger)
     .bind(path)
     .bind(schedule)
@@ -258,7 +258,7 @@ async fn author(
     .bind(source_condition)
     .bind(if role.is_some() { "role" } else { "invoker" })
     .bind(role)
-    .bind(caller.principal_id())
+    .bind(uuid::Uuid::from(*caller.principal_id()))
     .execute(connection)
     .await?
     .rows_affected();
@@ -318,7 +318,14 @@ async fn enable(
     .ok_or_else(unknown_version)?;
     let value: Value = row.try_get("graph_json")?;
     let graph = WorkflowGraph::parse(&value).map_err(invalid_graph)?;
-    if graph.graph_hash() != row.try_get::<wamn_digest::Digest, _>("graph_hash")? {
+    let hash = row
+        .try_get::<&str, _>("graph_hash")?
+        .parse()
+        .map_err(|source| sqlx::Error::ColumnDecode {
+            index: "graph_hash".into(),
+            source: Box::new(source),
+        })?;
+    if graph.graph_hash() != hash {
         return Err(invalid_graph("workflow graph hash does not match"));
     }
     let role: Option<&str> = row.try_get("execution_role")?;

@@ -6,13 +6,20 @@ pub(super) async fn record_package_schema(
     coordinate: &wamn_package::PackageCoordinate,
     artifact_digest: Option<&wamn_digest::Digest>,
 ) -> anyhow::Result<bool> {
-    Ok(sqlx::query("INSERT INTO catalog.packages (package_id, package_version, artifact_digest) \
+    Ok(sqlx::query(
+        "INSERT INTO catalog.packages (package_id, package_version, artifact_digest) \
         VALUES ($1,$2,$3) ON CONFLICT (package_id) DO UPDATE \
         SET package_version=EXCLUDED.package_version, artifact_digest=EXCLUDED.artifact_digest \
         WHERE ROW(catalog.packages.package_version, catalog.packages.artifact_digest) \
-        IS DISTINCT FROM ROW(EXCLUDED.package_version, EXCLUDED.artifact_digest)")
-        .bind(coordinate.package_id()).bind(coordinate.package_version()).bind(artifact_digest)
-        .execute(&mut **tx).await?.rows_affected() != 0)
+        IS DISTINCT FROM ROW(EXCLUDED.package_version, EXCLUDED.artifact_digest)",
+    )
+    .bind(coordinate.package_id())
+    .bind(coordinate.package_version())
+    .bind(artifact_digest.map(ToString::to_string))
+    .execute(&mut **tx)
+    .await?
+    .rows_affected()
+        != 0)
 }
 
 pub const LOCK_PACKAGE_SQL: &str = "SELECT pg_advisory_xact_lock(hashtextextended(\
@@ -59,7 +66,10 @@ async fn read_package(
             package_id.clone(),
             row.try_get::<wamn_package::package_version::PackageVersion, _>(1)?,
         )?,
-        artifact_digest: row.get(0),
+        artifact_digest: row
+            .try_get::<Option<&str>, _>(0)?
+            .map(str::parse)
+            .transpose()?,
     }))
 }
 
