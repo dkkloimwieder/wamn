@@ -8,6 +8,7 @@
 //! raw body with the bound connection credential and return its active principal.
 
 use wamn_package::AttachmentAuthPolicy;
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use hmac::{Hmac, KeyInit as _, Mac as _};
@@ -373,7 +374,7 @@ impl ControlRouteAuthenticator {
             principal,
             CredentialType::Session,
             false,
-            Default::default(),
+            HashSet::default(),
             None,
         ))
     }

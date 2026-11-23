@@ -34,7 +34,7 @@ enum Fact {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct Key {
-    project_env_key: ProjectEnvKey,
+    project_environment: ProjectEnvKey,
     lifetime: Duration,
     fact: Fact,
 }
@@ -123,7 +123,7 @@ impl Authorization {
             "project admission coordinates disagree"
         );
         Ok(Key {
-            project_env_key: key.clone(),
+            project_environment: key.clone(),
             lifetime: *lifetime,
             fact,
         })
