@@ -1,15 +1,19 @@
 //! PostgreSQL adapter for package verification.
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::{Context as _, Result, bail, ensure};
 use postgres_protocol::escape::{escape_identifier, escape_literal};
+use serde::{Deserialize, Serialize};
 use sqlx::{
     AssertSqlSafe, Column as _, Connection as _, Either, Executor as _, Row as _, SqlSafeStr as _,
-    TypeInfo as _, migrate::Migrator,
+    TypeInfo as _,
+    migrate::Migrator,
+    postgres::{PgConnectOptions, PgSslMode},
 };
 use wamn_codegen::AuthoredSql;
 use wamn_codegen::database::{
@@ -22,7 +26,6 @@ use wamn_package::manifest::source_name::SourceName;
 use wamn_schema::ir::CatalogIr;
 
 use crate::catalog::read_catalog_excluding_relations;
-use crate::{connect, database_configuration, identity, pool};
 
 const RECORD_HISTORY_SQL: &str = include_str!("../../../deploy/sql/record-history.sql");
 const RECORD_HISTORY_APP_GRANTS_SQL: &str =
@@ -398,6 +401,255 @@ async fn execute_on_server(server_url: &str, sql: &str) -> Result<()> {
         .await;
     client.close().await;
     result.map(|_| ()).with_context(|| format!("execute {sql}"))
+}
+
+/// Root of the database credential mounts in deployed processes.
+pub const DATABASE_DIR: &str = "/etc/wamn/db";
+
+/// A named credential source in the organization's namespace.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SecretRef {
+    pub namespace: String,
+    pub name: String,
+}
+
+/// Public connection data. Login and CA bytes come from mounted files.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConnectionConfig {
+    pub host: String,
+    pub port: u16,
+    pub database: String,
+    pub username: wamn_identity_protocol::LoginName,
+    pub credentials: SecretRef,
+    pub server_ca: SecretRef,
+}
+
+impl ConnectionConfig {
+    /// Open options using the named credential directory below the supplied mount root.
+    pub async fn mounted_options(&self, root: &Path) -> anyhow::Result<PgConnectOptions> {
+        let directory = credential_directory(root, &self.credentials.name)?;
+        let options = PgConnectOptions::new_without_pgpass()
+            .host(&self.host)
+            .port(self.port)
+            .database(&self.database)
+            .username(self.username.as_str())
+            .ssl_root_cert(directory.join("ca.crt"))
+            .ssl_mode(PgSslMode::VerifyFull);
+
+        let cert = directory.join("tls.crt");
+        let key = directory.join("tls.key");
+        let has_cert = credential_exists(&cert).await?;
+        let has_key = credential_exists(&key).await?;
+        if !has_cert && !has_key {
+            let password = read_password(&directory, &self.username).await?;
+            return Ok(options.password(&password));
+        }
+
+        if !has_cert || !has_key || credential_exists(&directory.join("password")).await? {
+            return Err(CertificateLayoutError { directory }.into());
+        }
+        // SQLx reads the files on each new connection, including after certificate renewal.
+        Ok(options.ssl_client_cert(cert).ssl_client_key(key))
+    }
+
+    /// Encode configuration without including credential or CA bytes.
+    pub fn to_json(&self) -> anyhow::Result<String> {
+        Ok(serde_json::to_string(self)?)
+    }
+}
+
+/// Read a mounted component configuration or borrow an explicit command input.
+pub fn configuration(input: &str) -> anyhow::Result<Cow<'_, str>> {
+    if input.starts_with('/') {
+        Ok(Cow::Owned(std::fs::read_to_string(input)?))
+    } else {
+        Ok(Cow::Borrowed(input))
+    }
+}
+
+/// Resolve public identity without loading credentials or opening a session.
+pub fn identity(input: &str) -> anyhow::Result<(wamn_identity_protocol::LoginName, String)> {
+    let input = configuration(input)?;
+    if input.trim_start().starts_with('{') {
+        let config: ConnectionConfig = serde_json::from_str(&input)?;
+        Ok((config.username, config.database))
+    } else {
+        let options: PgConnectOptions = input.parse()?;
+        Ok((
+            options.get_username().parse()?,
+            options.get_database().context("database is absent")?.into(),
+        ))
+    }
+}
+
+/// Resolve one named login directory below the supplied mount root.
+pub fn credential_directory(root: &Path, name: &str) -> anyhow::Result<PathBuf> {
+    anyhow::ensure!(
+        !name.is_empty()
+            && name
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-'),
+        "invalid database credential name"
+    );
+    Ok(root.join(name))
+}
+
+/// Read a mounted password after checking the login name.
+pub async fn read_password(
+    directory: &Path,
+    expected: &wamn_identity_protocol::LoginName,
+) -> anyhow::Result<String> {
+    let username: wamn_identity_protocol::LoginName =
+        read_text(&directory.join("username")).await?.parse()?;
+    if &username != expected {
+        return Err(CredentialMismatch {
+            directory: directory.to_owned(),
+        }
+        .into());
+    }
+    Ok(read_text(&directory.join("password")).await?)
+}
+
+async fn credential_exists(path: &Path) -> Result<bool, CredentialReadError> {
+    tokio::fs::try_exists(path)
+        .await
+        .map_err(|source| CredentialReadError {
+            path: path.to_owned(),
+            source,
+        })
+}
+
+async fn read_text(path: &Path) -> Result<String, CredentialReadError> {
+    tokio::fs::read_to_string(path)
+        .await
+        .map_err(|source| CredentialReadError {
+            path: path.to_owned(),
+            source,
+        })
+}
+
+#[derive(Debug)]
+struct CredentialReadError {
+    path: PathBuf,
+    source: std::io::Error,
+}
+
+impl std::fmt::Display for CredentialReadError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "read database credential {}", self.path.display())
+    }
+}
+
+impl std::error::Error for CredentialReadError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.source)
+    }
+}
+
+#[derive(Debug)]
+struct CredentialMismatch {
+    directory: PathBuf,
+}
+
+impl std::fmt::Display for CredentialMismatch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "database credential {} names another login",
+            self.directory.display()
+        )
+    }
+}
+
+impl std::error::Error for CredentialMismatch {}
+
+#[derive(Debug)]
+struct CertificateLayoutError {
+    directory: PathBuf,
+}
+
+impl std::fmt::Display for CertificateLayoutError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "database credential {} requires tls.crt and tls.key together without a password file",
+            self.directory.display()
+        )
+    }
+}
+
+impl std::error::Error for CertificateLayoutError {}
+
+/// Resolve verified options from mounted files or explicit operator input.
+pub async fn connect_options<'a>(
+    input: impl Into<ConnectionInput<'a>>,
+) -> anyhow::Result<PgConnectOptions> {
+    let input = match input.into() {
+        ConnectionInput::Options(options) => {
+            let username: wamn_identity_protocol::LoginName = options.get_username().parse()?;
+            return Ok((*options)
+                .username(username.as_str())
+                .ssl_mode(PgSslMode::VerifyFull));
+        }
+        ConnectionInput::Configuration(input) => input,
+    };
+    let input = configuration(input)?;
+    let options = if input.trim_start().starts_with('{') {
+        let config: ConnectionConfig = serde_json::from_str(&input)?;
+        config.mounted_options(Path::new(DATABASE_DIR)).await?
+    } else {
+        let explicit = url::Url::parse(&input)?;
+        // SQLx supplies a default login when the URL omits it.
+        anyhow::ensure!(
+            !explicit.username().is_empty() && !explicit.path().trim_matches('/').is_empty(),
+            "explicit database login and database are required"
+        );
+        let options: PgConnectOptions = input.parse()?;
+        let username: wamn_identity_protocol::LoginName = options.get_username().parse()?;
+        options.username(username.as_str())
+    };
+    Ok(options.ssl_mode(PgSslMode::VerifyFull))
+}
+
+/// Open a dedicated session with the same verified options as pooled sessions.
+pub async fn connect<'a>(
+    input: impl Into<ConnectionInput<'a>>,
+) -> anyhow::Result<sqlx::PgConnection> {
+    Ok(sqlx::PgConnection::connect_with(&connect_options(input).await?).await?)
+}
+
+/// Construct one initially idle pool for a role and database.
+pub async fn pool(input: &str, max_connections: u32) -> anyhow::Result<sqlx::PgPool> {
+    Ok(sqlx::postgres::PgPoolOptions::new()
+        .max_connections(max_connections)
+        .connect_lazy_with(connect_options(input).await?))
+}
+
+/// Explicit connection input for component configuration or database administration.
+pub enum ConnectionInput<'a> {
+    Configuration(&'a str),
+    Options(Box<PgConnectOptions>),
+}
+impl<'a> From<&'a str> for ConnectionInput<'a> {
+    fn from(value: &'a str) -> Self {
+        Self::Configuration(value)
+    }
+}
+
+/// Select another database while retaining the explicit login and TLS references.
+pub fn database_configuration(input: &str, database: &str) -> anyhow::Result<String> {
+    let input = configuration(input)?;
+    if input.trim_start().starts_with('{') {
+        let mut config: ConnectionConfig = serde_json::from_str(&input)?;
+        config.database = database.into();
+        config.to_json()
+    } else {
+        let mut coordinate = url::Url::parse(&input)?;
+        coordinate.set_path(database);
+        Ok(coordinate.into())
+    }
 }
 
 #[cfg(test)]

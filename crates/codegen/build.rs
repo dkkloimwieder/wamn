@@ -47,7 +47,6 @@ fn main() {
         "../number-pattern/src",
         "../postgres/src/build_database.rs",
         "../postgres/src/catalog.rs",
-        "../postgres/src/lib.rs",
         "../role/src",
         "../identity-protocol/src",
         "../../deploy/sql/record-history.sql",
