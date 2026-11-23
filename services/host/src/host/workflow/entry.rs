@@ -4,6 +4,7 @@ use super::admission::{Admission, Definition, Delivery};
 use super::bindings::{Service, exports::wamn::workflow::entry};
 use super::{Authority, Refusal, SharedCtx, Workflow, storage_error, wit_run};
 use serde_json::Value;
+use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 use tokio::sync::oneshot;
@@ -131,7 +132,7 @@ impl Workflow {
                     causation: None,
                 };
                 Ok(Ok(Some(Prepared::Inline {
-                    authority,
+                    authority: Arc::new(authority),
                     definition,
                 })))
             });
@@ -266,7 +267,7 @@ impl Workflow {
 
 enum Prepared {
     Inline {
-        authority: Authority,
+        authority: Arc<Authority>,
         definition: Definition,
     },
     Durable(Box<super::admission::Admitted>),

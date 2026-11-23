@@ -71,7 +71,7 @@ pub(super) struct Admitted {
 impl Admitted {
     pub(super) fn issue(self, workload: &Workload) -> wit_run::LeasedRun {
         let id = self.authority.delivery.clone();
-        let authority = workload.create_authority(self.authority);
+        let authority = workload.create_authority(Arc::new(self.authority));
         wit_run::LeasedRun {
             id,
             authority,

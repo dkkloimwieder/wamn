@@ -118,7 +118,7 @@ impl Workflow {
 }
 
 impl Workload {
-    fn create_authority(&self, authority: Authority) -> String {
+    fn create_authority(&self, authority: Arc<Authority>) -> String {
         let handle = uuid::Uuid::new_v4().to_string();
         let now = Instant::now();
         let expires = if authority.generation.is_some() {
@@ -131,13 +131,7 @@ impl Workload {
             .lock()
             .expect("workflow authority lock poisoned");
         entries.retain(|_, entry| entry.expires > now);
-        entries.insert(
-            handle.clone(),
-            AuthorityEntry {
-                authority: Arc::new(authority),
-                expires,
-            },
-        );
+        entries.insert(handle.clone(), AuthorityEntry { authority, expires });
         handle
     }
 
