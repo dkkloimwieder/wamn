@@ -321,6 +321,7 @@ Lint lines: authentication, authority, connection, envelope, blobstore, event, i
 - 21.6 The service principal request steps (`api_service.rs`) go to wamn-authentication. `provision_project_env/output.rs` goes to the CLI (ruling 14, changed by choice A).
 - 21.7 wamn-build reaches component admission through a trait, so it links no wamn-engine (choice 7a).
 - 21.8 Recount the dev-dependency cycles to wamn-test-infrastructure after the moves. The cycles that remain become one Open item (ruling 18).
+- 21.9 Every member of the apps workspace moves under `apps/`: the guests under `guests/`, `test-support/fixtures/guests/connection-http-standard`, `crates/guest` and `crates/record-history` (for example, to `apps/crates/`). The root crates that use wamn-record-history change only their path dependency. `apps/wamn_wms/tests` and `apps/wamn_receiving/tests` move into the root tree, under `tests/`, with directory names from the naming rule. After the move, `xtask/src/machete.rs` keeps only the version check and one run for each workspace, and the staging code goes (D, 2026-11-23, item 1).
 
 Lint lines: the full class rules of [docs/structure.md](../structure.md), with the crates of each class named in xtask. wamn-control and wamn-identity-service link no wasmtime, `wasmtime-*` or wash-runtime, and wamn-cli is outside that rule (ruling 20). No product crate links a test crate on a normal edge. The lint checks the manifests (names, aliases and optional features) and the resolved graph of each shipped build.
 
@@ -396,7 +397,7 @@ Next: the restructure ends. The review work in the Claude Doc "wamn review" foll
 - After the first kind run:
   - Charts: `enablePDB: false` for single-instance project clusters; delete the dropped `affinity` and `topologySpreadConstraints` host values, or render them.
 - An org login (control, apply) can INSERT `identity.principals`, and the policy checks only a bound identity, not the org. Least-privilege check: should these logins insert principals at all?
-- `cargo xtask machete` stages 14 members in a scratch tree, because cargo-machete finds the workspace by walking up from each manifest. The guests under `guests/` and `test-support/fixtures/guests/` belong to `apps/Cargo.toml`, and `apps/wamn_wms/tests` and `apps/wamn_receiving/tests` belong to the root workspace. Decide whether these members move under their own workspace directory, which removes the staging (Epic 17, 17.3).
+- Ruled (D, 2026-11-23), done in Epic 21 (21.9): every member of a workspace moves under the directory of that workspace. Until then, `cargo xtask machete` stages 14 members in a scratch tree, because cargo-machete finds the workspace by walking up from each manifest.
 - Crate graph review (2026-11-21): `wamn-registry` and `wamn-package` (30 dependents each) link sqlx with postgres, so `wamn-web`, `wamn-edge`, `wamn-event` and `wamn-broker` compile a database driver. The fix is choice 6a: the sqlx impls go from the domain types, the queries bind and read plain values, and wamn-postgres keeps private row structs. Epic 19 does it.
 
 # Part 2: Review log
@@ -2331,3 +2332,11 @@ Epic 14 closed on 2026-11-21 after review. cargo test --workspace: 617 passed in
 - cargo-machete joins the standard checks for both workspaces, through xtask, with its version pinned. Each ignore entry carries a comment with the reason, and every finding is fixed.
 - The structure rules are in `docs/structure.md`. All code follows them, and each review checks against them.
 - The work splits into five epics, run one after another: 17 names and the workflow graph (wamn-rkjb3), 18 application and Postgres, 19 plain data, 20 host, identity and cloud, 21 deploy and publish.
+
+**Ruled (D, 2026-11-23): Epic 17 items.**
+- Item 1, the workspace directory layout: (a), extended, as one issue in Epic 21 (21.9). Every member of the apps workspace moves under `apps/`, including the guests, `test-support/fixtures/guests/connection-http-standard`, `crates/guest` and `crates/record-history`. The root crates that use wamn-record-history change only their path dependency. `apps/wamn_wms/tests` and `apps/wamn_receiving/tests` move into the root tree. After the move, `xtask/src/machete.rs` keeps only the version check and one run for each workspace. Until Epic 21, the staging code stays.
+- Item 2: accepted. `FilesystemInvalidationSource` goes to wamn-build (21.5).
+- Item 3: accepted. The connection administration steps go to wamn-connection, which replaces the earlier ruling that put them in control. The control status rules go to wamn-environment, and the host event matching goes to wamn-event.
+- Item 4: accepted, as the one named exception to choice A. The SQLite store of the edge stays private in wamn-edge, and the rule that SQL goes to wamn-postgres applies to Postgres only.
+- Item 5: accepted. Directories under `test-support/` drop the `test-` prefix.
+- Item 6: the rule that root writes no fixes covers generated output too. 92a37b8e1 and 94084391f stay, because a wrong digest fails the build. From now on, the agent that changes the inputs runs the refresh and writes the pins in the same commit. Root writes nothing to the repository. There is no new command for writing pins.

@@ -23,6 +23,7 @@ Every crate has one class: domain, implementation or binary.
 ## SQL and rows
 
 - SQL lives only in `wamn-postgres` and `wamn-provision`.
+- One exception: the SQLite store of the edge stays private in `wamn-edge`. The rule that SQL lives in `wamn-postgres` applies to Postgres only.
 - No domain type derives or implements a sqlx trait.
 - At the query, bind and read plain values, for example `String`, `Uuid` or arrays. Make the domain value with its own constructor.
 - If a record maps often or the mapping can fail, use a private row struct in `wamn-postgres`.
@@ -32,6 +33,7 @@ Every crate has one class: domain, implementation or binary.
 - A crate has one job. Its name fits everything that the crate holds.
 - A crate name is singular and in plain words, with no abbreviations. A test crate can end in `-tests`.
 - A directory name equals the crate name without the `wamn-` prefix. Inside `test-support/`, it also drops the `test-` prefix.
+- The members of a workspace live under the directory of that workspace. No member sits inside the directory of another workspace.
 
 ## Code
 
