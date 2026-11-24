@@ -261,6 +261,7 @@ End checks of every epic, before merge:
 - `cargo test --workspace` and the ignored run
 
 Closing check after Epic 22: `cargo xtask prepare-tests`, `cargo test --workspace`, the ignored run, `cargo xtask preflight`, and the full journey run (Epics 15 and 16) on fresh local kind clusters, up to 12 orgs each.
+The closing check did not run. The restructure phase closed on 2026-11-24 (Open items).
 
 ### Epic 17: names and the workflow graph (wamn-rkjb3)
 
@@ -331,13 +332,7 @@ Epic 21 replaces the per-epic lists with one lint. It uses one list of domain cr
 
 ### Epic 22: control's outbound calls move to the host (wamn-i6kl1)
 
-- Control's OAuth code exchange (`crates/http/src/oauth.rs`, called from `services/control/src/control_route/oauth_authorization.rs`) and its connection health check (`crates/http/src/lib.rs`, called from `services/control/src/control_route/connection_test.rs`) move to the host (D, 2026-11-24, wamn-fmvz4.14, option b).
-- Reason: control's org namespace is default-deny with no public egress (`deploy/charts/org/templates/network-policies.yaml`). Only host pods get public egress, on the connection ports (`deploy/charts/application/templates/network-policy.yaml`). So on a cluster that enforces NetworkPolicy, both calls likely fail today. No journey test covers either one.
-- After the move, the stock egress policy stays the one owner (ruling Q-A), and control fetches no URL that users supply. wamn-control then links no `wasmtime`, `wasmtime-*` or `wash-runtime`. The lint exception "removed by Epic 22 (wamn-fmvz4.14)" in `xtask/src/repo_policy/dependencies.rs` goes.
-- The move makes the existing design work, so the freeze allows it.
-- One journey test for each call runs against a fixture on a public address that the egress policy allows.
-- The scout also lists the file-system uses and the tokio features process, fs and signal in wamn-environment, a domain crate, and proposes where each file read belongs.
-- The issues follow the scout.
+Closed on 2026-11-24 without a build. The findings are Open items.
 
 Next: the restructure ends. The review work in the Claude Doc "wamn review" follows.
 
@@ -415,6 +410,12 @@ Next: the restructure ends. The review work in the Claude Doc "wamn review" foll
 - Ruled (D, 2026-11-23), done in Epic 21 (21.9): every member of a workspace moves under the directory of that workspace. Until then, `cargo xtask machete` stages 14 members in a scratch tree, because cargo-machete finds the workspace by walking up from each manifest.
 - Crate graph review (2026-11-21): `wamn-registry` and `wamn-package` (30 dependents each) link sqlx with postgres, so `wamn-web`, `wamn-edge`, `wamn-event` and `wamn-broker` compile a database driver. The fix is choice 6a: the sqlx impls go from the domain types, the queries bind and read plain values, and wamn-postgres keeps private row structs. Epic 19 does it.
 - Replace the generator fingerprint (a hand-written list of source paths in `crates/codegen/build.rs`) with a check that regenerates and compares. After the restructure.
+- Control's outbound calls. Control has no public egress (`deploy/charts/org/templates/network-policies.yaml:12-15`). The OAuth code exchange and the connection test likely fail on a cluster that enforces NetworkPolicy. `services/control/src/control_route/oauth_authorization.rs::Authorization::callback` reaches `crates/http/src/oauth.rs::exchange_code` through `Authorization::exchange`. `services/control/src/control_route/connection_test.rs::connection_test_in` reaches `crates/http/src/lib.rs::health` through `crates/http/src/connection_health.rs::ConnectionHealth::probe`. No journey test covers either call. Option (a) adds a control NetworkPolicy for the declared connection ports. It follows the host policy, which permits public addresses and excludes private ranges (`deploy/charts/application/templates/network-policy.yaml`). Two journey tests use a fixture on a test-only Docker bridge on the kind network, at an address the stock policy permits, with a test CA (Epic 22 scout). Option (b) moves both calls to the host. It needs a control-to-host route. `services/control/src/host_route.rs` serves only calls from clients to control. It also needs a token check, such as the TokenReview that `services/control/src/first_owner.rs` uses. The environment chart needs to open egress ports before any application deploys. `crates/application-chart/src/plan.rs::http_connection_ports` opens ports only from deployed applications. The move also needs answers to the lock questions in the OAuth locks item below.
+- Control links wash-runtime for good. Control parses addresses with the stock `AllowedHost` (`crates/http/src/wasm_authority.rs:8`, called from `services/control/src/platform.rs:139` and `services/control/src/control_route/integration.rs:139`). Ruling Q-A refuses a copy, and the no-upstream rule refuses a split. So the control exception in the dependency lint is permanent.
+- The full journey run (Epics 15 and 16) on fresh kind clusters did not run on the crates of Epics 17 to 21.
+- OAuth locks. The callback locks the pending row and then the connection (`services/control/src/control_route/oauth_authorization.rs::Authorization::exchange`, called by `Authorization::callback`). Generation writes lock them in the opposite order (`crates/postgres/src/project_connections/administration.rs`). OAuth refresh holds a database guard across the provider call (`crates/postgres/src/project_connections/oauth.rs`). This breaks the rule "The host holds no database guard across an external call" (Part 1, line 77 of this file at commit 3e254c957).
+- wamn-environment reads files with std::fs (`crates/environment/src/environment/document/file.rs::EnvironmentFile::compile`, `crates/environment/src/environment/write.rs::host_group`). It turns on the tokio features fs, process and signal (`crates/environment/Cargo.toml`). No production code uses them.
+- Crate shape (facts only). wamn-postgres lists 22 wamn crates under [dependencies] (`crates/postgres/Cargo.toml`), after wamn-environment and wamn-release left it (wamn-fmvz4.16). wamn-kubernetes holds both the host's credential reads and control's cluster operations, so the host compiles wamn-platform-install. `ExchangeTransaction` (`crates/authentication/src/session_exchange.rs`) and `AdministrationSession` (`crates/connection/src/administration_transaction.rs`) pass connections or per-query methods through traits that have one implementation.
 
 # Part 2: Review log
 
@@ -2391,3 +2392,10 @@ Epic 14 closed on 2026-11-21 after review. cargo test --workspace: 617 passed in
 - The Epic 20 and Epic 21 beads close with notes, including wamn-5wonb.9. wamn-fmvz4.14 moves to Epic 22 (wamn-i6kl1).
 - The Epic 22 scout also lists each file-system use and each tokio feature (process, fs, signal) in wamn-environment, and proposes where each file read belongs.
 - The closing journey run on fresh kind clusters moves to after Epic 22.
+
+**Ruled (D, 2026-11-24): the restructure phase closes.**
+- The restructure phase closes on 2026-11-24. Epic 22 was not built. Its findings are Open items.
+- The closing journey run on fresh kind clusters did not run. It is an Open item.
+- The control exception in the dependency lint is permanent: stock address parsing and the egress policy (ruling Q-A). Its comment says so and points to the Open items.
+- No code changes, except that lint comment. Main fast-forwards to the branch head after `cargo xtask repo-lint` and `cargo build` exit 0.
+- wamn-fmvz4.14 and wamn-i6kl1 close without a build.
