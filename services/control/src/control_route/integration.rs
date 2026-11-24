@@ -4,12 +4,12 @@ use super::{ControlRoutes, ProjectTarget, Refusal, parse};
 use serde_json::{Value, json};
 use sqlx::Connection as _;
 use wamn_connection::connection_credentials::KubernetesStore;
+use wamn_connection::project_connections::Administration;
 use wamn_connection::{
     administration::{self, ConnectionError},
     references,
 };
 use wamn_identity_protocol::PrincipalId;
-use wamn_postgres::project_connections::Administration;
 use wamn_routes::HostAttachment;
 
 impl From<ConnectionError> for Refusal {
@@ -43,7 +43,7 @@ impl ControlRoutes<'_> {
         let result = self
             .integration_administration_in(&mut writer, attachment, caller, payload)
             .await;
-        wamn_postgres::control::unlock_all_advisory_locks(&mut writer).await?;
+        wamn_postgres::advisory_lock::unlock_all_advisory_locks(&mut writer).await?;
         result
     }
 
@@ -65,7 +65,7 @@ impl ControlRoutes<'_> {
             .begin_in(writer, attachment, caller, Some(&target.project))
             .await?;
         if operation == "integration_type.list" {
-            let result = wamn_postgres::control::configure_integration_type(
+            let result = wamn_connection::project_connections::configure_integration_type(
                 &mut authorized,
                 self.org,
                 operation,
@@ -80,8 +80,9 @@ impl ControlRoutes<'_> {
             detail: json!({"field":"env"}),
         })?;
         if !attachment.route.type_.is_read() {
-            let held = wamn_postgres::control::try_environment_lock(&mut authorized, self.org, env)
-                .await?;
+            let held =
+                wamn_postgres::advisory_lock::try_environment_lock(&mut authorized, self.org, env)
+                    .await?;
             if !held {
                 return Err(Refusal::Declared {
                     code: "deployment_in_progress",

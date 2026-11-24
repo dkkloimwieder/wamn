@@ -4,7 +4,6 @@ use std::path::{Path, PathBuf};
 use wamn_build::dev::{Deploy, development::Development};
 use wamn_build::source_build::SourceBuilder;
 use wamn_build::watch::{FilesystemInvalidationSource, GitSource};
-use wamn_postgres::build_database::PostgresBuildDatabase;
 
 use anyhow::Context as _;
 use clap::Args;
@@ -33,7 +32,6 @@ pub struct DevCommandArgs {
 pub async fn run(args: DevCommandArgs) -> anyhow::Result<()> {
     crate::operation_verbs::ControlHost::from_env()?;
     let build = SourceBuilder {
-        database: &PostgresBuildDatabase,
         describe: args.describe.mode(false),
     };
     let development = Development::prepare(&build, &args.config, &args.overlay_root).await?;

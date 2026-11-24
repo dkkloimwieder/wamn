@@ -2,10 +2,10 @@
 
 use std::time::Duration;
 
+use crate::oauth_token::{Available, Error, Fetch, Refresh, Token};
 use anyhow::Context as _;
 use sqlx::{Connection as _, Row as _};
 use tokio::time::Instant;
-use wamn_connection::oauth_token::{Available, Error, Fetch, Refresh, Token};
 use wamn_envelope::encryption::{Encrypted, Envelope};
 
 pub(super) async fn get_token(
@@ -16,7 +16,8 @@ pub(super) async fn get_token(
 ) -> anyhow::Result<Result<Available, Error>> {
     let mut database = database.oauth_connection().await?;
     let mut tx = database.begin().await?;
-    crate::bind_transaction_identity(&mut tx, &request.principal, "", "", None, None).await?;
+    wamn_postgres::bind_transaction_identity(&mut tx, &request.principal, "", "", None, None)
+        .await?;
     lock(&mut tx, request).await?;
     let stored = read_row(&mut tx, request.connection, envelope).await?;
     if let Some(stored) = &stored {

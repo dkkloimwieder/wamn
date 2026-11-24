@@ -16,7 +16,7 @@ use wamn_schema::ir::authored_object_name;
 
 use crate::AuthoredSql;
 use crate::authoring::{COMPILED_MANIFEST_NAME, compile_authored_manifest};
-use crate::database::{BuildDatabase, HistoryTable};
+use crate::build_database::{self, HistoryTable};
 use crate::describe::{DescribedStatement, column_type};
 use crate::describe_cache::{self, Evidence};
 use crate::materialize::{expected_files, introspect_with_manifest, write_files};
@@ -178,19 +178,15 @@ pub fn package_output(output_root: &Path, package: &wamn_package::PackageName) -
 }
 
 /// Generate package output without compiling its components.
-pub async fn generate_package(
-    database: &dyn BuildDatabase,
-    request: &BuildRequest<'_>,
-) -> Result<PackageManifest> {
+pub async fn generate_package(request: &BuildRequest<'_>) -> Result<PackageManifest> {
     let source = prepare_source(&request.package_root)?;
     let bases = crate::inheritance::load_base_manifests(&request.output_root, source.bases())?;
-    let (manifest, _) = generate_prepared(database, request, &source, &bases, None).await?;
+    let (manifest, _) = generate_prepared(request, &source, &bases, None).await?;
     Ok(manifest)
 }
 
 /// Generate artifacts from the same authored document that selected the build inputs.
 pub async fn generate_prepared(
-    database: &dyn BuildDatabase,
     request: &BuildRequest<'_>,
     source: &PreparedSource,
     bases: &[PackageManifest],
@@ -222,8 +218,8 @@ pub async fn generate_prepared(
             }
         }
     }
-    crate::migrations::validate_committed(database, &source.root, root).await?;
-    crate::migrations::validate_history(database, root).await?;
+    crate::migrations::validate_committed(&source.root, root).await?;
+    crate::migrations::validate_history(root).await?;
     let sql = provisional.load_sql(root)?;
     let output = package_output(&request.output_root, &provisional.package.id);
     let generation = Generation {
@@ -238,11 +234,10 @@ pub async fn generate_prepared(
             let cached = describe_cache::read(&source.root)?;
             let evidence = describe_cache::decode(&cached, input)?;
             let manifest = typed_manifest(authored, &evidence.statements)?;
-            generate_from_evidence(database, &generation, manifest, evidence, None).await?
+            generate_from_evidence(&generation, manifest, evidence, None).await?
         }
         DescribeMode::Refresh(url) | DescribeMode::Check(url) => {
             let mut built = generate_live(
-                database,
                 url,
                 &generation,
                 provisional,
@@ -260,7 +255,6 @@ pub async fn generate_prepared(
                 let input =
                     describe_cache::inputs(root, &source.document, bases, &request.output_root)?;
                 built = generate_live(
-                    database,
                     url,
                     &generation,
                     provisional,
@@ -461,7 +455,6 @@ fn typed_manifest(
 }
 
 async fn generate_live(
-    database: &dyn BuildDatabase,
     server: &str,
     generation: &Generation<'_>,
     provisional: &ManifestSources,
@@ -475,24 +468,24 @@ async fn generate_live(
         bases,
         ..
     } = *generation;
-    let verification = database.create_verification_database(server).await?;
+    let verification = build_database::create_verification_database(server).await?;
     let built = async {
         let url = verification.url.as_str();
-        let postgres = database.server_version(url).await?;
+        let postgres = build_database::server_version(url).await?;
         describe_cache::postgres_identity(postgres)?;
-        migrate(database, url, root, provisional, bases, output_root).await?;
+        migrate(url, root, provisional, bases, output_root).await?;
         let sql = sources
             .iter()
             .map(|source| AuthoredSql::new(&source.path, &source.bytes))
             .collect::<Vec<_>>();
-        let described = database.describe_statements(url, &sql).await?;
+        let described = build_database::describe_statements(url, &sql).await?;
         let sql_digests = sql
             .iter()
             .map(|source| (source.path().to_owned(), bytes_sha256(source.bytes())))
             .collect();
         let manifest = typed_manifest(authored.clone(), &described)?;
-        let catalog = introspect_with_manifest(database, url, &manifest, &sql).await?;
-        let columns = database.ordered_columns(url, &manifest).await?;
+        let catalog = introspect_with_manifest(url, &manifest, &sql).await?;
+        let columns = build_database::ordered_columns(url, &manifest).await?;
         let evidence = Evidence {
             inputs: input,
             postgres,
@@ -501,19 +494,16 @@ async fn generate_live(
             sql: sql_digests,
             columns,
         };
-        generate_from_evidence(database, generation, manifest, evidence, Some(url)).await
+        generate_from_evidence(generation, manifest, evidence, Some(url)).await
     }
     .await;
-    let dropped = database
-        .drop_verification_database(server, &verification.name)
-        .await;
+    let dropped = build_database::drop_verification_database(server, &verification.name).await;
     let generated = built?;
     dropped?;
     Ok(generated)
 }
 
 async fn generate_from_evidence(
-    database: &dyn BuildDatabase,
     generation: &Generation<'_>,
     mut manifest: PackageManifest,
     mut evidence: Evidence,
@@ -560,7 +550,7 @@ async fn generate_from_evidence(
             .filter(|(path, _)| !evidence.statements.contains_key(*path))
             .map(|(path, bytes)| AuthoredSql::new(path, bytes))
             .collect::<Vec<_>>();
-        let described = database.describe_statements(url, &remaining).await?;
+        let described = build_database::describe_statements(url, &remaining).await?;
         for (path, description) in described {
             let sql = bytes_sha256(&corpus.statements[&path]);
             evidence.sql.insert(path.clone(), sql);
@@ -605,8 +595,8 @@ async fn generate_from_evidence(
         .into_iter()
         .map(|(path, bytes)| (path, bytes.to_vec()))
         .collect::<BTreeMap<_, _>>();
-    let history = crate::history::render(database, root, &manifest, &evidence.columns).await?;
-    let migrations = crate::history::migrations(database, root, &history).await?;
+    let history = crate::history::render(root, &manifest, &evidence.columns).await?;
+    let migrations = crate::history::migrations(root, &history).await?;
     let mut appended_history = false;
     for (relative, bytes) in &migrations {
         let path = root.join(relative);
@@ -827,7 +817,6 @@ pub(crate) fn apply_statement_types(
 /// base packages' migrations first, then the package's, then the history
 /// tables of the relations the package keeps a log of.
 async fn migrate(
-    database: &dyn BuildDatabase,
     database_url: &str,
     package_root: &Path,
     manifest: &ManifestSources,
@@ -857,9 +846,7 @@ async fn migrate(
             sql: crate::history::history_table_sql(model),
         })
         .collect::<Vec<_>>();
-    database
-        .migrate(database_url, &schemas, &directories, &history)
-        .await
+    build_database::migrate(database_url, &schemas, &directories, &history).await
 }
 
 /// Write the build output: every generated file, the canonical `wamn.json`,

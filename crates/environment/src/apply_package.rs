@@ -44,7 +44,7 @@ async fn prepare_package(
         .context("validate package directory before database work")?;
     let manifest = PackageManifest::from_slice(&directory.manifest_bytes)
         .context("parse strict package manifest for definition ownership")?;
-    let migrations = wamn_postgres::build_database::migrator(migration_root).await?;
+    let migrations = wamn_postgres::package_migrations::migrator(migration_root).await?;
     Ok(PreparedPackage {
         directory,
         manifest,

@@ -9,7 +9,6 @@ use tokio::process::Command;
 use wamn_build::{
     BuildMode, BuildRequest, DescribeMode, GuestTarget, default_output_root, package_output,
 };
-use wamn_postgres::build_database::PostgresBuildDatabase;
 
 const ROLLBACK_FIXTURE: &str = "platform_fixture";
 
@@ -62,14 +61,9 @@ pub(super) async fn run(root: &Path) -> Result<()> {
         };
         let output_root = default_output_root(source.root());
         let request = BuildRequest::new(source.root(), &output_root, DescribeMode::Cached);
-        let result = wamn_build::build_prepared(
-            &PostgresBuildDatabase,
-            &request,
-            &source,
-            BuildMode::Published,
-        )
-        .await
-        .with_context(|| format!("build application {}", source.package().id))?;
+        let result = wamn_build::build_prepared(&request, &source, BuildMode::Published)
+            .await
+            .with_context(|| format!("build application {}", source.package().id))?;
         let id = result.package.id;
         let output = package_output(&output_root, &id);
         eprintln!("Prepared {} at {}", id, output.display());
@@ -229,7 +223,7 @@ async fn rollback_variant(root: &Path, fixture: &Path, mut version: Version) -> 
     fs::rename(&staged, &variant)?;
     let output = default_output_root(&variant);
     let request = BuildRequest::new(&variant, &output, DescribeMode::Cached);
-    let built = wamn_build::build_package(&PostgresBuildDatabase, &request).await?;
+    let built = wamn_build::build_package(&request).await?;
     ensure!(
         built.package.version.as_str() == version,
         "expected rollback fixture version {version}, found {}",

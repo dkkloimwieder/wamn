@@ -592,7 +592,7 @@ pub(crate) async fn observe_package_migrations(
     key: &ProjectEnvKey,
     id: &PackageName,
 ) -> anyhow::Result<SchemaReport> {
-    let migrator = wamn_postgres::build_database::migrator(path).await?;
+    let migrator = wamn_postgres::package_migrations::migrator(path).await?;
     let migrations = if let Some(client) = connection {
         crate::platform_migrations::observe_history(
             client,

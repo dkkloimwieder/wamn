@@ -1,13 +1,9 @@
 //! PostgreSQL operations used by the control service.
 
-use serde_json::Value;
 use sqlx::{PgConnection, PgPool};
 use uuid::Uuid;
-use wamn_principal::PrincipalId;
+use wamn_identity_protocol::PrincipalId;
 use wamn_registry::{EnvName, OrgId, ProjectId, Triple, instance_suffix::InstanceSuffix};
-
-/// The platform domain used in service principal email addresses.
-pub const PLATFORM_DOMAIN_SQL: &str = "SELECT platform_domain FROM registry.meta";
 
 // Every project deployment affected by an environment lifecycle change.
 const ENVIRONMENT_PROJECTS: &str = "SELECT project,env FROM registry.environment_projects WHERE org=$1 AND env=ANY($2) ORDER BY env,project";
@@ -16,8 +12,10 @@ const ENVIRONMENT_PROJECTS: &str = "SELECT project,env FROM registry.environment
 ///
 /// # Errors
 /// Returns an error if the registry metadata row cannot be read.
-pub async fn platform_domain(connection: &mut PgConnection) -> Result<Option<String>, sqlx::Error> {
-    sqlx::query_scalar(PLATFORM_DOMAIN_SQL)
+pub(crate) async fn platform_domain(
+    connection: &mut PgConnection,
+) -> Result<Option<String>, sqlx::Error> {
+    sqlx::query_scalar(wamn_identity::identity::application::service::PLATFORM_DOMAIN_SQL)
         .fetch_one(connection)
         .await
 }
@@ -26,7 +24,7 @@ pub async fn platform_domain(connection: &mut PgConnection) -> Result<Option<Str
 ///
 /// # Errors
 /// Returns an error if the query fails or a coordinate is invalid.
-pub async fn environment_projects(
+pub(crate) async fn environment_projects(
     connection: &mut PgConnection,
     org: &OrgId,
     envs: &[EnvName],
@@ -38,7 +36,12 @@ pub async fn environment_projects(
         .fetch_all(connection)
         .await?
         .into_iter()
-        .map(|(project, env)| Ok((super::decode_text(project, 0)?, super::decode_text(env, 1)?)))
+        .map(|(project, env)| {
+            Ok((
+                wamn_postgres::decode_text(project, 0)?,
+                wamn_postgres::decode_text(env, 1)?,
+            ))
+        })
         .collect()
 }
 
@@ -46,7 +49,7 @@ pub async fn environment_projects(
 ///
 /// # Errors
 /// Returns an error if the query fails or a stored name cannot be decoded.
-pub async fn project_deployments(
+pub(crate) async fn project_deployments(
     pool: &PgPool,
     org: &OrgId,
 ) -> Result<Vec<(Triple, InstanceSuffix)>, sqlx::Error> {
@@ -58,9 +61,9 @@ pub async fn project_deployments(
     .await?;
     rows.into_iter()
         .map(|(project, env, instance)| {
-            let project = super::decode_text(project, 0)?;
-            let env = super::decode_text(env, 1)?;
-            let instance = super::decode_text(instance, 2)?;
+            let project = wamn_postgres::decode_text(project, 0)?;
+            let env = wamn_postgres::decode_text(env, 1)?;
+            let instance = wamn_postgres::decode_text(instance, 2)?;
             Ok((Triple::new(org.clone(), env, project), instance))
         })
         .collect()
@@ -70,7 +73,7 @@ pub async fn project_deployments(
 ///
 /// # Errors
 /// Returns an error if the count cannot be read.
-pub async fn membership_count(
+pub(crate) async fn membership_count(
     connection: &mut PgConnection,
     org: &OrgId,
     project: &ProjectId,
@@ -91,7 +94,9 @@ pub async fn membership_count(
 ///
 /// # Errors
 /// Returns an error if either count cannot be read.
-pub async fn application_counts(connection: &mut PgConnection) -> Result<(i32, i32), sqlx::Error> {
+pub(crate) async fn application_counts(
+    connection: &mut PgConnection,
+) -> Result<(i32, i32), sqlx::Error> {
     sqlx::query_as(
         "SELECT \
          (SELECT count(*)::int4 FROM platform.\"user\" u \
@@ -107,7 +112,7 @@ pub async fn application_counts(connection: &mut PgConnection) -> Result<(i32, i
 ///
 /// # Errors
 /// Returns an error if the rows cannot be read or a principal cannot be decoded.
-pub async fn check_project_roles(
+pub(crate) async fn check_project_roles(
     connection: &mut PgConnection,
     org: &OrgId,
     project: &ProjectId,
@@ -126,7 +131,7 @@ pub async fn check_project_roles(
 ///
 /// # Errors
 /// Returns an error if the principal row cannot be read.
-pub async fn principal_active(
+pub(crate) async fn principal_active(
     connection: &mut PgConnection,
     principal: &PrincipalId,
 ) -> Result<bool, sqlx::Error> {
@@ -140,7 +145,7 @@ pub async fn principal_active(
 ///
 /// # Errors
 /// Returns an error if the login check cannot be read.
-pub async fn login_matches_org(
+pub(crate) async fn login_matches_org(
     connection: &mut PgConnection,
     org: &OrgId,
 ) -> Result<bool, sqlx::Error> {
@@ -154,7 +159,7 @@ pub async fn login_matches_org(
 ///
 /// # Errors
 /// Returns an error if the transaction lock cannot be acquired.
-pub async fn lock_first_owner(
+pub(crate) async fn lock_first_owner(
     transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     org: &OrgId,
 ) -> Result<(), sqlx::Error> {
@@ -169,7 +174,7 @@ pub async fn lock_first_owner(
 ///
 /// # Errors
 /// Returns an error if the role rows cannot be read.
-pub async fn org_role_holders(
+pub(crate) async fn org_role_holders(
     connection: &mut PgConnection,
     org: &OrgId,
     role: &str,
@@ -187,56 +192,11 @@ pub async fn org_role_holders(
     .await
 }
 
-/// Run the registry operation for an integration type.
-///
-/// # Errors
-/// Returns an error if the registry operation fails.
-pub async fn configure_integration_type(
-    connection: &mut PgConnection,
-    org: &OrgId,
-    operation: &str,
-    request: &Value,
-) -> Result<Value, sqlx::Error> {
-    sqlx::query_scalar("SELECT registry.configure_integration_type($1,$2,$3)")
-        .bind(org.as_str())
-        .bind(operation)
-        .bind(request)
-        .fetch_one(connection)
-        .await
-}
-
-/// Try to take a session lock that excludes concurrent environment deployment.
-///
-/// # Errors
-/// Returns an error if the database cannot attempt the lock.
-pub async fn try_environment_lock(
-    connection: &mut PgConnection,
-    org: &OrgId,
-    env: &EnvName,
-) -> Result<bool, sqlx::Error> {
-    sqlx::query_scalar(super::ENVIRONMENT_LOCK_SQL)
-        .bind(org.as_str())
-        .bind(env.as_str())
-        .fetch_one(connection)
-        .await
-}
-
-/// Release session advisory locks after a control write.
-///
-/// # Errors
-/// Returns an error if the database cannot release the locks.
-pub async fn unlock_all_advisory_locks(connection: &mut PgConnection) -> Result<(), sqlx::Error> {
-    sqlx::query("SELECT pg_advisory_unlock_all()")
-        .fetch_one(connection)
-        .await?;
-    Ok(())
-}
-
 /// Prune transaction identities and set the five-second statement timeout for this transaction.
 ///
 /// # Errors
 /// Returns an error if either database statement fails.
-pub async fn prune_transaction_identities(
+pub(crate) async fn prune_transaction_identities(
     transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
 ) -> Result<(), sqlx::Error> {
     sqlx::raw_sql("SET LOCAL statement_timeout = '5s'")

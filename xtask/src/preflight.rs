@@ -35,7 +35,6 @@ use wamn_environment::platform_environment;
 use wamn_environment::provision_project_env::workload;
 use wamn_platform_install::release_chart::bundle;
 use wamn_platform_install::release_chart::{POD_REGISTRY, pod_registry_reference};
-use wamn_postgres::build_database::PostgresBuildDatabase;
 use wamn_postgres::database::{capture_configuration, connection_for};
 use wamn_registry::{OrgId, name};
 
@@ -673,14 +672,9 @@ async fn application_manifest(
         &output_root,
         wamn_build::DescribeMode::Cached,
     );
-    wamn_build::build_prepared(
-        &PostgresBuildDatabase,
-        &request,
-        &source,
-        wamn_build::BuildMode::Published,
-    )
-    .await
-    .with_context(|| format!("build {APPLICATION}"))?;
+    wamn_build::build_prepared(&request, &source, wamn_build::BuildMode::Published)
+        .await
+        .with_context(|| format!("build {APPLICATION}"))?;
     crate::helm_size::published_manifest(&wamn_build::package_output(
         &output_root,
         &source.package().id,

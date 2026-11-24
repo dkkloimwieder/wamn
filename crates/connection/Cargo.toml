@@ -12,17 +12,22 @@ wamn-package.workspace = true
 wamn-connection-type.workspace = true
 wamn-envelope.workspace = true
 wamn-identity-protocol.workspace = true
+wamn-postgres.workspace = true
 anyhow = { workspace = true }
 async-trait = { workspace = true }
 moka = { workspace = true, features = ["sync"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
+sqlx = { workspace = true, features = ["postgres", "uuid", "json"] }
 tokio = { workspace = true, features = ["time", "fs", "net", "io-util", "rt", "macros", "sync"] }
 tracing = { workspace = true }
 uuid = { workspace = true, features = ["serde", "v4"] }
 wamn-authority = { workspace = true }
 wamn-digest.workspace = true
 wamn-registry = { workspace = true }
+
+[dev-dependencies]
+wamn-test-infrastructure.workspace = true
 
 [lints]
 workspace = true

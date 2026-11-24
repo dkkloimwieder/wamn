@@ -175,20 +175,20 @@ where
         let database = request
             .reader
             .project_connections(request.project, request.environment)?;
-        database
-            .oauth_token(
-                request.project,
-                Refresh {
-                    principal: request.principal,
-                    connection: request.connection,
-                    generation: request.generation,
-                    authorization_code: request.authorization_code,
-                    rejected: request.rejected,
-                },
-                envelope,
-                Box::new(|old| Box::pin(fetch(old))),
-            )
-            .await
+        crate::project_connections::oauth_token(
+            &database,
+            request.project,
+            Refresh {
+                principal: request.principal,
+                connection: request.connection,
+                generation: request.generation,
+                authorization_code: request.authorization_code,
+                rejected: request.rejected,
+            },
+            envelope,
+            Box::new(|old| Box::pin(fetch(old))),
+        )
+        .await
     }
     .await;
     result.map_err(|source| Error {

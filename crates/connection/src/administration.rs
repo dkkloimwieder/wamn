@@ -11,9 +11,7 @@ use crate::connection_credentials::{StoreVersion, WriteCredentials};
 use crate::references;
 use wamn_kubernetes::kubernetes::CredentialSecret;
 
-pub use crate::administration_store::{
-    AdministrationStore, CopySource, Lookup, NewConnection, TokenChange,
-};
+use crate::project_connections::{Administration, Lookup, NewConnection, TokenChange};
 
 /// A refused configuration write, or its database failure.
 #[derive(Debug)]
@@ -173,7 +171,7 @@ impl fmt::Debug for Request<'_> {
 
 /// Execute the named administration steps against the selected project.
 pub async fn execute(
-    database: &mut impl AdministrationStore,
+    database: &mut Administration<'_, '_>,
     credentials: &dyn WriteCredentials,
     authority_port: fn(&str) -> Result<u16, ConnectionError>,
     request: Request<'_>,
@@ -451,7 +449,7 @@ pub async fn execute(
 
 /// Read system type metadata and project rows without a system connection function.
 pub async fn configure(
-    database: &mut impl AdministrationStore,
+    database: &mut Administration<'_, '_>,
     org: &OrgId,
     operation: &str,
     request: &Value,
@@ -550,7 +548,7 @@ pub async fn configure(
 }
 
 async fn summary(
-    database: &mut impl AdministrationStore,
+    database: &mut Administration<'_, '_>,
     org: &OrgId,
     request: &Value,
     id: Uuid,

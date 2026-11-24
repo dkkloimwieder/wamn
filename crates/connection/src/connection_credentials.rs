@@ -231,7 +231,7 @@ impl Drop for PendingRead<'_> {
 
 #[derive(Clone)]
 struct ProjectReader {
-    database: std::sync::Weak<dyn crate::project_connections::ProjectConnections>,
+    database: std::sync::Weak<wamn_postgres::WamnPostgres>,
     project: wamn_registry::ProjectId,
     environment: wamn_registry::EnvName,
 }
@@ -274,7 +274,7 @@ impl ConnectionCredentials {
 
     pub(crate) fn with_project_database(
         mut self,
-        database: std::sync::Weak<dyn crate::project_connections::ProjectConnections>,
+        database: std::sync::Weak<wamn_postgres::WamnPostgres>,
         project: &wamn_registry::ProjectId,
         environment: &wamn_registry::EnvName,
     ) -> Self {
@@ -290,7 +290,7 @@ impl ConnectionCredentials {
         &self,
         project: &wamn_registry::ProjectId,
         environment: &wamn_registry::EnvName,
-    ) -> anyhow::Result<Arc<dyn crate::project_connections::ProjectConnections>> {
+    ) -> anyhow::Result<Arc<wamn_postgres::WamnPostgres>> {
         let target = self
             .project
             .as_ref()
@@ -355,7 +355,7 @@ impl ConnectionCredentials {
         id: &uuid::Uuid,
     ) -> anyhow::Result<Option<crate::connection_memory::ConnectionFact>> {
         let database = self.project_connections(project, environment)?;
-        let row = database.connection_fact(project, id).await?;
+        let row = crate::project_connections::connection_fact(&database, project, id).await?;
         Ok(row.map(|row| crate::connection_memory::ConnectionFact {
             active_generation: row.active_generation,
             status: if row.active {
@@ -380,9 +380,7 @@ impl ConnectionCredentials {
         generation: i64,
     ) -> anyhow::Result<Option<ConnectionGeneration>> {
         let database = self.project_connections(project, environment)?;
-        database
-            .connection_generation(project, id, generation)
-            .await
+        crate::project_connections::connection_generation(&database, project, id, generation).await
     }
 
     /// Read the named project Secret only on a cache miss or after rejection.
@@ -401,7 +399,12 @@ impl ConnectionCredentials {
         reader
             .read((key.to_owned(), credential), rejected, async {
                 let database = self.project_connections(project, environment)?;
-                let reference = database.credential_reference(project, &credential).await?;
+                let reference = crate::project_connections::credential_reference(
+                    &database,
+                    project,
+                    &credential,
+                )
+                .await?;
                 let reference = reference.context("credential unavailable")?;
                 let name = wamn_registry::credential_secret_name(self.org()?, project, environment);
                 anyhow::ensure!(
@@ -421,7 +424,7 @@ impl ConnectionCredentials {
         environment: &wamn_registry::EnvName,
     ) -> anyhow::Result<std::collections::BTreeMap<String, uuid::Uuid>> {
         let database = self.project_connections(project, environment)?;
-        database.environment_connections(project).await
+        crate::project_connections::environment_connections(&database, project).await
     }
 }
 

@@ -8,10 +8,10 @@ use sqlx::Connection as _;
 use url::Url;
 use zeroize::Zeroizing;
 
+use super::oauth_authorization_store as store;
 use wamn_connection::connection_credentials::KubernetesStore;
 use wamn_envelope::encryption::Envelope;
 use wamn_http::{oauth, transport::HttpTransport};
-use wamn_postgres::oauth_authorization as store;
 
 /// A refusal with a safe public reason. Sources never enter a callback page.
 pub struct Error {
@@ -229,7 +229,7 @@ impl Authorization {
             .encrypt(&plaintext)
             .await
             .map_err(|error| failed("token encryption failed", error))?;
-        wamn_postgres::project_connections::write_token(
+        wamn_connection::project_connections::write_token(
             tx,
             connection,
             &encrypted,

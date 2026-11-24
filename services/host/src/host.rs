@@ -531,9 +531,8 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         })
         .transpose()?
         .map(Arc::new);
-    let database = Arc::clone(&pools);
     let authorization = Arc::new(
-        Authorization::new(Arc::clone(&pools), database)
+        Authorization::new(Arc::clone(&pools))
             .with_credential_store(
                 wamn_connection::connection_credentials::CredentialReader::new(
                     wamn_kubernetes::kubernetes::KubernetesCredentials::for_host(),

@@ -1,7 +1,6 @@
 //! `wamn build`: the two-pass package build (docs/operations/building.md#wamn-build).
 
 use std::path::PathBuf;
-use wamn_postgres::build_database::PostgresBuildDatabase;
 
 use wamn_build::{BuildRequest, DescribeMode, build_package, default_output_root, package_output};
 
@@ -44,11 +43,7 @@ pub async fn run(args: BuildArgs) -> anyhow::Result<()> {
     let describe = args.describe.mode(args.check_describe)?;
     for package in &args.packages {
         let output_root = default_output_root(package);
-        let built = build_package(
-            &PostgresBuildDatabase,
-            &BuildRequest::new(package, &output_root, describe),
-        )
-        .await?;
+        let built = build_package(&BuildRequest::new(package, &output_root, describe)).await?;
         println!(
             "{} {} {} {}",
             built.package.id,

@@ -2,8 +2,6 @@ use std::fs;
 
 use sqlx::Row as _;
 use wamn_codegen::build::{BuildRequest, generate_package, package_output};
-use wamn_codegen::database::BuildDatabase;
-use wamn_postgres::build_database::PostgresBuildDatabase;
 use wamn_test_infrastructure::containers::Postgres;
 
 async fn install_feed(
@@ -91,18 +89,14 @@ manifest.Package {{
 }".replace("KEY_TYPE", key_type),
     ).unwrap();
 
-    let manifest = generate_package(
-        &PostgresBuildDatabase,
-        &BuildRequest::refresh(&root, &output, server.admin_url()),
-    )
-    .await
-    .unwrap();
+    let manifest = generate_package(&BuildRequest::refresh(&root, &output, server.admin_url()))
+        .await
+        .unwrap();
     let built = package_output(&output, &manifest.package.id);
     let sql = fs::read_to_string(built.join("sql/feed_load/feed_changes.sql")).unwrap();
 
     let database = server.create_database(database_name).await.unwrap();
-    PostgresBuildDatabase
-        .migrate(database.as_str(), &["app".into()], &[&built], &[])
+    wamn_codegen::build_database::migrate(database.as_str(), &["app".into()], &[&built], &[])
         .await
         .unwrap();
     let connection = wamn_postgres::connect(database.as_str()).await.unwrap();

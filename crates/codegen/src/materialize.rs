@@ -8,7 +8,7 @@ use anyhow::{Context as _, Result, ensure};
 use wamn_schema::ir::CatalogIr;
 
 use crate::authoring::package_manifest_path;
-use crate::database::BuildDatabase;
+use crate::build_database;
 use crate::{AuthoredSql, GeneratedPackage};
 use wamn_component_policy::PackageManifest;
 
@@ -19,23 +19,18 @@ pub(crate) struct SourceFile {
 }
 
 /// Introspect the package-owned schemas in one already-migrated PostgreSQL database.
-pub async fn introspect_package(
-    database: &dyn BuildDatabase,
-    database_url: &str,
-    package_root: &Path,
-) -> Result<CatalogIr> {
+pub async fn introspect_package(database_url: &str, package_root: &Path) -> Result<CatalogIr> {
     let (_, manifest) = load_manifest(package_root)?;
     let sources = load_authored_sql(&crate::output_root(package_root), &manifest)?;
     let authored = sources
         .iter()
         .map(|source| AuthoredSql::new(&source.path, &source.bytes))
         .collect::<Vec<_>>();
-    introspect_with_manifest(database, database_url, &manifest, &authored).await
+    introspect_with_manifest(database_url, &manifest, &authored).await
 }
 
 /// Introspect the schemas that `manifest` names, as [`introspect_package`] does.
 pub(crate) async fn introspect_with_manifest(
-    database: &dyn BuildDatabase,
     database_url: &str,
     manifest: &PackageManifest,
     authored_sql: &[AuthoredSql<'_>],
@@ -64,9 +59,7 @@ pub(crate) async fn introspect_with_manifest(
         selected.extend(parsed.tables.into_iter().map(|(table, _)| table));
     }
     let selected = selected.into_iter().collect::<Vec<_>>();
-    database
-        .read_catalog(database_url, &schema_names, &selected)
-        .await
+    build_database::read_catalog(database_url, &schema_names, &selected).await
 }
 
 /// Generate from compiled manifest bytes that the caller holds. `manifest` is

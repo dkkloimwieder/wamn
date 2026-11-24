@@ -428,9 +428,8 @@ pub(crate) mod test_binding {
             wamn_postgres::WamnPostgres::from_host_config(std::collections::BTreeMap::new())
                 .unwrap(),
         );
-        let database = Arc::clone(&postgres);
         let cache = Arc::new(wamn_authentication::authorization::Authorization::new(
-            postgres, database,
+            postgres,
         ));
         let facts = Arc::clone(&cache).facts(application).unwrap();
         let id = uuid::Uuid::new_v4();

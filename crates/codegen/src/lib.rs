@@ -16,7 +16,8 @@ mod authored_wit;
 mod authoring;
 /// `wamn build`: the two-pass package build (docs/operations/building.md#wamn-build).
 pub mod build;
-pub mod database;
+pub mod build_database;
+pub mod catalog;
 mod describe;
 mod describe_cache;
 /// Catalog facts for authored query feeds.

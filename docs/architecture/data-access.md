@@ -1,7 +1,7 @@
 # Data access
 
 Migration SQL defines an application's schema.
-`wamn-postgres` reads PostgreSQL into the catalog records in `wamn-schema`.
+`wamn-codegen` reads PostgreSQL into the catalog records in `wamn-schema`.
 The compiler selects relations from the manifest and authored SQL before it reads their column types.
 `wamn-codegen` owns authored declarations and their checks. It combines them with the schema description and SQL bytes to produce package artifacts. Catalog holds compiled release facts and does not depend on the compiler.
 The schema description is derived output, not an editable schema language.

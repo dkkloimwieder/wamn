@@ -7,17 +7,9 @@ license.workspace = true
 
 [dependencies]
 wamn-application.workspace = true
-wamn-codegen.workspace = true
-wamn-component-policy.workspace = true
-wamn-connection.workspace = true
 wamn-digest.workspace = true
-wamn-envelope.workspace = true
 wamn-event.workspace = true
 wamn-package.workspace = true
-wamn-record-history.workspace = true
-wamn-schema.workspace = true
-async-trait.workspace = true
-fallible-iterator = "0.2"
 tracing.workspace = true
 wamn-registry.workspace = true
 wamn-role.workspace = true
@@ -25,22 +17,11 @@ wamn-identity-protocol.workspace = true
 postgres-protocol.workspace = true
 wamn-principal.workspace = true
 url.workspace = true
-uuid.workspace = true
 tokio = { workspace = true, features = ["fs", "macros", "rt", "sync", "time"] }
 anyhow.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
-# SQLx exposes statement descriptions with the macros feature.
 sqlx = { workspace = true, features = ["macros", "migrate", "postgres", "runtime-tokio", "tls-rustls", "chrono", "uuid", "json"] }
 
 [lints]
 workspace = true
-
-[dev-dependencies]
-wamn-scalar.workspace = true
-pg_query = "=6.2.1"
-syn = { workspace = true, features = ["full"] }
-tempfile.workspace = true
-wamn-fixture-package.workspace = true
-wamn-test-infrastructure.workspace = true
-tokio = { workspace = true, features = ["io-util", "macros", "net", "rt"] }

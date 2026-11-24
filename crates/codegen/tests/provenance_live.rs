@@ -1,5 +1,5 @@
 //! Imported records keep the source namespace and its record identity.
-use wamn_postgres::catalog::read_catalog;
+use wamn_codegen::catalog::read_catalog;
 
 use sqlx::Row as _;
 #[tokio::test]

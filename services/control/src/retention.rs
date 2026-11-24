@@ -8,9 +8,9 @@ async fn prune_identities(input: ConnectionInput<'_>) -> anyhow::Result<()> {
     tokio::time::timeout(std::time::Duration::from_secs(5), async {
         let mut connection = wamn_postgres::connect(input).await?;
         let mut transaction = connection.begin().await?;
-        wamn_postgres::control::prune_transaction_identities(&mut transaction).await?;
+        crate::control_sql::prune_transaction_identities(&mut transaction).await?;
         let retired =
-            wamn_postgres::project_connections::retired_credentials(&mut transaction).await?;
+            wamn_connection::project_connections::retired_credentials(&mut transaction).await?;
         wamn_connection::credential_cleanup::collect(
             &wamn_connection::connection_credentials::KubernetesStore,
             retired,

@@ -12,13 +12,16 @@ use wamn_registry::platform_domain::PlatformDomain;
 
 pub use super::user::{disable, write_service};
 
+/// The platform domain used in service principal email addresses.
+pub const PLATFORM_DOMAIN_SQL: &str = "SELECT platform_domain FROM registry.meta";
+
 const MAX_PAT_TTL: Duration = Duration::from_hours(365 * 24);
 
 /// Read the platform domain from the system database.
 pub async fn platform_domain(
     system: &mut sqlx::PgConnection,
 ) -> Result<PlatformDomain, ServiceError> {
-    sqlx::query_scalar::<_, Option<String>>(wamn_postgres::control::PLATFORM_DOMAIN_SQL)
+    sqlx::query_scalar::<_, Option<String>>(PLATFORM_DOMAIN_SQL)
         .fetch_one(system)
         .await
         .and_then(|domain| {

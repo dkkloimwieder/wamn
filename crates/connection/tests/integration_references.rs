@@ -1,8 +1,7 @@
 //! Each environment reference prevents deletion before authority changes.
 
 use sqlx::Connection as _;
-use wamn_connection::administration::AdministrationStore as _;
-use wamn_postgres::project_connections::Administration;
+use wamn_connection::project_connections::Administration;
 
 async fn refusal(relation: &str, expected: &str) {
     let postgres = wamn_test_infrastructure::containers::start_postgres()

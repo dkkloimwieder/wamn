@@ -3,7 +3,6 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use wamn_postgres::build_database::PostgresBuildDatabase;
 
 use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
@@ -39,7 +38,7 @@ async fn generate_fixture(url: &str, package: &Path) -> anyhow::Result<()> {
     let manifest_path = wamn_codegen::package_manifest_path(package);
     let manifest_bytes = std::fs::read(&manifest_path)?;
     let manifest: Value = serde_json::from_slice(&manifest_bytes)?;
-    let catalog = introspect_package(&PostgresBuildDatabase, url, package).await?;
+    let catalog = introspect_package(url, package).await?;
     let mut paths = BTreeSet::new();
     sql_paths(&manifest, &mut paths);
     let sources = paths

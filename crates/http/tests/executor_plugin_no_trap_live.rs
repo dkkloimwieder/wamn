@@ -206,10 +206,7 @@ fn offline_postgres() -> OperationHost {
     })
     .expect("offline postgres pools build");
     let pools = Arc::new(pools);
-    let authorization = wamn_authentication::authorization::Authorization::new(
-        Arc::clone(&pools),
-        Arc::clone(&pools) as _,
-    );
+    let authorization = wamn_authentication::authorization::Authorization::new(Arc::clone(&pools));
     OperationHost::new(pools, Arc::new(authorization), None)
 }
 

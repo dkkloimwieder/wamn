@@ -2,14 +2,44 @@
 
 use std::pin::Pin;
 
+use crate::administration::{ConnectionError, refuse};
 use serde_json::Value;
 use sqlx::{Connection as _, PgConnection, Postgres, Transaction};
 use uuid::Uuid;
-use wamn_connection::administration::{
-    AdministrationStore, ConnectionError, CopySource, Lookup, NewConnection, TokenChange, refuse,
-};
 use wamn_identity_protocol::PrincipalId;
 use wamn_registry::OrgId;
+
+/// Whether administration needs to hold the row until transaction end.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum Lookup {
+    Read,
+    Lock,
+}
+
+/// Data for a new connection before its first generation is written.
+#[derive(Debug)]
+pub(crate) struct NewConnection<'a> {
+    pub id: Uuid,
+    pub name: Option<&'a str>,
+    pub integration: Option<&'a str>,
+    pub auth: &'a str,
+    pub external: Option<Uuid>,
+    pub target: Uuid,
+    pub resource: Option<String>,
+    pub principal: PrincipalId,
+    pub authority: Option<&'a str>,
+}
+
+/// How a credential or parameter change affects the current token.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum TokenChange {
+    Keep,
+    Delete,
+    Expire,
+}
+
+/// Integration type, auth type, parameters and authority from the source.
+pub(crate) type CopySource = (String, String, Value, Option<String>);
 
 type WriteService = for<'a, 'session> fn(
     &'a mut PgConnection,
@@ -44,11 +74,8 @@ impl<'a, 'session> Administration<'a, 'session> {
             write_service,
         }
     }
-}
 
-#[async_trait::async_trait]
-impl AdministrationStore for Administration<'_, '_> {
-    async fn connection_id(
+    pub(crate) async fn connection_id(
         &mut self,
         name: Option<&str>,
         lookup: Lookup,
@@ -64,7 +91,7 @@ impl AdministrationStore for Administration<'_, '_> {
             .map_err(database_error)
     }
 
-    async fn lock_connection(
+    pub(crate) async fn lock_connection(
         &mut self,
         name: Option<&str>,
     ) -> Result<Option<Value>, ConnectionError> {
@@ -75,7 +102,7 @@ impl AdministrationStore for Administration<'_, '_> {
             .map_err(database_error)
     }
 
-    async fn integration_metadata(
+    pub(crate) async fn integration_metadata(
         &mut self,
         integration: Option<&str>,
         auth: Option<&str>,
@@ -84,7 +111,7 @@ impl AdministrationStore for Administration<'_, '_> {
             .bind(integration).bind(auth).fetch_optional(&mut *self.system).await.map_err(database_error)
     }
 
-    async fn target(
+    pub(crate) async fn target(
         &mut self,
         caller: PrincipalId,
         operation: &str,
@@ -115,12 +142,15 @@ impl AdministrationStore for Administration<'_, '_> {
         Ok(target)
     }
 
-    async fn versions(&mut self, integration: Option<&str>) -> Result<Vec<Value>, ConnectionError> {
+    pub(crate) async fn versions(
+        &mut self,
+        integration: Option<&str>,
+    ) -> Result<Vec<Value>, ConnectionError> {
         sqlx::query_scalar("SELECT to_jsonb(v) FROM registry.integration_type_version v WHERE integration_type=$1 ORDER BY version")
             .bind(integration).fetch_all(&mut *self.system).await.map_err(database_error)
     }
 
-    async fn previous(
+    pub(crate) async fn previous(
         &mut self,
         id: Uuid,
         generation: Option<i64>,
@@ -129,7 +159,7 @@ impl AdministrationStore for Administration<'_, '_> {
             .bind(id).bind(generation).fetch_optional(&mut **self.project).await.map_err(database_error)
     }
 
-    async fn copy_source(
+    pub(crate) async fn copy_source(
         &mut self,
         name: Option<&str>,
     ) -> Result<Option<CopySource>, ConnectionError> {
@@ -141,7 +171,7 @@ impl AdministrationStore for Administration<'_, '_> {
                 .bind(name).fetch_optional(source).await.map_err(database_error)
     }
 
-    async fn required_version(
+    pub(crate) async fn required_version(
         &mut self,
         caller: PrincipalId,
         operation: &str,
@@ -163,7 +193,7 @@ impl AdministrationStore for Administration<'_, '_> {
         Ok(version)
     }
 
-    async fn external_system_id(
+    pub(crate) async fn external_system_id(
         &mut self,
         name: Option<&str>,
         lookup: Lookup,
@@ -179,7 +209,7 @@ impl AdministrationStore for Administration<'_, '_> {
             .map_err(database_error)
     }
 
-    async fn write_service(
+    pub(crate) async fn write_service(
         &mut self,
         name: &str,
         connection: &str,
@@ -195,7 +225,7 @@ impl AdministrationStore for Administration<'_, '_> {
             })
     }
 
-    async fn resource_value(
+    pub(crate) async fn resource_value(
         &mut self,
         parameters: &Value,
         field: &str,
@@ -208,14 +238,17 @@ impl AdministrationStore for Administration<'_, '_> {
             .map_err(database_error)
     }
 
-    async fn insert_connection(&mut self, row: NewConnection<'_>) -> Result<(), ConnectionError> {
+    pub(crate) async fn insert_connection(
+        &mut self,
+        row: NewConnection<'_>,
+    ) -> Result<(), ConnectionError> {
         sqlx::query("INSERT INTO platform.connection(id,name,integration_type,auth_type,external_system_id,target_id,resource_key,active_generation,service_principal_id,authority) VALUES($1,$2,$3,$4,$5,$6,$7,1,$8,$9)")
                 .bind(row.id).bind(row.name).bind(row.integration).bind(row.auth).bind(row.external).bind(row.target).bind(row.resource).bind(Uuid::from(row.principal)).bind(row.authority).execute(&mut **self.project).await.map_err(connection_write_error)?;
 
         Ok(())
     }
 
-    async fn write_generation(
+    pub(crate) async fn write_generation(
         &mut self,
         id: Uuid,
         credential_id: Option<Uuid>,
@@ -264,22 +297,25 @@ impl AdministrationStore for Administration<'_, '_> {
         Ok(())
     }
 
-    async fn configure_integration_type(
+    pub(crate) async fn configure_integration_type(
         &mut self,
         org: &OrgId,
         operation: &str,
         request: &Value,
     ) -> Result<Value, ConnectionError> {
-        crate::control::configure_integration_type(self.system, org, operation, request)
+        configure_integration_type(self.system, org, operation, request)
             .await
             .map_err(database_error)
     }
 
-    async fn list_external_systems(&mut self) -> Result<Value, ConnectionError> {
+    pub(crate) async fn list_external_systems(&mut self) -> Result<Value, ConnectionError> {
         sqlx::query_scalar("SELECT jsonb_build_object('external_systems',coalesce(jsonb_agg(to_jsonb(s) ORDER BY name),'[]'::jsonb)) FROM platform.external_system s").fetch_one(&mut **self.project).await.map_err(database_error)
     }
 
-    async fn insert_external_system(&mut self, name: Option<&str>) -> Result<(), ConnectionError> {
+    pub(crate) async fn insert_external_system(
+        &mut self,
+        name: Option<&str>,
+    ) -> Result<(), ConnectionError> {
         sqlx::query(
             "INSERT INTO platform.external_system(name) VALUES($1) ON CONFLICT(name) DO NOTHING",
         )
@@ -290,7 +326,7 @@ impl AdministrationStore for Administration<'_, '_> {
         Ok(())
     }
 
-    async fn delete_external_system(&mut self, id: Uuid) -> Result<(), ConnectionError> {
+    pub(crate) async fn delete_external_system(&mut self, id: Uuid) -> Result<(), ConnectionError> {
         sqlx::query("DELETE FROM platform.external_system WHERE id=$1")
             .bind(id)
             .execute(&mut **self.project)
@@ -299,7 +335,7 @@ impl AdministrationStore for Administration<'_, '_> {
         Ok(())
     }
 
-    async fn refuse_environment_references(
+    pub async fn refuse_environment_references(
         &mut self,
         group: &str,
         id: &str,
@@ -307,14 +343,14 @@ impl AdministrationStore for Administration<'_, '_> {
         super::references::refuse_environment_references(self.project, group, id).await
     }
 
-    async fn connection_ids(&mut self) -> Result<Vec<Uuid>, ConnectionError> {
+    pub(crate) async fn connection_ids(&mut self) -> Result<Vec<Uuid>, ConnectionError> {
         sqlx::query_scalar("SELECT id FROM platform.connection ORDER BY name")
             .fetch_all(&mut **self.project)
             .await
             .map_err(database_error)
     }
 
-    async fn test_metadata(
+    pub(crate) async fn test_metadata(
         &mut self,
         integration: Option<&str>,
         auth: Option<&str>,
@@ -323,11 +359,14 @@ impl AdministrationStore for Administration<'_, '_> {
                 .bind(integration).bind(auth).fetch_one(&mut *self.system).await.map_err(database_error)
     }
 
-    async fn credential_reference(&mut self, id: Uuid) -> Result<Value, ConnectionError> {
+    pub(crate) async fn credential_reference(
+        &mut self,
+        id: Uuid,
+    ) -> Result<Value, ConnectionError> {
         Ok(sqlx::query_scalar("SELECT jsonb_build_object('store',k.store,'ref',k.ref,'version',k.version) FROM platform.connection c JOIN platform.connection_generation g ON (g.connection_id,g.generation)=(c.id,c.active_generation) JOIN platform.credential k ON k.id=g.credential_id WHERE c.id=$1").bind(id).fetch_optional(&mut **self.project).await.map_err(database_error)?.unwrap_or(Value::Null))
     }
 
-    async fn set_connection_status(
+    pub(crate) async fn set_connection_status(
         &mut self,
         id: Uuid,
         status: &str,
@@ -341,7 +380,7 @@ impl AdministrationStore for Administration<'_, '_> {
         Ok(())
     }
 
-    async fn delete_connection(&mut self, id: Uuid) -> Result<Value, ConnectionError> {
+    pub(crate) async fn delete_connection(&mut self, id: Uuid) -> Result<Value, ConnectionError> {
         let credentials: Value=sqlx::query_scalar("SELECT coalesce(jsonb_agg(jsonb_build_object('store',store,'ref',ref,'version',version)),'[]'::jsonb) FROM platform.credential WHERE connection_id=$1").bind(id).fetch_one(&mut **self.project).await.map_err(database_error)?;
         sqlx::query("DELETE FROM platform.connection WHERE id=$1")
             .bind(id)
@@ -352,12 +391,12 @@ impl AdministrationStore for Administration<'_, '_> {
         Ok(credentials)
     }
 
-    async fn connection_summary(&mut self, id: Uuid) -> Result<Value, ConnectionError> {
+    pub(crate) async fn connection_summary(&mut self, id: Uuid) -> Result<Value, ConnectionError> {
         sqlx::query_scalar("SELECT to_jsonb(c)||jsonb_build_object('parameters',g.parameters,'hint',k.hint,'credential_created_at',k.created_at,'credential_created_by',k.created_by,'refresh_status',o.refresh_status,'expires_at',o.expires_at) FROM platform.connection c JOIN platform.connection_generation g ON (g.connection_id,g.generation)=(c.id,c.active_generation) LEFT JOIN platform.credential k ON k.id=g.credential_id LEFT JOIN platform.oauth_token o ON o.connection_id=c.id WHERE c.id=$1")
         .bind(id).fetch_one(&mut **self.project).await.map_err(database_error)
     }
 
-    async fn version_summary(
+    pub(crate) async fn version_summary(
         &mut self,
         integration: Option<&str>,
     ) -> Result<Value, ConnectionError> {
@@ -386,7 +425,7 @@ async fn bind_actor(
     caller: PrincipalId,
     operation: &str,
 ) -> Result<(), ConnectionError> {
-    crate::bind_transaction_identity(tx, &caller, "", "", Some(operation), None)
+    wamn_postgres::bind_transaction_identity(tx, &caller, "", "", Some(operation), None)
         .await
         .map_err(database_error)
 }
@@ -407,4 +446,22 @@ pub async fn required_connection_version(
     .fetch_optional(system)
     .await
     .map_err(database_error)
+}
+
+/// Run the registry operation for an integration type.
+///
+/// # Errors
+/// Returns an error if the registry operation fails.
+pub async fn configure_integration_type(
+    connection: &mut PgConnection,
+    org: &OrgId,
+    operation: &str,
+    request: &Value,
+) -> Result<Value, sqlx::Error> {
+    sqlx::query_scalar("SELECT registry.configure_integration_type($1,$2,$3)")
+        .bind(org.as_str())
+        .bind(operation)
+        .bind(request)
+        .fetch_one(connection)
+        .await
 }

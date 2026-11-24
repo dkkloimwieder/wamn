@@ -1,17 +1,15 @@
 //! Verified PostgreSQL connections from explicit component configuration.
 
-pub mod build_database;
-pub mod catalog;
+pub mod advisory_lock;
 mod connection_guard;
 mod connection_options;
 pub mod connection_readiness;
-pub mod control;
 pub mod database;
 mod executor;
 pub mod migration_scope;
 pub mod migrations;
-pub mod oauth_authorization;
 pub mod operation_grant_lock;
+pub mod package_migrations;
 pub mod platform_identity;
 pub mod platform_sql;
 pub mod provisioning_transaction;
@@ -28,8 +26,6 @@ pub use connection_options::{
 pub use executor::{
     ExecutorOpenError, open_executor_read, open_executor_transaction, run_executor_transaction,
 };
-
-pub mod project_connections;
 
 mod sql_error;
 pub use sql_error::{connection_lost, map_pg_error, postgres_error_detail};
@@ -52,7 +48,7 @@ pub use pool::{
 };
 
 mod registry;
-pub use registry::{Registry, decode_text};
+pub use registry::decode_text;
 
 /// Environment exclusion key shared by lifecycle operations and CDC publication.
 /// Acquire this key before an application key or a database mutation lock.

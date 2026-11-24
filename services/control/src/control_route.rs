@@ -41,6 +41,7 @@ use wamn_routes::HostRouteAuthority;
 mod connection_test;
 mod integration;
 pub(crate) mod oauth_authorization;
+mod oauth_authorization_store;
 pub(crate) mod oauth_callback;
 pub(crate) mod operations;
 pub(crate) mod users;
@@ -461,7 +462,7 @@ impl ControlRoutes<'_> {
                     let mut transaction =
                         wamn_identity::identity::transaction::read_pool(self.control, caller)
                             .await?;
-                    let count = wamn_postgres::control::membership_count(
+                    let count = crate::control_sql::membership_count(
                         &mut transaction,
                         self.org,
                         &request.project,
@@ -648,7 +649,7 @@ impl ControlRoutes<'_> {
                 let mut writer = self.writer.lock().await?;
                 let mut transaction = self.begin(&mut writer, attachment, caller).await?;
                 create_project(&mut transaction, self.org, &project).await?;
-                wamn_postgres::control::check_project_roles(&mut transaction, self.org, &project)
+                crate::control_sql::check_project_roles(&mut transaction, self.org, &project)
                     .await?;
                 transaction.commit().await?;
                 Ok(json!({ "project": project }))
@@ -675,7 +676,7 @@ impl ControlRoutes<'_> {
         let mut transaction = self.begin(&mut writer, attachment, caller).await?;
         let envs = status_environments(&mut transaction, self.org, project, env).await?;
         let environments =
-            wamn_postgres::control::environment_projects(&mut transaction, self.org, &envs).await?;
+            crate::control_sql::environment_projects(&mut transaction, self.org, &envs).await?;
         status::change_status(
             status,
             move || async move {
@@ -893,7 +894,7 @@ async fn application_counts(
     let mut client = wamn_postgres::connect(login).await?;
     let mut transaction =
         wamn_identity::identity::transaction::read_connection(&mut client, caller).await?;
-    let counts = wamn_postgres::control::application_counts(&mut transaction).await?;
+    let counts = crate::control_sql::application_counts(&mut transaction).await?;
     transaction.commit().await?;
     Ok(counts)
 }

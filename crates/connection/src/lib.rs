@@ -1,7 +1,6 @@
 //! Connection facts, credentials, invocation context, and administration.
 
 pub mod administration;
-mod administration_store;
 pub mod bound_http;
 pub mod connection;
 pub mod connection_credentials;

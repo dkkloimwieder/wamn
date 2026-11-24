@@ -17,7 +17,6 @@ path = "src/bin/wamn.rs"
 wamn-routes.workspace = true
 wamn-package.workspace = true
 wamn-build.workspace = true
-wamn-postgres.workspace = true
 wamn-identity.workspace = true
 wamn-digest.workspace = true
 anyhow = { workspace = true }

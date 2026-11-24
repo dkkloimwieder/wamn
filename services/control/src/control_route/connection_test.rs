@@ -6,8 +6,8 @@ use wamn_routes::HostAttachment;
 use serde_json::{Value, json};
 use wamn_connection::administration;
 use wamn_connection::connection_credentials::KubernetesStore;
+use wamn_connection::project_connections::{Administration, required_connection_version};
 use wamn_identity_protocol::PrincipalId;
-use wamn_postgres::project_connections::{Administration, required_connection_version};
 
 use super::{ControlRoutes, ProjectTarget, Refusal, parse};
 

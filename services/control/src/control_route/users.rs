@@ -107,7 +107,7 @@ impl ControlRoutes<'_> {
             })?;
         // Activation holds the principal lock. Refuse if disable won the race
         // between identity's successful response and this membership write.
-        let active = wamn_postgres::control::principal_active(&mut transaction, user).await?;
+        let active = crate::control_sql::principal_active(&mut transaction, user).await?;
         if !active {
             return Err(user_refused());
         }
@@ -214,12 +214,12 @@ pub(crate) async fn first_owner(
     let mut writer = handlers.writer.lock().await?;
     let mut tx =
         wamn_postgres::provisioning_transaction::provisioning_transaction(&mut writer).await?;
-    let registered = wamn_postgres::control::login_matches_org(&mut tx, org).await?;
+    let registered = crate::control_sql::login_matches_org(&mut tx, org).await?;
     if !registered {
         return Ok(StatusCode::FORBIDDEN);
     }
-    wamn_postgres::control::lock_first_owner(&mut tx, org).await?;
-    let (has_owner, same_owner) = wamn_postgres::control::org_role_holders(
+    crate::control_sql::lock_first_owner(&mut tx, org).await?;
+    let (has_owner, same_owner) = crate::control_sql::org_role_holders(
         &mut tx,
         org,
         ORG_ADMIN_ROLE,
@@ -251,7 +251,7 @@ pub(crate) async fn first_owner(
             }
             return Err(error.into());
         }
-        let active = wamn_postgres::control::principal_active(&mut tx, &user.principal_id).await?;
+        let active = crate::control_sql::principal_active(&mut tx, &user.principal_id).await?;
         if !active {
             return Ok(StatusCode::BAD_REQUEST);
         }

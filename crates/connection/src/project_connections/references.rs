@@ -1,7 +1,7 @@
 //! Check projected references under the deletion transaction.
 
+use crate::administration::{ConnectionError, refuse};
 use sqlx::Row as _;
-use wamn_connection::administration::{ConnectionError, refuse};
 
 use super::administration::database_error;
 

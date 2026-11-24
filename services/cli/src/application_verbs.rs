@@ -6,7 +6,6 @@ use serde_json::json;
 use std::path::PathBuf;
 use wamn_build::source_build::SourceBuilder;
 use wamn_environment::environment::{self, document::EnvironmentFile};
-use wamn_postgres::build_database::PostgresBuildDatabase;
 
 use crate::build_verbs::RefreshDescribeArgs;
 use crate::operation_verbs::ControlHost;
@@ -66,7 +65,6 @@ pub async fn deploy(args: DeployArgs) -> anyhow::Result<()> {
             let describe = args.describe.mode(false)?;
             let published = wamn_build::source_deploy::publish_from_env(
                 &SourceBuilder {
-                    database: &PostgresBuildDatabase,
                     describe: Ok(describe),
                 },
                 &crate::package_verbs::package_publisher(),

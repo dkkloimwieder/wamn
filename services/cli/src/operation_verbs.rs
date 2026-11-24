@@ -2,7 +2,6 @@
 
 use std::path::Path;
 use std::time::Duration;
-use wamn_postgres::build_database::PostgresBuildDatabase;
 
 use anyhow::{Context as _, bail, ensure};
 use serde_json::{Value, json};
@@ -124,7 +123,6 @@ pub(crate) async fn publish(
 ) -> anyhow::Result<(wamn_registry::ApplicationName, wamn_digest::Digest)> {
     wamn_build::source_deploy::publish_from_env(
         &wamn_build::source_build::SourceBuilder {
-            database: &PostgresBuildDatabase,
             describe: Ok(wamn_build::DescribeMode::Cached),
         },
         &crate::package_verbs::package_publisher(),

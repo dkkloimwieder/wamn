@@ -871,7 +871,7 @@ async fn catalog_arrays_preserve_values_at_any_lower_bound() {
         .await
         .unwrap();
     let database = server.create_database("tests").await.unwrap();
-    let pool = crate::pool(database.as_str(), 4).await.unwrap();
+    let pool = wamn_postgres::pool(database.as_str(), 4).await.unwrap();
     for lower in [i32::MIN, -7, 0, 1, 42, i32::MAX - 2] {
         let array = format!("[{lower}:{}]={{7,-3}}", lower + 1);
         let binary = sqlx::query(

@@ -2,9 +2,7 @@ use serde_json::Value;
 use sqlx::Row as _;
 use std::collections::BTreeMap;
 use uuid::Uuid;
-use wamn_registry::connections::{
-    ConnectionFact, ConnectionGeneration, ConnectionStore, CredentialReference,
-};
+use wamn_registry::connections::{ConnectionFact, ConnectionGeneration, CredentialReference};
 
 struct ConnectionGenerationRow {
     name: String,
@@ -14,10 +12,16 @@ struct ConnectionGenerationRow {
     parameters: Value,
 }
 
-impl ConnectionStore for super::Registry<'_> {
-    type Error = sqlx::Error;
+pub(super) struct ConnectionStore<'a> {
+    connection: &'a mut sqlx::PgConnection,
+}
 
-    async fn fact(&mut self, id: &Uuid) -> Result<Option<ConnectionFact>, sqlx::Error> {
+impl<'a> ConnectionStore<'a> {
+    pub(super) fn new(connection: &'a mut sqlx::PgConnection) -> Self {
+        Self { connection }
+    }
+
+    pub(super) async fn fact(&mut self, id: &Uuid) -> Result<Option<ConnectionFact>, sqlx::Error> {
         let Some(row) = sqlx::query("SELECT c.active_generation,c.status='active' AS active,g.credential_id,c.target_id,c.resource_key,c.service_principal_id,c.authority FROM platform.connection c JOIN platform.connection_generation g ON (g.connection_id,g.generation)=(c.id,c.active_generation) WHERE c.id=$1")
         .bind(id).fetch_optional(&mut *self.connection).await? else { return Ok(None); };
         Ok(Some(ConnectionFact {
@@ -31,7 +35,7 @@ impl ConnectionStore for super::Registry<'_> {
         }))
     }
 
-    async fn generation(
+    pub(super) async fn generation(
         &mut self,
         id: &Uuid,
         generation: i64,
@@ -46,14 +50,17 @@ impl ConnectionStore for super::Registry<'_> {
         };
         Ok(Some(ConnectionGeneration {
             name: row.name,
-            integration_type: super::decode_text(row.integration_type, "integration_type")?,
+            integration_type: wamn_postgres::decode_text(row.integration_type, "integration_type")?,
             auth_type: row.auth_type,
             external_system: row.external_system,
             parameters: row.parameters,
         }))
     }
 
-    async fn credential(&mut self, id: &Uuid) -> Result<Option<CredentialReference>, sqlx::Error> {
+    pub(super) async fn credential(
+        &mut self,
+        id: &Uuid,
+    ) -> Result<Option<CredentialReference>, sqlx::Error> {
         Ok(sqlx::query_as::<_, (String, String)>(
             "SELECT ref,version FROM platform.credential WHERE id=$1",
         )
@@ -63,7 +70,7 @@ impl ConnectionStore for super::Registry<'_> {
         .map(|(reference, version)| CredentialReference { reference, version }))
     }
 
-    async fn environment(&mut self) -> Result<BTreeMap<String, Uuid>, sqlx::Error> {
+    pub(super) async fn environment(&mut self) -> Result<BTreeMap<String, Uuid>, sqlx::Error> {
         Ok(sqlx::query_as::<_, (String, Uuid)>(
             "SELECT name,id FROM platform.connection ORDER BY name",
         )

@@ -12,7 +12,7 @@ use wamn_identity_protocol::PrincipalId;
 use wamn_package::canonical_name::CanonicalName;
 use wamn_plugin::operation_sql::{administration_transaction, begin_administration};
 use wamn_plugin::workflow;
-use wamn_postgres::{WamnPostgres, control};
+use wamn_postgres::{WamnPostgres, advisory_lock};
 use wamn_routes::HostAttachment;
 use wamn_routes::HostHandler;
 use wamn_workflow_graph::{GraphTrigger, WorkflowGraph};
@@ -156,7 +156,9 @@ async fn change(
     // Keep the same key through commit and broker settlement so another host
     // cannot enable a replacement while this host deletes its predecessor.
     let outcome = async {
-        require_lock(control::try_environment_lock(connection, &app.org, &app.environment).await?)?;
+        require_lock(
+            advisory_lock::try_environment_lock(connection, &app.org, &app.environment).await?,
+        )?;
         match handler {
             HostHandler::WorkflowEnable => enable(connection, broker, workload, &version).await,
             HostHandler::WorkflowDisable => disable(connection, broker, workload, &version).await,
@@ -182,7 +184,7 @@ async fn change(
             anyhow::Error::from(error).context("end the workflow lifecycle transaction"),
         ));
     }
-    control::unlock_all_advisory_locks(connection).await?;
+    advisory_lock::unlock_all_advisory_locks(connection).await?;
     session.repool();
     cleanup?;
     outcome?;

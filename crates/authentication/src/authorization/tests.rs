@@ -36,8 +36,7 @@ impl CredentialProvider for RecordingProvider {
 async fn user_operation_permissions_reuse_only_the_callable_http_authority() {
     let provider = Arc::new(RecordingProvider::default());
     let pools = Arc::new(WamnPostgres::with_provider(Arc::clone(&provider) as _));
-    let database = Arc::clone(&pools);
-    let authorization = Authorization::new(pools, database);
+    let authorization = Authorization::new(pools);
     let application = wamn_application::application_config::ApplicationConfig {
         org: "org".parse().unwrap(),
         project: (*DEFAULT_PROJECT).clone(),

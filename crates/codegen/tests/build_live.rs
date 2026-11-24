@@ -10,7 +10,6 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 use sqlx::Row as _;
 use wamn_codegen::build::{BuildRequest, generate_package, package_output};
-use wamn_postgres::build_database::PostgresBuildDatabase;
 
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires: docker"]
@@ -60,8 +59,8 @@ async fn concurrent_builds_initialize_history_on_one_server() -> anyhow::Result<
         Ok::<_, anyhow::Error>(())
     };
     let (first_result, second_result, unlocked) = tokio::join!(
-        generate_package(&PostgresBuildDatabase, &first_request),
-        generate_package(&PostgresBuildDatabase, &second_request),
+        generate_package(&first_request),
+        generate_package(&second_request),
         unlock,
     );
     unlocked?;
@@ -141,11 +140,7 @@ fn copy_source(source: &Path, target: &Path) {
 
 /// Every file below `root`, by its path relative to `root`.
 async fn build(package: &Path, output_root: &Path, database: &str) -> anyhow::Result<Value> {
-    generate_package(
-        &PostgresBuildDatabase,
-        &BuildRequest::refresh(package, output_root, database),
-    )
-    .await?;
+    generate_package(&BuildRequest::refresh(package, output_root, database)).await?;
     let path = package_output(
         output_root,
         &wamn_fixture_package::PACKAGE_ID
@@ -289,10 +284,11 @@ const RECEIPT_FEED_VIEW: &str = "SELECT line.id, line.code, line.edit_version,
 
 async fn authored_feed_build(database: &url::Url, workspace: &Workspace) -> anyhow::Result<()> {
     let output_root = workspace.root.join("target/wamn");
-    generate_package(
-        &PostgresBuildDatabase,
-        &BuildRequest::refresh(&workspace.package(), &output_root, database.as_str()),
-    )
+    generate_package(&BuildRequest::refresh(
+        &workspace.package(),
+        &output_root,
+        database.as_str(),
+    ))
     .await?;
     Ok(())
 }
@@ -444,10 +440,11 @@ async fn projection_view_keeps_non_null_and_nullable_declarations() {
             fs::write(&path, sql.replace('!', "?")).unwrap();
         }
         let output_root = workspace.root.join("target/wamn");
-        generate_package(
-            &PostgresBuildDatabase,
-            &BuildRequest::refresh(&workspace.package(), &output_root, database.as_str()),
-        )
+        generate_package(&BuildRequest::refresh(
+            &workspace.package(),
+            &output_root,
+            database.as_str(),
+        ))
         .await
         .expect("generate the projection over a migrated view");
         let output = package_output(
@@ -494,16 +491,15 @@ async fn overlay_builds_inherit_owner_fields_from_compiled_manifests() {
     )
     .unwrap();
     let output = workspace.root.join("selected-output");
-    generate_package(
-        &PostgresBuildDatabase,
-        &BuildRequest::refresh(&workspace.package(), &output, database.as_str()),
-    )
+    generate_package(&BuildRequest::refresh(
+        &workspace.package(),
+        &output,
+        database.as_str(),
+    ))
     .await
     .unwrap();
     let request = BuildRequest::refresh(&workspace.overlay(), &output, database.as_str());
-    generate_package(&PostgresBuildDatabase, &request)
-        .await
-        .unwrap();
+    generate_package(&request).await.unwrap();
     let manifest: Value = serde_json::from_slice(
         &fs::read(
             package_output(
@@ -550,11 +546,7 @@ async fn a_statement_takes_exactly_the_parameters_its_accessor_binds() {
             &workspace.root.join("output"),
             database.as_str(),
         );
-        assert!(
-            generate_package(&PostgresBuildDatabase, &request)
-                .await
-                .is_err()
-        );
+        assert!(generate_package(&request).await.is_err());
     }
 }
 
@@ -569,7 +561,7 @@ async fn history_changes_append_immutable_versions_and_execute_during_build() ->
     let package = workspace.package();
     let output = workspace.root.join("target/wamn");
     let request = BuildRequest::refresh(&package, &output, database.as_str());
-    generate_package(&PostgresBuildDatabase, &request).await?;
+    generate_package(&request).await?;
     let directory = package_output(
         &output,
         &wamn_fixture_package::PACKAGE_ID
@@ -577,7 +569,7 @@ async fn history_changes_append_immutable_versions_and_execute_during_build() ->
             .expect("valid fixture name"),
     );
     let original = sqlx::migrate::Migrator::new(directory.join("history")).await?;
-    generate_package(&PostgresBuildDatabase, &request).await?;
+    generate_package(&request).await?;
     let repeated = sqlx::migrate::Migrator::new(directory.join("history")).await?;
     assert!(
         original
@@ -590,11 +582,7 @@ async fn history_changes_append_immutable_versions_and_execute_during_build() ->
     let previous = original.iter().last().unwrap().version;
     let duplicate = package.join(format!("migrations/{previous:04}_duplicate.sql"));
     fs::write(&duplicate, "SELECT 1;")?;
-    assert!(
-        generate_package(&PostgresBuildDatabase, &request)
-            .await
-            .is_err()
-    );
+    assert!(generate_package(&request).await.is_err());
     fs::remove_file(duplicate)?;
 
     let authored_version = previous + 2;
@@ -602,18 +590,14 @@ async fn history_changes_append_immutable_versions_and_execute_during_build() ->
         package.join(format!("migrations/{authored_version:04}_append.sql")),
         "SELECT 1;",
     )?;
-    generate_package(&PostgresBuildDatabase, &request).await?;
+    generate_package(&request).await?;
     fs::remove_dir_all(&output)?;
     let inserted = package.join(format!("migrations/{:04}_insert.sql", previous + 1));
     fs::write(&inserted, "SELECT 1;")?;
-    assert!(
-        generate_package(&PostgresBuildDatabase, &request)
-            .await
-            .is_err()
-    );
+    assert!(generate_package(&request).await.is_err());
     fs::remove_file(inserted)?;
 
-    let highest = wamn_postgres::build_database::migrator(&package)
+    let highest = wamn_postgres::package_migrations::migrator(&package)
         .await?
         .iter()
         .map(|migration| migration.version)
@@ -626,7 +610,7 @@ async fn history_changes_append_immutable_versions_and_execute_during_build() ->
         path,
         source.replacen("retention = \"P30D\"", "retention = \"unlimited\"", 1),
     )?;
-    generate_package(&PostgresBuildDatabase, &request).await?;
+    generate_package(&request).await?;
     let changed = sqlx::migrate::Migrator::new(directory.join("history")).await?;
     for released in original.iter() {
         assert!(

@@ -257,7 +257,7 @@ Commit the refreshed `.wamn/describe/` files and any new `history/` migrations.
 Both flags are also available on `cargo xtask build-package`.
 
 Verification runs base migrations first, then the package migrations.
-The compiler reads authored WIT and uses statement descriptions supplied by `wamn-postgres`.
+The compiler reads authored WIT. `wamn-codegen` reads statement descriptions from PostgreSQL.
 The compiler derives relations and feed sources, then generates the remaining SQL once.
 SQLx describes every generated statement, including each fixed list sort and each feed statement.
 The compiler checks each accessor's parameters and selected columns against those descriptions before it writes consumers.

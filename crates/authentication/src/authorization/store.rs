@@ -11,7 +11,6 @@ use wamn_application::application_config::ApplicationConfig;
 use wamn_authority::auth_cache::PrincipalGrants;
 use wamn_connection::connection_credentials::{ConnectionCredentials, CredentialReader};
 use wamn_connection::connection_facts::{ConnectionAnswer, ConnectionCache, ConnectionFacts};
-use wamn_connection::project_connections::ProjectConnections;
 use wamn_identity_protocol::PrincipalId;
 use wamn_identity_protocol::secret::PatToken;
 use wamn_registry::{ProjectEnvKey, ProjectId};
@@ -62,7 +61,6 @@ impl moka::Expiry<Key, Answer> for Expiry {
 /// One local cache; the project lifetime applies equally to every admitted fact.
 pub struct Authorization {
     postgres: Arc<WamnPostgres>,
-    database: Arc<dyn ProjectConnections>,
     envelope: Option<Arc<wamn_envelope::encryption::Envelope>>,
     applications: RwLock<HashMap<String, Weak<ApplicationConfig>>>,
     lifetimes: RwLock<HashMap<ProjectEnvKey, (ProjectId, Duration)>>,
@@ -80,10 +78,9 @@ impl std::fmt::Debug for Authorization {
 
 impl Authorization {
     /// Share the project's pools and the authorized connection reader.
-    pub fn new(postgres: Arc<WamnPostgres>, database: Arc<dyn ProjectConnections>) -> Self {
+    pub fn new(postgres: Arc<WamnPostgres>) -> Self {
         Self {
             postgres,
-            database,
             envelope: None,
             lifetimes: RwLock::default(),
             applications: RwLock::default(),
@@ -382,7 +379,7 @@ impl ConnectionCache for Authorization {
                     &application.org,
                     self.credentials.as_ref().map(Arc::clone),
                 )),
-                &self.database,
+                &self.postgres,
                 &key,
                 &application.project,
                 &application.environment,

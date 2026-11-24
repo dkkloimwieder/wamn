@@ -44,10 +44,7 @@ fn an_unnamed_statements_entry_links_every_member_import() {
     let component =
         Component::new(engine.inner(), COMPOSED_IMPORTS).expect("compile the composed imports");
     let pools = Arc::new(WamnPostgres::from_host_config(BTreeMap::new()).expect("empty pools"));
-    let authorization = wamn_authentication::authorization::Authorization::new(
-        Arc::clone(&pools),
-        Arc::clone(&pools) as _,
-    );
+    let authorization = wamn_authentication::authorization::Authorization::new(Arc::clone(&pools));
     let host = OperationHost::new(pools, Arc::new(authorization), None);
     // The environment application chart writes this interface without a name.
     let entry = HashSet::from([WitInterface::from("wamn:postgres/statements,types@0.4.0")]);

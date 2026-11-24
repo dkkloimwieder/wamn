@@ -1,19 +1,3 @@
-//! PostgreSQL storage for connection records.
-
-mod connections;
-
-/// Registry operations on the caller's database session.
-#[derive(Debug)]
-pub struct Registry<'a> {
-    connection: &'a mut sqlx::PgConnection,
-}
-
-impl<'a> Registry<'a> {
-    pub fn new(connection: &'a mut sqlx::PgConnection) -> Self {
-        Self { connection }
-    }
-}
-
 /// Convert plain PostgreSQL text to a domain value, preserving the decode error.
 ///
 /// # Errors

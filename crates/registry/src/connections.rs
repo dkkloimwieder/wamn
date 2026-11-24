@@ -1,7 +1,6 @@
 //! Connection rows and credential references from project databases.
 
 use serde_json::Value;
-use std::collections::BTreeMap;
 use uuid::Uuid;
 
 /// Mutable authority and lease coordinates of one environment connection.
@@ -31,45 +30,4 @@ pub struct ConnectionGeneration {
 pub struct CredentialReference {
     pub reference: String,
     pub version: String,
-}
-
-/// Connection facts and credential references in a project.
-pub trait ConnectionStore {
-    type Error;
-
-    /// Read current project connection status, target and principal.
-    ///
-    /// # Errors
-    /// Returns database errors.
-    fn fact(
-        &mut self,
-        id: &Uuid,
-    ) -> impl std::future::Future<Output = Result<Option<ConnectionFact>, Self::Error>> + Send;
-
-    /// Read immutable generation data; workload configuration supplies its runtime type.
-    ///
-    /// # Errors
-    /// Returns database errors.
-    fn generation(
-        &mut self,
-        id: &Uuid,
-        generation: i64,
-    ) -> impl std::future::Future<Output = Result<Option<ConnectionGeneration>, Self::Error>> + Send;
-
-    /// Read an immutable secret reference in the selected project database.
-    ///
-    /// # Errors
-    /// Returns database errors.
-    fn credential(
-        &mut self,
-        id: &Uuid,
-    ) -> impl std::future::Future<Output = Result<Option<CredentialReference>, Self::Error>> + Send;
-
-    /// Read local connection names and identities.
-    ///
-    /// # Errors
-    /// Returns database errors.
-    fn environment(
-        &mut self,
-    ) -> impl std::future::Future<Output = Result<BTreeMap<String, Uuid>, Self::Error>> + Send;
 }

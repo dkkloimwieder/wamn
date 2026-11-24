@@ -397,10 +397,10 @@ It records parameter types, selected columns, relation access and transaction ne
 
 ### wamn build
 
-The live build tests in `wamn-postgres` have the marker `requires: docker`:
+The live build tests in `wamn-codegen` have the marker `requires: docker`.
 
 ```bash
-cargo test --locked --offline -p wamn-postgres --test build_live -- --ignored
+cargo test --locked --offline -p wamn-codegen --test build_live -- --ignored
 ```
 
 Each test copies the platform fixture into its own directory and builds it against its own server.

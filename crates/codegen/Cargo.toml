@@ -13,19 +13,25 @@ tempfile.workspace = true
 wamn-scalar.workspace = true
 wamn-digest.workspace = true
 anyhow.workspace = true
-async-trait.workspace = true
+fallible-iterator = "0.2"
 oas3.workspace = true
 pg_query = "=6.2.1"
+postgres-protocol.workspace = true
 prettyplease = "=0.3.0"
 proc-macro2.workspace = true
 quote.workspace = true
 syn = { workspace = true, features = ["full"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
+# SQLx exposes statement descriptions with the macros feature.
+sqlx = { workspace = true, features = ["macros", "migrate", "postgres", "chrono", "uuid", "json"] }
 toml.workspace = true
 wamn-schema = { workspace = true }
 wamn-record-history = { workspace = true }
 wamn-number-pattern = { workspace = true }
+wamn-identity-protocol.workspace = true
+wamn-postgres.workspace = true
+wamn-role.workspace = true
 wit-encoder = { workspace = true }
 wit-parser = { workspace = true }
 
@@ -37,8 +43,11 @@ wamn-digest.workspace = true
 wamn-guest = { workspace = true }
 uuid = { workspace = true, features = ["v4"] }
 boon.workspace = true
+tokio = { workspace = true, features = ["macros", "rt"] }
+url.workspace = true
 
 wamn-fixture-package = { workspace = true }
+wamn-test-infrastructure.workspace = true
 
 [lints]
 workspace = true

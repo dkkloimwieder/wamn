@@ -92,7 +92,7 @@ async fn create_returns_database_generated_integer_ids() {
                         "create",
                     )
                 } else {
-                    include_str!("../../codegen/tests/support/insert_default.sql").to_owned()
+                    include_str!("support/insert_default.sql").to_owned()
                 };
                 sqlx::raw_sql(sqlx::AssertSqlSafe(format!("PREPARE create_row AS {sql}")))
                     .execute(&mut client)

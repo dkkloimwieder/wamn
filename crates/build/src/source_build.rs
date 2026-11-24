@@ -8,13 +8,12 @@ use std::path::{Path, PathBuf};
 use wamn_package::manifest::{BaseDependencyRequirement, PackageIdentity, source_name::SourceName};
 
 use crate::{
-    BuildDatabase, BuildMode, BuildRequest, DescribeMode, PreparedSource, build_prepared,
-    default_output_root, package_output, source_deploy::PackageSource,
+    BuildMode, BuildRequest, DescribeMode, PreparedSource, build_prepared, default_output_root,
+    package_output, source_deploy::PackageSource,
 };
 
-/// Build source with the caller's database adapter and describe settings.
+/// Build source with the caller's describe settings.
 pub struct SourceBuilder<'a> {
-    pub database: &'a dyn BuildDatabase,
     pub describe: anyhow::Result<DescribeMode<'a>>,
 }
 
@@ -43,7 +42,7 @@ impl SourceBuilder<'_> {
             .as_ref()
             .map_err(|error| anyhow::anyhow!("{error:#}"))?;
         let request = BuildRequest::new(source.root(), &output, describe);
-        let built = build_prepared(self.database, &request, source, mode).await?;
+        let built = build_prepared(&request, source, mode).await?;
         Ok(package_output(&output, &built.package.id))
     }
 }

@@ -1,6 +1,7 @@
 //! Authenticated org administration without a guest runtime.
 
 mod control_route;
+mod control_sql;
 pub mod environment_status;
 mod execution;
 pub mod first_owner;
@@ -174,7 +175,7 @@ async fn wait_for_system_schema(database: &str) -> anyhow::Result<sqlx::PgConnec
         loop {
             let ready = tokio::time::timeout(Duration::from_secs(5), async {
                 let mut connection = wamn_postgres::connect(database).await?;
-                let domain = wamn_postgres::control::platform_domain(&mut connection).await?;
+                let domain = crate::control_sql::platform_domain(&mut connection).await?;
                 Ok::<_, anyhow::Error>(domain.map(|_| connection))
             })
             .await;

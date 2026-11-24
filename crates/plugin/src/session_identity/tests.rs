@@ -12,7 +12,7 @@ async fn workflow_caller_retains_typed_connection_unavailable() -> anyhow::Resul
         None,
     )));
     let pools = Arc::new(pools);
-    let authorization = Authorization::new(Arc::clone(&pools), Arc::clone(&pools) as _);
+    let authorization = Authorization::new(Arc::clone(&pools));
     let postgres = OperationHost::new(pools, Arc::new(authorization), None);
     let error = postgres
         .workflow_node_caller(

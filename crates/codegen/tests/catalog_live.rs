@@ -1,7 +1,7 @@
 //! Selected columns supply the generated action's transport types.
 
 use sqlx::{AssertSqlSafe, Row as _, SqlSafeStr as _};
-use wamn_postgres::catalog::{
+use wamn_codegen::catalog::{
     PostgresIntrospectionErrorType, read_catalog, read_catalog_excluding_relations,
 };
 use wamn_scalar::SqlValueType;

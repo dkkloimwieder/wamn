@@ -20,7 +20,6 @@ mod test_changes;
 
 use clap::{Parser, Subcommand};
 use std::path::{Path, PathBuf};
-use wamn_postgres::build_database::PostgresBuildDatabase;
 
 /// Repository task arguments.
 #[derive(Debug, Parser)]
@@ -176,10 +175,9 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
             )?;
             for package in packages {
                 let output = wamn_build::default_output_root(&package);
-                let built = wamn_build::build_package(
-                    &PostgresBuildDatabase,
-                    &wamn_build::BuildRequest::new(&package, &output, describe),
-                )
+                let built = wamn_build::build_package(&wamn_build::BuildRequest::new(
+                    &package, &output, describe,
+                ))
                 .await?;
                 println!(
                     "{} {} {}",

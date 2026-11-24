@@ -4,11 +4,11 @@ use serde_json::Value;
 use sqlx::{FromRow, PgConnection};
 use uuid::Uuid;
 use wamn_envelope::encryption::Encrypted;
-use wamn_principal::PrincipalId;
+use wamn_identity_protocol::PrincipalId;
 
 /// Authorization state read under a row lock for a single callback.
 #[derive(Debug)]
-pub struct LockedAuthorization {
+pub(super) struct LockedAuthorization {
     pub connection: Uuid,
     pub generation: i64,
     pub verifier: Encrypted,
@@ -32,7 +32,7 @@ struct AuthorizationRow {
 ///
 /// # Errors
 /// Returns an error if the authorization state cannot be stored.
-pub async fn insert(
+pub(super) async fn insert(
     connection: &mut PgConnection,
     state: &str,
     connection_id: Uuid,
@@ -52,7 +52,7 @@ pub async fn insert(
 ///
 /// # Errors
 /// Returns an error if the row cannot be locked or decoded.
-pub async fn lock(
+pub(super) async fn lock(
     transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     state: &str,
 ) -> Result<Option<LockedAuthorization>, sqlx::Error> {
@@ -81,7 +81,7 @@ pub async fn lock(
 ///
 /// # Errors
 /// Returns an error if the database cannot read or lock the connection.
-pub async fn lock_connection(
+pub(super) async fn lock_connection(
     transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     connection: Uuid,
 ) -> Result<Option<Value>, sqlx::Error> {
@@ -93,7 +93,7 @@ pub async fn lock_connection(
 ///
 /// # Errors
 /// Returns an error if the state cannot be deleted.
-pub async fn delete(connection: &mut PgConnection, state: &str) -> Result<(), sqlx::Error> {
+pub(super) async fn delete(connection: &mut PgConnection, state: &str) -> Result<(), sqlx::Error> {
     sqlx::query("DELETE FROM platform.oauth_authorization WHERE state=$1")
         .bind(state)
         .execute(connection)

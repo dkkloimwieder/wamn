@@ -2,7 +2,7 @@
 
 mod sql;
 
-use crate::database::BuildDatabase;
+use crate::build_database;
 use crate::sql_quote::{escape_identifier, escape_literal};
 use anyhow::{Context as _, ensure};
 use sql::{generated_function_name, log_function_sql, stamp_function_sql};
@@ -116,12 +116,11 @@ pub(crate) fn history_table_sql(model: &ModelDeclaration) -> String {
 
 /// Render a full history change. Disabled triggers are removed by this migration.
 pub(crate) async fn render(
-    database: &dyn BuildDatabase,
     root: &std::path::Path,
     manifest: &PackageManifest,
     columns: &BTreeMap<SourceName, Vec<RelationColumn>>,
 ) -> anyhow::Result<String> {
-    let mut statements = retired_triggers(database, root, manifest).await?;
+    let mut statements = retired_triggers(root, manifest).await?;
     for (id, model) in manifest
         .models
         .iter()
@@ -157,14 +156,12 @@ pub(crate) async fn render(
 /// Preserve generated migrations in the source tree; append each changed history recipe.
 /// The next build and published artifact carry every earlier migration unchanged.
 pub(crate) async fn migrations(
-    database: &dyn BuildDatabase,
     root: &std::path::Path,
     sql: &str,
 ) -> anyhow::Result<BTreeMap<std::path::PathBuf, Vec<u8>>> {
     let authored = root.join("migrations");
     let authored = if authored.is_dir() {
-        database
-            .migration_directory(&authored)
+        build_database::migration_directory(&authored)
             .await?
             .iter()
             .map(|migration| migration.version)
@@ -179,8 +176,7 @@ pub(crate) async fn migrations(
         serde_json::to_string(&authored)?
     );
     let mut files = BTreeMap::new();
-    let highest = database
-        .package_migrations(root)
+    let highest = build_database::package_migrations(root)
         .await?
         .iter()
         .map(|migration| migration.version)
@@ -192,7 +188,7 @@ pub(crate) async fn migrations(
         if !path.is_dir() {
             continue;
         }
-        let sources = database.migration_directory(&path).await?;
+        let sources = build_database::migration_directory(&path).await?;
         for migration in &sources {
             if directory == "history" {
                 latest = Some(migration.sql.as_str().to_owned());
@@ -234,7 +230,6 @@ pub(crate) async fn migrations(
 
 /// Remove triggers for declarations retired since an earlier immutable migration.
 async fn retired_triggers(
-    database: &dyn BuildDatabase,
     root: &std::path::Path,
     manifest: &PackageManifest,
 ) -> anyhow::Result<Vec<String>> {
@@ -242,7 +237,7 @@ async fn retired_triggers(
     if !directory.is_dir() {
         return Ok(Vec::new());
     }
-    let previous = database.migration_directory(&directory).await?;
+    let previous = build_database::migration_directory(&directory).await?;
     let mut retired = std::collections::BTreeSet::new();
     for migration in &previous {
         for raw in pg_query::parse(migration.sql.as_str())?.protobuf.stmts {
