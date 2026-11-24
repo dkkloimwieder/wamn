@@ -1,9 +1,4 @@
 //! Statements and transaction scopes for environment deployment.
-use crate::environment_sql::{
-    close_capture_gap_sql, insert_capture_gap_sql, lock_newest_capture_gap_sql,
-    select_event_reader_origin_sql, upsert_event_reader_sql,
-};
-use crate::provisioning_transaction as provision_project_env;
 use chrono::{DateTime, Utc};
 use std::time::Duration;
 use wamn_environment::environment::capture_gap::ClosedCaptureGap;
@@ -13,6 +8,11 @@ use wamn_environment::environment::database::{
 };
 use wamn_package::canonical_name::CanonicalName;
 use wamn_platform_install::database::ConnectionConfig;
+use wamn_postgres::environment_sql::{
+    close_capture_gap_sql, insert_capture_gap_sql, lock_newest_capture_gap_sql,
+    select_event_reader_origin_sql, upsert_event_reader_sql,
+};
+use wamn_postgres::provisioning_transaction as provision_project_env;
 use wamn_registry::{configuration::EnvironmentConfiguration, instance_suffix::InstanceSuffix};
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -41,9 +41,9 @@ use wamn_registry::{
 };
 use wamn_workflow_graph::WorkflowGraph;
 
-use crate::{LifecycleLock as PgLifecycleLock, connect};
+use wamn_postgres::{LifecycleLock as PgLifecycleLock, connect};
 
-pub(crate) async fn connect_project(url: &str) -> anyhow::Result<Client> {
+async fn connect_project(url: &str) -> anyhow::Result<Client> {
     let mut client = connect(url).await?;
     let owner: String = sqlx::query(
         "SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname=current_database()",
@@ -61,31 +61,28 @@ pub(crate) async fn connect_project(url: &str) -> anyhow::Result<Client> {
     Ok(client)
 }
 
-pub(crate) async fn read_row(
-    system: &mut Client,
-    triple: &Triple,
-) -> anyhow::Result<Option<EnvironmentRow>> {
-    Ok(
-        sqlx::query(crate::environment_sql::CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_ANALYSE_READ_ROW)
-            .bind(triple.org.as_str())
-            .bind(triple.project.as_str())
-            .bind(triple.env.as_str())
-            .fetch_optional(&mut *system)
-            .await
-            .context("read the environment row")?
-            .map(|row| {
-                Ok::<_, sqlx::Error>(EnvironmentRow {
-                    instance_suffix: crate::decode_text(row.try_get(0)?, 0)?,
-                    disposable: row.try_get(1)?,
-                })
-            })
-            .transpose()?,
+async fn read_row(system: &mut Client, triple: &Triple) -> anyhow::Result<Option<EnvironmentRow>> {
+    Ok(sqlx::query(
+        wamn_postgres::environment_sql::CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_ANALYSE_READ_ROW,
     )
+    .bind(triple.org.as_str())
+    .bind(triple.project.as_str())
+    .bind(triple.env.as_str())
+    .fetch_optional(&mut *system)
+    .await
+    .context("read the environment row")?
+    .map(|row| {
+        Ok::<_, sqlx::Error>(EnvironmentRow {
+            instance_suffix: wamn_postgres::decode_text(row.try_get(0)?, 0)?,
+            disposable: row.try_get(1)?,
+        })
+    })
+    .transpose()?)
 }
 
 /// Read installed SQL as the project database owner; deploy facts live in Helm values.
 /// Only an absent database returns `None`; unreadable state returns its cause.
-pub async fn read_project(url: &str) -> anyhow::Result<Option<ProjectState>> {
+async fn read_project(url: &str) -> anyhow::Result<Option<ProjectState>> {
     let mut client = match connect_project(url).await {
         Ok(client) => client,
         Err(error)
@@ -132,12 +129,13 @@ async fn application_names(
     triple: &Triple,
 ) -> anyhow::Result<BTreeSet<ApplicationName>> {
     let mut client = system.client().await;
-    let mut tx = crate::provisioning_transaction::provisioning_transaction(&mut client).await?;
+    let mut tx =
+        wamn_postgres::provisioning_transaction::provisioning_transaction(&mut client).await?;
     let applications: BTreeSet<wamn_registry::ApplicationName> = sqlx::query_scalar::<_, String>(
         "SELECT application FROM registry.environment_applications WHERE org=$1 AND env=$2 AND project=$3",
     )
     .bind(triple.org.as_str()).bind(triple.env.as_str()).bind(triple.project.as_str())
-    .fetch_all(&mut *tx).await?.into_iter().map(|name| crate::decode_text(name, 0)).collect::<Result<_, _>>()?;
+    .fetch_all(&mut *tx).await?.into_iter().map(|name| wamn_postgres::decode_text(name, 0)).collect::<Result<_, _>>()?;
     tx.commit().await?;
     drop(client);
     Ok(applications)
@@ -163,7 +161,8 @@ async fn unfinished(
     env: &EnvName,
     application: Option<&ApplicationName>,
 ) -> anyhow::Result<Vec<UnfinishedRun>> {
-    let mut transaction = crate::provisioning_transaction::provisioning_transaction(client).await?;
+    let mut transaction =
+        wamn_postgres::provisioning_transaction::provisioning_transaction(client).await?;
     let runs = sqlx::query(
         "SELECT package_id, run_id FROM wamn_run.runs
           WHERE environment = $1 AND ($2::text IS NULL OR package_id = $2)
@@ -185,7 +184,7 @@ async fn project_count(
     org: &OrgId,
     env: &EnvName,
 ) -> anyhow::Result<u32> {
-    let mut tx = crate::provisioning_transaction::provisioning_transaction(db).await?;
+    let mut tx = wamn_postgres::provisioning_transaction::provisioning_transaction(db).await?;
     let count: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM registry.environment_projects WHERE org=$1 AND env=$2",
     )
@@ -202,10 +201,12 @@ async fn read_configuration(
     connection: &mut sqlx::PgConnection,
     triple: &Triple,
 ) -> Result<Option<wamn_registry::configuration::EnvironmentConfiguration>, sqlx::Error> {
-    let principal = crate::PlatformComponent::Provisioning.principal_id();
+    let principal = wamn_postgres::PlatformComponent::Provisioning.principal_id();
     let mut transaction =
-        crate::identity::transaction::read_connection(connection, &principal).await?;
-    let configuration = crate::Registry::new(&mut transaction).read(triple).await?;
+        wamn_postgres::identity::transaction::read_connection(connection, &principal).await?;
+    let configuration = wamn_postgres::Registry::new(&mut transaction)
+        .read(triple)
+        .await?;
     transaction.commit().await?;
     Ok(configuration)
 }
@@ -219,7 +220,8 @@ async fn host_projects(
     drain_bound_seconds: Option<i32>,
 ) -> anyhow::Result<(Vec<ProjectId>, i32)> {
     let mut client = system.client().await;
-    let mut tx = crate::provisioning_transaction::provisioning_transaction(&mut client).await?;
+    let mut tx =
+        wamn_postgres::provisioning_transaction::provisioning_transaction(&mut client).await?;
     let projects: Vec<ProjectId> = sqlx::query_scalar::<_, String>(
         "SELECT project FROM registry.environment_projects WHERE org=$1 AND env=$2
          AND ($3::text IS NULL OR project<>$3)
@@ -232,11 +234,11 @@ async fn host_projects(
     .fetch_all(&mut *tx)
     .await?
     .into_iter()
-    .map(|project| crate::decode_text(project, 0))
+    .map(|project| wamn_postgres::decode_text(project, 0))
     .collect::<Result<_, _>>()?;
     let drain_bound_seconds = match drain_bound_seconds {
         Some(seconds) => seconds,
-        None => crate::Registry::new(&mut tx)
+        None => wamn_postgres::Registry::new(&mut tx)
             .drain_bound_seconds(org, env)
             .await
             .with_context(|| format!("read the host drain bound for {org}/{env}"))?,
@@ -253,7 +255,7 @@ async fn host_projects(
 /// # Errors
 ///
 /// When the probe fails.
-pub async fn cdc_in_place(
+async fn cdc_in_place(
     project: &mut sqlx::PgConnection,
     cdc_name: &str,
     schemas: &[wamn_package::canonical_name::CanonicalName],
@@ -289,7 +291,7 @@ async fn prepare_cdc(
     })
     .await
     .with_context(|| format!("wait for publication {publication}"))??;
-    crate::capture_sql::apply_cdc_sql(owner, capture, schemas, publication, database).await
+    wamn_postgres::capture_sql::apply_cdc_sql(owner, capture, schemas, publication, database).await
 }
 
 /// Create each integration application principal and its declared dependency role.
@@ -298,7 +300,7 @@ async fn prepare_cdc(
 /// # Errors
 ///
 /// Returns an error if an identity is disabled or a database write fails.
-pub async fn materialize_application_principals(
+async fn materialize_application_principals(
     domain: &PlatformDomain,
     project_url: &str,
     project_env_key: &wamn_registry::ProjectEnvKey,
@@ -315,14 +317,15 @@ pub async fn materialize_application_principals(
     }
     let mut project = connect_project(project_url).await?;
     let mut transaction = project.begin().await?;
-    crate::operation::lock_operation_grants(&mut transaction, project_env_key).await?;
-    crate::bind_platform_principal(&mut transaction, PlatformComponent::Provisioning).await?;
+    wamn_postgres::operation::lock_operation_grants(&mut transaction, project_env_key).await?;
+    wamn_postgres::bind_platform_principal(&mut transaction, PlatformComponent::Provisioning)
+        .await?;
     for package in &applications {
         let subject = wamn_registry::resource_names::application_subject(
             project_env_key,
             &package.package.id,
         );
-        crate::identity::application::service::write_service(
+        wamn_postgres::identity::application::service::write_service(
             &mut transaction,
             domain,
             &subject,
@@ -333,7 +336,7 @@ pub async fn materialize_application_principals(
             "application-{}",
             package.package.id.as_str().replace('_', "-")
         );
-        crate::administration::create_role(&mut transaction, &role).await?;
+        wamn_postgres::administration::create_role(&mut transaction, &role).await?;
     }
     write_runtime_grants(&mut transaction, project_env_key, &applications, packages).await?;
     transaction.commit().await?;
@@ -358,7 +361,7 @@ async fn write_runtime_grants(
             &package.package.id,
         );
         let principal =
-            crate::identity::application::service::active_service(transaction, &subject)
+            wamn_postgres::identity::application::service::active_service(transaction, &subject)
                 .await?
                 .with_context(|| {
                     format!("application principal {subject} is absent or inactive")
@@ -372,8 +375,8 @@ async fn write_runtime_grants(
              AND NOT EXISTS (SELECT FROM platform.user_role WHERE role_name=$1 AND user_id<>$2)",
         )
         .bind(&role)
-        .bind(uuid::Uuid::from(principal))
-        .bind(uuid::Uuid::from(
+        .bind(sqlx::types::Uuid::from(principal))
+        .bind(sqlx::types::Uuid::from(
             wamn_identity_protocol::PlatformComponent::Provisioning.principal_id(),
         ))
         .fetch_one(&mut **transaction)
@@ -387,7 +390,7 @@ async fn write_runtime_grants(
             package,
             &dependency_manifests,
         )? {
-            crate::administration::mutate_grant(
+            wamn_postgres::administration::mutate_grant(
                 transaction,
                 project_env_key,
                 wamn_authentication::administration::GrantAuthority::Provisioning,
@@ -399,7 +402,7 @@ async fn write_runtime_grants(
             )
             .await?;
         }
-        crate::administration::mutate_grant(
+        wamn_postgres::administration::mutate_grant(
             transaction,
             project_env_key,
             wamn_authentication::administration::GrantAuthority::Provisioning,
@@ -421,7 +424,7 @@ async fn create_number_sequences(
     sequences: &[SequenceDefault],
 ) -> anyhow::Result<()> {
     let mut transaction = sqlx::Connection::begin(project).await?;
-    crate::bind_platform_principal(
+    wamn_postgres::bind_platform_principal(
         &mut transaction,
         wamn_identity_protocol::PlatformComponent::Provisioning,
     )
@@ -463,17 +466,17 @@ async fn check_workflows(
 }
 
 /// Delete migration-owned objects and application state. Callers stop users first.
-pub async fn reset_database(
+async fn reset_database(
     system: &PgLifecycleLock,
     database_url: &str,
     migration_url: &str,
     triple: &wamn_registry::Triple,
 ) -> anyhow::Result<()> {
-    let disposable = crate::Registry::new(&mut *system.client().await)
+    let disposable = wamn_postgres::Registry::new(&mut *system.client().await)
         .disposable(triple)
         .await?;
     ensure!(disposable, "environment is not recorded as disposable");
-    let mut client = crate::connect(database_url).await?;
+    let mut client = wamn_postgres::connect(database_url).await?;
     let database: String = sqlx::query_scalar("SELECT current_database()::text")
         .fetch_one(&mut client)
         .await?;
@@ -481,9 +484,10 @@ pub async fn reset_database(
     sqlx::raw_sql(crate::apply_package::LOCK_SQL)
         .execute(&mut *tx)
         .await?;
-    crate::bind_platform_principal(&mut tx, crate::PlatformComponent::Provisioning).await?;
-    let mut migration = crate::connect(migration_url).await?;
-    let login = crate::project_migration::require_login(&mut migration).await?;
+    wamn_postgres::bind_platform_principal(&mut tx, wamn_postgres::PlatformComponent::Provisioning)
+        .await?;
+    let mut migration = wamn_postgres::connect(migration_url).await?;
+    let login = wamn_postgres::project_migration::require_login(&mut migration).await?;
     let migration_database: String = sqlx::query_scalar("SELECT current_database()::text")
         .fetch_one(&mut migration)
         .await?;
@@ -538,12 +542,12 @@ pub async fn reset_database(
         .await?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
         "{} {}",
-        crate::project_setup::grant_workload_login_sql(
+        wamn_postgres::project_setup::grant_workload_login_sql(
             wamn_platform_install::workload_role::WorkloadRoleFamily::Migration,
             &database,
             &login,
         ),
-        crate::project_migration::grants_sql(&login)
+        wamn_postgres::project_migration::grants_sql(&login)
     )))
     .execute(&mut *tx)
     .await?;
@@ -590,11 +594,11 @@ impl PackageMigrations for MigrationReader {
         key: &ProjectEnvKey,
         id: &PackageName,
     ) -> anyhow::Result<SchemaReport> {
-        let migrator = crate::build_database::migrator(path).await?;
+        let migrator = wamn_postgres::build_database::migrator(path).await?;
         let migrations = if let Some(client) = &mut self.0 {
-            crate::migrations::observe(
+            crate::platform_migrations::observe_history(
                 client,
-                &crate::project_migration::history_table(key, id),
+                &wamn_postgres::project_migration::history_table(key, id),
                 &migrator.migrations,
             )
             .await?
@@ -621,16 +625,16 @@ impl PackageMigrations for MigrationReader {
 /// # Errors
 ///
 /// Returns an error if a database operation or row removal fails.
-pub async fn delete_registry_rows(
+async fn delete_registry_rows(
     system: &mut sqlx::PgConnection,
     triple: &Triple,
 ) -> anyhow::Result<Vec<String>> {
     let (org, project, env) = (&triple.org, &triple.project, &triple.env);
-    let mut transaction = crate::provisioning_transaction::provisioning_transaction(system)
+    let mut transaction = wamn_postgres::provisioning_transaction::provisioning_transaction(system)
         .await
         .context("begin the row delete")?;
     sqlx::query(
-        crate::environment_sql::CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_DELETE_ROWS_DELETE_REGISTRY_ROWS,
+        wamn_postgres::environment_sql::CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_DELETE_ROWS_DELETE_REGISTRY_ROWS,
     )
     .bind(org.as_str())
     .bind(project.as_str())
@@ -661,7 +665,7 @@ async fn reserve(
     let mut reserved = Vec::with_capacity(projects.len());
     let mut client = system.client().await;
     let mut transaction = provision_project_env::provisioning_transaction(&mut client).await?;
-    sqlx::query(crate::platform_sql::PROJECT_STREAM_CAPACITY_LOCK_SQL)
+    sqlx::query(wamn_postgres::platform_sql::PROJECT_STREAM_CAPACITY_LOCK_SQL)
         .execute(&mut *transaction)
         .await
         .context("lock platform project stream capacity")?;
@@ -717,7 +721,7 @@ async fn reserve_project(
         &document.settings.env,
     )?;
     let instance = wamn_environment::provision_project_env::new_instance_suffix()?;
-    crate::environment_registry::record_project_env(
+    wamn_postgres::environment_registry::record_project_env(
         transaction,
         &document.triple(),
         document.readiness_budget_seconds,
@@ -742,18 +746,18 @@ async fn initialize_project(
     unconfigured: bool,
 ) -> anyhow::Result<()> {
     let mut client = project.client().await;
-    sqlx::raw_sql(sqlx::AssertSqlSafe(crate::project_setup::privilege_sql(
-        database,
-    )))
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        wamn_postgres::project_setup::privilege_sql(database),
+    ))
     .execute(&mut *client)
     .await?;
     drop(client);
     if unconfigured {
-        crate::platform_migrations::install_project(&mut *project.client().await).await?;
-        crate::environment_schema::restore_project(
+        wamn_postgres::platform_migrations::install_project(&mut *project.client().await).await?;
+        wamn_postgres::environment_schema::restore_project(
             owner,
-            &crate::platform_migrations::embedded_sources(
-                crate::migration_scope::MigrationDatabase::Project,
+            &wamn_postgres::platform_migrations::embedded_sources(
+                wamn_postgres::migration_scope::MigrationDatabase::Project,
             ),
         )
         .await?;
@@ -772,7 +776,9 @@ async fn save_deployment(
     let mut connection = system.client().await;
     let mut tx = provision_project_env::provisioning_transaction(&mut connection).await?;
     ensure!(
-        crate::Registry::new(&mut tx).write(configuration).await?,
+        wamn_postgres::Registry::new(&mut tx)
+            .write(configuration)
+            .await?,
         "provision the environment before applying configuration"
     );
     // With deployed schemas, the failover capture position uses the publication name.
@@ -806,7 +812,7 @@ async fn delete_inputs(
 ) -> anyhow::Result<Option<(InstanceSuffix, i32)>> {
     let (org, project, env) = (&triple.org, &triple.project, &triple.env);
     let row = sqlx::query_as::<_, (String, i32)>(
-        crate::environment_sql::CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_DELETE_DELETE_LOCKED,
+        wamn_postgres::environment_sql::CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_DELETE_DELETE_LOCKED,
     )
     .bind(org.as_str())
     .bind(project.as_str())
@@ -816,7 +822,7 @@ async fn delete_inputs(
     .context("read the environment row")?;
     row.map(|(instance, drain)| {
         Ok((
-            crate::decode_text(instance, 0).context("read the environment row")?,
+            wamn_postgres::decode_text(instance, 0).context("read the environment row")?,
             drain,
         ))
     })
@@ -828,7 +834,7 @@ async fn capture_exists(
     capture_name: &str,
     data: bool,
 ) -> anyhow::Result<bool> {
-    let observer = crate::database_configuration(&owner.to_json()?, "postgres")?;
+    let observer = wamn_postgres::database_configuration(&owner.to_json()?, "postgres")?;
     let mut observer = connect_for_delete(connect(&observer), data).await?;
     if let Some(row) = sqlx::query("SELECT active FROM pg_replication_slots WHERE slot_name=$1")
         .bind(capture_name)
@@ -849,9 +855,9 @@ async fn drop_capture(
     data: bool,
 ) -> anyhow::Result<()> {
     let mut connection = connect_for_delete(connect(&capture.to_json()?), data).await?;
-    sqlx::raw_sql(sqlx::AssertSqlSafe(crate::capture_sql::drop_capture_sql(
-        capture_name,
-    )))
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        wamn_postgres::capture_sql::drop_capture_sql(capture_name),
+    ))
     .execute(&mut connection)
     .await?;
     Ok(())
@@ -860,9 +866,12 @@ async fn drop_capture(
 async fn disable_connection_principals(project: &PgLifecycleLock) -> anyhow::Result<()> {
     let mut project = project.client().await;
     let mut transaction = project.begin().await?;
-    crate::bind_platform_principal(&mut transaction, crate::PlatformComponent::Provisioning)
-        .await?;
-    crate::identity::application::disable_connection_services(&mut transaction)
+    wamn_postgres::bind_platform_principal(
+        &mut transaction,
+        wamn_postgres::PlatformComponent::Provisioning,
+    )
+    .await?;
+    wamn_postgres::identity::application::disable_connection_services(&mut transaction)
         .await
         .context("disable the retained database's connection principals")?;
     transaction.commit().await?;
@@ -939,7 +948,7 @@ async fn inspect_capture(
     replication_name: &str,
     triple: &Triple,
 ) -> anyhow::Result<(CaptureStatus, Box<dyn CaptureRepair>)> {
-    let mut admin = crate::connect(url)
+    let mut admin = wamn_postgres::connect(url)
         .await
         .context("connect to the project database for capture gap recovery")?;
     let current: String = sqlx::query("SELECT current_database()::text")
@@ -991,15 +1000,15 @@ struct RepairConnection(Client);
 #[async_trait::async_trait]
 impl CaptureRepair for RepairConnection {
     async fn repair(&mut self, replication_name: &str) -> anyhow::Result<String> {
-        sqlx::raw_sql(sqlx::AssertSqlSafe(crate::capture_sql::drop_capture_sql(
-            replication_name,
-        )))
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            wamn_postgres::capture_sql::drop_capture_sql(replication_name),
+        ))
         .execute(&mut self.0)
         .await
         .map(drop)
         .context("drop the lost slot")?;
         sqlx::raw_sql(sqlx::AssertSqlSafe(
-            crate::capture_sql::create_failover_capture_sql(replication_name),
+            wamn_postgres::capture_sql::create_failover_capture_sql(replication_name),
         ))
         .execute(&mut self.0)
         .await
@@ -1096,8 +1105,11 @@ async fn capture_transaction(
 ) -> anyhow::Result<sqlx::Transaction<'_, sqlx::Postgres>> {
     use sqlx::Connection as _;
     let mut transaction = client.begin().await?;
-    crate::bind_platform_principal(&mut transaction, crate::PlatformComponent::Provisioning)
-        .await?;
+    wamn_postgres::bind_platform_principal(
+        &mut transaction,
+        wamn_postgres::PlatformComponent::Provisioning,
+    )
+    .await?;
     Ok(transaction)
 }
 
@@ -1189,7 +1201,8 @@ impl Database for PostgresDeployment {
             }
             DatabaseConnection::Wait { input, database } => {
                 let client =
-                    crate::platform_database::wait_project_connection(input, database).await?;
+                    wamn_postgres::platform_database::wait_project_connection(input, database)
+                        .await?;
                 PgLifecycleLock::acquire_environment(client, org, env).await?
             }
             DatabaseConnection::Delete { input, data } => {
@@ -1199,7 +1212,7 @@ impl Database for PostgresDeployment {
         };
         let lost = lock.loss_signal();
         Ok(LifecycleLock {
-            session: Box::new(lock),
+            session: Box::new(PostgresSession(lock)),
             lost,
         })
     }
@@ -1243,7 +1256,7 @@ impl Database for PostgresDeployment {
         app: Option<&ApplicationName>,
     ) -> anyhow::Result<Vec<UnfinishedRun>> {
         let mut connection =
-            crate::platform_database::wait_project_connection(url, database).await?;
+            wamn_postgres::platform_database::wait_project_connection(url, database).await?;
         unfinished(&mut connection, env, app).await
     }
 
@@ -1251,7 +1264,7 @@ impl Database for PostgresDeployment {
         &self,
         input: &str,
     ) -> anyhow::Result<Vec<(PackageName, Option<Digest>)>> {
-        Ok(crate::installed_package_artifacts(&mut connect(input).await?).await?)
+        Ok(wamn_postgres::installed_package_artifacts(&mut connect(input).await?).await?)
     }
 
     async fn package_baselines(
@@ -1292,7 +1305,7 @@ impl Database for PostgresDeployment {
     }
 
     fn migration_configuration(&self, owner: &str) -> anyhow::Result<String> {
-        crate::migration_scope::MigrationDatabase::Project.configuration(owner)
+        wamn_postgres::migration_scope::MigrationDatabase::Project.configuration(owner)
     }
 
     async fn prepare_cdc(
@@ -1335,10 +1348,13 @@ impl Database for PostgresDeployment {
     }
 }
 
+#[derive(Debug)]
+struct PostgresSession(PgLifecycleLock);
+
 #[async_trait::async_trait]
-impl DatabaseSession for PgLifecycleLock {
+impl DatabaseSession for PostgresSession {
     async fn release(self: Box<Self>) {
-        (*self).release().await;
+        self.0.release().await;
     }
 
     async fn reserve(
@@ -1346,7 +1362,7 @@ impl DatabaseSession for PgLifecycleLock {
         projects: &[EnvironmentDocument],
         disposable: Option<bool>,
     ) -> anyhow::Result<Vec<InstanceSuffix>> {
-        reserve(self, projects, disposable).await
+        reserve(&self.0, projects, disposable).await
     }
 
     async fn retain_integrations(
@@ -1355,10 +1371,10 @@ impl DatabaseSession for PgLifecycleLock {
         env: &EnvName,
         names: &[&str],
     ) -> anyhow::Result<()> {
-        let mut connection = self.client().await;
+        let mut connection = self.0.client().await;
         let mut transaction =
             provision_project_env::provisioning_transaction(&mut connection).await?;
-        crate::Registry::new(&mut transaction)
+        wamn_postgres::Registry::new(&mut transaction)
             .retain_integrations(org, env, names)
             .await
             .context("remove connection pins after project configuration")?;
@@ -1367,7 +1383,7 @@ impl DatabaseSession for PgLifecycleLock {
     }
 
     async fn project_count(&self, org: &OrgId, env: &EnvName) -> anyhow::Result<u32> {
-        project_count(&mut *self.client().await, org, env).await
+        project_count(&mut *self.0.client().await, org, env).await
     }
 
     async fn host_projects(
@@ -1378,11 +1394,11 @@ impl DatabaseSession for PgLifecycleLock {
         excluded: Option<&ProjectId>,
         drain: Option<i32>,
     ) -> anyhow::Result<(Vec<ProjectId>, i32)> {
-        host_projects(self, org, env, reserved, excluded, drain).await
+        host_projects(&self.0, org, env, reserved, excluded, drain).await
     }
 
     async fn connection(&self, triple: &Triple) -> anyhow::Result<ConnectionConfig> {
-        crate::platform_database::connection(&mut *self.client().await, triple).await
+        wamn_postgres::platform_database::connection(&mut *self.0.client().await, triple).await
     }
 
     async fn project_schema(
@@ -1392,24 +1408,26 @@ impl DatabaseSession for PgLifecycleLock {
         apply: bool,
         output: &mut Vec<u8>,
     ) -> anyhow::Result<()> {
-        let sources = crate::platform_migrations::embedded_sources(
-            crate::migration_scope::MigrationDatabase::Project,
+        let sources = wamn_postgres::platform_migrations::embedded_sources(
+            wamn_postgres::migration_scope::MigrationDatabase::Project,
         );
-        crate::environment_schema::project_schema(self, triple, migration, &sources, apply, output)
-            .await
+        crate::platform_migrations::project_schema(
+            &self.0, triple, migration, &sources, apply, output,
+        )
+        .await
     }
 
     async fn read_configuration(
         &self,
         triple: &Triple,
     ) -> anyhow::Result<Option<EnvironmentConfiguration>> {
-        Ok(read_configuration(&mut *self.client().await, triple).await?)
+        Ok(read_configuration(&mut *self.0.client().await, triple).await?)
     }
 
     async fn fill(&self, owner: &str, triple: &Triple, issuer: &str) -> anyhow::Result<()> {
         let mut project = connect(owner).await?;
-        crate::environment_fill::fill(
-            &mut *self.client().await,
+        wamn_postgres::environment_fill::fill(
+            &mut *self.0.client().await,
             &mut project,
             issuer,
             wamn_authentication::administration::ApplicationTarget {
@@ -1429,11 +1447,19 @@ impl DatabaseSession for PgLifecycleLock {
         schemas: &[CanonicalName],
         capture: &ConnectionConfig,
     ) -> anyhow::Result<()> {
-        save_deployment(self, triple, configuration, publication, schemas, capture).await
+        save_deployment(
+            &self.0,
+            triple,
+            configuration,
+            publication,
+            schemas,
+            capture,
+        )
+        .await
     }
 
     async fn environment_row(&self, triple: &Triple) -> anyhow::Result<Option<EnvironmentRow>> {
-        let mut connection = self.client().await;
+        let mut connection = self.0.client().await;
         let mut transaction =
             provision_project_env::provisioning_transaction(&mut connection).await?;
         let row = read_row(&mut transaction, triple)
@@ -1447,23 +1473,26 @@ impl DatabaseSession for PgLifecycleLock {
         &self,
         triple: &Triple,
     ) -> anyhow::Result<BTreeSet<ApplicationName>> {
-        application_names(self, triple).await
+        application_names(&self.0, triple).await
     }
 
     async fn capture_instance(&self, triple: &Triple) -> anyhow::Result<InstanceSuffix> {
-        crate::environment_registry::read_project_env_instance(&mut *self.client().await, triple)
-            .await
+        wamn_postgres::environment_registry::read_project_env_instance(
+            &mut *self.0.client().await,
+            triple,
+        )
+        .await
     }
 
     async fn instance(&self, triple: &Triple) -> anyhow::Result<InstanceSuffix> {
-        crate::Registry::new(&mut *self.client().await)
+        wamn_postgres::Registry::new(&mut *self.0.client().await)
             .instance_suffix(triple)
             .await?
             .context("project deployment instance is absent")
     }
 
     async fn disposable(&self, triple: &Triple) -> anyhow::Result<bool> {
-        Ok(crate::Registry::new(&mut *self.client().await)
+        Ok(wamn_postgres::Registry::new(&mut *self.0.client().await)
             .disposable(triple)
             .await?)
     }
@@ -1472,15 +1501,15 @@ impl DatabaseSession for PgLifecycleLock {
         &self,
         triple: &Triple,
     ) -> anyhow::Result<Option<(InstanceSuffix, i32)>> {
-        delete_inputs(self, triple).await
+        delete_inputs(&self.0, triple).await
     }
 
     async fn delete_rows(&self, triple: &Triple) -> anyhow::Result<Vec<String>> {
-        delete_registry_rows(&mut *self.client().await, triple).await
+        delete_registry_rows(&mut *self.0.client().await, triple).await
     }
 
     async fn reset(&self, owner: &str, migration: &str, triple: &Triple) -> anyhow::Result<()> {
-        reset_database(self, owner, migration, triple).await
+        reset_database(&self.0, owner, migration, triple).await
     }
 
     async fn initialize_project(
@@ -1489,14 +1518,14 @@ impl DatabaseSession for PgLifecycleLock {
         owner: &str,
         unconfigured: bool,
     ) -> anyhow::Result<()> {
-        initialize_project(self, database, owner, unconfigured).await
+        initialize_project(&self.0, database, owner, unconfigured).await
     }
 
     async fn grant_workload(
         &self,
         connections: &[(WorkloadRoleFamily, ConnectionConfig)],
     ) -> anyhow::Result<()> {
-        crate::project_setup::grant(&mut *self.client().await, connections).await
+        wamn_postgres::project_setup::grant(&mut *self.0.client().await, connections).await
     }
 
     async fn unfinished(
@@ -1504,38 +1533,40 @@ impl DatabaseSession for PgLifecycleLock {
         env: &EnvName,
         app: Option<&ApplicationName>,
     ) -> anyhow::Result<Vec<UnfinishedRun>> {
-        unfinished(&mut *self.client().await, env, app).await
+        unfinished(&mut *self.0.client().await, env, app).await
     }
 
     async fn installed_packages(&self) -> anyhow::Result<Vec<(PackageName, Option<Digest>)>> {
-        Ok(crate::installed_package_artifacts(&mut *self.client().await).await?)
+        Ok(wamn_postgres::installed_package_artifacts(&mut *self.0.client().await).await?)
     }
 
     async fn disable_connection_principals(&self) -> anyhow::Result<()> {
-        disable_connection_principals(self).await
+        disable_connection_principals(&self.0).await
     }
 
     async fn platform_domain(&self) -> anyhow::Result<PlatformDomain> {
         Ok(
-            crate::identity::application::service::platform_domain(&mut *self.client().await)
-                .await?,
+            wamn_postgres::identity::application::service::platform_domain(
+                &mut *self.0.client().await,
+            )
+            .await?,
         )
     }
 
     async fn check_workflows(&self, application: &ApplicationConfig) -> anyhow::Result<()> {
-        check_workflows(&mut *self.client().await, application).await
+        check_workflows(&mut *self.0.client().await, application).await
     }
 
     async fn create_number_sequences(&self, sequences: &[SequenceDefault]) -> anyhow::Result<()> {
-        create_number_sequences(&mut *self.client().await, sequences).await
+        create_number_sequences(&mut *self.0.client().await, sequences).await
     }
 
     async fn environment_target(&self, triple: &Triple) -> anyhow::Result<Option<Option<String>>> {
-        environment_target(self, triple).await
+        environment_target(&self.0, triple).await
     }
 
     async fn connection_binding(&self, name: &str) -> anyhow::Result<Option<ConnectionBinding>> {
-        connection_binding(self, name).await
+        connection_binding(&self.0, name).await
     }
 
     async fn integration_binding(
@@ -1545,25 +1576,25 @@ impl DatabaseSession for PgLifecycleLock {
         version: i32,
         connection: &ConnectionBinding,
     ) -> anyhow::Result<Option<IntegrationBinding>> {
-        integration_binding(self, triple, target, version, connection).await
+        integration_binding(&self.0, triple, target, version, connection).await
     }
 
     async fn has_capture_gap(&self, triple: &Triple) -> anyhow::Result<bool> {
-        capture_gap_open(&mut *self.client().await, triple).await
+        capture_gap_open(&mut *self.0.client().await, triple).await
     }
 
     async fn capture_registration(&self, triple: &Triple) -> anyhow::Result<CaptureRegistration> {
-        capture_registration(self, triple).await
+        capture_registration(&self.0, triple).await
     }
 
     async fn record_capture_gap(
         &self,
         gap: &PendingCaptureGap<'_>,
     ) -> anyhow::Result<DateTime<Utc>> {
-        record_capture_gap(self, gap).await
+        record_capture_gap(&self.0, gap).await
     }
 
     async fn close_capture_gap(&self, triple: &Triple) -> anyhow::Result<ClosedCaptureGap> {
-        close_capture_gap(triple, &mut *self.client().await).await
+        close_capture_gap(triple, &mut *self.0.client().await).await
     }
 }

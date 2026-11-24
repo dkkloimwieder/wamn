@@ -9,38 +9,6 @@ pub fn embedded_sources(target: MigrationDatabase) -> Vec<Migration> {
         .collect()
 }
 
-pub async fn observe(
-    client: &mut sqlx::PgConnection,
-    database: MigrationDatabase,
-    sources: &[Migration],
-) -> anyhow::Result<crate::migrations::SchemaReport> {
-    let table = match database {
-        MigrationDatabase::System => crate::REGISTRY_HISTORY_TABLE,
-        MigrationDatabase::Project => "platform._sqlx_migrations",
-    };
-    crate::migrations::observe(client, table, sources).await
-}
-pub async fn observe_system(
-    client: &mut sqlx::PgConnection,
-) -> anyhow::Result<crate::migrations::SchemaReport> {
-    observe(
-        client,
-        MigrationDatabase::System,
-        &embedded_sources(MigrationDatabase::System),
-    )
-    .await
-}
-pub async fn observe_project(
-    client: &mut sqlx::PgConnection,
-) -> anyhow::Result<crate::migrations::SchemaReport> {
-    observe(
-        client,
-        MigrationDatabase::Project,
-        &embedded_sources(MigrationDatabase::Project),
-    )
-    .await
-}
-
 pub async fn apply_target(
     client: &mut sqlx::PgConnection,
     database: MigrationDatabase,

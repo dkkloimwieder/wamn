@@ -6,10 +6,23 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+async-trait.workspace = true
+chrono = { workspace = true, features = ["std"] }
 ring.workspace = true
 serde = { workspace = true, features = ["derive"] }
+tokio = { workspace = true, features = ["time"] }
+wamn-application.workspace = true
+wamn-authentication.workspace = true
+wamn-component-policy.workspace = true
+wamn-digest.workspace = true
+wamn-environment.workspace = true
+wamn-event.workspace = true
+wamn-identity-protocol.workspace = true
+wamn-package.workspace = true
 wamn-platform-install.workspace = true
+wamn-release.workspace = true
 wamn-role.workspace = true
+wamn-workflow-graph.workspace = true
 anyhow.workspace = true
 wamn-postgres.workspace = true
 sqlx = { workspace = true, features = ["migrate", "macros", "postgres", "runtime-tokio", "tls-rustls", "chrono", "uuid", "json", "bigdecimal"] }
@@ -29,8 +42,8 @@ sha2 = { workspace = true }
 url = { workspace = true }
 
 [dev-dependencies]
-wamn-environment.workspace = true
 wamn-kubernetes.workspace = true
+wamn-oci.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 wamn-test-infrastructure = { workspace = true }
 

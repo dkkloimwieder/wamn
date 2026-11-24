@@ -5,7 +5,7 @@ use sqlx::{Connection as _, Row as _};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use wamn_postgres::apply_package::{self, ApplyOutcome, ApplyPackageRequest, PackageRoot};
+use wamn_provision::apply_package::{self, ApplyOutcome, ApplyPackageRequest, PackageRoot};
 use wamn_provision::sql;
 
 const SCHEMA: &str = "record_retention";

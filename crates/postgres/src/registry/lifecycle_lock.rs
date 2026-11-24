@@ -196,7 +196,8 @@ impl LifecycleLock {
         result
     }
 
-    pub(crate) fn loss_signal(&self) -> tokio::sync::watch::Receiver<bool> {
+    /// Subscribe to loss of the session holding the advisory locks.
+    pub fn loss_signal(&self) -> tokio::sync::watch::Receiver<bool> {
         self.lost.clone()
     }
 

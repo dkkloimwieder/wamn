@@ -4,9 +4,9 @@ use std::collections::BTreeSet;
 
 use anyhow::{Context as _, ensure};
 
-use crate::{PlatformComponent, bind_platform_principal};
 use wamn_component_policy::PackageManifest;
 use wamn_package::package_schema::{PackageDirectory, package_metadata};
+use wamn_postgres::{PlatformComponent, bind_platform_principal};
 
 mod entity_maps;
 mod error;
@@ -43,7 +43,7 @@ async fn prepare_package(
         .context("validate package directory before database work")?;
     let manifest = PackageManifest::from_slice(&directory.manifest_bytes)
         .context("parse strict package manifest for definition ownership")?;
-    let migrations = crate::build_database::migrator(migration_root).await?;
+    let migrations = wamn_postgres::build_database::migrator(migration_root).await?;
     Ok(PreparedPackage {
         directory,
         manifest,
@@ -65,7 +65,7 @@ pub async fn apply_package(
         ))
         .into());
     }
-    let mut client = crate::connect(&request.database_url)
+    let mut client = wamn_postgres::connect(&request.database_url)
         .await
         .context("connect to project environment")?;
 
@@ -92,18 +92,18 @@ async fn apply(
     let package_id = plan.coordinate.package_id().to_owned();
     let package_version = plan.coordinate.package_version().to_owned();
     let coordinate = format!("{package_id}@{package_version}");
-    let migration_options = crate::connect_options(migration_input).await?;
-    let catalog_options = crate::connect_options(catalog_input).await?;
+    let migration_options = wamn_postgres::connect_options(migration_input).await?;
+    let catalog_options = wamn_postgres::connect_options(catalog_input).await?;
     ensure!(
         migration_options.get_host() == catalog_options.get_host()
             && migration_options.get_port() == catalog_options.get_port()
             && migration_options.get_database() == catalog_options.get_database(),
         "migration and catalog connections name different database targets"
     );
-    let mut executor = crate::connect(migration_options)
+    let mut executor = wamn_postgres::connect(migration_options)
         .await
         .context("connect as the migration login")?;
-    let login = crate::project_migration::require_login(&mut executor).await?;
+    let login = wamn_postgres::project_migration::require_login(&mut executor).await?;
     let catalog_database: String = sqlx::query_scalar("SELECT current_database()::text")
         .fetch_one(&mut *client)
         .await?;
@@ -115,16 +115,16 @@ async fn apply(
         "migration and catalog connections name different databases"
     );
     // The executing backend owns exclusion, including while a cancelled SQL statement finishes.
-    crate::migrations::lock_session(&mut executor, LOCK_SQL, &[]).await?;
-    crate::migrations::lock_session(
+    wamn_postgres::migrations::lock_session(&mut executor, LOCK_SQL, &[]).await?;
+    wamn_postgres::migrations::lock_session(
         &mut executor,
         LOCK_PACKAGE_SQL,
         &[project_env_key.as_str(), package_id.as_str()],
     )
     .await?;
-    crate::migrations::lock_session(
+    wamn_postgres::migrations::lock_session(
         &mut executor,
-        crate::audit_retention::AUDIT_RETENTION_LOCK_SQL,
+        wamn_postgres::audit_retention::AUDIT_RETENTION_LOCK_SQL,
         &[],
     )
     .await?;
@@ -144,19 +144,20 @@ async fn apply(
     let mut tx = migration::begin(client, project_env_key).await?;
     let mut changed = false;
     if applied.is_none() {
-        changed |= crate::release_requirements::install(&mut tx, &package.manifest).await? != 0;
+        changed |=
+            wamn_postgres::release_requirements::install(&mut tx, &package.manifest).await? != 0;
     }
-    sqlx::raw_sql(sqlx::AssertSqlSafe(crate::project_migration::grants_sql(
-        &login,
-    )))
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        wamn_postgres::project_migration::grants_sql(&login),
+    ))
     .execute(&mut *tx)
     .await?;
-    let table = crate::project_migration::history_table(project_env_key, &package_id);
-    crate::project_migration::prepare_history(&mut tx, &table, &login).await?;
+    let table = wamn_postgres::project_migration::history_table(project_env_key, &package_id);
+    wamn_postgres::project_migration::prepare_history(&mut tx, &table, &login).await?;
     ensure_model_schemas(&mut tx, &plan, &login).await?;
     tx.commit().await?;
     let migrations_applied =
-        crate::migrations::run(&mut executor, package.migrations, table).await?;
+        wamn_postgres::migrations::run(&mut executor, package.migrations, table).await?;
     let mut tx = migration::begin(client, project_env_key).await?;
     entity_maps::reconcile_entity_maps(&mut tx, &plan, &package.manifest).await?;
     changed |=
@@ -230,7 +231,7 @@ async fn ensure_model_schemas(
         )
         .collect::<BTreeSet<_>>();
     for schema in schemas {
-        let schema = crate::schema::BareSchemaName::new(schema)?;
+        let schema = wamn_postgres::schema::BareSchemaName::new(schema)?;
         sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
             "CREATE SCHEMA IF NOT EXISTS {} AUTHORIZATION {}",
             schema.quoted(),
@@ -238,8 +239,12 @@ async fn ensure_model_schemas(
         )))
         .execute(&mut *connection)
         .await?;
-        crate::project_migration::grant_model_schema_access(connection, login, schema.as_str())
-            .await?;
+        wamn_postgres::project_migration::grant_model_schema_access(
+            connection,
+            login,
+            schema.as_str(),
+        )
+        .await?;
     }
     Ok(())
 }

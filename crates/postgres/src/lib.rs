@@ -6,7 +6,6 @@ use anyhow::Context as _;
 use sqlx::postgres::PgConnectOptions;
 
 pub mod administration;
-pub mod apply_package;
 pub mod audit_retention;
 pub mod authorization;
 pub mod build_database;
@@ -19,7 +18,6 @@ pub mod environment_org;
 pub mod environment_registry;
 pub mod environment_schema;
 pub mod environment_sql;
-pub mod environment_sql_effects;
 mod file_catalog;
 pub mod file_connections;
 pub mod identity;

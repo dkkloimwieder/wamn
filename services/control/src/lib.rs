@@ -108,7 +108,7 @@ impl Configuration {
                 == Some(wamn_platform_install::release_chart::POD_REGISTRY);
         Ok(Platform {
             system_database_url: self.apply_database.to_json()?,
-            database: Arc::new(wamn_postgres::environment_sql_effects::PostgresDeployment),
+            database: Arc::new(wamn_provision::environment_sql_effects::PostgresDeployment),
             database_values: wamn_provision::platform_environment::database_values,
             database_files: None,
             cluster: Arc::new(wamn_kubernetes::Target::in_cluster(

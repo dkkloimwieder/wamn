@@ -89,7 +89,7 @@ async fn platform_initialization_applies_pending_migrations_on_upgrade() {
     initialize_system(&mut client, migration_input.as_str(), &sources)
         .await
         .unwrap();
-    let observed = wamn_postgres::environment_schema::observe(
+    let observed = wamn_provision::platform_migrations::observe(
         &mut client,
         MigrationDatabase::System,
         &sources,

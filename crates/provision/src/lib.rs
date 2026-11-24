@@ -4,8 +4,10 @@
 //! client certificates. SQL declarations own privilege roles and grants.
 
 pub mod apply;
+pub mod apply_package;
 pub use wamn_postgres::audit_retention;
 pub mod environment_names;
+pub mod environment_sql_effects;
 mod error;
 pub mod identity_role;
 pub use wamn_postgres::project_migration as migration;

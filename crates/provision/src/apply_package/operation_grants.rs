@@ -1,9 +1,9 @@
-use crate::operation::lock_operation_grants;
-use crate::operation_grants::{
+use anyhow::Context as _;
+use wamn_postgres::operation::lock_operation_grants;
+use wamn_postgres::operation_grants::{
     ENSURE_ADMIN_ROLE_SQL, OPERATION_GRANT_TRANSACTION_PRELUDE_SQL,
     operation_base_grants_requirements_sql,
 };
-use anyhow::Context as _;
 
 /// Create the project's built-in `admin` role when it is absent, and return
 /// whether a row was written. `admin` has no permission rows.
