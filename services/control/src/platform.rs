@@ -150,7 +150,7 @@ impl Execution {
 pub async fn execute(config: &Configuration, payload: &str) -> anyhow::Result<Value> {
     let request: Request = serde_json::from_str(payload)?;
     let mut platform = config.platform()?;
-    let files = wamn_platform_install::credentials::DatabaseFiles::in_cluster()?;
+    let files = wamn_kubernetes::database_files::DatabaseFiles::in_cluster()?;
     files.materialize(&config.apply_database).await?;
     platform.database_files = Some(files);
     crate::write_kubeconfig(&platform.target.kubeconfig, config.org.as_str())?;
@@ -255,7 +255,7 @@ async fn project_schema(
     use std::io::Write as _;
 
     let migration =
-        wamn_platform_install::environment::connection(&mut *lock.client().await, triple).await?;
+        wamn_postgres::platform_database::connection(&mut *lock.client().await, triple).await?;
     platform.prepare_database(&migration).await?;
     let migration = migration.to_json()?;
     writeln!(output, "Project {}", triple.project)?;

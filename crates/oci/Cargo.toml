@@ -11,6 +11,7 @@ path = "src/bin/docker-credential-wamn.rs"
 test = false
 
 [dependencies]
+wamn-platform-install.workspace = true
 wamn-oci-reference.workspace = true
 wamn-gcp-metadata.workspace = true
 wamn-package.workspace = true

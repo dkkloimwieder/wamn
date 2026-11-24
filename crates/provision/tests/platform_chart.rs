@@ -5,7 +5,9 @@ use std::path::Path;
 
 #[test]
 fn project_retains_only_the_operator_policy_for_each_cluster() -> anyhow::Result<()> {
-    use crate::environment::{connection_for, database_values, entry, set_operation_values};
+    use wamn_kubernetes::platform_environment::entry;
+    use wamn_platform_install::environment::connection_for;
+    use wamn_provision::platform_environment::{database_values, set_operation_values};
     use wamn_registry::name;
 
     let triple = wamn_registry::Triple::new("acme".parse()?, "dev".parse()?, "billing".parse()?);
@@ -68,7 +70,7 @@ fn operation_worker_bindings_use_their_own_accounts_and_namespace_resources() ->
     let database = "recorded-environment-database";
     let application = "shop".parse()?;
     let mut values = json!({});
-    crate::environment::set_operation_values(
+    wamn_provision::platform_environment::set_operation_values(
         &mut values,
         &document,
         cluster,
@@ -83,7 +85,7 @@ fn operation_worker_bindings_use_their_own_accounts_and_namespace_resources() ->
         document.org, document.env, document.project,
     )
     .into();
-    let entry = crate::environment::entry(
+    let entry = wamn_kubernetes::platform_environment::entry(
         &repository.join("deploy/charts/project"),
         document.org.as_str(),
         "fixture",
@@ -191,7 +193,7 @@ fn colliding_coordinates_read_only_their_own_credentials() -> anyhow::Result<()>
     assert_ne!(secrets[0], secrets[1]);
     for index in 0..coordinates.len() {
         let (org, project, env) = coordinates[index];
-        let entry = crate::environment::entry(
+        let entry = wamn_kubernetes::platform_environment::entry(
             &repository.join("deploy/charts/environment"),
             org,
             &accounts[index],

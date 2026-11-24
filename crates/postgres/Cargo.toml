@@ -6,6 +6,8 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+hex.workspace = true
+wamn-platform-install.workspace = true
 pg_walstream.workspace = true
 wamn-application.workspace = true
 wamn-authentication.workspace = true
@@ -63,7 +65,6 @@ pg_query = "=6.2.1"
 syn = { workspace = true, features = ["full"] }
 tempfile.workspace = true
 wamn-fixture-package.workspace = true
-wamn-platform-install.workspace = true
 wamn-provision.workspace = true
 wamn-test-infrastructure.workspace = true
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt"] }

@@ -35,7 +35,7 @@ pub(super) async fn suspend_project(
         drain_bound_seconds,
     )
     .await?;
-    wamn_platform_install::environment::prepare_host_upgrade(
+    wamn_kubernetes::platform_environment::prepare_host_upgrade(
         &platform.target,
         &platform.chart,
         name.clone(),
@@ -44,7 +44,7 @@ pub(super) async fn suspend_project(
     .await?
     .await?;
     let connection =
-        wamn_platform_install::environment::connection(&mut *system.client().await, triple).await?;
+        wamn_postgres::platform_database::connection(&mut *system.client().await, triple).await?;
     let started = Instant::now();
     let mut deadline = started + Duration::from_secs(120);
     let mut next_check = started;
@@ -121,7 +121,7 @@ pub(super) async fn prepare_host_upgrade<'a>(
                 .context("invalid host replica count")?,
         )?
     };
-    let upgrade = wamn_platform_install::environment::prepare_host_upgrade(
+    let upgrade = wamn_kubernetes::platform_environment::prepare_host_upgrade(
         &platform.target,
         &platform.chart,
         name,
@@ -184,7 +184,7 @@ async fn host_values(
     .filter_map(|key| group.get(key).map(|value| (key, value)))
     .map(|(key, value)| Ok((key.into(), serde_json::to_value(value)?)))
     .collect::<serde_json::Result<_>>()?;
-    let image = wamn_platform_install::release_chart::image_set(&platform.chart)
+    let image = wamn_kubernetes::release_chart::image_set(&platform.chart)
         .await?
         .host;
 
@@ -192,7 +192,7 @@ async fn host_values(
     for project in projects {
         let triple = Triple::new(org.clone(), env.clone(), project);
         let connection =
-            wamn_platform_install::environment::connection(&mut *system.client().await, &triple)
+            wamn_postgres::platform_database::connection(&mut *system.client().await, &triple)
                 .await?;
         anyhow::ensure!(
             connection.credentials.namespace == org.as_str()

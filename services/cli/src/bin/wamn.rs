@@ -134,7 +134,14 @@ async fn main() -> anyhow::Result<()> {
         Command::Platform(command) => wamn_cli::platform_verbs::run_product(command).await,
         Command::Org(OrgCommand::Create { org, owner }) => {
             wamn_authentication::principal::require_user_contact(&owner, "Org owner")?;
-            wamn_platform_install::org::create(&org, &owner).await
+            let installer = wamn_kubernetes::org_install::OrgInstaller::developer().await?;
+            wamn_platform_install::org::create(
+                &org,
+                &owner,
+                &installer,
+                &wamn_oci::platform_install::PlatformRegistry,
+            )
+            .await
         }
         Command::Eject(args) => wamn_cli::build_verbs::eject(args),
         Command::Build(args) => wamn_cli::build_verbs::run(args).await,

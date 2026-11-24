@@ -24,7 +24,7 @@ use wamn_postgres::identity::application;
 use std::path::PathBuf;
 
 use wamn_kubernetes::Target;
-use wamn_platform_install::release_chart::bundle::SelectedChart;
+use wamn_kubernetes::release_chart::bundle::SelectedChart;
 
 /// The platform inputs of the lifecycle verbs.
 #[derive(Debug, Clone)]
@@ -32,7 +32,7 @@ pub struct Platform {
     /// The system database URL selected for this verb.
     pub system_database_url: String,
     /// The operation worker's writer for database credentials.
-    pub database_files: Option<wamn_platform_install::credentials::DatabaseFiles>,
+    pub database_files: Option<wamn_kubernetes::database_files::DatabaseFiles>,
     /// The cluster, its context and the operator release's namespace (R6).
     pub target: Target,
     /// A stamped release chart directory.

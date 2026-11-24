@@ -66,7 +66,7 @@ pub async fn grant(
     connections: &[(WorkloadRoleFamily, ConnectionConfig)],
 ) -> anyhow::Result<()> {
     for (family, connection) in connections {
-        wamn_platform_install::credentials::wait_role(project, &connection.username).await?;
+        wamn_postgres::platform_database::wait_role(project, &connection.username).await?;
         sqlx::raw_sql(sqlx::AssertSqlSafe(sql::grant_workload_login_sql(
             *family,
             &connection.database,

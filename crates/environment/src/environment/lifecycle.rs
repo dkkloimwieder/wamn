@@ -50,7 +50,7 @@ pub async fn configure(
                 let mut client = lock.client().await;
                 let mut transaction = provision_project_env::provisioning_transaction(&mut client)
                     .await?;
-                sqlx::query(wamn_registry::sql::PROJECT_STREAM_CAPACITY_LOCK_SQL)
+                sqlx::query(wamn_postgres::platform_sql::PROJECT_STREAM_CAPACITY_LOCK_SQL)
                     .execute(&mut *transaction)
                     .await
                     .context("lock platform project stream capacity")?;
@@ -107,7 +107,7 @@ pub async fn configure(
                 for (project, instance) in projects.iter().zip(reserved) {
                     let connection =
                         installer::environment::connection_for(&project.triple(), &instance);
-                    let database = installer::environment::database_values(
+                    let database = wamn_provision::platform_environment::database_values(
                         &connection,
                         replicas,
                         sizing.clone(),
@@ -210,7 +210,8 @@ async fn configure_project(
     } else {
         platform.prepare_database(connection).await?;
         let mut project =
-            installer::environment::wait_project_connection(&owner, &connection.database).await?;
+            wamn_postgres::platform_database::wait_project_connection(&owner, &connection.database)
+                .await?;
         let unfinished = super::drain::unfinished(&mut project, &triple.env, application).await?;
         ensure!(
             unfinished.is_empty(),
@@ -226,14 +227,14 @@ async fn configure_project(
 
     super::broker::configure_project(platform, triple).await?;
 
-    installer::environment::set_operation_values(
+    wamn_provision::platform_environment::set_operation_values(
         &mut values,
         triple,
         &cluster,
         &connection.database,
         document.applications.keys(),
     )?;
-    values["publication"] = installer::environment::publication_values(
+    values["publication"] = wamn_provision::platform_environment::publication_values(
         triple,
         instance,
         &cluster,
@@ -252,8 +253,13 @@ async fn configure_project(
         &triple.project,
         &triple.env,
     )?;
-    installer::environment::apply_project(&platform.target, &platform.chart, &release, &values)
-        .await?;
+    wamn_kubernetes::platform_environment::apply_project(
+        &platform.target,
+        &platform.chart,
+        &release,
+        &values,
+    )
+    .await?;
     let target = &platform.target;
     let clusters = resource(
         target.client.client(),
@@ -269,7 +275,7 @@ async fn configure_project(
     .await?
     .with_context(|| format!("Cluster {cluster} has no uid"))?;
     copy_server_ca(target, &cluster, &connection.server_ca.name, cluster_uid).await?;
-    installer::environment::wait_database_applied(
+    wamn_kubernetes::platform_environment::wait_database_applied(
         &platform.target,
         &connection.database,
         Duration::from_secs(120),
@@ -297,7 +303,8 @@ async fn configure_project(
         platform.prepare_database(connection).await?;
     }
     LifecycleLock::hold(
-        installer::environment::wait_project_connection(&owner, &connection.database).await?,
+        wamn_postgres::platform_database::wait_project_connection(&owner, &connection.database)
+            .await?,
         triple,
         async |project_lock| {
             let mut client = project_lock.client().await;
@@ -308,8 +315,10 @@ async fn configure_project(
             .await?;
             drop(client);
             if unconfigured {
-                installer::platform_migrations::install_project(&mut *project_lock.client().await)
-                    .await?;
+                wamn_provision::platform_migrations::install_project(
+                    &mut *project_lock.client().await,
+                )
+                .await?;
                 crate::platform_migrations::restore_project(
                     &owner,
                     &crate::platform_migrations::embedded_sources(
@@ -418,7 +427,7 @@ async fn reader_values(
     triple: &Triple,
     capture: &wamn_postgres::ConnectionConfig,
 ) -> anyhow::Result<Value> {
-    let image = installer::release_chart::image_set(&platform.chart)
+    let image = wamn_kubernetes::release_chart::image_set(&platform.chart)
         .await?
         .host;
     let (org, project, env) = (&triple.org, &triple.project, &triple.env);

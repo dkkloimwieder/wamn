@@ -125,12 +125,13 @@ fn stamp_chart(root: &Path, out: &Path) -> Result<std::path::PathBuf> {
         ingress: format!("registry.example.com/wamn/ingress@sha256:{zero}"),
         workflow: format!("registry.example.com/wamn/workflow@sha256:{zero}"),
     };
-    let stamped = wamn_platform_install::release_chart::stamp(
+    let stamped = wamn_kubernetes::release_chart::stamp(
         &root.join("deploy/charts/application"),
         &set,
         out,
+        &wamn_oci::platform_install::PlatformRegistry,
     )?;
-    wamn_platform_install::release_chart::bundle::prepare_payload(root, &stamped)?;
+    wamn_kubernetes::release_chart::bundle::prepare_payload(root, &stamped)?;
     Ok(stamped.join("platform/application"))
 }
 

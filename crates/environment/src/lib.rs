@@ -10,7 +10,7 @@ pub mod org;
 pub mod platform_migrations;
 pub mod provision_project_env;
 pub mod status;
-pub use wamn_platform_install::provision_system;
+pub use wamn_provision::provision_system;
 #[cfg(feature = "ops")]
 pub mod prune_record_history;
 #[cfg(feature = "ops")]

@@ -1,7 +1,7 @@
 //! Provisioning transaction authority.
+use crate::{PlatformComponent, bind_platform_principal};
 use anyhow::Context as _;
 use sqlx::{Connection as _, PgConnection as Client};
-use wamn_provision::{PlatformComponent, bind_platform_principal};
 /// Begin a system database transaction that writes as `wamn:provisioning`.
 ///
 /// The identity relations stamp the bound actor. The binding ends with the

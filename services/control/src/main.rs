@@ -75,15 +75,28 @@ async fn main() -> anyhow::Result<()> {
             max_projects,
         } => {
             let request = wamn_platform_install::provision_system::ProvisionSystemRequest {
-                database: wamn_postgres::ConnectionConfig::read(&database).await?,
+                database: wamn_postgres::read_connection_config(&database).await?,
                 platform_domain,
                 max_projects,
             };
-            wamn_platform_install::provision_system::provision_system(&request).await
+            wamn_platform_install::provision_system::provision_system(
+                &request,
+                &wamn_provision::provision_system::PostgresBootstrap,
+            )
+            .await
         }
         Command::ProvisionOrg { org, database } => {
-            let database = wamn_postgres::ConnectionConfig::read(&database).await?;
-            wamn_platform_install::provision_org::provision_org(&database, &org).await
+            let database = wamn_postgres::read_connection_config(&database).await?;
+            let api = wamn_kubernetes::client::KubernetesApi::in_cluster()?;
+            let oauth_encryption = wamn_kubernetes::org_secrets::oauth_encryption().await?;
+            wamn_platform_install::provision_org::provision_org(
+                &database,
+                &org,
+                &oauth_encryption,
+                &wamn_provision::provision_system::PostgresBootstrap,
+                &api,
+            )
+            .await
         }
         Command::InviteOrgOwner { org, owner } => {
             wamn_control::first_owner::invite(&org, &owner).await

@@ -1,9 +1,15 @@
 //! Shared Kubernetes transport, Secret storage, and bounded Job execution.
 
 pub mod client;
+pub mod database_files;
 pub mod helm;
 pub mod job;
 pub mod kubernetes;
+pub mod org_install;
+pub mod org_secrets;
+pub mod platform_environment;
+pub mod platform_install;
+pub mod release_chart;
 pub mod web_release;
 pub mod kubernetes_api {
     pub use crate::client::KubernetesApi;

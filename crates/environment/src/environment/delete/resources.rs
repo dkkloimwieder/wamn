@@ -70,7 +70,7 @@ pub(super) async fn delete_reader(
     if let Some(release) = release
         && deployments.get_opt(&cdc).await?.is_some()
     {
-        wamn_platform_install::environment::update_project(
+        wamn_kubernetes::platform_environment::update_project(
             &platform.target, &platform.chart, release,
             serde_json::json!({"cdcReader":{"pause":true},"publication":{"reclaimPolicy":"delete"}}),
         ).await?;
@@ -110,10 +110,15 @@ pub(super) async fn uninstall_project(
     data: bool,
     lines: &mut Vec<String>,
 ) -> anyhow::Result<()> {
-    wamn_platform_install::environment::remove_database(
+    let release = wamn_provision::environment_names::environment_resource_name(
+        &triple.org,
+        &triple.project,
+        &triple.env,
+    )?;
+    wamn_kubernetes::platform_environment::remove_database(
         &platform.target,
         &platform.chart,
-        triple,
+        &release,
         data,
     )
     .await?;

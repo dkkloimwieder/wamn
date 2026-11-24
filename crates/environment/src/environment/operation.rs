@@ -21,11 +21,12 @@ use serde_json::{Value, json};
 use tokio::time::Instant;
 use wamn_component_policy::PackageManifest;
 use wamn_digest::Digest;
+use wamn_kubernetes::release_chart::bundle::SelectedChart;
 use wamn_kubernetes::{
     client::{KubernetesApi, wait_named, workloads},
     job,
 };
-use wamn_platform_install::release_chart::bundle::{SelectedChart, pod_registry_reference};
+use wamn_platform_install::release_chart::pod_registry_reference;
 use wamn_publish::package_artifact::{OpenedPackage, open_package_digest};
 use wamn_registry::Triple;
 
@@ -174,11 +175,9 @@ pub async fn application(
                 document.applications.contains_key(name),
                 "application {name} is not declared"
             );
-            let connection = wamn_platform_install::environment::connection(
-                &mut *system.client().await,
-                &triple,
-            )
-            .await?;
+            let connection =
+                wamn_postgres::platform_database::connection(&mut *system.client().await, &triple)
+                    .await?;
             platform.prepare_database(&connection).await?;
             let owner = connection.to_json()?;
             let release = wamn_registry::resource_names::application_release_name(
@@ -188,7 +187,7 @@ pub async fn application(
                 name,
             );
             let project = if matches!(operation, Application::Deploy { .. }) {
-                wamn_platform_install::environment::wait_project_connection(
+                wamn_postgres::platform_database::wait_project_connection(
                     &owner,
                     &connection.database,
                 )
@@ -248,7 +247,7 @@ pub async fn application(
                     create_number_sequences(&mut *project.client().await, &sequences).await?;
                     let timeout =
                         Duration::from_secs(u64::try_from(document.readiness_budget_seconds)?);
-                    wamn_platform_install::environment::apply_application(
+                    wamn_kubernetes::platform_environment::apply_application(
                         &platform.target,
                         chart.directory(),
                         &release,
@@ -480,7 +479,7 @@ async fn apply_sql(
         .context("project deployment instance is absent")?;
     let publication =
         wamn_provision::cdc_object_name(&triple.org, &triple.project, &triple.env, &instance);
-    let mut values = wamn_platform_install::environment::publication_values(
+    let mut values = wamn_provision::platform_environment::publication_values(
         triple,
         &instance,
         cluster,
@@ -491,7 +490,7 @@ async fn apply_sql(
     values["cdcReader"] = json!({"pause":paused});
     let coord =
         wamn_registry::name::environment_resource_name(&triple.org, &triple.project, &triple.env);
-    wamn_platform_install::environment::update_project(
+    wamn_kubernetes::platform_environment::update_project(
         &platform.target,
         &platform.chart,
         &coord,
@@ -570,11 +569,9 @@ pub async fn reset(platform: &Platform, document: &EnvironmentDocument) -> anyho
                 .await?;
             ensure!(disposable, "environment is not recorded as disposable");
             drop(client);
-            let conn = wamn_platform_install::environment::connection(
-                &mut *system.client().await,
-                &triple,
-            )
-            .await?;
+            let conn =
+                wamn_postgres::platform_database::connection(&mut *system.client().await, &triple)
+                    .await?;
             platform.prepare_database(&conn).await?;
             let owner = conn.to_json()?;
             LifecycleLock::hold(

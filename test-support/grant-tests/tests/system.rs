@@ -541,7 +541,7 @@ async fn org_logins_reach_no_other_org() -> Result<()> {
     let home_name: String = sqlx::query_scalar("SELECT id FROM registry.orgs")
         .fetch_one(&mut admin)
         .await?;
-    let other_logins = wamn_platform_install::provision_org::create_org_logins(
+    let other_logins = wamn_provision::provision_org::create_org_logins(
         &mut admin,
         &OTHER_ORG.parse()?,
         &system.database,

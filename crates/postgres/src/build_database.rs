@@ -8,7 +8,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::{Context as _, Result, bail, ensure};
 use postgres_protocol::escape::{escape_identifier, escape_literal};
-use serde::{Deserialize, Serialize};
 use sqlx::{
     AssertSqlSafe, Column as _, Connection as _, Either, Executor as _, Row as _, SqlSafeStr as _,
     TypeInfo as _,
@@ -23,6 +22,7 @@ use wamn_codegen::database::{
 use wamn_component_policy::PackageManifest;
 use wamn_package::manifest::CONTROL_OWNED_RELATION_TABLES;
 use wamn_package::manifest::source_name::SourceName;
+use wamn_platform_install::database::{ConnectionConfig, DATABASE_DIR, credential_directory};
 use wamn_schema::ir::CatalogIr;
 
 use crate::catalog::read_catalog_excluding_relations;
@@ -403,61 +403,34 @@ async fn execute_on_server(server_url: &str, sql: &str) -> Result<()> {
     result.map(|_| ()).with_context(|| format!("execute {sql}"))
 }
 
-/// Root of the database credential mounts in deployed processes.
-pub const DATABASE_DIR: &str = "/etc/wamn/db";
+/// Open options using the named credential directory below the supplied mount root.
+pub(crate) async fn mounted_options(
+    config: &ConnectionConfig,
+    root: &Path,
+) -> anyhow::Result<PgConnectOptions> {
+    let directory = credential_directory(root, &config.credentials.name)?;
+    let options = PgConnectOptions::new_without_pgpass()
+        .host(&config.host)
+        .port(config.port)
+        .database(&config.database)
+        .username(config.username.as_str())
+        .ssl_root_cert(directory.join("ca.crt"))
+        .ssl_mode(PgSslMode::VerifyFull);
 
-/// A named credential source in the organization's namespace.
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct SecretRef {
-    pub namespace: String,
-    pub name: String,
-}
-
-/// Public connection data. Login and CA bytes come from mounted files.
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct ConnectionConfig {
-    pub host: String,
-    pub port: u16,
-    pub database: String,
-    pub username: wamn_role::LoginName,
-    pub credentials: SecretRef,
-    pub server_ca: SecretRef,
-}
-
-impl ConnectionConfig {
-    /// Open options using the named credential directory below the supplied mount root.
-    pub async fn mounted_options(&self, root: &Path) -> anyhow::Result<PgConnectOptions> {
-        let directory = credential_directory(root, &self.credentials.name)?;
-        let options = PgConnectOptions::new_without_pgpass()
-            .host(&self.host)
-            .port(self.port)
-            .database(&self.database)
-            .username(self.username.as_str())
-            .ssl_root_cert(directory.join("ca.crt"))
-            .ssl_mode(PgSslMode::VerifyFull);
-
-        let cert = directory.join("tls.crt");
-        let key = directory.join("tls.key");
-        let has_cert = credential_exists(&cert).await?;
-        let has_key = credential_exists(&key).await?;
-        if !has_cert && !has_key {
-            let password = read_password(&directory, &self.username).await?;
-            return Ok(options.password(&password));
-        }
-
-        if !has_cert || !has_key || credential_exists(&directory.join("password")).await? {
-            return Err(CertificateLayoutError { directory }.into());
-        }
-        // SQLx reads the files on each new connection, including after certificate renewal.
-        Ok(options.ssl_client_cert(cert).ssl_client_key(key))
+    let cert = directory.join("tls.crt");
+    let key = directory.join("tls.key");
+    let has_cert = credential_exists(&cert).await?;
+    let has_key = credential_exists(&key).await?;
+    if !has_cert && !has_key {
+        let password = read_password(&directory, &config.username).await?;
+        return Ok(options.password(&password));
     }
 
-    /// Encode configuration without including credential or CA bytes.
-    pub fn to_json(&self) -> anyhow::Result<String> {
-        Ok(serde_json::to_string(self)?)
+    if !has_cert || !has_key || credential_exists(&directory.join("password")).await? {
+        return Err(CertificateLayoutError { directory }.into());
     }
+    // SQLx reads the files on each new connection, including after certificate renewal.
+    Ok(options.ssl_client_cert(cert).ssl_client_key(key))
 }
 
 /// Read a mounted component configuration or borrow an explicit command input.
@@ -482,18 +455,6 @@ pub fn identity(input: &str) -> anyhow::Result<(wamn_role::LoginName, String)> {
             options.get_database().context("database is absent")?.into(),
         ))
     }
-}
-
-/// Resolve one named login directory below the supplied mount root.
-pub fn credential_directory(root: &Path, name: &str) -> anyhow::Result<PathBuf> {
-    anyhow::ensure!(
-        !name.is_empty()
-            && name
-                .bytes()
-                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-'),
-        "invalid database credential name"
-    );
-    Ok(root.join(name))
 }
 
 /// Read a mounted password after checking the login name.
@@ -597,7 +558,7 @@ pub async fn connect_options<'a>(
     let input = configuration(input)?;
     let options = if input.trim_start().starts_with('{') {
         let config: ConnectionConfig = serde_json::from_str(&input)?;
-        config.mounted_options(Path::new(DATABASE_DIR)).await?
+        mounted_options(&config, Path::new(DATABASE_DIR)).await?
     } else {
         let explicit = url::Url::parse(&input)?;
         // SQLx supplies a default login when the URL omits it.

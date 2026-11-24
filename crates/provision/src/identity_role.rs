@@ -3,9 +3,9 @@ use postgres_protocol::escape::escape_identifier;
 use sha2::{Digest as _, Sha256};
 use std::fmt::Write as _;
 
-use wamn_role::IDENTITY_ISSUER_ROLE;
 /// Exact database served by the identity authority.
-pub const IDENTITY_ISSUER_DATABASE: &str = "wamn_system";
+pub use wamn_platform_install::provision_system::SYSTEM_DATABASE as IDENTITY_ISSUER_DATABASE;
+use wamn_role::IDENTITY_ISSUER_ROLE;
 /// Tables that allow full row mutations by the signing authority.
 pub const IDENTITY_ISSUER_TABLES: [&str; 2] = ["session_keys", "session_signing_state"];
 /// Reads for the identity issuer.
@@ -204,6 +204,6 @@ pub fn grants_sql() -> String {
     }
     write!(sql, " GRANT SELECT, INSERT, UPDATE, DELETE ON identity.password_attempts TO {role}; GRANT EXECUTE ON FUNCTION identity.lock_password_principal(uuid) TO {role};").expect("string write");
     write!(sql, " GRANT DELETE ON identity.password_logins TO {role};").expect("string write");
-    sql.push_str(&wamn_registry::sql::grant_control_policy_execute_sql(&role));
+    sql.push_str(&wamn_postgres::platform_sql::grant_control_policy_execute_sql(&role));
     sql
 }

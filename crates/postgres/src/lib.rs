@@ -15,23 +15,28 @@ pub mod file_connections;
 pub mod identity;
 pub mod identity_error;
 pub mod identity_sql;
+pub mod migrations;
 pub mod oauth_authorization;
+pub mod platform_database;
+pub mod platform_sql;
 pub mod replication;
 
 pub use build_database::{
-    ConnectionConfig, ConnectionInput, DATABASE_DIR, SecretRef, configuration, connect,
-    connect_options, credential_directory, database_configuration, identity, pool, read_password,
+    ConnectionInput, configuration, connect, connect_options, database_configuration, identity,
+    pool, read_password,
 };
 
-impl ConnectionConfig {
-    /// Read public connection configuration from a file.
-    pub async fn read(path: &Path) -> anyhow::Result<Self> {
-        let contents = tokio::fs::read(path)
-            .await
-            .with_context(|| format!("read database configuration {}", path.display()))?;
-        serde_json::from_slice(&contents)
-            .with_context(|| format!("decode database configuration {}", path.display()))
-    }
+pub use wamn_platform_install::database::{
+    ConnectionConfig, DATABASE_DIR, SecretRef, credential_directory,
+};
+
+/// Read public connection configuration from a file.
+pub async fn read_connection_config(path: &Path) -> anyhow::Result<ConnectionConfig> {
+    let contents = tokio::fs::read(path)
+        .await
+        .with_context(|| format!("read database configuration {}", path.display()))?;
+    serde_json::from_slice(&contents)
+        .with_context(|| format!("decode database configuration {}", path.display()))
 }
 
 /// Read a public connection file and the login directory next to it.
@@ -39,10 +44,8 @@ pub async fn mounted_options(path: &Path) -> anyhow::Result<PgConnectOptions> {
     let root = path
         .parent()
         .context("database configuration has no parent directory")?;
-    ConnectionConfig::read(path)
-        .await?
-        .mounted_options(root)
-        .await
+    let config = read_connection_config(path).await?;
+    build_database::mounted_options(&config, root).await
 }
 
 impl std::fmt::Debug for ConnectionInput<'_> {

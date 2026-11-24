@@ -1,2 +1,2 @@
 //! Shared SQLx migration execution.
-pub use wamn_platform_install::migrations::*;
+pub use wamn_postgres::migrations::*;

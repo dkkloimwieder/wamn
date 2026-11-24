@@ -8,7 +8,8 @@ use serde_json::Value;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use wamn_build::GuestTarget;
-use wamn_platform_install::release_chart::{self, ImageSet};
+use wamn_kubernetes::release_chart;
+use wamn_platform_install::release_chart::ImageSet;
 
 pub(crate) const BUILDER: &str = "wamn-platform";
 pub(crate) const IMAGES: [&str; 5] = ["host", "control", "ctl", "identity", "edge-web"];
@@ -335,6 +336,7 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
             workflow: guests.remove("workflow").context("workflow image")?,
         },
         &args.out,
+        &wamn_oci::platform_install::PlatformRegistry,
     )?;
     let path = stamped.join("values.yaml");
     let mut values: Value = serde_yaml::from_slice(&std::fs::read(&path)?)?;

@@ -117,7 +117,7 @@ impl Configuration {
             oci_ca_paths: self.oci_ca_paths.clone(),
             insecure_registry: wamn_registry::registry_is_loopback(&self.registry)
                 || self.registry.split('/').next()
-                    == Some(wamn_platform_install::release_chart::bundle::POD_REGISTRY),
+                    == Some(wamn_platform_install::release_chart::POD_REGISTRY),
             package_artifact_base: Some(format!("{}/wamn/packages", self.registry)),
             host_group: None,
             identity_issuer: self.identity_issuer.clone(),

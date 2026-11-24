@@ -32,9 +32,11 @@ use kube::discovery::{ApiCapabilities, ApiResource, Scope};
 use serde_json::{Value, json};
 use wamn_environment::environment::document::EnvironmentFile;
 use wamn_environment::provision_project_env::workload;
+use wamn_kubernetes::release_chart::bundle;
 use wamn_platform_install::environment as installer;
-use wamn_platform_install::release_chart::bundle::{self, POD_REGISTRY};
+use wamn_platform_install::release_chart::{POD_REGISTRY, pod_registry_reference};
 use wamn_postgres::build_database::PostgresBuildDatabase;
+use wamn_provision::platform_environment;
 use wamn_registry::{OrgId, name};
 
 use crate::kind::RegistryEndpoint;
@@ -195,7 +197,10 @@ async fn render(
     directory: &Path,
     tally: &mut Tally,
 ) -> anyhow::Result<(Vec<Rendered>, Vec<String>)> {
-    let chart = bundle::select(bundle_directory)?;
+    let chart = bundle::select(
+        bundle_directory,
+        &wamn_oci::platform_install::PlatformRegistry,
+    )?;
     let charts = chart.directory().join("platform");
     let mut rendered = Vec::new();
 
@@ -308,7 +313,7 @@ async fn render(
         .as_str()
         .context("control configuration has no registry")?;
     let registry_token_metadata = control["registry_token_metadata"] == true;
-    let host_image = wamn_platform_install::release_chart::image_set(chart.directory())
+    let host_image = wamn_kubernetes::release_chart::image_set(chart.directory())
         .await?
         .host;
 
@@ -378,15 +383,15 @@ async fn render(
     let cluster = name::project_cluster(&connection.database);
     let publication = name::cdc_object_name(org_id, project, env, &instance);
     let mut project_values =
-        installer::database_values(&connection, 1, sizing, &org_values["postgres"])?;
-    installer::set_operation_values(
+        platform_environment::database_values(&connection, 1, sizing, &org_values["postgres"])?;
+    platform_environment::set_operation_values(
         &mut project_values,
         &triple,
         &cluster,
         &connection.database,
         document.applications.keys(),
     )?;
-    project_values["publication"] = installer::publication_values(
+    project_values["publication"] = platform_environment::publication_values(
         &triple,
         &instance,
         &cluster,
@@ -475,14 +480,14 @@ async fn render(
             for key in path {
                 field = &mut field[*key];
             }
-            field["image"] = bundle::pod_registry_reference(image).into_owned().into();
+            field["image"] = pod_registry_reference(image).into_owned().into();
         }
         for component in application_values["components"]
             .as_sequence_mut()
             .context("release values have no component list")?
         {
             if let Some(image) = component["image"].as_str() {
-                component["image"] = bundle::pod_registry_reference(image).into_owned().into();
+                component["image"] = pod_registry_reference(image).into_owned().into();
             }
         }
     }
@@ -506,7 +511,7 @@ async fn render(
     );
 
     // After deploy, the project release gains the publication schemas (operation.rs, --reuse-values).
-    project_values["publication"] = installer::publication_values(
+    project_values["publication"] = platform_environment::publication_values(
         &triple,
         &instance,
         &cluster,

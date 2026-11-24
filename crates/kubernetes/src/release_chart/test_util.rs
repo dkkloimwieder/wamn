@@ -2,8 +2,10 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::release_chart::{self, ImageSet};
+use crate::release_chart;
 use serde_json::{Value, json};
+use wamn_oci::platform_install::PlatformRegistry;
+use wamn_platform_install::release_chart::ImageSet;
 
 #[derive(Debug)]
 pub struct Chart(pub PathBuf);
@@ -29,6 +31,7 @@ pub fn prepared_chart(repository: &Path) -> anyhow::Result<Chart> {
             workflow: format!("registry.example/components/workflow@sha256:{digest}"),
         },
         &chart.0,
+        &PlatformRegistry,
     )?;
     release_chart::bundle::prepare_payload(repository, &chart.0)?;
     let path = chart.0.join("values.yaml");

@@ -37,7 +37,7 @@ pub(super) async fn set_paused(
 ) -> anyhow::Result<()> {
     let name =
         wamn_registry::name::environment_resource_name(&triple.org, &triple.project, &triple.env);
-    wamn_platform_install::environment::update_project(
+    wamn_kubernetes::platform_environment::update_project(
         &platform.target,
         &platform.chart,
         &name,

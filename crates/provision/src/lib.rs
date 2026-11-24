@@ -12,8 +12,14 @@ pub mod migration;
 pub mod migrations;
 mod name;
 pub mod operation_grants;
+pub mod platform_environment;
+pub mod platform_migrations;
+pub mod provision_org;
+pub mod provision_system;
+mod roles;
 pub mod sql;
 pub mod system_reader;
+pub mod transaction;
 pub mod transaction_identity;
 pub mod workload_role;
 

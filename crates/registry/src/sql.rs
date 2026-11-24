@@ -105,23 +105,6 @@ pub const CONTROL_DEV_SRC_DEV_TARGET_DATABASE_RECORDED_DISPOSABLE: &str = "SELEC
 /// crates/provision/src/sql.rs::control_surface_grants_sql registry statement.
 pub const CONTROL_PROVISION_SRC_SQL_CONTROL_SURFACE_GRANTS_SQL: &str = " GRANT EXECUTE ON FUNCTION registry.login_org(), registry.login_principal(uuid), identity.principal_in_login_org_only(uuid), identity.is_project_admin(uuid,text,text), identity.has_project_access(uuid,text,text,text) TO wamn_control;";
 
-/// Grant the functions required to initialize control row policies for a reader.
-/// The caller supplies a quoted role identifier.
-pub fn grant_control_policy_execute_sql(role: &str) -> String {
-    format!(
-        " GRANT EXECUTE ON FUNCTION registry.login_org(), registry.login_principal(uuid) TO {role};",
-    )
-}
-
-/// Serialize writes to the project stream limit and reservations against it.
-pub const PROJECT_STREAM_CAPACITY_LOCK_SQL: &str =
-    "SELECT pg_advisory_xact_lock(hashtextextended('wamn.project-stream-capacity', 0))";
-
-/// Set the installation's domain and project stream limit.
-pub const UPDATE_PLATFORM_META_SQL: &str = "UPDATE registry.meta SET platform_domain = $1, max_projects = $2 \
-     WHERE (platform_domain, max_projects) IS DISTINCT FROM ($1, $2) \
-     RETURNING old.max_projects IS NULL";
-
 /// crates/environment/src/environment/analyse.rs::read_row registry statement.
 pub const CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_ANALYSE_READ_ROW: &str = "SELECT instance_suffix, disposable FROM registry.environment_projects JOIN registry.environments USING (org,env) \
               WHERE org = $1 AND project = $2 AND env = $3";

@@ -1,9 +1,9 @@
 //! Image-owned platform SQL migrations.
+use crate::migrations::MigrationDatabase;
 use anyhow::ensure;
 use sqlx::migrate::{Migration, Migrator};
-use wamn_provision::migrations::MigrationDatabase;
 pub fn embedded_sources(target: MigrationDatabase) -> Vec<Migration> {
-    wamn_provision::migrations::embedded(target)
+    crate::migrations::embedded(target)
         .iter()
         .cloned()
         .collect()
@@ -13,16 +13,16 @@ pub async fn observe(
     client: &mut sqlx::PgConnection,
     database: MigrationDatabase,
     sources: &[Migration],
-) -> anyhow::Result<crate::migrations::SchemaReport> {
+) -> anyhow::Result<wamn_postgres::migrations::SchemaReport> {
     let table = match database {
         MigrationDatabase::System => wamn_postgres::REGISTRY_HISTORY_TABLE,
         MigrationDatabase::Project => "platform._sqlx_migrations",
     };
-    crate::migrations::observe(client, table, sources).await
+    wamn_postgres::migrations::observe(client, table, sources).await
 }
 pub async fn observe_system(
     client: &mut sqlx::PgConnection,
-) -> anyhow::Result<crate::migrations::SchemaReport> {
+) -> anyhow::Result<wamn_postgres::migrations::SchemaReport> {
     observe(
         client,
         MigrationDatabase::System,
@@ -32,7 +32,7 @@ pub async fn observe_system(
 }
 pub async fn observe_project(
     client: &mut sqlx::PgConnection,
-) -> anyhow::Result<crate::migrations::SchemaReport> {
+) -> anyhow::Result<wamn_postgres::migrations::SchemaReport> {
     observe(
         client,
         MigrationDatabase::Project,
@@ -60,19 +60,19 @@ pub async fn apply_target(
     let owner = postgres_protocol::escape::escape_identifier(&database.owner_role());
     sqlx::query("INSERT INTO platform.login_principal(login,principal_id) VALUES($1,$2) ON CONFLICT(login) DO UPDATE SET principal_id=EXCLUDED.principal_id")
         .bind(login.as_str())
-        .bind(sqlx::types::Uuid::from(wamn_provision::PlatformComponent::ApplyPackage.principal_id()))
+        .bind(sqlx::types::Uuid::from(crate::PlatformComponent::ApplyPackage.principal_id()))
         .execute(&mut *client).await?;
-    let key = crate::migrations::lock_session(client, lock, &[]).await?;
+    let key = wamn_postgres::migrations::lock_session(client, lock, &[]).await?;
     let result = async {
         let table = format!("{schema}._sqlx_migrations");
-        wamn_provision::migration::prepare_history(client, &table, &login).await?;
+        crate::migration::prepare_history(client, &table, &login).await?;
         sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
             "ALTER TABLE {table} OWNER TO {owner}"
         )))
         .execute(&mut *client)
         .await?;
         let migrator = Migrator::with_migrations(sources.to_vec());
-        crate::migrations::run(client, migrator, table).await
+        wamn_postgres::migrations::run(client, migrator, table).await
     }
     .await;
     // Connections are dedicated. A cancellation closes them; a completed call releases exclusion.
@@ -95,16 +95,16 @@ pub async fn install_project(client: &mut sqlx::PgConnection) -> anyhow::Result<
         .await?;
     if !present {
         for sql in [
-            wamn_provision::CATALOG_SCHEMA_SQL,
-            wamn_provision::APP_SCHEMA_SQL,
+            crate::CATALOG_SCHEMA_SQL,
+            crate::APP_SCHEMA_SQL,
             include_str!("../../../deploy/sql/run-state.sql"),
             include_str!("../../../deploy/sql/run-queue.sql"),
         ] {
             sqlx::raw_sql(sql).execute(&mut *tx).await?;
         }
         for surface in [
-            wamn_provision::sql::grant_dynamic_sql_surface_sql(),
-            wamn_provision::sql::grant_platform_surface_sql(),
+            crate::sql::grant_dynamic_sql_surface_sql(),
+            crate::sql::grant_platform_surface_sql(),
         ] {
             sqlx::raw_sql(sqlx::AssertSqlSafe(surface))
                 .execute(&mut *tx)

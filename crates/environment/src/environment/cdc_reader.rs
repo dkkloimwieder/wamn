@@ -27,7 +27,7 @@ pub async fn apply_cdc_sql(
         "CDC SQL targets a different database"
     );
     let login = wamn_role::CDC_LOGIN.parse()?;
-    wamn_platform_install::credentials::wait_role(&mut client, &login).await?;
+    wamn_postgres::platform_database::wait_role(&mut client, &login).await?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(cdc_schema_sql_bundle(
         schemas, database,
     )))

@@ -29,7 +29,7 @@
 {{- $passwordLookupConnections := add $pooler.control.maxUserConnections $pooler.apply.maxUserConnections -}}
 {{- /* services/identity-service/src/password.rs:51 opens a pool of 8 per replica. */ -}}
 {{- $identityConnections := mul (include "wamn-platform.identityReplicas" .) 8 -}}
-{{- /* crates/platform-install/src/provision_org.rs:35 opens one connection. */ -}}
+{{- /* crates/provision/src/provision_org.rs holds one dedicated connection. */ -}}
 {{- $provisionOrgConnections := 1 -}}
 {{- /* provision_system.rs:32,87,185 holds the admin connection and one extra at a time. */ -}}
 {{- $systemSqlConnections := 2 -}}

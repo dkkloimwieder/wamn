@@ -1,5 +1,5 @@
 #[doc(inline)]
-pub use wamn_platform_install::release_chart::bundle;
+pub use wamn_kubernetes::release_chart::bundle;
 
 /// Validate the environment coordinates and derive the application release name.
 pub fn release_name(

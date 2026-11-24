@@ -3,11 +3,7 @@
 use anyhow::{Context as _, ensure};
 
 /// The fixed owner login in a project Cluster.
-pub fn login() -> wamn_role::LoginName {
-    wamn_role::MIGRATION_ROLE
-        .parse()
-        .expect("fixed project owner")
-}
+pub use wamn_platform_install::environment::project_migration_login as login;
 
 /// Check the authenticated session before any package-controlled SQL runs.
 pub async fn require_login(

@@ -6,33 +6,13 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-kube = { workspace = true }
-k8s-openapi = { workspace = true }
-wamn-application-chart.workspace = true
-wamn-package.workspace = true
 wamn-role.workspace = true
 anyhow.workspace = true
-base64.workspace = true
-hex.workspace = true
 ring.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
-serde_yaml.workspace = true
-sqlx = { workspace = true, features = ["migrate", "postgres", "runtime-tokio", "tls-rustls", "chrono", "uuid", "json"] }
-tokio = { workspace = true, features = ["fs", "io-util", "macros", "process", "rt", "sync", "time", "net"] }
-oci-client.workspace = true
-tempfile.workspace = true
 wamn-digest.workspace = true
-wamn-kubernetes.workspace = true
-wamn-oci.workspace = true
-wamn-postgres.workspace = true
 wamn-registry.workspace = true
-wamn-provision.workspace = true
-postgres-protocol.workspace = true
-
-[dev-dependencies]
-wamn-test-infrastructure = { workspace = true }
-tempfile.workspace = true
 
 [lints]
 workspace = true

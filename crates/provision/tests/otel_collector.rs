@@ -11,7 +11,7 @@ fn repository_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .and_then(Path::parent)
-        .expect("platform-install lives two levels below the repository")
+        .expect("provision lives two levels below the repository")
         .to_path_buf()
 }
 

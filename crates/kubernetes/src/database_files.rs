@@ -1,88 +1,13 @@
-//! Native CNPG credentials and public connection configuration.
+//! Stage database credentials from Kubernetes Secrets.
 
 use anyhow::Context as _;
 use k8s_openapi::api::core::v1::Secret;
 use kube::Api;
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 use tokio::io::AsyncWriteExt as _;
-use wamn_kubernetes::client::KubernetesApi;
-use wamn_postgres::{ConnectionConfig, SecretRef};
-pub fn configuration(
-    namespace: &str,
-    cluster: &str,
-    host: String,
-    port: u16,
-    database: String,
-    username: wamn_role::LoginName,
-    secret: String,
-) -> ConnectionConfig {
-    ConnectionConfig {
-        host,
-        port,
-        database,
-        username,
-        credentials: SecretRef {
-            namespace: namespace.into(),
-            name: secret,
-        },
-        server_ca: SecretRef {
-            namespace: namespace.into(),
-            name: format!("{cluster}-ca"),
-        },
-    }
-}
+use wamn_platform_install::database::{ConnectionConfig, DATABASE_DIR, credential_directory};
 
-pub async fn wait_role(
-    connection: &mut sqlx::PgConnection,
-    username: &wamn_role::LoginName,
-) -> anyhow::Result<()> {
-    wait_role_kind(connection, username, true).await
-}
-
-pub(crate) async fn wait_group_role(
-    connection: &mut sqlx::PgConnection,
-    role: &wamn_role::LoginName,
-) -> anyhow::Result<()> {
-    wait_role_kind(connection, role, false).await
-}
-
-async fn wait_role_kind(
-    connection: &mut sqlx::PgConnection,
-    role: &wamn_role::LoginName,
-    can_login: bool,
-) -> anyhow::Result<()> {
-    tokio::time::timeout(Duration::from_secs(120), async {
-        loop {
-            let present: bool = sqlx::query_scalar(
-                "SELECT EXISTS(SELECT FROM pg_roles WHERE rolname=$1 AND rolcanlogin=$2)",
-            )
-            .bind(role.as_str())
-            .bind(can_login)
-            .fetch_one(&mut *connection)
-            .await?;
-            if present {
-                return Ok(());
-            }
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
-    })
-    .await
-    .map_err(|_| anyhow::anyhow!("CNPG did not reconcile database role {role}"))?
-}
-
-/// Retry opening a connection while the caller accepts connection failures.
-pub(crate) async fn connect_with_retry(
-    input: &str,
-    mut on_error: impl FnMut(anyhow::Error) -> anyhow::Result<()>,
-) -> anyhow::Result<sqlx::PgConnection> {
-    loop {
-        match wamn_postgres::connect(input).await {
-            Ok(connection) => return Ok(connection),
-            Err(error) => on_error(error)?,
-        }
-        tokio::time::sleep(Duration::from_secs(1)).await;
-    }
-}
+use crate::client::{KubernetesApi, REQUEST_TIMEOUT};
 
 /// A worker's Kubernetes access to the database files it stages in its pod.
 #[derive(Debug)]
@@ -119,11 +44,11 @@ impl DatabaseFiles {
                 && config.server_ca.namespace == self.0.namespace,
             "database credential sources and worker must share the org namespace"
         );
-        let root = Path::new(wamn_postgres::DATABASE_DIR);
-        let directory = wamn_postgres::credential_directory(root, &config.credentials.name)?;
-        wamn_postgres::credential_directory(root, &config.server_ca.name)?;
+        let root = Path::new(DATABASE_DIR);
+        let directory = credential_directory(root, &config.credentials.name)?;
+        credential_directory(root, &config.server_ca.name)?;
         let secrets = Api::<Secret>::namespaced(self.0.client(), &self.0.namespace);
-        let (login, ca) = tokio::time::timeout(wamn_kubernetes::client::REQUEST_TIMEOUT, async {
+        let (login, ca) = tokio::time::timeout(REQUEST_TIMEOUT, async {
             tokio::try_join!(
                 secrets.get(&config.credentials.name),
                 secrets.get(&config.server_ca.name)
