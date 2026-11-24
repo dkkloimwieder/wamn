@@ -1,10 +1,9 @@
 //! Operator commands and repository checks.
 
-use crate::process;
+use crate::{process, repo_policy::dependencies::check_boundaries};
 use anyhow::{Context as _, ensure};
 use clap::{Args, ValueEnum};
 use serde_json::{Value, json};
-use std::collections::BTreeSet;
 use std::path::Path;
 use tokio::process::Command;
 
@@ -124,7 +123,7 @@ pub async fn lint(root: &Path, mode: Mode) -> anyhow::Result<()> {
         }
     }
     if matches!(mode, Mode::Run) {
-        if let Err(error) = dependencies(root).await {
+        if let Err(error) = check_boundaries(root) {
             failures.push(format!("{error:#}"));
         }
     } else {
@@ -201,102 +200,6 @@ pub async fn packages(root: &Path, manifest: Option<&Path>) -> anyhow::Result<()
         .flatten()
         .collect();
     ensure!(failures.is_empty(), "{}", failures.join("\n"));
-    Ok(())
-}
-
-async fn linked(root: &Path, package: &str, extra: &[&str]) -> anyhow::Result<BTreeSet<String>> {
-    let mut args = vec![
-        "tree",
-        "-p",
-        package,
-        "-e",
-        "normal",
-        "--prefix",
-        "none",
-        "--locked",
-        "--offline",
-    ];
-    args.extend(extra);
-    Ok(process::output(root, "cargo", &args)
-        .await?
-        .lines()
-        .filter_map(|line| line.split_whitespace().next())
-        .map(str::to_owned)
-        .collect())
-}
-
-pub async fn dependencies(root: &Path) -> anyhow::Result<()> {
-    crate::repo_policy::dependencies::check_boundaries(root)?;
-
-    let event = linked(root, "wamn-event", &[]).await?;
-    for dependency in ["wamn-broker", "wamn-run-state", "wamn-plugin"] {
-        ensure!(
-            !event.contains(dependency),
-            "wamn-event links forbidden dependency {dependency}"
-        );
-    }
-
-    let network = [
-        "tokio-postgres",
-        "deadpool-postgres",
-        "postgres-types",
-        "async-nats",
-        "object_store",
-        "redis",
-        "oci-client",
-        "oci-wasm",
-        "opentelemetry-otlp",
-        "tonic",
-    ];
-    for (package, extra, allowed) in [
-        (
-            "wamn-edge",
-            &[][..],
-            &["async-nats", "opentelemetry-otlp", "redis", "tonic"][..],
-        ),
-        (
-            "wamn-edge",
-            &["--target", "aarch64-unknown-linux-gnu"][..],
-            &["async-nats", "opentelemetry-otlp", "redis", "tonic"][..],
-        ),
-        (
-            "wamn-engine",
-            &[][..],
-            &[
-                "async-nats",
-                "hyper-rustls",
-                "hyper-util",
-                "opentelemetry-otlp",
-                "redis",
-                "tonic",
-            ][..],
-        ),
-    ] {
-        let mut refused = network.to_vec();
-        if package == "wamn-edge" {
-            refused.push("wamn-postgres");
-        } else {
-            refused.extend(["hyper-util", "hyper-rustls", "reqwest"]);
-        }
-        let mut pruned = extra.to_vec();
-        pruned.extend(["--prune", "wash-runtime"]);
-        let outside = linked(root, package, &pruned).await?;
-        ensure!(
-            !refused.iter().any(|name| outside.contains(*name)),
-            "{package} links forbidden dependencies outside wash-runtime: {:?}",
-            refused
-                .iter()
-                .filter(|name| outside.contains(**name))
-                .collect::<Vec<_>>()
-        );
-        let all = linked(root, package, extra).await?;
-        ensure!(
-            !refused
-                .iter()
-                .any(|name| all.contains(*name) && !allowed.contains(name)),
-            "{package} links forbidden dependencies through wash-runtime"
-        );
-    }
     Ok(())
 }
 

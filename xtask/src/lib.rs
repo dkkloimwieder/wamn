@@ -239,7 +239,7 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
         Task::TestChanges { base } => test_changes::run(&root, &base),
         Task::RepoLint(args) => tasks::lint(&root, args.mode).await,
         Task::EnvironmentSchema { check } => repo_policy::environment_schema(&root, check),
-        Task::RepoLintDependencies => tasks::dependencies(&root).await,
+        Task::RepoLintDependencies => repo_policy::dependencies::check_boundaries(&root),
         Task::Machete => machete::run(&root).await,
         Task::CompilePackagesAlone { manifest } => {
             tasks::packages(&root, manifest.as_deref()).await

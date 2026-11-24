@@ -5,6 +5,7 @@
 
 mod authored_manifests;
 pub(crate) mod dependencies;
+mod dependency_identity;
 mod generated_clients;
 mod platform_import_registry;
 mod version_identity;
@@ -17,7 +18,7 @@ pub fn diagnostics(root: &Path) -> Vec<String> {
     authored_manifests::report_problems(root, &mut problems);
     generated_clients::report_problems(root, &mut problems);
     version_identity::report_problems(root, &mut problems);
-    dependencies::report_problems(root, &mut problems);
+    dependency_identity::report_problems(root, &mut problems);
     platform_import_registry::report_problems(root, &mut problems);
     if let Err(error) = environment_schema(root, true) {
         problems.push(format!("{error:#}"));
