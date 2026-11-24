@@ -23,6 +23,7 @@ pub(super) fn release_values(
     bindings: &[Binding],
     integration_repository: &str,
     component_repository: &str,
+    authority_port: super::AuthorityPort,
 ) -> anyhow::Result<(Value, Vec<RoleName>)> {
     let seconds = document
         .revocation_seconds
@@ -61,7 +62,7 @@ pub(super) fn release_values(
         seconds,
         bindings,
         integration_repository,
-        |authority| Ok(crate::wasm_authority::wasm_authority_port(authority)?),
+        |authority| Ok(authority_port(authority)?),
     )?;
     let names = roles.iter().map(|role| role.name).collect();
     let selection = &document.applications[application];

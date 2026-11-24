@@ -4,14 +4,14 @@
 //! client certificates. SQL declarations own privilege roles and grants.
 
 pub mod apply;
-pub mod audit_retention;
+pub use wamn_postgres::audit_retention;
 pub mod environment_names;
 mod error;
 pub mod identity_role;
-pub mod migration;
+pub use wamn_postgres::project_migration as migration;
 pub mod migrations;
 mod name;
-pub mod operation_grants;
+pub use wamn_postgres::operation_grants;
 pub mod platform_environment;
 pub mod platform_migrations;
 pub mod provision_org;
@@ -19,8 +19,8 @@ pub mod provision_system;
 mod roles;
 pub mod sql;
 pub mod system_reader;
-pub mod transaction;
-pub mod transaction_identity;
+pub use wamn_postgres::platform_identity as transaction_identity;
+pub use wamn_postgres::provisioning_transaction as transaction;
 pub mod workload_role;
 
 pub use error::ProvisionError;
@@ -32,7 +32,7 @@ pub use name::{
 };
 pub use transaction_identity::{bind_platform_principal, bind_platform_principal_sql};
 /// The platform component list, for callers that bind a component as the actor.
-pub use wamn_identity_protocol::PlatformComponent;
+pub use wamn_postgres::PlatformComponent;
 pub use workload_role::{
     WorkloadRoleFamily, WorkloadRoleIdentity, WorkloadRoleIdentityError, WorkloadRoleIdentityType,
     workload_login,
@@ -54,25 +54,4 @@ pub const CONTROL_PORTABLE_STORE_SQL: &str =
 /// The declarations applied to a fresh control database, in order.
 pub const CONTROL_BOOTSTRAP_SQL: [&str; 2] = [SYSTEM_SCHEMA_SQL, CONTROL_PORTABLE_STORE_SQL];
 
-/// The per-project authorization and configuration schema, applied to a project
-/// database after its catalog schema.
-///
-/// Every relation it creates carries a stamp trigger that calls
-/// `wamn_history.stamp_row()`, so the applier installs
-/// `deploy/sql/record-history.sql` first. `CATALOG_SCHEMA_SQL` carries that
-/// file, so an applier that applied the catalog schema already holds it
-/// (`wamn-0h0g.9.15`).
-pub const APP_SCHEMA_SQL: &str = concat!(
-    include_str!("../../../deploy/sql/app-schema.sql"),
-    include_str!("../../../deploy/sql/definer-privileges.sql"),
-);
-
-/// Complete catalog bootstrap for a fresh project database.
-pub const CATALOG_SCHEMA_SQL: &str = concat!(
-    include_str!("../../../deploy/sql/catalog-schema-prefix.sql"),
-    include_str!("../../../deploy/sql/reject-immutable-row-change.sql"),
-    include_str!("../../../deploy/sql/record-history.sql"),
-    include_str!("../../../deploy/sql/record-history-app-grants.sql"),
-    include_str!("../../../deploy/sql/catalog-schema.sql"),
-    include_str!("../../../deploy/sql/definer-privileges.sql"),
-);
+pub use wamn_postgres::project_setup::{APP_SCHEMA_SQL, CATALOG_SCHEMA_SQL};

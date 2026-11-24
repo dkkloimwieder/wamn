@@ -148,7 +148,7 @@ impl EnvironmentDocument {
     }
 
     pub(super) fn require_valid(&self) -> anyhow::Result<()> {
-        wamn_provision::validate_project_env(
+        wamn_platform_install::environment::validate_project_env(
             &self.settings.org,
             &self.settings.project,
             &self.settings.env,

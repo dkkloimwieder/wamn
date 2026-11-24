@@ -84,3 +84,14 @@ async fn post<T: DeserializeOwned>(
     }
     serde_json::from_slice(&body).map_err(|_| anyhow::anyhow!("invalid identity NATS response"))
 }
+
+#[async_trait::async_trait]
+impl wamn_environment::environment::broker_identity::BrokerIdentity for NatsClient {
+    async fn ensure_account(&self, request: &EnsureAccount) -> anyhow::Result<Account> {
+        self.ensure_account(request).await
+    }
+
+    async fn sign_user(&self, request: &SignUser) -> anyhow::Result<SignedUser> {
+        self.sign_user(request).await
+    }
+}

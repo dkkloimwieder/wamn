@@ -135,7 +135,11 @@ impl EnvironmentFile {
                 "duplicate project {}",
                 project.name
             );
-            wamn_provision::validate_project_env(&self.org, &project.name, &self.env)?;
+            wamn_platform_install::environment::validate_project_env(
+                &self.org,
+                &project.name,
+                &self.env,
+            )?;
             super::plan::require_applications(&project.applications, &self.connections)?;
             for name in project.applications.keys() {
                 ensure!(applications.insert(name), "duplicate application {name}");

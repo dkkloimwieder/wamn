@@ -11,6 +11,9 @@ use wamn_registry::Triple;
 
 use crate::{Causation, CdcIdentity, Envelope, Op, SourceEvent, msg_id, subject};
 
+/// The changes captured by every CDC publication.
+pub const CDC_PUBLISH: &str = "insert, update, delete";
+
 /// The event target and publish stall threshold for one reader.
 #[derive(Debug)]
 pub struct ReaderConfig {

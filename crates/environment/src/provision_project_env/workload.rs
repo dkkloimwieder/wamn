@@ -2,8 +2,8 @@
 
 use anyhow::Context as _;
 use serde_json::{Value, json};
-use wamn_postgres::ConnectionConfig;
-use wamn_provision::{WorkloadRoleFamily, sql};
+use wamn_platform_install::database::ConnectionConfig;
+use wamn_platform_install::workload_role::WorkloadRoleFamily;
 use wamn_registry::Triple;
 
 /// The connection of each project login, derived from the owner connection.
@@ -55,25 +55,7 @@ pub fn configuration_values(
         .into(),
     );
     Ok(json!({
-        "name":wamn_provision::project_env_secret_name(&triple.org, &triple.project, &triple.env),
+        "name":wamn_registry::name::project_env_secret_name(&triple.org, &triple.project, &triple.env),
         "data":data,
     }))
-}
-
-/// Grant each project login its database surface once CloudNativePG has created it.
-pub async fn grant(
-    project: &mut sqlx::PgConnection,
-    connections: &[(WorkloadRoleFamily, ConnectionConfig)],
-) -> anyhow::Result<()> {
-    for (family, connection) in connections {
-        wamn_postgres::platform_database::wait_role(project, &connection.username).await?;
-        sqlx::raw_sql(sqlx::AssertSqlSafe(sql::grant_workload_login_sql(
-            *family,
-            &connection.database,
-            &connection.username,
-        )))
-        .execute(&mut *project)
-        .await?;
-    }
-    Ok(())
 }

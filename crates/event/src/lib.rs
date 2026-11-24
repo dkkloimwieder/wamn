@@ -1,5 +1,6 @@
 //! Event records and source identity.
 
+pub mod deploy_broker;
 pub mod matching;
 mod oldref;
 pub mod reader;

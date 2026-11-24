@@ -196,6 +196,10 @@ impl LifecycleLock {
         result
     }
 
+    pub(crate) fn loss_signal(&self) -> tokio::sync::watch::Receiver<bool> {
+        self.lost.clone()
+    }
+
     /// Cancel protected work when the session that owns its advisory locks is lost.
     ///
     /// # Errors

@@ -6,9 +6,5 @@ pub mod nats;
 pub mod publisher;
 pub mod streams;
 
-/// The event broker inputs of CDC (`enable-cdc-project-env`).
-#[derive(Debug, Clone)]
-pub struct EventBroker {
-    pub stream_replicas: usize,
-    pub dup_window_secs: u64,
-}
+pub mod deployment;
+pub use wamn_event::deploy_broker::EventBroker;

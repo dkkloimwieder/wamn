@@ -12,16 +12,12 @@ ops = []
 [dependencies]
 ring.workspace = true
 serde = { workspace = true, features = ["derive"] }
-wamn-application-chart.workspace = true
 wamn-platform-install.workspace = true
-wamn-package.workspace = true
-wamn-component-policy.workspace = true
 wamn-role.workspace = true
 anyhow.workspace = true
 wamn-postgres.workspace = true
 sqlx = { workspace = true, features = ["migrate", "macros", "postgres", "runtime-tokio", "tls-rustls", "chrono", "uuid", "json", "bigdecimal"] }
 
-wamn-digest.workspace = true
 # The per-project environment credential Secrets render as JSON.
 serde_json = { workspace = true }
 
@@ -31,17 +27,13 @@ serde_json = { workspace = true }
 # A lean pure→pure edge (wamn-registry deps serde + serde_json only).
 wamn-registry = { workspace = true }
 postgres-protocol = { workspace = true }
-# The `sha256:<hex>` spelling of bundle, file and schema digests.
-# Platform transaction identities take their component names and derived ids
-# from the platform model.
-wamn-identity-protocol.workspace = true
-
 # Targeted login identities use a domain-separated digest.
 hex = { workspace = true }
 sha2 = { workspace = true }
 url = { workspace = true }
 
 [dev-dependencies]
+wamn-environment.workspace = true
 wamn-kubernetes.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 wamn-test-infrastructure = { workspace = true }

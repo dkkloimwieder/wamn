@@ -1,6 +1,5 @@
 //! Resolve project integrations for application workload configuration.
 
-use sqlx::Row as _;
 pub(super) mod plan;
 pub(crate) use plan::exports_satisfy;
 pub use plan::key;
@@ -9,10 +8,10 @@ use plan::{mode_satisfies, refuse};
 use std::collections::BTreeMap;
 use std::fmt;
 
+use super::database::DatabaseSession;
 use wamn_application_chart::{Binding, ResolvedConnection};
 use wamn_component_policy::PackageManifest;
 use wamn_package::manifest::{ConnectionDeclaration, ConnectionMode};
-use wamn_postgres::LifecycleLock;
 
 use super::document::EnvironmentDocument;
 
@@ -33,20 +32,20 @@ impl std::error::Error for BindingError {
         self.source.as_deref().map(|source| source as _)
     }
 }
-impl From<sqlx::Error> for BindingError {
-    fn from(source: sqlx::Error) -> Self {
+impl From<anyhow::Error> for BindingError {
+    fn from(source: anyhow::Error) -> Self {
         Self {
             code: "connection_database_error",
             context: "read connection authority".into(),
-            source: Some(Box::new(source)),
+            source: Some(source.into_boxed_dyn_error()),
         }
     }
 }
 
 /// Read project authority without creating or changing a connection.
 pub async fn analyse(
-    system: &LifecycleLock,
-    project: &LifecycleLock,
+    system: &dyn DatabaseSession,
+    project: &dyn DatabaseSession,
     document: &EnvironmentDocument,
     packages: impl IntoIterator<Item = &PackageManifest>,
 ) -> Result<Vec<Binding>, BindingError> {
@@ -63,13 +62,7 @@ pub async fn analyse(
                     .any(|package| definition.packages.contains(&package.package.id))
         })
         .collect();
-    let environment_target = sqlx::query_scalar::<_, Option<String>>(
-        "SELECT target_id::text FROM registry.environments WHERE org=$1 AND env=$2",
-    )
-    .bind(document.settings.org.as_str())
-    .bind(document.settings.env.as_str())
-    .fetch_optional(&mut *system.client().await)
-    .await?;
+    let environment_target = system.environment_target(&document.triple()).await?;
     if matches!(&environment_target, Some(None)) {
         return Err(refuse(
             "environment_target_missing",
@@ -88,9 +81,11 @@ pub async fn analyse(
                 .any(|integration| integration.as_str() == *name)
         })
     }) {
-        let connection=sqlx::query("SELECT c.id::text,c.integration_type,g.parameters,c.active_generation,c.target_id::text,c.authority FROM platform.connection c JOIN platform.connection_generation g ON (g.connection_id,g.generation)=(c.id,c.active_generation) WHERE c.name=$1 AND c.status='active'")
-            .bind(name).fetch_optional(&mut *project.client().await).await?.ok_or_else(||refuse("connection_unavailable",name))?;
-        let connection_target: &str = connection.get(4);
+        let connection = project
+            .connection_binding(name)
+            .await?
+            .ok_or_else(|| refuse("connection_unavailable", name))?;
+        let connection_target = connection.target.as_str();
         let environment_target = environment_target
             .as_deref()
             .ok_or_else(|| refuse("connection_unavailable", name))?;
@@ -103,44 +98,47 @@ pub async fn analyse(
                 ),
             ));
         }
-        let row=sqlx::query("SELECT $1::text AS id,t.code,t.runtime_type,$3::jsonb AS parameters,v.parameter_schema,v.digest,v.operations,$6::bigint AS generation,t.exclusive,v.exports,v.write_interfaces,destination.type FROM registry.integration_type t JOIN registry.target destination ON destination.id=$4::text::uuid AND destination.name=$5 AND destination.status='active' JOIN registry.environments e ON e.org=$7 AND e.env=$8 LEFT JOIN registry.integration_type_version v ON v.integration_type=t.code AND v.version=$9 WHERE t.code=$2")
-            .bind(connection.get::<String,_>(0)).bind(connection.get::<String,_>(1)).bind(connection.get::<serde_json::Value,_>(2)).bind(connection_target).bind(&document.settings.target).bind(connection.get::<i64,_>(3)).bind(document.settings.org.as_str()).bind(document.settings.env.as_str()).bind(version.version)
-            .fetch_optional(&mut *system.client().await).await?.ok_or_else(||refuse("connection_unavailable",name))?;
-        if row.get::<bool, _>(8) && row.get::<&str, _>(11) == "cloud" {
+        let row = system
+            .integration_binding(
+                &document.triple(),
+                &document.settings.target,
+                version.version,
+                &connection,
+            )
+            .await?
+            .ok_or_else(|| refuse("connection_unavailable", name))?;
+        if row.exclusive && row.placement == "cloud" {
             return Err(refuse(
                 "exclusive_connection_requires_local_target",
                 format!("connection {name}: exclusive connections belong to local targets"),
             ));
         }
-        let runtime: String = row.get(2);
-        let schema: Option<serde_json::Value> = row.get(4);
-        let schema = schema.ok_or_else(|| refuse("integration_version_unpublished", name))?;
-        let digest: Option<wamn_digest::Digest> = row
-            .try_get::<Option<&str>, _>(5)?
-            .map(str::parse)
+        let runtime = row.runtime.as_str();
+        let schema = row
+            .schema
+            .as_ref()
+            .ok_or_else(|| refuse("integration_version_unpublished", name))?;
+        let digest = row
+            .digest
+            .as_deref()
+            .map(str::parse::<wamn_digest::Digest>)
             .transpose()
-            .map_err(|source| sqlx::Error::ColumnDecode {
-                index: "digest".into(),
-                source: Box::new(source),
-            })?;
+            .map_err(anyhow::Error::from)?;
         if (runtime == "host" && version.version != 1)
             || (runtime == "wasm" && digest.is_none())
             || runtime == "native"
         {
             return Err(refuse("integration_version_unserved", name));
         }
-        let mut parameters: serde_json::Value = row.get(3);
+        let mut parameters = connection.parameters.clone();
         let values = parameters
             .as_object_mut()
             .ok_or_else(|| refuse("connection_parameters_invalid", name))?;
         values.remove("auth");
-        if !wamn_connection::administration::validates(&parameters, &schema) {
+        if !wamn_connection::administration::validates(&parameters, schema) {
             return Err(refuse("connection_parameters_invalid", name));
         }
-        selected.insert(
-            name.as_str(),
-            (row, connection.get::<Option<String>, _>(5), digest),
-        );
+        selected.insert(name.as_str(), (row, connection, digest));
     }
     let mut bindings = Vec::new();
     for (application, definition) in applications {
@@ -177,26 +175,27 @@ pub async fn analyse(
                 .connections
                 .get(name.as_str())
                 .ok_or_else(|| refuse("connection_unbound", &at))?;
-            let (row, authority, digest) = selected
+            let (row, connection, digest) = selected
                 .get(integration.as_str())
                 .ok_or_else(|| refuse("integration_version_missing", &at))?;
-            let integration_type = wamn_postgres::decode_text(row.try_get(1)?, 1)?;
-            let exports: Vec<String> = row.get(9);
-            if !exports_satisfy(&exports, std::slice::from_ref(&declaration.interface)) {
+            let integration_type: wamn_registry::integration_code::IntegrationCode =
+                row.integration_type.parse().map_err(anyhow::Error::from)?;
+            let exports = &row.exports;
+            if !exports_satisfy(exports, std::slice::from_ref(&declaration.interface)) {
                 return Err(refuse("integration_import_unsatisfied", at));
             }
-            let write_interfaces: Vec<String> = row.get(10);
-            if !mode_satisfies(declaration.mode, &declaration.interface, &write_interfaces) {
+            let write_interfaces = &row.write_interfaces;
+            if !mode_satisfies(declaration.mode, &declaration.interface, write_interfaces) {
                 return Err(refuse("connection_read_imports_write_interface", at));
             }
-            let runtime: String = row.get(2);
+            let runtime = row.runtime.as_str();
             let resolved = if runtime == "host" {
                 let requirement_type =
                     wamn_connection_type::RequirementType::for_integration(&integration_type)
                         .ok_or_else(|| refuse("integration_version_unserved", &at))?;
                 Some(ResolvedConnection {
                     requirement_type,
-                    definition: row.get(3),
+                    definition: connection.parameters.clone(),
                     credential_handle: (integration_type.as_str() != "gcs")
                         .then(|| format!("org:{}:{integration}", document.settings.org)),
                     org_connection_name: Some(integration.as_str().to_owned()),
@@ -223,16 +222,16 @@ pub async fn analyse(
                 } else {
                     wamn_connection_type::RuntimeType::Wasm
                 },
-                target_type: row.get(11),
-                connection_id: row.get(0),
-                authority: authority.clone(),
+                target_type: row.placement.clone(),
+                connection_id: connection.id.clone(),
+                authority: connection.authority.clone(),
                 integration_type,
-                exclusive: row.get(8),
-                generation: row.get(7),
+                exclusive: row.exclusive,
+                generation: connection.generation,
                 mode: declaration.mode,
                 digest: *digest,
-                exports,
-                write_interfaces,
+                exports: exports.clone(),
+                write_interfaces: write_interfaces.clone(),
                 resolved,
             });
         }

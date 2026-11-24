@@ -1,44 +1,16 @@
 //! Resolve an explicit Helm rollback target under the worker's lifecycle lock.
 
-use std::{ffi::OsStr, num::NonZeroU32};
+use std::num::NonZeroU32;
 
 use anyhow::{Context as _, ensure};
 use serde::Deserialize as _;
 use serde_json::Value;
 use wamn_application::application_config::{APPLICATION_CONFIG, ApplicationConfig};
 use wamn_digest::Digest;
-use wamn_kubernetes::helm;
 use wamn_registry::ApplicationName;
 use wamn_registry::Triple;
 
 use super::Platform;
-
-async fn helm(platform: &Platform, arguments: &[&str]) -> anyhow::Result<std::process::Output> {
-    let target = &platform.target;
-    let namespace = helm::org_release_namespace(&target.namespace);
-    let mut args = vec![
-        OsStr::new("--kubeconfig"),
-        target.kubeconfig.as_os_str(),
-        OsStr::new("--kube-context"),
-        target.context.as_ref(),
-        OsStr::new("--namespace"),
-        OsStr::new(namespace.as_ref()),
-    ];
-    args.extend(arguments.iter().map(OsStr::new));
-    helm::output(&args).await
-}
-
-async fn get(platform: &Platform, args: &[&str]) -> anyhow::Result<Option<Vec<u8>>> {
-    let output = helm(platform, args).await?;
-    if output.status.success() {
-        return Ok(Some(output.stdout));
-    }
-    let error = String::from_utf8_lossy(&output.stderr);
-    if error.contains("release: not found") || error.contains("release not found") {
-        return Ok(None);
-    }
-    anyhow::bail!("helm {} failed: {}", args.join(" "), error.trim())
-}
 
 pub(super) async fn target(
     platform: &Platform,
@@ -50,24 +22,17 @@ pub(super) async fn target(
     if let Some(revision) = revision {
         return Ok(revision.get());
     }
-    let api = wamn_kubernetes::client::KubernetesApi::in_cluster()?;
-    let live = crate::environment::document::workload_release(&api, triple, application)
-        .await?
-        .context("application has no deployed release")?
-        .revision;
+    let live =
+        crate::environment::document::workload_release(&*platform.cluster, triple, application)
+            .await?
+            .context("application has no deployed release")?
+            .revision;
     let name = format!("{release}-http");
     for candidate in (1..live).rev() {
-        let Some(manifest) = get(
-            platform,
-            &[
-                "get",
-                "manifest",
-                release,
-                "--revision",
-                &candidate.to_string(),
-            ],
-        )
-        .await?
+        let Some(manifest) = platform
+            .cluster
+            .release_manifest(release, candidate)
+            .await?
         else {
             continue;
         };
@@ -94,20 +59,11 @@ pub(super) async fn application(
     release: &str,
     revision: u32,
 ) -> anyhow::Result<(Digest, ApplicationConfig)> {
-    let values = get(
-        platform,
-        &[
-            "get",
-            "values",
-            release,
-            "--revision",
-            &revision.to_string(),
-            "-o",
-            "json",
-        ],
-    )
-    .await?
-    .with_context(|| format!("Helm revision {revision} is absent"))?;
+    let values = platform
+        .cluster
+        .release_values(release, revision)
+        .await?
+        .with_context(|| format!("Helm revision {revision} is absent"))?;
     let values: Value = serde_json::from_slice(&values)?;
     let digest = values["release"]["manifestDigest"]
         .as_str()
@@ -154,23 +110,5 @@ pub(super) fn verify_package_components(
 }
 
 pub(super) async fn run(platform: &Platform, release: &str, revision: u32) -> anyhow::Result<()> {
-    let output = helm(
-        platform,
-        &[
-            "rollback",
-            release,
-            &revision.to_string(),
-            "--server-side=true",
-            "--wait=watcher",
-            "--timeout",
-            "600s",
-        ],
-    )
-    .await?;
-    ensure!(
-        output.status.success(),
-        "helm rollback failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    Ok(())
+    platform.cluster.rollback(release, revision).await
 }

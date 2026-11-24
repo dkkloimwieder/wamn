@@ -4,7 +4,6 @@ mod file;
 pub(super) mod plan;
 
 pub use file::{EnvironmentFile, Project, schema_json};
-use wamn_registry::configuration::ConfigurationStore as _;
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -36,41 +35,17 @@ impl EnvironmentDocument {
     }
 }
 
-/// Read protected configuration as the provisioning component.
-pub(super) async fn read_configuration(
-    connection: &mut sqlx::PgConnection,
-    triple: &Triple,
-) -> Result<Option<wamn_registry::configuration::EnvironmentConfiguration>, sqlx::Error> {
-    let principal = wamn_provision::PlatformComponent::Provisioning.principal_id();
-    let mut transaction =
-        wamn_postgres::identity::transaction::read_connection(connection, &principal).await?;
-    let configuration = wamn_postgres::Registry::new(&mut transaction)
-        .read(triple)
-        .await?;
-    transaction.commit().await?;
-    Ok(configuration)
-}
-
 impl EnvironmentDocument {
     /// Read applied configuration by coordinate from the registry.
     pub async fn read(platform: &super::Platform, triple: &Triple) -> anyhow::Result<Self> {
-        let mut system = wamn_postgres::connect(&platform.system_database_url).await?;
-        let configuration = read_configuration(&mut system, triple)
+        let configuration = platform
+            .database
+            .read_configuration(&platform.system_database_url, triple)
             .await?
             .with_context(|| format!("environment {triple} has no applied configuration"))?;
         let document = Self::from_configuration(configuration);
         document.require_valid()?;
         Ok(document)
-    }
-
-    pub(super) async fn save(&self, connection: &mut sqlx::PgConnection) -> anyhow::Result<()> {
-        ensure!(
-            wamn_postgres::Registry::new(connection)
-                .write(&self.configuration())
-                .await?,
-            "provision the environment before applying configuration"
-        );
-        Ok(())
     }
 
     /// Applied settings exclude package membership, which comes from the selected release.
@@ -132,35 +107,18 @@ pub struct WorkloadRelease {
     pub revision: u32,
 }
 
-/// Observe the current package and Helm revision through the existing workload reader.
+/// Observe the current package and Helm revision through the workload reader.
 pub async fn workload_release(
-    api: &wamn_kubernetes::client::KubernetesApi,
+    cluster: &dyn super::cluster::Cluster,
     triple: &Triple,
     application: &wamn_registry::ApplicationName,
 ) -> anyhow::Result<Option<WorkloadRelease>> {
-    let release = wamn_registry::resource_names::application_release_name(
-        &triple.org,
-        &triple.project,
-        &triple.env,
-        application,
-    );
-    let workloads = wamn_kubernetes::client::workloads(api.client(), triple.org.as_str());
-    let workload = tokio::time::timeout(
-        wamn_kubernetes::client::REQUEST_TIMEOUT,
-        workloads.get_opt(&format!("{release}-http")),
-    )
-    .await??;
-    workload
+    cluster
+        .workload_annotations(triple, application)
+        .await?
         .as_ref()
-        .map(workload_release_annotations)
+        .map(|annotations| release_annotations(Some(annotations)))
         .transpose()
-}
-
-/// Decode the live package digest and content revision from workload metadata.
-pub fn workload_release_annotations(
-    workload: &kube::api::DynamicObject,
-) -> anyhow::Result<WorkloadRelease> {
-    release_annotations(workload.metadata.annotations.as_ref())
 }
 
 pub(crate) fn release_annotations(

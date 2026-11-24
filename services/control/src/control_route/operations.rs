@@ -1,8 +1,8 @@
 //! Server-authorized application Jobs and bounded Kubernetes observations.
 
 use anyhow::Context as _;
-use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+pub(crate) use wamn_environment::environment::worker::{Operation, Request};
 use wamn_identity_protocol::PrincipalId;
 use wamn_kubernetes::client::KubernetesApi;
 use wamn_registry::configuration::ConfigurationStore as _;
@@ -12,62 +12,6 @@ use super::{ControlRoutes, Refusal};
 
 const TARGET: &str = "wamn.dev/operation-target";
 const OPERATION: &str = "wamn.dev/operation";
-
-#[derive(Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct Request {
-    pub(crate) project: wamn_registry::ProjectId,
-    pub(crate) env: wamn_registry::EnvName,
-    #[serde(default)]
-    pub(crate) application: Option<wamn_registry::ApplicationName>,
-    #[serde(default)]
-    pub(crate) release: Option<wamn_digest::Digest>,
-    #[serde(default)]
-    job: Option<String>,
-    pub(crate) revision: Option<std::num::NonZeroU32>,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum Operation {
-    Deploy,
-    Rollback,
-    Stop,
-    Diff,
-    Apply,
-    Reset,
-    Recover,
-    Close,
-}
-
-impl Operation {
-    fn parse(operation: &str) -> Option<Self> {
-        Some(match operation {
-            "application.deploy" => Self::Deploy,
-            "application.rollback" => Self::Rollback,
-            "application.stop" => Self::Stop,
-            "schema.diff" => Self::Diff,
-            "schema.apply" => Self::Apply,
-            "schema.reset" => Self::Reset,
-            "capture_gap.recover" => Self::Recover,
-            "capture_gap.close" => Self::Close,
-            _ => return None,
-        })
-    }
-
-    fn command(self) -> &'static str {
-        match self {
-            Self::Deploy => "deploy",
-            Self::Rollback => "rollback",
-            Self::Stop => "stop",
-            Self::Diff => "diff",
-            Self::Apply => "apply",
-            Self::Reset => "reset",
-            Self::Recover => "recover",
-            Self::Close => "close",
-        }
-    }
-}
 
 fn invalid(field: &'static str) -> Refusal {
     Refusal::Declared {
@@ -244,7 +188,7 @@ fn manifest(
     container["resources"] =
         json!({"requests":{"cpu":"100m","memory":"256Mi"},"limits":{"cpu":"2","memory":"2Gi"}});
     if matches!(operation, Operation::Recover) {
-        crate::worker::mount_broker_ca(&mut job);
+        wamn_kubernetes::worker_mounts::mount_broker_ca(&mut job);
         wamn_kubernetes::job::mount(
             &mut job,
             "recovery-nats",
@@ -253,7 +197,7 @@ fn manifest(
             &[wamn_broker::nats::CREDENTIALS_KEY],
         );
     }
-    crate::worker::mount_database_files(&mut job);
-    crate::worker::mount_registry(&mut job, metadata);
+    wamn_kubernetes::worker_mounts::mount_database_files(&mut job);
+    wamn_kubernetes::worker_mounts::mount_registry(&mut job, metadata);
     job
 }

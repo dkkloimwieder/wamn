@@ -5,9 +5,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Context as _;
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 
-/// Mounted trust roots for the NATS server.
-pub const CA_FILE: &str = "/etc/wamn/nats-ca/ca.crt";
-pub const CREDENTIALS_KEY: &str = "user.creds";
+pub use wamn_event::deploy_broker::{CA_FILE, CREDENTIALS_KEY};
 
 /// Credentials for a broker operation.
 #[derive(Debug, Clone)]
@@ -19,14 +17,17 @@ pub struct PlatformNats {
 
 impl PlatformNats {
     pub async fn connect(&self) -> anyhow::Result<async_nats::Client> {
-        let options = credentials_options(async_nats::ConnectOptions::new(), &self.creds).await?;
-        connect(
-            tls_options(options, Some(&self.nats_tls_ca)),
-            &self.nats_url,
-            InitialConnect::Once,
-        )
-        .await
+        connect_platform(&self.nats_url, &self.nats_tls_ca, &self.creds).await
     }
+}
+
+pub(crate) async fn connect_platform(
+    url: &str,
+    ca: &Path,
+    credentials: &Path,
+) -> anyhow::Result<async_nats::Client> {
+    let options = credentials_options(async_nats::ConnectOptions::new(), credentials).await?;
+    connect(tls_options(options, Some(ca)), url, InitialConnect::Once).await
 }
 
 /// Parse the public subject to derive the exact inbox this user JWT authorizes.

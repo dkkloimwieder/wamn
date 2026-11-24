@@ -1,5 +1,7 @@
-use super::{BTreeMap, PackageManifest, ensure};
 use anyhow::Context as _;
+use anyhow::ensure;
+use std::collections::BTreeMap;
+use wamn_component_policy::PackageManifest;
 
 /// The sequence defaults of `packages`, each under the application that
 /// holds the declaring package in `environment.k`.

@@ -54,14 +54,14 @@ use wamn_authentication::administration::ApplicationTarget;
 use wamn_authentication::control_admission::{self, AdminAdmission};
 use wamn_authentication::identity_error::{IdentityError, IdentityRefusal};
 use wamn_authentication::paging::{ListPage, Order};
-use wamn_environment::org::{
-    create_project, org_environments, set_environment_status, status_environments,
-};
 use wamn_environment::status;
 use wamn_identity_client::users::UserClient;
 use wamn_identity_protocol::PrincipalId;
 use wamn_postgres::ConnectionInput;
 use wamn_postgres::administration::{require_platform_rows, write_environment_status};
+use wamn_postgres::environment_org::{
+    create_project, org_environments, set_environment_status, status_environments,
+};
 use wamn_postgres::identity::application::project_authority;
 use wamn_postgres::identity::control::{
     control_projects_page, is_org_admin, is_project_admin, org_projects_page,

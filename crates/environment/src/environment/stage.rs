@@ -1,162 +1,34 @@
 //! Application baseline initialization and immutable release caching.
 
-use sqlx::{Connection as _, Row as _};
 pub(super) mod plan;
 pub use plan::{apply_order, sequence_defaults};
 
 use std::collections::BTreeMap;
 
-use anyhow::{Context as _, bail, ensure};
-use wamn_component_policy::PackageManifest;
-use wamn_postgres::LifecycleLock;
+use super::database::DatabaseSession;
+use anyhow::{Context as _, bail};
 
 use super::Platform;
 use super::analyse::{self, Installed};
 use super::document::EnvironmentDocument;
-use wamn_oci::release_package::{OpenedPackage, open_package};
-use wamn_registry::platform_domain::PlatformDomain;
-
-/// Create each integration application principal and its declared dependency role.
-/// An identical apply writes no rows.
-///
-/// # Errors
-///
-/// Returns an error if an identity is disabled or a database write fails.
-pub async fn materialize_application_principals(
-    domain: &PlatformDomain,
-    project_url: &str,
-    project_env_key: &wamn_registry::ProjectEnvKey,
-    packages: &BTreeMap<wamn_package::PackageName, PackageManifest>,
-) -> anyhow::Result<()> {
-    use wamn_identity_protocol::PlatformComponent;
-
-    let applications = packages
-        .values()
-        .filter(|package| wamn_release::publish_release::composes_integration(package))
-        .collect::<Vec<_>>();
-    if applications.is_empty() {
-        return Ok(());
-    }
-    let mut project = super::analyse::connect_project(project_url).await?;
-    let mut transaction = project.begin().await?;
-    wamn_postgres::operation::lock_operation_grants(&mut transaction, project_env_key).await?;
-    wamn_provision::bind_platform_principal(&mut transaction, PlatformComponent::Provisioning)
-        .await?;
-    for package in &applications {
-        let subject = wamn_registry::resource_names::application_subject(
-            project_env_key,
-            &package.package.id,
-        );
-        wamn_postgres::identity::application::service::write_service(
-            &mut transaction,
-            domain,
-            &subject,
-            &subject,
-        )
-        .await?;
-        let role = format!(
-            "application-{}",
-            package.package.id.as_str().replace('_', "-")
-        );
-        wamn_postgres::administration::create_role(&mut transaction, &role).await?;
-    }
-    write_runtime_grants(&mut transaction, project_env_key, &applications, packages).await?;
-    transaction.commit().await?;
-    Ok(())
-}
-
-/// Add the selected application's permissions while retaining grants needed by running code.
-/// Principals and generated roles must already exist. Shared or authored roles refuse.
-async fn write_runtime_grants(
-    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    project_env_key: &wamn_registry::ProjectEnvKey,
-    applications: &[&PackageManifest],
-    packages: &BTreeMap<wamn_package::PackageName, PackageManifest>,
-) -> anyhow::Result<()> {
-    let dependency_manifests = packages
-        .values()
-        .map(|package| (&package.package.id, package))
-        .collect();
-    for package in applications {
-        let subject = wamn_registry::resource_names::application_subject(
-            project_env_key,
-            &package.package.id,
-        );
-        let principal =
-            wamn_postgres::identity::application::service::active_service(transaction, &subject)
-                .await?
-                .with_context(|| {
-                    format!("application principal {subject} is absent or inactive")
-                })?;
-        let role = format!(
-            "application-{}",
-            package.package.id.as_str().replace('_', "-")
-        );
-        let owned: bool = sqlx::query(
-            "SELECT EXISTS (SELECT FROM platform.role WHERE name=$1 AND created_by=$3) \
-             AND NOT EXISTS (SELECT FROM platform.user_role WHERE role_name=$1 AND user_id<>$2)",
-        )
-        .bind(&role)
-        .bind(uuid::Uuid::from(principal))
-        .bind(uuid::Uuid::from(
-            wamn_identity_protocol::PlatformComponent::Provisioning.principal_id(),
-        ))
-        .fetch_one(&mut **transaction)
-        .await?
-        .get(0);
-        ensure!(
-            owned,
-            "application role {role} is missing, authored, or shared or resolve its ownership"
-        );
-        for permission in wamn_release::publish_release::application_dependency_permissions(
-            package,
-            &dependency_manifests,
-        )? {
-            wamn_postgres::administration::mutate_grant(
-                transaction,
-                project_env_key,
-                wamn_authentication::administration::GrantAuthority::Provisioning,
-                wamn_authentication::administration::GrantChange::Permission {
-                    role: &role,
-                    reference: &permission,
-                    grant: true,
-                },
-            )
-            .await?;
-        }
-        wamn_postgres::administration::mutate_grant(
-            transaction,
-            project_env_key,
-            wamn_authentication::administration::GrantAuthority::Provisioning,
-            wamn_authentication::administration::GrantChange::UserRole {
-                user_id: &principal,
-                role: &role,
-                grant: true,
-            },
-        )
-        .await?;
-    }
-    Ok(())
-}
+use wamn_release::package_source::OpenPackage;
 
 /// The installed packages of the project database, read now.
 pub(super) async fn installed(
-    system: &LifecycleLock,
+    platform: &Platform,
+    system: &dyn DatabaseSession,
     document: &EnvironmentDocument,
 ) -> anyhow::Result<BTreeMap<wamn_package::PackageName, Installed>> {
-    let mut client = system.client().await;
-    let mut tx = crate::provision_project_env::provisioning_transaction(&mut client).await?;
-    let row = analyse::read_row(&mut tx, document)
+    let row = system
+        .environment_row(&document.triple())
         .await?
         .context("the environment row is missing after step 4")?;
-    tx.commit().await?;
-    drop(client);
-    Ok(
-        analyse::read_project(&analyse::project_url(document, &row)?)
-            .await?
-            .context("the project database is missing after step 4")?
-            .installed,
-    )
+    Ok(platform
+        .database
+        .read_project(&analyse::project_url(document, &row)?)
+        .await?
+        .context("the project database is missing after step 4")?
+        .installed)
 }
 
 /// The package artifact `<id>-<version>`, pulled from the registry.
@@ -164,14 +36,18 @@ pub(super) async fn open(
     platform: &Platform,
     id: &wamn_package::PackageName,
     version: &wamn_package::package_version::PackageVersion,
-) -> anyhow::Result<OpenedPackage> {
+) -> anyhow::Result<Box<dyn OpenPackage>> {
     let Some(base) = &platform.package_artifact_base else {
         bail!(
             "release names package {id}@{version}; set WAMN_PACKAGE_ARTIFACT_BASE to read \
              its artifact"
         );
     };
-    open_package(&platform.registry(base).await?, id, version)
+    platform
+        .packages
+        .repository(base)
+        .await?
+        .open(id, version)
         .await
         .with_context(|| format!("open package artifact {id}@{version}"))
 }

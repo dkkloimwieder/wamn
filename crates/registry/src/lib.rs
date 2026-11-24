@@ -17,7 +17,6 @@ pub mod integration_code;
 pub mod migrations;
 pub mod name;
 pub mod platform_domain;
-pub mod sql;
 mod types;
 
 pub use name::{credential_secret_name, project_env_key};

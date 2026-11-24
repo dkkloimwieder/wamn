@@ -18,6 +18,7 @@ mod dns;
 mod jwt;
 mod network_policy;
 pub mod transport;
+pub mod wasm_authority;
 
 use crate::oauth::{Request as Oauth2Request, Response as Oauth2Token};
 use dns::TokioDnsResolver;

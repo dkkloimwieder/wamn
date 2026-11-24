@@ -1,27 +1,15 @@
 //! Org-owned NATS credentials and the environment's resolver account.
 
+use super::broker_identity::BrokerIdentity;
 use anyhow::Context as _;
-use k8s_openapi::{ByteString, api::core::v1::Secret};
-use kube::{
-    Api,
-    api::{ObjectMeta, Patch, PatchParams},
-};
 use serde_json::json;
-use wamn_broker::nats::{CA_FILE, CREDENTIALS_KEY};
-use wamn_identity_client::nats::NatsClient;
+use wamn_event::deploy_broker::CREDENTIALS_KEY;
 use wamn_identity_protocol::nats::{EnsureAccount, SignUser, UserPurpose};
-use wamn_kubernetes::client::{APPLY_MANAGER, delete_named};
 
 use wamn_registry::{EnvName, OrgId, Triple, name};
 use zeroize::Zeroizing;
 
 use super::Platform;
-
-const IDENTITY_CA: &str = "/etc/identity-ca/ca.crt";
-
-fn client(platform: &Platform) -> anyhow::Result<NatsClient> {
-    NatsClient::new(&platform.identity_issuer, std::path::Path::new(IDENTITY_CA))
-}
 
 fn environment_users() -> [(&'static str, UserPurpose); 5] {
     [
@@ -33,38 +21,21 @@ fn environment_users() -> [(&'static str, UserPurpose); 5] {
     ]
 }
 
-pub(super) async fn project_count(
-    db: &mut sqlx::PgConnection,
-    org: &OrgId,
-    env: &EnvName,
-) -> anyhow::Result<u32> {
-    let mut tx = crate::provision_project_env::provisioning_transaction(db).await?;
-    let count: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM registry.environment_projects WHERE org=$1 AND env=$2",
-    )
-    .bind(org.as_str())
-    .bind(env.as_str())
-    .fetch_one(&mut *tx)
-    .await?;
-    tx.commit().await?;
-    Ok(u32::try_from(count)?)
-}
-
 pub(super) async fn configure(
     platform: &Platform,
     org: &OrgId,
     env: &EnvName,
     count: u32,
 ) -> anyhow::Result<()> {
-    let identity = client(platform)?;
-    set_limit(&identity, org, env, count).await?;
-    for (kind, user) in environment_users() {
+    let identity = (platform.broker_identity)(&platform.identity_issuer)?;
+    set_limit(&*identity, org, env, count).await?;
+    for (purpose_name, user) in environment_users() {
         ensure_user(
             platform,
-            &identity,
+            &*identity,
             org,
             env,
-            &name::environment_nats_secret(org, env, kind),
+            &name::environment_nats_secret(org, env, purpose_name),
             user,
         )
         .await?;
@@ -73,8 +44,8 @@ pub(super) async fn configure(
 }
 
 pub(super) async fn configure_project(platform: &Platform, triple: &Triple) -> anyhow::Result<()> {
-    let identity = client(platform)?;
-    for (kind, user) in [
+    let identity = (platform.broker_identity)(&platform.identity_issuer)?;
+    for (purpose_name, user) in [
         (
             "cdc",
             UserPurpose::Cdc {
@@ -90,10 +61,10 @@ pub(super) async fn configure_project(platform: &Platform, triple: &Triple) -> a
     ] {
         ensure_user(
             platform,
-            &identity,
+            &*identity,
             &triple.org,
             &triple.env,
-            &name::project_nats_secret(triple, kind),
+            &name::project_nats_secret(triple, purpose_name),
             user,
         )
         .await?;
@@ -106,24 +77,24 @@ pub(super) async fn after_delete(
     triple: &Triple,
     remaining: u32,
 ) -> anyhow::Result<()> {
-    let identity = client(platform)?;
-    for kind in ["cdc", "recovery"] {
-        delete_secret(platform, &name::project_nats_secret(triple, kind)).await?;
+    let identity = (platform.broker_identity)(&platform.identity_issuer)?;
+    for purpose_name in ["cdc", "recovery"] {
+        delete_secret(platform, &name::project_nats_secret(triple, purpose_name)).await?;
     }
     if remaining == 0 {
-        for (kind, _) in environment_users() {
+        for (purpose_name, _) in environment_users() {
             delete_secret(
                 platform,
-                &name::environment_nats_secret(&triple.org, &triple.env, kind),
+                &name::environment_nats_secret(&triple.org, &triple.env, purpose_name),
             )
             .await?;
         }
     }
-    set_limit(&identity, &triple.org, &triple.env, remaining).await
+    set_limit(&*identity, &triple.org, &triple.env, remaining).await
 }
 
 async fn set_limit(
-    identity: &NatsClient,
+    identity: &dyn BrokerIdentity,
     org: &OrgId,
     env: &EnvName,
     count: u32,
@@ -140,7 +111,7 @@ async fn set_limit(
 
 async fn ensure_user(
     platform: &Platform,
-    identity: &NatsClient,
+    identity: &dyn BrokerIdentity,
     org: &OrgId,
     env: &EnvName,
     secret_name: &str,
@@ -160,69 +131,43 @@ async fn ensure_user(
         .await?;
     let creds = wamn_authentication::nats::credentials(&signed.jwt, &key)?;
     anyhow::ensure!(
-        wamn_broker::nats::credentials_inbox(&creds)? == signed.inbox_prefix,
+        platform.broker.credentials_inbox(&creds)? == signed.inbox_prefix,
         "identity returned an unexpected NATS inbox"
     );
-    let target = &platform.target;
-    let secrets = Api::<Secret>::namespaced(target.client.client(), &target.namespace);
-    let secret = Secret {
-        metadata: ObjectMeta {
-            name: Some(secret_name.to_owned()),
-            namespace: Some(target.namespace.clone()),
-            ..ObjectMeta::default()
-        },
-        type_: Some("Opaque".into()),
-        data: Some(
-            [(
-                CREDENTIALS_KEY.into(),
-                ByteString(creds.as_bytes().to_vec()),
-            )]
-            .into(),
-        ),
-        ..Secret::default()
-    };
-    secrets
-        .patch(
-            secret_name,
-            &PatchParams::apply(APPLY_MANAGER),
-            &Patch::Apply(secret),
-        )
-        .await?;
-    Ok(())
+    platform
+        .cluster
+        .write_credentials(secret_name, CREDENTIALS_KEY, creds.as_bytes())
+        .await
 }
 
 async fn read_user(platform: &Platform, name: &str) -> anyhow::Result<Option<Zeroizing<String>>> {
-    let target = &platform.target;
-    let secrets = Api::<Secret>::namespaced(target.client.client(), &target.namespace);
-    let Some(secret) = secrets.get_opt(name).await? else {
+    let Some(bytes) = platform
+        .cluster
+        .read_credentials(name, CREDENTIALS_KEY)
+        .await?
+    else {
         return Ok(None);
     };
-    let bytes = secret
-        .data
-        .and_then(|mut data| data.remove(CREDENTIALS_KEY))
-        .context("broker Secret is missing its credentials")?;
-    let bytes = Zeroizing::new(bytes.0);
+    let bytes = Zeroizing::new(bytes);
     let credentials = std::str::from_utf8(&bytes).context("broker credentials are invalid")?;
     Ok(Some(Zeroizing::new(credentials.to_owned())))
 }
 
 async fn delete_secret(platform: &Platform, name: &str) -> anyhow::Result<()> {
-    let target = &platform.target;
-    let secrets = Api::<Secret>::namespaced(target.client.client(), &target.namespace);
-    delete_named(&secrets, name, true).await.map(drop)
+    platform.cluster.delete_secret(name).await.map(drop)
 }
 
 pub(super) async fn binding(
     platform: &Platform,
     org: &OrgId,
     env: &EnvName,
-    kind: &str,
+    purpose_name: &str,
 ) -> anyhow::Result<serde_json::Value> {
-    let name = name::environment_nats_secret(org, env, kind);
+    let name = name::environment_nats_secret(org, env, purpose_name);
     let creds = read_user(platform, &name)
         .await?
         .context("host NATS credential is absent")?;
-    let inbox = wamn_broker::nats::credentials_inbox(&creds)?;
+    let inbox = platform.broker.credentials_inbox(&creds)?;
     Ok(json!({"secret": name, "inbox": inbox}))
 }
 
@@ -230,18 +175,7 @@ pub(super) async fn admin(
     platform: &Platform,
     org: &OrgId,
     env: &EnvName,
-) -> anyhow::Result<Option<async_nats::jetstream::Context>> {
+) -> anyhow::Result<Option<Zeroizing<String>>> {
     let name = name::environment_nats_secret(org, env, "stream-admin");
-    let Some(creds) = read_user(platform, &name).await? else {
-        return Ok(None);
-    };
-    let options = wamn_broker::nats::user_options(async_nats::ConnectOptions::new(), &creds)?;
-    let options = wamn_broker::nats::tls_options(options, Some(std::path::Path::new(CA_FILE)));
-    let client = wamn_broker::nats::connect(
-        options,
-        &platform.nats_url,
-        wamn_broker::nats::InitialConnect::Once,
-    )
-    .await?;
-    Ok(Some(async_nats::jetstream::new(client)))
+    read_user(platform, &name).await
 }

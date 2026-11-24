@@ -1,23 +1,17 @@
 //! Explicit environment provisioning, shared credentials, and CDC resources.
 //! Application activation reads these resources without creating or reconciling them.
 
-use k8s_openapi::api::core::v1::ConfigMap;
-use kube::Api;
-use sqlx::Row as _;
-use wamn_registry::deployment::DeploymentStore as _;
-
+use super::database::DatabaseSession;
 use anyhow::Context as _;
-use wamn_postgres::LifecycleLock;
 use wamn_registry::{EnvName, OrgId, ProjectId, Triple, name};
 
 use super::Platform;
 use super::document::EnvironmentDocument;
-use wamn_postgres::connect;
 
 /// Remove one project's runtime access and wait until its credentials are unmounted.
 pub(super) async fn suspend_project(
     platform: &Platform,
-    system: &LifecycleLock,
+    system: &dyn DatabaseSession,
     triple: &Triple,
     drain_bound_seconds: Option<i32>,
 ) -> anyhow::Result<()> {
@@ -35,16 +29,12 @@ pub(super) async fn suspend_project(
         drain_bound_seconds,
     )
     .await?;
-    wamn_kubernetes::platform_environment::prepare_host_upgrade(
-        &platform.target,
-        &platform.chart,
-        name.clone(),
-        &values,
-    )
-    .await?
-    .await?;
-    let connection =
-        wamn_postgres::platform_database::connection(&mut *system.client().await, triple).await?;
+    platform
+        .cluster
+        .prepare_host_upgrade(&platform.chart, name.clone(), &values)
+        .await?
+        .await?;
+    let connection = system.connection(triple).await?;
     let started = Instant::now();
     let mut deadline = started + Duration::from_secs(120);
     let mut next_check = started;
@@ -94,7 +84,7 @@ pub(super) async fn suspend_project(
 /// Prepare the host upgrade with both configured and newly reserved projects.
 pub(super) async fn prepare_host_upgrade<'a>(
     platform: &'a Platform,
-    system: &LifecycleLock,
+    system: &dyn DatabaseSession,
     org: &OrgId,
     env: &EnvName,
     drain_bound_seconds: i32,
@@ -121,19 +111,16 @@ pub(super) async fn prepare_host_upgrade<'a>(
                 .context("invalid host replica count")?,
         )?
     };
-    let upgrade = wamn_kubernetes::platform_environment::prepare_host_upgrade(
-        &platform.target,
-        &platform.chart,
-        name,
-        &values,
-    )
-    .await?;
+    let upgrade = platform
+        .cluster
+        .prepare_host_upgrade(&platform.chart, name, &values)
+        .await?;
     Ok((replicas, upgrade))
 }
 
 async fn host_values(
     platform: &Platform,
-    system: &LifecycleLock,
+    system: &dyn DatabaseSession,
     org: &OrgId,
     env: &EnvName,
     reserved: &[&str],
@@ -142,31 +129,9 @@ async fn host_values(
 ) -> anyhow::Result<serde_json::Value> {
     use serde_json::json;
 
-    let mut client = system.client().await;
-    let mut tx = crate::provision_project_env::provisioning_transaction(&mut client).await?;
-    let projects: Vec<ProjectId> = sqlx::query_scalar::<_, String>(
-        "SELECT project FROM registry.environment_projects WHERE org=$1 AND env=$2
-         AND ($3::text IS NULL OR project<>$3)
-         AND (schema_mode IS NOT NULL OR project=ANY($4)) ORDER BY project",
-    )
-    .bind(org.as_str())
-    .bind(env.as_str())
-    .bind(excluded.map(wamn_registry::ProjectId::as_str))
-    .bind(reserved)
-    .fetch_all(&mut *tx)
-    .await?
-    .into_iter()
-    .map(|project| wamn_postgres::decode_text(project, 0))
-    .collect::<Result<_, _>>()?;
-    let drain_bound_seconds = match drain_bound_seconds {
-        Some(seconds) => seconds,
-        None => wamn_postgres::Registry::new(&mut tx)
-            .drain_bound_seconds(org, env)
-            .await
-            .with_context(|| format!("read the host drain bound for {org}/{env}"))?,
-    };
-    tx.commit().await?;
-    drop(client);
+    let (projects, drain_bound_seconds) = system
+        .host_projects(org, env, reserved, excluded, drain_bound_seconds)
+        .await?;
     if projects.is_empty() {
         return Ok(json!({"org":org, "env":env}));
     }
@@ -184,16 +149,12 @@ async fn host_values(
     .filter_map(|key| group.get(key).map(|value| (key, value)))
     .map(|(key, value)| Ok((key.into(), serde_json::to_value(value)?)))
     .collect::<serde_json::Result<_>>()?;
-    let image = wamn_kubernetes::release_chart::image_set(&platform.chart)
-        .await?
-        .host;
+    let image = platform.cluster.host_image(&platform.chart).await?;
 
     let mut eligible = serde_json::Map::new();
     for project in projects {
         let triple = Triple::new(org.clone(), env.clone(), project);
-        let connection =
-            wamn_postgres::platform_database::connection(&mut *system.client().await, &triple)
-                .await?;
+        let connection = system.connection(&triple).await?;
         anyhow::ensure!(
             connection.credentials.namespace == org.as_str()
                 && connection.server_ca.namespace == org.as_str(),
@@ -202,10 +163,10 @@ async fn host_values(
         let mut logins = serde_json::Map::new();
         for (family, config) in crate::provision_project_env::workload::connections(&connection)? {
             let role = match family {
-                wamn_provision::WorkloadRoleFamily::App => "guest-sql",
-                wamn_provision::WorkloadRoleFamily::Query => "dynamic-sql",
-                wamn_provision::WorkloadRoleFamily::Platform => "platform",
-                wamn_provision::WorkloadRoleFamily::Migration => continue,
+                wamn_platform_install::workload_role::WorkloadRoleFamily::App => "guest-sql",
+                wamn_platform_install::workload_role::WorkloadRoleFamily::Query => "dynamic-sql",
+                wamn_platform_install::workload_role::WorkloadRoleFamily::Platform => "platform",
+                wamn_platform_install::workload_role::WorkloadRoleFamily::Migration => continue,
             };
             logins.insert(role.into(), config.credentials.name.into());
         }
@@ -255,16 +216,13 @@ async fn host_values(
 /// Read every installed baseline, independent of the selected application release.
 pub async fn installed_manifests(
     platform: &Platform,
-    system: &LifecycleLock,
+    system: &dyn DatabaseSession,
     document: &EnvironmentDocument,
 ) -> anyhow::Result<Vec<wamn_component_policy::PackageManifest>> {
     let mut manifests = Vec::new();
-    for (id, baseline) in super::stage::installed(system, document).await? {
+    for (id, baseline) in super::stage::installed(platform, system, document).await? {
         let package = super::stage::open(platform, &id, &baseline.current).await?;
-        let path = wamn_codegen::package_manifest_path(package.root());
-        manifests.push(wamn_component_policy::PackageManifest::from_slice(
-            &std::fs::read(&path).with_context(|| format!("read {}", path.display()))?,
-        )?);
+        manifests.push(package.read_manifest()?);
     }
     Ok(manifests)
 }
@@ -278,61 +236,16 @@ pub(super) async fn ensure_stream(platform: &Platform, triple: &Triple) -> anyho
     let broker = super::broker::admin(platform, &triple.org, &triple.env)
         .await?
         .context("environment stream-admin credential is absent")?;
-    wamn_broker::streams::provision(
-        &broker,
-        triple,
-        events.stream_replicas,
-        std::time::Duration::from_secs(events.dup_window_secs),
-        &[],
-    )
-    .await
-}
-
-/// Whether the environment's CDC is in place, judged by what it observes: the
-/// publication `cdc_name` captures exactly `schemas` in database `project`, the
-/// connection the probe runs on.
-///
-/// # Errors
-///
-/// When the probe fails.
-pub async fn cdc_in_place(
-    project: &mut sqlx::PgConnection,
-    cdc_name: &str,
-    schemas: &[wamn_package::canonical_name::CanonicalName],
-) -> anyhow::Result<bool> {
-    let schemas: Vec<_> = schemas
-        .iter()
-        .map(wamn_package::canonical_name::CanonicalName::as_str)
-        .collect();
-    Ok(sqlx::query("SELECT EXISTS (SELECT FROM pg_publication p WHERE p.pubname = $1 \
-         AND NOT p.puballtables \
-         AND coalesce((SELECT array_agg(n.nspname::text ORDER BY n.nspname) \
-              FROM pg_publication_namespace pn JOIN pg_namespace n ON n.oid = pn.pnnspid \
-              WHERE pn.pnpubid = p.oid), ARRAY[]::text[]) = ARRAY(SELECT DISTINCT unnest($2::text[]) ORDER BY 1))").bind(cdc_name).bind(schemas).fetch_one(&mut *project)
+    platform
+        .broker
+        .provision(&platform.nats_url, &broker, triple, events)
         .await
-        .context("probe the CDC publication schema")?
-        .get(0))
-}
-
-pub(super) async fn postgres_settings(platform: &Platform) -> anyhow::Result<serde_json::Value> {
-    let target = &platform.target;
-    let maps = Api::<ConfigMap>::namespaced(target.client.client(), &target.namespace);
-    let configuration = maps
-        .get_opt("wamn-platform")
-        .await?
-        .context("installation configuration is absent")?;
-    let postgres = configuration
-        .data
-        .as_ref()
-        .and_then(|data| data.get("postgres.json"))
-        .context("installation PostgreSQL settings are absent")?;
-    serde_json::from_str(postgres).context("decode installation PostgreSQL settings")
 }
 
 /// Resolve the schemas already recorded in the project database.
 pub(super) async fn publication_schemas(
     platform: &Platform,
-    system: &LifecycleLock,
+    system: &dyn DatabaseSession,
     document: &EnvironmentDocument,
 ) -> anyhow::Result<Vec<wamn_package::canonical_name::CanonicalName>> {
     Ok(installed_manifests(platform, system, document)
@@ -347,24 +260,4 @@ pub(super) async fn publication_schemas(
         .collect::<std::collections::BTreeSet<_>>()
         .into_iter()
         .collect())
-}
-
-/// Wait for the chart's publication before creating the failover slot.
-pub(super) async fn prepare_cdc(
-    owner: &str,
-    capture: &str,
-    database: &str,
-    publication: &str,
-    schemas: &[wamn_package::canonical_name::CanonicalName],
-) -> anyhow::Result<()> {
-    let mut project = connect(owner).await?;
-    tokio::time::timeout(std::time::Duration::from_secs(120), async {
-        while !cdc_in_place(&mut project, publication, schemas).await? {
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        }
-        Ok::<_, anyhow::Error>(())
-    })
-    .await
-    .with_context(|| format!("wait for publication {publication}"))??;
-    super::cdc_reader::apply_cdc_sql(owner, capture, schemas, publication, database).await
 }

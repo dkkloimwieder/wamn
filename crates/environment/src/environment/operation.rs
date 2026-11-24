@@ -2,38 +2,31 @@
 
 mod rollback;
 
+use super::database::{DatabaseConnection, DatabaseSession, LifecycleLock};
 use std::{
     borrow::Cow,
     collections::{BTreeMap, BTreeSet},
-    sync::Mutex,
     time::Duration,
 };
 use wamn_application::application_config::APPLICATION_CONFIG;
 use wamn_application::application_config::ApplicationConfig;
 use wamn_package::PackageName;
-use wamn_postgres::LifecycleLock;
 use wamn_registry::ApplicationName;
-use wamn_registry::deployment::DeploymentStore as _;
-use wamn_workflow_graph::WorkflowGraph;
 
 use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
 use tokio::time::Instant;
 use wamn_component_policy::PackageManifest;
 use wamn_digest::Digest;
-use wamn_kubernetes::release_chart::bundle::SelectedChart;
-use wamn_kubernetes::{
-    client::{KubernetesApi, wait_named, workloads},
-    job,
-};
-use wamn_oci::release_package::{OpenedPackage, open_package_digest};
 use wamn_platform_install::release_chart::pod_registry_reference;
 use wamn_registry::Triple;
+use wamn_release::package_source::OpenPackage;
 
 use super::{
-    Platform, bindings, capture_gap,
+    Platform, bindings,
+    cluster::Chart,
     document::{DeclaredRelease, EnvironmentDocument},
-    ensure as resources, sql, stage, write,
+    sql, stage, write,
 };
 use crate::apply_package::{ApplyPackageRequest, apply_package};
 
@@ -43,7 +36,8 @@ pub enum Application<'a> {
         digest: Digest,
         integration_base: &'a str,
         component_base: &'a str,
-        chart: &'a SelectedChart,
+        chart: &'a dyn Chart,
+        authority_port: write::AuthorityPort,
     },
     Apply(Digest),
     Diff(Option<Digest>),
@@ -53,7 +47,7 @@ pub enum Application<'a> {
 
 struct Packages {
     manifests: BTreeMap<PackageName, PackageManifest>,
-    artifacts: BTreeMap<PackageName, OpenedPackage>,
+    artifacts: BTreeMap<PackageName, Box<dyn OpenPackage>>,
 }
 
 impl Packages {
@@ -62,7 +56,7 @@ impl Packages {
             .package_artifact_base
             .as_deref()
             .context("package artifact base is absent")?;
-        let registry = platform.registry(base).await?;
+        let registry = platform.packages.repository(base).await?;
         let mut manifests = BTreeMap::new();
         let mut artifacts = BTreeMap::new();
         let mut pins = BTreeMap::new();
@@ -72,7 +66,7 @@ impl Packages {
             if !visited.insert(digest) {
                 continue;
             }
-            let (artifact, manifest) = open_package_digest(&registry, &digest).await?;
+            let (artifact, manifest) = registry.open_digest(&digest).await?;
             let pins_by_alias = &manifest
                 .deploy
                 .as_ref()
@@ -115,7 +109,7 @@ impl Packages {
         })
     }
 
-    fn order(&self) -> anyhow::Result<Vec<&OpenedPackage>> {
+    fn order(&self) -> anyhow::Result<Vec<&dyn OpenPackage>> {
         let bases = self
             .manifests
             .iter()
@@ -132,13 +126,13 @@ impl Packages {
             .collect::<Vec<_>>();
         Ok(stage::apply_order(&bases)?
             .into_iter()
-            .map(|index| &self.artifacts[bases[index].0])
+            .map(|index| self.artifacts[bases[index].0].as_ref())
             .collect())
     }
 }
 
-async fn deploy_job_deadline() -> anyhow::Result<Instant> {
-    let job = job::current(&KubernetesApi::in_cluster()?).await?;
+async fn deploy_job_deadline(platform: &Platform) -> anyhow::Result<Instant> {
+    let job = platform.cluster.current_job().await?;
     let start = job["status"]["startTime"]
         .as_str()
         .context("deploy Job start time is absent")?;
@@ -168,16 +162,15 @@ pub async fn application(
 ) -> anyhow::Result<Value> {
     let triple = document.triple();
     LifecycleLock::hold(
-        wamn_postgres::connect(&platform.system_database_url).await?,
+        &*platform.database,
+        DatabaseConnection::Direct(&platform.system_database_url),
         &triple,
         async |system| {
             ensure!(
                 document.applications.contains_key(name),
                 "application {name} is not declared"
             );
-            let connection =
-                wamn_postgres::platform_database::connection(&mut *system.client().await, &triple)
-                    .await?;
+            let connection = system.connection(&triple).await?;
             platform.prepare_database(&connection).await?;
             let owner = connection.to_json()?;
             let release = wamn_registry::resource_names::application_release_name(
@@ -186,192 +179,165 @@ pub async fn application(
                 &triple.env,
                 name,
             );
-            let project = if matches!(operation, Application::Deploy { .. }) {
-                wamn_postgres::platform_database::wait_project_connection(
-                    &owner,
-                    &connection.database,
-                )
-                .await?
+            let connection_mode = if matches!(operation, Application::Deploy { .. }) {
+                DatabaseConnection::Wait {
+                    input: &owner,
+                    database: &connection.database,
+                }
             } else {
-                wamn_postgres::connect(&owner).await?
+                DatabaseConnection::Direct(&owner)
             };
-            LifecycleLock::hold(project, &triple, async |project| match operation {
-                Application::Deploy {
-                    digest,
-                    integration_base,
-                    component_base,
-                    chart,
-                } => {
-                    let packages = Packages::open(platform, digest).await?;
-                    let selection = document
-                        .applications
-                        .get_mut(name)
-                        .expect("declared application");
-                    selection.current = DeclaredRelease::Digest(digest);
-                    selection.packages = packages.manifests.keys().cloned().collect();
-                    let platform_domain =
-                        wamn_postgres::identity::application::service::platform_domain(
-                            &mut *system.client().await,
-                        )
-                        .await?;
-                    let bindings =
-                        bindings::analyse(system, project, &document, packages.manifests.values())
-                            .await?;
-                    let (mut values, roles) = write::release_values(
-                        &document,
-                        &platform_domain,
-                        name,
-                        &packages.manifests,
-                        &digest,
-                        &bindings,
+            LifecycleLock::hold(
+                &*platform.database,
+                connection_mode,
+                &triple,
+                async |project| match operation {
+                    Application::Deploy {
+                        digest,
                         integration_base,
                         component_base,
-                    )?;
-                    if platform.insecure_registry {
-                        use_pod_registry(chart, &mut values)?;
-                    }
-                    let app = application_config(&values)?;
-                    let sequences = stage::sequence_defaults(
-                        &document.membership(),
-                        packages.manifests.values(),
-                    )?;
-                    check_workflows(&mut *project.client().await, &app).await?;
-                    apply_sql(platform, system, &triple, &connection, &owner, &packages).await?;
-                    stage::materialize_application_principals(
-                        &platform_domain,
-                        &owner,
-                        &wamn_registry::project_env_key(&triple.org, &triple.project, &triple.env),
-                        &packages.manifests,
-                    )
-                    .await?;
-                    create_number_sequences(&mut *project.client().await, &sequences).await?;
-                    let timeout =
-                        Duration::from_secs(u64::try_from(document.readiness_budget_seconds)?);
-                    wamn_kubernetes::platform_environment::apply_application(
-                        &platform.target,
-                        chart.directory(),
-                        &release,
-                        &values,
-                        deploy_job_deadline().await?,
-                    )
-                    .await?;
-                    for role in roles {
-                        let workload = wamn_application_chart::workload_name(&release, role);
-                        wait_workload_ready(&platform.target, &workload, timeout).await?;
-                    }
-                    Ok(json!({"release":digest}))
-                }
-                Application::Apply(digest) => {
-                    let packages = Packages::open(platform, digest).await?;
-                    apply_sql(platform, system, &triple, &connection, &owner, &packages).await?;
-                    Ok(json!({"release":digest}))
-                }
-                Application::Diff(digest) => {
-                    let digest = if let Some(digest) = digest {
-                        digest
-                    } else {
-                        let api = KubernetesApi::in_cluster()?;
-                        super::document::workload_release(&api, &triple, name)
-                            .await?
-                            .context("application has no deployed package")?
-                            .package_digest
-                    };
-                    let packages = Packages::open(platform, digest).await?;
-                    let candidates = packages
-                        .order()?
-                        .into_iter()
-                        .map(|artifact| sql::schema::Candidate::source(artifact.package_root()))
-                        .collect::<Result<Vec<_>, _>>()?;
-                    let key =
-                        wamn_registry::project_env_key(&triple.org, &triple.project, &triple.env);
-                    let state = sql::schema::database_state(&owner, &key).await?;
-                    let diff =
-                        sql::schema::plan(&document, name, Some(digest), &candidates, &state)
+                        chart,
+                        authority_port,
+                    } => {
+                        let packages = Packages::open(platform, digest).await?;
+                        let selection = document
+                            .applications
+                            .get_mut(name)
+                            .expect("declared application");
+                        selection.current = DeclaredRelease::Digest(digest);
+                        selection.packages = packages.manifests.keys().cloned().collect();
+                        let platform_domain = system.platform_domain().await?;
+                        let bindings = bindings::analyse(
+                            system,
+                            project,
+                            &document,
+                            packages.manifests.values(),
+                        )
+                        .await?;
+                        let (mut values, roles) = write::release_values(
+                            &document,
+                            &platform_domain,
+                            name,
+                            &packages.manifests,
+                            &digest,
+                            &bindings,
+                            integration_base,
+                            component_base,
+                            authority_port,
+                        )?;
+                        if platform.insecure_registry {
+                            use_pod_registry(chart, &mut values)?;
+                        }
+                        let app = application_config(&values)?;
+                        let sequences = stage::sequence_defaults(
+                            &document.membership(),
+                            packages.manifests.values(),
+                        )?;
+                        project.check_workflows(&app).await?;
+                        apply_sql(platform, system, &triple, &connection, &owner, &packages)
                             .await?;
-                    Ok(serde_json::to_value(diff)?)
-                }
-                Application::Rollback(revision) => {
-                    let revision =
-                        rollback::target(platform, &triple, name, &release, revision).await?;
-                    let (digest, app) = rollback::application(platform, &release, revision).await?;
-                    let packages = Packages::open(platform, digest).await?;
-                    rollback::verify_package_components(&app, &packages.manifests)?;
-                    check_workflows(&mut *project.client().await, &app).await?;
-                    rollback::run(platform, &release, revision).await?;
-                    Ok(json!({"release":digest,"revision":revision}))
-                }
-                Application::Stop => {
-                    super::drain::stop(
-                        platform,
-                        &mut *project.client().await,
-                        &triple.env,
-                        name,
-                        &release,
-                    )
-                    .await?;
-                    Ok(json!({"stopped":name}))
-                }
-            })
+                        platform
+                            .database
+                            .materialize_application_principals(
+                                &platform_domain,
+                                &owner,
+                                &wamn_registry::project_env_key(
+                                    &triple.org,
+                                    &triple.project,
+                                    &triple.env,
+                                ),
+                                &packages.manifests,
+                            )
+                            .await?;
+                        project.create_number_sequences(&sequences).await?;
+                        let timeout =
+                            Duration::from_secs(u64::try_from(document.readiness_budget_seconds)?);
+                        platform
+                            .cluster
+                            .apply_application(
+                                chart.directory(),
+                                &release,
+                                &values,
+                                deploy_job_deadline(platform).await?,
+                            )
+                            .await?;
+                        for role in roles {
+                            let workload = wamn_application_chart::workload_name(&release, role);
+                            platform
+                                .cluster
+                                .wait_workload_ready(&workload, timeout)
+                                .await?;
+                        }
+                        Ok(json!({"release":digest}))
+                    }
+                    Application::Apply(digest) => {
+                        let packages = Packages::open(platform, digest).await?;
+                        apply_sql(platform, system, &triple, &connection, &owner, &packages)
+                            .await?;
+                        Ok(json!({"release":digest}))
+                    }
+                    Application::Diff(digest) => {
+                        let digest = if let Some(digest) = digest {
+                            digest
+                        } else {
+                            super::document::workload_release(&*platform.cluster, &triple, name)
+                                .await?
+                                .context("application has no deployed package")?
+                                .package_digest
+                        };
+                        let packages = Packages::open(platform, digest).await?;
+                        let candidates = packages
+                            .order()?
+                            .into_iter()
+                            .map(|artifact| {
+                                sql::schema::Candidate::source(
+                                    &*platform.packages,
+                                    artifact.package_root(),
+                                )
+                            })
+                            .collect::<Result<Vec<_>, _>>()?;
+                        let key = wamn_registry::project_env_key(
+                            &triple.org,
+                            &triple.project,
+                            &triple.env,
+                        );
+                        let state =
+                            sql::schema::database_state(&*platform.database, &owner, &key).await?;
+                        let diff = sql::schema::plan(
+                            &*platform.database,
+                            &document,
+                            name,
+                            Some(digest),
+                            &candidates,
+                            &state,
+                        )
+                        .await?;
+                        Ok(serde_json::to_value(diff)?)
+                    }
+                    Application::Rollback(revision) => {
+                        let revision =
+                            rollback::target(platform, &triple, name, &release, revision).await?;
+                        let (digest, app) =
+                            rollback::application(platform, &release, revision).await?;
+                        let packages = Packages::open(platform, digest).await?;
+                        rollback::verify_package_components(&app, &packages.manifests)?;
+                        project.check_workflows(&app).await?;
+                        rollback::run(platform, &release, revision).await?;
+                        Ok(json!({"release":digest,"revision":revision}))
+                    }
+                    Application::Stop => {
+                        super::drain::stop(platform, project, &triple.env, name, &release).await?;
+                        Ok(json!({"stopped":name}))
+                    }
+                },
+            )
             .await
         },
     )
     .await
 }
 
-async fn wait_workload_ready(
-    target: &wamn_kubernetes::Target,
-    name: &str,
-    timeout: Duration,
-) -> anyhow::Result<()> {
-    let diagnostics = Mutex::new(String::new());
-    let workloads = workloads(target.client.client(), &target.namespace);
-    wait_named(&workloads, name, timeout, |object| {
-        let Some(object) = object else {
-            return Ok(None);
-        };
-        let conditions = object.data["status"]["conditions"]
-            .as_array()
-            .map_or(&[][..], Vec::as_slice);
-        if conditions
-            .iter()
-            .any(|condition| condition["type"] == "Ready" && condition["status"] == "True")
-        {
-            return Ok(Some(()));
-        }
-        let messages = conditions
-            .iter()
-            .filter_map(|condition| {
-                let type_ = condition["type"].as_str()?;
-                let status = condition["status"].as_str()?;
-                let message = condition["message"].as_str().unwrap_or_default();
-                (type_ == "Ready" || matches!(status, "False" | "Unknown"))
-                    .then(|| format!("{type_}={status} {message:?}"))
-            })
-            .collect::<Vec<_>>()
-            .join(", ");
-        *diagnostics.lock().expect("lock workload diagnostics") = messages;
-        Ok(None)
-    })
-    .await
-    .map_err(|error| {
-        if error.is::<tokio::time::error::Elapsed>() {
-            let diagnostics = diagnostics.into_inner().expect("read workload diagnostics");
-            let diagnostics = if diagnostics.is_empty() {
-                "no Ready, False, or Unknown conditions observed"
-            } else {
-                &diagnostics
-            };
-            error.context(format!(
-                "WorkloadDeployment {name} did not become Ready within {} seconds ({diagnostics})",
-                timeout.as_secs()
-            ))
-        } else {
-            error
-        }
-    })
-}
-
-fn use_pod_registry(chart: &SelectedChart, values: &mut serde_yaml::Value) -> anyhow::Result<()> {
+fn use_pod_registry(chart: &dyn Chart, values: &mut serde_yaml::Value) -> anyhow::Result<()> {
     if let Cow::Owned(image) = pod_registry_reference(chart.image("ingress")?) {
         values["platform"]["roles"]["ingress"]["image"] = image.into();
     }
@@ -398,74 +364,29 @@ fn application_config(values: &serde_yaml::Value) -> anyhow::Result<ApplicationC
     Ok(serde_json::from_str(text)?)
 }
 
-/// Create the `platform.number_sequence` row of each sequence default that has none.
-/// A row that exists keeps its pattern (`docs/architecture/data-access.md#numbering`).
-async fn create_number_sequences(
-    project: &mut sqlx::PgConnection,
-    sequences: &[crate::configuration::SequenceDefault],
-) -> anyhow::Result<()> {
-    let mut transaction = sqlx::Connection::begin(project).await?;
-    wamn_provision::bind_platform_principal(
-        &mut transaction,
-        wamn_identity_protocol::PlatformComponent::Provisioning,
-    )
-    .await?;
-    for sequence in sequences {
-        sqlx::query(
-            "INSERT INTO platform.number_sequence (application, name, pattern) \
-             VALUES ($1, $2, $3) ON CONFLICT (application, name) DO NOTHING",
-        )
-        .bind(sequence.application.as_str())
-        .bind(&sequence.name)
-        .bind(&sequence.pattern)
-        .execute(&mut *transaction)
-        .await
-        .with_context(|| format!("create number sequence {}", sequence.name))?;
-    }
-    transaction.commit().await?;
-    Ok(())
-}
-
-async fn check_workflows(
-    project: &mut sqlx::PgConnection,
-    app: &ApplicationConfig,
-) -> anyhow::Result<()> {
-    let graphs = sqlx::query_as::<_, (String, Value)>(
-        "SELECT workflow_id, graph_json FROM catalog.workflows
-         WHERE environment=$1 AND application=$2 AND enabled ORDER BY workflow_id",
-    )
-    .bind(app.environment.as_str())
-    .bind(app.application.as_str())
-    .fetch_all(project)
-    .await?;
-    for (name, value) in graphs {
-        let graph = WorkflowGraph::parse(&value)?;
-        wamn_application::application_config::check_workflow_references(app, &graph)
-            .with_context(|| format!("enabled workflow {name}"))?;
-    }
-    Ok(())
-}
-
 async fn apply_sql(
     platform: &Platform,
-    system: &LifecycleLock,
+    system: &dyn DatabaseSession,
     triple: &Triple,
-    connection: &wamn_postgres::ConnectionConfig,
+    connection: &wamn_platform_install::database::ConnectionConfig,
     owner: &str,
     packages: &Packages,
 ) -> anyhow::Result<()> {
     let order = packages.order()?;
     let schemas = publication_schemas(platform, owner, &packages.manifests).await?;
-    let migration = wamn_provision::migrations::MigrationDatabase::Project.configuration(owner)?;
+    let migration = platform.database.migration_configuration(owner)?;
     for artifact in order {
-        apply_package(ApplyPackageRequest {
-            package: artifact.package_root(),
-            database_url: owner.into(),
-            migration_database_url: migration.clone(),
-            org: triple.org.clone(),
-            project: triple.project.clone(),
-            environment: triple.env.clone(),
-        })
+        apply_package(
+            platform,
+            ApplyPackageRequest {
+                package: artifact.package_root(),
+                database_url: owner.into(),
+                migration_database_url: migration.clone(),
+                org: triple.org.clone(),
+                project: triple.project.clone(),
+                environment: triple.env.clone(),
+            },
+        )
         .await?;
     }
     let cluster = connection
@@ -473,45 +394,36 @@ async fn apply_sql(
         .name
         .strip_suffix("-ca")
         .context("project cluster CA")?;
-    let instance = wamn_postgres::Registry::new(&mut *system.client().await)
-        .instance_suffix(triple)
-        .await?
-        .context("project deployment instance is absent")?;
+    let instance = system.instance(triple).await?;
     let publication =
-        wamn_provision::cdc_object_name(&triple.org, &triple.project, &triple.env, &instance);
-    let mut values = wamn_provision::platform_environment::publication_values(
-        triple,
-        &instance,
-        cluster,
-        &publication,
-        &schemas,
-    );
-    let paused = capture_gap::is_open(&mut *system.client().await, triple).await?;
+        wamn_registry::name::cdc_object_name(&triple.org, &triple.project, &triple.env, &instance);
+    let mut values =
+        super::chart_values::publication_values(triple, &instance, cluster, &publication, &schemas);
+    let paused = system.has_capture_gap(triple).await?;
     values["cdcReader"] = json!({"pause":paused});
     let coord =
         wamn_registry::name::environment_resource_name(&triple.org, &triple.project, &triple.env);
-    wamn_kubernetes::platform_environment::update_project(
-        &platform.target,
-        &platform.chart,
-        &coord,
-        values,
-    )
-    .await?;
+    platform
+        .cluster
+        .update_project(&platform.chart, &coord, values)
+        .await?;
     if schemas.is_empty() {
         return Ok(());
     }
     let capture = wamn_platform_install::environment::capture_configuration(connection.clone())?;
     platform.prepare_database(&capture).await?;
-    resources::prepare_cdc(
-        owner,
-        &capture.to_json()?,
-        &connection.database,
-        &publication,
-        &schemas,
-    )
-    .await?;
+    platform
+        .database
+        .prepare_cdc(
+            owner,
+            &capture.to_json()?,
+            &connection.database,
+            &publication,
+            &schemas,
+        )
+        .await?;
     if !paused {
-        super::cdc_reader::wait_reader_ready(&platform.target, triple).await?;
+        platform.cluster.wait_reader_ready(triple).await?;
     }
     Ok(())
 }
@@ -530,20 +442,19 @@ async fn publication_schemas(
                 .map(|model| model.schema.clone().into())
         })
         .collect::<BTreeSet<_>>();
-    let mut project = wamn_postgres::connect(owner).await?;
-    let installed = wamn_postgres::installed_package_artifacts(&mut project).await?;
+    let installed = platform.database.installed_packages(owner).await?;
     let base = platform
         .package_artifact_base
         .as_deref()
         .context("package artifact base is absent")?;
-    let registry = platform.registry(base).await?;
+    let registry = platform.packages.repository(base).await?;
     for (id, digest) in installed {
         if selected.contains_key(&id) {
             continue;
         }
         let digest =
             digest.with_context(|| format!("installed package {id} requires a pinned artifact"))?;
-        let (_, manifest) = open_package_digest(&registry, &digest).await?;
+        let (_, manifest) = registry.open_digest(&digest).await?;
         schemas.extend(
             manifest
                 .models
@@ -560,39 +471,32 @@ pub async fn reset(platform: &Platform, document: &EnvironmentDocument) -> anyho
     // Reset has no application selection. Its SQL application sources are the
     // exact installed artifact digests of the whole database.
     LifecycleLock::hold(
-        wamn_postgres::connect(&platform.system_database_url).await?,
+        &*platform.database,
+        DatabaseConnection::Direct(&platform.system_database_url),
         &triple,
         async |system| {
-            let mut client = system.client().await;
-            let disposable = wamn_postgres::Registry::new(&mut client)
-                .disposable(&triple)
-                .await?;
+            let disposable = system.disposable(&triple).await?;
             ensure!(disposable, "environment is not recorded as disposable");
-            drop(client);
-            let conn =
-                wamn_postgres::platform_database::connection(&mut *system.client().await, &triple)
-                    .await?;
+            let conn = system.connection(&triple).await?;
             platform.prepare_database(&conn).await?;
             let owner = conn.to_json()?;
             LifecycleLock::hold(
-                wamn_postgres::connect(&owner).await?,
+                &*platform.database,
+                DatabaseConnection::Direct(&owner),
                 &triple,
                 async |project| {
-                    let mut client = project.client().await;
-                    let unfinished =
-                        super::drain::unfinished(&mut client, &triple.env, None).await?;
+                    let unfinished = project.unfinished(&triple.env, None).await?;
                     ensure!(
                         unfinished.is_empty(),
                         "{}",
                         super::drain::describe(&unfinished)
                     );
-                    let installed = wamn_postgres::installed_package_artifacts(&mut client).await?;
-                    drop(client);
+                    let installed = project.installed_packages().await?;
                     let base = platform
                         .package_artifact_base
                         .as_deref()
                         .context("package artifact base is absent")?;
-                    let registry = platform.registry(base).await?;
+                    let registry = platform.packages.repository(base).await?;
                     let mut packages = Packages {
                         manifests: BTreeMap::new(),
                         artifacts: BTreeMap::new(),
@@ -601,7 +505,7 @@ pub async fn reset(platform: &Platform, document: &EnvironmentDocument) -> anyho
                         let digest = digest.with_context(|| {
                             format!("installed package {id} requires a pinned artifact")
                         })?;
-                        let (artifact, manifest) = open_package_digest(&registry, &digest).await?;
+                        let (artifact, manifest) = registry.open_digest(&digest).await?;
                         ensure!(
                             manifest.package.id == id,
                             "installed artifact {digest} is not {id}"
@@ -611,9 +515,8 @@ pub async fn reset(platform: &Platform, document: &EnvironmentDocument) -> anyho
                     }
                     packages.order()?;
                     super::ensure::suspend_project(platform, system, &triple, None).await?;
-                    let migration = wamn_provision::migrations::MigrationDatabase::Project
-                        .configuration(&owner)?;
-                    sql::reset::reset_database(system, &owner, &migration, &triple).await?;
+                    let migration = platform.database.migration_configuration(&owner)?;
+                    system.reset(&owner, &migration, &triple).await?;
                     apply_sql(platform, system, &triple, &conn, &owner, &packages).await?;
                     let (_, host) = super::ensure::prepare_host_upgrade(
                         platform,

@@ -48,6 +48,7 @@ wamn-provision.workspace = true
 # Admission parses components with the CLI's component model features.
 wamn-engine = { workspace = true, features = ["wasm_component_model_implements"] }
 wamn-oci.workspace = true
+wamn-http.workspace = true
 wamn-http-client = { workspace = true, features = ["tls12"] }
 wash-runtime = { workspace = true, features = ["oci"] }
 oci-client.workspace = true

@@ -136,7 +136,7 @@ impl ControlRoutes<'_> {
         let mut result = administration::execute(
             &mut database,
             &credentials,
-            wamn_environment::wasm_authority::wasm_authority_port,
+            wamn_http::wasm_authority::wasm_authority_port,
             administration::Request {
                 caller: *caller,
                 org: self.org,

@@ -6,8 +6,7 @@ pub use wamn_registry::identifiers::MAX_PROJECT_ID_LEN;
 pub use wamn_registry::name::{
     CDC_OBJECT_PREFIX, CDC_SECRET_PREFIX, DB_PREFIX, INSTANCE_SUFFIX_LEN, MAX_DB_NAME_LEN,
     MAX_NAMESPACE_LEN, MAX_NAMESPACE_STEM_LEN, NAMESPACE_PREFIX, cdc_object_name, cdc_reader_name,
-    project_env_database_name, project_env_namespace, project_env_namespace_stem,
-    project_env_secret_name,
+    project_env_database_name, project_env_namespace, project_env_secret_name,
 };
 pub use wamn_registry::project_env_key;
 
@@ -17,24 +16,12 @@ pub fn validate_project_env(
     project: &wamn_registry::ProjectId,
     env: &wamn_registry::EnvName,
 ) -> Result<(), ProvisionError> {
-    let probe = "00000000"
-        .parse::<wamn_registry::instance_suffix::InstanceSuffix>()
-        .expect("fixed suffix");
-    let database = project_env_database_name(org, project, env, &probe);
-    if database.len() > MAX_DB_NAME_LEN {
-        return Err(ProvisionError::NameTooLong {
-            name: database,
-            max: MAX_DB_NAME_LEN,
-        });
-    }
-    let stem = project_env_namespace_stem(org, project, env);
-    if stem.len() > MAX_NAMESPACE_STEM_LEN {
-        return Err(ProvisionError::NameTooLong {
-            name: stem,
-            max: MAX_NAMESPACE_STEM_LEN,
-        });
-    }
-    Ok(())
+    wamn_platform_install::environment::validate_project_env(org, project, env).map_err(|error| {
+        ProvisionError::NameTooLong {
+            name: error.name,
+            max: error.max,
+        }
+    })
 }
 
 /// Refuse coordinates whose CDC object name exceeds the database limit.
@@ -43,18 +30,12 @@ pub fn validate_project_env_cdc(
     project: &wamn_registry::ProjectId,
     env: &wamn_registry::EnvName,
 ) -> Result<(), ProvisionError> {
-    validate_project_env(org, project, env)?;
-    let probe = "00000000"
-        .parse::<wamn_registry::instance_suffix::InstanceSuffix>()
-        .expect("fixed suffix");
-    let cdc = cdc_object_name(org, project, env, &probe);
-    if cdc.len() > MAX_DB_NAME_LEN {
-        return Err(ProvisionError::NameTooLong {
-            name: cdc,
-            max: MAX_DB_NAME_LEN,
-        });
-    }
-    Ok(())
+    wamn_platform_install::environment::validate_project_env_cdc(org, project, env).map_err(
+        |error| ProvisionError::NameTooLong {
+            name: error.name,
+            max: error.max,
+        },
+    )
 }
 
 #[cfg(test)]
@@ -173,7 +154,7 @@ mod tests {
 
         // The namespace formula independently budgets the same ten bytes.
         let org = "o".repeat(40);
-        let stem = project_env_namespace_stem(
+        let stem = wamn_registry::name::project_env_namespace_stem(
             &org.parse().unwrap(),
             &"pp".parse().unwrap(),
             &"de".parse().unwrap(),

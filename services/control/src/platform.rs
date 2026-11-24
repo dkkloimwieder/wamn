@@ -3,39 +3,9 @@
 use anyhow::{Context as _, ensure};
 use serde::Deserialize;
 use serde_json::{Value, json};
-use wamn_environment::environment::document::EnvironmentFile;
-use wamn_postgres::LifecycleLock;
-use wamn_provision::migrations::MigrationDatabase;
-use wamn_registry::lifecycle_lock::LifecycleLocks as _;
+use wamn_environment::environment::worker::{self, Task};
 
 use crate::{Configuration, execution::Execution};
-
-#[derive(Debug, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
-enum Request {
-    ProjectOperation {
-        operation: crate::control_route::operations::Operation,
-        request: crate::control_route::operations::Request,
-    },
-    Environment {
-        operation: String,
-        project: wamn_registry::ProjectId,
-        env: wamn_registry::EnvName,
-        document: Option<Value>,
-        application: Option<wamn_registry::ApplicationName>,
-        disposable: Option<bool>,
-        #[serde(default)]
-        data: bool,
-    },
-    Schema {
-        target: String,
-        #[serde(default)]
-        projects: Vec<wamn_registry::ProjectId>,
-        org: Option<wamn_registry::OrgId>,
-        env: Option<wamn_registry::EnvName>,
-        apply: bool,
-    },
-}
 
 impl Execution {
     pub(crate) async fn platform_schema(
@@ -108,8 +78,8 @@ impl Execution {
         }
         ensure!(
             !matches!(
-                serde_json::from_str::<Request>(payload)?,
-                Request::ProjectOperation { .. }
+                serde_json::from_str::<Task>(payload)?,
+                Task::ProjectOperation { .. }
             ),
             "project operations require project route authorization"
         );
@@ -137,130 +107,36 @@ impl Execution {
             {"name":"work","mountPath":"/work"}
         ]);
         if environment {
-            crate::worker::mount_broker_ca(&mut job);
-            crate::worker::mount_identity_worker_token(&mut job);
+            wamn_kubernetes::worker_mounts::mount_broker_ca(&mut job);
+            wamn_kubernetes::worker_mounts::mount_identity_worker_token(
+                &mut job,
+                std::path::Path::new(wamn_identity_client::TOKEN_PATH),
+                wamn_identity_client::TOKEN_AUDIENCE,
+            );
         }
-        crate::worker::mount_database_files(&mut job);
-        crate::worker::mount_registry(&mut job, self.registry_token_metadata);
+        wamn_kubernetes::worker_mounts::mount_database_files(&mut job);
+        wamn_kubernetes::worker_mounts::mount_registry(&mut job, self.registry_token_metadata);
         wamn_kubernetes::job::submit(&api, &mut job, payload).await
     }
 }
 
 /// Run a server-authorized lifecycle operation or platform SQL task in its Job.
 pub async fn execute(config: &Configuration, payload: &str) -> anyhow::Result<Value> {
-    let request: Request = serde_json::from_str(payload)?;
+    let request: Task = serde_json::from_str(payload)?;
     let mut platform = config.platform()?;
     let files = wamn_kubernetes::database_files::DatabaseFiles::in_cluster()?;
     files.materialize(&config.apply_database).await?;
-    platform.database_files = Some(files);
-    crate::write_kubeconfig(&platform.target.kubeconfig, config.org.as_str())?;
-    let mut output = Vec::new();
-    match request {
-        Request::ProjectOperation { operation, request } => {
-            crate::worker::execute(config, platform, operation, request).await
-        }
-        Request::Environment {
-            operation,
-            project,
-            env,
-            document,
-            application,
-            disposable,
-            data,
-        } => {
-            let triple =
-                wamn_registry::Triple::new(config.org.clone(), env.clone(), project.clone());
-            if operation == "environment.delete" {
-                let messages =
-                    wamn_environment::environment::delete::delete(&platform, &triple, data).await?;
-                return Ok(json!({"messages":messages}));
-            }
-            ensure!(
-                operation == "environment.configure",
-                "unknown environment lifecycle operation"
-            );
-            let document: EnvironmentFile =
-                serde_json::from_value(document.context("environment document is absent")?)?;
-            document.require_valid()?;
-            let selected = match &application {
-                Some(application) => document.application_project(application)?,
-                None => &document.projects[0].name,
-            };
-            ensure!(
-                &triple.project == selected
-                    && triple.org == document.org
-                    && triple.env == document.env,
-                "environment document differs from its authorized coordinate"
-            );
-            wamn_environment::environment::lifecycle::configure(
-                &platform,
-                document,
-                application.as_ref(),
-                disposable,
-            )
-            .await?;
-            Ok(json!({"configured":true}))
-        }
-        Request::Schema {
-            target,
-            projects,
-            org,
-            env,
-            apply,
-        } => {
-            ensure!(target == "project", "unknown platform SQL target");
-            let env = env.context("environment is absent")?;
-            ensure!(
-                org.as_ref() == Some(&config.org),
-                "environment belongs to another org"
-            );
-            let first = projects.first().context("environment has no projects")?;
-            let coordinate =
-                wamn_registry::Triple::new(config.org.clone(), env.clone(), first.clone());
-            let lock = LifecycleLock::acquire_wait(
-                wamn_postgres::connect(&platform.system_database_url).await?,
-                &coordinate,
-            )
-            .await?;
-            let result = lock
-                .protect(async {
-                    let sources = wamn_environment::platform_migrations::embedded_sources(
-                        MigrationDatabase::Project,
-                    );
-                    for project in projects {
-                        let triple =
-                            wamn_registry::Triple::new(config.org.clone(), env.clone(), project);
-                        project_schema(&platform, &lock, &triple, &sources, apply, &mut output)
-                            .await
-                            .with_context(|| format!("platform SQL for {}", triple.project))?;
-                    }
-                    Ok(())
-                })
-                .await;
-            lock.release().await;
-            result?;
-            Ok(json!({"log":String::from_utf8(output)?}))
-        }
-    }
-}
-
-async fn project_schema(
-    platform: &wamn_environment::environment::Platform,
-    lock: &LifecycleLock,
-    triple: &wamn_registry::Triple,
-    sources: &[sqlx::migrate::Migration],
-    apply: bool,
-    output: &mut Vec<u8>,
-) -> anyhow::Result<()> {
-    use std::io::Write as _;
-
-    let migration =
-        wamn_postgres::platform_database::connection(&mut *lock.client().await, triple).await?;
-    platform.prepare_database(&migration).await?;
-    let migration = migration.to_json()?;
-    writeln!(output, "Project {}", triple.project)?;
-    wamn_environment::environment::sql::project_schema(
-        lock, triple, &migration, sources, apply, output,
+    platform.database_files = Some(std::sync::Arc::new(files));
+    crate::write_kubeconfig(
+        std::path::Path::new(crate::WORKER_KUBECONFIG),
+        config.org.as_str(),
+    )?;
+    worker::execute_task(
+        platform,
+        &config.org,
+        &config.registry,
+        request,
+        wamn_http::wasm_authority::wasm_authority_port,
     )
     .await
 }

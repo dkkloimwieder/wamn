@@ -6,21 +6,44 @@ use anyhow::Context as _;
 use sqlx::postgres::PgConnectOptions;
 
 pub mod administration;
+pub mod apply_package;
+pub mod audit_retention;
 pub mod authorization;
 pub mod build_database;
+pub mod capture_sql;
 pub mod catalog;
 pub mod control;
+pub mod environment_configuration;
+pub mod environment_fill;
+pub mod environment_org;
+pub mod environment_registry;
+pub mod environment_schema;
+pub mod environment_sql;
+pub mod environment_sql_effects;
 mod file_catalog;
 pub mod file_connections;
 pub mod identity;
 pub mod identity_error;
 pub mod identity_sql;
+pub mod migration_scope;
 pub mod migrations;
 pub mod oauth_authorization;
+pub mod operation_grants;
 pub mod platform_database;
+pub mod platform_identity;
+pub mod platform_login;
+pub mod platform_migrations;
 pub mod platform_sql;
+pub mod project_migration;
+pub mod project_setup;
+pub mod provisioning_transaction;
+pub mod prune_record_history;
+pub mod prune_run_history;
 pub mod release_requirements;
 pub mod replication;
+
+pub use platform_identity::{bind_platform_principal, bind_platform_principal_sql};
+pub use wamn_identity_protocol::PlatformComponent;
 
 pub use build_database::{
     ConnectionInput, configuration, connect, connect_options, database_configuration, identity,

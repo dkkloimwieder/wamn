@@ -8,7 +8,6 @@ mod host_route;
 pub mod platform;
 mod project_login;
 pub mod retention;
-mod worker;
 mod writer;
 
 use std::{
@@ -102,27 +101,48 @@ impl Configuration {
     }
 
     fn platform(&self) -> anyhow::Result<Platform> {
+        let insecure_registry = wamn_registry::registry_is_loopback(&self.registry)
+            || self.registry.split('/').next()
+                == Some(wamn_platform_install::release_chart::POD_REGISTRY);
         Ok(Platform {
             system_database_url: self.apply_database.to_json()?,
+            database: Arc::new(wamn_postgres::environment_sql_effects::PostgresDeployment),
+            database_values: wamn_provision::platform_environment::database_values,
             database_files: None,
-            target: wamn_kubernetes::Target::in_cluster(
-                "/work/kubeconfig".into(),
+            cluster: Arc::new(wamn_kubernetes::Target::in_cluster(
+                WORKER_KUBECONFIG.into(),
                 "operation",
                 self.org.to_string(),
-            )?,
+            )?),
             chart: self.chart.clone(),
             chart_download: None,
-            registry_auth_file: REGISTRY_AUTH_FILE.into(),
+            packages: std::sync::Arc::new(wamn_oci::deploy_packages::DeployPackages {
+                registry_token_metadata: self.registry_token_metadata,
+                registry_auth_file: REGISTRY_AUTH_FILE.into(),
+                insecure_registry,
+                oci_ca_paths: self.oci_ca_paths.clone(),
+            }),
+            select_chart: |path| {
+                Ok(Arc::new(wamn_kubernetes::release_chart::bundle::select(
+                    path,
+                    &wamn_oci::platform_install::PlatformRegistry,
+                )?))
+            },
             registry_token_metadata: self.registry_token_metadata,
             oci_ca_paths: self.oci_ca_paths.clone(),
-            insecure_registry: wamn_registry::registry_is_loopback(&self.registry)
-                || self.registry.split('/').next()
-                    == Some(wamn_platform_install::release_chart::POD_REGISTRY),
+            insecure_registry,
             package_artifact_base: Some(format!("{}/wamn/packages", self.registry)),
             host_group: None,
             identity_issuer: self.identity_issuer.clone(),
+            broker_identity: |issuer| {
+                Ok(Box::new(wamn_identity_client::nats::NatsClient::new(
+                    issuer,
+                    Path::new("/etc/identity-ca/ca.crt"),
+                )?))
+            },
             nats_url: self.nats_url.clone(),
             oauth_encryption: self.oauth_encryption.clone(),
+            broker: std::sync::Arc::new(wamn_broker::deployment::NatsDeployment),
             events: self.events.as_ref().map(|events| wamn_broker::EventBroker {
                 stream_replicas: events.stream_replicas,
                 dup_window_secs: events.dup_window_secs,
@@ -130,6 +150,8 @@ impl Configuration {
         })
     }
 }
+
+const WORKER_KUBECONFIG: &str = "/work/kubeconfig";
 
 fn write_kubeconfig(path: &Path, namespace: &str) -> anyhow::Result<()> {
     let host = std::env::var("KUBERNETES_SERVICE_HOST")?;
@@ -171,8 +193,8 @@ async fn wait_for_system_schema(database: &str) -> anyhow::Result<sqlx::PgConnec
 
 /// Serve org routes on native HTTP and drain active requests on shutdown.
 pub async fn serve(config: Configuration) -> anyhow::Result<()> {
-    let platform = config.platform()?;
-    write_kubeconfig(&platform.target.kubeconfig, config.org.as_str())?;
+    config.platform()?;
+    write_kubeconfig(Path::new(WORKER_KUBECONFIG), config.org.as_str())?;
     let database = config.database.to_json()?;
     let writer = wait_for_system_schema(&database).await?;
     // Keep three pooled connections alongside the dedicated writer.

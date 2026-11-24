@@ -5,23 +5,25 @@ use super::super::{
     document::{DeclaredRelease, EnvironmentDocument, SchemaMode},
     stage,
 };
-use crate::apply_package::{self, PackageRoot};
+use crate::apply_package::PackageRoot;
 use anyhow::{Context as _, ensure};
 use serde::{Deserialize, Serialize};
-use sqlx::Row as _;
 use std::collections::{BTreeMap, BTreeSet};
 use wamn_package::package_schema::{AppliedPackage, PackageDirectory};
+use wamn_release::package_source::{OpenPackage, PackageSource};
 
 #[derive(Debug)]
 pub struct Candidate {
     pub root: PackageRoot,
     pub directory: PackageDirectory,
-    _artifact: Option<wamn_oci::release_package::OpenedPackage>,
+    _artifact: Option<Box<dyn OpenPackage>>,
+    migration_root: std::path::PathBuf,
 }
 impl Candidate {
-    pub fn source(root: PackageRoot) -> anyhow::Result<Self> {
+    pub fn source(source: &dyn PackageSource, root: PackageRoot) -> anyhow::Result<Self> {
         Ok(Self {
-            directory: apply_package::read_package_root(&root)?,
+            directory: source.read_package_root(&root)?,
+            migration_root: source.migration_root(&root.path),
             root,
             _artifact: None,
         })
@@ -65,9 +67,11 @@ pub struct State {
 }
 
 pub async fn state(platform: &Platform, document: &EnvironmentDocument) -> anyhow::Result<State> {
-    let mut system = wamn_postgres::connect(&platform.system_database_url).await?;
-    let mut system = crate::provision_project_env::provisioning_transaction(&mut system).await?;
-    let Some(row) = analyse::read_row(&mut system, document).await? else {
+    let Some(row) = platform
+        .database
+        .environment_row(&platform.system_database_url, &document.triple())
+        .await?
+    else {
         return Ok(State {
             disposable: None,
             packages: BTreeMap::new(),
@@ -80,9 +84,9 @@ pub async fn state(platform: &Platform, document: &EnvironmentDocument) -> anyho
             ),
         });
     };
-    system.commit().await?;
     let url = analyse::project_url(document, &row)?;
     let mut state = database_state(
+        &*platform.database,
         &url,
         &wamn_registry::project_env_key(
             &document.settings.org,
@@ -96,34 +100,11 @@ pub async fn state(platform: &Platform, document: &EnvironmentDocument) -> anyho
 }
 
 pub async fn database_state(
+    database: &dyn super::super::database::Database,
     url: &str,
     project_env_key: &wamn_registry::ProjectEnvKey,
 ) -> anyhow::Result<State> {
-    let mut client = analyse::connect_project(url).await?;
-    let mut packages = BTreeMap::new();
-    for row in
-        sqlx::query("SELECT package_id, package_version, artifact_digest FROM catalog.packages")
-            .fetch_all(&mut client)
-            .await?
-    {
-        let id = wamn_package::PackageName::try_from(row.try_get::<String, _>(0)?)
-            .context("decode package_id")?;
-        packages.insert(
-            id.clone(),
-            AppliedPackage {
-                coordinate: wamn_package::PackageCoordinate::new(
-                    id,
-                    row.try_get::<String, _>(1)?
-                        .try_into()
-                        .context("decode package_version")?,
-                )?,
-                artifact_digest: row
-                    .try_get::<Option<&str>, _>(2)?
-                    .map(str::parse)
-                    .transpose()?,
-            },
-        );
-    }
+    let packages = database.package_baselines(url).await?;
     Ok(State {
         packages,
         database_url: Some(url.to_owned()),
@@ -147,7 +128,7 @@ pub(super) async fn open(
             "installed schema source for {id}@{version} differs from recorded artifact {digest}"
         );
     }
-    let candidate = Candidate::source(root)?;
+    let candidate = Candidate::source(&*platform.packages, root)?;
     let manifest =
         wamn_component_policy::PackageManifest::from_slice(&candidate.directory.manifest_bytes)?;
     ensure!(
@@ -162,6 +143,7 @@ pub(super) async fn open(
 
 /// Compare selected files with SQLx versions and checksums.
 pub async fn plan(
+    database: &dyn super::super::database::Database,
     document: &EnvironmentDocument,
     application: &wamn_registry::ApplicationName,
     release: Option<wamn_digest::Digest>,
@@ -169,10 +151,9 @@ pub async fn plan(
     state: &State,
 ) -> anyhow::Result<Diff> {
     analyse::select_application(document, Some(application))?;
-    let mut client = match &state.database_url {
-        Some(url) => Some(analyse::connect_project(url).await?),
-        None => None,
-    };
+    let mut migration_reader = database
+        .package_migrations(state.database_url.as_deref())
+        .await?;
     let mut packages = BTreeMap::new();
     let mut reset_sources = state
         .packages
@@ -192,30 +173,9 @@ pub async fn plan(
             wamn_component_policy::ComponentDescriptor,
         >(&candidate.directory)?;
         let id = metadata.coordinate.package_id();
-        let migrator = wamn_postgres::build_database::migrator(
-            &wamn_oci::package_source::migration_root(&candidate.root.path),
-        )
-        .await?;
-        let migrations = if let Some(client) = &mut client {
-            crate::migrations::observe(
-                client,
-                &wamn_provision::migration::history_table(&state.project_env_key, id),
-                &migrator.migrations,
-            )
-            .await?
-        } else {
-            crate::migrations::SchemaReport {
-                pending: migrator
-                    .iter()
-                    .filter(|source| source.migration_type.is_up_migration())
-                    .map(|source| crate::migrations::MigrationFile {
-                        version: source.version,
-                        checksum: hex::encode(&source.checksum),
-                    })
-                    .collect(),
-                ..Default::default()
-            }
-        };
+        let migrations = migration_reader
+            .observe(&candidate.migration_root, &state.project_env_key, id)
+            .await?;
         ensure!(
             !packages.contains_key(id),
             "schema candidate repeats package {id}"
@@ -355,10 +315,19 @@ mod tests {
             scratch.path().join("generated/wamn.json"),
             serde_json::to_vec(&manifest)?,
         )?;
-        let candidate = Candidate::source(PackageRoot {
-            path: scratch.path().to_owned(),
-            artifact_digest: None,
-        })?;
+        let reader = wamn_oci::deploy_packages::DeployPackages {
+            registry_token_metadata: false,
+            registry_auth_file: std::path::PathBuf::new(),
+            insecure_registry: false,
+            oci_ca_paths: Vec::new(),
+        };
+        let candidate = Candidate::source(
+            &reader,
+            PackageRoot {
+                path: scratch.path().to_owned(),
+                artifact_digest: None,
+            },
+        )?;
         let mut sources = BTreeMap::from([(
             manifest.package.id.clone(),
             SchemaSource {

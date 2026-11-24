@@ -1,4 +1,5 @@
 pub mod component_declaration;
+pub mod deploy_packages;
 pub mod integration;
 pub mod package_artifact;
 pub mod package_source;

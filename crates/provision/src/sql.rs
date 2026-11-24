@@ -7,8 +7,6 @@
 //! `wamn_app` role name is a pinned constant. Values that vary (a probed role
 //! name, a role password) travel as `$n` params or quoted literals.
 
-mod cdc;
-mod credentials;
 mod database;
 mod database_grants;
 
@@ -17,7 +15,7 @@ pub use database::{
     install_platform_extensions_sql, set_database_owner_sql,
 };
 
-pub use credentials::{
+pub use wamn_postgres::project_setup::{
     ensure_workload_acl_role_sql, grant_dynamic_sql_surface_sql, grant_platform_surface_sql,
     grant_workload_login_sql,
 };
@@ -30,20 +28,14 @@ pub use database_grants::{
 };
 
 #[doc(inline)]
-pub use cdc::{
-    CDC_PUBLISH, PUBLICATION_PROBE_SQL, create_failover_slot_sql, drop_replication_slot_sql,
-    ensure_cdc_exclusion_map_sql, ensure_entity_map_sql, grant_replication_access_sql,
-    upsert_cdc_exclusion_map_sql, upsert_entity_map_sql,
+pub use wamn_postgres::capture_sql::{
+    CDC_PUBLISH, PUBLICATION_PROBE_SQL, ensure_cdc_exclusion_map_sql, ensure_entity_map_sql,
+    grant_replication_access_sql, upsert_cdc_exclusion_map_sql, upsert_entity_map_sql,
 };
 
-use crate::workload_role::WorkloadRoleFamily;
 pub(crate) use postgres_protocol::escape::escape_identifier;
-use postgres_protocol::escape::escape_literal;
 
-/// Create shared project roles before selecting the database owner.
-pub fn ensure_project_roles_sql() -> &'static str {
-    include_str!("../../../deploy/sql/project-roles.sql")
-}
+pub use wamn_postgres::project_setup::ensure_project_roles_sql;
 
 /// Create shared system roles before selecting the database owner.
 pub fn ensure_system_roles_sql() -> &'static str {
@@ -273,10 +265,4 @@ pub const CONTROL_SCHEMAS: [&str; 2] = ["identity", "registry"];
 /// An admitted family lands on `None` with no edit here; a family
 /// that acquires a grant set adds it beside its builder, which is the one place
 /// a family stays per-family (`wamn-0h0g.22.16`).
-pub fn stable_surface_sql(family: WorkloadRoleFamily) -> Option<String> {
-    match family {
-        WorkloadRoleFamily::Query => Some(grant_dynamic_sql_surface_sql()),
-        WorkloadRoleFamily::Platform => Some(grant_platform_surface_sql()),
-        _ => None,
-    }
-}
+pub use wamn_postgres::project_setup::stable_surface_sql;

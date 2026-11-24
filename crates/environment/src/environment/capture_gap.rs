@@ -1,34 +1,15 @@
 //! Stop capture for recovery and retry reader restart after resynchronization.
 use super::Platform;
+use super::database::{DatabaseConnection, LifecycleLock};
 use anyhow::{Context as _, ensure};
-use k8s_openapi::api::apps::v1::Deployment;
-use kube::Api;
 pub use recovery::{
     CloseCaptureGapRequest, ClosedCaptureGap, RecoverCaptureGapRequest, RecoveredCaptureGap,
 };
 use serde_json::json;
-use wamn_kubernetes::client::resource;
-use wamn_postgres::LifecycleLock;
 use wamn_registry::Triple;
 
 mod plan;
 mod recovery;
-
-/// Whether the project has any capture gap that still needs resynchronization.
-pub(super) async fn is_open(
-    client: &mut sqlx::PgConnection,
-    triple: &Triple,
-) -> anyhow::Result<bool> {
-    Ok(sqlx::query_scalar(
-        "SELECT EXISTS (SELECT FROM registry.capture_gap
-         WHERE org = $1 AND project = $2 AND env = $3 AND resync_at IS NULL)",
-    )
-    .bind(triple.org.as_str())
-    .bind(triple.project.as_str())
-    .bind(triple.env.as_str())
-    .fetch_one(client)
-    .await?)
-}
 
 pub(super) async fn set_paused(
     platform: &Platform,
@@ -37,30 +18,21 @@ pub(super) async fn set_paused(
 ) -> anyhow::Result<()> {
     let name =
         wamn_registry::name::environment_resource_name(&triple.org, &triple.project, &triple.env);
-    wamn_kubernetes::platform_environment::update_project(
-        &platform.target,
-        &platform.chart,
-        &name,
-        json!({"cdcReader":{"pause":paused}}),
-    )
-    .await?;
-    if !paused {
-        let target = &platform.target;
-        let reader = wamn_provision::cdc_reader_name(&triple.org, &triple.project, &triple.env);
-        let deployments = Api::<Deployment>::namespaced(target.client.client(), &target.namespace);
-        let reader_exists = deployments
-            .get_opt(&reader)
-            .await
-            .with_context(|| format!("read CDC reader Deployment {reader}"))?
-            .is_some();
-        if reader_exists {
-            super::cdc_reader::wait_reader_ready(target, triple).await?;
-        }
+    platform
+        .cluster
+        .update_project(
+            &platform.chart,
+            &name,
+            json!({"cdcReader":{"pause":paused}}),
+        )
+        .await?;
+    if !paused && platform.cluster.reader_exists(triple).await? {
+        platform.cluster.wait_reader_ready(triple).await?;
     }
     Ok(())
 }
 
-/// Recover a lost slot while pausing its reader through the project chart.
+/// Recover a lost capture position while pausing its reader through the project chart.
 pub async fn recover(
     platform: &Platform,
     args: &RecoverCaptureGapRequest,
@@ -68,29 +40,17 @@ pub async fn recover(
     let triple =
         wamn_registry::Triple::new(args.org.clone(), args.env.clone(), args.project.clone());
     LifecycleLock::hold(
-        wamn_postgres::connect(&args.system_database_url).await?,
+        &*platform.database,
+        DatabaseConnection::Direct(&args.system_database_url),
         &triple,
         async |lock| {
-            let instance = crate::provision_project_env::read_project_env_instance(
-                &mut *lock.client().await,
-                &triple,
-            )
-            .await?;
+            let instance = lock.capture_instance(&triple).await?;
             let owner = wamn_platform_install::environment::connection_for(&triple, &instance);
-            let target = &platform.target;
-            let publications = resource(
-                target.client.client(),
-                &target.namespace,
-                "postgresql.cnpg.io",
-                "v1",
-                "Publication",
-                "publications",
-            );
-            let publication_exists = publications
-                .get_opt(&owner.database)
+            let publication_exists = platform
+                .cluster
+                .publication_exists(&owner.database)
                 .await
-                .with_context(|| format!("read CDC Publication for {triple}"))?
-                .is_some();
+                .with_context(|| format!("read CDC Publication for {triple}"))?;
             ensure!(
                 publication_exists,
                 "{triple} has no CDC Publication to recover"
@@ -112,11 +72,12 @@ pub async fn close(
     let triple =
         wamn_registry::Triple::new(args.org.clone(), args.env.clone(), args.project.clone());
     LifecycleLock::hold(
-        wamn_postgres::connect(&args.system_database_url).await?,
+        &*platform.database,
+        DatabaseConnection::Direct(&args.system_database_url),
         &triple,
         async |lock| {
-            let closed = recovery::close_capture_gap(&triple, &mut *lock.client().await).await?;
-            let paused = is_open(&mut *lock.client().await, &triple).await?;
+            let closed = lock.close_capture_gap(&triple).await?;
+            let paused = lock.has_capture_gap(&triple).await?;
             set_paused(platform, &triple, paused).await?;
             Ok(closed)
         },

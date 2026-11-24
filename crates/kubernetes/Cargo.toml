@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+wamn-environment.workspace = true
 tempfile.workspace = true
 wamn-platform-install.workspace = true
 kube = { workspace = true }

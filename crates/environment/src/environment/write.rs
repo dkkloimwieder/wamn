@@ -16,6 +16,9 @@ pub fn render(input: &ValuesInput<'_>) -> anyhow::Result<Value> {
     wamn_application_chart::values(input)
 }
 
+/// Validate an operator authority and read its fixed socket port.
+pub type AuthorityPort = fn(&str) -> Result<u16, wamn_connection::administration::ConnectionError>;
+
 /// Build release values from the application selection and artifact repositories.
 #[expect(
     clippy::too_many_arguments,
@@ -33,6 +36,7 @@ pub fn release_values(
     bindings: &[Binding],
     integration_repository: &str,
     component_repository: &str,
+    authority_port: AuthorityPort,
 ) -> anyhow::Result<(Value, Vec<RoleName>)> {
     plan::release_values(
         document,
@@ -43,6 +47,7 @@ pub fn release_values(
         bindings,
         integration_repository,
         component_repository,
+        authority_port,
     )
 }
 

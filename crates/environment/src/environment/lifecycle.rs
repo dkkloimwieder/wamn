@@ -1,39 +1,37 @@
 //! Authenticated environment configuration through installer-owned resources.
+use super::database::{DatabaseConnection, DatabaseSession, LifecycleLock};
 use super::{
     Platform,
     document::{EnvironmentDocument, EnvironmentFile},
     ensure as resources,
 };
-use crate::provision_project_env::{self, registry, workload};
+use crate::provision_project_env::workload;
 use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
-use std::time::Duration;
-use wamn_kubernetes::client::{ready, resource, wait_named};
 use wamn_platform_install as installer;
-use wamn_postgres::LifecycleLock;
-use wamn_registry::configuration::ConfigurationStore as _;
-use wamn_registry::lifecycle_lock::LifecycleLocks as _;
-use wamn_registry::{Triple, name, sql::upsert_event_reader_sql};
+use wamn_platform_install::database::ConnectionConfig;
+use wamn_registry::{Triple, name};
 
 pub async fn configure(
-    platform: &Platform,
+    platform: &mut Platform,
     document: EnvironmentFile,
     application: Option<&wamn_registry::ApplicationName>,
     disposable: Option<bool>,
 ) -> anyhow::Result<()> {
-    let mut platform = platform.clone();
-    super::runtime::resolve_platform(&mut platform)?;
-    let lock = LifecycleLock::acquire_environment(
-        wamn_postgres::connect(&platform.system_database_url).await?,
-        &document.org,
-        &document.env,
-    )
-    .await?;
+    super::runtime::resolve_platform(platform)?;
+    let lock = platform
+        .database
+        .lock(
+            DatabaseConnection::Direct(&platform.system_database_url),
+            &document.org,
+            &document.env,
+        )
+        .await?;
     let result = lock
         .protect(async {
             let applied_document = document.to_yaml()?;
             let sizing = serde_json::to_value(&document.database)?;
-            let settings = resources::postgres_settings(&platform).await?;
+            let settings = platform.cluster.postgres_settings().await?;
             let projects: Vec<_> = match application {
                 Some(application) => vec![document.into_application(application)?],
                 None => document.into_projects().collect(),
@@ -45,58 +43,16 @@ pub async fn configure(
                 .iter()
                 .map(|project| project.settings.project.as_str())
                 .collect();
-            let mut reserved = Vec::with_capacity(projects.len());
-            {
-                let mut client = lock.client().await;
-                let mut transaction = provision_project_env::provisioning_transaction(&mut client)
-                    .await?;
-                sqlx::query(wamn_postgres::platform_sql::PROJECT_STREAM_CAPACITY_LOCK_SQL)
-                    .execute(&mut *transaction)
-                    .await
-                    .context("lock platform project stream capacity")?;
-                let (max_projects, additional): (Option<i64>, i32) = sqlx::query_as(
-                    "SELECT (SELECT max_projects FROM registry.meta), \
-                            count(*)::int \
-                     FROM unnest($3::text[]) AS selected(project) \
-                     WHERE NOT EXISTS (SELECT 1 FROM registry.environment_projects AS registered \
-                         WHERE registered.org = $1 AND registered.env = $2 \
-                         AND registered.project = selected.project)",
-                )
-                .bind(first.settings.org.as_str())
-                .bind(first.settings.env.as_str())
-                .bind(&project_names)
-                .fetch_one(&mut *transaction)
-                .await
-                .context("count project stream reservations")?;
-                let max_projects = max_projects.context("the system SQL Job has not set the project stream limit")?;
-                if additional > 0 {
-                    let available: bool =
-                        sqlx::query_scalar("SELECT registry.project_capacity_available($1)")
-                            .bind(additional)
-                            .fetch_one(&mut *transaction)
-                            .await
-                            .context("check platform project stream capacity")?;
-                    ensure!(
-                        available,
-                        "project stream limit is {max_projects}, count would exceed it ({additional} new)"
-                    );
-                }
-                for project in &projects {
-                    reserved.push(
-                        reserve_project(&mut transaction, project, disposable)
-                            .await
-                            .with_context(|| format!("reserve project {}", project.settings.project))?,
-                    );
-                }
-                transaction.commit().await.context("commit project reservations")?;
-            }
-            let count =
-                super::broker::project_count(&mut *lock.client().await, &first.settings.org, &first.settings.env)
-                    .await?;
-            super::broker::configure(&platform, &first.settings.org, &first.settings.env, count).await?;
+            let reserved = lock.session.reserve(&projects, disposable).await?;
+            let count = lock
+                .session
+                .project_count(&first.settings.org, &first.settings.env)
+                .await?;
+            super::broker::configure(platform, &first.settings.org, &first.settings.env, count)
+                .await?;
             let (replicas, host) = resources::prepare_host_upgrade(
-                &platform,
-                &lock,
+                platform,
+                &*lock.session,
                 &first.settings.org,
                 &first.settings.env,
                 first.drain_bound_seconds,
@@ -107,20 +63,20 @@ pub async fn configure(
                 for (project, instance) in projects.iter().zip(reserved) {
                     let connection =
                         installer::environment::connection_for(&project.triple(), &instance);
-                    let database = wamn_provision::platform_environment::database_values(
+                    let database = (platform.database_values)(
                         &connection,
                         replicas,
                         sizing.clone(),
                         &settings,
                     )?;
                     configure_project(
-                        &platform,
+                        platform,
                         project,
                         application,
                         &instance,
                         &connection,
                         database,
-                        &lock,
+                        &*lock.session,
                         &applied_document,
                     )
                     .await
@@ -138,51 +94,21 @@ pub async fn configure(
                 tokio::try_join!(biased; async { anyhow::Ok(host.await) }, configure_projects)?;
             host_result?;
             if application.is_none() {
-                let names: Vec<_> = first.settings.integrations.keys().map(String::as_str).collect();
-                let mut connection = lock.client().await;
-                let mut transaction =
-                    provision_project_env::provisioning_transaction(&mut connection).await?;
-                wamn_postgres::Registry::new(&mut transaction).retain_integrations(&first.settings.org,
-                    &first.settings.env,
-                    &names,
-                )
-                .await
-                .context("remove connection pins after project configuration")?;
-                transaction.commit().await?;
+                let names: Vec<_> = first
+                    .settings
+                    .integrations
+                    .keys()
+                    .map(String::as_str)
+                    .collect();
+                lock.session
+                    .retain_integrations(&first.settings.org, &first.settings.env, &names)
+                    .await?;
             }
             Ok(())
         })
         .await;
     lock.release().await;
     result
-}
-
-async fn reserve_project(
-    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    document: &EnvironmentDocument,
-    disposable: Option<bool>,
-) -> anyhow::Result<wamn_registry::instance_suffix::InstanceSuffix> {
-    wamn_provision::validate_project_env_cdc(
-        &document.settings.org,
-        &document.settings.project,
-        &document.settings.env,
-    )?;
-    registry::record_project_env(
-        transaction,
-        &document.triple(),
-        document.readiness_budget_seconds,
-        document.drain_bound_seconds,
-        &document.settings.target,
-        &name::project_env_secret_name(
-            &document.settings.org,
-            &document.settings.project,
-            &document.settings.env,
-        ),
-        Some(document.settings.org.as_str()),
-        &registry::mint_instance_suffix()?,
-        disposable,
-    )
-    .await
 }
 
 #[expect(
@@ -194,25 +120,23 @@ async fn configure_project(
     document: &EnvironmentDocument,
     application: Option<&wamn_registry::ApplicationName>,
     instance: &wamn_registry::instance_suffix::InstanceSuffix,
-    connection: &wamn_postgres::ConnectionConfig,
+    connection: &ConnectionConfig,
     mut values: Value,
-    lock: &LifecycleLock,
+    lock: &dyn DatabaseSession,
     applied_document: &str,
 ) -> anyhow::Result<()> {
     let triple = &document.triple();
-    let unconfigured = super::document::read_configuration(&mut *lock.client().await, triple)
-        .await?
-        .is_none();
+    let unconfigured = lock.read_configuration(triple).await?.is_none();
     let owner = connection.to_json()?;
     let cluster = name::project_cluster(&connection.database);
     let schemas = if unconfigured {
         Vec::new()
     } else {
         platform.prepare_database(connection).await?;
-        let mut project =
-            wamn_postgres::platform_database::wait_project_connection(&owner, &connection.database)
-                .await?;
-        let unfinished = super::drain::unfinished(&mut project, &triple.env, application).await?;
+        let unfinished = platform
+            .database
+            .unfinished(&owner, &connection.database, &triple.env, application)
+            .await?;
         ensure!(
             unfinished.is_empty(),
             "{}",
@@ -222,140 +146,67 @@ async fn configure_project(
     };
     let capture = installer::environment::capture_configuration(connection.clone())?;
     let publication =
-        wamn_provision::cdc_object_name(&triple.org, &triple.project, &triple.env, instance);
+        wamn_registry::name::cdc_object_name(&triple.org, &triple.project, &triple.env, instance);
     let connections = workload::connections(connection)?;
 
     super::broker::configure_project(platform, triple).await?;
 
-    wamn_provision::platform_environment::set_operation_values(
+    super::chart_values::set_operation_values(
         &mut values,
         triple,
         &cluster,
         &connection.database,
         document.applications.keys(),
     )?;
-    values["publication"] = wamn_provision::platform_environment::publication_values(
-        triple,
-        instance,
-        &cluster,
-        &publication,
-        &schemas,
-    )["publication"]
-        .take();
+    values["publication"] =
+        super::chart_values::publication_values(triple, instance, &cluster, &publication, &schemas)
+            ["publication"]
+            .take();
     values["databaseConfig"] = workload::configuration_values(triple, instance, &connections)?;
     values["environmentDocument"] = applied_document.into();
     values["cdcReader"] = reader_values(platform, triple, &capture).await?;
-    let paused = super::capture_gap::is_open(&mut *lock.client().await, triple).await?;
+    let paused = lock.has_capture_gap(triple).await?;
     values["cdcReader"]["pause"] = paused.into();
     // Wait for the database first because the reader needs the slot created below.
-    let release = wamn_provision::environment_names::environment_resource_name(
-        &triple.org,
-        &triple.project,
-        &triple.env,
-    )?;
-    wamn_kubernetes::platform_environment::apply_project(
-        &platform.target,
-        &platform.chart,
-        &release,
-        &values,
-    )
-    .await?;
-    let target = &platform.target;
-    let clusters = resource(
-        target.client.client(),
-        &target.namespace,
-        "postgresql.cnpg.io",
-        "v1",
-        "Cluster",
-        "clusters",
-    );
-    let cluster_uid = wait_named(&clusters, &cluster, Duration::from_secs(120), |object| {
-        Ok(object.filter(ready).map(|object| object.metadata.uid))
-    })
-    .await?
-    .with_context(|| format!("Cluster {cluster} has no uid"))?;
-    copy_server_ca(target, &cluster, &connection.server_ca.name, cluster_uid).await?;
-    wamn_kubernetes::platform_environment::wait_database_applied(
-        &platform.target,
-        &connection.database,
-        Duration::from_secs(120),
-    )
-    .await?;
-
-    let certificates = resource(
-        target.client.client(),
-        &target.namespace,
-        "cert-manager.io",
-        "v1",
-        "Certificate",
-        "certificates",
-    );
-    let wait_certificate = |name| {
-        wait_named(&certificates, name, Duration::from_secs(120), |object| {
-            Ok(object.filter(ready).map(drop))
-        })
-    };
-    tokio::try_join!(
-        wait_certificate(&connection.credentials.name),
-        wait_certificate(&capture.credentials.name),
-    )?;
+    installer::environment::validate_project_env(&triple.org, &triple.project, &triple.env)?;
+    let release = name::environment_resource_name(&triple.org, &triple.project, &triple.env);
+    platform
+        .cluster
+        .apply_project(&platform.chart, &release, &values)
+        .await?;
+    platform.cluster.wait_database(connection, &capture).await?;
     if unconfigured {
         platform.prepare_database(connection).await?;
     }
     LifecycleLock::hold(
-        wamn_postgres::platform_database::wait_project_connection(&owner, &connection.database)
-            .await?,
+        &*platform.database,
+        DatabaseConnection::Wait {
+            input: &owner,
+            database: &connection.database,
+        },
         triple,
         async |project_lock| {
-            let mut client = project_lock.client().await;
-            sqlx::raw_sql(sqlx::AssertSqlSafe(provision_project_env::privilege_sql(
-                &connection.database,
-            )))
-            .execute(&mut *client)
-            .await?;
-            drop(client);
-            if unconfigured {
-                wamn_provision::platform_migrations::install_project(
-                    &mut *project_lock.client().await,
-                )
+            project_lock
+                .initialize_project(&connection.database, &owner, unconfigured)
                 .await?;
-                crate::platform_migrations::restore_project(
-                    &owner,
-                    &crate::platform_migrations::embedded_sources(
-                        wamn_provision::migrations::MigrationDatabase::Project,
-                    ),
-                )
-                .await?;
-            }
-            {
-                let mut project = wamn_postgres::connect(&owner).await?;
-                super::fill(
-                    &mut *lock.client().await,
-                    &mut project,
-                    &platform.identity_issuer,
-                    wamn_authentication::administration::ApplicationTarget {
-                        org: &triple.org,
-                        project: &triple.project,
-                        env: &triple.env,
-                    },
-                )
-                .await?;
-            }
-            workload::grant(&mut *project_lock.client().await, &connections).await?;
+            lock.fill(&owner, triple, &platform.identity_issuer).await?;
+            project_lock.grant_workload(&connections).await?;
             if !schemas.is_empty() {
                 platform.prepare_database(&capture).await?;
-                resources::prepare_cdc(
-                    &owner,
-                    &capture.to_json()?,
-                    &connection.database,
-                    &publication,
-                    &schemas,
-                )
-                .await?;
+                platform
+                    .database
+                    .prepare_cdc(
+                        &owner,
+                        &capture.to_json()?,
+                        &connection.database,
+                        &publication,
+                        &schemas,
+                    )
+                    .await?;
             }
             resources::ensure_stream(platform, triple).await?;
             if !schemas.is_empty() && !paused {
-                super::cdc_reader::wait_reader_ready(&platform.target, triple).await?;
+                platform.cluster.wait_reader_ready(triple).await?;
             }
             // Stop before save deletes the registry rows, so a failed stop is found again.
             let removed: Vec<_> = super::analyse::application_releases(platform, lock, triple)
@@ -367,12 +218,9 @@ async fn configure_project(
             let mut unfinished = Vec::new();
             for (application, _) in &removed {
                 unfinished.extend(
-                    super::drain::unfinished(
-                        &mut *project_lock.client().await,
-                        &triple.env,
-                        Some(application),
-                    )
-                    .await?,
+                    project_lock
+                        .unfinished(&triple.env, Some(application))
+                        .await?,
                 );
             }
             ensure!(
@@ -382,40 +230,16 @@ async fn configure_project(
             );
             for (removed, release) in removed {
                 println!("stopping {removed} (release {release})");
-                super::drain::stop(
-                    platform,
-                    &mut *project_lock.client().await,
-                    &triple.env,
-                    &removed,
-                    &release,
-                )
-                .await?;
+                super::drain::stop(platform, project_lock, &triple.env, &removed, &release).await?;
             }
-            let mut connection = lock.client().await;
-            let mut tx = provision_project_env::provisioning_transaction(&mut connection).await?;
-            document.save(&mut tx).await?;
-            // With deployed schemas, the failover slot uses the publication name.
-            let slot = &publication;
-            let stream = wamn_event::stream_name(&triple.org, &triple.project, &triple.env);
-            sqlx::query(sqlx::AssertSqlSafe(upsert_event_reader_sql()))
-                .bind(triple.org.as_str())
-                .bind(triple.project.as_str())
-                .bind(triple.env.as_str())
-                .bind(&publication)
-                .bind(
-                    schemas
-                        .iter()
-                        .map(wamn_package::canonical_name::CanonicalName::as_str)
-                        .collect::<Vec<_>>(),
-                )
-                .bind(slot)
-                .bind(stream)
-                .bind(&capture.credentials.name)
-                .bind(&capture.credentials.namespace)
-                .execute(&mut *tx)
-                .await
-                .with_context(|| format!("register the CDC reader for {triple}"))?;
-            tx.commit().await?;
+            lock.save_deployment(
+                triple,
+                &document.configuration(),
+                &publication,
+                &schemas,
+                &capture,
+            )
+            .await?;
             Ok(())
         },
     )
@@ -425,13 +249,11 @@ async fn configure_project(
 async fn reader_values(
     platform: &Platform,
     triple: &Triple,
-    capture: &wamn_postgres::ConnectionConfig,
+    capture: &ConnectionConfig,
 ) -> anyhow::Result<Value> {
-    let image = wamn_kubernetes::release_chart::image_set(&platform.chart)
-        .await?
-        .host;
+    let image = platform.cluster.host_image(&platform.chart).await?;
     let (org, project, env) = (&triple.org, &triple.project, &triple.env);
-    let capture_name = wamn_provision::cdc_reader_name(org, project, env);
+    let capture_name = wamn_registry::name::cdc_reader_name(org, project, env);
     Ok(json!({
         "name":capture_name,
         "key": name::project_env_key(org, project, env),
@@ -442,55 +264,4 @@ async fn reader_values(
         "database": capture,
         "natsUrl": platform.nats_url,
     }))
-}
-
-/// Copy only `ca.crt` of the cluster's server CA Secret into the ConfigMap
-/// that control reads. The Cluster owns the copy, so deleting it removes both.
-async fn copy_server_ca(
-    target: &wamn_kubernetes::Target,
-    cluster: &str,
-    source: &str,
-    cluster_uid: String,
-) -> anyhow::Result<()> {
-    use k8s_openapi::api::core::v1::{ConfigMap, Secret};
-    use k8s_openapi::apimachinery::pkg::apis::meta::v1::{ObjectMeta, OwnerReference};
-    use kube::{
-        Api,
-        api::{Patch, PatchParams},
-    };
-
-    let secrets = Api::<Secret>::namespaced(target.client.client(), &target.namespace);
-    let pem = secrets
-        .get(source)
-        .await
-        .with_context(|| format!("read Secret {source}"))?
-        .data
-        .and_then(|mut data| data.remove("ca.crt"))
-        .with_context(|| format!("Secret {source} has no ca.crt"))?;
-    let name = name::project_server_ca_copy(cluster);
-    let copy = ConfigMap {
-        metadata: ObjectMeta {
-            name: Some(name.clone()),
-            namespace: Some(target.namespace.clone()),
-            owner_references: Some(vec![OwnerReference {
-                api_version: "postgresql.cnpg.io/v1".into(),
-                kind: "Cluster".into(),
-                name: cluster.into(),
-                uid: cluster_uid,
-                ..OwnerReference::default()
-            }]),
-            ..ObjectMeta::default()
-        },
-        data: Some([("ca.crt".into(), String::from_utf8(pem.0)?)].into()),
-        ..ConfigMap::default()
-    };
-    Api::<ConfigMap>::namespaced(target.client.client(), &target.namespace)
-        .patch(
-            &name,
-            &PatchParams::apply(wamn_kubernetes::client::APPLY_MANAGER),
-            &Patch::Apply(copy),
-        )
-        .await
-        .with_context(|| format!("apply ConfigMap {name}"))?;
-    Ok(())
 }

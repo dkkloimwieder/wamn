@@ -191,6 +191,7 @@ async fn record_bytes(
         &[],
         "registry.example.com/wamn/integrations",
         "registry.example.com/wamn/components",
+        wamn_http::wasm_authority::wasm_authority_port,
     )?;
     let path = directory.join("application.yaml");
     std::fs::write(&path, serde_yaml::to_string(&values)?)?;

@@ -7,34 +7,26 @@ license.workspace = true
 
 [features]
 default = []
-ops = ["wamn-provision/ops"]
+ops = []
 
 [dependencies]
+async-trait.workspace = true
 wamn-application.workspace = true
 wamn-application-chart.workspace = true
-kube = { workspace = true }
-k8s-openapi = { workspace = true }
 wamn-connection-type.workspace = true
 wamn-oci-reference.workspace = true
 wamn-package.workspace = true
 wamn-component-policy.workspace = true
-wamn-workflow-graph.workspace = true
 wamn-role.workspace = true
 wamn-connection = { workspace = true }
 wamn-event.workspace = true
 wamn-envelope.workspace = true
 wamn-platform-install.workspace = true
-wamn-postgres.workspace = true
 wamn-authentication.workspace = true
-sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls", "chrono", "uuid", "json"] }
-wamn-broker = { workspace = true }
 wamn-digest.workspace = true
 wit-parser = { workspace = true }
-wamn-kubernetes = { workspace = true }
 anyhow = { workspace = true }
-async-nats = { workspace = true, features = ["jetstream"] }
 chrono = { workspace = true, features = ["clock"] }
-hex = { workspace = true }
 ring = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
@@ -44,22 +36,18 @@ serde_yaml = { workspace = true }
 tokio = { workspace = true, features = ["fs", "io-util", "macros", "process", "rt", "signal", "sync", "time"] }
 tracing = { workspace = true }
 uuid = { workspace = true, features = ["v4"] }
-wash-runtime.workspace = true
-wamn-oci = { workspace = true }
-wamn-provision = { workspace = true }
 wamn-registry = { workspace = true }
-postgres-protocol = { workspace = true }
-wamn-identity-client.workspace = true
 nkeys.workspace = true
 zeroize.workspace = true
 wamn-identity-protocol.workspace = true
-wamn-run-state = { workspace = true }
-wamn-codegen = { workspace = true }
 wamn-release = { workspace = true }
 
 [dev-dependencies]
+postgres-protocol = { workspace = true }
+wamn-postgres.workspace = true
+wamn-provision.workspace = true
+wamn-oci.workspace = true
 url = { workspace = true }
-wash-runtime = { workspace = true, features = ["washlet", "wasi-logging"] }
 object_store.workspace = true
 wamn-storage.workspace = true
 sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "migrate"] }

@@ -384,21 +384,22 @@ async fn render(
     let publication = name::cdc_object_name(org_id, project, env, &instance);
     let mut project_values =
         platform_environment::database_values(&connection, 1, sizing, &org_values["postgres"])?;
-    platform_environment::set_operation_values(
+    wamn_environment::environment::chart_values::set_operation_values(
         &mut project_values,
         &triple,
         &cluster,
         &connection.database,
         document.applications.keys(),
     )?;
-    project_values["publication"] = platform_environment::publication_values(
-        &triple,
-        &instance,
-        &cluster,
-        &publication,
-        &[],
-    )["publication"]
-        .take();
+    project_values["publication"] =
+        wamn_environment::environment::chart_values::publication_values(
+            &triple,
+            &instance,
+            &cluster,
+            &publication,
+            &[],
+        )["publication"]
+            .take();
     project_values["databaseConfig"] =
         workload::configuration_values(&triple, &instance, &connections)?;
     project_values["environmentDocument"] = applied_document.into();
@@ -469,6 +470,7 @@ async fn render(
         &[],
         &integration_base,
         &component_base,
+        wamn_http::wasm_authority::wasm_authority_port,
     )?;
     if host_values["insecureRegistry"] == true {
         // A copy of the private operation.rs::use_pod_registry.
@@ -511,14 +513,15 @@ async fn render(
     );
 
     // After deploy, the project release gains the publication schemas (operation.rs, --reuse-values).
-    project_values["publication"] = platform_environment::publication_values(
-        &triple,
-        &instance,
-        &cluster,
-        &publication,
-        &schemas,
-    )["publication"]
-        .take();
+    project_values["publication"] =
+        wamn_environment::environment::chart_values::publication_values(
+            &triple,
+            &instance,
+            &cluster,
+            &publication,
+            &schemas,
+        )["publication"]
+            .take();
     let deployed_file = write_json(directory, "project-deployed-values.json", &project_values)?;
     rendered.push(
         template(
