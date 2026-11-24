@@ -9,7 +9,7 @@ use wamn_authentication::api_service;
 use wamn_identity_protocol::{PrincipalId, pat_prefix::PatPrefix};
 use wamn_package::canonical_name::CanonicalName;
 use wamn_postgres::identity::application::service;
-use wamn_registry::{EnvName, ProjectId, Triple, deployment::DeploymentStore as _};
+use wamn_registry::{EnvName, ProjectId, Triple};
 use wamn_role::RoleName;
 
 use super::Execution;
@@ -36,10 +36,10 @@ impl Execution {
         let mut system =
             wamn_postgres::identity::transaction::read_pool(&self.control, caller).await?;
         let triple = Triple::new(self.org.clone(), target.env, target.project);
-        let instance = wamn_postgres::Registry::new(&mut system)
-            .instance_suffix(&triple)
-            .await?
-            .context("the project deployment does not exist")?;
+        let instance =
+            wamn_environment::registry::deployment::instance_suffix(&mut system, &triple)
+                .await?
+                .context("the project deployment does not exist")?;
         let domain = if matches!(
             operation.as_str(),
             "api_service.create" | "service_principal.create"

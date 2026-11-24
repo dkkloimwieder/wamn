@@ -18,7 +18,7 @@ async fn a_fresh_install_keeps_control_plane_tables_out() {
     postgres.create_system_role().await.unwrap();
     let database = postgres.create_project_database("project").await.unwrap();
     let mut client = connect(database.as_str()).await;
-    wamn_postgres::environment_schema::install_project(&mut client)
+    wamn_environment::platform_migrations::install_project(&mut client)
         .await
         .unwrap();
     let system_relations: Vec<String> = sqlx::query_scalar(

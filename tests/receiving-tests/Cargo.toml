@@ -10,6 +10,7 @@ autotests = false
 path = "lib.rs"
 
 [dev-dependencies]
+wamn-environment.workspace = true
 wamn-package.workspace = true
 wamn-component-policy.workspace = true
 wamn-postgres.workspace = true

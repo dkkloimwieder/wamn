@@ -29,7 +29,7 @@ async fn connect(url: &str) -> Client {
 /// Install the catalog and the application minimum on a clean database.
 async fn provision(admin: &mut Client) {
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (wamn_postgres::project_setup::ensure_project_roles_sql()).to_string(),
+        (wamn_environment::project_setup::ensure_project_roles_sql()).to_string(),
     ))
     .execute(&mut *admin)
     .await
@@ -254,7 +254,7 @@ async fn history_table_creation_waits_for_a_running_prune() {
         .await
         .unwrap();
     let migration = postgres.create_project_database("project").await.unwrap();
-    wamn_postgres::platform_migrations::install_project(&mut connect(migration.as_str()).await)
+    wamn_environment::platform_migrations::install_project(&mut connect(migration.as_str()).await)
         .await
         .unwrap();
     let mut database = url::Url::parse(postgres.admin_url()).unwrap();
@@ -301,7 +301,9 @@ async fn history_table_creation_waits_for_a_running_prune() {
         .map(drop)
         .unwrap();
     let prune =
-        tokio::spawn(async move { wamn_postgres::prune_record_history::prune(&mut pruning).await });
+        tokio::spawn(
+            async move { wamn_environment::prune_record_history::prune(&mut pruning).await },
+        );
     wait_for_blocker(
         &mut admin,
         &"history_lock_prune".parse().expect("valid name"),

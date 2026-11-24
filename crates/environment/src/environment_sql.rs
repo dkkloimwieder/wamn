@@ -51,26 +51,26 @@ pub fn close_capture_gap_sql() -> &'static str {
      RETURNING resync_at"
 }
 
-/// crates/environment/src/org.rs::ENVIRONMENT_STATUS_SQL registry statement.
+/// Registry statement used by [`crate::environment_org::set_environment_status`].
 pub const IDENTITY_PLATFORM_SRC_ORG_ENVIRONMENT_STATUS_SQL: &str = "UPDATE registry.environments SET status = $4 \
     WHERE org = $1 AND env = ANY($3) AND EXISTS (SELECT FROM registry.environment_projects p WHERE p.org=$1 AND p.env=registry.environments.env AND p.project=$2)";
 
-/// crates/environment/src/org.rs::ORG_ENVIRONMENTS_SQL registry statement.
+/// Registry statement used by [`crate::environment_org::org_environments`].
 pub const IDENTITY_PLATFORM_SRC_ORG_ORG_ENVIRONMENTS_SQL: &str = "SELECT project, env FROM registry.environment_projects \
     WHERE org = $1 AND ($2::text IS NULL OR project = $2) ORDER BY project, env";
 
-/// crates/environment/src/org.rs::CREATE_PROJECT_SQL registry statement.
+/// Registry statement used by [`crate::environment_org::create_project`].
 pub const IDENTITY_PLATFORM_SRC_ORG_CREATE_PROJECT_SQL: &str =
     "INSERT INTO registry.projects (org, id) VALUES ($1, $2) ON CONFLICT (org, id) DO NOTHING";
 
-/// crates/environment/src/environment/analyse.rs::read_row registry statement.
+/// Read the environment's instance suffix and disposable designation.
 pub const CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_ANALYSE_READ_ROW: &str = "SELECT instance_suffix, disposable FROM registry.environment_projects JOIN registry.environments USING (org,env) \
               WHERE org = $1 AND project = $2 AND env = $3";
 
-/// crates/environment/src/environment/delete.rs::delete_locked registry statement.
+/// Read the instance suffix and drain bound before environment deletion.
 pub const CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_DELETE_DELETE_LOCKED: &str = "SELECT instance_suffix, drain_bound_seconds FROM registry.environment_projects JOIN registry.environments USING (org,env) \
               WHERE org = $1 AND project = $2 AND env = $3";
 
-/// crates/environment/src/environment/delete/rows.rs::delete_registry_rows registry statement.
+/// Delete the project deployment from the environment.
 pub const CONTROL_ENVIRONMENT_SRC_ENVIRONMENT_DELETE_ROWS_DELETE_REGISTRY_ROWS: &str =
     "DELETE FROM registry.environment_projects WHERE org = $1 AND project = $2 AND env = $3";

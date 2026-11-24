@@ -1,9 +1,9 @@
 //! Project membership projection under system authority.
 
-use crate::identity::application;
 use sqlx::Connection as _;
 use std::collections::BTreeSet;
 use wamn_authentication::administration::ApplicationTarget;
+use wamn_postgres::identity::application;
 
 /// Fill member rows from system authority.
 pub async fn fill(
@@ -13,9 +13,13 @@ pub async fn fill(
     target: ApplicationTarget<'_>,
 ) -> anyhow::Result<()> {
     let mut system = system.begin().await?;
-    crate::identity::org::lock_org_memberships(&mut system, target.org).await?;
+    wamn_postgres::identity::org::lock_org_memberships(&mut system, target.org).await?;
     let mut project = project.begin().await?;
-    crate::bind_platform_principal(&mut project, crate::PlatformComponent::Provisioning).await?;
+    wamn_postgres::bind_platform_principal(
+        &mut project,
+        wamn_postgres::PlatformComponent::Provisioning,
+    )
+    .await?;
     let mut principals = BTreeSet::new();
     principals.extend(
         sqlx::query_scalar::<_, uuid::Uuid>(

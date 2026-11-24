@@ -34,7 +34,7 @@ pub async fn prepare(url: url::Url, family: WorkloadRoleFamily) -> Fixture {
             // and installs its schemas.
             execute(
                 &mut admin,
-                wamn_postgres::project_setup::ensure_project_roles_sql(),
+                wamn_environment::project_setup::ensure_project_roles_sql(),
             )
             .await;
             super::database::platform_migration_input(url.as_str(), MigrationDatabase::Project)
@@ -46,10 +46,10 @@ pub async fn prepare(url: url::Url, family: WorkloadRoleFamily) -> Fixture {
             )
             .await;
             for batch in [
-                wamn_postgres::project_setup::CATALOG_SCHEMA_SQL,
+                wamn_environment::project_setup::CATALOG_SCHEMA_SQL,
                 include_str!("../../../../deploy/sql/run-state.sql"),
                 include_str!("../../../../deploy/sql/run-queue.sql"),
-                wamn_postgres::project_setup::APP_SCHEMA_SQL,
+                wamn_environment::project_setup::APP_SCHEMA_SQL,
                 "RESET ROLE",
             ] {
                 execute(&mut admin, batch).await;
@@ -87,7 +87,7 @@ pub async fn prepare(url: url::Url, family: WorkloadRoleFamily) -> Fixture {
     if family == WorkloadRoleFamily::Migration {
         execute(
             &mut admin,
-            &wamn_postgres::project_migration::grants_sql(&login),
+            &wamn_environment::project_migration::grants_sql(&login),
         )
         .await;
     }

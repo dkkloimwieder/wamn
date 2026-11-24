@@ -24,6 +24,7 @@ wamn-postgres.workspace = true
 wamn-registry.workspace = true
 
 [dev-dependencies]
+wamn-environment.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 wamn-identity-protocol.workspace = true
 wamn-principal.workspace = true

@@ -1,7 +1,7 @@
 //! Identity provisioning fills the rows that application foreign keys reference.
 
 use wamn_authentication::administration::ApplicationTarget;
-use wamn_postgres::environment_fill::fill;
+use wamn_environment::environment_fill::fill;
 
 use wamn_test_infrastructure::identity as common;
 

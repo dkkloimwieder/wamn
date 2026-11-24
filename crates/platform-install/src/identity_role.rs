@@ -205,6 +205,8 @@ pub fn grants_sql() -> String {
     }
     write!(sql, " GRANT SELECT, INSERT, UPDATE, DELETE ON identity.password_attempts TO {role}; GRANT EXECUTE ON FUNCTION identity.lock_password_principal(uuid) TO {role};").expect("string write");
     write!(sql, " GRANT DELETE ON identity.password_logins TO {role};").expect("string write");
-    sql.push_str(&wamn_postgres::platform_sql::grant_control_policy_execute_sql(&role));
+    sql.push_str(&crate::platform_sql::grant_control_policy_execute_sql(
+        &role,
+    ));
     sql
 }

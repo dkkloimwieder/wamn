@@ -75,14 +75,14 @@ async fn application_mutations_require_row_security_in_each_database() {
         .await
         .unwrap();
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        wamn_postgres::project_setup::ensure_project_roles_sql().to_owned(),
+        wamn_environment::project_setup::ensure_project_roles_sql().to_owned(),
     ))
     .execute(&mut client)
     .await
     .unwrap();
     assert_author_sql_boundaries(&mut client).await;
     let mut migrator = wamn_postgres::connect(migration.as_str()).await.unwrap();
-    wamn_postgres::environment_schema::install_project(&mut migrator)
+    wamn_environment::platform_migrations::install_project(&mut migrator)
         .await
         .expect("install canonical project schemas through reconciler");
     let mut project = url::Url::parse(postgres.admin_url()).unwrap();

@@ -35,7 +35,7 @@ Each library has one concern. Directory names follow crate names without the `wa
 | `crates/digest` | `wamn-digest`: canonical JSON and SHA-256 identities |
 | `crates/scalar` | `wamn-scalar`: scalar formats and SQL value types |
 | `crates/number-pattern` | `wamn-number-pattern`: document number pattern parsing |
-| `crates/registry` | `wamn-registry`: hierarchy coordinates, resource names, and registry SQL |
+| `crates/registry` | `wamn-registry`: hierarchy coordinates, resource names, and registry values |
 | `crates/release` | `wamn-release`: release plans, admitted components, publication contracts, and web artifact uploads |
 | `crates/oci` | `wamn-oci`: registry transport, artifact reads and publication, and registry credentials |
 | `crates/environment` | `wamn-environment`: environment lifecycle, package apply, retention, and CDC reader lifecycle and recovery |
@@ -157,8 +157,9 @@ A component digest shares code only. It grants no access to another project or e
 ## Registry hierarchy
 
 The hierarchy is org, environment, project, application.
-`wamn-registry` owns registry SQL. Its deployment and connection readers return typed values.
-`wamn-catalog` owns typed environment configuration and lifecycle locks.
+`wamn-registry` defines the values that registry readers return.
+`wamn-environment` owns SQL for deployment records, applied configuration, and lifecycle locks.
+`wamn-platform-install` owns SQL for system and org setup. `wamn-postgres` holds the connection store.
 `registry.environments` stores each environment's status, disposable setting, target, readiness budget, and drain bound.
 `registry.projects` holds org-level project definitions.
 `registry.environment_projects` places a project under an environment and owns its database Secret and instance suffix.

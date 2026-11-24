@@ -47,10 +47,8 @@ Workers select managed database logins from the project placement and write thei
 They fetch the named Secrets in the org and write the login files and the server's `ca.crt` to `/etc/wamn/db/<login-secret>/` in memory.
 Project logins use `tls.crt` and `tls.key` in that directory.
 The recovery Job mounts its project recovery certificate. It can read only that project's source stream and receive replies on its own inbox.
-The private `prune-record-history` and `prune-run-history` worker commands serve chart retention tasks.
-They select the record or run retention login from the recorded project connection.
-The chart mounts that role's Secret and the public administration connection files.
-Library tests retain the assertions about retained rows, login refusals, and grants.
+The [record history pruning code](../../crates/environment/src/prune_record_history.rs) uses a project database login and binds `wamn:audit-retention` for each transaction.
+The [PostgreSQL test](../../crates/environment/tests/history_retention_live.rs) checks that creation of a history table waits for pruning.
 
 `api_service.create` returns its PAT through the authenticated response.
 `wamn create-api-service` saves that response to the selected private file and prints only its principal id.

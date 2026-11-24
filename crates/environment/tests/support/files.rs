@@ -59,16 +59,16 @@ pub async fn fixture(name: &str) -> anyhow::Result<Fixture> {
     let mut observer = connect(database.as_str()).await?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
         "{} CREATE SCHEMA wamn_run",
-        wamn_postgres::project_setup::ensure_project_roles_sql()
+        wamn_environment::project_setup::ensure_project_roles_sql()
     )))
     .execute(&mut observer)
     .await
     .map(drop)?;
-    sqlx::raw_sql(wamn_postgres::project_setup::CATALOG_SCHEMA_SQL)
+    sqlx::raw_sql(wamn_environment::project_setup::CATALOG_SCHEMA_SQL)
         .execute(&mut observer)
         .await
         .map(drop)?;
-    sqlx::raw_sql(wamn_postgres::project_setup::APP_SCHEMA_SQL)
+    sqlx::raw_sql(wamn_environment::project_setup::APP_SCHEMA_SQL)
         .execute(&mut observer)
         .await
         .map(drop)?;

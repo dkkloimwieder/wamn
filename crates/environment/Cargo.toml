@@ -44,6 +44,7 @@ wamn-identity-protocol.workspace = true
 wamn-release = { workspace = true }
 
 [dev-dependencies]
+wamn-scalar.workspace = true
 wamn-kubernetes.workspace = true
 wamn-oci.workspace = true
 url = { workspace = true }

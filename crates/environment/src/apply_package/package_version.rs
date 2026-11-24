@@ -83,7 +83,7 @@ pub async fn read_package_migrations(
     package_id: &wamn_package::PackageName,
 ) -> anyhow::Result<Vec<sqlx::migrate::AppliedMigration>> {
     use sqlx::migrate::Migrate as _;
-    let table = wamn_postgres::project_migration::history_table(project_env_key, package_id);
+    let table = crate::project_migration::history_table(project_env_key, package_id);
     let exists: bool = sqlx::query_scalar("SELECT to_regclass($1) IS NOT NULL")
         .bind(&table)
         .fetch_one(&mut *connection)

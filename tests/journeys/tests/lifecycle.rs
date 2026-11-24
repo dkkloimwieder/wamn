@@ -7,7 +7,6 @@ use std::net::{IpAddr, SocketAddr};
 use std::num::NonZeroU32;
 use std::path::PathBuf;
 use std::time::Duration;
-use wamn_registry::deployment::DeploymentStore as _;
 
 use anyhow::{Context as _, ensure};
 use common::host::{FIXTURE, fixture, ready, runtime};
@@ -686,10 +685,10 @@ async fn require_present(api: &Api<DynamicObject>, name: &str) -> anyhow::Result
 async fn require_no_active_project(environment: &Environment) -> anyhow::Result<()> {
     let mut system = environment.org.cluster.observe_system().await?;
     let triple = &environment.triple;
-    let active = wamn_postgres::Registry::new(&mut system.connection)
-        .instance_suffix(triple)
-        .await
-        .with_context(|| format!("read registry deployment for {triple}"))?;
+    let active =
+        wamn_environment::registry::deployment::instance_suffix(&mut system.connection, triple)
+            .await
+            .with_context(|| format!("read registry deployment for {triple}"))?;
     ensure!(
         active.is_none(),
         "plain delete left an active deployment for {triple}: {active:?}"

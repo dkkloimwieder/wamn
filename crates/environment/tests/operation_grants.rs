@@ -1,11 +1,11 @@
 //! Installed role constraints and the built-in administrator write.
 
 use sqlx::Connection as _;
-use wamn_postgres::bind_platform_principal_sql;
-use wamn_postgres::operation_grants::{
+use wamn_environment::operation_grants::{
     ENSURE_ADMIN_ROLE_SQL, OPERATION_GRANT_TRANSACTION_PRELUDE_SQL,
     operation_base_grants_requirements_sql,
 };
+use wamn_postgres::bind_platform_principal_sql;
 use wamn_principal::PlatformComponent;
 
 async fn admin_write(connection: &mut sqlx::PgConnection) -> Result<(), sqlx::Error> {
@@ -41,7 +41,7 @@ async fn admin_role_has_no_rows_and_authored_rows_are_grants_live() -> anyhow::R
     assert_eq!(missing.code().as_deref(), Some("55000"));
 
     for batch in [
-        wamn_postgres::project_setup::CATALOG_SCHEMA_SQL,
+        wamn_environment::project_setup::CATALOG_SCHEMA_SQL,
         include_str!("../../../deploy/sql/app-schema.sql"),
     ] {
         sqlx::raw_sql(sqlx::AssertSqlSafe(batch))

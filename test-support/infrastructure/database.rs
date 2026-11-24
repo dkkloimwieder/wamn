@@ -310,17 +310,17 @@ pub async fn project() -> Result<Project> {
     let mut project = wamn_postgres::connect(owner_url.as_str()).await?;
     execute(
         &mut project,
-        &wamn_postgres::project_setup::privilege_sql(&database),
+        &wamn_environment::project_setup::privilege_sql(&database),
     )
     .await?;
-    wamn_postgres::platform_migrations::install_project(&mut project).await?;
-    wamn_postgres::environment_schema::restore_project(
+    wamn_environment::platform_migrations::install_project(&mut project).await?;
+    wamn_environment::environment_schema::restore_project(
         owner_url.as_str(),
-        &wamn_postgres::platform_migrations::embedded_sources(MigrationDatabase::Project),
+        &wamn_postgres::migrations::embedded_sources(MigrationDatabase::Project),
     )
     .await?;
     let logins = wamn_environment::provision_project_env::workload::connections(&connection)?;
-    wamn_postgres::project_setup::grant(&mut project, &logins).await?;
+    wamn_environment::project_setup::grant(&mut project, &logins).await?;
     // A package migration creates each model schema, then the environment grants its capture.
     execute(
         &mut project,
@@ -329,7 +329,7 @@ pub async fn project() -> Result<Project> {
     .await?;
     execute(
         &mut project,
-        &wamn_postgres::capture_sql::cdc_schema_sql_bundle(&[MODEL_SCHEMA.parse()?], &database),
+        &wamn_environment::capture_sql::cdc_schema_sql_bundle(&[MODEL_SCHEMA.parse()?], &database),
     )
     .await?;
     Ok(Project {

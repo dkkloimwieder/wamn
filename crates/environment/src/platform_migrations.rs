@@ -1,13 +1,13 @@
 //! PostgreSQL platform migration execution and reporting.
 
 use crate::migrations::{MigrationFile, SchemaReport};
+use crate::registry::lifecycle_lock::LifecycleLock;
 use sqlx::PgConnection as Client;
 use sqlx::migrate::Migration;
-use wamn_postgres::LifecycleLock;
 use wamn_postgres::migration_scope::MigrationDatabase;
 use wamn_registry::Triple;
 
-use wamn_postgres::platform_migrations::{apply_target, embedded_sources};
+use wamn_postgres::migrations::{apply_target, embedded_sources};
 
 pub async fn observe(
     client: &mut sqlx::PgConnection,
@@ -46,8 +46,7 @@ pub(crate) async fn project_schema(
     apply: bool,
     output: impl std::io::Write,
 ) -> anyhow::Result<()> {
-    wamn_postgres::environment_registry::require_connected(&mut *lock.client().await, triple)
-        .await?;
+    crate::environment_registry::require_connected(&mut *lock.client().await, triple).await?;
     let mut client = wamn_postgres::connect(migration_database_url).await?;
     report(
         &mut client,
@@ -130,4 +129,35 @@ pub(crate) async fn observe_history(
             .push(format!("SQLx migration {version} is incomplete"));
     }
     Ok(report)
+}
+
+/// Bootstrap the project schemas in one transaction as the database owner.
+pub async fn install_project(client: &mut sqlx::PgConnection) -> anyhow::Result<bool> {
+    use sqlx::Connection as _;
+
+    MigrationDatabase::Project.require_login(client).await?;
+    let mut tx = client.begin().await?;
+    let present: bool = sqlx::query_scalar(r#"SELECT to_regclass('platform."user"') IS NOT NULL"#)
+        .fetch_one(&mut *tx)
+        .await?;
+    if !present {
+        for sql in [
+            crate::project_setup::CATALOG_SCHEMA_SQL,
+            crate::project_setup::APP_SCHEMA_SQL,
+            include_str!("../../../deploy/sql/run-state.sql"),
+            include_str!("../../../deploy/sql/run-queue.sql"),
+        ] {
+            sqlx::raw_sql(sql).execute(&mut *tx).await?;
+        }
+        for surface in [
+            crate::project_setup::grant_dynamic_sql_surface_sql(),
+            crate::project_setup::grant_platform_surface_sql(),
+        ] {
+            sqlx::raw_sql(sqlx::AssertSqlSafe(surface))
+                .execute(&mut *tx)
+                .await?;
+        }
+    }
+    tx.commit().await?;
+    Ok(!present)
 }

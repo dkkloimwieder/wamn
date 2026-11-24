@@ -1,7 +1,7 @@
 //! PostgreSQL registry operations for environment deployment.
 
+use crate::registry::deployment;
 use anyhow::Context as _;
-use wamn_registry::deployment::DeploymentStore as _;
 use wamn_registry::{Triple, instance_suffix::InstanceSuffix};
 
 /// Read one project-env's stored instance suffix from the registry.
@@ -9,14 +9,13 @@ pub async fn read_project_env_instance(
     client: &mut sqlx::PgConnection,
     triple: &Triple,
 ) -> anyhow::Result<InstanceSuffix> {
-    let mut transaction = crate::identity::transaction::read_connection(
+    let mut transaction = wamn_postgres::identity::transaction::read_connection(
         client,
-        &crate::PlatformComponent::Provisioning.principal_id(),
+        &wamn_postgres::PlatformComponent::Provisioning.principal_id(),
     )
     .await?;
     let result = async {
-        let stored = crate::Registry::new(&mut transaction)
-            .instance_suffix(triple)
+        let stored = deployment::instance_suffix(&mut transaction, triple)
             .await
             .context("read project deployment")?
             .with_context(|| format!("project-env {triple} is not recorded"))?;
@@ -42,17 +41,16 @@ pub async fn record_project_env(
     candidate: &InstanceSuffix,
     disposable: Option<bool>,
 ) -> anyhow::Result<InstanceSuffix> {
-    crate::Registry::new(transaction)
-        .record_project(&triple.org, &triple.project)
+    deployment::record_project(transaction, &triple.org, &triple.project)
         .await
         .context("record project")?;
-    let target_id = crate::Registry::new(transaction)
-        .target_id(target)
+    let target_id = deployment::target_id(transaction, target)
         .await
         .context("read deployment target")?
         .with_context(|| format!("target {target:?} is not registered"))?;
-    crate::Registry::new(transaction)
-        .record(&wamn_registry::deployment::Registration {
+    deployment::record(
+        transaction,
+        &wamn_registry::deployment::Registration {
             triple,
             secret_name,
             secret_namespace,
@@ -61,9 +59,10 @@ pub async fn record_project_env(
             readiness_budget_seconds,
             drain_bound_seconds,
             target_id: &target_id,
-        })
-        .await
-        .context("record project deployment")
+        },
+    )
+    .await
+    .context("record project deployment")
 }
 
 /// Require the environment's registry coordinate to exist.
@@ -71,7 +70,7 @@ pub async fn require_connected(
     client: &mut sqlx::PgConnection,
     triple: &Triple,
 ) -> anyhow::Result<()> {
-    let present = crate::Registry::new(client).exists(triple).await?;
+    let present = deployment::exists(client, triple).await?;
     anyhow::ensure!(present, "project environment is not recorded");
     Ok(())
 }

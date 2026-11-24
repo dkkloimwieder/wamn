@@ -11,9 +11,8 @@ use tokio::{
     task::JoinSet,
     time::timeout,
 };
-use wamn_postgres::LifecycleLock;
+use wamn_environment::registry::lifecycle_lock::LifecycleLock;
 use wamn_registry::Triple;
-use wamn_registry::lifecycle_lock::LifecycleLocks as _;
 
 #[tokio::test]
 #[ignore = "requires: docker"]

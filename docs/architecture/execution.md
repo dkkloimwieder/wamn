@@ -203,7 +203,7 @@ A project route needs that row, or a current `project-admin` row of the caller i
 A write runs in one transaction on a second `control` login, which holds one write at a time.
 The transaction inserts the caller and sealed operation id into `platform.tx_identity`, then checks the role again.
 Membership and administration writes use [`wamn_postgres::identity::org`](../../crates/postgres/src/identity/org.rs), which platform installation also calls.
-[`wamn_environment::org`](../../crates/environment/src/org.rs) owns project creation, environment enumeration, and environment status writes.
+[`wamn_environment::environment_org`](../../crates/environment/src/environment_org.rs) owns project creation, environment enumeration, and environment status writes.
 A refusal is a declared error of its route, with the input member it names in `field`: `invalid_input`, `project_not_found`, `environment_not_found`, `user_not_active`, `user_not_found`, `admin_covered` or `user_refused`.
 A write that changes administrative authority or membership also changes the application rows of each environment it covers, one transaction per environment, with the project's administration login.
 Native control reads a public connection file per `<env>--<project>` at each write. The login directory holds `tls.crt`, `tls.key`, and the server's `ca.crt`.

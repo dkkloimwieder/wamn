@@ -20,7 +20,7 @@ fn deploy_dir() -> std::path::PathBuf {
 fn app_schema_sql() -> String {
     format!(
         "\nDROP SCHEMA IF EXISTS catalog CASCADE;\n{}\n{}",
-        wamn_postgres::project_setup::CATALOG_SCHEMA_SQL,
+        wamn_environment::project_setup::CATALOG_SCHEMA_SQL,
         include_str!("../../../deploy/sql/app-schema.sql")
     )
 }
@@ -79,10 +79,10 @@ fn app_login_sql(database: &str, login: &wamn_role::LoginName, password: &str) -
     format!(
         "{} CREATE ROLE {role} LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD {}; \
          GRANT {} TO {role} WITH ADMIN FALSE, INHERIT TRUE, SET FALSE; {}",
-        wamn_postgres::project_setup::ensure_workload_acl_role_sql(family),
+        wamn_environment::project_setup::ensure_workload_acl_role_sql(family),
         escape_literal(password),
         escape_identifier(family.acl_role()),
-        wamn_postgres::project_setup::grant_workload_login_sql(family, database, login)
+        wamn_environment::project_setup::grant_workload_login_sql(family, database, login)
     )
 }
 
@@ -580,7 +580,7 @@ const OTHER_HISTORY_ACTOR: &str = "00000000-0000-4000-8000-00000000000b";
 
 fn install_history_probe(url: &str) {
     let mut script = sql::ensure_app_acl_role_sql();
-    script.push_str(wamn_postgres::project_setup::CATALOG_SCHEMA_SQL);
+    script.push_str(wamn_environment::project_setup::CATALOG_SCHEMA_SQL);
     script.push_str(HISTORY_PROBE);
     run(url, &script);
 }
@@ -862,8 +862,8 @@ DO $$ BEGIN
 END $$;
 COMMIT;
 ",
-        wamn_postgres::project_setup::ensure_project_roles_sql(),
-        wamn_postgres::project_setup::CATALOG_SCHEMA_SQL,
+        wamn_environment::project_setup::ensure_project_roles_sql(),
+        wamn_environment::project_setup::CATALOG_SCHEMA_SQL,
         include_str!("../../../deploy/sql/run-state.sql"),
         include_str!("../../../deploy/sql/run-queue.sql"),
         wamn_postgres::bind_platform_principal_sql(wamn_principal::PlatformComponent::Provisioning),

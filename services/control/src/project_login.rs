@@ -8,7 +8,6 @@ use k8s_openapi::api::core::v1::{ConfigMap, Secret};
 use kube::Api;
 use sqlx::postgres::{PgConnectOptions, PgSslMode};
 use wamn_kubernetes::client::{KubernetesApi, REQUEST_TIMEOUT};
-use wamn_registry::deployment::DeploymentStore as _;
 use wamn_registry::{EnvName, OrgId, ProjectId, Triple, instance_suffix::InstanceSuffix};
 
 /// Control's reads of its project logins in its org.
@@ -35,10 +34,12 @@ impl ProjectLogins {
         env: &EnvName,
     ) -> anyhow::Result<PgConnectOptions> {
         let triple = Triple::new(self.org.clone(), env.clone(), project.clone());
-        let instance = wamn_postgres::Registry::new(&mut *self.control.acquire().await?)
-            .instance_suffix(&triple)
-            .await?
-            .with_context(|| format!("project deployment {triple} is absent"))?;
+        let instance = wamn_environment::registry::deployment::instance_suffix(
+            &mut *self.control.acquire().await?,
+            &triple,
+        )
+        .await?
+        .with_context(|| format!("project deployment {triple} is absent"))?;
         self.login(&triple, &instance).await
     }
 

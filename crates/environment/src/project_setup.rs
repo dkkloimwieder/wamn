@@ -36,7 +36,7 @@ pub fn grant_workload_login_sql(
             grants,
             "INSERT INTO platform.login_principal(login,principal_id) VALUES ({login}, '{principal}') ON CONFLICT(login) DO UPDATE SET principal_id=EXCLUDED.principal_id;",
             login = escape_literal(role.as_str()),
-            principal = crate::PlatformComponent::Executor.principal_id(),
+            principal = wamn_identity_protocol::PlatformComponent::Executor.principal_id(),
         )
         .expect("string write");
     }
@@ -149,10 +149,13 @@ pub fn privilege_sql(database: &str) -> String {
 /// Grant each project login its database surface once CloudNativePG has created it.
 pub async fn grant(
     project: &mut sqlx::PgConnection,
-    connections: &[(WorkloadRoleFamily, crate::database::ConnectionConfig)],
+    connections: &[(
+        WorkloadRoleFamily,
+        wamn_postgres::database::ConnectionConfig,
+    )],
 ) -> anyhow::Result<()> {
     for (family, connection) in connections {
-        crate::platform_database::wait_role(project, &connection.username).await?;
+        wamn_postgres::connection_readiness::wait_role(project, &connection.username).await?;
         sqlx::raw_sql(sqlx::AssertSqlSafe(
             crate::project_setup::grant_workload_login_sql(
                 *family,

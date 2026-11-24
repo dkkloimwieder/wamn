@@ -9,7 +9,7 @@ async fn package_apply_refuses_rebinding_an_existing_relation() -> anyhow::Resul
     const INITIAL: &str = "CREATE TABLE fixture_app.item(id int PRIMARY KEY)";
     let postgres = wamn_test_infrastructure::containers::start_postgres().await?;
     let migration = postgres.create_project_database("project").await?;
-    wamn_postgres::platform_migrations::install_project(
+    wamn_environment::platform_migrations::install_project(
         &mut wamn_postgres::connect(migration.as_str()).await?,
     )
     .await?;

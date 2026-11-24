@@ -40,45 +40,6 @@ pub fn grants_sql(login: &wamn_role::LoginName) -> String {
     format!(
         "INSERT INTO platform.login_principal(login,principal_id) VALUES ({login}, '{principal}') ON CONFLICT(login) DO UPDATE SET principal_id=EXCLUDED.principal_id;",
         login = postgres_protocol::escape::escape_literal(login.as_str()),
-        principal = crate::PlatformComponent::ApplyPackage.principal_id(),
+        principal = wamn_identity_protocol::PlatformComponent::ApplyPackage.principal_id(),
     )
-}
-
-/// Create SQLx's history with platform-owned audit and immutable migration identity.
-/// Only SQLx's elapsed-time update remains writable after insertion.
-pub async fn prepare_history(
-    connection: &mut sqlx::PgConnection,
-    table: &str,
-    login: &wamn_role::LoginName,
-) -> anyhow::Result<()> {
-    let exists: bool = sqlx::query_scalar("SELECT to_regclass($1) IS NOT NULL")
-        .bind(table)
-        .fetch_one(&mut *connection)
-        .await?;
-    if !exists {
-        sqlx::raw_sql(sqlx::AssertSqlSafe(format!("CREATE TABLE {table} (
-            version BIGINT PRIMARY KEY,
-            description TEXT NOT NULL,
-            installed_on TIMESTAMPTZ NOT NULL DEFAULT now(),
-            success BOOLEAN NOT NULL,
-            checksum BYTEA NOT NULL,
-            execution_time BIGINT NOT NULL,
-            created_at TIMESTAMPTZ NOT NULL,
-            created_by UUID NOT NULL,
-            updated_at TIMESTAMPTZ NOT NULL,
-            updated_by UUID NOT NULL
-        );
-        CREATE TRIGGER wamn_record_history_stamp BEFORE INSERT OR UPDATE ON {table}
-            FOR EACH ROW EXECUTE FUNCTION wamn_history.stamp_row('created_at','created_by','updated_at','updated_by');
-        CREATE TRIGGER migration_immutable BEFORE UPDATE OR DELETE ON {table}
-            FOR EACH ROW EXECUTE FUNCTION wamn_history.guard_sqlx_migration();")))
-            .execute(&mut *connection).await?;
-    }
-    let role = postgres_protocol::escape::escape_identifier(login.as_str());
-    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
-        "GRANT SELECT, INSERT, UPDATE (execution_time) ON {table} TO {role}"
-    )))
-    .execute(connection)
-    .await?;
-    Ok(())
 }

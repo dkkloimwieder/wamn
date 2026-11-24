@@ -14,7 +14,7 @@ pub use database::{
     install_platform_extensions_sql, set_database_owner_sql,
 };
 
-use wamn_postgres::project_setup::ensure_project_roles_sql;
+use crate::project_setup::ensure_project_roles_sql;
 
 /// Create the shared project privilege roles before installing project schemas.
 pub fn ensure_app_acl_role_sql() -> String {

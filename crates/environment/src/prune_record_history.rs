@@ -1,4 +1,4 @@
-//! The `prune-record-history` subcommand: the record history retention task.
+//! Prune expired record history from one project database.
 //!
 //! The verb removes expired log entries from the history tables of one project
 //! database. A relation keeps its entries for n whole days when its
@@ -20,7 +20,7 @@
 //! than the cutoff goes only when no earlier entry of its row is at or after the
 //! cutoff. So the verb removes a prefix of the history of a row, never an
 //! interior entry. It advances the pruning watermark in the same transaction.
-//! The daily schedule sets the retention precision.
+//! The interval between runs sets the retention precision.
 //! The final transaction also expires write-log claims after 30 days, including
 //! claims with an unknown outcome.
 
@@ -36,7 +36,7 @@ use crate::audit_retention::{
     AUDIT_RETENTION_LOCK_SQL, AUDIT_RETENTION_TARGETS_SQL, WRITE_LOG_RETENTION_SQL,
     WRITE_LOG_RETENTION_TARGET_SQL,
 };
-use crate::{PlatformComponent, bind_platform_principal};
+use wamn_postgres::{PlatformComponent, bind_platform_principal};
 
 /// Inputs of one record history retention run.
 #[derive(Debug)]
@@ -75,9 +75,9 @@ pub struct PrunedHistory {
 pub async fn prune_expired_record_history(
     request: PruneRecordHistoryRequest,
 ) -> anyhow::Result<Vec<PrunedHistory>> {
-    let mut client = crate::connect(&crate::platform_login::platform_configuration(
-        &request.database_url,
-    )?)
+    let mut client = wamn_postgres::connect(
+        &wamn_postgres::platform_login::platform_configuration(&request.database_url)?,
+    )
     .await
     .context("audit retention credential connect")?;
 

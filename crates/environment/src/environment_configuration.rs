@@ -1,7 +1,7 @@
 //! Settings and number sequences written into one project database.
 
-use crate::identity_error::database_error;
 use wamn_authentication::identity_error::IdentityError;
+use wamn_postgres::identity_error::database_error;
 
 const NUMBER_SEQUENCE_SQL: &str = "INSERT INTO platform.number_sequence \
     (id, application, name, pattern) VALUES ($1::text::uuid, $2, $3, $4) \

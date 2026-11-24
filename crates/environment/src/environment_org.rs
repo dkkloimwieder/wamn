@@ -3,15 +3,15 @@
 //! Control routes call these functions inside the caller's transaction and
 //! under the caller's bound actor.
 
-use crate::identity::org::{lock_org_memberships, project_envs};
-use crate::identity_error::database_error;
 use sqlx::Row as _;
 use wamn_authentication::identity_error::{IdentityError, IdentityErrorType, IdentityRefusal};
+use wamn_postgres::identity::org::{lock_org_memberships, project_envs};
+use wamn_postgres::identity_error::database_error;
 use wamn_registry::EnvironmentStatus;
 
-const PROJECT_IN_ORG_SQL: &str = crate::identity_sql::PROJECT_IN_ORG_SQL;
+const PROJECT_IN_ORG_SQL: &str = wamn_postgres::identity_sql::PROJECT_IN_ORG_SQL;
 
-const ENV_IN_PROJECT_SQL: &str = crate::identity_sql::ENV_IN_PROJECT_SQL;
+const ENV_IN_PROJECT_SQL: &str = wamn_postgres::identity_sql::ENV_IN_PROJECT_SQL;
 
 const CREATE_PROJECT_SQL: &str =
     crate::environment_sql::IDENTITY_PLATFORM_SRC_ORG_CREATE_PROJECT_SQL;
@@ -57,7 +57,10 @@ pub async fn org_environments(
         .and_then(|rows| {
             rows.into_iter()
                 .map(|(project, env)| {
-                    Ok((crate::decode_text(project, 0)?, crate::decode_text(env, 1)?))
+                    Ok((
+                        wamn_postgres::decode_text(project, 0)?,
+                        wamn_postgres::decode_text(env, 1)?,
+                    ))
                 })
                 .collect()
         })

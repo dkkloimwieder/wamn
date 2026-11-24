@@ -125,7 +125,7 @@ async fn apply(
     .await?;
     wamn_postgres::migrations::lock_session(
         &mut executor,
-        wamn_postgres::audit_retention::AUDIT_RETENTION_LOCK_SQL,
+        crate::audit_retention::AUDIT_RETENTION_LOCK_SQL,
         &[],
     )
     .await?;
@@ -145,16 +145,15 @@ async fn apply(
     let mut tx = migration::begin(client, project_env_key).await?;
     let mut changed = false;
     if applied.is_none() {
-        changed |=
-            wamn_postgres::release_requirements::install(&mut tx, &package.manifest).await? != 0;
+        changed |= crate::release_requirements::install(&mut tx, &package.manifest).await? != 0;
     }
-    sqlx::raw_sql(sqlx::AssertSqlSafe(
-        wamn_postgres::project_migration::grants_sql(&login),
-    ))
+    sqlx::raw_sql(sqlx::AssertSqlSafe(crate::project_migration::grants_sql(
+        &login,
+    )))
     .execute(&mut *tx)
     .await?;
-    let table = wamn_postgres::project_migration::history_table(project_env_key, &package_id);
-    wamn_postgres::project_migration::prepare_history(&mut tx, &table, &login).await?;
+    let table = crate::project_migration::history_table(project_env_key, &package_id);
+    wamn_postgres::migrations::prepare_history(&mut tx, &table, &login).await?;
     ensure_model_schemas(&mut tx, &plan, &login).await?;
     tx.commit().await?;
     let migrations_applied =
@@ -232,7 +231,7 @@ async fn ensure_model_schemas(
         )
         .collect::<BTreeSet<_>>();
     for schema in schemas {
-        let schema = wamn_postgres::schema::BareSchemaName::new(schema)?;
+        let schema = crate::schema::BareSchemaName::new(schema)?;
         sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
             "CREATE SCHEMA IF NOT EXISTS {} AUTHORIZATION {}",
             schema.quoted(),
@@ -240,12 +239,8 @@ async fn ensure_model_schemas(
         )))
         .execute(&mut *connection)
         .await?;
-        wamn_postgres::project_migration::grant_model_schema_access(
-            connection,
-            login,
-            schema.as_str(),
-        )
-        .await?;
+        crate::project_migration::grant_model_schema_access(connection, login, schema.as_str())
+            .await?;
     }
     Ok(())
 }

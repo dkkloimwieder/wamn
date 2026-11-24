@@ -7,11 +7,10 @@ use sqlx::PgConnection as Client;
 use sqlx::Row as _;
 
 use sqlx::migrate::Migration;
+use wamn_postgres::connection_readiness::{connect_with_retry, wait_group_role, wait_role};
 use wamn_postgres::database::ConnectionConfig;
 use wamn_postgres::migration_scope::MigrationDatabase;
-use wamn_postgres::platform_database::{connect_with_retry, wait_group_role, wait_role};
-use wamn_postgres::platform_migrations::{apply_target, embedded_sources};
-use wamn_registry::migrations::MigrationHistory as _;
+use wamn_postgres::migrations::{apply_target, embedded_sources};
 use wamn_registry::platform_domain::PlatformDomain;
 
 use crate::{CONTROL_BOOTSTRAP_SQL, sql};
@@ -109,7 +108,7 @@ async fn finalize(
         .await
         .context("grant the apply surface")?;
     let first_limit: Option<bool> =
-        sqlx::query_scalar(wamn_postgres::platform_sql::UPDATE_PLATFORM_META_SQL)
+        sqlx::query_scalar(crate::platform_sql::UPDATE_PLATFORM_META_SQL)
             .bind(platform_domain.as_str())
             .bind(i64::from(max_projects.get()))
             .fetch_optional(&mut *transaction)
@@ -216,9 +215,7 @@ pub async fn system_state(client: &mut sqlx::PgConnection) -> anyhow::Result<Sys
     if !present {
         return Ok(SystemState::Absent);
     }
-    let complete = wamn_postgres::Registry::new(client)
-        .history_exists()
-        .await?;
+    let complete = crate::migration_history::history_exists(client).await?;
     Ok(if complete {
         SystemState::Complete
     } else {
@@ -305,7 +302,7 @@ pub async fn install_control_store(admin: &mut Client) -> anyhow::Result<bool> {
             sqlx::raw_sql(sqlx::AssertSqlSafe(crate::system_reader::grants_sql()))
                 .execute(&mut *admin)
                 .await?;
-            wamn_postgres::project_migration::prepare_history(
+            wamn_postgres::migrations::prepare_history(
                 admin,
                 wamn_postgres::REGISTRY_HISTORY_TABLE,
                 &wamn_role::SYSTEM_ROLE.parse()?,

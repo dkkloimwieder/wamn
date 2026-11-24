@@ -1,11 +1,8 @@
 use sqlx::Connection as _;
+use wamn_environment::registry::deployment;
 use wamn_platform_install::provision_system::install_control_store;
-use wamn_postgres::Registry;
 use wamn_postgres::provisioning_transaction::provisioning_transaction;
-use wamn_registry::{
-    Triple,
-    deployment::{DeploymentStore as _, Registration},
-};
+use wamn_registry::{Triple, deployment::Registration};
 
 /// A deployment update with no marker preserves the stored disposable setting.
 #[tokio::test]
@@ -42,12 +39,13 @@ async fn a_record_without_a_marker_keeps_the_disposable_row() {
         "inventory".parse().unwrap(),
     );
     let mut transaction = provisioning_transaction(&mut client).await.unwrap();
-    let mut registry = Registry::new(&mut transaction);
-    registry
-        .record_project(&triple.org, &triple.project)
+    deployment::record_project(&mut transaction, &triple.org, &triple.project)
         .await
         .unwrap();
-    let target = registry.target_id("cloud").await.unwrap().unwrap();
+    let target = deployment::target_id(&mut transaction, "cloud")
+        .await
+        .unwrap()
+        .unwrap();
     let mut registration = Registration {
         triple: &triple,
         secret_name: "db-first",
@@ -58,19 +56,20 @@ async fn a_record_without_a_marker_keeps_the_disposable_row() {
         drain_bound_seconds: 300,
         target_id: &target,
     };
-    registry.record(&registration).await.unwrap();
+    deployment::record(&mut transaction, &registration)
+        .await
+        .unwrap();
     transaction.commit().await.unwrap();
 
     registration.disposable = None;
     let mut transaction = provisioning_transaction(&mut client).await.unwrap();
-    Registry::new(&mut transaction)
-        .record(&registration)
+    deployment::record(&mut transaction, &registration)
         .await
         .unwrap();
     transaction.commit().await.unwrap();
-    let registry = Registry::new(&mut client)
-        .disposable(&triple)
-        .await
-        .unwrap();
-    assert!(registry, "a record without a marker keeps the registry row");
+    let disposable = deployment::disposable(&mut client, &triple).await.unwrap();
+    assert!(
+        disposable,
+        "a record without a marker keeps the registry row"
+    );
 }

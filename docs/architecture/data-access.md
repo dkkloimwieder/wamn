@@ -371,8 +371,8 @@ A retry that answers a stored result commits nothing, so no event publishes a se
 A new id comes from its insert's `RETURNING`, and nothing mints an id before the work.
 No application table implements or references the claim. The stored result names the rows that the work wrote, for example the `transaction_ids` of a WMS command.
 The result row stays stored, so each retry returns the original success answer in full.
-The existing `prune-record-history` job deletes all claims older than 30 days, using `created_at`.
-Its expiry statement lives in `crates/postgres/src/audit_retention.rs` and runs from `crates/postgres/src/prune_record_history.rs`.
+Record history pruning deletes claims older than 30 days, using `created_at`.
+Its expiry statement lives in `crates/environment/src/audit_retention.rs` and runs from `crates/environment/src/prune_record_history.rs`.
 This retention period exceeds the longest call by a wide margin.
 A result can finish late within that period without a separate claim identifier.
 The write log provides idempotency protection, which prevents repeated work for the same key.
@@ -896,7 +896,6 @@ The platform owner owns this lookup. Application logins have no privileges on it
 Provisioning binds `wamn:provisioning`.
 apply-package binds `wamn:apply-package` for package writes and operation grants.
 The retention task binds `wamn:audit-retention`.
-Run history retention also binds this actor before reading or deleting runs. It commits a prune and rolls back a preview.
 The identity row of a platform component also sets `operation` to the same `wamn:<component>` name.
 Administrative SQL must bind the operator's user row, and test fixtures must bind a provisioned test principal.
 Administrative SQL and test fixtures also bind `(wamn_authority.current_identity()).operation` as `admin:<kebab-purpose>`, including a transaction that only deletes rows.
@@ -910,7 +909,7 @@ The `user_platform_principal_check` constraint pins each name and id pair, and i
 `wamn_app` has only `SELECT` on `platform."user"`.
 The database is the org boundary, so `platform."user"` has no `project_id`, no row policy, and no project key index. Its key is `id`, and `email` is unique in the database.
 
-The [platform principal owner](../../crates/postgres/src/environment_fill.rs) renders the platform rows of a project database.
+The [platform principal owner](../../crates/environment/src/environment_fill.rs) renders the platform rows of a project database.
 It refuses a platform domain that is not a valid domain name.
 Its SQL binds `wamn:provisioning` first, so the `wamn:provisioning` row stamps itself.
 The development environment, the verification world, and the Rust identity journey apply that SQL.

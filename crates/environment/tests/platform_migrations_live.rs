@@ -34,8 +34,8 @@ async fn system_migration_login(
 async fn platform_initialization_applies_pending_migrations_on_upgrade() {
     use sqlx::SqlSafeStr as _;
     use sqlx::migrate::{Migration, MigrationType};
-    use wamn_postgres::environment_schema;
     use wamn_postgres::migration_scope::MigrationDatabase;
+    use wamn_postgres::migrations::apply_target;
     let postgres = wamn_test_infrastructure::containers::start_postgres()
         .await
         .unwrap();
@@ -62,9 +62,9 @@ async fn platform_initialization_applies_pending_migrations_on_upgrade() {
     let second = source(30, "INSERT INTO registry.migration_probe VALUES (2)");
     let migration_input = system_migration_login(&postgres, "system").await;
     assert!(
-        environment_schema::apply_reported(
+        apply_target(
             &mut client,
-            environment_schema::MigrationTarget::System,
+            MigrationDatabase::System,
             std::slice::from_ref(&first)
         )
         .await

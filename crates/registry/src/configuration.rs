@@ -3,7 +3,6 @@
 use std::collections::BTreeMap;
 use std::fmt;
 
-use crate::Triple;
 use serde::{Deserialize, Serialize};
 
 /// Settings shared by applied configuration and deploy input.
@@ -136,37 +135,4 @@ pub struct Client {
 pub struct Integration {
     #[schemars(range(min = 1))]
     pub version: i32,
-}
-
-/// Applied environment configuration and connection pins.
-pub trait ConfigurationStore {
-    type Error;
-
-    /// Read applied settings and environment connection pins. An unconfigured deployment returns none.
-    ///
-    /// # Errors
-    /// Returns database errors.
-    fn read(
-        &mut self,
-        triple: &Triple,
-    ) -> impl std::future::Future<Output = Result<Option<EnvironmentConfiguration>, Self::Error>> + Send;
-
-    /// Replace one project's settings atomically and upsert the environment pins.
-    /// The caller owns the environment lifecycle lock, checks placement, and binds the provisioning actor.
-    ///
-    /// # Errors
-    /// Returns database errors.
-    /// A missing deployment returns false.
-    fn write(
-        &mut self,
-        configuration: &EnvironmentConfiguration,
-    ) -> impl std::future::Future<Output = Result<bool, Self::Error>> + Send;
-
-    /// Remove stale pins after all of an environment's project binding writes succeed.
-    fn retain_integrations(
-        &mut self,
-        org: &crate::OrgId,
-        env: &crate::EnvName,
-        names: &[&str],
-    ) -> impl std::future::Future<Output = Result<(), Self::Error>> + Send;
 }

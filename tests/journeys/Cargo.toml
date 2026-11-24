@@ -20,6 +20,7 @@ uuid = { workspace = true, features = ["v4", "v7"] }
 wamn-identity-protocol.workspace = true
 wamn-http-client = { workspace = true, features = ["tls12"] }
 wamn-registry.workspace = true
+wamn-environment.workspace = true
 wamn-postgres.workspace = true
 wamn-test-infrastructure.workspace = true
 hyper = { workspace = true }

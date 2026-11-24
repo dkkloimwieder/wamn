@@ -50,17 +50,11 @@ sqlx = { workspace = true, features = ["macros", "migrate", "postgres", "runtime
 [lints]
 workspace = true
 
-[[test]]
-name = "project_schema"
-
 [dev-dependencies]
-wamn-environment.workspace = true
 wamn-platform-install.workspace = true
-wamn-release.workspace = true
 async-nats = { workspace = true, features = ["aws-lc-rs", "nkeys"] }
 base64.workspace = true
 wamn-key.workspace = true
-wamn-oci.workspace = true
 pg_query = "=6.2.1"
 syn = { workspace = true, features = ["full"] }
 tempfile.workspace = true

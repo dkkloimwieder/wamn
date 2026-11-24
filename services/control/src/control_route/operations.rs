@@ -5,7 +5,6 @@ use serde_json::{Value, json};
 pub(crate) use wamn_environment::environment::worker::{Operation, Request};
 use wamn_identity_protocol::PrincipalId;
 use wamn_kubernetes::client::KubernetesApi;
-use wamn_registry::configuration::ConfigurationStore as _;
 use wamn_routes::HostAttachment;
 
 use super::{ControlRoutes, Refusal};
@@ -53,8 +52,7 @@ impl ControlRoutes<'_> {
             request.project.clone(),
         );
         if operation.is_some()
-            && wamn_postgres::Registry::new(&mut transaction)
-                .read(&triple)
+            && wamn_environment::registry::configuration::read(&mut transaction, &triple)
                 .await?
                 .is_none()
         {

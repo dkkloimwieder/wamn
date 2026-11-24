@@ -2,8 +2,8 @@
 
 use sqlx::SqlSafeStr as _;
 use sqlx::migrate::{MigrateError, Migration, MigrationType, Migrator};
+use wamn_environment::project_migration;
 use wamn_postgres::migrations;
-use wamn_postgres::project_migration;
 
 fn source(version: i64, sql: &str) -> Migration {
     Migration::new(
@@ -31,7 +31,7 @@ async fn sqlx_commits_files_with_their_history_and_refuses_checksum_drift() -> a
     ))
     .execute(&mut admin)
     .await?;
-    sqlx::raw_sql(wamn_postgres::project_setup::CATALOG_SCHEMA_SQL)
+    sqlx::raw_sql(wamn_environment::project_setup::CATALOG_SCHEMA_SQL)
         .execute(&mut admin)
         .await?;
     let component = wamn_principal::PlatformComponent::ApplyPackage;
@@ -43,7 +43,7 @@ async fn sqlx_commits_files_with_their_history_and_refuses_checksum_drift() -> a
         &"fixture--dev--one".parse().unwrap(),
         &"orders".parse().unwrap(),
     );
-    project_migration::prepare_history(&mut admin, &table, &"postgres".parse().unwrap()).await?;
+    migrations::prepare_history(&mut admin, &table, &"postgres".parse().unwrap()).await?;
     let first = source(
         10,
         "CREATE TABLE public.migration_effect(id int PRIMARY KEY, created_at timestamptz NOT NULL, created_by uuid NOT NULL, updated_at timestamptz NOT NULL, updated_by uuid NOT NULL);

@@ -17,7 +17,7 @@ pub async fn system(postgres: &Postgres) -> url::Url {
 pub async fn project(postgres: &Postgres, name: &str) -> url::Url {
     let migration = postgres.create_project_database(name).await.unwrap();
     let mut owner = wamn_postgres::connect(migration.as_str()).await.unwrap();
-    wamn_postgres::platform_migrations::install_project(&mut owner)
+    wamn_environment::platform_migrations::install_project(&mut owner)
         .await
         .unwrap();
     let mut url = url::Url::parse(postgres.admin_url()).unwrap();

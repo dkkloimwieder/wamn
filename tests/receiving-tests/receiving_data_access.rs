@@ -369,7 +369,7 @@ mod tests {
         // their identity in.
         let server = wamn_test_infrastructure::containers::start_postgres().await?;
         let migration = server.create_project_database("receiving").await?;
-        wamn_postgres::platform_migrations::install_project(
+        wamn_environment::platform_migrations::install_project(
             &mut wamn_postgres::connect(migration.as_str()).await?,
         )
         .await?;

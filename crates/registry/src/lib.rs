@@ -1,9 +1,8 @@
-//! Registry coordinates, resource names, and system database statements.
+//! Registry coordinates, resource names, and domain values.
 
 pub mod configuration;
 pub mod connections;
 mod environment_application;
-pub mod lifecycle_lock;
 pub mod resource_names;
 
 pub use environment_application::{
@@ -14,7 +13,6 @@ pub mod deployment;
 pub mod identifiers;
 pub mod instance_suffix;
 pub mod integration_code;
-pub mod migrations;
 pub mod name;
 pub mod platform_domain;
 mod types;

@@ -510,16 +510,7 @@ async fn project_database() -> (wamn_test_infrastructure::containers::Postgres, 
     let server = wamn_test_infrastructure::containers::start_postgres()
         .await
         .unwrap();
-    let migration = server.create_project_database("fixture").await.unwrap();
-    wamn_postgres::platform_migrations::install_project(
-        &mut wamn_postgres::connect(migration.as_str())
-            .await
-            .expect("connect the migration login"),
-    )
-    .await
-    .expect("install the project schemas");
-    let mut database = url::Url::parse(server.admin_url()).unwrap();
-    database.set_path("fixture");
+    let database = wamn_test_infrastructure::identity::project(&server, "fixture").await;
     (server, database)
 }
 

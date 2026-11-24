@@ -11,8 +11,6 @@ use std::fmt::Write as _;
 /// (docs/architecture/overview.md#environment-lifecycle).
 pub const PUBLICATION_PROBE_SQL: &str = "SELECT 1 FROM pg_publication WHERE pubname = $1";
 
-pub use wamn_event::reader::CDC_PUBLISH;
-
 /// Idempotently create the **failover-enabled** logical capture position via
 /// the SQL-function form: `pg_create_logical_replication_slot(<name>,
 /// 'pgoutput', temporary => false, twophase => false, failover => true)`
@@ -176,7 +174,7 @@ pub async fn apply_cdc_sql(
     cdc_name: &str,
     database: &str,
 ) -> anyhow::Result<()> {
-    let mut client = crate::connect(admin_database_url).await?;
+    let mut client = wamn_postgres::connect(admin_database_url).await?;
     let connected: String = sqlx::query("SELECT current_database()")
         .fetch_one(&mut client)
         .await?
@@ -186,7 +184,7 @@ pub async fn apply_cdc_sql(
         "CDC SQL targets a different database"
     );
     let login = wamn_role::CDC_LOGIN.parse()?;
-    crate::platform_database::wait_role(&mut client, &login).await?;
+    wamn_postgres::connection_readiness::wait_role(&mut client, &login).await?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(cdc_schema_sql_bundle(
         schemas, database,
     )))
@@ -194,7 +192,7 @@ pub async fn apply_cdc_sql(
     .await
     .map(drop)
     .context("restore CDC maps and grants")?;
-    let mut capture = crate::connect(capture_database_url).await?;
+    let mut capture = wamn_postgres::connect(capture_database_url).await?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         crate::capture_sql::create_failover_capture_sql(cdc_name),
     ))

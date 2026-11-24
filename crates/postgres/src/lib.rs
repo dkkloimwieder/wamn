@@ -1,21 +1,14 @@
 //! Verified PostgreSQL connections from explicit component configuration.
 
 pub mod administration;
-pub mod audit_retention;
 pub mod authorization;
 pub mod build_database;
-pub mod capture_sql;
 pub mod catalog;
 mod connection_guard;
 mod connection_options;
+pub mod connection_readiness;
 pub mod control;
 pub mod database;
-pub mod environment_configuration;
-pub mod environment_fill;
-pub mod environment_org;
-pub mod environment_registry;
-pub mod environment_schema;
-pub mod environment_sql;
 mod executor;
 mod file_catalog;
 pub mod file_connections;
@@ -25,18 +18,10 @@ pub mod identity_sql;
 pub mod migration_scope;
 pub mod migrations;
 pub mod oauth_authorization;
-pub mod operation_grants;
-pub mod platform_database;
 pub mod platform_identity;
 pub mod platform_login;
-pub mod platform_migrations;
 pub mod platform_sql;
-pub mod project_migration;
-pub mod project_setup;
 pub mod provisioning_transaction;
-pub mod prune_record_history;
-pub mod prune_run_history;
-pub mod release_requirements;
 
 pub use platform_identity::{bind_platform_principal, bind_platform_principal_sql};
 pub use wamn_identity_protocol::PlatformComponent;
@@ -54,7 +39,6 @@ pub use executor::{
 pub mod operation;
 pub mod project_connections;
 pub mod run_store;
-pub mod schema;
 pub mod workflow;
 
 mod sql_error;
@@ -68,19 +52,26 @@ pub use transaction_identity::{
 
 mod checkout;
 mod host_project;
-mod package_catalog;
 mod pool;
 
 pub use checkout::CheckoutError;
 pub use host_project::HostProject;
-pub use package_catalog::installed_package_artifacts;
 pub use pool::{
     ClassCredentials, CredentialProvider, Object, ProjectConfig, ProjectPool, ResolvedCredential,
     StaticCredentialProvider, WamnPostgres, WamnPostgresConfig, destroy_connection,
 };
 
 mod registry;
-pub use registry::{
-    ENVIRONMENT_LOCK_SQL, ENVIRONMENT_TRANSACTION_LOCK_SQL, LifecycleLock, REGISTRY_HISTORY_TABLE,
-    Registry, RegistryTransaction, decode_text,
-};
+pub use registry::{Registry, decode_text};
+
+/// Environment exclusion key shared by lifecycle operations and CDC publication.
+/// Acquire this key before an application key or a database mutation lock.
+pub const ENVIRONMENT_LOCK_SQL: &str =
+    "SELECT pg_try_advisory_lock(hashtextextended('wamn-env/' || $1 || '/' || $2, 0))";
+
+/// Transaction-scoped exclusion for integration mutations. Params: org, environment.
+pub const ENVIRONMENT_TRANSACTION_LOCK_SQL: &str =
+    "SELECT pg_try_advisory_xact_lock(hashtextextended('wamn-env/' || $1 || '/' || $2, 0))";
+
+/// Migration history table in the registry schema.
+pub const REGISTRY_HISTORY_TABLE: &str = "registry._sqlx_migrations";

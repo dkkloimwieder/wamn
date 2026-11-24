@@ -106,7 +106,7 @@ async fn lock_org(database: &ConnectionConfig, org: &OrgId) -> anyhow::Result<sq
         .await
         .context("connect to the system database for org provisioning")?;
     let control = control_login(org, &database.database);
-    wamn_postgres::platform_database::lock_org_login(&mut connection, &control).await?;
+    crate::platform_database::lock_org_login(&mut connection, &control).await?;
     Ok(connection)
 }
 

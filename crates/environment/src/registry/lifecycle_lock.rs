@@ -7,20 +7,14 @@ use sqlx::{Connection as _, Row as _};
 use std::{sync::Arc, time::Duration};
 use tokio::task::JoinHandle;
 
-use wamn_registry::lifecycle_lock::{DEPLOYMENT_IN_PROGRESS, LifecycleLocks};
+use wamn_postgres::ENVIRONMENT_LOCK_SQL;
 use wamn_registry::{ApplicationName, EnvName, OrgId, Triple};
 
-/// Environment exclusion key shared by lifecycle operations and CDC publication.
-/// Acquire this key before an application key or a database mutation lock.
-pub const ENVIRONMENT_LOCK_SQL: &str =
-    "SELECT pg_try_advisory_lock(hashtextextended('wamn-env/' || $1 || '/' || $2, 0))";
-
-/// Transaction-scoped exclusion for integration mutations. Params: org, environment.
-pub const ENVIRONMENT_TRANSACTION_LOCK_SQL: &str =
-    "SELECT pg_try_advisory_xact_lock(hashtextextended('wamn-env/' || $1 || '/' || $2, 0))";
+/// The refusal when another operation holds the lock.
+pub const DEPLOYMENT_IN_PROGRESS: &str = "deployment in progress";
 
 /// Independent applications and SQL Jobs exclude shared database replacement.
-pub const ENVIRONMENT_SHARED_LOCK_SQL: &str =
+const ENVIRONMENT_SHARED_LOCK_SQL: &str =
     "SELECT pg_try_advisory_lock_shared(hashtextextended('wamn-env/' || $1 || '/' || $2, 0))";
 
 /// A held lifecycle lock. A one-second heartbeat keeps the session alive.
@@ -39,20 +33,18 @@ impl std::fmt::Debug for LifecycleLock {
     }
 }
 
-impl LifecycleLocks for LifecycleLock {
-    type Session = Client;
-
+impl LifecycleLock {
     /// Take the lock of `triple` on an opened connection.
     ///
     /// # Errors
     ///
     /// Returns a database error or refuses when another session holds the lock.
-    async fn acquire(client: Client, triple: &Triple) -> anyhow::Result<Self> {
+    pub async fn acquire(client: Client, triple: &Triple) -> anyhow::Result<Self> {
         Self::acquire_environment(client, &triple.org, &triple.env).await
     }
 
     /// Take exclusive ownership of the host shared by an org and environment.
-    async fn acquire_environment(
+    pub async fn acquire_environment(
         client: Client,
         org: &OrgId,
         env: &EnvName,
@@ -68,7 +60,7 @@ impl LifecycleLocks for LifecycleLock {
     }
 
     /// Wait for active deployments before taking exclusive environment ownership.
-    async fn acquire_wait(client: Client, triple: &Triple) -> anyhow::Result<Self> {
+    pub async fn acquire_wait(client: Client, triple: &Triple) -> anyhow::Result<Self> {
         let lock = Self::start(client).await?;
         while !lock
             .try_acquire(
@@ -81,7 +73,7 @@ impl LifecycleLocks for LifecycleLock {
     }
 
     /// Serialize operations on one application without blocking another application's rollout.
-    async fn acquire_application(
+    pub async fn acquire_application(
         client: Client,
         triple: &Triple,
         application: &ApplicationName,
@@ -103,7 +95,7 @@ impl LifecycleLocks for LifecycleLock {
 
     /// Exclude database replacement while allowing independent application operations.
     /// SQL Jobs hold this guard in their own process, even after their caller exits.
-    async fn acquire_shared(client: Client, triple: &Triple) -> anyhow::Result<Self> {
+    pub async fn acquire_shared(client: Client, triple: &Triple) -> anyhow::Result<Self> {
         let lock = Self::start(client).await?;
         let held = lock
             .try_acquire(
@@ -116,9 +108,7 @@ impl LifecycleLocks for LifecycleLock {
         }
         Ok(lock)
     }
-}
 
-impl LifecycleLock {
     async fn start(mut client: Client) -> anyhow::Result<Self> {
         sqlx::raw_sql("SET idle_session_timeout = '5s'")
             .execute(&mut client)
