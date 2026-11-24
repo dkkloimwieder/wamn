@@ -8,8 +8,8 @@ use plan::{mode_satisfies, refuse};
 use std::collections::BTreeMap;
 use std::fmt;
 
+use crate::application_chart::{binding::Binding, resolved_connection::ResolvedConnection};
 use crate::environment_sql_effects::PostgresSession;
-use wamn_application_chart::{Binding, ResolvedConnection};
 use wamn_component_policy::PackageManifest;
 use wamn_package::manifest::{ConnectionDeclaration, ConnectionMode};
 

@@ -82,7 +82,7 @@ pub(super) fn verify_package_components(
         wamn_component_policy::PackageManifest,
     >,
 ) -> anyhow::Result<()> {
-    let expected = wamn_application_chart::published_components(packages).count();
+    let expected = crate::application_chart::plan::published_components(packages).count();
     ensure!(
         application.components.len() == expected,
         "rollback application has a different package component set"
@@ -96,7 +96,7 @@ pub(super) fn verify_package_components(
                 .deploy
                 .as_ref()
                 .is_some_and(|deploy| deploy.components.values().any(|declared| {
-                    wamn_application_chart::component_name(
+                    crate::application_chart::plan::component_name(
                         &component.package,
                         &declared.descriptor.component,
                     ) == component.name

@@ -6,26 +6,28 @@ use wamn_environment::environment::document::EnvironmentFile;
 use wamn_registry::ApplicationName;
 use wamn_release::release_package::RegistryPackagePublisher;
 
-use super::{Deploy, DevInvalidationSource, WatchInputs};
-use crate::source_deploy::{self, PackageSource, SourceBuild};
+use super::{Deploy, WatchInputs};
+use crate::source_build::{PreparedPackage, SourceBuilder};
+use crate::source_deploy::{self, PackageSource};
+use crate::watch::FilesystemInvalidationSource;
 
 /// The compiled first pass and the inputs used to prepare subsequent passes.
 #[derive(Debug)]
-pub struct Development<'a, B: SourceBuild> {
-    build: &'a B,
+pub struct Development<'a> {
+    build: &'a SourceBuilder<'a>,
     configuration: &'a Path,
     root: &'a Path,
-    first: (ApplicationName, Vec<B::Prepared>),
+    first: (ApplicationName, Vec<PreparedPackage>),
 }
 
-impl<'a, B: SourceBuild> Development<'a, B> {
+impl<'a> Development<'a> {
     /// Read the selected application and prepare its source closure.
     pub async fn prepare(
-        build: &'a B,
+        build: &'a SourceBuilder<'a>,
         configuration: &'a Path,
         root: &'a Path,
     ) -> anyhow::Result<Self> {
-        let first = prepare(build, configuration, root).await?;
+        let first = prepare(configuration, root).await?;
         Ok(Self {
             build,
             configuration,
@@ -36,13 +38,13 @@ impl<'a, B: SourceBuild> Development<'a, B> {
 
     /// Inputs needed before the first pass starts.
     pub fn watch_inputs(&self) -> anyhow::Result<WatchInputs> {
-        watch_inputs(self.build, &self.first.1, self.configuration)
+        watch_inputs(&self.first.1, self.configuration)
     }
 
     /// Publish and deploy each selected source closure.
-    pub async fn run<S: DevInvalidationSource>(
+    pub async fn run(
         self,
-        source: Option<S>,
+        source: Option<FilesystemInvalidationSource>,
         shutdown: tokio::sync::watch::Receiver<bool>,
         publisher: &RegistryPackagePublisher<'_>,
         deployer: &impl Deploy,
@@ -61,10 +63,10 @@ impl<'a, B: SourceBuild> Development<'a, B> {
                 let (application, sources) = if let Some(pass) = first.take() {
                     pass
                 } else {
-                    let pass = prepare(build, configuration, root).await?;
+                    let pass = prepare(configuration, root).await?;
                     if let Some(source) = source {
                         source
-                            .replace_inputs(watch_inputs(build, &pass.1, configuration)?)
+                            .replace_inputs(watch_inputs(&pass.1, configuration)?)
                             .await?;
                     }
                     pass
@@ -84,25 +86,20 @@ impl<'a, B: SourceBuild> Development<'a, B> {
     }
 }
 
-async fn prepare<B: SourceBuild>(
-    build: &B,
+async fn prepare(
     configuration: &Path,
     root: &Path,
-) -> anyhow::Result<(ApplicationName, Vec<B::Prepared>)> {
+) -> anyhow::Result<(ApplicationName, Vec<PreparedPackage>)> {
     let document = EnvironmentFile::compile(configuration)?;
     let application = document.only_application()?.clone();
     let project = document.into_application(&application)?;
-    source_deploy::sources(build, &project, root).await
+    source_deploy::sources(&project, root).await
 }
 
-fn watch_inputs<B: SourceBuild>(
-    build: &B,
-    sources: &[B::Prepared],
-    configuration: &Path,
-) -> anyhow::Result<WatchInputs> {
+fn watch_inputs(sources: &[PreparedPackage], configuration: &Path) -> anyhow::Result<WatchInputs> {
     let mut inputs = BTreeSet::new();
     for source in sources {
-        inputs.extend(build.inputs(source)?);
+        inputs.extend(source.inputs()?);
     }
     inputs.insert(configuration.canonicalize()?);
     let (shared, files) = inputs.into_iter().partition(|path| path.is_dir());

@@ -6,7 +6,6 @@ license.workspace = true
 publish = false
 [dependencies]
 wamn-package.workspace = true
-wamn-dev.workspace = true
 tempfile.workspace = true
 syn = { workspace = true, features = ["full"] }
 quote.workspace = true
@@ -16,18 +15,24 @@ cargo_metadata = "0.23"
 serde_json.workspace = true
 serde.workspace = true
 toml.workspace = true
-tokio = { workspace = true, features = ["process"] }
+tokio = { workspace = true, features = ["macros", "process", "sync"] }
 wamn-codegen.workspace = true
 wamn-digest.workspace = true
+wamn-edge-document.workspace = true
+wamn-environment.workspace = true
+wamn-identity-protocol.workspace = true
+wamn-registry.workspace = true
+wamn-release.workspace = true
+tracing.workspace = true
 wac-graph.workspace = true
 wamn-component-policy.workspace = true
 wasmparser.workspace = true
 wasm-encoder = { workspace = true, features = ["wasmparser"] }
 [target.'cfg(target_os = "linux")'.dependencies]
 rustix.workspace = true
-tracing.workspace = true
 tokio = { workspace = true, features = ["io-util", "macros", "net", "time"] }
 [dev-dependencies]
+wamn-engine.workspace = true
 wat = "=1.254.2"
 [lints]
 workspace = true

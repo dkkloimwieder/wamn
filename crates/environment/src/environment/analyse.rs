@@ -20,6 +20,8 @@ use wamn_component_policy::PackageManifest;
 use wamn_package::PackageName;
 use wamn_registry::EnvironmentRow;
 
+use crate::application_chart::resolved_connection::ResolvedConnection;
+
 use super::Platform;
 use super::document::EnvironmentDocument;
 
@@ -47,7 +49,7 @@ pub struct ReleaseFacts {
 #[derive(Debug, Clone)]
 pub struct Authorities {
     pub release_name: String,
-    pub connections: BTreeMap<String, wamn_application_chart::ResolvedConnection>,
+    pub connections: BTreeMap<String, ResolvedConnection>,
     /// Application-qualified names resolved to published wasm artifacts.
     pub artifact_bindings: BTreeSet<String>,
     pub row: Option<EnvironmentRow>,

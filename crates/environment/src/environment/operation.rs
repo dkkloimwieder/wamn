@@ -246,7 +246,8 @@ pub async fn application(
                     )
                     .await?;
                     for role in roles {
-                        let workload = wamn_application_chart::workload_name(&release, role);
+                        let workload =
+                            crate::application_chart::plan::workload_name(&release, role);
                         platform
                             .cluster
                             .wait_workload_ready(&workload, timeout)

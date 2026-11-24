@@ -10,7 +10,7 @@ use wamn_registry::configuration::Client;
 use wamn_registry::platform_domain::PlatformDomain;
 use wamn_routes::http_route_data::RouteDefinition;
 
-use crate::Binding;
+use super::binding::Binding;
 
 const INGRESS_BINDING: &str = "ingress";
 const WORKFLOW_BINDING: &str = "workflow";
@@ -612,7 +612,7 @@ mod tests {
         BTreeMap, OperationType, PackageManifest, PackageName, Publication, PublishedOperation,
         roles,
     };
-    use crate::{Binding, ResolvedConnection};
+    use crate::application_chart::{binding::Binding, resolved_connection::ResolvedConnection};
 
     const OPERATION: &str = "source-fixture:item/get@1.0.0";
 

@@ -6210,25 +6210,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "wamn-application-chart"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "serde_json",
- "serde_yaml",
- "url",
- "wamn-application",
- "wamn-authority",
- "wamn-component-policy",
- "wamn-connection-type",
- "wamn-digest",
- "wamn-oci-reference",
- "wamn-package",
- "wamn-registry",
- "wamn-routes",
-]
-
-[[package]]
 name = "wamn-authentication"
 version = "0.1.0"
 dependencies = [
@@ -6351,9 +6332,14 @@ dependencies = [
  "wac-graph",
  "wamn-codegen",
  "wamn-component-policy",
- "wamn-dev",
  "wamn-digest",
+ "wamn-edge-document",
+ "wamn-engine",
+ "wamn-environment",
+ "wamn-identity-protocol",
  "wamn-package",
+ "wamn-registry",
+ "wamn-release",
  "wasm-encoder 0.261.0",
  "wasmparser 0.261.0",
  "wat",
@@ -6401,7 +6387,6 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "wamn-build",
- "wamn-dev",
  "wamn-digest",
  "wamn-engine",
  "wamn-environment",
@@ -6550,26 +6535,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "wamn-dev"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "serde",
- "serde_json",
- "tokio",
- "tracing",
- "wamn-component-policy",
- "wamn-digest",
- "wamn-edge-document",
- "wamn-engine",
- "wamn-environment",
- "wamn-identity-protocol",
- "wamn-package",
- "wamn-registry",
- "wamn-release",
-]
-
-[[package]]
 name = "wamn-digest"
 version = "0.1.0"
 dependencies = [
@@ -6605,8 +6570,8 @@ dependencies = [
  "uuid",
  "wamn-application",
  "wamn-authority",
+ "wamn-build",
  "wamn-component-policy",
- "wamn-dev",
  "wamn-digest",
  "wamn-edge-document",
  "wamn-engine",
@@ -6697,8 +6662,8 @@ dependencies = [
  "url",
  "uuid",
  "wamn-application",
- "wamn-application-chart",
  "wamn-authentication",
+ "wamn-authority",
  "wamn-component-policy",
  "wamn-connection",
  "wamn-connection-type",
@@ -6717,6 +6682,7 @@ dependencies = [
  "wamn-registry",
  "wamn-release",
  "wamn-role",
+ "wamn-routes",
  "wamn-scalar",
  "wamn-test-infrastructure",
  "wamn-workflow-graph",

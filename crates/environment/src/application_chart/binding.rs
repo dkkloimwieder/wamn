@@ -6,7 +6,7 @@ use wamn_package::manifest::ConnectionMode;
 use wamn_registry::ApplicationName;
 use wamn_registry::integration_code::IntegrationCode;
 
-use crate::ResolvedConnection;
+use super::resolved_connection::ResolvedConnection;
 
 /// One declared name resolved to an active environment connection and version.
 #[derive(Debug, Clone)]

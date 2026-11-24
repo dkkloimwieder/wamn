@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use wamn_edge_document::edge_bundle::BUNDLE_FILE_NAME;
 
-use wamn_dev::dev::edge_bundle::{EdgeTarget, write_package};
+use wamn_build::dev::edge_bundle::{EdgeTarget, write_package};
 use wamn_digest::bytes_sha256;
 use wamn_edge::config::{EdgeConfig, HttpConfig, ReleaseConfig, StoreConfig, TargetConfig};
 use wamn_edge::serve::{EdgeHost, serve};

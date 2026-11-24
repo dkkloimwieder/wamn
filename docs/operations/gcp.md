@@ -451,7 +451,9 @@ Use the existing infrastructure and platform owners in this order.
    The DNS owner publishes the certificate authorization CNAME from the OpenTofu outputs.
    The DNS owner points each route host at the global address `wamn-edge`.
 
-### One approved GKE verification
+### Former GKE verification procedure
+
+The repository no longer contains the `control_operations_gke` test.
 
 Get owner approval for one run and the section 3 teardown before you start.
 Complete the section 1 prerequisites with the dedicated cloud login and kubeconfig.
@@ -491,12 +493,7 @@ Run these steps in order:
    Wait for the edge and load balancer certificates to become valid.
 4. Enroll the owner through the hosted UI and load its password into `WAMN_TEST_OWNER_PASSWORD`.
    Record disposable consent with `kubectl annotate namespace platform wamn.dev/disposable=true` in the dedicated kubeconfig.
-5. Run this exact case:
-
-   ```bash
-   cargo test --locked --offline -p wamn-dev --test platform_apply_kind \
-     control_operations_gke -- --ignored --exact --nocapture
-   ```
+5. The former procedure ran `control_operations_gke`.
 
 6. Run section 3 after success or failure.
    Remove the load balancer and certificate resources before the cluster, while its network endpoint group still exists.

@@ -5,15 +5,18 @@ pub(super) mod plan;
 
 use std::path::Path;
 
+use crate::application_chart::{
+    binding::Binding,
+    plan::{self as chart, RoleName, ValuesInput},
+};
 use anyhow::Context as _;
 use serde_yaml::{Mapping, Value};
-use wamn_application_chart::{Binding, RoleName, ValuesInput};
 
 use super::document::EnvironmentDocument;
 
 /// Render application values without host configuration.
 pub fn render(input: &ValuesInput<'_>) -> anyhow::Result<Value> {
-    wamn_application_chart::values(input)
+    chart::values(input)
 }
 
 /// Validate an operator authority and read its fixed socket port.

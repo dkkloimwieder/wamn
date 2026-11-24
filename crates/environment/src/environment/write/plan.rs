@@ -1,7 +1,10 @@
 use std::collections::BTreeMap;
 
+use crate::application_chart::{
+    binding::Binding,
+    plan::{self as chart, Publication, PublishedOperation},
+};
 use anyhow::Context as _;
-use wamn_application_chart::{self as chart, Binding, Publication, PublishedOperation};
 use wamn_release::publish_release::{deploy_runtime_schema, deployment_routes, route_contracts};
 
 use super::{EnvironmentDocument, RoleName, Value, ValuesInput};

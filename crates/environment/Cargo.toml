@@ -12,7 +12,8 @@ wamn-workflow-graph.workspace = true
 sqlx = { workspace = true, features = ["migrate", "macros", "postgres", "runtime-tokio", "tls-rustls", "chrono", "uuid", "json", "bigdecimal"] }
 wamn-kubernetes.workspace = true
 wamn-application.workspace = true
-wamn-application-chart.workspace = true
+wamn-authority.workspace = true
+wamn-routes.workspace = true
 wamn-connection-type.workspace = true
 wamn-oci-reference.workspace = true
 wamn-package.workspace = true

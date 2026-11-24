@@ -8,7 +8,7 @@ use wamn_edge_document::edge_bundle::BUNDLE_FILE_NAME;
 use wamn_edge_document::edge_bundle::EdgeBundle;
 use wamn_edge_document::edge_bundle::INGRESS_FILE_NAME;
 
-use wamn_dev::dev::edge_bundle::{EdgeTarget, write_package};
+use wamn_build::dev::edge_bundle::{EdgeTarget, write_package};
 use wamn_digest::bytes_sha256;
 
 fn repository() -> PathBuf {

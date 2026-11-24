@@ -42,7 +42,6 @@ rustls = { workspace = true, features = ["aws_lc_rs", "std", "tls12"] }
 wamn-release = { workspace = true }
 wamn-engine = { workspace = true, features = ["wasm_component_model_implements"] }
 wamn-environment = { workspace = true }
-wamn-dev = { workspace = true }
 wamn-kubernetes.workspace = true
 wamn-platform-install.workspace = true
 # `wamn inspect` and `wamn diff` read verified package artifacts.
@@ -62,7 +61,6 @@ wash-runtime = { workspace = true, features = ["oci"] }
 [dev-dependencies]
 url = { workspace = true }
 wamn-oci = { workspace = true }
-wamn-dev.workspace = true
 wamn-test-infrastructure = { workspace = true }
 
 [lints]

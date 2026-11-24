@@ -1,19 +1,15 @@
 //! Prepare and build the source closure selected by development.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
+#[cfg(target_os = "linux")]
+use std::collections::BTreeSet;
 use std::fmt;
 use std::path::{Path, PathBuf};
-use wamn_codegen::fingerprint;
-use wamn_component_policy::PackageManifest;
-use wamn_dev::source_deploy::{PackageSource, SourceBuild};
-use wamn_package::{
-    PackageName,
-    manifest::{BaseDependencyRequirement, PackageIdentity, source_name::SourceName},
-};
+use wamn_package::manifest::{BaseDependencyRequirement, PackageIdentity, source_name::SourceName};
 
 use crate::{
     BuildDatabase, BuildMode, BuildRequest, DescribeMode, PreparedSource, build_prepared,
-    default_output_root, package_output,
+    default_output_root, package_output, source_deploy::PackageSource,
 };
 
 /// Build source with the caller's database adapter and describe settings.
@@ -34,14 +30,12 @@ impl fmt::Debug for SourceBuilder<'_> {
 #[derive(Debug)]
 pub struct PreparedPackage(PreparedSource);
 
-impl SourceBuild for SourceBuilder<'_> {
-    type Prepared = PreparedPackage;
-
-    async fn prepare(&self, root: &Path) -> anyhow::Result<PreparedPackage> {
-        Ok(PreparedPackage(crate::prepare_source(root).await?))
-    }
-
-    async fn build(&self, source: &PreparedPackage, mode: BuildMode) -> anyhow::Result<PathBuf> {
+impl SourceBuilder<'_> {
+    pub(crate) async fn build(
+        &self,
+        source: &PreparedPackage,
+        mode: BuildMode,
+    ) -> anyhow::Result<PathBuf> {
         let source = &source.0;
         let output = default_output_root(source.root());
         let describe = *self
@@ -52,27 +46,16 @@ impl SourceBuild for SourceBuilder<'_> {
         let built = build_prepared(self.database, &request, source, mode).await?;
         Ok(package_output(&output, &built.package.id))
     }
+}
 
-    fn inputs(&self, source: &PreparedPackage) -> anyhow::Result<BTreeSet<PathBuf>> {
-        crate::build_inputs(&source.0)
-    }
+pub(crate) async fn prepare(root: &Path) -> anyhow::Result<PreparedPackage> {
+    Ok(PreparedPackage(crate::prepare_source(root).await?))
+}
 
-    fn source_dependency(&self, root: &Path, id: &PackageName) -> anyhow::Result<PathBuf> {
-        wamn_codegen::source_root(&package_output(&default_output_root(root), id))
-    }
-
-    fn built_root(&self, root: &Path) -> PathBuf {
-        wamn_codegen::output_root(root)
-    }
-
-    fn built_dependency(&self, parent: &Path, id: &PackageName) -> PathBuf {
-        package_output(parent, id)
-    }
-
-    fn read_built(&self, root: &Path) -> anyhow::Result<PackageManifest> {
-        let marker = fingerprint::read(root)?;
-        let (bytes, _) = fingerprint::read_artifact(root, &marker, Path::new("wamn.json"))?;
-        Ok(PackageManifest::from_slice(&bytes)?)
+#[cfg(target_os = "linux")]
+impl PreparedPackage {
+    pub(crate) fn inputs(&self) -> anyhow::Result<BTreeSet<PathBuf>> {
+        crate::build_inputs(&self.0)
     }
 }
 

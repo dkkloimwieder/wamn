@@ -1,6 +1,7 @@
 //! Package and guest build orchestration shared by xtask and its command clients.
 mod components;
 pub mod composer;
+pub mod dev;
 pub mod eject;
 #[cfg(target_os = "linux")]
 mod git_source;
@@ -9,6 +10,7 @@ mod inputs;
 pub mod kcl;
 pub mod palette;
 pub mod source_build;
+pub mod source_deploy;
 #[cfg(target_os = "linux")]
 pub mod watch;
 use anyhow::{Context as _, Result};
@@ -44,7 +46,12 @@ pub async fn build_component(repository: &Path, manifest: &Path) -> Result<std::
     .await
 }
 
-pub use wamn_dev::source_deploy::BuildMode;
+/// The version policy used to build an authored package.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+pub enum BuildMode {
+    Published,
+    Development,
+}
 
 /// Package identity and exact compiled manifest digest.
 #[derive(Debug)]

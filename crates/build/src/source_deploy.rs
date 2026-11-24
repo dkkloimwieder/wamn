@@ -2,6 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use wamn_codegen::fingerprint;
 use wamn_component_policy::PackageManifest;
 use wamn_environment::environment::document::EnvironmentDocument;
 use wamn_package::PackageName;
@@ -12,49 +13,27 @@ use wamn_release::release_package::RegistryPackagePublisher;
 
 use anyhow::{Context as _, ensure};
 
-/// The version policy used to build an authored package.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
-pub enum BuildMode {
-    Published,
-    Development,
-}
-
-/// Prepare authored packages and read or build their verified output.
-pub trait SourceBuild: Sync {
-    type Prepared: PackageSource + Send + Sync;
-
-    fn prepare(&self, root: &Path) -> impl Future<Output = anyhow::Result<Self::Prepared>> + Send;
-
-    fn build(
-        &self,
-        source: &Self::Prepared,
-        mode: BuildMode,
-    ) -> impl Future<Output = anyhow::Result<PathBuf>> + Send;
-
-    fn inputs(&self, source: &Self::Prepared) -> anyhow::Result<BTreeSet<PathBuf>>;
-    fn source_dependency(&self, root: &Path, id: &PackageName) -> anyhow::Result<PathBuf>;
-    fn built_root(&self, root: &Path) -> PathBuf;
-    fn built_dependency(&self, parent: &Path, id: &PackageName) -> PathBuf;
-    fn read_built(&self, root: &Path) -> anyhow::Result<PackageManifest>;
-}
+use crate::source_build::{self, PreparedPackage, SourceBuilder};
+use crate::{BuildMode, default_output_root, package_output};
 
 /// Build and publish source using its committed database evidence.
 pub async fn publish_from_env(
-    build: &impl SourceBuild,
+    build: &SourceBuilder<'_>,
     publisher: &RegistryPackagePublisher<'_>,
     document: &EnvironmentDocument,
     root: &Path,
 ) -> anyhow::Result<(wamn_registry::ApplicationName, wamn_digest::Digest)> {
-    let (application, sources) = sources(build, document, root).await?;
+    let (application, sources) = sources(document, root).await?;
     build_and_publish(build, publisher, application, sources, BuildMode::Published).await
 }
 
 /// Build and publish the source documents already compiled for this dev pass.
-pub(crate) async fn publish_development<B: SourceBuild>(
-    build: &B,
+#[cfg(target_os = "linux")]
+pub(crate) async fn publish_development(
+    build: &SourceBuilder<'_>,
     publisher: &RegistryPackagePublisher<'_>,
     application: wamn_registry::ApplicationName,
-    sources: Vec<B::Prepared>,
+    sources: Vec<PreparedPackage>,
 ) -> anyhow::Result<(wamn_registry::ApplicationName, wamn_digest::Digest)> {
     build_and_publish(
         build,
@@ -66,11 +45,11 @@ pub(crate) async fn publish_development<B: SourceBuild>(
     .await
 }
 
-async fn build_and_publish<B: SourceBuild>(
-    build: &B,
+async fn build_and_publish(
+    build: &SourceBuilder<'_>,
     publisher: &RegistryPackagePublisher<'_>,
     application: wamn_registry::ApplicationName,
-    sources: Vec<B::Prepared>,
+    sources: Vec<PreparedPackage>,
     mode: BuildMode,
 ) -> anyhow::Result<(wamn_registry::ApplicationName, wamn_digest::Digest)> {
     let mut roots = Vec::with_capacity(sources.len());
@@ -83,21 +62,22 @@ async fn build_and_publish<B: SourceBuild>(
 
 /// Publish the selected package's existing build output without rebuilding.
 pub async fn publish_built_from_env(
-    build: &impl SourceBuild,
     publisher: &RegistryPackagePublisher<'_>,
     root: &Path,
 ) -> anyhow::Result<wamn_digest::Digest> {
-    let root = build.built_root(&root.canonicalize()?);
+    let root = wamn_codegen::output_root(&root.canonicalize()?);
     let parent = root
         .parent()
         .context("build directory has no parent")?
         .to_owned();
     let read = |root: PathBuf| async move {
-        let manifest = build.read_built(&root)?;
+        let marker = fingerprint::read(&root)?;
+        let (bytes, _) = fingerprint::read_artifact(&root, &marker, Path::new("wamn.json"))?;
+        let manifest = PackageManifest::from_slice(&bytes)?;
         Ok(BuiltSource { root, manifest })
     };
     let roots = ordered_sources(read(root).await?, read, |id| {
-        Ok(build.built_dependency(&parent, id))
+        Ok(package_output(&parent, id))
     })
     .await?
     .into_iter()
@@ -107,19 +87,18 @@ pub async fn publish_built_from_env(
 }
 
 /// Resolve and compile the source closure in dependency order.
-pub(crate) async fn sources<B: SourceBuild>(
-    build: &B,
+pub(crate) async fn sources(
     document: &EnvironmentDocument,
     root: &Path,
-) -> anyhow::Result<(wamn_registry::ApplicationName, Vec<B::Prepared>)> {
+) -> anyhow::Result<(wamn_registry::ApplicationName, Vec<PreparedPackage>)> {
     let root = root
         .canonicalize()
         .context("resolve selected package root")?;
     let application = selected_application(document)?.clone();
     let sources = ordered_sources(
-        build.prepare(&root).await?,
-        |root| async move { build.prepare(&root).await },
-        |id| build.source_dependency(&root, id),
+        source_build::prepare(&root).await?,
+        |root| async move { source_build::prepare(&root).await },
+        |id| wamn_codegen::source_root(&package_output(&default_output_root(&root), id)),
     )
     .await?;
     Ok((application, sources))

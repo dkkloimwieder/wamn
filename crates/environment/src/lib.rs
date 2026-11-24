@@ -1,5 +1,6 @@
 //! Environment lifecycle and authorized control execution.
 
+pub mod application_chart;
 pub mod apply_package;
 pub mod audit_retention;
 pub mod capture_sql;

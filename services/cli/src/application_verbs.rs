@@ -64,7 +64,7 @@ pub async fn deploy(args: DeployArgs) -> anyhow::Result<()> {
                 Some(&args.application),
             )?;
             let describe = args.describe.mode(false)?;
-            let published = wamn_dev::source_deploy::publish_from_env(
+            let published = wamn_build::source_deploy::publish_from_env(
                 &SourceBuilder {
                     database: &PostgresBuildDatabase,
                     describe: Ok(describe),

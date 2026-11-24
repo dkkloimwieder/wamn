@@ -38,14 +38,13 @@ Each library has one concern. Directory names follow crate names without the `wa
 | `crates/registry` | `wamn-registry`: hierarchy coordinates, resource names, and registry values |
 | `crates/release` | `wamn-release`: release plans, admitted components, publication contracts, and web artifact uploads |
 | `crates/oci` | `wamn-oci`: registry transport, artifact reads, and registry credentials |
-| `crates/environment` | `wamn-environment`: environment lifecycle, package apply, retention, and CDC reader lifecycle and recovery |
+| `crates/environment` | `wamn-environment` owns environment lifecycle, application chart values, package apply, retention, and CDC reader lifecycle and recovery |
 | `crates/platform-install` | `wamn-platform-install`: chart installation and system and org database bootstrap |
-| `crates/dev` | `wamn-dev`: watched builds, publication, and deployment |
 | `crates/kubernetes` | `wamn-kubernetes`: Kubernetes transport, Secrets, and Job execution |
 | `crates/broker` | `wamn-broker`: NATS connections, streams, and shared memory buckets |
 | `crates/event` | `wamn-event`: event records, source identity, and CDC reader configuration |
 | `crates/component-policy` | `wamn-component-policy`: import admission and platform import declarations |
-| `crates/build` | `wamn-build`: package builds and overlay and base composition |
+| `crates/build` | `wamn-build` owns package builds, overlay and base composition, source publication, and watched deployment |
 | `crates/engine` | `wamn-engine`: native loading, dispatch, and the invocation scope registry |
 | `crates/workflow-graph` | `wamn-workflow-graph` owns authored graphs, validation, and canonical identity |
 | `crates/authority` | `wamn-authority`: shared invocation identity and effect evidence |

@@ -6,7 +6,7 @@ pub fn release_name(
     application: &wamn_registry::ApplicationName,
 ) -> anyhow::Result<String> {
     wamn_platform_install::environment::validate_project_env(org, project, env)?;
-    Ok(wamn_application_chart::release_name(
+    Ok(crate::application_chart::plan::release_name(
         org,
         project,
         env,

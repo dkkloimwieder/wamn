@@ -1,7 +1,7 @@
 //! Project deployment chart values.
 
+use crate::application_chart::plan::{RoleName, release_name, workload_name};
 use serde_json::{Value, json};
-use wamn_application_chart::{RoleName, release_name, workload_name};
 use wamn_platform_install::provision_org::APPLY_SECRET;
 use wamn_registry::{Triple, name};
 

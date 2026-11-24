@@ -2,7 +2,7 @@
 //!
 //! The adapter decides whether a change touches package-owned inputs or explicit
 //! component source roots. It deliberately does not coalesce events or execute
-//! deployment work; [`wamn_dev::dev::run`] owns each development pass.
+//! deployment work. [`crate::dev::run`] owns each development pass.
 
 pub(super) mod plan;
 
@@ -29,7 +29,7 @@ pub use super::git_source::{
     GitSourceError, GitSourceErrorType, GitSourceSnapshot, GitSourceState,
 };
 
-use wamn_dev::dev::{DevInvalidation, DevInvalidationSource, WatchInputs};
+use crate::dev::{DevInvalidation, WatchInputs};
 
 const INOTIFY_BUFFER_BYTES: usize = 64 * 1024;
 
@@ -383,7 +383,7 @@ impl FilesystemInvalidationSource {
         }
         let mut updated = Self::new(packages, components, self.git.clone()).await?;
         updated.replace_configuration_files(self.roots.configuration_files.iter().cloned())?;
-        while let Some(event) = self.try_next()? {
+        while let Some(event) = self.try_next() {
             updated.pending.push_back(event);
         }
         *self = updated;
@@ -582,17 +582,18 @@ impl FilesystemInvalidationSource {
         }
         Ok(())
     }
-}
 
-impl DevInvalidationSource for FilesystemInvalidationSource {
-    type Error = FilesystemInvalidationError;
-
-    async fn replace_inputs(&mut self, inputs: WatchInputs) -> Result<(), Self::Error> {
+    pub(crate) async fn replace_inputs(
+        &mut self,
+        inputs: WatchInputs,
+    ) -> Result<(), FilesystemInvalidationError> {
         self.replace_roots(inputs.roots, inputs.shared).await?;
         self.replace_configuration_files(inputs.files)
     }
 
-    async fn next(&mut self) -> Result<Option<DevInvalidation>, Self::Error> {
+    pub(crate) async fn next(
+        &mut self,
+    ) -> Result<Option<DevInvalidation>, FilesystemInvalidationError> {
         if let Some(invalidation) = self.pending.pop_front() {
             return Ok(Some(invalidation));
         }
@@ -600,8 +601,8 @@ impl DevInvalidationSource for FilesystemInvalidationSource {
         Ok(self.pending.pop_front())
     }
 
-    fn try_next(&mut self) -> Result<Option<DevInvalidation>, Self::Error> {
-        Ok(self.pending.pop_front())
+    pub(crate) fn try_next(&mut self) -> Option<DevInvalidation> {
+        self.pending.pop_front()
     }
 }
 
@@ -791,7 +792,7 @@ mod tests {
         let mut passes = 0;
         tokio::time::timeout(
             Duration::from_secs(5),
-            wamn_dev::dev::run(Some(source), receiver, async |_| {
+            crate::dev::run(Some(source), receiver, async |_| {
                 passes += 1;
                 let pass = passes;
                 let root = &root;
@@ -941,7 +942,7 @@ mod tests {
             .expect("read the event")
             .expect("the source stays open");
         let mut events = vec![first];
-        while let Some(event) = source.try_next().expect("drain filesystem events") {
+        while let Some(event) = source.try_next() {
             events.push(event);
         }
         events

@@ -1,6 +1,7 @@
 //! Command-line inputs and signals for watched product deployment.
 
 use std::path::{Path, PathBuf};
+use wamn_build::dev::{Deploy, development::Development};
 use wamn_build::source_build::SourceBuilder;
 use wamn_build::watch::{FilesystemInvalidationSource, GitSource};
 use wamn_postgres::build_database::PostgresBuildDatabase;
@@ -8,7 +9,6 @@ use wamn_postgres::build_database::PostgresBuildDatabase;
 use anyhow::Context as _;
 use clap::Args;
 use tokio::signal::unix::{SignalKind, signal};
-use wamn_dev::dev::{Deploy, Development};
 
 use crate::build_verbs::RefreshDescribeArgs;
 
@@ -102,11 +102,7 @@ pub struct PublishArgs {
 
 /// Publish existing build output and print the top package OCI digest.
 pub async fn publish(args: PublishArgs) -> anyhow::Result<()> {
-    let digest = wamn_dev::source_deploy::publish_built_from_env(
-        &SourceBuilder {
-            database: &PostgresBuildDatabase,
-            describe: Ok(wamn_build::DescribeMode::Cached),
-        },
+    let digest = wamn_build::source_deploy::publish_built_from_env(
         &crate::package_verbs::package_publisher(),
         &args.package,
     )

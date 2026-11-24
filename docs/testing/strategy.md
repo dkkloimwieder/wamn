@@ -128,8 +128,8 @@ Reset exclusion and concurrent independent application deployment are separate p
 
 ## Independent deployed cases
 
-Reuse the entry points in `crates/dev/tests/platform_apply_kind.rs`.
-These are intended coverage responsibilities, not an assertion that each current function already has minimal setup.
+See [Development on kind](../operations/running-tests.md#development-on-kind) for current test entry points.
+The table lists intended coverage.
 Any execution remains subject to the approval and preflight rules above.
 
 | Case | Minimal starting state | Distinct observation |

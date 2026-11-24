@@ -49,7 +49,7 @@ fn an_unnamed_statements_entry_links_every_member_import() {
         Arc::clone(&pools) as _,
     );
     let host = OperationHost::new(pools, Arc::new(authorization), None);
-    // The entry `release_chart::plan::host_interfaces` writes: no name.
+    // The environment application chart writes this interface without a name.
     let entry = HashSet::from([WitInterface::from("wamn:postgres/statements,types@0.4.0")]);
     let mut linker = Linker::<SharedCtx>::new(engine.inner());
 

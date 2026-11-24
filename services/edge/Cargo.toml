@@ -61,8 +61,8 @@ tracing-subscriber = { workspace = true, features = ["env-filter"] }
 wamn-release.workspace = true
 wat = "=1.254.2"
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt"] }
-# The tests write the edge_device bundle with the dev loop's bundle writer.
-wamn-dev = { workspace = true }
+# The tests write the edge_device bundle with the build crate's bundle writer.
+wamn-build.workspace = true
 # The device test writes frames into a pseudo-terminal pair.
 rustix = { workspace = true, features = ["pty"] }
 # The forward test serves an HTTPS platform with its own certificate authority.

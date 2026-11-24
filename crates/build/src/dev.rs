@@ -1,16 +1,16 @@
 //! Watch package inputs and repeat the product deployment operation.
 
 #[cfg(target_os = "linux")]
-mod development;
+pub mod development;
 pub mod edge_bundle;
-#[cfg(target_os = "linux")]
-pub use development::Development;
 
-use std::error::Error;
 use std::path::{Path, PathBuf};
 
 use wamn_digest::Digest;
 use wamn_registry::ApplicationName;
+
+#[cfg(target_os = "linux")]
+use crate::watch::FilesystemInvalidationSource;
 
 /// A filesystem event's effect on development output.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -37,35 +37,15 @@ pub trait Deploy: Sync {
     ) -> impl Future<Output = anyhow::Result<()>> + Send;
 }
 
-/// Receives filesystem changes without executing deployment work.
-pub trait DevInvalidationSource {
-    /// Failure to receive a source change.
-    type Error: Error + Send + Sync + 'static;
-    /// Observe the build inputs selected by the current source closure.
-    fn replace_inputs(
-        &mut self,
-        inputs: WatchInputs,
-    ) -> impl Future<Output = Result<(), Self::Error>> + Send;
-    /// Wait for a source event or the end of the source.
-    fn next(&mut self)
-    -> impl Future<Output = Result<Option<DevInvalidation>, Self::Error>> + Send;
-    /// Receive an event that is already queued.
-    fn try_next(&mut self) -> Result<Option<DevInvalidation>, Self::Error>;
-}
-
 /// Build, publish and deploy once, then repeat for coalesced source changes.
 /// Shutdown waits for an active deployment to finish. A failed watch pass is
 /// reported and the next source change retries through the same product path.
 #[cfg(target_os = "linux")]
-pub async fn run<S, F>(
-    mut source: Option<S>,
+pub async fn run(
+    mut source: Option<FilesystemInvalidationSource>,
     mut shutdown: tokio::sync::watch::Receiver<bool>,
-    mut deploy: F,
-) -> anyhow::Result<()>
-where
-    S: DevInvalidationSource,
-    F: AsyncFnMut(&mut Option<S>) -> anyhow::Result<()>,
-{
+    mut deploy: impl AsyncFnMut(&mut Option<FilesystemInvalidationSource>) -> anyhow::Result<()>,
+) -> anyhow::Result<()> {
     loop {
         if *shutdown.borrow() {
             return Ok(());
@@ -87,7 +67,7 @@ where
                 return Ok(());
             };
             let mut changed = matches!(event, DevInvalidation::Rerun);
-            while let Some(event) = source.try_next()? {
+            while let Some(event) = source.try_next() {
                 changed |= matches!(event, DevInvalidation::Rerun);
             }
             if changed {
