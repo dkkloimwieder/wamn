@@ -4,32 +4,14 @@ use std::net::SocketAddr;
 
 use wash_runtime::host::egress_policy::EgressAddressPolicy;
 
-/// The address rule of the target type a connection call runs on.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum AddressPolicy {
-    /// The cloud cluster reaches public addresses only.
-    Cloud,
-    /// A local device also reaches private addresses.
-    Local,
-}
+use wamn_connection::bound_http::Target;
 
-impl AddressPolicy {
-    /// The rule for a `registry.target.type` value; `None` for any other value.
-    pub(crate) fn for_target(target_type: &str) -> Option<Self> {
-        match target_type {
-            "cloud" => Some(Self::Cloud),
-            "local" => Some(Self::Local),
-            _ => None,
-        }
+pub(crate) fn allows(target: Target, address: SocketAddr) -> bool {
+    EgressAddressPolicy {
+        deny_special: true,
+        allow_private: target == Target::Local,
     }
-
-    pub(crate) fn allows(self, address: SocketAddr) -> bool {
-        EgressAddressPolicy {
-            deny_special: true,
-            allow_private: self == Self::Local,
-        }
-        .permits(address.ip())
-    }
+    .permits(address.ip())
 }
 
 #[cfg(test)]
@@ -54,7 +36,7 @@ mod tests {
             "[::ffff:169.254.169.254]:80",
         ] {
             assert!(
-                !AddressPolicy::Local.allows(address.parse().unwrap()),
+                !allows(Target::Local, address.parse().unwrap()),
                 "{address}"
             );
         }
@@ -67,10 +49,7 @@ mod tests {
             "[::ffff:10.96.0.1]:443",
             "[2001:4860:4860::8888]:443",
         ] {
-            assert!(
-                AddressPolicy::Local.allows(address.parse().unwrap()),
-                "{address}"
-            );
+            assert!(allows(Target::Local, address.parse().unwrap()), "{address}");
         }
     }
 
@@ -92,20 +71,17 @@ mod tests {
             "[2002:a00:1::1]:443",
         ] {
             let address = address.parse().unwrap();
-            assert!(!AddressPolicy::Cloud.allows(address), "{address}");
-            assert!(AddressPolicy::Local.allows(address), "{address}");
+            assert!(!allows(Target::Cloud, address), "{address}");
+            assert!(allows(Target::Local, address), "{address}");
         }
-        assert!(!AddressPolicy::Cloud.allows("168.63.129.16:80".parse().unwrap()));
+        assert!(!allows(Target::Cloud, "168.63.129.16:80".parse().unwrap()));
         for address in [
             "8.8.8.8:443",
             "172.32.0.1:443",
             "100.128.0.1:443",
             "[2001:4860:4860::8888]:443",
         ] {
-            assert!(
-                AddressPolicy::Cloud.allows(address.parse().unwrap()),
-                "{address}"
-            );
+            assert!(allows(Target::Cloud, address.parse().unwrap()), "{address}");
         }
     }
 }

@@ -10,7 +10,8 @@ use tokio::net::TcpListener;
 use super::*;
 use crate::test_util::Observed;
 use wamn_connection::connection_credentials::{ConnectionCredentials, ConnectionGeneration};
-use wamn_connection::connection_memory::ConnectionFact;
+use wamn_connection::connection_facts::ConnectionAnswer;
+use wamn_connection::connection_memory::{ConnectionFact, ConnectionStatus};
 use wamn_connection::database::ProjectDatabase;
 
 /// The project database is never read: a call without OAuth reads no connection row.
@@ -73,15 +74,11 @@ async fn a_local_target_call_reaches_a_private_server_with_its_credential() {
             .unwrap();
     });
 
-    let scopes = Arc::new(InvocationScopes::default());
-    let http = ConnectionHttp::new(scopes, Arc::new(HttpTransport::new().unwrap()));
-    let transport = http.transport.for_invocation(
-        "scope",
-        wamn_engine::invocation_scope::InvocationExecution::new(
+    let transport = HttpTransport::new().unwrap();
+    let execution: Arc<dyn wamn_application::InvocationLifetime> =
+        Arc::new(wamn_engine::invocation_scope::InvocationExecution::new(
             tokio::time::Instant::now() + std::time::Duration::from_secs(10),
-        ),
-        AddressPolicy::for_target("local").unwrap(),
-    );
+        ));
     let answer = ConnectionAnswer {
         fact: ConnectionFact {
             active_generation: 1,
@@ -104,15 +101,21 @@ async fn a_local_target_call_reaches_a_private_server_with_its_credential() {
         }),
     };
 
-    let (response, token) = http
+    let (response, token) = transport
         .attempt(
-            &facts(),
-            uuid::Uuid::new_v4(),
-            &answer,
-            &transport,
-            "scope",
-            &effect_request(Vec::new()),
-            (Some(r#"{"username":"owner","password":"secret"}"#), None),
+            &Call {
+                facts: &facts(),
+                connection: uuid::Uuid::new_v4(),
+                target: Target::Local,
+                execution: &execution,
+                request: &effect_request(Vec::new()),
+                principal: &|| None,
+            },
+            Attempt {
+                answer: &answer,
+                material: Some(r#"{"username":"owner","password":"secret"}"#),
+                rejected: None,
+            },
         )
         .await
         .unwrap();

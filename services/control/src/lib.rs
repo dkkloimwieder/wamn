@@ -1,6 +1,5 @@
 //! Authenticated org administration without a guest runtime.
 
-pub mod connection_health;
 mod control_route;
 pub mod environment_status;
 mod execution;
@@ -20,7 +19,6 @@ use std::{
 
 use anyhow::{Context as _, ensure};
 pub use host_route::{ControlExecution, HostRouteDelivery, HostRouteHandlers};
-use http_body_util::BodyExt as _;
 use serde::Deserialize;
 use serde_json::json;
 use wamn_authentication::route_authentication::ControlRouteAuthenticator;
@@ -237,9 +235,9 @@ pub async fn serve(config: Configuration) -> anyhow::Result<()> {
         .with_worker(worker)
         .with_operation_jobs(wamn_kubernetes::kubernetes_api::KubernetesApi::in_cluster()?)
         .with_registry_token_metadata(config.registry_token_metadata)
-        .with_connection_health(Arc::new(crate::connection_health::ConnectionHealth::new(
-            transport,
-        )))
+        .with_connection_health(Arc::new(
+            wamn_http::connection_health::ConnectionHealth::new(transport),
+        ))
         .with_oauth(oauth.as_ref().map(Arc::clone)),
     );
     let listener =
@@ -276,7 +274,7 @@ pub async fn serve(config: Configuration) -> anyhow::Result<()> {
                         let oauth = oauth.as_ref().map(Arc::clone);
                         let logins = Arc::clone(&logins);
                         async move {
-                            let request = request.map(|body| body.map_err(wasmtime_wasi_http::Error::from).boxed_unsync());
+                            let request = wamn_http::body::incoming(request);
                             let response = if request.uri().path() == "/oauth/callback" && let Some(oauth) = oauth {
                                 control_route::oauth_callback::response(&oauth, &logins, request).await
                             } else { handlers.http(request).await };

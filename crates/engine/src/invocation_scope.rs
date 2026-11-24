@@ -77,6 +77,17 @@ impl InvocationExecution {
     }
 }
 
+#[async_trait::async_trait]
+impl wamn_application::InvocationLifetime for InvocationExecution {
+    fn deadline(&self) -> std::time::Instant {
+        self.deadline().into_std()
+    }
+
+    async fn cancelled(&self) {
+        let _ = self.run(std::future::pending::<()>()).await;
+    }
+}
+
 impl Default for InvocationExecution {
     fn default() -> Self {
         Self::new(Instant::now() + MAX_HOST_CALL_DURATION)

@@ -19,7 +19,6 @@ uuid = { workspace = true, features = ["v4"] }
 sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls", "json"] }
 rustls = { workspace = true, features = ["aws-lc-rs"] }
 clap = { workspace = true, features = ["derive"] }
-http-body-util.workspace = true
 hyper = { workspace = true, features = ["server", "http1"] }
 hyper-util = { workspace = true, features = ["http1", "tokio"] }
 serde = { workspace = true, features = ["derive"] }
@@ -29,7 +28,6 @@ tracing.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 url.workspace = true
 zeroize.workspace = true
-wasmtime-wasi-http.workspace = true
 wamn-broker.workspace = true
 wamn-provision.workspace = true
 wamn-engine.workspace = true
@@ -38,7 +36,6 @@ wamn-platform-install.workspace = true
 async-trait.workspace = true
 wamn-http-client = { workspace = true, features = ["tls12"] }
 wamn-blobstore.workspace = true
-bytes.workspace = true
 boon.workspace = true
 wamn-identity-client.workspace = true
 wamn-identity-protocol.workspace = true

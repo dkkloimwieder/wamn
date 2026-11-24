@@ -25,6 +25,7 @@ tracing = { workspace = true }
 uuid = { workspace = true, features = ["serde", "v4"] }
 wamn-authority = { workspace = true }
 wamn-connection = { workspace = true }
+wamn-connection-type.workspace = true
 wamn-digest = { workspace = true }
 wamn-engine = { workspace = true }
 wamn-event = { workspace = true }

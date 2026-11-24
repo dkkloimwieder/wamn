@@ -1,5 +1,6 @@
 //! Connection facts, credentials, invocation context, leases and Wasm integration dispatch.
 
+pub mod bound_http;
 pub mod connection;
 pub mod connection_credentials;
 pub mod connection_facts;

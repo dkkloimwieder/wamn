@@ -1,245 +1,40 @@
-//! Environment-bound HTTP for ordinary `wamn:node` components.
-//!
-//! The host binds the exact entry (a route, or a graph node position and
-//! occurrence) and the component digest before invoking a pooled component. The
-//! guest names only a store alias; the database must resolve that alias at the
-//! component grain and the mounted manifest must contain the exact route or
-//! graph version/hash and the component tuple. No run, plan, frame or effect
-//! record participates.
+//! Pinned HTTP transport, authentication, and candidate checks.
 
-use std::collections::{HashMap, HashSet};
-#[cfg(test)]
-use std::sync::Mutex;
-use std::sync::{Arc, RwLock};
-use wamn_connection::connection_credentials::Secret;
-use wamn_connection::connection_facts::{ConnectionAnswer, ConnectionFacts};
-use wamn_connection::connection_memory::ConnectionStatus;
-use wamn_engine::invocation_scope::InvocationScopes;
-use wash_runtime::engine::ctx::{ActiveCtx, SharedCtx, extract_active_ctx};
-use wash_runtime::engine::workload::{ResolvedWorkload, WorkloadItem};
-use wash_runtime::plugin::{HostPlugin, WitInterfaces};
-use wash_runtime::wasmtime::component::Accessor;
-use wash_runtime::wit::{WitInterface, WitWorld};
+use std::collections::HashMap;
 
-use anyhow::Context as _;
-use tracing::Instrument as _;
-use wamn_authority::EffectOutcome;
-use wamn_authority::effect_span::{
-    EFFECT_OPERATION, EffectIdentity, EffectOutcomeGuard, HTTP_EFFECT_DURATION_MS, effect_span,
-    record_effect_ms, record_graph,
-};
-
-use wash_runtime::host::allowed_hosts::AllowedHost;
-
+use wamn_authority::connection::ConnectionError;
 use wamn_authority::connection_authority::{
     AuthorityDecision, AuthorityError, HttpConnectionAuthority, TokioDnsResolver,
     bound_http_target, bound_oauth_token, resolve_http_request,
 };
+use wamn_connection::bound_http::{Attempt, BoundHttp, Call, Header, Request, Response, Target};
+use wamn_connection::connection_facts::ConnectionFacts;
+use wash_runtime::host::allowed_hosts::AllowedHost;
 
 mod authentication;
+pub mod body;
+pub mod connection_health;
 mod jwt;
 mod network_policy;
 pub mod transport;
 
 use crate::oauth::{Request as Oauth2Request, Response as Oauth2Token};
-use network_policy::AddressPolicy;
 use transport::HttpTransport;
 
-mod bindings {
-    wash_runtime::wasmtime::component::bindgen!({
-        path: [
-            "../../wit/wamn-connection",
-            "../../wit/wamn-ingress",
-            "../../wit/wamn-postgres-0.4",
-            "../../wit/wamn-node",
-            "../../wit/wamn-operation-0.1",
-            "../../wit/wasmcloud-blobstore",
-            "../authority/wit",
-        ],
-        world: "wamn:host/connection-http-plugin@0.1.0",
-        imports: { default: async | trappable | tracing },
-        wasmtime_crate: wash_runtime::wasmtime,
-    });
-}
-
-use bindings::wamn::connection::http::{self, Header, Request, Response};
-use wamn_authority::connection::ConnectionError;
-
-pub const CONNECTION_HTTP_ID: &str = "wamn-connection-http";
-
-#[derive(Debug)]
-struct ApplicationBinding {
-    workload: String,
-    application: Arc<wamn_application::application_config::ApplicationConfig>,
-}
-
-/// HTTP host plugin. Only importing components receive its linker entries.
-#[derive(Debug)]
-pub struct ConnectionHttp {
-    scopes: Arc<InvocationScopes>,
-    transport: Arc<HttpTransport>,
-    applications: Arc<RwLock<HashMap<String, ApplicationBinding>>>,
-    component: Option<String>,
-}
-impl ConnectionHttp {
-    pub fn new(scopes: Arc<InvocationScopes>, transport: Arc<HttpTransport>) -> Self {
-        Self {
-            scopes,
-            transport,
-            applications: Arc::default(),
-            component: None,
-        }
-    }
-    async fn send(&self, scope: &str, request: &Request) -> Result<Response, ConnectionError> {
-        let execution = self
-            .scopes
-            .execution(scope)
-            .ok_or(ConnectionError::AttestationInvalid)?;
-        let context = wamn_connection::invocation::context(&self.scopes, scope)
-            .map_err(|_| ConnectionError::AttestationInvalid)?;
-        let invocation = wamn_connection::invocation::invocation(&self.scopes, scope)
-            .ok_or(ConnectionError::AttestationInvalid)?;
-        let alias = request
-            .requirement
-            .parse()
-            .map_err(|_| ConnectionError::Incompatible)?;
-        let binding = {
-            let applications = self
-                .applications
-                .read()
-                .expect("HTTP application bindings poisoned");
-            let application = self
-                .component
-                .as_ref()
-                .and_then(|id| applications.get(id))
-                .ok_or(ConnectionError::Unbound)?;
-            if application.application != context.release {
-                return Err(ConnectionError::AttestationInvalid);
-            }
-            invocation
-                .connection(&context.release, &alias)
-                .ok_or(ConnectionError::Unbound)?
-        };
-        if binding.runtime_type != wamn_connection_type::RuntimeType::Host
-            || binding.integration_type.as_str() != "http"
-        {
-            return Err(ConnectionError::Incompatible);
-        }
-        let addresses =
-            AddressPolicy::for_target(&binding.target_type).ok_or(ConnectionError::Incompatible)?;
-        let read_only = binding
-            .mode
-            .read_only(&invocation.package_id, &binding.name)
-            .ok_or(ConnectionError::Incompatible)?;
-        if read_only
-            && !matches!(
-                request.method.to_ascii_uppercase().as_str(),
-                "GET" | "HEAD" | "OPTIONS"
-            )
-        {
-            return Err(ConnectionError::AuthorityDenied);
-        }
-        let id = binding
-            .connection_id
-            .parse()
-            .map_err(|_| ConnectionError::Unbound)?;
-        let facts = &context.connections;
-        let answer = facts
-            .answer(&id)
-            .await
-            .map_err(|_| ConnectionError::CredentialUnavailable)?
-            .filter(|answer| answer.fact.status == ConnectionStatus::Active)
-            .ok_or(ConnectionError::Unbound)?;
-        let transport = self.transport.for_invocation(scope, execution, addresses);
-        self.send_active(facts, id, answer, &transport, scope, request)
-            .await
-    }
-    async fn send_active(
-        &self,
-        facts: &ConnectionFacts,
-        id: uuid::Uuid,
-        answer: Arc<ConnectionAnswer>,
-        transport: &HttpTransport,
-        scope: &str,
-        request: &Request,
-    ) -> Result<Response, ConnectionError> {
-        let secret = credential(facts, &answer, None).await?;
-        let (first, token) = self
-            .attempt(
-                facts,
-                id,
-                &answer,
-                transport,
-                scope,
-                request,
-                (secret.as_deref().map(Secret::expose), None),
-            )
-            .await?;
-        if !matches!(first.status, 401 | 403) {
-            return Ok(first);
-        }
-        facts
-            .oauth_tokens()
-            .remove(&(id, answer.fact.active_generation));
-        let fresh = facts
-            .read_again(&id)
-            .await
-            .map_err(|_| ConnectionError::CredentialUnavailable)?
-            .filter(|answer| answer.fact.status == ConnectionStatus::Active)
-            .ok_or(ConnectionError::Unbound)?;
-        let same_credential = fresh.fact.credential_id == answer.fact.credential_id;
-        let refreshed = credential(
-            facts,
-            &fresh,
-            if same_credential {
-                secret.as_ref()
-            } else {
-                None
-            },
-        )
-        .await?;
-        drop(secret);
-        let same_generation =
-            same_credential && fresh.fact.active_generation == answer.fact.active_generation;
-        let rejected_token = token.as_deref().filter(|_| same_generation);
-        let result = self
-            .attempt(
-                facts,
-                id,
-                &fresh,
-                transport,
-                scope,
-                request,
-                (refreshed.as_deref().map(Secret::expose), rejected_token),
-            )
-            .await;
-        match result {
-            Ok((response, _)) => {
-                if matches!(response.status, 401 | 403) {
-                    facts
-                        .oauth_tokens()
-                        .remove(&(id, fresh.fact.active_generation));
-                }
-                Ok(response)
-            }
-            Err(_) if rejected_token.is_some() => Ok(first),
-            Err(error) => Err(error),
-        }
-    }
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "an attempt needs separate connection, invocation, and request inputs"
-    )]
+#[async_trait::async_trait]
+impl BoundHttp for HttpTransport {
     async fn attempt(
         &self,
-        facts: &ConnectionFacts,
-        id: uuid::Uuid,
-        answer: &ConnectionAnswer,
-        transport: &HttpTransport,
-        scope: &str,
-        request: &Request,
-        (material, rejected): (Option<&str>, Option<&str>),
+        call: &Call<'_>,
+        attempt: Attempt<'_>,
     ) -> Result<(Response, Option<String>), ConnectionError> {
+        let Attempt {
+            answer,
+            material,
+            rejected,
+        } = attempt;
+        let request = call.request;
+        let transport = self.for_invocation(call.execution, call.target);
         let target = wamn_authority::normalize_portable_http_target(&request.path_and_query)
             .map_err(|_| ConnectionError::AuthorityDenied)?;
         let authority = wamn_authority::connection_authority::parse_http_definition(
@@ -250,7 +45,7 @@ impl ConnectionHttp {
             &authority,
             &target,
             &[exact_host(&authority)],
-            &|address| transport.addresses().allows(address),
+            &|address| network_policy::allows(transport.addresses(), address),
             &TokioDnsResolver,
         )
         .await
@@ -259,22 +54,17 @@ impl ConnectionHttp {
         let empty = serde_json::json!({});
         let parameters = answer.generation.parameters.get("auth").unwrap_or(&empty);
         let (headers, token) = if wamn_connection::oauth_token::is_oauth(auth_type) {
-            let principal = self
-                .scopes
-                .read::<wamn_connection::invocation::Scope, _>(scope, |record| record.principal)
-                .flatten()
-                .ok_or(ConnectionError::AttestationInvalid)?;
-            let token = self
-                .oauth2_token(
-                    facts,
-                    principal,
-                    &authority,
-                    (auth_type, parameters, material),
-                    &(id, answer.fact.active_generation),
-                    rejected,
-                    transport,
-                )
-                .await?;
+            let principal = (call.principal)().ok_or(ConnectionError::AttestationInvalid)?;
+            let token = oauth2_token(
+                call.facts,
+                principal,
+                &authority,
+                (auth_type, parameters, material),
+                &(call.connection, answer.fact.active_generation),
+                rejected,
+                &transport,
+            )
+            .await?;
             (
                 HashMap::from([("authorization".into(), format!("Bearer {token}"))]),
                 Some(token),
@@ -285,104 +75,84 @@ impl ConnectionHttp {
                 None,
             )
         };
-        let mut response = execute(transport, decision, request, headers).await?;
+        let mut response = execute(&transport, decision, request, headers).await?;
         response
             .external_system
             .clone_from(&answer.generation.external_system);
         Ok((response, token))
     }
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "token lookup needs separate authority, cache, and transport inputs"
-    )]
-    async fn oauth2_token(
-        &self,
-        facts: &ConnectionFacts,
-        principal: wamn_identity_protocol::PrincipalId,
-        authority: &HttpConnectionAuthority,
-        (auth_type, parameters, material): (&str, &serde_json::Value, Option<&str>),
-        key: &wamn_connection::oauth_token::CacheKey,
-        rejected: Option<&str>,
-        transport: &HttpTransport,
-    ) -> Result<String, ConnectionError> {
-        let oauth2_cache = facts.oauth_tokens();
-        if rejected.is_none()
-            && let Some(token) = oauth2_cache.get(key)
-        {
-            return Ok(token);
-        }
-        oauth2_cache.remove(key);
-        let envelope = facts
-            .oauth_encryption()
-            .ok_or(ConnectionError::CredentialUnavailable)?;
-        let available = wamn_connection::oauth_token::get(
-            wamn_connection::oauth_token::Request {
-                reader: facts.reader(),
-                principal,
-                project: facts.project(),
-                environment: facts.environment(),
-                connection: key.0,
-                generation: key.1,
-                authorization_code: auth_type == "oauth2_authorization_code",
-                rejected,
-            },
-            &envelope,
-            |old| async move {
-                let refresh = if auth_type == "oauth2_authorization_code" {
-                    Some(
-                        old.and_then(|token| token.refresh_token)
-                            .ok_or_else(|| anyhow::anyhow!("OAuth refresh token missing"))?,
-                    )
-                } else {
-                    None
-                };
-                let request = oauth2_request(auth_type, parameters, material, refresh.as_deref())
-                    .map_err(|_| anyhow::anyhow!("OAuth credential unavailable"))?;
-                let decision = token_endpoint(
-                    authority,
-                    request.token_authority.as_deref(),
-                    &request.token_url,
-                    transport.addresses(),
-                )
-                .await?;
-                let token = fetch_health_token(transport, decision, &request)
-                    .await
-                    .map_err(|_| anyhow::anyhow!("OAuth provider unavailable"))?;
-                Ok(wamn_connection::oauth_token::Fetched {
-                    token: wamn_connection::oauth_token::Token {
-                        access_token: Some(token.access_token),
-                        refresh_token: token.refresh_token,
-                    },
-                    expires_in: token.expires_in,
-                })
-            },
-        )
-        .await
-        .map_err(|error| {
-            if error.unauthorized {
-                ConnectionError::Unauthorized
-            } else {
-                ConnectionError::CredentialUnavailable
-            }
-        })?;
-        Ok(available.token)
-    }
 }
-async fn credential(
+async fn oauth2_token(
     facts: &ConnectionFacts,
-    answer: &ConnectionAnswer,
-    rejected: Option<&Arc<Secret>>,
-) -> Result<Option<Arc<Secret>>, ConnectionError> {
-    match answer.fact.credential_id {
-        Some(id) => facts
-            .secret(id, rejected)
-            .await
-            .map(Some)
-            .map_err(|_| ConnectionError::CredentialUnavailable),
-        None => Ok(None),
+    principal: wamn_identity_protocol::PrincipalId,
+    authority: &HttpConnectionAuthority,
+    (auth_type, parameters, material): (&str, &serde_json::Value, Option<&str>),
+    key: &wamn_connection::oauth_token::CacheKey,
+    rejected: Option<&str>,
+    transport: &HttpTransport,
+) -> Result<String, ConnectionError> {
+    let oauth2_cache = facts.oauth_tokens();
+    if rejected.is_none()
+        && let Some(token) = oauth2_cache.get(key)
+    {
+        return Ok(token);
     }
+    oauth2_cache.remove(key);
+    let envelope = facts
+        .oauth_encryption()
+        .ok_or(ConnectionError::CredentialUnavailable)?;
+    let available = wamn_connection::oauth_token::get(
+        wamn_connection::oauth_token::Request {
+            reader: facts.reader(),
+            principal,
+            project: facts.project(),
+            environment: facts.environment(),
+            connection: key.0,
+            generation: key.1,
+            authorization_code: auth_type == "oauth2_authorization_code",
+            rejected,
+        },
+        &envelope,
+        |old| async move {
+            let refresh = if auth_type == "oauth2_authorization_code" {
+                Some(
+                    old.and_then(|token| token.refresh_token)
+                        .ok_or_else(|| anyhow::anyhow!("OAuth refresh token missing"))?,
+                )
+            } else {
+                None
+            };
+            let request = oauth2_request(auth_type, parameters, material, refresh.as_deref())
+                .map_err(|_| anyhow::anyhow!("OAuth credential unavailable"))?;
+            let decision = token_endpoint(
+                authority,
+                request.token_authority.as_deref(),
+                &request.token_url,
+                transport.addresses(),
+            )
+            .await?;
+            let token = fetch_health_token(transport, decision, &request)
+                .await
+                .map_err(|_| anyhow::anyhow!("OAuth provider unavailable"))?;
+            Ok(wamn_connection::oauth_token::Fetched {
+                token: wamn_connection::oauth_token::Token {
+                    access_token: Some(token.access_token),
+                    refresh_token: token.refresh_token,
+                },
+                expires_in: token.expires_in,
+            })
+        },
+    )
+    .await
+    .map_err(|error| {
+        if error.unauthorized {
+            ConnectionError::Unauthorized
+        } else {
+            ConnectionError::CredentialUnavailable
+        }
+    })?;
+    Ok(available.token)
 }
-
 async fn execute(
     transport: &HttpTransport,
     decision: wamn_authority::connection_authority::AuthorityDecision,
@@ -455,164 +225,6 @@ async fn execute(
     })
 }
 
-#[async_trait::async_trait]
-impl HostPlugin for ConnectionHttp {
-    fn id(&self) -> &'static str {
-        CONNECTION_HTTP_ID
-    }
-    fn world(&self) -> WitWorld {
-        WitWorld {
-            imports: HashSet::from([WitInterface::from("wamn:connection/http@0.1.0")]),
-            exports: HashSet::new(),
-        }
-    }
-    async fn on_workload_item_bind<'a>(
-        &self,
-        item: &mut WorkloadItem<'a>,
-        _: WitInterfaces<'_>,
-    ) -> anyhow::Result<()> {
-        let WorkloadItem::Component(component) = &*item else {
-            anyhow::bail!("HTTP connection requires an application component");
-        };
-        let bound = Arc::new(Self {
-            scopes: Arc::clone(&self.scopes),
-            transport: Arc::clone(&self.transport),
-            applications: Arc::clone(&self.applications),
-            component: Some(component.id().to_owned()),
-        });
-        item.add_plugin(CONNECTION_HTTP_ID, bound);
-        http::add_to_linker::<_, SharedCtx>(item.linker()?, extract_active_ctx)?;
-        Ok(())
-    }
-    async fn on_workload_resolved(
-        &self,
-        workload: &ResolvedWorkload,
-        component_id: &str,
-    ) -> anyhow::Result<()> {
-        let components = workload.components();
-        let components = components.read().await;
-        let route = components
-            .values()
-            .find(|component| component.name() == "ingress")
-            .context("ingress missing")?;
-        let application =
-            wamn_engine::application::bound_application_config(&self.scopes, route.id())
-                .context("wamn.application missing")?;
-        if application
-            .components
-            .iter()
-            .any(|component| !component.connections.is_empty())
-        {
-            self.applications
-                .write()
-                .expect("HTTP application bindings poisoned")
-                .insert(
-                    component_id.to_owned(),
-                    ApplicationBinding {
-                        workload: workload.id().to_owned(),
-                        application,
-                    },
-                );
-        }
-        Ok(())
-    }
-    async fn on_workload_unbind(&self, workload: &str, _: WitInterfaces<'_>) -> anyhow::Result<()> {
-        self.applications
-            .write()
-            .expect("HTTP application bindings poisoned")
-            .retain(|_, binding| binding.workload != workload);
-        Ok(())
-    }
-}
-impl http::Host for ActiveCtx<'_> {}
-impl<T: Send + 'static> http::HostWithStore<T> for SharedCtx {
-    async fn send(
-        accessor: &Accessor<T, Self>,
-        request: Request,
-    ) -> wash_runtime::wasmtime::Result<Result<Response, http::ConnectionError>> {
-        let (plugin, scope) = accessor.with(|mut access| {
-            let ctx = access.get();
-            Ok::<_, wash_runtime::wasmtime::Error>((
-                ctx.try_get_plugin::<ConnectionHttp>(CONNECTION_HTTP_ID)?,
-                Arc::clone(&ctx.component_id),
-            ))
-        })?;
-        let trace = accessor
-            .with(|mut access| wamn_engine::invocation_trace::invocation_trace(&mut access.get()));
-        trace
-            .run(async move {
-                let context = wamn_connection::invocation::context(&plugin.scopes, &scope).ok();
-                let project_key = context
-                    .as_ref()
-                    .map(|context| context.connections.project_env_key());
-                let project = context
-                    .as_ref()
-                    .map_or("", |context| context.connections.project().as_str());
-                let span = effect_span!(
-                    "wamn.connection_http",
-                    EffectIdentity {
-                        project_env_key: project_key,
-                        project,
-                        component: &scope
-                    },
-                    None,
-                    effect.operation = "send",
-                );
-                let invocation = wamn_connection::invocation::invocation(&plugin.scopes, &scope);
-                record_graph(
-                    &span,
-                    invocation
-                        .as_ref()
-                        .map(wamn_connection::connection::ConnectionInvocation::effect_graph),
-                );
-                let mut observed = EffectOutcomeGuard::new(
-                    &span,
-                    invocation.and_then(|invocation| invocation.effects),
-                );
-                let started = std::time::Instant::now();
-                let result = plugin.send(&scope, &request).instrument(span).await;
-                record_effect_ms(
-                    &HTTP_EFFECT_DURATION_MS,
-                    EFFECT_OPERATION,
-                    "send",
-                    project,
-                    started.elapsed(),
-                );
-                let outcome = match &result {
-                    Ok(_) => EffectOutcome::Responded,
-                    Err(ConnectionError::Timeout) => EffectOutcome::Timeout,
-                    Err(ConnectionError::Transport(detail))
-                        if detail == "connection-client-unavailable" =>
-                    {
-                        EffectOutcome::RefusedBeforeDispatch
-                    }
-                    Err(ConnectionError::Transport(detail))
-                        if detail == "connection-response-lost" =>
-                    {
-                        EffectOutcome::ResponseLost
-                    }
-                    Err(ConnectionError::Transport(_)) => EffectOutcome::EffectUncertain,
-                    Err(_) => EffectOutcome::RefusedBeforeDispatch,
-                };
-                observed.settle(outcome, result.is_err());
-                Ok(result.map_err(wit_error))
-            })
-            .await
-    }
-}
-fn wit_error(error: ConnectionError) -> http::ConnectionError {
-    match error {
-        ConnectionError::Unbound => http::ConnectionError::Unbound,
-        ConnectionError::Incompatible => http::ConnectionError::Incompatible,
-        ConnectionError::AuthorityDenied => http::ConnectionError::AuthorityDenied,
-        ConnectionError::AttestationInvalid => http::ConnectionError::AttestationInvalid,
-        ConnectionError::CredentialUnavailable => http::ConnectionError::CredentialUnavailable,
-        ConnectionError::Timeout => http::ConnectionError::Timeout,
-        ConnectionError::Transport(detail) => http::ConnectionError::Transport(detail),
-        ConnectionError::Unauthorized => http::ConnectionError::Unauthorized,
-    }
-}
-
 fn oauth2_request(
     auth_type: &str,
     parameters: &serde_json::Value,
@@ -631,14 +243,14 @@ pub(crate) async fn token_endpoint(
     connection: &HttpConnectionAuthority,
     token_authority: Option<&str>,
     token_url: &str,
-    addresses: AddressPolicy,
+    addresses: Target,
 ) -> Result<AuthorityDecision, AuthorityError> {
     let (authority, target, endpoint) = bound_oauth_token(connection, token_authority, token_url)?;
     let mut decision = resolve_http_request(
         &authority,
         &target,
         &[exact_host(&authority)],
-        &|address| addresses.allows(address),
+        &|address| network_policy::allows(addresses, address),
         &TokioDnsResolver,
     )
     .await?;
@@ -773,7 +385,7 @@ async fn fetch_health_token(
 ) -> Result<Oauth2Token, ConnectionError> {
     request
         .send(&crate::oauth::Transport {
-            http: transport.clone(),
+            http: transport,
             decision,
         })
         .await
@@ -795,13 +407,12 @@ pub async fn health(
             &authority,
             &target,
             &[exact_host(&authority)],
-            &|address| transport.addresses().allows(address),
+            &|address| network_policy::allows(transport.addresses(), address),
             &TokioDnsResolver,
         )
         .await?;
         decision.logical_url = endpoint;
         let request = Request {
-            requirement: "health".into(),
             method: "HEAD".into(),
             path_and_query: "/".into(),
             headers: Vec::new(),
@@ -862,7 +473,7 @@ fn health_status(status: u16) -> anyhow::Result<()> {
 mod tests {
 
     use super::*;
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex};
 
     use crate::test_util::{effect_request, interface_address};
 

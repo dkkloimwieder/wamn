@@ -93,12 +93,12 @@ fn credential(
     Ok((parameters, client))
 }
 
-pub(crate) struct Transport {
-    pub http: crate::transport::HttpTransport,
+pub(crate) struct Transport<'a> {
+    pub http: &'a HttpTransport,
     pub decision: wamn_authority::connection_authority::AuthorityDecision,
 }
 
-impl<'c> oauth2::AsyncHttpClient<'c> for Transport {
+impl<'c> oauth2::AsyncHttpClient<'c> for Transport<'_> {
     type Error = crate::transport::TransportError;
     type Future = std::pin::Pin<
         Box<dyn Future<Output = Result<oauth2::HttpResponse, Self::Error>> + Send + 'c>,
@@ -180,7 +180,10 @@ impl Request {
         })
     }
 
-    pub(crate) async fn send(&self, transport: &Transport) -> Result<Response, ConnectionError> {
+    pub(crate) async fn send(
+        &self,
+        transport: &Transport<'_>,
+    ) -> Result<Response, ConnectionError> {
         self.exchange(transport).await
     }
 

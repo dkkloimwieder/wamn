@@ -29,11 +29,12 @@ use tokio::{
 use tokio_rustls::TlsConnector;
 use tower_service::Service;
 
-use wamn_authority::connection_authority::{AuthorityDecision, HttpScheme, TlsIdentity};
+use wamn_application::InvocationLifetime;
 use wamn_application::MAX_HOST_CALL_DURATION as REQUEST_TIMEOUT;
-use wamn_engine::invocation_scope::InvocationExecution;
+use wamn_authority::connection_authority::{AuthorityDecision, HttpScheme, TlsIdentity};
+use wamn_connection::bound_http::Target as ConnectionTarget;
 
-use super::network_policy::AddressPolicy;
+use super::network_policy;
 
 // Owner-approved limits apply across bindings and credential generations.
 pub(crate) const MAX_BODY_BYTES: usize = 8 * 1024 * 1024;
@@ -46,8 +47,8 @@ type BoxError = Box<dyn StdError + Send + Sync>;
 #[derive(Clone)]
 pub struct HttpTransport {
     inner: Arc<Inner>,
-    invocation: Option<(Box<str>, InvocationExecution)>,
-    addresses: AddressPolicy,
+    invocation: Option<Arc<dyn InvocationLifetime>>,
+    addresses: ConnectionTarget,
 }
 
 impl fmt::Debug for HttpTransport {
@@ -68,7 +69,7 @@ struct Target {
 }
 
 struct ClientLife {
-    execution: Option<InvocationExecution>,
+    execution: Option<Arc<dyn InvocationLifetime>>,
 }
 
 impl HttpTransport {
@@ -78,10 +79,10 @@ impl HttpTransport {
     /// Returns an error if the platform TLS verifier cannot initialize.
     pub fn new() -> anyhow::Result<Self> {
         let tls = wamn_http_client::platform_tls()?;
-        Ok(Self::from_tls(tls, AddressPolicy::Cloud))
+        Ok(Self::from_tls(tls, ConnectionTarget::Cloud))
     }
 
-    pub(crate) fn from_tls(mut tls: rustls::ClientConfig, addresses: AddressPolicy) -> Self {
+    pub(crate) fn from_tls(mut tls: rustls::ClientConfig, addresses: ConnectionTarget) -> Self {
         tls.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
         Self {
             inner: Arc::new(Inner { tls: Arc::new(tls) }),
@@ -93,26 +94,25 @@ impl HttpTransport {
     /// Scope the transport to one invocation of a connection on a target type.
     pub(crate) fn for_invocation(
         &self,
-        scope: &str,
-        execution: InvocationExecution,
-        addresses: AddressPolicy,
+        execution: &Arc<dyn InvocationLifetime>,
+        addresses: ConnectionTarget,
     ) -> Self {
         Self {
             inner: Arc::clone(&self.inner),
-            invocation: Some((scope.into(), execution)),
+            invocation: Some(Arc::clone(execution)),
             addresses,
         }
     }
 
     /// The address rule this transport sends under.
-    pub(crate) fn addresses(&self) -> AddressPolicy {
+    pub(crate) fn addresses(&self) -> ConnectionTarget {
         self.addresses
     }
 
     fn deadline(&self) -> Instant {
         let deadline = Instant::now() + REQUEST_TIMEOUT;
-        self.invocation.as_ref().map_or(deadline, |(_, execution)| {
-            deadline.min(execution.deadline())
+        self.invocation.as_ref().map_or(deadline, |execution| {
+            deadline.min(Instant::from_std(execution.deadline()))
         })
     }
 
@@ -136,10 +136,7 @@ impl HttpTransport {
         request.headers_mut().insert(header::CONTENT_LENGTH, length);
         header_budget(request.headers(), (0, 0), Phase::BeforeDispatch)?;
         let life = Arc::new(ClientLife {
-            execution: self
-                .invocation
-                .as_ref()
-                .map(|(_, execution)| execution.clone()),
+            execution: self.invocation.as_ref().map(Arc::clone),
         });
         let endpoint = PinnedConnector {
             target,
@@ -180,7 +177,11 @@ impl HttpTransport {
             Ok(Response::from_parts(parts, bytes.freeze()))
         });
         let result = match &self.invocation {
-            Some((_, execution)) => execution.run(send).await,
+            Some(execution) => tokio::select! {
+                biased;
+                () = execution.cancelled() => None,
+                result = send => Some(result),
+            },
             None => Some(send.await),
         };
         match result {
@@ -199,7 +200,7 @@ impl HttpTransport {
         let expired = self
             .invocation
             .as_ref()
-            .is_some_and(|(_, execution)| Instant::now() >= execution.deadline());
+            .is_some_and(|execution| Instant::now() >= Instant::from_std(execution.deadline()));
         TransportError::new(
             if expired {
                 ErrorType::Timeout
@@ -309,10 +310,10 @@ fn head_error(error: hyper_util::client::legacy::Error) -> TransportError {
 fn target(
     decision: &AuthorityDecision,
     uri: &Uri,
-    addresses: AddressPolicy,
+    addresses: ConnectionTarget,
 ) -> Result<Target, TransportError> {
     let origin = &decision.transport;
-    if !addresses.allows(origin.address) {
+    if !network_policy::allows(addresses, origin.address) {
         return Err(input("HTTP destination address denied"));
     }
     let logical_uri: Uri = decision
@@ -385,7 +386,11 @@ where
         let life = Arc::clone(&self.life);
         tokio::spawn(async move {
             if let Some(execution) = &life.execution {
-                let _ = execution.run(future).await;
+                tokio::select! {
+                    biased;
+                    () = execution.cancelled() => {},
+                    _ = future => {},
+                }
             } else {
                 future.await;
             }
@@ -421,10 +426,13 @@ impl Service<Uri> for PinnedConnector {
                 return Err(input("HTTP connector authority mismatch"));
             }
             // Hyper can retain a connecting future. Its deadline still belongs to the invocation.
-            let deadline = connector.life.execution.as_ref().map_or(
-                Instant::now() + REQUEST_TIMEOUT,
-                InvocationExecution::deadline,
-            );
+            let deadline = connector
+                .life
+                .execution
+                .as_ref()
+                .map_or(Instant::now() + REQUEST_TIMEOUT, |execution| {
+                    Instant::from_std(execution.deadline())
+                });
             let connected = timeout_at(deadline, async {
                 let tcp = TcpStream::connect(connector.target.peer)
                     .await

@@ -70,7 +70,7 @@ pub struct HostRouteDelivery {
     worker: Option<wamn_kubernetes::job::Worker>,
     execution: Option<Arc<dyn ControlExecution>>,
     handlers: HostRouteHandlers,
-    connection_health: Option<Arc<crate::connection_health::ConnectionHealth>>,
+    connection_health: Option<Arc<wamn_http::connection_health::ConnectionHealth>>,
     oauth: Option<Arc<oauth_authorization::Authorization>>,
     control_authenticator:
         Option<Arc<wamn_authentication::route_authentication::ControlRouteAuthenticator>>,
@@ -112,7 +112,7 @@ impl HostRouteDelivery {
     /// Use the process-owned artifact and transport resources for candidate tests.
     pub fn with_connection_health(
         mut self,
-        health: Arc<crate::connection_health::ConnectionHealth>,
+        health: Arc<wamn_http::connection_health::ConnectionHealth>,
     ) -> Self {
         self.connection_health = Some(health);
         self
@@ -339,45 +339,23 @@ impl HostRouteDelivery {
     /// Serve a platform endpoint through native ingress.
     pub async fn http(
         &self,
-        request: hyper::Request<wasmtime_wasi_http::WasiBody>,
-    ) -> hyper::Response<wasmtime_wasi_http::WasiBody> {
-        use http_body_util::BodyExt as _;
-        let answer = |status: u16, body: Value| {
-            let body = http_body_util::Full::new(bytes::Bytes::from(body.to_string()))
-                .map_err(|never| match never {})
-                .boxed_unsync();
-            let mut response = hyper::Response::new(body);
-            *response.status_mut() =
-                hyper::StatusCode::from_u16(status).expect("native HTTP status");
-            response.headers_mut().insert(
-                "content-type",
-                hyper::header::HeaderValue::from_static("application/json"),
-            );
-            response.headers_mut().insert(
-                "cache-control",
-                hyper::header::HeaderValue::from_static("no-store"),
-            );
-            response
-        };
+        request: hyper::Request<wamn_http::body::HttpBody>,
+    ) -> hyper::Response<wamn_http::body::HttpBody> {
+        use wamn_http::body::{ReadError, empty_response, json_response, read_limited};
+
         if request.uri().path() == wamn_platform_install::provision_org::FIRST_OWNER_PATH {
             let status =
                 crate::first_owner::respond(&self.handlers, self.operation_jobs.as_ref(), request)
                     .await;
-            let mut response = hyper::Response::new(
-                http_body_util::Empty::<bytes::Bytes>::new()
-                    .map_err(|never| match never {})
-                    .boxed_unsync(),
-            );
-            *response.status_mut() = status;
-            return response;
+            return empty_response(status);
         }
         let Some((id, attachment)) = HostRouteSet::Control.attachments().find(|(_, attachment)| {
             attachment.definition["route"]["path"].as_str() == Some(request.uri().path())
         }) else {
-            return answer(404, json!({"error":{"code":"route-not-found"}}));
+            return json_response(404, &json!({"error":{"code":"route-not-found"}}));
         };
         if attachment.route.type_.http_method() != request.method().as_str() {
-            return answer(405, json!({"error":{"code":"method-not-allowed"}}));
+            return json_response(405, &json!({"error":{"code":"method-not-allowed"}}));
         }
         let headers = request
             .headers()
@@ -397,37 +375,33 @@ impl HostRouteDelivery {
         let maximum = attachment.definition["raw-body-bytes"]["maximum"]
             .as_u64()
             .unwrap_or(1024 * 1024);
-        let mut body = request.into_body();
-        let mut bytes = Vec::new();
-        while let Some(frame) = body.frame().await {
-            let Ok(frame) = frame else {
-                return answer(400, json!({"error":{"code":"invalid-body"}}));
-            };
-            if let Ok(data) = frame.into_data() {
-                if bytes.len().saturating_add(data.len()) as u64 > maximum {
-                    return answer(413, json!({"error":{"code":"body-too-large"}}));
-                }
-                bytes.extend_from_slice(&data);
+        let bytes = match read_limited(request.into_body(), maximum).await {
+            Ok(bytes) => bytes,
+            Err(ReadError::Invalid(_)) => {
+                return json_response(400, &json!({"error":{"code":"invalid-body"}}));
             }
-        }
+            Err(ReadError::TooLarge) => {
+                return json_response(413, &json!({"error":{"code":"body-too-large"}}));
+            }
+        };
         let authentication = match &self.control_authenticator {
             Some(authenticator) => authenticator.authenticate_control(id, &headers).await,
             None => Err(wamn_application::ingress::authentication_unavailable()),
         };
         let caller = match authentication {
             Ok(caller) => Some(caller),
-            Err(error) => return answer(error.status, json!({"error":{"code":error.code}})),
+            Err(error) => return json_response(error.status, &json!({"error":{"code":error.code}})),
         };
         let payload = if read {
             let parsed = wamn_routes::read_query::decode_read_query(&query);
             match parsed {
                 Ok(input) => json!([input]),
-                Err(_) => return answer(400, json!({"error":{"code":"invalid-query"}})),
+                Err(_) => return json_response(400, &json!({"error":{"code":"invalid-query"}})),
             }
         } else {
             match serde_json::from_slice::<Value>(&bytes) {
                 Ok(input) => input,
-                Err(_) => return answer(400, json!({"error":{"code":"malformed-json"}})),
+                Err(_) => return json_response(400, &json!({"error":{"code":"malformed-json"}})),
             }
         };
         if let Some(schema) = attachment.definition.get("input-schema") {
@@ -439,7 +413,7 @@ impl HostRouteDelivery {
                     .compile(location, &mut schemas)
                     .is_ok_and(|index| schemas.validate(&payload, index).is_ok());
             if !valid {
-                return answer(400, json!({"error":{"code":"invalid-input"}}));
+                return json_response(400, &json!({"error":{"code":"invalid-input"}}));
             }
         }
         let report = self
@@ -458,17 +432,17 @@ impl HostRouteDelivery {
             .await;
         match report.outcome {
             Ok(body) => match serde_json::from_str(&body) {
-                Ok(body) => answer(200, body),
-                Err(_) => answer(503, json!({"error":{"code":"execution-failed"}})),
+                Ok(body) => json_response(200, &body),
+                Err(_) => json_response(503, &json!({"error":{"code":"execution-failed"}})),
             },
             Err(
                 DeliveryError::PermissionDenied(denial)
                 | DeliveryError::FreshCredentialRequired(denial),
-            ) => answer(
+            ) => json_response(
                 403,
-                json!({"error":{"code":"permission-denied", "operation": denial.operation}}),
+                &json!({"error":{"code":"permission-denied", "operation": denial.operation}}),
             ),
-            _ => answer(503, json!({"error":{"code":"execution-failed"}})),
+            _ => json_response(503, &json!({"error":{"code":"execution-failed"}})),
         }
     }
 }

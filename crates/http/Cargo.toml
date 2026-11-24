@@ -1,13 +1,12 @@
 [package]
 name = "wamn-http"
-description = "Bound HTTP host service and OAuth token exchanges."
+description = "Pinned HTTP transport, OAuth token exchanges and native HTTP bodies."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
 wamn-application.workspace = true
-wamn-connection-type.workspace = true
 async-trait.workspace = true
 anyhow = { workspace = true }
 base64 = { workspace = true }
@@ -33,10 +32,8 @@ tower-service = { workspace = true }
 tracing = { workspace = true }
 tracing-opentelemetry = { workspace = true }
 url = { workspace = true }
-uuid = { workspace = true, features = ["serde", "v4"] }
 wamn-authority = { workspace = true }
 wamn-connection = { workspace = true }
-wamn-engine = { workspace = true }
 wamn-identity-protocol.workspace = true
 wamn-http-client = { workspace = true, features = ["tls12"] }
 wash-runtime = { workspace = true }
@@ -48,6 +45,8 @@ opentelemetry_sdk = { workspace = true, features = ["trace", "testing"] }
 rcgen = { workspace = true }
 tokio = { workspace = true, features = ["test-util"] }
 tracing-subscriber = { workspace = true }
+uuid = { workspace = true, features = ["v4"] }
+wamn-engine.workspace = true
 wamn-plugin = { workspace = true }
 wamn-postgres.workspace = true
 wat = "=1.254.2"

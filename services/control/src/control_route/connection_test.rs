@@ -1,7 +1,7 @@
 //! Read-only candidate testing under the connection writer's authority.
 
-use wamn_routes::HostAttachment;
 use std::time::Duration;
+use wamn_routes::HostAttachment;
 
 use serde_json::{Value, json};
 use wamn_environment::connections::administration;
@@ -181,15 +181,18 @@ impl ControlRoutes<'_> {
             .ok_or_else(|| invalid("integration_type"))?
             .parse::<wamn_registry::integration_code::IntegrationCode>()
             .map_err(|_| invalid("integration_type"))?;
+        let parameters = &request["parameters"];
+        let credential = credential.as_deref();
         let result = health
             .probe(
-                &integration_type,
+                integration_type.as_str(),
                 context["runtime_type"]
                     .as_str()
                     .ok_or_else(|| invalid("integration_type"))?,
-                &request["parameters"],
+                parameters,
                 auth,
-                credential.as_deref(),
+                credential,
+                || wamn_blobstore::plugin::health(&integration_type, parameters, credential),
             )
             .await;
         Ok(match result {

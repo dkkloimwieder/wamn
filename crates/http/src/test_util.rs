@@ -1,5 +1,5 @@
 //! HTTP boundary fixtures for this crate's unit tests.
-use crate::bindings::wamn::connection::http::{Header, Request};
+use wamn_connection::bound_http::{Header, Request};
 pub fn interface_address() -> std::net::IpAddr {
     let socket = std::net::UdpSocket::bind("0.0.0.0:0").expect("address selection socket");
     socket
@@ -10,7 +10,6 @@ pub fn interface_address() -> std::net::IpAddr {
 
 pub fn effect_request(headers: Vec<Header>) -> Request {
     Request {
-        requirement: "manager".to_string(),
         method: "POST".to_string(),
         path_and_query: "/notify".to_string(),
         headers,

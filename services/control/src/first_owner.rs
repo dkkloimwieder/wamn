@@ -1,7 +1,6 @@
 //! The org invitation Job's private control operation.
 
 use anyhow::Context as _;
-use http_body_util::BodyExt as _;
 use hyper::{Method, Request, StatusCode, header};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -22,7 +21,7 @@ struct Invitation<'a> {
 pub(crate) async fn respond(
     handlers: &HostRouteHandlers,
     api: Option<&KubernetesApi>,
-    request: Request<wasmtime_wasi_http::WasiBody>,
+    request: Request<wamn_http::body::HttpBody>,
 ) -> StatusCode {
     if request.method() != Method::POST {
         return StatusCode::METHOD_NOT_ALLOWED;
@@ -49,13 +48,9 @@ pub(crate) async fn respond(
         }
     }
 
-    let Ok(body) = http_body_util::Limited::new(request.into_body(), 4096)
-        .collect()
-        .await
-    else {
+    let Ok(body) = wamn_http::body::read_limited(request.into_body(), 4096).await else {
         return StatusCode::BAD_REQUEST;
     };
-    let body = body.to_bytes();
     let Ok(invitation) = serde_json::from_slice::<Invitation<'_>>(&body) else {
         return StatusCode::BAD_REQUEST;
     };

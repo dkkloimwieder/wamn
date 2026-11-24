@@ -547,7 +547,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     let integration = Arc::new(wamn_connection::integrations::IntegrationBound::new(
         Arc::clone(&authorization) as _,
     ));
-    let connection_http = Arc::new(wamn_http::ConnectionHttp::new(
+    let connection_http = Arc::new(wamn_plugin::bound_http::ConnectionHttp::new(
         Arc::clone(&postgres.scopes),
         Arc::new(wamn_http::transport::HttpTransport::new()?),
     ));

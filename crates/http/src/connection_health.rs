@@ -2,9 +2,9 @@
 
 use std::sync::Arc;
 
-use wamn_http::{self, transport::HttpTransport};
+use crate::transport::HttpTransport;
 
-/// Process-owned artifact cache. Candidate instances have fresh stores.
+/// Checks a candidate connection with the process HTTP transport.
 pub struct ConnectionHealth {
     transport: Arc<HttpTransport>,
 }
@@ -21,17 +21,22 @@ impl ConnectionHealth {
     }
 
     /// Link candidate values and return only non-secret health diagnostics.
-    pub async fn probe(
+    pub async fn probe<F, Fut>(
         &self,
-        integration_type: &wamn_registry::integration_code::IntegrationCode,
+        integration_type: &str,
         runtime: &str,
         parameters: &serde_json::Value,
         auth_type: &str,
         credential: Option<&str>,
-    ) -> Result<(), String> {
+        storage_health: F,
+    ) -> Result<(), String>
+    where
+        F: FnOnce() -> Fut,
+        Fut: Future<Output = anyhow::Result<()>>,
+    {
         match runtime {
-            "host" => match integration_type.as_str() {
-                "http" => wamn_http::health(&self.transport, parameters, auth_type, credential)
+            "host" => match integration_type {
+                "http" => crate::health(&self.transport, parameters, auth_type, credential)
                     .await
                     .map_err(|error| {
                         if matches!(error.parse::<u16>(), Ok(401 | 403 | 500..=599)) {
@@ -40,11 +45,9 @@ impl ConnectionHealth {
                             "HTTP health failed".to_owned()
                         }
                     }),
-                "gcs" | "s3" => {
-                    wamn_blobstore::plugin::health(integration_type, parameters, credential)
-                        .await
-                        .map_err(|_| "storage health failed".to_owned())
-                }
+                "gcs" | "s3" => storage_health()
+                    .await
+                    .map_err(|_| "storage health failed".to_owned()),
                 _ => Err("integration health unavailable".into()),
             },
             "wasm" | "native" => {

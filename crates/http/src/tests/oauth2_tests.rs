@@ -91,7 +91,7 @@ impl TlsTokenEndpoint {
         .with_root_certificates(roots)
         .with_no_client_auth();
         // The listener has a private address, which only the local target reaches.
-        let transport = Arc::new(HttpTransport::from_tls(client, AddressPolicy::Local));
+        let transport = Arc::new(HttpTransport::from_tls(client, Target::Local));
         let listener = TcpListener::bind((super::interface_address(), 0))
             .await
             .unwrap();

@@ -174,7 +174,7 @@ pub(crate) struct ControlRoutes<'a> {
     pub(crate) operation_jobs: Option<&'a wamn_kubernetes::kubernetes_api::KubernetesApi>,
     pub(crate) org: &'a wamn_registry::OrgId,
     pub(crate) oauth: Option<&'a oauth_authorization::Authorization>,
-    pub(crate) connection_health: Option<&'a crate::connection_health::ConnectionHealth>,
+    pub(crate) connection_health: Option<&'a wamn_http::connection_health::ConnectionHealth>,
 }
 
 #[derive(Deserialize)]
@@ -960,8 +960,7 @@ async fn write_status(
         write_environment_status(&mut transaction, status).await?;
         transaction.commit().await?;
         anyhow::Ok(())
-    }
-    .await;
+    }.await;
     drop(client);
     result
 }

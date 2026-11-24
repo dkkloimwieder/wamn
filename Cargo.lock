@@ -6495,9 +6495,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "boon",
- "bytes",
  "clap",
- "http-body-util",
  "hyper",
  "hyper-util",
  "k8s-openapi",
@@ -6534,7 +6532,6 @@ dependencies = [
  "wamn-registry",
  "wamn-role",
  "wamn-routes",
- "wasmtime-wasi-http",
  "zeroize",
 ]
 
@@ -6885,7 +6882,6 @@ dependencies = [
  "wamn-application",
  "wamn-authority",
  "wamn-connection",
- "wamn-connection-type",
  "wamn-engine",
  "wamn-http-client",
  "wamn-identity-protocol",
@@ -7202,6 +7198,7 @@ dependencies = [
  "wamn-authentication",
  "wamn-authority",
  "wamn-connection",
+ "wamn-connection-type",
  "wamn-digest",
  "wamn-engine",
  "wamn-event",

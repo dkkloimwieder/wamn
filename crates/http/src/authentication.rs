@@ -173,7 +173,6 @@ mod tests {
 
     fn request() -> Request {
         Request {
-            requirement: "upstream".into(),
             method: "POST".into(),
             path_and_query: "/notify".into(),
             headers: Vec::new(),
