@@ -7,7 +7,7 @@ mod inputs;
 pub mod kcl;
 pub mod palette;
 use anyhow::{Context as _, Result};
-pub use components::{GuestTarget, build_guest, component_path, guest_rustflags};
+pub use components::{GuestTarget, build_guest, guest_rustflags};
 pub use inputs::paths as build_inputs;
 use std::path::Path;
 pub use wamn_codegen::build::{

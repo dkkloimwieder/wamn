@@ -11,7 +11,7 @@ fn field(path: String, type_name: String, required: bool, nullable: bool) -> Fie
         type_name,
         required,
         nullable,
-        revision: wamn_package::manifest::Revision::default(),
+        revision: crate::manifest::Revision::default(),
         values: Vec::new(),
         children: Vec::new(),
         minimum: None,
@@ -105,7 +105,7 @@ fn insert(tree: &mut Vec<FieldIr>, leaf: FieldIr, segments: &[&str], prefix: &st
     tree.sort_by(|a, b| a.path.cmp(&b.path));
 }
 
-pub(super) fn fields_of(contract: &Value) -> Vec<FieldIr> {
+pub fn fields_of(contract: &Value) -> Vec<FieldIr> {
     let mut tree = Vec::new();
     for declared in contract
         .get("fields")
@@ -145,7 +145,7 @@ pub(super) fn fields_of(contract: &Value) -> Vec<FieldIr> {
     tree
 }
 
-pub(super) fn input_fields_of(contract: &Value) -> Vec<FieldIr> {
+pub fn input_fields_of(contract: &Value) -> Vec<FieldIr> {
     let mut tree = fields_of(contract);
     if !tree.is_empty() {
         // The custom input contract's line bound owns value.line[].
@@ -324,11 +324,8 @@ pub struct FieldIr {
     /// Whether this signed integer is a revision serialized as a decimal JSON
     /// string, and the input path whose record it guards when the contract
     /// names one.
-    #[serde(
-        default,
-        skip_serializing_if = "wamn_package::manifest::Revision::is_absent"
-    )]
-    pub revision: wamn_package::manifest::Revision,
+    #[serde(default, skip_serializing_if = "crate::manifest::Revision::is_absent")]
+    pub revision: crate::manifest::Revision,
     /// Object members or repeated item members, ordered by path.
     pub children: Vec<FieldIr>,
     /// Declared repeated-item bounds.
@@ -406,7 +403,7 @@ pub struct ErrorCaseIr {
     pub text: Option<String>,
 }
 
-pub(crate) fn errors_of(errors: Option<&Value>) -> Vec<ErrorCaseIr> {
+pub fn errors_of(errors: Option<&Value>) -> Vec<ErrorCaseIr> {
     let mut cases: Vec<ErrorCaseIr> = errors
         .and_then(|errors| errors.get("cases"))
         .and_then(Value::as_array)

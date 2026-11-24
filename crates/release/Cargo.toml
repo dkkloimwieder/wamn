@@ -1,0 +1,31 @@
+[package]
+name = "wamn-release"
+description = "Release plans, admitted components, and publication contracts."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+wamn-component-policy.workspace = true
+wamn-connection-type.workspace = true
+wamn-digest.workspace = true
+wamn-edge-document.workspace = true
+wamn-oci-reference.workspace = true
+wamn-package.workspace = true
+wamn-record-history.workspace = true
+wamn-registry.workspace = true
+wamn-routes.workspace = true
+wit-component.workspace = true
+wit-parser.workspace = true
+
+[dev-dependencies]
+http.workspace = true
+wamn-test-infrastructure.workspace = true
+wit-component = { workspace = true, features = ["dummy-module"] }
+
+[lints]
+workspace = true

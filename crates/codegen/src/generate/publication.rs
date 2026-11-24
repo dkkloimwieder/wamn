@@ -1,11 +1,11 @@
 //! Inline publication schemas and OpenAPI from compiled operations.
 use super::{OperationDescription, insert_json_line};
-use crate::client_fields::FieldIr;
-use crate::client_fields::{fields_of, input_fields_of};
 use crate::openapi::{add_route, document, scalar};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use wamn_component_policy::PackageManifest;
+use wamn_package::client_fields::FieldIr;
+use wamn_package::client_fields::{fields_of, input_fields_of};
 use wamn_package::manifest::ManifestError as GenerateError;
 
 pub const ATTACHMENTS: &str = "generated/publication/attachments.json";

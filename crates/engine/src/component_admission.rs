@@ -555,6 +555,22 @@ fn top_level_exports(component_bytes: &[u8]) -> anyhow::Result<Vec<String>> {
     Ok(exports)
 }
 
+/// Validates publication inputs with the native component engine.
+#[derive(Debug)]
+pub struct ReleaseComponentAdmission;
+
+impl wamn_release::component_admission::ComponentAdmissionEngine for ReleaseComponentAdmission {
+    fn validate(
+        &self,
+        bytes: &[u8],
+        request: ComponentAdmissionRequest,
+    ) -> anyhow::Result<ComponentDescriptor> {
+        let engine = crate::build_engine(&[]).context("build component admission engine")?;
+        validate_component_admission(&engine, bytes, request)
+            .context("validate exact component bytes")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     /// `wamn-362o.41`: the classifier keys on the platform import registry, so a

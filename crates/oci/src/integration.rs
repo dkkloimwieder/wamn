@@ -10,8 +10,8 @@ use wamn_connection_type::RuntimeType;
 use wamn_digest::bytes_sha256;
 use wamn_registry::integration_code::IntegrationCode;
 
-pub use wamn_oci::package_artifact::integration::ARTIFACT_TYPE;
-use wamn_oci::package_artifact::integration::{CONFIG_TYPE, WASM_TYPE};
+pub use crate::package_artifact::integration::ARTIFACT_TYPE;
+use crate::package_artifact::integration::{CONFIG_TYPE, WASM_TYPE};
 
 /// The immutable output of a local integration build.
 #[derive(Debug)]
@@ -90,7 +90,11 @@ fn source_digest(root: &Path) -> anyhow::Result<wamn_digest::Digest> {
 /// # Errors
 ///
 /// Refuses failed builds and outputs that are not components.
-pub async fn build(repository: &Path, code: &IntegrationCode) -> anyhow::Result<BuiltIntegration> {
+pub async fn build(
+    repository: &Path,
+    code: &IntegrationCode,
+    compile: impl AsyncFn(&Path, &Path) -> anyhow::Result<PathBuf>,
+) -> anyhow::Result<BuiltIntegration> {
     let repository = repository.canonicalize()?;
     let guest = repository.join("apps/guests").join(code.as_str());
     let source = if guest.join("Cargo.toml").is_file() {
@@ -103,7 +107,7 @@ pub async fn build(repository: &Path, code: &IntegrationCode) -> anyhow::Result<
         .with_context(|| format!("find integration {code}"))?;
     let manifest_path = root.join("Cargo.toml");
     let inputs = source_digest(&root)?;
-    let component_path = wamn_build::build_component(&repository, &manifest_path).await?;
+    let component_path = compile(&repository, &manifest_path).await?;
     let component = std::fs::read(component_path)?;
     ensure!(
         wasmparser::Parser::is_component(&component),

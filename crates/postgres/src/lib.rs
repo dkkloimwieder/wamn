@@ -19,6 +19,7 @@ pub mod migrations;
 pub mod oauth_authorization;
 pub mod platform_database;
 pub mod platform_sql;
+pub mod release_requirements;
 pub mod replication;
 
 pub use build_database::{

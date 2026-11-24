@@ -23,7 +23,8 @@ enum IntegrationCommand {
 /// Build the integration and print its artifact digest.
 pub async fn run(args: IntegrationArgs) -> anyhow::Result<()> {
     let IntegrationCommand::Build { code, repository } = args.command;
-    let built = wamn_publish::integration::build(&repository, &code).await?;
+    let built =
+        wamn_oci::integration::build(&repository, &code, wamn_build::build_component).await?;
     println!(
         "{} {} {} runtime_type={}",
         built.code,

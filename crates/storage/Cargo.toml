@@ -26,6 +26,10 @@ wamn-digest.workspace = true
 wamn-gcp-metadata.workspace = true
 wamn-registry.workspace = true
 
+tar.workspace = true
+wamn-package.workspace = true
+wamn-release.workspace = true
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "test-util"] }
 wamn-postgres.workspace = true

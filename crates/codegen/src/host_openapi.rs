@@ -89,7 +89,7 @@ pub fn host_openapi(set: HostRouteSet) -> Result<Vec<u8>> {
 }
 
 fn response_contract(descriptor: &Value, refusals: &Value) -> Value {
-    let errors = crate::client_fields::errors_of(Some(refusals))
+    let errors = wamn_package::client_fields::errors_of(Some(refusals))
         .into_iter()
         .map(|case| {
             json!({

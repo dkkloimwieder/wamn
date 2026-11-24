@@ -2,8 +2,11 @@
 
 use clap::Args;
 use std::path::PathBuf;
+use wamn_engine::component_admission::ReleaseComponentAdmission;
 use wamn_oci::package_artifact::OCI_CA_PATHS_ENV;
-use wamn_publish::package_artifact::PackageRegistry;
+use wamn_oci::package_artifact::PackageRegistry;
+use wamn_oci::release_package::RegistryPackagePublisher;
+use wamn_release::package_artifact::{ComponentPublisher, ComponentPush};
 
 /// Registry access for package artifacts.
 #[derive(Debug, Args)]
@@ -35,5 +38,32 @@ impl RegistryArgs {
             insecure_registry: self.insecure_registry,
             oci_ca_paths: self.oci_ca_paths.clone(),
         }
+    }
+}
+
+pub(crate) fn package_publisher() -> RegistryPackagePublisher<'static> {
+    RegistryPackagePublisher::new(&ReleaseComponentAdmission, &StockComponentPublisher)
+}
+
+struct StockComponentPublisher;
+
+#[async_trait::async_trait]
+impl ComponentPublisher for StockComponentPublisher {
+    async fn push(&self, request: ComponentPush<'_>) -> anyhow::Result<wamn_digest::Digest> {
+        wash_runtime::oci::set_extra_ca_certificates(request.ca_paths)?;
+        let digest = wash_runtime::oci::push_component(
+            request.reference,
+            request.component.bytes(),
+            wash_runtime::oci::OciConfig {
+                credentials: request
+                    .credentials
+                    .map(|(user, password)| (user.to_owned(), password.to_owned())),
+                insecure: request.insecure,
+                ..Default::default()
+            },
+            None,
+        )
+        .await?;
+        Ok(digest.parse()?)
     }
 }

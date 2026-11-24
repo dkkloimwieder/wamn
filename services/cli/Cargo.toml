@@ -39,7 +39,7 @@ rustls = { workspace = true, features = ["aws_lc_rs", "std", "tls12"] }
 # implemented by the catalog model; the writer never re-derives that hash.
 # `wamn build` calls the two-pass package build.
 # The control operations that the verbs call.
-wamn-publish = { workspace = true }
+wamn-release = { workspace = true }
 wamn-engine = { workspace = true, features = ["wasm_component_model_implements"] }
 wamn-environment = { workspace = true }
 wamn-dev = { workspace = true }
@@ -58,6 +58,10 @@ wamn-registry = { workspace = true }
 # independently issued/revoked PATs for provision-project-env.
 wamn-identity-protocol = { workspace = true }
 wamn-role.workspace = true
+
+async-trait.workspace = true
+wamn-storage.workspace = true
+wash-runtime = { workspace = true, features = ["oci"] }
 
 [dev-dependencies]
 url = { workspace = true }

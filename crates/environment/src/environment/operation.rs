@@ -26,8 +26,8 @@ use wamn_kubernetes::{
     client::{KubernetesApi, wait_named, workloads},
     job,
 };
+use wamn_oci::release_package::{OpenedPackage, open_package_digest};
 use wamn_platform_install::release_chart::pod_registry_reference;
-use wamn_publish::package_artifact::{OpenedPackage, open_package_digest};
 use wamn_registry::Triple;
 
 use super::{

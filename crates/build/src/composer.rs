@@ -25,36 +25,6 @@ use wasmparser::{Parser, Payload};
 /// The HTTP entry exported only by the platform route component.
 pub const HTTP_HANDLER: &str = "wasi:http/handler@0.3.0";
 
-/// Refuse entry authority anywhere in an application member's component tree.
-pub fn validate_application_member(bytes: &[u8]) -> anyhow::Result<()> {
-    for payload in Parser::new(0).parse_all(bytes) {
-        match payload.context("read application member")? {
-            Payload::ComponentImportSection(imports) => {
-                for import in imports {
-                    let import = import.context("read application member import")?;
-                    let interface = wamn_component_policy::instance_type(
-                        import.name.name,
-                        import.name.implements,
-                    );
-                    if wamn_component_policy::import_pkg(interface) == "wamn:operation" {
-                        bail!("application member imports entry-only package wamn:operation");
-                    }
-                }
-            }
-            Payload::ComponentExportSection(exports) => {
-                for export in exports {
-                    let export = export.context("read application member export")?;
-                    if export.name.name.split('@').next() == Some("wasi:http/handler") {
-                        bail!("application member supplies its own wasi:http/handler");
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-    Ok(())
-}
-
 /// One registered and instantiated member of the composition.
 #[derive(Debug, Clone, Copy)]
 struct Member {
@@ -258,7 +228,8 @@ mod tests {
 
     use wac_graph::types::{Package, Types};
 
-    use super::{HTTP_HANDLER, compose, validate_application_member};
+    use super::{HTTP_HANDLER, compose};
+    use wamn_component_policy::validate_application_member;
 
     const HOST_LOG: &str =
         r#"(import "test:host/log@1.0.0" (instance (export "log" (func (param "x" u32)))))"#;

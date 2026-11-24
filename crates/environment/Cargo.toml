@@ -55,12 +55,13 @@ zeroize.workspace = true
 wamn-identity-protocol.workspace = true
 wamn-run-state = { workspace = true }
 wamn-codegen = { workspace = true }
-wamn-publish = { workspace = true }
+wamn-release = { workspace = true }
 
 [dev-dependencies]
 url = { workspace = true }
 wash-runtime = { workspace = true, features = ["washlet", "wasi-logging"] }
 object_store.workspace = true
+wamn-storage.workspace = true
 sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "migrate"] }
 wamn-http-client = { workspace = true, features = ["tls12"] }
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "sync", "test-util", "time"] }

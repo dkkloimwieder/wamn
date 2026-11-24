@@ -8,8 +8,7 @@
 //! every layer against its digest. The first layer contains the published
 //! package document, including the admitted component facts.
 //!
-//! `wamn-publish` packs and pushes package artifacts with [`Repository`]. A
-//! deployed service may depend on this crate, never on `wamn-publish`.
+//! [`crate::release_package`] packs and pushes package artifacts with [`Repository`].
 //!
 //! The crate also owns the registry credential ([`registry_credentials`]) and
 //! the OCI trust roots ([`read_ca_bundles`]) that every registry client reads,

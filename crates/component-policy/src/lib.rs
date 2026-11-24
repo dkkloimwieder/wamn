@@ -23,7 +23,10 @@
 //! `wasi:sockets@…`) collapses to the same package and is caught by the one
 //! rule.
 
+mod application_member;
 mod component_facts;
+
+pub use application_member::validate_application_member;
 mod signed_file_read;
 
 pub use component_facts::{

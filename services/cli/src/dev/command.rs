@@ -81,6 +81,7 @@ pub async fn run(args: DevCommandArgs) -> anyhow::Result<()> {
             }
             let (application, digest) = wamn_dev::source_deploy::publish_development(
                 &PostgresBuildDatabase,
+                &crate::package_verbs::package_publisher(),
                 application,
                 sources,
                 args.describe.mode(false)?,
@@ -118,7 +119,11 @@ pub struct PublishArgs {
 
 /// Publish existing build output and print the top package OCI digest.
 pub async fn publish(args: PublishArgs) -> anyhow::Result<()> {
-    let digest = wamn_dev::source_deploy::publish_built_from_env(&args.package).await?;
+    let digest = wamn_dev::source_deploy::publish_built_from_env(
+        &crate::package_verbs::package_publisher(),
+        &args.package,
+    )
+    .await?;
     println!("{digest}");
     Ok(())
 }

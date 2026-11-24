@@ -64,6 +64,7 @@ pub async fn deploy(args: DeployArgs) -> anyhow::Result<()> {
             )?;
             let published = wamn_dev::source_deploy::publish_from_env(
                 &PostgresBuildDatabase,
+                &crate::package_verbs::package_publisher(),
                 &document,
                 &package,
                 args.describe.mode(false)?,

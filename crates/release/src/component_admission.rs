@@ -13,7 +13,6 @@ use plan::{
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
-use std::path::PathBuf;
 
 use anyhow::Context as _;
 use wamn_component_policy::{
@@ -21,7 +20,6 @@ use wamn_component_policy::{
 };
 use wamn_connection_type::ComponentConnectionRequirement;
 use wamn_connection_type::ConnectionTypeDescriptor;
-use wamn_engine::component_admission::validate_component_admission;
 use wamn_package::package_schema::package_metadata;
 use wamn_package::{ComponentConnection, ComponentConnectionType, ComponentDeclaration};
 
@@ -84,23 +82,6 @@ impl fmt::Display for ComponentProjectionError {
 }
 
 impl std::error::Error for ComponentProjectionError {}
-
-/// Source-owned inputs for one exact component admission.
-#[derive(Debug)]
-pub struct AdmitComponentRequest {
-    /// Package root whose strict manifest and generated evidence own the component.
-    pub package: PathBuf,
-    /// Exact wasm component bytes to admit.
-    pub component_bytes: PathBuf,
-    /// Package-owned component declaration to bind to the bytes.
-    pub declaration: PathBuf,
-    /// Closed platform import set granted to these exact bytes.
-    pub admitted_platform_packages: Vec<String>,
-    /// The component digest of each base the package pins: the authored
-    /// `base_dependencies` digests, with a base this run built layered over
-    /// its pin for a disposable target.
-    pub base_digests: BTreeSet<wamn_digest::Digest>,
-}
 
 /// Exact saved-byte admission reused by later publication.
 ///
@@ -170,37 +151,52 @@ impl ComponentAdmission {
     }
 }
 
-/// Validate saved component and package bytes without publication side effects.
-pub fn admit_component(args: AdmitComponentRequest) -> anyhow::Result<ComponentAdmission> {
-    let directory = crate::package_source::read_package_directory(&args.package)?;
-    let package = package_metadata::<wamn_component_policy::ComponentDescriptor>(&directory)
-        .context("validate strict package directory before component publication")?;
-    let package_manifest =
-        wamn_component_policy::PackageManifest::from_slice(&directory.manifest_bytes)
-            .context("parse strict package manifest before component publication")?;
-    let component_bytes = std::fs::read(&args.component_bytes)
-        .with_context(|| format!("read component bytes {}", args.component_bytes.display()))?;
-    let declaration_bytes = std::fs::read(&args.declaration)
-        .with_context(|| format!("read component declaration {}", args.declaration.display()))?;
-    let document: serde_json::Value = serde_json::from_slice(&declaration_bytes)
-        .with_context(|| format!("parse component declaration {}", args.declaration.display()))?;
-    let mut declaration: ComponentDeclaration<ComponentPackageCoordinate> =
-        serde_json::from_value(document).with_context(|| {
-            format!("parse component declaration {}", args.declaration.display())
-        })?;
+/// Strict package inputs for exact component admission.
+#[derive(Debug)]
+pub struct ComponentPackage {
+    manifest: wamn_component_policy::PackageManifest,
+    coordinate: wamn_package::PackageCoordinate,
+}
 
-    declaration.data_change = package_manifest
+impl ComponentPackage {
+    pub fn validate(
+        directory: &wamn_package::package_schema::PackageDirectory,
+    ) -> anyhow::Result<Self> {
+        let package = package_metadata::<ComponentDescriptor>(directory)
+            .context("validate strict package directory before component publication")?;
+        let manifest =
+            wamn_component_policy::PackageManifest::from_slice(&directory.manifest_bytes)
+                .context("parse strict package manifest before component publication")?;
+        Ok(Self {
+            manifest,
+            coordinate: package.coordinate,
+        })
+    }
+}
+
+/// Admit the exact supplied package, component, and declaration bytes.
+pub fn admit_component(
+    engine: &dyn ComponentAdmissionEngine,
+    package: &ComponentPackage,
+    component_bytes: Vec<u8>,
+    mut declaration: ComponentDeclaration<ComponentPackageCoordinate>,
+    admitted_platform_packages: BTreeSet<String>,
+    base_digests: BTreeSet<wamn_digest::Digest>,
+) -> anyhow::Result<ComponentAdmission> {
+    declaration.data_change = package
+        .manifest
         .components
         .get(declaration.component.as_str())
         .is_some_and(|component| component.data_change.is_some());
 
     let (declaration, target) = wamn_component_policy::split_target(declaration);
     let (descriptor, requirements) = admit(
-        &package_manifest,
+        engine,
+        &package.manifest,
         &component_bytes,
         declaration,
-        args.admitted_platform_packages.into_iter().collect(),
-        args.base_digests,
+        admitted_platform_packages,
+        base_digests,
     )?;
     let facts = descriptor.into_admitted(target);
     ensure_component_package_matches(&facts.component, &package.coordinate)?;
@@ -212,26 +208,34 @@ pub fn admit_component(args: AdmitComponentRequest) -> anyhow::Result<ComponentA
     })
 }
 
+/// Check a component against the runtime's import and export rules.
+pub trait ComponentAdmissionEngine: Send + Sync {
+    fn validate(
+        &self,
+        bytes: &[u8],
+        request: ComponentAdmissionRequest,
+    ) -> anyhow::Result<ComponentDescriptor>;
+}
+
+/// Admit component bytes and bind the component to the package's operation contract.
 pub(crate) fn admit(
+    engine: &dyn ComponentAdmissionEngine,
     package_manifest: &wamn_component_policy::PackageManifest,
     component_bytes: &[u8],
     declaration: ComponentDeclaration,
     admitted_platform_packages: BTreeSet<String>,
     base_digests: BTreeSet<wamn_digest::Digest>,
 ) -> anyhow::Result<(ComponentDescriptor, Vec<ComponentConnectionRequirement>)> {
-    wamn_build::composer::validate_application_member(component_bytes)
+    wamn_component_policy::validate_application_member(component_bytes)
         .context("refuse application-owned entry authority")?;
-    let engine = wamn_engine::build_engine(&[]).context("build component admission engine")?;
-    let mut admitted = validate_component_admission(
-        &engine,
+    let mut admitted = engine.validate(
         component_bytes,
         ComponentAdmissionRequest {
             declaration,
             admitted_platform_packages,
             base_digests,
         },
-    )
-    .context("validate exact component bytes")?;
+    )?;
     let expected = expected_operation_contracts(package_manifest)?;
     let selected = validate_component_operation_assignment(package_manifest, &admitted, &expected)?;
     let host_transactions = host_transaction_exports(package_manifest, &selected)?;

@@ -1,11 +1,7 @@
-//! Build, admit, and publish immutable package and release artifacts.
+//! Release plans, admitted components, and publication contracts.
 
 pub mod component_admission;
-pub mod component_declaration;
 pub mod connection_requirement;
-#[cfg(test)]
-mod development;
-pub mod integration;
 pub mod package_artifact;
 pub mod package_source;
 #[cfg(test)]

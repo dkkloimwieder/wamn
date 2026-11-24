@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/role", "crates/jsonata", "crates/event", "crates/postgres", "crates/digest", "crates/scalar", "services/host", "services/control", "services/edge", "services/web", "services/identity-service", "services/cli", "services/cdc-reader", "xtask", "crates/build", "tests/journeys", "test-support/fixtures/package", "test-support/infrastructure", "tests/receiving-tests", "tests/wms-tests", "crates/connection-type", "crates/oci/reference", "crates/run-state", "crates/codegen", "crates/schema", "crates/number-pattern", "crates/component-policy", "crates/application", "crates/application-chart", "crates/engine", "crates/authority", "crates/connection", "crates/envelope", "crates/plugin", "crates/http", "crates/http-client", "crates/blobstore", "crates/storage", "crates/authentication", "crates/publish", "crates/environment", "crates/platform-install", "crates/dev", "crates/provision", "crates/registry", "crates/identity-client", "crates/identity-protocol", "crates/principal", "crates/kubernetes", "crates/broker", "crates/oci", "crates/gcp-metadata", "crates/key", "crates/package", "crates/routes", "crates/workflow-graph", "services/edge/document", "test-support/grant-tests"]
+members = ["crates/role", "crates/jsonata", "crates/event", "crates/postgres", "crates/digest", "crates/scalar", "services/host", "services/control", "services/edge", "services/web", "services/identity-service", "services/cli", "services/cdc-reader", "xtask", "crates/build", "tests/journeys", "test-support/fixtures/package", "test-support/infrastructure", "tests/receiving-tests", "tests/wms-tests", "crates/connection-type", "crates/oci/reference", "crates/run-state", "crates/codegen", "crates/schema", "crates/number-pattern", "crates/component-policy", "crates/application", "crates/application-chart", "crates/engine", "crates/authority", "crates/connection", "crates/envelope", "crates/plugin", "crates/http", "crates/http-client", "crates/blobstore", "crates/storage", "crates/authentication", "crates/release", "crates/environment", "crates/platform-install", "crates/dev", "crates/provision", "crates/registry", "crates/identity-client", "crates/identity-protocol", "crates/principal", "crates/kubernetes", "crates/broker", "crates/oci", "crates/gcp-metadata", "crates/key", "crates/package", "crates/routes", "crates/workflow-graph", "services/edge/document", "test-support/grant-tests"]
 default-members = [
   "crates/connection-type",
   "crates/oci/reference",
@@ -242,7 +242,7 @@ wamn-oci-reference = { path = "crates/oci/reference", version = "0.1.0" }
 wamn-oci = { path = "crates/oci", version = "0.1.0" }
 wamn-fixture-package = { path = "test-support/fixtures/package", version = "0.1.0" }
 wamn-component-policy = { path = "crates/component-policy", version = "0.1.0" }
-wamn-publish = { path = "crates/publish", version = "0.1.0" }
+wamn-release = { path = "crates/release", version = "0.1.0" }
 wamn-platform-install = { path = "crates/platform-install", version = "0.1.0" }
 wamn-environment = { path = "crates/environment", version = "0.1.0" }
 wamn-dev = { path = "crates/dev", version = "0.1.0" }

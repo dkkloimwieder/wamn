@@ -289,7 +289,7 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
                 .await?,
             )
         } else {
-            let packed = wamn_publish::web_artifact::platform_ui::pack(
+            let packed = wamn_oci::web_artifact::platform_ui::pack(
                 &root.join("apps/platform_ui/dist"),
                 &version.parse()?,
             )?;
@@ -321,7 +321,7 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
                 auth,
             )?;
             Some(
-                wamn_publish::web_artifact::push_archive(&packed, &repository)
+                wamn_oci::web_artifact::push_archive(&packed, &repository)
                     .await?
                     .digest,
             )

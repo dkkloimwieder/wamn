@@ -13,7 +13,7 @@ use wamn_postgres::LifecycleLock;
 use super::Platform;
 use super::analyse::{self, Installed};
 use super::document::EnvironmentDocument;
-use wamn_publish::package_artifact::{OpenedPackage, open_package};
+use wamn_oci::release_package::{OpenedPackage, open_package};
 use wamn_registry::platform_domain::PlatformDomain;
 
 /// Create each integration application principal and its declared dependency role.
@@ -32,7 +32,7 @@ pub async fn materialize_application_principals(
 
     let applications = packages
         .values()
-        .filter(|package| wamn_publish::publish_release::composes_integration(package))
+        .filter(|package| wamn_release::publish_release::composes_integration(package))
         .collect::<Vec<_>>();
     if applications.is_empty() {
         return Ok(());
@@ -108,7 +108,7 @@ async fn write_runtime_grants(
             owned,
             "application role {role} is missing, authored, or shared or resolve its ownership"
         );
-        for permission in wamn_publish::publish_release::application_dependency_permissions(
+        for permission in wamn_release::publish_release::application_dependency_permissions(
             package,
             &dependency_manifests,
         )? {

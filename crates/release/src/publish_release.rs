@@ -25,13 +25,9 @@ mod attachments;
 mod components;
 mod package_sources;
 
-use attachments::{read_package_attachments, resolve_route_methods};
+pub use attachments::{merge_package_attachment_documents, resolve_route_methods};
 use components::{resolve_component_dependency_closure, resolve_route_component};
-use package_sources::read_package_manifests;
 pub use package_sources::{package_route, route_contracts};
-
-#[cfg(test)]
-use attachments::merge_package_attachment_documents;
 
 /// Inputs owned by the release publisher.
 #[derive(Debug)]
@@ -93,7 +89,7 @@ pub struct PublishedRelease {
     pub canonical_bytes: Vec<u8>,
 }
 
-pub const RELEASE_MANIFEST_MINT_REFUSAL: &str = "release-manifest-mint-refused";
+pub const RELEASE_MANIFEST_REFUSAL: &str = "release-manifest-mint-refused";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PublishManifestErrorType {
@@ -152,6 +148,19 @@ impl PublishManifestError {
         }
     }
 
+    /// Preserve an adapter failure as the source for this release refusal.
+    pub fn with_anyhow_source(
+        type_: PublishManifestErrorType,
+        detail: impl Into<String>,
+        source: anyhow::Error,
+    ) -> Self {
+        Self {
+            type_,
+            detail: detail.into(),
+            source: Some(source.into()),
+        }
+    }
+
     pub const fn error_type(&self) -> PublishManifestErrorType {
         self.type_
     }
@@ -165,7 +174,7 @@ impl std::fmt::Display for PublishManifestError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             formatter,
-            "{RELEASE_MANIFEST_MINT_REFUSAL} ({}): {}",
+            "{RELEASE_MANIFEST_REFUSAL} ({}): {}",
             self.type_.as_str(),
             self.detail
         )
@@ -197,6 +206,18 @@ pub struct RouteContract {
     reads: BTreeSet<ServingRelation>,
     revision: Option<String>,
     pub idempotency: Option<String>,
+}
+
+impl RouteContract {
+    /// Relations read by this operation.
+    pub fn reads(&self) -> &BTreeSet<ServingRelation> {
+        &self.reads
+    }
+
+    /// Revision field returned by a single-record read.
+    pub fn revision(&self) -> Option<&str> {
+        self.revision.as_deref()
+    }
 }
 
 /// Inputs of one application release publication.
@@ -240,7 +261,7 @@ pub fn deployment_routes(
             ))
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
-    let attachments = attachments::merge_package_attachment_documents(documents)?;
+    let attachments = merge_package_attachment_documents(documents)?;
     let attachments = attachments::plan::resolve_owned_route_methods(attachments, contracts)?;
     let workflow_prefix = wamn_routes::workflow_http_prefix(application);
     let mut routes = Vec::with_capacity(attachments.len());
@@ -295,8 +316,8 @@ pub fn deployment_routes(
             component: component.clone(),
             operation: operation.clone(),
             type_: contract.type_,
-            reads: contract.reads.clone(),
-            revision: contract.revision.clone(),
+            reads: contract.reads().clone(),
+            revision: contract.revision().map(str::to_owned),
             idempotency: contract.idempotency.clone(),
         };
         routes.push(
@@ -321,17 +342,16 @@ pub struct AssembledRelease {
     pub components: Vec<AdmittedComponent>,
 }
 
-/// Assemble an edge release from package directories and admitted components.
-/// This operation reads no database and publishes no artifacts.
+/// Assemble an edge release from compiled package documents and admitted components.
 pub fn assemble_release(
     args: &PublishReleaseRequest,
-    package_roots: &[PathBuf],
+    authored: &BTreeMap<wamn_package::canonical_name::CanonicalName, ServingAttachment>,
+    package_manifests: &BTreeMap<wamn_package::PackageName, wamn_component_policy::PackageManifest>,
+    route_contracts: &RouteContracts,
     admissions: &[crate::component_admission::ComponentAdmission],
     palette: &[crate::palette::PaletteComponent],
 ) -> anyhow::Result<AssembledRelease> {
-    let authored = read_package_attachments(package_roots)?;
-    let (package_manifests, route_contracts) = read_package_manifests(package_roots)?;
-    let attachments = resolve_route_methods(&authored, &route_contracts)?;
+    let attachments = resolve_route_methods(authored, route_contracts)?;
     let packages = args.packages.iter().cloned().collect::<BTreeSet<_>>();
     ensure!(
         packages.len() == args.packages.len(),
@@ -361,8 +381,8 @@ pub fn assemble_release(
     let mut published = publish_release_with_package_manifests(
         &request,
         &release_components,
-        &package_manifests,
-        &route_contracts,
+        package_manifests,
+        route_contracts,
     )?;
     for component in palette {
         published
@@ -370,7 +390,7 @@ pub fn assemble_release(
             .components
             .insert(ServingComponent::project(
                 &component.facts.component,
-                components::palette_connections(&component.facts.connections, &package_manifests),
+                components::palette_connections(&component.facts.connections, package_manifests),
             ));
     }
     if !palette.is_empty() {
@@ -969,18 +989,18 @@ mod tests {
         let resolved =
             resolve_route_methods(&authored, &types).expect("every route resolves a method");
         for (id, method) in [
-            ("get-http", hyper::Method::GET),
-            ("query-http", hyper::Method::GET),
-            ("load-http", hyper::Method::GET),
-            ("update-http", hyper::Method::POST),
-            ("record-http", hyper::Method::POST),
-            ("graph-http", hyper::Method::POST),
+            ("get-http", http::Method::GET),
+            ("query-http", http::Method::GET),
+            ("load-http", http::Method::GET),
+            ("update-http", http::Method::POST),
+            ("record-http", http::Method::POST),
+            ("graph-http", http::Method::POST),
         ] {
             assert_eq!(
                 resolved[id].definition["route"]["method"]
                     .as_str()
                     .unwrap()
-                    .parse::<hyper::Method>()
+                    .parse::<http::Method>()
                     .unwrap(),
                 method,
                 "{id}"
@@ -1233,6 +1253,3 @@ mod tests {
         assert!(closure.contains(&overlay));
     }
 }
-
-#[cfg(test)]
-mod effective_release_live;

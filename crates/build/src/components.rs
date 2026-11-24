@@ -8,7 +8,7 @@ use tokio::process::Command;
 
 const COMPILED_MANIFEST_NAME: &str = "wamn.json";
 use crate::{BuildMode, PreparedSource, package_output};
-use wamn_codegen::fingerprint;
+use wamn_codegen::{COMPONENTS_DIRECTORY, component_path, fingerprint};
 use wamn_component_policy::PackageManifest;
 use wamn_digest::{Digest, bytes_sha256};
 use wamn_package::PackageName;
@@ -16,8 +16,6 @@ use wamn_package::manifest::{
     ManifestError as GenerateError, ManifestErrorType as GenerateErrorType,
 };
 
-/// Where the components lie in a package's build output.
-const COMPONENTS: &str = "components";
 /// Compilation target for an application or platform guest.
 #[derive(Clone, Copy, Debug)]
 pub enum GuestTarget {
@@ -71,7 +69,7 @@ pub(crate) async fn compile_components(
         "component include paths require the package workspace output root"
     );
     let repository = workspace.join("..");
-    let directory = output.join(COMPONENTS);
+    let directory = output.join(COMPONENTS_DIRECTORY);
     fs::create_dir_all(&directory)?;
     let mut components = BTreeMap::new();
     for name in manifest.components.keys() {
@@ -280,11 +278,6 @@ fn require_guest(repository: &Path, name: &str, file: &Path, crate_manifest: &Pa
         );
     }
     Ok(())
-}
-
-/// Relative component artifact path shared by builds and their consumers.
-pub fn component_path(name: &str) -> PathBuf {
-    Path::new(COMPONENTS).join(format!("{name}.wasm"))
 }
 
 #[derive(Debug, Default)]

@@ -45,7 +45,6 @@ wamn-digest.workspace = true
 wamn-codegen.workspace = true
 wamn-platform-install.workspace = true
 wamn-provision.workspace = true
-wamn-publish.workspace = true
 # Admission parses components with the CLI's component model features.
 wamn-engine = { workspace = true, features = ["wasm_component_model_implements"] }
 wamn-oci.workspace = true

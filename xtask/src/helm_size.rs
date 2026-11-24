@@ -77,7 +77,10 @@ pub(super) async fn run(root: &Path) -> Result<()> {
 
 /// The manifest that publication would write, with placeholder registry digests.
 pub(crate) fn published_manifest(output: &Path) -> Result<PackageManifest> {
-    let mut verified = wamn_publish::package_artifact::verify_package(output)?;
+    let mut verified = wamn_oci::release_package::verify_package(
+        &wamn_engine::component_admission::ReleaseComponentAdmission,
+        output,
+    )?;
     let base_packages = verified
         .manifest
         .base_dependencies
@@ -88,7 +91,7 @@ pub(crate) fn published_manifest(output: &Path) -> Result<PackageManifest> {
         .components
         .into_iter()
         .map(|component| {
-            let descriptor = component.descriptor;
+            let descriptor = component.into_descriptor();
             let image_digest =
                 bytes_sha256(format!("image {}", descriptor.component_digest).as_bytes());
             (

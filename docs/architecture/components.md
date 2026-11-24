@@ -21,7 +21,7 @@ Component facts carry these types. Their JSON fields stay strings.
 
 ## Grouping and publication
 
-`wamn-publish` admits components and publishes the package closure.
+`wamn-release` checks admission against package contracts. `wamn-engine` checks component bytes, and `wamn-oci` publishes the package closure.
 A package tag points to the latest published digest. Each digest identifies immutable content.
 Dev publication keeps its first publication time.
 An edge bundle uses a separate serving manifest.

@@ -79,7 +79,7 @@ pub(super) struct CustomDescription<'a> {
         wamn_package::manifest::source_name::SourceName,
         wamn_package::manifest::StaticSqlStatementDeclaration,
     >,
-    pub request: Vec<crate::client_fields::FieldIr>,
+    pub request: Vec<wamn_package::client_fields::FieldIr>,
     pub feed_key: Option<SqlValueType>,
     pub result: Option<std::borrow::Cow<'a, CustomOperationResultDeclaration>>,
     pub refusals:
@@ -236,7 +236,7 @@ pub(super) fn compile_custom<'a>(
                 .find(|field| field.revision.is_revision())
         })
         .map(|field| field.ty);
-    let mut request = crate::client_fields::input_fields_of(
+    let mut request = wamn_package::client_fields::input_fields_of(
         &serde_json::to_value(&operation.input).expect("validated request serializes"),
     );
     request.retain(|field| field.path != "request_id");

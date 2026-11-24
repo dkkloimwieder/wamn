@@ -16,8 +16,6 @@ mod authored_wit;
 mod authoring;
 /// `wamn build`: the two-pass package build (docs/operations/building.md#wamn-build).
 pub mod build;
-mod client_fields;
-pub mod client_plan;
 pub mod database;
 mod describe;
 mod describe_cache;
@@ -54,3 +52,11 @@ pub use package_catalog::project_package_catalog;
 mod history;
 
 pub mod migrations;
+
+/// Component directory in a package build.
+pub const COMPONENTS_DIRECTORY: &str = "components";
+
+/// Relative component artifact path shared by builds and their consumers.
+pub fn component_path(name: &str) -> std::path::PathBuf {
+    std::path::Path::new(COMPONENTS_DIRECTORY).join(format!("{name}.wasm"))
+}

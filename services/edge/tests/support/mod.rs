@@ -71,6 +71,7 @@ fn build_bundle() -> PathBuf {
         .join(format!("edge-device-bundle-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&out);
     write_package(
+        &wamn_engine::component_admission::ReleaseComponentAdmission,
         &package,
         &"device".parse().unwrap(),
         &device,

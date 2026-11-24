@@ -1,35 +1,23 @@
-//! Independent web artifacts and bucket uploads (docs/operations/web-upload.md).
-//!
-//! A standalone artifact packs `dist/` and canonical `web.json` in one tar layer.
-//! Its metadata binds the client to the package's recorded manifest digest.
-//!
-//! `wamn web upload --platform-ui` uploads a pinned platform UI artifact.
-//! Application uploads copy the pinned artifact to its immutable bucket root.
+//! Build and transfer digest-pinned browser artifacts.
 
-pub(super) mod plan;
 pub mod platform_ui;
-pub use plan::client_project;
-use plan::{content_type, read_web_manifest, validate_path, web_dist_files, web_manifest};
-
-use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, bail, ensure};
-use object_store::aws::AmazonS3Builder;
-use object_store::gcp::GoogleCloudStorageBuilder;
-use object_store::{Attribute, Attributes, ObjectStore, ObjectStoreExt as _, PutMode, PutOptions};
 use oci_client::manifest::{OCI_IMAGE_MEDIA_TYPE, OciImageManifest};
+use std::path::{Path, PathBuf};
 use wamn_codegen::fingerprint;
 use wamn_digest::{bytes_sha256, canonical_json_bytes};
-use wamn_oci::package_artifact::registry_credentials::read_registry_credentials;
-use wamn_oci::package_artifact::{Repository, registry_auth};
 use wamn_oci_reference::OciTag;
+use wamn_release::web_artifact::{
+    PackedWebArtifact, PushedWebArtifact, WEB_MANIFEST_FILE, WebArtifactError,
+    WebArtifactErrorType, WebArtifactReader, WebManifest, WebPushDisposition,
+};
 
-use crate::package_artifact::PackageRegistry;
+use crate::package_artifact::registry_credentials::read_registry_credentials;
+use crate::package_artifact::{PackageRegistry, Repository, registry_auth};
 
 /// Standalone output below a package's build directory.
 const ARTIFACT_DIRECTORY: &str = "web-artifact";
-/// The web artifact's metadata, beside `dist/`.
-pub const WEB_MANIFEST_FILE: &str = "web.json";
 /// OCI artifact type for an independent web client.
 pub const WEB_ARTIFACT_TYPE: &str = "application/vnd.wamn.web.v1";
 /// Media type of the tar that contains `dist/` and `web.json`.
@@ -37,81 +25,53 @@ pub const WEB_TAR_MEDIA_TYPE: &str = "application/vnd.wamn.web.v1.tar";
 const EMPTY_CONFIG_MEDIA_TYPE: &str = "application/vnd.oci.empty.v1+json";
 const EMPTY_CONFIG: &[u8] = b"{}";
 
-/// The client identity and package contract that accompany the browser files.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct WebManifest {
-    pub client_package: wamn_package::client_package_name::ClientPackageName,
-    /// The version from the package's `web/package.json`.
-    pub version: String,
-    /// `<package id>@<package version>` from the package build record.
-    #[serde(with = "package_coordinate_wire")]
-    pub package: wamn_package::PackageCoordinate,
-    /// `outputs.manifest`, the digest of the compiled canonical `wamn.json`.
-    pub contract_digest: wamn_digest::Digest,
-}
-
-mod package_coordinate_wire {
-    use serde::{Deserialize as _, Deserializer, Serializer};
-    use wamn_package::PackageCoordinate;
-
-    pub(super) fn serialize<S: Serializer>(
-        value: &PackageCoordinate,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error> {
-        serializer.collect_str(&format_args!(
-            "{}@{}",
-            value.package_id(),
-            value.package_version()
-        ))
-    }
-
-    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
-        deserializer: D,
-    ) -> Result<PackageCoordinate, D::Error> {
-        let value = String::deserialize(deserializer)?;
-        crate::publish_release::parse_package(&value).map_err(serde::de::Error::custom)
-    }
-}
-
-impl WebManifest {
-    /// Canonical JSON bytes, independent of field order and whitespace.
-    pub fn to_bytes(&self) -> Vec<u8> {
-        canonical_json_bytes(&serde_json::to_value(self).expect("web metadata serializes"))
-    }
-}
-
-#[derive(Debug)]
-enum WebArtifactErrorType {
-    Build,
-    Pack,
-    Push,
-    Pull,
-    Upload,
-}
-
-/// A web artifact failure with its action, path or reference, and source.
-#[derive(Debug)]
-pub struct WebArtifactError {
-    type_: WebArtifactErrorType,
-    context: String,
-    source: anyhow::Error,
-}
-
-impl std::fmt::Display for WebArtifactError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "web artifact {:?} {}: {:#}",
-            self.type_, self.context, self.source
+fn web_manifest(
+    compiled: &[u8],
+    digest: wamn_digest::Digest,
+    version: String,
+) -> anyhow::Result<WebManifest> {
+    let manifest = wamn_component_policy::PackageManifest::from_slice(compiled)?;
+    let client = manifest.client_package.with_context(|| {
+        format!(
+            "package {}@{} has no client_package and no web artifact",
+            manifest.package.id, manifest.package.version
         )
-    }
+    })?;
+    Ok(WebManifest {
+        client_package: client.name,
+        version,
+        package: wamn_package::PackageCoordinate::new(
+            manifest.package.id,
+            manifest.package.version,
+        )?,
+        contract_digest: digest,
+    })
 }
 
-impl std::error::Error for WebArtifactError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        Some(self.source.as_ref())
+fn read_web_manifest(tar: &[u8]) -> anyhow::Result<WebManifest> {
+    use std::io::Read as _;
+
+    let mut archive = tar::Archive::new(tar);
+    let mut metadata = None;
+    for entry in archive.entries()? {
+        let mut entry = entry?;
+        if entry.path()?.as_ref() != Path::new(WEB_MANIFEST_FILE) {
+            continue;
+        }
+        ensure!(metadata.is_none(), "web artifact repeats web.json");
+        ensure!(
+            entry.header().entry_type().is_file(),
+            "web.json must be a regular file"
+        );
+        let mut bytes = Vec::new();
+        entry.read_to_end(&mut bytes)?;
+        let web: WebManifest = serde_json::from_slice(&bytes)?;
+        ensure!(bytes == web.to_bytes(), "web.json is not canonical JSON");
+
+        ensure!(!web.version.is_empty(), "web.json has no version");
+        metadata = Some(web);
     }
+    metadata.context("web artifact has no web.json")
 }
 
 /// The directory that holds `dist/` and `web.json` for one standalone build.
@@ -126,7 +86,10 @@ pub fn artifact_output(package_root: &Path) -> PathBuf {
 ///
 /// Refuses a missing fingerprint, changed manifest, missing web version or
 /// client, or a failed Vite build.
-pub async fn build_web_artifact(package_root: &Path) -> Result<PathBuf, WebArtifactError> {
+pub async fn build_web_artifact(
+    package_root: &Path,
+    compile: impl AsyncFn(&Path, &Path) -> anyhow::Result<()>,
+) -> Result<PathBuf, WebArtifactError> {
     async {
         let output = wamn_codegen::output_root(package_root);
         let finished = fingerprint::read(&output)?;
@@ -148,7 +111,7 @@ pub async fn build_web_artifact(package_root: &Path) -> Result<PathBuf, WebArtif
         if sidecar.exists() {
             std::fs::remove_file(&sidecar)?;
         }
-        wamn_build::build_web_client(package_root, &root.join("dist")).await?;
+        compile(package_root, &root.join("dist")).await?;
         std::fs::write(&sidecar, manifest.to_bytes())
             .with_context(|| format!("write {}", sidecar.display()))?;
         Ok(root)
@@ -159,15 +122,6 @@ pub async fn build_web_artifact(package_root: &Path) -> Result<PathBuf, WebArtif
         context: package_root.display().to_string(),
         source,
     })
-}
-
-/// One deterministic tar and its canonical OCI image manifest.
-#[derive(Debug)]
-pub struct PackedWebArtifact {
-    pub tag: OciTag,
-    pub digest: wamn_digest::Digest,
-    pub manifest: Vec<u8>,
-    pub tar: Vec<u8>,
 }
 
 /// Pack only `dist/` and canonical `web.json` from a standalone build directory.
@@ -273,21 +227,6 @@ fn artifact_files(
     Ok(())
 }
 
-/// Whether the tag was created or already held the same artifact digest.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WebPushDisposition {
-    Pushed,
-    AlreadyPresent,
-}
-
-/// The immutable tag and digest after a successful web push.
-#[derive(Debug)]
-pub struct PushedWebArtifact {
-    pub tag: OciTag,
-    pub digest: wamn_digest::Digest,
-    pub disposition: WebPushDisposition,
-}
-
 /// Push a web artifact, or accept the same digest without any writes.
 ///
 /// # Errors
@@ -337,7 +276,7 @@ pub async fn push_archive(
                     .push_manifest_raw(
                         &repository.reference,
                         packed.manifest.clone(),
-                        hyper::header::HeaderValue::from_static(OCI_IMAGE_MEDIA_TYPE),
+                        http::HeaderValue::from_static(OCI_IMAGE_MEDIA_TYPE),
                     )
                     .await
                     .with_context(|| format!("push web artifact {}", repository.reference))?;
@@ -418,7 +357,7 @@ async fn pull_archive(
         "web artifact {digest} must have one {WEB_TAR_MEDIA_TYPE} layer"
     );
     let layer = &manifest.layers[0];
-    let tar = wamn_oci::package_artifact::registry_pull::blob(
+    let tar = crate::package_artifact::registry_pull::blob(
         &repository.client,
         &repository.reference,
         layer,
@@ -433,163 +372,27 @@ async fn pull_archive(
     Ok(tar)
 }
 
-/// The package, destination, and completion state of an artifact upload.
+/// Read verified browser artifacts from the configured registry.
 #[derive(Debug)]
-pub struct UploadedClient {
-    pub package: wamn_package::PackageName,
-    pub location: String,
-    pub written: bool,
-}
+pub struct RegistryWebArtifacts<'a>(pub &'a PackageRegistry);
 
-/// Copy a pinned web artifact to the bucket without replacing existing objects.
-///
-/// # Errors
-///
-/// Refuses invalid artifacts, registry failures, or conflicting bucket objects.
-pub async fn upload_web_artifact(
-    registry: &PackageRegistry,
-    digest: &wamn_digest::Digest,
-    bucket: &str,
-) -> Result<UploadedClient, WebArtifactError> {
-    async {
-        let sink = Sink::parse(bucket)?;
-        let store = sink.store()?;
-        let (package, root, written) =
-            upload_web_to_store(registry, digest, sink.prefix, store.as_ref()).await?;
-        Ok(UploadedClient {
-            package,
-            location: format!("{}{}/{root}/", sink.scheme.prefix(), sink.bucket),
-            written,
-        })
+#[async_trait::async_trait]
+impl WebArtifactReader for RegistryWebArtifacts<'_> {
+    fn artifact_base(&self) -> &str {
+        &self.0.artifact_base
     }
-    .await
-    .map_err(|source| WebArtifactError {
-        type_: WebArtifactErrorType::Upload,
-        context: format!("{}@{digest} to {bucket}", registry.artifact_base),
-        source,
-    })
-}
 
-pub async fn upload_web_to_store(
-    registry: &PackageRegistry,
-    digest: &wamn_digest::Digest,
-    prefix: &str,
-    store: &dyn ObjectStore,
-) -> anyhow::Result<(wamn_package::PackageName, String, bool)> {
-    let (metadata, tar) = pull_web(registry, digest).await?;
-    let package = metadata.package.package_id();
-    let root = [
-        prefix.trim_matches('/'),
-        "clients",
-        package.as_str(),
-        &digest.hex(),
-    ]
-    .into_iter()
-    .filter(|part| !part.is_empty())
-    .collect::<Vec<_>>()
-    .join("/");
-    let index = object_store::path::Path::from(format!("{root}/index.html"));
-    match store.head(&index).await {
-        Ok(_) => return Ok((package.clone(), root, false)),
-        Err(object_store::Error::NotFound { .. }) => {}
-        Err(error) => return Err(error).context("read the web upload completion index"),
+    async fn read_web(
+        &self,
+        digest: &wamn_digest::Digest,
+    ) -> Result<(WebManifest, Vec<u8>), WebArtifactError> {
+        pull_web(self.0, digest).await
     }
-    let mut files = web_dist_files(&tar)?;
-    let index = files
-        .remove("index.html")
-        .context("web artifact has no dist/index.html")?;
-    for (name, bytes) in files {
-        put(store, &root, &name, bytes, content_type(&name)?).await?;
-    }
-    put(
-        store,
-        &root,
-        "index.html",
-        index,
-        content_type("index.html")?,
-    )
-    .await?;
-    Ok((package.clone(), root, true))
-}
 
-/// Write one object create-only with its content type. An
-/// existing object with equal bytes is the write of an earlier run that
-/// stopped, so it stays. An existing object with other bytes refuses.
-async fn put(
-    store: &dyn ObjectStore,
-    root: &str,
-    relative: &str,
-    bytes: Vec<u8>,
-    content_type: &'static str,
-) -> anyhow::Result<()> {
-    let mut attributes = Attributes::new();
-    attributes.insert(Attribute::ContentType, content_type.into());
-    let key = object_store::path::Path::from(format!("{root}/{relative}"));
-    let bytes = object_store::PutPayload::from(bytes);
-    let written = store
-        .put_opts(
-            &key,
-            bytes.clone(),
-            PutOptions {
-                mode: PutMode::Create,
-                attributes,
-                ..PutOptions::default()
-            },
-        )
-        .await;
-    match written {
-        Err(
-            object_store::Error::AlreadyExists { .. } | object_store::Error::Precondition { .. },
-        ) => {
-            let existing = store
-                .get(&key)
-                .await
-                .with_context(|| format!("read the existing {key}"))?
-                .bytes()
-                .await
-                .with_context(|| format!("read the existing {key}"))?;
-            ensure!(
-                existing
-                    .as_ref()
-                    .iter()
-                    .copied()
-                    .eq(bytes.iter().flat_map(|part| part.iter().copied())),
-                "write {key}; an existing object with other bytes is never replaced"
-            );
-            Ok(())
-        }
-        written => written
-            .map(|_| ())
-            .with_context(|| format!("write {key}; an existing object is never replaced")),
-    }
-}
-
-pub use plan::Scheme;
-
-pub use plan::Sink;
-
-impl Sink<'_> {
-    /// For `s3://` the `AWS_*` variables supply the endpoint and the
-    /// credentials. For `gs://` the `GOOGLE_*` variables and Application
-    /// Default Credentials do.
-    pub fn store(&self) -> anyhow::Result<Box<dyn ObjectStore>> {
-        Ok(match self.scheme {
-            Scheme::S3 => Box::new(
-                AmazonS3Builder::from_env()
-                    .with_bucket_name(self.bucket)
-                    .build()
-                    .context("configure the bucket from the AWS_* variables")?,
-            ),
-            Scheme::Gcs => Box::new(
-                GoogleCloudStorageBuilder::from_env()
-                    .with_bucket_name(self.bucket)
-                    .build()
-                    .context(
-                        "configure the bucket from the GOOGLE_* variables and \
-                         Application Default Credentials",
-                    )?,
-            ),
-        })
+    async fn read_platform_ui(&self, digest: &wamn_digest::Digest) -> anyhow::Result<Vec<u8>> {
+        let tar = pull_archive(self.0, digest, platform_ui::ARTIFACT_TYPE).await?;
+        platform_ui::read_metadata(&tar)?;
+        Ok(tar)
     }
 }
 
@@ -622,8 +425,8 @@ mod tests {
     use wamn_test_infrastructure::scratch::ScratchRoot;
 
     use super::{
-        Sink, WEB_MANIFEST_FILE, WebPushDisposition, build_web_artifact, pack_web_artifact,
-        pull_web_artifact, push_web_artifact, read_web_manifest,
+        RegistryWebArtifacts, WEB_MANIFEST_FILE, WebPushDisposition, build_web_artifact,
+        pack_web_artifact, pull_web_artifact, push_web_artifact, read_web_manifest,
     };
 
     fn build_fixture(client: Option<&str>) -> (Fingerprint, Vec<u8>) {
@@ -660,7 +463,10 @@ mod tests {
         let (record, mut compiled) = build_fixture(Some("@wamn/web-fixture-client"));
         compiled.push(b' ');
         let package = write_build(&scratch, &record, &compiled);
-        let _error = build_web_artifact(&package).await.unwrap_err().to_string();
+        let _error = build_web_artifact(&package, wamn_build::build_web_client)
+            .await
+            .unwrap_err()
+            .to_string();
     }
 
     #[tokio::test]
@@ -668,7 +474,10 @@ mod tests {
         let scratch = ScratchRoot::create().unwrap();
         let (record, compiled) = build_fixture(None);
         let package = write_build(&scratch, &record, &compiled);
-        let _error = build_web_artifact(&package).await.unwrap_err().to_string();
+        let _error = build_web_artifact(&package, wamn_build::build_web_client)
+            .await
+            .unwrap_err()
+            .to_string();
     }
 
     #[tokio::test]
@@ -683,7 +492,10 @@ mod tests {
             } else {
                 fs::remove_file(&path).unwrap();
             }
-            let _error = build_web_artifact(&package).await.unwrap_err().to_string();
+            let _error = build_web_artifact(&package, wamn_build::build_web_client)
+                .await
+                .unwrap_err()
+                .to_string();
         }
     }
 
@@ -717,7 +529,9 @@ fs.copyFileSync('index.html', dist + '/index.html');
         )
         .unwrap();
         fs::write(source.join("index.html"), "first").unwrap();
-        let output = build_web_artifact(&package).await.unwrap();
+        let output = build_web_artifact(&package, wamn_build::build_web_client)
+            .await
+            .unwrap();
         let first = pack_web_artifact(&output).unwrap();
 
         fs::write(source.join("index.html"), "other").unwrap();
@@ -726,7 +540,9 @@ fs.copyFileSync('index.html', dist + '/index.html');
             r#"{"version":"0.2.1","scripts":{"build":"node build.cjs"}}"#,
         )
         .unwrap();
-        build_web_artifact(&package).await.unwrap();
+        build_web_artifact(&package, wamn_build::build_web_client)
+            .await
+            .unwrap();
         let second = pack_web_artifact(&output).unwrap();
 
         assert_ne!(
@@ -753,7 +569,11 @@ fs.copyFileSync('index.html', dist + '/index.html');
             record
         );
         fs::write(source.join("build.cjs"), "process.exit(1);").unwrap();
-        assert!(build_web_artifact(&package).await.is_err());
+        assert!(
+            build_web_artifact(&package, wamn_build::build_web_client)
+                .await
+                .is_err()
+        );
     }
 
     #[test]
@@ -951,8 +771,8 @@ fs.copyFileSync('index.html', dist + '/index.html');
         ] {
             let server = Server::start(responses).await;
             let store = InMemory::new();
-            let _error = super::upload_web_to_store(
-                &fixture_registry(&scratch, &server),
+            let _error = wamn_storage::web_artifact::upload_web_to_store(
+                &RegistryWebArtifacts(&fixture_registry(&scratch, &server)),
                 &digest,
                 "",
                 &store,
@@ -969,10 +789,5 @@ fs.copyFileSync('index.html', dist + '/index.html');
                     .is_empty()
             );
         }
-    }
-
-    #[test]
-    fn the_sink_refuses_an_unsupported_scheme() {
-        assert!(Sink::parse("https://web").is_err());
     }
 }

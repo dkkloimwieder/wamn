@@ -1,37 +1,67 @@
-//! Package manifest bytes and generated operation contracts.
-
-pub(super) mod plan;
-
+//! Read built package documents for release assembly.
+use std::collections::BTreeMap;
+#[cfg(test)]
 use std::path::Path;
-
-use wamn_record_history::{HISTORY_TABLE_SUFFIX, is_history_table_name};
-
-use super::{
-    BTreeMap, BTreeSet, OperationType, PathBuf, PublishManifestError, PublishManifestErrorType,
-    RouteContract, RouteContracts, ServingRelation, ServingRoute,
+use std::path::PathBuf;
+#[cfg(test)]
+use wamn_edge_document::ServingRoute;
+use wamn_package::ServingAttachment;
+use wamn_release::publish_release::{
+    AssembledRelease, PublishManifestError, PublishManifestErrorType, PublishReleaseRequest,
+    RouteContracts, merge_package_attachment_documents, route_contracts,
 };
 
-/// Every package's parsed manifest and the contract type of every operation
-/// the packages generate.
-pub(super) type PackageManifestSources = (
+type PackageManifestSources = (
     BTreeMap<wamn_package::PackageName, wamn_component_policy::PackageManifest>,
     RouteContracts,
 );
 
-pub(super) fn read_package_manifests(
+/// Read the build's compiled routes for local edge assembly.
+pub fn read_package_attachments(
+    paths: &[PathBuf],
+) -> Result<
+    BTreeMap<wamn_package::canonical_name::CanonicalName, ServingAttachment>,
+    PublishManifestError,
+> {
+    let documents = paths
+        .iter()
+        .map(|root| {
+            let path = wamn_codegen::package_manifest_path(root);
+            let read = || -> anyhow::Result<_> {
+                let manifest =
+                    wamn_component_policy::PackageManifest::from_slice(&std::fs::read(&path)?)?;
+                Ok(manifest
+                    .deploy
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("build the package to compile its deploy section")
+                    })?
+                    .routes)
+            };
+            let routes = read().map_err(|error| {
+                PublishManifestError::with_anyhow_source(
+                    PublishManifestErrorType::Document,
+                    format!("read routes from {}", path.display()),
+                    error,
+                )
+            })?;
+            Ok((path, routes))
+        })
+        .collect::<Result<Vec<_>, PublishManifestError>>()?;
+    merge_package_attachment_documents(documents)
+}
+
+pub fn read_package_manifests(
     roots: &[PathBuf],
 ) -> Result<PackageManifestSources, PublishManifestError> {
     let mut manifests = BTreeMap::new();
     for root in roots {
         let path = wamn_codegen::package_manifest_path(root);
         let directory = crate::package_source::read_package_directory(root).map_err(|error| {
-            PublishManifestError {
-                source: Some(error.into()),
-                ..PublishManifestError::new(
-                    PublishManifestErrorType::PackageManifest,
-                    format!("read package directory {}", root.display()),
-                )
-            }
+            PublishManifestError::with_anyhow_source(
+                PublishManifestErrorType::PackageManifest,
+                format!("read package directory {}", root.display()),
+                error,
+            )
         })?;
         let manifest = wamn_component_policy::PackageManifest::from_slice(
             &directory.manifest_bytes,
@@ -62,93 +92,21 @@ pub(super) fn read_package_manifests(
     Ok((manifests, types))
 }
 
-/// Collect the compiled operation contracts for the packages in one deployment.
-pub fn route_contracts(
-    manifests: &BTreeMap<wamn_package::PackageName, wamn_component_policy::PackageManifest>,
-) -> Result<RouteContracts, PublishManifestError> {
-    let mut types = RouteContracts::new();
-    for (package_id, manifest) in manifests {
-        for contract in operation_contracts(manifest)? {
-            types.insert(
-                (package_id.clone(), contract.operation.into()),
-                contract.route,
-            );
-        }
-    }
-    Ok(types)
+/// Read built packages and assemble their local release.
+pub fn assemble_release(
+    args: &PublishReleaseRequest,
+    roots: &[PathBuf],
+    admissions: &[wamn_release::component_admission::ComponentAdmission],
+    palette: &[wamn_release::palette::PaletteComponent],
+) -> anyhow::Result<AssembledRelease> {
+    let authored = read_package_attachments(roots)?;
+    let (manifests, contracts) = read_package_manifests(roots)?;
+    wamn_release::publish_release::assemble_release(
+        args, &authored, &manifests, &contracts, admissions, palette,
+    )
 }
 
-/// One generated contract of a package.
-struct PackageContract {
-    operation: wamn_package::registered_operation::RegisteredOperation,
-    route: RouteContract,
-}
-
-/// Borrow the operation descriptions compiled into a package document.
-fn operation_contracts(
-    manifest: &wamn_component_policy::PackageManifest,
-) -> Result<Vec<PackageContract>, PublishManifestError> {
-    #[derive(serde::Deserialize)]
-    struct Relation<'a> {
-        schema: &'a str,
-        table: &'a str,
-    }
-    let read = || -> anyhow::Result<Vec<PackageContract>> {
-        manifest
-            .compiled_operations
-            .values()
-            .map(|description| {
-                let contract = &description.operation;
-                let reads = if contract.type_.is_read() {
-                    contract
-                        .relations
-                        .iter()
-                        .map(|relation| {
-                            let relation: Relation<'_> = serde::Deserialize::deserialize(relation)?;
-                            let table = if is_history_table_name(relation.table) {
-                                &relation.table[..relation.table.len() - HISTORY_TABLE_SUFFIX.len()]
-                            } else {
-                                relation.table
-                            };
-                            Ok(ServingRelation {
-                                schema: relation.schema.to_owned(),
-                                relation: table.to_owned(),
-                            })
-                        })
-                        .collect::<anyhow::Result<BTreeSet<_>>>()?
-                } else {
-                    BTreeSet::new()
-                };
-                let revision = contract
-                    .record
-                    .as_ref()
-                    .and_then(|record| record["revision_field"].as_str())
-                    .filter(|_| contract.type_ == OperationType::Get)
-                    .map(str::to_owned);
-                let idempotency = (!contract.type_.is_read())
-                    .then(|| wamn_codegen::client_plan::idempotency_field(&description.input))
-                    .flatten();
-                Ok(PackageContract {
-                    operation: contract.operation.clone(),
-                    route: RouteContract {
-                        type_: contract.type_,
-                        reads,
-                        revision,
-                        idempotency,
-                    },
-                })
-            })
-            .collect()
-    };
-    read().map_err(|source| PublishManifestError {
-        source: Some(source.into()),
-        ..PublishManifestError::new(
-            PublishManifestErrorType::PackageManifest,
-            format!("read compiled operations of {}", manifest.package.id),
-        )
-    })
-}
-
+#[cfg(test)]
 /// The manifest route of one route attachment of the package at `root`, as
 /// publish writes it from the generated contract of its operation.
 ///
@@ -160,7 +118,7 @@ fn operation_contracts(
 ///
 /// Returns [`PublishManifestError`] when no generated contract declares the
 /// operation, or a contract cannot be read.
-pub fn package_route(
+fn package_route(
     roots: &BTreeMap<wamn_package::PackageName, &Path>,
     package_id: &wamn_package::PackageName,
     component: &wamn_package::canonical_name::CanonicalName,
@@ -191,8 +149,7 @@ pub fn package_route(
                 source,
             )
         })?;
-    let contracts = operation_contracts(&manifest)?;
-    plan::package_route(contracts, package_id, component, operation)
+    wamn_release::publish_release::package_route(&manifest, component, operation)
 }
 
 #[cfg(test)]
@@ -238,7 +195,7 @@ mod tests {
                     "base": {
                         "package": "base_fixture",
                         "version": "1.0.0",
-                        "digest": crate::test_support::DIGEST,
+                        "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                         "operations": ["item.get"],
                     }
                 });

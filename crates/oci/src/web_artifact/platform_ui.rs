@@ -5,18 +5,17 @@ use std::io::Read as _;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, ensure};
-use object_store::{ObjectStore, ObjectStoreExt as _};
 use wamn_digest::canonical_json_bytes;
-use wamn_oci::package_artifact::PackageRegistry;
 use wamn_oci_reference::OciTag;
 
-use super::{
-    PackedWebArtifact, Sink, UploadedClient, WEB_MANIFEST_FILE, WebArtifactError,
-    WebArtifactErrorType, artifact_files, content_type, pack_archive, pull_archive, put,
-    validate_path, web_dist_files,
+use wamn_release::web_artifact::{
+    PackedWebArtifact, WEB_MANIFEST_FILE, WebArtifactError, WebArtifactErrorType, content_type,
+    validate_path,
 };
 
-const ARTIFACT_TYPE: &str = "application/vnd.wamn.platform-ui.v1";
+use super::{artifact_files, pack_archive};
+
+pub(super) const ARTIFACT_TYPE: &str = "application/vnd.wamn.platform-ui.v1";
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -58,7 +57,7 @@ pub fn pack(dist: &Path, version: &OciTag) -> Result<PackedWebArtifact, WebArtif
     })
 }
 
-fn read_metadata(tar: &[u8]) -> anyhow::Result<()> {
+pub(super) fn read_metadata(tar: &[u8]) -> anyhow::Result<()> {
     let mut found = false;
     for entry in tar::Archive::new(tar).entries()? {
         let mut entry = entry?;
@@ -83,82 +82,14 @@ fn read_metadata(tar: &[u8]) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Upload a verified platform UI digest without reading a checkout or build output.
-///
-/// # Errors
-/// Refuses invalid artifacts, failed transfers, or conflicting bucket objects.
-pub async fn upload(
-    registry: &PackageRegistry,
-    digest: &wamn_digest::Digest,
-    bucket: &str,
-) -> Result<UploadedClient, WebArtifactError> {
-    async {
-        let sink = Sink::parse(bucket)?;
-        let store = sink.store()?;
-        let (root, written) =
-            upload_to_store(registry, digest, sink.prefix, store.as_ref()).await?;
-        Ok(UploadedClient {
-            package: "platform-ui".parse().unwrap(),
-            location: format!("{}{}/{root}/", sink.scheme.prefix(), sink.bucket),
-            written,
-        })
-    }
-    .await
-    .map_err(|source| WebArtifactError {
-        type_: WebArtifactErrorType::Upload,
-        context: format!("{}@{digest} to {bucket}", registry.artifact_base),
-        source,
-    })
-}
-
-/// Copy a verified platform UI artifact to an object store.
-///
-/// # Errors
-/// Refuses invalid artifacts before writing, or conflicting existing objects.
-pub async fn upload_to_store(
-    registry: &PackageRegistry,
-    digest: &wamn_digest::Digest,
-    prefix: &str,
-    store: &dyn ObjectStore,
-) -> anyhow::Result<(String, bool)> {
-    let tar = pull_archive(registry, digest, ARTIFACT_TYPE).await?;
-    read_metadata(&tar)?;
-    let mut files = web_dist_files(&tar)?;
-    let index = files
-        .remove("index.html")
-        .expect("verified web archive has an index");
-    let base = prefix.trim_matches('/');
-    let base = if base.is_empty() {
-        String::new()
-    } else {
-        format!("{base}/")
-    };
-    let root = format!("{base}platform-ui/sha256-{}", digest.hex());
-    match store.head(&format!("{root}/index.html").into()).await {
-        Ok(_) => return Ok((root, false)),
-        Err(object_store::Error::NotFound { .. }) => {}
-        Err(error) => return Err(error).context("read the platform UI completion index"),
-    }
-    for (name, bytes) in files {
-        put(store, &root, &name, bytes, content_type(&name)?).await?;
-    }
-    put(
-        store,
-        &root,
-        "index.html",
-        index,
-        content_type("index.html")?,
-    )
-    .await?;
-    Ok((root, true))
-}
-
 #[cfg(test)]
 mod tests {
+    use super::super::RegistryWebArtifacts;
     use super::*;
     use futures_util::TryStreamExt as _;
-    use object_store::memory::InMemory;
+    use object_store::{ObjectStore as _, ObjectStoreExt as _, memory::InMemory};
     use wamn_digest::bytes_sha256;
+    use wamn_storage::web_artifact::upload_platform_ui_to_store;
     use wamn_test_infrastructure::publish::{Server, artifact_fixture, fixture_registry};
     use wamn_test_infrastructure::scratch::ScratchRoot;
 
@@ -200,7 +131,7 @@ mod tests {
         let scratch = ScratchRoot::create().unwrap();
         artifact_fixture(scratch.path(), false);
         let packed = pack(&scratch.path().join("dist"), &"1.2.3".parse().unwrap()).unwrap();
-        let application = super::super::pack_web_artifact(scratch.path()).unwrap();
+        let application = crate::web_artifact::pack_web_artifact(scratch.path()).unwrap();
         for (responses, digest) in [
             (vec![(404, Vec::new())], &packed.digest),
             (
@@ -218,9 +149,14 @@ mod tests {
             let server = Server::start(responses).await;
             let store = InMemory::new();
             assert!(
-                upload_to_store(&fixture_registry(&scratch, &server), digest, "", &store)
-                    .await
-                    .is_err()
+                upload_platform_ui_to_store(
+                    &RegistryWebArtifacts(&fixture_registry(&scratch, &server)),
+                    digest,
+                    "",
+                    &store
+                )
+                .await
+                .is_err()
             );
             assert!(
                 store
@@ -246,20 +182,33 @@ mod tests {
             .await;
             let store = InMemory::new();
             let root = format!("platform-ui/sha256-{}", packed.digest.hex());
-            let files = web_dist_files(&packed.tar).unwrap();
-            let (asset, bytes) = files
-                .iter()
-                .find(|(name, _)| name.as_str() != "index.html")
+            let mut archive = tar::Archive::new(packed.tar.as_slice());
+            let mut asset = archive
+                .entries()
+                .unwrap()
+                .map(Result::unwrap)
+                .find(|entry| {
+                    let path = entry.path().unwrap();
+                    path.starts_with("dist") && path.as_ref() != Path::new("dist/index.html")
+                })
                 .unwrap();
-            let original = if conflict {
-                b"conflict".to_vec()
+            let path = asset
+                .path()
+                .unwrap()
+                .strip_prefix("dist")
+                .unwrap()
+                .to_path_buf();
+            let mut original = Vec::new();
+            if conflict {
+                original.extend_from_slice(b"conflict");
             } else {
-                bytes.clone()
-            };
-            let key = object_store::path::Path::from(format!("{root}/{asset}"));
-            store.put(&key, original.clone().into()).await.unwrap();
-            let result = upload_to_store(
-                &fixture_registry(&scratch, &server),
+                std::io::Read::read_to_end(&mut asset, &mut original).unwrap();
+            }
+            let original_digest = bytes_sha256(&original);
+            let key = object_store::path::Path::from(format!("{root}/{}", path.display()));
+            store.put(&key, original.into()).await.unwrap();
+            let result = upload_platform_ui_to_store(
+                &RegistryWebArtifacts(&fixture_registry(&scratch, &server)),
                 &packed.digest,
                 "",
                 &store,
@@ -275,7 +224,7 @@ mod tests {
             );
             assert_eq!(
                 bytes_sha256(&store.get(&key).await.unwrap().bytes().await.unwrap()),
-                bytes_sha256(&original)
+                original_digest
             );
         }
     }

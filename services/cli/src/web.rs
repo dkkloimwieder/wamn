@@ -2,7 +2,8 @@
 
 use anyhow::Context as _;
 use clap::{Args, Subcommand};
-use wamn_publish::web_artifact::{self, upload_web_artifact};
+use wamn_oci::web_artifact::{self, RegistryWebArtifacts};
+use wamn_storage::web_artifact::{upload_platform_ui, upload_web_artifact};
 
 /// Web client commands.
 #[derive(Debug, Args)]
@@ -63,7 +64,9 @@ pub struct UploadArgs {
 pub async fn run(args: WebArgs) -> anyhow::Result<()> {
     match args.command {
         WebCommand::Build(args) => {
-            let output = web_artifact::build_web_artifact(&args.package).await?;
+            let output =
+                web_artifact::build_web_artifact(&args.package, wamn_build::build_web_client)
+                    .await?;
             println!("{} built", output.display());
             Ok(())
         }
@@ -81,16 +84,17 @@ pub async fn run(args: WebArgs) -> anyhow::Result<()> {
 
 async fn upload(args: UploadArgs) -> anyhow::Result<()> {
     let registry = args.registry.registry();
+    let source = RegistryWebArtifacts(&registry);
     let uploaded = if let Some(digest) = args.platform_ui {
-        web_artifact::platform_ui::upload(
-            &registry,
+        upload_platform_ui(
+            &source,
             &digest,
             args.bucket.as_deref().unwrap_or("gs://wamn-dev-web"),
         )
         .await?
     } else {
         upload_web_artifact(
-            &registry,
+            &source,
             args.web.as_ref().context("upload requires --web")?,
             args.bucket.as_deref().context("--web requires --bucket")?,
         )

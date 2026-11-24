@@ -15,13 +15,14 @@ use wamn_package::PackageName;
 use wamn_package::manifest::BaseDependencyRequirement;
 use wamn_package::manifest::PackageIdentity;
 use wamn_package::manifest::source_name::SourceName;
-use wamn_publish::package_artifact::{PackageRegistry, PushPackageRequest, push_package};
+use wamn_release::package_artifact::PackagePublisher;
 
 use anyhow::{Context as _, ensure};
 
 /// Build and publish source using its committed database evidence.
 pub async fn publish_from_env(
     database: &dyn BuildDatabase,
+    publisher: &dyn PackagePublisher,
     document: &EnvironmentDocument,
     root: &Path,
     describe: DescribeMode<'_>,
@@ -29,6 +30,7 @@ pub async fn publish_from_env(
     let (application, sources) = sources(document, root).await?;
     build_and_publish(
         database,
+        publisher,
         application,
         sources,
         BuildMode::Published,
@@ -40,12 +42,14 @@ pub async fn publish_from_env(
 /// Build and publish the source documents already compiled for this dev pass.
 pub async fn publish_development(
     database: &dyn BuildDatabase,
+    publisher: &dyn PackagePublisher,
     application: wamn_registry::ApplicationName,
     sources: Vec<PreparedSource>,
     describe: DescribeMode<'_>,
 ) -> anyhow::Result<(wamn_registry::ApplicationName, wamn_digest::Digest)> {
     build_and_publish(
         database,
+        publisher,
         application,
         sources,
         BuildMode::Development,
@@ -56,6 +60,7 @@ pub async fn publish_development(
 
 async fn build_and_publish(
     database: &dyn BuildDatabase,
+    publisher: &dyn PackagePublisher,
     application: wamn_registry::ApplicationName,
     sources: Vec<PreparedSource>,
     mode: BuildMode,
@@ -68,12 +73,15 @@ async fn build_and_publish(
         let built = build_prepared(database, &request, &source, mode).await?;
         roots.push(package_output(&root, &built.package.id));
     }
-    let digest = publish_source_from_env(roots).await?;
+    let digest = publisher.publish(roots).await?;
     Ok((application, digest))
 }
 
 /// Publish the selected package's existing build output without rebuilding.
-pub async fn publish_built_from_env(root: &Path) -> anyhow::Result<wamn_digest::Digest> {
+pub async fn publish_built_from_env(
+    publisher: &dyn PackagePublisher,
+    root: &Path,
+) -> anyhow::Result<wamn_digest::Digest> {
     let root = wamn_codegen::output_root(&root.canonicalize()?);
     let parent = root
         .parent()
@@ -95,52 +103,7 @@ pub async fn publish_built_from_env(root: &Path) -> anyhow::Result<wamn_digest::
     .into_iter()
     .map(|source| source.root)
     .collect();
-    publish_source_from_env(roots).await
-}
-
-async fn publish_source_from_env(roots: Vec<PathBuf>) -> anyhow::Result<wamn_digest::Digest> {
-    let variable = |name: &str| {
-        std::env::var(name).with_context(|| format!("set {name} for source publication"))
-    };
-    let artifact_base = variable("WAMN_PACKAGE_ARTIFACT_BASE")?;
-    let insecure_registry = url::Url::parse(&format!("http://{artifact_base}"))?
-        .host_str()
-        .is_some_and(|host| matches!(host, "localhost" | "127.0.0.1" | "[::1]"));
-    let registry = PackageRegistry {
-        artifact_base,
-        credentials: None,
-        registry_auth_file: variable("WAMN_REGISTRY_AUTH_FILE")?.into(),
-        insecure_registry,
-        oci_ca_paths: std::env::var("WAMN_OCI_CA_PATHS")
-            .unwrap_or_default()
-            .split(':')
-            .filter(|path| !path.is_empty())
-            .map(Into::into)
-            .collect(),
-    };
-    publish_built(roots, registry, &variable("WAMN_COMPONENT_ARTIFACT_BASE")?).await
-}
-
-async fn publish_built(
-    mut roots: Vec<PathBuf>,
-    registry: PackageRegistry,
-    component_artifact_base: &str,
-) -> anyhow::Result<wamn_digest::Digest> {
-    // A dependency-first walk visits the selected source package last.
-    let top = roots.pop().context("source package closure is empty")?;
-    let mut publication = PushPackageRequest {
-        package: PathBuf::new(),
-        registry,
-        component_artifact_base: component_artifact_base.to_owned(),
-    };
-    let mut bases = BTreeMap::new();
-    for root in roots {
-        publication.package = root;
-        let published = push_package(&publication, &bases).await?;
-        bases.insert(published.coordinate.clone(), published);
-    }
-    publication.package = top;
-    Ok(push_package(&publication, &bases).await?.digest)
+    publisher.publish(roots).await
 }
 
 /// Resolve and compile the source closure in dependency order.

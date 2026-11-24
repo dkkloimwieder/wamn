@@ -1,5 +1,6 @@
 use object_store::memory::InMemory;
-use wamn_publish::web_artifact::{pack_web_artifact, upload_web_to_store};
+use wamn_oci::web_artifact::{RegistryWebArtifacts, pack_web_artifact};
+use wamn_storage::web_artifact::upload_web_to_store;
 use wamn_test_infrastructure::publish::{Server, artifact_fixture, fixture_registry};
 use wamn_test_infrastructure::scratch::ScratchRoot;
 
@@ -27,13 +28,15 @@ async fn two_environments_with_the_same_web_digest_share_one_completed_upload() 
     second.applications.get_mut("fixture").unwrap().label = "staging".into();
     let store = InMemory::new();
     let web = &first.applications["fixture"].client.as_ref().unwrap().web;
-    let (_, _, written) = upload_web_to_store(&registry, web, "prefix", &store)
-        .await
-        .unwrap();
+    let (_, _, written) =
+        upload_web_to_store(&RegistryWebArtifacts(&registry), web, "prefix", &store)
+            .await
+            .unwrap();
     assert!(written);
     let web = &second.applications["fixture"].client.as_ref().unwrap().web;
-    let (_, _, written) = upload_web_to_store(&registry, web, "prefix", &store)
-        .await
-        .unwrap();
+    let (_, _, written) =
+        upload_web_to_store(&RegistryWebArtifacts(&registry), web, "prefix", &store)
+            .await
+            .unwrap();
     assert!(!written);
 }

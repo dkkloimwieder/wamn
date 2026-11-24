@@ -17,11 +17,13 @@ use wamn_identity_protocol::ADMIN_ROLE;
 use wamn_package::PackageCoordinate;
 use wamn_registry::project_env_key;
 
-use wamn_publish::component_admission::{AdmitComponentRequest, admit_component};
-use wamn_publish::component_declaration::{authored_base_digests, render_package_declaration};
-use wamn_publish::publish_release::{PublishReleaseRequest, assemble_release};
+use wamn_oci::component_declaration::{authored_base_digests, render_package_declaration};
+use wamn_oci::release_component::{AdmitComponentRequest, admit_component};
+use wamn_oci::release_source::assemble_release;
+use wamn_release::component_admission::ComponentAdmissionEngine;
+use wamn_release::publish_release::PublishReleaseRequest;
 
-/// The environment coordinate of the box: the edge configuration's `[target]`.
+/// The environment coordinate from the edge configuration's `[target]`.
 /// The `project_env_key` of the release is [`project_env_key`] of the three.
 #[derive(Debug, Clone, Copy)]
 pub struct EdgeTarget<'a> {
@@ -42,6 +44,7 @@ impl EdgeTarget<'_> {
 ///
 /// It admits the bytes and assembles the release without a database or session.
 pub fn write_package(
+    engine: &dyn ComponentAdmissionEngine,
     package: &Path,
     component: &wamn_package::canonical_name::CanonicalName,
     bytes: &Path,
@@ -52,13 +55,16 @@ pub fn write_package(
     let project_env_key = target.project_env_key();
     let document = render_package_declaration(package, component, &project_env_key)?;
     let declaration = TemporaryFile::write(&serde_json::to_vec(&document)?)?;
-    let admission = admit_component(AdmitComponentRequest {
-        package: package.to_owned(),
-        component_bytes: bytes.to_owned(),
-        declaration: declaration.path().to_owned(),
-        admitted_platform_packages: vec!["wamn:node".to_owned(), "wamn:postgres".to_owned()],
-        base_digests: authored_base_digests(package)?.into_values().collect(),
-    })?;
+    let admission = admit_component(
+        engine,
+        AdmitComponentRequest {
+            package: package.to_owned(),
+            component_bytes: bytes.to_owned(),
+            declaration: declaration.path().to_owned(),
+            admitted_platform_packages: vec!["wamn:node".to_owned(), "wamn:postgres".to_owned()],
+            base_digests: authored_base_digests(package)?.into_values().collect(),
+        },
+    )?;
     let request = PublishReleaseRequest {
         org: target.org.to_owned(),
         project: target.project.to_owned(),

@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use wamn_publish::integration;
+use wamn_oci::integration;
 
 fn fixture() -> wamn_test_infrastructure::scratch::ScratchRoot {
     let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create().unwrap();
@@ -37,17 +37,29 @@ fn fixture() -> wamn_test_infrastructure::scratch::ScratchRoot {
 #[tokio::test]
 async fn build_digest_tracks_source_bytes_and_survives_another_checkout() {
     let first = fixture();
-    let a = integration::build(first.path(), &"fixture".parse().unwrap())
-        .await
-        .unwrap();
-    let b = integration::build(first.path(), &"fixture".parse().unwrap())
-        .await
-        .unwrap();
+    let a = integration::build(
+        first.path(),
+        &"fixture".parse().unwrap(),
+        wamn_build::build_component,
+    )
+    .await
+    .unwrap();
+    let b = integration::build(
+        first.path(),
+        &"fixture".parse().unwrap(),
+        wamn_build::build_component,
+    )
+    .await
+    .unwrap();
     assert_eq!(a.digest, b.digest);
     let other = fixture();
-    let c = integration::build(other.path(), &"fixture".parse().unwrap())
-        .await
-        .unwrap();
+    let c = integration::build(
+        other.path(),
+        &"fixture".parse().unwrap(),
+        wamn_build::build_component,
+    )
+    .await
+    .unwrap();
     assert_eq!(a.digest, c.digest);
     let source = first.path().join("integrations/fixture/src/lib.rs");
     let bytes = std::fs::read_to_string(&source).unwrap();
@@ -56,8 +68,12 @@ async fn build_digest_tracks_source_bytes_and_survives_another_checkout() {
         format!("{bytes}\n// A source-only edit changes artifact identity.\n"),
     )
     .unwrap();
-    let edited = integration::build(first.path(), &"fixture".parse().unwrap())
-        .await
-        .unwrap();
+    let edited = integration::build(
+        first.path(),
+        &"fixture".parse().unwrap(),
+        wamn_build::build_component,
+    )
+    .await
+    .unwrap();
     assert_ne!(a.digest, edited.digest);
 }

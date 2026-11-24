@@ -14,23 +14,25 @@ use std::os::unix::fs::DirBuilderExt as _;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use crate::package_artifact::registry_credentials::read_registry_credentials;
 use anyhow::{Context as _, bail, ensure};
-use oci_client::Reference;
 use oci_client::manifest::OCI_IMAGE_MEDIA_TYPE;
-use wamn_component_policy::ComponentDescriptor;
 use wamn_component_policy::PackageManifest;
 use wamn_digest::Digest;
-use wamn_oci::package_artifact::registry_credentials::read_registry_credentials;
 use wamn_oci_reference::{OciTag, ParseOciTagError, component_artifact_reference};
 
-use crate::component_admission::admit;
 use crate::component_declaration::package_declaration;
-use wamn_digest::bytes_sha256;
-use wamn_oci::package_artifact::{CREATED_ANNOTATION, PulledPackage, Repository, is_dev_tag};
-pub use wamn_oci::package_artifact::{
+use crate::package_artifact::{CREATED_ANNOTATION, PulledPackage, Repository, is_dev_tag};
+pub use crate::package_artifact::{
     NoPackageArtifact, PACKAGE_ARTIFACT_TYPE, PACKAGE_MANIFEST_MEDIA_TYPE, PACKAGE_TAR_MEDIA_TYPE,
     PackageRegistry, PackedLayer,
 };
+use wamn_digest::bytes_sha256;
+use wamn_release::component_admission::ComponentAdmissionEngine;
+use wamn_release::package_artifact::{
+    ComponentPublisher, ComponentPush, PackagePublisher, VerifiedComponent, verify_component,
+};
+use wamn_release::package_source::PackageRoot;
 
 const EMPTY_CONFIG_MEDIA_TYPE: &str = "application/vnd.oci.empty.v1+json";
 const EMPTY_CONFIG: &[u8] = b"{}";
@@ -176,14 +178,6 @@ fn collect_files(
     Ok(())
 }
 
-/// One admitted component and its exact bytes, before the registry assigns its image digest.
-#[derive(Debug)]
-pub struct VerifiedComponent {
-    /// The admitted component descriptor.
-    pub descriptor: ComponentDescriptor,
-    bytes: Box<[u8]>,
-}
-
 /// A finished build checked offline, before any registry call.
 #[derive(Debug)]
 pub struct VerifiedPackage {
@@ -203,7 +197,10 @@ pub struct VerifiedPackage {
 /// # Errors
 /// When the build is not finished or differs from its fingerprint, or a
 /// component is refused.
-pub fn verify_package(root: &Path) -> anyhow::Result<VerifiedPackage> {
+pub fn verify_package(
+    engine: &dyn ComponentAdmissionEngine,
+    root: &Path,
+) -> anyhow::Result<VerifiedPackage> {
     let output = wamn_codegen::output_root(root);
     let finished = wamn_codegen::fingerprint::read(&output)?;
     let directory = crate::package_source::read_package_directory(root)?;
@@ -222,7 +219,7 @@ pub fn verify_package(root: &Path) -> anyhow::Result<VerifiedPackage> {
     let mut manifest = PackageManifest::from_slice(&directory.manifest_bytes)
         .context("read the compiled package manifest")?;
     drop(directory);
-    let components = admit_components(&output, &finished, &mut manifest)?;
+    let components = admit_components(engine, &output, &finished, &mut manifest)?;
     let migrations = migration_files(root)?;
     let expected_migrations = finished
         .outputs
@@ -254,6 +251,7 @@ pub fn verify_package(root: &Path) -> anyhow::Result<VerifiedPackage> {
 }
 
 fn admit_components(
+    engine: &dyn ComponentAdmissionEngine,
     output: &Path,
     finished: &wamn_codegen::fingerprint::Fingerprint,
     manifest: &mut PackageManifest,
@@ -284,7 +282,7 @@ fn admit_components(
             manifest.package.version.clone(),
         )?;
         let declaration = package_declaration(manifest, &name, target)?;
-        let path = wamn_build::component_path(name.as_str());
+        let path = wamn_codegen::component_path(name.as_str());
         let file = output.join(&path);
         let bytes = std::fs::read(&file).with_context(|| format!("read {}", file.display()))?;
         let connection_packages = manifest.components[name.as_str()]
@@ -293,9 +291,10 @@ fn admit_components(
             .filter_map(|connection| manifest.connections.get(connection))
             .filter_map(|declared| declared.interface.split_once('/'))
             .map(|(package, _)| package);
-        let (descriptor, _) = admit(
+        let verified = verify_component(
+            engine,
             manifest,
-            &bytes,
+            bytes,
             declaration,
             OWNED_PLATFORM_PACKAGES
                 .into_iter()
@@ -309,20 +308,17 @@ fn admit_components(
             output,
             finished,
             &path,
-            descriptor.component_digest,
+            verified.descriptor().component_digest,
         )?;
         if !manifest.connections.is_empty() {
             let declaration = &manifest.components[name.as_str()];
-            crate::connection_requirement::validate_connections(
-                &bytes,
+            wamn_release::connection_requirement::validate_connections(
+                verified.bytes(),
                 manifest,
                 &declaration.connections,
             )?;
         }
-        components.push(VerifiedComponent {
-            descriptor,
-            bytes: bytes.into_boxed_slice(),
-        });
+        components.push(verified);
     }
     ensure!(
         manifest
@@ -354,16 +350,83 @@ async fn push_artifact(repository: &Repository, packed: PackedPackage) -> anyhow
         .push_manifest_raw(
             &repository.reference,
             packed.manifest,
-            hyper::header::HeaderValue::from_static(OCI_IMAGE_MEDIA_TYPE),
+            http::HeaderValue::from_static(OCI_IMAGE_MEDIA_TYPE),
         )
         .await
         .with_context(|| format!("push package artifact {}", repository.reference))?;
     Ok(())
 }
 
+/// Publish built packages to the registry configured for source publication.
+pub struct RegistryPackagePublisher<'a> {
+    admission: &'a dyn ComponentAdmissionEngine,
+    components: &'a dyn ComponentPublisher,
+}
+
+impl std::fmt::Debug for RegistryPackagePublisher<'_> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("RegistryPackagePublisher")
+            .finish_non_exhaustive()
+    }
+}
+
+impl<'a> RegistryPackagePublisher<'a> {
+    pub fn new(
+        admission: &'a dyn ComponentAdmissionEngine,
+        components: &'a dyn ComponentPublisher,
+    ) -> Self {
+        Self {
+            admission,
+            components,
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl PackagePublisher for RegistryPackagePublisher<'_> {
+    async fn publish(&self, mut roots: Vec<PathBuf>) -> anyhow::Result<Digest> {
+        let variable = |name: &str| {
+            std::env::var(name).with_context(|| format!("set {name} for source publication"))
+        };
+        let artifact_base = variable("WAMN_PACKAGE_ARTIFACT_BASE")?;
+        let insecure_registry = url::Url::parse(&format!("http://{artifact_base}"))?
+            .host_str()
+            .is_some_and(|host| matches!(host, "localhost" | "127.0.0.1" | "[::1]"));
+        let registry = PackageRegistry {
+            artifact_base,
+            credentials: None,
+            registry_auth_file: variable("WAMN_REGISTRY_AUTH_FILE")?.into(),
+            insecure_registry,
+            oci_ca_paths: std::env::var("WAMN_OCI_CA_PATHS")
+                .unwrap_or_default()
+                .split(':')
+                .filter(|path| !path.is_empty())
+                .map(Into::into)
+                .collect(),
+        };
+        let component_artifact_base = variable("WAMN_COMPONENT_ARTIFACT_BASE")?;
+        // A dependency-first walk visits the selected source package last.
+        let top = roots.pop().context("source package closure is empty")?;
+        let mut publication = PushPackageRequest {
+            package: PathBuf::new(),
+            registry,
+            component_artifact_base,
+        };
+        let mut bases = BTreeMap::new();
+        for root in roots {
+            publication.package = root;
+            let published = push_package(self, &publication, &bases).await?;
+            bases.insert(published.coordinate.clone(), published);
+        }
+        publication.package = top;
+        Ok(push_package(self, &publication, &bases).await?.digest)
+    }
+}
+
 /// Inputs of one `push-package` run.
 #[derive(Debug)]
-pub struct PushPackageRequest {
+struct PushPackageRequest {
     /// The source package root or its finished build directory.
     pub package: PathBuf,
     /// The package registry.
@@ -375,7 +438,7 @@ pub struct PushPackageRequest {
 
 /// Published identity and byte pins that later packages in this push can reuse.
 #[derive(Debug)]
-pub struct PushedPackage {
+struct PushedPackage {
     pub coordinate: PackageCoordinate,
     pub digest: Digest,
     images: BTreeMap<Digest, Digest>,
@@ -388,7 +451,8 @@ pub struct PushedPackage {
 /// prefix. SQLx still refuses checksum changes when it applies migrations.
 /// Bases and components already published by this operation supply their
 /// digests directly.
-pub async fn push_package(
+async fn push_package(
+    publisher: &RegistryPackagePublisher<'_>,
     request: &PushPackageRequest,
     bases: &BTreeMap<PackageCoordinate, PushedPackage>,
 ) -> anyhow::Result<PushedPackage> {
@@ -397,19 +461,19 @@ pub async fn push_package(
         mut manifest,
         components,
         migrations: files,
-    } = verify_package(&request.package)?;
+    } = verify_package(publisher.admission, &request.package)?;
     let mut base_packages = BTreeMap::new();
     for (alias, base) in &manifest.base_dependencies {
         let coordinate = PackageCoordinate::new(base.package.clone(), base.version.clone())?;
-        let published = bases.get(&coordinate).with_context(|| {
+        let prior_release = bases.get(&coordinate).with_context(|| {
             format!("publish base {coordinate:?} before the package that uses it")
         })?;
         ensure!(
-            published.images.len() == 1 && published.images.contains_key(&base.digest),
+            prior_release.images.len() == 1 && prior_release.images.contains_key(&base.digest),
             "base {coordinate:?} does not supply its pinned component {}",
             base.digest
         );
-        base_packages.insert(alias.clone(), published.digest);
+        base_packages.insert(alias.clone(), prior_release.digest);
     }
     let tag = format!(
         "{}-{}",
@@ -450,7 +514,7 @@ pub async fn push_package(
     deploy.components.clear();
     let mut images = BTreeMap::new();
     for component in components {
-        let descriptor = &component.descriptor;
+        let descriptor = component.descriptor();
         let digest = descriptor.component_digest;
         let known = images.get(&digest).copied().or_else(|| {
             bases
@@ -466,6 +530,7 @@ pub async fn push_package(
             image
         } else {
             push_component_artifact(
+                publisher.components,
                 &request.registry,
                 &request.component_artifact_base,
                 &component,
@@ -476,7 +541,7 @@ pub async fn push_package(
         deploy.components.insert(
             descriptor.component.clone(),
             PublishedComponent {
-                descriptor: component.descriptor,
+                descriptor: component.into_descriptor(),
                 image_digest,
             },
         );
@@ -551,7 +616,7 @@ async fn component_image(
         oci_ca_paths: registry.oci_ca_paths.clone(),
     };
     let tag: OciTag = artifact.tag().parse()?;
-    let auth = wamn_oci::package_artifact::registry_auth(credentials.as_ref());
+    let auth = crate::package_artifact::registry_auth(credentials.as_ref());
     let repository = Repository::with_auth(&transport, &tag, auth)?;
     let Some((bytes, image)) = repository.manifest().await? else {
         return Ok(None);
@@ -568,38 +633,32 @@ async fn component_image(
 
 /// Push one admitted component as a stock application/wasm artifact under its byte digest.
 async fn push_component_artifact(
+    publisher: &dyn ComponentPublisher,
     registry: &PackageRegistry,
     artifact_base: &str,
     component: &VerifiedComponent,
 ) -> anyhow::Result<Digest> {
     let artifact =
-        component_artifact_reference(artifact_base, &component.descriptor.component_digest)
+        component_artifact_reference(artifact_base, &component.descriptor().component_digest)
             .context("derive the component artifact reference")?;
-    let reference = Reference::with_tag(
+    let credentials = read_registry_credentials(&registry.registry_auth_file, artifact.registry())
+        .context("load the component registry push credential")?;
+    let reference = oci_client::Reference::with_tag(
         artifact.registry().to_owned(),
         artifact.repository().to_owned(),
         artifact.tag().to_owned(),
     );
-    let credentials = read_registry_credentials(&registry.registry_auth_file, artifact.registry())
-        .context("load the component registry push credential")?;
-    wash_runtime::oci::set_extra_ca_certificates(&registry.oci_ca_paths)?;
-    let digest = wash_runtime::oci::push_component(
-        &reference.to_string(),
-        &component.bytes,
-        wash_runtime::oci::OciConfig {
-            credentials: credentials.as_ref().map(|credentials| {
-                (
-                    credentials.username().to_owned(),
-                    credentials.password().to_owned(),
-                )
-            }),
+    publisher
+        .push(ComponentPush {
+            reference: &reference.to_string(),
+            component,
+            credentials: credentials
+                .as_ref()
+                .map(|value| (value.username(), value.password())),
             insecure: registry.insecure_registry,
-            ..Default::default()
-        },
-        None,
-    )
-    .await?;
-    Ok(digest.parse()?)
+            ca_paths: &registry.oci_ca_paths,
+        })
+        .await
 }
 
 /// An opened package source. An unpacked artifact lives in a private
@@ -619,8 +678,8 @@ impl OpenedPackage {
     /// The package root with the digest this opener holds in memory, the one
     /// carrier of the digest of an opened artifact. The digest is the one the
     /// registry records; a directory has none.
-    pub fn package_root(&self) -> crate::package_source::PackageRoot {
-        crate::package_source::PackageRoot {
+    pub fn package_root(&self) -> PackageRoot {
+        PackageRoot {
             path: self.root.clone(),
             artifact_digest: self.digest,
         }
@@ -882,3 +941,6 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod development;

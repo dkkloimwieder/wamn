@@ -6373,6 +6373,7 @@ name = "wamn-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "bytes",
  "clap",
  "http-body-util",
@@ -6397,11 +6398,13 @@ dependencies = [
  "wamn-platform-install",
  "wamn-postgres",
  "wamn-provision",
- "wamn-publish",
  "wamn-registry",
+ "wamn-release",
  "wamn-role",
  "wamn-routes",
+ "wamn-storage",
  "wamn-test-infrastructure",
+ "wash-runtime",
 ]
 
 [[package]]
@@ -6447,6 +6450,7 @@ dependencies = [
  "wamn-digest",
  "wamn-package",
  "wamn-registry",
+ "wasmparser 0.261.0",
 ]
 
 [[package]]
@@ -6539,17 +6543,18 @@ dependencies = [
  "serde_json",
  "tokio",
  "tracing",
- "url",
  "wamn-build",
  "wamn-codegen",
  "wamn-component-policy",
  "wamn-digest",
  "wamn-edge-document",
+ "wamn-engine",
  "wamn-environment",
  "wamn-identity-protocol",
+ "wamn-oci",
  "wamn-package",
- "wamn-publish",
  "wamn-registry",
+ "wamn-release",
 ]
 
 [[package]]
@@ -6635,6 +6640,7 @@ dependencies = [
  "wamn-digest",
  "wamn-package",
  "wamn-registry",
+ "wamn-release",
  "wamn-routes",
  "wash-runtime",
  "wasmparser 0.261.0",
@@ -6702,10 +6708,11 @@ dependencies = [
  "wamn-platform-install",
  "wamn-postgres",
  "wamn-provision",
- "wamn-publish",
  "wamn-registry",
+ "wamn-release",
  "wamn-role",
  "wamn-run-state",
+ "wamn-storage",
  "wamn-test-infrastructure",
  "wamn-workflow-graph",
  "wash-runtime",
@@ -7073,21 +7080,40 @@ name = "wamn-oci"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
+ "chrono",
+ "futures-util",
+ "http",
+ "object_store",
  "oci-client",
  "serde",
  "serde_json",
+ "tar",
  "tokio",
  "tracing",
+ "url",
+ "wamn-build",
+ "wamn-codegen",
+ "wamn-component-policy",
+ "wamn-connection-type",
  "wamn-digest",
+ "wamn-edge-document",
  "wamn-engine",
+ "wamn-fixture-package",
  "wamn-gcp-metadata",
  "wamn-oci-reference",
  "wamn-package",
  "wamn-platform-install",
+ "wamn-registry",
+ "wamn-release",
+ "wamn-storage",
  "wamn-test-infrastructure",
  "wash-runtime",
+ "wasmparser 0.261.0",
  "wasmtime",
  "wat",
+ "wit-component 0.254.2",
+ "wit-parser 0.254.2",
 ]
 
 [[package]]
@@ -7259,42 +7285,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "wamn-publish"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "chrono",
- "futures-util",
- "hyper",
- "object_store",
- "oci-client",
- "serde",
- "serde_json",
- "sqlx",
- "tar",
- "tokio",
- "wamn-build",
- "wamn-codegen",
- "wamn-component-policy",
- "wamn-connection-type",
- "wamn-digest",
- "wamn-edge-document",
- "wamn-engine",
- "wamn-fixture-package",
- "wamn-oci",
- "wamn-oci-reference",
- "wamn-package",
- "wamn-record-history",
- "wamn-registry",
- "wamn-routes",
- "wamn-test-infrastructure",
- "wash-runtime",
- "wasmparser 0.261.0",
- "wit-component 0.254.2",
- "wit-parser 0.254.2",
-]
-
-[[package]]
 name = "wamn-receiving-tests"
 version = "0.1.0"
 dependencies = [
@@ -7335,6 +7325,29 @@ dependencies = [
  "wamn-package",
  "wamn-principal",
  "wamn-role",
+]
+
+[[package]]
+name = "wamn-release"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "http",
+ "serde",
+ "serde_json",
+ "wamn-component-policy",
+ "wamn-connection-type",
+ "wamn-digest",
+ "wamn-edge-document",
+ "wamn-oci-reference",
+ "wamn-package",
+ "wamn-record-history",
+ "wamn-registry",
+ "wamn-routes",
+ "wamn-test-infrastructure",
+ "wit-component 0.254.2",
+ "wit-parser 0.254.2",
 ]
 
 [[package]]
@@ -7401,6 +7414,7 @@ dependencies = [
  "object_store",
  "serde",
  "serde_json",
+ "tar",
  "tokio",
  "tracing",
  "url",
@@ -7411,8 +7425,10 @@ dependencies = [
  "wamn-connection-type",
  "wamn-digest",
  "wamn-gcp-metadata",
+ "wamn-package",
  "wamn-postgres",
  "wamn-registry",
+ "wamn-release",
 ]
 
 [[package]]
@@ -8959,7 +8975,6 @@ dependencies = [
  "wamn-platform-install",
  "wamn-postgres",
  "wamn-provision",
- "wamn-publish",
  "wamn-registry",
  "wamn-routes",
  "wash-runtime",

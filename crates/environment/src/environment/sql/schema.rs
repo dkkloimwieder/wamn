@@ -16,7 +16,7 @@ use wamn_package::package_schema::{AppliedPackage, PackageDirectory};
 pub struct Candidate {
     pub root: PackageRoot,
     pub directory: PackageDirectory,
-    _artifact: Option<wamn_publish::package_artifact::OpenedPackage>,
+    _artifact: Option<wamn_oci::release_package::OpenedPackage>,
 }
 impl Candidate {
     pub fn source(root: PackageRoot) -> anyhow::Result<Self> {
@@ -193,7 +193,7 @@ pub async fn plan(
         >(&candidate.directory)?;
         let id = metadata.coordinate.package_id();
         let migrator = wamn_postgres::build_database::migrator(
-            &wamn_publish::package_source::migration_root(&candidate.root.path),
+            &wamn_oci::package_source::migration_root(&candidate.root.path),
         )
         .await?;
         let migrations = if let Some(client) = &mut client {

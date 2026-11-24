@@ -6,3 +6,5 @@ mod pod_identity;
 mod store;
 
 pub use client::{ObjectStorage, health};
+
+pub mod web_artifact;

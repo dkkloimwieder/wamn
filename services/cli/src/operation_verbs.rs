@@ -124,6 +124,7 @@ pub(crate) async fn publish(
 ) -> anyhow::Result<(wamn_registry::ApplicationName, wamn_digest::Digest)> {
     wamn_dev::source_deploy::publish_from_env(
         &PostgresBuildDatabase,
+        &crate::package_verbs::package_publisher(),
         document,
         package,
         wamn_build::DescribeMode::Cached,

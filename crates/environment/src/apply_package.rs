@@ -21,7 +21,8 @@ pub use error::{
 pub use package_version::{
     LOCK_PACKAGE_SQL, load_applied_package, read_applied_package, read_package_migrations,
 };
-pub use wamn_publish::package_source::{PackageRoot, read_package_directory, read_package_root};
+pub use wamn_oci::package_source::{read_package_directory, read_package_root};
+pub use wamn_release::package_source::PackageRoot;
 
 pub const LOCK_SQL: &str = "SELECT pg_advisory_xact_lock(hashtextextended(\
      'wamn.package.data-access:' || current_database(), 0))";
@@ -82,7 +83,7 @@ pub(crate) async fn prepare_package(root: &PackageRoot) -> anyhow::Result<Prepar
         .context("validate package directory before database work")?;
     let manifest = PackageManifest::from_slice(&directory.manifest_bytes)
         .context("parse strict package manifest for definition ownership")?;
-    let migration_root = wamn_publish::package_source::migration_root(&root.path);
+    let migration_root = wamn_oci::package_source::migration_root(&root.path);
     let migrations = wamn_postgres::build_database::migrator(&migration_root).await?;
     Ok(PreparedPackage {
         directory,
@@ -181,7 +182,7 @@ async fn apply(
     let mut changed = false;
     if applied.is_none() {
         changed |=
-            wamn_publish::connection_requirement::install(&mut tx, &package.manifest).await? != 0;
+            wamn_postgres::release_requirements::install(&mut tx, &package.manifest).await? != 0;
     }
     sqlx::raw_sql(sqlx::AssertSqlSafe(wamn_provision::migration::grants_sql(
         &login,

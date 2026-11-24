@@ -4,7 +4,7 @@ use super::{
     canonical_http_route_template, normalize_http_route,
 };
 
-pub(in super::super) fn merge_package_attachment_documents(
+pub fn merge_package_attachment_documents(
     documents: Vec<(
         PathBuf,
         BTreeMap<wamn_package::canonical_name::CanonicalName, ServingAttachment>,
@@ -39,7 +39,7 @@ pub(in super::super) fn merge_package_attachment_documents(
 ///
 /// The release names no route host (R1): a route is its path and method, and
 /// the host configuration and the http workload's `config.host` name the host.
-pub(in super::super) fn resolve_route_methods(
+pub fn resolve_route_methods(
     authored: &BTreeMap<wamn_package::canonical_name::CanonicalName, ServingAttachment>,
     route_contracts: &RouteContracts,
 ) -> Result<
@@ -49,7 +49,7 @@ pub(in super::super) fn resolve_route_methods(
     resolve_owned_route_methods(authored.clone(), route_contracts)
 }
 
-pub(in super::super) fn resolve_owned_route_methods(
+pub fn resolve_owned_route_methods(
     mut resolved: BTreeMap<wamn_package::canonical_name::CanonicalName, ServingAttachment>,
     route_contracts: &RouteContracts,
 ) -> Result<
