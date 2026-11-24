@@ -8,6 +8,7 @@ use tracing::Instrument as _;
 use wamn_application::InvocationLifetime;
 use wamn_authority::EffectOutcome;
 use wamn_authority::connection::ConnectionError;
+use wamn_authority::connection_authority::HostPolicy;
 use wamn_authority::effect_span::{
     EFFECT_OPERATION, EffectIdentity, EffectOutcomeGuard, HTTP_EFFECT_DURATION_MS, effect_span,
     record_effect_ms, record_graph,
@@ -55,14 +56,20 @@ struct ApplicationBinding {
 pub struct ConnectionHttp {
     scopes: Arc<InvocationScopes>,
     transport: Arc<dyn BoundHttp>,
+    host_policy: &'static dyn HostPolicy,
     applications: Arc<RwLock<HashMap<String, ApplicationBinding>>>,
     component: Option<String>,
 }
 impl ConnectionHttp {
-    pub fn new(scopes: Arc<InvocationScopes>, transport: Arc<dyn BoundHttp>) -> Self {
+    pub fn new(
+        scopes: Arc<InvocationScopes>,
+        transport: Arc<dyn BoundHttp>,
+        host_policy: &'static dyn HostPolicy,
+    ) -> Self {
         Self {
             scopes,
             transport,
+            host_policy,
             applications: Arc::default(),
             component: None,
         }
@@ -152,6 +159,7 @@ impl ConnectionHttp {
             connection: id,
             target: addresses,
             execution: &execution,
+            host_policy: self.host_policy,
             request: &request,
             principal: &principal,
         };
@@ -278,6 +286,7 @@ impl HostPlugin for ConnectionHttp {
         let bound = Arc::new(Self {
             scopes: Arc::clone(&self.scopes),
             transport: Arc::clone(&self.transport),
+            host_policy: self.host_policy,
             applications: Arc::clone(&self.applications),
             component: Some(component.id().to_owned()),
         });

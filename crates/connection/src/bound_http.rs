@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use wamn_application::InvocationLifetime;
 use wamn_authority::connection::ConnectionError;
+use wamn_authority::connection_authority::HostPolicy;
 use wamn_identity_protocol::PrincipalId;
 
 use crate::connection_facts::{ConnectionAnswer, ConnectionFacts};
@@ -50,6 +51,7 @@ pub struct Call<'a> {
     pub connection: uuid::Uuid,
     pub target: Target,
     pub execution: &'a Arc<dyn InvocationLifetime>,
+    pub host_policy: &'static dyn HostPolicy,
     pub request: &'a Request,
     pub principal: &'a (dyn Fn() -> Option<PrincipalId> + Sync),
 }

@@ -3,9 +3,8 @@
 use std::net::{IpAddr, SocketAddr};
 
 use crate::{CanonicalHttpTarget, normalize_portable_http_target};
-use hyper::Uri;
+use http::Uri;
 use url::{Host, Url};
-use wash_runtime::host::allowed_hosts::AllowedHost;
 
 /// Supported outbound HTTP schemes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -160,29 +159,10 @@ pub trait DnsResolver: Send + Sync {
     ) -> impl Future<Output = Result<Vec<SocketAddr>, AuthorityError>> + Send;
 }
 
-/// Production DNS resolver backed by Tokio's host-controlled resolver.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct TokioDnsResolver;
-
-impl DnsResolver for TokioDnsResolver {
-    fn resolve(
-        &self,
-        host: &str,
-        port: u16,
-    ) -> impl Future<Output = Result<Vec<SocketAddr>, AuthorityError>> + Send {
-        let host = host.to_owned();
-        async move {
-            tokio::net::lookup_host((host.as_str(), port))
-                .await
-                .map(std::iter::Iterator::collect)
-                .map_err(|error| {
-                    AuthorityError::new(
-                        AuthorityErrorType::DnsResolutionFailed,
-                        format!("DNS resolution failed for {host}:{port}: {error}"),
-                    )
-                })
-        }
-    }
+/// The host runtime's additional restriction on a canonical HTTP target.
+pub trait HostPolicy: std::fmt::Debug + Send + Sync {
+    /// Check the target's explicit host and port against the runtime policy.
+    fn allows(&self, authority: &CanonicalAuthority, target: &Uri) -> bool;
 }
 
 /// Parse a connection definition through the catalog's typed contract.
@@ -226,10 +206,11 @@ pub fn parse_http_connection_authority(
 }
 
 /// Resolve a guest-controlled relative path/query under a trusted connection.
+/// Supply the runtime host policy for calls that run under a host.
 pub async fn resolve_http_request<R, N>(
     connection: &HttpConnectionAuthority,
     target: &CanonicalHttpTarget,
-    platform_hosts: &[AllowedHost],
+    host_policy: Option<&dyn HostPolicy>,
     network: &N,
     dns: &R,
 ) -> Result<AuthorityDecision, AuthorityError>
@@ -244,7 +225,7 @@ where
             format!("invalid relative HTTP target: {error}"),
         )
     })?;
-    resolve_target(connection, target, platform_hosts, network, dns).await
+    resolve_target(connection, target, host_policy, network, dns).await
 }
 
 /// Convert an absolute credential endpoint to a target inside the binding.
@@ -275,7 +256,7 @@ pub fn bound_oauth_token(
 ) -> Result<(HttpConnectionAuthority, CanonicalHttpTarget, Box<str>), AuthorityError> {
     let extra = token_authority
         .map(|value| {
-            let authority: hyper::http::uri::Authority = value.parse().map_err(|_| {
+            let authority: http::uri::Authority = value.parse().map_err(|_| {
                 AuthorityError::new(
                     AuthorityErrorType::InvalidDefinition,
                     "invalid token authority",
@@ -306,7 +287,7 @@ pub fn bound_oauth_token(
 async fn resolve_target<R, N>(
     connection: &HttpConnectionAuthority,
     target: Url,
-    platform_hosts: &[AllowedHost],
+    host_policy: Option<&dyn HostPolicy>,
     network: &N,
     dns: &R,
 ) -> Result<AuthorityDecision, AuthorityError>
@@ -315,7 +296,24 @@ where
     N: Fn(SocketAddr) -> bool + Send + Sync,
 {
     validate_target_url(connection, &target)?;
-    require_host_policy(&target, platform_hosts)?;
+    let uri = explicit_http_uri(&target)?;
+    let allowed = match host_policy {
+        Some(policy) => policy.allows(&connection.authority, &uri),
+        None => {
+            connection
+                .base_url
+                .host_str()
+                .zip(uri.host())
+                .is_some_and(|(base, target)| base.eq_ignore_ascii_case(target))
+                && uri.port_u16() == Some(connection.authority.port)
+        }
+    };
+    if !allowed {
+        return Err(AuthorityError::new(
+            AuthorityErrorType::PlatformHostDenied,
+            format!("platform host policy denies {uri}"),
+        ));
+    }
 
     let origin = pin_endpoint(&connection.authority, network, dns).await?;
     Ok(AuthorityDecision {
@@ -526,7 +524,7 @@ fn validate_target_url(
     Ok(())
 }
 
-fn require_host_policy(url: &Url, platform_hosts: &[AllowedHost]) -> Result<(), AuthorityError> {
+fn explicit_http_uri(url: &Url) -> Result<Uri, AuthorityError> {
     // `Url` drops a scheme's default port, and a `host:port` entry matches only
     // a URI that names its port, so the URI states the port.
     let (Some(host), Some(port)) = (url.host_str(), url.port_or_known_default()) else {
@@ -540,20 +538,12 @@ fn require_host_policy(url: &Url, platform_hosts: &[AllowedHost]) -> Result<(), 
         url.scheme(),
         &url[url::Position::BeforePath..]
     );
-    let uri: Uri = explicit.parse().map_err(|error| {
+    explicit.parse().map_err(|error| {
         AuthorityError::new(
             AuthorityErrorType::InvalidDefinition,
             format!("canonical HTTP URL is not a valid URI: {error}"),
         )
-    })?;
-    if platform_hosts.iter().any(|entry| entry.matches(&uri)) {
-        Ok(())
-    } else {
-        Err(AuthorityError::new(
-            AuthorityErrorType::PlatformHostDenied,
-            format!("platform host policy denies {uri}"),
-        ))
-    }
+    })
 }
 
 async fn pin_endpoint<R, N>(
@@ -614,29 +604,15 @@ fn bracket_ip_v6(host: &str) -> std::borrow::Cow<'_, str> {
 mod tests {
     use super::*;
 
-    #[derive(Debug)]
-    struct EmptyDns;
-
-    impl DnsResolver for EmptyDns {
-        fn resolve(
-            &self,
-            _host: &str,
-            _port: u16,
-        ) -> impl Future<Output = Result<Vec<SocketAddr>, AuthorityError>> + Send {
-            std::future::ready(Ok(Vec::new()))
-        }
-    }
-
-    #[tokio::test]
-    async fn resolved_target_outside_base_is_refused() {
+    #[test]
+    fn resolved_target_outside_base_is_refused() {
         let connection = parse_http_connection_authority(
             "https://manager.example/api/",
             TlsPolicy::VerifyAuthority,
         )
         .expect("connection definition");
         let outside = Url::parse("https://manager.example/outside").expect("outside target");
-        let error = resolve_target(&connection, outside, &[], &|_| false, &EmptyDns)
-            .await
+        let error = validate_target_url(&connection, &outside)
             .expect_err("resolved target escaped its configured base");
         assert_eq!(error.error_type(), AuthorityErrorType::BasePathEscape);
     }

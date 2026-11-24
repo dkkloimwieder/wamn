@@ -20,6 +20,7 @@ use wash_runtime::wit::{WitInterface, WitWorld};
 pub mod bound_http;
 mod executor;
 mod host;
+pub mod host_policy;
 pub mod invocation;
 pub mod number_counter;
 mod operation;

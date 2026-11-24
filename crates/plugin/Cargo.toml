@@ -17,6 +17,7 @@ wamn-authentication = { workspace = true }
 anyhow = { workspace = true }
 async-trait = { workspace = true }
 futures-util = { workspace = true }
+http.workspace = true
 opentelemetry = { workspace = true, features = ["metrics", "trace"] }
 serde_json = { workspace = true }
 sqlx = { workspace = true, features = ["postgres"] }

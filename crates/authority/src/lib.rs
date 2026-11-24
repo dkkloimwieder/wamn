@@ -3,6 +3,7 @@
 pub mod auth_cache;
 pub mod connection;
 pub mod connection_authority;
+pub mod edge;
 mod effect_outcome;
 pub mod effect_span;
 pub mod kv_memory;

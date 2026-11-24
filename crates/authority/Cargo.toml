@@ -6,26 +6,24 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+anyhow.workspace = true
+http.workspace = true
 wamn-application.workspace = true
+wamn-component-policy.workspace = true
 wamn-package.workspace = true
 wamn-connection-type.workspace = true
 wamn-digest.workspace = true
-hyper = { workspace = true, features = ["client", "http1", "http2"] }
 opentelemetry = { workspace = true, features = ["metrics", "trace"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
-tokio = { workspace = true, features = ["time", "fs", "net", "io-util", "rt", "macros", "sync"] }
 tracing = { workspace = true }
-tracing-opentelemetry = { workspace = true }
 url = { workspace = true }
 wamn-identity-protocol = { workspace = true }
 wamn-registry = { workspace = true }
-wash-runtime = { workspace = true }
 
 [dev-dependencies]
-hyper = { workspace = true, features = ["server"] }
 opentelemetry_sdk = { workspace = true, features = ["trace", "testing"] }
-tokio = { workspace = true, features = ["test-util"] }
+tracing-opentelemetry = { workspace = true }
 tracing-subscriber = { workspace = true }
 
 [lints]

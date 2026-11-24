@@ -4,21 +4,22 @@ use std::collections::HashMap;
 
 use wamn_authority::connection::ConnectionError;
 use wamn_authority::connection_authority::{
-    AuthorityDecision, AuthorityError, HttpConnectionAuthority, TokioDnsResolver,
-    bound_http_target, bound_oauth_token, resolve_http_request,
+    AuthorityDecision, AuthorityError, HttpConnectionAuthority, bound_http_target,
+    bound_oauth_token, resolve_http_request,
 };
-use wamn_connection::bound_http::{Attempt, BoundHttp, Call, Header, Request, Response, Target};
+use wamn_connection::bound_http::{Attempt, BoundHttp, Call, Header, Request, Response};
 use wamn_connection::connection_facts::ConnectionFacts;
-use wash_runtime::host::allowed_hosts::AllowedHost;
 
 mod authentication;
 pub mod body;
 pub mod connection_health;
+mod dns;
 mod jwt;
 mod network_policy;
 pub mod transport;
 
 use crate::oauth::{Request as Oauth2Request, Response as Oauth2Token};
+use dns::TokioDnsResolver;
 use transport::HttpTransport;
 
 #[async_trait::async_trait]
@@ -34,7 +35,7 @@ impl BoundHttp for HttpTransport {
             rejected,
         } = attempt;
         let request = call.request;
-        let transport = self.for_invocation(call.execution, call.target);
+        let transport = self.for_invocation(call.execution, call.target, call.host_policy);
         let target = wamn_authority::normalize_portable_http_target(&request.path_and_query)
             .map_err(|_| ConnectionError::AuthorityDenied)?;
         let authority = wamn_authority::connection_authority::parse_http_definition(
@@ -44,7 +45,7 @@ impl BoundHttp for HttpTransport {
         let mut decision = resolve_http_request(
             &authority,
             &target,
-            &[exact_host(&authority)],
+            transport.host_policy(),
             &|address| network_policy::allows(transport.addresses(), address),
             &TokioDnsResolver,
         )
@@ -128,7 +129,7 @@ async fn oauth2_token(
                 authority,
                 request.token_authority.as_deref(),
                 &request.token_url,
-                transport.addresses(),
+                transport,
             )
             .await?;
             let token = fetch_health_token(transport, decision, &request)
@@ -243,33 +244,19 @@ pub(crate) async fn token_endpoint(
     connection: &HttpConnectionAuthority,
     token_authority: Option<&str>,
     token_url: &str,
-    addresses: Target,
+    transport: &HttpTransport,
 ) -> Result<AuthorityDecision, AuthorityError> {
     let (authority, target, endpoint) = bound_oauth_token(connection, token_authority, token_url)?;
     let mut decision = resolve_http_request(
         &authority,
         &target,
-        &[exact_host(&authority)],
-        &|address| network_policy::allows(addresses, address),
+        transport.host_policy(),
+        &|address| network_policy::allows(transport.addresses(), address),
         &TokioDnsResolver,
     )
     .await?;
     decision.logical_url = endpoint;
     Ok(decision)
-}
-
-/// The one host entry that admits a connection's own authority and no other.
-fn exact_host(authority: &HttpConnectionAuthority) -> AllowedHost {
-    let url = url::Url::parse(authority.canonical_base_url()).expect("canonical connection URL");
-    AllowedHost::Authority(
-        format!(
-            "{}:{}",
-            url.host_str().expect("canonical connection host"),
-            authority.authority().port()
-        )
-        .parse()
-        .expect("canonical connection authority"),
-    )
 }
 
 fn reserved_header(name: &hyper::header::HeaderName) -> bool {
@@ -406,7 +393,7 @@ pub async fn health(
         let mut decision = resolve_http_request(
             &authority,
             &target,
-            &[exact_host(&authority)],
+            transport.host_policy(),
             &|address| network_policy::allows(transport.addresses(), address),
             &TokioDnsResolver,
         )
@@ -433,7 +420,7 @@ pub async fn health(
                 &authority,
                 token_request.token_authority.as_deref(),
                 &token_request.token_url,
-                transport.addresses(),
+                transport,
             )
             .await?;
             let token = fetch_health_token(transport, token_decision, &token_request)
@@ -474,6 +461,7 @@ mod tests {
 
     use super::*;
     use std::sync::{Arc, Mutex};
+    use wamn_connection::bound_http::Target;
 
     use crate::test_util::{effect_request, interface_address};
 

@@ -31,7 +31,9 @@ use tower_service::Service;
 
 use wamn_application::InvocationLifetime;
 use wamn_application::MAX_HOST_CALL_DURATION as REQUEST_TIMEOUT;
-use wamn_authority::connection_authority::{AuthorityDecision, HttpScheme, TlsIdentity};
+use wamn_authority::connection_authority::{
+    AuthorityDecision, HostPolicy, HttpScheme, TlsIdentity,
+};
 use wamn_connection::bound_http::Target as ConnectionTarget;
 
 use super::network_policy;
@@ -49,6 +51,7 @@ pub struct HttpTransport {
     inner: Arc<Inner>,
     invocation: Option<Arc<dyn InvocationLifetime>>,
     addresses: ConnectionTarget,
+    host_policy: Option<&'static dyn HostPolicy>,
 }
 
 impl fmt::Debug for HttpTransport {
@@ -82,12 +85,17 @@ impl HttpTransport {
         Ok(Self::from_tls(tls, ConnectionTarget::Cloud))
     }
 
+    pub(crate) fn host_policy(&self) -> Option<&'static dyn HostPolicy> {
+        self.host_policy
+    }
+
     pub(crate) fn from_tls(mut tls: rustls::ClientConfig, addresses: ConnectionTarget) -> Self {
         tls.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
         Self {
             inner: Arc::new(Inner { tls: Arc::new(tls) }),
             invocation: None,
             addresses,
+            host_policy: None,
         }
     }
 
@@ -96,11 +104,13 @@ impl HttpTransport {
         &self,
         execution: &Arc<dyn InvocationLifetime>,
         addresses: ConnectionTarget,
+        host_policy: &'static dyn HostPolicy,
     ) -> Self {
         Self {
             inner: Arc::clone(&self.inner),
             invocation: Some(Arc::clone(execution)),
             addresses,
+            host_policy: Some(host_policy),
         }
     }
 

@@ -1,11 +1,24 @@
-//! Shared invocation identity and connection authorization rules.
+//! Failures reported by an HTTP connection operation.
 
-mod bindings {
-    wash_runtime::wasmtime::component::bindgen!({
-        path: ["../../wit/wamn-connection", "../../wit/wamn-ingress", "../../wit/wamn-postgres-0.4", "../../wit/wamn-node", "../../wit/wamn-operation-0.1", "../../wit/wasmcloud-blobstore", "wit"],
-        world: "wamn:host/connection-http-plugin@0.1.0",
-        imports: { default: async | trappable | tracing },
-        wasmtime_crate: wash_runtime::wasmtime,
-    });
+use std::fmt;
+
+/// The domain failure behind a connection operation result.
+#[derive(Debug, Clone)]
+pub enum ConnectionError {
+    Unbound,
+    Incompatible,
+    AuthorityDenied,
+    AttestationInvalid,
+    CredentialUnavailable,
+    Timeout,
+    Transport(String),
+    Unauthorized,
 }
-pub use bindings::wamn::connection::http::ConnectionError;
+
+impl fmt::Display for ConnectionError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "ConnectionError::{self:?}")
+    }
+}
+
+impl std::error::Error for ConnectionError {}

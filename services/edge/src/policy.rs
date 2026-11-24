@@ -6,16 +6,16 @@
 
 use crate::serving_context::ServingContext;
 use std::collections::{BTreeMap, HashSet};
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
-use anyhow::Context as _;
-use tokio::time::Instant;
-use wamn_component_policy::AdmittedComponent;
-use wamn_application::ingress::AuthenticatedCaller;
-use wamn_application::native_routes::authorize_released_operation;
 use crate::native_operation::invocation_policy::{InvocationPolicy, InvocationScope};
 use crate::native_operation::native_call::{NativeCallFailure, NativeInvocation};
 use crate::native_operation::native_workload::native_component_name;
+use anyhow::Context as _;
+use tokio::time::Instant;
+use wamn_application::ingress::AuthenticatedCaller;
+use wamn_authority::edge::EdgeAuthority;
+use wamn_component_policy::AdmittedComponent;
 use wash_runtime::engine::workload::WorkloadItem;
 use wash_runtime::plugin::{HostPlugin, WitInterfaces};
 use wash_runtime::wit::{WitInterface, WitWorld};
@@ -25,12 +25,6 @@ pub const EDGE_POLICY_ID: &str = "wamn:edge-operation-policy";
 
 /// The one import an edge application may have: the node ABI types.
 const NODE_TYPES: &str = "wamn:node/types@0.2.0";
-
-/// One admitted component and the operations its release publishes for it.
-#[derive(Debug)]
-struct ComponentPolicy {
-    fact: AdmittedComponent,
-}
 
 /// The facts of one edge call that only the policy reads.
 #[derive(Clone)]
@@ -57,8 +51,8 @@ impl EdgeFacts {
 /// The admitted components of the loaded release and their native bindings.
 #[derive(Debug)]
 pub struct EdgePolicy {
-    components: BTreeMap<String, Arc<ComponentPolicy>>,
-    bindings: RwLock<BTreeMap<String, Arc<ComponentPolicy>>>,
+    components: BTreeMap<String, Arc<AdmittedComponent>>,
+    authority: EdgeAuthority,
 }
 
 impl EdgePolicy {
@@ -77,43 +71,12 @@ impl EdgePolicy {
                         && served.descriptor.operations == fact.operations
                 })
                 .context("component-not-in-carried-release")?;
-            policies.insert(
-                native_component_name(fact)?,
-                Arc::new(ComponentPolicy { fact: fact.clone() }),
-            );
+            policies.insert(native_component_name(fact)?, Arc::new(fact.clone()));
         }
         Ok(Self {
             components: policies,
-            bindings: RwLock::default(),
+            authority: EdgeAuthority::default(),
         })
-    }
-
-    /// Make sure of one call: the deadline, the admitted and released operation, and
-    /// the released-operation grant under the caller.
-    fn authorize(
-        &self,
-        component_id: &str,
-        request: &NativeInvocation<Self>,
-    ) -> anyhow::Result<()> {
-        anyhow::ensure!(
-            Instant::now() < request.deadline,
-            "native-node-deadline-exceeded"
-        );
-        let bindings = self
-            .bindings
-            .read()
-            .expect("edge component bindings lock poisoned");
-        let component = bindings
-            .get(component_id)
-            .context("native invocation component is not admitted")?;
-        let operation = request.operation.as_str();
-        let released = component
-            .fact
-            .operations
-            .get(operation)
-            .context("native invocation operation is not admitted")?;
-        authorize_released_operation(request.facts.caller.as_ref(), released)?;
-        Ok(())
     }
 }
 
@@ -128,14 +91,17 @@ impl InvocationPolicy for EdgePolicy {
         request: &NativeInvocation<Self>,
         _failure: NativeCallFailure,
     ) -> impl Future<Output = anyhow::Result<()>> + Send {
-        std::future::ready(self.authorize(component_id, request))
+        std::future::ready(self.authority.authorize(
+            component_id,
+            request.operation.as_str(),
+            request.facts.caller.as_ref(),
+            Instant::now().into_std(),
+            request.deadline.into_std(),
+        ))
     }
 
     fn shutdown(&self) {
-        self.bindings
-            .write()
-            .expect("edge component bindings lock poisoned")
-            .clear();
+        self.authority.clear();
     }
 
     fn revoke(&self, _target: &str) {}
@@ -151,7 +117,7 @@ impl HostPlugin for EdgePolicy {
         let exports = self
             .components
             .values()
-            .flat_map(|policy| policy.fact.operations.keys())
+            .flat_map(|component| component.operations.keys())
             .map(|name| WitInterface::from(name.as_str()))
             .collect();
         WitWorld {
@@ -169,14 +135,12 @@ impl HostPlugin for EdgePolicy {
             WorkloadItem::Component(component) => component.name(),
             WorkloadItem::Service(_) => anyhow::bail!("native-operation-service-not-admitted"),
         };
-        let policy = self
+        let component = self
             .components
             .get(name)
             .context("native binding does not name an admitted component")?;
-        self.bindings
-            .write()
-            .expect("edge component bindings lock poisoned")
-            .insert(item.id().to_owned(), Arc::clone(policy));
+        self.authority
+            .bind(item.id().to_owned(), Arc::clone(component));
         Ok(())
     }
 
@@ -187,115 +151,5 @@ impl HostPlugin for EdgePolicy {
     ) -> anyhow::Result<()> {
         self.shutdown();
         Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::collections::HashMap;
-    use std::time::Duration;
-    use wamn_application::ingress::CredentialType;
-    use wamn_application::native_routes::{OperationRefusal, OperationRefusalType};
-    use crate::native_operation::native_workload::{
-        NativeApplication, NativeWorkloadSpec, load_native_application,
-    };
-    use wamn_engine::operation::node_types;
-    use wash_runtime::observability::{MeterKind, Meters};
-    use wash_runtime::plugin::PluginBindings;
-
-    use super::*;
-    use crate::release::test_util::{OPERATION, release};
-
-    async fn request() -> NativeInvocation<EdgePolicy> {
-        let release = release().await;
-        let policy = Arc::new(EdgePolicy::new(release.components(), release.release()).unwrap());
-        let application: Arc<NativeApplication<EdgePolicy>> = load_native_application(
-            Arc::new(wamn_engine::build_engine(&[]).unwrap()),
-            NativeWorkloadSpec {
-                id: "edge-policy-test".into(),
-                namespace: "test".into(),
-                name: "test".into(),
-                components: Vec::new(),
-                local_resources: wash_runtime::types::LocalResources::default(),
-                host_interfaces: Vec::new(),
-            },
-            Arc::clone(&policy),
-            &HashMap::new(),
-            &PluginBindings::new(),
-            &Meters::new(MeterKind::Off),
-        )
-        .await
-        .unwrap();
-        let component = Arc::clone(policy.components.values().next().unwrap());
-        policy
-            .bindings
-            .write()
-            .unwrap()
-            .insert("bound".into(), component);
-        NativeInvocation {
-            operation: OPERATION.parse().unwrap(),
-            context: node_types::NodeContext {
-                graph_id: String::new(),
-                graph_version: 0,
-                node_id: String::new(),
-                delivery_id: "test".into(),
-                input_port: None,
-                occurrence: 0,
-                traceparent: None,
-                tracestate: None,
-                deadline_ms: Some(1000),
-                config: "null".into(),
-            },
-            input: crate::native_operation::native_call::NativeInput::Encoded("{}".into()),
-            deadline: Instant::now() + Duration::from_secs(60),
-            facts: EdgeFacts::entry(Some(AuthenticatedCaller::new(
-                "record-http".parse().unwrap(),
-                "00000000-0000-4000-8000-000000000001".parse().unwrap(),
-                CredentialType::Session,
-                false,
-                [wamn_package::sealed_operation_reference(OPERATION).to_owned()].into(),
-                Some("operator".into()),
-            ))),
-            application,
-        }
-    }
-
-    #[tokio::test]
-    async fn an_expired_deadline_refuses() {
-        let mut request = request().await;
-        let policy = &request.application.policy;
-        policy.authorize("bound", &request).unwrap();
-        request.deadline = Instant::now() - Duration::from_secs(1);
-        assert!(policy.authorize("bound", &request).is_err());
-    }
-
-    #[tokio::test]
-    async fn an_unbound_component_refuses() {
-        let request = request().await;
-        let policy = &request.application.policy;
-        policy.authorize("bound", &request).unwrap();
-        assert!(policy.authorize("unbound", &request).is_err());
-    }
-
-    #[tokio::test]
-    async fn a_caller_without_the_grant_refuses() {
-        let mut request = request().await;
-        let policy = &request.application.policy;
-        policy.authorize("bound", &request).unwrap();
-        request.facts = EdgeFacts::entry(Some(AuthenticatedCaller::new(
-            "record-http".parse().unwrap(),
-            "00000000-0000-4000-8000-000000000001".parse().unwrap(),
-            CredentialType::Session,
-            false,
-            HashSet::new(),
-            Some("viewer".into()),
-        )));
-        let error = policy.authorize("bound", &request).unwrap_err();
-        let refusal = error.downcast_ref::<OperationRefusal>().unwrap();
-        assert_eq!(
-            refusal.refusal_type(),
-            OperationRefusalType::PermissionDenied
-        );
-        assert_eq!(refusal.operation(), OPERATION);
     }
 }

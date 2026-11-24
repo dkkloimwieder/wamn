@@ -13,6 +13,7 @@ use wamn_connection::connection_credentials::{ConnectionCredentials, ConnectionG
 use wamn_connection::connection_facts::ConnectionAnswer;
 use wamn_connection::connection_memory::{ConnectionFact, ConnectionStatus};
 use wamn_connection::database::ProjectDatabase;
+use wamn_plugin::host_policy::CONNECTION_HOST_POLICY;
 
 /// The project database is never read: a call without OAuth reads no connection row.
 fn facts() -> ConnectionFacts {
@@ -108,6 +109,7 @@ async fn a_local_target_call_reaches_a_private_server_with_its_credential() {
                 connection: uuid::Uuid::new_v4(),
                 target: Target::Local,
                 execution: &execution,
+                host_policy: &CONNECTION_HOST_POLICY,
                 request: &effect_request(Vec::new()),
                 principal: &|| None,
             },

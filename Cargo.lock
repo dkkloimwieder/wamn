@@ -6247,23 +6247,23 @@ dependencies = [
 name = "wamn-authority"
 version = "0.1.0"
 dependencies = [
- "hyper",
+ "anyhow",
+ "http",
  "opentelemetry",
  "opentelemetry_sdk",
  "serde",
  "serde_json",
- "tokio",
  "tracing",
  "tracing-opentelemetry",
  "tracing-subscriber",
  "url",
  "wamn-application",
+ "wamn-component-policy",
  "wamn-connection-type",
  "wamn-digest",
  "wamn-identity-protocol",
  "wamn-package",
  "wamn-registry",
- "wash-runtime",
 ]
 
 [[package]]
@@ -6592,6 +6592,7 @@ dependencies = [
  "tracing-subscriber",
  "uuid",
  "wamn-application",
+ "wamn-authority",
  "wamn-component-policy",
  "wamn-dev",
  "wamn-digest",
@@ -7187,6 +7188,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "futures-util",
+ "http",
  "opentelemetry",
  "serde",
  "serde_json",

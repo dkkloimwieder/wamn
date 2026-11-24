@@ -12,6 +12,7 @@ test = false
 
 [dependencies]
 wamn-application.workspace = true
+wamn-authority.workspace = true
 wamn-edge-document.workspace = true
 wamn-component-policy.workspace = true
 wamn-package.workspace = true
