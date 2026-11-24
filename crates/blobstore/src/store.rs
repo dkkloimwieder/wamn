@@ -404,9 +404,8 @@ pub(crate) mod test_binding {
             wamn_postgres::WamnPostgres::from_host_config(std::collections::BTreeMap::new())
                 .unwrap(),
         );
-        let database: Arc<dyn wamn_connection::database::ProjectDatabase> = Arc::new(
-            wamn_operation::OperationDatabase::new(Arc::clone(&postgres)),
-        );
+        let database: Arc<dyn wamn_connection::database::ProjectDatabase> =
+            Arc::new(wamn_plugin::OperationDatabase::new(Arc::clone(&postgres)));
         let cache = Arc::new(wamn_authentication::authorization::Authorization::new(
             postgres, database,
         ));

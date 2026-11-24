@@ -46,7 +46,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use wamn_engine::engine::build_engine;
-use wamn_operation::{self, OperationHost, PROJECT_ENV_KEY_CONFIG_KEY, WAMN_POSTGRES_ID};
+use wamn_plugin::{self, OperationHost, PROJECT_ENV_KEY_CONFIG_KEY, WAMN_POSTGRES_ID};
 use wamn_postgres::{WamnPostgres, WamnPostgresConfig};
 use wash_runtime::engine::ctx::{Ctx, SharedCtx};
 use wash_runtime::plugin::{HostPlugin, WitInterfaces};
@@ -205,7 +205,8 @@ fn offline_postgres() -> OperationHost {
         statement_timeout_ms: 100,
     })
     .expect("offline postgres pools build");
-    OperationHost::new(Arc::new(pools), None)
+    let pools = Arc::new(pools);
+    OperationHost::new(Arc::clone(&pools), pools, None)
 }
 
 /// Query reaches credential resolution after the host binds the project.
@@ -317,7 +318,8 @@ async fn wamn_postgres_maps_an_unresolvable_project_to_connection_unavailable_no
         postgres as Arc<dyn HostPlugin + Send + Sync>,
     );
 
-    let (outcome, trail) = drive_guest(&postgres_guest(), plugins, wamn_operation::add_to_linker).await;
+    let (outcome, trail) =
+        drive_guest(&postgres_guest(), plugins, wamn_plugin::add_to_linker).await;
 
     outcome.expect("the guest survived the postgres refusal");
     // `1` is `err`, and `1` again is `connection-unavailable` — the second case

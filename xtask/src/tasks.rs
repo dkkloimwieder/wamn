@@ -229,7 +229,7 @@ pub async fn dependencies(root: &Path) -> anyhow::Result<()> {
     crate::repo_policy::dependencies::check_boundaries(root)?;
 
     let event = linked(root, "wamn-event", &[]).await?;
-    for dependency in ["wamn-broker", "wamn-run-state", "wamn-operation"] {
+    for dependency in ["wamn-broker", "wamn-run-state", "wamn-plugin"] {
         ensure!(
             !event.contains(dependency),
             "wamn-event links forbidden dependency {dependency}"

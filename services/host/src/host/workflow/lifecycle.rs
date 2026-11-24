@@ -13,7 +13,7 @@ use wamn_application::application_config::ApplicationConfig;
 use wamn_application::ingress::AuthenticatedCaller;
 use wamn_application::native_routes::DeliveryError;
 use wamn_identity_protocol::PrincipalId;
-use wamn_operation::OperationHost;
+use wamn_plugin::OperationHost;
 use wamn_postgres::{ENVIRONMENT_LOCK_SQL, ENVIRONMENT_TRANSACTION_LOCK_SQL};
 
 use super::{

@@ -32,7 +32,7 @@ use wamn_application::application_config::ApplicationConfig;
 use wamn_application::ingress::{AuthenticatedCaller, CredentialType, Header, RoutePolicy};
 use wamn_engine::ingress::IngressRouting;
 use wamn_identity_protocol::PrincipalId;
-use wamn_operation::OperationHost;
+use wamn_plugin::OperationHost;
 
 const FILE_COLUMNS: &str =
     "id::text, connection_id::text, media_type, size, exposure, url, blob_key";

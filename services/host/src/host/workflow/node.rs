@@ -10,7 +10,7 @@ use tokio::time::Instant;
 use wamn_connection::connection::GraphPosition;
 use wamn_application::native_routes::{OperationRefusal, bounded_node_deadline_ms};
 use wamn_engine::operation::node_types;
-use wamn_operation::WorkflowNode;
+use wamn_plugin::WorkflowNode;
 use wamn_postgres::run_store::PostgresRunStore;
 use wamn_run_state::run_store::RunStore;
 use wash_runtime::wasmtime::component::Accessor;

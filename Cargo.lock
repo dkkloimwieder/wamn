@@ -6193,12 +6193,14 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "futures-util",
  "serde",
  "serde_json",
  "tracing",
  "wamn-component-policy",
  "wamn-connection-type",
  "wamn-digest",
+ "wamn-event",
  "wamn-identity-protocol",
  "wamn-package",
  "wamn-registry",
@@ -6293,8 +6295,8 @@ dependencies = [
  "wamn-engine",
  "wamn-gcp-metadata",
  "wamn-identity-protocol",
- "wamn-operation",
  "wamn-package",
+ "wamn-plugin",
  "wamn-postgres",
  "wamn-registry",
  "wamn-routes",
@@ -6834,8 +6836,8 @@ dependencies = [
  "wamn-identity-protocol",
  "wamn-key",
  "wamn-oci-reference",
- "wamn-operation",
  "wamn-package",
+ "wamn-plugin",
  "wamn-postgres",
  "wamn-registry",
  "wamn-routes",
@@ -6887,7 +6889,7 @@ dependencies = [
  "wamn-engine",
  "wamn-http-client",
  "wamn-identity-protocol",
- "wamn-operation",
+ "wamn-plugin",
  "wamn-postgres",
  "wash-runtime",
  "wat",
@@ -7140,40 +7142,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "wamn-operation"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "chrono",
- "futures-util",
- "opentelemetry",
- "postgres-protocol",
- "serde",
- "serde_json",
- "sqlx",
- "tokio",
- "tracing",
- "uuid",
- "wamn-application",
- "wamn-authentication",
- "wamn-authority",
- "wamn-connection",
- "wamn-digest",
- "wamn-engine",
- "wamn-event",
- "wamn-identity-protocol",
- "wamn-number-pattern",
- "wamn-package",
- "wamn-postgres",
- "wamn-registry",
- "wamn-role",
- "wamn-run-state",
- "wamn-scalar",
- "wash-runtime",
-]
-
-[[package]]
 name = "wamn-package"
 version = "0.1.0"
 dependencies = [
@@ -7217,6 +7185,37 @@ dependencies = [
 ]
 
 [[package]]
+name = "wamn-plugin"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "futures-util",
+ "opentelemetry",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "tokio",
+ "tracing",
+ "uuid",
+ "wamn-application",
+ "wamn-authentication",
+ "wamn-authority",
+ "wamn-connection",
+ "wamn-digest",
+ "wamn-engine",
+ "wamn-event",
+ "wamn-identity-protocol",
+ "wamn-number-pattern",
+ "wamn-package",
+ "wamn-postgres",
+ "wamn-registry",
+ "wamn-role",
+ "wamn-run-state",
+ "wash-runtime",
+]
+
+[[package]]
 name = "wamn-postgres"
 version = "0.1.0"
 dependencies = [
@@ -7225,6 +7224,7 @@ dependencies = [
  "bytes",
  "chrono",
  "fallible-iterator",
+ "futures-util",
  "pg_query",
  "pg_walstream",
  "postgres-protocol",

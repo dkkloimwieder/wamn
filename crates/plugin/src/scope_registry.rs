@@ -2,6 +2,7 @@
 
 use crate::{OperationTransaction, PgError};
 use wamn_application::session_identity::SessionIdentity;
+pub use wamn_application::session_identity::{valid_runner, valid_schema};
 use wamn_connection::connection::ConnectionInvocation;
 use wamn_connection::invocation::ReleaseContext;
 use wamn_engine::invocation_scope::InvocationScopes;
@@ -104,12 +105,6 @@ pub fn set_schema(
     Ok(())
 }
 
-pub(super) fn schema_for(scopes: &InvocationScopes, component_id: &str) -> Option<String> {
-    scopes
-        .read::<Authority, _>(component_id, |record| record.identity.schema.clone())
-        .flatten()
-}
-
 /// Register the durable queue lease owner for a component id.
 /// Each transaction records it in the protected caller identity.
 pub fn set_runner(
@@ -125,45 +120,6 @@ pub fn set_runner(
         record.identity.runner = Some(runner.to_string());
     });
     Ok(())
-}
-
-pub(super) fn runner_for(scopes: &InvocationScopes, component_id: &str) -> Option<String> {
-    scopes
-        .read::<Authority, _>(component_id, |record| record.identity.runner.clone())
-        .flatten()
-}
-
-pub(super) fn role_for(scopes: &InvocationScopes, component_id: &str) -> Option<String> {
-    scopes
-        .read::<Authority, _>(component_id, |record| record.identity.role.clone())
-        .flatten()
-}
-
-pub(super) fn user_id_for(
-    scopes: &InvocationScopes,
-    component_id: &str,
-) -> Option<wamn_identity_protocol::PrincipalId> {
-    scopes
-        .read::<Authority, _>(component_id, |record| record.identity.user_id)
-        .flatten()
-}
-
-pub(super) fn operation_for(
-    scopes: &InvocationScopes,
-    component_id: &str,
-) -> Option<wamn_package::canonical_name::CanonicalName> {
-    scopes
-        .read::<Authority, _>(component_id, |record| record.identity.operation.clone())
-        .flatten()
-}
-
-pub(super) fn application_for(
-    scopes: &InvocationScopes,
-    component_id: &str,
-) -> Option<wamn_registry::ApplicationName> {
-    scopes
-        .read::<Authority, _>(component_id, |record| record.identity.application.clone())
-        .flatten()
 }
 
 pub(super) fn current_run_for(scopes: &InvocationScopes, component_id: &str) -> Option<Causation> {
@@ -184,7 +140,7 @@ pub fn invocation(scopes: &InvocationScopes, component_id: &str) -> Option<Conne
 /// Read back the identity set one component id currently resolves to.
 ///
 /// `None` is the base denial policy: no project_env_key is bound, so
-/// [`require_project_env_key`] refuses every call made under
+/// [`require_sql_identity`] refuses every call made under
 /// this id. That is what an idle, never-acquired execution instance must
 /// report, and it is the read half of the checkout-identity seam — the pair
 /// this and what [`crate::invocation::AuthorizedInvocation::enter`] writes
@@ -196,11 +152,11 @@ pub fn session_identity(scopes: &InvocationScopes, component_id: &str) -> Option
         .filter(|identity| identity.project_env_key.is_some())
 }
 
-pub(super) fn require_project_env_key(
+pub(super) fn require_sql_identity(
     scopes: &InvocationScopes,
     component_id: &str,
-) -> Result<wamn_registry::ProjectEnvKey, PgError> {
-    project_env_key_for(scopes, component_id).ok_or_else(|| {
+) -> Result<SessionIdentity, PgError> {
+    session_identity(scopes, component_id).ok_or_else(|| {
         tracing::warn!(
             component_id,
             "wamn:postgres call from component with no project_env_key identity"
@@ -253,36 +209,6 @@ pub(super) fn operation_transaction_for(
     scopes
         .read::<Authority, _>(scope, |record| record.transaction.clone())
         .flatten()
-}
-
-/// A durable-queue lease owner. An identity-format contract: bounded
-/// `[A-Za-z0-9_-]`, no quotes/backslashes. Since R2 this is NO LONGER the
-/// injection boundary on the plugin path: the begin batch escapes the runner
-/// as a PostgreSQL literal, so a quote/backslash is inert data, but a malformed owner still
-/// fails closed.
-pub fn valid_runner(runner: &str) -> bool {
-    !runner.is_empty()
-        && runner.len() <= 128
-        && runner
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-}
-
-/// A `search_path` schema name. Stricter than a project: no hyphens. Since R2 the
-/// value uses PostgreSQL literal escaping in the begin batch, but the no-hyphen
-/// rule still matters where a schema
-/// name is quoted into DDL elsewhere (e.g. the migrate / copy paths), and a
-/// malformed schema still fails closed.
-pub fn valid_schema(schema: &str) -> bool {
-    !schema.is_empty()
-        && schema.len() <= 63
-        && schema
-            .chars()
-            .next()
-            .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
-        && schema
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
 pub(crate) fn validate_identity(identity: &SessionIdentity) -> anyhow::Result<()> {

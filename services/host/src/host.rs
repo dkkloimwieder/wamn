@@ -40,7 +40,7 @@ use wamn_engine::engine::{DEFAULT_CORE_INSTANCES, build_engine_with_host_memory}
 use wamn_engine::ingress::IngressRouting;
 use wamn_identity_client::nats::sign_host_user;
 use wamn_identity_protocol::nats::SignHostUser;
-use wamn_operation::{OperationDatabase, OperationHost};
+use wamn_plugin::{OperationDatabase, OperationHost};
 use wamn_postgres::WamnPostgres;
 
 #[derive(Debug, Args)]
@@ -269,7 +269,7 @@ fn plugin_bindings(args: &HostArgs, source: &str) -> anyhow::Result<plugin::Plug
                 .get(secret)
                 .context("plugin Secret is absent from host secrets catalog")?;
             anyhow::ensure!(
-                (entry.id == wamn_operation::WAMN_POSTGRES_ID
+                (entry.id == wamn_plugin::WAMN_POSTGRES_ID
                     || entry.id == plugin::wasmcloud_nats::PLUGIN_NATS_ID)
                     && source.dir == PathBuf::from(HOST_PLUGIN_SECRET_DIRECTORY).join(secret),
                 "unsupported plugin Secret projection"
@@ -539,7 +539,11 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             .with_credential_store(Box::new(credential_store::KubernetesCredentials::default()))
             .with_oauth_encryption(envelope),
     );
-    let postgres = Arc::new(OperationHost::new(pools, Some(Arc::clone(&authorization))));
+    let postgres = Arc::new(OperationHost::new(
+        Arc::clone(&pools),
+        pools,
+        Some(Arc::clone(&authorization)),
+    ));
     let integration = Arc::new(wamn_connection::integrations::IntegrationBound::new(
         Arc::clone(&authorization) as _,
     ));

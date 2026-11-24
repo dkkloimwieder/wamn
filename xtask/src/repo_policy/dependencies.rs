@@ -11,7 +11,7 @@ const WORKFLOW_GRAPH_REFUSED: &[&str] = &[
     "wamn-provision",
     "wamn-kubernetes",
     "wamn-engine",
-    "wamn-operation",
+    "wamn-plugin",
     "wamn-http",
     "wamn-http-client",
     "wamn-identity-client",

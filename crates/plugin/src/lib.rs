@@ -26,7 +26,6 @@ mod operation_transaction;
 mod query;
 mod resources;
 pub mod scope_registry;
-mod transactions;
 mod types;
 pub mod write_log;
 
@@ -34,7 +33,7 @@ pub use executor::OperationDatabase;
 pub use host::OperationHost;
 pub use operation::WorkflowNode;
 pub use operation_transaction::{OperationTransaction, PgCommitFailure};
-pub use resources::{PgStatementTransaction, PgTransaction};
+pub use resources::PgStatementTransaction;
 pub use write_log::WriteLogStore;
 
 #[cfg(not(feature = "wasm_component_model_implements"))]
@@ -309,7 +308,7 @@ impl HostPlugin for OperationHost {
 
     fn binding_schema(&self) -> wash_runtime::plugin::BindingSchema {
         wash_runtime::plugin::BindingSchema::with_host_owned_keys(
-            self.pools
+            self.store
                 .host_projects()
                 .map(wamn_registry::ProjectId::as_str),
         )
@@ -344,7 +343,7 @@ impl HostPlugin for OperationHost {
                 &application.project,
                 &application.environment,
             );
-            self.pools
+            self.store
                 .bind_host_project(&application.project, &key)
                 .await?;
             if let Some(store) = &self.authorization {

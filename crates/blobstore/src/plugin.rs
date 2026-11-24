@@ -24,7 +24,7 @@ use wamn_connection_type::{BlobstoreDefinition, BlobstoreProvider};
 use wamn_connection::connection::ConnectionInvocation;
 use wamn_connection::connection_facts::{ConnectionAnswer, ConnectionFacts};
 use wamn_connection::connection_memory::ConnectionStatus;
-use wamn_operation::OperationHost;
+use wamn_plugin::OperationHost;
 
 /// The WAMN blobstore host service.
 pub struct WamnBlobstore {
@@ -377,7 +377,7 @@ pub(super) fn blobstore_span(
     let span = plugin
         .postgres
         .scopes
-        .read::<wamn_operation::scope_registry::Authority, _>(component_id, |record| {
+        .read::<wamn_plugin::scope_registry::Authority, _>(component_id, |record| {
             make_span(Some(&record.identity))
         })
         .unwrap_or_else(|| make_span(None));

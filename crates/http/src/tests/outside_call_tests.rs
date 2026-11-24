@@ -24,7 +24,7 @@ fn facts() -> ConnectionFacts {
     })
     .expect("offline project pools build");
     let database: Arc<dyn ProjectDatabase> =
-        Arc::new(wamn_operation::OperationDatabase::new(Arc::new(pools)));
+        Arc::new(wamn_plugin::OperationDatabase::new(Arc::new(pools)));
     let org = "acme".parse().unwrap();
     ConnectionFacts::new(
         Arc::default(),

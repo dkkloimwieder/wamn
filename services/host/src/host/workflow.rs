@@ -25,7 +25,7 @@ use wamn_application::application_config::ApplicationConfig;
 use wamn_engine::operation::WamnOperation;
 use wamn_event::Causation;
 use wamn_identity_protocol::PrincipalId;
-use wamn_operation::OperationHost;
+use wamn_plugin::OperationHost;
 use wash_runtime::engine::ctx::{SharedCtx, extract_active_ctx};
 use wash_runtime::engine::dispatch::DispatchTarget;
 use wash_runtime::engine::workload::{ResolvedWorkload, WorkloadItem};

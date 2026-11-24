@@ -185,7 +185,7 @@ impl OpenOperation {
         let identity = scope_registry::session_identity(&self.postgres.scopes, self.scope())
             .expect("active invocation identity");
         WriteLogStore::new(
-            Arc::clone(&self.postgres),
+            &self.postgres,
             identity
                 .project
                 .unwrap_or_else(|| super::DEFAULT_PROJECT.to_owned()),

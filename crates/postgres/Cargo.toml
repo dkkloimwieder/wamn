@@ -17,9 +17,11 @@ wamn-package.workspace = true
 wamn-record-history.workspace = true
 wamn-run-state.workspace = true
 wamn-schema.workspace = true
+wamn-scalar.workspace = true
 async-trait.workspace = true
 chrono = { workspace = true, features = ["std"] }
 fallible-iterator = "0.2"
+futures-util.workspace = true
 tracing.workspace = true
 wamn-registry.workspace = true
 wamn-role.workspace = true
@@ -49,6 +51,5 @@ tempfile.workspace = true
 wamn-fixture-package.workspace = true
 wamn-platform-install.workspace = true
 wamn-provision.workspace = true
-wamn-scalar.workspace = true
 wamn-test-infrastructure.workspace = true
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt"] }

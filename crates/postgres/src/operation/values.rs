@@ -7,7 +7,7 @@ use sqlx::{
     Column as _, Decode, Encode, Row as _, Statement as _, Type, TypeInfo as _, ValueRef as _,
 };
 
-use super::{PgError, SqlValue};
+use wamn_application::database::{SqlError, SqlValue};
 
 pub fn columns_of(stmt: &PgStatement) -> Vec<String> {
     stmt.columns()
@@ -16,7 +16,7 @@ pub fn columns_of(stmt: &PgStatement) -> Vec<String> {
         .collect()
 }
 
-pub fn decode_row(row: &PgRow) -> Result<Vec<SqlValue>, PgError> {
+pub fn decode_row(row: &PgRow) -> Result<Vec<SqlValue>, SqlError> {
     (0..row.len())
         .map(|index| {
             let value = row
@@ -61,7 +61,7 @@ pub fn decode_row(row: &PgRow) -> Result<Vec<SqlValue>, PgError> {
                     SqlValue::Text(row.try_get(index).map_err(|e| map_pg_error(&e))?)
                 }
                 other => {
-                    return Err(PgError::QueryError((
+                    return Err(SqlError::QueryError((
                         "WAMN1".into(),
                         format!("unsupported column type {other}"),
                     )));
@@ -72,28 +72,28 @@ pub fn decode_row(row: &PgRow) -> Result<Vec<SqlValue>, PgError> {
         .collect()
 }
 
-pub(super) fn checkout_pg_error(_: wamn_postgres::CheckoutError) -> PgError {
-    PgError::ConnectionUnavailable
+pub(super) fn checkout_pg_error(_: crate::CheckoutError) -> SqlError {
+    SqlError::ConnectionUnavailable
 }
 
-pub fn map_pg_error(error: &sqlx::Error) -> PgError {
+pub fn map_pg_error(error: &sqlx::Error) -> SqlError {
     if let Some(database) = error.as_database_error() {
         let constraint = || database.constraint().unwrap_or_default().to_owned();
         return match database.code().as_deref().unwrap_or("XX000") {
-            "40001" | "40P01" => PgError::SerializationFailure,
-            "57014" => PgError::StatementTimeout,
-            "23505" => PgError::UniqueViolation(constraint()),
-            "23503" => PgError::ForeignKeyViolation(constraint()),
-            "23514" => PgError::CheckViolation(constraint()),
-            "23P01" => PgError::ExclusionViolation(constraint()),
-            "42501" => PgError::PermissionDenied,
-            code => PgError::QueryError((code.to_owned(), database.message().to_owned())),
+            "40001" | "40P01" => SqlError::SerializationFailure,
+            "57014" => SqlError::StatementTimeout,
+            "23505" => SqlError::UniqueViolation(constraint()),
+            "23503" => SqlError::ForeignKeyViolation(constraint()),
+            "23514" => SqlError::CheckViolation(constraint()),
+            "23P01" => SqlError::ExclusionViolation(constraint()),
+            "42501" => SqlError::PermissionDenied,
+            code => SqlError::QueryError((code.to_owned(), database.message().to_owned())),
         };
     }
     if connection_lost(error) {
-        return PgError::ConnectionUnavailable;
+        return SqlError::ConnectionUnavailable;
     }
-    PgError::QueryError(("XX000".into(), error.to_string()))
+    SqlError::QueryError(("XX000".into(), error.to_string()))
 }
 
 pub fn connection_lost(error: &sqlx::Error) -> bool {

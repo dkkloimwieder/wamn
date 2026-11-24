@@ -214,12 +214,12 @@ mod tests {
             wamn_postgres::WamnPostgres::from_host_config(std::collections::BTreeMap::new())
                 .expect("empty pools"),
         );
-        let database = Arc::new(wamn_operation::OperationDatabase::new(Arc::clone(&pools)));
+        let database = Arc::new(wamn_plugin::OperationDatabase::new(Arc::clone(&pools)));
         let authorization = Arc::new(wamn_authentication::authorization::Authorization::new(
             Arc::clone(&pools),
             database,
         ));
-        let postgres = Arc::new(wamn_operation::OperationHost::new(pools, None));
+        let postgres = Arc::new(wamn_plugin::OperationHost::new(Arc::clone(&pools), pools, None));
         let blobstore = Arc::new(wamn_blobstore::plugin::WamnBlobstore::new(Arc::clone(
             &postgres,
         )));

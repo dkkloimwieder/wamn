@@ -5,12 +5,16 @@ use std::fmt::Write as _;
 use tracing::Instrument as _;
 
 use wamn_event::Causation;
-use wamn_identity_protocol::AuthorityClass;
+use wamn_identity_protocol::{AuthorityClass, PrincipalId};
+use wamn_package::canonical_name::CanonicalName;
+use wamn_registry::ApplicationName;
 
-use crate::PgError;
-use crate::scope_registry::{valid_runner, valid_schema};
-use wamn_postgres::transaction_identity_sql;
-use super::types::map_pg_error;
+use wamn_application::database::SqlError;
+use wamn_application::session_identity::{SessionIdentity, validate_sql_identity};
+
+use crate::transaction_identity_sql;
+
+use super::values::map_pg_error;
 
 pub(super) fn causation_sql(run: &Causation) -> String {
     let json = serde_json::to_string(run).expect("Causation serializes to JSON");
@@ -57,7 +61,7 @@ pub(super) struct BoundIdentity {
 }
 
 impl BoundIdentity {
-    pub(super) async fn bind(&self, conn: &mut sqlx::PgConnection) -> Result<String, PgError> {
+    pub(super) async fn bind(&self, conn: &mut sqlx::PgConnection) -> Result<String, SqlError> {
         async {
             // Simple protocol permits BEGIN and setup in one round trip. Every
             // value is escaped with PostgreSQL's literal rules before batching.
@@ -78,61 +82,48 @@ impl BoundIdentity {
     }
 }
 
-/// Begin a transaction and bind its caller before any application SQL.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "every identity this transaction binds is an independently trusted input"
-)]
-pub(super) async fn begin_with_identity(
-    conn: &mut sqlx::PgConnection,
-    class: AuthorityClass,
-    read: bool,
-    schema: Option<&str>,
-    runner: Option<&str>,
-    role: Option<&str>,
-    user_id: Option<&wamn_identity_protocol::PrincipalId>,
-    operation: Option<&wamn_package::canonical_name::CanonicalName>,
-    application: Option<&wamn_registry::ApplicationName>,
-    run: Option<&Causation>,
-    statement_timeout_ms: u32,
-) -> Result<String, PgError> {
-    prepare_identity(
-        class,
-        read,
-        schema,
-        runner,
-        role,
-        user_id,
-        operation,
-        application,
-        run,
-        statement_timeout_ms,
-    )?
-    .bind(conn)
-    .await
+#[derive(Default)]
+pub(super) struct TransactionIdentity<'a> {
+    pub(super) schema: Option<&'a str>,
+    pub(super) runner: Option<&'a str>,
+    pub(super) role: Option<&'a str>,
+    pub(super) principal: Option<&'a PrincipalId>,
+    pub(super) operation: Option<&'a CanonicalName>,
+    pub(super) application: Option<&'a ApplicationName>,
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "every identity this transaction binds is an independently trusted input"
-)]
+impl<'a> From<&'a SessionIdentity> for TransactionIdentity<'a> {
+    fn from(identity: &'a SessionIdentity) -> Self {
+        Self {
+            schema: identity.schema.as_deref(),
+            runner: identity.runner.as_deref(),
+            role: identity.role.as_deref(),
+            principal: identity.user_id.as_ref(),
+            operation: identity.operation.as_ref(),
+            application: identity.application.as_ref(),
+        }
+    }
+}
+
 pub(super) fn prepare_identity(
     class: AuthorityClass,
     read: bool,
-    schema: Option<&str>,
-    runner: Option<&str>,
-    role: Option<&str>,
-    user_id: Option<&wamn_identity_protocol::PrincipalId>,
-    operation: Option<&wamn_package::canonical_name::CanonicalName>,
-    application: Option<&wamn_registry::ApplicationName>,
-    run: Option<&Causation>,
+    identity: &TransactionIdentity<'_>,
     statement_timeout_ms: u32,
-) -> Result<BoundIdentity, PgError> {
+) -> Result<BoundIdentity, SqlError> {
+    let TransactionIdentity {
+        schema,
+        runner,
+        role,
+        principal,
+        operation,
+        application,
+    } = *identity;
     // The project selected this connection credential. Refuse malformed values
     // before opening its transaction.
-    validate_session_identity(schema, runner, role, operation)?;
-    let principal = user_id
-        .ok_or_else(|| PgError::QueryError(("55000".to_owned(), "actor-required".to_owned())))?;
+    validate_sql_identity(schema, runner, role)?;
+    let principal = principal
+        .ok_or_else(|| SqlError::QueryError(("55000".to_owned(), "actor-required".to_owned())))?;
     // The isolation level is stated, not inherited from a session default:
     // the write log's retry reads the identity that its insert waited on, and
     // only a fresh READ COMMITTED snapshot sees it
@@ -146,8 +137,8 @@ pub(super) fn prepare_identity(
     let bind = transaction_identity_sql(
         principal,
         role.unwrap_or_default(),
-        application.map_or("", wamn_registry::ApplicationName::as_str),
-        operation.map(wamn_package::canonical_name::CanonicalName::as_str),
+        application.map_or("", ApplicationName::as_str),
+        operation.map(CanonicalName::as_str),
         runner,
     );
     let schema = schema.map(escape::escape_literal);
@@ -162,49 +153,5 @@ pub(super) fn prepare_identity(
         schema.as_deref().unwrap_or("NULL"),
     )
     .expect("writing transaction setup to String cannot fail");
-    if let Some(run) = run.filter(|_| !read) {
-        batch.push_str(&causation_sql(run));
-    }
     Ok(BoundIdentity { batch, class })
-}
-
-/// Reject a malformed session identity before it is bound (R16). Since R2 these
-/// validators are not the injection boundary: identity values use PostgreSQL
-/// literal escaping in the begin batch, so a `'`/`;`/`--` value is inert data, but a
-/// malformed identity still fails closed: they define what a *legal* id is (and
-/// the no-hyphen `valid_schema` rule still matters where a schema name is quoted
-/// into DDL elsewhere).
-pub(super) fn validate_session_identity(
-    schema: Option<&str>,
-    runner: Option<&str>,
-    role: Option<&str>,
-    _operation: Option<&wamn_package::canonical_name::CanonicalName>,
-) -> Result<(), PgError> {
-    if let Some(schema) = schema
-        && !valid_schema(schema)
-    {
-        return Err(PgError::QueryError((
-            "WAMN0".to_string(),
-            "invalid search_path schema".to_string(),
-        )));
-    }
-    if let Some(runner) = runner
-        && !valid_runner(runner)
-    {
-        return Err(PgError::QueryError((
-            "WAMN0".to_string(),
-            "invalid runner owner".to_string(),
-        )));
-    }
-    if let Some(role) = role
-        && !role
-            .parse::<wamn_role::RoleName>()
-            .is_ok_and(|parsed| parsed.as_str() == role)
-    {
-        return Err(PgError::QueryError((
-            "WAMN0".to_string(),
-            "invalid caller role".to_string(),
-        )));
-    }
-    Ok(())
 }

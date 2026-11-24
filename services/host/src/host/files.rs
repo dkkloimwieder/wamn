@@ -15,7 +15,7 @@ use wamn_blobstore::file_route::{FileRoutes, RegistryFileConnections};
 use wamn_blobstore::plugin::WamnBlobstore;
 use wamn_connection::connection_facts::ConnectionCache;
 use wamn_connection::invocation::ReleaseContext;
-use wamn_operation::OperationHost;
+use wamn_plugin::OperationHost;
 
 pub(super) struct Routes {
     pub(super) files: FileRoutes,

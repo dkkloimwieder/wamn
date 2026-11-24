@@ -33,7 +33,7 @@ uuid = { workspace = true, features = ["serde", "v4"] }
 wamn-authority = { workspace = true }
 wamn-connection = { workspace = true }
 wamn-engine = { workspace = true }
-wamn-operation = { workspace = true }
+wamn-plugin = { workspace = true }
 wamn-registry = { workspace = true }
 wash-runtime = { workspace = true }
 

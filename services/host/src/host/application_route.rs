@@ -29,8 +29,8 @@ use wamn_identity::application::{
     AdministrationError, AdministrationRefusal, GrantAuthority, GrantChange, application_users,
     create_role, delete_role, mutate_grant, permission_is_grantable, permission_rows, role_names,
 };
-use wamn_operation::OperationHost;
-use wamn_operation::number_counter::{CounterSet, CounterSetRefusal};
+use wamn_plugin::OperationHost;
+use wamn_plugin::number_counter::{CounterSet, CounterSetRefusal};
 
 use super::route_refusal::{Refusal, parse};
 
@@ -314,7 +314,7 @@ impl ApplicationRoutes<'_> {
             key: request.key,
             value: request.value,
         };
-        let value = wamn_operation::number_counter::set_number_counter(
+        let value = wamn_plugin::number_counter::set_number_counter(
             self.postgres,
             self.project,
             self.project_env_key,

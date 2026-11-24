@@ -1,4 +1,3 @@
-use crate::transactions::validate_session_identity;
 use crate::{OperationDatabase, OperationHost, PgError};
 use std::sync::Arc;
 use wamn_authentication::authorization::{Authorization, AuthorizationStore as _};
@@ -6,24 +5,6 @@ use wamn_identity_protocol::AuthorityClass;
 use wamn_postgres::{
     CredentialProvider, DEFAULT_PROJECT, ResolvedCredential, StaticCredentialProvider, WamnPostgres,
 };
-
-#[test]
-fn validate_identity_rejects_malformed_identities() {
-    assert!(
-        validate_session_identity(
-            Some("public"),
-            Some("owner-1"),
-            Some("inspector"),
-            Some(&"platform-fixture:widget/update@1.0.0".parse().unwrap())
-        )
-        .is_ok()
-    );
-    assert!(validate_session_identity(None, None, None, None).is_ok());
-    assert!(validate_session_identity(Some("has-hyphen"), None, None, None).is_err());
-    assert!(validate_session_identity(None, Some("bad;runner"), None, None).is_err());
-    // `''` is the base denial policy, never an identity.
-    assert!(validate_session_identity(None, None, Some(""), None).is_err());
-}
 
 /// A provider that RECORDS which authority class each resolution was asked
 /// for, and names no credential for any of them.
@@ -99,7 +80,8 @@ async fn workflow_caller_retains_typed_connection_unavailable() -> anyhow::Resul
         std::collections::HashMap::new(),
         None,
     )));
-    let postgres = OperationHost::new(Arc::new(pools), None);
+    let pools = Arc::new(pools);
+    let postgres = OperationHost::new(Arc::clone(&pools), pools, None);
     let error = postgres
         .workflow_node_caller(
             &"default".parse().unwrap(),

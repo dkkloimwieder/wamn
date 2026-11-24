@@ -14,7 +14,7 @@ use wamn_application::native_routes::{
     DeliveryError, DeliveryOutcome, DeliveryReport, DeliveryRequest, Source,
     resolve_authorized_host_route,
 };
-use wamn_operation::OperationHost;
+use wamn_plugin::OperationHost;
 
 use super::application_route::ApplicationRoutes;
 use super::route_refusal::Refusal;

@@ -18,17 +18,13 @@
 //! counter, whose values are mappings that never change.
 
 use serde::Serialize;
-use sqlx::{Row as _, Statement as _};
 use wamn_number_pattern::Policy;
 
-use wamn_application::session_identity::SessionIdentity;
 use crate::OperationHost;
-use crate::write_log::Claim;
 use crate::invocation::{AuthorizedInvocation, InvocationRequest};
+use crate::write_log::Claim;
 use wamn_application::ingress::AuthenticatedCaller;
-const SEQUENCE_SQL: &str =
-    "SELECT id::text, pattern FROM platform.number_sequence WHERE application = $1 AND name = $2";
-
+use wamn_application::session_identity::SessionIdentity;
 /// One set of one counter of a number sequence.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct CounterSet {
@@ -131,9 +127,6 @@ fn failed(
         request_id: request_id.to_owned(),
     }
 }
-
-/// The write of the route.
-const SET_SQL: &str = "SELECT platform.set_counter($1::text::uuid, $2, $3, $4)";
 
 /// Set one counter of a sequence of `set.application` for the caller
 /// `caller`, in one operation transaction of the guest authority of
@@ -268,22 +261,9 @@ async fn set_in_transaction(
             .as_i64()
             .ok_or_else(|| failed(set, request_id, context, None));
     }
-    let outcome = transaction
-        .with_host_connection(|mut connection| async move {
-            let result = set_counter(connection.connection(), set, request_id).await;
-            (connection, result)
-        })
-        .await;
-    match outcome {
-        Ok(Ok(())) => {}
-        Ok(Err(error)) => {
-            let _ = transaction.rollback().await;
-            return Err(error);
-        }
-        Err(error) => {
-            let _ = transaction.rollback().await;
-            return Err(with_source("set the counter", error.into()));
-        }
+    if let Err(error) = set_counter(&transaction, set, request_id).await {
+        let _ = transaction.rollback().await;
+        return Err(error);
     }
     transaction
         .commit()
@@ -294,61 +274,53 @@ async fn set_in_transaction(
 
 /// Set the counter under its row lock. The caller rolls back a refusal.
 async fn set_counter(
-    connection: &mut sqlx::PgConnection,
+    transaction: &crate::OperationTransaction,
     set: &CounterSet,
     request_id: &str,
-) -> Result<Result<(), CounterSetError>, sqlx::Error> {
+) -> Result<(), CounterSetError> {
     let refused = |refusal| refused(set, request_id, refusal);
-    let statement = sqlx::Executor::prepare(
-        &mut *connection,
-        sqlx::SqlSafeStr::into_sql_str(SEQUENCE_SQL),
-    )
-    .await?;
-    let row = sqlx::query(statement.sql().clone())
-        .bind(set.application.as_str())
-        .bind(&set.sequence)
-        .fetch_optional(&mut *connection)
-        .await?;
-    let Some(row) = row else {
-        return Ok(Err(refused(CounterSetRefusal::SequenceNotFound)));
+    let failed = |error| {
+        failed(
+            set,
+            request_id,
+            "set the counter",
+            Some(crate::types::into_guest_error(error).into()),
+        )
     };
-    let sequence: String = row.get(0);
-    let pattern: String = row.get(1);
+    let Some((sequence, pattern)) = transaction
+        .session
+        .counter_sequence(&set.application, &set.sequence)
+        .await
+        .map_err(failed)?
+    else {
+        return Err(refused(CounterSetRefusal::SequenceNotFound));
+    };
     // A stored pattern that does not parse has no counter to set.
     let pattern = match wamn_number_pattern::parse(&pattern) {
         Ok(pattern) => pattern,
         Err(source) => {
             let mut error = refused(CounterSetRefusal::CounterNotFound);
             error.source = Some(source.into());
-            return Ok(Err(error));
+            return Err(error);
         }
     };
     let Some(target) = pattern
         .counters()
         .find(|counter| counter.name() == set.counter)
     else {
-        return Ok(Err(refused(CounterSetRefusal::CounterNotFound)));
+        return Err(refused(CounterSetRefusal::CounterNotFound));
     };
     match target.policy() {
-        Policy::Per(_) => return Ok(Err(refused(CounterSetRefusal::AssignedPerKey))),
+        Policy::Per(_) => return Err(refused(CounterSetRefusal::AssignedPerKey)),
         Policy::Always if !set.key.is_empty() => {
-            return Ok(Err(refused(CounterSetRefusal::InvalidInput {
-                field: "key",
-            })));
+            return Err(refused(CounterSetRefusal::InvalidInput { field: "key" }));
         }
         Policy::Always | Policy::Reset(_) => {}
     }
 
-    let write =
-        sqlx::Executor::prepare(&mut *connection, sqlx::SqlSafeStr::into_sql_str(SET_SQL)).await?;
-    sqlx::query(write.sql().clone())
-        .bind(&sequence)
-        .bind(&set.counter)
-        .bind(&set.key)
-        .bind(set.value)
-        .execute(&mut *connection)
+    transaction
+        .session
+        .set_counter(&sequence, &set.counter, &set.key, set.value)
         .await
-        .map(|result| result.rows_affected())?;
-
-    Ok(Ok(()))
+        .map_err(failed)
 }

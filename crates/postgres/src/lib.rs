@@ -115,6 +115,7 @@ pub fn require_identity(
     Ok(())
 }
 
+pub mod operation;
 pub mod run_store;
 pub mod schema;
 

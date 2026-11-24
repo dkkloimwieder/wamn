@@ -52,7 +52,7 @@ Each library has one concern. Directory names follow crate names without the `wa
 | `crates/run-state` | `wamn-run-state`: run storage contracts for admission, leases and settlement |
 | `crates/authority` | `wamn-authority`: shared invocation identity and effect evidence |
 | `crates/postgres` | `wamn-postgres`: PostgreSQL connection configuration, transport and run storage |
-| `crates/operation` | `wamn-operation`: host operation transactions and database authority |
+| `crates/plugin` | `wamn-plugin`: host operation transactions and database authority |
 | `crates/http` | `wamn-http`: authorized outbound HTTP and OAuth |
 | `crates/envelope` | `wamn-envelope` owns envelope encryption and the wrapping key interface |
 | `crates/gcp-metadata` | `wamn-gcp-metadata` reads access tokens and account email from the Google Cloud metadata server |

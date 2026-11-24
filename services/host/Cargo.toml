@@ -36,7 +36,7 @@ wamn-registry = { workspace = true }
 wamn-identity.workspace = true
 wamn-identity-client.workspace = true
 wamn-identity-protocol = { workspace = true }
-wamn-operation = { workspace = true, features = ["wasm_component_model_implements"] }
+wamn-plugin = { workspace = true, features = ["wasm_component_model_implements"] }
 wamn-postgres.workspace = true
 wamn-authentication = { workspace = true }
 wamn-digest.workspace = true

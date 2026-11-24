@@ -48,7 +48,7 @@ opentelemetry_sdk = { workspace = true, features = ["trace", "testing"] }
 rcgen = { workspace = true }
 tokio = { workspace = true, features = ["test-util"] }
 tracing-subscriber = { workspace = true }
-wamn-operation = { workspace = true }
+wamn-plugin = { workspace = true }
 wamn-postgres.workspace = true
 wat = "=1.254.2"
 

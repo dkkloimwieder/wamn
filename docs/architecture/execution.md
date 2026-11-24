@@ -443,7 +443,7 @@ Text fields keep the WIT `string` type.
 The converter derives deletion markers from absent change data. It omits that data from a deleted row.
 A refusal without details returns an empty object. Absent optional refusal details stay omitted.
 Before execution, the host binds each invocation in one registry with a shared lifetime and trace context.
-`wamn-operation` owns identity, causation, the transaction and the WAL position.
+`wamn-plugin` owns identity, causation, the transaction and the WAL position.
 `wamn-connection` owns the release context and the attested connection invocation.
 SQL binding makes sure that the release and identity match before execution.
 HTTP, storage and integration dispatch read the connections record from the same registry.

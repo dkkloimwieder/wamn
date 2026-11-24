@@ -3,6 +3,7 @@
 use std::time::Duration;
 
 pub mod application_config;
+pub mod database;
 pub mod ingress;
 pub mod invocation_authority;
 pub mod native_routes;
