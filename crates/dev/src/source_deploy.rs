@@ -2,13 +2,6 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
-use wamn_build::{
-    BuildDatabase, BuildMode, BuildRequest, DescribeMode, PreparedSource, build_prepared,
-};
-use wamn_codegen::{
-    build::{default_output_root, package_output},
-    fingerprint,
-};
 use wamn_component_policy::PackageManifest;
 use wamn_environment::environment::document::EnvironmentDocument;
 use wamn_package::PackageName;
@@ -19,59 +12,70 @@ use wamn_release::package_artifact::PackagePublisher;
 
 use anyhow::{Context as _, ensure};
 
+/// The version policy used to build an authored package.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+pub enum BuildMode {
+    Published,
+    Development,
+}
+
+/// Prepare authored packages and read or build their verified output.
+pub trait SourceBuild: Sync {
+    type Prepared: PackageSource + Send + Sync;
+
+    fn prepare(&self, root: &Path) -> impl Future<Output = anyhow::Result<Self::Prepared>> + Send;
+
+    fn build(
+        &self,
+        source: &Self::Prepared,
+        mode: BuildMode,
+    ) -> impl Future<Output = anyhow::Result<PathBuf>> + Send;
+
+    fn inputs(&self, source: &Self::Prepared) -> anyhow::Result<BTreeSet<PathBuf>>;
+    fn source_dependency(&self, root: &Path, id: &PackageName) -> anyhow::Result<PathBuf>;
+    fn built_root(&self, root: &Path) -> PathBuf;
+    fn built_dependency(&self, parent: &Path, id: &PackageName) -> PathBuf;
+    fn read_built(&self, root: &Path) -> anyhow::Result<PackageManifest>;
+}
+
 /// Build and publish source using its committed database evidence.
 pub async fn publish_from_env(
-    database: &dyn BuildDatabase,
+    build: &impl SourceBuild,
     publisher: &dyn PackagePublisher,
     document: &EnvironmentDocument,
     root: &Path,
-    describe: DescribeMode<'_>,
 ) -> anyhow::Result<(wamn_registry::ApplicationName, wamn_digest::Digest)> {
-    let (application, sources) = sources(document, root).await?;
-    build_and_publish(
-        database,
-        publisher,
-        application,
-        sources,
-        BuildMode::Published,
-        describe,
-    )
-    .await
+    let (application, sources) = sources(build, document, root).await?;
+    build_and_publish(build, publisher, application, sources, BuildMode::Published).await
 }
 
 /// Build and publish the source documents already compiled for this dev pass.
-pub async fn publish_development(
-    database: &dyn BuildDatabase,
+pub(crate) async fn publish_development<B: SourceBuild>(
+    build: &B,
     publisher: &dyn PackagePublisher,
     application: wamn_registry::ApplicationName,
-    sources: Vec<PreparedSource>,
-    describe: DescribeMode<'_>,
+    sources: Vec<B::Prepared>,
 ) -> anyhow::Result<(wamn_registry::ApplicationName, wamn_digest::Digest)> {
     build_and_publish(
-        database,
+        build,
         publisher,
         application,
         sources,
         BuildMode::Development,
-        describe,
     )
     .await
 }
 
-async fn build_and_publish(
-    database: &dyn BuildDatabase,
+async fn build_and_publish<B: SourceBuild>(
+    build: &B,
     publisher: &dyn PackagePublisher,
     application: wamn_registry::ApplicationName,
-    sources: Vec<PreparedSource>,
+    sources: Vec<B::Prepared>,
     mode: BuildMode,
-    describe: DescribeMode<'_>,
 ) -> anyhow::Result<(wamn_registry::ApplicationName, wamn_digest::Digest)> {
     let mut roots = Vec::with_capacity(sources.len());
     for source in sources {
-        let root = default_output_root(source.root());
-        let request = BuildRequest::new(source.root(), &root, describe);
-        let built = build_prepared(database, &request, &source, mode).await?;
-        roots.push(package_output(&root, &built.package.id));
+        roots.push(build.build(&source, mode).await?);
     }
     let digest = publisher.publish(roots).await?;
     Ok((application, digest))
@@ -79,26 +83,22 @@ async fn build_and_publish(
 
 /// Publish the selected package's existing build output without rebuilding.
 pub async fn publish_built_from_env(
+    build: &impl SourceBuild,
     publisher: &dyn PackagePublisher,
     root: &Path,
 ) -> anyhow::Result<wamn_digest::Digest> {
-    let root = wamn_codegen::output_root(&root.canonicalize()?);
+    let root = build.built_root(&root.canonicalize()?);
     let parent = root
         .parent()
         .context("build directory has no parent")?
         .to_owned();
-    let roots = ordered_sources(
-        root,
-        async |root| {
-            let marker = fingerprint::read(&root)?;
-            let (bytes, _) = fingerprint::read_artifact(&root, &marker, Path::new("wamn.json"))?;
-            Ok(BuiltSource {
-                root,
-                manifest: PackageManifest::from_slice(&bytes)?,
-            })
-        },
-        |id| Ok(package_output(&parent, id)),
-    )
+    let read = |root: PathBuf| async move {
+        let manifest = build.read_built(&root)?;
+        Ok(BuiltSource { root, manifest })
+    };
+    let roots = ordered_sources(read(root).await?, read, |id| {
+        Ok(build.built_dependency(&parent, id))
+    })
     .await?
     .into_iter()
     .map(|source| source.root)
@@ -107,19 +107,19 @@ pub async fn publish_built_from_env(
 }
 
 /// Resolve and compile the source closure in dependency order.
-pub async fn sources(
+pub(crate) async fn sources<B: SourceBuild>(
+    build: &B,
     document: &EnvironmentDocument,
     root: &Path,
-) -> anyhow::Result<(wamn_registry::ApplicationName, Vec<PreparedSource>)> {
+) -> anyhow::Result<(wamn_registry::ApplicationName, Vec<B::Prepared>)> {
     let root = root
         .canonicalize()
         .context("resolve selected package root")?;
-    let output = default_output_root(&root);
     let application = selected_application(document)?.clone();
     let sources = ordered_sources(
-        root,
-        async |root| wamn_build::prepare_source(&root).await,
-        |id| wamn_codegen::source_root(&package_output(&output, id)),
+        build.prepare(&root).await?,
+        |root| async move { build.prepare(&root).await },
+        |id| build.source_dependency(&root, id),
     )
     .await?;
     Ok((application, sources))
@@ -139,19 +139,11 @@ fn selected_application(
         .expect("one application"))
 }
 
-trait PackageSource {
+/// The coordinate and authored base dependencies used to order a source closure.
+pub trait PackageSource {
+    fn root(&self) -> &Path;
     fn package(&self) -> &PackageIdentity;
     fn bases(&self) -> &BTreeMap<SourceName, BaseDependencyRequirement>;
-}
-
-impl PackageSource for PreparedSource {
-    fn package(&self) -> &PackageIdentity {
-        self.package()
-    }
-
-    fn bases(&self) -> &BTreeMap<SourceName, BaseDependencyRequirement> {
-        self.bases()
-    }
 }
 
 struct BuiltSource {
@@ -160,6 +152,10 @@ struct BuiltSource {
 }
 
 impl PackageSource for BuiltSource {
+    fn root(&self) -> &Path {
+        &self.root
+    }
+
     fn package(&self) -> &PackageIdentity {
         &self.manifest.package
     }
@@ -169,12 +165,11 @@ impl PackageSource for BuiltSource {
     }
 }
 
-async fn ordered_sources<T: PackageSource>(
-    root: PathBuf,
-    read: impl AsyncFn(PathBuf) -> anyhow::Result<T>,
+async fn ordered_sources<T: PackageSource, F: Future<Output = anyhow::Result<T>>>(
+    source: T,
+    read: impl Fn(PathBuf) -> F,
     base_root: impl Fn(&PackageName) -> anyhow::Result<PathBuf>,
 ) -> anyhow::Result<Vec<T>> {
-    let source = read(root).await?;
     let mut sources = BTreeMap::from([(source.package().id.clone(), source)]);
     loop {
         let missing = sources

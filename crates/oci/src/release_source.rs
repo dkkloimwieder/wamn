@@ -1,11 +1,18 @@
 //! Read built package documents for release assembly.
 use std::collections::BTreeMap;
-#[cfg(test)]
+use std::fmt;
+use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
 #[cfg(test)]
 use wamn_edge_document::ServingRoute;
-use wamn_package::ServingAttachment;
+use wamn_package::{ServingAttachment, canonical_name::CanonicalName};
+use wamn_registry::ProjectEnvKey;
+use wamn_release::component_admission::{ComponentAdmission, ComponentAdmissionEngine};
+use wamn_release::package_source::LocalReleaseSource;
+
+use crate::component_declaration::{authored_base_digests, render_package_declaration};
+use crate::release_component::{AdmitComponentRequest, admit_component};
 use wamn_release::publish_release::{
     AssembledRelease, PublishManifestError, PublishManifestErrorType, PublishReleaseRequest,
     RouteContracts, merge_package_attachment_documents, route_contracts,
@@ -104,6 +111,92 @@ pub fn assemble_release(
     wamn_release::publish_release::assemble_release(
         args, &authored, &manifests, &contracts, admissions, palette,
     )
+}
+
+/// Read build artifacts for release assembly without publishing them.
+pub struct LocalReleaseFiles<'a> {
+    pub engine: &'a dyn ComponentAdmissionEngine,
+}
+
+impl fmt::Debug for LocalReleaseFiles<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("LocalReleaseFiles")
+            .finish_non_exhaustive()
+    }
+}
+
+impl LocalReleaseSource for LocalReleaseFiles<'_> {
+    fn admit(
+        &self,
+        package: &Path,
+        component: &CanonicalName,
+        bytes: &Path,
+        target: &ProjectEnvKey,
+        platform_packages: &[&str],
+    ) -> anyhow::Result<ComponentAdmission> {
+        let document = render_package_declaration(package, component, target)?;
+        let declaration = TemporaryFile::write(&serde_json::to_vec(&document)?)?;
+        admit_component(
+            self.engine,
+            AdmitComponentRequest {
+                package: package.to_owned(),
+                component_bytes: bytes.to_owned(),
+                declaration: declaration.path().to_owned(),
+                admitted_platform_packages: platform_packages
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect(),
+                base_digests: authored_base_digests(package)?.into_values().collect(),
+            },
+        )
+    }
+
+    fn assemble(
+        &self,
+        request: &PublishReleaseRequest,
+        package: &Path,
+        admission: &ComponentAdmission,
+    ) -> anyhow::Result<AssembledRelease> {
+        assemble_release(
+            request,
+            &[package.to_owned()],
+            std::slice::from_ref(admission),
+            &[],
+        )
+    }
+}
+
+struct TemporaryFile(std::path::PathBuf);
+
+impl TemporaryFile {
+    fn write(bytes: &[u8]) -> anyhow::Result<Self> {
+        use std::io::Write as _;
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+        let path = std::env::temp_dir().join(format!(
+            "wamn-edge-{}-{}.json",
+            std::process::id(),
+            SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ));
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)?;
+        let temporary = Self(path);
+        file.write_all(bytes)?;
+        Ok(temporary)
+    }
+
+    fn path(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for TemporaryFile {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.0);
+    }
 }
 
 #[cfg(test)]

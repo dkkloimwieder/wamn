@@ -17,10 +17,7 @@ use wamn_identity_protocol::ADMIN_ROLE;
 use wamn_package::PackageCoordinate;
 use wamn_registry::project_env_key;
 
-use wamn_oci::component_declaration::{authored_base_digests, render_package_declaration};
-use wamn_oci::release_component::{AdmitComponentRequest, admit_component};
-use wamn_oci::release_source::assemble_release;
-use wamn_release::component_admission::ComponentAdmissionEngine;
+use wamn_release::package_source::LocalReleaseSource;
 use wamn_release::publish_release::PublishReleaseRequest;
 
 /// The environment coordinate from the edge configuration's `[target]`.
@@ -44,7 +41,7 @@ impl EdgeTarget<'_> {
 ///
 /// It admits the bytes and assembles the release without a database or session.
 pub fn write_package(
-    engine: &dyn ComponentAdmissionEngine,
+    release: &dyn LocalReleaseSource,
     package: &Path,
     component: &wamn_package::canonical_name::CanonicalName,
     bytes: &Path,
@@ -53,17 +50,12 @@ pub fn write_package(
     out: &Path,
 ) -> anyhow::Result<wamn_digest::Digest> {
     let project_env_key = target.project_env_key();
-    let document = render_package_declaration(package, component, &project_env_key)?;
-    let declaration = TemporaryFile::write(&serde_json::to_vec(&document)?)?;
-    let admission = admit_component(
-        engine,
-        AdmitComponentRequest {
-            package: package.to_owned(),
-            component_bytes: bytes.to_owned(),
-            declaration: declaration.path().to_owned(),
-            admitted_platform_packages: vec!["wamn:node".to_owned(), "wamn:postgres".to_owned()],
-            base_digests: authored_base_digests(package)?.into_values().collect(),
-        },
+    let admission = release.admit(
+        package,
+        component,
+        bytes,
+        &project_env_key,
+        &["wamn:node", "wamn:postgres"],
     )?;
     let request = PublishReleaseRequest {
         org: target.org.to_owned(),
@@ -74,12 +66,7 @@ pub fn write_package(
             admission.package_version().clone(),
         )?],
     };
-    let assembled = assemble_release(
-        &request,
-        &[package.to_owned()],
-        std::slice::from_ref(&admission),
-        &[],
-    )?;
+    let assembled = release.assemble(&request, package, &admission)?;
     write_bundle(
         &assembled.published.canonical_bytes,
         &assembled.components,
@@ -161,36 +148,4 @@ fn write_bundle(
     .context("encode the bundle")?;
     fs::write(out.join(BUNDLE_FILE_NAME), &bundle)?;
     Ok(bytes_sha256(&bundle))
-}
-
-struct TemporaryFile(std::path::PathBuf);
-
-impl TemporaryFile {
-    fn write(bytes: &[u8]) -> anyhow::Result<Self> {
-        use std::io::Write as _;
-        use std::sync::atomic::{AtomicU64, Ordering};
-        static SEQUENCE: AtomicU64 = AtomicU64::new(0);
-        let path = std::env::temp_dir().join(format!(
-            "wamn-edge-{}-{}.json",
-            std::process::id(),
-            SEQUENCE.fetch_add(1, Ordering::Relaxed)
-        ));
-        let mut file = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&path)?;
-        let temporary = Self(path);
-        file.write_all(bytes)?;
-        Ok(temporary)
-    }
-
-    fn path(&self) -> &Path {
-        &self.0
-    }
-}
-
-impl Drop for TemporaryFile {
-    fn drop(&mut self) {
-        let _ = fs::remove_file(&self.0);
-    }
 }

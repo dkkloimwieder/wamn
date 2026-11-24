@@ -2,10 +2,15 @@
 mod components;
 pub mod composer;
 pub mod eject;
+#[cfg(target_os = "linux")]
+mod git_source;
 mod guest_workspace;
 mod inputs;
 pub mod kcl;
 pub mod palette;
+pub mod source_build;
+#[cfg(target_os = "linux")]
+pub mod watch;
 use anyhow::{Context as _, Result};
 pub use components::{GuestTarget, build_guest, guest_rustflags};
 pub use inputs::paths as build_inputs;
@@ -39,12 +44,7 @@ pub async fn build_component(repository: &Path, manifest: &Path) -> Result<std::
     .await
 }
 
-/// The kind of package build and its versioning policy.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
-pub enum BuildMode {
-    Published,
-    Development,
-}
+pub use wamn_dev::source_deploy::BuildMode;
 
 /// Package identity and exact compiled manifest digest.
 #[derive(Debug)]

@@ -1,11 +1,16 @@
 //! Watch package inputs and repeat the product deployment operation.
 
-pub mod edge_bundle;
-mod git_source;
 #[cfg(target_os = "linux")]
-pub mod watch;
+mod development;
+pub mod edge_bundle;
+#[cfg(target_os = "linux")]
+pub use development::Development;
 
 use std::error::Error;
+use std::path::{Path, PathBuf};
+
+use wamn_digest::Digest;
+use wamn_registry::ApplicationName;
 
 /// A filesystem event's effect on development output.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -14,10 +19,33 @@ pub enum DevInvalidation {
     Rerun,
 }
 
+/// Paths the next development pass needs to observe.
+#[derive(Debug)]
+pub struct WatchInputs {
+    pub roots: Vec<PathBuf>,
+    pub shared: Vec<PathBuf>,
+    pub files: Vec<PathBuf>,
+}
+
+/// Deploy a published digest through the application deployment entry point.
+pub trait Deploy: Sync {
+    fn deploy(
+        &self,
+        configuration: &Path,
+        application: ApplicationName,
+        release: Digest,
+    ) -> impl Future<Output = anyhow::Result<()>> + Send;
+}
+
 /// Receives filesystem changes without executing deployment work.
 pub trait DevInvalidationSource {
     /// Failure to receive a source change.
     type Error: Error + Send + Sync + 'static;
+    /// Observe the build inputs selected by the current source closure.
+    fn replace_inputs(
+        &mut self,
+        inputs: WatchInputs,
+    ) -> impl Future<Output = Result<(), Self::Error>> + Send;
     /// Wait for a source event or the end of the source.
     fn next(&mut self)
     -> impl Future<Output = Result<Option<DevInvalidation>, Self::Error>> + Send;

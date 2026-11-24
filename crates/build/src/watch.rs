@@ -2,7 +2,7 @@
 //!
 //! The adapter decides whether a change touches package-owned inputs or explicit
 //! component source roots. It deliberately does not coalesce events or execute
-//! deployment work; [`super::run`] owns each development pass.
+//! deployment work; [`wamn_dev::dev::run`] owns each development pass.
 
 pub(super) mod plan;
 
@@ -29,7 +29,7 @@ pub use super::git_source::{
     GitSourceError, GitSourceErrorType, GitSourceSnapshot, GitSourceState,
 };
 
-use super::{DevInvalidation, DevInvalidationSource};
+use wamn_dev::dev::{DevInvalidation, DevInvalidationSource, WatchInputs};
 
 const INOTIFY_BUFFER_BYTES: usize = 64 * 1024;
 
@@ -587,6 +587,11 @@ impl FilesystemInvalidationSource {
 impl DevInvalidationSource for FilesystemInvalidationSource {
     type Error = FilesystemInvalidationError;
 
+    async fn replace_inputs(&mut self, inputs: WatchInputs) -> Result<(), Self::Error> {
+        self.replace_roots(inputs.roots, inputs.shared).await?;
+        self.replace_configuration_files(inputs.files)
+    }
+
     async fn next(&mut self) -> Result<Option<DevInvalidation>, Self::Error> {
         if let Some(invalidation) = self.pending.pop_front() {
             return Ok(Some(invalidation));
@@ -786,7 +791,7 @@ mod tests {
         let mut passes = 0;
         tokio::time::timeout(
             Duration::from_secs(5),
-            super::super::run(Some(source), receiver, async |_| {
+            wamn_dev::dev::run(Some(source), receiver, async |_| {
                 passes += 1;
                 let pass = passes;
                 let root = &root;

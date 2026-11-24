@@ -1,13 +1,14 @@
 //! Command-line inputs and signals for watched product deployment.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use wamn_build::source_build::SourceBuilder;
+use wamn_build::watch::{FilesystemInvalidationSource, GitSource};
 use wamn_postgres::build_database::PostgresBuildDatabase;
 
 use anyhow::Context as _;
 use clap::Args;
 use tokio::signal::unix::{SignalKind, signal};
-use wamn_dev::dev::watch::{FilesystemInvalidationSource, GitSource};
-use wamn_environment::environment::document::{EnvironmentDocument, EnvironmentFile};
+use wamn_dev::dev::{Deploy, Development};
 
 use crate::build_verbs::RefreshDescribeArgs;
 
@@ -31,18 +32,17 @@ pub struct DevCommandArgs {
 /// A deployed release stays available after this command exits.
 pub async fn run(args: DevCommandArgs) -> anyhow::Result<()> {
     crate::operation_verbs::ControlHost::from_env()?;
-    let document = source_project(&args.config)?;
-    let mut first = Some(wamn_dev::source_deploy::sources(&document, &args.overlay_root).await?);
+    let build = SourceBuilder {
+        database: &PostgresBuildDatabase,
+        describe: args.describe.mode(false),
+    };
+    let development = Development::prepare(&build, &args.config, &args.overlay_root).await?;
     let source = if args.watch {
         let git = GitSource::discover(&args.overlay_root).await?;
-        let (_, sources) = first.as_ref().context("initial source pass")?;
-        let roots = sources
-            .iter()
-            .map(|source| source.root().to_owned())
-            .collect::<Vec<_>>();
-        let (shared, files) = watch_inputs(sources, &args.config)?;
-        let mut source = FilesystemInvalidationSource::new(roots, shared, git).await?;
-        source.replace_configuration_files(files)?;
+        let inputs = development.watch_inputs()?;
+        let mut source =
+            FilesystemInvalidationSource::new(inputs.roots, inputs.shared, git).await?;
+        source.replace_configuration_files(inputs.files)?;
         Some(source)
     } else {
         None
@@ -59,55 +59,38 @@ pub async fn run(args: DevCommandArgs) -> anyhow::Result<()> {
         }
         shutdown.send_replace(true);
     });
-    let result = wamn_dev::dev::run(source, receiver, async |source| {
-        let result = async {
-            let initial = first.is_some();
-            let (application, sources) = if let Some(pass) = first.take() {
-                pass
-            } else {
-                let document = source_project(&args.config)?;
-                wamn_dev::source_deploy::sources(&document, &args.overlay_root).await?
-            };
-            if let Some(source) = source
-                && !initial
-            {
-                let roots = sources
-                    .iter()
-                    .map(|source| source.root().to_owned())
-                    .collect::<Vec<_>>();
-                let (shared, files) = watch_inputs(&sources, &args.config)?;
-                source.replace_roots(roots, shared).await?;
-                source.replace_configuration_files(files)?;
-            }
-            let (application, digest) = wamn_dev::source_deploy::publish_development(
-                &PostgresBuildDatabase,
-                &crate::package_verbs::package_publisher(),
-                application,
-                sources,
-                args.describe.mode(false)?,
-            )
-            .await?;
-            crate::application_verbs::deploy(crate::application_verbs::DeployArgs {
-                package: None,
-                release: Some(digest),
-                application,
-                env: args.config.clone(),
-                describe: RefreshDescribeArgs::default(),
-            })
-            .await
-        }
-        .await;
-        if args.watch
-            && let Err(error) = &result
-        {
-            eprintln!("{error:#}");
-        }
-        result
-    })
-    .await
-    .context("run development deployment");
+    let result = development
+        .run(
+            source,
+            receiver,
+            &crate::package_verbs::package_publisher(),
+            &ControlDeployment,
+            |error| eprintln!("{error:#}"),
+        )
+        .await
+        .context("run development deployment");
     signals.abort();
     result
+}
+
+struct ControlDeployment;
+
+impl Deploy for ControlDeployment {
+    async fn deploy(
+        &self,
+        configuration: &Path,
+        application: wamn_registry::ApplicationName,
+        release: wamn_digest::Digest,
+    ) -> anyhow::Result<()> {
+        crate::application_verbs::deploy(crate::application_verbs::DeployArgs {
+            package: None,
+            release: Some(release),
+            application,
+            env: configuration.to_owned(),
+            describe: RefreshDescribeArgs::default(),
+        })
+        .await
+    }
 }
 
 /// Inputs for publication of existing source build output.
@@ -120,28 +103,14 @@ pub struct PublishArgs {
 /// Publish existing build output and print the top package OCI digest.
 pub async fn publish(args: PublishArgs) -> anyhow::Result<()> {
     let digest = wamn_dev::source_deploy::publish_built_from_env(
+        &SourceBuilder {
+            database: &PostgresBuildDatabase,
+            describe: Ok(wamn_build::DescribeMode::Cached),
+        },
         &crate::package_verbs::package_publisher(),
         &args.package,
     )
     .await?;
     println!("{digest}");
     Ok(())
-}
-
-fn source_project(file: &std::path::Path) -> anyhow::Result<EnvironmentDocument> {
-    let document = EnvironmentFile::compile(file)?;
-    let application = document.only_application()?.clone();
-    document.into_application(&application)
-}
-
-fn watch_inputs(
-    sources: &[wamn_build::PreparedSource],
-    configuration: &std::path::Path,
-) -> anyhow::Result<(Vec<PathBuf>, Vec<PathBuf>)> {
-    let mut inputs = std::collections::BTreeSet::new();
-    for source in sources {
-        inputs.extend(wamn_build::build_inputs(source)?);
-    }
-    inputs.insert(configuration.canonicalize()?);
-    Ok(inputs.into_iter().partition(|path| path.is_dir()))
 }

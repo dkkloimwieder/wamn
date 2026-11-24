@@ -10,25 +10,19 @@ wamn-package.workspace = true
 wamn-component-policy.workspace = true
 wamn-edge-document.workspace = true
 anyhow.workspace = true
-rustix.workspace = true
+serde.workspace = true
 serde_json.workspace = true
-tokio = { workspace = true, features = ["fs", "io-util", "macros", "process", "rt", "sync", "time"] }
+tokio = { workspace = true, features = ["macros", "sync"] }
 tracing.workspace = true
-wamn-build.workspace = true
-wamn-codegen.workspace = true
 wamn-digest.workspace = true
 wamn-environment.workspace = true
 wamn-identity-protocol.workspace = true
 wamn-release.workspace = true
 wamn-registry.workspace = true
 
-wamn-oci.workspace = true
-
 [dev-dependencies]
+wamn-oci.workspace = true
 wamn-engine.workspace = true
-tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "sync", "test-util", "time"] }
-wamn-identity-protocol = { workspace = true }
-wamn-environment = { workspace = true, features = ["ops"] }
 
 [lints]
 workspace = true

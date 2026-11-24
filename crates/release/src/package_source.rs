@@ -45,3 +45,22 @@ pub trait PackageSource: Debug + Send + Sync {
     fn read_package_root(&self, root: &PackageRoot) -> anyhow::Result<PackageDirectory>;
     fn migration_root(&self, path: &Path) -> PathBuf;
 }
+
+/// Admit a built component and assemble a release from local package files.
+pub trait LocalReleaseSource {
+    fn admit(
+        &self,
+        package: &Path,
+        component: &wamn_package::canonical_name::CanonicalName,
+        bytes: &Path,
+        target: &wamn_registry::ProjectEnvKey,
+        platform_packages: &[&str],
+    ) -> anyhow::Result<crate::component_admission::ComponentAdmission>;
+
+    fn assemble(
+        &self,
+        request: &crate::publish_release::PublishReleaseRequest,
+        package: &Path,
+        admission: &crate::component_admission::ComponentAdmission,
+    ) -> anyhow::Result<crate::publish_release::AssembledRelease>;
+}

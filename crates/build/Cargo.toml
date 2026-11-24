@@ -6,6 +6,7 @@ license.workspace = true
 publish = false
 [dependencies]
 wamn-package.workspace = true
+wamn-dev.workspace = true
 tempfile.workspace = true
 syn = { workspace = true, features = ["full"] }
 quote.workspace = true
@@ -22,6 +23,10 @@ wac-graph.workspace = true
 wamn-component-policy.workspace = true
 wasmparser.workspace = true
 wasm-encoder = { workspace = true, features = ["wasmparser"] }
+[target.'cfg(target_os = "linux")'.dependencies]
+rustix.workspace = true
+tracing.workspace = true
+tokio = { workspace = true, features = ["io-util", "macros", "net", "time"] }
 [dev-dependencies]
 wat = "=1.254.2"
 [lints]

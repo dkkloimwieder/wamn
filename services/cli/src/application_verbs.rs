@@ -4,6 +4,7 @@ use anyhow::Context as _;
 use clap::Args;
 use serde_json::json;
 use std::path::PathBuf;
+use wamn_build::source_build::SourceBuilder;
 use wamn_environment::environment::{self, document::EnvironmentFile};
 use wamn_postgres::build_database::PostgresBuildDatabase;
 
@@ -62,12 +63,15 @@ pub async fn deploy(args: DeployArgs) -> anyhow::Result<()> {
                 &file.into_project(&triple.project)?,
                 Some(&args.application),
             )?;
+            let describe = args.describe.mode(false)?;
             let published = wamn_dev::source_deploy::publish_from_env(
-                &PostgresBuildDatabase,
+                &SourceBuilder {
+                    database: &PostgresBuildDatabase,
+                    describe: Ok(describe),
+                },
                 &crate::package_verbs::package_publisher(),
                 &document,
                 &package,
-                args.describe.mode(false)?,
             )
             .await?;
             published.1
