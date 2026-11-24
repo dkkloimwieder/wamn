@@ -5,10 +5,6 @@ edition.workspace = true
 license.workspace = true
 publish = false
 
-[package.metadata.cargo-machete]
-# This enables support for components with multiple handler exports during admission.
-ignored = ["wamn-engine"]
-
 [lib]
 test = false
 doctest = false

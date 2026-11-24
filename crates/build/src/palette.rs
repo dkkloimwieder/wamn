@@ -4,6 +4,8 @@ use std::{
     fs,
     path::{Path, PathBuf},
 };
+use wamn_component_policy::{ComponentAdmission, ComponentAdmissionRequest, ComponentDescriptor};
+
 /// Palette facts have no application package or environment coordinate.
 #[derive(Debug, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -23,7 +25,7 @@ pub struct PaletteDeclaration {
 pub struct PaletteComponent {
     pub name: wamn_package::canonical_name::CanonicalName,
     pub file: PathBuf,
-    pub declaration: wamn_component_policy::ComponentDescriptor,
+    pub declaration: ComponentDescriptor,
 }
 
 fn sources(repository: &Path) -> Result<Vec<(PathBuf, String, PaletteDeclaration)>> {
@@ -58,8 +60,8 @@ pub fn names(repository: &Path) -> Result<Vec<wamn_package::canonical_name::Cano
 fn seal(
     bytes: &[u8],
     declaration: PaletteDeclaration,
-) -> Result<wamn_component_policy::ComponentDescriptor> {
-    let engine = wamn_engine::build_engine(&[])?;
+    admission: &impl ComponentAdmission,
+) -> Result<ComponentDescriptor> {
     let admitted_platform_packages = declaration
         .operations
         .keys()
@@ -76,10 +78,9 @@ fn seal(
                 .map(|connection| connection.requirement_type.import_package().to_owned()),
         )
         .collect();
-    let descriptor = wamn_engine::component_admission::validate_component_admission(
-        &engine,
+    admission.admit(
         bytes,
-        wamn_engine::component_admission::ComponentAdmissionRequest {
+        ComponentAdmissionRequest {
             declaration: wamn_package::ComponentDeclaration {
                 data_change: false,
                 target: wamn_package::palette_package(),
@@ -91,17 +92,19 @@ fn seal(
             admitted_platform_packages,
             base_digests: std::collections::BTreeSet::new(),
         },
-    )?;
-    Ok(descriptor)
+    )
 }
 
 /// Build palette guests once through the shared compiler, independently of applications.
-pub async fn build(repository: &Path) -> Result<Vec<PaletteComponent>> {
+pub async fn build(
+    repository: &Path,
+    admission: &impl ComponentAdmission,
+) -> Result<Vec<PaletteComponent>> {
     let mut palette = Vec::new();
     for (manifest, package, declaration) in sources(repository)? {
         let file =
             crate::build_guest(repository, &manifest, &package, crate::GuestTarget::WasiP2).await?;
-        let declaration = seal(&fs::read(&file)?, declaration)?;
+        let declaration = seal(&fs::read(&file)?, declaration, admission)?;
         palette.push(PaletteComponent {
             name: declaration.component.clone(),
             file,

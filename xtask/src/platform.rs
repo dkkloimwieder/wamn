@@ -8,6 +8,7 @@ use serde_json::Value;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use wamn_build::GuestTarget;
+use wamn_engine::component_admission::EngineComponentAdmission;
 use wamn_kubernetes::release_chart;
 use wamn_platform_install::release_chart::ImageSet;
 
@@ -98,7 +99,7 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
                     .await?;
             std::fs::copy(path, components.path().join(format!("{image}.wasm")))?;
         }
-        for component in wamn_build::palette::build(&root).await? {
+        for component in wamn_build::palette::build(&root, &EngineComponentAdmission).await? {
             let bytes = std::fs::read(&component.file)?;
             std::fs::write(
                 components.path().join(format!(

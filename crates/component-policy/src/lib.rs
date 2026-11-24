@@ -60,6 +60,30 @@ impl ComponentImports {
 
 use std::collections::BTreeSet;
 
+/// Component declaration plus its exact admitted platform imports.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ComponentAdmissionRequest {
+    pub declaration: wamn_package::ComponentDeclaration,
+    pub admitted_platform_packages: BTreeSet<String>,
+    /// The component digest of each base the package manifest pins in
+    /// `base_dependencies`. A composed component embeds only these bases.
+    pub base_digests: BTreeSet<wamn_digest::Digest>,
+}
+
+/// Validates exact component bytes against their declaration and import policy.
+pub trait ComponentAdmission: Send + Sync {
+    /// Return the descriptor sealed against the supplied bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if validation cannot start or the component is refused.
+    fn admit(
+        &self,
+        bytes: &[u8],
+        request: ComponentAdmissionRequest,
+    ) -> anyhow::Result<ComponentDescriptor>;
+}
+
 /// The interface that each member of a composed component imports as an
 /// instance of its own
 /// (docs/architecture/components.md#grouping-and-publication).

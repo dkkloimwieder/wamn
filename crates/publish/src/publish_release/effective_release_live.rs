@@ -7,9 +7,9 @@ use wamn_package::OperationType;
 use wamn_package::PackageCoordinate;
 use wamn_package::package_version::PackageVersion;
 
-use wamn_component_policy::ComponentPackageCoordinate;
+use wamn_component_policy::{ComponentAdmissionRequest, ComponentPackageCoordinate};
 use wamn_digest::bytes_sha256;
-use wamn_engine::component_admission::{ComponentAdmissionRequest, validate_component_admission};
+use wamn_engine::component_admission::validate_component_admission;
 
 use super::{
     PublishReleaseManifest, ReleaseComponents, publish_release_with_package_manifests,

@@ -6343,7 +6343,6 @@ dependencies = [
  "wamn-codegen",
  "wamn-component-policy",
  "wamn-digest",
- "wamn-engine",
  "wamn-package",
  "wasm-encoder 0.261.0",
  "wasmparser 0.261.0",
@@ -6441,6 +6440,7 @@ dependencies = [
 name = "wamn-component-policy"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "boon",
  "serde",
  "serde_json",

@@ -6,10 +6,9 @@ use std::fmt;
 use wamn_package::canonical_name::CanonicalName;
 
 use wamn_component_policy::{
-    AdmittedComponentEffect, ComponentDescriptor, ComponentEffectProvenance,
-    normalize_component_fact,
+    AdmittedComponentEffect, ComponentAdmission, ComponentAdmissionRequest, ComponentDescriptor,
+    ComponentEffectProvenance, normalize_component_fact,
 };
-use wamn_package::ComponentDeclaration;
 use wash_runtime::engine::Engine;
 use wash_runtime::wasmtime::component::Component;
 use wash_runtime::wasmtime::component::types::ComponentItem;
@@ -21,14 +20,19 @@ pub const ASYNC_HANDLER_OPERATION: &str = "wamn:node/async-handler@0.2.0";
 const HANDLER_SIGNATURE: &str =
     "wamn:node/handler@0.2.0::run(node-context, string) -> result<emission, node-error>";
 
-/// Component declaration plus its exact admitted platform imports.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ComponentAdmissionRequest {
-    pub declaration: ComponentDeclaration,
-    pub admitted_platform_packages: BTreeSet<String>,
-    /// The component digest of each base the package manifest pins in
-    /// `base_dependencies`. A composed component embeds only these bases.
-    pub base_digests: BTreeSet<wamn_digest::Digest>,
+/// Component admission using the default engine configuration.
+#[derive(Debug)]
+pub struct EngineComponentAdmission;
+
+impl ComponentAdmission for EngineComponentAdmission {
+    fn admit(
+        &self,
+        bytes: &[u8],
+        request: ComponentAdmissionRequest,
+    ) -> anyhow::Result<ComponentDescriptor> {
+        let engine = crate::build_engine(&[])?;
+        validate_component_admission(&engine, bytes, request).map_err(Into::into)
+    }
 }
 
 /// Stable classification for a refused component admission.
@@ -584,7 +588,8 @@ mod tests {
 
     use serde_json::json;
     use wamn_package::{
-        ComponentOperationDeclaration, ComponentParameterDeclaration, ComponentPortDeclaration,
+        ComponentDeclaration, ComponentOperationDeclaration, ComponentParameterDeclaration,
+        ComponentPortDeclaration,
     };
     use wit_component::{ComponentEncoder, StringEncoding, dummy_module, embed_component_metadata};
     use wit_parser::{LiftLowerAbi, ManglingAndAbi, Resolve};
