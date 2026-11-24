@@ -14,6 +14,7 @@ use std::{
     net::SocketAddr,
     path::{Path, PathBuf},
     sync::Arc,
+    time::Duration,
 };
 
 use anyhow::{Context as _, ensure};
@@ -26,6 +27,7 @@ use wamn_identity_client::users::UserClient;
 pub use writer::Writer;
 
 const HTTP_PORT: u16 = 80;
+const HTTP_DRAIN_TIMEOUT: Duration = Duration::from_secs(1);
 const REGISTRY_AUTH_FILE: &str = "/credentials/registry/config.json";
 const IDENTITY_CA: &str = "/etc/identity-ca/ca.crt";
 const OAUTH_KEY: &str = "/etc/wamn/oauth/key";
@@ -171,8 +173,6 @@ fn write_kubeconfig(path: &Path, namespace: &str) -> anyhow::Result<()> {
 }
 
 async fn wait_for_system_schema(database: &str) -> anyhow::Result<sqlx::PgConnection> {
-    use std::time::Duration;
-
     tokio::time::timeout(Duration::from_mins(5), async {
         loop {
             let ready = tokio::time::timeout(Duration::from_secs(5), async {
@@ -312,7 +312,7 @@ pub async fn serve(config: Configuration) -> anyhow::Result<()> {
     }
     maintenance.shutdown().await;
     let drain = async { while connections.join_next().await.is_some() {} };
-    if tokio::time::timeout(wamn_engine::lifecycle::RUNTIME_SHUTDOWN_BUDGET, drain)
+    if tokio::time::timeout(HTTP_DRAIN_TIMEOUT, drain)
         .await
         .is_err()
     {

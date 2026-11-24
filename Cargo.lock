@@ -6515,7 +6515,6 @@ dependencies = [
  "wamn-broker",
  "wamn-connection",
  "wamn-digest",
- "wamn-engine",
  "wamn-envelope",
  "wamn-environment",
  "wamn-http",

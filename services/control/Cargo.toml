@@ -31,7 +31,6 @@ url.workspace = true
 zeroize.workspace = true
 wamn-broker.workspace = true
 wamn-provision.workspace = true
-wamn-engine.workspace = true
 wamn-environment = { workspace = true, features = ["ops"] }
 wamn-platform-install.workspace = true
 wamn-http-client = { workspace = true, features = ["tls12"] }
