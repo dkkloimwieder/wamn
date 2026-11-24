@@ -8,7 +8,7 @@ use anyhow::Context as _;
 use serde_json::Value;
 use wamn_application::application_config::ApplicationConfig;
 use wamn_application::result_signing::{ResultSigner, ResultSigning, ResultSigningError};
-use wamn_blobstore::Storage;
+use wamn_blobstore::client::ObjectStorage;
 use wamn_blobstore::file_route::FileCatalog;
 use wamn_connection::connection_facts::ConnectionCache;
 use wamn_connection::invocation::ReleaseContext;
@@ -31,7 +31,7 @@ struct ApplicationFiles {
 pub(super) struct Files {
     postgres: Weak<OperationHost>,
     catalog: Arc<dyn FileCatalog>,
-    storage: Arc<dyn Storage>,
+    storage: Arc<ObjectStorage>,
     authorization: Arc<Authorization>,
     applications: RwLock<HashMap<String, Arc<ApplicationFiles>>>,
 }
@@ -46,7 +46,7 @@ impl Files {
     pub(super) fn new(
         postgres: &Arc<OperationHost>,
         catalog: Arc<dyn FileCatalog>,
-        storage: Arc<dyn Storage>,
+        storage: Arc<ObjectStorage>,
         authorization: Arc<Authorization>,
     ) -> Self {
         Self {

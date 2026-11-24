@@ -36,7 +36,7 @@ Each library has one concern. Directory names follow crate names without the `wa
 | `crates/scalar` | `wamn-scalar`: scalar formats and SQL value types |
 | `crates/number-pattern` | `wamn-number-pattern`: document number pattern parsing |
 | `crates/registry` | `wamn-registry`: hierarchy coordinates, resource names, and registry SQL |
-| `crates/release` | `wamn-release`: release plans, admitted components, and publication contracts |
+| `crates/release` | `wamn-release`: release plans, admitted components, publication contracts, and web artifact uploads |
 | `crates/oci` | `wamn-oci`: registry transport, artifact reads and publication, and registry credentials |
 | `crates/environment` | `wamn-environment`: environment lifecycle, package apply, retention, and CDC reader lifecycle and recovery |
 | `crates/platform-install` | `wamn-platform-install`: chart installation and system and org database bootstrap |
@@ -57,7 +57,8 @@ Each library has one concern. Directory names follow crate names without the `wa
 | `crates/gcp-metadata` | `wamn-gcp-metadata` reads access tokens and account email from the Google Cloud metadata server |
 | `crates/key` | `wamn-key` wraps data keys with a local key or through Cloud KMS |
 | `crates/connection` | `wamn-connection`: connection facts, credentials, resource leases, invocation context, and bound Wasm import dispatch |
-| `crates/blobstore` | `wamn-blobstore`: authorized object storage |
+| `crates/blobstore` | `wamn-blobstore`: connection-authorized file and object storage |
+| `crates/storage` | `wamn-storage`: S3 and Google Cloud Storage transport |
 | `crates/authentication` | `wamn-authentication`: route authentication, password rules, session verification, and signing |
 | `crates/identity-client` | `wamn-identity-client`: HTTPS client for identity administration |
 | `crates/identity-protocol` | `wamn-identity-protocol`: principal IDs, database login names, roles, credential formats, and public key documents |

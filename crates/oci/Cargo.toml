@@ -41,7 +41,6 @@ object_store.workspace = true
 wamn-build.workspace = true
 wamn-edge-document.workspace = true
 wamn-fixture-package.workspace = true
-wamn-storage.workspace = true
 wit-component = { workspace = true, features = ["dummy-module"] }
 wit-parser.workspace = true
 wash-runtime = { workspace = true, features = ["oci"] }

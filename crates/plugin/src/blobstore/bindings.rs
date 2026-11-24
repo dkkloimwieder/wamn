@@ -45,7 +45,7 @@ wash_runtime::wasmtime::component::bindgen!({
     world: "wamn:host/blobstore-plugin@0.1.0",
     imports: { default: async | trappable | tracing },
     with: {
-        "wasmcloud:blobstore/container.container": super::host::BoundContainer,
+        "wasmcloud:blobstore/container.container": super::host::ContainerHandle,
     },
     wasmtime_crate: wash_runtime::wasmtime,
 });

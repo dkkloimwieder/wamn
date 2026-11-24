@@ -227,7 +227,7 @@ mod tests {
         let files = Arc::new(Files::new(
             &postgres,
             Arc::clone(&pools) as _,
-            Arc::new(wamn_storage::ObjectStorage::default()),
+            Arc::new(wamn_blobstore::client::ObjectStorage::default()),
             authorization,
         ));
         let routing = Arc::new(IngressRouting::new(Arc::clone(&postgres.scopes)));

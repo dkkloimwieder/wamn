@@ -1,15 +1,15 @@
 //! Upload pinned browser files to object storage.
 
+use std::path::Path;
+
 use anyhow::{Context as _, ensure};
-use object_store::aws::AmazonS3Builder;
-use object_store::gcp::GoogleCloudStorageBuilder;
-use object_store::{Attribute, Attributes, ObjectStore, ObjectStoreExt as _, PutMode, PutOptions};
-use wamn_release::web_artifact::{
+use object_store::ObjectStore;
+use wamn_storage::publication;
+
+use super::{
     Scheme, Sink, UploadedClient, WEB_MANIFEST_FILE, WebArtifactError, WebArtifactErrorType,
     WebArtifactReader, content_type, validate_path,
 };
-
-use std::path::Path;
 
 fn web_dist_files(tar: &[u8]) -> anyhow::Result<std::collections::BTreeMap<String, Vec<u8>>> {
     use std::io::Read as _;
@@ -87,6 +87,7 @@ pub async fn upload_web_artifact(
     })
 }
 
+/// Copy a verified web archive and write its completion index last.
 pub async fn upload_web_to_store(
     artifacts: &dyn WebArtifactReader,
     digest: &wamn_digest::Digest,
@@ -105,23 +106,28 @@ pub async fn upload_web_to_store(
     .filter(|part| !part.is_empty())
     .collect::<Vec<_>>()
     .join("/");
-    let index = object_store::path::Path::from(format!("{root}/index.html"));
-    match store.head(&index).await {
-        Ok(_) => return Ok((package.clone(), root, false)),
-        Err(object_store::Error::NotFound { .. }) => {}
-        Err(error) => return Err(error).context("read the web upload completion index"),
+    if publication::exists(store, &format!("{root}/index.html"))
+        .await
+        .context("read the web upload completion index")?
+    {
+        return Ok((package.clone(), root, false));
     }
     let mut files = web_dist_files(&tar)?;
     let index = files
         .remove("index.html")
         .context("web artifact has no dist/index.html")?;
     for (name, bytes) in files {
-        put(store, &root, &name, bytes, content_type(&name)?).await?;
+        publication::put(
+            store,
+            &format!("{root}/{name}"),
+            bytes,
+            content_type(&name)?,
+        )
+        .await?;
     }
-    put(
+    publication::put(
         store,
-        &root,
-        "index.html",
+        &format!("{root}/index.html"),
         index,
         content_type("index.html")?,
     )
@@ -129,79 +135,11 @@ pub async fn upload_web_to_store(
     Ok((package.clone(), root, true))
 }
 
-/// Write one object create-only with its content type. An
-/// existing object with equal bytes is the write of an earlier run that
-/// stopped, so it stays. An existing object with other bytes refuses.
-async fn put(
-    store: &dyn ObjectStore,
-    root: &str,
-    relative: &str,
-    bytes: Vec<u8>,
-    content_type: &'static str,
-) -> anyhow::Result<()> {
-    let mut attributes = Attributes::new();
-    attributes.insert(Attribute::ContentType, content_type.into());
-    let key = object_store::path::Path::from(format!("{root}/{relative}"));
-    let bytes = object_store::PutPayload::from(bytes);
-    let written = store
-        .put_opts(
-            &key,
-            bytes.clone(),
-            PutOptions {
-                mode: PutMode::Create,
-                attributes,
-                ..PutOptions::default()
-            },
-        )
-        .await;
-    match written {
-        Err(
-            object_store::Error::AlreadyExists { .. } | object_store::Error::Precondition { .. },
-        ) => {
-            let existing = store
-                .get(&key)
-                .await
-                .with_context(|| format!("read the existing {key}"))?
-                .bytes()
-                .await
-                .with_context(|| format!("read the existing {key}"))?;
-            ensure!(
-                existing
-                    .as_ref()
-                    .iter()
-                    .copied()
-                    .eq(bytes.iter().flat_map(|part| part.iter().copied())),
-                "write {key}; an existing object with other bytes is never replaced"
-            );
-            Ok(())
-        }
-        written => written
-            .map(|_| ())
-            .with_context(|| format!("write {key}; an existing object is never replaced")),
-    }
-}
-
-/// For `s3://` the `AWS_*` variables supply the endpoint and the
-/// credentials. For `gs://` the `GOOGLE_*` variables and Application
-/// Default Credentials do.
 fn store(sink: &Sink<'_>) -> anyhow::Result<Box<dyn ObjectStore>> {
-    Ok(match sink.scheme {
-        Scheme::S3 => Box::new(
-            AmazonS3Builder::from_env()
-                .with_bucket_name(sink.bucket)
-                .build()
-                .context("configure the bucket from the AWS_* variables")?,
-        ),
-        Scheme::Gcs => Box::new(
-            GoogleCloudStorageBuilder::from_env()
-                .with_bucket_name(sink.bucket)
-                .build()
-                .context(
-                    "configure the bucket from the GOOGLE_* variables and \
-                         Application Default Credentials",
-                )?,
-        ),
-    })
+    match sink.scheme {
+        Scheme::S3 => publication::s3(sink.bucket),
+        Scheme::Gcs => publication::gcs(sink.bucket),
+    }
 }
 
 /// Upload a verified platform UI digest without reading a checkout or build output.
@@ -254,18 +192,24 @@ pub async fn upload_platform_ui_to_store(
         format!("{base}/")
     };
     let root = format!("{base}platform-ui/sha256-{}", digest.hex());
-    match store.head(&format!("{root}/index.html").into()).await {
-        Ok(_) => return Ok((root, false)),
-        Err(object_store::Error::NotFound { .. }) => {}
-        Err(error) => return Err(error).context("read the platform UI completion index"),
+    if publication::exists(store, &format!("{root}/index.html"))
+        .await
+        .context("read the platform UI completion index")?
+    {
+        return Ok((root, false));
     }
     for (name, bytes) in files {
-        put(store, &root, &name, bytes, content_type(&name)?).await?;
+        publication::put(
+            store,
+            &format!("{root}/{name}"),
+            bytes,
+            content_type(&name)?,
+        )
+        .await?;
     }
-    put(
+    publication::put(
         store,
-        &root,
-        "index.html",
+        &format!("{root}/index.html"),
         index,
         content_type("index.html")?,
     )

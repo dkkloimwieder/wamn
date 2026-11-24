@@ -1,10 +1,6 @@
-//! Object storage implementations for the WAMN host.
+//! S3 and GCS operations for WAMN object storage.
 
-mod client;
-pub mod files;
+pub mod client;
 mod pod_identity;
-mod store;
-
-pub use client::{ObjectStorage, health};
-
-pub mod web_artifact;
+pub mod publication;
+pub mod store;

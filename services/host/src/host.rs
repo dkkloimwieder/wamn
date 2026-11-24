@@ -552,8 +552,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         Arc::new(wamn_http::transport::HttpTransport::new()?),
         &wamn_plugin::host_policy::CONNECTION_HOST_POLICY,
     ));
-    let storage: Arc<dyn wamn_blobstore::Storage> =
-        Arc::new(wamn_storage::ObjectStorage::default());
+    let storage = Arc::new(wamn_blobstore::client::ObjectStorage::default());
     let blobstore = Arc::new(wamn_plugin::blobstore::WamnBlobstore::new(
         Arc::clone(&postgres.scopes),
         Arc::clone(&storage),

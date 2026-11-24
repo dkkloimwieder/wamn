@@ -771,7 +771,7 @@ fs.copyFileSync('index.html', dist + '/index.html');
         ] {
             let server = Server::start(responses).await;
             let store = InMemory::new();
-            let _error = wamn_storage::web_artifact::upload_web_to_store(
+            let _error = wamn_release::web_artifact::upload::upload_web_to_store(
                 &RegistryWebArtifacts(&fixture_registry(&scratch, &server)),
                 &digest,
                 "",

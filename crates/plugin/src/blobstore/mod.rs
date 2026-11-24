@@ -4,9 +4,9 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use wamn_authority::effect_span;
 use wamn_authority::effect_span::{EffectIdentity, record_graph};
-use wamn_blobstore::Storage;
 use wamn_blobstore::binding::BindingError;
-use wamn_blobstore::store::ObjectContainer;
+use wamn_blobstore::client::ObjectStorage;
+use wamn_blobstore::store::BoundContainer;
 use wamn_engine::invocation_scope::InvocationScopes;
 use wash_runtime::engine::ctx::{SharedCtx, extract_active_ctx};
 use wash_runtime::engine::workload::WorkloadItem;
@@ -28,7 +28,7 @@ mod wit_error;
 /// The WAMN blobstore host service.
 pub struct WamnBlobstore {
     scopes: Arc<InvocationScopes>,
-    storage: Arc<dyn Storage>,
+    storage: Arc<ObjectStorage>,
 }
 
 impl std::fmt::Debug for WamnBlobstore {
@@ -42,7 +42,7 @@ impl std::fmt::Debug for WamnBlobstore {
 
 impl WamnBlobstore {
     /// Build the plugin with the host's invocation scopes and storage implementation.
-    pub fn new(scopes: Arc<InvocationScopes>, storage: Arc<dyn Storage>) -> Self {
+    pub fn new(scopes: Arc<InvocationScopes>, storage: Arc<ObjectStorage>) -> Self {
         Self { scopes, storage }
     }
 
@@ -55,7 +55,7 @@ impl WamnBlobstore {
         &self,
         component_id: &str,
         alias: &wamn_package::canonical_name::CanonicalName,
-    ) -> Result<Arc<dyn ObjectContainer>, BindingError> {
+    ) -> Result<Arc<BoundContainer>, BindingError> {
         let resolve = async {
             let context = crate::invocation::context(&self.scopes, component_id)?;
             let invocation = self

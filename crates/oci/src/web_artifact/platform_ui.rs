@@ -89,7 +89,7 @@ mod tests {
     use futures_util::TryStreamExt as _;
     use object_store::{ObjectStore as _, ObjectStoreExt as _, memory::InMemory};
     use wamn_digest::bytes_sha256;
-    use wamn_storage::web_artifact::upload_platform_ui_to_store;
+    use wamn_release::web_artifact::upload::upload_platform_ui_to_store;
     use wamn_test_infrastructure::publish::{Server, artifact_fixture, fixture_registry};
     use wamn_test_infrastructure::scratch::ScratchRoot;
 

@@ -26,13 +26,13 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 use wamn_application::application_config::ApplicationConfig;
 use wamn_application::ingress::{AuthenticatedCaller, CredentialType, Header, RoutePolicy};
-use wamn_blobstore::Storage;
+use wamn_blobstore::client::ObjectStorage;
 use wamn_blobstore::file_route::{
     DeleteRequest, ExposeRequest, Exposure, FileCatalog, FileConnection, FileConnections,
     FileError, FileExposure, FileInsert, FileRecord, FileRefusal, FileRequest, UploadQuery, failed,
     refused, valid_media_type,
 };
-use wamn_blobstore::files::{FileStore, MAX_URL_LIFETIME};
+use wamn_blobstore::files::{MAX_URL_LIFETIME, StoredFiles};
 use wamn_engine::ingress::IngressRouting;
 use wamn_identity_protocol::PrincipalId;
 use wamn_package::canonical_name::CanonicalName;
@@ -42,7 +42,7 @@ pub struct FileRoutes {
     pub(crate) release: Arc<ApplicationConfig>,
     pub(crate) context: Arc<wamn_connection::invocation::ReleaseContext>,
     pub(crate) catalog: Arc<dyn FileCatalog>,
-    pub(crate) storage: Arc<dyn Storage>,
+    pub(crate) storage: Arc<ObjectStorage>,
     pub(crate) connections: Arc<dyn FileConnections>,
     pub(crate) project: wamn_registry::ProjectId,
 }
@@ -60,7 +60,7 @@ impl FileRoutes {
     pub fn new(
         context: Arc<wamn_connection::invocation::ReleaseContext>,
         catalog: Arc<dyn FileCatalog>,
-        storage: Arc<dyn Storage>,
+        storage: Arc<ObjectStorage>,
         connections: Arc<dyn FileConnections>,
         project: wamn_registry::ProjectId,
     ) -> Self {
@@ -81,7 +81,7 @@ impl FileRoutes {
         pinned: Option<&str>,
         write: bool,
         deadline: tokio::time::Instant,
-    ) -> Result<(FileConnection, Box<dyn FileStore>), FileError> {
+    ) -> Result<(FileConnection, StoredFiles), FileError> {
         if application != &self.release.application {
             return Err(refused(FileRefusal::BindingRefused, "application"));
         }
@@ -102,7 +102,7 @@ impl FileRoutes {
         )?;
         let store = self
             .storage
-            .file_store(
+            .open_files(
                 &self.context,
                 connection
                     .id
@@ -294,7 +294,7 @@ impl FileRoutes {
         }
         let published = request.exposure == Exposure::Public && row.exposure != Exposure::Public;
         let url = change_exposure(
-            store.as_ref(),
+            &store,
             &row.blob_key,
             row.exposure,
             row.url,
@@ -644,7 +644,7 @@ impl FileRoutes {
 }
 
 async fn change_exposure(
-    store: &dyn FileStore,
+    store: &StoredFiles,
     blob_key: &str,
     current: Exposure,
     url: Option<String>,

@@ -8,8 +8,10 @@ license.workspace = true
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
+object_store.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
+tar.workspace = true
 wamn-component-policy.workspace = true
 wamn-connection-type.workspace = true
 wamn-digest.workspace = true
@@ -19,6 +21,7 @@ wamn-package.workspace = true
 wamn-record-history.workspace = true
 wamn-registry.workspace = true
 wamn-routes.workspace = true
+wamn-storage.workspace = true
 wit-component.workspace = true
 wit-parser.workspace = true
 

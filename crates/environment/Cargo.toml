@@ -48,7 +48,6 @@ wamn-kubernetes.workspace = true
 wamn-oci.workspace = true
 url = { workspace = true }
 object_store.workspace = true
-wamn-storage.workspace = true
 wamn-http-client = { workspace = true, features = ["tls12"] }
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "sync", "test-util", "time"] }
 wamn-test-infrastructure = { workspace = true }

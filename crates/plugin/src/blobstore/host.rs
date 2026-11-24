@@ -40,7 +40,7 @@ use std::sync::Arc;
 use wamn_authority::EffectOutcome;
 use wamn_blobstore::binding::BindingError;
 use wamn_blobstore::intake::MAX_OBJECT_BYTES;
-use wamn_blobstore::store::{BackendErrorType, ObjectContainer, StoreError};
+use wamn_blobstore::store::{BackendErrorType, BoundContainer, StoreError};
 use wash_runtime::engine::ctx::{ActiveCtx, SharedCtx};
 use wash_runtime::wasmtime::component::{Accessor, Resource};
 
@@ -57,7 +57,7 @@ use super::{WAMN_BLOBSTORE_ID, WamnBlobstore};
 
 use wamn_authority::effect_span::EffectOutcomeGuard;
 
-pub type BoundContainer = Arc<dyn ObjectContainer>;
+pub type ContainerHandle = Arc<BoundContainer>;
 
 /// The refusal a store-owned verb returns.
 fn refused(verb: &'static str, reason: &'static str) -> WitError {
@@ -68,7 +68,7 @@ fn refused(verb: &'static str, reason: &'static str) -> WitError {
 fn container_of<T>(
     accessor: &Accessor<T, SharedCtx>,
     handle: &Resource<Container>,
-) -> wash_runtime::wasmtime::Result<BoundContainer>
+) -> wash_runtime::wasmtime::Result<ContainerHandle>
 where
     T: 'static,
 {
@@ -508,7 +508,7 @@ where
 async fn resolve_alias<T>(
     accessor: &Accessor<T, SharedCtx>,
     store_alias: &str,
-) -> Result<BoundContainer, BindingError>
+) -> Result<ContainerHandle, BindingError>
 where
     T: 'static,
 {

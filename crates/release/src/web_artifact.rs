@@ -1,6 +1,7 @@
-//! Contracts and archive plans for web publication.
+//! Contracts, archive plans, and uploads for web publication.
 
 mod plan;
+pub mod upload;
 pub use plan::{Scheme, Sink, client_project, content_type, validate_path};
 
 use anyhow::{bail, ensure};
