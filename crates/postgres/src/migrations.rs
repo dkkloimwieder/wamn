@@ -5,6 +5,7 @@ use anyhow::{Context as _, ensure};
 use sqlx::PgConnection as Client;
 use sqlx::Row as _;
 use sqlx::migrate::{Migration, Migrator};
+use wamn_principal::PlatformComponent;
 
 /// Apply one SQLx sequence to its own history table.
 /// The caller owns a dedicated session and holds schema exclusion.
@@ -104,7 +105,7 @@ pub async fn apply_target(
     let owner = postgres_protocol::escape::escape_identifier(&database.owner_role());
     sqlx::query("INSERT INTO platform.login_principal(login,principal_id) VALUES($1,$2) ON CONFLICT(login) DO UPDATE SET principal_id=EXCLUDED.principal_id")
         .bind(login.as_str())
-        .bind(sqlx::types::Uuid::from(crate::PlatformComponent::ApplyPackage.principal_id()))
+        .bind(sqlx::types::Uuid::from(PlatformComponent::ApplyPackage.principal_id()))
         .execute(&mut *client).await?;
     let key = lock_session(client, lock, &[]).await?;
     let result = async {

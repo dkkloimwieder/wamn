@@ -1,8 +1,7 @@
 //! Org workload identity from the Kubernetes TokenReview API.
 
 use hyper::{HeaderMap, header};
-use wamn_identity::workload_identity;
-pub(super) use wamn_identity::workload_identity::Role;
+use wamn_identity::workload_identity::{self, Role};
 use wamn_identity_client::TOKEN_AUDIENCE;
 use wamn_kubernetes::client::KubernetesApi;
 use wamn_registry::OrgId;

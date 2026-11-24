@@ -237,21 +237,9 @@ Phase 3 steps, in dependency order: 3.1 database model; 3.2 request path (worklo
 
 Re-scoped on 2026-11-22 to the ports-and-adapters rule. The issue list follows D's ruling on the re-scout.
 
-Rule (ports and adapters):
+The current crate roles and dependency rules are in [Crate structure](../structure.md).
 
-- Domain crates hold types, traits and product logic that calls only domain traits. They link no sqlx, kube, k8s-openapi, wasmtime, wasmtime-*, wash-runtime, reqwest, hyper or any other client or runtime crate, and they derive no sqlx traits.
-- Implementation crates implement domain traits for one technology: Postgres, Kubernetes, the wasmCloud host (plugins), HTTP, NATS, OCI, object storage. They depend on domain crates, never the reverse.
-- Binaries (`services/*` and the CLI) hold wiring and process setup only. Tests and xtask are outside the rule.
-- The full rules are in [docs/structure.md](../structure.md).
-
-Target layout. The root workspace has 58 crates and `apps/` has 24.
-
-- Domain: digest, principal, role, scalar, number-pattern, record-history, identity-protocol, package, registry, component-policy, connection-type, routes, workflow-graph (new), application (new), authority, authentication, connection, envelope, blobstore, event, run-state, schema (was schema-introspection), oci-reference, edge-document, release (was publish), environment, application-chart (new), dev, platform-install.
-- Implementation: postgres, provision, kubernetes, engine, plugin (was operation), http-client, http, identity-client, gcp-metadata (new), key (new), storage (new), broker, oci.
-- Build support: build, codegen, jsonata.
-- Binaries: host, control, identity-service, web, edge, cdc-reader, cli.
-- Tests: test-infrastructure (`test-support/infrastructure`), grant-tests (was test-sql, `test-support/grant-tests`), fixture-package, journey-tests, receiving-tests, wms-tests, xtask.
-- wamn-identity goes: its records go to identity-protocol and authentication, its SQL to postgres, and its signing to authentication.
+[Epic 1](epic-1-cleanup.md) replaced the ports-and-adapters rule. It moved domain SQL to its owners, kept shared database mechanics in the Postgres kernel, and separated runtime crates from deployment crates.
 
 Order: the five epics run one after another, because each one changes the root `Cargo.toml`, `Cargo.lock` and `xtask/src/tasks.rs`. Each issue is its own commit, and each standing fix is its own commit.
 

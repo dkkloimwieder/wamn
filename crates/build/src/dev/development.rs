@@ -7,9 +7,10 @@ use wamn_registry::ApplicationName;
 use wamn_release::release_package::RegistryPackagePublisher;
 
 use super::{Deploy, WatchInputs};
-use crate::source_build::{PreparedPackage, SourceBuilder};
-use crate::source_deploy::{self, PackageSource};
+use crate::source_build::SourceBuilder;
+use crate::source_deploy;
 use crate::watch::FilesystemInvalidationSource;
+use crate::{PreparedSource, build_inputs};
 
 /// The compiled first pass and the inputs used to prepare subsequent passes.
 #[derive(Debug)]
@@ -17,7 +18,7 @@ pub struct Development<'a> {
     build: &'a SourceBuilder<'a>,
     configuration: &'a Path,
     root: &'a Path,
-    first: (ApplicationName, Vec<PreparedPackage>),
+    first: (ApplicationName, Vec<PreparedSource>),
 }
 
 impl<'a> Development<'a> {
@@ -89,17 +90,17 @@ impl<'a> Development<'a> {
 async fn prepare(
     configuration: &Path,
     root: &Path,
-) -> anyhow::Result<(ApplicationName, Vec<PreparedPackage>)> {
+) -> anyhow::Result<(ApplicationName, Vec<PreparedSource>)> {
     let document = EnvironmentFile::compile(configuration)?;
     let application = document.only_application()?.clone();
     let project = document.into_application(&application)?;
     source_deploy::sources(&project, root).await
 }
 
-fn watch_inputs(sources: &[PreparedPackage], configuration: &Path) -> anyhow::Result<WatchInputs> {
+fn watch_inputs(sources: &[PreparedSource], configuration: &Path) -> anyhow::Result<WatchInputs> {
     let mut inputs = BTreeSet::new();
     for source in sources {
-        inputs.extend(source.inputs()?);
+        inputs.extend(build_inputs(source)?);
     }
     inputs.insert(configuration.canonicalize()?);
     let (shared, files) = inputs.into_iter().partition(|path| path.is_dir());

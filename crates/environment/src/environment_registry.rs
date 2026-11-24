@@ -11,7 +11,7 @@ pub async fn read_project_env_instance(
 ) -> anyhow::Result<InstanceSuffix> {
     let mut transaction = wamn_identity::identity::transaction::read_connection(
         client,
-        &wamn_postgres::PlatformComponent::Provisioning.principal_id(),
+        &wamn_principal::PlatformComponent::Provisioning.principal_id(),
     )
     .await?;
     let result = async {

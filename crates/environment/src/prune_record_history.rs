@@ -36,7 +36,8 @@ use crate::audit_retention::{
     AUDIT_RETENTION_LOCK_SQL, AUDIT_RETENTION_TARGETS_SQL, WRITE_LOG_RETENTION_SQL,
     WRITE_LOG_RETENTION_TARGET_SQL,
 };
-use wamn_postgres::{PlatformComponent, bind_platform_principal};
+use wamn_postgres::bind_platform_principal;
+use wamn_principal::PlatformComponent;
 
 /// Inputs of one record history retention run.
 #[derive(Debug)]

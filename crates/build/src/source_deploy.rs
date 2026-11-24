@@ -13,8 +13,8 @@ use wamn_release::release_package::RegistryPackagePublisher;
 
 use anyhow::{Context as _, ensure};
 
-use crate::source_build::{self, PreparedPackage, SourceBuilder};
-use crate::{BuildMode, default_output_root, package_output};
+use crate::source_build::SourceBuilder;
+use crate::{BuildMode, PreparedSource, default_output_root, package_output, prepare_source};
 
 /// Build and publish source using its committed database evidence.
 pub async fn publish_from_env(
@@ -33,7 +33,7 @@ pub(crate) async fn publish_development(
     build: &SourceBuilder<'_>,
     publisher: &RegistryPackagePublisher<'_>,
     application: wamn_registry::ApplicationName,
-    sources: Vec<PreparedPackage>,
+    sources: Vec<PreparedSource>,
 ) -> anyhow::Result<(wamn_registry::ApplicationName, wamn_digest::Digest)> {
     build_and_publish(
         build,
@@ -49,7 +49,7 @@ async fn build_and_publish(
     build: &SourceBuilder<'_>,
     publisher: &RegistryPackagePublisher<'_>,
     application: wamn_registry::ApplicationName,
-    sources: Vec<PreparedPackage>,
+    sources: Vec<PreparedSource>,
     mode: BuildMode,
 ) -> anyhow::Result<(wamn_registry::ApplicationName, wamn_digest::Digest)> {
     let mut roots = Vec::with_capacity(sources.len());
@@ -90,14 +90,14 @@ pub async fn publish_built_from_env(
 pub(crate) async fn sources(
     document: &EnvironmentDocument,
     root: &Path,
-) -> anyhow::Result<(wamn_registry::ApplicationName, Vec<PreparedPackage>)> {
+) -> anyhow::Result<(wamn_registry::ApplicationName, Vec<PreparedSource>)> {
     let root = root
         .canonicalize()
         .context("resolve selected package root")?;
     let application = selected_application(document)?.clone();
     let sources = ordered_sources(
-        source_build::prepare(&root).await?,
-        |root| async move { source_build::prepare(&root).await },
+        prepare_source(&root).await?,
+        |root| async move { prepare_source(&root).await },
         |id| wamn_codegen::source_root(&package_output(&default_output_root(&root), id)),
     )
     .await?;
@@ -120,9 +120,18 @@ fn selected_application(
 
 /// The coordinate and authored base dependencies used to order a source closure.
 pub trait PackageSource {
-    fn root(&self) -> &Path;
     fn package(&self) -> &PackageIdentity;
     fn bases(&self) -> &BTreeMap<SourceName, BaseDependencyRequirement>;
+}
+
+impl PackageSource for PreparedSource {
+    fn package(&self) -> &PackageIdentity {
+        self.package()
+    }
+
+    fn bases(&self) -> &BTreeMap<SourceName, BaseDependencyRequirement> {
+        self.bases()
+    }
 }
 
 struct BuiltSource {
@@ -131,10 +140,6 @@ struct BuiltSource {
 }
 
 impl PackageSource for BuiltSource {
-    fn root(&self) -> &Path {
-        &self.root
-    }
-
     fn package(&self) -> &PackageIdentity {
         &self.manifest.package
     }

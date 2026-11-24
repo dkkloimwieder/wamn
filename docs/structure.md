@@ -11,6 +11,8 @@ These rules cover the root workspace and the `apps/` workspace. Crate boundaries
 | Runtime domain | engine, plugin, authority, http, blobstore, connection, authentication | Runtime domain crates can call portable, infrastructure, and runtime domain crates directly. They can link SQLx and the host libraries `wash-runtime`, `wasmtime`, `hyper`, and `reqwest`. They own their SQL. |
 | Deployment domain | environment, platform-install, release, build, codegen, identity | Deployment domain crates can call any crate except a binary. They can link SQLx and own their SQL. |
 | Binary | Runtime binaries are host, edge, web, and cdc-reader. Deployment binaries are control, cli, identity-service, and xtask. | Binaries set up the process and connect its parts. They can own SQL that only they use. No crate can depend on a binary. |
+| App guests | `blob-put`, `client-acme-receiving`, `connection-http-standard`, `device`, `fixture`, `fixture-overlay`, `http-page`, `http-request`, `ingress`, `jsonata-expression`, `label-render`, `modbus`, `modbus-reader`, `netsuite`, `receiving`, `rest-connector`, `rest-consumer-fixture`, `samples`, `transform`, `wamn-integration`, `wms`, `workflow-service` | Guest components link only portable libraries and use WIT imports for effects. |
+| Tests | `wamn-fixture-package`, `wamn-grant-tests`, `wamn-journey-tests`, `wamn-receiving-tests`, `wamn-test-infrastructure`, `wamn-wms-tests` | These packages support tests. The production dependency rule excludes test packages and development dependencies. |
 
 The apps workspace links only portable crates. Runtime binaries and runtime domain crates must have no dependency path to a deployment domain crate. Deployment binaries can link runtime domain crates.
 

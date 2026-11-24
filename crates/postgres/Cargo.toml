@@ -8,7 +8,6 @@ license.workspace = true
 [dependencies]
 wamn-application.workspace = true
 wamn-digest.workspace = true
-wamn-event.workspace = true
 wamn-package.workspace = true
 tracing.workspace = true
 wamn-registry.workspace = true

@@ -13,6 +13,7 @@ use wamn_identity::identity::{
 };
 use wamn_identity::password::RefusalCause;
 use wamn_identity::password_requests::{self, Attempt, DeliveryFailure, EmailDelivery};
+use wamn_identity::workload_identity::Role;
 use wamn_identity_protocol::PrincipalId;
 use wamn_identity_protocol::wire::{PrincipalRequest, UserRequest, UserResponse};
 use wamn_registry::OrgId;
@@ -74,9 +75,9 @@ async fn handle(
             | wamn_identity_protocol::nats::SIGN_USER_PATH
     );
     let role = if nats_route {
-        workload::Role::Worker
+        Role::Worker
     } else {
-        workload::Role::Control
+        Role::Control
     };
     let org = match workload::authenticate(api, token, role).await {
         Ok(Some(org)) => org,

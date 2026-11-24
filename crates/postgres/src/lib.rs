@@ -15,7 +15,6 @@ pub mod platform_sql;
 pub mod provisioning_transaction;
 
 pub use platform_identity::{bind_platform_principal, bind_platform_principal_sql};
-pub use wamn_identity_protocol::PlatformComponent;
 
 pub use connection_guard::ConnectionGuard;
 pub use connection_options::{

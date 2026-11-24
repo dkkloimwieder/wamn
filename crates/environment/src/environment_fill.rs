@@ -17,7 +17,7 @@ pub async fn fill(
     let mut project = project.begin().await?;
     wamn_postgres::bind_platform_principal(
         &mut project,
-        wamn_postgres::PlatformComponent::Provisioning,
+        wamn_principal::PlatformComponent::Provisioning,
     )
     .await?;
     let mut principals = BTreeSet::new();
