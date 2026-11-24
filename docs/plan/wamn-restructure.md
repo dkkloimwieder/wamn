@@ -315,6 +315,7 @@ No new lint lines. Epic 21 replaces the per-epic lists with one lint.
 
 ### Epic 21: deploy and publish
 
+- 21.0 wamn-plugin links no sqlx and no wamn-postgres. This finishes 20.9 and choice 15a.
 - 21.1 A new crate `wamn-application-chart` (`crates/application-chart`) takes `Binding`, `ResolvedConnection` and `release_chart/plan.rs`, the values for one application release (rulings 10 and 14b).
 - 21.2 wamn-environment keeps the documents and holds the deploy steps against domain traits, with the worker steps from control. Its 126 SQL calls move to wamn-postgres, with the package apply SQL and the history pruning modules and their tests. X4 stays deferred. Kubernetes and Helm calls go to wamn-kubernetes, NATS calls to wamn-broker, and OCI calls to wamn-oci (choice 8b, rulings 12 and 13 changed).
 - 21.3 wamn-platform-install stays as a domain crate with the install and org steps. The Postgres bootstrap goes to wamn-provision and wamn-postgres, Kubernetes and Helm to wamn-kubernetes, and OCI to wamn-oci. The Postgres lock stays across the Secret writes (`provision_org.rs::provision_org`).
@@ -2356,3 +2357,14 @@ Epic 14 closed on 2026-11-21 after review. cargo test --workspace: 617 passed in
 - The review found no merge blockers at `cbe015455`. Main fast-forwarded to that commit.
 - Items 20.16 and 21.10 cover the SQL in `crates/registry/src/sql.rs`. Each item moves to wamn-postgres with the code that runs it. The last move deletes the file and its unused items.
 - `crates/codegen/build.rs` hashes `crates/postgres/src/lib.rs`, so adding a store changes the generator id. Item 20.0 narrows the inputs and cites each call that reads a moved item. If the id changes, the same commit refreshes the describe files.
+
+**Ruled (D, 2026-11-23): Epic 20 review.**
+- Before the Epic 20 merge, one commit runs `cargo fmt --all` in both workspaces with the pinned toolchain 1.100.0 and changes nothing else. If the generator id changes, the same commit refreshes the describe files. Then `cargo xtask repo-lint` exits 0.
+- From now on, the end checks run `cargo xtask repo-lint` as one command. It includes the format check and the clippy steps, and its parts are not run one at a time in its place.
+- The other end checks stay: `cargo xtask machete`, the 12 app builds, the schema check, prepare-tests, build-platform, helm-size, `cargo test --workspace` and the ignored run.
+- Reason: the end checks ran the parts of the lint one at a time and left out the format step. So 115 files failed, and nobody saw it. The clippy gap had the same cause.
+- Epic 21 starts with 21.0. The host calls the wamn-postgres pools directly, and the pass-through in `crates/plugin/src/executor.rs` goes. Guest grants go through `AuthorizationStore`. The connection guard goes behind a trait in wamn-connection, and wamn-postgres implements it.
+- In 21.0, `DEFAULT_PROJECT` moves to a domain crate. After 21.0, `crates/plugin/Cargo.toml` lists neither sqlx nor wamn-postgres, also under dev-dependencies. If a test needs one of them, the commit names that test.
+- The rest of Epic 21 follows as the plan writes it, one change per commit. The full journey run on fresh kind clusters waits for D after the review.
+- Root writes nothing to the repository, and that includes amends and doc restores. A fix goes to an agent and gets its own commit.
+- Agents edit this plan only when their instruction says so.
