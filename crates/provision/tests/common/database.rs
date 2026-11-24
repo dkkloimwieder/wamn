@@ -40,7 +40,7 @@ pub async fn system(url: &str) {
 pub fn login_sql(
     family: WorkloadRoleFamily,
     database: &str,
-    role: &wamn_identity_protocol::LoginName,
+    role: &wamn_role::LoginName,
     password: &str,
 ) -> String {
     let login = escape_identifier(role.as_str());

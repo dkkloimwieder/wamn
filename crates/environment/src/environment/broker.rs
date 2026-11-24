@@ -8,7 +8,8 @@ use kube::{
 };
 use serde_json::json;
 use wamn_broker::nats::{CA_FILE, CREDENTIALS_KEY};
-use wamn_identity_client::nats::{EnsureAccount, NatsClient, SignUser, UserKind};
+use wamn_identity_client::nats::NatsClient;
+use wamn_identity_protocol::nats::{EnsureAccount, SignUser, UserPurpose};
 use wamn_kubernetes::client::{APPLY_MANAGER, delete_named};
 
 use wamn_registry::{EnvName, OrgId, Triple, name};
@@ -22,13 +23,13 @@ fn client(platform: &Platform) -> anyhow::Result<NatsClient> {
     NatsClient::new(&platform.identity_issuer, std::path::Path::new(IDENTITY_CA))
 }
 
-fn environment_users() -> [(&'static str, UserKind); 5] {
+fn environment_users() -> [(&'static str, UserPurpose); 5] {
     [
-        ("data", UserKind::HostData),
-        ("workflow", UserKind::Workflow),
-        ("ingress", UserKind::Ingress),
-        ("workflow-native", UserKind::WorkflowNative),
-        ("stream-admin", UserKind::StreamAdmin),
+        ("data", UserPurpose::HostData),
+        ("workflow", UserPurpose::Workflow),
+        ("ingress", UserPurpose::Ingress),
+        ("workflow-native", UserPurpose::WorkflowNative),
+        ("stream-admin", UserPurpose::StreamAdmin),
     ]
 }
 
@@ -76,13 +77,13 @@ pub(super) async fn configure_project(platform: &Platform, triple: &Triple) -> a
     for (kind, user) in [
         (
             "cdc",
-            UserKind::Cdc {
+            UserPurpose::Cdc {
                 project: triple.project.clone(),
             },
         ),
         (
             "recovery",
-            UserKind::Recovery {
+            UserPurpose::Recovery {
                 project: triple.project.clone(),
             },
         ),
@@ -143,7 +144,7 @@ async fn ensure_user(
     org: &OrgId,
     env: &EnvName,
     secret_name: &str,
-    kind: UserKind,
+    purpose: UserPurpose,
 ) -> anyhow::Result<()> {
     if read_user(platform, secret_name).await?.is_some() {
         return Ok(());
@@ -153,7 +154,7 @@ async fn ensure_user(
         .sign_user(&SignUser {
             org: org.clone(),
             env: env.clone(),
-            kind,
+            purpose,
             public_key: key.public_key(),
         })
         .await?;

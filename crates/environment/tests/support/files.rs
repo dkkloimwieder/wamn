@@ -29,7 +29,7 @@ pub async fn connect(url: &str) -> anyhow::Result<Client> {
     Ok(client)
 }
 
-fn login(url: &str, role: &wamn_identity_protocol::LoginName) -> anyhow::Result<String> {
+fn login(url: &str, role: &wamn_role::LoginName) -> anyhow::Result<String> {
     let mut url = url::Url::parse(url)?;
     url.set_username(role.as_str())
         .map_err(|()| anyhow::anyhow!("fixture username"))?;

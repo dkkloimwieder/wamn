@@ -258,7 +258,7 @@ pub(crate) async fn bind_apply_package_principal(
 async fn ensure_model_schemas(
     connection: &mut sqlx::PgConnection,
     plan: &wamn_package::package_schema::PackageMetadata,
-    login: &wamn_identity_protocol::LoginName,
+    login: &wamn_role::LoginName,
 ) -> anyhow::Result<()> {
     let schemas = plan
         .models

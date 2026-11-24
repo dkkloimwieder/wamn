@@ -6,10 +6,10 @@ use kube::Api;
 use ring::rand::{SecureRandom as _, SystemRandom};
 use std::fmt;
 use std::path::Path;
-use wamn_identity_protocol::LoginName;
 use wamn_kubernetes::client::KubernetesApi;
 use wamn_postgres::ConnectionConfig;
 use wamn_registry::OrgId;
+use wamn_role::LoginName;
 
 pub const CONTROL_SECRET: &str = "wamn-control-db";
 pub(crate) const APPLY_SECRET: &str = "wamn-apply-db";

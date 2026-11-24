@@ -9,9 +9,9 @@ use serde::{Deserialize, Serialize};
 use sqlx::PgConnection;
 use tokio::sync::OnceCell;
 use wamn_identity::nats::{self, Authority, LimitsPerProject, Permissions, SubjectPermission};
-use wamn_identity_client::nats::{
+use wamn_identity_protocol::nats::{
     Account, ENSURE_ACCOUNT_PATH, EnsureAccount, SIGN_USER_PATH, SignHostUser, SignUser,
-    SignedUser, UserKind,
+    SignedUser, UserPurpose,
 };
 use wamn_kubernetes::client::KubernetesApi;
 use wamn_registry::{OrgId, name};
@@ -373,18 +373,18 @@ fn template(request: &SignUser, inbox: &str) -> (String, Permissions) {
         .map(str::to_owned)
         .into()
     };
-    let (kind, publish) = match &request.kind {
-        UserKind::Workflow => ("workflow".into(), workload()),
-        UserKind::Ingress => {
+    let (name_prefix, publish) = match &request.purpose {
+        UserPurpose::Workflow => ("workflow".into(), workload()),
+        UserPurpose::Ingress => {
             subscribe.push("_nats_push.>".into());
             ("ingress".into(), workload())
         }
-        UserKind::WorkflowNative => ("workflow-native".into(), workload()),
-        UserKind::Cdc { project } => (
+        UserPurpose::WorkflowNative => ("workflow-native".into(), workload()),
+        UserPurpose::Cdc { project } => (
             format!("cdc-{project}"),
             vec![name::stream_subjects(&request.org, project, &request.env)],
         ),
-        UserKind::Recovery { project } => {
+        UserPurpose::Recovery { project } => {
             let stream = name::stream_name(&request.org, project, &request.env);
             (
                 format!("recovery-{project}"),
@@ -394,7 +394,7 @@ fn template(request: &SignUser, inbox: &str) -> (String, Permissions) {
                 ],
             )
         }
-        UserKind::StreamAdmin => (
+        UserPurpose::StreamAdmin => (
             "stream-admin".into(),
             [
                 "$JS.API.STREAM.INFO.*",
@@ -407,10 +407,10 @@ fn template(request: &SignUser, inbox: &str) -> (String, Permissions) {
             .map(str::to_owned)
             .into(),
         ),
-        UserKind::HostData => ("wasmcloud-data".into(), Vec::new()),
+        UserPurpose::HostData => ("wasmcloud-data".into(), Vec::new()),
     };
     let name = format!(
-        "{kind}-{}",
+        "{name_prefix}-{}",
         name::environment_key(&request.org, &request.env)
     );
     let permissions = Permissions {

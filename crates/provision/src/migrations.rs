@@ -31,7 +31,7 @@ impl MigrationDatabase {
     }
 
     /// One bounded migration login for this database and platform scope.
-    pub fn login(self, database: &str) -> wamn_identity_protocol::LoginName {
+    pub fn login(self, database: &str) -> wamn_role::LoginName {
         match self {
             Self::Project => crate::migration::login(),
             Self::System => {
@@ -75,7 +75,7 @@ impl MigrationDatabase {
     pub async fn require_login(
         self,
         connection: &mut sqlx::PgConnection,
-    ) -> anyhow::Result<wamn_identity_protocol::LoginName> {
+    ) -> anyhow::Result<wamn_role::LoginName> {
         if self == Self::Project {
             return crate::migration::require_login(connection).await;
         }
@@ -87,9 +87,9 @@ impl MigrationDatabase {
         .bind(wamn_role::SYSTEM_ROLE)
         .fetch_one(connection)
         .await?;
-        let session = wamn_identity_protocol::LoginName::try_from(session)
+        let session = wamn_role::LoginName::try_from(session)
             .context("decode the session login")?;
-        let current = wamn_identity_protocol::LoginName::try_from(current)
+        let current = wamn_role::LoginName::try_from(current)
             .context("decode the current login")?;
         anyhow::ensure!(
             session == self.login(&database) && current == session && restricted && member,

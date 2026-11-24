@@ -49,7 +49,7 @@ async fn handle(
         return unavailable();
     };
     let route = parts.uri.path();
-    if route == wamn_identity_client::nats::SIGN_HOST_USER_PATH {
+    if route == wamn_identity_protocol::nats::SIGN_HOST_USER_PATH {
         let pod = match workload::authenticate_host(api, token).await {
             Ok(Some(pod)) => pod,
             Ok(None) => return forbidden(),
@@ -65,8 +65,8 @@ async fn handle(
     }
     let nats_route = matches!(
         route,
-        wamn_identity_client::nats::ENSURE_ACCOUNT_PATH
-            | wamn_identity_client::nats::SIGN_USER_PATH
+        wamn_identity_protocol::nats::ENSURE_ACCOUNT_PATH
+            | wamn_identity_protocol::nats::SIGN_USER_PATH
     );
     let role = if nats_route {
         workload::Role::Worker

@@ -23,6 +23,7 @@ wamn-digest.workspace = true
 wamn-engine = { workspace = true }
 # Device identity and role slugs.
 wamn-identity-protocol = { workspace = true }
+wamn-role.workspace = true
 # The `sha256:<hex>` spelling of bundle, file and schema digests.
 # The project of the box's environment coordinate (R1).
 wamn-registry = { workspace = true }

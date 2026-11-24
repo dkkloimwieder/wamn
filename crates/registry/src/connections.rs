@@ -13,7 +13,7 @@ pub struct ConnectionFact {
     pub target_id: Uuid,
     pub resource_key: Option<String>,
     pub authority: Option<String>,
-    pub service_principal_id: wamn_identity_protocol::PrincipalId,
+    pub service_principal_id: wamn_principal::PrincipalId,
 }
 
 /// One generation of a connection, apart from its secret.

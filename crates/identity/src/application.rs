@@ -208,7 +208,7 @@ pub async fn create_role(
         return Err(AdministrationRefusal::AdminCreated.into());
     }
     if !role
-        .parse::<wamn_identity_protocol::RoleName>()
+        .parse::<wamn_role::RoleName>()
         .is_ok_and(|parsed| parsed.as_str() == role)
     {
         return Err(AdministrationRefusal::NotProjectRole {

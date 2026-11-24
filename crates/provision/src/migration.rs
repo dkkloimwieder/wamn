@@ -3,14 +3,16 @@
 use anyhow::{Context as _, ensure};
 
 /// The fixed owner login in a project Cluster.
-pub fn login() -> wamn_identity_protocol::LoginName {
-    wamn_role::MIGRATION_ROLE.parse().expect("fixed project owner")
+pub fn login() -> wamn_role::LoginName {
+    wamn_role::MIGRATION_ROLE
+        .parse()
+        .expect("fixed project owner")
 }
 
 /// Check the authenticated session before any package-controlled SQL runs.
 pub async fn require_login(
     connection: &mut sqlx::PgConnection,
-) -> anyhow::Result<wamn_identity_protocol::LoginName> {
+) -> anyhow::Result<wamn_role::LoginName> {
     let (session, current, restricted): (String, String, bool) = sqlx::query_as(
         "SELECT session_user::text, current_user::text, \
          NOT (rolsuper OR rolcreatedb OR rolcreaterole OR rolreplication OR rolbypassrls) \
@@ -18,10 +20,8 @@ pub async fn require_login(
     )
     .fetch_one(&mut *connection)
     .await?;
-    let session =
-        wamn_identity_protocol::LoginName::try_from(session).context("decode the session login")?;
-    let current =
-        wamn_identity_protocol::LoginName::try_from(current).context("decode the current login")?;
+    let session = wamn_role::LoginName::try_from(session).context("decode the session login")?;
+    let current = wamn_role::LoginName::try_from(current).context("decode the current login")?;
     let expected = login();
     ensure!(
         session == expected && current == session && restricted,
@@ -46,7 +46,7 @@ pub fn history_table(
 /// Grant runtime use and default access on one application model schema.
 pub async fn grant_model_schema_access(
     connection: &mut sqlx::PgConnection,
-    login: &wamn_identity_protocol::LoginName,
+    login: &wamn_role::LoginName,
     schema: &str,
 ) -> Result<(), sqlx::Error> {
     sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
@@ -70,7 +70,7 @@ pub async fn grant_model_schema_access(
 }
 
 /// Register the actor for package migration sessions.
-pub fn grants_sql(login: &wamn_identity_protocol::LoginName) -> String {
+pub fn grants_sql(login: &wamn_role::LoginName) -> String {
     format!(
         "INSERT INTO platform.login_principal(login,principal_id) VALUES ({login}, '{principal}') ON CONFLICT(login) DO UPDATE SET principal_id=EXCLUDED.principal_id;",
         login = postgres_protocol::escape::escape_literal(login.as_str()),
@@ -83,7 +83,7 @@ pub fn grants_sql(login: &wamn_identity_protocol::LoginName) -> String {
 pub async fn prepare_history(
     connection: &mut sqlx::PgConnection,
     table: &str,
-    login: &wamn_identity_protocol::LoginName,
+    login: &wamn_role::LoginName,
 ) -> anyhow::Result<()> {
     let exists: bool = sqlx::query_scalar("SELECT to_regclass($1) IS NOT NULL")
         .bind(table)

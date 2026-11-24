@@ -9,7 +9,7 @@ use wamn_provision::{WorkloadRoleFamily, WorkloadRoleIdentity, sql, workload_log
 pub struct Fixture {
     pub admin: sqlx::PgConnection,
     pub url: String,
-    pub login: wamn_identity_protocol::LoginName,
+    pub login: wamn_role::LoginName,
 }
 
 pub async fn execute(connection: &mut sqlx::PgConnection, statement: &str) {

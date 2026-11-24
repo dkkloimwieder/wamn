@@ -59,6 +59,7 @@ wamn-registry = { workspace = true }
 # MVP management authentication: stable service principals, project roles, and
 # independently issued/revoked PATs for provision-project-env.
 wamn-identity-protocol = { workspace = true }
+wamn-role.workspace = true
 wamn-identity = { workspace = true }
 
 [dev-dependencies]

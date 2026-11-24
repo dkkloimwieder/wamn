@@ -58,7 +58,7 @@ fn current_database(url: &str) -> String {
 fn app_generation(
     database: &str,
     project_env_key: &wamn_registry::ProjectEnvKey,
-) -> wamn_identity_protocol::LoginName {
+) -> wamn_role::LoginName {
     workload_login(
         WorkloadRoleFamily::App,
         WorkloadRoleIdentity::ProjectEnvKey {
@@ -72,7 +72,7 @@ fn app_generation(
 /// Create an App login as CNPG would, with the grants that provisioning adds.
 fn app_login_sql(
     database: &str,
-    login: &wamn_identity_protocol::LoginName,
+    login: &wamn_role::LoginName,
     password: &str,
 ) -> String {
     let family = WorkloadRoleFamily::App;

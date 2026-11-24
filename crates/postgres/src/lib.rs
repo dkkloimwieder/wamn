@@ -87,7 +87,7 @@ mod tests {
 /// An explicit connection names another role or database than its consumer.
 #[derive(Debug)]
 pub struct IdentityMismatch {
-    pub username: wamn_identity_protocol::LoginName,
+    pub username: wamn_role::LoginName,
     pub database: String,
 }
 impl std::fmt::Display for IdentityMismatch {
@@ -100,7 +100,7 @@ impl std::error::Error for IdentityMismatch {}
 /// Check component authority before opening a socket or reading credential material.
 pub fn require_identity(
     input: &str,
-    username: &wamn_identity_protocol::LoginName,
+    username: &wamn_role::LoginName,
     database: &str,
 ) -> anyhow::Result<()> {
     let (actual_user, actual_database) = identity(input)?;

@@ -58,7 +58,7 @@ mod tests {
     #[test]
     fn login_parse_rule() {
         for (value, valid) in [
-            (wamn_role::PLATFORM_ROLE.to_owned(), true),
+            (crate::PLATFORM_ROLE.to_owned(), true),
             ("a".repeat(63), true),
             ("Quoted Login".to_owned(), true),
             ("é".repeat(31), true),

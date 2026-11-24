@@ -300,7 +300,7 @@ pub(crate) fn validate_identity(identity: &SessionIdentity) -> anyhow::Result<()
     );
     anyhow::ensure!(
         identity.role.as_deref().is_none_or(|role| role
-            .parse::<wamn_identity_protocol::RoleName>()
+            .parse::<wamn_role::RoleName>()
             .is_ok_and(|parsed| parsed.as_str() == role)),
         "invalid role"
     );

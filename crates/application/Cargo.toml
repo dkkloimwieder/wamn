@@ -17,6 +17,7 @@ wamn-digest.workspace = true
 wamn-identity-protocol.workspace = true
 wamn-package.workspace = true
 wamn-registry.workspace = true
+wamn-role.workspace = true
 wamn-routes.workspace = true
 wamn-workflow-graph.workspace = true
 

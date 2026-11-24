@@ -17,7 +17,8 @@ use sqlx::postgres::PgRow as Row;
 use sqlx::types::Uuid;
 use std::fmt;
 
-use wamn_identity_protocol::{PrincipalId, RoleName};
+use wamn_identity_protocol::PrincipalId;
+use wamn_role::RoleName;
 
 pub mod application;
 pub mod control;

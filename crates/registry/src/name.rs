@@ -371,7 +371,7 @@ pub fn service_resource(
 ///
 /// # Panics
 /// Panics if the prefix and hash cannot form a PostgreSQL login name.
-pub fn credential_login(prefix: &str, identity_hash: &str) -> wamn_identity_protocol::LoginName {
+pub fn credential_login(prefix: &str, identity_hash: &str) -> wamn_role::LoginName {
     format!("{prefix}_{identity_hash}")
         .parse()
         .expect("derived login fits PostgreSQL identifiers")

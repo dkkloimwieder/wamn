@@ -38,7 +38,8 @@ use wamn_authentication::route_authentication::{
 };
 use wamn_engine::engine::{DEFAULT_CORE_INSTANCES, build_engine_with_host_memory};
 use wamn_engine::ingress::IngressRouting;
-use wamn_identity_client::nats::{SignHostUser, sign_host_user};
+use wamn_identity_client::nats::sign_host_user;
+use wamn_identity_protocol::nats::SignHostUser;
 use wamn_operation::{OperationDatabase, OperationHost};
 use wamn_postgres::WamnPostgres;
 

@@ -138,7 +138,7 @@ pub fn validate_identity_issuer(issuer: &str) -> anyhow::Result<()> {
 }
 
 /// Derive the login of one issuer.
-pub fn identity_issuer_login(issuer: &str) -> anyhow::Result<wamn_identity_protocol::LoginName> {
+pub fn identity_issuer_login(issuer: &str) -> anyhow::Result<wamn_role::LoginName> {
     validate_identity_issuer(issuer)?;
     let mut digest = Sha256::new();
     for field in [

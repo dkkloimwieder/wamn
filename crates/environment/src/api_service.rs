@@ -2,8 +2,9 @@
 
 use anyhow::ensure;
 use std::time::Duration;
-use wamn_identity_protocol::{RoleName, wire::PatResponse};
+use wamn_identity_protocol::wire::PatResponse;
 use wamn_registry::{ProjectEnvKey, platform_domain::PlatformDomain};
+use wamn_role::RoleName;
 
 use wamn_identity::application::{GrantAuthority, GrantChange, mutate_grant, service};
 

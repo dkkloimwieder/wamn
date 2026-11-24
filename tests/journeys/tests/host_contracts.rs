@@ -18,7 +18,7 @@ use k8s_openapi::jiff::SignedDuration;
 use kube::Api;
 use kube::api::{ListParams, PostParams};
 use serde_json::json;
-use wamn_identity_client::nats::{SIGN_HOST_USER_PATH, SignHostUser, SignedUser};
+use wamn_identity_protocol::nats::{SIGN_HOST_USER_PATH, SignHostUser, SignedUser};
 use wamn_test_infrastructure::scratch::ScratchRoot;
 
 /// A second application with the fixture package, for the stop and status path.

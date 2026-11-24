@@ -83,7 +83,7 @@ impl WamnPostgres {
             };
             let directory =
                 crate::credential_directory(std::path::Path::new(crate::DATABASE_DIR), secret)?;
-            let username: wamn_identity_protocol::LoginName = match class {
+            let username: wamn_role::LoginName = match class {
                 AuthorityClass::GuestSql => wamn_role::APP_LOGIN,
                 AuthorityClass::DynamicSql => wamn_role::QUERY_LOGIN,
                 AuthorityClass::Platform => wamn_role::PLATFORM_LOGIN,

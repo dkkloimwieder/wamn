@@ -106,7 +106,7 @@ async fn platform_identity_round_trip_on_postgres() {
     assert_eq!(
         roles
             .iter()
-            .map(wamn_identity_protocol::RoleName::as_str)
+            .map(wamn_role::RoleName::as_str)
             .collect::<Vec<_>>(),
         ["project-author", "project-promoter"]
     );

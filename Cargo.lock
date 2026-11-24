@@ -6202,6 +6202,7 @@ dependencies = [
  "wamn-identity-protocol",
  "wamn-package",
  "wamn-registry",
+ "wamn-role",
  "wamn-routes",
  "wamn-workflow-graph",
 ]
@@ -6403,6 +6404,7 @@ dependencies = [
  "wamn-provision",
  "wamn-publish",
  "wamn-registry",
+ "wamn-role",
  "wamn-routes",
  "wamn-test-infrastructure",
 ]
@@ -6534,6 +6536,7 @@ dependencies = [
  "wamn-postgres",
  "wamn-provision",
  "wamn-registry",
+ "wamn-role",
  "wamn-routes",
  "wasmtime-wasi-http",
  "zeroize",
@@ -6605,6 +6608,7 @@ dependencies = [
  "wamn-identity-protocol",
  "wamn-package",
  "wamn-registry",
+ "wamn-role",
  "wamn-routes",
  "wash-runtime",
  "wat",
@@ -6942,6 +6946,7 @@ dependencies = [
  "wamn-postgres",
  "wamn-provision",
  "wamn-registry",
+ "wamn-role",
  "wamn-routes",
  "wamn-test-infrastructure",
  "zeroize",
@@ -6962,7 +6967,6 @@ dependencies = [
  "url",
  "wamn-http-client",
  "wamn-identity-protocol",
- "wamn-registry",
 ]
 
 [[package]]
@@ -6977,6 +6981,7 @@ dependencies = [
  "subtle",
  "wamn-digest",
  "wamn-principal",
+ "wamn-registry",
  "wamn-role",
  "zeroize",
 ]
@@ -7165,6 +7170,7 @@ dependencies = [
  "wamn-package",
  "wamn-postgres",
  "wamn-registry",
+ "wamn-role",
  "wamn-run-state",
  "wamn-scalar",
  "wash-runtime",
@@ -7178,8 +7184,8 @@ dependencies = [
  "serde",
  "serde_json",
  "wamn-digest",
- "wamn-identity-protocol",
  "wamn-record-history",
+ "wamn-role",
  "wamn-scalar",
  "wit-parser 0.254.2",
 ]
@@ -7203,7 +7209,6 @@ dependencies = [
  "tempfile",
  "tokio",
  "wamn-digest",
- "wamn-identity-protocol",
  "wamn-kubernetes",
  "wamn-oci",
  "wamn-package",
@@ -7359,13 +7364,19 @@ dependencies = [
  "sha2 0.11.0",
  "uuid",
  "wamn-digest",
- "wamn-identity-protocol",
  "wamn-package",
+ "wamn-principal",
+ "wamn-role",
 ]
 
 [[package]]
 name = "wamn-role"
 version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "wamn-principal",
+]
 
 [[package]]
 name = "wamn-routes"

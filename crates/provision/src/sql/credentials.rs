@@ -17,7 +17,7 @@ pub fn ensure_workload_acl_role_sql(family: WorkloadRoleFamily) -> String {
 pub fn grant_workload_login_sql(
     family: WorkloadRoleFamily,
     database: &str,
-    role: &wamn_identity_protocol::LoginName,
+    role: &wamn_role::LoginName,
 ) -> String {
     let privileges = if family == WorkloadRoleFamily::Migration {
         "CONNECT, CREATE"

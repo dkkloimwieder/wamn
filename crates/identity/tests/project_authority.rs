@@ -71,7 +71,7 @@ fn current_database(url: &str) -> String {
 /// test. The fixture writes as U1, its test principal, whose row stamps itself,
 /// under an administrative operation, and both bindings stay for the probes.
 /// Returns the generation name for the probes' `current_user`.
-fn prelude(url: &str) -> (wamn_identity_protocol::LoginName, String) {
+fn prelude(url: &str) -> (wamn_role::LoginName, String) {
     let database = current_database(url);
     let app_generation = workload_login(
         WorkloadRoleFamily::App,
@@ -104,7 +104,7 @@ COMMIT;"#
 }
 
 /// Create the App login as CNPG would, with the grants that provisioning adds.
-fn app_login_sql(database: &str, login: &wamn_identity_protocol::LoginName) -> String {
+fn app_login_sql(database: &str, login: &wamn_role::LoginName) -> String {
     use postgres_protocol::escape::{escape_identifier, escape_literal};
     let family = WorkloadRoleFamily::App;
     let role = escape_identifier(login.as_str());

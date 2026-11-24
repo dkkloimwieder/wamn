@@ -314,13 +314,13 @@ impl CredentialProvider for StaticCredentialProvider {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(super) struct PoolKey {
     pub(super) project: wamn_registry::ProjectId,
-    login: wamn_identity_protocol::LoginName,
+    login: wamn_role::LoginName,
 }
 
 impl PoolKey {
     pub(super) fn new(
         project: &wamn_registry::ProjectId,
-        login: wamn_identity_protocol::LoginName,
+        login: wamn_role::LoginName,
     ) -> Self {
         Self {
             project: project.clone(),

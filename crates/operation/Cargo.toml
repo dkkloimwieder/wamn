@@ -33,6 +33,7 @@ wamn-event = { workspace = true }
 wamn-identity-protocol.workspace = true
 wamn-postgres.workspace = true
 wamn-registry = { workspace = true }
+wamn-role.workspace = true
 wamn-run-state = { workspace = true }
 wamn-scalar.workspace = true
 wash-runtime = { workspace = true }

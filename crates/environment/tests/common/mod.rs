@@ -8,7 +8,7 @@ use wamn_provision::sql::{ensure_workload_acl_role_sql, grant_workload_login_sql
 pub fn login_sql(
     family: WorkloadRoleFamily,
     database: &str,
-    role: &wamn_identity_protocol::LoginName,
+    role: &wamn_role::LoginName,
     password: &str,
 ) -> String {
     let login = escape_identifier(role.as_str());

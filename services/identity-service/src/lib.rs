@@ -250,9 +250,9 @@ impl IdentityService {
                 "/users"
                     | "/invitations"
                     | "/users/disable"
-                    | wamn_identity_client::nats::ENSURE_ACCOUNT_PATH
-                    | wamn_identity_client::nats::SIGN_USER_PATH
-                    | wamn_identity_client::nats::SIGN_HOST_USER_PATH
+                    | wamn_identity_protocol::nats::ENSURE_ACCOUNT_PATH
+                    | wamn_identity_protocol::nats::SIGN_USER_PATH
+                    | wamn_identity_protocol::nats::SIGN_HOST_USER_PATH
             )
         {
             return Ok(users::respond(&self.inner, request, source).await);

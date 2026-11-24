@@ -421,7 +421,7 @@ pub struct ConnectionConfig {
     pub host: String,
     pub port: u16,
     pub database: String,
-    pub username: wamn_identity_protocol::LoginName,
+    pub username: wamn_role::LoginName,
     pub credentials: SecretRef,
     pub server_ca: SecretRef,
 }
@@ -470,7 +470,7 @@ pub fn configuration(input: &str) -> anyhow::Result<Cow<'_, str>> {
 }
 
 /// Resolve public identity without loading credentials or opening a session.
-pub fn identity(input: &str) -> anyhow::Result<(wamn_identity_protocol::LoginName, String)> {
+pub fn identity(input: &str) -> anyhow::Result<(wamn_role::LoginName, String)> {
     let input = configuration(input)?;
     if input.trim_start().starts_with('{') {
         let config: ConnectionConfig = serde_json::from_str(&input)?;
@@ -499,10 +499,9 @@ pub fn credential_directory(root: &Path, name: &str) -> anyhow::Result<PathBuf> 
 /// Read a mounted password after checking the login name.
 pub async fn read_password(
     directory: &Path,
-    expected: &wamn_identity_protocol::LoginName,
+    expected: &wamn_role::LoginName,
 ) -> anyhow::Result<String> {
-    let username: wamn_identity_protocol::LoginName =
-        read_text(&directory.join("username")).await?.parse()?;
+    let username: wamn_role::LoginName = read_text(&directory.join("username")).await?.parse()?;
     if &username != expected {
         return Err(CredentialMismatch {
             directory: directory.to_owned(),
@@ -588,7 +587,7 @@ pub async fn connect_options<'a>(
 ) -> anyhow::Result<PgConnectOptions> {
     let input = match input.into() {
         ConnectionInput::Options(options) => {
-            let username: wamn_identity_protocol::LoginName = options.get_username().parse()?;
+            let username: wamn_role::LoginName = options.get_username().parse()?;
             return Ok((*options)
                 .username(username.as_str())
                 .ssl_mode(PgSslMode::VerifyFull));
@@ -607,7 +606,7 @@ pub async fn connect_options<'a>(
             "explicit database login and database are required"
         );
         let options: PgConnectOptions = input.parse()?;
-        let username: wamn_identity_protocol::LoginName = options.get_username().parse()?;
+        let username: wamn_role::LoginName = options.get_username().parse()?;
         options.username(username.as_str())
     };
     Ok(options.ssl_mode(PgSslMode::VerifyFull))

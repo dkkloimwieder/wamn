@@ -13,7 +13,7 @@ pub fn configuration(
     host: String,
     port: u16,
     database: String,
-    username: wamn_identity_protocol::LoginName,
+    username: wamn_role::LoginName,
     secret: String,
 ) -> ConnectionConfig {
     ConnectionConfig {
@@ -34,21 +34,21 @@ pub fn configuration(
 
 pub async fn wait_role(
     connection: &mut sqlx::PgConnection,
-    username: &wamn_identity_protocol::LoginName,
+    username: &wamn_role::LoginName,
 ) -> anyhow::Result<()> {
     wait_role_kind(connection, username, true).await
 }
 
 pub(crate) async fn wait_group_role(
     connection: &mut sqlx::PgConnection,
-    role: &wamn_identity_protocol::LoginName,
+    role: &wamn_role::LoginName,
 ) -> anyhow::Result<()> {
     wait_role_kind(connection, role, false).await
 }
 
 async fn wait_role_kind(
     connection: &mut sqlx::PgConnection,
-    role: &wamn_identity_protocol::LoginName,
+    role: &wamn_role::LoginName,
     can_login: bool,
 ) -> anyhow::Result<()> {
     tokio::time::timeout(Duration::from_secs(120), async {

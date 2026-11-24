@@ -208,7 +208,7 @@ impl std::error::Error for WorkloadRoleIdentityError {}
 pub fn workload_login(
     family: WorkloadRoleFamily,
     identity: WorkloadRoleIdentity<'_>,
-) -> Result<wamn_identity_protocol::LoginName, WorkloadRoleIdentityError> {
+) -> Result<wamn_role::LoginName, WorkloadRoleIdentityError> {
     let actual = identity.identity_type();
     let expected = family.identity_type();
     if actual != expected {

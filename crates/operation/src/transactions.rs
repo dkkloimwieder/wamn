@@ -198,7 +198,7 @@ pub(super) fn validate_session_identity(
     }
     if let Some(role) = role
         && !role
-            .parse::<wamn_identity_protocol::RoleName>()
+            .parse::<wamn_role::RoleName>()
             .is_ok_and(|parsed| parsed.as_str() == role)
     {
         return Err(PgError::QueryError((

@@ -8,7 +8,7 @@ license.workspace = true
 [dependencies]
 wit-parser.workspace = true
 anyhow.workspace = true
-wamn-identity-protocol.workspace = true
+wamn-role.workspace = true
 wamn-record-history.workspace = true
 wamn-digest.workspace = true
 wamn-scalar.workspace = true

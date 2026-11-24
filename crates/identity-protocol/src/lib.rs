@@ -5,11 +5,7 @@
 /// stored in the clear as the index key, the whole string only as a digest.
 pub const PAT_TOKEN_PREFIX: &str = "wamn_pat_";
 
-mod login;
-pub use login::{LoginName, ParseLoginNameError};
-
-mod role;
-pub use role::RoleName;
+pub mod nats;
 pub mod pat_prefix;
 pub mod secret;
 pub mod wire;

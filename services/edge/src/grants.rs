@@ -9,7 +9,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use wamn_edge_document::ServingManifest;
 use wamn_edge_document::edge_bundle::{EdgeGrants, GRANTS_FILE_NAME};
-use wamn_identity_protocol::RoleName;
+use wamn_role::RoleName;
 
 use crate::release::{EdgeReleaseError, EdgeReleaseErrorType};
 

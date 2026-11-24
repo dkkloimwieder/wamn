@@ -19,7 +19,7 @@ pub struct ApiServiceArgs {
     #[arg(long)]
     pub display_name: String,
     #[arg(long, required = true)]
-    pub role: Vec<wamn_identity_protocol::RoleName>,
+    pub role: Vec<wamn_role::RoleName>,
     #[arg(long)]
     pub lifetime_seconds: u64,
     #[arg(long)]

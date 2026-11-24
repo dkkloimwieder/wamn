@@ -1,4 +1,10 @@
-//! PostgreSQL role names.
+//! PostgreSQL role and login names.
+
+mod login;
+mod role;
+
+pub use login::{LoginName, ParseLoginNameError};
+pub use role::RoleName;
 
 /// Application statements.
 pub const APP_ROLE: &str = "wamn_app";

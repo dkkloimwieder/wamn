@@ -40,7 +40,7 @@ pub struct ApplicationComponent {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ApplicationDataChange {
-    pub role: wamn_identity_protocol::RoleName,
+    pub role: wamn_role::RoleName,
     pub host_transaction: bool,
     pub models: Vec<DataChangeModel>,
 }
