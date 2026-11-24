@@ -333,6 +333,7 @@ Next: the restructure ends. The review work in the Claude Doc "wamn review" foll
 
 ## Open items
 
+- Four dev-dependency cycles through `wamn-test-infrastructure` remain after Epic 21 (ruling 18). They start in `wamn-environment`, `wamn-postgres`, `wamn-provision`, and `wamn-release`.
 - X5: `-host-namespaces=` is empty (T4, `hostNamespaces: []`), so the stock operator sends no stops to a deleted host pod in an org namespace. The host then drains the full `drain_bound_seconds` and exits 1. Its own scout comes later. Measured on kind (Epic 15): every wamn env delete waits about 300 s for the host to drain, and the host then exits with 'service cleanup exceeded its shutdown budget'. That exit is a defect in its own right. X5 gets the next scout after the restructure.
 - The CDC reader has no readiness probe, so its rollout wait shows only that the pod runs, not that it opened its replication session. A probe needs a check in the reader, so it is design work (Epic 16 scout).
 - `wamn env delete --data` with no active row finds an ObjectStore only through its Cluster. If the Cluster is already gone, the ObjectStore stays. Kind has no backups, so no kind test covers it (Epic 16 scout).
