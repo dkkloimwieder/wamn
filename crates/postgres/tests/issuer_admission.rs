@@ -97,7 +97,7 @@ async fn password_exchange_requires_current_org_membership() {
     .unwrap();
 
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        wamn_provision::identity_role::grant_identity_issuer_surface_sql(),
+        wamn_platform_install::identity_role::grant_identity_issuer_surface_sql(),
     ))
     .execute(&mut admin)
     .await
@@ -169,7 +169,7 @@ async fn concurrent_issuer_connections_share_the_account_limit() {
     let database = wamn_test_infrastructure::identity::system(&postgres).await;
     let mut admin = wamn_postgres::connect(database.as_str()).await.unwrap();
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        wamn_provision::identity_role::grant_identity_issuer_surface_sql(),
+        wamn_platform_install::identity_role::grant_identity_issuer_surface_sql(),
     ))
     .execute(&mut admin)
     .await

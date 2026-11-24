@@ -606,7 +606,7 @@ Two verbs write the row with the control credential:
 
 - A lost slot is not recoverable. A new slot starts at the current WAL position, and the WAL between the old confirmed position and that point is removed. The rows written in that interval produce no events.
 
-- The reader never creates a slot. Environment provisioning creates it with `create_failover_slot_sql` (`crates/provision/src/sql/cdc.rs`).
+- The reader never creates a slot. Environment provisioning creates it with `create_failover_capture_sql` (`crates/postgres/src/capture_sql.rs`).
 
 - No automatic re-slot. No component creates a slot again without an operator.
 

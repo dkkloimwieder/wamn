@@ -49,9 +49,6 @@ wamn-platform-install.workspace = true
 wamn-oci = { workspace = true }
 wamn-oci-reference.workspace = true
 wamn-http-client = { workspace = true, features = ["tls12"] }
-# The pure provisioning SQL builders + identifier naming + credential Secret
-# rendering.
-wamn-provision = { workspace = true }
 # wamn-q3n.6 provision-org: the control-plane registry model + registry SQL.
 wamn-registry = { workspace = true }
 # MVP management authentication: stable service principals, project roles, and

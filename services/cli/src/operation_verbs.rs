@@ -143,6 +143,6 @@ pub(crate) fn parse_coordinate(value: &str) -> anyhow::Result<wamn_registry::Tri
     let org = org.parse()?;
     let project = project.parse()?;
     let env = env.parse()?;
-    wamn_provision::validate_project_env(&org, &project, &env)?;
+    wamn_environment::name::validate_project_env(&org, &project, &env)?;
     Ok(wamn_registry::Triple::new(org, env, project))
 }

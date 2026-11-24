@@ -5,10 +5,10 @@ use std::fmt::Write as _;
 use std::path::Path;
 
 use postgres_protocol::escape::{escape_identifier, escape_literal};
+use wamn_environment::sql;
 use wamn_identity_protocol::workload_role::{
     WorkloadRoleFamily, WorkloadRoleIdentity, workload_login,
 };
-use wamn_provision::sql;
 
 const APP_GENERATION_PASSWORD: &str = "test-owned-app-generation-password";
 const OTHER_APP_PASSWORD: &str = "other-test-app-password";
@@ -20,7 +20,7 @@ fn deploy_dir() -> std::path::PathBuf {
 fn app_schema_sql() -> String {
     format!(
         "\nDROP SCHEMA IF EXISTS catalog CASCADE;\n{}\n{}",
-        wamn_provision::CATALOG_SCHEMA_SQL,
+        wamn_postgres::project_setup::CATALOG_SCHEMA_SQL,
         include_str!("../../../deploy/sql/app-schema.sql")
     )
 }
@@ -79,10 +79,10 @@ fn app_login_sql(database: &str, login: &wamn_role::LoginName, password: &str) -
     format!(
         "{} CREATE ROLE {role} LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD {}; \
          GRANT {} TO {role} WITH ADMIN FALSE, INHERIT TRUE, SET FALSE; {}",
-        sql::ensure_workload_acl_role_sql(family),
+        wamn_postgres::project_setup::ensure_workload_acl_role_sql(family),
         escape_literal(password),
         escape_identifier(family.acl_role()),
-        sql::grant_workload_login_sql(family, database, login)
+        wamn_postgres::project_setup::grant_workload_login_sql(family, database, login)
     )
 }
 
@@ -136,7 +136,7 @@ async fn app_schema_applies_and_enforces_isolation_on_postgres() {
         app_generation(&other_database, &PROJECT_ENV_KEY_2.parse().unwrap());
     let mut other_script =
         app_login_sql(&other_database, &project_env_key_2_app, OTHER_APP_PASSWORD);
-    other_script.push_str(sql::revoke_public_connect_base_grants_sql());
+    other_script.push_str(wamn_platform_install::sql::revoke_public_connect_base_grants_sql());
     other_script.push_str(&record_history_sql());
     other_script.push_str(&record_history_app_grants_sql());
     other_script.push_str(&app_schema_sql());
@@ -580,7 +580,7 @@ const OTHER_HISTORY_ACTOR: &str = "00000000-0000-4000-8000-00000000000b";
 
 fn install_history_probe(url: &str) {
     let mut script = sql::ensure_app_acl_role_sql();
-    script.push_str(wamn_provision::CATALOG_SCHEMA_SQL);
+    script.push_str(wamn_postgres::project_setup::CATALOG_SCHEMA_SQL);
     script.push_str(HISTORY_PROBE);
     run(url, &script);
 }
@@ -862,14 +862,12 @@ DO $$ BEGIN
 END $$;
 COMMIT;
 ",
-        sql::ensure_project_roles_sql(),
-        wamn_provision::CATALOG_SCHEMA_SQL,
+        wamn_postgres::project_setup::ensure_project_roles_sql(),
+        wamn_postgres::project_setup::CATALOG_SCHEMA_SQL,
         include_str!("../../../deploy/sql/run-state.sql"),
         include_str!("../../../deploy/sql/run-queue.sql"),
-        wamn_provision::bind_platform_principal_sql(
-            wamn_provision::PlatformComponent::Provisioning
-        ),
-        wamn_provision::PlatformComponent::Provisioning.principal_id(),
+        wamn_postgres::bind_platform_principal_sql(wamn_principal::PlatformComponent::Provisioning),
+        wamn_principal::PlatformComponent::Provisioning.principal_id(),
     );
     run(database.as_str(), &script);
 }

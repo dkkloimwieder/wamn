@@ -1,11 +1,12 @@
 //! The identity issuer role and its database privileges.
+
 use postgres_protocol::escape::escape_identifier;
 use sha2::{Digest as _, Sha256};
 use std::fmt::Write as _;
-
-/// Exact database served by the identity authority.
-pub use wamn_platform_install::provision_system::SYSTEM_DATABASE as IDENTITY_ISSUER_DATABASE;
 use wamn_role::IDENTITY_ISSUER_ROLE;
+
+use crate::provision_system::SYSTEM_DATABASE;
+
 /// Tables that allow full row mutations by the signing authority.
 pub const IDENTITY_ISSUER_TABLES: [&str; 2] = ["session_keys", "session_signing_state"];
 /// Reads for the identity issuer.
@@ -146,7 +147,7 @@ pub fn identity_issuer_login(issuer: &str) -> anyhow::Result<wamn_role::LoginNam
         "issuer",
         issuer,
         "database",
-        IDENTITY_ISSUER_DATABASE,
+        SYSTEM_DATABASE,
     ] {
         digest.update(u64::try_from(field.len())?.to_be_bytes());
         digest.update(field.as_bytes());

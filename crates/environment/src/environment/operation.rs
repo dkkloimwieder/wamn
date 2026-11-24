@@ -2,7 +2,8 @@
 
 mod rollback;
 
-use super::database::{DatabaseConnection, DatabaseSession, LifecycleLock};
+use super::database::{DatabaseConnection, LifecycleLock};
+use crate::environment_sql_effects::{self, PostgresSession};
 use std::{
     borrow::Cow,
     collections::{BTreeMap, BTreeSet},
@@ -162,7 +163,6 @@ pub async fn application(
 ) -> anyhow::Result<Value> {
     let triple = document.triple();
     LifecycleLock::hold(
-        &*platform.database,
         DatabaseConnection::Direct(&platform.system_database_url),
         &triple,
         async |system| {
@@ -187,150 +187,122 @@ pub async fn application(
             } else {
                 DatabaseConnection::Direct(&owner)
             };
-            LifecycleLock::hold(
-                &*platform.database,
-                connection_mode,
-                &triple,
-                async |project| match operation {
-                    Application::Deploy {
-                        digest,
+            LifecycleLock::hold(connection_mode, &triple, async |project| match operation {
+                Application::Deploy {
+                    digest,
+                    integration_base,
+                    component_base,
+                    chart,
+                    authority_port,
+                } => {
+                    let packages = Packages::open(platform, digest).await?;
+                    let selection = document
+                        .applications
+                        .get_mut(name)
+                        .expect("declared application");
+                    selection.current = DeclaredRelease::Digest(digest);
+                    selection.packages = packages.manifests.keys().cloned().collect();
+                    let platform_domain = system.platform_domain().await?;
+                    let bindings =
+                        bindings::analyse(system, project, &document, packages.manifests.values())
+                            .await?;
+                    let (mut values, roles) = write::release_values(
+                        &document,
+                        &platform_domain,
+                        name,
+                        &packages.manifests,
+                        &digest,
+                        &bindings,
                         integration_base,
                         component_base,
-                        chart,
                         authority_port,
-                    } => {
-                        let packages = Packages::open(platform, digest).await?;
-                        let selection = document
-                            .applications
-                            .get_mut(name)
-                            .expect("declared application");
-                        selection.current = DeclaredRelease::Digest(digest);
-                        selection.packages = packages.manifests.keys().cloned().collect();
-                        let platform_domain = system.platform_domain().await?;
-                        let bindings = bindings::analyse(
-                            system,
-                            project,
-                            &document,
-                            packages.manifests.values(),
+                    )?;
+                    if platform.insecure_registry {
+                        use_pod_registry(chart, &mut values)?;
+                    }
+                    let app = application_config(&values)?;
+                    let sequences = stage::sequence_defaults(
+                        &document.membership(),
+                        packages.manifests.values(),
+                    )?;
+                    project.check_workflows(&app).await?;
+                    apply_sql(platform, system, &triple, &connection, &owner, &packages).await?;
+                    environment_sql_effects::materialize_application_principals(
+                        &platform_domain,
+                        &owner,
+                        &wamn_registry::project_env_key(&triple.org, &triple.project, &triple.env),
+                        &packages.manifests,
+                    )
+                    .await?;
+                    project.create_number_sequences(&sequences).await?;
+                    let timeout =
+                        Duration::from_secs(u64::try_from(document.readiness_budget_seconds)?);
+                    platform
+                        .cluster
+                        .apply_application(
+                            chart.directory(),
+                            &release,
+                            &values,
+                            deploy_job_deadline(platform).await?,
                         )
                         .await?;
-                        let (mut values, roles) = write::release_values(
-                            &document,
-                            &platform_domain,
-                            name,
-                            &packages.manifests,
-                            &digest,
-                            &bindings,
-                            integration_base,
-                            component_base,
-                            authority_port,
-                        )?;
-                        if platform.insecure_registry {
-                            use_pod_registry(chart, &mut values)?;
-                        }
-                        let app = application_config(&values)?;
-                        let sequences = stage::sequence_defaults(
-                            &document.membership(),
-                            packages.manifests.values(),
-                        )?;
-                        project.check_workflows(&app).await?;
-                        apply_sql(platform, system, &triple, &connection, &owner, &packages)
-                            .await?;
-                        platform
-                            .database
-                            .materialize_application_principals(
-                                &platform_domain,
-                                &owner,
-                                &wamn_registry::project_env_key(
-                                    &triple.org,
-                                    &triple.project,
-                                    &triple.env,
-                                ),
-                                &packages.manifests,
-                            )
-                            .await?;
-                        project.create_number_sequences(&sequences).await?;
-                        let timeout =
-                            Duration::from_secs(u64::try_from(document.readiness_budget_seconds)?);
+                    for role in roles {
+                        let workload = wamn_application_chart::workload_name(&release, role);
                         platform
                             .cluster
-                            .apply_application(
-                                chart.directory(),
-                                &release,
-                                &values,
-                                deploy_job_deadline(platform).await?,
+                            .wait_workload_ready(&workload, timeout)
+                            .await?;
+                    }
+                    Ok(json!({"release":digest}))
+                }
+                Application::Apply(digest) => {
+                    let packages = Packages::open(platform, digest).await?;
+                    apply_sql(platform, system, &triple, &connection, &owner, &packages).await?;
+                    Ok(json!({"release":digest}))
+                }
+                Application::Diff(digest) => {
+                    let digest = if let Some(digest) = digest {
+                        digest
+                    } else {
+                        super::document::workload_release(&*platform.cluster, &triple, name)
+                            .await?
+                            .context("application has no deployed package")?
+                            .package_digest
+                    };
+                    let packages = Packages::open(platform, digest).await?;
+                    let candidates = packages
+                        .order()?
+                        .into_iter()
+                        .map(|artifact| {
+                            sql::schema::Candidate::source(
+                                &*platform.packages,
+                                artifact.package_root(),
                             )
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
+                    let key =
+                        wamn_registry::project_env_key(&triple.org, &triple.project, &triple.env);
+                    let state = sql::schema::database_state(&owner, &key).await?;
+                    let diff =
+                        sql::schema::plan(&document, name, Some(digest), &candidates, &state)
                             .await?;
-                        for role in roles {
-                            let workload = wamn_application_chart::workload_name(&release, role);
-                            platform
-                                .cluster
-                                .wait_workload_ready(&workload, timeout)
-                                .await?;
-                        }
-                        Ok(json!({"release":digest}))
-                    }
-                    Application::Apply(digest) => {
-                        let packages = Packages::open(platform, digest).await?;
-                        apply_sql(platform, system, &triple, &connection, &owner, &packages)
-                            .await?;
-                        Ok(json!({"release":digest}))
-                    }
-                    Application::Diff(digest) => {
-                        let digest = if let Some(digest) = digest {
-                            digest
-                        } else {
-                            super::document::workload_release(&*platform.cluster, &triple, name)
-                                .await?
-                                .context("application has no deployed package")?
-                                .package_digest
-                        };
-                        let packages = Packages::open(platform, digest).await?;
-                        let candidates = packages
-                            .order()?
-                            .into_iter()
-                            .map(|artifact| {
-                                sql::schema::Candidate::source(
-                                    &*platform.packages,
-                                    artifact.package_root(),
-                                )
-                            })
-                            .collect::<Result<Vec<_>, _>>()?;
-                        let key = wamn_registry::project_env_key(
-                            &triple.org,
-                            &triple.project,
-                            &triple.env,
-                        );
-                        let state =
-                            sql::schema::database_state(&*platform.database, &owner, &key).await?;
-                        let diff = sql::schema::plan(
-                            &*platform.database,
-                            &document,
-                            name,
-                            Some(digest),
-                            &candidates,
-                            &state,
-                        )
-                        .await?;
-                        Ok(serde_json::to_value(diff)?)
-                    }
-                    Application::Rollback(revision) => {
-                        let revision =
-                            rollback::target(platform, &triple, name, &release, revision).await?;
-                        let (digest, app) =
-                            rollback::application(platform, &release, revision).await?;
-                        let packages = Packages::open(platform, digest).await?;
-                        rollback::verify_package_components(&app, &packages.manifests)?;
-                        project.check_workflows(&app).await?;
-                        rollback::run(platform, &release, revision).await?;
-                        Ok(json!({"release":digest,"revision":revision}))
-                    }
-                    Application::Stop => {
-                        super::drain::stop(platform, project, &triple.env, name, &release).await?;
-                        Ok(json!({"stopped":name}))
-                    }
-                },
-            )
+                    Ok(serde_json::to_value(diff)?)
+                }
+                Application::Rollback(revision) => {
+                    let revision =
+                        rollback::target(platform, &triple, name, &release, revision).await?;
+                    let (digest, app) = rollback::application(platform, &release, revision).await?;
+                    let packages = Packages::open(platform, digest).await?;
+                    rollback::verify_package_components(&app, &packages.manifests)?;
+                    project.check_workflows(&app).await?;
+                    rollback::run(platform, &release, revision).await?;
+                    Ok(json!({"release":digest,"revision":revision}))
+                }
+                Application::Stop => {
+                    super::drain::stop(platform, project, &triple.env, name, &release).await?;
+                    Ok(json!({"stopped":name}))
+                }
+            })
             .await
         },
     )
@@ -366,7 +338,7 @@ fn application_config(values: &serde_yaml::Value) -> anyhow::Result<ApplicationC
 
 async fn apply_sql(
     platform: &Platform,
-    system: &dyn DatabaseSession,
+    system: &PostgresSession,
     triple: &Triple,
     connection: &wamn_postgres::database::ConnectionConfig,
     owner: &str,
@@ -374,7 +346,8 @@ async fn apply_sql(
 ) -> anyhow::Result<()> {
     let order = packages.order()?;
     let schemas = publication_schemas(platform, owner, &packages.manifests).await?;
-    let migration = platform.database.migration_configuration(owner)?;
+    let migration =
+        wamn_postgres::migration_scope::MigrationDatabase::Project.configuration(owner)?;
     for artifact in order {
         apply_package(
             platform,
@@ -412,16 +385,14 @@ async fn apply_sql(
     }
     let capture = wamn_postgres::database::capture_configuration(connection.clone())?;
     platform.prepare_database(&capture).await?;
-    platform
-        .database
-        .prepare_cdc(
-            owner,
-            &capture.to_json()?,
-            &connection.database,
-            &publication,
-            &schemas,
-        )
-        .await?;
+    environment_sql_effects::prepare_cdc(
+        owner,
+        &capture.to_json()?,
+        &connection.database,
+        &publication,
+        &schemas,
+    )
+    .await?;
     if !paused {
         platform.cluster.wait_reader_ready(triple).await?;
     }
@@ -442,7 +413,7 @@ async fn publication_schemas(
                 .map(|model| model.schema.clone().into())
         })
         .collect::<BTreeSet<_>>();
-    let installed = platform.database.installed_packages(owner).await?;
+    let installed = environment_sql_effects::installed_packages(owner).await?;
     let base = platform
         .package_artifact_base
         .as_deref()
@@ -471,7 +442,6 @@ pub async fn reset(platform: &Platform, document: &EnvironmentDocument) -> anyho
     // Reset has no application selection. Its SQL application sources are the
     // exact installed artifact digests of the whole database.
     LifecycleLock::hold(
-        &*platform.database,
         DatabaseConnection::Direct(&platform.system_database_url),
         &triple,
         async |system| {
@@ -481,7 +451,6 @@ pub async fn reset(platform: &Platform, document: &EnvironmentDocument) -> anyho
             platform.prepare_database(&conn).await?;
             let owner = conn.to_json()?;
             LifecycleLock::hold(
-                &*platform.database,
                 DatabaseConnection::Direct(&owner),
                 &triple,
                 async |project| {
@@ -515,7 +484,8 @@ pub async fn reset(platform: &Platform, document: &EnvironmentDocument) -> anyho
                     }
                     packages.order()?;
                     super::ensure::suspend_project(platform, system, &triple, None).await?;
-                    let migration = platform.database.migration_configuration(&owner)?;
+                    let migration = wamn_postgres::migration_scope::MigrationDatabase::Project
+                        .configuration(&owner)?;
                     system.reset(&owner, &migration, &triple).await?;
                     apply_sql(platform, system, &triple, &conn, &owner, &packages).await?;
                     let (_, host) = super::ensure::prepare_host_upgrade(

@@ -3,7 +3,7 @@
 use sqlx::SqlSafeStr as _;
 use sqlx::migrate::{MigrateError, Migration, MigrationType, Migrator};
 use wamn_postgres::migrations;
-use wamn_provision::migration;
+use wamn_postgres::project_migration;
 
 fn source(version: i64, sql: &str) -> Migration {
     Migration::new(
@@ -27,23 +27,23 @@ async fn sqlx_commits_files_with_their_history_and_refuses_checksum_drift() -> a
     let database = postgres.create_database("project").await?;
     let mut admin = wamn_postgres::connect(database.as_str()).await?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        wamn_provision::sql::ensure_app_acl_role_sql(),
+        wamn_environment::sql::ensure_app_acl_role_sql(),
     ))
     .execute(&mut admin)
     .await?;
-    sqlx::raw_sql(wamn_provision::CATALOG_SCHEMA_SQL)
+    sqlx::raw_sql(wamn_postgres::project_setup::CATALOG_SCHEMA_SQL)
         .execute(&mut admin)
         .await?;
-    let component = wamn_provision::PlatformComponent::ApplyPackage;
+    let component = wamn_principal::PlatformComponent::ApplyPackage;
     sqlx::query("INSERT INTO platform.login_principal(login,principal_id) VALUES(current_user,$1::text::uuid) ON CONFLICT(login) DO UPDATE SET principal_id=EXCLUDED.principal_id")
         .bind(uuid::Uuid::from(component.principal_id()))
         .execute(&mut admin)
         .await?;
-    let table = migration::history_table(
+    let table = project_migration::history_table(
         &"fixture--dev--one".parse().unwrap(),
         &"orders".parse().unwrap(),
     );
-    migration::prepare_history(&mut admin, &table, &"postgres".parse().unwrap()).await?;
+    project_migration::prepare_history(&mut admin, &table, &"postgres".parse().unwrap()).await?;
     let first = source(
         10,
         "CREATE TABLE public.migration_effect(id int PRIMARY KEY, created_at timestamptz NOT NULL, created_by uuid NOT NULL, updated_at timestamptz NOT NULL, updated_by uuid NOT NULL);

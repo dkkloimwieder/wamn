@@ -447,7 +447,7 @@ pub(crate) mod tests {
     use tokio::net::TcpListener;
     use wamn_http_client::HttpClient;
     use wamn_identity_protocol::PlatformComponent;
-    use wamn_provision::identity_role::identity_issuer_login;
+    use wamn_platform_install::identity_role::identity_issuer_login;
     use wamn_test_infrastructure::containers::{Postgres, start_postgres};
 
     /// Create the issuer login as CNPG would, with the identity issuer surface.
@@ -457,7 +457,7 @@ pub(crate) mod tests {
         let role = escape_identifier(role.as_str());
         format!(
             "{} CREATE ROLE {role} LOGIN INHERIT PASSWORD {}; GRANT wamn_identity_issuer TO {role} WITH ADMIN FALSE, INHERIT TRUE, SET FALSE; GRANT CONNECT ON DATABASE wamn_system TO {role};",
-            wamn_provision::identity_role::grant_identity_issuer_surface_sql(),
+            wamn_platform_install::identity_role::grant_identity_issuer_surface_sql(),
             escape_literal(password),
         )
     }

@@ -17,7 +17,8 @@
 //! With `--data`, remove kept generations even when the registry row is gone.
 //! An absent or unreachable project database skips database-side cleanup.
 
-use super::database::{DatabaseConnection, DatabaseSession, LifecycleLock};
+use super::database::{DatabaseConnection, LifecycleLock};
+use crate::environment_sql_effects::{self, PostgresSession};
 
 use anyhow::bail;
 
@@ -43,7 +44,6 @@ pub async fn delete(
 ) -> anyhow::Result<Vec<String>> {
     super::runtime::resolve_platform(platform)?;
     LifecycleLock::hold(
-        &*platform.database,
         DatabaseConnection::Direct(&platform.system_database_url),
         triple,
         async |lock| Box::pin(delete_locked(platform, triple, data, lock)).await,
@@ -60,7 +60,7 @@ async fn delete_locked(
     platform: &Platform,
     triple: &Triple,
     data: bool,
-    system: &dyn DatabaseSession,
+    system: &PostgresSession,
 ) -> anyhow::Result<Vec<String>> {
     let (org, project, env) = (&triple.org, &triple.project, &triple.env);
     let release = name::environment_resource_name(org, project, env);
@@ -113,13 +113,15 @@ async fn delete_locked(
     } else if let Some(connection) = &project_connection {
         platform.prepare_database(connection).await?;
         let url = connection.to_json()?;
-        match platform
-            .database
-            .lock(DatabaseConnection::Delete { input: &url, data }, org, env)
-            .await
+        match environment_sql_effects::lock_environment(
+            DatabaseConnection::Delete { input: &url, data },
+            org,
+            env,
+        )
+        .await
         {
             Ok(lock) => Some(lock),
-            Err(error) if data && platform.database.unreachable(&error) => {
+            Err(error) if data && environment_sql_effects::database_unreachable(&error) => {
                 lines.push(format!(
                     "--data: project database {database} unreachable ({error:#}). Deleted without the database-side steps."
                 ));
@@ -190,25 +192,25 @@ async fn delete_locked(
         if let Some(project_connection) = project_connection {
             let replication_name = cdc_object_name(org, project, env, &instance);
             let drop_capture = async {
-                if platform
-                    .database
-                    .capture_exists(&project_connection, &replication_name, data)
-                    .await?
+                if environment_sql_effects::capture_exists(
+                    &project_connection,
+                    &replication_name,
+                    data,
+                )
+                .await?
                 {
                     let mut capture =
                         wamn_postgres::database::capture_configuration(project_connection)?;
                     capture.database = "postgres".into();
                     platform.prepare_database(&capture).await?;
-                    platform
-                        .database
-                        .drop_capture(&capture, &replication_name, data)
+                    environment_sql_effects::drop_capture(&capture, &replication_name, data)
                         .await?;
                 }
                 Ok(())
             };
             match drop_capture.await {
                 Ok(()) => {}
-                Err(error) if data && platform.database.unreachable(&error) => lines.push(format!(
+                Err(error) if data && environment_sql_effects::database_unreachable(&error) => lines.push(format!(
                     "--data: project database {database} unreachable ({error:#}). Deleted without replication slot cleanup."
                 )),
                 Err(error) => return Err(error),

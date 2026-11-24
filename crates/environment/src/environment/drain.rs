@@ -24,7 +24,7 @@ pub(super) fn describe(unfinished: &[UnfinishedRun]) -> String {
 /// Uninstall an application's release, and refuse while the application has unfinished runs.
 pub(super) async fn stop(
     platform: &Platform,
-    project: &dyn super::database::DatabaseSession,
+    project: &crate::environment_sql_effects::PostgresSession,
     env: &EnvName,
     application: &ApplicationName,
     release: &str,

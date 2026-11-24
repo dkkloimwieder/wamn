@@ -36,11 +36,10 @@ Each library has one concern. Directory names follow crate names without the `wa
 | `crates/scalar` | `wamn-scalar`: scalar formats and SQL value types |
 | `crates/number-pattern` | `wamn-number-pattern`: document number pattern parsing |
 | `crates/registry` | `wamn-registry`: hierarchy coordinates, resource names, and registry SQL |
-| `crates/provision` | `wamn-provision`: database roles and provisioning SQL |
 | `crates/release` | `wamn-release`: release plans, admitted components, and publication contracts |
 | `crates/oci` | `wamn-oci`: registry transport, artifact reads and publication, and registry credentials |
 | `crates/environment` | `wamn-environment`: environment lifecycle, package apply, retention, and CDC reader lifecycle and recovery |
-| `crates/platform-install` | `wamn-platform-install`: chart installation and bootstrap |
+| `crates/platform-install` | `wamn-platform-install`: chart installation and system and org database bootstrap |
 | `crates/dev` | `wamn-dev`: watched builds, publication, and deployment |
 | `crates/kubernetes` | `wamn-kubernetes`: Kubernetes transport, Secrets, and Job execution |
 | `crates/broker` | `wamn-broker`: NATS connections, streams, and shared memory buckets |

@@ -1,6 +1,6 @@
 //! Platform extensions support application exclusion constraints.
 
-use wamn_provision::sql;
+use wamn_environment::sql;
 
 const OVERLAP_PROBE_TABLE: &str = "CREATE TABLE overlap_probe.appointment (\
      id uuid PRIMARY KEY, dock_id uuid NOT NULL, during tstzrange NOT NULL, \

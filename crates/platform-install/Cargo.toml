@@ -6,6 +6,11 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+hex.workspace = true
+postgres-protocol.workspace = true
+sha2.workspace = true
+url.workspace = true
+sqlx = { workspace = true, features = ["migrate", "postgres", "runtime-tokio", "tls-rustls"] }
 wamn-role.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
@@ -17,6 +22,12 @@ tokio = { workspace = true, features = ["time"] }
 wamn-digest.workspace = true
 wamn-postgres.workspace = true
 wamn-registry.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+wamn-identity-protocol.workspace = true
+wamn-principal.workspace = true
+wamn-test-infrastructure.workspace = true
 
 [lints]
 workspace = true

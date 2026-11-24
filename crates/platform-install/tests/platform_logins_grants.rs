@@ -3,7 +3,7 @@
 pub mod common;
 use common::grants;
 use wamn_identity_protocol::workload_role::WorkloadRoleFamily;
-use wamn_provision::migrations::MigrationDatabase;
+use wamn_postgres::migration_scope::MigrationDatabase;
 
 #[tokio::test]
 #[ignore = "requires: docker"]

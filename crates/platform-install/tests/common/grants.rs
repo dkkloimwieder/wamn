@@ -5,8 +5,7 @@ use wamn_identity_protocol::workload_role::WorkloadRoleIdentityType;
 use wamn_identity_protocol::workload_role::{
     WorkloadRoleFamily, WorkloadRoleIdentity, workload_login,
 };
-use wamn_provision::migrations::MigrationDatabase;
-use wamn_provision::sql;
+use wamn_postgres::migration_scope::MigrationDatabase;
 
 #[derive(Debug)]
 pub struct Fixture {
@@ -33,7 +32,11 @@ pub async fn prepare(url: url::Url, family: WorkloadRoleFamily) -> Fixture {
         _ => {
             // As in production, the migration login owns the project database
             // and installs its schemas.
-            execute(&mut admin, sql::ensure_project_roles_sql()).await;
+            execute(
+                &mut admin,
+                wamn_postgres::project_setup::ensure_project_roles_sql(),
+            )
+            .await;
             super::database::platform_migration_input(url.as_str(), MigrationDatabase::Project)
                 .await;
             let owner = MigrationDatabase::Project.login(database);
@@ -43,10 +46,10 @@ pub async fn prepare(url: url::Url, family: WorkloadRoleFamily) -> Fixture {
             )
             .await;
             for batch in [
-                wamn_provision::CATALOG_SCHEMA_SQL,
+                wamn_postgres::project_setup::CATALOG_SCHEMA_SQL,
                 include_str!("../../../../deploy/sql/run-state.sql"),
                 include_str!("../../../../deploy/sql/run-queue.sql"),
-                wamn_provision::APP_SCHEMA_SQL,
+                wamn_postgres::project_setup::APP_SCHEMA_SQL,
                 "RESET ROLE",
             ] {
                 execute(&mut admin, batch).await;
@@ -82,7 +85,11 @@ pub async fn prepare(url: url::Url, family: WorkloadRoleFamily) -> Fixture {
     )
     .await;
     if family == WorkloadRoleFamily::Migration {
-        execute(&mut admin, &wamn_provision::migration::grants_sql(&login)).await;
+        execute(
+            &mut admin,
+            &wamn_postgres::project_migration::grants_sql(&login),
+        )
+        .await;
     }
     let mut url = url;
     url.set_username(login.as_str()).unwrap();

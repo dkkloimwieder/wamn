@@ -34,7 +34,7 @@ async fn system_migration_login_refusals() -> anyhow::Result<()> {
     let system = database::system().await?;
     let login = system.declared_login(wamn_role::SYSTEM_ROLE)?.to_owned();
     let mut actor = common::log_in(&system.login_url(&login, PASSWORD)?).await?;
-    wamn_provision::migrations::MigrationDatabase::System
+    wamn_postgres::migration_scope::MigrationDatabase::System
         .require_login(&mut actor)
         .await?;
     let checked = login_refusals(&system, &login, PASSWORD).await?;
@@ -541,7 +541,7 @@ async fn org_logins_reach_no_other_org() -> Result<()> {
     let home_name: String = sqlx::query_scalar("SELECT id FROM registry.orgs")
         .fetch_one(&mut admin)
         .await?;
-    let other_logins = wamn_provision::provision_org::create_org_logins(
+    let other_logins = wamn_platform_install::provision_org::create_org_logins(
         &mut admin,
         &OTHER_ORG.parse()?,
         &system.database,

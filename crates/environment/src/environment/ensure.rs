@@ -1,7 +1,7 @@
 //! Explicit environment provisioning, shared credentials, and CDC resources.
 //! Application activation reads these resources without creating or reconciling them.
 
-use super::database::DatabaseSession;
+use crate::environment_sql_effects::PostgresSession;
 use anyhow::Context as _;
 use wamn_registry::{EnvName, OrgId, ProjectId, Triple, name};
 
@@ -11,7 +11,7 @@ use super::document::EnvironmentDocument;
 /// Remove one project's runtime access and wait until its credentials are unmounted.
 pub(super) async fn suspend_project(
     platform: &Platform,
-    system: &dyn DatabaseSession,
+    system: &PostgresSession,
     triple: &Triple,
     drain_bound_seconds: Option<i32>,
 ) -> anyhow::Result<()> {
@@ -84,7 +84,7 @@ pub(super) async fn suspend_project(
 /// Prepare the host upgrade with both configured and newly reserved projects.
 pub(super) async fn prepare_host_upgrade<'a>(
     platform: &'a Platform,
-    system: &dyn DatabaseSession,
+    system: &PostgresSession,
     org: &OrgId,
     env: &EnvName,
     drain_bound_seconds: i32,
@@ -120,7 +120,7 @@ pub(super) async fn prepare_host_upgrade<'a>(
 
 async fn host_values(
     platform: &Platform,
-    system: &dyn DatabaseSession,
+    system: &PostgresSession,
     org: &OrgId,
     env: &EnvName,
     reserved: &[&str],
@@ -214,13 +214,13 @@ async fn host_values(
 }
 
 /// Read every installed baseline, independent of the selected application release.
-pub async fn installed_manifests(
+async fn installed_manifests(
     platform: &Platform,
-    system: &dyn DatabaseSession,
+    system: &PostgresSession,
     document: &EnvironmentDocument,
 ) -> anyhow::Result<Vec<wamn_component_policy::PackageManifest>> {
     let mut manifests = Vec::new();
-    for (id, baseline) in super::stage::installed(platform, system, document).await? {
+    for (id, baseline) in super::stage::installed(system, document).await? {
         let package = super::stage::open(platform, &id, &baseline.current).await?;
         manifests.push(package.read_manifest()?);
     }
@@ -245,7 +245,7 @@ pub(super) async fn ensure_stream(platform: &Platform, triple: &Triple) -> anyho
 /// Resolve the schemas already recorded in the project database.
 pub(super) async fn publication_schemas(
     platform: &Platform,
-    system: &dyn DatabaseSession,
+    system: &PostgresSession,
     document: &EnvironmentDocument,
 ) -> anyhow::Result<Vec<wamn_package::canonical_name::CanonicalName>> {
     Ok(installed_manifests(platform, system, document)

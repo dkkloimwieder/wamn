@@ -1,5 +1,5 @@
 //! Resource names derived from registry coordinates.
-use crate::{ProvisionError, validate_project_env};
+use crate::{error::ProvisionError, name::validate_project_env};
 
 pub fn environment_resource_name(
     org: &wamn_registry::OrgId,

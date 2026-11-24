@@ -2,7 +2,7 @@
 
 use postgres_protocol::escape::{escape_identifier, escape_literal};
 use wamn_identity_protocol::workload_role::WorkloadRoleFamily;
-use wamn_provision::sql::{ensure_workload_acl_role_sql, grant_workload_login_sql};
+use wamn_postgres::project_setup::{ensure_workload_acl_role_sql, grant_workload_login_sql};
 
 /// Create a password login of `family` as CNPG would, with the grants that provisioning adds.
 pub fn login_sql(

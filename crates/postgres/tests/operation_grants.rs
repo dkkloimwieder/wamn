@@ -1,11 +1,12 @@
 //! Installed role constraints and the built-in administrator write.
 
 use sqlx::Connection as _;
+use wamn_postgres::bind_platform_principal_sql;
 use wamn_postgres::operation_grants::{
     ENSURE_ADMIN_ROLE_SQL, OPERATION_GRANT_TRANSACTION_PRELUDE_SQL,
     operation_base_grants_requirements_sql,
 };
-use wamn_provision::{PlatformComponent, bind_platform_principal_sql};
+use wamn_principal::PlatformComponent;
 
 async fn admin_write(connection: &mut sqlx::PgConnection) -> Result<(), sqlx::Error> {
     let mut transaction = connection.begin().await?;
@@ -28,7 +29,7 @@ async fn admin_role_has_no_rows_and_authored_rows_are_grants_live() -> anyhow::R
     let postgres = wamn_test_infrastructure::containers::start_postgres().await?;
     let mut connection = wamn_postgres::connect(postgres.admin_url()).await?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        wamn_provision::sql::ensure_app_acl_role_sql(),
+        wamn_environment::sql::ensure_app_acl_role_sql(),
     ))
     .execute(&mut connection)
     .await?;
@@ -40,7 +41,7 @@ async fn admin_role_has_no_rows_and_authored_rows_are_grants_live() -> anyhow::R
     assert_eq!(missing.code().as_deref(), Some("55000"));
 
     for batch in [
-        wamn_provision::CATALOG_SCHEMA_SQL,
+        wamn_postgres::project_setup::CATALOG_SCHEMA_SQL,
         include_str!("../../../deploy/sql/app-schema.sql"),
     ] {
         sqlx::raw_sql(sqlx::AssertSqlSafe(batch))

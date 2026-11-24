@@ -8,7 +8,7 @@ use plan::{mode_satisfies, refuse};
 use std::collections::BTreeMap;
 use std::fmt;
 
-use super::database::DatabaseSession;
+use crate::environment_sql_effects::PostgresSession;
 use wamn_application_chart::{Binding, ResolvedConnection};
 use wamn_component_policy::PackageManifest;
 use wamn_package::manifest::{ConnectionDeclaration, ConnectionMode};
@@ -43,9 +43,9 @@ impl From<anyhow::Error> for BindingError {
 }
 
 /// Read project authority without creating or changing a connection.
-pub async fn analyse(
-    system: &dyn DatabaseSession,
-    project: &dyn DatabaseSession,
+pub(super) async fn analyse(
+    system: &PostgresSession,
+    project: &PostgresSession,
     document: &EnvironmentDocument,
     packages: impl IntoIterator<Item = &PackageManifest>,
 ) -> Result<Vec<Binding>, BindingError> {

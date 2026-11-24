@@ -12,7 +12,7 @@
 -- control-plane state. There are no per-project RLS base grants,
 -- NO NULLIF/CHECK(project_id <> '') pattern here. The top-level key is `org_id`;
 -- access is the `wamn_system` owner role (from wamn-q3n.2). The control-plane
--- families get their grants from `stable_surface_sql` in wamn-provision.
+-- families get their grants from `stable_surface_sql` in wamn-postgres.
 --
 -- APPLY AS THE `wamn_system` OWNER (it owns the system DB, so it can CREATE
 -- SCHEMA): the registry is then owned by — and usable by — that role, which is
@@ -23,7 +23,7 @@
 -- created_by, updated_at, and updated_by as NOT NULL columns, and a
 -- wamn_record_history_stamp trigger that calls wamn_history.stamp_row(). An applier
 -- installs deploy/sql/record-history.sql first. The SYSTEM_SCHEMA_SQL
--- composition in wamn-provision carries it. The system database owner,
+-- composition in wamn-platform-install carries it. The system database owner,
 -- wamn_system, owns its record history helpers. Every write to these relations
 -- binds a transaction principal. The identity issuer binds wamn:identity-service
 -- for service writes. Provisioning binds wamn:provisioning.
@@ -165,7 +165,7 @@ INSERT INTO registry.target (name, type, status) VALUES ('cloud', 'cloud', 'acti
 -- configuration; the bootstrap that applies this file sets it, and
 -- `reconcile-run-plane` refuses to create a project's platform rows while it is
 -- unset. The CHECK carries the same shape and the same two length limits that
--- `wamn_provision::validate_platform_domain` enforces: dot-separated
+-- `wamn_registry::platform_domain::PlatformDomain` enforces: dot-separated
 -- labels of lowercase letters, digits and inner hyphens, each label at most 63
 -- bytes and the whole name at most 253.
 -- ---------------------------------------------------------------------------

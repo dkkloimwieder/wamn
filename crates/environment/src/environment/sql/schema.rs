@@ -5,11 +5,12 @@ use super::super::{
     document::{DeclaredRelease, EnvironmentDocument, SchemaMode},
     stage,
 };
-use crate::apply_package::PackageRoot;
+use crate::environment_sql_effects;
 use anyhow::{Context as _, ensure};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use wamn_package::package_schema::{AppliedPackage, PackageDirectory};
+use wamn_release::package_source::PackageRoot;
 use wamn_release::package_source::{OpenPackage, PackageSource};
 
 #[derive(Debug)]
@@ -67,10 +68,9 @@ pub struct State {
 }
 
 pub async fn state(platform: &Platform, document: &EnvironmentDocument) -> anyhow::Result<State> {
-    let Some(row) = platform
-        .database
-        .environment_row(&platform.system_database_url, &document.triple())
-        .await?
+    let Some(row) =
+        environment_sql_effects::environment_row(&platform.system_database_url, &document.triple())
+            .await?
     else {
         return Ok(State {
             disposable: None,
@@ -86,7 +86,6 @@ pub async fn state(platform: &Platform, document: &EnvironmentDocument) -> anyho
     };
     let url = analyse::project_url(document, &row)?;
     let mut state = database_state(
-        &*platform.database,
         &url,
         &wamn_registry::project_env_key(
             &document.settings.org,
@@ -100,11 +99,10 @@ pub async fn state(platform: &Platform, document: &EnvironmentDocument) -> anyho
 }
 
 pub async fn database_state(
-    database: &dyn super::super::database::Database,
     url: &str,
     project_env_key: &wamn_registry::ProjectEnvKey,
 ) -> anyhow::Result<State> {
-    let packages = database.package_baselines(url).await?;
+    let packages = environment_sql_effects::package_baselines(url).await?;
     Ok(State {
         packages,
         database_url: Some(url.to_owned()),
@@ -143,7 +141,6 @@ pub(super) async fn open(
 
 /// Compare selected files with SQLx versions and checksums.
 pub async fn plan(
-    database: &dyn super::super::database::Database,
     document: &EnvironmentDocument,
     application: &wamn_registry::ApplicationName,
     release: Option<wamn_digest::Digest>,
@@ -151,9 +148,8 @@ pub async fn plan(
     state: &State,
 ) -> anyhow::Result<Diff> {
     analyse::select_application(document, Some(application))?;
-    let mut migration_reader = database
-        .package_migrations(state.database_url.as_deref())
-        .await?;
+    let mut migration_reader =
+        environment_sql_effects::package_migrations(state.database_url.as_deref()).await?;
     let mut packages = BTreeMap::new();
     let mut reset_sources = state
         .packages
@@ -173,9 +169,13 @@ pub async fn plan(
             wamn_component_policy::ComponentDescriptor,
         >(&candidate.directory)?;
         let id = metadata.coordinate.package_id();
-        let migrations = migration_reader
-            .observe(&candidate.migration_root, &state.project_env_key, id)
-            .await?;
+        let migrations = environment_sql_effects::observe_package_migrations(
+            &mut migration_reader,
+            &candidate.migration_root,
+            &state.project_env_key,
+            id,
+        )
+        .await?;
         ensure!(
             !packages.contains_key(id),
             "schema candidate repeats package {id}"

@@ -9,7 +9,7 @@ use wamn_postgres::identity::{
     assign_project_role, create_user, disable_principal, grant_project_env_membership,
     has_project_env_membership, project_roles, resolve_principal, revoke_project_env_membership,
 };
-use wamn_provision::PlatformComponent;
+use wamn_principal::PlatformComponent;
 
 use wamn_test_infrastructure::identity as common;
 

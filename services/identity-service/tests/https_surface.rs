@@ -1,7 +1,7 @@
 //! Redaction and authority validation for identity database configuration.
 
 use wamn_identity_service::IdentityConfig;
-use wamn_provision::identity_role::identity_issuer_login;
+use wamn_platform_install::identity_role::identity_issuer_login;
 
 const ISSUER: &str = "https://identity.service.internal";
 const PASSWORD: &str = "identity-surface-fixture-secret";

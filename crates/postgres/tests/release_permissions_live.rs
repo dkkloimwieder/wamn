@@ -34,8 +34,8 @@ macro_rules! change {
     ($client:expr, |$tx:ident| $body:expr) => {{
         let mut $tx = $client.begin().await.unwrap();
         sqlx::raw_sql(sqlx::AssertSqlSafe(
-            (&wamn_provision::bind_platform_principal_sql(
-                wamn_provision::PlatformComponent::Provisioning,
+            (&wamn_postgres::bind_platform_principal_sql(
+                wamn_principal::PlatformComponent::Provisioning,
             ))
                 .to_string(),
         ))

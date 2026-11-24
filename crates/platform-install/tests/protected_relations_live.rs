@@ -2,7 +2,6 @@
 
 use sqlx::PgConnection as Client;
 use sqlx::Row as _;
-use wamn_provision::sql;
 
 #[tokio::test]
 #[ignore = "requires: docker"]
@@ -72,13 +71,15 @@ async fn application_mutations_require_row_security_in_each_database() {
     postgres.create_system_role().await.unwrap();
     let system = postgres.create_database("wamn_system").await.unwrap();
     let mut client = wamn_postgres::connect(system.as_str()).await.unwrap();
-    wamn_provision::provision_system::install_control_store(&mut client)
+    wamn_platform_install::provision_system::install_control_store(&mut client)
         .await
         .unwrap();
-    sqlx::raw_sql(sqlx::AssertSqlSafe(sql::ensure_app_acl_role_sql()))
-        .execute(&mut client)
-        .await
-        .unwrap();
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        wamn_postgres::project_setup::ensure_project_roles_sql().to_owned(),
+    ))
+    .execute(&mut client)
+    .await
+    .unwrap();
     assert_author_sql_boundaries(&mut client).await;
     let mut migrator = wamn_postgres::connect(migration.as_str()).await.unwrap();
     wamn_postgres::environment_schema::install_project(&mut migrator)

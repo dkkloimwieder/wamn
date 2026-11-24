@@ -24,13 +24,6 @@ use std::sync::Arc;
 use wamn_identity_protocol::nats::BrokerIdentity;
 use wamn_platform_install::deployment::{Chart, Cluster, DatabaseFiles};
 
-type DatabaseValues = fn(
-    &wamn_postgres::database::ConnectionConfig,
-    u32,
-    serde_json::Value,
-    &serde_json::Value,
-) -> anyhow::Result<serde_json::Value>;
-
 type ChartSelector = fn(&Path) -> anyhow::Result<Arc<dyn Chart>>;
 
 /// The platform inputs of the lifecycle verbs.
@@ -38,8 +31,6 @@ type ChartSelector = fn(&Path) -> anyhow::Result<Arc<dyn Chart>>;
 pub struct Platform {
     /// The system database URL selected for this verb.
     pub system_database_url: String,
-    pub database_values: DatabaseValues,
-    pub database: Arc<dyn database::Database>,
     /// The operation worker's writer for database credentials.
     pub database_files: Option<Arc<dyn DatabaseFiles>>,
     /// The cluster, its context and the operator release's namespace (R6).

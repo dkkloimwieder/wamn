@@ -6,9 +6,7 @@
 //! about which project it may read — and the host has to be able to make sure that
 //! identity before it opens the connection.
 //!
-//! `wamn-provision` DELEGATES here for the App family rather than
-//! carrying a second implementation. There is one definition of the digest and
-//! one of the framing.
+//! The App login uses the digest and framing defined here.
 
 use sha2::{Digest as _, Sha256};
 

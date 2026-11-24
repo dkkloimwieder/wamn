@@ -32,7 +32,7 @@ async fn migration_login_refusals() -> anyhow::Result<()> {
     let project = database::project().await?;
     let login = WorkloadRoleFamily::Migration.login_name();
     let mut actor = common::log_in(&project.login_url(login)?).await?;
-    wamn_provision::migrations::MigrationDatabase::Project
+    wamn_postgres::migration_scope::MigrationDatabase::Project
         .require_login(&mut actor)
         .await?;
     let checked = login_refusals(&project, login, false, &[]).await?;
@@ -95,7 +95,7 @@ async fn app_login_refusals() -> anyhow::Result<()> {
         .await?;
 
     // A bound identity is not replaced, and no identity binds another transaction.
-    let principal = wamn_provision::PlatformComponent::Executor.principal_id();
+    let principal = wamn_principal::PlatformComponent::Executor.principal_id();
     let mut transaction = actor.begin().await?;
     wamn_postgres::bind_transaction_identity(
         &mut transaction,
@@ -134,7 +134,7 @@ async fn app_login_refusals() -> anyhow::Result<()> {
     let mut seed = admin.begin().await?;
     wamn_postgres::bind_transaction_identity(
         &mut seed,
-        &wamn_provision::PlatformComponent::ApplyPackage.principal_id(),
+        &wamn_principal::PlatformComponent::ApplyPackage.principal_id(),
         "",
         "fixture",
         None,

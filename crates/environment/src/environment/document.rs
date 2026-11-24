@@ -5,6 +5,7 @@ pub(super) mod plan;
 
 pub use file::{EnvironmentFile, Project, schema_json};
 
+use crate::environment_sql_effects;
 use std::collections::BTreeMap;
 use std::fmt;
 use std::path::Path;
@@ -39,11 +40,12 @@ impl EnvironmentDocument {
 impl EnvironmentDocument {
     /// Read applied configuration by coordinate from the registry.
     pub async fn read(platform: &super::Platform, triple: &Triple) -> anyhow::Result<Self> {
-        let configuration = platform
-            .database
-            .read_configuration(&platform.system_database_url, triple)
-            .await?
-            .with_context(|| format!("environment {triple} has no applied configuration"))?;
+        let configuration = environment_sql_effects::read_environment_configuration(
+            &platform.system_database_url,
+            triple,
+        )
+        .await?
+        .with_context(|| format!("environment {triple} has no applied configuration"))?;
         let document = Self::from_configuration(configuration);
         document.require_valid()?;
         Ok(document)

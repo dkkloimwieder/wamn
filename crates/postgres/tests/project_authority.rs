@@ -41,7 +41,7 @@ const APP_GENERATION_PASSWORD: &str = "test-owned-app-generation-password";
 fn app_schema_sql() -> String {
     format!(
         "\nDROP SCHEMA IF EXISTS catalog CASCADE;\n{}\n{}",
-        wamn_provision::CATALOG_SCHEMA_SQL,
+        wamn_postgres::project_setup::CATALOG_SCHEMA_SQL,
         include_str!("../../../deploy/sql/app-schema.sql")
     )
 }
@@ -113,10 +113,10 @@ fn app_login_sql(database: &str, login: &wamn_role::LoginName) -> String {
     format!(
         "{} CREATE ROLE {role} LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD {}; \
          GRANT {} TO {role} WITH ADMIN FALSE, INHERIT TRUE, SET FALSE; {}",
-        wamn_provision::sql::ensure_workload_acl_role_sql(family),
+        wamn_postgres::project_setup::ensure_workload_acl_role_sql(family),
         escape_literal(APP_GENERATION_PASSWORD),
         escape_identifier(family.acl_role()),
-        wamn_provision::sql::grant_workload_login_sql(family, database, login)
+        wamn_postgres::project_setup::grant_workload_login_sql(family, database, login)
     )
 }
 

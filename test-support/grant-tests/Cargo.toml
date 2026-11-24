@@ -15,7 +15,7 @@ url = { workspace = true }
 wamn-identity-protocol.workspace = true
 wamn-platform-install = { workspace = true }
 wamn-postgres = { workspace = true }
-wamn-provision = { workspace = true }
+wamn-principal.workspace = true
 wamn-role = { workspace = true }
 wamn-test-infrastructure = { workspace = true }
 

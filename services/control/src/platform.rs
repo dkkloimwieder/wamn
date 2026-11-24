@@ -44,7 +44,7 @@ impl Execution {
         let environment = operation.as_str().starts_with("environment.");
         let input: Value = serde_json::from_str(payload)?;
         let coordinate = if environment {
-            wamn_provision::environment_names::environment_resource_name(
+            wamn_environment::environment_names::environment_resource_name(
                 &self.org,
                 &input["project"]
                     .as_str()

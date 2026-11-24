@@ -7,7 +7,7 @@ use wamn_authentication::principal::Principal;
 use wamn_identity_protocol::PrincipalId;
 use wamn_postgres::identity::password::{authenticate_password, enroll_password, issue_invitation};
 use wamn_postgres::identity::{create_user, disable_principal};
-use wamn_provision::PlatformComponent;
+use wamn_principal::PlatformComponent;
 
 use wamn_test_infrastructure::identity as common;
 

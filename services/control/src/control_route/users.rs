@@ -212,7 +212,8 @@ pub(crate) async fn first_owner(
 
     let org = &handlers.org;
     let mut writer = handlers.writer.lock().await?;
-    let mut tx = wamn_provision::transaction::provisioning_transaction(&mut writer).await?;
+    let mut tx =
+        wamn_postgres::provisioning_transaction::provisioning_transaction(&mut writer).await?;
     let registered = wamn_postgres::control::login_matches_org(&mut tx, org).await?;
     if !registered {
         return Ok(StatusCode::FORBIDDEN);

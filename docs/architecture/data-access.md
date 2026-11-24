@@ -372,7 +372,7 @@ A new id comes from its insert's `RETURNING`, and nothing mints an id before the
 No application table implements or references the claim. The stored result names the rows that the work wrote, for example the `transaction_ids` of a WMS command.
 The result row stays stored, so each retry returns the original success answer in full.
 The existing `prune-record-history` job deletes all claims older than 30 days, using `created_at`.
-Its expiry statement lives in `crates/provision/src/audit_retention.rs` and runs from `crates/environment/src/prune_record_history.rs`.
+Its expiry statement lives in `crates/postgres/src/audit_retention.rs` and runs from `crates/postgres/src/prune_record_history.rs`.
 This retention period exceeds the longest call by a wide margin.
 A result can finish late within that period without a separate claim identifier.
 The write log provides idempotency protection, which prevents repeated work for the same key.
@@ -910,7 +910,7 @@ The `user_platform_principal_check` constraint pins each name and id pair, and i
 `wamn_app` has only `SELECT` on `platform."user"`.
 The database is the org boundary, so `platform."user"` has no `project_id`, no row policy, and no project key index. Its key is `id`, and `email` is unique in the database.
 
-The [platform principal owner](../../crates/provision/src/platform_principals.rs) renders the platform rows of a project database.
+The [platform principal owner](../../crates/postgres/src/environment_fill.rs) renders the platform rows of a project database.
 It refuses a platform domain that is not a valid domain name.
 Its SQL binds `wamn:provisioning` first, so the `wamn:provisioning` row stamps itself.
 The development environment, the verification world, and the Rust identity journey apply that SQL.
@@ -1081,7 +1081,7 @@ In the system database, the actor is an `identity.principals` id.
 The system identity tables record the actor only. A control route inserts `operation` to its sealed operation id, and no column stores it.
 The system database keeps stamps only and no history table, as its [limits](#limits) state.
 
-The `SYSTEM_SCHEMA_SQL` composition in [provisioning](../../crates/provision/src/lib.rs) installs `record-history.sql` before [`deploy/sql/system-schema.sql`](../../deploy/sql/system-schema.sql).
+The `SYSTEM_SCHEMA_SQL` composition in [platform installation](../../crates/platform-install/src/lib.rs) installs `record-history.sql` before [`deploy/sql/system-schema.sql`](../../deploy/sql/system-schema.sql).
 Initialization creates the `NOLOGIN` owner roles before installing these helpers.
 A separate managed migration login inherits the selected owner role and runs the platform migration sequence.
 `SYSTEM_SCHEMA_SQL` does not carry `record-history-app-grants.sql`.

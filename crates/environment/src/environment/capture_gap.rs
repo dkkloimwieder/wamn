@@ -40,7 +40,6 @@ pub async fn recover(
     let triple =
         wamn_registry::Triple::new(args.org.clone(), args.env.clone(), args.project.clone());
     LifecycleLock::hold(
-        &*platform.database,
         DatabaseConnection::Direct(&args.system_database_url),
         &triple,
         async |lock| {
@@ -72,7 +71,6 @@ pub async fn close(
     let triple =
         wamn_registry::Triple::new(args.org.clone(), args.env.clone(), args.project.clone());
     LifecycleLock::hold(
-        &*platform.database,
         DatabaseConnection::Direct(&args.system_database_url),
         &triple,
         async |lock| {

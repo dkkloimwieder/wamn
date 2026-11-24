@@ -28,7 +28,7 @@ impl ControlRoutes<'_> {
         payload: &str,
     ) -> Result<Value, Refusal> {
         let request: Request = serde_json::from_str(payload).map_err(|_| invalid("value"))?;
-        let coordinate = wamn_provision::environment_names::environment_resource_name(
+        let coordinate = wamn_environment::environment_names::environment_resource_name(
             self.org,
             &request.project,
             &request.env,

@@ -20,7 +20,6 @@ serde_json = { workspace = true }
 tokio = { workspace = true, features = ["fs", "io-util", "net", "process", "signal", "sync", "time", "rt", "macros"] }
 uuid = { workspace = true, features = ["v7"] }
 
-wamn-provision = { workspace = true }
 wamn-test-infrastructure = { workspace = true }
 wamn-record-history = { workspace = true }
 

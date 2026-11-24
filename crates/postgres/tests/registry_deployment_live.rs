@@ -1,10 +1,11 @@
 use sqlx::Connection as _;
+use wamn_platform_install::provision_system::install_control_store;
 use wamn_postgres::Registry;
+use wamn_postgres::provisioning_transaction::provisioning_transaction;
 use wamn_registry::{
     Triple,
     deployment::{DeploymentStore as _, Registration},
 };
-use wamn_test_infrastructure::database::{install_control_store, provisioning_transaction};
 
 /// A deployment update with no marker preserves the stored disposable setting.
 #[tokio::test]

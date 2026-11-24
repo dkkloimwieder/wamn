@@ -6,9 +6,9 @@ use std::path::Path;
 #[test]
 fn project_retains_only_the_operator_policy_for_each_cluster() -> anyhow::Result<()> {
     use wamn_environment::environment::chart_values::set_operation_values;
+    use wamn_environment::platform_environment::database_values;
     use wamn_kubernetes::platform_environment::entry;
     use wamn_postgres::database::connection_for;
-    use wamn_provision::platform_environment::database_values;
     use wamn_registry::name;
 
     let triple = wamn_registry::Triple::new("acme".parse()?, "dev".parse()?, "billing".parse()?);

@@ -7,7 +7,7 @@ use wamn_test_infrastructure::identity as common;
 
 /// Seed the organization `fill`, its project `fixture` and the environment `dev`.
 fn seed_org_project_env_sql() -> String {
-    let actor = wamn_provision::PlatformComponent::Provisioning.principal_id();
+    let actor = wamn_principal::PlatformComponent::Provisioning.principal_id();
     format!(
         "INSERT INTO platform.tx_identity(principal_id,role,application) VALUES('{actor}','','fixture'); \
          INSERT INTO registry.orgs(id) VALUES ('fill'); \
@@ -29,7 +29,7 @@ async fn provisioning_fills_and_removes_environment_member_rows() -> anyhow::Res
     let mut authority_connection = wamn_postgres::connect(system.as_str()).await?;
     let mut authority = common::transaction(
         &mut authority_connection,
-        &wamn_provision::PlatformComponent::Provisioning.principal_id(),
+        &wamn_principal::PlatformComponent::Provisioning.principal_id(),
         "admin:environment-fill",
     )
     .await?;
@@ -79,7 +79,7 @@ async fn provisioning_fills_and_removes_environment_member_rows() -> anyhow::Res
     assert!(present);
     let mut authority = common::transaction(
         &mut authority_connection,
-        &wamn_provision::PlatformComponent::Provisioning.principal_id(),
+        &wamn_principal::PlatformComponent::Provisioning.principal_id(),
         "admin:revoke-environment-member",
     )
     .await?;

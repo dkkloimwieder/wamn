@@ -79,11 +79,7 @@ async fn main() -> anyhow::Result<()> {
                 platform_domain,
                 max_projects,
             };
-            wamn_platform_install::provision_system::provision_system(
-                &request,
-                &wamn_provision::provision_system::PostgresBootstrap,
-            )
-            .await
+            wamn_platform_install::provision_system::provision_system(&request).await
         }
         Command::ProvisionOrg { org, database } => {
             let database = wamn_postgres::read_connection_config(&database).await?;
@@ -93,7 +89,6 @@ async fn main() -> anyhow::Result<()> {
                 &database,
                 &org,
                 &oauth_encryption,
-                &wamn_provision::provision_system::PostgresBootstrap,
                 &api,
             )
             .await

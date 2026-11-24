@@ -45,7 +45,7 @@ async fn credentials_are_inaccessible_to_application_roles() {
     postgres.create_system_role().await.unwrap();
     let database = postgres.create_database("wamn_system").await.unwrap();
     let mut client = connect(database.as_str()).await;
-    wamn_provision::provision_system::install_control_store(&mut client)
+    wamn_platform_install::provision_system::install_control_store(&mut client)
         .await
         .unwrap();
     sqlx::raw_sql("DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_app') THEN CREATE ROLE wamn_app NOLOGIN NOINHERIT; END IF; END $$").execute(&mut client).await.map(drop).unwrap();

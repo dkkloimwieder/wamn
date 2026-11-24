@@ -1,6 +1,6 @@
 //! Database creation, ownership, and extensions.
 
-use super::escape_identifier;
+use postgres_protocol::escape::escape_identifier;
 
 /// Assign a project's database to its single migration login.
 pub fn set_database_owner_sql(database: &str) -> String {
@@ -16,7 +16,7 @@ pub fn set_database_owner_sql(database: &str) -> String {
 /// injection-safe). Must run as its own autocommit statement (Postgres forbids
 /// `CREATE DATABASE` inside a transaction block).
 ///
-/// Pass a name from [`project_env_database_name`](crate::project_env_database_name)
+/// Pass a name from [`project_env_database_name`](wamn_registry::name::project_env_database_name)
 /// (`wamn-db-<org>--<project>--<env>--<instance>`). In production the CNPG `Database` CRD
 /// creates the per-project-env database; this is the plain-SQL equivalent the
 /// substrate-agnostic condition uses off-cluster (wamn-q3n.8).

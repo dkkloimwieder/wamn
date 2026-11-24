@@ -4,7 +4,7 @@
 
 use sqlx::Connection as _;
 use wamn_identity_protocol::workload_role::WorkloadRoleFamily;
-use wamn_provision::PlatformComponent;
+use wamn_principal::PlatformComponent;
 use wamn_test_infrastructure::database;
 
 /// The principal, application and operation that the current transaction acts as.

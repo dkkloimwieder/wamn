@@ -1,10 +1,13 @@
 //! Provision an org's system database logins, registry row, and local OAuth key.
 
+use anyhow::Context as _;
 use ring::rand::{SecureRandom as _, SystemRandom};
 use std::fmt;
 use wamn_postgres::database::ConnectionConfig;
 use wamn_registry::OrgId;
 use wamn_role::LoginName;
+
+use crate::provision_system::connect_system_database;
 
 pub const CONTROL_SECRET: &str = "wamn-control-db";
 pub const APPLY_SECRET: &str = "wamn-apply-db";
@@ -32,24 +35,6 @@ pub fn apply_login(org: &OrgId, database: &str) -> LoginName {
     )
 }
 
-/// Acquire a dedicated session before changing the org logins or their Secrets.
-pub trait OrgDatabase {
-    type Locked<'a>: LockedOrg + Send
-    where
-        Self: 'a;
-
-    fn lock_org<'a>(
-        &'a self,
-        database: &'a ConnectionConfig,
-        org: &'a OrgId,
-    ) -> impl Future<Output = anyhow::Result<Self::Locked<'a>>> + Send;
-}
-
-/// The lock remains held until this session is dropped.
-pub trait LockedOrg {
-    fn rotate_logins(&mut self) -> impl Future<Output = anyhow::Result<Vec<OrgLogin>>> + Send;
-}
-
 /// Read and fill the Secrets created by the org chart.
 pub trait OrgSecrets {
     fn contains_key(
@@ -73,10 +58,9 @@ pub async fn provision_org(
     database: &ConnectionConfig,
     org: &OrgId,
     oauth_encryption: &serde_json::Value,
-    store: &impl OrgDatabase,
     secrets: &impl OrgSecrets,
 ) -> anyhow::Result<()> {
-    let mut locked = store.lock_org(database, org).await?;
+    let mut locked = lock_org(database, org).await?;
     if oauth_encryption["provider"] == "local"
         && !secrets.contains_key(org, OAUTH_SECRET, "key").await?
     {
@@ -88,7 +72,7 @@ pub async fn provision_org(
         secrets.write_key(org, OAUTH_SECRET, "key", &key).await?;
     }
 
-    for login in locked.rotate_logins().await? {
+    for login in create_org_logins(&mut locked, org, &database.database).await? {
         secrets
             .write_key(org, login.secret, "password", login.password.as_bytes())
             .await?;
@@ -115,3 +99,119 @@ impl fmt::Debug for OrgLogin {
             .finish_non_exhaustive()
     }
 }
+
+/// Open the dedicated Postgres session that holds the org advisory lock.
+async fn lock_org(database: &ConnectionConfig, org: &OrgId) -> anyhow::Result<sqlx::PgConnection> {
+    let mut connection = connect_system_database(&database.to_json()?)
+        .await
+        .context("connect to the system database for org provisioning")?;
+    let control = control_login(org, &database.database);
+    wamn_postgres::platform_database::lock_org_login(&mut connection, &control).await?;
+    Ok(connection)
+}
+
+/// Create or rotate the org's control and apply logins and record the org, in one transaction.
+pub async fn create_org_logins(
+    connection: &mut sqlx::PgConnection,
+    org: &OrgId,
+    database: &str,
+) -> anyhow::Result<Vec<OrgLogin>> {
+    let random = SystemRandom::new();
+    // These limits match the role limits in the platform Poolers.
+    let logins = [
+        (
+            control_login(org, database),
+            wamn_role::CONTROL_ROLE,
+            8_i32,
+            CONTROL_SECRET,
+        ),
+        (
+            apply_login(org, database),
+            wamn_role::APPLY_ROLE,
+            16_i32,
+            APPLY_SECRET,
+        ),
+    ];
+    let mut passwords = Vec::with_capacity(logins.len());
+    let mut tx =
+        wamn_postgres::provisioning_transaction::provisioning_transaction(connection).await?;
+    for (login, group, limit, secret) in logins {
+        let mut entropy = [0_u8; 32];
+        random
+            .fill(&mut entropy)
+            .map_err(|_| anyhow::anyhow!("generate the org login password"))?;
+        let password = hex::encode(entropy);
+        let role_error = |error: sqlx::Error| OrgRoleError {
+            login: login.as_str().to_owned(),
+            code: error
+                .as_database_error()
+                .and_then(sqlx::error::DatabaseError::code)
+                .map(std::borrow::Cow::into_owned),
+        };
+        // Bind the password so the client statement text never contains it.
+        sqlx::query(
+            "SELECT set_config('wamn.org_login', $1, true), set_config('wamn.org_password', $2, true),
+                    set_config('wamn.org_group', $3, true), set_config('wamn.org_connection_limit', $4::int::text, true)",
+        )
+        .bind(login.as_str())
+        .bind(&password)
+        .bind(group)
+        .bind(limit)
+        .execute(&mut *tx)
+        .await
+        .map_err(role_error)?;
+        sqlx::raw_sql(
+            "DO $org_login$
+             DECLARE
+                 login_name text := current_setting('wamn.org_login');
+                 login_password text := current_setting('wamn.org_password');
+                 login_group text := current_setting('wamn.org_group');
+                 connection_limit integer := current_setting('wamn.org_connection_limit')::integer;
+             BEGIN
+                 IF EXISTS (SELECT FROM pg_roles WHERE rolname = login_name) THEN
+                     EXECUTE format('ALTER ROLE %I LOGIN PASSWORD %L CONNECTION LIMIT %s',
+                                    login_name, login_password, connection_limit);
+                     EXECUTE format('GRANT %I TO %I', login_group, login_name);
+                 ELSE
+                     EXECUTE format('CREATE ROLE %I LOGIN PASSWORD %L CONNECTION LIMIT %s IN ROLE %I',
+                                    login_name, login_password, connection_limit, login_group);
+                 END IF;
+             END
+             $org_login$",
+        )
+        .execute(&mut *tx)
+        .await
+        .map_err(role_error)?;
+        passwords.push(OrgLogin {
+            login,
+            secret,
+            password,
+        });
+    }
+    sqlx::query("INSERT INTO registry.orgs (id) VALUES ($1) ON CONFLICT DO NOTHING")
+        .bind(org.as_str())
+        .execute(&mut *tx)
+        .await
+        .context("record the org in registry.orgs")?;
+    tx.commit().await.context("commit org provisioning")?;
+    Ok(passwords)
+}
+
+#[derive(Debug)]
+struct OrgRoleError {
+    login: String,
+    // PostgreSQL error details can contain the dynamic SQL and password.
+    code: Option<String>,
+}
+
+impl std::fmt::Display for OrgRoleError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "provision org login {}", self.login)?;
+        if let Some(code) = &self.code {
+            write!(formatter, " (SQLSTATE {code})")?;
+        }
+        Ok(())
+    }
+}
+
+impl std::error::Error for OrgRoleError {}

@@ -5,7 +5,7 @@ pub use plan::{apply_order, sequence_defaults};
 
 use std::collections::BTreeMap;
 
-use super::database::DatabaseSession;
+use crate::environment_sql_effects::{self, PostgresSession};
 use anyhow::{Context as _, bail};
 
 use super::Platform;
@@ -15,20 +15,19 @@ use wamn_release::package_source::OpenPackage;
 
 /// The installed packages of the project database, read now.
 pub(super) async fn installed(
-    platform: &Platform,
-    system: &dyn DatabaseSession,
+    system: &PostgresSession,
     document: &EnvironmentDocument,
 ) -> anyhow::Result<BTreeMap<wamn_package::PackageName, Installed>> {
     let row = system
         .environment_row(&document.triple())
         .await?
         .context("the environment row is missing after step 4")?;
-    Ok(platform
-        .database
-        .read_project(&analyse::project_url(document, &row)?)
-        .await?
-        .context("the project database is missing after step 4")?
-        .installed)
+    Ok(
+        environment_sql_effects::read_project(&analyse::project_url(document, &row)?)
+            .await?
+            .context("the project database is missing after step 4")?
+            .installed,
+    )
 }
 
 /// The package artifact `<id>-<version>`, pulled from the registry.

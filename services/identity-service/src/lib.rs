@@ -31,10 +31,10 @@ use tokio::task::JoinSet;
 use tokio_rustls::TlsAcceptor;
 use wamn_authentication::session_exchange::DEFAULT_KEY_ROTATION;
 use wamn_kubernetes::client::KubernetesApi;
+use wamn_platform_install::identity_role::identity_issuer_login;
 use wamn_postgres::identity::session_keys::{
     active_session_key_exists, initialize_session_key, session_jwks,
 };
-use wamn_provision::identity_role::identity_issuer_login;
 
 // Match the public-key client's total fetch bound. No retry or stale response
 // is introduced when TLS, request headers, or the authoritative read stalls.

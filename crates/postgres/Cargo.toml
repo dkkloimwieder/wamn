@@ -54,6 +54,9 @@ workspace = true
 name = "project_schema"
 
 [dev-dependencies]
+wamn-environment.workspace = true
+wamn-platform-install.workspace = true
+wamn-release.workspace = true
 async-nats = { workspace = true, features = ["aws-lc-rs", "nkeys"] }
 base64.workspace = true
 wamn-key.workspace = true
@@ -62,6 +65,5 @@ pg_query = "=6.2.1"
 syn = { workspace = true, features = ["full"] }
 tempfile.workspace = true
 wamn-fixture-package.workspace = true
-wamn-provision.workspace = true
 wamn-test-infrastructure.workspace = true
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt"] }

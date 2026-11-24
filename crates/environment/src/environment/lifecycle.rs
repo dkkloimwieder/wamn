@@ -1,10 +1,11 @@
 //! Authenticated environment configuration through installer-owned resources.
-use super::database::{DatabaseConnection, DatabaseSession, LifecycleLock};
+use super::database::{DatabaseConnection, LifecycleLock};
 use super::{
     Platform,
     document::{EnvironmentDocument, EnvironmentFile},
     ensure as resources,
 };
+use crate::environment_sql_effects::{self, PostgresSession};
 use crate::provision_project_env::workload;
 use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
@@ -19,14 +20,12 @@ pub async fn configure(
     disposable: Option<bool>,
 ) -> anyhow::Result<()> {
     super::runtime::resolve_platform(platform)?;
-    let lock = platform
-        .database
-        .lock(
-            DatabaseConnection::Direct(&platform.system_database_url),
-            &document.org,
-            &document.env,
-        )
-        .await?;
+    let lock = environment_sql_effects::lock_environment(
+        DatabaseConnection::Direct(&platform.system_database_url),
+        &document.org,
+        &document.env,
+    )
+    .await?;
     let result = lock
         .protect(async {
             let applied_document = document.to_yaml()?;
@@ -52,7 +51,7 @@ pub async fn configure(
                 .await?;
             let (replicas, host) = resources::prepare_host_upgrade(
                 platform,
-                &*lock.session,
+                &lock.session,
                 &first.settings.org,
                 &first.settings.env,
                 first.drain_bound_seconds,
@@ -62,7 +61,7 @@ pub async fn configure(
             let configure_projects = async {
                 for (project, instance) in projects.iter().zip(reserved) {
                     let connection = connection_for(&project.triple(), &instance);
-                    let database = (platform.database_values)(
+                    let database = crate::platform_environment::database_values(
                         &connection,
                         replicas,
                         sizing.clone(),
@@ -75,7 +74,7 @@ pub async fn configure(
                         &instance,
                         &connection,
                         database,
-                        &*lock.session,
+                        &lock.session,
                         &applied_document,
                     )
                     .await
@@ -121,7 +120,7 @@ async fn configure_project(
     instance: &wamn_registry::instance_suffix::InstanceSuffix,
     connection: &ConnectionConfig,
     mut values: Value,
-    lock: &dyn DatabaseSession,
+    lock: &PostgresSession,
     applied_document: &str,
 ) -> anyhow::Result<()> {
     let triple = &document.triple();
@@ -132,10 +131,13 @@ async fn configure_project(
         Vec::new()
     } else {
         platform.prepare_database(connection).await?;
-        let unfinished = platform
-            .database
-            .unfinished(&owner, &connection.database, &triple.env, application)
-            .await?;
+        let unfinished = environment_sql_effects::unfinished_in_database(
+            &owner,
+            &connection.database,
+            &triple.env,
+            application,
+        )
+        .await?;
         ensure!(
             unfinished.is_empty(),
             "{}",
@@ -178,7 +180,6 @@ async fn configure_project(
         platform.prepare_database(connection).await?;
     }
     LifecycleLock::hold(
-        &*platform.database,
         DatabaseConnection::Wait {
             input: &owner,
             database: &connection.database,
@@ -192,16 +193,14 @@ async fn configure_project(
             project_lock.grant_workload(&connections).await?;
             if !schemas.is_empty() {
                 platform.prepare_database(&capture).await?;
-                platform
-                    .database
-                    .prepare_cdc(
-                        &owner,
-                        &capture.to_json()?,
-                        &connection.database,
-                        &publication,
-                        &schemas,
-                    )
-                    .await?;
+                environment_sql_effects::prepare_cdc(
+                    &owner,
+                    &capture.to_json()?,
+                    &connection.database,
+                    &publication,
+                    &schemas,
+                )
+                .await?;
             }
             resources::ensure_stream(platform, triple).await?;
             if !schemas.is_empty() && !paused {

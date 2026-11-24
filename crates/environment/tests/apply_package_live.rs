@@ -3,12 +3,13 @@
 #[tokio::test]
 #[ignore = "requires: docker"]
 async fn package_apply_refuses_rebinding_an_existing_relation() -> anyhow::Result<()> {
-    use wamn_provision::apply_package::{self, ApplyPackageRequest, PackageRoot};
+    use wamn_environment::apply_package::{self, ApplyPackageRequest};
+    use wamn_release::package_source::PackageRoot;
 
     const INITIAL: &str = "CREATE TABLE fixture_app.item(id int PRIMARY KEY)";
     let postgres = wamn_test_infrastructure::containers::start_postgres().await?;
     let migration = postgres.create_project_database("project").await?;
-    wamn_provision::platform_migrations::install_project(
+    wamn_postgres::platform_migrations::install_project(
         &mut wamn_postgres::connect(migration.as_str()).await?,
     )
     .await?;
@@ -48,7 +49,7 @@ async fn package_apply_refuses_rebinding_an_existing_relation() -> anyhow::Resul
     let request = async |package| {
         let directory = wamn_oci::package_source::read_package_root(&package)?;
         let migration_root = wamn_oci::package_source::migration_root(&package.path);
-        apply_package::apply_package(
+        apply_package::apply_package_from_directory(
             ApplyPackageRequest {
                 package,
                 database_url: database.as_str().to_owned(),

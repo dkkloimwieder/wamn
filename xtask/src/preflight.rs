@@ -31,12 +31,12 @@ use kube::core::GroupVersionKind;
 use kube::discovery::{ApiCapabilities, ApiResource, Scope};
 use serde_json::{Value, json};
 use wamn_environment::environment::document::EnvironmentFile;
+use wamn_environment::platform_environment;
 use wamn_environment::provision_project_env::workload;
 use wamn_kubernetes::release_chart::bundle;
 use wamn_platform_install::release_chart::{POD_REGISTRY, pod_registry_reference};
 use wamn_postgres::build_database::PostgresBuildDatabase;
 use wamn_postgres::database::{capture_configuration, connection_for};
-use wamn_provision::platform_environment;
 use wamn_registry::{OrgId, name};
 
 use crate::kind::RegistryEndpoint;

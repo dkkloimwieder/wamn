@@ -5,8 +5,8 @@ use sqlx::{Connection as _, Row as _};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use wamn_provision::apply_package::{self, ApplyOutcome, ApplyPackageRequest, PackageRoot};
-use wamn_provision::sql;
+use wamn_environment::apply_package::{self, ApplyOutcome, ApplyPackageRequest};
+use wamn_release::package_source::PackageRoot;
 
 const SCHEMA: &str = "record_retention";
 const PACKAGE_ID: &str = "record_retention_fixture";
@@ -29,7 +29,7 @@ async fn connect(url: &str) -> Client {
 /// Install the catalog and the application minimum on a clean database.
 async fn provision(admin: &mut Client) {
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (sql::ensure_project_roles_sql()).to_string(),
+        (wamn_postgres::project_setup::ensure_project_roles_sql()).to_string(),
     ))
     .execute(&mut *admin)
     .await
@@ -139,7 +139,7 @@ async fn apply(url: &str, migration: &str, package: &Path) -> anyhow::Result<App
     };
     let directory = wamn_oci::package_source::read_package_root(&package)?;
     let migration_root = wamn_oci::package_source::migration_root(&package.path);
-    apply_package::apply_package(
+    apply_package::apply_package_from_directory(
         ApplyPackageRequest {
             migration_database_url: migration.to_owned(),
             package,
@@ -254,7 +254,7 @@ async fn history_table_creation_waits_for_a_running_prune() {
         .await
         .unwrap();
     let migration = postgres.create_project_database("project").await.unwrap();
-    wamn_provision::platform_migrations::install_project(&mut connect(migration.as_str()).await)
+    wamn_postgres::platform_migrations::install_project(&mut connect(migration.as_str()).await)
         .await
         .unwrap();
     let mut database = url::Url::parse(postgres.admin_url()).unwrap();

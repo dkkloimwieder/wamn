@@ -2,14 +2,6 @@
 
 use crate::error::ProvisionError;
 
-pub use wamn_registry::identifiers::MAX_PROJECT_ID_LEN;
-pub use wamn_registry::name::{
-    CDC_OBJECT_PREFIX, CDC_SECRET_PREFIX, DB_PREFIX, INSTANCE_SUFFIX_LEN, MAX_DB_NAME_LEN,
-    MAX_NAMESPACE_LEN, MAX_NAMESPACE_STEM_LEN, NAMESPACE_PREFIX, cdc_object_name, cdc_reader_name,
-    project_env_database_name, project_env_namespace, project_env_secret_name,
-};
-pub use wamn_registry::project_env_key;
-
 /// Refuse coordinates whose database or namespace name exceeds its limit.
 pub fn validate_project_env(
     org: &wamn_registry::OrgId,
@@ -41,6 +33,10 @@ pub fn validate_project_env_cdc(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use wamn_registry::name::{
+        MAX_DB_NAME_LEN, MAX_NAMESPACE_LEN, MAX_NAMESPACE_STEM_LEN, cdc_object_name,
+        project_env_database_name, project_env_namespace,
+    };
 
     const INSTANCE: &str = "k3m9x2p7";
 

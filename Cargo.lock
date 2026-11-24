@@ -6409,7 +6409,6 @@ dependencies = [
  "wamn-package",
  "wamn-platform-install",
  "wamn-postgres",
- "wamn-provision",
  "wamn-registry",
  "wamn-release",
  "wamn-role",
@@ -6537,7 +6536,6 @@ dependencies = [
  "wamn-package",
  "wamn-platform-install",
  "wamn-postgres",
- "wamn-provision",
  "wamn-registry",
  "wamn-role",
  "wamn-routes",
@@ -6678,8 +6676,8 @@ name = "wamn-environment"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-trait",
  "chrono",
+ "hex",
  "nkeys",
  "object_store",
  "postgres-protocol",
@@ -6705,17 +6703,19 @@ dependencies = [
  "wamn-event",
  "wamn-http-client",
  "wamn-identity-protocol",
+ "wamn-kubernetes",
  "wamn-oci",
  "wamn-oci-reference",
  "wamn-package",
  "wamn-platform-install",
  "wamn-postgres",
- "wamn-provision",
+ "wamn-principal",
  "wamn-registry",
  "wamn-release",
  "wamn-role",
  "wamn-storage",
  "wamn-test-infrastructure",
+ "wamn-workflow-graph",
  "wit-parser 0.254.2",
  "zeroize",
 ]
@@ -6771,7 +6771,7 @@ dependencies = [
  "wamn-identity-protocol",
  "wamn-platform-install",
  "wamn-postgres",
- "wamn-provision",
+ "wamn-principal",
  "wamn-role",
  "wamn-test-infrastructure",
 ]
@@ -6980,8 +6980,8 @@ dependencies = [
  "wamn-identity-protocol",
  "wamn-key",
  "wamn-kubernetes",
+ "wamn-platform-install",
  "wamn-postgres",
- "wamn-provision",
  "wamn-registry",
  "wamn-test-infrastructure",
  "zeroize",
@@ -7149,15 +7149,23 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "hex",
+ "postgres-protocol",
  "ring",
  "serde",
  "serde_json",
  "serde_yaml",
+ "sha2 0.11.0",
+ "sqlx",
  "tokio",
+ "url",
  "wamn-digest",
+ "wamn-identity-protocol",
  "wamn-postgres",
+ "wamn-principal",
  "wamn-registry",
  "wamn-role",
+ "wamn-test-infrastructure",
 ]
 
 [[package]]
@@ -7235,16 +7243,18 @@ dependencies = [
  "wamn-connection-type",
  "wamn-digest",
  "wamn-envelope",
+ "wamn-environment",
  "wamn-event",
  "wamn-fixture-package",
  "wamn-identity-protocol",
  "wamn-key",
  "wamn-oci",
  "wamn-package",
+ "wamn-platform-install",
  "wamn-principal",
- "wamn-provision",
  "wamn-record-history",
  "wamn-registry",
+ "wamn-release",
  "wamn-role",
  "wamn-run-state",
  "wamn-scalar",
@@ -7264,41 +7274,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "wamn-provision"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "chrono",
- "hex",
- "postgres-protocol",
- "ring",
- "serde",
- "serde_json",
- "sha2 0.11.0",
- "sqlx",
- "tokio",
- "url",
- "wamn-application",
- "wamn-authentication",
- "wamn-component-policy",
- "wamn-digest",
- "wamn-environment",
- "wamn-event",
- "wamn-identity-protocol",
- "wamn-kubernetes",
- "wamn-oci",
- "wamn-package",
- "wamn-platform-install",
- "wamn-postgres",
- "wamn-registry",
- "wamn-release",
- "wamn-role",
- "wamn-test-infrastructure",
- "wamn-workflow-graph",
-]
-
-[[package]]
 name = "wamn-receiving-tests"
 version = "0.1.0"
 dependencies = [
@@ -7312,7 +7287,6 @@ dependencies = [
  "wamn-component-policy",
  "wamn-package",
  "wamn-postgres",
- "wamn-provision",
  "wamn-record-history",
  "wamn-test-infrastructure",
 ]
@@ -7478,7 +7452,6 @@ dependencies = [
  "wamn-package",
  "wamn-platform-install",
  "wamn-postgres",
- "wamn-provision",
  "wamn-registry",
 ]
 
@@ -8990,7 +8963,6 @@ dependencies = [
  "wamn-package",
  "wamn-platform-install",
  "wamn-postgres",
- "wamn-provision",
  "wamn-registry",
  "wamn-routes",
  "wash-runtime",

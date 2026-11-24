@@ -511,7 +511,7 @@ async fn project_database() -> (wamn_test_infrastructure::containers::Postgres, 
         .await
         .unwrap();
     let migration = server.create_project_database("fixture").await.unwrap();
-    wamn_provision::platform_migrations::install_project(
+    wamn_postgres::platform_migrations::install_project(
         &mut wamn_postgres::connect(migration.as_str())
             .await
             .expect("connect the migration login"),

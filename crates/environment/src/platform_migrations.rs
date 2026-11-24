@@ -1,13 +1,13 @@
 //! PostgreSQL platform migration execution and reporting.
 
+use crate::migrations::{MigrationFile, SchemaReport};
 use sqlx::PgConnection as Client;
 use sqlx::migrate::Migration;
-use wamn_environment::migrations::{MigrationFile, SchemaReport};
 use wamn_postgres::LifecycleLock;
 use wamn_postgres::migration_scope::MigrationDatabase;
 use wamn_registry::Triple;
 
-pub use wamn_postgres::platform_migrations::{apply_target, embedded_sources, install_project};
+use wamn_postgres::platform_migrations::{apply_target, embedded_sources};
 
 pub async fn observe(
     client: &mut sqlx::PgConnection,

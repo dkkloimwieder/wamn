@@ -2,7 +2,8 @@
 //! Recovery keeps the reader stopped. Control restarts it after closing the gap.
 
 use super::plan::pg_lsn;
-use crate::environment::database::{DatabaseSession, MISSING_CAPTURE_REASON, PendingCaptureGap};
+use crate::environment::database::{MISSING_CAPTURE_REASON, PendingCaptureGap};
+use crate::environment_sql_effects::{self, PostgresSession};
 
 use anyhow::ensure;
 use chrono::{DateTime, Utc};
@@ -66,7 +67,7 @@ pub(super) async fn recover_capture_gap(
     instance: &wamn_registry::instance_suffix::InstanceSuffix,
     admin_database_url: &str,
     platform: &super::super::Platform,
-    system: &dyn DatabaseSession,
+    system: &PostgresSession,
 ) -> anyhow::Result<RecoveredCaptureGap> {
     validate_project_env_cdc(&args.org, &args.project, &args.env)
         .map_err(|e| anyhow::anyhow!("cdc names: {e}"))?;
@@ -80,10 +81,13 @@ pub(super) async fn recover_capture_gap(
         "the registration of {triple} names slot {}, not {replication_name}",
         registration.name
     );
-    let (status, mut repair) = platform
-        .database
-        .inspect_capture(admin_database_url, &database, &replication_name, &triple)
-        .await?;
+    let (status, mut admin) = environment_sql_effects::inspect_capture(
+        admin_database_url,
+        &database,
+        &replication_name,
+        &triple,
+    )
+    .await?;
     let reason = status.reason;
     let last = platform
         .broker
@@ -101,7 +105,7 @@ pub(super) async fn recover_capture_gap(
     super::set_paused(platform, &triple, true).await?;
     platform.cluster.wait_reader_stopped(&triple).await?;
 
-    let end_lsn = repair.repair(&replication_name).await?;
+    let end_lsn = environment_sql_effects::repair_capture(&mut admin, &replication_name).await?;
     let created_at = system
         .record_capture_gap(&PendingCaptureGap {
             triple: &triple,

@@ -4,9 +4,9 @@ use sqlx::PgConnection as Client;
 use sqlx::{Connection as _, Row as _};
 use wamn_authentication::password_login::Renewal;
 use wamn_identity_protocol::PrincipalId;
+use wamn_platform_install::identity_role::grant_identity_issuer_surface_sql;
 use wamn_postgres::identity::password_login as login;
 use wamn_postgres::identity::{create_user, disable_principal};
-use wamn_provision::identity_role::grant_identity_issuer_surface_sql;
 
 use wamn_test_infrastructure::identity as common;
 
@@ -37,7 +37,7 @@ async fn user(client: &mut Client) -> PrincipalId {
 async fn create(client: &mut Client, user: &PrincipalId) -> Renewal {
     let mut tx = common::transaction(
         client,
-        &wamn_provision::PlatformComponent::Provisioning.principal_id(),
+        &wamn_principal::PlatformComponent::Provisioning.principal_id(),
         "wamn:provisioning",
     )
     .await
@@ -52,7 +52,7 @@ async fn create(client: &mut Client, user: &PrincipalId) -> Renewal {
 async fn rotate(client: &mut Client, secret: &str) -> Option<Renewal> {
     let mut tx = common::transaction(
         client,
-        &wamn_provision::PlatformComponent::Provisioning.principal_id(),
+        &wamn_principal::PlatformComponent::Provisioning.principal_id(),
         "wamn:provisioning",
     )
     .await
@@ -98,7 +98,7 @@ async fn targeted_rotation_preserves_deadline_and_replay_revokes_successor() {
     );
     let mut tx = common::transaction(
         &mut issuer,
-        &wamn_provision::PlatformComponent::Provisioning.principal_id(),
+        &wamn_principal::PlatformComponent::Provisioning.principal_id(),
         "wamn:provisioning",
     )
     .await
@@ -118,7 +118,7 @@ async fn targeted_rotation_preserves_deadline_and_replay_revokes_successor() {
     tx.commit().await.unwrap();
     let mut tx = common::transaction(
         &mut issuer,
-        &wamn_provision::PlatformComponent::Provisioning.principal_id(),
+        &wamn_principal::PlatformComponent::Provisioning.principal_id(),
         "wamn:provisioning",
     )
     .await
@@ -173,7 +173,7 @@ async fn targeted_rotation_preserves_deadline_and_replay_revokes_successor() {
     );
     let mut tx = common::transaction(
         &mut issuer,
-        &wamn_provision::PlatformComponent::Provisioning.principal_id(),
+        &wamn_principal::PlatformComponent::Provisioning.principal_id(),
         "wamn:provisioning",
     )
     .await
@@ -210,7 +210,7 @@ async fn inactivity_absolute_expiry_and_bounded_cleanup() {
     let mut issuer = connect(db.as_str(), "wamn_identity_issuer").await;
     let mut tx = common::transaction(
         &mut issuer,
-        &wamn_provision::PlatformComponent::Provisioning.principal_id(),
+        &wamn_principal::PlatformComponent::Provisioning.principal_id(),
         "wamn:provisioning",
     )
     .await

@@ -32,7 +32,7 @@ impl Execution {
         input.remove("project");
         input.remove("env");
         let input = Value::Object(input);
-        wamn_provision::validate_project_env(&self.org, &target.project, &target.env)?;
+        wamn_environment::name::validate_project_env(&self.org, &target.project, &target.env)?;
         let mut system =
             wamn_postgres::identity::transaction::read_pool(&self.control, caller).await?;
         let triple = Triple::new(self.org.clone(), target.env, target.project);

@@ -7,7 +7,7 @@
 //! the live set. It then tests the document
 //! against them and returns the plan, or the refusals.
 
-use super::database::DatabaseSession;
+use crate::environment_sql_effects::PostgresSession;
 pub(super) mod plan;
 pub(crate) use plan::project_url;
 pub use plan::refusals;
@@ -155,7 +155,7 @@ pub fn application_release_name(
 /// Derive application release names from declarations and observed workloads.
 pub(crate) async fn application_releases(
     platform: &Platform,
-    system: &dyn DatabaseSession,
+    system: &PostgresSession,
     triple: &wamn_registry::Triple,
 ) -> anyhow::Result<BTreeMap<wamn_registry::ApplicationName, String>> {
     let mut applications = system.application_names(triple).await?;

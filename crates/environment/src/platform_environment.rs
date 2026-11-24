@@ -33,7 +33,7 @@ pub fn database_values(
     sizing["roles"] = serde_json::to_value(roles)?;
     // Reserve headroom for PostgreSQL and the operator.
     sizing["maxConnections"] = max_connections.max(100).into();
-    sizing["initializeRoles"] = crate::sql::ensure_project_roles_sql().into();
+    sizing["initializeRoles"] = wamn_postgres::project_setup::ensure_project_roles_sql().into();
     let extensions = crate::sql::PLATFORM_EXTENSIONS.map(|name| json!({"name":name}));
     Ok(json!({
         "namespace":connection.credentials.namespace,

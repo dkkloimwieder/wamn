@@ -15,10 +15,7 @@ use sqlx::PgConnection;
 use url::Url;
 use wamn_identity_protocol::workload_role::WorkloadRoleFamily;
 use wamn_platform_install::provision_org::OrgLogin;
-use wamn_provision::migrations::MigrationDatabase;
-pub use wamn_provision::{
-    provision_system::install_control_store, transaction::provisioning_transaction,
-};
+use wamn_postgres::migration_scope::MigrationDatabase;
 
 use crate::containers::{Postgres, start_postgres};
 
@@ -296,7 +293,7 @@ pub async fn project() -> Result<Project> {
             name: "ca".into(),
         },
     };
-    let values = wamn_provision::platform_environment::database_values(
+    let values = wamn_environment::platform_environment::database_values(
         &connection,
         1,
         json!({"instances": 1, "cpu": "1", "memory": "1Gi", "storage": "1Gi"}),
@@ -316,10 +313,10 @@ pub async fn project() -> Result<Project> {
         &wamn_postgres::project_setup::privilege_sql(&database),
     )
     .await?;
-    wamn_provision::platform_migrations::install_project(&mut project).await?;
+    wamn_postgres::platform_migrations::install_project(&mut project).await?;
     wamn_postgres::environment_schema::restore_project(
         owner_url.as_str(),
-        &wamn_provision::platform_migrations::embedded_sources(MigrationDatabase::Project),
+        &wamn_postgres::platform_migrations::embedded_sources(MigrationDatabase::Project),
     )
     .await?;
     let logins = wamn_environment::provision_project_env::workload::connections(&connection)?;
@@ -420,7 +417,7 @@ pub async fn system() -> Result<System> {
     let migration = MigrationDatabase::System.login(&database);
     let mut admin =
         wamn_postgres::connect(database_admin_url(&postgres, &database)?.as_str()).await?;
-    wamn_provision::provision_system::install_system(
+    wamn_platform_install::provision_system::install_system(
         &mut admin,
         postgres
             .database_url(&database, migration.as_str(), PASSWORD)?
@@ -441,9 +438,12 @@ pub async fn system() -> Result<System> {
         ),
     )
     .await?;
-    let orgs =
-        wamn_provision::provision_org::create_org_logins(&mut admin, &"acme".parse()?, &database)
-            .await?;
+    let orgs = wamn_platform_install::provision_org::create_org_logins(
+        &mut admin,
+        &"acme".parse()?,
+        &database,
+    )
+    .await?;
     Ok(System {
         postgres,
         database,

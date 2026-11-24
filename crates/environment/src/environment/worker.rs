@@ -250,7 +250,6 @@ pub async fn execute_task(
             let first = projects.first().context("environment has no projects")?;
             let coordinate = wamn_registry::Triple::new(org.clone(), env.clone(), first.clone());
             super::database::LifecycleLock::hold(
-                &*platform.database,
                 super::database::DatabaseConnection::WaitForEnvironment {
                     input: &platform.system_database_url,
                     triple: &coordinate,
@@ -274,7 +273,7 @@ pub async fn execute_task(
 
 async fn project_schema(
     platform: &Platform,
-    lock: &dyn super::database::DatabaseSession,
+    lock: &crate::environment_sql_effects::PostgresSession,
     triple: &Triple,
     apply: bool,
     output: &mut Vec<u8>,

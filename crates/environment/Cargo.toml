@@ -6,7 +6,10 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-async-trait.workspace = true
+hex.workspace = true
+postgres-protocol.workspace = true
+wamn-workflow-graph.workspace = true
+sqlx = { workspace = true, features = ["migrate", "macros", "postgres", "runtime-tokio", "tls-rustls", "chrono", "uuid", "json", "bigdecimal"] }
 wamn-application.workspace = true
 wamn-application-chart.workspace = true
 wamn-connection-type.workspace = true
@@ -19,6 +22,7 @@ wamn-event.workspace = true
 wamn-envelope.workspace = true
 wamn-platform-install.workspace = true
 wamn-postgres.workspace = true
+wamn-principal.workspace = true
 wamn-authentication.workspace = true
 wamn-digest.workspace = true
 wit-parser = { workspace = true }
@@ -40,13 +44,11 @@ wamn-identity-protocol.workspace = true
 wamn-release = { workspace = true }
 
 [dev-dependencies]
-postgres-protocol = { workspace = true }
-wamn-provision.workspace = true
+wamn-kubernetes.workspace = true
 wamn-oci.workspace = true
 url = { workspace = true }
 object_store.workspace = true
 wamn-storage.workspace = true
-sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "migrate"] }
 wamn-http-client = { workspace = true, features = ["tls12"] }
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "sync", "test-util", "time"] }
 wamn-test-infrastructure = { workspace = true }
