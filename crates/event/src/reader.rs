@@ -1,53 +1,872 @@
-//! Configuration supplied by the CDC lifecycle owner.
-use std::path::PathBuf;
+//! Read committed row changes into the environment event stream.
+//! A transaction advances only after every broker acknowledgement settles.
 
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
+use std::collections::{BTreeMap, HashMap, hash_map::Entry};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use bytes::Bytes;
+use wamn_package::{PackageName, manifest::CONTROL_OWNED_RELATION_TABLES};
+use wamn_registry::Triple;
+
+use crate::{Causation, CdcIdentity, Envelope, Op, SourceEvent, msg_id, subject};
+
+/// The event target and publish stall threshold for one reader.
+#[derive(Debug)]
 pub struct ReaderConfig {
-    /// Organization id.
-    pub org: wamn_registry::OrgId,
+    pub target: Triple,
+    pub stall_threshold: Duration,
+}
 
-    /// Project id.
-    pub project: wamn_registry::ProjectId,
+/// What a replication failure means for the reader.
+#[derive(Debug, PartialEq, Eq)]
+pub enum SessionFate {
+    Cancelled,
+    CaptureGap,
+    Fatal,
+    Reopen,
+}
 
-    /// Environment slug.
-    pub env: wamn_registry::EnvName,
+/// A failure with its retry disposition and original cause.
+#[derive(Debug)]
+pub struct SessionFailure {
+    pub fate: SessionFate,
+    pub source: anyhow::Error,
+}
 
-    /// Provisioned publication name.
-    pub publication: String,
-    /// Provisioned replication slot name.
-    pub slot: String,
-    /// Provisioned source stream.
-    pub stream: String,
-    /// Path to the replication connection configuration, or its JSON value.
-    pub cdc_url: String,
+impl SessionFailure {
+    fn reopen(source: anyhow::Error) -> Self {
+        Self {
+            fate: SessionFate::Reopen,
+            source,
+        }
+    }
+}
 
-    /// The NATS (JetStream) the events publish to (docs/plan/alignment.md R8).
-    pub nats_url: String,
+/// The closed classification of a managed relation.
+#[derive(Debug)]
+pub enum RelationClassification {
+    Entity {
+        package_id: PackageName,
+        entity_id: String,
+    },
+    Excluded {
+        package_id: PackageName,
+        relation_id: String,
+    },
+}
 
-    /// The CA of the NATS server.
-    pub nats_tls_ca: Option<PathBuf>,
+type RowImage = serde_json::Map<String, serde_json::Value>;
 
-    /// The reader's signed user JWT and local NKey.
-    pub nats_creds: Option<PathBuf>,
+/// A change or progress frame from the replication source.
+#[derive(Debug)]
+pub enum ReplicationFrame<R> {
+    Begin {
+        txid: u32,
+        commit_ts: chrono::DateTime<chrono::Utc>,
+    },
+    Commit {
+        commit_lsn: u64,
+        end_lsn: u64,
+    },
+    Row {
+        op: Op,
+        schema: Arc<str>,
+        table: Arc<str>,
+        relation_oid: u32,
+        old: Option<R>,
+        new: Option<R>,
+    },
+    Message {
+        flags: u8,
+        prefix: Arc<str>,
+        content: Bytes,
+    },
+    Truncate {
+        tables: Vec<Arc<str>>,
+    },
+    Keepalive {
+        wal_end: u64,
+    },
+}
 
-    /// Standby-status feedback interval, seconds (how often the confirmed
-    /// LSN reaches the server).
-    pub feedback_secs: u64,
+/// Read one replication session and submit its confirmed progress.
+pub trait ReplicationInput {
+    /// The input's raw row, decoded only after entity selection.
+    type Row: Send;
 
-    /// How long a single JetStream publish may retry unacked before the reader
-    /// emits the distinct `CDC_PUBLISH_STALLED` alert event (E2). Below this the
-    /// retries are ordinary warns; at/past it every retry is an error alerts can
-    /// bind to. The LSN is held throughout — a stall silently freezes WAL
-    /// retention on the source DB, so this is a SAFETY INTERLOCK, not a metric.
-    pub stall_threshold_secs: u64,
+    /// Return the next data or progress frame, or None on cancellation.
+    fn next_frame(
+        &mut self,
+    ) -> impl Future<Output = Result<Option<ReplicationFrame<Self::Row>>, SessionFailure>> + Send;
 
-    /// How often the slot-headroom monitor polls `pg_replication_slots` over a
-    /// SEPARATE plain connection (E2 backstop). Zero disables the monitor.
-    pub slot_poll_secs: u64,
+    /// Look up one managed relation by its source schema and OID.
+    fn relation_classification(
+        &mut self,
+        schema: &str,
+        relation_oid: u32,
+    ) -> impl Future<Output = Result<RelationClassification, SessionFailure>> + Send;
 
-    /// Warn while the slot is still `reserved` but `safe_wal_size` has fallen
-    /// below this many bytes — the early alert that fires BEFORE `wal_status`
-    /// leaves `reserved` (E2). Default 256 MiB (≈16 WAL segments of headroom).
-    pub slot_safe_wal_warn_bytes: i64,
+    /// Decode the selected row into the envelope's wire representation.
+    fn decode_row(row: &Self::Row) -> Result<RowImage, SessionFailure>;
+
+    /// Return the source system ID and the timeline that contains this commit.
+    fn origin(&self, commit_lsn: u64) -> (u64, u32);
+
+    fn confirmed_position(&self) -> u64;
+    fn confirm(&mut self, position: u64);
+}
+
+/// Send events and settle their broker acknowledgements separately.
+pub trait EventPublisher {
+    type Ack: Send;
+
+    /// Submit one message without waiting for its server acknowledgement.
+    fn send(
+        &self,
+        subject: &str,
+        id: &str,
+        payload: &Bytes,
+    ) -> impl Future<Output = anyhow::Result<Self::Ack>> + Send;
+
+    /// Settle one acknowledgement. True means the message was a duplicate.
+    fn settle(&self, ack: Self::Ack) -> impl Future<Output = anyhow::Result<bool>> + Send;
+}
+
+fn merge_relation_counts(committed: &mut BTreeMap<String, u64>, pending: BTreeMap<String, u64>) {
+    for (identity, count) in pending {
+        *committed.entry(identity).or_default() += count;
+    }
+}
+
+/// Decode a logical-decoding `Message` frame into a causation stamp, or `None`
+/// when it isn't our contract (wamn-l5i9.12). Two conditions: the frame must be
+/// **transactional** (`flags & 1`) — the unforgeable property rides on the
+/// commit, so a rolled-back txn's message never reaches us and a
+/// non-transactional emit is deliberately ignored — and the prefix must be
+/// exactly `wamn.causation` (the plugin's own emit is the only legitimate
+/// writer). A payload that doesn't parse as a `Causation` (malformed, or
+/// smuggling extra fields past `deny_unknown_fields`) is logged and dropped,
+/// never a crash — a bad message must not sever the session.
+fn parse_causation(flags: u8, prefix: &str, content: &[u8]) -> Option<Causation> {
+    if flags & 1 == 0 || prefix != "wamn.causation" {
+        return None;
+    }
+    match serde_json::from_slice::<Causation>(content) {
+        Ok(c) => Some(c),
+        Err(e) => {
+            tracing::warn!(target: "wamn_cdc_reader", error = %e, "wamn.causation message did not parse as Causation — ignoring");
+            None
+        }
+    }
+}
+
+/// A received TRUNCATE is reported and skipped.
+const TRUNCATE_INCIDENT_EVENT: &str = "CDC_TRUNCATE_RECEIVED";
+
+/// One transaction, held until its `Commit`: the metadata every row shares,
+/// the causation stamp (if the `wamn:postgres` plugin emitted one —
+/// wamn-l5i9.12), and the row events BUFFERED until the commit.
+///
+/// Buffer-per-txn is what makes causation robust to frame order: a
+/// transactional `wamn.causation` message rides the stream at its own LSN
+/// within `Begin`..`Commit` and may arrive BEFORE or AFTER a row event, so
+/// nothing can be published as it arrives — the whole txn is collected and
+/// every row publishes at `Commit` with the stamp (if any) attached. The
+/// confirmed LSN still advances only after every row of the txn is acked.
+struct Txn {
+    txid: u32,
+    commit_ts: chrono::DateTime<chrono::Utc>,
+    causation: Option<Causation>,
+    rows: Vec<PendingRow>,
+    next_ordinal: u64,
+    excluded_by_relation: BTreeMap<String, u64>,
+}
+
+/// A decoded row event awaiting its transaction's `Commit`. Entity resolution
+/// happens at arrival (keeping the per-session OID cache warm); only the
+/// causation stamp and the publish are deferred to the commit.
+struct PendingRow {
+    op: Op,
+    old: Option<RowImage>,
+    new: Option<RowImage>,
+    package_id: PackageName,
+    entity_id: String,
+    table: String,
+    ordinal: u64,
+}
+
+/// What a drained session produced. `commits` is the R11 productivity signal —
+/// the shared ladder resets the fast-flap streak only when a session committed
+/// at least one transaction, so an open-then-sever session that never commits
+/// keeps counting toward the cap.
+#[derive(Default)]
+struct DrainSummary {
+    commits: u64,
+    published: u64,
+    deduped: u64,
+    /// TRUNCATE frames received this session. The declared publication carries
+    /// none, so any count above zero is an operational incident.
+    truncates: u64,
+    excluded_by_relation: BTreeMap<String, u64>,
+}
+
+fn log_drain_summary(summary: &DrainSummary, ending: &str) {
+    tracing::info!(
+        target: "wamn::event_reader",
+        commits = summary.commits,
+        events_published = summary.published,
+        deduped = summary.deduped,
+        truncates = summary.truncates,
+        excluded_by_relation = ?summary.excluded_by_relation,
+        ending,
+        "drain summary"
+    );
+}
+
+/// The result and productivity of one replication session.
+#[derive(Debug)]
+pub struct DrainOutcome {
+    pub commits: u64,
+    pub result: Result<(), SessionFailure>,
+}
+
+/// Drain a session, settling every acknowledgement before confirming a commit.
+/// The caller supplies the stop check and the interruptible retry timer.
+pub async fn drain(
+    input: &mut impl ReplicationInput,
+    args: &ReaderConfig,
+    publisher: &impl EventPublisher,
+    is_stopping: &impl Fn() -> bool,
+    wait_to_retry: &impl AsyncFn(Duration) -> bool,
+) -> DrainOutcome {
+    let mut summary = DrainSummary::default();
+    let result = drain_frames(
+        input,
+        args,
+        publisher,
+        is_stopping,
+        wait_to_retry,
+        &mut summary,
+    )
+    .await;
+    log_drain_summary(
+        &summary,
+        if result.is_ok() {
+            "shutdown"
+        } else {
+            "severed"
+        },
+    );
+    DrainOutcome {
+        commits: summary.commits,
+        result,
+    }
+}
+
+async fn drain_frames<I: ReplicationInput>(
+    input: &mut I,
+    args: &ReaderConfig,
+    publisher: &impl EventPublisher,
+    is_stopping: &impl Fn() -> bool,
+    wait_to_retry: &impl AsyncFn(Duration) -> bool,
+    summary: &mut DrainSummary,
+) -> Result<(), SessionFailure> {
+    let mut txn: Option<Txn> = None;
+    // OIDs survive renames, so a resolution stays correct for this session.
+    let mut relation_classifications: HashMap<u32, RelationClassification> = HashMap::new();
+    while let Some(frame) = input.next_frame().await? {
+        let (op, old, new, schema, table, relation_oid) = match frame {
+            ReplicationFrame::Begin { txid, commit_ts } => {
+                txn = Some(Txn {
+                    txid,
+                    commit_ts,
+                    causation: None,
+                    rows: Vec::new(),
+                    next_ordinal: 0,
+                    excluded_by_relation: BTreeMap::new(),
+                });
+                continue;
+            }
+            ReplicationFrame::Commit {
+                commit_lsn,
+                end_lsn,
+            } => {
+                let Some(frame) = txn.take() else {
+                    return Err(SessionFailure::reopen(anyhow::anyhow!(
+                        "Protocol parsing error: Commit outside a Begin frame"
+                    )));
+                };
+                // Buffer-per-txn: build the whole transaction's wire messages
+                // NOW, the causation stamp (if the plugin emitted one) attached
+                // to every row — robust to whether the message arrived before or
+                // after these rows.
+                let mut msgs = Vec::with_capacity(frame.rows.len());
+                let (system_id, timeline) = input.origin(commit_lsn);
+                for row in frame.rows {
+                    let envelope = Envelope {
+                        op: row.op,
+                        old: row.old,
+                        new: row.new,
+                        package_id: row.package_id,
+                        entity: row.entity_id,
+                        table: row.table,
+                        identity: CdcIdentity {
+                            system_id,
+                            timeline,
+                            commit_lsn,
+                            row_ordinal: row.ordinal,
+                        },
+                        txid: frame.txid,
+                        commit_ts: frame.commit_ts,
+                        causation: frame.causation.clone(),
+                    };
+                    let subject = subject(
+                        &args.target.org,
+                        &args.target.project,
+                        &args.target.env,
+                        envelope.entity_segment(),
+                        row.op,
+                    );
+                    let id = msg_id(&args.target.project, &args.target.env, &envelope.identity);
+                    let payload = serde_json::to_vec(&SourceEvent::Cdc(envelope))
+                        .map_err(|error| {
+                            let message = format!("IO error: {error}");
+                            let source =
+                                std::io::Error::new(std::io::ErrorKind::InvalidData, error);
+                            SessionFailure::reopen(anyhow::Error::new(source).context(message))
+                        })?
+                        .into();
+                    msgs.push(PreparedMsg {
+                        subject,
+                        id,
+                        payload,
+                    });
+                }
+                // E1: pipeline the txn's publishes — sent without awaiting, the
+                // ack futures held in publish order, ALL settled here before the
+                // LSN advances (the v3 §4 per-txn invariant, unchanged).
+                let has_exclusions = !frame.excluded_by_relation.is_empty();
+                let Some(tally) = publish_txn(
+                    publisher,
+                    is_stopping,
+                    wait_to_retry,
+                    &msgs,
+                    args.stall_threshold,
+                )
+                .await
+                else {
+                    return Ok(());
+                };
+                summary.published += tally.published;
+                summary.deduped += tally.deduped;
+                merge_relation_counts(
+                    &mut summary.excluded_by_relation,
+                    frame.excluded_by_relation,
+                );
+                input.confirm(end_lsn);
+                summary.commits += 1;
+                if has_exclusions {
+                    tracing::info!(
+                        target: "wamn::event_reader",
+                        excluded_by_relation = ?summary.excluded_by_relation,
+                        "CDC exclusions committed"
+                    );
+                }
+                continue;
+            }
+            ReplicationFrame::Message {
+                flags,
+                prefix,
+                content,
+            } => {
+                // The wamn:postgres causation stamp for the open txn
+                // (wamn-l5i9.12). A transactional message always rides inside a
+                // Begin/Commit; one outside a frame is a protocol surprise —
+                // log and ignore, never crash the session.
+                if let Some(c) = parse_causation(flags, &prefix, &content) {
+                    if let Some(frame) = txn.as_mut() {
+                        frame.causation = Some(c);
+                    } else {
+                        tracing::warn!(
+                            target: "wamn_cdc_reader",
+                            "transactional wamn.causation message outside a txn frame — ignored"
+                        );
+                    }
+                }
+                continue;
+            }
+            ReplicationFrame::Row {
+                op,
+                old,
+                new,
+                schema,
+                table,
+                relation_oid,
+            } => (op, old, new, schema, table, relation_oid),
+            ReplicationFrame::Truncate { tables } => {
+                // The declared publication omits `truncate`, so a TRUNCATE
+                // frame proves the publication drifted after this session
+                // opened. Count it and alert; the event plane still carries
+                // insert/update/delete only (wamn-0h0g.19.19).
+                summary.truncates += 1;
+                tracing::error!(
+                    target: "wamn::event_reader",
+                    event = TRUNCATE_INCIDENT_EVENT,
+                    ?tables,
+                    truncates = summary.truncates,
+                    "TRUNCATE received from a publication that declares none — \
+                     operational incident, not published"
+                );
+                continue;
+            }
+            // With no transaction open, all earlier changes are acknowledged.
+            ReplicationFrame::Keepalive { wal_end } => {
+                if txn.is_none() && wal_end > input.confirmed_position() {
+                    input.confirm(wal_end);
+                }
+                continue;
+            }
+        };
+        let Some(frame) = txn.as_mut() else {
+            return Err(SessionFailure::reopen(anyhow::anyhow!(
+                "Protocol parsing error: row event outside a Begin/Commit frame"
+            )));
+        };
+        let ordinal = frame.next_ordinal;
+        frame.next_ordinal += 1;
+        if CONTROL_OWNED_RELATION_TABLES.contains(&table.as_ref()) {
+            continue;
+        }
+        let classification = match relation_classifications.entry(relation_oid) {
+            Entry::Occupied(entry) => entry.into_mut(),
+            Entry::Vacant(entry) => {
+                let resolved = input.relation_classification(&schema, relation_oid).await?;
+                match &resolved {
+                    RelationClassification::Entity {
+                        package_id,
+                        entity_id,
+                    } => tracing::info!(
+                        target: "wamn_cdc_reader",
+                        %table,
+                        relation_oid,
+                        package_id = package_id.as_str(),
+                        entity = entity_id.as_str(),
+                        "entity resolved"
+                    ),
+                    RelationClassification::Excluded {
+                        package_id,
+                        relation_id,
+                    } => tracing::info!(
+                        target: "wamn_cdc_reader",
+                        %table,
+                        relation_oid,
+                        package_id = package_id.as_str(),
+                        relation = relation_id.as_str(),
+                        "CDC exclusion resolved"
+                    ),
+                }
+                entry.insert(resolved)
+            }
+        };
+        match classification {
+            RelationClassification::Entity {
+                package_id,
+                entity_id,
+            } => {
+                frame.rows.push(PendingRow {
+                    op,
+                    old: old.as_ref().map(I::decode_row).transpose()?,
+                    new: new.as_ref().map(I::decode_row).transpose()?,
+                    package_id: package_id.clone(),
+                    entity_id: entity_id.clone(),
+                    table: table.to_string(),
+                    ordinal,
+                });
+            }
+            RelationClassification::Excluded {
+                package_id,
+                relation_id,
+            } => {
+                let identity = format!("{package_id}::{relation_id}");
+                *frame.excluded_by_relation.entry(identity).or_default() += 1;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The E1 in-flight publish bound: at most this many un-acked publishes are held
+/// before the pipeline settles them mid-transaction.
+const MAX_IN_FLIGHT: usize = 256;
+
+/// One row event's wire form, prepared once and re-published as-is on a retry
+/// (the `Nats-Msg-Id` in `id` is what the JetStream duplicate window keys on).
+struct PreparedMsg {
+    subject: String,
+    id: String,
+    payload: Bytes,
+}
+
+/// Running publish/dedupe counts for one transaction, folded into the
+/// `DrainSummary` once the whole txn has settled.
+#[derive(Default)]
+struct PublishTally {
+    published: u64,
+    deduped: u64,
+}
+
+/// Where one publish's retry sits relative to the stall threshold (E2).
+#[derive(Debug, PartialEq, Eq)]
+enum StallLevel {
+    /// Under the threshold — an ordinary retry warn.
+    Retrying,
+    /// At or past the threshold — emit the distinct `CDC_PUBLISH_STALLED` alert.
+    Stalled,
+}
+
+/// Classify how long a single publish has been holding the LSN. At/past the
+/// threshold the stall is a first-class alert; below it, an ordinary retry.
+fn stall_level(stall: Duration, threshold: Duration) -> StallLevel {
+    if stall >= threshold {
+        StallLevel::Stalled
+    } else {
+        StallLevel::Retrying
+    }
+}
+
+/// Publish one whole transaction's messages and settle every server ack —
+/// retrying FOREVER (bounded only by shutdown). JetStream down ⇒ we hold here ⇒
+/// the LSN holds ⇒ WAL is retained: delayed, never lost. But a held LSN silently
+/// freezes WAL retention on the source DB, so once the retries pass
+/// `stall_threshold` this escalates from ordinary warns to a distinct
+/// `CDC_PUBLISH_STALLED` alert event (E2 — the interlock that makes "delayed,
+/// never lost" observable). The publishes are PIPELINED (E1): sent without
+/// awaiting, held in order, settled in bounded batches; the whole set is acked
+/// before the caller advances the LSN.
+///
+/// A failed ack retries the transaction from the FIRST UNACKED row — the
+/// JetStream duplicate window absorbs the already-landed prefix, and the
+/// workflow's run key + `ON CONFLICT` absorbs anything past the window.
+/// `first_unacked` advances only as acks settle durably, so a retry never
+/// re-settles (or double-counts) a row the server already acked.
+async fn publish_txn(
+    publisher: &impl EventPublisher,
+    is_stopping: &impl Fn() -> bool,
+    wait_to_retry: &impl AsyncFn(Duration) -> bool,
+    msgs: &[PreparedMsg],
+    stall_threshold: Duration,
+) -> Option<PublishTally> {
+    let mut tally = PublishTally::default();
+    let mut first_unacked = 0usize;
+    let mut delay = Duration::from_millis(500);
+    let first_attempt = Instant::now();
+    let mut publish_retries: u64 = 0;
+    let mut stalled = false;
+    loop {
+        if is_stopping() {
+            return None;
+        }
+        match publish_pass(publisher, is_stopping, msgs, &mut first_unacked, &mut tally).await {
+            PassOutcome::Complete => {
+                if stalled {
+                    tracing::info!(
+                        target: "wamn::event_reader",
+                        event = "CDC_PUBLISH_RECOVERED",
+                        publish_retries,
+                        publish_stall_seconds = first_attempt.elapsed().as_secs(),
+                        "JetStream publish recovered — the LSN can advance again"
+                    );
+                }
+                return Some(tally);
+            }
+            PassOutcome::Cancelled => return None,
+            PassOutcome::Failed(e) => {
+                publish_retries += 1;
+                let stall = first_attempt.elapsed();
+                // The retry restart point — the row alerts should bind to.
+                let subject = msgs[first_unacked].subject.as_str();
+                let id = msgs[first_unacked].id.as_str();
+                match stall_level(stall, stall_threshold) {
+                    StallLevel::Retrying => tracing::warn!(
+                        target: "wamn::event_reader",
+                        subject,
+                        id,
+                        publish_retries,
+                        publish_stall_seconds = stall.as_secs(),
+                        error = %e,
+                        "publish unacked — holding the LSN; retrying from the first unacked row"
+                    ),
+                    StallLevel::Stalled => {
+                        stalled = true;
+                        tracing::error!(
+                            target: "wamn::event_reader",
+                            event = "CDC_PUBLISH_STALLED",
+                            subject,
+                            id,
+                            publish_retries,
+                            publish_stall_seconds = stall.as_secs(),
+                            error = %e,
+                            "JetStream publish STALLED past threshold — LSN held, WAL retention frozen on the source DB; fix JetStream, do NOT drop the slot (v3 §11)"
+                        );
+                    }
+                }
+                if wait_to_retry(delay).await {
+                    return None;
+                }
+                delay = (delay * 2).min(Duration::from_secs(10));
+            }
+        }
+    }
+}
+
+/// One pass of the pipeline: publish `msgs[*first_unacked..]` without awaiting,
+/// holding the ack futures in publish order, draining (settling) them whenever
+/// the in-flight set reaches `MAX_IN_FLIGHT`, and settling the remainder at the
+/// end. `first_unacked` advances as each ack settles durably. A `send` or
+/// `settle` failure ends the pass at `Failed` (its held futures dropped — the
+/// broker client releases their permits), leaving `first_unacked`
+/// at the first row whose ack has NOT settled.
+enum PassOutcome {
+    Complete,
+    Cancelled,
+    Failed(anyhow::Error),
+}
+
+async fn publish_pass(
+    publisher: &impl EventPublisher,
+    is_stopping: &impl Fn() -> bool,
+    msgs: &[PreparedMsg],
+    first_unacked: &mut usize,
+    tally: &mut PublishTally,
+) -> PassOutcome {
+    // (row index, held ack future) in publish order — index strictly ascending.
+    let mut held = Vec::new();
+    for (idx, msg) in msgs.iter().enumerate().skip(*first_unacked) {
+        if is_stopping() {
+            return PassOutcome::Cancelled;
+        }
+        match publisher.send(&msg.subject, &msg.id, &msg.payload).await {
+            Ok(ack) => held.push((idx, ack)),
+            Err(e) => return PassOutcome::Failed(e),
+        }
+        if held.len() >= MAX_IN_FLIGHT {
+            // In-flight bound hit mid-transaction: settle the held batch, then
+            // keep publishing. The LSN hold is unaffected.
+            if let Err(e) = settle_all(publisher, msgs, first_unacked, &mut held, tally).await {
+                return PassOutcome::Failed(e);
+            }
+        }
+    }
+    // Settle any remaining held acks BEFORE the caller advances the LSN.
+    match settle_all(publisher, msgs, first_unacked, &mut held, tally).await {
+        Ok(()) => PassOutcome::Complete,
+        Err(e) => PassOutcome::Failed(e),
+    }
+}
+
+/// Settle held acks in publish order. Each durable ack advances `first_unacked`
+/// (and the tally); the FIRST failure stops the drain and returns, dropping the
+/// still-held futures — `first_unacked` is left AT the failed row so the retry
+/// restarts there and never re-settles a durably-acked prefix.
+async fn settle_all<P: EventPublisher>(
+    publisher: &P,
+    msgs: &[PreparedMsg],
+    first_unacked: &mut usize,
+    held: &mut Vec<(usize, P::Ack)>,
+    tally: &mut PublishTally,
+) -> anyhow::Result<()> {
+    for (idx, ack) in held.drain(..) {
+        let duplicate = publisher.settle(ack).await?;
+        debug_assert_eq!(idx, *first_unacked, "acks settle strictly in publish order");
+        *first_unacked = idx + 1;
+        tally.published += 1;
+        if duplicate {
+            tally.deduped += 1;
+            tracing::debug!(target: "wamn_cdc_reader", id = msgs[idx].id, "redelivery deduped by the stream");
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::VecDeque;
+    use std::future::{poll_fn, ready};
+    use std::pin::pin;
+    use std::sync::Mutex;
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::Relaxed};
+    use std::task::{Context, Poll, Waker};
+
+    struct Input<'a> {
+        frames: VecDeque<ReplicationFrame<()>>,
+        confirmed: &'a AtomicU64,
+    }
+
+    impl ReplicationInput for Input<'_> {
+        type Row = ();
+
+        fn next_frame(
+            &mut self,
+        ) -> impl Future<Output = Result<Option<ReplicationFrame<()>>, SessionFailure>> + Send
+        {
+            ready(Ok(self.frames.pop_front()))
+        }
+
+        fn relation_classification(
+            &mut self,
+            _: &str,
+            _: u32,
+        ) -> impl Future<Output = Result<RelationClassification, SessionFailure>> + Send {
+            ready(Ok(RelationClassification::Entity {
+                package_id: "orders".parse().unwrap(),
+                entity_id: "order".into(),
+            }))
+        }
+
+        fn decode_row((): &()) -> Result<RowImage, SessionFailure> {
+            Ok(RowImage::new())
+        }
+
+        fn origin(&self, _: u64) -> (u64, u32) {
+            (1, 1)
+        }
+
+        fn confirmed_position(&self) -> u64 {
+            self.confirmed.load(Relaxed)
+        }
+
+        fn confirm(&mut self, position: u64) {
+            self.confirmed.store(position, Relaxed);
+        }
+    }
+
+    #[derive(Default)]
+    struct Publisher {
+        sent: Mutex<Vec<u64>>,
+        last_failed: AtomicBool,
+        last_ready: AtomicBool,
+    }
+
+    impl EventPublisher for Publisher {
+        type Ack = u64;
+
+        fn send(
+            &self,
+            _: &str,
+            id: &str,
+            _: &Bytes,
+        ) -> impl Future<Output = anyhow::Result<Self::Ack>> + Send {
+            let (_, ordinal) = id.rsplit_once(':').unwrap();
+            let ordinal = ordinal.parse().unwrap();
+            self.sent.lock().unwrap().push(ordinal);
+            ready(Ok(ordinal))
+        }
+
+        async fn settle(&self, ack: Self::Ack) -> anyhow::Result<bool> {
+            if ack == 1 {
+                anyhow::ensure!(self.last_failed.swap(true, Relaxed), "ack unavailable");
+                poll_fn(|_| {
+                    if self.last_ready.load(Relaxed) {
+                        Poll::Ready(())
+                    } else {
+                        Poll::Pending
+                    }
+                })
+                .await;
+            }
+            Ok(false)
+        }
+    }
+
+    #[test]
+    fn confirmation_waits_for_every_ack_and_retry_resumes_at_first_unacked_row() {
+        let confirmed = AtomicU64::new(1);
+        let commit_end = 42;
+        let row = || ReplicationFrame::Row {
+            op: Op::Insert,
+            schema: "orders".into(),
+            table: "orders".into(),
+            relation_oid: 1,
+            old: None,
+            new: Some(()),
+        };
+        let mut input = Input {
+            frames: [
+                ReplicationFrame::Begin {
+                    txid: 1,
+                    commit_ts: chrono::DateTime::UNIX_EPOCH,
+                },
+                row(),
+                ReplicationFrame::Keepalive { wal_end: 35 },
+                row(),
+                ReplicationFrame::Commit {
+                    commit_lsn: 41,
+                    end_lsn: commit_end,
+                },
+            ]
+            .into(),
+            confirmed: &confirmed,
+        };
+        let config = ReaderConfig {
+            target: Triple::new(
+                "acme".parse().unwrap(),
+                "dev".parse().unwrap(),
+                "orders".parse().unwrap(),
+            ),
+            stall_threshold: Duration::from_secs(30),
+        };
+        let publisher = Publisher::default();
+        let retry = async |_| {
+            assert_eq!(confirmed.load(Relaxed), 1);
+            false
+        };
+        let mut reader = pin!(drain(&mut input, &config, &publisher, &|| false, &retry));
+        let mut context = Context::from_waker(Waker::noop());
+        assert!(reader.as_mut().poll(&mut context).is_pending());
+        assert_eq!(*publisher.sent.lock().unwrap(), [0, 1, 1]);
+        assert_eq!(confirmed.load(Relaxed), 1);
+
+        publisher.last_ready.store(true, Relaxed);
+        let Poll::Ready(outcome) = reader.poll(&mut context) else {
+            panic!("reader still pending after all acknowledgements settled");
+        };
+        outcome.result.unwrap();
+        assert_eq!(confirmed.load(Relaxed), commit_end);
+    }
+
+    #[test]
+    fn parse_causation_accepts_only_the_transactional_wamn_contract() {
+        let good = br#"{"run":"f1:evt:9","root":"f1:evt:1","depth":3}"#;
+        assert_eq!(
+            parse_causation(1, "wamn.causation", good),
+            Some(Causation {
+                run: "f1:evt:9".into(),
+                root: "f1:evt:1".into(),
+                depth: 3,
+            }),
+            "a transactional wamn.causation frame with valid JSON is the stamp"
+        );
+        // Non-transactional: ignored — the unforgeable property rides on the
+        // commit, so only a transactional message counts.
+        assert_eq!(parse_causation(0, "wamn.causation", good), None);
+        // A foreign prefix is not ours.
+        assert_eq!(parse_causation(1, "some.other.prefix", good), None);
+        // Malformed / incomplete / smuggling extra fields (deny_unknown_fields):
+        // dropped, never a crash.
+        assert_eq!(parse_causation(1, "wamn.causation", b"not json"), None);
+        assert_eq!(
+            parse_causation(1, "wamn.causation", br#"{"run":"a"}"#),
+            None
+        );
+        assert_eq!(
+            parse_causation(
+                1,
+                "wamn.causation",
+                br#"{"run":"a","root":"b","depth":1,"x":2}"#
+            ),
+            None
+        );
+    }
 }

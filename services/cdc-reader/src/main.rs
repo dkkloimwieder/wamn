@@ -1,10 +1,17 @@
 //! Run change capture from one mounted JSON configuration.
 
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::Context as _;
 use clap::Parser;
+use tokio_util::sync::CancellationToken;
+use wamn_broker::nats::{CA_FILE, PlatformNats};
+use wamn_broker::publisher::JetStreamPublisher;
 use wamn_event::reader::ReaderConfig;
+use wamn_postgres::replication::ReplicationSource;
+use wamn_registry::Triple;
 
 #[derive(Parser)]
 #[command(name = "wamn-cdc-reader", version, about)]
@@ -48,23 +55,36 @@ async fn main() -> anyhow::Result<()> {
         .with_context(|| format!("read reader settings {}", cli.settings.display()))?;
     let settings: Settings = serde_json::from_slice(&bytes).context("decode reader settings")?;
     let stream = wamn_event::stream_name(&settings.org, &settings.project, &settings.env);
-    wamn_cdc_reader::run(ReaderConfig {
-        org: settings.org,
-        project: settings.project,
-        env: settings.env,
-        publication: settings.cdc_name.clone(),
-        slot: settings.cdc_name,
-        stream,
-        cdc_url: settings.database.to_json()?,
+    let database = settings.database.to_json()?;
+    let token = CancellationToken::new();
+    let signalled = token.clone();
+    // The process can run as PID 1, which needs a signal handler.
+    tokio::spawn(async move {
+        let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("install SIGTERM handler");
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {}
+            _ = term.recv() => {}
+        }
+        signalled.cancel();
+    });
+
+    let source = tokio::select! {
+        biased;
+        () = token.cancelled() => return Ok(()),
+        result = ReplicationSource::prepare(&database, settings.cdc_name) => Arc::new(result?),
+    };
+    let broker = PlatformNats {
         nats_url: settings.nats_url,
-        nats_tls_ca: Some(wamn_broker::nats::CA_FILE.into()),
-        nats_creds: Some(settings.nats_creds),
-        feedback_secs: 5,
-        stall_threshold_secs: 30,
-        slot_poll_secs: 30,
-        slot_safe_wal_warn_bytes: 256 << 20,
-    })
-    .await
+        nats_tls_ca: CA_FILE.into(),
+        creds: settings.nats_creds,
+    };
+    let publisher = JetStreamPublisher::new(broker.connect().await?, stream);
+    let config = ReaderConfig {
+        target: Triple::new(settings.org, settings.env, settings.project),
+        stall_threshold: Duration::from_secs(30),
+    };
+    wamn_cdc_reader::run(&source, &config, &publisher, &token).await
 }
 
 #[cfg(all(test, target_os = "linux"))]

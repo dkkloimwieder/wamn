@@ -9,6 +9,7 @@ pub mod build_database;
 pub mod catalog;
 pub mod control;
 pub mod oauth_authorization;
+pub mod replication;
 
 pub use build_database::{
     ConnectionConfig, ConnectionInput, DATABASE_DIR, SecretRef, configuration, connect,

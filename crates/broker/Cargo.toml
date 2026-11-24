@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+bytes.workspace = true
 wamn-package.workspace = true
 anyhow = { workspace = true }
 async-nats = { workspace = true, features = ["nkeys", "jetstream", "kv", "server_2_10", "server_2_11", "server_2_12"] }

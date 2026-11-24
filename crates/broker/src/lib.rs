@@ -3,6 +3,7 @@
 pub mod events;
 pub mod kv_memory;
 pub mod nats;
+pub mod publisher;
 pub mod streams;
 
 /// The event broker inputs of CDC (`enable-cdc-project-env`).
