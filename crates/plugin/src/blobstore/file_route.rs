@@ -28,22 +28,25 @@ use wamn_application::application_config::ApplicationConfig;
 use wamn_application::ingress::{AuthenticatedCaller, CredentialType, Header, RoutePolicy};
 use wamn_blobstore::client::ObjectStorage;
 use wamn_blobstore::file_route::{
-    DeleteRequest, ExposeRequest, Exposure, FileCatalog, FileConnection, FileConnections,
-    FileError, FileExposure, FileInsert, FileRecord, FileRefusal, FileRequest, UploadQuery, failed,
-    refused, valid_media_type,
+    DeleteRequest, ExposeRequest, Exposure, FileConnection, FileError, FileExposure, FileInsert,
+    FileRecord, FileRefusal, FileRequest, UploadQuery, failed, refused, valid_media_type,
 };
 use wamn_blobstore::files::{MAX_URL_LIFETIME, StoredFiles};
 use wamn_engine::ingress::IngressRouting;
 use wamn_identity_protocol::PrincipalId;
 use wamn_package::canonical_name::CanonicalName;
+use wamn_postgres::WamnPostgres;
+
+use crate::file_catalog;
+use crate::file_connections::RegistryFileConnections;
 
 /// File handlers of one released application environment.
 pub struct FileRoutes {
     pub(crate) release: Arc<ApplicationConfig>,
     pub(crate) context: Arc<wamn_connection::invocation::ReleaseContext>,
-    pub(crate) catalog: Arc<dyn FileCatalog>,
+    pub(crate) database: Arc<WamnPostgres>,
     pub(crate) storage: Arc<ObjectStorage>,
-    pub(crate) connections: Arc<dyn FileConnections>,
+    pub(crate) connections: Arc<RegistryFileConnections>,
     pub(crate) project: wamn_registry::ProjectId,
 }
 impl fmt::Debug for FileRoutes {
@@ -59,15 +62,15 @@ impl fmt::Debug for FileRoutes {
 impl FileRoutes {
     pub fn new(
         context: Arc<wamn_connection::invocation::ReleaseContext>,
-        catalog: Arc<dyn FileCatalog>,
+        database: Arc<WamnPostgres>,
         storage: Arc<ObjectStorage>,
-        connections: Arc<dyn FileConnections>,
+        connections: Arc<RegistryFileConnections>,
         project: wamn_registry::ProjectId,
     ) -> Self {
         Self {
             release: Arc::clone(&context.release),
             context,
-            catalog,
+            database,
             storage,
             connections,
             project,
@@ -125,15 +128,15 @@ impl FileRoutes {
         if application != &self.release.application {
             return Err(refused(FileRefusal::NotFound, "file_id"));
         }
-        self.catalog
-            .record(
-                &self.project,
-                principal,
-                &file_operation(action),
-                application,
-                id,
-            )
-            .await
+        file_catalog::record(
+            &self.database,
+            &self.project,
+            principal,
+            &file_operation(action),
+            application,
+            id,
+        )
+        .await
     }
 
     /// Stage bytes, commit one row, then promote staging to the live key.
@@ -157,23 +160,23 @@ impl FileRoutes {
         let id = Uuid::new_v4();
         let staged = store.stage(id, &mut body).await?;
         let size = i64::try_from(staged.size).map_err(|error| failed("size", error))?;
-        self.catalog
-            .insert(
-                &self.project,
-                &principal,
-                &file_operation("put"),
-                FileInsert {
-                    id,
-                    application,
-                    connection_id: &connection.id,
-                    name,
-                    media_type,
-                    size,
-                    sha256: &staged.sha256,
-                    blob_key: &staged.blob_key,
-                },
-            )
-            .await?;
+        file_catalog::insert(
+            &self.database,
+            &self.project,
+            &principal,
+            &file_operation("put"),
+            FileInsert {
+                id,
+                application,
+                connection_id: &connection.id,
+                name,
+                media_type,
+                size,
+                sha256: &staged.sha256,
+                blob_key: &staged.blob_key,
+            },
+        )
+        .await?;
         // A committed row remains readable through staging if promotion fails.
         if let Err(error) = store.finish(id).await {
             tracing::warn!(%error, %id, "file promotion deferred to the next read");
@@ -229,7 +232,7 @@ impl FileRoutes {
     ) -> Result<Value, FileError> {
         let deadline = tokio::time::Instant::now() + wamn_application::MAX_HOST_CALL_DURATION;
         let principal = principal(caller, "delete")?;
-        let _lock = self.catalog.lock(&self.project, request.file_id).await?;
+        let _lock = file_catalog::lock(&self.database, &self.project, request.file_id).await?;
         let row = self
             .record(&principal, &request.application, request.file_id, "delete")
             .await?;
@@ -242,15 +245,15 @@ impl FileRoutes {
                 deadline,
             )
             .await?;
-        self.catalog
-            .delete(
-                &self.project,
-                &principal,
-                &file_operation("delete"),
-                &request.application,
-                request.file_id,
-            )
-            .await?;
+        file_catalog::delete(
+            &self.database,
+            &self.project,
+            &principal,
+            &file_operation("delete"),
+            &request.application,
+            request.file_id,
+        )
+        .await?;
         if let Err(error) = store.delete(&row.blob_key).await {
             // Metadata deletion is committed. The collector (wamn-2wdsf.4)
             // owns orphan cleanup, so this path does not retry object deletion.
@@ -270,7 +273,7 @@ impl FileRoutes {
     ) -> Result<Value, FileError> {
         let deadline = tokio::time::Instant::now() + wamn_application::MAX_HOST_CALL_DURATION;
         let principal = principal(caller, "expose")?;
-        let _lock = self.catalog.lock(&self.project, request.file_id).await?;
+        let _lock = file_catalog::lock(&self.database, &self.project, request.file_id).await?;
         let row = self
             .record(&principal, &request.application, request.file_id, "expose")
             .await?;
@@ -301,20 +304,19 @@ impl FileRoutes {
             request.exposure,
         )
         .await?;
-        let written = self
-            .catalog
-            .set_exposure(
-                &self.project,
-                &principal,
-                &file_operation("expose"),
-                FileExposure {
-                    application: &request.application,
-                    id: request.file_id,
-                    exposure: request.exposure,
-                    url: url.as_deref(),
-                },
-            )
-            .await?;
+        let written = file_catalog::set_exposure(
+            &self.database,
+            &self.project,
+            &principal,
+            &file_operation("expose"),
+            FileExposure {
+                application: &request.application,
+                id: request.file_id,
+                exposure: request.exposure,
+                url: url.as_deref(),
+            },
+        )
+        .await?;
         if let Err(error) = written {
             // A confirmed rollback can remove a newly copied public object.
             // A lost COMMIT answer remains uncertain and reaches the caller above.

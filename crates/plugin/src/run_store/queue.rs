@@ -5,7 +5,7 @@
 //! plane. The production lease is deliberately split into small statements
 //! composed by one host-owned transaction: lock and replace the expired lease.
 
-use wamn_run_state::{FailType, RunStatus};
+use crate::{FailType, RunStatus};
 
 /// Lock the oldest expired lease for this application.
 pub(super) fn select_production_lease_sql() -> &'static str {

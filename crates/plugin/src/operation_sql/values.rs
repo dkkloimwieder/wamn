@@ -9,7 +9,7 @@ use sqlx::{
 
 use wamn_application::database::{SqlError, SqlValue};
 
-use crate::map_pg_error;
+use wamn_postgres::map_pg_error;
 
 pub fn columns_of(stmt: &PgStatement) -> Vec<String> {
     stmt.columns()
@@ -74,7 +74,7 @@ pub fn decode_row(row: &PgRow) -> Result<Vec<SqlValue>, SqlError> {
         .collect()
 }
 
-pub(super) fn checkout_pg_error(_: crate::CheckoutError) -> SqlError {
+pub(super) fn checkout_pg_error(_: wamn_postgres::CheckoutError) -> SqlError {
     SqlError::ConnectionUnavailable
 }
 

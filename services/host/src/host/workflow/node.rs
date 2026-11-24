@@ -11,8 +11,8 @@ use wamn_connection::connection::GraphPosition;
 use wamn_engine::operation::node_types;
 use wamn_package::canonical_name::CanonicalName;
 use wamn_plugin::WorkflowNode;
-use wamn_postgres::run_store::PostgresRunStore;
-use wamn_run_state::run_store::RunStore;
+use wamn_plugin::operation_sql::executor_write;
+use wamn_plugin::run_store::PostgresRunStore;
 use wash_runtime::wasmtime::component::Accessor;
 use wit_node::{Detail, Emission, Invocation, NodeError};
 
@@ -40,18 +40,20 @@ impl Workflow {
         }
         if let Some(generation) = authority.generation {
             let checked_at = Instant::now();
-            let remaining = self
-                .database
-                .executor_write(&workload.application.project, async |connection| {
+            let remaining = executor_write(
+                &self.database,
+                &workload.application.project,
+                async |connection| {
                     PostgresRunStore::new(connection)
                         .lease_remaining_ms(&authority.delivery, &workload.runner, generation)
                         .await
-                })
-                .await
-                .map_err(|error| {
-                    tracing::warn!(%error, "check workflow node lease");
-                    retryable("storage", "the workflow store is unavailable")
-                })?;
+                },
+            )
+            .await
+            .map_err(|error| {
+                tracing::warn!(%error, "check workflow node lease");
+                retryable("storage", "the workflow store is unavailable")
+            })?;
             let Some(remaining) = remaining.and_then(|ms| u64::try_from(ms).ok()) else {
                 workload.remove_authority(&request.handle);
                 return Err(terminal(

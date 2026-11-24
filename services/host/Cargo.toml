@@ -13,7 +13,6 @@ wamn-workflow-graph.workspace = true
 zeroize.workspace = true
 chrono.workspace = true
 wamn-event.workspace = true
-wamn-run-state.workspace = true
 wamn-envelope.workspace = true
 wamn-key.workspace = true
 boon.workspace = true

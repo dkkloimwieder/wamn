@@ -540,7 +540,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             .with_oauth_encryption(envelope),
     );
     let postgres = Arc::new(OperationHost::new(
-        Arc::clone(&pools) as _,
+        Arc::clone(&pools),
         Arc::clone(&authorization) as _,
         Some(Arc::clone(&authorization) as _),
     ));
@@ -559,7 +559,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     ));
     let files = Arc::new(files::Files::new(
         &postgres,
-        Arc::clone(&pools) as _,
+        Arc::clone(&pools),
         storage,
         Arc::clone(&authorization),
     ));

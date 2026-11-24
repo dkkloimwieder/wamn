@@ -1,8 +1,8 @@
 //! PostgreSQL storage for workflow runs.
 
-mod pruning;
 mod queue;
 mod transitions;
+mod types;
 
 use self::queue::{
     advance_lease_attempts_sql, grant_production_lease_sql, renew_production_lease_sql,
@@ -10,18 +10,18 @@ use self::queue::{
     terminalize_exhausted_production_sql,
 };
 use self::transitions::terminalize_sql;
+use crate::admission::{RunAdmission, RunAdmitted};
+use crate::persistence::{LeaseTurn, ProductionLeaseResult, ProductionWorkflow};
+use crate::transitions::TerminalizeResult;
+use crate::{FailType, RunStatus};
 use sqlx::postgres::PgRow as Row;
 use sqlx::{Decode, Row as _, Type};
 use std::time::SystemTime;
-use wamn_package::canonical_name::CanonicalName;
-use wamn_run_state::admission::{RunAdmission, RunAdmitted};
-use wamn_run_state::persistence::{LeaseTurn, ProductionLeaseResult, ProductionWorkflow};
-use wamn_run_state::run_store::{
+pub use types::{
     ProductionCompletion, ProductionCompletionResult, ProductionLeaseError,
-    ProductionLeaseErrorType, ProductionLeaseRenewal, ProductionReapResult, RunStore,
+    ProductionLeaseErrorType, ProductionLeaseRenewal, ProductionReapResult,
 };
-use wamn_run_state::transitions::TerminalizeResult;
-use wamn_run_state::{FailType, RunStatus};
+use wamn_package::canonical_name::CanonicalName;
 
 /// Run storage on a PostgreSQL connection the caller has already authorized.
 #[derive(Debug)]
@@ -58,8 +58,9 @@ const EXISTING_SQL: &str = "
        AND execution_principal_id = $8 AND execution_role = $9
        AND invoked_by_user_id IS NOT DISTINCT FROM $10";
 
-impl RunStore for PostgresRunStore<'_> {
-    async fn admit_run(
+impl PostgresRunStore<'_> {
+    /// Insert and lease the run atomically on an authorized transaction.
+    pub async fn admit_run(
         &mut self,
         run: &RunAdmission<'_>,
         runner: &str,
@@ -111,7 +112,8 @@ impl RunStore for PostgresRunStore<'_> {
         })
     }
 
-    async fn history_actor(
+    /// Find the history actor for the CDC row when the source has a history table.
+    pub async fn history_actor(
         &mut self,
         envelope: &wamn_event::Envelope,
     ) -> Result<Option<wamn_identity_protocol::PrincipalId>, ProductionLeaseError> {
@@ -185,7 +187,8 @@ impl RunStore for PostgresRunStore<'_> {
         Ok(None)
     }
 
-    async fn renew(
+    /// Renew a live lease under its owner and generation fence.
+    pub async fn renew(
         &mut self,
         run_id: &str,
         runner: &str,
@@ -211,7 +214,8 @@ impl RunStore for PostgresRunStore<'_> {
         })
     }
 
-    async fn complete(
+    /// Store the terminal outcome and remove the queue entry under the lease fence.
+    pub async fn complete(
         &mut self,
         run_id: &str,
         runner: &str,
@@ -254,7 +258,8 @@ impl RunStore for PostgresRunStore<'_> {
         }
     }
 
-    async fn lease_next(
+    /// Lease one run. The caller commits both `Leased` and `GrantRefused` turns.
+    pub async fn lease_next(
         &mut self,
         runner: &str,
         application: &wamn_registry::ApplicationName,
@@ -345,7 +350,8 @@ impl RunStore for PostgresRunStore<'_> {
         }))
     }
 
-    async fn reap_exhausted(
+    /// Fail and dequeue one expired run whose retry budget is spent.
+    pub async fn reap_exhausted(
         &mut self,
         application: &wamn_registry::ApplicationName,
         environment: &wamn_registry::EnvName,
@@ -439,7 +445,8 @@ impl RunStore for PostgresRunStore<'_> {
         })
     }
 
-    async fn checkpoint(
+    /// Record the Response checkpoint under the live lease fence.
+    pub async fn checkpoint(
         &mut self,
         run_id: &str,
         runner: &str,
@@ -460,7 +467,8 @@ impl RunStore for PostgresRunStore<'_> {
         row_value(&row, 0, "Response checkpoint fence")
     }
 
-    async fn lease_remaining_ms(
+    /// Check that the host still owns the unexpired lease before dispatching a node.
+    pub async fn lease_remaining_ms(
         &mut self,
         run: &str,
         runner: &str,
@@ -478,19 +486,6 @@ impl RunStore for PostgresRunStore<'_> {
         .fetch_optional(connection)
         .await
         .map_err(|error| postgres_error("check workflow node lease", &error))
-    }
-
-    async fn prune_terminal_runs(
-        &mut self,
-        retention_days: u32,
-    ) -> Result<u64, ProductionLeaseError> {
-        let connection = &mut *self.connection;
-        sqlx::query(sqlx::AssertSqlSafe(pruning::prune_terminal_runs_sql()))
-            .bind(i64::from(retention_days))
-            .execute(connection)
-            .await
-            .map(|result| result.rows_affected())
-            .map_err(|error| ProductionLeaseError::storage("prune terminal runs", error))
     }
 }
 
@@ -657,11 +652,11 @@ pub fn postgres_error(operation: &'static str, error: &sqlx::Error) -> Productio
     ProductionLeaseError::new(
         ProductionLeaseErrorType::Storage,
         operation,
-        crate::postgres_error_detail(error),
+        wamn_postgres::postgres_error_detail(error),
     )
 }
 
-pub(super) fn executor_open_error(error: crate::ExecutorOpenError) -> ProductionLeaseError {
+pub(super) fn executor_open_error(error: wamn_postgres::ExecutorOpenError) -> ProductionLeaseError {
     let (operation, source) = error.into_parts();
     ProductionLeaseError::storage(operation, source)
 }

@@ -8,12 +8,11 @@ use std::sync::Arc;
 use wamn_application::application_config::{ApplicationConfig, check_authored_workflow};
 use wamn_application::ingress::AuthenticatedCaller;
 use wamn_application::native_routes::DeliveryError;
-use wamn_connection::administration_transaction::{
-    AdministrationSession, AdministrationTransactions, administration_transaction,
-};
 use wamn_identity_protocol::PrincipalId;
 use wamn_package::canonical_name::CanonicalName;
-use wamn_postgres::{control, workflow};
+use wamn_plugin::operation_sql::{administration_transaction, begin_administration};
+use wamn_plugin::workflow;
+use wamn_postgres::{WamnPostgres, control};
 use wamn_routes::HostAttachment;
 use wamn_routes::HostHandler;
 use wamn_workflow_graph::{GraphTrigger, WorkflowGraph};
@@ -143,7 +142,7 @@ enum ConsumerChange {
 }
 
 async fn change(
-    pools: &impl AdministrationTransactions<Session: AdministrationSession<Connection = PgConnection>>,
+    pools: &WamnPostgres,
     broker: &Broker,
     workload: &Workload,
     principal: &PrincipalId,
@@ -152,9 +151,7 @@ async fn change(
     version: Version,
 ) -> Result<Value, Refusal> {
     let app = &workload.application;
-    let mut session = pools
-        .begin_administration(&app.project, principal, operation)
-        .await?;
+    let mut session = begin_administration(pools, &app.project, principal, operation).await?;
     let connection = session.connection();
     // Keep the same key through commit and broker settlement so another host
     // cannot enable a replacement while this host deletes its predecessor.

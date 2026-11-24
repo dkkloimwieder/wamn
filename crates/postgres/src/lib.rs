@@ -10,14 +10,13 @@ pub mod connection_readiness;
 pub mod control;
 pub mod database;
 mod executor;
-mod file_catalog;
-pub mod file_connections;
 pub mod identity;
 pub mod identity_error;
 pub mod identity_sql;
 pub mod migration_scope;
 pub mod migrations;
 pub mod oauth_authorization;
+pub mod operation_grant_lock;
 pub mod platform_identity;
 pub mod platform_login;
 pub mod platform_sql;
@@ -36,10 +35,7 @@ pub use executor::{
     ExecutorOpenError, open_executor_read, open_executor_transaction, run_executor_transaction,
 };
 
-pub mod operation;
 pub mod project_connections;
-pub mod run_store;
-pub mod workflow;
 
 mod sql_error;
 pub use sql_error::{connection_lost, map_pg_error, postgres_error_detail};

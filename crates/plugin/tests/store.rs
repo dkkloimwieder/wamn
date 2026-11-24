@@ -1,5 +1,5 @@
 //! Persisted status encoding at its public interface.
-use wamn_run_state::{FailType, RunStatus};
+use wamn_plugin::{FailType, RunStatus};
 
 #[test]
 fn persisted_statuses_round_trip() {

@@ -6,7 +6,7 @@
 //! id: accidentally presenting one run's fence while mutating another is a
 //! typed `cross-run-authority` refusal, not an empty update.
 
-use wamn_run_state::RunStatus;
+use crate::RunStatus;
 
 static FENCED_PREFIX: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
     format!(

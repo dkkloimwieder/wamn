@@ -4,9 +4,7 @@ use std::{fmt, sync::Arc};
 
 use uuid::Uuid;
 use wamn_application::application_config::ApplicationConfig;
-use wamn_blobstore::file_route::{
-    FileConnection, FileConnections, FileError, FileRefusal, failed, refused,
-};
+use wamn_blobstore::file_route::{FileConnection, FileError, FileRefusal, failed, refused};
 
 /// Login-targeted registry lookup of active store generations.
 /// Existing files use their connection identity without a binding.
@@ -22,9 +20,9 @@ impl fmt::Debug for RegistryFileConnections {
             .finish_non_exhaustive()
     }
 }
-#[async_trait::async_trait]
-impl FileConnections for RegistryFileConnections {
-    async fn generations(&self) -> Result<Vec<FileConnection>, FileError> {
+impl RegistryFileConnections {
+    /// Enumerate immutable store generations using the targeted registry reader.
+    pub async fn generations(&self) -> Result<Vec<FileConnection>, FileError> {
         let mut generations = Vec::new();
         for (_name, id) in self
             .facts
@@ -64,7 +62,8 @@ impl FileConnections for RegistryFileConnections {
         Ok(generations)
     }
 
-    async fn lookup(
+    /// Resolve an application's binding or an existing file's active generation.
+    pub(crate) async fn lookup(
         &self,
         application: &wamn_registry::ApplicationName,
         binding: Option<&wamn_package::canonical_name::CanonicalName>,

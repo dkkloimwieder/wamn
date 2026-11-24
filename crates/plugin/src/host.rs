@@ -3,16 +3,17 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use wamn_application::database::{OperationStore, SqlError};
+use wamn_application::database::SqlError;
 use wamn_application::result_signing::ResultSigner;
 use wamn_authentication::authorization::AuthorizationStore;
 use wamn_connection::connection_facts::ConnectionCache;
+use wamn_postgres::WamnPostgres;
 
 use crate::PgError;
 
 /// Host plugin for guest and native operations over PostgreSQL.
 pub struct OperationHost {
-    pub(super) store: Arc<dyn OperationStore>,
+    pub(super) store: Arc<WamnPostgres>,
     pub(super) result_signer: std::sync::OnceLock<std::sync::Weak<dyn ResultSigner>>,
     pub(super) authorization: Arc<dyn AuthorizationStore>,
     pub(super) connection_cache: Option<Arc<dyn ConnectionCache>>,
@@ -36,7 +37,7 @@ impl std::fmt::Debug for OperationHost {
 impl OperationHost {
     /// Use the host's operation and authorization stores and its application connection cache.
     pub fn new(
-        store: Arc<dyn OperationStore>,
+        store: Arc<WamnPostgres>,
         authorization: Arc<dyn AuthorizationStore>,
         connection_cache: Option<Arc<dyn ConnectionCache>>,
     ) -> Self {

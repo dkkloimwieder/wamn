@@ -2,17 +2,18 @@
 
 use std::sync::Arc;
 
-use wamn_application::database::{Claim, CommitFailure, DatabaseTarget, OperationSession};
+use wamn_application::database::{Claim, CommitFailure, DatabaseTarget};
 use wamn_package::canonical_name::CanonicalName;
 
-use super::scope_registry;
+use super::operation_sql::Transaction;
 use super::types::into_guest_error;
 use super::{OperationHost, PgError};
+use super::{operation_sql, scope_registry};
 
 /// The host transaction of one request. The guest borrows its query handle.
 #[derive(Debug, Clone)]
 pub struct OperationTransaction {
-    pub(super) session: Arc<dyn OperationSession>,
+    pub(super) session: Arc<Transaction>,
     known_result: Option<String>,
 }
 
@@ -110,9 +111,7 @@ impl OperationHost {
         } else {
             scope_registry::current_run_for(&self.scopes, scope)
         };
-        let session = self
-            .store
-            .begin(scope, target, &identity, read, causation)
+        let session = operation_sql::begin(&self.store, scope, target, &identity, read, causation)
             .await
             .map_err(into_guest_error)?;
         Ok(OperationTransaction {

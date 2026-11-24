@@ -41,13 +41,6 @@ impl RunStatus {
     pub fn from_sql(s: &str) -> Option<RunStatus> {
         RunStatus::ALL.into_iter().find(|v| v.as_sql() == s)
     }
-
-    pub fn is_terminal(self) -> bool {
-        matches!(
-            self,
-            RunStatus::Completed | RunStatus::Failed | RunStatus::InfrastructureFailure
-        )
-    }
 }
 
 /// Why a run failed, including engine failures.

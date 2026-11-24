@@ -2,20 +2,17 @@
 
 use std::sync::{Arc, Mutex, atomic::AtomicU64};
 
-use async_trait::async_trait;
 use sqlx::Statement as _;
-use wamn_application::database::{
-    Claim, CommitFailure, OperationSession, SqlError, SqlRows, SqlValue,
-};
+use wamn_application::database::{Claim, CommitFailure, SqlError, SqlRows, SqlValue};
 use wamn_event::Causation;
 use wamn_package::canonical_name::CanonicalName;
 use wamn_registry::ApplicationName;
 
-use crate::{Object, destroy_connection};
+use wamn_postgres::{Object, destroy_connection};
 
 use super::query::{QueryTransaction, open_stream};
-use crate::connection_guard::ConnectionGuard;
-use crate::{connection_lost, map_pg_error};
+use wamn_postgres::ConnectionGuard;
+use wamn_postgres::{connection_lost, map_pg_error};
 
 #[derive(Debug)]
 pub(super) struct TxnState {
@@ -26,7 +23,7 @@ pub(super) struct TxnState {
 pub(super) type SharedTxnState = Arc<Mutex<TxnState>>;
 
 #[derive(Debug)]
-pub(super) struct Transaction {
+pub(crate) struct Transaction {
     pub(super) state: SharedTxnState,
     pub(super) destroyed: Arc<AtomicU64>,
     pub(super) finish: Mutex<Option<[String; 3]>>,
@@ -77,9 +74,12 @@ impl Drop for Transaction {
     }
 }
 
-#[async_trait]
-impl OperationSession for Transaction {
-    async fn query(&self, sql: String, params: Vec<SqlValue>) -> Result<SqlRows, SqlError> {
+impl Transaction {
+    pub(crate) async fn query(
+        &self,
+        sql: String,
+        params: Vec<SqlValue>,
+    ) -> Result<SqlRows, SqlError> {
         let connection = ConnectionGuard::new(take_conn(&self.state)?, Arc::clone(&self.destroyed));
         open_stream(
             connection,
@@ -90,7 +90,7 @@ impl OperationSession for Transaction {
         .await
     }
 
-    async fn query_batch(&self, sql: String) -> Result<(), SqlError> {
+    pub(crate) async fn query_batch(&self, sql: String) -> Result<(), SqlError> {
         with_txn_conn(&self.state, &self.destroyed, |mut connection| async move {
             let result = sqlx::raw_sql(sqlx::AssertSqlSafe(sql))
                 .execute(connection.connection())
@@ -101,7 +101,7 @@ impl OperationSession for Transaction {
         .await
     }
 
-    async fn claim(
+    pub(crate) async fn claim(
         &self,
         operation: &CanonicalName,
         key: &str,
@@ -110,11 +110,11 @@ impl OperationSession for Transaction {
         self.claim_request(operation, key, request).await
     }
 
-    fn stage_finish(&self, operation: &CanonicalName, key: &str, result: String) {
+    pub(crate) fn stage_finish(&self, operation: &CanonicalName, key: &str, result: String) {
         self.stage_result(operation, key, result);
     }
 
-    async fn wal_position(&self) -> Result<String, SqlError> {
+    pub(crate) async fn wal_position(&self) -> Result<String, SqlError> {
         with_txn_conn(&self.state, &self.destroyed, |mut connection| async move {
             let result = sqlx::query_scalar("SELECT pg_current_wal_lsn()::text")
                 .fetch_one(connection.connection())
@@ -124,7 +124,7 @@ impl OperationSession for Transaction {
         .await
     }
 
-    async fn counter_sequence(
+    pub(crate) async fn counter_sequence(
         &self,
         application: &ApplicationName,
         sequence: &str,
@@ -147,7 +147,7 @@ impl OperationSession for Transaction {
         .await
     }
 
-    async fn set_counter(
+    pub(crate) async fn set_counter(
         &self,
         sequence: &str,
         counter: &str,
@@ -185,7 +185,7 @@ impl OperationSession for Transaction {
     ///
     /// Returns [`CommitFailure::Uncertain`] when the guest ended the host
     /// transaction or the host did not read the answer to `COMMIT`.
-    async fn commit(&self) -> Result<(), CommitFailure> {
+    pub(crate) async fn commit(&self) -> Result<(), CommitFailure> {
         let state = &self.state;
         let connection = take_conn(state).map_err(CommitFailure::RolledBack)?;
         let mut connection = ConnectionGuard::new(connection, Arc::clone(&self.destroyed));
@@ -241,7 +241,7 @@ impl OperationSession for Transaction {
     /// the server aborts the transaction. A transaction whose connection is
     /// already lost, for example after a failed statement, is rolled back, so
     /// it answers `Ok`.
-    async fn rollback(&self) -> Result<(), SqlError> {
+    pub(crate) async fn rollback(&self) -> Result<(), SqlError> {
         if self
             .state
             .lock()

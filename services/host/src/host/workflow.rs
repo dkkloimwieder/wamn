@@ -266,7 +266,7 @@ fn service<T: 'static + Send>(accessor: &Accessor<T, SharedCtx>) -> WasmResult<B
     })
 }
 
-fn storage_error(error: &wamn_run_state::run_store::ProductionLeaseError) -> Refusal {
+fn storage_error(error: &wamn_plugin::run_store::ProductionLeaseError) -> Refusal {
     tracing::warn!(%error, "workflow persistence failed");
     Refusal::Unavailable
 }

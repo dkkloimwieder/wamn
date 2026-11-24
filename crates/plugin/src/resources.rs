@@ -2,14 +2,13 @@
 
 use std::sync::{Arc, Weak};
 
-use wamn_application::database::OperationSession;
-
 use wamn_authority::effect_span::{
     EffectIdentity, EffectRun, effect_span, record_effect_ms, record_graph,
 };
 use wash_runtime::engine::ctx::{ActiveCtx, SharedCtx};
 use wash_runtime::wasmtime::component::{Accessor, Resource};
 
+use super::operation_sql::Transaction;
 use super::{
     OperationHost, PgError, SqlValue, WAMN_POSTGRES_ID, client, scope_registry, statement_wit,
 };
@@ -17,7 +16,7 @@ use super::{
 /// Guest handle of the operation's transaction.
 #[derive(Debug)]
 pub struct PgStatementTransaction {
-    pub(super) transaction: Weak<dyn OperationSession>,
+    pub(super) transaction: Weak<Transaction>,
     pub(super) owner_scope: String,
 }
 

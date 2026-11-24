@@ -9,6 +9,12 @@ license.workspace = true
 wasm_component_model_implements = ["wash-runtime/wasm_component_model_implements", "wamn-engine/wasm_component_model_implements"]
 
 [dependencies]
+chrono = { workspace = true, features = ["std"] }
+postgres-protocol.workspace = true
+sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "chrono", "uuid", "json", "bigdecimal"] }
+wamn-postgres.workspace = true
+wamn-scalar.workspace = true
+wamn-workflow-graph.workspace = true
 wamn-application.workspace = true
 wamn-package.workspace = true
 wamn-number-pattern.workspace = true
@@ -44,7 +50,6 @@ wash-runtime = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
-wamn-postgres.workspace = true
 
 [lints]
 workspace = true

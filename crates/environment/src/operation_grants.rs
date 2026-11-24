@@ -27,7 +27,7 @@ pub const OPERATION_GRANT_TRANSACTION_PRELUDE_SQL: &str = "SET LOCAL row_securit
 
 /// Refuse unless the existing application-authorization base grants are installed.
 ///
-/// The effect owner executes this after acquiring `wamn_postgres::operation::lock_operation_grants`
+/// The effect owner executes this after acquiring `wamn_postgres::operation_grant_lock::lock_operation_grants`
 /// and applying [`OPERATION_GRANT_TRANSACTION_PRELUDE_SQL`], and before
 /// [`ENSURE_ADMIN_ROLE_SQL`], all in one transaction.
 pub fn operation_base_grants_requirements_sql() -> String {
@@ -142,7 +142,7 @@ pub fn operation_grant_tokens(
 /// Create the environment's `admin` role when it is absent.
 ///
 /// The caller owns the surrounding transaction: it acquires
-/// `wamn_postgres::operation::lock_operation_grants`, applies
+/// `wamn_postgres::operation_grant_lock::lock_operation_grants`, applies
 /// [`OPERATION_GRANT_TRANSACTION_PRELUDE_SQL`] and
 /// [`operation_base_grants_requirements_sql`], then executes this statement. It
 /// changes one row or none.

@@ -9,12 +9,12 @@ use std::fmt::Write as _;
 use std::sync::Arc;
 use wamn_application::database::{Claim, DatabaseTarget, SqlError, SqlValue};
 
-use crate::WamnPostgres;
+use wamn_postgres::WamnPostgres;
 
 use super::transaction::{Transaction, restore_connection, take_conn};
 use super::values::{PgParam, checkout_pg_error};
-use crate::connection_guard::ConnectionGuard;
-use crate::map_pg_error;
+use wamn_postgres::ConnectionGuard;
+use wamn_postgres::map_pg_error;
 
 /// Insert the claim of one key, or nothing when a committed row holds the key.
 ///

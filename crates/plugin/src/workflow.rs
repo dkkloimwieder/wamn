@@ -15,7 +15,7 @@ pub async fn try_author_lock(
     connection: &mut PgConnection,
     app: &ApplicationConfig,
 ) -> Result<bool, sqlx::Error> {
-    sqlx::query_scalar(super::ENVIRONMENT_TRANSACTION_LOCK_SQL)
+    sqlx::query_scalar(wamn_postgres::ENVIRONMENT_TRANSACTION_LOCK_SQL)
         .bind(app.org.as_str())
         .bind(app.environment.as_str())
         .fetch_one(connection)

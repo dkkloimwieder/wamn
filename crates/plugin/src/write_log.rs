@@ -2,12 +2,13 @@
 
 use std::sync::Arc;
 
-use wamn_application::database::{DatabaseTarget, OperationStore};
+use wamn_application::database::DatabaseTarget;
 use wamn_package::canonical_name::CanonicalName;
+use wamn_postgres::WamnPostgres;
 use wamn_registry::{ProjectEnvKey, ProjectId};
 
 use super::types::into_guest_error;
-use super::{OperationHost, PgError};
+use super::{OperationHost, PgError, operation_sql};
 
 pub use wamn_application::database::Claim;
 
@@ -16,7 +17,7 @@ pub const DELETED_RESULT: &str = r#"{"value":{"outcome":"deleted"}}"#;
 
 #[derive(Debug, Clone)]
 pub struct WriteLogStore {
-    store: Arc<dyn OperationStore>,
+    store: Arc<WamnPostgres>,
     project: ProjectId,
     project_env_key: ProjectEnvKey,
 }
@@ -47,8 +48,7 @@ impl WriteLogStore {
         key: &str,
         request: Vec<u8>,
     ) -> Result<Claim, PgError> {
-        self.store
-            .claim(self.target(), operation, key, request)
+        operation_sql::claim(&self.store, self.target(), operation, key, request)
             .await
             .map_err(into_guest_error)
     }
@@ -59,15 +59,13 @@ impl WriteLogStore {
         key: &str,
         result: String,
     ) -> Result<(), PgError> {
-        self.store
-            .complete(self.target(), operation, key, result)
+        operation_sql::complete(&self.store, self.target(), operation, key, result)
             .await
             .map_err(into_guest_error)
     }
 
     pub async fn release_claim(&self, operation: &CanonicalName, key: &str) -> Result<(), PgError> {
-        self.store
-            .release(self.target(), operation, key)
+        operation_sql::release(&self.store, self.target(), operation, key)
             .await
             .map_err(into_guest_error)
     }

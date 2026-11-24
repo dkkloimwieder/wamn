@@ -15,7 +15,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use wamn_identity_protocol::ADMIN_ROLE;
 use wamn_identity_protocol::PrincipalId;
 use wamn_package::sealed_operation_reference;
-use wamn_postgres::operation::lock_operation_grants;
+use wamn_postgres::operation_grant_lock::lock_operation_grants;
 use wamn_routes::HostAttachment;
 use wamn_routes::HostHandler;
 use wamn_routes::HostRouteAuthority;
@@ -29,9 +29,9 @@ use wamn_authentication::administration::{
     AdministrationError, AdministrationRefusal, GrantAuthority, GrantChange, GrantError,
     permission_is_grantable,
 };
-use wamn_connection::administration_transaction::administration_transaction;
 use wamn_plugin::OperationHost;
 use wamn_plugin::number_counter::{CounterSet, CounterSetRefusal};
+use wamn_plugin::operation_sql::administration_transaction;
 use wamn_postgres::administration::{
     application_users, create_role, delete_role, mutate_grant, permission_rows, role_names,
 };

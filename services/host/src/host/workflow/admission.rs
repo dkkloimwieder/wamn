@@ -12,14 +12,14 @@ use tokio::time::Instant;
 use wamn_event::{Causation, SourceEvent, matching};
 use wamn_identity_protocol::PrincipalId;
 use wamn_identity_protocol::workflow_user_id;
-use wamn_postgres::run_store::PostgresRunStore;
-use wamn_postgres::workflow::admission::{self as stored, Definition};
-use wamn_run_state::admission::{RunAdmission, RunAdmitted, RunTrigger};
-use wamn_run_state::persistence::{LeaseTurn, ProductionLeaseResult};
-use wamn_run_state::run_store::{
+use wamn_plugin::admission::{RunAdmission, RunAdmitted, RunTrigger};
+use wamn_plugin::operation_sql::executor_write;
+use wamn_plugin::persistence::{LeaseTurn, ProductionLeaseResult};
+use wamn_plugin::run_store::PostgresRunStore;
+use wamn_plugin::run_store::{
     ProductionCompletion, ProductionCompletionResult, ProductionLeaseError, ProductionLeaseRenewal,
-    RunStore,
 };
+use wamn_plugin::workflow::admission::{self as stored, Definition};
 use wash_runtime::wasmtime::component::Accessor;
 
 pub(super) fn wit_definition(definition: Definition) -> wit_run::Workflow {
@@ -156,45 +156,43 @@ impl Workflow {
         let key = due.to_rfc3339_opts(SecondsFormat::Secs, true);
         let input = serde_json::json!({ "due": &key });
         let app = &workload.application;
-        let admitted = self
-            .database
-            .executor_write(&app.project, async |connection| {
-                let rows = stored::schedules(connection, app).await?;
-                let mut admitted = Vec::new();
-                for row in rows {
-                    let schedule = row.schedule()?;
-                    if !wamn_workflow_graph::schedule::is_due(schedule, due.naive_utc()).map_err(
-                        |error| ProductionLeaseError::invalid("match workflow schedule", error),
-                    )? {
-                        continue;
-                    }
-                    let definition = row.definition()?;
-                    let role = row.role()?;
-                    if let Some(run) = workload
-                        .admit(
-                            connection,
-                            definition,
-                            Delivery {
-                                trigger: RunTrigger::Schedule,
-                                invoked_by: "schedule",
-                                principal: workflow_user_id(),
-                                role,
-                                invoker: None,
-                                key: &key,
-                                input: &input,
-                                parent: None,
-                            },
-                        )
-                        .await?
-                        .winner()?
-                    {
-                        admitted.push(run);
-                    }
+        let admitted = executor_write(&self.database, &app.project, async |connection| {
+            let rows = stored::schedules(connection, app).await?;
+            let mut admitted = Vec::new();
+            for row in rows {
+                let schedule = row.schedule()?;
+                if !wamn_workflow_graph::schedule::is_due(schedule, due.naive_utc()).map_err(
+                    |error| ProductionLeaseError::invalid("match workflow schedule", error),
+                )? {
+                    continue;
                 }
-                Ok(admitted)
-            })
-            .await
-            .map_err(|error| storage_error(&error))?;
+                let definition = row.definition()?;
+                let role = row.role()?;
+                if let Some(run) = workload
+                    .admit(
+                        connection,
+                        definition,
+                        Delivery {
+                            trigger: RunTrigger::Schedule,
+                            invoked_by: "schedule",
+                            principal: workflow_user_id(),
+                            role,
+                            invoker: None,
+                            key: &key,
+                            input: &input,
+                            parent: None,
+                        },
+                    )
+                    .await?
+                    .winner()?
+                {
+                    admitted.push(run);
+                }
+            }
+            Ok(admitted)
+        })
+        .await
+        .map_err(|error| storage_error(&error))?;
         Ok(admitted
             .into_iter()
             .map(|run| run.issue(workload))
@@ -263,114 +261,109 @@ impl Workflow {
         {
             return Err(invalid("data-change subject disagrees with the envelope"));
         }
-        let result = self
-            .database
-            .executor_write(&app.project, async |connection| {
-                let row =
-                    stored::data_change(connection, app, &message.workflow_id, &envelope).await?;
-                let Some(row) = row else { return Ok(None) };
-                let condition = row.condition()?;
-                if !matching::matches(&envelope, condition, &workload.project_key)
-                    .map_err(event_error)?
-                {
-                    return Ok(None);
-                }
-                let actor = PostgresRunStore::new(connection)
-                    .history_actor(&envelope)
-                    .await?;
-                let definition = row.definition()?;
-                let role = row.role()?;
-                workload
-                    .admit(
-                        connection,
-                        definition,
-                        Delivery {
-                            trigger: RunTrigger::DataChange,
-                            invoked_by: &format!("event:{}", source_id.as_str()),
-                            principal: workflow_user_id(),
-                            role,
-                            invoker: actor.as_ref(),
-                            key: source_id.as_str(),
-                            input: &matching::event_input(&envelope),
-                            parent: envelope.causation.as_ref(),
-                        },
-                    )
-                    .await
-                    .and_then(Admission::winner)
-            })
-            .await
-            .map_err(|error| storage_error(&error))?;
+        let result = executor_write(&self.database, &app.project, async |connection| {
+            let row = stored::data_change(connection, app, &message.workflow_id, &envelope).await?;
+            let Some(row) = row else { return Ok(None) };
+            let condition = row.condition()?;
+            if !matching::matches(&envelope, condition, &workload.project_key)
+                .map_err(event_error)?
+            {
+                return Ok(None);
+            }
+            let actor = PostgresRunStore::new(connection)
+                .history_actor(&envelope)
+                .await?;
+            let definition = row.definition()?;
+            let role = row.role()?;
+            workload
+                .admit(
+                    connection,
+                    definition,
+                    Delivery {
+                        trigger: RunTrigger::DataChange,
+                        invoked_by: &format!("event:{}", source_id.as_str()),
+                        principal: workflow_user_id(),
+                        role,
+                        invoker: actor.as_ref(),
+                        key: source_id.as_str(),
+                        input: &matching::event_input(&envelope),
+                        parent: envelope.causation.as_ref(),
+                    },
+                )
+                .await
+                .and_then(Admission::winner)
+        })
+        .await
+        .map_err(|error| storage_error(&error))?;
         Ok(result.map(|run| run.issue(workload)))
     }
 
     async fn take(&self, workload: &Workload) -> Result<Option<wit_run::LeasedRun>, Refusal> {
         let app = &workload.application;
-        let result = self
-            .database
-            .executor_write(&app.project, async |connection| {
-                let mut runs = PostgresRunStore::new(connection);
-                runs.reap_exhausted(&app.application, &app.environment, 0)
-                    .await?;
-                let turn = runs
-                    .lease_next(
-                        &workload.runner,
-                        &app.application,
-                        &app.environment,
-                        LEASE_MS,
-                    )
-                    .await?;
-                let outcome = match turn {
-                    LeaseTurn::GrantRefused(error) => return Ok(Err(error)),
-                    LeaseTurn::Leased(ProductionLeaseResult::Empty) => return Ok(Ok(None)),
-                    LeaseTurn::Leased(outcome) => outcome,
-                };
-                let ProductionLeaseResult::Ready {
-                    run_id,
-                    input_json,
-                    checkpoint_json,
-                    lease_generation,
-                    graph_id,
-                    graph_version,
-                    workflow,
-                } = outcome
-                else {
-                    return Ok(Ok(None));
-                };
-                let graph = stored::leased_graph(
-                    connection,
-                    app,
-                    &graph_id,
-                    graph_version,
-                    &workflow.graph_hash,
+        let result = executor_write(&self.database, &app.project, async |connection| {
+            let mut runs = PostgresRunStore::new(connection);
+            runs.reap_exhausted(&app.application, &app.environment, 0)
+                .await?;
+            let turn = runs
+                .lease_next(
+                    &workload.runner,
+                    &app.application,
+                    &app.environment,
+                    LEASE_MS,
                 )
                 .await?;
-                Ok(Ok(Some(Admitted {
-                    definition: Definition {
-                        id: graph_id.clone(),
-                        version: graph_version,
-                        graph,
-                        hash: workflow.graph_hash,
-                        role: None,
-                    },
-                    authority: Authority {
-                        delivery: run_id,
-                        workflow_id: graph_id,
-                        version: graph_version.unsigned_abs(),
-                        hash: workflow.graph_hash,
-                        principal: workflow.execution_principal_id,
-                        role: workflow.execution_role,
-                        generation: Some(lease_generation),
-                        request_deadline: None,
-                        responded: AtomicBool::new(false),
-                        causation: workflow.causation,
-                    },
-                    input_json,
-                    checkpoint_json,
-                })))
-            })
-            .await
-            .map_err(|error| storage_error(&error))?
-            .map_err(|error| storage_error(&error))?;
+            let outcome = match turn {
+                LeaseTurn::GrantRefused(error) => return Ok(Err(error)),
+                LeaseTurn::Leased(ProductionLeaseResult::Empty) => return Ok(Ok(None)),
+                LeaseTurn::Leased(outcome) => outcome,
+            };
+            let ProductionLeaseResult::Ready {
+                run_id,
+                input_json,
+                checkpoint_json,
+                lease_generation,
+                graph_id,
+                graph_version,
+                workflow,
+            } = outcome
+            else {
+                return Ok(Ok(None));
+            };
+            let graph = stored::leased_graph(
+                connection,
+                app,
+                &graph_id,
+                graph_version,
+                &workflow.graph_hash,
+            )
+            .await?;
+            Ok(Ok(Some(Admitted {
+                definition: Definition {
+                    id: graph_id.clone(),
+                    version: graph_version,
+                    graph,
+                    hash: workflow.graph_hash,
+                    role: None,
+                },
+                authority: Authority {
+                    delivery: run_id,
+                    workflow_id: graph_id,
+                    version: graph_version.unsigned_abs(),
+                    hash: workflow.graph_hash,
+                    principal: workflow.execution_principal_id,
+                    role: workflow.execution_role,
+                    generation: Some(lease_generation),
+                    request_deadline: None,
+                    responded: AtomicBool::new(false),
+                    causation: workflow.causation,
+                },
+                input_json,
+                checkpoint_json,
+            })))
+        })
+        .await
+        .map_err(|error| storage_error(&error))?
+        .map_err(|error| storage_error(&error))?;
         Ok(result.map(|run| run.issue(workload)))
     }
 }
@@ -385,7 +378,7 @@ fn event_error(error: matching::MatchError) -> ProductionLeaseError {
 }
 
 fn completion(outcome: wit_run::Completion) -> Result<ProductionCompletion, serde_json::Error> {
-    use wamn_run_state::FailType;
+    use wamn_plugin::FailType;
     use wit_run::FailureType;
     Ok(match outcome {
         wit_run::Completion::Completed(result) => {
@@ -465,15 +458,17 @@ impl<T: Send + 'static> wit_run::HostWithStore<T> for SharedCtx {
         let service = service(accessor)?;
         Ok(async {
             let (plugin, workload, authority, generation) = lease(service, &handle)?;
-            let outcome = plugin
-                .database
-                .executor_write(&workload.application.project, async |connection| {
+            let outcome = executor_write(
+                &plugin.database,
+                &workload.application.project,
+                async |connection| {
                     PostgresRunStore::new(connection)
                         .renew(&authority.delivery, &workload.runner, generation, LEASE_MS)
                         .await
-                })
-                .await
-                .map_err(|error| storage_error(&error))?;
+                },
+            )
+            .await
+            .map_err(|error| storage_error(&error))?;
             if outcome != ProductionLeaseRenewal::Renewed {
                 workload.remove_authority(&handle);
                 return Err(Refusal::FenceLost);
@@ -501,15 +496,17 @@ impl<T: Send + 'static> wit_run::HostWithStore<T> for SharedCtx {
             let (plugin, workload, authority, generation) = lease(service, &handle)?;
             let state = serde_json::from_str(&state_json)
                 .map_err(|_| Refusal::InvalidInput("invalid checkpoint JSON".into()))?;
-            let stored = plugin
-                .database
-                .executor_write(&workload.application.project, async |connection| {
+            let stored = executor_write(
+                &plugin.database,
+                &workload.application.project,
+                async |connection| {
                     PostgresRunStore::new(connection)
                         .checkpoint(&authority.delivery, &workload.runner, generation, &state)
                         .await
-                })
-                .await
-                .map_err(|error| storage_error(&error))?;
+                },
+            )
+            .await
+            .map_err(|error| storage_error(&error))?;
             if stored {
                 authority.responded.store(true, Ordering::Release);
                 Ok(())
@@ -530,15 +527,17 @@ impl<T: Send + 'static> wit_run::HostWithStore<T> for SharedCtx {
             let (plugin, workload, authority, generation) = lease(service, &handle)?;
             let outcome = completion(outcome)
                 .map_err(|_| Refusal::InvalidInput("invalid result JSON".into()))?;
-            let finished = plugin
-                .database
-                .executor_write(&workload.application.project, async |connection| {
+            let finished = executor_write(
+                &plugin.database,
+                &workload.application.project,
+                async |connection| {
                     PostgresRunStore::new(connection)
                         .complete(&authority.delivery, &workload.runner, generation, &outcome)
                         .await
-                })
-                .await
-                .map_err(|error| storage_error(&error))?;
+                },
+            )
+            .await
+            .map_err(|error| storage_error(&error))?;
             workload.remove_authority(&handle);
             match finished {
                 ProductionCompletionResult::Terminalized

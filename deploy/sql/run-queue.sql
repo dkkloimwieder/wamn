@@ -3,7 +3,7 @@
 -- dispatched). Postgres owns durability (`FOR UPDATE SKIP LOCKED` lease + run
 -- state share one durability domain). The host polls due work and leases rows.
 -- A run lease lets another replica recover abandoned work.
--- Run persistence lives in crates/run-state.
+-- Run persistence lives in crates/plugin/src/run_store.
 -- The host grants the first lease during admission. The service takes expired leases.
 --
 -- Project provisioning applies this schema after run-state.sql, which creates
@@ -46,7 +46,7 @@ CREATE TABLE wamn_run.run_queue (
     -- generation; executor mutations join on owner + generation.
     lease_generation bigint NOT NULL DEFAULT 0 CHECK (lease_generation >= 0),
     attempts         int  NOT NULL DEFAULT 0,
-    -- Backoff cap: crates/run-state/src/queue/mod.rs.
+    -- Backoff cap: crates/plugin/src/run_store/queue.rs.
     max_attempts     int  NOT NULL DEFAULT 20,
     enqueued_at      timestamptz NOT NULL DEFAULT now(),
     PRIMARY KEY (run_id),

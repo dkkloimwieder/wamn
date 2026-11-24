@@ -7,8 +7,8 @@ use wamn_application::database::{SqlError, SqlRows, SqlValue};
 
 use super::transaction::{SharedTxnState, restore_connection};
 use super::values::{PgParam, columns_of, decode_row};
-use crate::connection_guard::ConnectionGuard;
-use crate::map_pg_error;
+use wamn_postgres::ConnectionGuard;
+use wamn_postgres::map_pg_error;
 
 const STREAM_BATCH_ROWS: usize = 500;
 

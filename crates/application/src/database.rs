@@ -1,15 +1,9 @@
 //! Database operations used by a host-attested application invocation.
 
 use std::fmt;
-use std::sync::Arc;
 
-use async_trait::async_trait;
 use futures_util::{future::BoxFuture, stream::BoxStream};
-use wamn_event::Causation;
-use wamn_package::canonical_name::CanonicalName;
-use wamn_registry::{ApplicationName, ProjectEnvKey, ProjectId};
-
-use crate::session_identity::SessionIdentity;
+use wamn_registry::{ProjectEnvKey, ProjectId};
 
 /// Values at the application SQL boundary.
 #[derive(Debug)]
@@ -100,91 +94,4 @@ pub enum Claim {
     InProgress,
     OutcomeUnknown,
     Conflict,
-}
-
-#[async_trait]
-pub trait OperationStore: fmt::Debug + Send + Sync {
-    fn host_projects(&self) -> Box<dyn Iterator<Item = &ProjectId> + '_>;
-
-    async fn bind_host_project(
-        &self,
-        project: &ProjectId,
-        environment: &ProjectEnvKey,
-    ) -> anyhow::Result<()>;
-
-    async fn read(
-        &self,
-        target: DatabaseTarget<'_>,
-        identity: &SessionIdentity,
-        sql: String,
-        params: Vec<SqlValue>,
-    ) -> Result<SqlRows, SqlError>;
-
-    async fn begin(
-        &self,
-        scope: &str,
-        target: DatabaseTarget<'_>,
-        identity: &SessionIdentity,
-        read: bool,
-        causation: Option<Causation>,
-    ) -> Result<Arc<dyn OperationSession>, SqlError>;
-
-    async fn claim(
-        &self,
-        target: DatabaseTarget<'_>,
-        operation: &CanonicalName,
-        key: &str,
-        request: Vec<u8>,
-    ) -> Result<Claim, SqlError>;
-
-    async fn complete(
-        &self,
-        target: DatabaseTarget<'_>,
-        operation: &CanonicalName,
-        key: &str,
-        result: String,
-    ) -> Result<(), SqlError>;
-
-    async fn release(
-        &self,
-        target: DatabaseTarget<'_>,
-        operation: &CanonicalName,
-        key: &str,
-    ) -> Result<(), SqlError>;
-}
-
-#[async_trait]
-pub trait OperationSession: fmt::Debug + Send + Sync {
-    async fn query(&self, sql: String, params: Vec<SqlValue>) -> Result<SqlRows, SqlError>;
-
-    async fn query_batch(&self, sql: String) -> Result<(), SqlError>;
-
-    async fn claim(
-        &self,
-        operation: &CanonicalName,
-        key: &str,
-        request: Vec<u8>,
-    ) -> Result<Claim, SqlError>;
-
-    fn stage_finish(&self, operation: &CanonicalName, key: &str, result: String);
-
-    async fn wal_position(&self) -> Result<String, SqlError>;
-
-    async fn counter_sequence(
-        &self,
-        application: &ApplicationName,
-        sequence: &str,
-    ) -> Result<Option<(String, String)>, SqlError>;
-
-    async fn set_counter(
-        &self,
-        sequence: &str,
-        counter: &str,
-        key: &str,
-        value: i64,
-    ) -> Result<(), SqlError>;
-
-    async fn commit(&self) -> Result<(), CommitFailure>;
-
-    async fn rollback(&self) -> Result<(), SqlError>;
 }

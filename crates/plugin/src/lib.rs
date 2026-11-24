@@ -16,18 +16,27 @@ use wash_runtime::plugin::{HostPlugin, WitInterfaces};
 use wash_runtime::wasmtime::component::{Component, Linker};
 use wash_runtime::wit::{WitInterface, WitWorld};
 
+pub mod admission;
 pub mod blobstore;
 pub mod bound_http;
+mod file_catalog;
+pub mod file_connections;
 mod host;
 pub mod host_policy;
 pub mod invocation;
 pub mod number_counter;
 mod operation;
+pub mod operation_sql;
 mod operation_transaction;
+pub mod persistence;
 mod query;
 mod resources;
+pub mod run_store;
 pub mod scope_registry;
+mod status;
+pub mod transitions;
 mod types;
+pub mod workflow;
 pub mod write_log;
 
 pub mod integrations;
@@ -35,6 +44,7 @@ pub use host::OperationHost;
 pub use operation::WorkflowNode;
 pub use operation_transaction::{OperationTransaction, PgCommitFailure};
 pub use resources::PgStatementTransaction;
+pub use status::{FailType, RunStatus};
 pub use write_log::WriteLogStore;
 
 #[cfg(not(feature = "wasm_component_model_implements"))]

@@ -74,7 +74,7 @@ Applications cannot replace or weaken them.
 PostgreSQL uses the authenticated database role for application row isolation.
 [Connection authority](platform-services.md#invocation-and-connection-authority) states how the host selects the database and the credential of each authority class.
 Control-store projections retain their separate project-targeted policies.
-`wamn-run-state` supplies the host queue worker's actual `CURRENT_USER` membership query.
+`wamn-plugin` supplies the host queue worker's actual `CURRENT_USER` membership query.
 The native runtime refuses absent membership at the existing guest error boundary.
 
 ## Application declarations

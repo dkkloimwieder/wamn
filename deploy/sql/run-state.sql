@@ -63,10 +63,9 @@ END
 $$;
 REVOKE ALL ON FUNCTION wamn_run.guard_run_admission_pins_immutable() FROM PUBLIC;
 
--- `wamn_platform` holds DELETE for history pruning, and `wamn_app` still
--- retains it pending the guest-login retirement. The table grant cannot express
--- the prune statement's terminal-state predicate, so this ordinary
--- invoker-rights trigger makes that predicate caller-independent.
+-- `wamn_platform` holds DELETE, and `wamn_app` retains it pending the
+-- guest-login retirement. This invoker-rights trigger permits deletion only
+-- for terminal runs, regardless of the caller.
 --
 -- THE TRIGGER AND THE ROLE ARE INDEPENDENT LAYERS AND STAY THAT WAY
 -- (wamn-0h0g.12.69): the grant bounds WHO may delete, this trigger bounds WHAT

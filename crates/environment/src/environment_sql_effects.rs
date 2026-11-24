@@ -314,7 +314,8 @@ pub(crate) async fn materialize_application_principals(
     }
     let mut project = connect_project(project_url).await?;
     let mut transaction = project.begin().await?;
-    wamn_postgres::operation::lock_operation_grants(&mut transaction, project_env_key).await?;
+    wamn_postgres::operation_grant_lock::lock_operation_grants(&mut transaction, project_env_key)
+        .await?;
     wamn_postgres::bind_platform_principal(&mut transaction, PlatformComponent::Provisioning)
         .await?;
     for package in &applications {

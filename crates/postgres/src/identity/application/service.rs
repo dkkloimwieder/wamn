@@ -30,7 +30,7 @@ pub fn api_service_transaction(
 #[async_trait::async_trait]
 impl ApiServiceStore for ApiServiceTransaction<'_, '_> {
     async fn lock_grants(&mut self, key: &ProjectEnvKey) -> Result<(), ServiceError> {
-        crate::operation::lock_operation_grants(self.0, key)
+        crate::operation_grant_lock::lock_operation_grants(self.0, key)
             .await
             .map_err(|source| ServiceError::database("lock project operation grants", source))
     }

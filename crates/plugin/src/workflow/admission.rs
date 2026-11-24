@@ -1,11 +1,11 @@
 //! PostgreSQL lookups for workflow deliveries under the caller's transaction.
 
+use crate::run_store::ProductionLeaseError;
 use sqlx::{PgConnection, Row as _, postgres::PgRow};
 use wamn_application::application_config::ApplicationConfig;
 use wamn_digest::Digest;
 use wamn_event::Envelope;
 use wamn_package::canonical_name::CanonicalName;
-use wamn_run_state::run_store::ProductionLeaseError;
 
 use crate::run_store::postgres_error;
 

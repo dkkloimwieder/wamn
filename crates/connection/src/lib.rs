@@ -2,7 +2,6 @@
 
 pub mod administration;
 mod administration_store;
-pub mod administration_transaction;
 pub mod bound_http;
 pub mod connection;
 pub mod connection_credentials;

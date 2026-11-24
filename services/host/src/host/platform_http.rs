@@ -220,13 +220,13 @@ mod tests {
             database,
         ));
         let postgres = Arc::new(wamn_plugin::OperationHost::new(
-            Arc::clone(&pools) as _,
+            Arc::clone(&pools),
             Arc::clone(&authorization) as _,
             None,
         ));
         let files = Arc::new(Files::new(
             &postgres,
-            Arc::clone(&pools) as _,
+            Arc::clone(&pools),
             Arc::new(wamn_blobstore::client::ObjectStorage::default()),
             authorization,
         ));

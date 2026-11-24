@@ -1,13 +1,11 @@
-//! File metadata, refusals, and catalog access contracts.
+//! File metadata and refusals for native file routes.
 
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
-use wamn_identity_protocol::PrincipalId;
-use wamn_package::canonical_name::CanonicalName;
-use wamn_registry::{ApplicationName, ProjectId};
+use wamn_registry::ApplicationName;
 
 use crate::files::{FileStorageError, FileStorageErrorType};
 
@@ -144,26 +142,6 @@ pub struct FileConnection {
     pub read_only: bool,
 }
 
-/// The registry authority needed by native file handlers.
-#[async_trait::async_trait]
-pub trait FileConnections: Send + Sync + fmt::Debug {
-    /// Enumerate immutable store generations using the same targeted registry reader.
-    async fn generations(&self) -> Result<Vec<FileConnection>, FileError> {
-        Err(failed(
-            "collector",
-            anyhow::anyhow!("store generation listing unavailable"),
-        ))
-    }
-
-    /// Resolve an application's binding, or an existing file's active generation.
-    async fn lookup(
-        &self,
-        application: &wamn_registry::ApplicationName,
-        binding: Option<&wamn_package::canonical_name::CanonicalName>,
-        pinned: Option<&str>,
-    ) -> Result<FileConnection, FileError>;
-}
-
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FileRequest {
@@ -211,51 +189,6 @@ pub struct FileInsert<'a> {
     pub size: i64,
     pub sha256: &'a wamn_digest::Digest,
     pub blob_key: &'a str,
-}
-
-/// File rows and session locks for native file operations.
-#[async_trait::async_trait]
-pub trait FileCatalog: fmt::Debug + Send + Sync {
-    /// Hold a session lock until the returned guard is dropped.
-    async fn lock(&self, project: &ProjectId, id: Uuid) -> Result<Box<dyn Send>, FileError>;
-
-    /// Read one row under the caller's administration authority.
-    async fn record(
-        &self,
-        project: &ProjectId,
-        principal: &PrincipalId,
-        operation: &CanonicalName,
-        application: &ApplicationName,
-        id: Uuid,
-    ) -> Result<FileRecord, FileError>;
-
-    /// Commit the staged file's metadata before promoting its bytes.
-    async fn insert(
-        &self,
-        project: &ProjectId,
-        principal: &PrincipalId,
-        operation: &CanonicalName,
-        file: FileInsert<'_>,
-    ) -> Result<(), FileError>;
-
-    /// Delete one row under the caller's administration authority.
-    async fn delete(
-        &self,
-        project: &ProjectId,
-        principal: &PrincipalId,
-        operation: &CanonicalName,
-        application: &ApplicationName,
-        id: Uuid,
-    ) -> Result<(), FileError>;
-
-    /// Return query errors in the inner result after a confirmed rollback.
-    async fn set_exposure(
-        &self,
-        project: &ProjectId,
-        principal: &PrincipalId,
-        operation: &CanonicalName,
-        file: FileExposure<'_>,
-    ) -> Result<Result<(), FileError>, FileError>;
 }
 
 /// Exposure and URL to write for one file.

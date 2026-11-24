@@ -20,7 +20,6 @@ wamn-application.workspace = true
 wamn-connection.workspace = true
 wamn-connection-type.workspace = true
 wamn-digest.workspace = true
-wamn-identity-protocol.workspace = true
 wamn-package.workspace = true
 wamn-registry.workspace = true
 wamn-storage.workspace = true

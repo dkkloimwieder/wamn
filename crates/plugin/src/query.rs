@@ -6,9 +6,7 @@ use std::task::{Context, Poll};
 
 use futures_util::stream::BoxStream;
 use tracing::Instrument as _;
-use wamn_application::database::{
-    DatabaseTarget, OperationSession, SqlError, SqlRows, SqlValue as DatabaseValue,
-};
+use wamn_application::database::{DatabaseTarget, SqlError, SqlRows, SqlValue as DatabaseValue};
 use wash_runtime::engine::ctx::SharedCtx;
 use wash_runtime::wasmtime::StoreContextMut;
 use wash_runtime::wasmtime::component::{
@@ -16,6 +14,7 @@ use wash_runtime::wasmtime::component::{
     VecBuffer,
 };
 
+use super::operation_sql::Transaction;
 use super::resources::{PgStatementTransaction, db_span_for_project, plugin_of, record_query_ms};
 use super::scope_registry;
 use super::types::{into_database_value, into_guest_error, into_guest_value};
@@ -61,16 +60,15 @@ pub(super) async fn dynamic_query<T: 'static + Send>(
                         .as_ref()
                         .expect("required SQL identity"),
                 };
-                plugin
-                    .store
-                    .read(
-                        target,
-                        &identity,
-                        sql,
-                        params.into_iter().map(into_database_value).collect(),
-                    )
-                    .await
-                    .map_err(into_guest_error)
+                crate::operation_sql::read(
+                    &plugin.store,
+                    target,
+                    &identity,
+                    sql,
+                    params.into_iter().map(into_database_value).collect(),
+                )
+                .await
+                .map_err(into_guest_error)
             }
             .instrument(span)
             .await;
@@ -119,7 +117,7 @@ pub(super) async fn transaction_query<T: 'static + Send>(
 fn transaction_session<T: 'static>(
     accessor: &Accessor<T, SharedCtx>,
     rep: &Resource<PgStatementTransaction>,
-) -> WasmResult<Option<Arc<dyn OperationSession>>> {
+) -> WasmResult<Option<Arc<Transaction>>> {
     accessor.with(|mut access| {
         let ctx = access.get();
         let handle = ctx.table.get(rep)?;

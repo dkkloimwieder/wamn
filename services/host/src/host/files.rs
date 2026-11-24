@@ -9,14 +9,14 @@ use serde_json::Value;
 use wamn_application::application_config::ApplicationConfig;
 use wamn_application::result_signing::{ResultSigner, ResultSigning, ResultSigningError};
 use wamn_blobstore::client::ObjectStorage;
-use wamn_blobstore::file_route::FileCatalog;
 use wamn_connection::connection_facts::ConnectionCache;
 use wamn_connection::invocation::ReleaseContext;
 use wamn_package::{SignedFileField, SignedFileResultClass};
 use wamn_plugin::OperationHost;
 use wamn_plugin::blobstore::file_route::FileRoutes;
+use wamn_plugin::file_connections::RegistryFileConnections;
+use wamn_postgres::WamnPostgres;
 use wamn_postgres::authorization::Authorization;
-use wamn_postgres::file_connections::RegistryFileConnections;
 
 pub(super) struct Routes {
     pub(super) files: FileRoutes,
@@ -30,7 +30,7 @@ struct ApplicationFiles {
 
 pub(super) struct Files {
     postgres: Weak<OperationHost>,
-    catalog: Arc<dyn FileCatalog>,
+    database: Arc<WamnPostgres>,
     storage: Arc<ObjectStorage>,
     authorization: Arc<Authorization>,
     applications: RwLock<HashMap<String, Arc<ApplicationFiles>>>,
@@ -45,13 +45,13 @@ impl std::fmt::Debug for Files {
 impl Files {
     pub(super) fn new(
         postgres: &Arc<OperationHost>,
-        catalog: Arc<dyn FileCatalog>,
+        database: Arc<WamnPostgres>,
         storage: Arc<ObjectStorage>,
         authorization: Arc<Authorization>,
     ) -> Self {
         Self {
             postgres: Arc::downgrade(postgres),
-            catalog,
+            database,
             storage,
             authorization,
             applications: RwLock::default(),
@@ -111,7 +111,7 @@ impl Files {
                 Ok(Arc::new(Routes {
                     files: FileRoutes::new(
                         context,
-                        Arc::clone(&self.catalog),
+                        Arc::clone(&self.database),
                         Arc::clone(&self.storage),
                         connections,
                         application.project.clone(),
