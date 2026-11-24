@@ -8,8 +8,7 @@ use crate::serving_context::ServingContext;
 use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 
-use crate::native_operation::invocation_policy::{InvocationPolicy, InvocationScope};
-use crate::native_operation::native_call::{NativeCallFailure, NativeInvocation};
+use crate::native_operation::native_call::NativeInvocation;
 use crate::native_operation::native_workload::native_component_name;
 use anyhow::Context as _;
 use tokio::time::Instant;
@@ -27,7 +26,6 @@ pub const EDGE_POLICY_ID: &str = "wamn:edge-operation-policy";
 const NODE_TYPES: &str = "wamn:node/types@0.2.0";
 
 /// The facts of one edge call that only the policy reads.
-#[derive(Clone)]
 pub struct EdgeFacts {
     caller: Option<AuthenticatedCaller>,
 }
@@ -78,33 +76,24 @@ impl EdgePolicy {
             authority: EdgeAuthority::default(),
         })
     }
-}
 
-impl InvocationPolicy for EdgePolicy {
-    type Facts = EdgeFacts;
-    /// No invocation authority is bound, so nothing is revoked.
-    type Authority = ();
-    fn activate(
+    pub(crate) fn activate(
         &self,
         component_id: &str,
-        _invocation_scope: &InvocationScope<Self>,
-        request: &NativeInvocation<Self>,
-        _failure: NativeCallFailure,
-    ) -> impl Future<Output = anyhow::Result<()>> + Send {
-        std::future::ready(self.authority.authorize(
+        request: &NativeInvocation,
+    ) -> anyhow::Result<()> {
+        self.authority.authorize(
             component_id,
             request.operation.as_str(),
             request.facts.caller.as_ref(),
             Instant::now().into_std(),
             request.deadline.into_std(),
-        ))
+        )
     }
 
-    fn shutdown(&self) {
+    pub(crate) fn shutdown(&self) {
         self.authority.clear();
     }
-
-    fn revoke(&self, _target: &str) {}
 }
 
 #[async_trait::async_trait]

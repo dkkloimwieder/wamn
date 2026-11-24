@@ -20,21 +20,10 @@ use wamn_application::native_routes::{
 use wamn_identity::control::{control_projects_page, is_org_admin, org_projects_page};
 use wamn_identity::paging::Order;
 use wamn_identity_client::users::UserClient;
-use wamn_identity_protocol::PrincipalId;
 
 use crate::Writer;
 use crate::control_route::{ControlRoutes, Refusal, control_page, oauth_authorization};
-
-/// Native control execution after the route checks the caller's current authority.
-#[async_trait::async_trait]
-pub trait ControlExecution: Send + Sync + fmt::Debug {
-    async fn execute(
-        &self,
-        operation: &wamn_package::canonical_name::CanonicalName,
-        caller: &PrincipalId,
-        payload: &str,
-    ) -> anyhow::Result<Value>;
-}
+use crate::execution::Execution;
 
 /// The control routes of one org, through its `control` login.
 pub struct HostRouteHandlers {
@@ -49,8 +38,6 @@ pub struct HostRouteHandlers {
     pub issuer: String,
     /// The `wamn_platform` login of each project environment.
     pub(crate) logins: Arc<crate::project_login::ProjectLogins>,
-    /// The runtime status source selected by the serving mode.
-    pub status: Arc<dyn crate::environment_status::StatusSource>,
     pub org: wamn_registry::OrgId,
 }
 
@@ -68,7 +55,7 @@ pub struct HostRouteDelivery {
     registry_token_metadata: bool,
     operation_jobs: Option<wamn_kubernetes::kubernetes_api::KubernetesApi>,
     worker: Option<wamn_kubernetes::job::Worker>,
-    execution: Option<Arc<dyn ControlExecution>>,
+    execution: Option<Execution>,
     handlers: HostRouteHandlers,
     connection_health: Option<Arc<wamn_http::connection_health::ConnectionHealth>>,
     oauth: Option<Arc<oauth_authorization::Authorization>>,
@@ -134,7 +121,7 @@ impl HostRouteDelivery {
     }
 
     /// Hand authenticated service operations to their native owner.
-    pub fn with_control_execution(mut self, execution: Arc<dyn ControlExecution>) -> Self {
+    pub(crate) fn with_control_execution(mut self, execution: Execution) -> Self {
         self.execution = Some(execution);
         self
     }
@@ -168,7 +155,6 @@ impl HostRouteDelivery {
             identity,
             issuer,
             logins,
-            status,
             org,
         } = &self.handlers;
         match attachment.route.handler {
@@ -226,10 +212,9 @@ impl HostRouteDelivery {
                     identity: identity.as_ref(),
                     issuer,
                     logins,
-                    status: status.as_ref(),
                     operation_jobs: self.operation_jobs.as_ref(),
                     worker: self.worker.as_ref(),
-                    execution: self.execution.as_deref(),
+                    execution: self.execution.as_ref(),
                     registry_token_metadata: self.registry_token_metadata,
                     org,
                     connection_health: self.connection_health.as_deref(),

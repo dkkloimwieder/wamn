@@ -18,7 +18,7 @@ use std::{
 };
 
 use anyhow::{Context as _, ensure};
-pub use host_route::{ControlExecution, HostRouteDelivery, HostRouteHandlers};
+pub use host_route::{HostRouteDelivery, HostRouteHandlers};
 use serde::Deserialize;
 use serde_json::json;
 use wamn_authentication::route_authentication::ControlRouteAuthenticator;
@@ -221,17 +221,16 @@ pub async fn serve(config: Configuration) -> anyhow::Result<()> {
             )?),
             issuer: config.identity_issuer,
             logins: Arc::clone(&logins),
-            status: Arc::new(crate::environment_status::KubernetesSource),
             org: config.org.clone(),
         })
         .with_control_authenticator(Arc::new(ControlRouteAuthenticator::new(verifier)))
-        .with_control_execution(Arc::new(execution::Execution {
+        .with_control_execution(execution::Execution {
             org: config.org.clone(),
             worker: worker.clone(),
             logins: Arc::clone(&logins),
             control: pool,
             registry_token_metadata: config.registry_token_metadata,
-        }))
+        })
         .with_worker(worker)
         .with_operation_jobs(wamn_kubernetes::kubernetes_api::KubernetesApi::in_cluster()?)
         .with_registry_token_metadata(config.registry_token_metadata)

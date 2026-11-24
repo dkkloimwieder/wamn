@@ -6,20 +6,9 @@ use std::fmt;
 use std::path::PathBuf;
 use wamn_edge_document::edge_bundle::local_component_path;
 
-use async_trait::async_trait;
 use wamn_component_policy::AdmittedComponent;
 
 use wamn_digest::bytes_sha256;
-
-/// A source that returns only verified component bytes.
-#[async_trait]
-pub trait ArtifactSource: Send + Sync {
-    /// Pull and verify the exact bytes named by one admitted component fact.
-    async fn pull_verified(
-        &self,
-        component: &AdmittedComponent,
-    ) -> Result<Vec<u8>, ComponentArtifactFetchError>;
-}
 
 /// Stable classification of a refused component artifact pull.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -102,11 +91,9 @@ impl LocalComponentSource {
     pub fn new(directory: PathBuf) -> Self {
         Self { directory }
     }
-}
 
-#[async_trait]
-impl ArtifactSource for LocalComponentSource {
-    async fn pull_verified(
+    /// Read and verify the exact bytes named by one admitted component fact.
+    pub async fn pull_verified(
         &self,
         component: &AdmittedComponent,
     ) -> Result<Vec<u8>, ComponentArtifactFetchError> {

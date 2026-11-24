@@ -135,7 +135,7 @@ impl EdgeOperation {
             .find(|component| component.operations.contains_key(&authorized.operation))
             .context("operation is outside the release")?;
         invoke_operation(
-            &*self.application,
+            &self.application,
             OperationCall {
                 closure: OperationClosure::Released(components),
                 component,

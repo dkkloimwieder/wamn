@@ -19,7 +19,7 @@
 //! signature signs that same digest. The loader refuses any file whose bytes do
 //! not match.
 
-use crate::artifact_source::{ArtifactSource as _, LocalComponentSource};
+use crate::artifact_source::LocalComponentSource;
 use crate::release_manifest::{load_canonical_bytes, validate_component_in_release};
 use std::collections::BTreeSet;
 use std::fmt;

@@ -1,13 +1,12 @@
 //! The loaded application of the edge release.
 //!
-//! The box carries one release, so the application loads once at start and
+//! The edge carries one release, so the application loads once at start and
 //! serves every call.
 
-use wamn_component_policy::AdmittedComponent;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use wamn_component_policy::AdmittedComponent;
 
-use crate::native_operation::invocation_policy::ApplicationHost;
 use crate::native_operation::native_workload::{
     NativeApplication, NativeWorkloadSpec, load_native_application,
 };
@@ -22,7 +21,7 @@ use crate::release::EdgeRelease;
 /// The one native application of the edge release.
 #[derive(Debug)]
 pub struct EdgeApplication {
-    application: Arc<NativeApplication<EdgePolicy>>,
+    application: Arc<NativeApplication>,
 }
 
 impl EdgeApplication {
@@ -58,25 +57,18 @@ impl EdgeApplication {
         .await?;
         Ok(Self { application })
     }
-}
-
-impl ApplicationHost for EdgeApplication {
-    type Policy = EdgePolicy;
 
     /// The application loaded at start, when `components` is its closure.
-    fn released_application(
+    pub(crate) fn released_application(
         &self,
-        components: &Arc<[AdmittedComponent]>,
-    ) -> impl Future<Output = anyhow::Result<Arc<NativeApplication<EdgePolicy>>>> + Send {
+        components: &[AdmittedComponent],
+    ) -> anyhow::Result<&Arc<NativeApplication>> {
         let loaded = &self.application.workload.facts_by_component_id;
         let closure = components.len() == loaded.len()
             && components
                 .iter()
                 .all(|fact| loaded.values().any(|loaded| loaded == fact));
-        std::future::ready(if closure {
-            Ok(Arc::clone(&self.application))
-        } else {
-            Err(anyhow::anyhow!("native-release-component-closure-mismatch"))
-        })
+        anyhow::ensure!(closure, "native-release-component-closure-mismatch");
+        Ok(&self.application)
     }
 }

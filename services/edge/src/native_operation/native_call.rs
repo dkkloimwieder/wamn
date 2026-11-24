@@ -5,31 +5,30 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use wamn_engine::invocation_trace::InvocationTrace;
 use anyhow::Context as _;
 use tokio::sync::oneshot;
 use tokio::time::{Instant, timeout_at};
 use tracing::Instrument as _;
+use wamn_engine::invocation_scope::InvocationExecution;
+use wamn_engine::invocation_trace::InvocationTrace;
 use wash_runtime::engine::ctx::SharedCtx;
 use wash_runtime::engine::dispatch::{DispatchTarget, GuestCall, GuestCallFuture};
 use wash_runtime::wasmtime::component::{Accessor, Instance, Val};
 
-use super::invocation_policy::{InvocationPolicy, InvocationScope};
+use crate::policy::EdgeFacts;
+
 use super::native_workload::NativeApplication;
 use super::node_types;
 
-/// Preserve a host failure's Rust type across the native guest trap boundary.
-pub type NativeCallFailure = Arc<std::sync::Mutex<Option<anyhow::Error>>>;
-
 /// The request authority and absolute deadline carried into one native node call.
-pub struct NativeInvocation<P: InvocationPolicy> {
+pub struct NativeInvocation {
     pub operation: wamn_package::canonical_name::CanonicalName,
     pub context: node_types::NodeContext,
     pub input: NativeInput,
     pub deadline: Instant,
     /// The facts of this call that only the policy reads.
-    pub facts: P::Facts,
-    pub application: Arc<NativeApplication<P>>,
+    pub facts: EdgeFacts,
+    pub application: Arc<NativeApplication>,
 }
 
 /// JSON exists only at dynamic routing. Nested known calls retain WIT values.
@@ -52,7 +51,7 @@ impl From<&str> for NativeInput {
 
 pub use wamn_engine::operation::native_call::NativeOutcome;
 
-impl<P: InvocationPolicy> fmt::Debug for NativeInvocation<P> {
+impl fmt::Debug for NativeInvocation {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("NativeInvocation")
@@ -62,14 +61,13 @@ impl<P: InvocationPolicy> fmt::Debug for NativeInvocation<P> {
     }
 }
 
-struct NativeCall<P: InvocationPolicy> {
-    request: NativeInvocation<P>,
-    finish_result: bool,
+struct NativeCall {
+    request: NativeInvocation,
     reply: oneshot::Sender<NativeOutcome>,
-    failure: NativeCallFailure,
     trace: InvocationTrace,
     retired_after_reply: Arc<AtomicBool>,
-    scope: Arc<InvocationScope<P>>,
+    scope_id: Box<str>,
+    execution: InvocationExecution,
     /// `wamn.operation.instantiate`: open from the dispatch until the call
     /// begins, so it holds the store creation, the instantiation and the
     /// wait for an instance.
@@ -80,7 +78,7 @@ struct NativeCall<P: InvocationPolicy> {
 struct ActiveScope<'a> {
     accessor: &'a Accessor<SharedCtx>,
     component_id: Arc<str>,
-    execution: wamn_engine::invocation_scope::InvocationExecution,
+    execution: &'a InvocationExecution,
 }
 
 impl Drop for ActiveScope<'_> {
@@ -92,22 +90,16 @@ impl Drop for ActiveScope<'_> {
     }
 }
 
-// This guard belongs to the dispatching caller, not the native guest task.
-// Cancellation revokes authority before native's abandoned-store grace ends.
-struct CloseScope<P: InvocationPolicy> {
-    scope: Arc<InvocationScope<P>>,
-    completed: bool,
-}
-impl<P: InvocationPolicy> Drop for CloseScope<P> {
+// End host work when the dispatching caller exits, including during cancellation.
+struct CloseScope(InvocationExecution);
+
+impl Drop for CloseScope {
     fn drop(&mut self) {
-        self.scope.execution.cancel();
-        if !self.completed {
-            self.scope.close();
-        }
+        self.0.cancel();
     }
 }
 
-impl<P: InvocationPolicy> GuestCall for NativeCall<P> {
+impl GuestCall for NativeCall {
     fn describe(&self) -> &str {
         self.request.operation.as_str()
     }
@@ -127,11 +119,10 @@ impl<P: InvocationPolicy> GuestCall for NativeCall<P> {
         Box::pin(trace.run(async move {
             let Self {
                 request,
-                finish_result,
                 reply,
-                failure,
                 retired_after_reply,
-                scope,
+                scope_id,
+                execution,
                 instantiate,
                 ..
             } = *self;
@@ -153,25 +144,17 @@ impl<P: InvocationPolicy> GuestCall for NativeCall<P> {
                     .keeps_instances_warm();
                 let component_id = accessor.with(|mut access| {
                     let active = &mut access.get().active_ctx;
-                    std::mem::replace(&mut active.component_id, Arc::from(scope.id.as_ref()))
+                    std::mem::replace(&mut active.component_id, Arc::from(scope_id.as_ref()))
                 });
                 let active_scope = ActiveScope {
                     accessor,
                     component_id,
-                    execution: scope.execution.clone(),
+                    execution: &execution,
                 };
-                // Declared after active_scope, so authority is revoked before the
-                // native component identity is restored, including cancellation.
-                let _authority = request
+                request
                     .application
                     .policy
-                    .activate(
-                        &active_scope.component_id,
-                        &scope,
-                        &request,
-                        Arc::clone(&failure),
-                    )
-                    .await?;
+                    .activate(&active_scope.component_id, &request)?;
                 accessor.with(|mut access| {
                     if let Ok(scopes) = access
                         .get()
@@ -179,7 +162,7 @@ impl<P: InvocationPolicy> GuestCall for NativeCall<P> {
                         .try_get_plugin::<wamn_engine::invocation_scope::InvocationScopes>(
                         wamn_engine::invocation_scope::INVOCATION_SCOPES_ID,
                     ) {
-                        scopes.set_execution(&scope.id, scope.execution.clone())?;
+                        scopes.set_execution(&scope_id, execution.clone())?;
                     }
                     Ok::<_, anyhow::Error>(())
                 })?;
@@ -214,8 +197,7 @@ impl<P: InvocationPolicy> GuestCall for NativeCall<P> {
                     Ok(input) => {
                         let arguments = [context_value(request.context), input];
                         let mut results = [Val::Bool(false)];
-                        scope
-                            .execution
+                        execution
                             .run(run.call_concurrent(accessor, &arguments, &mut results))
                             .await
                             .context("native invocation ended")?
@@ -229,22 +211,6 @@ impl<P: InvocationPolicy> GuestCall for NativeCall<P> {
                             message: error.to_string(),
                         },
                     ))),
-                };
-                // Direct native calls finish here under their active authority.
-                // The engine's intent path finishes after commit or replay instead.
-                let outcome = if finish_result {
-                    request
-                        .application
-                        .policy
-                        .finish_result(
-                            &active_scope.component_id,
-                            &request.operation,
-                            &request.facts,
-                            outcome,
-                        )
-                        .await?
-                } else {
-                    outcome
                 };
                 let refused = match &outcome {
                     NativeOutcome::Json(value) => value.is_err(),
@@ -273,134 +239,47 @@ impl<P: InvocationPolicy> GuestCall for NativeCall<P> {
     }
 }
 
-/// Retire the native instance selected for a refused invocation.
-struct RefusedCall {
-    operation: wamn_package::canonical_name::CanonicalName,
-    deadline: Instant,
-}
-
-impl GuestCall for RefusedCall {
-    fn describe(&self) -> &str {
-        self.operation.as_str()
-    }
-
-    fn deadline(&self) -> Duration {
-        self.deadline.saturating_duration_since(Instant::now())
-    }
-
-    fn call(
-        self: Box<Self>,
-        _accessor: &Accessor<SharedCtx>,
-        _instance: Instance,
-    ) -> GuestCallFuture<'_> {
-        Box::pin(async { anyhow::bail!("native invocation admission refused") })
-    }
-}
-
-pub(super) async fn prepare_invocation<P: InvocationPolicy>(
-    application: &NativeApplication<P>,
-    target: &DispatchTarget,
-    operation: &wamn_package::canonical_name::CanonicalName,
-    facts: &P::Facts,
-    deadline: Instant,
-) -> anyhow::Result<P::Facts> {
-    let component_id = application
-        .workload
-        .target_component(target)
-        .context("dispatch target is outside the application")?;
-    let prepared = timeout_at(
-        deadline,
-        application.policy.prepare(component_id, operation, facts),
-    )
-    .await
-    .context("native admission deadline elapsed")?;
-    if prepared.is_err()
-        && target
-            .workload()
-            .warm_instance_policy(component_id)
-            .await
-            .keeps_instances_warm()
-    {
-        // Admission precedes dispatch. Let native retire the selected instance
-        // without running its handler, and preserve the original host error.
-        let _ = timeout_at(
-            deadline,
-            target.dispatch(RefusedCall {
-                operation: operation.to_owned(),
-                deadline,
-            }),
-        )
-        .await;
-    }
-    prepared
-}
-
 /// Dispatch and receive a typed node result under the same enclosing deadline.
-pub async fn invoke_owned<P: InvocationPolicy>(
+pub async fn invoke_owned(
     target: &DispatchTarget,
-    request: NativeInvocation<P>,
+    request: NativeInvocation,
 ) -> anyhow::Result<NativeOutcome> {
-    invoke(target, request, true).await
+    invoke_raw(target, request).await
 }
 
 /// The operation owner persists the raw result before it signs the response.
-pub async fn invoke_raw<P: InvocationPolicy>(
+pub async fn invoke_raw(
     target: &DispatchTarget,
-    request: NativeInvocation<P>,
-) -> anyhow::Result<NativeOutcome> {
-    invoke(target, request, false).await
-}
-
-async fn invoke<P: InvocationPolicy>(
-    target: &DispatchTarget,
-    mut request: NativeInvocation<P>,
-    finish_result: bool,
+    mut request: NativeInvocation,
 ) -> anyhow::Result<NativeOutcome> {
     let deadline = request
         .deadline
         .min(Instant::now() + wamn_application::MAX_HOST_CALL_DURATION);
     request.deadline = deadline;
     anyhow::ensure!(Instant::now() < deadline, "native-node-deadline-exceeded");
-    let (reply, response) = oneshot::channel();
-    let failure = NativeCallFailure::default();
-    let retired_after_reply = Arc::new(AtomicBool::new(false));
-    request.facts = prepare_invocation(
-        &request.application,
-        target,
-        &request.operation,
-        &request.facts,
-        deadline,
-    )
-    .await?;
-    let retained = request
+    request
         .application
-        .policy
-        .scope_id(&request.facts)
-        .map(Box::<str>::from);
-    let retains_authority = retained.is_some();
-    let scope = Arc::new(match retained {
-        Some(id) => InvocationScope::with_id(Arc::clone(&request.application.policy), id, deadline),
-        None => InvocationScope::new(Arc::clone(&request.application.policy), deadline),
-    });
-    let mut close = CloseScope {
-        scope: Arc::clone(&scope),
-        completed: false,
-    };
-    let result = timeout_at(deadline, async move {
+        .workload
+        .target_component(target)
+        .context("dispatch target is outside the application")?;
+    let (reply, response) = oneshot::channel();
+    let retired_after_reply = Arc::new(AtomicBool::new(false));
+    let execution = InvocationExecution::new(deadline);
+    let _close = CloseScope(execution.clone());
+    timeout_at(deadline, async move {
         // Await native completion first: an initialization or guest failure
         // must not be replaced by the resulting closed response channel.
         if let Err(native_error) = target
             .dispatch(NativeCall {
                 request,
-                finish_result,
                 reply,
-                failure: Arc::clone(&failure),
                 // Native starts a separate task. Carry the existing invocation
                 // span and subscriber into its GuestCall instead of creating
                 // another invocation span or relying on executor-local state.
                 trace: InvocationTrace::capture(),
                 retired_after_reply: Arc::clone(&retired_after_reply),
-                scope,
+                scope_id: super::next_scope("native-invocation"),
+                execution,
                 instantiate: tracing::info_span!("wamn.operation.instantiate"),
             })
             .await
@@ -410,33 +289,20 @@ async fn invoke<P: InvocationPolicy>(
                     .await
                     .context("retired native invocation lost its completed response");
             }
-            // Only host policy writes this request-owned error, before it
-            // traps. Guest text cannot supply an error's Rust classification.
-            let host_error = failure
-                .lock()
-                .expect("native call failure lock poisoned")
-                .take();
-            return Err(match host_error {
-                Some(error) => {
-                    error.context(format!("dispatch native node operation: {native_error:#}"))
-                }
-                None => native_error.context("dispatch native node operation"),
-            });
+            return Err(native_error.context("dispatch native node operation"));
         }
         response
             .await
             .context("native node dispatch completed without a response")
     })
     .await
-    .context("native node enclosing deadline elapsed")?;
-    close.completed = result.is_ok() && retains_authority;
-    result
+    .context("native node enclosing deadline elapsed")?
 }
 
 /// Invoke the JSON adapter at an HTTP or dynamic routing boundary.
-pub async fn invoke_native<P: InvocationPolicy>(
+pub async fn invoke_native(
     target: &DispatchTarget,
-    request: NativeInvocation<P>,
+    request: NativeInvocation,
 ) -> anyhow::Result<Result<node_types::Emission, node_types::NodeError>> {
     invoke_owned(target, request).await?.into_json()
 }

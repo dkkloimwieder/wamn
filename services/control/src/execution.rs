@@ -14,9 +14,9 @@ pub(crate) struct Execution {
     pub registry_token_metadata: bool,
 }
 
-#[async_trait::async_trait]
-impl crate::host_route::ControlExecution for Execution {
-    async fn execute(
+impl Execution {
+    /// Run a native control operation after route admission.
+    pub(crate) async fn execute(
         &self,
         operation: &wamn_package::canonical_name::CanonicalName,
         caller: &PrincipalId,

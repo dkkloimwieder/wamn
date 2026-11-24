@@ -29,8 +29,7 @@
 //! `project.create` writes a project of the org with no environment and no
 //! copied administrator grants (docs/architecture/execution.md#host-run-routes).
 //!
-//! `environment.status` reads the runtime through the host-selected
-//! [`crate::environment_status::StatusSource`] and writes nothing. Optional
+//! The read-only `environment.status` route gets runtime status from Kubernetes. Optional
 //! counts read the environment through its administration login and the
 //! control store through its existing connection. Count failures answer null.
 //!
@@ -166,10 +165,8 @@ pub(crate) struct ControlRoutes<'a> {
     pub(crate) issuer: &'a str,
     /// The `wamn_platform` login of each project environment.
     pub(crate) logins: &'a crate::project_login::ProjectLogins,
-    /// The runtime reader selected by the host mode.
-    pub(crate) status: &'a dyn crate::environment_status::StatusSource,
     pub(crate) registry_token_metadata: bool,
-    pub(crate) execution: Option<&'a dyn crate::ControlExecution>,
+    pub(crate) execution: Option<&'a crate::execution::Execution>,
     pub(crate) worker: Option<&'a wamn_kubernetes::job::Worker>,
     pub(crate) operation_jobs: Option<&'a wamn_kubernetes::kubernetes_api::KubernetesApi>,
     pub(crate) org: &'a wamn_registry::OrgId,
@@ -448,10 +445,9 @@ impl ControlRoutes<'_> {
                         detail: json!({ "field": "env" }),
                     });
                 }
-                let status = self
-                    .status
-                    .read(self.org, &request.project, &request.env)
-                    .await?;
+                let status =
+                    crate::environment_status::read(self.org, &request.project, &request.env)
+                        .await?;
                 let application = async {
                     let login = self
                         .login(&request.project, &request.env)

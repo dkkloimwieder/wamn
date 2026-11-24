@@ -21,7 +21,7 @@ use wash_runtime::plugin::{HostPlugin, PluginBindings};
 use wash_runtime::types::{Component, LocalResources, Workload};
 use wash_runtime::wit::WitInterface;
 
-use super::invocation_policy::InvocationPolicy;
+use crate::policy::EdgePolicy;
 
 #[cfg(test)]
 mod tests;
@@ -136,16 +136,16 @@ async fn unbind_all<'a>(
 
 /// One release or candidate lifetime, retained by every native call it owns.
 #[derive(Debug)]
-pub struct NativeApplication<P: InvocationPolicy> {
+pub struct NativeApplication {
     // Cleanup runs before the workload fields drop. The policy contains only
     // synchronous WAMN registries; native workload teardown owns warm stores.
-    _cleanup: NativePolicyCleanup<P>,
+    _cleanup: NativePolicyCleanup,
     pub workload: Arc<NativeWorkload>,
-    pub policy: Arc<P>,
+    pub policy: Arc<EdgePolicy>,
     dispatch_targets: BTreeMap<String, DispatchTarget>,
 }
 
-impl<P: InvocationPolicy> NativeApplication<P> {
+impl NativeApplication {
     /// The component's prepared links and native pool, retained for this application.
     pub fn dispatch_target(&self, component_id: &str) -> anyhow::Result<&DispatchTarget> {
         self.dispatch_targets
@@ -155,9 +155,9 @@ impl<P: InvocationPolicy> NativeApplication<P> {
 }
 
 #[derive(Debug)]
-struct NativePolicyCleanup<P: InvocationPolicy>(Arc<P>);
+struct NativePolicyCleanup(Arc<EdgePolicy>);
 
-impl<P: InvocationPolicy> Drop for NativePolicyCleanup<P> {
+impl Drop for NativePolicyCleanup {
     fn drop(&mut self) {
         self.0.shutdown();
     }
@@ -171,14 +171,14 @@ impl<P: InvocationPolicy> Drop for NativePolicyCleanup<P> {
     clippy::implicit_hasher,
     reason = "wash-runtime takes the plugin map with the default hasher"
 )]
-pub async fn load_native_application<P: InvocationPolicy>(
+pub async fn load_native_application(
     engine: Arc<Engine>,
     spec: NativeWorkloadSpec,
-    policy: Arc<P>,
+    policy: Arc<EdgePolicy>,
     plugins: &HashMap<&'static str, Arc<dyn HostPlugin>>,
     plugin_bindings: &PluginBindings,
     meters: &Meters,
-) -> anyhow::Result<Arc<NativeApplication<P>>> {
+) -> anyhow::Result<Arc<NativeApplication>> {
     let cleanup = NativePolicyCleanup(Arc::clone(&policy));
     let workload =
         Arc::new(load_native_workload(engine, spec, plugins, plugin_bindings, meters).await?);
