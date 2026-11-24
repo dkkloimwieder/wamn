@@ -1,6 +1,7 @@
 //! Platform and org installation workflows.
 
 pub mod database;
+pub mod deployment;
 pub mod environment;
 pub mod install;
 pub mod org;

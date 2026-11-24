@@ -14,7 +14,9 @@ use kube::{
 };
 use serde_json::Value;
 use std::{collections::BTreeMap, ffi::OsStr, path::Path, sync::Mutex, time::Duration};
+use tokio::time::Instant;
 use wamn_platform_install::database::ConnectionConfig;
+use wamn_platform_install::deployment::{Chart, Cluster, DatabaseFiles, Upgrade};
 use wamn_registry::{ApplicationName, Triple, name};
 
 use crate::client::{
@@ -581,9 +583,6 @@ async fn read_credentials(
         .context("broker Secret is missing its credentials")?;
     Ok(Some(bytes.0))
 }
-
-use tokio::time::Instant;
-use wamn_environment::environment::cluster::{Chart, Cluster, DatabaseFiles, Upgrade};
 
 impl Chart for crate::release_chart::bundle::SelectedChart {
     fn directory(&self) -> &Path {

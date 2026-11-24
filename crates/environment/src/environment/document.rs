@@ -11,6 +11,7 @@ use std::path::Path;
 
 use anyhow::{Context as _, ensure};
 use serde::{Deserialize, Serialize};
+use wamn_platform_install::deployment::Cluster;
 use wamn_registry::EnvironmentApplications;
 use wamn_registry::Triple;
 
@@ -109,7 +110,7 @@ pub struct WorkloadRelease {
 
 /// Observe the current package and Helm revision through the workload reader.
 pub async fn workload_release(
-    cluster: &dyn super::cluster::Cluster,
+    cluster: &dyn Cluster,
     triple: &Triple,
     application: &wamn_registry::ApplicationName,
 ) -> anyhow::Result<Option<WorkloadRelease>> {

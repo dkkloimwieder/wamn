@@ -18,13 +18,13 @@ use serde_json::{Value, json};
 use tokio::time::Instant;
 use wamn_component_policy::PackageManifest;
 use wamn_digest::Digest;
+use wamn_platform_install::deployment::Chart;
 use wamn_platform_install::release_chart::pod_registry_reference;
 use wamn_registry::Triple;
 use wamn_release::package_source::OpenPackage;
 
 use super::{
     Platform, bindings,
-    cluster::Chart,
     document::{DeclaredRelease, EnvironmentDocument},
     sql, stage, write,
 };

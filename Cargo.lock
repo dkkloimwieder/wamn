@@ -7061,7 +7061,6 @@ dependencies = [
  "uuid",
  "wamn-connection",
  "wamn-digest",
- "wamn-environment",
  "wamn-oci",
  "wamn-package",
  "wamn-platform-install",
@@ -7141,9 +7140,12 @@ name = "wamn-platform-install"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "ring",
  "serde",
  "serde_json",
+ "serde_yaml",
+ "tokio",
  "wamn-digest",
  "wamn-identity-protocol",
  "wamn-registry",

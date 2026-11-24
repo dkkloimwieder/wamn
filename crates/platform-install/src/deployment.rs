@@ -8,22 +8,27 @@ use std::time::Duration;
 
 use serde_json::Value;
 use tokio::time::Instant;
-use wamn_platform_install::database::ConnectionConfig;
 use wamn_registry::{ApplicationName, Triple};
 
+use crate::database::ConnectionConfig;
+
+/// The pending host upgrade after preparation completes.
 pub type Upgrade<'a> = Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + 'a>>;
 
+/// A selected chart and its image references.
 pub trait Chart: Debug + Send + Sync {
     fn directory(&self) -> &Path;
     fn is_downloaded(&self) -> bool;
     fn image(&self, name: &str) -> anyhow::Result<&str>;
 }
 
+/// Prepare the mounted credentials for a database connection.
 #[async_trait::async_trait]
 pub trait DatabaseFiles: Debug + Send + Sync {
     async fn materialize(&self, configuration: &ConnectionConfig) -> anyhow::Result<()>;
 }
 
+/// Read and apply the cluster resources that environment deployment uses.
 #[async_trait::async_trait]
 pub trait Cluster: Debug + Send + Sync {
     fn namespace(&self) -> &str;

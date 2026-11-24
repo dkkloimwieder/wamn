@@ -5,7 +5,6 @@ pub mod bindings;
 mod broker;
 pub mod capture_gap;
 pub mod chart_values;
-pub mod cluster;
 pub mod database;
 pub mod delete;
 pub mod document;
@@ -23,8 +22,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use wamn_identity_protocol::nats::BrokerIdentity;
-
-use cluster::{Chart, Cluster, DatabaseFiles};
+use wamn_platform_install::deployment::{Chart, Cluster, DatabaseFiles};
 
 type DatabaseValues = fn(
     &wamn_platform_install::database::ConnectionConfig,
