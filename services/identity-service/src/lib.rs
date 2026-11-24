@@ -29,18 +29,16 @@ use tokio::sync::{Mutex, Semaphore};
 use tokio::task::JoinSet;
 
 use tokio_rustls::TlsAcceptor;
+use wamn_authentication::session_exchange::DEFAULT_KEY_ROTATION;
+use wamn_kubernetes::client::KubernetesApi;
 use wamn_postgres::identity::session_keys::{
     active_session_key_exists, initialize_session_key, session_jwks,
 };
-use wamn_kubernetes::client::KubernetesApi;
 use wamn_provision::identity_role::identity_issuer_login;
 
 // Match the public-key client's total fetch bound. No retry or stale response
 // is introduced when TLS, request headers, or the authoritative read stalls.
 const IO_TIMEOUT: Duration = Duration::from_secs(5);
-
-/// The default signing key rotation interval: 30 days.
-const DEFAULT_KEY_ROTATION: Duration = Duration::from_hours(30 * 24);
 
 /// Validated exact issuer and its narrow database credential.
 #[derive(Clone)]
@@ -148,24 +146,9 @@ impl Inner {
     async fn prune_tx_identity(&self) -> Result<(), IdentityServiceError> {
         tokio::time::timeout(IO_TIMEOUT, async {
             let mut database = connect_database(&self.connection).await?;
-            let mut transaction = database.client.begin().await.map_err(|_| {
-                IdentityServiceError::new("begin transaction identity cleanup failed")
-            })?;
-            sqlx::raw_sql("SET LOCAL statement_timeout = '5s'")
-                .execute(&mut *transaction)
+            wamn_postgres::identity::issuer::prune_tx_identity(&mut database.client)
                 .await
-                .map_err(|_| {
-                    IdentityServiceError::new("set transaction identity cleanup timeout failed")
-                })?;
-            sqlx::query("SELECT platform.prune_tx_identity()")
-                .execute(&mut *transaction)
-                .await
-                .map_err(|_| {
-                    IdentityServiceError::new("prune system transaction identities failed")
-                })?;
-            transaction.commit().await.map_err(|_| {
-                IdentityServiceError::new("commit transaction identity cleanup failed")
-            })
+                .map_err(|error| IdentityServiceError::new(error.context))
         })
         .await
         .map_err(|_| IdentityServiceError::new("transaction identity cleanup timed out"))?

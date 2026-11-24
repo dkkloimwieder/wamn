@@ -13,6 +13,7 @@ anyhow = { workspace = true }
 argon2.workspace = true
 base64.workspace = true
 data-encoding.workspace = true
+hex.workspace = true
 nkeys.workspace = true
 ring.workspace = true
 zeroize.workspace = true
@@ -23,7 +24,7 @@ moka = { workspace = true, features = ["sync"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
-tokio = { workspace = true, features = ["rt", "sync"] }
+tokio = { workspace = true, features = ["rt", "sync", "time"] }
 tracing = { workspace = true }
 uuid = { workspace = true, features = ["serde", "v4"] }
 wamn-authority = { workspace = true }

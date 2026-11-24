@@ -26,6 +26,7 @@ use crate::identity_error::database_error;
 
 pub mod application;
 pub mod control;
+pub mod issuer;
 pub mod nats;
 mod nats_store;
 pub mod org;

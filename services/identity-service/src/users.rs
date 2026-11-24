@@ -5,19 +5,24 @@ use std::net::IpAddr;
 use bytes::Bytes;
 use http_body_util::{BodyExt as _, Full, Limited};
 use hyper::{Request, Response, StatusCode, body::Incoming};
-use sqlx::{Connection as _, PgConnection as Client};
+use sqlx::PgConnection as Client;
 use wamn_authentication::identity_error::{IdentityErrorType, IdentityRefusal};
 use wamn_authentication::password::RefusalCause;
+use wamn_authentication::password_requests::{self, Attempt, DeliveryFailure, EmailDelivery};
+use wamn_authentication::workload_identity::WorkloadRegistry as _;
+use wamn_identity_protocol::PrincipalId;
 use wamn_identity_protocol::wire::{PrincipalRequest, UserRequest, UserResponse};
-use wamn_identity_protocol::{PlatformComponent, PrincipalId};
-use wamn_postgres::identity::{create_or_reuse_user, password::issue_invitation};
+use wamn_postgres::identity::{
+    create_or_reuse_user,
+    issuer::{Issuer, begin_user_write},
+};
 use wamn_registry::OrgId;
 
 use crate::{
     Inner, connect_database,
     mail::Mailer,
     nats,
-    password::{admit_source, refusal, throttled},
+    password::{refusal, throttled},
     response, unavailable, workload,
 };
 
@@ -85,13 +90,19 @@ async fn handle(
     let Ok(mut db) = connect_database(&inner.connection).await else {
         return unavailable();
     };
-    match workload::registered(&mut db.client, &org).await {
+    match Issuer(&mut db.client).registered(&org).await {
         Ok(true) => (),
         Ok(false) => return forbidden(),
         Err(_) => return unavailable(),
     }
     if !nats_route {
-        match admit_source(&mut db.client, &inner.issuer, source).await {
+        match password_requests::admit(
+            &mut Issuer(&mut db.client),
+            &inner.issuer,
+            Attempt::Source(source),
+        )
+        .await
+        {
             Ok(true) => (),
             Ok(false) => return throttled(),
             Err(_) => return unavailable(),
@@ -142,29 +153,12 @@ async fn json_body(headers: &hyper::HeaderMap, body: Incoming) -> Option<Bytes> 
     Some(Limited::new(body, 8192).collect().await.ok()?.to_bytes())
 }
 
-async fn begin(client: &mut Client) -> Result<sqlx::Transaction<'_, sqlx::Postgres>, sqlx::Error> {
-    let mut tx = client
-        .begin_with("BEGIN ISOLATION LEVEL READ COMMITTED")
-        .await?;
-    let actor = PlatformComponent::IdentityService;
-    wamn_postgres::bind_transaction_identity(
-        &mut tx,
-        &actor.principal_id(),
-        "",
-        "identity",
-        Some(&actor.principal_name()),
-        None,
-    )
-    .await?;
-    Ok(tx)
-}
-
 async fn disable(
     client: &mut Client,
     org: &OrgId,
     principal: &PrincipalId,
 ) -> Response<Full<Bytes>> {
-    let Ok(mut tx) = begin(client).await else {
+    let Ok(mut tx) = begin_user_write(client).await else {
         return unavailable();
     };
     if let Err(error) = wamn_postgres::identity::org::disable_user(&mut tx, principal, org).await {
@@ -194,77 +188,48 @@ async fn invite(
     org: &OrgId,
     principal: PrincipalId,
 ) -> Response<Full<Bytes>> {
-    let Ok(mut read) = wamn_postgres::identity::transaction::read_connection(
-        client,
-        &PlatformComponent::IdentityService.principal_id(),
-    )
-    .await
-    else {
-        return unavailable();
+    let mut store = Issuer(client);
+    let invitation = match password_requests::invite(&mut store, org, &principal).await {
+        Ok(invitation) => invitation,
+        Err(DeliveryFailure::UnknownPrincipal) => {
+            tracing::info!(principal = %principal, cause = %RefusalCause::NoSuchAccount, "password request refused");
+            return invalid();
+        }
+        Err(DeliveryFailure::Refused { error, email }) => return refusal(&error, &email),
+        Err(DeliveryFailure::Unavailable) => return unavailable(),
     };
-    let Ok(email) = sqlx::query_scalar::<_, String>(
-        "SELECT p.email FROM identity.principals p
-         JOIN identity.org_memberships m ON m.principal_id = p.id
-         WHERE p.id = $1 AND p.type = 'user' AND p.status = 'active'
-               AND m.org = $2 AND m.status = 'active'",
-    )
-    .bind(sqlx::types::Uuid::from(principal))
-    .bind(org.as_str())
-    .fetch_optional(&mut *read)
-    .await
-    else {
-        return unavailable();
-    };
-    if read.commit().await.is_err() {
-        return unavailable();
-    }
-    let Some(email) = email else {
-        tracing::info!(principal = %principal, cause = %RefusalCause::NoSuchAccount, "password request refused");
-        return invalid();
-    };
-    let actor: PrincipalId = PlatformComponent::IdentityService.principal_id();
-    let invitation = match issue_invitation(client, &actor, &principal).await {
-        Ok(value) => value,
-        Err(error) => return refusal(&error, &email),
-    };
-    if mail
-        .invite(
-            &email,
+    let delivery = async {
+        mail.invite(
+            &invitation.email,
             &principal,
-            invitation.secret(),
-            invitation.expires_at(),
+            invitation.token.secret(),
+            invitation.token.expires_at(),
         )
         .await
-        .is_err()
-    {
-        // A failed or uncertain send must never report delivery success.
-        // Consume only this invitation. Earlier invitations stay valid.
-        let hash = wamn_digest::bytes_sha256(invitation.secret().as_bytes());
-        if let Ok(mut tx) = begin(client).await
-            && sqlx::query(
-                "UPDATE identity.password_tokens SET consumed_at = clock_timestamp()
-                 WHERE token_hash = $1 AND consumed_at IS NULL",
-            )
-            .bind(hash.to_string())
-            .execute(&mut *tx)
-            .await
-            .is_ok()
-        {
-            let _ = tx.commit().await;
-        }
-        return unavailable();
-    }
-    response(
-        StatusCode::CREATED,
-        "application/json",
-        br#"{"status":"accepted_for_delivery"}"#.to_vec(),
+        .is_ok()
+    };
+    if password_requests::deliver(
+        &mut store,
+        &invitation.token,
+        EmailDelivery::Invitation,
+        delivery,
     )
+    .await
+    {
+        response(
+            StatusCode::CREATED,
+            "application/json",
+            br#"{"status":"accepted_for_delivery"}"#.to_vec(),
+        )
+    } else {
+        unavailable()
+    }
 }
 
 /// Create or reuse the user of one email, as `wamn:identity-service`, and reply
 /// with the principal and whether it has a password credential.
 async fn create_user(client: &mut Client, request: &UserRequest) -> Response<Full<Bytes>> {
-    let Ok(mut tx) = begin(client).await else {
+    let Ok(mut tx) = begin_user_write(client).await else {
         return unavailable();
     };
     let account = match create_or_reuse_user(&mut tx, &request.email, &request.display_name).await {
@@ -313,6 +278,8 @@ fn invalid() -> Response<Full<Bytes>> {
 mod tests {
     use super::*;
     use crate::password::tests::demo_members;
+    use wamn_identity_protocol::PlatformComponent;
+    use wamn_postgres::identity::password::issue_invitation;
     use wamn_test_infrastructure::containers::start_postgres;
 
     #[tokio::test]

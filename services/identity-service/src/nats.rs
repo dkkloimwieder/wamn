@@ -8,12 +8,10 @@ use hyper::{Response, StatusCode, body::Bytes};
 use serde::{Deserialize, Serialize};
 use sqlx::PgConnection;
 use tokio::sync::OnceCell;
-use wamn_authentication::nats::{
-    self, Authority, LimitsPerProject, Permissions, SubjectPermission,
-};
+use wamn_authentication::nats::{self, Authority, LimitsPerProject};
+use wamn_authentication::workload_identity;
 use wamn_identity_protocol::nats::{
-    Account, ENSURE_ACCOUNT_PATH, EnsureAccount, SIGN_USER_PATH, SignHostUser, SignUser,
-    SignedUser, UserPurpose,
+    Account, ENSURE_ACCOUNT_PATH, EnsureAccount, SIGN_USER_PATH, SignHostUser, SignUser, SignedUser,
 };
 use wamn_kubernetes::client::KubernetesApi;
 use wamn_postgres::identity::nats as key_store;
@@ -298,7 +296,7 @@ async fn sign_user(
         return invalid();
     }
     let inbox_prefix = name::nats_user_inbox(&request.public_key);
-    let (name, permissions) = template(&request, &inbox_prefix);
+    let (name, permissions) = workload_identity::environment_permissions(&request, &inbox_prefix);
     let user = nats::User {
         public_key: &request.public_key,
         name: &name,
@@ -335,22 +333,7 @@ pub(super) fn sign_host_user(inner: &Inner, pod: &str, body: &[u8]) -> Response<
         return invalid();
     }
     let inbox_prefix = name::nats_user_inbox(&request.public_key);
-    let permissions = Permissions {
-        pub_: SubjectPermission {
-            allow: vec![
-                format!("runtime.host.{pod}.__control.ready"),
-                format!("runtime.operator.heartbeat.{pod}"),
-                format!("{inbox_prefix}.>"),
-                format!("{}.>", nats::RUNTIME_OPERATOR_INBOX),
-            ],
-            deny: Vec::new(),
-        },
-        sub: SubjectPermission {
-            allow: vec![format!("runtime.host.{pod}.>"), format!("{inbox_prefix}.>")],
-            deny: Vec::new(),
-        },
-        resp: None,
-    };
+    let permissions = workload_identity::host_permissions(pod, &inbox_prefix);
     let user = nats::User {
         public_key: &request.public_key,
         name: pod,
@@ -360,78 +343,6 @@ pub(super) fn sign_host_user(inner: &Inner, pod: &str, body: &[u8]) -> Response<
         Ok(jwt) => json(&SignedUser { jwt, inbox_prefix }),
         Err(error) => signing_error(&error),
     }
-}
-
-fn template(request: &SignUser, inbox: &str) -> (String, Permissions) {
-    let mut subscribe = vec![format!("{inbox}.>")];
-    let workload = || {
-        [
-            "$JS.API.STREAM.INFO.*",
-            "$JS.API.CONSUMER.INFO.>",
-            "$JS.API.CONSUMER.CREATE.>",
-            "$JS.API.CONSUMER.DELETE.>",
-            "$JS.API.CONSUMER.MSG.NEXT.>",
-            "$JS.ACK.>",
-        ]
-        .map(str::to_owned)
-        .into()
-    };
-    let (name_prefix, publish) = match &request.purpose {
-        UserPurpose::Workflow => ("workflow".into(), workload()),
-        UserPurpose::Ingress => {
-            subscribe.push("_nats_push.>".into());
-            ("ingress".into(), workload())
-        }
-        UserPurpose::WorkflowNative => ("workflow-native".into(), workload()),
-        UserPurpose::Cdc { project } => (
-            format!("cdc-{project}"),
-            vec![name::stream_subjects(&request.org, project, &request.env)],
-        ),
-        UserPurpose::Recovery { project } => {
-            let stream = name::stream_name(&request.org, project, &request.env);
-            (
-                format!("recovery-{project}"),
-                vec![
-                    format!("$JS.API.STREAM.INFO.{stream}"),
-                    format!("$JS.API.STREAM.MSG.GET.{stream}"),
-                ],
-            )
-        }
-        UserPurpose::StreamAdmin => (
-            "stream-admin".into(),
-            [
-                "$JS.API.STREAM.INFO.*",
-                "$JS.API.STREAM.CREATE.*",
-                "$JS.API.STREAM.DELETE.*",
-                "$JS.API.STREAM.PURGE.*",
-                "$JS.API.CONSUMER.INFO.>",
-                "$JS.API.CONSUMER.CREATE.>",
-            ]
-            .map(str::to_owned)
-            .into(),
-        ),
-        UserPurpose::HostData => ("wasmcloud-data".into(), Vec::new()),
-    };
-    let name = format!(
-        "{name_prefix}-{}",
-        name::environment_key(&request.org, &request.env)
-    );
-    let permissions = Permissions {
-        pub_: SubjectPermission {
-            deny: if publish.is_empty() {
-                vec![">".into()]
-            } else {
-                Vec::new()
-            },
-            allow: publish,
-        },
-        sub: SubjectPermission {
-            allow: subscribe,
-            deny: Vec::new(),
-        },
-        resp: None,
-    };
-    (name, permissions)
 }
 
 fn signing_error(error: &nats::Error) -> Response<Full<Bytes>> {
