@@ -50,7 +50,6 @@ wamn-oci = { workspace = true }
 wamn-provision = { workspace = true }
 wamn-registry = { workspace = true }
 postgres-protocol = { workspace = true }
-wamn-identity = { workspace = true }
 wamn-identity-client.workspace = true
 nkeys.workspace = true
 zeroize.workspace = true

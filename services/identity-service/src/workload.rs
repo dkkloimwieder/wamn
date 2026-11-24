@@ -83,7 +83,7 @@ pub(super) async fn registered(
     org: &OrgId,
 ) -> Result<bool, sqlx::Error> {
     let actor = PlatformComponent::IdentityService.principal_id();
-    let mut tx = wamn_identity::transaction::read_connection(client, &actor).await?;
+    let mut tx = wamn_postgres::identity::transaction::read_connection(client, &actor).await?;
     let exists = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM registry.orgs WHERE id = $1)")
         .bind(org.as_str())
         .fetch_one(&mut *tx)

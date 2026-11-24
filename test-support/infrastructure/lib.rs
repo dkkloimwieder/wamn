@@ -6,6 +6,7 @@ pub mod collector;
 pub mod containers;
 pub mod database;
 pub mod fixture_digest;
+pub mod identity;
 pub mod operations;
 pub mod process_input;
 pub mod publish;

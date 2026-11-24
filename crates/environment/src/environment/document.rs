@@ -43,7 +43,7 @@ pub(super) async fn read_configuration(
 ) -> Result<Option<wamn_registry::configuration::EnvironmentConfiguration>, sqlx::Error> {
     let principal = wamn_provision::PlatformComponent::Provisioning.principal_id();
     let mut transaction =
-        wamn_identity::transaction::read_connection(connection, &principal).await?;
+        wamn_postgres::identity::transaction::read_connection(connection, &principal).await?;
     let configuration = wamn_postgres::Registry::new(&mut transaction)
         .read(triple)
         .await?;

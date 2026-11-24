@@ -39,6 +39,10 @@ url.workspace = true
 uuid.workspace = true
 tokio = { workspace = true, features = ["fs", "macros", "rt", "sync", "time"] }
 anyhow.workspace = true
+jsonwebtoken.workspace = true
+nkeys.workspace = true
+ring.workspace = true
+zeroize.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 # SQLx exposes statement descriptions with the macros feature.
@@ -51,6 +55,9 @@ workspace = true
 name = "project_schema"
 
 [dev-dependencies]
+async-nats = { workspace = true, features = ["aws-lc-rs", "nkeys"] }
+base64.workspace = true
+wamn-key.workspace = true
 bytes.workspace = true
 pg_query = "=6.2.1"
 syn = { workspace = true, features = ["full"] }

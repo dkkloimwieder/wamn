@@ -7,6 +7,7 @@ pub const PAT_TOKEN_PREFIX: &str = "wamn_pat_";
 
 pub mod nats;
 pub mod pat_prefix;
+pub mod records;
 pub mod secret;
 pub mod wire;
 

@@ -6,11 +6,11 @@ use serde_json::{Value, json};
 use sqlx::Connection as _;
 use std::time::Duration;
 use wamn_environment::api_service;
-use wamn_identity::application::service;
 use wamn_identity_protocol::{PrincipalId, pat_prefix::PatPrefix};
 use wamn_package::canonical_name::CanonicalName;
 use wamn_registry::{EnvName, ProjectId, Triple, deployment::DeploymentStore as _};
 use wamn_role::RoleName;
+use wamn_postgres::identity::application::service;
 
 use super::Execution;
 
@@ -33,7 +33,8 @@ impl Execution {
         input.remove("env");
         let input = Value::Object(input);
         wamn_provision::validate_project_env(&self.org, &target.project, &target.env)?;
-        let mut system = wamn_identity::transaction::read_pool(&self.control, caller).await?;
+        let mut system =
+            wamn_postgres::identity::transaction::read_pool(&self.control, caller).await?;
         let triple = Triple::new(self.org.clone(), target.env, target.project);
         let instance = wamn_postgres::Registry::new(&mut system)
             .instance_suffix(&triple)

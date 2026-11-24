@@ -196,24 +196,22 @@ pub async fn application(
             } else {
                 wamn_postgres::connect(&owner).await?
             };
-            LifecycleLock::hold(
-                project,
-                &triple,
-                async |project| match operation {
-                    Application::Deploy {
-                        digest,
-                        integration_base,
-                        component_base,
-                        chart,
-                    } => {
-                        let packages = Packages::open(platform, digest).await?;
-                        let selection = document
-                            .applications
-                            .get_mut(name)
-                            .expect("declared application");
-                        selection.current = DeclaredRelease::Digest(digest);
-                        selection.packages = packages.manifests.keys().cloned().collect();
-                        let platform_domain = wamn_identity::application::service::platform_domain(
+            LifecycleLock::hold(project, &triple, async |project| match operation {
+                Application::Deploy {
+                    digest,
+                    integration_base,
+                    component_base,
+                    chart,
+                } => {
+                    let packages = Packages::open(platform, digest).await?;
+                    let selection = document
+                        .applications
+                        .get_mut(name)
+                        .expect("declared application");
+                    selection.current = DeclaredRelease::Digest(digest);
+                    selection.packages = packages.manifests.keys().cloned().collect();
+                    let platform_domain =
+                        wamn_postgres::identity::application::service::platform_domain(
                             &mut *system.client().await,
                         )
                         .await?;

@@ -56,7 +56,7 @@ pub async fn read_project_env_instance(
     client: &mut sqlx::PgConnection,
     triple: &Triple,
 ) -> anyhow::Result<InstanceSuffix> {
-    let mut transaction = wamn_identity::transaction::read_connection(
+    let mut transaction = wamn_postgres::identity::transaction::read_connection(
         client,
         &wamn_provision::PlatformComponent::Provisioning.principal_id(),
     )

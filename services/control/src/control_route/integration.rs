@@ -109,7 +109,8 @@ impl ControlRoutes<'_> {
             let login = self.login(&target.project, source_env).await?;
             source_client = wamn_postgres::connect(login).await?;
             source_tx =
-                wamn_identity::transaction::read_connection(&mut source_client, caller).await?;
+                wamn_postgres::identity::transaction::read_connection(&mut source_client, caller)
+                    .await?;
             Some(&mut *source_tx)
         } else {
             None
@@ -125,7 +126,7 @@ impl ControlRoutes<'_> {
             source,
             Some(|system, project, name, connection| {
                 Box::pin(
-                    wamn_identity::application::service::write_connection_service(
+                    wamn_postgres::identity::application::service::write_connection_service(
                         system, project, name, connection,
                     ),
                 )
@@ -162,7 +163,7 @@ impl ControlRoutes<'_> {
                 .ok_or_else(|| anyhow::anyhow!("connection delete returned no principal id"))?
                 .parse::<PrincipalId>()
                 .map_err(anyhow::Error::from)?;
-            wamn_identity::application::service::disable(&mut project, &principal)
+            wamn_postgres::identity::application::service::disable(&mut project, &principal)
                 .await
                 .map_err(anyhow::Error::from)?;
         }

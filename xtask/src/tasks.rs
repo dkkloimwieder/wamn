@@ -274,7 +274,7 @@ pub async fn dependencies(root: &Path) -> anyhow::Result<()> {
     ] {
         let mut refused = network.to_vec();
         if package == "wamn-edge" {
-            refused.push("wamn-identity");
+            refused.push("wamn-postgres");
         } else {
             refused.extend(["hyper-util", "hyper-rustls", "reqwest"]);
         }

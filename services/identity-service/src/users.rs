@@ -6,10 +6,11 @@ use bytes::Bytes;
 use http_body_util::{BodyExt as _, Full, Limited};
 use hyper::{Request, Response, StatusCode, body::Incoming};
 use sqlx::{Connection as _, PgConnection as Client};
-use wamn_identity::password::{RefusalCause, issue_invitation};
-use wamn_identity::{IdentityErrorType, IdentityRefusal, create_or_reuse_user};
-use wamn_identity_protocol::{PlatformComponent, PrincipalId};
+use wamn_authentication::identity_error::{IdentityErrorType, IdentityRefusal};
+use wamn_authentication::password::RefusalCause;
 use wamn_identity_protocol::wire::{PrincipalRequest, UserRequest, UserResponse};
+use wamn_identity_protocol::{PlatformComponent, PrincipalId};
+use wamn_postgres::identity::{create_or_reuse_user, password::issue_invitation};
 use wamn_registry::OrgId;
 
 use crate::{
@@ -166,7 +167,7 @@ async fn disable(
     let Ok(mut tx) = begin(client).await else {
         return unavailable();
     };
-    if let Err(error) = wamn_identity::org::disable_user(&mut tx, principal, org).await {
+    if let Err(error) = wamn_postgres::identity::org::disable_user(&mut tx, principal, org).await {
         return match error.refusal() {
             Some(IdentityRefusal::UserNotFound) => response(
                 StatusCode::NOT_FOUND,
@@ -193,7 +194,7 @@ async fn invite(
     org: &OrgId,
     principal: PrincipalId,
 ) -> Response<Full<Bytes>> {
-    let Ok(mut read) = wamn_identity::transaction::read_connection(
+    let Ok(mut read) = wamn_postgres::identity::transaction::read_connection(
         client,
         &PlatformComponent::IdentityService.principal_id(),
     )

@@ -6215,10 +6215,15 @@ name = "wamn-authentication"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "argon2",
  "async-trait",
+ "base64 0.22.1",
+ "data-encoding",
  "hmac 0.13.0",
  "jsonwebtoken 11.1.0",
  "moka",
+ "nkeys",
+ "ring",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -6236,6 +6241,7 @@ dependencies = [
  "wamn-registry",
  "wamn-role",
  "wamn-routes",
+ "zeroize",
 ]
 
 [[package]]
@@ -6360,13 +6366,13 @@ dependencies = [
  "tokio",
  "tracing-subscriber",
  "url",
+ "wamn-authentication",
  "wamn-build",
  "wamn-dev",
  "wamn-digest",
  "wamn-engine",
  "wamn-environment",
  "wamn-http-client",
- "wamn-identity",
  "wamn-identity-protocol",
  "wamn-kubernetes",
  "wamn-oci",
@@ -6491,7 +6497,6 @@ dependencies = [
  "wamn-environment",
  "wamn-http",
  "wamn-http-client",
- "wamn-identity",
  "wamn-identity-client",
  "wamn-identity-protocol",
  "wamn-key",
@@ -6670,7 +6675,6 @@ dependencies = [
  "wamn-envelope",
  "wamn-event",
  "wamn-http-client",
- "wamn-identity",
  "wamn-identity-client",
  "wamn-identity-protocol",
  "wamn-kubernetes",
@@ -6885,42 +6889,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "wamn-identity"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "argon2",
- "async-nats",
- "base64 0.22.1",
- "data-encoding",
- "futures-util",
- "jsonwebtoken 11.1.0",
- "nkeys",
- "postgres-protocol",
- "ring",
- "serde",
- "serde_json",
- "sha2 0.11.0",
- "sqlx",
- "tempfile",
- "tokio",
- "url",
- "wamn-authentication",
- "wamn-digest",
- "wamn-envelope",
- "wamn-environment",
- "wamn-identity-protocol",
- "wamn-key",
- "wamn-platform-install",
- "wamn-postgres",
- "wamn-provision",
- "wamn-registry",
- "wamn-role",
- "wamn-test-infrastructure",
- "zeroize",
-]
-
-[[package]]
 name = "wamn-identity-client"
 version = "0.1.0"
 dependencies = [
@@ -6947,6 +6915,7 @@ dependencies = [
  "serde",
  "serde_json",
  "subtle",
+ "uuid",
  "wamn-digest",
  "wamn-principal",
  "wamn-registry",
@@ -6977,10 +6946,10 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "url",
+ "wamn-authentication",
  "wamn-digest",
  "wamn-envelope",
  "wamn-http-client",
- "wamn-identity",
  "wamn-identity-client",
  "wamn-identity-protocol",
  "wamn-key",
@@ -7200,15 +7169,20 @@ name = "wamn-postgres"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-nats",
  "async-trait",
+ "base64 0.22.1",
  "bytes",
  "chrono",
  "fallible-iterator",
  "futures-util",
+ "jsonwebtoken 11.1.0",
  "moka",
+ "nkeys",
  "pg_query",
  "pg_walstream",
  "postgres-protocol",
+ "ring",
  "serde",
  "serde_json",
  "sqlx",
@@ -7231,6 +7205,7 @@ dependencies = [
  "wamn-event",
  "wamn-fixture-package",
  "wamn-identity-protocol",
+ "wamn-key",
  "wamn-package",
  "wamn-platform-install",
  "wamn-principal",
@@ -7243,6 +7218,7 @@ dependencies = [
  "wamn-schema",
  "wamn-test-infrastructure",
  "wamn-workflow-graph",
+ "zeroize",
 ]
 
 [[package]]

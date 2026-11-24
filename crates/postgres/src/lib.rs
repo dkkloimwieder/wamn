@@ -12,7 +12,9 @@ pub mod catalog;
 pub mod control;
 mod file_catalog;
 pub mod file_connections;
+pub mod identity;
 pub mod identity_error;
+pub mod identity_sql;
 pub mod oauth_authorization;
 pub mod replication;
 

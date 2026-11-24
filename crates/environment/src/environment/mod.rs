@@ -19,7 +19,7 @@ pub mod write;
 use sqlx::Connection as _;
 use std::collections::BTreeSet;
 use wamn_authentication::administration::ApplicationTarget;
-use wamn_identity::application;
+use wamn_postgres::identity::application;
 
 use std::path::PathBuf;
 
@@ -103,7 +103,7 @@ pub async fn fill(
     target: ApplicationTarget<'_>,
 ) -> anyhow::Result<()> {
     let mut system = system.begin().await?;
-    wamn_identity::org::lock_org_memberships(&mut system, target.org).await?;
+    wamn_postgres::identity::org::lock_org_memberships(&mut system, target.org).await?;
     let mut project = project.begin().await?;
     wamn_provision::bind_platform_principal(
         &mut project,

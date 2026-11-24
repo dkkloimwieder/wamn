@@ -133,7 +133,7 @@ async fn main() -> anyhow::Result<()> {
         Command::Schema(command) => wamn_cli::schema_verbs::run(command).await,
         Command::Platform(command) => wamn_cli::platform_verbs::run_product(command).await,
         Command::Org(OrgCommand::Create { org, owner }) => {
-            wamn_identity::require_user_contact(&owner, "Org owner")?;
+            wamn_authentication::principal::require_user_contact(&owner, "Org owner")?;
             wamn_platform_install::org::create(&org, &owner).await
         }
         Command::Eject(args) => wamn_cli::build_verbs::eject(args),

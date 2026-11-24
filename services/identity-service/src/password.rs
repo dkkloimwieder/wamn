@@ -11,14 +11,15 @@ use http_body_util::{BodyExt as _, Full, Limited};
 use hyper::{Request, Response, StatusCode, body::Incoming};
 use serde::{Deserialize, Serialize};
 use sqlx::PgConnection as Client;
-use wamn_identity::{
-    password::{
-        Password, PasswordError, PasswordErrorType, PasswordWork, RefusalCause,
-        authenticate_password, enroll_password, issue_reset, password_work,
-        reset_password,
-    },
+use wamn_authentication::password::{
+    Password, PasswordError, PasswordErrorType, PasswordWork, RefusalCause, password_work,
+};
+use wamn_authentication::password_login::Renewal;
+use wamn_authentication::session_token::IssuedSessionToken;
+use wamn_postgres::identity::{
+    password::{authenticate_password, enroll_password, issue_reset, reset_password},
     password_login,
-    session_token::{IssuedSessionToken, sign_session_token_in_transaction},
+    session_token::sign_session_token_in_transaction,
 };
 use wamn_provision::PlatformComponent;
 
@@ -203,7 +204,7 @@ async fn handle(
                 Ok(false) => return throttled(),
                 Err(_) => return unavailable(),
             }
-            let Ok(mut read) = wamn_identity::transaction::read_connection(
+            let Ok(mut read) = wamn_postgres::identity::transaction::read_connection(
                 &mut database,
                 &PlatformComponent::IdentityService.principal_id(),
             )
@@ -313,7 +314,7 @@ async fn handle(
             // No mail task outlives the request or performs automatic retries.
             let deadline = tokio::time::Instant::now() + Duration::from_secs(6);
             let action = async {
-                let Ok(mut read) = wamn_identity::transaction::read_connection(
+                let Ok(mut read) = wamn_postgres::identity::transaction::read_connection(
                     &mut database,
                     &PlatformComponent::IdentityService.principal_id(),
                 )
@@ -487,8 +488,8 @@ fn authority_failure(error: &session::ExchangeFailure) -> Response<Full<Bytes>> 
 
 async fn finish_session(
     mut tx: sqlx::Transaction<'_, sqlx::Postgres>,
-    claims: wamn_identity::session_token::AccessTokenClaims,
-    renewal: password_login::Renewal,
+    claims: wamn_identity_protocol::records::AccessTokenClaims,
+    renewal: Renewal,
     started_at: i64,
     envelope: &wamn_envelope::encryption::Envelope,
 ) -> Response<Full<Bytes>> {
@@ -512,10 +513,7 @@ async fn finish_session(
     renewable_response(&token, &renewal)
 }
 
-fn renewable_response(
-    token: &IssuedSessionToken,
-    renewal: &password_login::Renewal,
-) -> Response<Full<Bytes>> {
+fn renewable_response(token: &IssuedSessionToken, renewal: &Renewal) -> Response<Full<Bytes>> {
     match serde_json::to_vec(&RenewableResponse {
         sub: &token.claims().sub,
         access_token: token.token(),
@@ -607,7 +605,7 @@ async fn enrollment_refusal(
 ) -> Response<Full<Bytes>> {
     if let Some(cause) = error.cause() {
         let Ok(mut read) =
-            wamn_identity::transaction::read_connection(client, principal).await
+            wamn_postgres::identity::transaction::read_connection(client, principal).await
         else {
             return password_failure(error);
         };
@@ -743,7 +741,11 @@ pub(crate) mod tests {
         postgres: &Postgres,
         issuer: &str,
         users: &[(&str, &str, &str)],
-    ) -> (crate::Database, url::Url, Vec<wamn_identity::Principal>) {
+    ) -> (
+        crate::Database,
+        url::Url,
+        Vec<wamn_authentication::principal::Principal>,
+    ) {
         let mut url = system(postgres).await;
         let mut admin = connect_database(url.as_str()).await.unwrap();
         sqlx::raw_sql(sqlx::AssertSqlSafe(issuer_login_sql(
@@ -760,9 +762,14 @@ pub(crate) mod tests {
         let mut members = Vec::new();
         for (subject, email, display_name) in users {
             members.push(
-                wamn_identity::create_user(&mut admin.client, subject, email, display_name)
-                    .await
-                    .unwrap(),
+                wamn_postgres::identity::create_user(
+                    &mut admin.client,
+                    subject,
+                    email,
+                    display_name,
+                )
+                .await
+                .unwrap(),
             );
         }
         let mut tx = admin.client.begin().await.unwrap();
@@ -965,7 +972,7 @@ pub(crate) mod tests {
                 &PlatformComponent::IdentityService.principal_id().to_string()
             ]
         );
-        wamn_identity::disable_principal(&mut admin.client, bob.id())
+        wamn_postgres::identity::disable_principal(&mut admin.client, bob.id())
             .await
             .unwrap();
         let disabled = client

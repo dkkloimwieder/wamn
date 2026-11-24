@@ -8,12 +8,15 @@ use hyper::{Response, StatusCode, body::Bytes};
 use serde::{Deserialize, Serialize};
 use sqlx::PgConnection;
 use tokio::sync::OnceCell;
-use wamn_identity::nats::{self, Authority, LimitsPerProject, Permissions, SubjectPermission};
+use wamn_authentication::nats::{
+    self, Authority, LimitsPerProject, Permissions, SubjectPermission,
+};
 use wamn_identity_protocol::nats::{
     Account, ENSURE_ACCOUNT_PATH, EnsureAccount, SIGN_USER_PATH, SignHostUser, SignUser,
     SignedUser, UserPurpose,
 };
 use wamn_kubernetes::client::KubernetesApi;
+use wamn_postgres::identity::nats as key_store;
 use wamn_registry::{OrgId, name};
 
 use crate::{IdentityServiceError, Inner, response, unavailable};
@@ -144,7 +147,7 @@ pub(super) async fn start(
             "identity NATS bootstrap requires the platform namespace",
         ));
     }
-    let bootstrap = nats::bootstrap(db, issuer, envelope, max_projects, limits_per_project)
+    let bootstrap = key_store::bootstrap(db, issuer, envelope, max_projects, limits_per_project)
         .await
         .map_err(|error| {
             tracing::error!(%error, "NATS bootstrap failed");
@@ -199,7 +202,7 @@ pub(super) async fn respond(
     };
     match route {
         ENSURE_ACCOUNT_PATH => ensure_account(inner, state, client, org, body).await,
-        SIGN_USER_PATH => sign_user(inner, state, client, org, body).await,
+        SIGN_USER_PATH => sign_user(inner, client, org, body).await,
         _ => unreachable!("only NATS routes enter NATS request handling"),
     }
 }
@@ -221,10 +224,14 @@ async fn ensure_account(
         return invalid();
     };
     if count == 0 {
-        let deleted = match state
-            .authority
-            .retire_environment(client, &inner.issuer, org, &request.env)
-            .await
+        let deleted = match key_store::retire_environment(
+            &state.authority,
+            client,
+            &inner.issuer,
+            org,
+            &request.env,
+        )
+        .await
         {
             Ok(None) => {
                 return json(&Account {
@@ -244,17 +251,16 @@ async fn ensure_account(
         }
         return json(&Account { public_key });
     }
-    let (public_key, jwt) = match state
-        .authority
-        .ensure_environment(
-            client,
-            &inner.envelope,
-            &inner.issuer,
-            (org, &request.env),
-            count,
-            async |account| state.lookup_account(account).await,
-        )
-        .await
+    let (public_key, jwt) = match key_store::ensure_environment(
+        &state.authority,
+        client,
+        &inner.envelope,
+        &inner.issuer,
+        (org, &request.env),
+        count,
+        async |account| state.lookup_account(account).await,
+    )
+    .await
     {
         Ok(value) => value,
         Err(error) if error.is_project_limit() => {
@@ -278,7 +284,6 @@ async fn ensure_account(
 
 async fn sign_user(
     inner: &Inner,
-    state: &State,
     client: &mut PgConnection,
     org: &OrgId,
     body: &[u8],
@@ -299,17 +304,15 @@ async fn sign_user(
         name: &name,
         permissions: &permissions,
     };
-    let signed = state
-        .authority
-        .environment_user(
-            client,
-            &inner.envelope,
-            &inner.issuer,
-            org,
-            &request.env,
-            &user,
-        )
-        .await;
+    let signed = key_store::environment_user(
+        client,
+        &inner.envelope,
+        &inner.issuer,
+        org,
+        &request.env,
+        &user,
+    )
+    .await;
     match signed {
         Ok(Some(jwt)) => json(&SignedUser { jwt, inbox_prefix }),
         Ok(None) => response(

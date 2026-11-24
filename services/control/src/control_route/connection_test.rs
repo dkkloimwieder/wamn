@@ -80,7 +80,7 @@ impl ControlRoutes<'_> {
             let login = self.login(&project, env).await?;
             let mut client = wamn_postgres::connect(login).await?;
             let mut transaction =
-                wamn_identity::transaction::read_connection(&mut client, caller).await?;
+                wamn_postgres::identity::transaction::read_connection(&mut client, caller).await?;
             let mut database = Administration::new(&mut transaction, &mut writer, None, None);
             let context = administration::configure(
                 &mut database,

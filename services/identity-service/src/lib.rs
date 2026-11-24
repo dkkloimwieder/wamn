@@ -29,7 +29,7 @@ use tokio::sync::{Mutex, Semaphore};
 use tokio::task::JoinSet;
 
 use tokio_rustls::TlsAcceptor;
-use wamn_identity::session_keys::{
+use wamn_postgres::identity::session_keys::{
     active_session_key_exists, initialize_session_key, session_jwks,
 };
 use wamn_kubernetes::client::KubernetesApi;
@@ -135,7 +135,7 @@ pub(crate) async fn connect_database(input: &str) -> Result<Database, IdentitySe
 impl Inner {
     async fn rotate_keys(&self) -> Result<(), IdentityServiceError> {
         let mut database = connect_database(&self.connection).await?;
-        wamn_identity::session_keys::rotate_session_keys(
+        wamn_postgres::identity::session_keys::rotate_session_keys(
             &mut database.client,
             &self.issuer,
             DEFAULT_KEY_ROTATION,
@@ -332,7 +332,7 @@ impl IdentityService {
                                     "cache-control",
                                     format!(
                                         "public, max-age={}",
-                                        wamn_identity::session_keys::JWKS_CACHE_SECONDS
+                                        wamn_postgres::identity::session_keys::JWKS_CACHE_SECONDS
                                     )
                                     .parse()
                                     .expect("constant cache policy"),

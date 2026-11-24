@@ -10,6 +10,12 @@ wamn-application.workspace = true
 wamn-package.workspace = true
 wamn-digest.workspace = true
 anyhow = { workspace = true }
+argon2.workspace = true
+base64.workspace = true
+data-encoding.workspace = true
+nkeys.workspace = true
+ring.workspace = true
+zeroize.workspace = true
 async-trait = { workspace = true }
 hmac = { workspace = true }
 jsonwebtoken.workspace = true
@@ -17,7 +23,7 @@ moka = { workspace = true, features = ["sync"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
-tokio = { workspace = true, features = ["sync"] }
+tokio = { workspace = true, features = ["rt", "sync"] }
 tracing = { workspace = true }
 uuid = { workspace = true, features = ["serde", "v4"] }
 wamn-authority = { workspace = true }
@@ -28,6 +34,9 @@ wamn-registry = { workspace = true }
 wamn-role.workspace = true
 wamn-routes.workspace = true
 url.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "time"] }
 
 [lints]
 workspace = true

@@ -410,3 +410,11 @@ impl From<GrantError> for AdministrationError {
         error.source
     }
 }
+
+/// The user an application row names.
+#[derive(Debug, Clone, Copy)]
+pub struct ApplicationUser<'a> {
+    pub principal_id: &'a PrincipalId,
+    pub email: &'a str,
+    pub display_name: &'a str,
+}

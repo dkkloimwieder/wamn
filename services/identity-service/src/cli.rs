@@ -9,7 +9,7 @@ use serde::Deserialize;
 use serde_json::json;
 use tokio::net::TcpListener;
 use wamn_envelope::encryption::{Configuration, Envelope};
-use wamn_identity::session_keys::{remove_compromised_session_key, retire_session_keys};
+use wamn_postgres::identity::session_keys::{remove_compromised_session_key, retire_session_keys};
 
 use crate::{
     IdentityConfig, IdentityService, IdentityServiceError, connect, nats, serve, tls_config,

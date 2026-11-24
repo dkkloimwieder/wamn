@@ -15,6 +15,7 @@ wamn-principal.workspace = true
 hex = { workspace = true }
 subtle = { workspace = true }
 zeroize = { workspace = true }
+uuid = { workspace = true, features = ["serde"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 

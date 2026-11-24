@@ -4,13 +4,14 @@
 //! under the caller's bound actor.
 
 use sqlx::Row as _;
-use wamn_identity::org::{lock_org_memberships, project_envs};
-use wamn_identity::{IdentityError, IdentityErrorType, IdentityRefusal, database_error};
+use wamn_authentication::identity_error::{IdentityError, IdentityErrorType, IdentityRefusal};
+use wamn_postgres::identity::org::{lock_org_memberships, project_envs};
+use wamn_postgres::identity_error::database_error;
 use wamn_registry::EnvironmentStatus;
 
-const PROJECT_IN_ORG_SQL: &str = wamn_registry::sql::IDENTITY_PLATFORM_SRC_ORG_PROJECT_IN_ORG_SQL;
+const PROJECT_IN_ORG_SQL: &str = wamn_postgres::identity_sql::PROJECT_IN_ORG_SQL;
 
-const ENV_IN_PROJECT_SQL: &str = wamn_registry::sql::IDENTITY_PLATFORM_SRC_ORG_ENV_IN_PROJECT_SQL;
+const ENV_IN_PROJECT_SQL: &str = wamn_postgres::identity_sql::ENV_IN_PROJECT_SQL;
 
 const CREATE_PROJECT_SQL: &str = wamn_registry::sql::IDENTITY_PLATFORM_SRC_ORG_CREATE_PROJECT_SQL;
 

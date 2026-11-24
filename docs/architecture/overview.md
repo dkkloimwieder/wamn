@@ -59,8 +59,7 @@ Each library has one concern. Directory names follow crate names without the `wa
 | `crates/key` | `wamn-key` wraps data keys with a local key or through Cloud KMS |
 | `crates/connection` | `wamn-connection`: connection facts, credentials, resource leases, invocation context, and bound Wasm import dispatch |
 | `crates/blobstore` | `wamn-blobstore`: authorized object storage |
-| `crates/authentication` | `wamn-authentication`: route authentication and session verification |
-| `crates/identity` | `wamn-identity`: identity authority, project user and grant administration, and their SQL |
+| `crates/authentication` | `wamn-authentication`: route authentication, password rules, session verification, and signing |
 | `crates/identity-client` | `wamn-identity-client`: HTTPS client for identity administration |
 | `crates/identity-protocol` | `wamn-identity-protocol`: principal IDs, database login names, roles, credential formats, and public key documents |
 | `crates/guest` | `wamn-guest`: guest cursors, pages, scalar conversion, operation SQL, and document numbering |

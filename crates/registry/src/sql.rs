@@ -84,36 +84,6 @@ pub fn close_capture_gap_sql() -> &'static str {
 pub const ENVIRONMENT_DISPOSABLE: &str =
     "SELECT disposable FROM registry.environments WHERE org=$1 AND env=$2";
 
-/// crates/identity/src/control.rs::ORG_PROJECTS_SQL registry statement.
-pub const IDENTITY_PLATFORM_SRC_CONTROL_ORG_PROJECTS_SQL: &str = "SELECT p.id, CASE WHEN EXISTS (SELECT 1 FROM registry.environment_projects e JOIN registry.environments v USING (org,env) \
-    WHERE e.org = p.org AND e.project = p.id AND v.status = 'active') \
-    THEN 'active' ELSE 'inactive' END FROM registry.projects p WHERE p.org = $1 \
-    AND ($2::text IS NULL OR p.id > $2) ORDER BY p.id LIMIT $3";
-
-/// crates/identity/src/control.rs::CONTROL_PROJECTS_SQL registry statement.
-pub const IDENTITY_PLATFORM_SRC_CONTROL_CONTROL_PROJECTS_SQL: &str = "SELECT r.id FROM registry.projects r \
-    JOIN identity.principals p ON p.id=$1 \
-    WHERE r.org=$2 AND p.type='user' AND p.status='active' \
-    AND EXISTS (SELECT FROM identity.org_memberships m WHERE m.principal_id=p.id AND m.org=$2 AND m.status='active') \
-    AND (EXISTS (SELECT FROM identity.project_roles a WHERE a.principal_id=p.id AND a.org=$2 AND a.project=r.id AND a.role=$3) \
-      OR EXISTS (SELECT FROM identity.org_roles a WHERE a.principal_id=p.id AND a.org=$2)) \
-    AND ($4::text IS NULL OR r.id>$4) ORDER BY r.id LIMIT $5";
-
-/// crates/identity/src/org.rs::PROJECT_MEMBERS_SQL registry statement.
-pub const IDENTITY_PLATFORM_SRC_ORG_PROJECT_MEMBERS_SQL: &str = "SELECT p.id,p.email,p.display_name, \
-    EXISTS (SELECT FROM identity.org_roles r WHERE r.principal_id=p.id AND r.org=$1 AND r.role=$4), \
-    identity.is_project_admin(p.id,$1,$2) AND $3='project-admin', \
-    ARRAY(SELECT e.env FROM registry.environment_projects e WHERE e.org=$1 AND e.project=$2 \
-      AND ($8::text IS NULL OR e.env=$8) AND identity.has_project_access(p.id,$1,e.env,$2) ORDER BY e.env) \
-    FROM identity.principals p WHERE p.type='user' \
-    AND EXISTS (SELECT FROM registry.environment_projects e WHERE e.org=$1 AND e.project=$2 \
-      AND ($8::text IS NULL OR e.env=$8) AND identity.has_project_access(p.id,$1,e.env,$2)) \
-    AND ($5::text IS NULL OR (p.email,p.id)>($5,$6)) ORDER BY p.email,p.id LIMIT $7";
-
-/// crates/identity/src/org.rs::PROJECT_ENVS_SQL registry statement.
-pub const IDENTITY_PLATFORM_SRC_ORG_PROJECT_ENVS_SQL: &str = "SELECT env, status FROM registry.environment_projects JOIN registry.environments USING (org,env) WHERE org = $1 AND project = $2 \
-    AND ($3::text IS NULL OR env > $3) ORDER BY env LIMIT $4";
-
 /// crates/environment/src/org.rs::ENVIRONMENT_STATUS_SQL registry statement.
 pub const IDENTITY_PLATFORM_SRC_ORG_ENVIRONMENT_STATUS_SQL: &str = "UPDATE registry.environments SET status = $4 \
     WHERE org = $1 AND env = ANY($3) AND EXISTS (SELECT FROM registry.environment_projects p WHERE p.org=$1 AND p.env=registry.environments.env AND p.project=$2)";
@@ -125,14 +95,6 @@ pub const IDENTITY_PLATFORM_SRC_ORG_ORG_ENVIRONMENTS_SQL: &str = "SELECT project
 /// crates/environment/src/org.rs::CREATE_PROJECT_SQL registry statement.
 pub const IDENTITY_PLATFORM_SRC_ORG_CREATE_PROJECT_SQL: &str =
     "INSERT INTO registry.projects (org, id) VALUES ($1, $2) ON CONFLICT (org, id) DO NOTHING";
-
-/// crates/identity/src/org.rs::ENV_IN_PROJECT_SQL registry statement.
-pub const IDENTITY_PLATFORM_SRC_ORG_ENV_IN_PROJECT_SQL: &str = "SELECT EXISTS (SELECT 1 FROM registry.environment_projects \
-    WHERE org = $1 AND project = $2 AND env = $3)";
-
-/// crates/identity/src/org.rs::PROJECT_IN_ORG_SQL registry statement.
-pub const IDENTITY_PLATFORM_SRC_ORG_PROJECT_IN_ORG_SQL: &str =
-    "SELECT EXISTS (SELECT 1 FROM registry.projects WHERE org = $1 AND id = $2)";
 
 /// crates/dev/src/pat_secrets_tests.rs::auth_drops_mint_pat_records_the_committed_project_role_drop registry statement.
 pub const CONTROL_DEV_SRC_PAT_SECRETS_TESTS_AUTH_DROPS_MINT_PAT_RECORDS_THE_COMMITTED_PROJECT_ROLE_DROP: &str = "INSERT INTO registry.orgs (id) VALUES ('org'); INSERT INTO registry.projects (org, id) VALUES ('org', 'project')";

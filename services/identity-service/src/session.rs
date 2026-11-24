@@ -7,9 +7,8 @@ use hyper::{Response, StatusCode};
 use ring::rand::{SecureRandom as _, SystemRandom};
 use sqlx::Row as _;
 use std::time::{SystemTime, UNIX_EPOCH};
-use wamn_identity::{
-    AuthenticatedPrincipal, control::org_audience_org, session_token::AccessTokenClaims,
-};
+use wamn_authentication::{control_admission::org_audience_org, principal::AuthenticatedPrincipal};
+use wamn_identity_protocol::records::AccessTokenClaims;
 
 #[derive(Debug)]
 pub(super) enum FailureType {

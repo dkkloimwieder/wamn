@@ -262,7 +262,7 @@ async fn delete_locked(
                 wamn_provision::PlatformComponent::Provisioning,
             )
             .await?;
-            wamn_identity::application::disable_connection_services(&mut transaction)
+            wamn_postgres::identity::application::disable_connection_services(&mut transaction)
                 .await
                 .context("disable the retained database's connection principals")?;
             transaction.commit().await?;

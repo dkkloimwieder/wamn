@@ -915,7 +915,7 @@ It refuses a platform domain that is not a valid domain name.
 Its SQL binds `wamn:provisioning` first, so the `wamn:provisioning` row stamps itself.
 The development environment, the verification world, and the Rust identity journey apply that SQL.
 
-The [platform configuration writer](../../crates/identity/src/configuration.rs) writes the platform configuration rows of one environment.
+The [platform configuration writer](../../crates/environment/src/configuration.rs) writes the platform configuration rows of one environment.
 The writer runs on the environment's `wamn_administration` login, in one transaction that binds the caller and the operation, so each row write appends its history entry.
 The writer keeps a row that already holds the given values, and it removes no row.
 

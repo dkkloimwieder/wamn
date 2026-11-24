@@ -47,7 +47,7 @@ pub async fn materialize_application_principals(
             project_env_key,
             &package.package.id,
         );
-        wamn_identity::application::service::write_service(
+        wamn_postgres::identity::application::service::write_service(
             &mut transaction,
             domain,
             &subject,
@@ -82,9 +82,12 @@ async fn write_runtime_grants(
             project_env_key,
             &package.package.id,
         );
-        let principal = wamn_identity::application::service::active_service(transaction, &subject)
-            .await?
-            .with_context(|| format!("application principal {subject} is absent or inactive"))?;
+        let principal =
+            wamn_postgres::identity::application::service::active_service(transaction, &subject)
+                .await?
+                .with_context(|| {
+                    format!("application principal {subject} is absent or inactive")
+                })?;
         let role = format!(
             "application-{}",
             package.package.id.as_str().replace('_', "-")
