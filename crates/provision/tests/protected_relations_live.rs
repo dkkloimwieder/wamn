@@ -1,4 +1,3 @@
-#![cfg(feature = "ops")]
 //! Application mutation privileges require row security in each database.
 
 use sqlx::PgConnection as Client;
