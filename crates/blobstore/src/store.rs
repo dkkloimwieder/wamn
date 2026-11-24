@@ -405,7 +405,7 @@ pub(crate) mod test_binding {
                 .unwrap(),
         );
         let database = Arc::clone(&postgres);
-        let cache = Arc::new(wamn_authentication::authorization::Authorization::new(
+        let cache = Arc::new(wamn_postgres::authorization::Authorization::new(
             postgres, database,
         ));
         let facts = Arc::clone(&cache).facts(application).unwrap();

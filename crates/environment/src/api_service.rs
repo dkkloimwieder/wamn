@@ -6,7 +6,9 @@ use wamn_identity_protocol::wire::PatResponse;
 use wamn_registry::{ProjectEnvKey, platform_domain::PlatformDomain};
 use wamn_role::RoleName;
 
-use wamn_identity::application::{GrantAuthority, GrantChange, mutate_grant, service};
+use wamn_authentication::administration::{GrantAuthority, GrantChange};
+use wamn_identity::application::service;
+use wamn_postgres::administration::mutate_grant;
 
 /// Authored grants and credential lifetime for an API service.
 #[derive(Debug)]

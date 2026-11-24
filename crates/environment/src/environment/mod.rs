@@ -18,7 +18,8 @@ pub mod write;
 
 use sqlx::Connection as _;
 use std::collections::BTreeSet;
-use wamn_identity::application::{self, ApplicationTarget};
+use wamn_authentication::administration::ApplicationTarget;
+use wamn_identity::application;
 
 use std::path::PathBuf;
 

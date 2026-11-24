@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use wamn_application::database::OperationStore;
 use wamn_application::result_signing::ResultSigner;
-use wamn_authentication::authorization::Authorization;
+use wamn_postgres::authorization::Authorization;
 use wamn_postgres::{CheckoutError, WamnPostgres};
 
 use crate::PgError;
@@ -134,7 +134,7 @@ impl OperationHost {
                 )
             }));
         }
-        let grants = wamn_authentication::authorization::read_guest_grants(
+        let grants = wamn_postgres::authorization::read_guest_grants(
             &self.pools,
             project,
             project_env_key,

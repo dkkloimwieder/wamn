@@ -8,7 +8,6 @@ use std::time::Duration;
 
 use anyhow::Context as _;
 use serde_json::Value;
-use wamn_authentication::authorization::Authorization;
 use wamn_application::application_config::ApplicationConfig;
 use wamn_application::result_signing::{ResultSigner, ResultSigning, ResultSigningError};
 use wamn_blobstore::file_route::{FileRoutes, RegistryFileConnections};
@@ -16,6 +15,7 @@ use wamn_blobstore::plugin::WamnBlobstore;
 use wamn_connection::connection_facts::ConnectionCache;
 use wamn_connection::invocation::ReleaseContext;
 use wamn_plugin::OperationHost;
+use wamn_postgres::authorization::Authorization;
 
 pub(super) struct Routes {
     pub(super) files: FileRoutes,

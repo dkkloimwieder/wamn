@@ -1,64 +1,8 @@
-//! Authorization reads owned by authentication, over a host-authorized connection.
+//! Project authorization contracts and held grants.
 
-use sqlx::Row as _;
 use std::{collections::BTreeSet, sync::Arc, time::SystemTime};
 use wamn_authority::auth_cache::PrincipalGrants;
 use wamn_identity_protocol::{PrincipalId, secret::PatToken};
-
-/// The status row of the environment, which `wamn_app` reads under its
-/// database boundary.
-const ENVIRONMENT_INACTIVE_SQL: &str = "SELECT status = 'inactive' FROM platform.environment";
-
-/// The user row of one principal, each role it holds and each permission
-/// of that role, in one read. No row means no user row. A role without
-/// permissions, such as `admin`, yields one row with a null permission, and a
-/// principal without roles yields one row with a null role.
-const PRINCIPAL_GRANTS_SQL: &str = "SELECT u.status = 'active', r.role_name, p.permission, u.type = 'user' \
-    FROM platform.\"user\" u LEFT JOIN platform.user_role r \
-    ON r.user_id = u.id \
-    LEFT JOIN platform.permission p \
-    ON p.role_name = r.role_name \
-    WHERE u.id = $1";
-
-fn principal_grants_from_rows(
-    rows: &[sqlx::postgres::PgRow],
-) -> Result<wamn_authority::auth_cache::PrincipalGrants, sqlx::Error> {
-    let mut grants = wamn_authority::auth_cache::PrincipalGrants {
-        present: !rows.is_empty(),
-        ..Default::default()
-    };
-    for row in rows {
-        grants.active = row.try_get(0)?;
-        grants.user = row.try_get(3)?;
-        if let Some(role) = row.try_get::<Option<String>, _>(1)? {
-            let permissions = grants.roles.entry(role).or_default();
-            permissions.extend(row.try_get::<Option<String>, _>(2)?);
-        }
-    }
-    Ok(grants)
-}
-
-/// Read the current user, roles and permissions without choosing the transaction identity.
-pub async fn principal_grants(
-    connection: &mut sqlx::PgConnection,
-    user_id: &wamn_identity_protocol::PrincipalId,
-) -> Result<PrincipalGrants, sqlx::Error> {
-    let rows = sqlx::query(PRINCIPAL_GRANTS_SQL)
-        .bind(uuid::Uuid::from(*user_id))
-        .fetch_all(connection)
-        .await?;
-    principal_grants_from_rows(&rows)
-}
-
-/// An absent environment row remains active.
-pub async fn environment_inactive(
-    connection: &mut sqlx::PgConnection,
-) -> Result<bool, sqlx::Error> {
-    Ok(sqlx::query_scalar(ENVIRONMENT_INACTIVE_SQL)
-        .fetch_optional(connection)
-        .await?
-        .unwrap_or(false))
-}
 
 /// The application authority a caller holds now: whether it holds `admin`, and
 /// the stable operation references its other roles grant under the loaded
@@ -168,44 +112,27 @@ pub struct ProjectPat {
     pub deadline: SystemTime,
 }
 
-/// Check one PAT on the host's platform login.
-pub async fn project_pat(
-    project: &mut sqlx::PgConnection,
-    token: &PatToken,
-) -> Result<Option<Arc<ProjectPat>>, sqlx::Error> {
-    let row = sqlx::query(
-        r#"SELECT u.id, u.sub, p.hash, p.expires_at
-           FROM platform.pat p JOIN platform."user" u ON u.id=p.user_id
-           WHERE p.prefix=$1 AND p.revoked_at IS NULL AND p.expires_at > now()
-             AND u.issuer='wamn' AND u.type='service' AND u.status='active'"#,
-    )
-    .bind(token.lookup().to_string())
-    .fetch_optional(project)
-    .await?;
-    let Some(row) = row else {
-        return Ok(None);
-    };
-    let hash =
-        row.try_get::<&str, _>("hash")?
-            .parse()
-            .map_err(|source| sqlx::Error::ColumnDecode {
-                index: "hash".into(),
-                source: Box::new(source),
-            })?;
-    if !token.matches(&hash) {
-        return Ok(None);
-    }
-    let deadline: sqlx::types::chrono::DateTime<sqlx::types::chrono::Utc> =
-        row.try_get("expires_at")?;
-    Ok(Some(Arc::new(ProjectPat {
-        principal: PrincipalId::from(row.try_get::<uuid::Uuid, _>("id")?),
-        subject: row.try_get::<&str, _>("sub")?.into(),
-        deadline: deadline.into(),
-    })))
+#[derive(Debug)]
+pub struct SessionIdentityError {
+    pub type_: SessionIdentityErrorType,
+    pub context: &'static str,
+    pub source: anyhow::Error,
 }
 
-mod project_reads;
-mod store;
+#[derive(Debug)]
+pub enum SessionIdentityErrorType {
+    Authorization,
+    Infrastructure,
+}
 
-pub use project_reads::{SessionIdentityError, SessionIdentityErrorType, read_guest_grants};
-pub use store::Authorization;
+impl std::fmt::Display for SessionIdentityError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}: {}", self.context, self.source)
+    }
+}
+
+impl std::error::Error for SessionIdentityError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(self.source.as_ref())
+    }
+}

@@ -58,7 +58,7 @@ pub async fn materialize_application_principals(
             "application-{}",
             package.package.id.as_str().replace('_', "-")
         );
-        wamn_identity::application::create_role(&mut transaction, &role).await?;
+        wamn_postgres::administration::create_role(&mut transaction, &role).await?;
     }
     write_runtime_grants(&mut transaction, project_env_key, &applications, packages).await?;
     transaction.commit().await?;
@@ -109,11 +109,11 @@ async fn write_runtime_grants(
             package,
             &dependency_manifests,
         )? {
-            wamn_identity::application::mutate_grant(
+            wamn_postgres::administration::mutate_grant(
                 transaction,
                 project_env_key,
-                wamn_identity::application::GrantAuthority::Provisioning,
-                wamn_identity::application::GrantChange::Permission {
+                wamn_authentication::administration::GrantAuthority::Provisioning,
+                wamn_authentication::administration::GrantChange::Permission {
                     role: &role,
                     reference: &permission,
                     grant: true,
@@ -121,11 +121,11 @@ async fn write_runtime_grants(
             )
             .await?;
         }
-        wamn_identity::application::mutate_grant(
+        wamn_postgres::administration::mutate_grant(
             transaction,
             project_env_key,
-            wamn_identity::application::GrantAuthority::Provisioning,
-            wamn_identity::application::GrantChange::UserRole {
+            wamn_authentication::administration::GrantAuthority::Provisioning,
+            wamn_authentication::administration::GrantChange::UserRole {
                 user_id: &principal,
                 role: &role,
                 grant: true,

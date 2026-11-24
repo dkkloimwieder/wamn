@@ -324,7 +324,7 @@ async fn configure_project(
                     &mut *lock.client().await,
                     &mut project,
                     &platform.identity_issuer,
-                    wamn_identity::application::ApplicationTarget {
+                    wamn_authentication::administration::ApplicationTarget {
                         org: &triple.org,
                         project: &triple.project,
                         env: &triple.env,

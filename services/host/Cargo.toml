@@ -29,7 +29,6 @@ uuid.workspace = true
 wamn-broker = { workspace = true }
 mimalloc = { workspace = true }
 wamn-registry = { workspace = true }
-wamn-identity.workspace = true
 wamn-identity-client.workspace = true
 wamn-identity-protocol = { workspace = true }
 wamn-plugin = { workspace = true, features = ["wasm_component_model_implements"] }

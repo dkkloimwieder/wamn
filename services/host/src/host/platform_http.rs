@@ -215,7 +215,7 @@ mod tests {
                 .expect("empty pools"),
         );
         let database = Arc::clone(&pools);
-        let authorization = Arc::new(wamn_authentication::authorization::Authorization::new(
+        let authorization = Arc::new(wamn_postgres::authorization::Authorization::new(
             Arc::clone(&pools),
             database,
         ));

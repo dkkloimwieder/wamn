@@ -8,9 +8,12 @@ license.workspace = true
 [dependencies]
 pg_walstream.workspace = true
 wamn-application.workspace = true
+wamn-authentication.workspace = true
+wamn-authority.workspace = true
 wamn-codegen.workspace = true
 wamn-component-policy.workspace = true
 wamn-connection.workspace = true
+wamn-connection-type.workspace = true
 wamn-digest.workspace = true
 wamn-envelope.workspace = true
 wamn-event.workspace = true
@@ -24,6 +27,7 @@ async-trait.workspace = true
 chrono = { workspace = true, features = ["std"] }
 fallible-iterator = "0.2"
 futures-util.workspace = true
+moka = { workspace = true, features = ["sync"] }
 tracing.workspace = true
 wamn-registry.workspace = true
 wamn-role.workspace = true

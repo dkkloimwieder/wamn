@@ -182,7 +182,7 @@ pub async fn serve(config: Configuration) -> anyhow::Result<()> {
         pool.clone(),
         config.org.clone(),
     ));
-    let verifier = wamn_authentication::access_token::AccessTokenVerifier::new(
+    let verifier = wamn_http::access_token::access_token_verifier(
         &config.identity_issuer,
         &format!(
             "{}/.well-known/jwks.json",

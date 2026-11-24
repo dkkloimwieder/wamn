@@ -7,7 +7,7 @@
 //! to the caller and `app.operation` to the route's sealed operation id. A
 //! role or permission write first takes the project lock that `wamn` and
 //! release reconciliation take. The writes are the functions of
-//! `wamn_identity::application`, which `wamn` also calls, so no
+//! `wamn_postgres::administration`, which `wamn` also calls, so no
 //! second writer exists. A grant stores one row, and a caller holds exactly
 //! its rows, so a grant works while two releases serve during a rollout.
 //!
@@ -25,12 +25,15 @@ use serde_json::{Value, json};
 use sqlx::PgConnection as Client;
 use wamn_application::application_config::ApplicationConfig;
 use wamn_application::ingress::AuthenticatedCaller;
-use wamn_identity::application::{
-    AdministrationError, AdministrationRefusal, GrantAuthority, GrantChange, application_users,
-    create_role, delete_role, mutate_grant, permission_is_grantable, permission_rows, role_names,
+use wamn_authentication::administration::{
+    AdministrationError, AdministrationRefusal, GrantAuthority, GrantChange, GrantError,
+    permission_is_grantable,
 };
 use wamn_plugin::OperationHost;
 use wamn_plugin::number_counter::{CounterSet, CounterSetRefusal};
+use wamn_postgres::administration::{
+    application_users, create_role, delete_role, mutate_grant, permission_rows, role_names,
+};
 
 use super::route_refusal::{Refusal, parse};
 
@@ -76,8 +79,8 @@ struct UserRoleRequest {
     role: String,
 }
 
-impl From<wamn_identity::application::GrantError> for Refusal {
-    fn from(error: wamn_identity::application::GrantError) -> Self {
+impl From<GrantError> for Refusal {
+    fn from(error: GrantError) -> Self {
         AdministrationError::from(error).into()
     }
 }

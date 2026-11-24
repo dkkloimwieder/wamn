@@ -51,14 +51,13 @@ use anyhow::Context as _;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use wamn_application::native_routes::{DeliveryError, PermissionDenial};
+use wamn_authentication::administration::ApplicationTarget;
 use wamn_authentication::control_admission::{self, AdminAdmission};
 use wamn_environment::org::{
     create_project, org_environments, set_environment_status, status_environments,
 };
 use wamn_environment::status;
-use wamn_identity::application::{
-    ApplicationTarget, project_authority, require_platform_rows, write_environment_status,
-};
+use wamn_identity::application::project_authority;
 use wamn_identity::control::{
     control_projects_page, is_org_admin, is_project_admin, org_projects_page,
 };
@@ -72,6 +71,7 @@ use wamn_identity::{IdentityError, IdentityRefusal};
 use wamn_identity_client::users::UserClient;
 use wamn_identity_protocol::PrincipalId;
 use wamn_postgres::ConnectionInput;
+use wamn_postgres::administration::{require_platform_rows, write_environment_status};
 
 use crate::Writer;
 

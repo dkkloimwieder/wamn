@@ -3,10 +3,13 @@
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock, Weak};
 use std::time::{Duration, Instant, SystemTime};
-use wamn_application::application_config::ApplicationConfig;
 
 use anyhow::Context as _;
 use moka::sync::Cache;
+use wamn_application::application_config::ApplicationConfig;
+use wamn_authentication::authorization::{
+    AuthorizationStore, HeldOperationGrants, ProjectPat, held_grants,
+};
 use wamn_authority::auth_cache::PrincipalGrants;
 use wamn_connection::connection_credentials::{
     ConnectionCredentials, CredentialReader, ReadCredentials,
@@ -15,13 +18,13 @@ use wamn_connection::connection_facts::{ConnectionAnswer, ConnectionCache, Conne
 use wamn_connection::project_connections::ProjectConnections;
 use wamn_identity_protocol::PrincipalId;
 use wamn_identity_protocol::secret::PatToken;
-use wamn_postgres::WamnPostgres;
 use wamn_registry::{ProjectEnvKey, ProjectId};
+
+use crate::WamnPostgres;
 
 use super::project_reads::{
     read_environment_inactive, read_platform_grants, read_project_pat, resolve_subject,
 };
-use super::{AuthorizationStore, HeldOperationGrants, ProjectPat};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 enum Fact {
@@ -216,7 +219,7 @@ impl AuthorizationStore for Authorization {
         let grants = self
             .principal_grants(project, project_key, principal)
             .await?;
-        Ok(super::held_grants(&grants))
+        Ok(held_grants(&grants))
     }
 
     async fn route_pat(

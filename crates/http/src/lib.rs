@@ -10,6 +10,7 @@ use wamn_authority::connection_authority::{
 use wamn_connection::bound_http::{Attempt, BoundHttp, Call, Header, Request, Response};
 use wamn_connection::connection_facts::ConnectionFacts;
 
+pub mod access_token;
 mod authentication;
 pub mod body;
 pub mod connection_health;

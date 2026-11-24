@@ -5,9 +5,12 @@ use std::path::Path;
 use anyhow::Context as _;
 use sqlx::postgres::PgConnectOptions;
 
+pub mod administration;
+pub mod authorization;
 pub mod build_database;
 pub mod catalog;
 pub mod control;
+pub mod identity_error;
 pub mod oauth_authorization;
 pub mod replication;
 

@@ -1,7 +1,8 @@
 use crate::{OperationHost, PgError};
 use std::sync::Arc;
-use wamn_authentication::authorization::{Authorization, AuthorizationStore as _};
+use wamn_authentication::authorization::AuthorizationStore as _;
 use wamn_identity_protocol::AuthorityClass;
+use wamn_postgres::authorization::Authorization;
 use wamn_postgres::{
     CredentialProvider, DEFAULT_PROJECT, ResolvedCredential, StaticCredentialProvider, WamnPostgres,
 };
