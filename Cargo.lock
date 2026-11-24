@@ -6202,6 +6202,7 @@ dependencies = [
  "wamn-digest",
  "wamn-event",
  "wamn-identity-protocol",
+ "wamn-oci-reference",
  "wamn-package",
  "wamn-registry",
  "wamn-role",
@@ -6727,6 +6728,7 @@ dependencies = [
  "anyhow",
  "bytes",
  "chrono",
+ "jmespath",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -6798,11 +6800,9 @@ dependencies = [
  "bytes",
  "chrono",
  "clap",
- "croner",
  "http-body-util",
  "humantime",
  "hyper",
- "jmespath",
  "k8s-openapi",
  "kube",
  "mimalloc",
@@ -6833,7 +6833,6 @@ dependencies = [
  "wamn-identity-client",
  "wamn-identity-protocol",
  "wamn-key",
- "wamn-oci-reference",
  "wamn-package",
  "wamn-plugin",
  "wamn-postgres",
@@ -7255,6 +7254,7 @@ dependencies = [
  "wamn-scalar",
  "wamn-schema",
  "wamn-test-infrastructure",
+ "wamn-workflow-graph",
 ]
 
 [[package]]
@@ -7498,9 +7498,14 @@ dependencies = [
 name = "wamn-workflow-graph"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "chrono",
+ "croner",
+ "http",
  "serde",
  "serde_json",
  "wamn-digest",
+ "wamn-event",
  "wamn-package",
 ]
 

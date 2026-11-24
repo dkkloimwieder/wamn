@@ -8,6 +8,7 @@ license.workspace = true
 [dependencies]
 anyhow.workspace = true
 bytes.workspace = true
+jmespath.workspace = true
 tracing.workspace = true
 wamn-package.workspace = true
 wamn-registry = { workspace = true }

@@ -18,6 +18,7 @@ wamn-record-history.workspace = true
 wamn-run-state.workspace = true
 wamn-schema.workspace = true
 wamn-scalar.workspace = true
+wamn-workflow-graph.workspace = true
 async-trait.workspace = true
 chrono = { workspace = true, features = ["std"] }
 fallible-iterator = "0.2"

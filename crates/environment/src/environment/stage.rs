@@ -39,10 +39,7 @@ pub async fn materialize_application_principals(
     }
     let mut project = super::analyse::connect_project(project_url).await?;
     let mut transaction = project.begin().await?;
-    sqlx::query(wamn_identity::application::OPERATION_GRANT_LOCK_SQL)
-        .bind(project_env_key.as_str())
-        .fetch_one(&mut *transaction)
-        .await?;
+    wamn_postgres::operation::lock_operation_grants(&mut transaction, project_env_key).await?;
     wamn_provision::bind_platform_principal(&mut transaction, PlatformComponent::Provisioning)
         .await?;
     for package in &applications {

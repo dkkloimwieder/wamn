@@ -1,23 +1,23 @@
 //! Author and change the enabled workflow under the project lifecycle lock.
 
-use wamn_package::canonical_name::CanonicalName;
-use wamn_routes::HostAttachment;
-use wamn_routes::HostHandler;
-use wamn_workflow_graph::{GraphTrigger, WorkflowGraph};
 use anyhow::Context as _;
 use serde::Deserialize;
 use serde_json::{Value, json};
-use sqlx::{PgConnection, Row as _};
+use sqlx::PgConnection;
 use std::sync::Arc;
-use wamn_application::application_config::ApplicationConfig;
+use wamn_application::application_config::{ApplicationConfig, check_authored_workflow};
 use wamn_application::ingress::AuthenticatedCaller;
 use wamn_application::native_routes::DeliveryError;
 use wamn_identity_protocol::PrincipalId;
+use wamn_package::canonical_name::CanonicalName;
 use wamn_plugin::OperationHost;
-use wamn_postgres::{ENVIRONMENT_LOCK_SQL, ENVIRONMENT_TRANSACTION_LOCK_SQL};
+use wamn_postgres::{control, workflow};
+use wamn_routes::HostAttachment;
+use wamn_routes::HostHandler;
+use wamn_workflow_graph::{GraphTrigger, WorkflowGraph};
 
 use super::{
-    RunAs, RunNow, Workflow, Workload, authoring,
+    RunAs, RunNow, Workflow, Workload,
     broker::{Broker, Consumer},
 };
 use crate::host::route_refusal::{Refusal, parse};
@@ -103,9 +103,9 @@ impl Workflow {
                 &operation,
                 async |connection| {
                     let result = match handler {
-                        HostHandler::WorkflowList => list(connection, app).await?,
+                        HostHandler::WorkflowList => workflow::list(connection, app).await?,
                         HostHandler::WorkflowAuthor => {
-                            lock(connection, app, ENVIRONMENT_TRANSACTION_LOCK_SQL).await?;
+                            require_lock(workflow::try_author_lock(connection, app).await?)?;
                             author(connection, app, caller, parse(payload)?).await?
                         }
                         _ => return Err(Refusal::Delivery(DeliveryError::SourceNotFound)),
@@ -117,16 +117,7 @@ impl Workflow {
     }
 }
 
-async fn lock(
-    connection: &mut PgConnection,
-    app: &ApplicationConfig,
-    statement: &'static str,
-) -> Result<(), Refusal> {
-    let held = sqlx::query_scalar(statement)
-        .bind(app.org.as_str())
-        .bind(app.environment.as_str())
-        .fetch_one(connection)
-        .await?;
+fn require_lock(held: bool) -> Result<(), Refusal> {
     if held {
         Ok(())
     } else {
@@ -160,7 +151,7 @@ async fn change(
     // Keep the same key through commit and broker settlement so another host
     // cannot enable a replacement while this host deletes its predecessor.
     let outcome = async {
-        lock(connection, app, ENVIRONMENT_LOCK_SQL).await?;
+        require_lock(control::try_environment_lock(connection, &app.org, &app.environment).await?)?;
         match handler {
             HostHandler::WorkflowEnable => enable(connection, broker, workload, &version).await,
             HostHandler::WorkflowDisable => disable(connection, broker, workload, &version).await,
@@ -169,9 +160,9 @@ async fn change(
     }
     .await;
     let ended = if outcome.is_ok() {
-        sqlx::query("COMMIT").execute(&mut *connection).await
+        workflow::commit_change(connection).await
     } else {
-        sqlx::raw_sql("ROLLBACK").execute(&mut *connection).await
+        workflow::rollback_change(connection).await
     };
     let cleanup = match (&outcome, ended.is_ok()) {
         (Ok(ConsumerChange::DeleteAfterCommit(consumer)), true)
@@ -186,9 +177,7 @@ async fn change(
             anyhow::Error::from(error).context("end the workflow lifecycle transaction"),
         ));
     }
-    sqlx::query("SELECT pg_advisory_unlock_all()")
-        .execute(connection)
-        .await?;
+    control::unlock_all_advisory_locks(connection).await?;
     session.repool();
     cleanup?;
     outcome?;
@@ -204,70 +193,26 @@ async fn author(
     let graph = WorkflowGraph::parse(&request.graph).map_err(invalid_graph)?;
     let version = i32::try_from(graph.version).map_err(invalid_graph)?;
     let role = request.execution_role.as_deref();
-    let checked = authoring::check(&graph, app, role).map_err(invalid_graph)?;
-    let mut path = None;
-    let mut schedule = None;
-    let mut source_package = None;
-    let mut source_entity = None;
-    let mut source_ops = None;
-    let mut source_condition = None;
-    let trigger = match checked.entry {
-        GraphTrigger::Request { path: request_path } => {
-            check_path(connection, app, &graph.graph_id, request_path).await?;
-            path = Some(request_path);
-            "request"
-        }
-        GraphTrigger::Schedule { cron } => {
-            schedule = Some(cron);
-            "schedule"
-        }
-        GraphTrigger::DataChange {
-            package,
-            entity,
-            ops,
-            condition,
-        } => {
-            source_package = Some(package.as_str());
-            source_entity = Some(entity.as_str());
-            source_ops = Some(ops.iter().map(|op| op.as_str()).collect::<Vec<_>>());
-            source_condition = condition.as_deref();
-            "data_change"
-        }
-    };
-    let hash = graph.graph_hash();
-    let inserted = sqlx::query(
-        "INSERT INTO catalog.workflows
-          (environment, application, workflow_id, version, graph_json, graph_hash,
-           trigger, path, schedule, source_package, entity, ops, condition,
-           execution_type, execution_role, created_by)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
-         ON CONFLICT (environment, application, workflow_id, version) DO NOTHING",
+    let checked = check_authored_workflow(app, &graph, role).map_err(invalid_graph)?;
+    if let GraphTrigger::Request { path } = checked.entry {
+        check_path(connection, app, &graph.graph_id, path).await?;
+    }
+    let Some(hash) = workflow::insert_version(
+        connection,
+        app,
+        &graph,
+        version,
+        checked.entry,
+        role,
+        caller.principal_id(),
     )
-    .bind(app.environment.as_str())
-    .bind(app.application.as_str())
-    .bind(graph.graph_id.as_str())
-    .bind(version)
-    .bind(sqlx::types::Json(&graph))
-    .bind(hash.to_string())
-    .bind(trigger)
-    .bind(path)
-    .bind(schedule)
-    .bind(source_package)
-    .bind(source_entity)
-    .bind(source_ops)
-    .bind(source_condition)
-    .bind(if role.is_some() { "role" } else { "invoker" })
-    .bind(role)
-    .bind(uuid::Uuid::from(*caller.principal_id()))
-    .execute(connection)
     .await?
-    .rows_affected();
-    if inserted == 0 {
+    else {
         return Err(Refusal::Declared {
             code: "workflow_version_exists",
             detail: json!({}),
         });
-    }
+    };
     Ok(json!({"workflow_id": graph.graph_id, "version": version, "graph_hash": hash}))
 }
 
@@ -277,18 +222,7 @@ async fn check_path(
     id: &CanonicalName,
     path: &str,
 ) -> Result<(), Refusal> {
-    let taken = sqlx::query_scalar(
-        "SELECT EXISTS (SELECT 1 FROM catalog.workflows
-           WHERE environment = $1 AND application = $2 AND enabled
-             AND path = $3 AND workflow_id <> $4)",
-    )
-    .bind(app.environment.as_str())
-    .bind(app.application.as_str())
-    .bind(path)
-    .bind(id.as_str())
-    .fetch_one(connection)
-    .await?;
-    if taken {
+    if workflow::path_taken(connection, app, id, path).await? {
         Err(Refusal::Declared {
             code: "workflow_path_taken",
             detail: json!({"path": path}),
@@ -305,48 +239,24 @@ async fn enable(
     version: &Version,
 ) -> Result<ConsumerChange, Refusal> {
     let app = &workload.application;
-    let row = sqlx::query(
-        "SELECT graph_json, graph_hash, execution_role, enabled FROM catalog.workflows
-          WHERE environment = $1 AND application = $2 AND workflow_id = $3 AND version = $4",
-    )
-    .bind(app.environment.as_str())
-    .bind(app.application.as_str())
-    .bind(version.workflow_id.as_str())
-    .bind(version.version)
-    .fetch_optional(&mut *connection)
-    .await?
-    .ok_or_else(unknown_version)?;
-    let value: Value = row.try_get("graph_json")?;
+    let row = workflow::load_version(connection, app, &version.workflow_id, version.version)
+        .await?
+        .ok_or_else(unknown_version)?;
+    let value = row.graph()?;
     let graph = WorkflowGraph::parse(&value).map_err(invalid_graph)?;
-    let hash = row
-        .try_get::<&str, _>("graph_hash")?
-        .parse()
-        .map_err(|source| sqlx::Error::ColumnDecode {
-            index: "graph_hash".into(),
-            source: Box::new(source),
-        })?;
+    let hash = row.hash()?;
     if graph.graph_hash() != hash {
         return Err(invalid_graph("workflow graph hash does not match"));
     }
-    let role: Option<&str> = row.try_get("execution_role")?;
-    let checked = authoring::check(&graph, app, role).map_err(invalid_graph)?;
+    let role = row.role()?;
+    let checked = check_authored_workflow(app, &graph, role).map_err(invalid_graph)?;
     if let GraphTrigger::Request { path } = checked.entry {
         check_path(connection, app, &version.workflow_id, path).await?;
     }
-    if row.try_get::<bool, _>("enabled")? {
+    if row.enabled()? {
         if !matches!(checked.entry, GraphTrigger::DataChange { .. }) {
             // A retry of a trigger change must finish any post-commit deletion.
-            let previously_had_consumer: bool = sqlx::query_scalar(
-                "SELECT EXISTS (SELECT 1 FROM catalog.workflows
-                  WHERE environment = $1 AND application = $2 AND workflow_id = $3
-                    AND trigger = 'data_change' AND enable_lsn IS NOT NULL)",
-            )
-            .bind(app.environment.as_str())
-            .bind(app.application.as_str())
-            .bind(version.workflow_id.as_str())
-            .fetch_one(connection)
-            .await?;
-            if previously_had_consumer {
+            if workflow::previously_had_consumer(connection, app, &version.workflow_id).await? {
                 return Ok(ConsumerChange::DeleteAfterCommit(
                     broker.consumer(workload, &version.workflow_id).await?,
                 ));
@@ -365,41 +275,21 @@ async fn enable(
     } else {
         None
     };
-    let lsn: String = sqlx::query_scalar("SELECT pg_current_wal_lsn()::text")
-        .fetch_one(&mut *connection)
-        .await?;
-    let previous: Option<String> = sqlx::query_scalar(
-        "UPDATE catalog.workflows SET enabled = false
-          WHERE environment = $1 AND application = $2 AND workflow_id = $3 AND enabled
-          RETURNING trigger",
-    )
-    .bind(app.environment.as_str())
-    .bind(app.application.as_str())
-    .bind(version.workflow_id.as_str())
-    .fetch_optional(&mut *connection)
-    .await?;
-    sqlx::query(
-        "UPDATE catalog.workflows SET enabled = true, enable_lsn = $5::pg_lsn
-          WHERE environment = $1 AND application = $2 AND workflow_id = $3 AND version = $4",
-    )
-    .bind(app.environment.as_str())
-    .bind(app.application.as_str())
-    .bind(version.workflow_id.as_str())
-    .bind(version.version)
-    .bind(lsn)
-    .execute(connection)
-    .await?;
-    let had_data_change = previous.as_deref() == Some("data_change");
+    let had_data_change =
+        workflow::enable_version(connection, app, &version.workflow_id, version.version).await?;
     if let Some((consumer, start, entity, ops)) = data_change {
         let already_owned = had_data_change && consumer.exists().await?;
-        let filters = ops.iter().map(|op| {
-            wamn_registry::name::event_subject(
-                &app.org,
-                &app.project,
-                &app.environment,
-                &format!("{entity}.{}", op.as_str()),
-            )
-        }).collect();
+        let filters = ops
+            .iter()
+            .map(|op| {
+                wamn_registry::name::event_subject(
+                    &app.org,
+                    &app.project,
+                    &app.environment,
+                    &format!("{entity}.{}", op.as_str()),
+                )
+            })
+            .collect();
         consumer.create(filters, start).await?;
         // A rollback keeps another version's existing consumer.
         return Ok(if already_owned {
@@ -422,49 +312,18 @@ async fn disable(
     version: &Version,
 ) -> Result<ConsumerChange, Refusal> {
     let app = &workload.application;
-    let trigger: String = sqlx::query_scalar(
-        "UPDATE catalog.workflows SET enabled = false
-          WHERE environment = $1 AND application = $2 AND workflow_id = $3 AND version = $4
-          RETURNING trigger",
-    )
-    .bind(app.environment.as_str())
-    .bind(app.application.as_str())
-    .bind(version.workflow_id.as_str())
-    .bind(version.version)
-    .fetch_optional(&mut *connection)
-    .await?
-    .ok_or_else(unknown_version)?;
+    let trigger = workflow::disable_version(connection, app, &version.workflow_id, version.version)
+        .await?
+        .ok_or_else(unknown_version)?;
     if trigger != "data_change" {
         return Ok(ConsumerChange::Keep);
     }
-    let enabled: bool = sqlx::query_scalar(
-        "SELECT EXISTS (SELECT 1 FROM catalog.workflows
-          WHERE environment = $1 AND application = $2 AND workflow_id = $3
-            AND enabled AND trigger = 'data_change')",
-    )
-    .bind(app.environment.as_str())
-    .bind(app.application.as_str())
-    .bind(version.workflow_id.as_str())
-    .fetch_one(connection)
-    .await?;
-    if enabled {
+    if workflow::has_enabled_data_change(connection, app, &version.workflow_id).await? {
         return Ok(ConsumerChange::Keep);
     }
     Ok(ConsumerChange::DeleteAfterCommit(
         broker.consumer(workload, &version.workflow_id).await?,
     ))
-}
-
-async fn list(connection: &mut PgConnection, app: &ApplicationConfig) -> Result<Value, Refusal> {
-    let rows: Vec<Value> = sqlx::query_scalar(
-        "SELECT to_jsonb(w) FROM catalog.workflows w WHERE environment = $1 AND application = $2
-          ORDER BY workflow_id, version",
-    )
-    .bind(app.environment.as_str())
-    .bind(app.application.as_str())
-    .fetch_all(connection)
-    .await?;
-    Ok(Value::Array(rows))
 }
 
 fn version_result(version: Version) -> Value {
@@ -504,14 +363,7 @@ pub(in crate::host) async fn permissions(
     connection: &mut PgConnection,
     app: &ApplicationConfig,
 ) -> Result<Vec<String>, sqlx::Error> {
-    let ids: Vec<String> = sqlx::query_scalar(
-        "SELECT workflow_id FROM catalog.workflows
-          WHERE environment = $1 AND application = $2 AND enabled AND trigger = 'request'",
-    )
-    .bind(app.environment.as_str())
-    .bind(app.application.as_str())
-    .fetch_all(connection)
-    .await?;
+    let ids = workflow::request_workflow_ids(connection, app).await?;
     Ok(ids
         .iter()
         .map(|id| wamn_routes::workflow_permission(&app.application, id))

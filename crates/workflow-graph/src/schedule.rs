@@ -1,9 +1,9 @@
 //! UTC calendar schedule evaluation.
 
+use crate::GraphError;
 use anyhow::Context as _;
-use wamn_workflow_graph::GraphError;
 
-/// Whether the cron of `schedule` names the minute `tick`.
+/// Whether the UTC schedule matches the given minute.
 pub fn is_due(schedule: &str, tick: chrono::NaiveDateTime) -> anyhow::Result<bool> {
     parse_workflow_schedule(schedule)?
         .is_time_matching(&tick.and_utc())

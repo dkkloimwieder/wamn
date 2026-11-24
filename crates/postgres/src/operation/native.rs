@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use anyhow::Context as _;
 use wamn_identity_protocol::{AuthorityClass, PlatformComponent, PrincipalId};
-use wamn_registry::ProjectId;
+use wamn_registry::{ProjectEnvKey, ProjectId};
 use wamn_run_state::run_store::ProductionLeaseError;
 
 use crate::WamnPostgres;
@@ -12,6 +12,24 @@ use crate::run_store::postgres_error;
 
 use super::ConnectionGuard;
 use super::identity::{TransactionIdentity, finish_transaction, prepare_identity};
+
+/// Serialize role and permission writes for the project environment.
+///
+/// # Errors
+/// Returns a database error if the transaction cannot acquire the lock.
+pub async fn lock_operation_grants(
+    connection: &mut sqlx::PgConnection,
+    key: &ProjectEnvKey,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "SELECT pg_advisory_xact_lock(hashtextextended(\
+     'wamn.operation-grants:' || $1, 0))",
+    )
+    .bind(key.as_str())
+    .fetch_one(connection)
+    .await?;
+    Ok(())
+}
 
 impl WamnPostgres {
     /// Read through the authorized executor pool.

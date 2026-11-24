@@ -138,6 +138,31 @@ pub fn workflow_call<'a>(
     Some((component, component.operations.get(export)?))
 }
 
+/// Validate an authored graph against this workload's available exports.
+pub fn check_authored_workflow<'a>(
+    application: &ApplicationConfig,
+    graph: &'a wamn_workflow_graph::WorkflowGraph,
+    role: Option<&str>,
+) -> Result<wamn_workflow_graph::authoring::Checked<'a>, wamn_workflow_graph::GraphError> {
+    wamn_workflow_graph::authoring::check(
+        graph,
+        application.application.as_str(),
+        role,
+        |sibling, export| {
+            let (component, operation) = workflow_call(application, sibling, export)?;
+            let palette = component.package.as_str() == wamn_package::PALETTE_PACKAGE_ID;
+            Some(match operation.type_ {
+                Some(ApplicationOperationType::Write | ApplicationOperationType::Delete) => true,
+                type_ if !palette => type_.is_none(),
+                _ => !matches!(
+                    component.name.as_str(),
+                    "wamn_palette-jsonata" | "wamn_palette-transform" | "wamn_palette-label-render"
+                ),
+            })
+        },
+    )
+}
+
 /// Verify that every call in an enabled graph is available in the candidate workload.
 pub fn check_workflow_references(
     application: &ApplicationConfig,

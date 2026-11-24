@@ -1,10 +1,10 @@
 //! Workload identity policy around the runtime's default OCI start.
 
-use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context as _;
+use wamn_application::workload::{WorkloadAdmission, WorkloadClass, validate_workload_images};
 use wash_runtime::host::{Host, HostApi as _};
 use wash_runtime::washlet::{HostCommandHandler, HostControlDefaults, types::v2};
 
@@ -12,55 +12,34 @@ pub(super) struct Commands {
     pub drain: Arc<WorkloadDrain>,
 }
 
-#[derive(Clone, Default)]
-struct DrainState {
-    draining: bool,
-    pending_stops: BTreeSet<String>,
-    services: BTreeSet<String>,
-    components: BTreeSet<String>,
-}
-
 /// Keep control alive until the operator requests every workload's stop.
 /// Native ingress shutdown also shuts down the attached control loop.
 #[derive(Default)]
 pub(super) struct WorkloadDrain {
-    state: tokio::sync::watch::Sender<DrainState>,
+    state: tokio::sync::watch::Sender<WorkloadAdmission>,
 }
 
 impl WorkloadDrain {
     fn admit(&self, workload: &str, service: bool) -> anyhow::Result<()> {
-        let mut admitted = false;
-        self.state.send_modify(|state| {
-            if !state.draining {
-                admitted = true;
-                state.pending_stops.insert(workload.to_owned());
-                if service {
-                    state.services.insert(workload.to_owned());
-                } else {
-                    state.components.insert(workload.to_owned());
-                }
-            }
-        });
-        anyhow::ensure!(admitted, "host is draining");
-        Ok(())
+        let class = if service {
+            WorkloadClass::Service
+        } else {
+            WorkloadClass::Component
+        };
+        let mut result = Ok(());
+        self.state
+            .send_modify(|state| result = state.admit(workload, class));
+        result
     }
 
     fn stopped(&self, workload: &str) {
-        self.state.send_modify(|state| {
-            state.pending_stops.remove(workload);
-            state.services.remove(workload);
-            state.components.remove(workload);
-        });
+        self.state.send_modify(|state| state.stopped(workload));
     }
 
     fn defer_component_stop(&self, workload: &str) -> Option<v2::WorkloadStopResponse> {
         let mut deferred = false;
-        self.state.send_modify(|state| {
-            if state.draining && state.components.contains(workload) {
-                state.pending_stops.remove(workload);
-                deferred = true;
-            }
-        });
+        self.state
+            .send_modify(|state| deferred = state.defer_component_stop(workload));
         // Native component stop closes instance pools and can interrupt active
         // HTTP calls. Acknowledge the request now, but retain the workload for
         // teardown after ingress drains. Repeated stops receive the same reply.
@@ -83,7 +62,7 @@ impl WorkloadDrain {
         drained: impl std::future::Future<Output = ()>,
     ) -> anyhow::Result<()> {
         drained.await;
-        let components = self.state.borrow().components.clone();
+        let components = self.state.borrow().components().clone();
         for workload_id in components {
             host.workload_stop(wash_runtime::types::WorkloadStopRequest {
                 workload_id: workload_id.clone(),
@@ -95,8 +74,8 @@ impl WorkloadDrain {
     }
 
     pub async fn stop(&self, host: &Host, bound: Duration) -> anyhow::Result<()> {
-        self.state.send_modify(|state| state.draining = true);
-        let services = self.state.borrow().services.clone();
+        self.state.send_modify(WorkloadAdmission::begin_drain);
+        let services = self.state.borrow().services().clone();
         let mut state = self.state.subscribe();
         tokio::time::timeout(bound, async {
             // Workload stop aborts the service supervisor, including its restart
@@ -110,7 +89,7 @@ impl WorkloadDrain {
             // A local stop does not release the operator's finalizer. Keep
             // control alive for the operator's own stop, within the same bound.
             state
-                .wait_for(|state| state.pending_stops.is_empty())
+                .wait_for(WorkloadAdmission::operator_stops_complete)
                 .await?;
             anyhow::Ok(())
         })
@@ -131,16 +110,14 @@ impl HostCommandHandler for Commands {
             .wit_world
             .as_ref()
             .map_or_default(|world| &world.components[..]);
-        for component in components {
-            wamn_oci_reference::validate_component_start_reference(&component.image)?;
-        }
+        validate_workload_images(components.iter().map(|component| component.image.as_str()))?;
         let workload_id = request.workload_id.clone();
         self.drain.admit(&workload_id, workload.service.is_some())?;
         let mut draining = self.drain.state.subscribe();
         // The runtime still owns reservations, pulls, verification, compilation and stop races.
         let result = tokio::select! {
             biased;
-            _ = draining.wait_for(|state| state.draining) => {
+            _ = draining.wait_for(WorkloadAdmission::is_draining) => {
                 Err(anyhow::anyhow!("host is draining"))
             }
             result = defaults.start(request) => result,

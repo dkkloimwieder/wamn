@@ -1,20 +1,19 @@
 //! Admit UTC schedule ticks and verified data changes on the project platform login.
 
-use wamn_package::canonical_name::CanonicalName;
 use super::{
     Authority, BoundService, LEASE_MS, LEASE_TTL, Refusal, SharedCtx, WasmResult, Workflow,
     Workload, service, storage_error, wit_run,
 };
 use chrono::{DateTime, SecondsFormat, Utc};
 use serde_json::Value;
-use sqlx::Row as _;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::time::Instant;
-use wamn_event::{Causation, SourceEvent};
+use wamn_event::{Causation, SourceEvent, matching};
 use wamn_identity_protocol::PrincipalId;
 use wamn_identity_protocol::workflow_user_id;
-use wamn_postgres::run_store::{PostgresRunStore, postgres_error};
+use wamn_postgres::run_store::PostgresRunStore;
+use wamn_postgres::workflow::admission::{self as stored, Definition};
 use wamn_run_state::admission::{RunAdmission, RunAdmitted, RunTrigger};
 use wamn_run_state::persistence::{LeaseTurn, ProductionLeaseResult};
 use wamn_run_state::run_store::{
@@ -23,53 +22,11 @@ use wamn_run_state::run_store::{
 };
 use wash_runtime::wasmtime::component::Accessor;
 
-pub(super) struct Definition {
-    pub id: CanonicalName,
-    pub version: i32,
-    pub graph: String,
-    pub hash: wamn_digest::Digest,
-    pub role: Option<String>,
-}
-
-fn workflow_id(row: &sqlx::postgres::PgRow) -> Result<CanonicalName, sqlx::Error> {
-    row.try_get::<String, _>("workflow_id")?
-        .try_into()
-        .map_err(|source| sqlx::Error::ColumnDecode {
-            index: "\"workflow_id\"".into(),
-            source: Box::new(source),
-        })
-}
-
-impl Definition {
-    pub(super) fn from_row(row: &sqlx::postgres::PgRow) -> Result<Self, ProductionLeaseError> {
-        let error = |error| ProductionLeaseError::storage("read workflow version", error);
-        Ok(Self {
-            id: workflow_id(row).map_err(error)?,
-            version: row.try_get("version").map_err(error)?,
-            graph: row.try_get("graph").map_err(error)?,
-            hash: row
-                .try_get::<&str, _>("graph_hash")
-                .map_err(error)?
-                .parse()
-                .map_err(|source| {
-                    ProductionLeaseError::storage(
-                        "read workflow version",
-                        sqlx::Error::ColumnDecode {
-                            index: "graph_hash".into(),
-                            source: Box::new(source),
-                        },
-                    )
-                })?,
-            role: row.try_get("execution_role").map_err(error)?,
-        })
-    }
-
-    pub(super) fn wit(self) -> wit_run::Workflow {
-        wit_run::Workflow {
-            id: self.id.into(),
-            version: self.version.unsigned_abs(),
-            graph_json: self.graph,
-        }
+pub(super) fn wit_definition(definition: Definition) -> wit_run::Workflow {
+    wit_run::Workflow {
+        id: definition.id.into(),
+        version: definition.version.unsigned_abs(),
+        graph_json: definition.graph,
     }
 }
 
@@ -98,7 +55,7 @@ impl Admitted {
         wit_run::LeasedRun {
             id,
             authority,
-            definition: self.definition.wit(),
+            definition: wit_definition(self.definition),
             input_json: self.input_json,
             checkpoint_json: self.checkpoint_json,
         }
@@ -136,28 +93,29 @@ impl Workload {
             .map(i32::try_from)
             .transpose()
             .map_err(|error| ProductionLeaseError::invalid("convert workflow depth", error))?;
-        let run = PostgresRunStore::new(connection).admit_run(
-            &RunAdmission {
-                application: &self.application.application,
-                environment: &self.application.environment,
-                workflow_id: &definition.id,
-                workflow_version: definition.version,
-                graph_hash: &definition.hash,
-                execution_principal_id: &delivery.principal,
-                execution_role: delivery.role,
-                trigger: delivery.trigger,
-                invoked_by: delivery.invoked_by,
-                invoked_by_user_id: delivery.invoker,
-                idempotency_key: delivery.key,
-                input: delivery.input,
-                source_run: delivery.parent.map(|parent| parent.run.as_str()),
-                root_run: delivery.parent.map(|parent| parent.root.as_str()),
-                depth: stored_depth,
-            },
-            &self.runner,
-            LEASE_MS,
-        )
-        .await?;
+        let run = PostgresRunStore::new(connection)
+            .admit_run(
+                &RunAdmission {
+                    application: &self.application.application,
+                    environment: &self.application.environment,
+                    workflow_id: &definition.id,
+                    workflow_version: definition.version,
+                    graph_hash: &definition.hash,
+                    execution_principal_id: &delivery.principal,
+                    execution_role: delivery.role,
+                    trigger: delivery.trigger,
+                    invoked_by: delivery.invoked_by,
+                    invoked_by_user_id: delivery.invoker,
+                    idempotency_key: delivery.key,
+                    input: delivery.input,
+                    source_run: delivery.parent.map(|parent| parent.run.as_str()),
+                    root_run: delivery.parent.map(|parent| parent.root.as_str()),
+                    depth: stored_depth,
+                },
+                &self.runner,
+                LEASE_MS,
+            )
+            .await?;
         match run {
             RunAdmitted::Existing { run_id } => Ok(Admission::Existing(run_id)),
             RunAdmitted::Conflict => Ok(Admission::Conflict),
@@ -201,34 +159,17 @@ impl Workflow {
         let admitted = self
             .postgres
             .executor_write(&app.project, async |connection| {
-                let rows = sqlx::query(
-                    "SELECT workflow_id, version, graph_json::text AS graph, graph_hash,
-                        execution_role, schedule
-                   FROM catalog.workflows
-                  WHERE environment = $1 AND application = $2 AND enabled AND trigger = 'schedule'
-                  ORDER BY workflow_id FOR SHARE",
-                )
-                .bind(app.environment.as_str())
-                .bind(app.application.as_str())
-                .fetch_all(&mut *connection)
-                .await
-                .map_err(|error| {
-                    postgres_error("read enabled schedules", &error)
-                })?;
+                let rows = stored::schedules(connection, app).await?;
                 let mut admitted = Vec::new();
                 for row in rows {
-                    let schedule: &str = row
-                        .try_get("schedule")
-                        .map_err(|error| ProductionLeaseError::storage("read schedule", error))?;
-                    if !super::schedule::is_due(schedule, due.naive_utc()).map_err(|error| {
-                        ProductionLeaseError::invalid("match workflow schedule", error)
-                    })? {
+                    let schedule = row.schedule()?;
+                    if !wamn_workflow_graph::schedule::is_due(schedule, due.naive_utc()).map_err(
+                        |error| ProductionLeaseError::invalid("match workflow schedule", error),
+                    )? {
                         continue;
                     }
-                    let definition = Definition::from_row(&row)?;
-                    let role: &str = row.try_get("execution_role").map_err(|error| {
-                        ProductionLeaseError::storage("read schedule role", error)
-                    })?;
+                    let definition = row.definition()?;
+                    let role = row.role()?;
                     if let Some(run) = workload
                         .admit(
                             connection,
@@ -265,18 +206,16 @@ impl Workflow {
         workload: &Workload,
     ) -> Result<Vec<wit_run::DataChangeConsumer>, Refusal> {
         let app = &workload.application;
-        let workflows = self.postgres.executor_read(&app.project, async |connection| {
-            Ok(sqlx::query(
-                "SELECT workflow_id FROM catalog.workflows
-                  WHERE environment = $1 AND application = $2 AND enabled AND trigger = 'data_change'
-                  ORDER BY workflow_id"
-            ).bind(app.environment.as_str()).bind(app.application.as_str())
-                .try_map(|row| workflow_id(&row))
-                .fetch_all(connection).await?)
-        }).await.map_err(|error| {
-            tracing::warn!(%error, "read enabled data-change consumers");
-            Refusal::Unavailable
-        })?;
+        let workflows = self
+            .postgres
+            .executor_read(&app.project, async |connection| {
+                Ok(stored::consumer_workflows(connection, app).await?)
+            })
+            .await
+            .map_err(|error| {
+                tracing::warn!(%error, "read enabled data-change consumers");
+                Refusal::Unavailable
+            })?;
         let stream = wamn_event::stream_name(&app.org, &app.project, &app.environment);
         Ok(workflows
             .into_iter()
@@ -324,46 +263,43 @@ impl Workflow {
         {
             return Err(invalid("data-change subject disagrees with the envelope"));
         }
-        let result = self.postgres.executor_write(&app.project, async |connection| {
-            let row = sqlx::query(
-                "SELECT workflow_id, version, graph_json::text AS graph, graph_hash, execution_role, condition
-                   FROM catalog.workflows
-                  WHERE environment = $1 AND application = $2 AND workflow_id = $3
-                    AND enabled AND trigger = 'data_change' AND source_package = $4
-                    AND entity = $5 AND $6 = ANY(ops) AND enable_lsn <= $7::text::pg_lsn
-                    FOR SHARE"
-            )
-            .bind(app.environment.as_str())
-            .bind(app.application.as_str())
-            .bind(&message.workflow_id)
-            .bind(envelope.package_id.as_str())
-            .bind(&envelope.entity)
-            .bind(envelope.op.as_str())
-            // The ID was checked against the envelope's complete source coordinate.
-            .bind(wal_lsn(envelope.identity.commit_lsn))
-            .fetch_optional(&mut *connection).await
-            .map_err(|error| postgres_error("match data-change workflow", &error))?;
-            let Some(row) = row else { return Ok(None) };
-            let condition: Option<&str> = row.try_get("condition")
-                .map_err(|error| ProductionLeaseError::storage("read data-change condition", error))?;
-            if !super::events::matches(&envelope, condition, &workload.project_key)? {
-                return Ok(None);
-            }
-            let actor = PostgresRunStore::new(connection).history_actor(&envelope).await?;
-            let definition = Definition::from_row(&row)?;
-            let role: &str = row.try_get("execution_role")
-                .map_err(|error| ProductionLeaseError::storage("read data-change role", error))?;
-            workload.admit(connection, definition, Delivery {
-                trigger: RunTrigger::DataChange,
-                invoked_by: &format!("event:{}", source_id.as_str()),
-                principal: workflow_user_id(),
-                role,
-                invoker: actor.as_ref(),
-                key: source_id.as_str(),
-                input: &super::events::event_input(&envelope),
-                parent: envelope.causation.as_ref(),
-            }).await.and_then(Admission::winner)
-        }).await.map_err(|error| storage_error(&error))?;
+        let result = self
+            .postgres
+            .executor_write(&app.project, async |connection| {
+                let row =
+                    stored::data_change(connection, app, &message.workflow_id, &envelope).await?;
+                let Some(row) = row else { return Ok(None) };
+                let condition = row.condition()?;
+                if !matching::matches(&envelope, condition, &workload.project_key)
+                    .map_err(event_error)?
+                {
+                    return Ok(None);
+                }
+                let actor = PostgresRunStore::new(connection)
+                    .history_actor(&envelope)
+                    .await?;
+                let definition = row.definition()?;
+                let role = row.role()?;
+                workload
+                    .admit(
+                        connection,
+                        definition,
+                        Delivery {
+                            trigger: RunTrigger::DataChange,
+                            invoked_by: &format!("event:{}", source_id.as_str()),
+                            principal: workflow_user_id(),
+                            role,
+                            invoker: actor.as_ref(),
+                            key: source_id.as_str(),
+                            input: &matching::event_input(&envelope),
+                            parent: envelope.causation.as_ref(),
+                        },
+                    )
+                    .await
+                    .and_then(Admission::winner)
+            })
+            .await
+            .map_err(|error| storage_error(&error))?;
         Ok(result.map(|run| run.issue(workload)))
     }
 
@@ -375,13 +311,14 @@ impl Workflow {
                 let mut runs = PostgresRunStore::new(connection);
                 runs.reap_exhausted(&app.application, &app.environment, 0)
                     .await?;
-                let turn = runs.lease_next(
-                    &workload.runner,
-                    &app.application,
-                    &app.environment,
-                    LEASE_MS,
-                )
-                .await?;
+                let turn = runs
+                    .lease_next(
+                        &workload.runner,
+                        &app.application,
+                        &app.environment,
+                        LEASE_MS,
+                    )
+                    .await?;
                 let outcome = match turn {
                     LeaseTurn::GrantRefused(error) => return Ok(Err(error)),
                     LeaseTurn::Leased(ProductionLeaseResult::Empty) => return Ok(Ok(None)),
@@ -399,21 +336,14 @@ impl Workflow {
                 else {
                     return Ok(Ok(None));
                 };
-                let graph = sqlx::query_scalar(
-                    "SELECT graph_json::text FROM catalog.workflows
-                  WHERE environment = $1 AND application = $2 AND workflow_id = $3
-                    AND version = $4 AND graph_hash = $5",
+                let graph = stored::leased_graph(
+                    connection,
+                    app,
+                    &graph_id,
+                    graph_version,
+                    &workflow.graph_hash,
                 )
-                .bind(app.environment.as_str())
-                .bind(app.application.as_str())
-                .bind(graph_id.as_str())
-                .bind(graph_version)
-                .bind(workflow.graph_hash.to_string())
-                .fetch_one(connection)
-                .await
-                .map_err(|error| {
-                    postgres_error("read the leased workflow version", &error)
-                })?;
+                .await?;
                 Ok(Ok(Some(Admitted {
                     definition: Definition {
                         id: graph_id.clone(),
@@ -445,8 +375,13 @@ impl Workflow {
     }
 }
 
-fn wal_lsn(lsn: u64) -> String {
-    format!("{:X}/{:08X}", lsn >> 32, lsn & u64::from(u32::MAX))
+fn event_error(error: matching::MatchError) -> ProductionLeaseError {
+    let operation = error.operation();
+    if std::error::Error::source(&error).is_some() {
+        ProductionLeaseError::invalid(operation, error)
+    } else {
+        ProductionLeaseError::contract(operation, error.to_string())
+    }
 }
 
 fn completion(outcome: wit_run::Completion) -> Result<ProductionCompletion, serde_json::Error> {

@@ -1,13 +1,13 @@
 //! Build event condition inputs and read the row project.
 
+use crate::Envelope;
 use serde::Serialize;
 use serde_json::{Map, Value, json};
-use wamn_event::Envelope;
 use wamn_package::RowOperation as Op;
 
 /// Project deployment identity carried by one CDC image.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum RowProject {
+enum RowProject {
     /// The image is present and has no `project_id`; database residency governs.
     Absent,
     /// The image carries a string project identity.
@@ -26,7 +26,7 @@ pub enum RowProject {
 /// real NULL, which is present as `null`) — a condition over such a column
 /// sees `null` either way in v1; the distinction becomes load-bearing only
 /// with old-image conditions (l5i9.31).
-pub fn event_context(envelope: &Envelope) -> Value {
+fn event_context(envelope: &Envelope) -> Value {
     // The members stand in sorted order, so the context serializes the same
     // with or without serde_json/preserve_order (wamn-g1jd).
     json!({
@@ -46,7 +46,7 @@ pub fn event_context(envelope: &Envelope) -> Value {
 /// The caller can accept `Absent` only after the catalog credential confirms
 /// that the package resides in the project database. A present string
 /// remains an additional equality guard; any other carrier is unscopable.
-pub fn row_project(envelope: &Envelope) -> RowProject {
+fn row_project(envelope: &Envelope) -> RowProject {
     let image: &Map<String, Value> = match envelope.op {
         Op::Insert | Op::Update => match envelope.new.as_ref() {
             Some(image) => image,
@@ -89,46 +89,100 @@ pub fn event_input(envelope: &Envelope) -> Value {
     .expect("event input serializes")
 }
 
+/// Refusal while matching a data-change workflow.
+#[derive(Debug)]
+pub struct MatchError {
+    operation: &'static str,
+    failure: MatchFailure,
+}
+
+#[derive(Debug)]
+enum MatchFailure {
+    Contract(&'static str),
+    Condition(Box<jmespath::JmespathError>),
+}
+
+impl MatchError {
+    /// The operation that refused the event.
+    pub fn operation(&self) -> &'static str {
+        self.operation
+    }
+
+    fn contract(detail: &'static str) -> Self {
+        Self {
+            operation: "match data-change workflow",
+            failure: MatchFailure::Contract(detail),
+        }
+    }
+
+    fn condition(operation: &'static str, source: jmespath::JmespathError) -> Self {
+        Self {
+            operation,
+            failure: MatchFailure::Condition(Box::new(source)),
+        }
+    }
+}
+
+impl std::fmt::Display for MatchError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.failure {
+            MatchFailure::Condition(source) => source.fmt(formatter),
+            MatchFailure::Contract(detail) => formatter.write_str(detail),
+        }
+    }
+}
+
+impl std::error::Error for MatchError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match &self.failure {
+            MatchFailure::Condition(source) => Some(source.as_ref()),
+            MatchFailure::Contract(_) => None,
+        }
+    }
+}
+
+/// Validate the syntax accepted by data-change matching.
+///
+/// # Errors
+/// Returns the condition parser's error when the expression is invalid.
+pub fn validate_condition(condition: &str) -> Result<(), MatchError> {
+    compile(condition).map(drop)
+}
+
+fn compile(condition: &str) -> Result<jmespath::Expression<'_>, MatchError> {
+    jmespath::compile(condition)
+        .map_err(|error| MatchError::condition("compile data-change condition", error))
+}
+
 /// Check the CDC project, lineage depth and optional JMESPath condition.
-pub(super) fn matches(
+pub fn matches(
     envelope: &Envelope,
     condition: Option<&str>,
     project: &wamn_registry::ProjectEnvKey,
-) -> Result<bool, wamn_run_state::run_store::ProductionLeaseError> {
-    use wamn_run_state::run_store::ProductionLeaseError;
+) -> Result<bool, MatchError> {
     if envelope
         .causation
         .as_ref()
         .is_some_and(|parent| parent.depth >= 16)
     {
-        return Err(ProductionLeaseError::contract(
-            "match data-change workflow",
-            "event lineage is too deep",
-        ));
+        return Err(MatchError::contract("event lineage is too deep"));
     }
     match row_project(envelope) {
         RowProject::Project(other) if other != *project => return Ok(false),
         RowProject::Unscopable => {
-            return Err(ProductionLeaseError::contract(
-                "match data-change workflow",
-                "invalid event project",
-            ));
+            return Err(MatchError::contract("invalid event project"));
         }
         _ => {}
     }
     let Some(condition) = condition else {
         return Ok(true);
     };
-    let condition = jmespath::compile(condition)
-        .map_err(|error| ProductionLeaseError::invalid("compile data-change condition", error))?;
+    let condition = compile(condition)?;
     if envelope.old.is_none() && super::oldref::references_old(condition.as_ast()) {
-        return Err(ProductionLeaseError::contract(
-            "match data-change workflow",
-            "old image is missing",
-        ));
+        return Err(MatchError::contract("old image is missing"));
     }
     condition
         .search(event_context(envelope))
         .map(|value| value.is_truthy())
-        .map_err(|error| ProductionLeaseError::invalid("evaluate data-change condition", error))
+        .map_err(|error| MatchError::condition("evaluate data-change condition", error))
 }

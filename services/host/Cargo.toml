@@ -7,14 +7,11 @@ license.workspace = true
 
 [dependencies]
 wamn-application.workspace = true
-croner.workspace = true
 wamn-package.workspace = true
 wamn-routes.workspace = true
 wamn-workflow-graph.workspace = true
-wamn-oci-reference.workspace = true
 zeroize.workspace = true
 chrono.workspace = true
-jmespath.workspace = true
 wamn-event.workspace = true
 wamn-run-state.workspace = true
 wamn-envelope.workspace = true

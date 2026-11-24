@@ -24,7 +24,7 @@ use crate::WamnPostgres;
 
 pub use connection::ConnectionGuard;
 use identity::prepare_identity;
-pub use native::open_executor_read;
+pub use native::{lock_operation_grants, open_executor_read};
 use query::{QueryTransaction, open_stream};
 use transaction::Transaction;
 use values::checkout_pg_error;

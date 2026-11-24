@@ -17,6 +17,7 @@ wamn-connection-type.workspace = true
 wamn-digest.workspace = true
 wamn-event.workspace = true
 wamn-identity-protocol.workspace = true
+wamn-oci-reference.workspace = true
 wamn-package.workspace = true
 wamn-registry.workspace = true
 wamn-role.workspace = true

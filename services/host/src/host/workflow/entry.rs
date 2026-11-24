@@ -1,6 +1,6 @@
 //! Native dispatch into the workflow service's entry exports.
 
-use super::admission::{Admission, Definition, Delivery};
+use super::admission::{Admission, Delivery, wit_definition};
 use super::bindings::{Service, exports::wamn::workflow::entry};
 use super::{Authority, Refusal, SharedCtx, Workflow, storage_error, wit_run};
 use serde_json::Value;
@@ -9,9 +9,10 @@ use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 use tokio::sync::oneshot;
 use tokio::time::Instant;
+use wamn_application::application_config::check_authored_workflow;
 use wamn_application::ingress::AuthenticatedCaller;
 use wamn_identity_protocol::{PrincipalId, workflow_user_id};
-use wamn_postgres::run_store::postgres_error;
+use wamn_postgres::workflow::admission::{self as stored, Definition};
 use wamn_run_state::admission::RunTrigger;
 use wamn_run_state::run_store::ProductionLeaseError;
 use wash_runtime::engine::dispatch::{GuestCall, GuestCallFuture};
@@ -55,17 +56,10 @@ impl Workflow {
         let prepare = self
             .postgres
             .executor_write(&app.project, async |connection| {
-                let row = sqlx::query(
-                "SELECT workflow_id, version, graph_json::text AS graph, graph_hash, execution_role
-                   FROM catalog.workflows WHERE environment = $1 AND application = $2
-                    AND enabled AND trigger = 'request' AND path = $3 FOR SHARE"
-            ).bind(app.environment.as_str()).bind(app.application.as_str()).bind(request.path)
-                .fetch_optional(&mut *connection).await
-                .map_err(|error| postgres_error("load Request workflow", &error))?;
-                let Some(row) = row else {
+                let definition = stored::request_workflow(connection, app, request.path).await?;
+                let Some(definition) = definition else {
                     return Ok(Ok(None));
                 };
-                let definition = Definition::from_row(&row)?;
                 let permission =
                     wamn_routes::workflow_permission(&app.application, definition.id.as_str());
                 if !request.caller.permits(&permission) {
@@ -88,7 +82,7 @@ impl Workflow {
                         "graph hash mismatch",
                     ));
                 }
-                let checked = super::authoring::check(&graph, app, definition.role.as_deref())
+                let checked = check_authored_workflow(app, &graph, definition.role.as_deref())
                     .map_err(|error| {
                         ProductionLeaseError::invalid("check Request workflow", error)
                     })?;
@@ -150,7 +144,7 @@ impl Workflow {
                 definition,
             } => (
                 workload.create_authority(authority),
-                definition.wit(),
+                wit_definition(definition),
                 request.input.to_string(),
                 None,
             ),
@@ -199,17 +193,11 @@ impl Workflow {
         let admitted = self
             .postgres
             .executor_write(&app.project, async |connection| {
-                let row = sqlx::query(
-                "SELECT workflow_id, version, graph_json::text AS graph, graph_hash, execution_role
-                   FROM catalog.workflows WHERE environment = $1 AND application = $2
-                    AND enabled AND workflow_id = $3 FOR SHARE"
-            ).bind(app.environment.as_str()).bind(app.application.as_str()).bind(request.workflow_id)
-                .fetch_optional(&mut *connection).await
-                .map_err(|error| postgres_error("load run-now workflow", &error))?;
-                let Some(row) = row else {
+                let definition =
+                    stored::run_now_workflow(connection, app, request.workflow_id).await?;
+                let Some(definition) = definition else {
                     return Ok(Ok(None));
                 };
-                let definition = Definition::from_row(&row)?;
                 let identity = match request.run_as {
                     RunAs::Admin => request_identity(request.caller, None),
                     RunAs::Workflow => definition

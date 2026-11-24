@@ -1,15 +1,11 @@
 //! Host authority and dispatch for the workflow service in an application workload.
 
 mod admission;
-mod authoring;
 mod broker;
 mod entry;
-mod events;
 pub(super) mod lifecycle;
 mod node;
-mod oldref;
 mod request;
-mod schedule;
 
 pub(super) use entry::{RequestCall, RunAs, RunNow};
 

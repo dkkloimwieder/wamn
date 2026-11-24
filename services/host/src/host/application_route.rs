@@ -11,14 +11,14 @@
 //! second writer exists. A grant stores one row, and a caller holds exactly
 //! its rows, so a grant works while two releases serve during a rollout.
 //!
-use wamn_routes::HostAttachment;
-use wamn_routes::HostHandler;
-use wamn_routes::HostRouteAuthority;
-use wamn_package::sealed_operation_reference;
 use std::collections::{BTreeMap, BTreeSet};
 use wamn_identity_protocol::ADMIN_ROLE;
 use wamn_identity_protocol::PrincipalId;
-use wamn_identity::application::OPERATION_GRANT_LOCK_SQL;
+use wamn_package::sealed_operation_reference;
+use wamn_postgres::operation::lock_operation_grants;
+use wamn_routes::HostAttachment;
+use wamn_routes::HostHandler;
+use wamn_routes::HostRouteAuthority;
 
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -348,10 +348,7 @@ impl ApplicationRoutes<'_> {
                 &attachment.operation.clone().into(),
                 async |client| {
                     if lock {
-                        sqlx::query(OPERATION_GRANT_LOCK_SQL)
-                            .bind(project_env_key.as_str())
-                            .fetch_one(&mut *client)
-                            .await?;
+                        lock_operation_grants(client, project_env_key).await?;
                     }
                     work(client).await
                 },

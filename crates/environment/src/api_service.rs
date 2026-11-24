@@ -34,10 +34,7 @@ pub async fn create(
         !request.roles.is_empty(),
         "an API service requires an authored role"
     );
-    sqlx::query(wamn_identity::application::OPERATION_GRANT_LOCK_SQL)
-        .bind(key.as_str())
-        .execute(&mut **transaction)
-        .await?;
+    wamn_postgres::operation::lock_operation_grants(transaction, key).await?;
     let subject = format!("api.{}.{}.{}", request.org, request.project, request.name);
     let principal =
         service::write_service(transaction, domain, &subject, request.display_name).await?;

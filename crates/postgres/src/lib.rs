@@ -118,6 +118,7 @@ pub fn require_identity(
 pub mod operation;
 pub mod run_store;
 pub mod schema;
+pub mod workflow;
 
 mod transaction_identity;
 pub use transaction_identity::{bind_transaction_identity, transaction_identity_sql};

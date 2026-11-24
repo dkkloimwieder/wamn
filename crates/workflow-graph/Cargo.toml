@@ -6,7 +6,12 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+anyhow.workspace = true
+chrono.workspace = true
+croner.workspace = true
+http.workspace = true
 wamn-digest.workspace = true
+wamn-event.workspace = true
 wamn-package.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true

@@ -1,5 +1,8 @@
 //! Authored workflow graphs and their canonical JSON identity.
 
+pub mod authoring;
+pub mod schedule;
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{collections::BTreeMap, fmt};
