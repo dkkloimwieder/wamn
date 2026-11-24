@@ -67,11 +67,7 @@ fn component(name: &str, export: &str, import: Option<&str>, value: u32) -> Nati
 }
 
 async fn load(components: Vec<NativeComponent>) -> anyhow::Result<NativeWorkload> {
-    load_with_reuse(
-        components,
-        vec![WitInterface::from(OPERATION)],
-    )
-    .await
+    load_with_reuse(components, vec![WitInterface::from(OPERATION)]).await
 }
 
 async fn load_with_reuse(

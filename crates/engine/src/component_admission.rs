@@ -361,12 +361,17 @@ fn validate_data_change_signature(
     let Some(("handle", handle)) = exports.next() else {
         anyhow::bail!("data change interface must export handle");
     };
-    anyhow::ensure!(exports.next().is_none(), "data change interface must export only handle");
+    anyhow::ensure!(
+        exports.next().is_none(),
+        "data change interface must export only handle"
+    );
     let ComponentItem::ComponentFunc(handle) = handle.ty else {
         anyhow::bail!("handle is not a component function");
     };
-    anyhow::ensure!(handle.async_() && handle.params().eq([("event", Type::String)]),
-        "handle must be async and accept an event string");
+    anyhow::ensure!(
+        handle.async_() && handle.params().eq([("event", Type::String)]),
+        "handle must be async and accept an event string"
+    );
     let mut results = handle.results();
     anyhow::ensure!(
         matches!(results.next(), Some(Type::Result(result)) if result.ok().is_none() && result.err() == Some(Type::String))

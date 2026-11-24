@@ -107,7 +107,10 @@ pub async fn record_batch(
         scalar::uuid("value.maker_id", maker_id)?;
     }
     let (widget_id, _) = lines.swap_remove(0);
-    batch_sql::find_widget(transaction, wamn_guest::postgres_statements::Uuid(widget_id))
-        .await
-        .map_err(|error| AccessError::from_statement(&error, Constraints::NONE))
+    batch_sql::find_widget(
+        transaction,
+        wamn_guest::postgres_statements::Uuid(widget_id),
+    )
+    .await
+    .map_err(|error| AccessError::from_statement(&error, Constraints::NONE))
 }

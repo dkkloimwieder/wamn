@@ -2,10 +2,7 @@ pub(super) mod plan;
 pub use plan::{
     application_dependency_permissions, composes_integration, deploy_runtime_schema, parse_package,
 };
-use plan::{
-    pin_runtime_schemas, project_components, project_routes,
-    validate_request,
-};
+use plan::{pin_runtime_schemas, project_components, project_routes, validate_request};
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
@@ -1007,7 +1004,6 @@ mod tests {
             .expect_err("an authored method refuses");
         assert_eq!(refusal.error_type(), PublishManifestErrorType::Document);
     }
-
 
     /// A package directory whose `descriptors/` holds the canonical descriptor
     /// of `fact` with one connection, as an unpacked artifact holds it.

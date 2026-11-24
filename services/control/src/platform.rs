@@ -1,12 +1,12 @@
 //! Submit and run platform SQL, environment, and project operation Jobs.
 
-use wamn_postgres::LifecycleLock;
-use wamn_registry::lifecycle_lock::LifecycleLocks as _;
 use anyhow::{Context as _, ensure};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use wamn_environment::environment::document::EnvironmentFile;
+use wamn_postgres::LifecycleLock;
 use wamn_provision::migrations::MigrationDatabase;
+use wamn_registry::lifecycle_lock::LifecycleLocks as _;
 
 use crate::{Configuration, execution::Execution};
 

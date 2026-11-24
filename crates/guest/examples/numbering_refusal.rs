@@ -15,7 +15,9 @@ struct Component;
 
 impl bindings::Guest for Component {
     async fn run() -> (bool, bool) {
-        use wamn_guest::postgres_statements::{StatementErrorType, next_number, operation_transaction};
+        use wamn_guest::postgres_statements::{
+            StatementErrorType, next_number, operation_transaction,
+        };
         let mut transaction = operation_transaction().await.expect("host transaction");
         let refused = next_number(&mut transaction, "dated", &[])
             .await

@@ -1,12 +1,12 @@
 //! Server-authorized application Jobs and bounded Kubernetes observations.
 
-use wamn_registry::configuration::ConfigurationStore as _;
-use wamn_routes::HostAttachment;
 use anyhow::Context as _;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use wamn_identity_protocol::PrincipalId;
 use wamn_kubernetes::client::KubernetesApi;
+use wamn_registry::configuration::ConfigurationStore as _;
+use wamn_routes::HostAttachment;
 
 use super::{ControlRoutes, Refusal};
 

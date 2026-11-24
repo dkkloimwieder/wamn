@@ -10,10 +10,10 @@ use tokio::time::Instant;
 use wash_runtime::plugin::HostPlugin;
 use wash_runtime::wit::WitWorld;
 
+use crate::invocation_trace::InvocationTrace;
 use wamn_application::MAX_HOST_CALL_DURATION;
 use wamn_application::ingress::RouteProvider;
 use wamn_application::invocation_authority::InvocationAuthority;
-use crate::invocation_trace::InvocationTrace;
 
 pub const INVOCATION_SCOPES_ID: &str = "wamn:invocation-scopes";
 

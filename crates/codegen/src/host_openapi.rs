@@ -74,7 +74,9 @@ pub fn host_openapi(set: HostRouteSet) -> Result<Vec<u8>> {
             input,
             output_schema,
         );
-        operation.extensions.insert("wamn-contract".to_owned(), response_contract);
+        operation
+            .extensions
+            .insert("wamn-contract".to_owned(), response_contract);
     }
     let spec = document(
         host_route_package().as_str().to_owned(),
@@ -89,12 +91,14 @@ pub fn host_openapi(set: HostRouteSet) -> Result<Vec<u8>> {
 fn response_contract(descriptor: &Value, refusals: &Value) -> Value {
     let errors = crate::client_fields::errors_of(Some(refusals))
         .into_iter()
-        .map(|case| json!({
-            "literal": case.literal,
-            "required": case.detail_required,
-            "sources": case.sources,
-            "text": case.text,
-        }))
+        .map(|case| {
+            json!({
+                "literal": case.literal,
+                "required": case.detail_required,
+                "sources": case.sources,
+                "text": case.text,
+            })
+        })
         .collect::<Vec<_>>();
     json!({
         "resultClass": descriptor["result"],

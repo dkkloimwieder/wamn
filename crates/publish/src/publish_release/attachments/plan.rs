@@ -122,7 +122,10 @@ pub(in super::super) fn resolve_owned_route_methods(
                 .is_some_and(|(_, path)| path == "files" || path.starts_with("files/"))
         };
         if file_prefix(&normalized.path)
-            || normalized.path.strip_prefix("/api").is_some_and(file_prefix)
+            || normalized
+                .path
+                .strip_prefix("/api")
+                .is_some_and(file_prefix)
         {
             return Err(PublishManifestError::new(
                 PublishManifestErrorType::Document,

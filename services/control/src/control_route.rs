@@ -926,7 +926,8 @@ async fn write_application(
         project_authority(system, &mut transaction, target, principal, issuer).await?;
         transaction.commit().await?;
         anyhow::Ok(())
-    }.await;
+    }
+    .await;
     drop(client);
     result
 }
@@ -958,7 +959,8 @@ async fn write_status(
         write_environment_status(&mut transaction, status).await?;
         transaction.commit().await?;
         anyhow::Ok(())
-    }.await;
+    }
+    .await;
     drop(client);
     result
 }

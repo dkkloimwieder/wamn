@@ -1445,8 +1445,8 @@ mod tests {
 
 #[cfg(test)]
 mod connection_alias_tests {
-    use wamn_package::ConnectionMode;
     use super::*;
+    use wamn_package::ConnectionMode;
     #[test]
     fn configuration_connections_follow_each_nodes_alias() {
         for parameter in ["store_alias", "requirement"] {

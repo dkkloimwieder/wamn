@@ -42,13 +42,17 @@ async fn system_migration_login(
 async fn platform_initialization_applies_pending_migrations_on_upgrade() {
     use sqlx::SqlSafeStr as _;
     use sqlx::migrate::{Migration, MigrationType};
-    use wamn_provision::migrations::MigrationDatabase;
     use wamn_environment::platform_migrations;
+    use wamn_provision::migrations::MigrationDatabase;
     let postgres = wamn_test_infrastructure::containers::start_postgres()
         .await
         .unwrap();
     postgres.create_system_role().await.unwrap();
-    let url = postgres.create_database("system").await.unwrap().to_string();
+    let url = postgres
+        .create_database("system")
+        .await
+        .unwrap()
+        .to_string();
     let mut client = connect(&url).await;
     let source = |version, sql: &str| {
         Migration::new(
@@ -74,9 +78,13 @@ async fn platform_initialization_applies_pending_migrations_on_upgrade() {
         .await
         .is_err()
     );
-    initialize_system(&mut client, migration_input.as_str(), std::slice::from_ref(&first))
-        .await
-        .unwrap();
+    initialize_system(
+        &mut client,
+        migration_input.as_str(),
+        std::slice::from_ref(&first),
+    )
+    .await
+    .unwrap();
     let sources = [first, second];
     initialize_system(&mut client, migration_input.as_str(), &sources)
         .await

@@ -27,19 +27,23 @@ mod tests {
     const COMMAND_PRINCIPAL: Uuid = Uuid::from_u128(0x0000_0000_0000_4000_8000_0000_0000_00f2);
     /// The administrative operation that every fixture write logs.
     const FIXTURE_OPERATION: &str = "admin:receiving-data-access-fixture";
-    const HISTORY_SQL: &str =
-        include_str!("../../../apps/wamn_receiving/query/receiving/load_purchase_order_history/load_purchase_order_history.sql");
+    const HISTORY_SQL: &str = include_str!(
+        "../../../apps/wamn_receiving/query/receiving/load_purchase_order_history/load_purchase_order_history.sql"
+    );
     const UPDATE_SQL: &str = "wamn_receiving/sql/purchase_order/update.sql";
-    const LOCK_PURCHASE_ORDER_SQL: &str =
-        include_str!("../../../apps/wamn_receiving/command/receiving/record_receipt/lock_purchase_order.sql");
-    const RECORD_RECEIPT_SQL: &str =
-        include_str!("../../../apps/wamn_receiving/command/receiving/record_receipt/record_receipt.sql");
+    const LOCK_PURCHASE_ORDER_SQL: &str = include_str!(
+        "../../../apps/wamn_receiving/command/receiving/record_receipt/lock_purchase_order.sql"
+    );
+    const RECORD_RECEIPT_SQL: &str = include_str!(
+        "../../../apps/wamn_receiving/command/receiving/record_receipt/record_receipt.sql"
+    );
     const OVERLAY_FIELDS_MIGRATION: &str =
         include_str!("../../../apps/client_acme_receiving/migrations/0001_initial.sql");
     const OVERLAY_GET_SQL: &str = "client_acme_receiving/sql/purchase_order/get.sql";
     const OVERLAY_UPDATE_SQL: &str = "client_acme_receiving/sql/purchase_order/update.sql";
-    const OVERLAY_LOAD_DETAIL_SQL: &str =
-        include_str!("../../../apps/client_acme_receiving/query/quality/load_purchase_order_detail/load_purchase_order_detail.sql");
+    const OVERLAY_LOAD_DETAIL_SQL: &str = include_str!(
+        "../../../apps/client_acme_receiving/query/quality/load_purchase_order_detail/load_purchase_order_detail.sql"
+    );
     const OVERLAY_APPROVE_INSPECTION_SQL: &str = include_str!(
         "../../../apps/client_acme_receiving/command/quality/approve_inspection/approve_inspection.sql"
     );
@@ -792,10 +796,9 @@ mod tests {
 
     async fn execute_create_inspection(client: &mut Client, receipt_id: Uuid) -> Result<bool> {
         sqlx::raw_sql("COMMIT").execute(&mut *client).await?;
-        let mut transaction =
-            begin_as(client, COMMAND_PRINCIPAL)
-                .await
-                .context("begin exact create_inspection transaction")?;
+        let mut transaction = begin_as(client, COMMAND_PRINCIPAL)
+            .await
+            .context("begin exact create_inspection transaction")?;
         let inserted = sqlx::query(OVERLAY_INSERT_INSPECTION_SQL)
             .bind(receipt_id)
             .fetch_optional(&mut *transaction)
@@ -1074,10 +1077,9 @@ mod tests {
         location_id: Uuid,
     ) -> Result<()> {
         sqlx::raw_sql("COMMIT").execute(&mut *client).await?;
-        let mut transaction =
-            begin_as(client, FIXTURE_PRINCIPAL)
-                .await
-                .context("begin location-lock test transaction")?;
+        let mut transaction = begin_as(client, FIXTURE_PRINCIPAL)
+            .await
+            .context("begin location-lock test transaction")?;
         let line = json!([{
             "purchase_order_line_id": purchase_order_line_id.hyphenated().to_string(),
             "quantity": "1.0",
@@ -1226,10 +1228,9 @@ mod tests {
         command: &ReceiptCommand,
     ) -> Result<std::result::Result<ReceiptCommandResult, DomainRefusal>> {
         sqlx::raw_sql("COMMIT").execute(&mut *client).await?;
-        let mut transaction =
-            begin_as(client, COMMAND_PRINCIPAL)
-                .await
-                .context("begin exact record_receipt transaction")?;
+        let mut transaction = begin_as(client, COMMAND_PRINCIPAL)
+            .await
+            .context("begin exact record_receipt transaction")?;
         let outcome = match record_receipt_work(&mut transaction, command).await {
             Ok(result) => {
                 transaction
@@ -1549,9 +1550,10 @@ mod tests {
         .await
         .map(|result| result.rows_affected())
         .context("insert supplier fixture")?;
-        sqlx::raw_sql(sqlx::AssertSqlSafe(
-            format!("SET LOCAL ROLE \"{}\"", role.replace('"', "\"\"")),
-        ))
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+            "SET LOCAL ROLE \"{}\"",
+            role.replace('"', "\"\"")
+        )))
         .execute(&mut *client)
         .await
         .map(drop)?;

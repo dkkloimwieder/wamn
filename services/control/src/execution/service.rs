@@ -8,9 +8,9 @@ use std::time::Duration;
 use wamn_environment::api_service;
 use wamn_identity_protocol::{PrincipalId, pat_prefix::PatPrefix};
 use wamn_package::canonical_name::CanonicalName;
+use wamn_postgres::identity::application::service;
 use wamn_registry::{EnvName, ProjectId, Triple, deployment::DeploymentStore as _};
 use wamn_role::RoleName;
-use wamn_postgres::identity::application::service;
 
 use super::Execution;
 

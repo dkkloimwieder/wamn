@@ -1,20 +1,20 @@
 //! A release bundle loaded from a directory, and every refusal of one.
 
-use wamn_edge::config::TargetConfig;
-use wamn_edge::serving_context::ReleaseTarget;
-use wamn_edge_document::edge_bundle::{BUNDLE_FILE_NAME, BUNDLE_FORMAT};
-use wamn_edge_document::edge_bundle::COMPONENTS_FILE_NAME;
-use wamn_edge_document::edge_bundle::GRANTS_FILE_NAME;
-use wamn_edge_document::edge_bundle::INGRESS_FILE_NAME;
-use wamn_package::PackageCoordinate;
-use wamn_edge_document::RELEASE_MANIFEST_FILE_NAME;
-use wamn_edge_document::ServingComponent;
-use wamn_edge_document::SERVING_MANIFEST_FORMAT_VERSION;
-use wamn_edge_document::ServingManifest;
-use wamn_edge_document::ServingRelease;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
+use wamn_edge::config::TargetConfig;
+use wamn_edge::serving_context::ReleaseTarget;
+use wamn_edge_document::RELEASE_MANIFEST_FILE_NAME;
+use wamn_edge_document::SERVING_MANIFEST_FORMAT_VERSION;
+use wamn_edge_document::ServingComponent;
+use wamn_edge_document::ServingManifest;
+use wamn_edge_document::ServingRelease;
+use wamn_edge_document::edge_bundle::COMPONENTS_FILE_NAME;
+use wamn_edge_document::edge_bundle::GRANTS_FILE_NAME;
+use wamn_edge_document::edge_bundle::INGRESS_FILE_NAME;
+use wamn_edge_document::edge_bundle::{BUNDLE_FILE_NAME, BUNDLE_FORMAT};
+use wamn_package::PackageCoordinate;
 
 use serde_json::json;
 use wamn_component_policy::{

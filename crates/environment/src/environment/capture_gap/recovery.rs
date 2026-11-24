@@ -1,10 +1,10 @@
 //! Repair lost replication slots and record operator resynchronization.
 //! Recovery keeps the reader stopped. Control restarts it after closing the gap.
 
-use wamn_postgres::LifecycleLock;
 use super::plan::pg_lsn;
 use sqlx::PgConnection as Client;
 use sqlx::Row as _;
+use wamn_postgres::LifecycleLock;
 
 use anyhow::{Context as _, bail, ensure};
 use async_nats::header::NATS_MESSAGE_ID;

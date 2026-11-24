@@ -1,15 +1,18 @@
 //! Admin-side installation of a single org.
 
+use anyhow::{Context as _, ensure};
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use k8s_openapi::api::{
     apps::v1::Deployment,
     batch::v1::Job,
     core::v1::{ConfigMap, Namespace, Secret, Service},
     discovery::v1::EndpointSlice,
 };
-use kube::{Api, api::{ListParams, Patch, PatchParams, PostParams}};
+use kube::{
+    Api,
+    api::{ListParams, Patch, PatchParams, PostParams},
+};
 use serde::Deserialize as _;
-use anyhow::{Context as _, ensure};
-use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde_json::{Value, json};
 use std::{net::IpAddr, path::PathBuf, time::Duration};
 use wamn_kubernetes::{Target, client::APPLY_MANAGER, helm, job};

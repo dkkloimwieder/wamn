@@ -36,8 +36,12 @@ pub const MODEL_SCHEMA: &str = "acme_model";
 #[derive(Debug, Deserialize)]
 #[serde(tag = "kind")]
 enum Resource {
-    Cluster { spec: ClusterSpec },
-    Database { spec: DatabaseSpec },
+    Cluster {
+        spec: ClusterSpec,
+    },
+    Database {
+        spec: DatabaseSpec,
+    },
     #[serde(other)]
     Other,
 }
@@ -71,7 +75,10 @@ struct Managed {
 /// stand-in never drops an attribute that the chart declares.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-#[expect(clippy::struct_excessive_bools, reason = "the fields mirror the CloudNativePG role schema")]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "the fields mirror the CloudNativePG role schema"
+)]
 pub struct ManagedRole {
     pub name: String,
     #[serde(default)]
@@ -103,7 +110,6 @@ struct DatabaseSpec {
 struct Extension {
     name: String,
 }
-
 
 /// Run one statement, naming it in the error.
 pub async fn execute(connection: &mut PgConnection, statement: &str) -> Result<()> {
@@ -173,7 +179,11 @@ fn managed_role_sql(role: &ManagedRole) -> Result<String> {
         write!(sql, " CONNECTION LIMIT {limit}")?;
     }
     if !role.in_roles.is_empty() {
-        let groups: Vec<String> = role.in_roles.iter().map(|group| escape_identifier(group)).collect();
+        let groups: Vec<String> = role
+            .in_roles
+            .iter()
+            .map(|group| escape_identifier(group))
+            .collect();
         write!(sql, " IN ROLE {}", groups.join(", "))?;
     }
     if role.login {
@@ -231,7 +241,10 @@ async fn cloudnative_pg(postgres: &Postgres, resources: &[Resource]) -> Result<(
         for extension in &spec.extensions {
             execute(
                 &mut connection,
-                &format!("CREATE EXTENSION IF NOT EXISTS {}", escape_identifier(&extension.name)),
+                &format!(
+                    "CREATE EXTENSION IF NOT EXISTS {}",
+                    escape_identifier(&extension.name)
+                ),
             )
             .await?;
         }
@@ -408,7 +421,8 @@ pub async fn system() -> Result<System> {
     let database = spec.bootstrap.initdb.database.clone();
     let roles = spec.managed.roles.clone();
     let migration = MigrationDatabase::System.login(&database);
-    let mut admin = wamn_postgres::connect(database_admin_url(&postgres, &database)?.as_str()).await?;
+    let mut admin =
+        wamn_postgres::connect(database_admin_url(&postgres, &database)?.as_str()).await?;
     wamn_platform_install::provision_system::install_system(
         &mut admin,
         postgres

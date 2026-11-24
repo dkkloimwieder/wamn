@@ -1,10 +1,10 @@
 //! Application host routes served on the workload's native ingress.
 
+use std::collections::BTreeSet;
+use std::sync::Arc;
 use wamn_routes::HostAttachment;
 use wamn_routes::HostHandler;
 use wamn_routes::HostRouteSet;
-use std::collections::BTreeSet;
-use std::sync::Arc;
 
 use serde_json::{Value, json};
 use wamn_application::application_config::ApplicationConfig;

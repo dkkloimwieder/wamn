@@ -109,7 +109,9 @@ pub(super) mod receiving_load_purchase_order_history {
                         "update" => contract::TypeValue::Update,
                         "delete" => contract::TypeValue::Delete,
                         _ => {
-                            return Err(crate::data::AccessError::internal("unknown history event"));
+                            return Err(crate::data::AccessError::internal(
+                                "unknown history event",
+                            ));
                         }
                     };
                     Ok(contract::LoadPurchaseOrderHistoryRow {

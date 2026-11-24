@@ -13,8 +13,8 @@ mod manifest_error;
 pub mod source_name;
 
 use self::source_name::SourceName;
-use crate::local_operation::LocalOperation;
 use crate::OperationType;
+use crate::local_operation::LocalOperation;
 pub use manifest_error::{ManifestError, ManifestErrorType};
 
 pub const CONTROL_OWNED_RELATION_TABLES: [&str; 2] = ["wamn_entities", "wamn_cdc_exclusions"];

@@ -2,8 +2,8 @@
 
 use std::path::{Path, PathBuf};
 
-use serde_json::{Value, json};
 use crate::release_chart::{self, ImageSet};
+use serde_json::{Value, json};
 
 #[derive(Debug)]
 pub struct Chart(pub PathBuf);

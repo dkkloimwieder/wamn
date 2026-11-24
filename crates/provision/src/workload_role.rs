@@ -4,7 +4,6 @@ use std::fmt;
 
 use wamn_identity_protocol::AuthorityClass;
 
-
 /// Project database login families.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WorkloadRoleFamily {
@@ -113,7 +112,6 @@ impl WorkloadRoleFamily {
             _ => self.cli_stem(),
         }
     }
-
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -212,7 +210,11 @@ pub fn workload_login(
     let actual = identity.identity_type();
     let expected = family.identity_type();
     if actual != expected {
-        return Err(WorkloadRoleIdentityError { family, expected, actual });
+        return Err(WorkloadRoleIdentityError {
+            family,
+            expected,
+            actual,
+        });
     }
     Ok(family.login_name().parse().expect("fixed project login"))
 }

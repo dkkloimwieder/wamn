@@ -1,9 +1,9 @@
 //! Entry-owned operations on the Store's host transaction.
 
-use wamn_package::canonical_name::CanonicalName;
-use wamn_package::registered_operation::RegisteredOperation;
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use wamn_package::canonical_name::CanonicalName;
+use wamn_package::registered_operation::RegisteredOperation;
 
 use crate::invocation::{AuthorizedInvocation, InvocationRequest};
 use anyhow::Context as _;
@@ -22,13 +22,11 @@ use wamn_engine::operation::WamnOperation;
 use wash_runtime::engine::ctx::ActiveCtx;
 use wash_runtime::wasmtime::component::{Accessor, HasData, Resource, ResourceTable};
 
-use wamn_authentication::authorization::{SessionIdentityError, SessionIdentityErrorType};
-use wamn_connection::connection_facts::ConnectionCache as _;
 use super::scope_registry;
 use super::write_log::{Claim, WriteLogStore};
-use super::{
-    OperationTransaction, PgCommitFailure, WAMN_POSTGRES_ID, OperationHost,
-};
+use super::{OperationHost, OperationTransaction, PgCommitFailure, WAMN_POSTGRES_ID};
+use wamn_authentication::authorization::{SessionIdentityError, SessionIdentityErrorType};
+use wamn_connection::connection_facts::ConnectionCache as _;
 
 /// Delivery counters shared by all operations of this PostgreSQL plugin.
 #[derive(Debug)]
@@ -719,10 +717,7 @@ async fn begin(
         },
     )
     .map_err(|error| {
-        if error
-            .downcast_ref::<OperationRefusal>()
-            .is_some()
-        {
+        if error.downcast_ref::<OperationRefusal>().is_some() {
             Refusal::GrantDenied
         } else {
             binding_error(OperationErrorType::Identity, workload, error)
@@ -751,8 +746,12 @@ async fn begin(
             .begin_operation_transaction(open.scope())
             .await
             .map_err(Refusal::Postgres)?;
-        scope_registry::bind_operation_transaction(&open.postgres.scopes, open.scope(), &transaction)
-            .map_err(|error| binding_error(OperationErrorType::Transaction, open.scope(), error))?;
+        scope_registry::bind_operation_transaction(
+            &open.postgres.scopes,
+            open.scope(),
+            &transaction,
+        )
+        .map_err(|error| binding_error(OperationErrorType::Transaction, open.scope(), error))?;
         open.settled = false;
         return Ok((Some(open), Begun::New(delivery)));
     }
@@ -799,10 +798,12 @@ async fn claim_operation(
             .await
             .map_err(Refusal::Postgres)?;
         if matches!(claim, Claim::New) {
-            scope_registry::bind_operation_transaction(&open.postgres.scopes, open.scope(), &transaction)
-                .map_err(|error| {
-                    binding_error(OperationErrorType::Transaction, open.scope(), error)
-                })?;
+            scope_registry::bind_operation_transaction(
+                &open.postgres.scopes,
+                open.scope(),
+                &transaction,
+            )
+            .map_err(|error| binding_error(OperationErrorType::Transaction, open.scope(), error))?;
         } else {
             transaction.rollback().await.map_err(Refusal::Postgres)?;
         }
@@ -917,8 +918,7 @@ impl OperationHost {
             let claim = claim_operation(
                 &open,
                 policy.host_transaction,
-                policy.type_
-                    == Some(ApplicationOperationType::Delete),
+                policy.type_ == Some(ApplicationOperationType::Delete),
                 hash.to_string().into_bytes(),
             )
             .await
@@ -937,7 +937,10 @@ impl OperationHost {
                             if let Some(transaction) = open.transaction() {
                                 transaction.rollback().await?;
                             }
-                            scope_registry::revoke_operation_transaction(&self.scopes, authority.id());
+                            scope_registry::revoke_operation_transaction(
+                                &self.scopes,
+                                authority.id(),
+                            );
                             return Ok(Err(node_types::NodeError::Cancelled));
                         }
                         Err(error) => {
@@ -1121,10 +1124,7 @@ pub struct WorkflowNode<'a> {
 
 impl OperationHost {
     /// Share the application document already read from the route sibling.
-    pub fn workflow_application(
-        &self,
-        route: &str,
-    ) -> Option<Arc<ApplicationConfig>> {
+    pub fn workflow_application(&self, route: &str) -> Option<Arc<ApplicationConfig>> {
         self.operation_workloads
             .read()
             .expect("operation workloads lock poisoned")

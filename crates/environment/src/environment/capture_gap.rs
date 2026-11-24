@@ -1,6 +1,4 @@
 //! Stop capture for recovery and retry reader restart after resynchronization.
-use wamn_postgres::LifecycleLock;
-use wamn_kubernetes::client::resource;
 use super::Platform;
 use anyhow::{Context as _, ensure};
 use k8s_openapi::api::apps::v1::Deployment;
@@ -9,6 +7,8 @@ pub use recovery::{
     CloseCaptureGapRequest, ClosedCaptureGap, RecoverCaptureGapRequest, RecoveredCaptureGap,
 };
 use serde_json::json;
+use wamn_kubernetes::client::resource;
+use wamn_postgres::LifecycleLock;
 use wamn_registry::Triple;
 
 mod plan;

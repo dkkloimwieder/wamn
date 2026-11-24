@@ -59,7 +59,9 @@ impl IdentityHttp {
 
 fn service_endpoint(value: &str, route: &str) -> anyhow::Result<Url> {
     let mut endpoint = Url::parse(value).map_err(|_| {
-        anyhow::anyhow!("identity endpoint must be an HTTPS URL without credentials, query, or fragment")
+        anyhow::anyhow!(
+            "identity endpoint must be an HTTPS URL without credentials, query, or fragment"
+        )
     })?;
     anyhow::ensure!(
         endpoint.scheme() == "https"
@@ -77,13 +79,13 @@ fn service_endpoint(value: &str, route: &str) -> anyhow::Result<Url> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::users::{UserClient, UserRefused, invitation_body};
+    use super::*;
     use std::io::Write as _;
-    use wamn_identity_protocol::PrincipalId;
     use std::os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _};
     use std::sync::Arc;
     use std::sync::atomic::{AtomicU64, Ordering};
+    use wamn_identity_protocol::PrincipalId;
 
     use rcgen::{BasicConstraints, CertificateParams, IsCa, Issuer, KeyPair, KeyUsagePurpose};
     use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};

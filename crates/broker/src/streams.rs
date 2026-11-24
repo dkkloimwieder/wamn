@@ -6,8 +6,7 @@ pub use plan::validate_inputs;
 use std::time::Duration;
 
 use crate::events::{
-    consumer_config_matches, event_consumer_config, source_stream_config,
-    stream_config_matches,
+    consumer_config_matches, event_consumer_config, source_stream_config, stream_config_matches,
 };
 use anyhow::{Context as _, ensure};
 use async_nats::jetstream::Context;

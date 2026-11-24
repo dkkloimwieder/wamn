@@ -81,10 +81,7 @@ pub async fn prune_expired_record_history(
     .await
     .context("audit retention credential connect")?;
 
-    let result = async {
-        prune(&mut client).await
-    }
-    .await;
+    let result = async { prune(&mut client).await }.await;
     drop(client);
     result
 }

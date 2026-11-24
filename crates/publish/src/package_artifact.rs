@@ -2,12 +2,12 @@
 //! Publication admits the build's components and pins the stock OCI images.
 
 pub(super) mod plan;
-use wamn_package::manifest::deploy::PublishedComponent;
-use wamn_package::manifest::PolicyContractState;
-use wamn_package::PackageCoordinate;
 use plan::{
     image_manifest, package_coordinate, refuse_workflow_declarations, tar_layer, validate_append,
 };
+use wamn_package::PackageCoordinate;
+use wamn_package::manifest::PolicyContractState;
+use wamn_package::manifest::deploy::PublishedComponent;
 
 use std::collections::BTreeMap;
 use std::os::unix::fs::DirBuilderExt as _;
@@ -306,7 +306,10 @@ fn admit_components(
         )
         .with_context(|| format!("admit component {name}"))?;
         wamn_codegen::fingerprint::verify_digest(
-            output, finished, &path, descriptor.component_digest,
+            output,
+            finished,
+            &path,
+            descriptor.component_digest,
         )?;
         if !manifest.connections.is_empty() {
             let declaration = &manifest.components[name.as_str()];
@@ -878,5 +881,4 @@ mod tests {
                 .unwrap()
         );
     }
-
 }

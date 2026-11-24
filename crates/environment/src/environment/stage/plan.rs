@@ -28,13 +28,13 @@ pub fn sequence_defaults<'a>(
     }
     Ok(defaults
         .into_iter()
-        .map(|((application, name), (_, pattern))| {
-            crate::configuration::SequenceDefault {
+        .map(
+            |((application, name), (_, pattern))| crate::configuration::SequenceDefault {
                 application,
                 name: name.to_string(),
                 pattern,
-            }
-        })
+            },
+        )
         .collect())
 }
 

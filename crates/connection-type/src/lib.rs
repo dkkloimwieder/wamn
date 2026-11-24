@@ -61,7 +61,6 @@ impl ComponentConnectionRequirement {
     pub fn canonical_bytes(&self) -> Vec<u8> {
         serde_json::to_vec(self).expect("portable component connection requirement serializes")
     }
-
 }
 
 /// Shape version for portable connection-type descriptors.

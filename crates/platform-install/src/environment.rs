@@ -1,5 +1,4 @@
 //! Helm owns environment resources; credential writes and SQL remain explicit.
-use wamn_registry::deployment::DeploymentStore as _;
 use anyhow::Context as _;
 use serde_json::{Value, json};
 use std::path::Path;
@@ -11,6 +10,7 @@ use wamn_kubernetes::{
 };
 use wamn_provision::migrations::MigrationDatabase;
 use wamn_registry::Triple;
+use wamn_registry::deployment::DeploymentStore as _;
 
 /// Recover the host release and prepare one upgrade that waits for readiness.
 pub async fn prepare_host_upgrade<'a>(

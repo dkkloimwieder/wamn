@@ -19,7 +19,10 @@ pub async fn system(url: &str) {
         .fetch_one(&mut connection)
         .await
         .unwrap();
-    let owner = format!("ALTER DATABASE {} OWNER TO wamn_system", escape_identifier(&name));
+    let owner = format!(
+        "ALTER DATABASE {} OWNER TO wamn_system",
+        escape_identifier(&name)
+    );
     for batch in [
         SYSTEM_ROLE_SQL,
         sql::ensure_project_roles_sql(),
@@ -111,6 +114,7 @@ pub async fn platform_migration_input(input: &str, scope: MigrationDatabase) -> 
     }
     let mut url = url::Url::parse(input).unwrap();
     url.set_username(login.as_str()).unwrap();
-    url.set_password(Some("platform-migration-fixture")).unwrap();
+    url.set_password(Some("platform-migration-fixture"))
+        .unwrap();
     url.into()
 }

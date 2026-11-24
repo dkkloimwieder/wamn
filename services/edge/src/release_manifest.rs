@@ -104,8 +104,8 @@ mod tests {
     use wamn_edge_document::{SERVING_MANIFEST_FORMAT_VERSION, ServingComponent, ServingRelease};
     use wamn_package::PackageCoordinate;
 
-    use super::*;
     use super as loader;
+    use super::*;
 
     const COMPONENT: &str =
         "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -176,12 +176,8 @@ mod tests {
         let mut component = manifest.components.pop_first().unwrap();
         component.descriptor.imports = vec!["wasi:clocks/monotonic-clock@0.2.3".to_owned()];
         manifest.components.insert(component);
-        loader::load_canonical_bytes(
-            &manifest.canonical_bytes(),
-            "effect projection",
-            target(),
-        )
-        .unwrap();
+        loader::load_canonical_bytes(&manifest.canonical_bytes(), "effect projection", target())
+            .unwrap();
     }
 
     fn target() -> ReleaseTarget {

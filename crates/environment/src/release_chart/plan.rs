@@ -138,7 +138,8 @@ pub fn roles(
                 );
             }
             let integration = if binding.runtime_type == wamn_connection_type::RuntimeType::Wasm {
-                let base = wamn_oci_reference::parse_component_artifact_base(integration_repository)?;
+                let base =
+                    wamn_oci_reference::parse_component_artifact_base(integration_repository)?;
                 Some(format!(
                     "{}/{}@{}",
                     base.registry(),
@@ -810,7 +811,12 @@ mod tests {
                     .map(|authority| format!("https://{}/", authority.as_str().unwrap()));
                 std::iter::once(primary.to_owned()).chain(token)
             })
-            .map(|url| url::Url::parse(&url).unwrap().port_or_known_default().unwrap())
+            .map(|url| {
+                url::Url::parse(&url)
+                    .unwrap()
+                    .port_or_known_default()
+                    .unwrap()
+            })
             .collect();
         let bindings: Vec<_> = definitions
             .into_iter()

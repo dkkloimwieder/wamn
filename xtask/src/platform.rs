@@ -60,7 +60,8 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
     let version = release_chart::chart_version(&chart)?;
     let ui = if let Some(file) = args.cluster.as_deref() {
         let values: Value = serde_yaml::from_slice(&std::fs::read(file)?)?;
-        values.pointer("/gcp/buckets/web")
+        values
+            .pointer("/gcp/buckets/web")
             .and_then(Value::as_str)
             .is_some_and(|bucket| !bucket.is_empty())
     } else {
@@ -91,8 +92,9 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
     if !args.stamp_only {
         // Platform guests use the same component build and validation path as packages.
         for (package, image, target) in GUESTS {
-            let path = wamn_build::build_guest(&root, &root.join("apps/Cargo.toml"), package, target)
-                .await?;
+            let path =
+                wamn_build::build_guest(&root, &root.join("apps/Cargo.toml"), package, target)
+                    .await?;
             std::fs::copy(path, components.path().join(format!("{image}.wasm")))?;
         }
         for component in wamn_build::palette::build(&root).await? {

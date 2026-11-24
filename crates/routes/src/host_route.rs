@@ -15,8 +15,8 @@ mod contract_files;
 
 use crate::{route_attachment_id, route_path};
 use std::collections::BTreeMap;
-use wamn_package::canonical_name::CanonicalName;
 use std::sync::LazyLock;
+use wamn_package::canonical_name::CanonicalName;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};

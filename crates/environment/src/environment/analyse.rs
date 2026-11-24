@@ -7,14 +7,14 @@
 //! the live set. It then tests the document
 //! against them and returns the plan, or the refusals.
 
-use wamn_postgres::LifecycleLock;
 use k8s_openapi::api::core::v1::Pod;
 use kube::{Api, api::ListParams};
 use sqlx::{Connection as _, Row as _};
 use wamn_kubernetes::client::workloads;
+use wamn_postgres::LifecycleLock;
 pub(super) mod plan;
-pub use plan::refusals;
 pub(crate) use plan::project_url;
+pub use plan::refusals;
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -145,9 +145,6 @@ pub fn select_application(
     })
 }
 
-
-
-
 pub(crate) async fn connect_project(url: &str) -> anyhow::Result<Client> {
     let mut client = connect(url).await?;
     let owner: String = sqlx::query(
@@ -232,8 +229,6 @@ pub async fn read_project(url: &str) -> anyhow::Result<Option<ProjectState>> {
     }))
 }
 
-
-
 /// The targeted application's Helm release and host group identity.
 pub fn application_release_name(
     document: &EnvironmentDocument,
@@ -279,12 +274,18 @@ pub(crate) async fn application_releases(
             );
         }
     }
-    applications.into_iter().map(|application| {
-        let release = wamn_provision::environment_names::application_release_name(
-            &triple.org, &triple.project, &triple.env, &application,
-        )?;
-        Ok((application, release))
-    }).collect()
+    applications
+        .into_iter()
+        .map(|application| {
+            let release = wamn_provision::environment_names::application_release_name(
+                &triple.org,
+                &triple.project,
+                &triple.env,
+                &application,
+            )?;
+            Ok((application, release))
+        })
+        .collect()
 }
 
 /// List the host Pods for the specified host group.

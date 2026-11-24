@@ -283,7 +283,10 @@ mod tests {
         .await;
 
         assert!(
-            matches!(sent, Err(wasmtime_wasi_http::Error::DestinationIpProhibited)),
+            matches!(
+                sent,
+                Err(wasmtime_wasi_http::Error::DestinationIpProhibited)
+            ),
             "got {:?}",
             sent.err()
         );

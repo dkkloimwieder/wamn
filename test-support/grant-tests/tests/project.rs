@@ -2,8 +2,8 @@
 
 pub mod common;
 
-use wamn_test_infrastructure::database::{self, PASSWORD, Project, execute};
 use wamn_provision::WorkloadRoleFamily;
+use wamn_test_infrastructure::database::{self, PASSWORD, Project, execute};
 
 /// Log in as `login`, then check its catalog-derived refusals and the `contract` actions.
 async fn login_refusals(
@@ -51,7 +51,10 @@ async fn app_login_refusals() -> anyhow::Result<()> {
     let mut admin = project.admin().await?;
     common::assert_no_grant_options(&mut admin, login).await?;
     let reached = common::mapped_logins_reached(&mut admin, login).await?;
-    assert!(reached.is_empty(), "{login} reaches mapped platform logins: {reached:?}");
+    assert!(
+        reached.is_empty(),
+        "{login} reaches mapped platform logins: {reached:?}"
+    );
 
     // Identity storage: no read, no login mapping, no change to a bound identity.
     let mut contract: Vec<String> = [
@@ -94,14 +97,26 @@ async fn app_login_refusals() -> anyhow::Result<()> {
     // A bound identity is not replaced, and no identity binds another transaction.
     let principal = wamn_provision::PlatformComponent::Executor.principal_id();
     let mut transaction = actor.begin().await?;
-    wamn_postgres::bind_transaction_identity(&mut transaction, &principal, "viewer", "fixture", None, None).await?;
-    let replaced = wamn_postgres::bind_transaction_identity(&mut transaction, &principal, "admin", "fixture", None, None)
-        .await
-        .unwrap_err();
-    assert_eq!(
-        common::sqlstate(&replaced).as_deref(),
-        Some("23505")
-    );
+    wamn_postgres::bind_transaction_identity(
+        &mut transaction,
+        &principal,
+        "viewer",
+        "fixture",
+        None,
+        None,
+    )
+    .await?;
+    let replaced = wamn_postgres::bind_transaction_identity(
+        &mut transaction,
+        &principal,
+        "admin",
+        "fixture",
+        None,
+        None,
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(common::sqlstate(&replaced).as_deref(), Some("23505"));
     transaction.rollback().await?;
     let mut transaction = actor.begin().await?;
     let other = sqlx::query(
@@ -112,10 +127,7 @@ async fn app_login_refusals() -> anyhow::Result<()> {
     .execute(&mut *transaction)
     .await
     .unwrap_err();
-    assert_eq!(
-        common::sqlstate(&other).as_deref(),
-        Some("42501")
-    );
+    assert_eq!(common::sqlstate(&other).as_deref(), Some("42501"));
     transaction.rollback().await?;
 
     // Catalog rows stay hidden from a transaction without a bound identity.
@@ -139,8 +151,18 @@ async fn app_login_refusals() -> anyhow::Result<()> {
     let hidden: i64 = sqlx::query_scalar(count).fetch_one(&mut actor).await?;
     assert_eq!(hidden, 0, "{login} reads catalog rows without an identity");
     let mut transaction = actor.begin().await?;
-    wamn_postgres::bind_transaction_identity(&mut transaction, &principal, "viewer", "fixture", None, None).await?;
-    let visible: i64 = sqlx::query_scalar(count).fetch_one(&mut *transaction).await?;
+    wamn_postgres::bind_transaction_identity(
+        &mut transaction,
+        &principal,
+        "viewer",
+        "fixture",
+        None,
+        None,
+    )
+    .await?;
+    let visible: i64 = sqlx::query_scalar(count)
+        .fetch_one(&mut *transaction)
+        .await?;
     assert_eq!(visible, 1);
     transaction.rollback().await?;
     println!("{login}: {checked} refused actions");
@@ -155,9 +177,15 @@ async fn query_login_refusals() -> anyhow::Result<()> {
     let mut admin = project.admin().await?;
     common::assert_no_grant_options(&mut admin, login).await?;
     let reached = common::mapped_logins_reached(&mut admin, login).await?;
-    assert!(reached.is_empty(), "{login} reaches mapped platform logins: {reached:?}");
+    assert!(
+        reached.is_empty(),
+        "{login} reaches mapped platform logins: {reached:?}"
+    );
     let writes = common::writes_outside(&mut admin, login, None).await?;
-    assert!(writes.is_empty(), "{login} writes beyond its transaction identity: {writes:?}");
+    assert!(
+        writes.is_empty(),
+        "{login} writes beyond its transaction identity: {writes:?}"
+    );
     let checked = login_refusals(&project, login, false, &[]).await?;
     println!("{login}: {checked} refused actions");
     Ok(())

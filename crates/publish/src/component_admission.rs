@@ -16,9 +16,9 @@ use std::fmt;
 use std::path::PathBuf;
 
 use anyhow::Context as _;
+use wamn_component_policy::{AdmittedComponent, ComponentDescriptor, ComponentPackageCoordinate};
 use wamn_connection_type::ComponentConnectionRequirement;
 use wamn_connection_type::ConnectionTypeDescriptor;
-use wamn_component_policy::{AdmittedComponent, ComponentDescriptor, ComponentPackageCoordinate};
 use wamn_engine::component_admission::validate_component_admission;
 use wamn_package::package_schema::package_metadata;
 use wamn_package::{ComponentConnection, ComponentConnectionType, ComponentDeclaration};
@@ -187,7 +187,8 @@ pub fn admit_component(args: AdmitComponentRequest) -> anyhow::Result<ComponentA
             format!("parse component declaration {}", args.declaration.display())
         })?;
 
-    declaration.data_change = package_manifest.components
+    declaration.data_change = package_manifest
+        .components
         .get(declaration.component.as_str())
         .is_some_and(|component| component.data_change.is_some());
 
@@ -504,5 +505,4 @@ mod tests {
             ComponentProjectionErrorType::StatementComponentMismatch
         );
     }
-
 }

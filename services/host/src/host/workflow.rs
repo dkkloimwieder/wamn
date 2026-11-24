@@ -9,11 +9,11 @@ mod request;
 
 pub(super) use entry::{RequestCall, RunAs, RunNow};
 
-use wamn_package::canonical_name::CanonicalName;
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
+use wamn_package::canonical_name::CanonicalName;
 
 use anyhow::Context as _;
 use tokio::time::Instant;

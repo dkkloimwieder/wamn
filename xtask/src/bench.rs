@@ -749,9 +749,7 @@ async fn post(target: &Target, path: &str, items: &Value) -> anyhow::Result<Valu
 
 /// The value of the one outcome, or an error for any status, transport or
 /// refusal.
-async fn outcome(
-    response: wamn_http_client::HttpResponse,
-) -> anyhow::Result<Value> {
+async fn outcome(response: wamn_http_client::HttpResponse) -> anyhow::Result<Value> {
     let status = response.status();
     let body: Value = response.json().await?;
     ensure!(

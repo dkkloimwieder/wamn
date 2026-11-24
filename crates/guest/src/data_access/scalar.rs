@@ -5,8 +5,8 @@
 //! numeric is PostgreSQL's own text for the same datum. One value then reaches
 //! the database, and the command bytes, in one form.
 
-use serde_json::{Value, json};
 use crate::postgres_statements::{Json, Numeric, TimestampTz, Uuid};
+use serde_json::{Value, json};
 use wamn_scalar::{canonical_numeric, canonical_timestamptz};
 
 use crate::data_access::Invalid;

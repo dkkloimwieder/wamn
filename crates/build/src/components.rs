@@ -91,7 +91,8 @@ pub(crate) async fn compile_components(
             bases
                 .iter()
                 .map(|(path, digest)| {
-                    let bytes = fs::read(path).with_context(|| format!("read {}", path.display()))?;
+                    let bytes =
+                        fs::read(path).with_context(|| format!("read {}", path.display()))?;
                     ensure!(
                         bytes_sha256(&bytes) == *digest,
                         "{} changed during the overlay build; retry",

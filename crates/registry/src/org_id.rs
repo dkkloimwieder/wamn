@@ -29,7 +29,10 @@ impl TryFrom<String> for OrgId {
     fn try_from(value: String) -> Result<Self, Self::Error> {
         if crate::identifiers::project_id_reason(&value).is_some()
             || crate::identifiers::project_id_is_reserved(&value)
-            || matches!(value.as_str(), "platform" | "hosts" | "cert-manager" | "default")
+            || matches!(
+                value.as_str(),
+                "platform" | "hosts" | "cert-manager" | "default"
+            )
             || value.starts_with("kube-")
         {
             return Err(ParseOrgIdError);

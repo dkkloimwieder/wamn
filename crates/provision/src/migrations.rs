@@ -79,18 +79,19 @@ impl MigrationDatabase {
         if self == Self::Project {
             return crate::migration::require_login(connection).await;
         }
-        let (session, current, database, restricted, member): (String, String, String, bool, bool) = sqlx::query_as(
-            "SELECT session_user::text, current_user::text, current_database()::text, \
+        let (session, current, database, restricted, member): (String, String, String, bool, bool) =
+            sqlx::query_as(
+                "SELECT session_user::text, current_user::text, current_database()::text, \
              NOT (rolsuper OR rolcreatedb OR rolcreaterole OR rolreplication OR rolbypassrls), \
              pg_has_role(session_user,$1,'USAGE') FROM pg_roles WHERE rolname=session_user",
-        )
-        .bind(wamn_role::SYSTEM_ROLE)
-        .fetch_one(connection)
-        .await?;
-        let session = wamn_role::LoginName::try_from(session)
-            .context("decode the session login")?;
-        let current = wamn_role::LoginName::try_from(current)
-            .context("decode the current login")?;
+            )
+            .bind(wamn_role::SYSTEM_ROLE)
+            .fetch_one(connection)
+            .await?;
+        let session =
+            wamn_role::LoginName::try_from(session).context("decode the session login")?;
+        let current =
+            wamn_role::LoginName::try_from(current).context("decode the current login")?;
         anyhow::ensure!(
             session == self.login(&database) && current == session && restricted && member,
             "platform migrations require their direct restricted managed login"

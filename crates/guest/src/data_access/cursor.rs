@@ -6,8 +6,8 @@
 //! itself: another version, field or direction, another member, and every
 //! spelling that is not the one [`id::encode_with_id`] writes.
 
-use serde_json::Value;
 use crate::postgres_statements::{Numeric, TimestampTz, Uuid};
+use serde_json::Value;
 use wamn_scalar::{canonical_numeric, canonical_timestamptz};
 
 use crate::data_access::{Invalid, scalar};

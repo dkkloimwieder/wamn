@@ -155,7 +155,14 @@ pub fn select(chart: &Path) -> anyhow::Result<SelectedChart> {
         .to_owned();
     validate_image(&host).context("invalid selected host image")?;
     validate_platform_images(&values["platform"]).context("invalid selected platform image")?;
-    for name in ["ctl", "control", "identity", "edge", "roles/ingress", "workflow"] {
+    for name in [
+        "ctl",
+        "control",
+        "identity",
+        "edge",
+        "roles/ingress",
+        "workflow",
+    ] {
         ensure!(
             values
                 .pointer(&format!("/platform/{name}/image"))

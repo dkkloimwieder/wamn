@@ -17,8 +17,15 @@ async fn login_refusals(system: &System, login: &str, password: &str) -> anyhow:
     let mut admin = system.admin().await?;
     common::assert_unelevated(&mut admin, login, false).await?;
     let mut actor = common::log_in(&system.login_url(login, password)?).await?;
-    common::assert_login_refusals(&mut admin, &system.postgres, login, password, &mut actor, &[])
-        .await
+    common::assert_login_refusals(
+        &mut admin,
+        &system.postgres,
+        login,
+        password,
+        &mut actor,
+        &[],
+    )
+    .await
 }
 
 #[tokio::test]
@@ -40,11 +47,16 @@ async fn system_migration_login_refusals() -> anyhow::Result<()> {
 #[ignore = "requires: docker, bin:helm"]
 async fn identity_issuer_login_refusals() -> anyhow::Result<()> {
     let system = database::system().await?;
-    let login = system.declared_login(wamn_role::IDENTITY_ISSUER_ROLE)?.to_owned();
+    let login = system
+        .declared_login(wamn_role::IDENTITY_ISSUER_ROLE)?
+        .to_owned();
     let mut admin = system.admin().await?;
     common::assert_no_grant_options(&mut admin, &login).await?;
     let writes = common::writes_outside(&mut admin, &login, Some("identity")).await?;
-    assert!(writes.is_empty(), "{login} writes outside identity storage: {writes:?}");
+    assert!(
+        writes.is_empty(),
+        "{login} writes outside identity storage: {writes:?}"
+    );
     let checked = login_refusals(&system, &login, PASSWORD).await?;
     println!("{login}: {checked} refused actions");
     Ok(())
@@ -83,9 +95,15 @@ async fn pooler_auth_login_refusals() -> anyhow::Result<()> {
     common::assert_no_grant_options(&mut admin, login).await?;
     let mut actor =
         common::log_in(&system.postgres.database_url("postgres", login, PASSWORD)?).await?;
-    let checked =
-        common::assert_login_refusals(&mut admin, &system.postgres, login, PASSWORD, &mut actor, &[])
-            .await?;
+    let checked = common::assert_login_refusals(
+        &mut admin,
+        &system.postgres,
+        login,
+        PASSWORD,
+        &mut actor,
+        &[],
+    )
+    .await?;
 
     // The lookup answers only for an org login of its own group.
     let lookup = "SELECT count(*) FROM wamn_pooler.lookup_login($1, $2)";

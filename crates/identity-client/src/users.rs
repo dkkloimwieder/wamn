@@ -6,9 +6,9 @@ use anyhow::Context as _;
 use hyper::StatusCode;
 use serde::{Deserialize, Serialize};
 use url::Url;
+use wamn_http_client::HttpResponse;
 use wamn_identity_protocol::PrincipalId;
 use wamn_identity_protocol::wire::{PrincipalRequest, UserRequest, UserResponse};
-use wamn_http_client::HttpResponse;
 
 use super::{IdentityHttp, TOKEN_PATH, service_endpoint};
 

@@ -113,8 +113,12 @@ pub const EXECUTOR_PLATFORM_RUN_UPDATE_COLUMNS: [&str; 6] = [
 ];
 
 /// Columns written when a host renews or replaces a lease.
-pub const EXECUTOR_PLATFORM_QUEUE_UPDATE_COLUMNS: [&str; 4] =
-    ["lease_owner", "lease_expires_at", "lease_generation", "attempts"];
+pub const EXECUTOR_PLATFORM_QUEUE_UPDATE_COLUMNS: [&str; 4] = [
+    "lease_owner",
+    "lease_expires_at",
+    "lease_generation",
+    "attempts",
+];
 
 /// Run columns written during admission.
 pub const EXECUTOR_PLATFORM_RUN_INSERT_COLUMNS: [&str; 16] = [

@@ -115,8 +115,18 @@ pub async fn create_org_logins(
     let random = SystemRandom::new();
     // These limits match the role limits in the platform Poolers.
     let logins = [
-        (control_login(org, database), wamn_role::CONTROL_ROLE, 8_i32, CONTROL_SECRET),
-        (apply_login(org, database), wamn_role::APPLY_ROLE, 16_i32, APPLY_SECRET),
+        (
+            control_login(org, database),
+            wamn_role::CONTROL_ROLE,
+            8_i32,
+            CONTROL_SECRET,
+        ),
+        (
+            apply_login(org, database),
+            wamn_role::APPLY_ROLE,
+            16_i32,
+            APPLY_SECRET,
+        ),
     ];
     let mut passwords = Vec::with_capacity(logins.len());
     let mut tx = crate::transaction::provisioning_transaction(connection).await?;

@@ -70,11 +70,7 @@ fn app_generation(
 }
 
 /// Create an App login as CNPG would, with the grants that provisioning adds.
-fn app_login_sql(
-    database: &str,
-    login: &wamn_role::LoginName,
-    password: &str,
-) -> String {
+fn app_login_sql(database: &str, login: &wamn_role::LoginName, password: &str) -> String {
     let family = WorkloadRoleFamily::App;
     let role = escape_identifier(login.as_str());
     format!(
@@ -592,7 +588,10 @@ async fn application_history_keeps_bound_actor_and_records_scale_changes() {
     let postgres = wamn_test_infrastructure::containers::start_postgres()
         .await
         .unwrap();
-    let database = postgres.create_database("application_history").await.unwrap();
+    let database = postgres
+        .create_database("application_history")
+        .await
+        .unwrap();
     let url = database.as_str();
     install_history_probe(url);
 
@@ -878,7 +877,10 @@ async fn concurrent_history_uses_the_last_committed_row_image() {
     let postgres = wamn_test_infrastructure::containers::start_postgres()
         .await
         .unwrap();
-    let database = postgres.create_database("concurrent_history").await.unwrap();
+    let database = postgres
+        .create_database("concurrent_history")
+        .await
+        .unwrap();
     let url = database.as_str();
     install_history_probe(url);
     run(
@@ -898,19 +900,17 @@ async fn concurrent_history_uses_the_last_committed_row_image() {
     let advance = "UPDATE public.history_probe SET amount = amount + 1 WHERE id = $1";
 
     for (id, commit_first) in [(1, true), (2, false)] {
-        let mut earlier =
-            transaction(&mut first, &first_actor, "admin:advance-history")
-                .await
-                .unwrap();
+        let mut earlier = transaction(&mut first, &first_actor, "admin:advance-history")
+            .await
+            .unwrap();
         sqlx::query(advance)
             .bind(id)
             .execute(&mut *earlier)
             .await
             .unwrap();
-        let mut later =
-            transaction(&mut second, &second_actor, "admin:advance-history")
-                .await
-                .unwrap();
+        let mut later = transaction(&mut second, &second_actor, "admin:advance-history")
+            .await
+            .unwrap();
         tokio::time::timeout(std::time::Duration::from_secs(10), async {
             let release = async {
                 loop {
@@ -945,14 +945,12 @@ async fn concurrent_history_uses_the_last_committed_row_image() {
         .expect("competing writers finish");
     }
 
-    let mut earlier =
-        transaction(&mut first, &first_actor, "admin:advance-history")
-            .await
-            .unwrap();
-    let mut later =
-        transaction(&mut second, &second_actor, "admin:advance-history")
-            .await
-            .unwrap();
+    let mut earlier = transaction(&mut first, &first_actor, "admin:advance-history")
+        .await
+        .unwrap();
+    let mut later = transaction(&mut second, &second_actor, "admin:advance-history")
+        .await
+        .unwrap();
     sqlx::query(advance)
         .bind(3_i32)
         .execute(&mut *earlier)

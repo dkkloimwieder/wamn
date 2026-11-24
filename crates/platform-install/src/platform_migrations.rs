@@ -106,7 +106,9 @@ pub async fn install_project(client: &mut sqlx::PgConnection) -> anyhow::Result<
             wamn_provision::sql::grant_dynamic_sql_surface_sql(),
             wamn_provision::sql::grant_platform_surface_sql(),
         ] {
-            sqlx::raw_sql(sqlx::AssertSqlSafe(surface)).execute(&mut *tx).await?;
+            sqlx::raw_sql(sqlx::AssertSqlSafe(surface))
+                .execute(&mut *tx)
+                .await?;
         }
     }
     tx.commit().await?;

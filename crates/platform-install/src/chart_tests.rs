@@ -114,9 +114,11 @@ fn operation_worker_bindings_use_their_own_accounts_and_namespace_resources() ->
             .find(|object| object["kind"] == "RoleBinding" && object["metadata"]["name"] == name);
         if name == values["capture"] {
             assert!(binding.is_none());
-            assert!(!objects.iter().any(|object| {
-                object["kind"] == "Role" && object["metadata"]["name"] == name
-            }));
+            assert!(
+                !objects.iter().any(|object| {
+                    object["kind"] == "Role" && object["metadata"]["name"] == name
+                })
+            );
             continue;
         }
         let binding = binding.unwrap();
@@ -135,9 +137,11 @@ fn operation_worker_bindings_use_their_own_accounts_and_namespace_resources() ->
             .unwrap();
         assert_eq!(role["metadata"]["namespace"], document.org.as_str());
 
-        assert_eq!(name, format!("{}-operation", values["name"].as_str().unwrap()));
-        let allowed =
-            json!({ "secrets": values["diffSecrets"], "workloaddeployments": values["diffWorkloads"] });
+        assert_eq!(
+            name,
+            format!("{}-operation", values["name"].as_str().unwrap())
+        );
+        let allowed = json!({ "secrets": values["diffSecrets"], "workloaddeployments": values["diffWorkloads"] });
         let mut observed = std::collections::BTreeSet::new();
         for rule in role["rules"].as_array().unwrap() {
             assert_eq!(rule["verbs"], json!(["get"]));
@@ -153,7 +157,15 @@ fn operation_worker_bindings_use_their_own_accounts_and_namespace_resources() ->
                 assert_eq!(rule["resourceNames"], allowed[resource]);
             }
         }
-        assert_eq!(observed, allowed.as_object().unwrap().keys().map(String::as_str).collect());
+        assert_eq!(
+            observed,
+            allowed
+                .as_object()
+                .unwrap()
+                .keys()
+                .map(String::as_str)
+                .collect()
+        );
     }
     Ok(())
 }

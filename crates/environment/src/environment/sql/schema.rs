@@ -133,7 +133,6 @@ pub async fn database_state(
     })
 }
 
-
 pub(super) async fn open(
     platform: &Platform,
     id: &wamn_package::PackageName,
@@ -342,8 +341,6 @@ pub fn validate_candidates(
     )?;
     Ok((packages, order))
 }
-
-
 
 #[cfg(test)]
 mod tests {

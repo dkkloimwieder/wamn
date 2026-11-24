@@ -1,5 +1,4 @@
 //! Authenticated environment configuration through installer-owned resources.
-use wamn_kubernetes::client::{ready, resource, wait_named};
 use super::{
     Platform,
     document::{EnvironmentDocument, EnvironmentFile},
@@ -9,6 +8,7 @@ use crate::provision_project_env::{self, registry, workload};
 use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
 use std::time::Duration;
+use wamn_kubernetes::client::{ready, resource, wait_named};
 use wamn_platform_install as installer;
 use wamn_postgres::LifecycleLock;
 use wamn_registry::configuration::ConfigurationStore as _;
@@ -445,7 +445,10 @@ async fn copy_server_ca(
 ) -> anyhow::Result<()> {
     use k8s_openapi::api::core::v1::{ConfigMap, Secret};
     use k8s_openapi::apimachinery::pkg::apis::meta::v1::{ObjectMeta, OwnerReference};
-    use kube::{Api, api::{Patch, PatchParams}};
+    use kube::{
+        Api,
+        api::{Patch, PatchParams},
+    };
 
     let secrets = Api::<Secret>::namespaced(target.client.client(), &target.namespace);
     let pem = secrets

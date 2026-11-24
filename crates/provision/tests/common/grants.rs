@@ -79,11 +79,7 @@ pub async fn prepare(url: url::Url, family: WorkloadRoleFamily) -> Fixture {
     )
     .await;
     if family == WorkloadRoleFamily::Migration {
-        execute(
-            &mut admin,
-            &wamn_provision::migration::grants_sql(&login),
-        )
-        .await;
+        execute(&mut admin, &wamn_provision::migration::grants_sql(&login)).await;
     }
     let mut url = url;
     url.set_username(login.as_str()).unwrap();

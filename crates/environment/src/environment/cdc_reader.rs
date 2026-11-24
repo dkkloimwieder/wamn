@@ -1,11 +1,11 @@
 //! Provision and discard CDC state through authorized connections.
-use wamn_kubernetes::client::wait_named;
 use anyhow::Context as _;
 use k8s_openapi::api::{apps::v1::Deployment, core::v1::Pod};
 use kube::{Api, api::ListParams};
 use sqlx::Row as _;
 use std::fmt::Write as _;
 use std::time::Duration;
+use wamn_kubernetes::client::wait_named;
 use wamn_provision::{cdc_reader_name, sql};
 use wamn_registry::Triple;
 
@@ -28,7 +28,9 @@ pub async fn apply_cdc_sql(
     );
     let login = wamn_role::CDC_LOGIN.parse()?;
     wamn_platform_install::credentials::wait_role(&mut client, &login).await?;
-    sqlx::raw_sql(sqlx::AssertSqlSafe(cdc_schema_sql_bundle(schemas, database)))
+    sqlx::raw_sql(sqlx::AssertSqlSafe(cdc_schema_sql_bundle(
+        schemas, database,
+    )))
     .execute(&mut client)
     .await
     .map(drop)
@@ -64,7 +66,8 @@ pub fn cdc_schema_sql_bundle(
             "\n{entity_map};\n{exclusion_map};\n{grants}",
             entity_map = sql::ensure_entity_map_sql(schema.as_str()),
             exclusion_map = sql::ensure_cdc_exclusion_map_sql(schema.as_str()),
-            grants = sql::grant_replication_access_sql(db_name, wamn_role::CDC_LOGIN, schema.as_str()),
+            grants =
+                sql::grant_replication_access_sql(db_name, wamn_role::CDC_LOGIN, schema.as_str()),
         )
         .expect("write CDC SQL into a string");
     }

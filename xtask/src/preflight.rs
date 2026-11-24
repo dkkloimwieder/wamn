@@ -754,7 +754,9 @@ fn normalize_file_modes(value: &mut Value, in_file_volume: bool) {
                     && let Ok(mode) = u64::from_str_radix(mode, 8)
                 {
                     *child = mode.into();
-                } else if key == "volumes" && let Some(volumes) = child.as_array_mut() {
+                } else if key == "volumes"
+                    && let Some(volumes) = child.as_array_mut()
+                {
                     for volume in volumes {
                         for name in ["configMap", "downwardAPI", "projected", "secret"] {
                             if let Some(source) = volume.get_mut(name) {

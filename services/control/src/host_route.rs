@@ -5,12 +5,12 @@
 //! instead of a component. [`HostRouteDelivery`] serves the native platform
 //! routes of the loaded release.
 
-use wamn_routes::HostAttachment;
-use wamn_routes::HostHandler;
-use wamn_routes::HostRouteSet;
 use std::fmt;
 use std::sync::Arc;
 use wamn_postgres::identity::control::{control_projects_page, is_org_admin, org_projects_page};
+use wamn_routes::HostAttachment;
+use wamn_routes::HostHandler;
+use wamn_routes::HostRouteSet;
 
 use serde_json::{Value, json};
 use wamn_application::ingress::AuthenticatedCaller;
@@ -375,7 +375,9 @@ impl HostRouteDelivery {
         };
         let caller = match authentication {
             Ok(caller) => Some(caller),
-            Err(error) => return json_response(error.status, &json!({"error":{"code":error.code}})),
+            Err(error) => {
+                return json_response(error.status, &json!({"error":{"code":error.code}}));
+            }
         };
         let payload = if read {
             let parsed = wamn_routes::read_query::decode_read_query(&query);

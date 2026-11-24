@@ -7,9 +7,9 @@
 //! It reads authorization from the project database. Signature policies verify the
 //! raw body with the bound connection credential and return its active principal.
 
-use wamn_package::AttachmentAuthPolicy;
 use std::collections::HashSet;
 use std::sync::Arc;
+use wamn_package::AttachmentAuthPolicy;
 
 use hmac::{Hmac, KeyInit as _, Mac as _};
 use sha2::Sha256;

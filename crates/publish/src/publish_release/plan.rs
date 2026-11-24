@@ -1,8 +1,8 @@
 use super::{
-    AttachmentTarget, BTreeMap, BTreeSet,
-    DependencyDigestRule, PackageCoordinate, PublishManifestError, PublishManifestErrorType,
-    PublishReleaseManifest, ReleaseComponents, RouteContracts, ServingComponent,
-    ServingRoute, ensure, resolve_component_dependency_closure, resolve_route_component,
+    AttachmentTarget, BTreeMap, BTreeSet, DependencyDigestRule, PackageCoordinate,
+    PublishManifestError, PublishManifestErrorType, PublishReleaseManifest, ReleaseComponents,
+    RouteContracts, ServingComponent, ServingRoute, ensure, resolve_component_dependency_closure,
+    resolve_route_component,
 };
 use anyhow::Context as _;
 

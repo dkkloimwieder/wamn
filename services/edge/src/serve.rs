@@ -29,11 +29,11 @@ use wash_runtime::engine::guest_memory::GuestMemoryMode;
 use wash_runtime::engine::workload::WorkloadItem;
 use wash_runtime::host::http::Ingress;
 use wash_runtime::host::{Host, HostApi as _, HostBuilder};
+use wash_runtime::plugin::{HostPlugin, WitInterfaces};
 use wash_runtime::sockets::policy::EgressMode;
 use wash_runtime::types::{
     Component, LocalResources, Workload, WorkloadStartRequest, WorkloadState,
 };
-use wash_runtime::plugin::{HostPlugin, WitInterfaces};
 use wash_runtime::wit::{WitInterface, WitWorld};
 
 use crate::application::EdgeApplication;
@@ -338,13 +338,16 @@ impl HostPlugin for NatsTraps {
         item: &mut WorkloadItem<'a>,
         _interfaces: WitInterfaces<'_>,
     ) -> anyhow::Result<()> {
-        use wash_runtime::wasmtime::component::types::ComponentItem;
         use wash_runtime::wasmtime::component::ResourceType;
+        use wash_runtime::wasmtime::component::types::ComponentItem;
 
         let WorkloadItem::Component(component) = item else {
             anyhow::bail!("edge NATS imports belong to ingress");
         };
-        anyhow::ensure!(component.name() == INGRESS_WORKLOAD, "edge NATS imports belong to ingress");
+        anyhow::ensure!(
+            component.name() == INGRESS_WORKLOAD,
+            "edge NATS imports belong to ingress"
+        );
         // Only the NATS instances trap. Every other import keeps the
         // definition of its provider, and a resource that one interface uses
         // from another, such as `authenticated-caller`, keeps its real type.

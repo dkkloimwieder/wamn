@@ -2,12 +2,12 @@
 
 mod common;
 
-use wamn_registry::deployment::DeploymentStore as _;
 use std::collections::BTreeMap;
 use std::net::{IpAddr, SocketAddr};
 use std::num::NonZeroU32;
 use std::path::PathBuf;
 use std::time::Duration;
+use wamn_registry::deployment::DeploymentStore as _;
 
 use anyhow::{Context as _, ensure};
 use common::host::{FIXTURE, fixture, ready, runtime};

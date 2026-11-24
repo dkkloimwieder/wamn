@@ -1,9 +1,9 @@
 //! Ownership checks and deletion of project resources.
 
 use anyhow::Context as _;
-use serde_json::Value;
 use k8s_openapi::api::{apps::v1::Deployment, core::v1::Secret};
 use kube::{Api, api::ListParams};
+use serde_json::Value;
 use wamn_kubernetes::{
     client::{delete_named, resource},
     helm,
@@ -143,7 +143,12 @@ pub(super) async fn delete_kept_project_resources(
         ("postgresql.cnpg.io", "Cluster", "clusters", true),
         ("cert-manager.io", "Certificate", "certificates", false),
         ("cert-manager.io", "Issuer", "issuers", false),
-        ("networking.k8s.io", "NetworkPolicy", "networkpolicies", false),
+        (
+            "networking.k8s.io",
+            "NetworkPolicy",
+            "networkpolicies",
+            false,
+        ),
     ] {
         let objects = resource(
             target.client.client(),

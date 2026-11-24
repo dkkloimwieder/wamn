@@ -1,11 +1,11 @@
 //! Native CNPG credentials and public connection configuration.
 
-use wamn_kubernetes::client::KubernetesApi;
 use anyhow::Context as _;
 use k8s_openapi::api::core::v1::Secret;
 use kube::Api;
 use std::{sync::Arc, time::Duration};
 use tokio::io::AsyncWriteExt as _;
+use wamn_kubernetes::client::KubernetesApi;
 use wamn_postgres::{ConnectionConfig, SecretRef};
 pub fn configuration(
     namespace: &str,

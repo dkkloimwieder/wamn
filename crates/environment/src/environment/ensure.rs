@@ -1,10 +1,10 @@
 //! Explicit environment provisioning, shared credentials, and CDC resources.
 //! Application activation reads these resources without creating or reconciling them.
 
-use wamn_registry::deployment::DeploymentStore as _;
 use k8s_openapi::api::core::v1::ConfigMap;
 use kube::Api;
 use sqlx::Row as _;
+use wamn_registry::deployment::DeploymentStore as _;
 
 use anyhow::Context as _;
 use wamn_postgres::LifecycleLock;

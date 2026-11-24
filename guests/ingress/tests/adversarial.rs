@@ -222,11 +222,7 @@ fn limits() -> AdapterLimits {
     AdapterLimits { body_bytes: 1024 }
 }
 
-fn request(
-    backend: &mut FakeBackend,
-    head: &RequestHead,
-    bytes: &[u8],
-) -> ingress::HttpResponse {
+fn request(backend: &mut FakeBackend, head: &RequestHead, bytes: &[u8]) -> ingress::HttpResponse {
     let mut body = Chunks::json(&[bytes]);
     block_on(handle_request(backend, &mut body, head, limits()))
 }

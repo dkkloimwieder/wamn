@@ -604,11 +604,11 @@ impl ServingManifest {
         }
 
         if let Some(entry) = &self.composed_entry {
-            wamn_oci_reference::validate_serving_entry_reference(&entry.reference).map_err(|error| {
-                CatalogIdentityError::InvalidDefinition {
+            wamn_oci_reference::validate_serving_entry_reference(&entry.reference).map_err(
+                |error| CatalogIdentityError::InvalidDefinition {
                     message: error.reason().to_owned(),
-                }
-            })?;
+                },
+            )?;
 
             if entry.members.is_empty() {
                 return invalid("a composed entry must name its application members");
@@ -908,8 +908,11 @@ fn within_delivery_limit(bytes: usize) -> Result<(), CatalogIdentityError> {
 
 #[cfg(test)]
 mod tests {
-    use wamn_package::{AttachmentAuthPolicy, NO_AUTHENTICATION_MODE, PAT_AUTHENTICATION_MODE, SESSION_AUTHENTICATION_MODE};
     use super::*;
+    use wamn_package::{
+        AttachmentAuthPolicy, NO_AUTHENTICATION_MODE, PAT_AUTHENTICATION_MODE,
+        SESSION_AUTHENTICATION_MODE,
+    };
 
     const COMPONENT_A: &str =
         "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -1358,9 +1361,8 @@ mod tests {
         component_operation.registered_operation =
             Some("overlay:widget/get@3.0.0".parse().unwrap());
         mismatched_components.insert(component);
-        let _error =
-            admit(release(), mismatched_components, routes(), BTreeMap::new())
-                .expect_err("component operation must match its selected package coordinate");
+        let _error = admit(release(), mismatched_components, routes(), BTreeMap::new())
+            .expect_err("component operation must match its selected package coordinate");
     }
 
     #[test]

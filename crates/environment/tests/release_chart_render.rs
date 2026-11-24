@@ -8,7 +8,6 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-
 fn repository_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
@@ -109,11 +108,10 @@ fn the_egress_policy_opens_each_declared_port() {
             "{}",
             String::from_utf8_lossy(&output.stderr)
         );
-        let policies: Vec<serde_yaml::Value> =
-            serde_yaml::Deserializer::from_slice(&output.stdout)
-                .map(|document| serde::Deserialize::deserialize(document).expect("YAML document"))
-                .filter(|document: &serde_yaml::Value| document["kind"] == "NetworkPolicy")
-                .collect();
+        let policies: Vec<serde_yaml::Value> = serde_yaml::Deserializer::from_slice(&output.stdout)
+            .map(|document| serde::Deserialize::deserialize(document).expect("YAML document"))
+            .filter(|document: &serde_yaml::Value| document["kind"] == "NetworkPolicy")
+            .collect();
         let ports: BTreeSet<u64> = policies
             .iter()
             .flat_map(|policy| policy["spec"]["egress"].as_sequence().expect("egress"))

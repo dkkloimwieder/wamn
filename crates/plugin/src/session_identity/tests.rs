@@ -37,7 +37,7 @@ impl CredentialProvider for RecordingProvider {
 async fn user_operation_permissions_reuse_only_the_callable_http_authority() {
     let provider = Arc::new(RecordingProvider::default());
     let pools = Arc::new(WamnPostgres::with_provider(
-        Arc::clone(&provider) as Arc<dyn CredentialProvider>,
+        Arc::clone(&provider) as Arc<dyn CredentialProvider>
     ));
     let database = Arc::clone(&pools);
     let authorization = Authorization::new(pools, database);
@@ -59,13 +59,10 @@ async fn user_operation_permissions_reuse_only_the_callable_http_authority() {
         .parse()
         .expect("user UUID");
 
-    authorization.user_operation_permissions(
-        &DEFAULT_PROJECT,
-        &project_env_key,
-        &principal_id,
-    )
-    .await
-    .expect_err("a provider that names no credential resolves nothing");
+    authorization
+        .user_operation_permissions(&DEFAULT_PROJECT, &project_env_key, &principal_id)
+        .await
+        .expect_err("a provider that names no credential resolves nothing");
 
     let asked = provider
         .asked

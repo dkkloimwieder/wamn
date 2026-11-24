@@ -468,13 +468,9 @@ impl<T: Send + 'static> wit_run::HostWithStore<T> for SharedCtx {
             let outcome = plugin
                 .postgres
                 .executor_write(&workload.application.project, async |connection| {
-                    PostgresRunStore::new(connection).renew(
-                        &authority.delivery,
-                        &workload.runner,
-                        generation,
-                        LEASE_MS,
-                    )
-                    .await
+                    PostgresRunStore::new(connection)
+                        .renew(&authority.delivery, &workload.runner, generation, LEASE_MS)
+                        .await
                 })
                 .await
                 .map_err(|error| storage_error(&error))?;
@@ -508,13 +504,9 @@ impl<T: Send + 'static> wit_run::HostWithStore<T> for SharedCtx {
             let stored = plugin
                 .postgres
                 .executor_write(&workload.application.project, async |connection| {
-                    PostgresRunStore::new(connection).checkpoint(
-                        &authority.delivery,
-                        &workload.runner,
-                        generation,
-                        &state,
-                    )
-                    .await
+                    PostgresRunStore::new(connection)
+                        .checkpoint(&authority.delivery, &workload.runner, generation, &state)
+                        .await
                 })
                 .await
                 .map_err(|error| storage_error(&error))?;
@@ -541,13 +533,9 @@ impl<T: Send + 'static> wit_run::HostWithStore<T> for SharedCtx {
             let finished = plugin
                 .postgres
                 .executor_write(&workload.application.project, async |connection| {
-                    PostgresRunStore::new(connection).complete(
-                        &authority.delivery,
-                        &workload.runner,
-                        generation,
-                        &outcome,
-                    )
-                    .await
+                    PostgresRunStore::new(connection)
+                        .complete(&authority.delivery, &workload.runner, generation, &outcome)
+                        .await
                 })
                 .await
                 .map_err(|error| storage_error(&error))?;

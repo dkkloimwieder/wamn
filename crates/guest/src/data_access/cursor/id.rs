@@ -1,10 +1,10 @@
 //! Keyset cursors with the record id's declared scalar type.
 
+use crate::postgres_statements::Uuid;
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use serde_json::{Value, json};
 use wamn_digest::canonical_json_bytes;
-use crate::postgres_statements::Uuid;
 
 use super::{Direction, Key, VERSION};
 use crate::data_access::Invalid;

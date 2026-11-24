@@ -298,7 +298,9 @@ async fn delete_locked(
     let secret = wamn_registry::credential_secret_name(org, project, env);
     let secrets = Api::<Secret>::namespaced(target.client.client(), namespace);
     if delete_named(&secrets, &secret, true).await? {
-        lines.push(format!("secret \"{secret}\" deleted from {namespace} namespace"));
+        lines.push(format!(
+            "secret \"{secret}\" deleted from {namespace} namespace"
+        ));
     }
     lines.extend(delete_registry_rows(&mut *system.client().await, triple).await?);
     Ok(lines)

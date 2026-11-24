@@ -2,8 +2,8 @@
 
 use sqlx::SqlSafeStr as _;
 use sqlx::migrate::{MigrateError, Migration, MigrationType, Migrator};
-use wamn_provision::migration;
 use wamn_environment::migrations;
+use wamn_provision::migration;
 
 fn source(version: i64, sql: &str) -> Migration {
     Migration::new(

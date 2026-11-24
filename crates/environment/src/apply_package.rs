@@ -183,9 +183,9 @@ async fn apply(
         changed |=
             wamn_publish::connection_requirement::install(&mut tx, &package.manifest).await? != 0;
     }
-    sqlx::raw_sql(sqlx::AssertSqlSafe(
-        wamn_provision::migration::grants_sql(&login),
-    ))
+    sqlx::raw_sql(sqlx::AssertSqlSafe(wamn_provision::migration::grants_sql(
+        &login,
+    )))
     .execute(&mut *tx)
     .await?;
     let table = wamn_provision::migration::history_table(project_env_key, &package_id);
@@ -196,12 +196,8 @@ async fn apply(
         crate::migrations::run(&mut executor, package.migrations, table).await?;
     let mut tx = migration::begin(client, project_env_key).await?;
     entity_maps::reconcile_entity_maps(&mut tx, &plan, &package.manifest).await?;
-    changed |= package_version::record_package_schema(
-        &mut tx,
-        &plan.coordinate,
-        artifact_digest,
-    )
-    .await?;
+    changed |=
+        package_version::record_package_schema(&mut tx, &plan.coordinate, artifact_digest).await?;
     if applied.is_none() {
         changed |= operation_grants::ensure_admin_role(&mut tx, project_env_key).await?;
     }
@@ -279,12 +275,8 @@ async fn ensure_model_schemas(
         )))
         .execute(&mut *connection)
         .await?;
-        wamn_provision::migration::grant_model_schema_access(
-            connection,
-            login,
-            schema.as_str(),
-        )
-        .await?;
+        wamn_provision::migration::grant_model_schema_access(connection, login, schema.as_str())
+            .await?;
     }
     Ok(())
 }

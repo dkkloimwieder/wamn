@@ -35,7 +35,9 @@ use oci_client::{Client as OciClient, Reference};
 use wamn_digest::bytes_sha256;
 use wamn_oci_reference::{OciTag, parse_component_artifact_base};
 
-use crate::package_artifact::registry_credentials::{RegistryCredentials, read_registry_credentials};
+use crate::package_artifact::registry_credentials::{
+    RegistryCredentials, read_registry_credentials,
+};
 use crate::package_artifact::registry_source::RegistrySource;
 
 /// Artifact type of a package artifact.

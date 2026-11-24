@@ -11,9 +11,9 @@
     reason = "each test binary uses part of the shared fixtures"
 )]
 
-use wamn_edge_document::edge_bundle::BUNDLE_FILE_NAME;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
+use wamn_edge_document::edge_bundle::BUNDLE_FILE_NAME;
 
 use wamn_dev::dev::edge_bundle::{EdgeTarget, write_package};
 use wamn_digest::bytes_sha256;

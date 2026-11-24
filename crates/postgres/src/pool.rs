@@ -296,7 +296,8 @@ impl CredentialProvider for StaticCredentialProvider {
                 &triple.project == project
                     && options.get_username() == expected
                     && wamn_registry::name::project_database_key(database).as_ref() == Some(key)
-                    && options.get_host() == wamn_registry::name::project_database_host(database, &triple.org)
+                    && options.get_host()
+                        == wamn_registry::name::project_database_host(database, &triple.org)
                     && options.get_port() == 5432
                     && options.get_socket().is_none(),
                 "the {class} credential does not match project {key} and its database endpoint"
@@ -318,10 +319,7 @@ pub(super) struct PoolKey {
 }
 
 impl PoolKey {
-    pub(super) fn new(
-        project: &wamn_registry::ProjectId,
-        login: wamn_role::LoginName,
-    ) -> Self {
+    pub(super) fn new(project: &wamn_registry::ProjectId, login: wamn_role::LoginName) -> Self {
         Self {
             project: project.clone(),
             login,
@@ -421,8 +419,8 @@ mod tests {
     /// must survive `--release`, where a `debug_assert` would not exist.
     #[tokio::test]
     async fn a_platform_checkout_refuses_the_guest_authority() {
-        let postgres = WamnPostgres::from_env(Some(credentials("acme--dev--default")))
-            .expect("compose");
+        let postgres =
+            WamnPostgres::from_env(Some(credentials("acme--dev--default"))).expect("compose");
         let refused = postgres
             .checkout_platform(&DEFAULT_PROJECT, AuthorityClass::GuestSql)
             .await;

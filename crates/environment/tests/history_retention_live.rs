@@ -6,8 +6,8 @@ use sqlx::{Connection as _, Row as _};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use wamn_provision::sql;
 use wamn_environment::apply_package::{self, ApplyOutcome, ApplyPackageRequest};
+use wamn_provision::sql;
 
 const SCHEMA: &str = "record_retention";
 const PACKAGE_ID: &str = "record_retention_fixture";
@@ -49,15 +49,13 @@ async fn provision(admin: &mut Client) {
 }
 
 async fn drop_fixture_schemas(admin: &mut Client) {
-    sqlx::raw_sql(sqlx::AssertSqlSafe(
-        format!(
-            "DROP SCHEMA IF EXISTS {SCHEMA} CASCADE; \
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "DROP SCHEMA IF EXISTS {SCHEMA} CASCADE; \
              DROP SCHEMA IF EXISTS platform CASCADE; \
              DROP SCHEMA IF EXISTS catalog CASCADE; \
              DROP SCHEMA IF EXISTS wamn_authority CASCADE; \
              DROP SCHEMA IF EXISTS wamn_history CASCADE;"
-        ),
-    ))
+    )))
     .execute(&mut *admin)
     .await
     .map(drop)
@@ -172,12 +170,10 @@ async fn seed(admin: &mut Client, table: &str, statement: &str, age_days: i32) -
     ))
     .execute(&mut *admin)
     .await.map_or_else(|error| panic!("write {statement}: {error}"), drop);
-    let mut positions = sqlx::query(sqlx::AssertSqlSafe(
-        format!(
-            "UPDATE {history} SET changed_at = now() - make_interval(days => $1) \
+    let mut positions = sqlx::query(sqlx::AssertSqlSafe(format!(
+        "UPDATE {history} SET changed_at = now() - make_interval(days => $1) \
                   WHERE position > $2 RETURNING position"
-        ),
-    ))
+    )))
     .bind(age_days)
     .bind(last)
     .fetch_all(&mut *admin)
@@ -204,9 +200,9 @@ fn row_id(n: u8) -> String {
 async fn positions(admin: &mut Client) -> BTreeMap<String, Vec<i64>> {
     let mut observed = BTreeMap::new();
     for (table, _) in RELATIONS {
-        let rows = sqlx::query(sqlx::AssertSqlSafe(
-            format!("SELECT position FROM {SCHEMA}.{table}_history ORDER BY position"),
-        ))
+        let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
+            "SELECT position FROM {SCHEMA}.{table}_history ORDER BY position"
+        )))
         .fetch_all(&mut *admin)
         .await
         .expect("read a history table");
@@ -252,11 +248,9 @@ async fn history_table_creation_waits_for_a_running_prune() {
         .await
         .unwrap();
     let migration = postgres.create_project_database("project").await.unwrap();
-    wamn_environment::platform_migrations::install_project(
-        &mut connect(migration.as_str()).await,
-    )
-    .await
-    .unwrap();
+    wamn_environment::platform_migrations::install_project(&mut connect(migration.as_str()).await)
+        .await
+        .unwrap();
     let mut database = url::Url::parse(postgres.admin_url()).unwrap();
     database.set_path("project");
     let url = database.to_string();

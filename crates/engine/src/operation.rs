@@ -146,8 +146,7 @@ impl WamnOperation {
         event: String,
     ) -> anyhow::Result<Result<(), String>> {
         let binding = self.binding(ingress)?;
-        let deadline = Instant::now()
-            + Duration::from_millis(bounded_node_deadline_ms(None));
+        let deadline = Instant::now() + Duration::from_millis(bounded_node_deadline_ms(None));
         binding
             .target(sibling)?
             .call(scopes, scope, deadline, move |call| DataChangeInvocation {
@@ -177,10 +176,8 @@ impl Binding {
         context: node_types::NodeContext,
         input: String,
     ) -> anyhow::Result<Result<node_types::Emission, node_types::NodeError>> {
-        let deadline = Instant::now()
-            + Duration::from_millis(bounded_node_deadline_ms(
-                context.deadline_ms,
-            ));
+        let deadline =
+            Instant::now() + Duration::from_millis(bounded_node_deadline_ms(context.deadline_ms));
         self.target(sibling)?
             .call(scopes, scope, deadline, move |call| OperationInvocation {
                 call,

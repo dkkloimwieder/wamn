@@ -1,15 +1,15 @@
 //! Dispatch a node through the exact sibling's SQL and connection authority.
 
-use wamn_package::canonical_name::CanonicalName;
 use super::{SharedCtx, WasmResult, Workflow, Workload, service, wit_node};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 use tokio::time::Instant;
-use wamn_connection::connection::GraphPosition;
 use wamn_application::native_routes::{OperationRefusal, bounded_node_deadline_ms};
+use wamn_connection::connection::GraphPosition;
 use wamn_engine::operation::node_types;
+use wamn_package::canonical_name::CanonicalName;
 use wamn_plugin::WorkflowNode;
 use wamn_postgres::run_store::PostgresRunStore;
 use wamn_run_state::run_store::RunStore;
@@ -43,12 +43,9 @@ impl Workflow {
             let remaining = self
                 .postgres
                 .executor_write(&workload.application.project, async |connection| {
-                    PostgresRunStore::new(connection).lease_remaining_ms(
-                        &authority.delivery,
-                        &workload.runner,
-                        generation,
-                    )
-                    .await
+                    PostgresRunStore::new(connection)
+                        .lease_remaining_ms(&authority.delivery, &workload.runner, generation)
+                        .await
                 })
                 .await
                 .map_err(|error| {

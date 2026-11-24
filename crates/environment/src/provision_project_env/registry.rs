@@ -1,8 +1,8 @@
 //! Environment instance creation, registry reads, and control-store projection.
 
-use wamn_registry::deployment::DeploymentStore as _;
 use anyhow::Context as _;
 use ring::rand::SecureRandom as _;
+use wamn_registry::deployment::DeploymentStore as _;
 use wamn_registry::instance_suffix::InstanceSuffix;
 
 use ring::rand::SystemRandom;
@@ -108,10 +108,9 @@ pub(crate) async fn record_project_env(
             readiness_budget_seconds,
             drain_bound_seconds,
             target_id: &target_id,
-        },
-    )
-    .await
-    .context("record project deployment")
+        })
+        .await
+        .context("record project deployment")
 }
 
 /// Require the environment's registry coordinate to exist.

@@ -591,7 +591,6 @@ mod tests {
         .unwrap()
     }
 
-
     #[test]
     fn source_identity_requires_one_exact_header() {
         let envelope = admission_envelope();
@@ -639,7 +638,6 @@ mod tests {
             },
         )
     }
-
 
     #[test]
     fn derived_source_identity_requires_exact_target_and_one_header() {
@@ -689,7 +687,6 @@ mod tests {
 }
 
 pub use wamn_registry::name::{stream_name, stream_subjects};
-
 
 /// A source-event coordinate that matches the delivered NATS identity.
 #[derive(Debug, Clone, PartialEq, Eq)]

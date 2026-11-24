@@ -1,9 +1,9 @@
 //! Write edge bundles from built packages and admitted component bytes.
 
-use wamn_edge_document::edge_bundle::local_component_path;
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
+use wamn_edge_document::edge_bundle::local_component_path;
 
 use anyhow::{Context as _, ensure};
 use wamn_component_policy::AdmittedComponent;
@@ -19,9 +19,7 @@ use wamn_registry::project_env_key;
 
 use wamn_publish::component_admission::{AdmitComponentRequest, admit_component};
 use wamn_publish::component_declaration::{authored_base_digests, render_package_declaration};
-use wamn_publish::publish_release::{
-    PublishReleaseRequest, assemble_release,
-};
+use wamn_publish::publish_release::{PublishReleaseRequest, assemble_release};
 
 /// The environment coordinate of the box: the edge configuration's `[target]`.
 /// The `project_env_key` of the release is [`project_env_key`] of the three.

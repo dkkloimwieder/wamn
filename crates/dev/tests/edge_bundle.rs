@@ -3,10 +3,10 @@
 //! Run `eval "$(cargo xtask prepare-tests)"` first. It builds the edge_device
 //! component and the pinned ingress guest and exports their paths.
 
+use std::path::{Path, PathBuf};
 use wamn_edge_document::edge_bundle::BUNDLE_FILE_NAME;
 use wamn_edge_document::edge_bundle::EdgeBundle;
 use wamn_edge_document::edge_bundle::INGRESS_FILE_NAME;
-use std::path::{Path, PathBuf};
 
 use wamn_dev::dev::edge_bundle::{EdgeTarget, write_package};
 use wamn_digest::bytes_sha256;

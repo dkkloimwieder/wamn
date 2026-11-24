@@ -137,7 +137,8 @@ impl EnvironmentDocument {
     ///
     /// When a field is unknown or missing, or a value is refused.
     pub fn from_json(bytes: &[u8]) -> anyhow::Result<Self> {
-        let document: Self = serde_json::from_slice(bytes).context("decode the environment JSON")?;
+        let document: Self =
+            serde_json::from_slice(bytes).context("decode the environment JSON")?;
         ensure!(
             document.revocation_seconds.is_some(),
             "revocation_seconds is required in environment input"

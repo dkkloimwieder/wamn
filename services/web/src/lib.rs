@@ -340,13 +340,17 @@ async fn respond(
                     .trim()
                     .parse::<std::net::IpAddr>()?
             };
-        let mut request =
-            match browser_session::forward(request, &proxy.csrf_key, password_route, password_request)
-                .await
-            {
-                Ok(request) => request,
-                Err(status) => return Ok(boxed(empty(status))),
-            };
+        let mut request = match browser_session::forward(
+            request,
+            &proxy.csrf_key,
+            password_route,
+            password_request,
+        )
+        .await
+        {
+            Ok(request) => request,
+            Err(status) => return Ok(boxed(empty(status))),
+        };
         request
             .headers_mut()
             .insert("x-forwarded-for", address.to_string().parse()?);

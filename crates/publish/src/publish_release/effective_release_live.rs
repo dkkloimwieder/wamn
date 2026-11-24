@@ -1,11 +1,11 @@
 //! Two-package effective release from the prepared fixture components.
 
-use wamn_package::package_version::PackageVersion;
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::PathBuf;
 use wamn_package::ComponentDeclaration;
 use wamn_package::OperationType;
 use wamn_package::PackageCoordinate;
-use std::collections::{BTreeMap, BTreeSet};
-use std::path::PathBuf;
+use wamn_package::package_version::PackageVersion;
 
 use wamn_component_policy::ComponentPackageCoordinate;
 use wamn_digest::bytes_sha256;

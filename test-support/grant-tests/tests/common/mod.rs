@@ -157,7 +157,11 @@ pub fn sqlstate(error: &sqlx::Error) -> Option<Cow<'_, str>> {
 
 /// Run each action as `actor` in a rolled-back transaction, and check that the server refuses
 /// each one with SQLSTATE 42501. Return the number of actions.
-pub async fn assert_refused(actor: &mut PgConnection, label: &str, actions: &[String]) -> Result<usize> {
+pub async fn assert_refused(
+    actor: &mut PgConnection,
+    label: &str,
+    actions: &[String],
+) -> Result<usize> {
     let mut failures = Vec::new();
     for action in actions {
         let mut transaction = actor.begin().await?;
@@ -260,8 +264,17 @@ pub async fn assert_login_refusals(
         .fetch_all(&mut *admin)
         .await?;
     actions.extend(roles);
-    for attribute in ["SUPERUSER", "BYPASSRLS", "CREATEROLE", "CREATEDB", "REPLICATION"] {
-        actions.push(format!("ALTER ROLE {} {attribute}", escape_identifier(login)));
+    for attribute in [
+        "SUPERUSER",
+        "BYPASSRLS",
+        "CREATEROLE",
+        "CREATEDB",
+        "REPLICATION",
+    ] {
+        actions.push(format!(
+            "ALTER ROLE {} {attribute}",
+            escape_identifier(login)
+        ));
     }
     actions.extend_from_slice(contract);
     let mut checked = assert_refused(actor, login, &actions).await?;
@@ -292,7 +305,11 @@ pub async fn assert_login_refusals(
 }
 
 /// The role holds no elevated attribute and reaches no elevated role.
-pub async fn assert_unelevated(admin: &mut PgConnection, role: &str, replication: bool) -> Result<()> {
+pub async fn assert_unelevated(
+    admin: &mut PgConnection,
+    role: &str,
+    replication: bool,
+) -> Result<()> {
     let (elevated, replicates, reaches): (bool, bool, bool) = sqlx::query_as(
         "SELECT rolsuper OR rolbypassrls OR rolcreatedb OR rolcreaterole, rolreplication, \
                 EXISTS (SELECT FROM pg_catalog.pg_roles r \
@@ -305,7 +322,10 @@ pub async fn assert_unelevated(admin: &mut PgConnection, role: &str, replication
     .fetch_one(&mut *admin)
     .await?;
     ensure!(!elevated, "{role} holds an elevated attribute");
-    ensure!(replicates == replication, "{role} replication is {replicates}");
+    ensure!(
+        replicates == replication,
+        "{role} replication is {replicates}"
+    );
     ensure!(!reaches, "{role} is a member of an elevated role");
     Ok(())
 }
@@ -325,12 +345,19 @@ pub async fn assert_no_grant_options(admin: &mut PgConnection, role: &str) -> Re
     .bind(role)
     .fetch_all(&mut *admin)
     .await?;
-    ensure!(grantable.is_empty(), "{role} can pass on privileges: {grantable:?}");
+    ensure!(
+        grantable.is_empty(),
+        "{role} can pass on privileges: {grantable:?}"
+    );
     Ok(())
 }
 
 /// The relations that `role` can write, other than its own transaction identity, outside `schema`.
-pub async fn writes_outside(admin: &mut PgConnection, role: &str, schema: Option<&str>) -> Result<Vec<String>> {
+pub async fn writes_outside(
+    admin: &mut PgConnection,
+    role: &str,
+    schema: Option<&str>,
+) -> Result<Vec<String>> {
     Ok(sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT c.oid::regclass::text FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
           WHERE {USER_SCHEMA} AND n.nspname IS DISTINCT FROM $2 AND c.relkind IN ('r', 'p', 'v', 'm', 'f')
@@ -369,7 +396,10 @@ pub async fn assert_mapped_logins_are_platform_components(admin: &mut PgConnecti
     .await?;
     ensure!(!rows.is_empty(), "the install maps no login to a principal");
     for (login, principal, restricted) in rows {
-        ensure!(restricted, "mapped login {login} can bypass database privileges");
+        ensure!(
+            restricted,
+            "mapped login {login} can bypass database privileges"
+        );
         ensure!(
             wamn_identity_protocol::PlatformComponent::ALL
                 .into_iter()
@@ -392,7 +422,10 @@ pub async fn assert_public_executes_no_definer(admin: &mut PgConnection) -> Resu
     .bind(PUBLIC_ONLY)
     .fetch_all(&mut *admin)
     .await?;
-    ensure!(executable.is_empty(), "PUBLIC executes security definers: {executable:?}");
+    ensure!(
+        executable.is_empty(),
+        "PUBLIC executes security definers: {executable:?}"
+    );
     let actions = refused_actions(admin, PUBLIC_ONLY).await?;
     execute(admin, &format!("SET ROLE {PUBLIC_ONLY}")).await?;
     let checked = assert_refused(admin, PUBLIC_ONLY, &actions).await;

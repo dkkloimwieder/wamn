@@ -347,8 +347,5 @@ async fn execute_inner(
     let status = result.with_context(|| format!("{label}\n{text}{diagnostics}"))?;
     reaped?;
     streams?;
-    Ok(Captured {
-        text,
-        status,
-    })
+    Ok(Captured { text, status })
 }

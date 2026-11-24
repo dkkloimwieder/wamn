@@ -1,18 +1,18 @@
 //! HTTP and device calls use one operation boundary over the edge's durable store.
 
-use wamn_package::canonical_name::CanonicalName;
 use crate::application::EdgeApplication;
+use crate::native_operation::{OperationCall, OperationClosure, invoke_operation, node_types};
 use crate::policy::EdgeFacts;
 use crate::release::EdgeRelease;
 use crate::store::{Claim, EdgeStore};
 use anyhow::Context as _;
 use std::collections::HashSet;
 use std::sync::Arc;
-use wamn_engine::entry_operation::operation::{self, Begun, Refusal};
-use wamn_engine::entry_operation::postgres_types::PgError;
 use wamn_application::ingress::AuthenticatedCaller;
 use wamn_application::native_routes::{authorize_registered_operation, bounded_node_deadline_ms};
-use crate::native_operation::{OperationCall, OperationClosure, invoke_operation, node_types};
+use wamn_engine::entry_operation::operation::{self, Begun, Refusal};
+use wamn_engine::entry_operation::postgres_types::PgError;
+use wamn_package::canonical_name::CanonicalName;
 use wash_runtime::engine::ctx::{ActiveCtx, extract_active_ctx};
 use wash_runtime::engine::workload::WorkloadItem;
 use wash_runtime::plugin::{HostPlugin, WitInterfaces};
@@ -302,7 +302,9 @@ impl<T: 'static + Send> operation::HostWithStore<T> for EdgeOperationHost {
         _component: String,
         _event: String,
     ) -> impl Future<Output = wash_runtime::wasmtime::Result<Result<(), String>>> {
-        std::future::ready(Ok(Err("data change dispatch is unavailable at the edge".into())))
+        std::future::ready(Ok(Err(
+            "data change dispatch is unavailable at the edge".into()
+        )))
     }
 
     async fn invoke(

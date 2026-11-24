@@ -350,10 +350,7 @@ pub fn record_graph(span: &tracing::Span, graph: Option<EffectGraph<'_>>) {
         graph.map_or(0, |graph| graph.graph_version),
     );
     span.record("wamn.node_id", graph.map_or("", |graph| graph.node_id));
-    span.record(
-        "wamn.occurrence",
-        graph.map_or(0, |graph| graph.occurrence),
-    );
+    span.record("wamn.occurrence", graph.map_or(0, |graph| graph.occurrence));
     span.record(
         "wamn.component_digest",
         graph
@@ -364,10 +361,7 @@ pub fn record_graph(span: &tracing::Span, graph: Option<EffectGraph<'_>>) {
         "wamn.component_name",
         graph.map_or("", |graph| graph.component_name),
     );
-    span.record(
-        "wamn.operation",
-        graph.map_or("", |graph| graph.operation),
-    );
+    span.record("wamn.operation", graph.map_or("", |graph| graph.operation));
 }
 
 /// [9.1] Open one effect span: a per-surface constant name, that surface's own

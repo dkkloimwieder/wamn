@@ -21,7 +21,9 @@ impl InstalledPackageRow<'_> {
             .map_err(|source| sqlx::Error::ColumnDecode {
                 index: "1".into(),
                 source: anyhow::Error::new(source)
-                    .context(format!("decode artifact digest for installed package {package}"))
+                    .context(format!(
+                        "decode artifact digest for installed package {package}"
+                    ))
                     .into(),
             })?;
         Ok((package, digest))

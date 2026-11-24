@@ -308,5 +308,4 @@ mod tests {
         assert_eq!(recovery("deployed"), None);
         assert_eq!(recovery("failed"), None);
     }
-
 }

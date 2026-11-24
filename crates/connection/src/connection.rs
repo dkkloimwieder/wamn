@@ -1,8 +1,8 @@
 //! Host-attested connection invocations and application authorization.
 
 use std::sync::Arc;
-use wamn_authority::effect_span::{EffectEvidence, EffectGraph, EffectSource};
 use wamn_application::application_config::{ApplicationConfig, ApplicationConnection};
+use wamn_authority::effect_span::{EffectEvidence, EffectGraph, EffectSource};
 
 /// Host-attested identity of one component invocation.
 ///
