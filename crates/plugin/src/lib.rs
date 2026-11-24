@@ -17,6 +17,7 @@ use wash_runtime::plugin::{HostPlugin, WitInterfaces};
 use wash_runtime::wasmtime::component::{Component, Linker};
 use wash_runtime::wit::{WitInterface, WitWorld};
 
+pub mod blobstore;
 pub mod bound_http;
 mod executor;
 mod host;

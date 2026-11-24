@@ -15,7 +15,8 @@ enum BindingErrorType {
     Credential,
 }
 impl BindingError {
-    pub(crate) fn unauthorized() -> Self {
+    /// Refuse a binding whose authority cannot be established.
+    pub fn unauthorized() -> Self {
         Self::refused(BindingErrorType::Credential, "blobstore binding refused")
     }
 

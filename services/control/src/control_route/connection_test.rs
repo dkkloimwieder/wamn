@@ -192,7 +192,7 @@ impl ControlRoutes<'_> {
                 parameters,
                 auth,
                 credential,
-                || wamn_blobstore::plugin::health(&integration_type, parameters, credential),
+                || wamn_storage::health(&integration_type, parameters, credential),
             )
             .await;
         Ok(match result {

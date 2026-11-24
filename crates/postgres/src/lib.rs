@@ -10,6 +10,8 @@ pub mod authorization;
 pub mod build_database;
 pub mod catalog;
 pub mod control;
+mod file_catalog;
+pub mod file_connections;
 pub mod identity_error;
 pub mod oauth_authorization;
 pub mod replication;

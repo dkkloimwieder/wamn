@@ -539,9 +539,10 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             ))
             .with_oauth_encryption(envelope),
     );
+    let operation_store = Arc::clone(&pools);
     let postgres = Arc::new(OperationHost::new(
         Arc::clone(&pools),
-        pools,
+        operation_store,
         Some(Arc::clone(&authorization)),
     ));
     let integration = Arc::new(wamn_plugin::integrations::IntegrationBound::new(
@@ -552,12 +553,16 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         Arc::new(wamn_http::transport::HttpTransport::new()?),
         &wamn_plugin::host_policy::CONNECTION_HOST_POLICY,
     ));
-    let blobstore = Arc::new(wamn_blobstore::plugin::WamnBlobstore::new(Arc::clone(
-        &postgres,
-    )));
+    let storage: Arc<dyn wamn_blobstore::Storage> =
+        Arc::new(wamn_storage::ObjectStorage::default());
+    let blobstore = Arc::new(wamn_plugin::blobstore::WamnBlobstore::new(
+        Arc::clone(&postgres.scopes),
+        Arc::clone(&storage),
+    ));
     let files = Arc::new(files::Files::new(
         &postgres,
-        Arc::clone(&blobstore),
+        pools,
+        storage,
         Arc::clone(&authorization),
     ));
     postgres.set_result_signer(

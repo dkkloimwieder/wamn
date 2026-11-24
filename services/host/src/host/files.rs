@@ -1,7 +1,5 @@
 //! Native file handlers and result signing for one resolved application workload.
 
-use wamn_package::SignedFileField;
-use wamn_package::SignedFileResultClass;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock, Weak};
 use std::time::Duration;
@@ -10,12 +8,15 @@ use anyhow::Context as _;
 use serde_json::Value;
 use wamn_application::application_config::ApplicationConfig;
 use wamn_application::result_signing::{ResultSigner, ResultSigning, ResultSigningError};
-use wamn_blobstore::file_route::{FileRoutes, RegistryFileConnections};
-use wamn_blobstore::plugin::WamnBlobstore;
+use wamn_blobstore::Storage;
+use wamn_blobstore::file_route::FileCatalog;
 use wamn_connection::connection_facts::ConnectionCache;
 use wamn_connection::invocation::ReleaseContext;
+use wamn_package::{SignedFileField, SignedFileResultClass};
 use wamn_plugin::OperationHost;
+use wamn_plugin::blobstore::file_route::FileRoutes;
 use wamn_postgres::authorization::Authorization;
+use wamn_postgres::file_connections::RegistryFileConnections;
 
 pub(super) struct Routes {
     pub(super) files: FileRoutes,
@@ -29,7 +30,8 @@ struct ApplicationFiles {
 
 pub(super) struct Files {
     postgres: Weak<OperationHost>,
-    blobstore: Arc<WamnBlobstore>,
+    catalog: Arc<dyn FileCatalog>,
+    storage: Arc<dyn Storage>,
     authorization: Arc<Authorization>,
     applications: RwLock<HashMap<String, Arc<ApplicationFiles>>>,
 }
@@ -43,12 +45,14 @@ impl std::fmt::Debug for Files {
 impl Files {
     pub(super) fn new(
         postgres: &Arc<OperationHost>,
-        blobstore: Arc<WamnBlobstore>,
+        catalog: Arc<dyn FileCatalog>,
+        storage: Arc<dyn Storage>,
         authorization: Arc<Authorization>,
     ) -> Self {
         Self {
             postgres: Arc::downgrade(postgres),
-            blobstore,
+            catalog,
+            storage,
             authorization,
             applications: RwLock::default(),
         }
@@ -98,19 +102,17 @@ impl Files {
                 let connections = Arc::new(RegistryFileConnections {
                     release: Arc::clone(application),
                     facts,
-                    project: application.project.clone(),
-                    environment: application.environment.clone(),
                 });
                 let application_routes = super::host_route::HostRouteDelivery::new(
-                    Arc::clone(&postgres),
+                    postgres,
                     Arc::clone(&self.authorization),
                     Arc::clone(application),
                 );
                 Ok(Arc::new(Routes {
                     files: FileRoutes::new(
                         context,
-                        postgres,
-                        Arc::clone(&self.blobstore),
+                        Arc::clone(&self.catalog),
+                        Arc::clone(&self.storage),
                         connections,
                         application.project.clone(),
                     ),

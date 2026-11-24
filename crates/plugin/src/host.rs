@@ -60,15 +60,6 @@ impl OperationHost {
             .expect("result signer is installed once");
     }
 
-    /// Hold a file's session lock on the configured platform login until drop.
-    pub async fn lock_file(
-        &self,
-        project: &wamn_registry::ProjectId,
-        id: uuid::Uuid,
-    ) -> anyhow::Result<sqlx::PgConnection> {
-        self.pools.lock_file(project, id).await
-    }
-
     /// Release every scope owned by a stopped workload.
     pub(super) fn clear_component_identity(&self, workload_id: &str) {
         self.scopes.revoke_workload(workload_id);

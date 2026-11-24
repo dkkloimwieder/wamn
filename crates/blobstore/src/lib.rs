@@ -1,4 +1,4 @@
-//! The WAMN blobstore host service.
+//! File and confined object storage contracts.
 //!
 //! WAMN is the single runtime owner of `wasmcloud:blobstore@0.1.0`. Upstream's
 //! `wasi_blobstore` providers are prior-art source only and are never
@@ -6,7 +6,7 @@
 //! they are not even compiled, so a second runtime for this contract is a
 //! structural impossibility rather than a convention (wamn-jpxo).
 //!
-//! This module holds the parts that decide, before any request exists, what a
+//! This crate holds the parts that decide, before any request exists, what a
 //! guest is allowed to do:
 //!
 //! * [`confinement`] turns the descriptor's environment-owned bucket and
@@ -28,15 +28,41 @@
 //! and a test says so.
 
 pub mod binding;
-pub mod bindings;
 pub mod confinement;
-pub mod drain;
-pub mod files;
-mod host;
-pub mod intake;
-pub mod plugin;
-mod pod_identity;
-pub mod store;
-pub mod wit_error;
-
 pub mod file_route;
+pub mod files;
+pub mod intake;
+pub mod store;
+
+use std::sync::Arc;
+
+use tokio::time::Instant;
+use uuid::Uuid;
+use wamn_connection::connection_facts::ConnectionFacts;
+use wamn_connection::invocation::ReleaseContext;
+use wamn_registry::integration_code::IntegrationCode;
+
+use crate::files::{FileStorageError, FileStore};
+use crate::store::ObjectContainer;
+
+/// Open storage under the active generation and the caller's binding permissions.
+#[async_trait::async_trait]
+pub trait Storage: std::fmt::Debug + Send + Sync {
+    /// Open a confined container for a declared guest binding.
+    async fn container(
+        &self,
+        facts: &Arc<ConnectionFacts>,
+        id: Uuid,
+        integration_type: &IntegrationCode,
+        read_only: bool,
+    ) -> anyhow::Result<Arc<dyn ObjectContainer>>;
+
+    /// Open file storage after the native handler authorizes the binding.
+    async fn file_store(
+        &self,
+        context: &ReleaseContext,
+        id: Uuid,
+        read_only: bool,
+        deadline: Instant,
+    ) -> Result<Box<dyn FileStore>, FileStorageError>;
+}

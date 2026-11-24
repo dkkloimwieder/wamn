@@ -33,7 +33,7 @@ use wash_runtime::wasmtime::component::{
     Accessor, HasData, Source, StreamConsumer, StreamReader, StreamResult,
 };
 
-use super::intake::{Intake, IntakeError};
+use wamn_blobstore::intake::{Intake, IntakeError};
 
 /// Drain `stream` into an [`Intake`] under `limit`, returning the body only on
 /// a clean end-of-stream.

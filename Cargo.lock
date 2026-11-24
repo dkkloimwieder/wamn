@@ -6267,35 +6267,18 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
- "boon",
  "bytes",
  "futures-util",
- "http-body-util",
- "hyper",
- "moka",
- "object_store",
  "serde",
  "serde_json",
- "sqlx",
  "tokio",
- "tracing",
- "url",
  "uuid",
- "wamn-application",
- "wamn-authority",
  "wamn-connection",
  "wamn-connection-type",
  "wamn-digest",
- "wamn-engine",
- "wamn-gcp-metadata",
  "wamn-identity-protocol",
  "wamn-package",
- "wamn-plugin",
- "wamn-postgres",
  "wamn-registry",
- "wamn-routes",
- "wash-runtime",
- "wasmtime-wasi-http",
 ]
 
 [[package]]
@@ -6501,7 +6484,6 @@ dependencies = [
  "uuid",
  "wamn-application",
  "wamn-authentication",
- "wamn-blobstore",
  "wamn-broker",
  "wamn-connection",
  "wamn-digest",
@@ -6522,6 +6504,7 @@ dependencies = [
  "wamn-registry",
  "wamn-role",
  "wamn-routes",
+ "wamn-storage",
  "zeroize",
 ]
 
@@ -6826,6 +6809,7 @@ dependencies = [
  "wamn-registry",
  "wamn-routes",
  "wamn-run-state",
+ "wamn-storage",
  "wamn-test-infrastructure",
  "wamn-workflow-graph",
  "wash-runtime",
@@ -7177,18 +7161,24 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "boon",
+ "bytes",
  "futures-util",
  "http",
+ "http-body-util",
+ "hyper",
  "opentelemetry",
  "serde",
  "serde_json",
  "sqlx",
  "tokio",
  "tracing",
+ "url",
  "uuid",
  "wamn-application",
  "wamn-authentication",
  "wamn-authority",
+ "wamn-blobstore",
  "wamn-connection",
  "wamn-connection-type",
  "wamn-digest",
@@ -7200,8 +7190,10 @@ dependencies = [
  "wamn-postgres",
  "wamn-registry",
  "wamn-role",
+ "wamn-routes",
  "wamn-run-state",
  "wash-runtime",
+ "wasmtime-wasi-http",
 ]
 
 [[package]]
@@ -7230,6 +7222,7 @@ dependencies = [
  "wamn-application",
  "wamn-authentication",
  "wamn-authority",
+ "wamn-blobstore",
  "wamn-codegen",
  "wamn-component-policy",
  "wamn-connection",
@@ -7413,6 +7406,32 @@ dependencies = [
  "serde_json",
  "wamn-package",
  "wamn-scalar",
+]
+
+[[package]]
+name = "wamn-storage"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bytes",
+ "futures-util",
+ "moka",
+ "object_store",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "url",
+ "uuid",
+ "wamn-application",
+ "wamn-blobstore",
+ "wamn-connection",
+ "wamn-connection-type",
+ "wamn-digest",
+ "wamn-gcp-metadata",
+ "wamn-postgres",
+ "wamn-registry",
 ]
 
 [[package]]

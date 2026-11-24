@@ -133,29 +133,6 @@ pub async fn open_executor_read(
 }
 
 impl WamnPostgres {
-    /// Hold a file's session lock on the configured platform login until drop.
-    pub async fn lock_file(
-        &self,
-        project: &wamn_registry::ProjectId,
-        id: uuid::Uuid,
-    ) -> anyhow::Result<sqlx::PgConnection> {
-        let (connection, policy) = self
-            .checkout_platform(project, AuthorityClass::Platform)
-            .await
-            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-        // A session lock must never return to a pool still holding its lock.
-        let mut connection = connection.detach();
-        sqlx::query("SELECT set_config('lock_timeout', $1, false)")
-            .bind(format!("{}ms", policy.statement_timeout_ms))
-            .execute(&mut connection)
-            .await?;
-        sqlx::query("SELECT pg_advisory_lock(hashtextextended($1, 0))")
-            .bind(format!("wamn:file:{id}"))
-            .execute(&mut connection)
-            .await?;
-        Ok(connection)
-    }
-
     pub async fn administration_transaction<T, E>(
         &self,
         project: &wamn_registry::ProjectId,

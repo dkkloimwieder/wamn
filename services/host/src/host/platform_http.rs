@@ -219,11 +219,18 @@ mod tests {
             Arc::clone(&pools),
             database,
         ));
-        let postgres = Arc::new(wamn_plugin::OperationHost::new(Arc::clone(&pools), pools, None));
-        let blobstore = Arc::new(wamn_blobstore::plugin::WamnBlobstore::new(Arc::clone(
+        let operation_store = Arc::clone(&pools);
+        let postgres = Arc::new(wamn_plugin::OperationHost::new(
+            Arc::clone(&pools),
+            operation_store,
+            None,
+        ));
+        let files = Arc::new(Files::new(
             &postgres,
-        )));
-        let files = Arc::new(Files::new(&postgres, blobstore, authorization));
+            pools,
+            Arc::new(wamn_storage::ObjectStorage::default()),
+            authorization,
+        ));
         let routing = Arc::new(IngressRouting::new(Arc::clone(&postgres.scopes)));
         let operations = Arc::new(wamn_engine::operation::WamnOperation::new(
             Arc::clone(&postgres) as Arc<dyn wash_runtime::plugin::HostPlugin>,

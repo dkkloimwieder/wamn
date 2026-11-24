@@ -10,6 +10,7 @@ pg_walstream.workspace = true
 wamn-application.workspace = true
 wamn-authentication.workspace = true
 wamn-authority.workspace = true
+wamn-blobstore.workspace = true
 wamn-codegen.workspace = true
 wamn-component-policy.workspace = true
 wamn-connection.workspace = true

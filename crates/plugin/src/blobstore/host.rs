@@ -35,7 +35,12 @@
 //! because the environment owns the container, which is the ordinary operation
 //! of the ownership split rather than a deviation from the contract.
 
+use std::sync::Arc;
+
 use wamn_authority::EffectOutcome;
+use wamn_blobstore::binding::BindingError;
+use wamn_blobstore::intake::MAX_OBJECT_BYTES;
+use wamn_blobstore::store::{BackendErrorType, ObjectContainer, StoreError};
 use wash_runtime::engine::ctx::{ActiveCtx, SharedCtx};
 use wash_runtime::wasmtime::component::{Accessor, Resource};
 
@@ -47,12 +52,12 @@ use super::bindings::wasmcloud::blobstore::types::{
     ContainerMetadata, Error as WitError, ObjectId, ObjectMetadata,
 };
 use super::drain::drain_body;
-use super::intake::MAX_OBJECT_BYTES;
-use super::plugin::{WAMN_BLOBSTORE_ID, WamnBlobstore};
-use super::store::{BoundContainer, StoreError};
 use super::wit_error::to_wit;
+use super::{WAMN_BLOBSTORE_ID, WamnBlobstore};
 
 use wamn_authority::effect_span::EffectOutcomeGuard;
+
+pub type BoundContainer = Arc<dyn ObjectContainer>;
 
 /// The refusal a store-owned verb returns.
 fn refused(verb: &'static str, reason: &'static str) -> WitError {
@@ -67,7 +72,14 @@ fn container_of<T>(
 where
     T: 'static,
 {
-    accessor.with(|mut access| access.get().table.get(handle).cloned().map_err(Into::into))
+    accessor.with(|mut access| {
+        access
+            .get()
+            .table
+            .get(handle)
+            .map(Arc::clone)
+            .map_err(Into::into)
+    })
 }
 
 // The marker traits attach to the store's DATA type (`ActiveCtx`), while the
@@ -373,10 +385,8 @@ where
 /// that stopped arriving after the object was found is response-lost, the same
 /// shape the HTTP surface names at its own body read.
 ///
-/// `object_store::Error` is `non_exhaustive`, so the last arm is a wildcard and
-/// not a list. It records [`EffectOutcome::EffectUncertain`]: a generic backend
-/// failure is an attempt the platform made and holds no outcome for. A timeout
-/// there names a deadline that never elapsed (owner ruling, `wamn-b2m6.3`).
+/// A generic backend failure leaves the effect outcome uncertain, even when
+/// the guest-facing error names a transport timeout (wamn-b2m6.3).
 fn store_outcome(error: Option<&StoreError>) -> EffectOutcome {
     let Some(error) = error else {
         return EffectOutcome::Responded;
@@ -388,12 +398,11 @@ fn store_outcome(error: Option<&StoreError>) -> EffectOutcome {
         }
         StoreError::NoSuchObject => EffectOutcome::Responded,
         StoreError::ResponseLost(_) => EffectOutcome::ResponseLost,
-        StoreError::Backend(backend) => match backend {
-            object_store::Error::NotFound { .. }
-            | object_store::Error::PermissionDenied { .. }
-            | object_store::Error::Unauthenticated { .. }
-            | object_store::Error::AlreadyExists { .. } => EffectOutcome::Responded,
-            _ => EffectOutcome::EffectUncertain,
+        StoreError::Backend(backend) => match backend.type_ {
+            BackendErrorType::NotFound
+            | BackendErrorType::AccessDenied
+            | BackendErrorType::AlreadyExists => EffectOutcome::Responded,
+            BackendErrorType::Timeout | BackendErrorType::Other => EffectOutcome::EffectUncertain,
         },
     }
 }
@@ -418,7 +427,7 @@ where
             use tracing::Instrument as _;
 
             let (plugin, component_id) = plugin_and_caller(accessor)?;
-            let span = super::plugin::blobstore_span(&plugin, &component_id, operation);
+            let span = super::blobstore_span(&plugin, &component_id, operation);
             // Declared before the effect so it outlives the instrumented future. An
             // effect dropped mid-flight records `cancelled` through this guard.
             let evidence = plugin
@@ -426,13 +435,9 @@ where
                 .and_then(|invocation| invocation.effects);
             let mut observed = EffectOutcomeGuard::new(&span, evidence);
             let started = std::time::Instant::now();
-            let execution = plugin
-                .postgres
-                .scopes
-                .execution(&component_id)
-                .ok_or_else(|| {
-                    wash_runtime::wasmtime::Error::msg("invocation scope was revoked")
-                })?;
+            let execution = plugin.scopes.execution(&component_id).ok_or_else(|| {
+                wash_runtime::wasmtime::Error::msg("invocation scope was revoked")
+            })?;
             let remaining = execution
                 .deadline()
                 .saturating_duration_since(tokio::time::Instant::now());
@@ -467,9 +472,8 @@ where
                 );
             };
             if plugin
-                .postgres
                 .scopes
-                .read::<wamn_plugin::scope_registry::Authority, _>(&component_id, |record| {
+                .read::<crate::scope_registry::Authority, _>(&component_id, |record| {
                     record_duration(
                         record
                             .identity
@@ -504,7 +508,7 @@ where
 async fn resolve_alias<T>(
     accessor: &Accessor<T, SharedCtx>,
     store_alias: &str,
-) -> Result<BoundContainer, super::binding::BindingError>
+) -> Result<BoundContainer, BindingError>
 where
     T: 'static,
 {
@@ -518,11 +522,11 @@ where
         Ok(resolved) => resolved,
         Err(error) => {
             tracing::warn!(error = %error, "blobstore plugin is not registered on this host");
-            return Err(super::binding::BindingError::unauthorized());
+            return Err(BindingError::unauthorized());
         }
     };
     let store_alias = store_alias
         .parse()
-        .map_err(|_| super::binding::BindingError::unauthorized())?;
+        .map_err(|_| BindingError::unauthorized())?;
     plugin.container_for(&component_id, &store_alias).await
 }

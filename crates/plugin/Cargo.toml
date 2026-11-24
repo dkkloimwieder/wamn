@@ -16,7 +16,14 @@ serde = { workspace = true, features = ["derive"] }
 wamn-authentication = { workspace = true }
 anyhow = { workspace = true }
 async-trait = { workspace = true }
+boon.workspace = true
+bytes.workspace = true
 futures-util = { workspace = true }
+http-body-util.workspace = true
+hyper.workspace = true
+url.workspace = true
+wasmtime-wasi-http.workspace = true
+wamn-blobstore.workspace = true
 http.workspace = true
 opentelemetry = { workspace = true, features = ["metrics", "trace"] }
 serde_json = { workspace = true }
@@ -33,6 +40,7 @@ wamn-event = { workspace = true }
 wamn-identity-protocol.workspace = true
 wamn-postgres.workspace = true
 wamn-registry = { workspace = true }
+wamn-routes.workspace = true
 wamn-role.workspace = true
 wamn-run-state = { workspace = true }
 wash-runtime = { workspace = true }

@@ -35,7 +35,7 @@ wamn-environment = { workspace = true, features = ["ops"] }
 wamn-platform-install.workspace = true
 async-trait.workspace = true
 wamn-http-client = { workspace = true, features = ["tls12"] }
-wamn-blobstore.workspace = true
+wamn-storage.workspace = true
 boon.workspace = true
 wamn-identity-client.workspace = true
 wamn-identity-protocol.workspace = true

@@ -23,7 +23,8 @@
 //!   `timeout`, which names a deadline that never elapsed (`wamn-b2m6.3`).
 
 use super::bindings::wasmcloud::blobstore::types::Error as WitError;
-use super::store::StoreError;
+use wamn_blobstore::intake::IntakeError;
+use wamn_blobstore::store::{BackendError, BackendErrorType, StoreError};
 
 /// Translate a store failure into the contract's error variant.
 ///
@@ -35,8 +36,8 @@ pub fn to_wit(error: &StoreError) -> WitError {
         StoreError::Confinement(_) => WitError::AccessDenied,
         StoreError::NoSuchObject => WitError::NoSuchObject,
         StoreError::Intake(intake) => match intake {
-            super::intake::IntakeError::TooLarge { .. } => WitError::QuotaExceeded,
-            super::intake::IntakeError::Incomplete { .. } => WitError::Other(intake.to_string()),
+            IntakeError::TooLarge { .. } => WitError::QuotaExceeded,
+            IntakeError::Incomplete { .. } => WitError::Other(intake.to_string()),
         },
         StoreError::Refused { verb, reason } => {
             WitError::Other(format!("{verb} is refused by this platform: {reason}"))
@@ -46,38 +47,21 @@ pub fn to_wit(error: &StoreError) -> WitError {
     }
 }
 
-fn backend_to_wit(error: &object_store::Error) -> WitError {
-    match error {
-        object_store::Error::NotFound { .. } => WitError::NoSuchObject,
-        object_store::Error::PermissionDenied { .. }
-        | object_store::Error::Unauthenticated { .. } => WitError::AccessDenied,
-        object_store::Error::AlreadyExists { .. } => WitError::ContainerAlreadyExists,
-        // A backend that says "retry me" is `store-unavailable`, which is the
-        // variant documented as "may succeed if retried later" — the guest can
-        // act on that, where `other` would leave it guessing.
-        object_store::Error::Generic { source, .. } if is_timeout(source.as_ref()) => {
-            WitError::Timeout
-        }
-        other => WitError::Other(other.to_string()),
+fn backend_to_wit(error: &BackendError) -> WitError {
+    match error.type_ {
+        BackendErrorType::NotFound => WitError::NoSuchObject,
+        BackendErrorType::AccessDenied => WitError::AccessDenied,
+        BackendErrorType::AlreadyExists => WitError::ContainerAlreadyExists,
+        BackendErrorType::Timeout => WitError::Timeout,
+        BackendErrorType::Other => WitError::Other(error.to_string()),
     }
-}
-
-/// Whether a boxed backend error reads as a timeout.
-///
-/// `object_store` funnels transport failures through `Generic`, so the only
-/// discriminator available is the rendered message. Matching text is
-/// unattractive; reporting every transport failure as `other` is worse,
-/// because `timeout` is the one a guest can sensibly retry.
-fn is_timeout(source: &(dyn std::error::Error + 'static)) -> bool {
-    let rendered = source.to_string().to_ascii_lowercase();
-    rendered.contains("timed out") || rendered.contains("timeout")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::confinement::KeyRefusal;
-    use crate::intake::{IntakeError, MAX_OBJECT_BYTES};
+    use wamn_blobstore::confinement::KeyRefusal;
+    use wamn_blobstore::intake::MAX_OBJECT_BYTES;
 
     /// A containment refusal must be visible to the guest AS a containment
     /// refusal. Collapsing it into `other` would bury the one refusal a
@@ -142,10 +126,7 @@ mod tests {
     /// missing.
     #[test]
     fn a_lost_body_is_other() {
-        let error = to_wit(&StoreError::ResponseLost(object_store::Error::Generic {
-            store: "S3",
-            source: "stream closed".into(),
-        }));
+        let error = to_wit(&StoreError::ResponseLost("stream closed".into()));
         assert!(matches!(error, WitError::Other(_)));
     }
 
@@ -156,10 +137,10 @@ mod tests {
             WitError::NoSuchObject
         ));
         assert!(matches!(
-            to_wit(&StoreError::Backend(object_store::Error::NotFound {
-                path: "p".to_owned(),
-                source: "gone".into(),
-            })),
+            to_wit(&StoreError::Backend(BackendError::new(
+                BackendErrorType::NotFound,
+                "gone"
+            ))),
             WitError::NoSuchObject
         ));
     }
@@ -167,12 +148,10 @@ mod tests {
     #[test]
     fn a_denied_backend_is_access_denied() {
         assert!(matches!(
-            to_wit(&StoreError::Backend(
-                object_store::Error::PermissionDenied {
-                    path: "p".to_owned(),
-                    source: "no".into(),
-                }
-            )),
+            to_wit(&StoreError::Backend(BackendError::new(
+                BackendErrorType::AccessDenied,
+                "no"
+            ))),
             WitError::AccessDenied
         ));
     }
