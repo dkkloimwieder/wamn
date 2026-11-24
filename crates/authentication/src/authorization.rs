@@ -1,8 +1,8 @@
 //! Project authorization contracts and held grants.
 
-use std::{collections::BTreeSet, sync::Arc, time::SystemTime};
+use std::{collections::BTreeSet, time::SystemTime};
 use wamn_authority::auth_cache::PrincipalGrants;
-use wamn_identity_protocol::{PrincipalId, secret::PatToken};
+use wamn_identity_protocol::PrincipalId;
 
 /// The application authority a caller holds now: whether it holds `admin`, and
 /// the stable operation references its other roles grant under the loaded
@@ -58,70 +58,6 @@ pub fn held_grants(grants: &PrincipalGrants) -> HeldOperationGrants {
     held
 }
 
-/// Host transport and authorization memory used by route authentication.
-#[async_trait::async_trait]
-pub trait AuthorizationStore: std::fmt::Debug + Send + Sync {
-    /// Register deploy-owned cache coordinates when an application workload binds.
-    fn configure_application(
-        &self,
-        _application: &wamn_application::application_config::ApplicationConfig,
-    ) -> anyhow::Result<()> {
-        Ok(())
-    }
-
-    /// Admit a project PAT; connection ownership remains a separate check.
-    async fn route_pat(
-        &self,
-        project: &wamn_registry::ProjectId,
-        key: &wamn_registry::ProjectEnvKey,
-        token: &PatToken,
-    ) -> anyhow::Result<Option<Arc<ProjectPat>>>;
-
-    async fn environment_inactive(
-        &self,
-        project: &wamn_registry::ProjectId,
-        key: &wamn_registry::ProjectEnvKey,
-    ) -> anyhow::Result<bool>;
-    /// Resolve an external identity to an active user in the project database.
-    async fn resolve_subject(
-        &self,
-        project: &wamn_registry::ProjectId,
-        key: &wamn_registry::ProjectEnvKey,
-        issuer: &str,
-        subject: &str,
-    ) -> anyhow::Result<Option<wamn_identity_protocol::PrincipalId>>;
-    async fn user_operation_permissions(
-        &self,
-        project: &wamn_registry::ProjectId,
-        key: &wamn_registry::ProjectEnvKey,
-        principal: &wamn_identity_protocol::PrincipalId,
-    ) -> anyhow::Result<HeldOperationGrants>;
-    async fn principal_grants(
-        &self,
-        project: &wamn_registry::ProjectId,
-        key: &wamn_registry::ProjectEnvKey,
-        principal: &wamn_identity_protocol::PrincipalId,
-    ) -> anyhow::Result<PrincipalGrants>;
-
-    /// Read current principal grants using the guest authority without consulting the cache.
-    ///
-    /// A checkout failure carries [`wamn_application::database::SqlError::ConnectionUnavailable`].
-    async fn guest_principal_grants(
-        &self,
-        project: &wamn_registry::ProjectId,
-        key: &wamn_registry::ProjectEnvKey,
-        principal: &PrincipalId,
-    ) -> anyhow::Result<PrincipalGrants>;
-
-    /// Read role permissions for an active workflow service principal.
-    async fn workflow_role_permissions(
-        &self,
-        project: &wamn_registry::ProjectId,
-        principal: &PrincipalId,
-        role: &str,
-    ) -> anyhow::Result<Option<Vec<String>>>;
-}
-
 /// The active local service admitted by a PAT.
 #[derive(Debug)]
 pub struct ProjectPat {
@@ -154,3 +90,11 @@ impl std::error::Error for SessionIdentityError {
         Some(self.source.as_ref())
     }
 }
+
+mod project_reads;
+mod store;
+
+pub use store::Authorization;
+
+#[cfg(test)]
+mod tests;

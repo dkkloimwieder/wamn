@@ -1,7 +1,5 @@
 //! Verified PostgreSQL connections from explicit component configuration.
 
-pub mod administration;
-pub mod authorization;
 pub mod build_database;
 pub mod catalog;
 mod connection_guard;
@@ -10,15 +8,11 @@ pub mod connection_readiness;
 pub mod control;
 pub mod database;
 mod executor;
-pub mod identity;
-pub mod identity_error;
-pub mod identity_sql;
 pub mod migration_scope;
 pub mod migrations;
 pub mod oauth_authorization;
 pub mod operation_grant_lock;
 pub mod platform_identity;
-pub mod platform_login;
 pub mod platform_sql;
 pub mod provisioning_transaction;
 

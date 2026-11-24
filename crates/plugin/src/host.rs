@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use wamn_application::database::SqlError;
 use wamn_application::result_signing::ResultSigner;
-use wamn_authentication::authorization::AuthorizationStore;
+use wamn_authentication::authorization::Authorization;
 use wamn_connection::connection_facts::ConnectionCache;
 use wamn_postgres::WamnPostgres;
 
@@ -15,7 +15,7 @@ use crate::PgError;
 pub struct OperationHost {
     pub(super) store: Arc<WamnPostgres>,
     pub(super) result_signer: std::sync::OnceLock<std::sync::Weak<dyn ResultSigner>>,
-    pub(super) authorization: Arc<dyn AuthorizationStore>,
+    pub(super) authorization: Arc<Authorization>,
     pub(super) connection_cache: Option<Arc<dyn ConnectionCache>>,
     pub(super) operation_metrics: super::operation::OperationMetrics,
     pub(super) operation_workloads:
@@ -38,7 +38,7 @@ impl OperationHost {
     /// Use the host's operation and authorization stores and its application connection cache.
     pub fn new(
         store: Arc<WamnPostgres>,
-        authorization: Arc<dyn AuthorizationStore>,
+        authorization: Arc<Authorization>,
         connection_cache: Option<Arc<dyn ConnectionCache>>,
     ) -> Self {
         Self {

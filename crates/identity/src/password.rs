@@ -1,0 +1,413 @@
+//! Password policy, bounded hashing, and authentication.
+
+use std::error::Error;
+use std::fmt;
+use std::sync::Arc;
+
+use argon2::{
+    Algorithm, Argon2, Params, Version,
+    password_hash::{PasswordHasher as _, PasswordVerifier as _, phc::PasswordHash},
+};
+use ring::rand::{SecureRandom as _, SystemRandom};
+use tokio::sync::Semaphore;
+
+use wamn_identity_protocol::secret::{SecretToken, SecretType};
+use zeroize::Zeroizing;
+
+/// Maximum UTF-8 password input; at least 64 Unicode characters fit.
+pub const MAX_PASSWORD_BYTES: usize = 1024;
+/// Minimum enrollment length, counted as Unicode characters without trimming.
+pub const MIN_PASSWORD_CHARACTERS: usize = 15;
+/// Argon2id memory in KiB, using the OWASP minimum profile.
+pub const PASSWORD_MEMORY_KIB: u32 = 19 * 1024;
+/// Two simultaneous jobs use at most 38 MiB of Argon2 working memory.
+pub const MAX_PASSWORD_JOBS: usize = 2;
+pub const INVITATION_PURPOSE: &str = "invitation";
+pub const RESET_PURPOSE: &str = "reset";
+
+/// Failure classes inside the password owner, not HTTP or WIT outcomes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PasswordErrorType {
+    /// Enrollment input violates password policy.
+    Policy,
+    /// The credential or principal cannot perform this operation.
+    Refused,
+    /// All bounded password workers are occupied.
+    Busy,
+    /// Identity storage or password worker infrastructure failed.
+    Infrastructure,
+}
+
+/// Why a policy or refused request failed. The service logs it and never
+/// sends it on the wire.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RefusalCause {
+    /// The email credential passed its expiry.
+    Expired,
+    /// The email credential was used or replaced.
+    Consumed,
+    /// No stored email credential matches the secret.
+    UnknownSecret,
+    /// No active user account fits the request.
+    NoSuchAccount,
+    /// The invitation names a user who already has a password.
+    AlreadyEnrolled,
+    /// The password breaks the password rule.
+    PasswordRule,
+}
+impl fmt::Display for RefusalCause {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Expired => "expired",
+            Self::Consumed => "consumed",
+            Self::UnknownSecret => "unknown secret",
+            Self::NoSuchAccount => "no such account",
+            Self::AlreadyEnrolled => "already enrolled",
+            Self::PasswordRule => "password rule",
+        })
+    }
+}
+
+/// Password failure with fixed context and an optional internal source.
+pub struct PasswordError {
+    type_: PasswordErrorType,
+    operation: &'static str,
+    cause: Option<RefusalCause>,
+    reason: Option<&'static str>,
+    source: Option<Box<dyn Error + Send + Sync>>,
+}
+impl PasswordError {
+    /// Return the internal failure class.
+    pub fn error_type(&self) -> PasswordErrorType {
+        self.type_
+    }
+    /// Return the cause of a policy or refused failure.
+    pub fn cause(&self) -> Option<RefusalCause> {
+        self.cause
+    }
+    /// Name the case behind a shared cause, such as `no-password` for
+    /// "no such account". Only the log carries it.
+    pub fn reason(&self) -> Option<&'static str> {
+        self.reason
+    }
+}
+impl fmt::Display for PasswordError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.operation)
+    }
+}
+impl fmt::Debug for PasswordError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("PasswordError")
+            .field("type", &self.type_)
+            .field("operation", &self.operation)
+            .field("cause", &self.cause)
+            .field("reason", &self.reason)
+            .finish_non_exhaustive()
+    }
+}
+impl Error for PasswordError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        self.source
+            .as_deref()
+            .map(|source| source as &(dyn Error + 'static))
+    }
+}
+pub fn failure(type_: PasswordErrorType, operation: &'static str) -> PasswordError {
+    PasswordError {
+        type_,
+        operation,
+        cause: None,
+        reason: None,
+        source: None,
+    }
+}
+pub fn refused(operation: &'static str, cause: RefusalCause) -> PasswordError {
+    refused_because(operation, cause, None)
+}
+pub fn refused_because(
+    operation: &'static str,
+    cause: RefusalCause,
+    reason: Option<&'static str>,
+) -> PasswordError {
+    let type_ = if cause == RefusalCause::PasswordRule {
+        PasswordErrorType::Policy
+    } else {
+        PasswordErrorType::Refused
+    };
+    PasswordError {
+        type_,
+        operation,
+        cause: Some(cause),
+        reason,
+        source: None,
+    }
+}
+pub fn infrastructure(
+    operation: &'static str,
+    source: impl Error + Send + Sync + 'static,
+) -> PasswordError {
+    PasswordError {
+        type_: PasswordErrorType::Infrastructure,
+        operation,
+        cause: None,
+        reason: None,
+        source: Some(Box::new(source)),
+    }
+}
+/// Owned password input that redacts diagnostics and erases its bytes on drop.
+pub struct Password(Zeroizing<String>);
+impl Password {
+    /// Take ownership without trimming or normalizing the password.
+    pub fn new(value: String) -> Result<Self, PasswordError> {
+        let value = Zeroizing::new(value);
+        if value.is_empty() || value.len() > MAX_PASSWORD_BYTES {
+            return Err(refused(
+                "password length refused",
+                RefusalCause::PasswordRule,
+            ));
+        }
+        Ok(Self(value))
+    }
+}
+impl fmt::Debug for Password {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("Password(<redacted>)")
+    }
+}
+
+/// Shared admission budget for hashing and verification, with no waiting queue.
+#[derive(Clone, Debug)]
+pub struct PasswordWork {
+    permits: Arc<Semaphore>,
+}
+/// Create once per identity service and clone for each request handler.
+pub fn password_work() -> PasswordWork {
+    PasswordWork {
+        permits: Arc::new(Semaphore::new(MAX_PASSWORD_JOBS)),
+    }
+}
+fn argon() -> Argon2<'static> {
+    Argon2::new(
+        Algorithm::Argon2id,
+        Version::V0x13,
+        Params::new(PASSWORD_MEMORY_KIB, 2, 1, Some(32))
+            .expect("fixed Argon2 parameters are valid"),
+    )
+}
+impl PasswordWork {
+    async fn run<T: Send + 'static>(
+        &self,
+        work: impl FnOnce() -> Result<T, PasswordError> + Send + 'static,
+    ) -> Result<T, PasswordError> {
+        let permit = Arc::clone(&self.permits)
+            .try_acquire_owned()
+            .map_err(|_| failure(PasswordErrorType::Busy, "password workers busy"))?;
+        tokio::task::spawn_blocking(move || {
+            // Cancellation of the async caller must not free this budget while
+            // the blocking worker still runs.
+            let _permit = permit;
+            work()
+        })
+        .await
+        .map_err(|source| infrastructure("password worker failed", source))?
+    }
+    pub async fn hash(&self, password: Password) -> Result<String, PasswordError> {
+        self.run(move || {
+            let mut salt = [0u8; 16];
+            SystemRandom::new().fill(&mut salt).map_err(|_| {
+                failure(
+                    PasswordErrorType::Infrastructure,
+                    "password salt generation failed",
+                )
+            })?;
+            argon()
+                .hash_password_with_salt(password.0.as_bytes(), &salt)
+                .map(|hash| hash.to_string())
+                .map_err(|source| infrastructure("password hashing failed", source))
+        })
+        .await
+    }
+    pub(crate) async fn verify(
+        &self,
+        password: Password,
+        hash: String,
+    ) -> Result<bool, PasswordError> {
+        self.run(move || {
+            let hash = PasswordHash::new(&hash)
+                .map_err(|source| infrastructure("stored password hash refused", source))?;
+            let params = Params::try_from(&hash)
+                .map_err(|source| infrastructure("stored password parameters refused", source))?;
+            if hash.algorithm.as_str() != "argon2id"
+                || hash.version != Some(19)
+                || params != *argon().params()
+                || hash.salt.is_none()
+                || hash.hash.is_none()
+            {
+                return Err(failure(
+                    PasswordErrorType::Infrastructure,
+                    "stored password profile refused",
+                ));
+            }
+            match argon().verify_password(password.0.as_bytes(), &hash) {
+                Ok(()) => Ok(true),
+                Err(argon2::password_hash::Error::PasswordInvalid) => Ok(false),
+                Err(source) => Err(infrastructure("password verification failed", source)),
+            }
+        })
+        .await
+    }
+}
+
+/// A one-time email secret for invitation or reset, never persisted in bearer form.
+pub struct Invitation {
+    secret: Zeroizing<String>,
+    expires_at: String,
+}
+impl Invitation {
+    /// Record the one-time secret and its stored expiry for delivery.
+    pub fn new(secret: Zeroizing<String>, expires_at: String) -> Self {
+        Self { secret, expires_at }
+    }
+
+    /// Supply this secret to the intended recipient once; never log it.
+    pub fn secret(&self) -> &str {
+        &self.secret
+    }
+    /// The stored expiry in UTC, as `YYYY-MM-DD HH:MM`.
+    pub fn expires_at(&self) -> &str {
+        &self.expires_at
+    }
+}
+impl fmt::Debug for Invitation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("Invitation(<redacted>)")
+    }
+}
+pub fn token_hash(secret: &str, purpose: &str) -> Option<wamn_digest::Digest> {
+    SecretToken::parse(secret_type(purpose), secret)
+        .ok()
+        .map(|token| token.digest())
+}
+pub fn secret_type(purpose: &str) -> SecretType {
+    if purpose == INVITATION_PURPOSE {
+        SecretType::Invitation
+    } else {
+        SecretType::Reset
+    }
+}
+pub fn enrollment_policy(password: &Password) -> Result<(), PasswordError> {
+    if password.0.chars().count() < MIN_PASSWORD_CHARACTERS {
+        return Err(refused(
+            "password policy refused",
+            RefusalCause::PasswordRule,
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn enrollment_policy_counts_characters() {
+        assert!(Password::new("x".repeat(MAX_PASSWORD_BYTES + 1)).is_err());
+        assert!(enrollment_policy(&Password::new("界".repeat(14)).unwrap()).is_err());
+        assert!(enrollment_policy(&Password::new("界".repeat(15)).unwrap()).is_ok());
+        assert!(enrollment_policy(&Password::new("界".repeat(64)).unwrap()).is_ok());
+        let password = Password::new("  spaces remain part of me  ".into()).unwrap();
+        assert_eq!(&*password.0, "  spaces remain part of me  ");
+        assert!(!format!("{password:?}").contains("spaces"));
+    }
+
+    #[tokio::test]
+    async fn hash_round_trip_salts_and_bounds_stored_work() {
+        let work = password_work();
+        let hash = work
+            .hash(Password::new("a sufficiently long password".into()).unwrap())
+            .await
+            .unwrap();
+        let other = work
+            .hash(Password::new("a sufficiently long password".into()).unwrap())
+            .await
+            .unwrap();
+        assert_ne!(hash, other);
+        assert!(hash.starts_with("$argon2id$v=19$m=19456,t=2,p=1$"));
+        assert!(
+            work.verify(
+                Password::new("a sufficiently long password".into()).unwrap(),
+                hash.clone()
+            )
+            .await
+            .unwrap()
+        );
+        assert!(
+            !work
+                .verify(
+                    Password::new("wrong password".into()).unwrap(),
+                    hash.clone()
+                )
+                .await
+                .unwrap()
+        );
+        let oversized = hash.replace("m=19456", "m=4194304");
+        assert_eq!(
+            work.verify(Password::new("test".into()).unwrap(), oversized)
+                .await
+                .unwrap_err()
+                .error_type(),
+            PasswordErrorType::Infrastructure
+        );
+        let wrong_version = hash.replace("v=19", "v=16");
+        assert!(
+            work.verify(Password::new("test".into()).unwrap(), wrong_version)
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn cancelled_hash_call_keeps_its_budget_until_worker_finishes() {
+        let work = password_work();
+        let mut tasks = Vec::new();
+        let mut releases = Vec::new();
+        for _ in 0..MAX_PASSWORD_JOBS {
+            let (started, ready) = tokio::sync::oneshot::channel();
+            let (release, wait) = std::sync::mpsc::channel();
+            releases.push(release);
+            let owned = work.clone();
+            tasks.push(tokio::spawn(async move {
+                owned
+                    .run(move || {
+                        started.send(()).unwrap();
+                        wait.recv().unwrap();
+                        Ok(())
+                    })
+                    .await
+            }));
+            ready.await.unwrap();
+        }
+        for task in tasks {
+            task.abort();
+            assert!(task.await.unwrap_err().is_cancelled());
+        }
+        assert_eq!(
+            work.run(|| Ok(())).await.unwrap_err().error_type(),
+            PasswordErrorType::Busy
+        );
+        for release in releases {
+            release.send(()).unwrap();
+        }
+        let permits = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            work.permits
+                .acquire_many(u32::try_from(MAX_PASSWORD_JOBS).unwrap()),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        drop(permits);
+        work.run(|| Ok(())).await.unwrap();
+    }
+}

@@ -203,7 +203,7 @@ async fn read_configuration(
 ) -> Result<Option<wamn_registry::configuration::EnvironmentConfiguration>, sqlx::Error> {
     let principal = wamn_principal::PlatformComponent::Provisioning.principal_id();
     let mut transaction =
-        wamn_postgres::identity::transaction::read_connection(connection, &principal).await?;
+        wamn_identity::identity::transaction::read_connection(connection, &principal).await?;
     let configuration = crate::registry::configuration::read(&mut transaction, triple).await?;
     transaction.commit().await?;
     Ok(configuration)
@@ -323,7 +323,7 @@ pub(crate) async fn materialize_application_principals(
             project_env_key,
             &package.package.id,
         );
-        wamn_postgres::identity::application::service::write_service(
+        wamn_identity::identity::application::service::write_service(
             &mut transaction,
             domain,
             &subject,
@@ -334,7 +334,7 @@ pub(crate) async fn materialize_application_principals(
             "application-{}",
             package.package.id.as_str().replace('_', "-")
         );
-        wamn_postgres::administration::create_role(&mut transaction, &role).await?;
+        wamn_authentication::administration::create_role(&mut transaction, &role).await?;
     }
     write_runtime_grants(&mut transaction, project_env_key, &applications, packages).await?;
     transaction.commit().await?;
@@ -359,7 +359,7 @@ async fn write_runtime_grants(
             &package.package.id,
         );
         let principal =
-            wamn_postgres::identity::application::service::active_service(transaction, &subject)
+            wamn_identity::identity::application::service::active_service(transaction, &subject)
                 .await?
                 .with_context(|| {
                     format!("application principal {subject} is absent or inactive")
@@ -388,7 +388,7 @@ async fn write_runtime_grants(
             package,
             &dependency_manifests,
         )? {
-            wamn_postgres::administration::mutate_grant(
+            wamn_authentication::administration::mutate_grant(
                 transaction,
                 project_env_key,
                 wamn_authentication::administration::GrantAuthority::Provisioning,
@@ -400,7 +400,7 @@ async fn write_runtime_grants(
             )
             .await?;
         }
-        wamn_postgres::administration::mutate_grant(
+        wamn_authentication::administration::mutate_grant(
             transaction,
             project_env_key,
             wamn_authentication::administration::GrantAuthority::Provisioning,
@@ -865,7 +865,7 @@ async fn disable_connection_principals(project: &PgLifecycleLock) -> anyhow::Res
         wamn_principal::PlatformComponent::Provisioning,
     )
     .await?;
-    wamn_postgres::identity::application::disable_connection_services(&mut transaction)
+    wamn_identity::identity::application::disable_connection_services(&mut transaction)
         .await
         .context("disable the retained database's connection principals")?;
     transaction.commit().await?;
@@ -1438,7 +1438,7 @@ impl PostgresSession {
 
     pub(crate) async fn platform_domain(&self) -> anyhow::Result<PlatformDomain> {
         Ok(
-            wamn_postgres::identity::application::service::platform_domain(
+            wamn_identity::identity::application::service::platform_domain(
                 &mut *self.0.client().await,
             )
             .await?,

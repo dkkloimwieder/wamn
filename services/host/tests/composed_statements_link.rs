@@ -44,7 +44,7 @@ fn an_unnamed_statements_entry_links_every_member_import() {
     let component =
         Component::new(engine.inner(), COMPOSED_IMPORTS).expect("compile the composed imports");
     let pools = Arc::new(WamnPostgres::from_host_config(BTreeMap::new()).expect("empty pools"));
-    let authorization = wamn_postgres::authorization::Authorization::new(
+    let authorization = wamn_authentication::authorization::Authorization::new(
         Arc::clone(&pools),
         Arc::clone(&pools) as _,
     );

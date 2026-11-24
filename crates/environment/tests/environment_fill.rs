@@ -33,7 +33,7 @@ async fn provisioning_fills_and_removes_environment_member_rows() -> anyhow::Res
         "admin:environment-fill",
     )
     .await?;
-    let member = *wamn_postgres::identity::create_user(
+    let member = *wamn_identity::identity::create_user(
         &mut authority,
         "member@example.invalid",
         "member@example.invalid",
@@ -41,13 +41,13 @@ async fn provisioning_fills_and_removes_environment_member_rows() -> anyhow::Res
     )
     .await?
     .id();
-    wamn_postgres::identity::org::activate_org_membership(
+    wamn_identity::identity::org::activate_org_membership(
         &mut authority,
         &member,
         &"fill".parse().unwrap(),
     )
     .await?;
-    wamn_postgres::identity::org::grant_member(
+    wamn_identity::identity::org::grant_member(
         &mut authority,
         &member,
         &"fill".parse().unwrap(),
@@ -83,7 +83,7 @@ async fn provisioning_fills_and_removes_environment_member_rows() -> anyhow::Res
         "admin:revoke-environment-member",
     )
     .await?;
-    wamn_postgres::identity::org::revoke_member(
+    wamn_identity::identity::org::revoke_member(
         &mut authority,
         &member,
         &"fill".parse().unwrap(),

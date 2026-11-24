@@ -60,7 +60,7 @@ The [stamp rules](../architecture/data-access.md#record-history) define the expe
 - The [generation tests](../../crates/postgres/tests/generation.rs) refuse each invalid declaration, retention, and history name, and keep the revision on a true no-op. They also make sure that a logged relation keeps the schema state id. A custom operation reads a history table with only its select grant.
 - The [operation grant tests](../../crates/provision/src/operation_grants.rs) make sure that the Receiving history read is its own operation grant. The [router driver tests](../../crates/workflow/src/router_driver.rs) make sure that the host refuses a caller without that grant.
 - The [session identity tests](../../crates/plugin/src/session_identity/tests.rs) test the principal and operation bindings and the refusal before PostgreSQL. A pooled connection keeps no earlier operation.
-- The [identity live test](../../crates/postgres/tests/identity_live.rs) reads the system database stamp columns and triggers from the server. It also tests the seeded `wamn:provisioning` row, the platform CHECK, and the `actor-required` refusal.
+- The [identity live test](../../crates/identity/tests/identity_live.rs) reads the system database stamp columns and triggers from the server. It also tests the seeded `wamn:provisioning` row, the platform CHECK, and the `actor-required` refusal.
 - The [PAT test](../../crates/identity/tests/pat_live.rs) makes sure that issuance and revocation stamp `wamn:provisioning` and that a token refuses a platform principal.
 
 A fixture that installs triggers with its own SQL does not test installation by apply-package.

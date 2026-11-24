@@ -13,9 +13,8 @@ use wamn_application::native_routes::{
     DeliveryError, DeliveryOutcome, DeliveryReport, DeliveryRequest, Source,
     resolve_authorized_host_route,
 };
-use wamn_authentication::authorization::AuthorizationStore as _;
+use wamn_authentication::authorization::Authorization;
 use wamn_plugin::OperationHost;
-use wamn_postgres::authorization::Authorization;
 
 use super::application_route::ApplicationRoutes;
 use super::route_refusal::Refusal;

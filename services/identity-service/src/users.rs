@@ -7,15 +7,14 @@ use http_body_util::{BodyExt as _, Full, Limited};
 use hyper::{Request, Response, StatusCode, body::Incoming};
 use sqlx::PgConnection as Client;
 use wamn_authentication::identity_error::{IdentityErrorType, IdentityRefusal};
-use wamn_authentication::password::RefusalCause;
-use wamn_authentication::password_requests::{self, Attempt, DeliveryFailure, EmailDelivery};
-use wamn_authentication::workload_identity::WorkloadRegistry as _;
-use wamn_identity_protocol::PrincipalId;
-use wamn_identity_protocol::wire::{PrincipalRequest, UserRequest, UserResponse};
-use wamn_postgres::identity::{
+use wamn_identity::identity::{
     create_or_reuse_user,
     issuer::{Issuer, begin_user_write},
 };
+use wamn_identity::password::RefusalCause;
+use wamn_identity::password_requests::{self, Attempt, DeliveryFailure, EmailDelivery};
+use wamn_identity_protocol::PrincipalId;
+use wamn_identity_protocol::wire::{PrincipalRequest, UserRequest, UserResponse};
 use wamn_registry::OrgId;
 
 use crate::{
@@ -161,7 +160,7 @@ async fn disable(
     let Ok(mut tx) = begin_user_write(client).await else {
         return unavailable();
     };
-    if let Err(error) = wamn_postgres::identity::org::disable_user(&mut tx, principal, org).await {
+    if let Err(error) = wamn_identity::identity::org::disable_user(&mut tx, principal, org).await {
         return match error.refusal() {
             Some(IdentityRefusal::UserNotFound) => response(
                 StatusCode::NOT_FOUND,
@@ -278,8 +277,8 @@ fn invalid() -> Response<Full<Bytes>> {
 mod tests {
     use super::*;
     use crate::password::tests::demo_members;
+    use wamn_identity::identity::password::issue_invitation;
     use wamn_identity_protocol::PlatformComponent;
-    use wamn_postgres::identity::password::issue_invitation;
     use wamn_test_infrastructure::containers::start_postgres;
 
     #[tokio::test]

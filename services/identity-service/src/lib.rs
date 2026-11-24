@@ -29,12 +29,12 @@ use tokio::sync::{Mutex, Semaphore};
 use tokio::task::JoinSet;
 
 use tokio_rustls::TlsAcceptor;
-use wamn_authentication::session_exchange::DEFAULT_KEY_ROTATION;
-use wamn_kubernetes::client::KubernetesApi;
-use wamn_platform_install::identity_role::identity_issuer_login;
-use wamn_postgres::identity::session_keys::{
+use wamn_identity::identity::session_keys::{
     active_session_key_exists, initialize_session_key, session_jwks,
 };
+use wamn_identity::session_exchange::DEFAULT_KEY_ROTATION;
+use wamn_kubernetes::client::KubernetesApi;
+use wamn_platform_install::identity_role::identity_issuer_login;
 
 // Match the public-key client's total fetch bound. No retry or stale response
 // is introduced when TLS, request headers, or the authoritative read stalls.
@@ -133,7 +133,7 @@ pub(crate) async fn connect_database(input: &str) -> Result<Database, IdentitySe
 impl Inner {
     async fn rotate_keys(&self) -> Result<(), IdentityServiceError> {
         let mut database = connect_database(&self.connection).await?;
-        wamn_postgres::identity::session_keys::rotate_session_keys(
+        wamn_identity::identity::session_keys::rotate_session_keys(
             &mut database.client,
             &self.issuer,
             DEFAULT_KEY_ROTATION,
@@ -146,7 +146,7 @@ impl Inner {
     async fn prune_tx_identity(&self) -> Result<(), IdentityServiceError> {
         tokio::time::timeout(IO_TIMEOUT, async {
             let mut database = connect_database(&self.connection).await?;
-            wamn_postgres::identity::issuer::prune_tx_identity(&mut database.client)
+            wamn_identity::identity::issuer::prune_tx_identity(&mut database.client)
                 .await
                 .map_err(|error| IdentityServiceError::new(error.context))
         })
@@ -315,7 +315,7 @@ impl IdentityService {
                                     "cache-control",
                                     format!(
                                         "public, max-age={}",
-                                        wamn_postgres::identity::session_keys::JWKS_CACHE_SECONDS
+                                        wamn_identity::identity::session_keys::JWKS_CACHE_SECONDS
                                     )
                                     .parse()
                                     .expect("constant cache policy"),

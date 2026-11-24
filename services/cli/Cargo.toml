@@ -18,7 +18,7 @@ wamn-routes.workspace = true
 wamn-package.workspace = true
 wamn-build.workspace = true
 wamn-postgres.workspace = true
-wamn-authentication.workspace = true
+wamn-identity.workspace = true
 wamn-digest.workspace = true
 anyhow = { workspace = true }
 # `string`: `wamn-0h0g.22.16` derives the workload-generation flag set from the

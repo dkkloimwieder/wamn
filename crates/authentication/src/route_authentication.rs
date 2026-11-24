@@ -22,7 +22,7 @@ use wamn_application::ingress::{
 use wamn_identity_protocol::secret::PatToken;
 
 use crate::access_token::AccessTokenVerifier;
-use crate::authorization::AuthorizationStore;
+use crate::authorization::Authorization;
 use wamn_connection::connection_facts::ConnectionFacts;
 use wamn_connection::connection_memory::ConnectionStatus;
 
@@ -31,7 +31,7 @@ use wamn_connection::connection_memory::ConnectionStatus;
 /// `platform.environment`, as `wamn_app`, kept in the host's [auth
 /// memory](wamn_authority::auth_cache).
 pub struct EnvironmentStatusReader {
-    postgres: Arc<dyn AuthorizationStore>,
+    postgres: Arc<Authorization>,
 }
 
 impl std::fmt::Debug for EnvironmentStatusReader {
@@ -43,7 +43,7 @@ impl std::fmt::Debug for EnvironmentStatusReader {
 }
 
 impl EnvironmentStatusReader {
-    pub fn new<S: AuthorizationStore + 'static>(postgres: Arc<S>) -> Self {
+    pub fn new(postgres: Arc<Authorization>) -> Self {
         Self { postgres }
     }
 }
@@ -64,17 +64,14 @@ impl wamn_application::ingress::EnvironmentStatus for EnvironmentStatusReader {
 /// The host's authentication authority for PAT, session and signed requests.
 #[derive(Debug)]
 pub struct PlatformRouteAuthenticator {
-    postgres: Arc<dyn AuthorizationStore>,
+    postgres: Arc<Authorization>,
     connection_cache: Option<Arc<dyn wamn_connection::connection_facts::ConnectionCache>>,
     verifier: Option<AccessTokenVerifier>,
 }
 
 impl PlatformRouteAuthenticator {
     /// Bind a host to its authorization store and configured issuer.
-    pub fn new<S: AuthorizationStore + 'static>(
-        postgres: Arc<S>,
-        verifier: Option<AccessTokenVerifier>,
-    ) -> Self {
+    pub fn new(postgres: Arc<Authorization>, verifier: Option<AccessTokenVerifier>) -> Self {
         Self {
             postgres,
             connection_cache: None,

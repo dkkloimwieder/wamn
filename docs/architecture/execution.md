@@ -202,7 +202,7 @@ Every other org route needs a current `org-admin` row of the caller in the token
 A project route needs that row, or a current `project-admin` row of the caller in the project that the request names.
 A write runs in one transaction on a second `control` login, which holds one write at a time.
 The transaction inserts the caller and sealed operation id into `platform.tx_identity`, then checks the role again.
-Membership and administration writes use [`wamn_postgres::identity::org`](../../crates/postgres/src/identity/org.rs), which platform installation also calls.
+Membership and administration writes use [`wamn_identity::identity::org`](../../crates/identity/src/identity/org.rs).
 [`wamn_environment::environment_org`](../../crates/environment/src/environment_org.rs) owns project creation, environment enumeration, and environment status writes.
 A refusal is a declared error of its route, with the input member it names in `field`: `invalid_input`, `project_not_found`, `environment_not_found`, `user_not_active`, `user_not_found`, `admin_covered` or `user_refused`.
 A write that changes administrative authority or membership also changes the application rows of each environment it covers, one transaction per environment, with the project's administration login.
@@ -699,7 +699,7 @@ Renewal requires an active principal, an active org membership, and a live passw
 Logout, disable, reset, expiry, or renewal replay prevents further renewal.
 Authentication deadlines govern new admission and do not cancel accepted work.
 
-The [signer](../../crates/authentication/src/session_token.rs) applies the time limits to access-token claims.
+The [signer](../../crates/identity/src/session_token.rs) applies the time limits to access-token claims.
 The [verifier](../../crates/authentication/src/access_token.rs) requires `at+jwt`, EdDSA, and the configured issuer and audience.
 It allows 30 seconds of clock tolerance for expiry and future issuance.
 The edge refuses every protected route until its identity design is defined.
@@ -926,10 +926,10 @@ For a PAT caller, current roles are read per request, so grant and revoke both t
 
 ## Password enrollment foundation
 
-The [password library](../../crates/authentication/src/password.rs) owns password policy and authentication. [Postgres](../../crates/postgres/src/identity/password.rs) stores credentials and updates them during enrollment.
+The [password library](../../crates/identity/src/password.rs) defines password policy. The [identity storage module](../../crates/identity/src/identity/password.rs) authenticates users by password. It stores credentials and updates them during enrollment.
 The identity service exposes password HTTP endpoints. Receiving supports hidden terminal enrollment and password login.
 
-The [login storage library](../../crates/postgres/src/identity/password_login.rs) supplies database primitives for renewal and revocation.
+The [login storage library](../../crates/identity/src/identity/password_login.rs) supplies database primitives for renewal and revocation.
 The HTTP service and terminal use these primitives for renewal and server-side logout.
 Each login binds one user, issuer, and org audience.
 Its authentication time and eight-hour absolute deadline remain fixed.
@@ -1102,7 +1102,7 @@ Replicas serialize rotation with an issuer lock. Restarting a replica does not r
 An issuer without an active key requires explicit activation, including after removal of a compromised key.
 The previous public key stays available for the longest token lifetime plus clock tolerance after its signing cutoff.
 
-The [key cache](../../crates/authentication/src/access_token.rs) and [key owner](../../crates/postgres/src/identity/session_keys.rs) define these bounds.
+The [key cache](../../crates/authentication/src/access_token.rs) and [key owner](../../crates/identity/src/identity/session_keys.rs) define these bounds.
 
 ## Operator clients
 

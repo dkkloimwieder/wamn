@@ -23,6 +23,7 @@ wamn-event.workspace = true
 wamn-envelope.workspace = true
 wamn-platform-install.workspace = true
 wamn-postgres.workspace = true
+wamn-identity.workspace = true
 wamn-principal.workspace = true
 wamn-authentication.workspace = true
 wamn-digest.workspace = true

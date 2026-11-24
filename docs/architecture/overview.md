@@ -58,7 +58,8 @@ Each library has one concern. Directory names follow crate names without the `wa
 | `crates/connection` | `wamn-connection`: connection facts, credentials, resource leases, invocation context, and bound Wasm import dispatch |
 | `crates/blobstore` | `wamn-blobstore`: connection-authorized file and object storage |
 | `crates/storage` | `wamn-storage`: S3 and Google Cloud Storage transport |
-| `crates/authentication` | `wamn-authentication`: route authentication, password rules, session verification, and signing |
+| `crates/authentication` | `wamn-authentication`: token verification, route authentication, authorization reads, and project administration |
+| `crates/identity` | `wamn-identity`: platform identities, sessions, passwords, and NATS signing |
 | `crates/identity-client` | `wamn-identity-client`: HTTPS client for identity administration |
 | `crates/identity-protocol` | `wamn-identity-protocol`: principal IDs, database login names, roles, credential formats, and public key documents |
 | `apps/crates/guest` | `wamn-guest`: guest cursors, pages, scalar conversion, operation SQL, and document numbering |

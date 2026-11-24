@@ -5,14 +5,14 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use sqlx::PgConnection;
 use wamn_authentication::identity_error::IdentityRefusal;
-use wamn_authentication::principal::require_user_contact;
+use wamn_identity::identity::org::invite_member;
+use wamn_identity::principal::require_user_contact;
 use wamn_identity_client::users::{DisableOutcome, UserClient, UserRefused};
 use wamn_identity_protocol::records::MemberGrants;
 use wamn_identity_protocol::{
     PrincipalId,
     wire::{UserRequest, UserResponse},
 };
-use wamn_postgres::identity::org::invite_member;
 use wamn_routes::HostAttachment;
 
 use super::{ControlRoutes, Refusal, parse, principal};
@@ -202,7 +202,7 @@ pub(crate) async fn first_owner(
     email: &str,
 ) -> anyhow::Result<hyper::StatusCode> {
     use hyper::StatusCode;
-    use wamn_authentication::control_admission::ORG_ADMIN_ROLE;
+    use wamn_identity::control_admission::ORG_ADMIN_ROLE;
 
     let display_name = email.trim().split('@').next().unwrap_or_default();
     let display_name = &display_name[..display_name.floor_char_boundary(200)];

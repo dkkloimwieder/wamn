@@ -128,7 +128,7 @@ async fn ensure_user(
             public_key: key.public_key(),
         })
         .await?;
-    let creds = wamn_authentication::nats::credentials(&signed.jwt, &key)?;
+    let creds = wamn_identity::nats::credentials(&signed.jwt, &key)?;
     anyhow::ensure!(
         platform.broker.credentials_inbox(&creds)? == signed.inbox_prefix,
         "identity returned an unexpected NATS inbox"

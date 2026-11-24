@@ -8,13 +8,13 @@ use hyper::{Response, StatusCode, body::Bytes};
 use serde::{Deserialize, Serialize};
 use sqlx::PgConnection;
 use tokio::sync::OnceCell;
-use wamn_authentication::nats::{self, Authority, LimitsPerProject};
-use wamn_authentication::workload_identity;
+use wamn_identity::identity::nats as key_store;
+use wamn_identity::nats::{self, Authority, LimitsPerProject};
+use wamn_identity::workload_identity;
 use wamn_identity_protocol::nats::{
     Account, ENSURE_ACCOUNT_PATH, EnsureAccount, SIGN_USER_PATH, SignHostUser, SignUser, SignedUser,
 };
 use wamn_kubernetes::client::KubernetesApi;
-use wamn_postgres::identity::nats as key_store;
 use wamn_registry::{OrgId, name};
 
 use crate::{IdentityServiceError, Inner, response, unavailable};

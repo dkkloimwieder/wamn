@@ -1,5 +1,12 @@
 //! Application roles, grants and administration.
 
+mod sql;
+
+pub use sql::{
+    ProjectAuthority, application_users, project_administration, read_project_authority,
+    require_platform_rows, role_names, write_environment_status,
+};
+
 use std::fmt;
 
 use wamn_identity_protocol::{ADMIN_ROLE, PrincipalId};
@@ -164,45 +171,9 @@ pub fn permission_is_grantable(reference: &str) -> bool {
         || wamn_routes::is_granted_host_route_operation(reference)
 }
 
-/// Application grant reads and writes in the caller's prepared transaction.
-#[async_trait::async_trait]
-pub trait GrantStore: Send {
-    async fn insert_role(&mut self, role: &str) -> Result<bool, IdentityError>;
-    async fn remove_role(&mut self, role: &str) -> Result<bool, IdentityError>;
-    async fn role_exists(&mut self, role: &str) -> Result<bool, IdentityError>;
-    async fn user_exists(&mut self, user_id: &PrincipalId) -> Result<bool, IdentityError>;
-    async fn is_admin(&mut self, actor: &PrincipalId) -> Result<bool, IdentityError>;
-    async fn holds_permission(
-        &mut self,
-        actor: &PrincipalId,
-        reference: &str,
-    ) -> Result<bool, IdentityError>;
-    async fn permissions(&mut self, role: &str) -> Result<Vec<String>, IdentityError>;
-    async fn insert_permission(
-        &mut self,
-        role: &str,
-        reference: &str,
-    ) -> Result<PermissionGrantOutcome, IdentityError>;
-    async fn remove_permission(
-        &mut self,
-        role: &str,
-        reference: &str,
-    ) -> Result<bool, IdentityError>;
-    async fn assign_role(
-        &mut self,
-        user_id: &PrincipalId,
-        role: &str,
-    ) -> Result<bool, IdentityError>;
-    async fn unassign_role(
-        &mut self,
-        user_id: &PrincipalId,
-        role: &str,
-    ) -> Result<bool, IdentityError>;
-}
-
 /// Create the empty authored role `role`. A second create changes nothing.
 pub async fn create_role(
-    store: &mut impl GrantStore,
+    client: &mut sqlx::PgConnection,
     role: &str,
 ) -> Result<bool, AdministrationError> {
     if role == ADMIN_ROLE {
@@ -217,24 +188,27 @@ pub async fn create_role(
         }
         .into());
     }
-    Ok(store.insert_role(role).await?)
+    Ok(sql::insert_role(client, role).await?)
 }
 
 /// Delete the authored role `role` with its assignments and permissions. A
 /// delete of an absent role changes nothing.
 pub async fn delete_role(
-    store: &mut impl GrantStore,
+    client: &mut sqlx::PgConnection,
     role: &str,
 ) -> Result<bool, AdministrationError> {
     if role == ADMIN_ROLE {
         return Err(AdministrationRefusal::AdminDeleted.into());
     }
-    Ok(store.remove_role(role).await?)
+    Ok(sql::remove_role(client, role).await?)
 }
 
 /// Refuse unless `role` exists in the environment.
-async fn require_role(store: &mut impl GrantStore, role: &str) -> Result<(), AdministrationError> {
-    let exists = store.role_exists(role).await?;
+async fn require_role(
+    client: &mut sqlx::PgConnection,
+    role: &str,
+) -> Result<(), AdministrationError> {
+    let exists = sql::role_exists(client, role).await?;
     if exists {
         Ok(())
     } else {
@@ -247,10 +221,10 @@ async fn require_role(store: &mut impl GrantStore, role: &str) -> Result<(), Adm
 
 /// Refuse unless the database has the application user `user_id`.
 async fn require_user(
-    store: &mut impl GrantStore,
+    client: &mut sqlx::PgConnection,
     user_id: &wamn_identity_protocol::PrincipalId,
 ) -> Result<(), AdministrationError> {
-    let exists = store.user_exists(user_id).await?;
+    let exists = sql::user_exists(client, user_id).await?;
     if exists {
         Ok(())
     } else {
@@ -260,17 +234,17 @@ async fn require_user(
 
 /// The stored permissions held by an existing role.
 pub async fn permission_rows(
-    store: &mut impl GrantStore,
+    client: &mut sqlx::PgConnection,
     role: &str,
 ) -> Result<Vec<String>, AdministrationError> {
-    require_role(store, role).await?;
-    Ok(store.permissions(role).await?)
+    require_role(client, role).await?;
+    Ok(sql::permissions(client, role).await?)
 }
 
 /// Mutate an authored grant inside the caller's application transaction.
 /// The caller serializes role and permission writes with the application lock.
 pub async fn mutate_grant(
-    store: &mut impl GrantStore,
+    client: &mut sqlx::PgConnection,
     project_env_key: &wamn_registry::ProjectEnvKey,
     authority: GrantAuthority<'_>,
     change: GrantChange<'_>,
@@ -290,7 +264,7 @@ pub async fn mutate_grant(
             .into());
         }
         if !matches!(change, GrantChange::UserRole { grant: false, .. }) {
-            require_role(store, role).await?;
+            require_role(client, role).await?;
         }
         if let GrantChange::Permission {
             reference,
@@ -305,14 +279,14 @@ pub async fn mutate_grant(
             .into());
         }
         if grant && let GrantAuthority::User(actor) = authority {
-            let admin = store.is_admin(actor).await?;
+            let admin = sql::is_admin(client, actor).await?;
             if !admin {
                 let required = match change {
                     GrantChange::Permission { reference, .. } => vec![reference.to_owned()],
-                    GrantChange::UserRole { role, .. } => permission_rows(store, role).await?,
+                    GrantChange::UserRole { role, .. } => permission_rows(client, role).await?,
                 };
                 for reference in required {
-                    let held = store.holds_permission(actor, &reference).await?;
+                    let held = sql::holds_permission(client, actor, &reference).await?;
                     if !held || !permission_is_grantable(&reference) {
                         return Err(AdministrationRefusal::NotGrantable { reference }.into());
                     }
@@ -326,12 +300,12 @@ pub async fn mutate_grant(
                 grant,
             } => {
                 if matches!(authority, GrantAuthority::User(_)) {
-                    require_user(store, user_id).await?;
+                    require_user(client, user_id).await?;
                 }
                 let changed = if grant {
-                    store.assign_role(user_id, role).await?
+                    sql::assign_role(client, user_id, role).await?
                 } else {
-                    store.unassign_role(user_id, role).await?
+                    sql::unassign_role(client, user_id, role).await?
                 };
                 return Ok(GrantOutcome {
                     changed,
@@ -342,13 +316,17 @@ pub async fn mutate_grant(
                 role,
                 reference,
                 grant: true,
-            } => store.insert_permission(role, reference).await?.rows_added,
+            } => {
+                sql::insert_permission(client, role, reference)
+                    .await?
+                    .rows_added
+            }
             GrantChange::Permission {
                 role,
                 reference,
                 grant: false,
             } => {
-                if !store.remove_permission(role, reference).await? {
+                if !sql::remove_permission(client, role, reference).await? {
                     return Err(AdministrationRefusal::NotHeld {
                         role: role.to_owned(),
                         reference: reference.to_owned(),

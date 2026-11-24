@@ -128,7 +128,7 @@ So the tests use the production digests:
 The operator Secret holds `operator_include`, the file that identity bootstrap returns.
 Each Certificate Secret holds a new self-signed certificate.
 `Nats::connect_options()` requires TLS and trusts only that certificate.
-`crates/postgres/tests/nats_isolation.rs` holds the NATS isolation tests. Each has the marker `requires: docker, bin:helm`.
+`crates/identity/tests/nats_isolation.rs` holds the NATS isolation tests. Each has the marker `requires: docker, bin:helm`.
 
 The CloudNativePG image has no entrypoint that creates a database.
 So the PostgreSQL helper runs its own `initdb` in the container, with these options:

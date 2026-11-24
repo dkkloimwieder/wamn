@@ -6,9 +6,8 @@
 //! row of the caller in the project that the request names. A write runs in
 //! one transaction on the org's `control` login, inserts the caller and
 //! the route's sealed operation id into its transaction identity, and tests
-//! the role again inside it. The writes are the functions of
-//! `wamn_postgres::identity::org`, which platform installation also calls, so no
-//! second writer exists.
+//! the role again inside it. Membership and administration writes use
+//! `wamn_identity::identity::org`.
 //!
 //! A write that changes administrative authority or membership also changes the
 //! application rows of each environment it covers, with the environment's
@@ -50,27 +49,28 @@ use anyhow::Context as _;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use wamn_application::native_routes::{DeliveryError, PermissionDenial};
-use wamn_authentication::administration::ApplicationTarget;
-use wamn_authentication::control_admission::{self, AdminAdmission};
+use wamn_authentication::administration::{
+    ApplicationTarget, require_platform_rows, write_environment_status,
+};
 use wamn_authentication::identity_error::{IdentityError, IdentityRefusal};
 use wamn_authentication::paging::{ListPage, Order};
 use wamn_environment::environment_org::{
     create_project, org_environments, set_environment_status, status_environments,
 };
 use wamn_environment::status;
-use wamn_identity_client::users::UserClient;
-use wamn_identity_protocol::PrincipalId;
-use wamn_postgres::ConnectionInput;
-use wamn_postgres::administration::{require_platform_rows, write_environment_status};
-use wamn_postgres::identity::application::project_authority;
-use wamn_postgres::identity::control::{
+use wamn_identity::control_admission::{self, AdminAdmission};
+use wamn_identity::identity::application::project_authority;
+use wamn_identity::identity::control::{
     control_projects_page, is_org_admin, is_project_admin, org_projects_page,
 };
-use wamn_postgres::identity::org::{
+use wamn_identity::identity::org::{
     deactivate_org_membership, grant_member, grant_org_admin, grant_project_admin, org_users_page,
     project_envs, project_envs_page, project_members_page, reactivate_org_membership,
     revoke_member, revoke_org_admin, revoke_project_admin,
 };
+use wamn_identity_client::users::UserClient;
+use wamn_identity_protocol::PrincipalId;
+use wamn_postgres::ConnectionInput;
 
 use crate::Writer;
 
@@ -127,7 +127,7 @@ impl From<IdentityError> for Refusal {
 }
 
 fn operation_refusal(error: anyhow::Error) -> Refusal {
-    use wamn_authentication::service::{ServiceError, ServiceErrorType};
+    use wamn_identity::service::{ServiceError, ServiceErrorType};
 
     if let Some(service) = error.downcast_ref::<ServiceError>() {
         return match service.type_ {
@@ -459,7 +459,7 @@ impl ControlRoutes<'_> {
                 };
                 let memberships = async {
                     let mut transaction =
-                        wamn_postgres::identity::transaction::read_pool(self.control, caller)
+                        wamn_identity::identity::transaction::read_pool(self.control, caller)
                             .await?;
                     let count = wamn_postgres::control::membership_count(
                         &mut transaction,
@@ -750,7 +750,7 @@ impl ControlRoutes<'_> {
         &self,
         caller: &PrincipalId,
     ) -> Result<sqlx::Transaction<'static, sqlx::Postgres>, Refusal> {
-        Ok(wamn_postgres::identity::transaction::read_pool(self.control, caller).await?)
+        Ok(wamn_identity::identity::transaction::read_pool(self.control, caller).await?)
     }
 
     async fn read<T>(
@@ -796,7 +796,7 @@ impl ControlRoutes<'_> {
             None,
         )
         .await?;
-        wamn_postgres::identity::org::lock_membership(&mut system, principal, self.org).await?;
+        wamn_identity::identity::org::lock_membership(&mut system, principal, self.org).await?;
         let mut completed = Vec::new();
         for ((project, env), login) in environments.iter().zip(logins) {
             let target = ApplicationTarget {
@@ -892,7 +892,7 @@ async fn application_counts(
 ) -> anyhow::Result<(i32, i32)> {
     let mut client = wamn_postgres::connect(login).await?;
     let mut transaction =
-        wamn_postgres::identity::transaction::read_connection(&mut client, caller).await?;
+        wamn_identity::identity::transaction::read_connection(&mut client, caller).await?;
     let counts = wamn_postgres::control::application_counts(&mut transaction).await?;
     transaction.commit().await?;
     Ok(counts)

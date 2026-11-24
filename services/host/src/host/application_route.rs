@@ -7,7 +7,7 @@
 //! to the caller and `app.operation` to the route's sealed operation id. A
 //! role or permission write first takes the project lock that `wamn` and
 //! release reconciliation take. The writes are the functions of
-//! `wamn_postgres::administration`, which `wamn` also calls, so no
+//! `wamn_authentication::administration`, which `wamn` also calls, so no
 //! second writer exists. A grant stores one row, and a caller holds exactly
 //! its rows, so a grant works while two releases serve during a rollout.
 //!
@@ -27,14 +27,12 @@ use wamn_application::application_config::ApplicationConfig;
 use wamn_application::ingress::AuthenticatedCaller;
 use wamn_authentication::administration::{
     AdministrationError, AdministrationRefusal, GrantAuthority, GrantChange, GrantError,
-    permission_is_grantable,
+    application_users, create_role, delete_role, mutate_grant, permission_is_grantable,
+    permission_rows, role_names,
 };
 use wamn_plugin::OperationHost;
 use wamn_plugin::number_counter::{CounterSet, CounterSetRefusal};
 use wamn_plugin::operation_sql::administration_transaction;
-use wamn_postgres::administration::{
-    application_users, create_role, delete_role, mutate_grant, permission_rows, role_names,
-};
 
 use super::route_refusal::{Refusal, parse};
 

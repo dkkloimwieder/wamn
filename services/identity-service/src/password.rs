@@ -8,17 +8,13 @@ use http_body_util::{BodyExt as _, Full, Limited};
 use hyper::{Request, Response, StatusCode, body::Incoming};
 use serde::{Deserialize, Serialize};
 use sqlx::PgConnection as Client;
-use wamn_authentication::password::{
+use wamn_identity::identity::issuer::Issuer;
+use wamn_identity::password::{
     Password, PasswordError, PasswordErrorType, PasswordWork, RefusalCause, password_work,
 };
-use wamn_authentication::password_requests::{
-    self, Attempt, DeliveryFailure, EmailDelivery, PasswordStore as _,
-};
-use wamn_authentication::session_exchange::{
-    self, Exchange, ExchangeFailure, RenewalAction, Session,
-};
+use wamn_identity::password_requests::{self, Attempt, DeliveryFailure, EmailDelivery};
+use wamn_identity::session_exchange::{self, Exchange, ExchangeFailure, RenewalAction, Session};
 use wamn_identity_protocol::PrincipalId;
-use wamn_postgres::identity::issuer::Issuer;
 
 use zeroize::Zeroizing;
 
@@ -472,7 +468,7 @@ pub(crate) mod tests {
     ) -> (
         crate::Database,
         url::Url,
-        Vec<wamn_authentication::principal::Principal>,
+        Vec<wamn_identity::principal::Principal>,
     ) {
         let mut url = wamn_test_infrastructure::identity::system(postgres).await;
         let mut admin = connect_database(url.as_str()).await.unwrap();
@@ -490,7 +486,7 @@ pub(crate) mod tests {
         let mut members = Vec::new();
         for (subject, email, display_name) in users {
             members.push(
-                wamn_postgres::identity::create_user(
+                wamn_identity::identity::create_user(
                     &mut admin.client,
                     subject,
                     email,
@@ -702,7 +698,7 @@ pub(crate) mod tests {
                     .to_string()
             ]
         );
-        wamn_postgres::identity::disable_principal(&mut admin.client, bob.id())
+        wamn_identity::identity::disable_principal(&mut admin.client, bob.id())
             .await
             .unwrap();
         let disabled = client

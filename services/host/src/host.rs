@@ -30,6 +30,7 @@ mod platform_http;
 mod route_refusal;
 mod workflow;
 
+use wamn_authentication::authorization::Authorization;
 use wamn_authentication::route_authentication::{
     EnvironmentStatusReader, PlatformRouteAuthenticator,
 };
@@ -39,7 +40,6 @@ use wamn_identity_client::nats::sign_host_user;
 use wamn_identity_protocol::nats::SignHostUser;
 use wamn_plugin::OperationHost;
 use wamn_postgres::WamnPostgres;
-use wamn_postgres::authorization::Authorization;
 
 #[derive(Debug, Args)]
 pub struct HostArgs {
@@ -543,7 +543,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     );
     let postgres = Arc::new(OperationHost::new(
         Arc::clone(&pools),
-        Arc::clone(&authorization) as _,
+        Arc::clone(&authorization),
         Some(Arc::clone(&authorization) as _),
     ));
     let integration = Arc::new(wamn_plugin::integrations::IntegrationBound::new(

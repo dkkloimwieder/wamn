@@ -7,7 +7,7 @@
 
 use std::fmt;
 use std::sync::Arc;
-use wamn_postgres::identity::control::{control_projects_page, is_org_admin, org_projects_page};
+use wamn_identity::identity::control::{control_projects_page, is_org_admin, org_projects_page};
 use wamn_routes::HostAttachment;
 use wamn_routes::HostHandler;
 use wamn_routes::HostRouteSet;
@@ -160,7 +160,7 @@ impl HostRouteDelivery {
         match attachment.route.handler {
             HostHandler::ControlMine => {
                 let mut transaction =
-                    wamn_postgres::identity::transaction::read_pool(control, principal).await?;
+                    wamn_identity::identity::transaction::read_pool(control, principal).await?;
                 let org_admin = is_org_admin(&mut transaction, principal, org).await?;
                 let page = control_page(payload, attachment, principal, org, None, Order::Project)?;
                 let projects = if org_admin {
@@ -190,7 +190,7 @@ impl HostRouteDelivery {
                 let mut rows = Vec::with_capacity(projects.len());
                 for project in projects {
                     let project_admin = org_admin
-                        || wamn_postgres::identity::control::is_project_admin(
+                        || wamn_identity::identity::control::is_project_admin(
                             &mut transaction,
                             principal,
                             org,

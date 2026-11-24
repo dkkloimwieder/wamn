@@ -40,6 +40,7 @@ wamn-identity-protocol.workspace = true
 wamn-role.workspace = true
 wamn-kubernetes.workspace = true
 wamn-postgres.workspace = true
+wamn-identity.workspace = true
 wamn-registry.workspace = true
 wamn-connection = { workspace = true }
 wamn-http = { workspace = true }

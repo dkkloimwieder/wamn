@@ -76,7 +76,7 @@ pub async fn prune_expired_record_history(
     request: PruneRecordHistoryRequest,
 ) -> anyhow::Result<Vec<PrunedHistory>> {
     let mut client = wamn_postgres::connect(
-        &wamn_postgres::platform_login::platform_configuration(&request.database_url)?,
+        &wamn_identity::platform_login::platform_configuration(&request.database_url)?,
     )
     .await
     .context("audit retention credential connect")?;

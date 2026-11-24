@@ -8,6 +8,7 @@ use anyhow::Context as _;
 use serde_json::Value;
 use wamn_application::application_config::ApplicationConfig;
 use wamn_application::result_signing::{ResultSigner, ResultSigning, ResultSigningError};
+use wamn_authentication::authorization::Authorization;
 use wamn_blobstore::client::ObjectStorage;
 use wamn_connection::connection_facts::ConnectionCache;
 use wamn_connection::invocation::ReleaseContext;
@@ -16,7 +17,6 @@ use wamn_plugin::OperationHost;
 use wamn_plugin::blobstore::file_route::FileRoutes;
 use wamn_plugin::file_connections::RegistryFileConnections;
 use wamn_postgres::WamnPostgres;
-use wamn_postgres::authorization::Authorization;
 
 pub(super) struct Routes {
     pub(super) files: FileRoutes,
