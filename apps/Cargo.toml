@@ -97,6 +97,7 @@ license = "Apache-2.0"
 [workspace.dependencies]
 wamn-digest = { path = "../crates/digest", version = "0.1.0" }
 wamn-scalar = { path = "../crates/scalar", version = "0.1.0" }
+wamn-number-pattern = { path = "../crates/number-pattern" }
 wamn-jsonata = { path = "../crates/jsonata", version = "0.1.0" }
 # Inherited by the four relocated guest-consumed rlibs, pinned exactly as the
 # root workspace pins them so a crate resolves identically from either side.

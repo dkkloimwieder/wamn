@@ -34,7 +34,7 @@ wamn-digest.workspace = true
 
 [dev-dependencies]
 # The accessor compilation test links this library through rustc.
-wamn-guest = { path = "../guest" }
+wamn-guest = { workspace = true }
 uuid = { workspace = true, features = ["v4"] }
 boon.workspace = true
 
