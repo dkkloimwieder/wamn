@@ -86,10 +86,12 @@ pub(crate) fn check_boundaries(root: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn refused(source: &str, target: &str) -> bool {
+fn refused(source: &str, target: &str, runtime_exempt: bool) -> bool {
     let runtime = matches!(target, "wasmtime" | "wash-runtime") || target.starts_with("wasmtime-");
     (DOMAINS.contains(&source) && (TECHNOLOGY.contains(&target) || runtime))
-        || (matches!(source, "wamn-control" | "wamn-identity-service") && runtime)
+        || (matches!(source, "wamn-control" | "wamn-identity-service")
+            && runtime
+            && !runtime_exempt)
         || (matches!(source, "wamn-edge" | "wamn-edge-document")
             && SERVICE_CLIENTS.contains(&target))
         || (target == TEST_INFRASTRUCTURE && !TEST_AND_TOOL_PACKAGES.contains(&source))

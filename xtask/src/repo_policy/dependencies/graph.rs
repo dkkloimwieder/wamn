@@ -5,7 +5,7 @@ use std::path::Path;
 
 pub(super) fn report(
     manifest: &Path,
-    refused: impl Fn(&str, &str) -> bool,
+    refused: impl Fn(&str, &str, bool) -> bool,
     failures: &mut Vec<String>,
 ) -> anyhow::Result<()> {
     let metadata = MetadataCommand::new()
@@ -23,14 +23,15 @@ pub(super) fn report(
         .collect();
     for start in &metadata.workspace_members {
         let source = names[start];
-        let mut parents = HashMap::from([(start, None)]);
-        let mut pending = VecDeque::from([start]);
+        let first = (start, false);
+        let mut parents = HashMap::from([(first, None)]);
+        let mut pending = VecDeque::from([first]);
         let mut reported = HashSet::new();
-        while let Some(id) = pending.pop_front() {
+        while let Some(step @ (id, runtime_exempt)) = pending.pop_front() {
             let name = names[id];
-            if id != start && refused(source, name) && reported.insert(name) {
-                let mut path: Vec<_> = std::iter::successors(Some(id), |id| parents[id])
-                    .map(|id| names[id])
+            if id != start && refused(source, name, runtime_exempt) && reported.insert(name) {
+                let mut path: Vec<_> = std::iter::successors(Some(step), |step| parents[step])
+                    .map(|(id, _)| names[id])
                     .collect();
                 path.reverse();
                 failures.push(format!(
@@ -39,14 +40,19 @@ pub(super) fn report(
                 ));
             }
             for dep in &nodes[id].deps {
+                // removed by Epic 22 (wamn-fmvz4.14)
+                let next = (
+                    &dep.pkg,
+                    runtime_exempt || (source == "wamn-control" && names[&dep.pkg] == "wamn-http"),
+                );
                 if dep
                     .dep_kinds
                     .iter()
                     .any(|edge| edge.kind == DependencyKind::Normal)
-                    && let Entry::Vacant(entry) = parents.entry(&dep.pkg)
+                    && let Entry::Vacant(entry) = parents.entry(next)
                 {
-                    entry.insert(Some(id));
-                    pending.push_back(&dep.pkg);
+                    entry.insert(Some(step));
+                    pending.push_back(next);
                 }
             }
         }
