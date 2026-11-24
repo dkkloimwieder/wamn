@@ -98,7 +98,7 @@ impl OperationHost {
         project: &wamn_registry::ProjectId,
         principal_id: &wamn_identity_protocol::PrincipalId,
         operation: &wamn_package::canonical_name::CanonicalName,
-    ) -> anyhow::Result<wamn_connection::database::ConnectionGuard> {
+    ) -> anyhow::Result<wamn_postgres::operation::ConnectionGuard> {
         self.pools
             .begin_administration(project, principal_id, operation)
             .await

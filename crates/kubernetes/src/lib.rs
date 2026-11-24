@@ -12,14 +12,6 @@ pub mod kubernetes_api {
 use std::error::Error as StdError;
 use std::fmt;
 
-/// The immutable database reference returned by a write.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct StoreVersion {
-    pub store: &'static str,
-    pub reference: String,
-    pub version: String,
-}
-
 /// A store failure with operation context and its source.
 #[derive(Debug)]
 pub struct Error {
@@ -72,28 +64,6 @@ pub(crate) fn failure(
         reference: reference.to_owned(),
         source: source.into(),
     }
-}
-
-/// The resolved Secret name and coordinate labels for a credential write.
-#[derive(Debug)]
-pub struct CredentialSecret<'a> {
-    pub name: String,
-    pub org: &'a str,
-    pub env: &'a str,
-    pub project: &'a str,
-}
-
-/// Credential storage. Values stay outside the database.
-#[async_trait::async_trait]
-pub trait Store: Send + Sync + fmt::Debug {
-    async fn put(
-        &self,
-        target: CredentialSecret<'_>,
-        credential_id: uuid::Uuid,
-        value: &[u8],
-    ) -> Result<StoreVersion, Error>;
-    async fn get(&self, reference: &str, version: &str) -> Result<Vec<u8>, Error>;
-    async fn destroy(&self, reference: &str, version: &str) -> Result<(), Error>;
 }
 
 /// A selected cluster and namespace for command line operations.

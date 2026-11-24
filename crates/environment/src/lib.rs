@@ -3,8 +3,6 @@
 pub mod api_service;
 pub mod configuration;
 pub mod apply_package;
-pub mod connections;
-pub mod credential_cleanup;
 pub mod environment;
 pub mod ident;
 pub mod migrations;
@@ -23,3 +21,5 @@ pub mod prune_run_history;
 mod web_artifact_tests;
 
 pub mod release_chart;
+
+pub mod wasm_authority;

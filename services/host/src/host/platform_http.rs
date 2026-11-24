@@ -214,7 +214,7 @@ mod tests {
             wamn_postgres::WamnPostgres::from_host_config(std::collections::BTreeMap::new())
                 .expect("empty pools"),
         );
-        let database = Arc::new(wamn_plugin::OperationDatabase::new(Arc::clone(&pools)));
+        let database = Arc::clone(&pools);
         let authorization = Arc::new(wamn_authentication::authorization::Authorization::new(
             Arc::clone(&pools),
             database,

@@ -84,9 +84,6 @@ pub fn close_capture_gap_sql() -> &'static str {
 pub const ENVIRONMENT_DISPOSABLE: &str =
     "SELECT disposable FROM registry.environments WHERE org=$1 AND env=$2";
 
-/// crates/execution-host/src/credential_cleanup.rs::collect registry statement.
-pub const EXECUTION_HOST_SRC_CREDENTIAL_CLEANUP_COLLECT: &str = "SELECT k.store,k.ref,k.version FROM platform.credential k JOIN platform.connection c ON c.id=k.connection_id JOIN platform.connection_generation active ON (active.connection_id,active.generation)=(c.id,c.active_generation) JOIN LATERAL (SELECT max(generation) AS generation FROM platform.connection_generation WHERE connection_id=c.id AND credential_id=k.id) last_use ON true JOIN LATERAL (SELECT created_at FROM platform.connection_generation WHERE connection_id=c.id AND generation>last_use.generation ORDER BY generation LIMIT 1) successor ON true WHERE active.credential_id IS DISTINCT FROM k.id AND successor.created_at<now()-interval '5 minutes'";
-
 /// crates/identity/src/control.rs::ORG_PROJECTS_SQL registry statement.
 pub const IDENTITY_PLATFORM_SRC_CONTROL_ORG_PROJECTS_SQL: &str = "SELECT p.id, CASE WHEN EXISTS (SELECT 1 FROM registry.environment_projects e JOIN registry.environments v USING (org,env) \
     WHERE e.org = p.org AND e.project = p.id AND v.status = 'active') \

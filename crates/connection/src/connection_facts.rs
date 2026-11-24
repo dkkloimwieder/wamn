@@ -8,7 +8,7 @@ use anyhow::Context as _;
 
 use crate::connection_credentials::{ConnectionCredentials, ConnectionGeneration, Secret};
 use crate::connection_memory::{ConnectionFact, ConnectionMemory, EnvConnections};
-use crate::database::ProjectDatabase;
+use crate::project_connections::ProjectConnections;
 
 /// The active connection facts and their generation.
 #[derive(Debug)]
@@ -82,7 +82,7 @@ impl ConnectionFacts {
     pub fn new(
         memory: Arc<ConnectionMemory>,
         reader: Arc<ConnectionCredentials>,
-        database: &Arc<dyn ProjectDatabase>,
+        database: &Arc<dyn ProjectConnections>,
         project_env_key: &wamn_registry::ProjectEnvKey,
         project: &wamn_registry::ProjectId,
         environment: &wamn_registry::EnvName,

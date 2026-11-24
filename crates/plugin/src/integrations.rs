@@ -1,9 +1,9 @@
 //! The bound guard of integration sibling components; wasmCloud owns their code.
 
-use crate::connection_facts::{ConnectionCache, ConnectionFacts};
 use anyhow::Context as _;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, OnceLock, RwLock};
+use wamn_connection::connection_facts::{ConnectionCache, ConnectionFacts};
 use wash_runtime::engine::ctx::{ActiveCtx, SharedCtx};
 use wash_runtime::engine::workload::{ResolvedWorkload, WorkloadItem};
 use wash_runtime::plugin::{HostPlugin, WitInterfaces};
@@ -29,7 +29,7 @@ use bindings::wamn::integration::bound;
 /// Parameters and credential selected for one integration call.
 pub struct Call {
     parameters: String,
-    credential: Option<Arc<crate::connection_credentials::Secret>>,
+    credential: Option<Arc<wamn_connection::connection_credentials::Secret>>,
 }
 
 impl std::fmt::Debug for Call {
@@ -167,7 +167,7 @@ impl bound::Host for ActiveCtx<'_> {
                 .await?
                 .context("connection unavailable")?;
             anyhow::ensure!(
-                answer.fact.status == crate::connection_memory::ConnectionStatus::Active,
+                answer.fact.status == wamn_connection::connection_memory::ConnectionStatus::Active,
                 "connection disabled"
             );
             let mut parameters = answer.generation.parameters.clone();

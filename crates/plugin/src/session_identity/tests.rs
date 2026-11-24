@@ -1,4 +1,4 @@
-use crate::{OperationDatabase, OperationHost, PgError};
+use crate::{OperationHost, PgError};
 use std::sync::Arc;
 use wamn_authentication::authorization::{Authorization, AuthorizationStore as _};
 use wamn_identity_protocol::AuthorityClass;
@@ -38,7 +38,7 @@ async fn user_operation_permissions_reuse_only_the_callable_http_authority() {
     let pools = Arc::new(WamnPostgres::with_provider(
         Arc::clone(&provider) as Arc<dyn CredentialProvider>,
     ));
-    let database = Arc::new(OperationDatabase::new(Arc::clone(&pools)));
+    let database = Arc::clone(&pools);
     let authorization = Authorization::new(pools, database);
     let application = wamn_application::application_config::ApplicationConfig {
         org: "org".parse().unwrap(),

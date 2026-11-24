@@ -31,7 +31,7 @@ pub mod scope_registry;
 mod types;
 pub mod write_log;
 
-pub use executor::OperationDatabase;
+pub mod integrations;
 pub use host::OperationHost;
 pub use operation::WorkflowNode;
 pub use operation_transaction::{OperationTransaction, PgCommitFailure};

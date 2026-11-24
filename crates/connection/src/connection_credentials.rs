@@ -1,6 +1,5 @@
 //! Connection rows and credential references read only through the project platform login.
 
-use wamn_registry::connections::ConnectionStore as _;
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::{Arc, Mutex};
@@ -15,8 +14,40 @@ use crate::connection_memory::bounded;
 
 /// Read one versioned credential from the host's Secret store.
 #[async_trait::async_trait]
-pub trait CredentialStore: Send + Sync {
+pub trait ReadCredentials: Send + Sync {
     async fn read(&self, reference: &str, version: &str) -> anyhow::Result<Vec<u8>>;
+}
+
+/// Save and retire credential values without exposing the storage client.
+#[async_trait::async_trait]
+pub trait WriteCredentials: Send + Sync {
+    /// Save a new immutable version under the project's Secret name.
+    async fn put(
+        &self,
+        target: CredentialSecret<'_>,
+        id: Uuid,
+        value: &[u8],
+    ) -> anyhow::Result<StoreVersion>;
+
+    /// Remove an immutable version, including when it is already absent.
+    async fn destroy(&self, reference: &str, version: &str) -> anyhow::Result<()>;
+}
+
+/// The resolved Secret name and coordinate labels for a credential write.
+#[derive(Debug)]
+pub struct CredentialSecret<'a> {
+    pub name: String,
+    pub org: &'a str,
+    pub env: &'a str,
+    pub project: &'a str,
+}
+
+/// The immutable database reference returned by a credential write.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StoreVersion {
+    pub store: &'static str,
+    pub reference: String,
+    pub version: String,
 }
 
 /// Credential material omitted from debug output.
@@ -61,7 +92,7 @@ impl std::error::Error for ReadError {
 
 /// The host's shared Secret reader and bounded cache of credential values.
 pub struct CredentialReader {
-    store: Box<dyn CredentialStore>,
+    store: Box<dyn ReadCredentials>,
     values: Cache<Key, Arc<Secret>>,
     pending: Mutex<HashMap<Key, Arc<Read>>>,
 }
@@ -75,7 +106,7 @@ impl fmt::Debug for CredentialReader {
 }
 
 impl CredentialReader {
-    pub fn new(store: Box<dyn CredentialStore>) -> Self {
+    pub fn new(store: Box<dyn ReadCredentials>) -> Self {
         Self {
             store,
             values: bounded(),
@@ -165,7 +196,7 @@ impl Drop for PendingRead<'_> {
 
 #[derive(Clone)]
 struct ProjectReader {
-    database: std::sync::Weak<dyn crate::database::ProjectDatabase>,
+    database: std::sync::Weak<dyn crate::project_connections::ProjectConnections>,
     project: wamn_registry::ProjectId,
     environment: wamn_registry::EnvName,
 }
@@ -208,7 +239,7 @@ impl ConnectionCredentials {
 
     pub(crate) fn with_project_database(
         mut self,
-        database: std::sync::Weak<dyn crate::database::ProjectDatabase>,
+        database: std::sync::Weak<dyn crate::project_connections::ProjectConnections>,
         project: &wamn_registry::ProjectId,
         environment: &wamn_registry::EnvName,
     ) -> Self {
@@ -220,11 +251,11 @@ impl ConnectionCredentials {
         self
     }
 
-    fn project_database(
+    pub(crate) fn project_connections(
         &self,
         project: &wamn_registry::ProjectId,
         environment: &wamn_registry::EnvName,
-    ) -> anyhow::Result<Arc<dyn crate::database::ProjectDatabase>> {
+    ) -> anyhow::Result<Arc<dyn crate::project_connections::ProjectConnections>> {
         let target = self
             .project
             .as_ref()
@@ -237,16 +268,6 @@ impl ConnectionCredentials {
             .database
             .upgrade()
             .context("project database was unloaded")
-    }
-
-    pub async fn oauth_database(
-        &self,
-        project: &wamn_registry::ProjectId,
-        environment: &wamn_registry::EnvName,
-    ) -> anyhow::Result<sqlx::pool::PoolConnection<sqlx::Postgres>> {
-        self.project_database(project, environment)?
-            .oauth_connection(project)
-            .await
     }
 
     pub fn org(&self) -> anyhow::Result<&wamn_registry::OrgId> {
@@ -274,8 +295,8 @@ impl ConnectionCredentials {
     }
 
     pub fn connection_name<'a>(&self, handle: &'a str) -> anyhow::Result<&'a str> {
-        let (org, name) =
-            wamn_connection_type::parse_org_credential_handle(handle).map_err(anyhow::Error::msg)?;
+        let (org, name) = wamn_connection_type::parse_org_credential_handle(handle)
+            .map_err(anyhow::Error::msg)?;
         let configured_org = self
             .org
             .as_ref()
@@ -298,13 +319,8 @@ impl ConnectionCredentials {
         environment: &wamn_registry::EnvName,
         id: &uuid::Uuid,
     ) -> anyhow::Result<Option<crate::connection_memory::ConnectionFact>> {
-        let database = self.project_database(project, environment)?;
-        let mut local = database.read_connection(project).await?;
-        let row = wamn_postgres::Registry::new(local.connection())
-            .fact(id)
-            .await
-            .context("read connection fact")?;
-        local.commit().await?;
+        let database = self.project_connections(project, environment)?;
+        let row = database.connection_fact(project, id).await?;
         Ok(row.map(|row| crate::connection_memory::ConnectionFact {
             active_generation: row.active_generation,
             status: if row.active {
@@ -328,14 +344,10 @@ impl ConnectionCredentials {
         id: &uuid::Uuid,
         generation: i64,
     ) -> anyhow::Result<Option<ConnectionGeneration>> {
-        let database = self.project_database(project, environment)?;
-        let mut local = database.read_connection(project).await?;
-        let row = wamn_postgres::Registry::new(local.connection())
-            .generation(id, generation)
+        let database = self.project_connections(project, environment)?;
+        database
+            .connection_generation(project, id, generation)
             .await
-            .context("read connection generation")?;
-        local.commit().await?;
-        Ok(row)
     }
 
     /// Read the named project Secret only on a cache miss or after rejection.
@@ -353,13 +365,8 @@ impl ConnectionCredentials {
             .context("credential reader unavailable")?;
         reader
             .read((key.to_owned(), credential), rejected, async {
-                let database = self.project_database(project, environment)?;
-                let mut local = database.read_connection(project).await?;
-                let reference = wamn_postgres::Registry::new(local.connection())
-                    .credential(&credential)
-                    .await
-                    .context("read credential reference")?;
-                local.commit().await?;
+                let database = self.project_connections(project, environment)?;
+                let reference = database.credential_reference(project, &credential).await?;
                 let reference = reference.context("credential unavailable")?;
                 let name = wamn_registry::credential_secret_name(self.org()?, project, environment);
                 anyhow::ensure!(
@@ -378,14 +385,8 @@ impl ConnectionCredentials {
         project: &wamn_registry::ProjectId,
         environment: &wamn_registry::EnvName,
     ) -> anyhow::Result<std::collections::BTreeMap<String, uuid::Uuid>> {
-        let database = self.project_database(project, environment)?;
-        let mut local = database.read_connection(project).await?;
-        let rows = wamn_postgres::Registry::new(local.connection())
-            .environment()
-            .await
-            .context("read environment connections")?;
-        local.commit().await?;
-        Ok(rows)
+        let database = self.project_connections(project, environment)?;
+        database.environment_connections(project).await
     }
 }
 

@@ -79,9 +79,9 @@ impl ConnectionHttp {
             .scopes
             .execution(scope)
             .ok_or(ConnectionError::AttestationInvalid)?;
-        let context = wamn_connection::invocation::context(&self.scopes, scope)
+        let context = crate::invocation::context(&self.scopes, scope)
             .map_err(|_| ConnectionError::AttestationInvalid)?;
-        let invocation = wamn_connection::invocation::invocation(&self.scopes, scope)
+        let invocation = crate::invocation::invocation(&self.scopes, scope)
             .ok_or(ConnectionError::AttestationInvalid)?;
         let alias = request
             .requirement
@@ -351,7 +351,7 @@ impl<T: Send + 'static> http::HostWithStore<T> for SharedCtx {
             .with(|mut access| wamn_engine::invocation_trace::invocation_trace(&mut access.get()));
         trace
             .run(async move {
-                let context = wamn_connection::invocation::context(&plugin.scopes, &scope).ok();
+                let context = crate::invocation::context(&plugin.scopes, &scope).ok();
                 let project_key = context
                     .as_ref()
                     .map(|context| context.connections.project_env_key());
@@ -368,7 +368,7 @@ impl<T: Send + 'static> http::HostWithStore<T> for SharedCtx {
                     None,
                     effect.operation = "send",
                 );
-                let invocation = wamn_connection::invocation::invocation(&plugin.scopes, &scope);
+                let invocation = crate::invocation::invocation(&plugin.scopes, &scope);
                 record_graph(
                     &span,
                     invocation

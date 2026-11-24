@@ -20,7 +20,6 @@ wamn-package.workspace = true
 wamn-component-policy.workspace = true
 wamn-routes.workspace = true
 wamn-workflow-graph.workspace = true
-async-trait.workspace = true
 wamn-role.workspace = true
 wamn-connection = { workspace = true }
 wamn-event.workspace = true

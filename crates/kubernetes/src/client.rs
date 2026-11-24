@@ -73,6 +73,18 @@ impl KubernetesApi {
         Self::from_config(cluster_config()?)
     }
 
+    pub(crate) fn host_credential_secrets() -> anyhow::Result<Api<Secret>> {
+        let mut config = Config::incluster().context("load in-cluster credential configuration")?;
+        config.default_retry = false;
+        let namespace = config.default_namespace.clone();
+        let client = Client::try_from(config).context("build in-cluster credential client")?;
+        Ok(Api::namespaced(client, &namespace))
+    }
+
+    pub(crate) fn into_secrets(self) -> Api<Secret> {
+        Api::namespaced(self.client, &self.namespace)
+    }
+
     pub fn client(&self) -> Client {
         self.client.clone()
     }

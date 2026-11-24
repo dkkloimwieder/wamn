@@ -167,14 +167,3 @@ pub async fn read_guest_grants(
 ) -> anyhow::Result<wamn_authority::auth_cache::PrincipalGrants> {
     read_principal_grants(postgres, project, key, principal, AuthorityClass::GuestSql).await
 }
-
-/// Check out the project's platform login for OAuth's own transaction.
-pub async fn oauth_connection(
-    postgres: &WamnPostgres,
-    project: &wamn_registry::ProjectId,
-) -> anyhow::Result<sqlx::pool::PoolConnection<sqlx::Postgres>> {
-    let (connection, _) = postgres
-        .checkout_platform(project, AuthorityClass::Platform)
-        .await?;
-    Ok(connection)
-}

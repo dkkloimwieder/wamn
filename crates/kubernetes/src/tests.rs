@@ -1,6 +1,6 @@
 //! Credential operations through the shared HTTP interface.
 
-use crate::{CredentialSecret, Store as _, client::KubernetesApi, kubernetes::KubernetesStore};
+use crate::{client::KubernetesApi, kubernetes::KubernetesStore};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use bytes::Bytes;
 use http_body_util::{BodyExt as _, Full};
@@ -13,6 +13,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 use tokio::net::TcpListener;
+use wamn_connection::connection_credentials::CredentialSecret;
 
 struct Api {
     store: KubernetesStore,

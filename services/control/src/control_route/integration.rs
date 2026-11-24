@@ -3,8 +3,13 @@
 use super::{ControlRoutes, ProjectTarget, Refusal, parse};
 use serde_json::{Value, json};
 use sqlx::Connection as _;
-use wamn_environment::connections::{ConnectionError, administration, references};
+use wamn_connection::{
+    administration::{self, ConnectionError},
+    references,
+};
 use wamn_identity_protocol::PrincipalId;
+use wamn_kubernetes::kubernetes::KubernetesCredentials;
+use wamn_postgres::project_connections::Administration;
 use wamn_routes::HostAttachment;
 
 impl From<ConnectionError> for Refusal {
@@ -57,12 +62,7 @@ impl ControlRoutes<'_> {
         })?;
         administration::validate_request(operation, &request)?;
         let mut authorized = self
-            .begin_in(
-                writer,
-                attachment,
-                caller,
-                Some(&target.project),
-            )
+            .begin_in(writer, attachment, caller, Some(&target.project))
             .await?;
         if operation == "integration_type.list" {
             let result = wamn_postgres::control::configure_integration_type(
@@ -119,16 +119,30 @@ impl ControlRoutes<'_> {
         } else {
             Vec::new()
         };
-        let mut result = administration::execute(
+        let mut database = Administration::new(
             &mut project,
             writer,
-            *caller,
-            self.org,
-            operation,
-            payload,
             source,
+            Some(|system, project, name, connection| {
+                Box::pin(
+                    wamn_identity::application::service::write_connection_service(
+                        system, project, name, connection,
+                    ),
+                )
+            }),
+        );
+        let credentials = KubernetesCredentials::default();
+        let mut result = administration::execute(
+            &mut database,
+            &credentials,
+            wamn_environment::wasm_authority::wasm_authority_port,
+            administration::Request {
+                caller: *caller,
+                org: self.org,
+                operation,
+                payload,
+            },
             &applications,
-            wamn_identity::application::service::write_connection_service,
         )
         .await?;
         if operation == "connection.authorize" {
@@ -154,7 +168,7 @@ impl ControlRoutes<'_> {
         }
         project.commit().await?;
         if let Some(credentials) = result.get("credentials") {
-            references::destroy_credentials(credentials).await?;
+            references::destroy_credentials(&KubernetesCredentials::default(), credentials).await?;
         }
         if let Some(row) = result.as_object_mut() {
             let _ = row.remove("credentials");

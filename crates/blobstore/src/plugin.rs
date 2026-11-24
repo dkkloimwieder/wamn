@@ -53,7 +53,7 @@ impl WamnBlobstore {
 
     /// Read signing and effect authority from the invocation record.
     pub fn invocation(&self, component_id: &str) -> Option<ConnectionInvocation> {
-        wamn_connection::invocation::invocation(&self.postgres.scopes, component_id)
+        wamn_plugin::invocation::invocation(&self.postgres.scopes, component_id)
     }
 
     /// Open file storage after the native host authorizes its package binding.
@@ -131,8 +131,7 @@ impl WamnBlobstore {
         alias: &wamn_package::canonical_name::CanonicalName,
     ) -> Result<BoundContainer, BindingError> {
         let resolve = async {
-            let context =
-                wamn_connection::invocation::context(&self.postgres.scopes, component_id)?;
+            let context = wamn_plugin::invocation::context(&self.postgres.scopes, component_id)?;
             let invocation = self
                 .invocation(component_id)
                 .ok_or_else(|| anyhow::anyhow!("no connection invocation"))?;

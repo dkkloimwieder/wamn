@@ -10,6 +10,7 @@ pg_walstream.workspace = true
 wamn-application.workspace = true
 wamn-codegen.workspace = true
 wamn-component-policy.workspace = true
+wamn-connection.workspace = true
 wamn-digest.workspace = true
 wamn-envelope.workspace = true
 wamn-event.workspace = true

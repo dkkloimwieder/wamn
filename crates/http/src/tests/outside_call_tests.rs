@@ -12,7 +12,7 @@ use crate::test_util::Observed;
 use wamn_connection::connection_credentials::{ConnectionCredentials, ConnectionGeneration};
 use wamn_connection::connection_facts::ConnectionAnswer;
 use wamn_connection::connection_memory::{ConnectionFact, ConnectionStatus};
-use wamn_connection::database::ProjectDatabase;
+use wamn_connection::project_connections::ProjectConnections;
 use wamn_plugin::host_policy::CONNECTION_HOST_POLICY;
 
 /// The project database is never read: a call without OAuth reads no connection row.
@@ -25,8 +25,7 @@ fn facts() -> ConnectionFacts {
         statement_timeout_ms: 100,
     })
     .expect("offline project pools build");
-    let database: Arc<dyn ProjectDatabase> =
-        Arc::new(wamn_plugin::OperationDatabase::new(Arc::new(pools)));
+    let database: Arc<dyn ProjectConnections> = Arc::new(pools);
     let org = "acme".parse().unwrap();
     ConnectionFacts::new(
         Arc::default(),

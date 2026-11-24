@@ -1,7 +1,8 @@
 //! Each environment reference prevents deletion before authority changes.
 
 use sqlx::Connection as _;
-use wamn_environment::connections::references::refuse_environment_references;
+use wamn_connection::administration::AdministrationStore as _;
+use wamn_postgres::project_connections::Administration;
 
 async fn refusal(relation: &str, expected: &str) {
     let postgres = wamn_test_infrastructure::containers::start_postgres()
@@ -15,9 +16,9 @@ async fn refusal(relation: &str, expected: &str) {
         CREATE TABLE platform.record_source(external_system_id uuid REFERENCES platform.external_system(id)); \
         CREATE TABLE platform.file(connection_id uuid); \
         INSERT INTO platform.external_system VALUES ('00000000-0000-0000-0000-000000000001')").execute(&mut client).await.map(drop).unwrap();
-    sqlx::raw_sql(sqlx::AssertSqlSafe(
-        format!("INSERT INTO {relation} VALUES ('00000000-0000-0000-0000-000000000001')"),
-    ))
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "INSERT INTO {relation} VALUES ('00000000-0000-0000-0000-000000000001')"
+    )))
     .execute(&mut client)
     .await
     .map(drop)
@@ -28,10 +29,12 @@ async fn refusal(relation: &str, expected: &str) {
     } else {
         "connection"
     };
-    let error =
-        refuse_environment_references(&mut tx, group, "00000000-0000-0000-0000-000000000001")
-            .await
-            .unwrap_err();
+    let mut system = wamn_postgres::connect(postgres.admin_url()).await.unwrap();
+    let mut database = Administration::new(&mut tx, &mut system, None, None);
+    let error = database
+        .refuse_environment_references(group, "00000000-0000-0000-0000-000000000001")
+        .await
+        .unwrap_err();
     assert_eq!(error.code, "referenced");
     assert_eq!(error.field, expected);
 }

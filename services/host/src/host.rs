@@ -24,7 +24,6 @@ use wash_runtime::washlet::AttachedHostControl;
 
 mod application_route;
 mod commands;
-mod credential_store;
 mod files;
 mod host_route;
 mod platform_http;
@@ -40,7 +39,7 @@ use wamn_engine::engine::{DEFAULT_CORE_INSTANCES, build_engine_with_host_memory}
 use wamn_engine::ingress::IngressRouting;
 use wamn_identity_client::nats::sign_host_user;
 use wamn_identity_protocol::nats::SignHostUser;
-use wamn_plugin::{OperationDatabase, OperationHost};
+use wamn_plugin::OperationHost;
 use wamn_postgres::WamnPostgres;
 
 #[derive(Debug, Args)]
@@ -533,10 +532,12 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         })
         .transpose()?
         .map(Arc::new);
-    let database = Arc::new(OperationDatabase::new(Arc::clone(&pools)));
+    let database = Arc::clone(&pools);
     let authorization = Arc::new(
         Authorization::new(Arc::clone(&pools), database)
-            .with_credential_store(Box::new(credential_store::KubernetesCredentials::default()))
+            .with_credential_store(Box::new(
+                wamn_kubernetes::kubernetes::KubernetesCredentials::for_host(),
+            ))
             .with_oauth_encryption(envelope),
     );
     let postgres = Arc::new(OperationHost::new(
@@ -544,7 +545,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         pools,
         Some(Arc::clone(&authorization)),
     ));
-    let integration = Arc::new(wamn_connection::integrations::IntegrationBound::new(
+    let integration = Arc::new(wamn_plugin::integrations::IntegrationBound::new(
         Arc::clone(&authorization) as _,
     ));
     let connection_http = Arc::new(wamn_plugin::bound_http::ConnectionHttp::new(

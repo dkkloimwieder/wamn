@@ -116,6 +116,7 @@ pub fn require_identity(
 }
 
 pub mod operation;
+pub mod project_connections;
 pub mod run_store;
 pub mod schema;
 pub mod workflow;

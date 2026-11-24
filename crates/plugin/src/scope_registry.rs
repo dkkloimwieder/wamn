@@ -134,7 +134,7 @@ pub(super) fn current_run_for(scopes: &InvocationScopes, component_id: &str) -> 
 /// The invocation currently bound to one pooled instance.
 #[must_use]
 pub fn invocation(scopes: &InvocationScopes, component_id: &str) -> Option<ConnectionInvocation> {
-    wamn_connection::invocation::invocation(scopes, component_id)
+    crate::invocation::invocation(scopes, component_id)
 }
 
 /// Read back the identity set one component id currently resolves to.

@@ -2,8 +2,8 @@
 
 use sqlx::Row as _;
 use std::{collections::BTreeSet, sync::Arc, time::SystemTime};
-use wamn_identity_protocol::{PrincipalId, secret::PatToken};
 use wamn_authority::auth_cache::PrincipalGrants;
+use wamn_identity_protocol::{PrincipalId, secret::PatToken};
 
 /// The status row of the environment, which `wamn_app` reads under its
 /// database boundary.
@@ -207,7 +207,5 @@ pub async fn project_pat(
 mod project_reads;
 mod store;
 
-pub use project_reads::{
-    SessionIdentityError, SessionIdentityErrorType, oauth_connection, read_guest_grants,
-};
+pub use project_reads::{SessionIdentityError, SessionIdentityErrorType, read_guest_grants};
 pub use store::Authorization;

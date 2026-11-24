@@ -2,7 +2,6 @@
 
 use crate::connection::ConnectionInvocation;
 use std::sync::Arc;
-use wamn_engine::invocation_scope::InvocationScopes;
 
 /// Immutable application facts and project-owned connection readers for one deployment.
 #[derive(Debug)]
@@ -41,19 +40,3 @@ pub struct Scope {
 }
 
 impl wamn_application::invocation_authority::InvocationAuthority for Scope {}
-
-/// Read the deployment selected by the host for this scope.
-pub fn context(scopes: &InvocationScopes, scope: &str) -> anyhow::Result<Arc<ReleaseContext>> {
-    use anyhow::Context as _;
-    scopes
-        .read::<Scope, _>(scope, |record| record.context.as_ref().map(Arc::clone))
-        .context("scope was revoked")?
-        .context("scope has no release authority")
-}
-
-/// Read the host-attested invocation while its scope remains active.
-pub fn invocation(scopes: &InvocationScopes, scope: &str) -> Option<ConnectionInvocation> {
-    scopes
-        .read::<Scope, _>(scope, |record| record.invocation.clone())
-        .flatten()
-}

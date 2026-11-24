@@ -8,10 +8,10 @@ use sqlx::Connection as _;
 use url::Url;
 use zeroize::Zeroizing;
 
-use wamn_connection::connection_credentials::CredentialStore as _;
+use wamn_connection::connection_credentials::ReadCredentials as _;
 use wamn_envelope::encryption::Envelope;
-use wamn_environment::connections::KubernetesCredentials;
 use wamn_http::{oauth, transport::HttpTransport};
+use wamn_kubernetes::kubernetes::KubernetesCredentials;
 use wamn_postgres::oauth_authorization as store;
 
 /// A refusal with a safe public reason. Sources never enter a callback page.
@@ -230,7 +230,7 @@ impl Authorization {
             .encrypt(&plaintext)
             .await
             .map_err(|error| failed("token encryption failed", error))?;
-        wamn_connection::oauth_token::write_row(
+        wamn_postgres::project_connections::write_token(
             tx,
             connection,
             &encrypted,
@@ -253,7 +253,9 @@ async fn credential(context: &Value) -> anyhow::Result<Zeroizing<String>> {
     };
     let reference = text("ref")?;
     let version = text("version")?;
-    let bytes = KubernetesCredentials.read(reference, version).await?;
+    let bytes = KubernetesCredentials::default()
+        .read(reference, version)
+        .await?;
     String::from_utf8(bytes)
         .context("credential is not UTF-8")
         .map(Zeroizing::new)

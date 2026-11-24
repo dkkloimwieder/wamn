@@ -1,18 +1,18 @@
 //! Positive admission facts shared by the host's application workloads.
 
-use wamn_application::application_config::ApplicationConfig;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock, Weak};
 use std::time::{Duration, Instant, SystemTime};
+use wamn_application::application_config::ApplicationConfig;
 
 use anyhow::Context as _;
 use moka::sync::Cache;
 use wamn_authority::auth_cache::PrincipalGrants;
 use wamn_connection::connection_credentials::{
-    ConnectionCredentials, CredentialReader, CredentialStore,
+    ConnectionCredentials, CredentialReader, ReadCredentials,
 };
 use wamn_connection::connection_facts::{ConnectionAnswer, ConnectionCache, ConnectionFacts};
-use wamn_connection::database::ProjectDatabase;
+use wamn_connection::project_connections::ProjectConnections;
 use wamn_identity_protocol::PrincipalId;
 use wamn_identity_protocol::secret::PatToken;
 use wamn_postgres::WamnPostgres;
@@ -62,7 +62,7 @@ impl moka::Expiry<Key, Answer> for Expiry {
 /// One local cache; the project lifetime applies equally to every admitted fact.
 pub struct Authorization {
     postgres: Arc<WamnPostgres>,
-    database: Arc<dyn ProjectDatabase>,
+    database: Arc<dyn ProjectConnections>,
     envelope: Option<Arc<wamn_envelope::encryption::Envelope>>,
     applications: RwLock<HashMap<String, Weak<ApplicationConfig>>>,
     lifetimes: RwLock<HashMap<ProjectEnvKey, (ProjectId, Duration)>>,
@@ -80,7 +80,7 @@ impl std::fmt::Debug for Authorization {
 
 impl Authorization {
     /// Share the project's pools and the authorized connection reader.
-    pub fn new(postgres: Arc<WamnPostgres>, database: Arc<dyn ProjectDatabase>) -> Self {
+    pub fn new(postgres: Arc<WamnPostgres>, database: Arc<dyn ProjectConnections>) -> Self {
         Self {
             postgres,
             database,
@@ -96,7 +96,7 @@ impl Authorization {
     }
 
     /// Share one credential store and cache across application workloads.
-    pub fn with_credential_store(mut self, store: Box<dyn CredentialStore>) -> Self {
+    pub fn with_credential_store(mut self, store: Box<dyn ReadCredentials>) -> Self {
         self.credentials = Some(Arc::new(CredentialReader::new(store)));
         self
     }

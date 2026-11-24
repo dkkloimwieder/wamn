@@ -4,9 +4,11 @@ use std::time::Duration;
 use wamn_routes::HostAttachment;
 
 use serde_json::{Value, json};
-use wamn_environment::connections::administration;
+use wamn_connection::administration;
+use wamn_connection::connection_credentials::ReadCredentials as _;
 use wamn_identity_protocol::PrincipalId;
-use wamn_kubernetes::Store as _;
+use wamn_kubernetes::kubernetes::KubernetesCredentials;
+use wamn_postgres::project_connections::{Administration, required_connection_version};
 
 use super::{ControlRoutes, ProjectTarget, Refusal, parse};
 
@@ -67,7 +69,7 @@ impl ControlRoutes<'_> {
             let mut authorized = self
                 .begin_in(&mut writer, attachment, caller, Some(&project))
                 .await?;
-            let pin = administration::required_connection_version(
+            let pin = required_connection_version(
                 &mut authorized,
                 self.org,
                 env,
@@ -79,9 +81,9 @@ impl ControlRoutes<'_> {
             let mut client = wamn_postgres::connect(login).await?;
             let mut transaction =
                 wamn_identity::transaction::read_connection(&mut client, caller).await?;
+            let mut database = Administration::new(&mut transaction, &mut writer, None, None);
             let context = administration::configure(
-                &mut transaction,
-                &mut writer,
+                &mut database,
                 self.org,
                 "connection.test",
                 &json!({"project":project,"env":env,"name":request["name"]}),
@@ -148,10 +150,8 @@ impl ControlRoutes<'_> {
             ),
             None if context["credential"].is_object() => {
                 let stored = &context["credential"];
-                let store = wamn_kubernetes::kubernetes::KubernetesStore::in_cluster()
-                    .map_err(|_| invalid("credential"))?;
-                let bytes = store
-                    .get(
+                let bytes = KubernetesCredentials::default()
+                    .read(
                         stored["ref"]
                             .as_str()
                             .ok_or_else(|| invalid("credential"))?,
