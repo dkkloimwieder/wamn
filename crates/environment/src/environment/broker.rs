@@ -1,10 +1,9 @@
 //! Org-owned NATS credentials and the environment's resolver account.
 
-use super::broker_identity::BrokerIdentity;
 use anyhow::Context as _;
 use serde_json::json;
 use wamn_event::deploy_broker::CREDENTIALS_KEY;
-use wamn_identity_protocol::nats::{EnsureAccount, SignUser, UserPurpose};
+use wamn_identity_protocol::nats::{BrokerIdentity, EnsureAccount, SignUser, UserPurpose};
 
 use wamn_registry::{EnvName, OrgId, Triple, name};
 use zeroize::Zeroizing;

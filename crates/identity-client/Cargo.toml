@@ -7,7 +7,6 @@ license.workspace = true
 
 [dependencies]
 async-trait.workspace = true
-wamn-environment.workspace = true
 anyhow = { workspace = true }
 wamn-http-client = { workspace = true, features = ["tls12"] }
 serde = { workspace = true, features = ["derive"] }

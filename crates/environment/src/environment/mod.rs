@@ -3,7 +3,6 @@
 pub mod analyse;
 pub mod bindings;
 mod broker;
-pub mod broker_identity;
 pub mod capture_gap;
 pub mod chart_values;
 pub mod cluster;
@@ -22,6 +21,8 @@ pub mod write;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+
+use wamn_identity_protocol::nats::BrokerIdentity;
 
 use cluster::{Chart, Cluster, DatabaseFiles};
 
@@ -65,7 +66,7 @@ pub struct Platform {
     pub host_group: Option<PathBuf>,
     /// The identity issuer address used for project user rows.
     pub identity_issuer: String,
-    pub broker_identity: fn(&str) -> anyhow::Result<Box<dyn broker_identity::BrokerIdentity>>,
+    pub broker_identity: fn(&str) -> anyhow::Result<Box<dyn BrokerIdentity>>,
     /// The shared in-cluster NATS endpoint.
     pub nats_url: String,
     /// Provider for the host's OAuth wrapping key.

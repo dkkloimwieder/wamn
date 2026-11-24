@@ -10,6 +10,13 @@ pub const SIGN_USER_PATH: &str = "/nats/users";
 /// Scheduler JWT signing route for a host pod.
 pub const SIGN_HOST_USER_PATH: &str = "/nats/host-user";
 
+/// Account administration and user signing for the deployment worker.
+#[async_trait::async_trait]
+pub trait BrokerIdentity: Send + Sync {
+    async fn ensure_account(&self, request: &EnsureAccount) -> anyhow::Result<Account>;
+    async fn sign_user(&self, request: &SignUser) -> anyhow::Result<SignedUser>;
+}
+
 /// Ensure one environment account with a disk reservation for its project count.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

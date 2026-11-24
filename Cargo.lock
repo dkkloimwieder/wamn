@@ -6920,7 +6920,6 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "url",
- "wamn-environment",
  "wamn-http-client",
  "wamn-identity-protocol",
 ]
@@ -6929,6 +6928,8 @@ dependencies = [
 name = "wamn-identity-protocol"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "async-trait",
  "base64 0.22.1",
  "hex",
  "ring",

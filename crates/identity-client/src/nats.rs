@@ -6,8 +6,8 @@ use hyper::StatusCode;
 use serde::{Serialize, de::DeserializeOwned};
 use url::Url;
 use wamn_identity_protocol::nats::{
-    Account, ENSURE_ACCOUNT_PATH, EnsureAccount, SIGN_HOST_USER_PATH, SIGN_USER_PATH, SignHostUser,
-    SignUser, SignedUser,
+    Account, BrokerIdentity, ENSURE_ACCOUNT_PATH, EnsureAccount, SIGN_HOST_USER_PATH,
+    SIGN_USER_PATH, SignHostUser, SignUser, SignedUser,
 };
 
 use super::{IdentityHttp, TOKEN_PATH, service_endpoint};
@@ -86,7 +86,7 @@ async fn post<T: DeserializeOwned>(
 }
 
 #[async_trait::async_trait]
-impl wamn_environment::environment::broker_identity::BrokerIdentity for NatsClient {
+impl BrokerIdentity for NatsClient {
     async fn ensure_account(&self, request: &EnsureAccount) -> anyhow::Result<Account> {
         self.ensure_account(request).await
     }

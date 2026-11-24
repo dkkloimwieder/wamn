@@ -6,6 +6,8 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
 wamn-role.workspace = true
 wamn-registry.workspace = true
 wamn-digest.workspace = true
