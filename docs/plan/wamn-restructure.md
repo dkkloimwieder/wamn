@@ -260,7 +260,7 @@ End checks of every epic, before merge:
 - the standard checks: `cargo build` and `cargo clippy` for both workspaces with zero errors, `cargo xtask build-platform`, the schema apply to a fresh local Postgres, `cargo xtask helm-size`, `cargo xtask repo-lint-dependencies`, and `cargo xtask machete` for both workspaces
 - `cargo test --workspace` and the ignored run
 
-Closing check after Epic 21: `cargo xtask prepare-tests`, `cargo test --workspace`, the ignored run, `cargo xtask preflight`, and the full journey run (Epics 15 and 16) on fresh local kind clusters, up to 12 orgs each.
+Closing check after Epic 22: `cargo xtask prepare-tests`, `cargo test --workspace`, the ignored run, `cargo xtask preflight`, and the full journey run (Epics 15 and 16) on fresh local kind clusters, up to 12 orgs each.
 
 ### Epic 17: names and the workflow graph (wamn-rkjb3)
 
@@ -328,6 +328,16 @@ No new lint lines. Epic 21 replaces the per-epic lists with one lint.
 - 21.10 The environment items in `crates/registry/src/sql.rs` move to wamn-postgres with 21.2. The platform-install items move with 21.3. The provision item used by `crates/provision/src/identity_role.rs` also moves to wamn-postgres. The last move deletes `sql.rs` and its unused items. After that, wamn-registry holds no SQL text.
 
 Epic 21 replaces the per-epic lists with one lint. It uses one list of domain crates and one list of banned technology crates. Domain crates link none of these technology crates (`sqlx`, `kube`, `k8s-openapi`, `wasmtime`, `wasmtime-*`, `wash-runtime`, `reqwest`, `hyper`, `async-nats`, `oci-client`, `object_store`). The lint follows the `cargo metadata` graph with all features enabled. `wamn-control` and `wamn-identity-service` link no `wasmtime`, `wasmtime-*` or `wash-runtime`. `wamn-edge` and `wamn-edge-document` link no service clients. No product crate links `wamn-test-infrastructure`. Keep `xtask/src/repo_policy/dependencies.rs` under 100 lines. Remove `WORKFLOW_GRAPH_REFUSED`, `WITHOUT_WASM_RUNTIME`, `WITHOUT_POSTGRES` and every other per-epic list.
+
+### Epic 22: control's outbound calls move to the host (wamn-i6kl1)
+
+- Control's OAuth code exchange (`crates/http/src/oauth.rs`, called from `services/control/src/control_route/oauth_authorization.rs`) and its connection health check (`crates/http/src/lib.rs`, called from `services/control/src/control_route/connection_test.rs`) move to the host (D, 2026-11-24, wamn-fmvz4.14, option b).
+- Reason: control's org namespace is default-deny with no public egress (`deploy/charts/org/templates/network-policies.yaml`). Only host pods get public egress, on the connection ports (`deploy/charts/application/templates/network-policy.yaml`). So on a cluster that enforces NetworkPolicy, both calls likely fail today. No journey test covers either one.
+- After the move, the stock egress policy stays the one owner (ruling Q-A), and control fetches no URL that users supply. wamn-control then links no `wasmtime`, `wasmtime-*` or `wash-runtime`. The lint exception "removed by Epic 22 (wamn-fmvz4.14)" in `xtask/src/repo_policy/dependencies.rs` goes.
+- The move makes the existing design work, so the freeze allows it.
+- One journey test for each call runs against a fixture on a public address that the egress policy allows.
+- The scout also lists the file-system uses and the tokio features process, fs and signal in wamn-environment, a domain crate, and proposes where each file read belongs.
+- The issues follow the scout.
 
 Next: the restructure ends. The review work in the Claude Doc "wamn review" follows.
 
@@ -2369,3 +2379,15 @@ Epic 14 closed on 2026-11-21 after review. cargo test --workspace: 617 passed in
 - The rest of Epic 21 follows as the plan writes it, one change per commit. The full journey run on fresh kind clusters waits for D after the review.
 - Root writes nothing to the repository, and that includes amends and doc restores. A fix goes to an agent and gets its own commit.
 - Agents edit this plan only when their instruction says so.
+
+**Ruled (D, 2026-11-24): Epic 22.**
+- The wash-runtime conflict (wamn-fmvz4.14) goes with option (b). Control's OAuth code exchange (`crates/http/src/oauth.rs`, called from `services/control/src/control_route/oauth_authorization.rs`) and its connection health check (`crates/http/src/lib.rs`, called from `services/control/src/control_route/connection_test.rs`) move to the host.
+- Reason: control's org namespace is default-deny with no public egress (`deploy/charts/org/templates/network-policies.yaml`). Only host pods get public egress, on the connection ports (`deploy/charts/application/templates/network-policy.yaml`). So on a cluster that enforces NetworkPolicy, both calls likely fail today. No journey test covers either one.
+- Moving them keeps the stock egress policy as the one owner (ruling Q-A). Control stops fetching URLs that users supply, and wasmtime leaves control with no exception. This makes the existing design work, so the freeze allows it.
+- Merge of Epics 20 and 21: one lint exception lets control link wash-runtime through wamn-http. The lint names it with the comment "removed by Epic 22 (wamn-fmvz4.14)", in its own commit. The end checks run at the new head, with the full ignored run. Main fast-forwards to the branch head without waiting for the peer session. An owner rule of 2026-11-24 forbids messages to peer sessions, so the peer is not told.
+- An outside review found that the host compiled wamn-environment, and so the deploy steps, wamn-platform-install and wamn-release, but used no wamn_environment item (wamn-fmvz4.16). Fix, before the merge, one commit for each move: `BrokerIdentity` moves to wamn-identity-protocol, which owns the NATS signing messages. `Chart`, `Cluster`, `DatabaseFiles` and `Upgrade` move to wamn-platform-install, which holds `ConnectionConfig`. No new crate. Then neither wamn-kubernetes nor wamn-identity-client lists wamn-environment.
+- The host still reached wamn-environment through wamn-postgres, because 21.2 put the environment SQL there. Option (a): `environment_sql_effects.rs` and `apply_package.rs` move from wamn-postgres to wamn-provision, unchanged in behavior. Only control and the CLI link wamn-provision. Only the wamn-postgres helpers that the moved code calls become public. This changes the 21.2 placement.
+- The dependency lint gets one line: wamn-host links no wamn-environment.
+- The Epic 20 and Epic 21 beads close with notes, including wamn-5wonb.9. wamn-fmvz4.14 moves to Epic 22 (wamn-i6kl1).
+- The Epic 22 scout also lists each file-system use and each tokio feature (process, fs, signal) in wamn-environment, and proposes where each file read belongs.
+- The closing journey run on fresh kind clusters moves to after Epic 22.
