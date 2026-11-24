@@ -11,11 +11,11 @@ use wamn_component_policy::{ComponentAdmissionRequest, ComponentPackageCoordinat
 use wamn_digest::bytes_sha256;
 use wamn_engine::component_admission::validate_component_admission;
 
-use wamn_oci::release_source::{read_package_attachments, read_package_manifests};
 use wamn_release::publish_release::{
     PublishReleaseManifest, ReleaseComponents, publish_release_with_package_manifests,
     resolve_route_methods,
 };
+use wamn_release::release_source::{read_package_attachments, read_package_manifests};
 
 const PROJECT_ENV_KEY: &str = "effective-release-poc--dev--fixture";
 const ENVIRONMENT: &str = "dev";
@@ -49,7 +49,7 @@ struct PackageInput {
 /// overlay manifest pins, which is a third copy of a value that must be one.
 fn base_component_digest() -> wamn_digest::Digest {
     let base = format!("{}@{}", wamn_fixture_package::PACKAGE_ID, package_version());
-    wamn_oci::component_declaration::authored_base_digests(&wamn_fixture_package::overlay_root())
+    wamn_release::component_declaration::authored_base_digests(&wamn_fixture_package::overlay_root())
         .expect("the overlay manifest authors its base digest")[base.as_str()]
 }
 
@@ -89,11 +89,11 @@ fn admit_components(
     let mut digests = BTreeMap::new();
     let mut release_components = ReleaseComponents::default();
     for input in inputs {
-        let base_digests = wamn_oci::component_declaration::authored_base_digests(&input.root)
+        let base_digests = wamn_release::component_declaration::authored_base_digests(&input.root)
             .unwrap_or_else(|error| {
                 panic!("read {}@{} base pins: {error}", input.id, input.version)
             });
-        let declaration = wamn_oci::component_declaration::render_package_declaration(
+        let declaration = wamn_release::component_declaration::render_package_declaration(
             &input.root,
             &input.component.parse().unwrap(),
             &PROJECT_ENV_KEY.parse().unwrap(),

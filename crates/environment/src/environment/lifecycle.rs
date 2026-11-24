@@ -171,11 +171,15 @@ async fn configure_project(
     // Wait for the database first because the reader needs the slot created below.
     installer::environment::validate_project_env(&triple.org, &triple.project, &triple.env)?;
     let release = name::environment_resource_name(&triple.org, &triple.project, &triple.env);
-    platform
-        .cluster
-        .apply_project(&platform.chart, &release, &values)
+    wamn_platform_install::deployment::apply_project(
+        &platform.cluster,
+        &platform.chart,
+        &release,
+        &values,
+    )
+    .await?;
+    wamn_platform_install::deployment::wait_database(&platform.cluster, connection, &capture)
         .await?;
-    platform.cluster.wait_database(connection, &capture).await?;
     if unconfigured {
         platform.prepare_database(connection).await?;
     }
@@ -249,7 +253,7 @@ async fn reader_values(
     triple: &Triple,
     capture: &ConnectionConfig,
 ) -> anyhow::Result<Value> {
-    let image = platform.cluster.host_image(&platform.chart).await?;
+    let image = wamn_platform_install::deployment::host_image(&platform.chart).await?;
     let (org, project, env) = (&triple.org, &triple.project, &triple.env);
     let capture_name = wamn_registry::name::cdc_reader_name(org, project, env);
     Ok(json!({

@@ -1,10 +1,2 @@
-pub mod component_declaration;
-pub mod deploy_packages;
 pub mod integration;
 pub mod package_artifact;
-pub mod package_source;
-pub mod platform_install;
-pub mod release_component;
-pub mod release_package;
-pub mod release_source;
-pub mod web_artifact;

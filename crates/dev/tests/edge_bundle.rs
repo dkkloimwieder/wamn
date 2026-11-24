@@ -29,7 +29,7 @@ fn the_bundle_pins_the_separate_route_component() {
         .join(format!("edge-bundle-entry-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&out);
     write_package(
-        &wamn_oci::release_source::LocalReleaseFiles {
+        &wamn_release::release_source::LocalReleaseFiles {
             engine: &wamn_engine::component_admission::ReleaseComponentAdmission,
         },
         &repository().join("apps/edge_device"),

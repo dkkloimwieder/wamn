@@ -10,21 +10,23 @@ use anyhow::{Context as _, ensure};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use wamn_package::package_schema::{AppliedPackage, PackageDirectory};
-use wamn_release::package_source::PackageRoot;
-use wamn_release::package_source::{OpenPackage, PackageSource};
+use wamn_release::{
+    package_source::{PackageRoot, migration_root, read_package_root},
+    release_package::OpenedPackage,
+};
 
 #[derive(Debug)]
 pub struct Candidate {
     pub root: PackageRoot,
     pub directory: PackageDirectory,
-    _artifact: Option<Box<dyn OpenPackage>>,
+    _artifact: Option<OpenedPackage>,
     migration_root: std::path::PathBuf,
 }
 impl Candidate {
-    pub fn source(source: &dyn PackageSource, root: PackageRoot) -> anyhow::Result<Self> {
+    pub fn source(root: PackageRoot) -> anyhow::Result<Self> {
         Ok(Self {
-            directory: source.read_package_root(&root)?,
-            migration_root: source.migration_root(&root.path),
+            directory: read_package_root(&root)?,
+            migration_root: migration_root(&root.path),
             root,
             _artifact: None,
         })
@@ -126,7 +128,7 @@ pub(super) async fn open(
             "installed schema source for {id}@{version} differs from recorded artifact {digest}"
         );
     }
-    let candidate = Candidate::source(&*platform.packages, root)?;
+    let candidate = Candidate::source(root)?;
     let manifest =
         wamn_component_policy::PackageManifest::from_slice(&candidate.directory.manifest_bytes)?;
     ensure!(
@@ -315,19 +317,10 @@ mod tests {
             scratch.path().join("generated/wamn.json"),
             serde_json::to_vec(&manifest)?,
         )?;
-        let reader = wamn_oci::deploy_packages::DeployPackages {
-            registry_token_metadata: false,
-            registry_auth_file: std::path::PathBuf::new(),
-            insecure_registry: false,
-            oci_ca_paths: Vec::new(),
-        };
-        let candidate = Candidate::source(
-            &reader,
-            PackageRoot {
-                path: scratch.path().to_owned(),
-                artifact_digest: None,
-            },
-        )?;
+        let candidate = Candidate::source(PackageRoot {
+            path: scratch.path().to_owned(),
+            artifact_digest: None,
+        })?;
         let mut sources = BTreeMap::from([(
             manifest.package.id.clone(),
             SchemaSource {

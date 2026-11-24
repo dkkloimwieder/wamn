@@ -145,6 +145,21 @@ pub struct RegistryCredentials {
 }
 
 impl RegistryCredentials {
+    /// A username and password resolved by the caller.
+    pub fn new(username: String, password: String) -> Self {
+        Self {
+            username: username.into_boxed_str(),
+            password: password.into_boxed_str(),
+        }
+    }
+
+    pub(super) fn into_auth(self) -> oci_client::secrets::RegistryAuth {
+        oci_client::secrets::RegistryAuth::Basic(
+            self.username.into_string(),
+            self.password.into_string(),
+        )
+    }
+
     /// Registry username supplied to the OCI transport.
     pub fn username(&self) -> &str {
         &self.username

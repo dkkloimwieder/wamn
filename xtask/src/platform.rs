@@ -9,7 +9,7 @@ use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use wamn_build::GuestTarget;
 use wamn_engine::component_admission::EngineComponentAdmission;
-use wamn_kubernetes::release_chart;
+use wamn_platform_install::release_chart;
 use wamn_platform_install::release_chart::ImageSet;
 
 pub(crate) const BUILDER: &str = "wamn-platform";
@@ -289,16 +289,19 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
                 .await?,
             )
         } else {
-            let packed = wamn_oci::web_artifact::platform_ui::pack(
+            let packed = wamn_release::web_artifact::platform_ui::pack(
                 &root.join("apps/platform_ui/dist"),
                 &version.parse()?,
             )?;
             let reference: oci_client::Reference =
                 format!("{}/wamn/platform-ui:{}", args.registry, packed.tag).parse()?;
-            let auth = match docker_credential::get_credential(reference.resolve_registry()) {
-                Ok(DockerCredential::UsernamePassword(user, password)) => {
-                    oci_client::secrets::RegistryAuth::Basic(user, password)
-                }
+            let credentials = match docker_credential::get_credential(reference.resolve_registry())
+            {
+                Ok(DockerCredential::UsernamePassword(user, password)) => Some(
+                    wamn_oci::package_artifact::registry_credentials::RegistryCredentials::new(
+                        user, password,
+                    ),
+                ),
                 Ok(DockerCredential::IdentityToken(_)) => {
                     anyhow::bail!("an identity token is not a registry credential")
                 }
@@ -306,10 +309,10 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
                     CredentialRetrievalError::ConfigNotFound
                     | CredentialRetrievalError::ConfigReadError
                     | CredentialRetrievalError::NoCredentialConfigured,
-                ) => oci_client::secrets::RegistryAuth::Anonymous,
+                ) => None,
                 Err(error) => return Err(error).context("read registry credential"),
             };
-            let repository = wamn_oci::package_artifact::Repository::with_auth(
+            let repository = wamn_oci::package_artifact::Repository::with_credentials(
                 &wamn_oci::package_artifact::PackageRegistry {
                     artifact_base: format!("{}/{}", reference.registry(), reference.repository()),
                     credentials: None,
@@ -318,10 +321,10 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
                     oci_ca_paths: Vec::new(),
                 },
                 &packed.tag,
-                auth,
+                credentials,
             )?;
             Some(
-                wamn_oci::web_artifact::push_archive(&packed, &repository)
+                wamn_release::web_artifact::push_archive(&packed, &repository)
                     .await?
                     .digest,
             )
@@ -337,7 +340,6 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
             workflow: guests.remove("workflow").context("workflow image")?,
         },
         &args.out,
-        &wamn_oci::platform_install::PlatformRegistry,
     )?;
     let path = stamped.join("values.yaml");
     let mut values: Value = serde_yaml::from_slice(&std::fs::read(&path)?)?;

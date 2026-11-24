@@ -11,7 +11,7 @@ use anyhow::{Context as _, bail};
 use super::Platform;
 use super::analyse::{self, Installed};
 use super::document::EnvironmentDocument;
-use wamn_release::package_source::OpenPackage;
+use wamn_release::release_package::{OpenedPackage, open_package};
 
 /// The installed packages of the project database, read now.
 pub(super) async fn installed(
@@ -35,18 +35,15 @@ pub(super) async fn open(
     platform: &Platform,
     id: &wamn_package::PackageName,
     version: &wamn_package::package_version::PackageVersion,
-) -> anyhow::Result<Box<dyn OpenPackage>> {
+) -> anyhow::Result<OpenedPackage> {
     let Some(base) = &platform.package_artifact_base else {
         bail!(
             "release names package {id}@{version}; set WAMN_PACKAGE_ARTIFACT_BASE to read \
              its artifact"
         );
     };
-    platform
-        .packages
-        .repository(base)
-        .await?
-        .open(id, version)
+    let registry = platform.packages.repository(base).await?;
+    open_package(&registry, id, version)
         .await
         .with_context(|| format!("open package artifact {id}@{version}"))
 }

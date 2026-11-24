@@ -8,7 +8,7 @@
 //! every layer against its digest. The first layer contains the published
 //! package document, including the admitted component facts.
 //!
-//! [`crate::release_package`] packs and pushes package artifacts with [`Repository`].
+//! `wamn-release` packs and pushes package artifacts with [`Repository`].
 //!
 //! The crate also owns the registry credential ([`registry_credentials`]) and
 //! the OCI trust roots ([`read_ca_bundles`]) that every registry client reads,
@@ -17,9 +17,10 @@
 
 pub mod integration;
 pub mod registry_credentials;
-pub mod registry_pull;
+mod registry_pull;
 mod registry_source;
-pub mod registry_transport;
+#[cfg(test)]
+mod registry_transport;
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -64,6 +65,9 @@ pub const PACKAGE_MANIFEST_MEDIA_TYPE: &str = "application/vnd.wamn.package.mani
 
 /// Media type of the migrations tar, the second layer.
 pub const PACKAGE_TAR_MEDIA_TYPE: &str = "application/vnd.wamn.package.v1.tar";
+
+/// Empty configuration blob for artifacts without image settings.
+pub const EMPTY_CONFIG: &[u8] = b"{}";
 
 /// The read and connect bound of one registry request.
 const REGISTRY_IO_TIMEOUT: Duration = Duration::from_secs(30);
@@ -178,7 +182,7 @@ pub struct PulledPackage {
 }
 
 /// Whether `error` says the artifact does not exist.
-pub fn artifact_is_absent(error: &OciDistributionError) -> bool {
+fn artifact_is_absent(error: &OciDistributionError) -> bool {
     match error {
         OciDistributionError::RegistryError { envelope, .. } => {
             !envelope.errors.is_empty()
@@ -195,16 +199,6 @@ pub fn artifact_is_absent(error: &OciDistributionError) -> bool {
         | OciDistributionError::ServerError { code: 404, .. } => true,
         _ => false,
     }
-}
-
-/// No credential: the auth file states anonymous access for this registry.
-pub fn registry_auth(credentials: Option<&RegistryCredentials>) -> RegistryAuth {
-    credentials.map_or(RegistryAuth::Anonymous, |credentials| {
-        RegistryAuth::Basic(
-            credentials.username().to_owned(),
-            credentials.password().to_owned(),
-        )
-    })
 }
 
 /// A tag or a parsed immutable artifact identity.
@@ -228,12 +222,9 @@ impl From<&wamn_digest::Digest> for ArtifactReference<'_> {
 
 /// One open registry repository and the tag or digest of one package.
 pub struct Repository {
-    /// The registry client.
-    pub client: OciClient,
-    /// The credential of the registry.
-    pub auth: RegistryAuth,
-    /// `<registry>/<repository>:<tag>` or `<registry>/<repository>@<digest>`.
-    pub reference: Reference,
+    client: OciClient,
+    auth: RegistryAuth,
+    reference: Reference,
 }
 
 /// Names the reference only: the credential must not reach a log.
@@ -246,7 +237,94 @@ impl std::fmt::Debug for Repository {
     }
 }
 
+/// The JSON descriptor for one artifact layer.
+pub fn artifact_layer(
+    media_type: &str,
+    bytes: &[u8],
+    annotations: Option<&BTreeMap<String, String>>,
+) -> serde_json::Value {
+    let mut layer = serde_json::json!({
+        "mediaType": media_type,
+        "digest": bytes_sha256(bytes),
+        "size": bytes.len(),
+    });
+    if let Some(annotations) = annotations {
+        layer["annotations"] = serde_json::json!(annotations);
+    }
+    layer
+}
+
+/// Encode a canonical artifact manifest with an empty image configuration.
+pub fn encode_artifact_manifest(
+    artifact_type: &str,
+    layers: impl IntoIterator<Item = serde_json::Value>,
+    annotations: Option<&BTreeMap<String, String>>,
+) -> Vec<u8> {
+    let mut manifest = serde_json::json!({
+        "schemaVersion": 2,
+        "mediaType": OCI_IMAGE_MEDIA_TYPE,
+        "artifactType": artifact_type,
+        "config": artifact_layer("application/vnd.oci.empty.v1+json", EMPTY_CONFIG, None),
+        "layers": layers.into_iter().collect::<Vec<_>>(),
+    });
+    if let Some(annotations) = annotations {
+        manifest["annotations"] = serde_json::json!(annotations);
+    }
+    wamn_digest::canonical_json_bytes(&manifest)
+}
+
+/// Whether the parsed image reference has a tag, including an implied tag.
+pub fn image_has_tag(image: &str) -> anyhow::Result<bool> {
+    Ok(image.parse::<Reference>()?.tag().is_some())
+}
+
+/// The digest text of an image reference, when it has a digest.
+pub fn image_digest(image: &str) -> anyhow::Result<Option<String>> {
+    Ok(image.parse::<Reference>()?.digest().map(str::to_owned))
+}
+
+/// Whether a manifest has exactly one Wasm layer with the requested digest.
+pub fn wasm_layer_matches(bytes: &[u8], digest: &wamn_digest::Digest) -> serde_json::Result<bool> {
+    let manifest: OciImageManifest = serde_json::from_slice(bytes)?;
+    Ok(matches!(manifest.layers.as_slice(), [layer]
+        if layer.media_type == "application/wasm"
+            && layer.digest.parse::<wamn_digest::Digest>().ok().as_ref() == Some(digest)))
+}
+
+/// A single-layer artifact refused by its manifest or registry.
+#[derive(Debug)]
+pub enum SingleLayerError {
+    ArtifactType,
+    Layers,
+    Read(anyhow::Error),
+}
+
 impl Repository {
+    /// The repository reference as it appears in registry diagnostics.
+    pub fn reference(&self) -> String {
+        self.reference.to_string()
+    }
+
+    /// Push one blob under its digest.
+    pub async fn push_blob(&self, bytes: Vec<u8>, digest: &str) -> anyhow::Result<()> {
+        self.client
+            .push_blob(&self.reference, bytes, digest)
+            .await?;
+        Ok(())
+    }
+
+    /// Push the encoded image manifest to the open reference.
+    pub async fn push_image_manifest(&self, bytes: Vec<u8>) -> anyhow::Result<()> {
+        self.client
+            .push_manifest_raw(
+                &self.reference,
+                bytes,
+                http::HeaderValue::from_static(OCI_IMAGE_MEDIA_TYPE),
+            )
+            .await?;
+        Ok(())
+    }
+
     /// Open the repository of `registry` at `reference`: a full digest
     /// `sha256:<hex>` or a tag `<package_id>-<version>`.
     ///
@@ -259,23 +337,22 @@ impl Repository {
         reference: impl Into<ArtifactReference<'a>>,
     ) -> anyhow::Result<Self> {
         let base = parse_component_artifact_base(&registry.artifact_base)?;
-        let from_file;
         let credentials = if let Some(credentials) = &registry.credentials {
-            Some(credentials)
+            Some(credentials.clone())
         } else {
-            from_file = read_registry_credentials(&registry.registry_auth_file, base.registry())
-                .with_context(|| format!("load the credential for registry {}", base.registry()))?;
-            from_file.as_ref()
+            read_registry_credentials(&registry.registry_auth_file, base.registry())
+                .with_context(|| format!("load the credential for registry {}", base.registry()))?
         };
-        Self::with_auth(registry, reference, registry_auth(credentials))
+        Self::with_credentials(registry, reference, credentials)
     }
 
     /// Open a repository with a host-resolved credential, including metadata tokens.
-    pub fn with_auth<'a>(
+    pub fn with_credentials<'a>(
         registry: &PackageRegistry,
         reference: impl Into<ArtifactReference<'a>>,
-        auth: RegistryAuth,
+        credentials: Option<RegistryCredentials>,
     ) -> anyhow::Result<Self> {
+        let auth = credentials.map_or(RegistryAuth::Anonymous, RegistryCredentials::into_auth);
         let base = parse_component_artifact_base(&registry.artifact_base)
             .context("read the package artifact base")?;
         let ca_bundles = read_ca_bundles(&registry.oci_ca_paths)
@@ -300,6 +377,36 @@ impl Repository {
             auth,
             reference,
         })
+    }
+
+    /// Pull the sole layer of an artifact with the requested media types.
+    pub async fn pull_single_layer(
+        &self,
+        bytes: &[u8],
+        artifact_type: &str,
+        media_type: &str,
+    ) -> Result<(Vec<u8>, String), SingleLayerError> {
+        let manifest: OciImageManifest = serde_json::from_slice(bytes)
+            .map_err(|source| SingleLayerError::Read(source.into()))?;
+        if manifest.artifact_type.as_deref() != Some(artifact_type) {
+            return Err(SingleLayerError::ArtifactType);
+        }
+        let [layer]: [OciDescriptor; 1] = manifest
+            .layers
+            .try_into()
+            .map_err(|_| SingleLayerError::Layers)?;
+        if layer.media_type != media_type {
+            return Err(SingleLayerError::Layers);
+        }
+        let bytes = registry_pull::blob(
+            &self.client,
+            &self.reference,
+            &layer,
+            tokio::time::Instant::now() + REGISTRY_IO_TIMEOUT,
+        )
+        .await
+        .map_err(|source| SingleLayerError::Read(source.into()))?;
+        Ok((bytes, layer.digest))
     }
 
     /// The manifest bytes and digest of the reference, or `None` when it does

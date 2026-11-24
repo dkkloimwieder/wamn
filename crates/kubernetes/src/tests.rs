@@ -1,6 +1,9 @@
 //! Credential operations through the shared HTTP interface.
 
-use crate::{client::KubernetesApi, kubernetes::KubernetesStore};
+use crate::{
+    client::KubernetesApi,
+    kubernetes::{CredentialSecret, CredentialSecrets},
+};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use bytes::Bytes;
 use http_body_util::{BodyExt as _, Full};
@@ -13,10 +16,9 @@ use std::{
     sync::{Arc, Mutex},
 };
 use tokio::net::TcpListener;
-use wamn_connection::connection_credentials::CredentialSecret;
 
 struct Api {
-    store: KubernetesStore,
+    store: CredentialSecrets,
     requests: Arc<Mutex<Vec<Value>>>,
     task: tokio::task::JoinHandle<()>,
 }
@@ -71,7 +73,7 @@ async fn api(replies: Vec<(u16, Value)>) -> Api {
     config.default_namespace = "hosts".into();
     let api = KubernetesApi::from_config(config).unwrap();
     Api {
-        store: KubernetesStore::new(api),
+        store: CredentialSecrets::new(api),
         requests,
         task,
     }
@@ -87,8 +89,8 @@ async fn credentials_use_a_key_scoped_patch() {
         project: "app",
     };
     let id = uuid::Uuid::new_v4();
-    let stored = fixture.store.put(target, id, &[3]).await.unwrap();
-    assert_eq!(uuid::Uuid::parse_str(&stored.version).unwrap(), id);
+    let stored = fixture.store.put(&target, id, &[3]).await.unwrap();
+    assert_eq!(uuid::Uuid::parse_str(&stored).unwrap(), id);
     let requests = fixture.requests.lock().unwrap();
     let write = requests.last().unwrap();
     assert!(write["metadata"].get("resourceVersion").is_none());
@@ -114,7 +116,7 @@ async fn failed_or_redirected_writes_never_return_a_reference() {
             fixture
                 .store
                 .put(
-                    CredentialSecret {
+                    &CredentialSecret {
                         name: "wamn-credential-acme--dev--app".into(),
                         org: "acme",
                         env: "dev",

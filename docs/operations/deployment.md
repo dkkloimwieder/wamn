@@ -994,7 +994,8 @@ Hosts and control derive the JWKS URL and org audience, and read the public plat
 
 The HTTP interface keeps its `credential-unavailable` result.
 
-Connection administration passes the registry's credential Secret name and the coordinate values to `wamn-kubernetes`.
+Connection administration gives the registry's credential Secret name and coordinate values to `KubernetesStore` in `wamn-connection`.
+The store uses `wamn-kubernetes` to read and update the Secret.
 Separate credential keys can change independently. The project chart must create the Secret before control writes credentials.
 
 NATS runs in operator mode and authenticates clients with user JWTs.

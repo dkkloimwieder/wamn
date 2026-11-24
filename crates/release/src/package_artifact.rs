@@ -5,16 +5,11 @@ use std::path::PathBuf;
 use wamn_component_policy::ComponentDescriptor;
 use wamn_digest::Digest;
 
-use crate::component_admission::{ComponentAdmissionEngine, admit};
+use crate::component_admission::admit;
 use std::collections::BTreeSet;
+use wamn_component_policy::ComponentAdmissionEngine;
 use wamn_component_policy::PackageManifest;
 use wamn_package::ComponentDeclaration;
-
-/// Publish a built source closure in dependency order.
-#[async_trait::async_trait]
-pub trait PackagePublisher: Send + Sync {
-    async fn publish(&self, roots: Vec<PathBuf>) -> anyhow::Result<Digest>;
-}
 
 /// One admitted component and its original bytes.
 #[derive(Debug)]

@@ -1,16 +1,12 @@
 //! Shared Kubernetes transport, Secret storage, and bounded Job execution.
 
 pub mod client;
-pub mod database_files;
-mod deployment_components;
+pub mod deployment_components;
 pub mod helm;
 pub mod job;
 pub mod kubernetes;
-pub mod org_install;
-pub mod org_secrets;
+pub mod org_resources;
 pub mod platform_environment;
-pub mod platform_install;
-pub mod release_chart;
 pub mod web_release;
 pub mod worker_mounts;
 pub mod kubernetes_api {

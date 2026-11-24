@@ -6,6 +6,10 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+chrono = { workspace = true, features = ["clock"] }
+wamn-codegen.workspace = true
+wamn-oci.workspace = true
+url.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
 object_store.workspace = true
@@ -26,6 +30,11 @@ wit-component.workspace = true
 wit-parser.workspace = true
 
 [dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt"] }
+futures-util.workspace = true
+wamn-build.workspace = true
+wamn-engine.workspace = true
+wamn-fixture-package.workspace = true
 http.workspace = true
 wamn-test-infrastructure.workspace = true
 wit-component = { workspace = true, features = ["dummy-module"] }

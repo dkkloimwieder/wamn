@@ -147,6 +147,31 @@ impl KubernetesApi {
         }))
     }
 
+    /// Check for a key in the named Secret.
+    pub async fn secret_contains_key(
+        &self,
+        namespace: &str,
+        name: &str,
+        key: &str,
+    ) -> anyhow::Result<bool> {
+        let secrets = Api::<Secret>::namespaced(self.client(), namespace);
+        let secret = tokio::time::timeout(REQUEST_TIMEOUT, secrets.get(name)).await??;
+        Ok(secret.data.is_some_and(|data| data.contains_key(key)))
+    }
+
+    /// Read a login and CA Secret in the selected namespace within one deadline.
+    pub async fn database_secrets(
+        &self,
+        login: &str,
+        ca: &str,
+    ) -> anyhow::Result<(Secret, Secret)> {
+        let secrets = Api::<Secret>::namespaced(self.client(), &self.namespace);
+        Ok(tokio::time::timeout(REQUEST_TIMEOUT, async {
+            tokio::try_join!(secrets.get(login), secrets.get(ca))
+        })
+        .await??)
+    }
+
     pub async fn patch_secret_data(
         &self,
         name: &str,
@@ -392,3 +417,13 @@ where
 }
 
 pub const APPLY_MANAGER: &str = "wamn";
+
+/// Borrow a decoded entry from a Kubernetes Secret.
+pub fn secret_entry<'a>(secret: &'a Secret, key: &str) -> anyhow::Result<&'a [u8]> {
+    secret
+        .data
+        .as_ref()
+        .and_then(|data| data.get(key))
+        .map(|bytes| bytes.0.as_slice())
+        .with_context(|| format!("database Secret key {key} is absent"))
+}

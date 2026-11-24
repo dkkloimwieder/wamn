@@ -12,7 +12,7 @@ async fn prune_identities(input: ConnectionInput<'_>) -> anyhow::Result<()> {
         let retired =
             wamn_postgres::project_connections::retired_credentials(&mut transaction).await?;
         wamn_connection::credential_cleanup::collect(
-            &wamn_kubernetes::kubernetes::KubernetesCredentials::default(),
+            &wamn_connection::connection_credentials::KubernetesStore,
             retired,
         )
         .await;

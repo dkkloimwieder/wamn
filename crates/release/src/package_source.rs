@@ -1,13 +1,6 @@
-use std::{
-    fmt::Debug,
-    path::{Path, PathBuf},
-};
-
-use wamn_component_policy::PackageManifest;
-use wamn_digest::Digest;
-use wamn_package::{
-    PackageName, package_schema::PackageDirectory, package_version::PackageVersion,
-};
+use anyhow::Context as _;
+use std::path::{Path, PathBuf};
+use wamn_package::package_schema::{MigrationSource, PackageDirectory};
 
 /// A package tree and the digest of the verified package artifact it was
 /// opened from. The opener holds the digest in memory and passes it here; no
@@ -18,49 +11,65 @@ pub struct PackageRoot {
     pub artifact_digest: Option<wamn_digest::Digest>,
 }
 
-/// A verified package tree that remains available for the lifetime of the reader.
-pub trait OpenPackage: Debug + Send + Sync {
-    fn read_manifest(&self) -> anyhow::Result<PackageManifest>;
-    fn package_root(&self) -> PackageRoot;
+/// Read the exact package bytes of `root`, with the artifact digest it carries.
+pub fn read_package_root(root: &PackageRoot) -> anyhow::Result<PackageDirectory> {
+    Ok(PackageDirectory {
+        artifact_digest: root.artifact_digest,
+        ..read_package_directory(&root.path)?
+    })
 }
 
-/// Read packages from one resolved registry repository.
-#[async_trait::async_trait]
-pub trait PackageRepository: Send + Sync {
-    async fn open(
-        &self,
-        id: &PackageName,
-        version: &PackageVersion,
-    ) -> anyhow::Result<Box<dyn OpenPackage>>;
-    async fn open_digest(
-        &self,
-        digest: &Digest,
-    ) -> anyhow::Result<(Box<dyn OpenPackage>, PackageManifest)>;
+/// Read the exact package bytes under `root`. The migrations are sorted by
+/// file name, so the result does not depend on the file system order. A tree
+/// carries no artifact digest, so the result has none
+/// ([`read_package_root`] adds it).
+pub fn read_package_directory(root: &Path) -> anyhow::Result<PackageDirectory> {
+    let artifact_digest = None;
+    let manifest_path = wamn_codegen::package_manifest_path(root);
+    let manifest_bytes = std::fs::read(&manifest_path)
+        .with_context(|| format!("read {}", manifest_path.display()))?;
+    read_migrations(&migration_root(root), manifest_bytes, artifact_digest)
 }
 
-/// Open a repository and read a verified or local package tree.
-#[async_trait::async_trait]
-pub trait PackageSource: Debug + Send + Sync {
-    async fn repository(&self, base: &str) -> anyhow::Result<Box<dyn PackageRepository>>;
-    fn read_package_root(&self, root: &PackageRoot) -> anyhow::Result<PackageDirectory>;
-    fn migration_root(&self, path: &Path) -> PathBuf;
+pub fn migration_root(root: &Path) -> PathBuf {
+    if wamn_codegen::is_authored(root) && !root.join("generated").is_dir() {
+        wamn_codegen::output_root(root)
+    } else {
+        root.to_owned()
+    }
 }
 
-/// Admit a built component and assemble a release from local package files.
-pub trait LocalReleaseSource {
-    fn admit(
-        &self,
-        package: &Path,
-        component: &wamn_package::canonical_name::CanonicalName,
-        bytes: &Path,
-        target: &wamn_registry::ProjectEnvKey,
-        platform_packages: &[&str],
-    ) -> anyhow::Result<crate::component_admission::ComponentAdmission>;
-
-    fn assemble(
-        &self,
-        request: &crate::publish_release::PublishReleaseRequest,
-        package: &Path,
-        admission: &crate::component_admission::ComponentAdmission,
-    ) -> anyhow::Result<crate::publish_release::AssembledRelease>;
+fn read_migrations(
+    root: &Path,
+    manifest_bytes: Vec<u8>,
+    artifact_digest: Option<wamn_digest::Digest>,
+) -> anyhow::Result<PackageDirectory> {
+    let mut migrations = Vec::new();
+    for relative in ["migrations", "history"] {
+        let migrations_path = root.join(relative);
+        if !migrations_path.exists() {
+            continue;
+        }
+        let entries = std::fs::read_dir(&migrations_path)
+            .with_context(|| format!("read {}", migrations_path.display()))?;
+        for entry in entries {
+            let entry = entry.context("read package migration directory entry")?;
+            // SQLx ignores directories and unrelated files during native resolution.
+            if !entry.path().is_file() {
+                continue;
+            }
+            let file_name = entry.file_name().to_string_lossy().into_owned();
+            migrations.push(MigrationSource {
+                relative_path: format!("{relative}/{file_name}"),
+                bytes: std::fs::read(entry.path())
+                    .with_context(|| format!("read {}", entry.path().display()))?,
+            });
+        }
+    }
+    migrations.sort_unstable_by(|left, right| left.relative_path.cmp(&right.relative_path));
+    Ok(PackageDirectory {
+        manifest_bytes,
+        migrations,
+        artifact_digest,
+    })
 }

@@ -32,8 +32,6 @@ hyper = { workspace = true }
 wasmtime-wasi-http = { workspace = true }
 wasmtime-wasi.workspace = true
 
-wamn-release.workspace = true
-
 [build-dependencies]
 wit-component = { workspace = true, features = ["dummy-module"] }
 wit-parser.workspace = true

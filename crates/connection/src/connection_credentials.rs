@@ -8,15 +8,13 @@ use anyhow::Context as _;
 use moka::sync::Cache;
 use tokio::sync::OnceCell;
 use uuid::Uuid;
+use wamn_kubernetes::{
+    ErrorType,
+    kubernetes::{CredentialSecret, CredentialSecrets, KubernetesCredentials},
+};
 use wamn_registry::ProjectEnvKey;
 
 use crate::connection_memory::bounded;
-
-/// Read one versioned credential from the host's Secret store.
-#[async_trait::async_trait]
-pub trait ReadCredentials: Send + Sync {
-    async fn read(&self, reference: &str, version: &str) -> anyhow::Result<Vec<u8>>;
-}
 
 /// Save and retire credential values without exposing the storage client.
 #[async_trait::async_trait]
@@ -33,13 +31,50 @@ pub trait WriteCredentials: Send + Sync {
     async fn destroy(&self, reference: &str, version: &str) -> anyhow::Result<()>;
 }
 
-/// The resolved Secret name and coordinate labels for a credential write.
+/// Read, save, and retire control-plane credential versions.
 #[derive(Debug)]
-pub struct CredentialSecret<'a> {
-    pub name: String,
-    pub org: &'a str,
-    pub env: &'a str,
-    pub project: &'a str,
+pub struct KubernetesStore;
+
+impl KubernetesStore {
+    pub async fn read(&self, reference: &str, version: &str) -> anyhow::Result<Vec<u8>> {
+        let store = CredentialSecrets::in_cluster().map_err(|error| {
+            let local = error.type_ == Some(ErrorType::NoCluster);
+            let error = anyhow::Error::new(error);
+            if local {
+                let reason = "no credential store in local mode";
+                tracing::warn!("{reason}");
+                error.context(reason)
+            } else {
+                error
+            }
+        })?;
+        Ok(store.get(reference, version).await?)
+    }
+}
+
+#[async_trait::async_trait]
+impl WriteCredentials for KubernetesStore {
+    async fn put(
+        &self,
+        target: CredentialSecret<'_>,
+        id: Uuid,
+        value: &[u8],
+    ) -> anyhow::Result<StoreVersion> {
+        let version = CredentialSecrets::in_cluster()?
+            .put(&target, id, value)
+            .await?;
+        Ok(StoreVersion {
+            store: "k8s",
+            reference: target.name,
+            version,
+        })
+    }
+
+    async fn destroy(&self, reference: &str, version: &str) -> anyhow::Result<()> {
+        Ok(CredentialSecrets::in_cluster()?
+            .destroy(reference, version)
+            .await?)
+    }
 }
 
 /// The immutable database reference returned by a credential write.
@@ -92,7 +127,7 @@ impl std::error::Error for ReadError {
 
 /// The host's shared Secret reader and bounded cache of credential values.
 pub struct CredentialReader {
-    store: Box<dyn ReadCredentials>,
+    store: KubernetesCredentials,
     values: Cache<Key, Arc<Secret>>,
     pending: Mutex<HashMap<Key, Arc<Read>>>,
 }
@@ -106,7 +141,7 @@ impl fmt::Debug for CredentialReader {
 }
 
 impl CredentialReader {
-    pub fn new(store: Box<dyn ReadCredentials>) -> Self {
+    pub fn new(store: KubernetesCredentials) -> Self {
         Self {
             store,
             values: bounded(),
@@ -373,7 +408,7 @@ impl ConnectionCredentials {
                     reference.reference == name,
                     "credential Secret does not match project"
                 );
-                let bytes = reader.store.read(&name, &reference.version).await?;
+                let bytes = Box::pin(reader.store.read(&name, &reference.version)).await?;
                 String::from_utf8(bytes).context("credential is not UTF-8")
             })
             .await

@@ -73,6 +73,15 @@ pub struct ComponentAdmissionRequest {
     pub base_digests: BTreeSet<wamn_digest::Digest>,
 }
 
+/// Check a component against the runtime's import and export rules.
+pub trait ComponentAdmissionEngine: Send + Sync {
+    fn validate(
+        &self,
+        bytes: &[u8],
+        request: ComponentAdmissionRequest,
+    ) -> anyhow::Result<ComponentDescriptor>;
+}
+
 /// Validates exact component bytes against their declaration and import policy.
 pub trait ComponentAdmission: Send + Sync {
     /// Return the descriptor sealed against the supplied bytes.

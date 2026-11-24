@@ -245,12 +245,9 @@ async fn ensure_model_schemas(
     Ok(())
 }
 
-pub async fn apply_package(
-    platform: &crate::environment::Platform,
-    request: ApplyPackageRequest,
-) -> anyhow::Result<ApplyOutcome> {
-    let directory = platform.packages.read_package_root(&request.package)?;
-    let migration_root = platform.packages.migration_root(&request.package.path);
+pub async fn apply_package(request: ApplyPackageRequest) -> anyhow::Result<ApplyOutcome> {
+    let directory = wamn_release::package_source::read_package_root(&request.package)?;
+    let migration_root = wamn_release::package_source::migration_root(&request.package.path);
     apply_package_from_directory(request, directory, &migration_root).await
 }
 

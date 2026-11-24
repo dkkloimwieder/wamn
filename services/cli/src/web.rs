@@ -2,8 +2,8 @@
 
 use anyhow::Context as _;
 use clap::{Args, Subcommand};
-use wamn_oci::web_artifact::{self, RegistryWebArtifacts};
 use wamn_release::web_artifact::upload::{upload_platform_ui, upload_web_artifact};
+use wamn_release::web_artifact::{self, RegistryWebArtifacts};
 
 /// Web client commands.
 #[derive(Debug, Args)]

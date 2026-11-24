@@ -23,7 +23,7 @@ pub(super) async fn target(
         return Ok(revision.get());
     }
     let live =
-        crate::environment::document::workload_release(&*platform.cluster, triple, application)
+        crate::environment::document::workload_release(&platform.cluster, triple, application)
             .await?
             .context("application has no deployed release")?
             .revision;

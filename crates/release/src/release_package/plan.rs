@@ -1,37 +1,5 @@
-use super::{
-    BTreeMap, EMPTY_CONFIG, EMPTY_CONFIG_MEDIA_TYPE, PACKAGE_ARTIFACT_TYPE, PackedLayer, Path,
-    bytes_sha256, ensure,
-};
+use super::{BTreeMap, Path, ensure};
 use anyhow::Context as _;
-
-/// The canonical image manifest bytes of `layers`.
-pub(super) fn image_manifest(
-    layers: &[PackedLayer],
-    annotations: &BTreeMap<String, String>,
-    image_media_type: &str,
-) -> Vec<u8> {
-    let manifest = serde_json::json!({
-        "schemaVersion": 2,
-        "mediaType": image_media_type,
-        "artifactType": PACKAGE_ARTIFACT_TYPE,
-        "config": {
-            "mediaType": EMPTY_CONFIG_MEDIA_TYPE,
-            "digest": bytes_sha256(EMPTY_CONFIG),
-            "size": EMPTY_CONFIG.len(),
-        },
-        "layers": layers
-            .iter()
-            .map(|layer| serde_json::json!({
-                "mediaType": layer.media_type,
-                "digest": bytes_sha256(&layer.bytes),
-                "size": layer.bytes.len(),
-                "annotations": layer.annotations,
-            }))
-            .collect::<Vec<_>>(),
-        "annotations": annotations,
-    });
-    wamn_digest::canonical_json_bytes(&manifest)
-}
 
 /// The package id and version of a package manifest.
 pub(super) fn package_coordinate(

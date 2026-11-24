@@ -13,10 +13,7 @@ use kube::{
     api::{ListParams, ObjectMeta, Patch, PatchParams},
 };
 use serde_json::Value;
-use std::{collections::BTreeMap, ffi::OsStr, path::Path, sync::Mutex, time::Duration};
-use tokio::time::Instant;
-use wamn_platform_install::deployment::{Chart, Cluster, DatabaseFiles, Upgrade};
-use wamn_postgres::database::ConnectionConfig;
+use std::{collections::BTreeMap, ffi::OsStr, sync::Mutex, time::Duration};
 use wamn_registry::{ApplicationName, Triple, name};
 
 use crate::client::{
@@ -114,25 +111,6 @@ async fn require_ownership(target: &Target, triple: &Triple, database: &str) -> 
         );
     }
     Ok(())
-}
-
-async fn delete_reader(
-    target: &Target,
-    chart: &Path,
-    triple: &Triple,
-    release: Option<&str>,
-) -> anyhow::Result<()> {
-    let cdc = name::cdc_reader_name(&triple.org, &triple.project, &triple.env);
-    let deployments = Api::<Deployment>::namespaced(target.client.client(), &target.namespace);
-    if let Some(release) = release
-        && deployments.get_opt(&cdc).await?.is_some()
-    {
-        crate::platform_environment::update_project(
-            target, chart, release,
-            serde_json::json!({"cdcReader":{"pause":true},"publication":{"reclaimPolicy":"delete"}}),
-        ).await?;
-    }
-    wait_reader_stopped(target, triple).await
 }
 
 async fn project_release_exists(target: &Target, release: &str) -> anyhow::Result<bool> {
@@ -450,7 +428,7 @@ async fn workload_annotations(
 
 /// Copy only `ca.crt` of the cluster's server CA Secret into the ConfigMap
 /// that control reads. The Cluster owns the copy, so deleting it removes both.
-async fn copy_server_ca(
+pub async fn copy_server_ca(
     target: &Target,
     cluster: &str,
     source: &str,
@@ -494,51 +472,50 @@ async fn copy_server_ca(
     Ok(())
 }
 
-async fn wait_database(
-    target: &Target,
-    owner: &ConnectionConfig,
-    capture: &ConnectionConfig,
-) -> anyhow::Result<()> {
-    let cluster = name::project_cluster(&owner.database);
-    let clusters = resource(
-        target.client.client(),
-        &target.namespace,
-        "postgresql.cnpg.io",
-        "v1",
-        "Cluster",
-        "clusters",
-    );
-    let cluster_uid = wait_named(&clusters, &cluster, Duration::from_secs(120), |object| {
-        Ok(object.filter(ready).map(|object| object.metadata.uid))
-    })
-    .await?
-    .with_context(|| format!("Cluster {cluster} has no uid"))?;
-    copy_server_ca(target, &cluster, &owner.server_ca.name, cluster_uid).await?;
-    crate::platform_environment::wait_database_applied(
-        target,
-        &owner.database,
-        Duration::from_secs(120),
-    )
-    .await?;
-
-    let certificates = resource(
-        target.client.client(),
-        &target.namespace,
-        "cert-manager.io",
-        "v1",
-        "Certificate",
-        "certificates",
-    );
-    let wait_certificate = |name| {
-        wait_named(&certificates, name, Duration::from_secs(120), |object| {
-            Ok(object.filter(ready).map(drop))
+impl Target {
+    pub async fn wait_database_cluster_uid(&self, cluster: &str) -> anyhow::Result<String> {
+        let clusters = resource(
+            self.client.client(),
+            &self.namespace,
+            "postgresql.cnpg.io",
+            "v1",
+            "Cluster",
+            "clusters",
+        );
+        wait_named(&clusters, cluster, Duration::from_secs(120), |object| {
+            Ok(object.filter(ready).map(|object| object.metadata.uid))
         })
-    };
-    tokio::try_join!(
-        wait_certificate(&owner.credentials.name),
-        wait_certificate(&capture.credentials.name),
-    )?;
-    Ok(())
+        .await?
+        .with_context(|| format!("Cluster {cluster} has no uid"))
+    }
+
+    pub async fn has_reader_deployment(&self, triple: &Triple) -> Result<bool, kube::Error> {
+        let name = name::cdc_reader_name(&triple.org, &triple.project, &triple.env);
+        let deployments = Api::<Deployment>::namespaced(self.client.client(), &self.namespace);
+        Ok(deployments.get_opt(&name).await?.is_some())
+    }
+
+    pub async fn wait_database_certificates(
+        &self,
+        owner: &str,
+        capture: &str,
+    ) -> anyhow::Result<()> {
+        let certificates = resource(
+            self.client.client(),
+            &self.namespace,
+            "cert-manager.io",
+            "v1",
+            "Certificate",
+            "certificates",
+        );
+        let wait_certificate = |name| {
+            wait_named(&certificates, name, Duration::from_secs(120), |object| {
+                Ok(object.filter(ready).map(drop))
+            })
+        };
+        tokio::try_join!(wait_certificate(owner), wait_certificate(capture),)?;
+        Ok(())
+    }
 }
 
 async fn write_credentials(
@@ -584,101 +561,35 @@ async fn read_credentials(
     Ok(Some(bytes.0))
 }
 
-impl Chart for crate::release_chart::bundle::SelectedChart {
-    fn directory(&self) -> &Path {
-        self.directory()
-    }
-
-    fn is_downloaded(&self) -> bool {
-        self.is_downloaded()
-    }
-
-    fn image(&self, name: &str) -> anyhow::Result<&str> {
-        self.image(name)
-    }
-}
-
-#[async_trait::async_trait]
-impl DatabaseFiles for crate::database_files::DatabaseFiles {
-    async fn materialize(&self, configuration: &ConnectionConfig) -> anyhow::Result<()> {
-        Ok(self.materialize(configuration).await?)
-    }
-}
-
-#[async_trait::async_trait]
-impl Cluster for Target {
-    fn namespace(&self) -> &str {
+impl Target {
+    pub fn namespace(&self) -> &str {
         &self.namespace
     }
 
-    async fn prepare_host_upgrade(
-        &self,
-        chart: &Path,
-        name: String,
-        values: &Value,
-    ) -> anyhow::Result<Upgrade<'_>> {
-        Ok(Box::pin(
-            crate::platform_environment::prepare_host_upgrade(self, chart, name, values).await?,
-        ))
-    }
-
-    async fn host_image(&self, chart: &Path) -> anyhow::Result<String> {
-        Ok(crate::release_chart::image_set(chart).await?.host)
-    }
-
-    async fn host_pods(&self, name: &str) -> anyhow::Result<Value> {
+    pub async fn host_pods(&self, name: &str) -> anyhow::Result<Value> {
         host_pods(self, name).await
     }
 
-    async fn postgres_settings(&self) -> anyhow::Result<Value> {
+    pub async fn postgres_settings(&self) -> anyhow::Result<Value> {
         postgres_settings(self).await
     }
 
-    async fn apply_project(
-        &self,
-        chart: &Path,
-        release: &str,
-        values: &Value,
-    ) -> anyhow::Result<()> {
-        crate::platform_environment::apply_project(self, chart, release, values).await
-    }
-
-    async fn update_project(
-        &self,
-        chart: &Path,
-        release: &str,
-        values: Value,
-    ) -> anyhow::Result<()> {
-        crate::platform_environment::update_project(self, chart, release, values).await
-    }
-
-    async fn wait_database(
-        &self,
-        owner: &ConnectionConfig,
-        capture: &ConnectionConfig,
-    ) -> anyhow::Result<()> {
-        wait_database(self, owner, capture).await
-    }
-
-    async fn wait_reader_stopped(&self, triple: &Triple) -> anyhow::Result<()> {
+    pub async fn wait_reader_stopped(&self, triple: &Triple) -> anyhow::Result<()> {
         wait_reader_stopped(self, triple).await
     }
 
-    async fn wait_reader_ready(&self, triple: &Triple) -> anyhow::Result<()> {
+    pub async fn wait_reader_ready(&self, triple: &Triple) -> anyhow::Result<()> {
         wait_reader_ready(self, triple).await
     }
 
-    async fn reader_exists(&self, triple: &Triple) -> anyhow::Result<bool> {
+    pub async fn reader_exists(&self, triple: &Triple) -> anyhow::Result<bool> {
         let reader = name::cdc_reader_name(&triple.org, &triple.project, &triple.env);
-        let deployments = Api::<Deployment>::namespaced(self.client.client(), &self.namespace);
-        Ok(deployments
-            .get_opt(&reader)
+        self.has_reader_deployment(triple)
             .await
-            .with_context(|| format!("read CDC reader Deployment {reader}"))?
-            .is_some())
+            .with_context(|| format!("read CDC reader Deployment {reader}"))
     }
 
-    async fn publication_exists(&self, database: &str) -> anyhow::Result<bool> {
+    pub async fn publication_exists(&self, database: &str) -> anyhow::Result<bool> {
         Ok(resource(
             self.client.client(),
             &self.namespace,
@@ -692,20 +603,25 @@ impl Cluster for Target {
         .is_some())
     }
 
-    async fn write_credentials(&self, name: &str, key: &str, bytes: &[u8]) -> anyhow::Result<()> {
+    pub async fn write_credentials(
+        &self,
+        name: &str,
+        key: &str,
+        bytes: &[u8],
+    ) -> anyhow::Result<()> {
         write_credentials(self, name, key, bytes).await
     }
 
-    async fn read_credentials(&self, name: &str, key: &str) -> anyhow::Result<Option<Vec<u8>>> {
+    pub async fn read_credentials(&self, name: &str, key: &str) -> anyhow::Result<Option<Vec<u8>>> {
         read_credentials(self, name, key).await
     }
 
-    async fn delete_secret(&self, name: &str) -> anyhow::Result<bool> {
+    pub async fn delete_secret(&self, name: &str) -> anyhow::Result<bool> {
         let secrets = Api::<Secret>::namespaced(self.client.client(), &self.namespace);
         delete_named(&secrets, name, true).await
     }
 
-    async fn workload_annotations(
+    pub async fn workload_annotations(
         &self,
         triple: &Triple,
         application: &ApplicationName,
@@ -713,29 +629,19 @@ impl Cluster for Target {
         workload_annotations(triple, application).await
     }
 
-    async fn applications(&self, triple: &Triple) -> anyhow::Result<Vec<ApplicationName>> {
+    pub async fn applications(&self, triple: &Triple) -> anyhow::Result<Vec<ApplicationName>> {
         applications(self, triple).await
     }
 
-    async fn wait_workload_ready(&self, name: &str, timeout: Duration) -> anyhow::Result<()> {
+    pub async fn wait_workload_ready(&self, name: &str, timeout: Duration) -> anyhow::Result<()> {
         wait_workload_ready(self, name, timeout).await
     }
 
-    async fn current_job(&self) -> anyhow::Result<Value> {
+    pub async fn current_job(&self) -> anyhow::Result<Value> {
         crate::job::current(&KubernetesApi::in_cluster()?).await
     }
 
-    async fn apply_application(
-        &self,
-        chart: &Path,
-        name: &str,
-        values: &serde_yaml::Value,
-        deadline: Instant,
-    ) -> anyhow::Result<()> {
-        crate::platform_environment::apply_application(self, chart, name, values, deadline).await
-    }
-
-    async fn release_manifest(
+    pub async fn release_manifest(
         &self,
         release: &str,
         revision: u32,
@@ -753,7 +659,7 @@ impl Cluster for Target {
         .await
     }
 
-    async fn release_values(
+    pub async fn release_values(
         &self,
         release: &str,
         revision: u32,
@@ -773,37 +679,24 @@ impl Cluster for Target {
         .await
     }
 
-    async fn rollback(&self, release: &str, revision: u32) -> anyhow::Result<()> {
+    pub async fn rollback(&self, release: &str, revision: u32) -> anyhow::Result<()> {
         run(self, release, revision).await
     }
 
-    async fn uninstall(&self, release: &str) -> anyhow::Result<()> {
+    pub async fn uninstall(&self, release: &str) -> anyhow::Result<()> {
         let namespace = helm::org_release_namespace(&self.namespace);
         helm::uninstall(self, &namespace, release, helm::Wait::Watcher).await
     }
 
-    async fn require_ownership(&self, triple: &Triple, database: &str) -> anyhow::Result<()> {
+    pub async fn require_ownership(&self, triple: &Triple, database: &str) -> anyhow::Result<()> {
         require_ownership(self, triple, database).await
     }
 
-    async fn delete_reader(
-        &self,
-        chart: &Path,
-        triple: &Triple,
-        release: Option<&str>,
-    ) -> anyhow::Result<()> {
-        delete_reader(self, chart, triple, release).await
-    }
-
-    async fn project_release_exists(&self, release: &str) -> anyhow::Result<bool> {
+    pub async fn project_release_exists(&self, release: &str) -> anyhow::Result<bool> {
         project_release_exists(self, release).await
     }
 
-    async fn remove_database(&self, chart: &Path, release: &str, data: bool) -> anyhow::Result<()> {
-        crate::platform_environment::remove_database(self, chart, release, data).await
-    }
-
-    async fn delete_kept_project_resources(
+    pub async fn delete_kept_project_resources(
         &self,
         triple: &Triple,
         release: &str,
@@ -811,7 +704,7 @@ impl Cluster for Target {
         delete_kept_project_resources(self, triple, release).await
     }
 
-    async fn delete_database_certificate_secrets(
+    pub async fn delete_database_certificate_secrets(
         &self,
         database: &str,
         logins: &[&str],
@@ -819,7 +712,7 @@ impl Cluster for Target {
         delete_database_certificate_secrets(self, database, logins).await
     }
 
-    async fn database_exists(&self, database: &str) -> anyhow::Result<bool> {
+    pub async fn database_exists(&self, database: &str) -> anyhow::Result<bool> {
         Ok(resource(
             self.client.client(),
             &self.namespace,
@@ -833,7 +726,7 @@ impl Cluster for Target {
         .is_some())
     }
 
-    async fn database_cluster_exists(&self, name: &str) -> anyhow::Result<bool> {
+    pub async fn database_cluster_exists(&self, name: &str) -> anyhow::Result<bool> {
         Ok(resource(
             self.client.client(),
             &self.namespace,

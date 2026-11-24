@@ -1,118 +1,184 @@
-//! Cluster operations used by environment deployment.
+//! Apply and observe the environment releases in Kubernetes.
 
-use std::collections::BTreeMap;
-use std::fmt::Debug;
-use std::path::Path;
-use std::pin::Pin;
-use std::time::Duration;
-
-use serde_json::Value;
-use tokio::time::Instant;
-use wamn_registry::{ApplicationName, Triple};
-
+use anyhow::Context as _;
+use serde_json::{Value, json};
+use std::{path::Path, pin::Pin, time::Duration};
+use tokio::time::{Instant, timeout_at};
+use wamn_kubernetes::{
+    Target,
+    helm::{self, Install, Wait},
+};
 use wamn_postgres::database::ConnectionConfig;
+use wamn_registry::{Triple, name};
+
+/// Recover the host release and prepare one upgrade that waits for readiness.
+pub async fn prepare_host_upgrade<'a>(
+    target: &'a Target,
+    chart: &Path,
+    name: String,
+    values: &Value,
+) -> anyhow::Result<Upgrade<'a>> {
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("values.yaml");
+    std::fs::write(&path, serde_json::to_vec(values)?)?;
+    let chart = chart.join("platform/environment");
+    let namespace = helm::org_release_namespace(&target.namespace);
+    helm::recover_pending(target, &namespace, &name, Wait::Watcher).await?;
+    Ok(Box::pin(async move {
+        let _directory = directory;
+        helm::upgrade(
+            target,
+            &namespace,
+            &chart,
+            &name,
+            &[&path],
+            Wait::Watcher,
+            Install::SkipCrds,
+        )
+        .await
+        .with_context(|| format!("upgrade environment host {name}"))
+    }))
+}
+
+/// Upgrade one application with SQL and workflow checks already complete.
+pub async fn apply_application(
+    target: &Target,
+    chart: &Path,
+    name: &str,
+    values: &serde_yaml::Value,
+    deadline: Instant,
+) -> anyhow::Result<()> {
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("application.yaml");
+    std::fs::write(&path, serde_yaml::to_string(values)?)?;
+    let namespace = helm::org_release_namespace(&target.namespace);
+    timeout_at(deadline, async {
+        helm::recover_pending(target, &namespace, name, Wait::Watcher).await?;
+        helm::upgrade(
+            target,
+            &namespace,
+            &chart.join("platform/application"),
+            name,
+            &[&path],
+            Wait::WatcherUntil(deadline),
+            Install::SkipCrds,
+        )
+        .await
+    })
+    .await
+    .with_context(|| {
+        format!("deploy Job deadline reached applying Helm release {namespace}/{name}")
+    })?
+}
+
+/// Submit the project resources before the worker initializes the database and CDC checkpoint.
+pub async fn apply_project(
+    target: &Target,
+    chart: &Path,
+    name: &str,
+    values: &Value,
+) -> anyhow::Result<()> {
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("values.yaml");
+    std::fs::write(&path, serde_json::to_vec(values)?)?;
+    let namespace = helm::org_release_namespace(&target.namespace);
+    helm::recover_pending(target, &namespace, name, Wait::None).await?;
+    helm::upgrade(
+        target,
+        &namespace,
+        &chart.join("platform/project"),
+        name,
+        &[&path],
+        Wait::None,
+        Install::ExistingNamespace,
+    )
+    .await
+}
+
+/// Set the lifecycle values of an installed project.
+pub async fn update_project(
+    target: &Target,
+    chart: &Path,
+    name: &str,
+    mut values: Value,
+) -> anyhow::Result<()> {
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("project-values.yaml");
+    values["namespace"] = target.namespace.as_str().into();
+    std::fs::write(&path, serde_json::to_vec(&values)?)?;
+    let namespace = helm::org_release_namespace(&target.namespace);
+    helm::recover_pending(target, &namespace, name, Wait::None).await?;
+    helm::update_values(
+        target,
+        &namespace,
+        &chart.join("platform/project"),
+        name,
+        &path,
+    )
+    .await
+}
+
+/// Uninstall the project release. Storage and its ObjectStore are kept by default.
+pub async fn remove_database(
+    target: &Target,
+    chart: &Path,
+    name: &str,
+    data: bool,
+) -> anyhow::Result<()> {
+    if data {
+        update_project(target, chart, name, json!({"deleteData":true})).await?;
+    }
+    let namespace = helm::org_release_namespace(&target.namespace);
+    helm::uninstall(target, &namespace, name, Wait::None).await
+}
 
 /// The pending host upgrade after preparation completes.
 pub type Upgrade<'a> = Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + 'a>>;
 
-/// A selected chart and its image references.
-pub trait Chart: Debug + Send + Sync {
-    fn directory(&self) -> &Path;
-    fn is_downloaded(&self) -> bool;
-    fn image(&self, name: &str) -> anyhow::Result<&str>;
+/// Read the host's stamped image from the selected chart.
+pub async fn host_image(chart: &Path) -> anyhow::Result<String> {
+    Ok(crate::release_chart::image_set(chart).await?.host)
 }
 
-/// Prepare the mounted credentials for a database connection.
-#[async_trait::async_trait]
-pub trait DatabaseFiles: Debug + Send + Sync {
-    async fn materialize(&self, configuration: &ConnectionConfig) -> anyhow::Result<()>;
+pub async fn wait_database(
+    target: &Target,
+    owner: &ConnectionConfig,
+    capture: &ConnectionConfig,
+) -> anyhow::Result<()> {
+    let cluster = name::project_cluster(&owner.database);
+    let cluster_uid = target.wait_database_cluster_uid(&cluster).await?;
+    wamn_kubernetes::deployment_components::copy_server_ca(
+        target,
+        &cluster,
+        &owner.server_ca.name,
+        cluster_uid,
+    )
+    .await?;
+    wamn_kubernetes::platform_environment::wait_database_applied(
+        target,
+        &owner.database,
+        Duration::from_secs(120),
+    )
+    .await?;
+
+    target
+        .wait_database_certificates(&owner.credentials.name, &capture.credentials.name)
+        .await
 }
 
-/// Read and apply the cluster resources that environment deployment uses.
-#[async_trait::async_trait]
-pub trait Cluster: Debug + Send + Sync {
-    fn namespace(&self) -> &str;
-
-    async fn prepare_host_upgrade(
-        &self,
-        chart: &Path,
-        name: String,
-        values: &Value,
-    ) -> anyhow::Result<Upgrade<'_>>;
-    async fn host_image(&self, chart: &Path) -> anyhow::Result<String>;
-    async fn host_pods(&self, name: &str) -> anyhow::Result<Value>;
-    async fn postgres_settings(&self) -> anyhow::Result<Value>;
-    async fn apply_project(
-        &self,
-        chart: &Path,
-        release: &str,
-        values: &Value,
-    ) -> anyhow::Result<()>;
-    async fn update_project(
-        &self,
-        chart: &Path,
-        release: &str,
-        values: Value,
-    ) -> anyhow::Result<()>;
-    async fn wait_database(
-        &self,
-        owner: &ConnectionConfig,
-        capture: &ConnectionConfig,
-    ) -> anyhow::Result<()>;
-
-    async fn wait_reader_stopped(&self, triple: &Triple) -> anyhow::Result<()>;
-    async fn wait_reader_ready(&self, triple: &Triple) -> anyhow::Result<()>;
-    async fn reader_exists(&self, triple: &Triple) -> anyhow::Result<bool>;
-    async fn publication_exists(&self, database: &str) -> anyhow::Result<bool>;
-
-    async fn write_credentials(&self, name: &str, key: &str, bytes: &[u8]) -> anyhow::Result<()>;
-    async fn read_credentials(&self, name: &str, key: &str) -> anyhow::Result<Option<Vec<u8>>>;
-    async fn delete_secret(&self, name: &str) -> anyhow::Result<bool>;
-
-    async fn workload_annotations(
-        &self,
-        triple: &Triple,
-        application: &ApplicationName,
-    ) -> anyhow::Result<Option<BTreeMap<String, String>>>;
-    async fn applications(&self, triple: &Triple) -> anyhow::Result<Vec<ApplicationName>>;
-    async fn wait_workload_ready(&self, name: &str, timeout: Duration) -> anyhow::Result<()>;
-    async fn current_job(&self) -> anyhow::Result<Value>;
-    async fn apply_application(
-        &self,
-        chart: &Path,
-        name: &str,
-        values: &serde_yaml::Value,
-        deadline: Instant,
-    ) -> anyhow::Result<()>;
-    async fn release_manifest(
-        &self,
-        release: &str,
-        revision: u32,
-    ) -> anyhow::Result<Option<Vec<u8>>>;
-    async fn release_values(&self, release: &str, revision: u32)
-    -> anyhow::Result<Option<Vec<u8>>>;
-    async fn rollback(&self, release: &str, revision: u32) -> anyhow::Result<()>;
-    async fn uninstall(&self, release: &str) -> anyhow::Result<()>;
-
-    async fn require_ownership(&self, triple: &Triple, database: &str) -> anyhow::Result<()>;
-    async fn delete_reader(
-        &self,
-        chart: &Path,
-        triple: &Triple,
-        release: Option<&str>,
-    ) -> anyhow::Result<()>;
-    async fn project_release_exists(&self, release: &str) -> anyhow::Result<bool>;
-    async fn remove_database(&self, chart: &Path, release: &str, data: bool) -> anyhow::Result<()>;
-    async fn delete_kept_project_resources(
-        &self,
-        triple: &Triple,
-        release: &str,
-    ) -> anyhow::Result<Vec<String>>;
-    async fn delete_database_certificate_secrets(
-        &self,
-        database: &str,
-        logins: &[&str],
-    ) -> anyhow::Result<()>;
-    async fn database_exists(&self, database: &str) -> anyhow::Result<bool>;
-    async fn database_cluster_exists(&self, name: &str) -> anyhow::Result<bool>;
+pub async fn delete_reader(
+    target: &Target,
+    chart: &Path,
+    triple: &Triple,
+    release: Option<&str>,
+) -> anyhow::Result<()> {
+    if let Some(release) = release
+        && target.has_reader_deployment(triple).await?
+    {
+        update_project(
+            target, chart, release,
+            serde_json::json!({"cdcReader":{"pause":true},"publication":{"reclaimPolicy":"delete"}}),
+        ).await?;
+    }
+    target.wait_reader_stopped(triple).await
 }

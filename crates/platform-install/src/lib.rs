@@ -1,19 +1,25 @@
 //! Platform and org installation workflows.
 
 mod apply;
+pub mod database_files;
 pub mod deployment;
 pub mod environment;
 pub mod identity_role;
 pub mod install;
 mod migration_history;
 pub mod org;
+pub mod org_install;
+pub mod org_secrets;
 mod platform_database;
+pub mod platform_install;
+mod platform_registry;
 mod platform_sql;
 pub mod provision_org;
 pub mod provision_system;
 pub mod release_chart;
 pub mod sql;
 pub mod system_reader;
+pub mod worker_mounts;
 
 /// Core control-database schema, applied first by a fresh bootstrap.
 ///

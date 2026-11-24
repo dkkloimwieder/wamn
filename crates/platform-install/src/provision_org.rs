@@ -3,6 +3,7 @@
 use anyhow::Context as _;
 use ring::rand::{SecureRandom as _, SystemRandom};
 use std::fmt;
+use wamn_kubernetes::client::KubernetesApi;
 use wamn_postgres::database::ConnectionConfig;
 use wamn_registry::OrgId;
 use wamn_role::LoginName;
@@ -35,46 +36,37 @@ pub fn apply_login(org: &OrgId, database: &str) -> LoginName {
     )
 }
 
-/// Read and fill the Secrets created by the org chart.
-pub trait OrgSecrets {
-    fn contains_key(
-        &self,
-        org: &OrgId,
-        secret: &str,
-        key: &str,
-    ) -> impl Future<Output = anyhow::Result<bool>> + Send;
-
-    fn write_key(
-        &self,
-        org: &OrgId,
-        secret: &str,
-        key: &str,
-        value: &[u8],
-    ) -> impl Future<Output = anyhow::Result<()>> + Send;
-}
-
 /// Initialize the local OAuth key if needed, record the org, and rotate both logins.
 pub async fn provision_org(
     database: &ConnectionConfig,
     org: &OrgId,
     oauth_encryption: &serde_json::Value,
-    secrets: &impl OrgSecrets,
+    secrets: &KubernetesApi,
 ) -> anyhow::Result<()> {
     let mut locked = lock_org(database, org).await?;
     if oauth_encryption["provider"] == "local"
-        && !secrets.contains_key(org, OAUTH_SECRET, "key").await?
+        && !secrets
+            .secret_contains_key(org.as_str(), OAUTH_SECRET, "key")
+            .await?
     {
         // The host's envelope reader requires 32 raw bytes.
         let mut key = [0_u8; 32];
         SystemRandom::new()
             .fill(&mut key)
             .map_err(|_| anyhow::anyhow!("generate the OAuth encryption key for org {org}"))?;
-        secrets.write_key(org, OAUTH_SECRET, "key", &key).await?;
+        secrets
+            .patch_namespaced_secret_data(org.as_str(), OAUTH_SECRET, "key", &key)
+            .await?;
     }
 
     for login in create_org_logins(&mut locked, org, &database.database).await? {
         secrets
-            .write_key(org, login.secret, "password", login.password.as_bytes())
+            .patch_namespaced_secret_data(
+                org.as_str(),
+                login.secret,
+                "password",
+                login.password.as_bytes(),
+            )
             .await?;
     }
     drop(locked);

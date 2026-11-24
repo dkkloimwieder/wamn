@@ -11,9 +11,7 @@ use wamn_authentication::authorization::{
     AuthorizationStore, HeldOperationGrants, ProjectPat, held_grants,
 };
 use wamn_authority::auth_cache::PrincipalGrants;
-use wamn_connection::connection_credentials::{
-    ConnectionCredentials, CredentialReader, ReadCredentials,
-};
+use wamn_connection::connection_credentials::{ConnectionCredentials, CredentialReader};
 use wamn_connection::connection_facts::{ConnectionAnswer, ConnectionCache, ConnectionFacts};
 use wamn_connection::project_connections::ProjectConnections;
 use wamn_identity_protocol::PrincipalId;
@@ -100,8 +98,8 @@ impl Authorization {
     }
 
     /// Share one credential store and cache across application workloads.
-    pub fn with_credential_store(mut self, store: Box<dyn ReadCredentials>) -> Self {
-        self.credentials = Some(Arc::new(CredentialReader::new(store)));
+    pub fn with_credential_store(mut self, store: CredentialReader) -> Self {
+        self.credentials = Some(Arc::new(store));
         self
     }
 

@@ -6,7 +6,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-wamn-oci.workspace = true
+wamn-release.workspace = true
 wamn-application.workspace = true
 kube = { workspace = true }
 k8s-openapi = { workspace = true }

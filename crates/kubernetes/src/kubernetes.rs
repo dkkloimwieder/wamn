@@ -13,17 +13,23 @@ use kube::{
 };
 use serde_json::json;
 use tokio::sync::OnceCell;
-use wamn_connection::connection_credentials::{
-    CredentialSecret, ReadCredentials, StoreVersion, WriteCredentials,
-};
+/// A credential Secret name and its environment labels.
+#[derive(Debug)]
+pub struct CredentialSecret<'a> {
+    pub name: String,
+    pub org: &'a str,
+    pub env: &'a str,
+    pub project: &'a str,
+}
 
+/// The Kubernetes operations on versioned project Secrets.
 #[derive(Clone, Debug)]
-pub(crate) struct KubernetesStore {
+pub struct CredentialSecrets {
     secrets: Api<Secret>,
 }
 
-impl KubernetesStore {
-    fn in_cluster() -> Result<Self, Error> {
+impl CredentialSecrets {
+    pub fn in_cluster() -> Result<Self, Error> {
         Ok(Self::new(KubernetesApi::in_cluster()?))
     }
 
@@ -94,12 +100,12 @@ impl KubernetesStore {
         }
     }
 
-    pub(crate) async fn put(
+    pub async fn put(
         &self,
-        target: CredentialSecret<'_>,
+        target: &CredentialSecret<'_>,
         credential_id: uuid::Uuid,
         value: &[u8],
-    ) -> Result<StoreVersion, Error> {
+    ) -> Result<String, Error> {
         if [target.org, target.project, target.env]
             .into_iter()
             .any(str::is_empty)
@@ -111,15 +117,11 @@ impl KubernetesStore {
             ));
         }
         let version = credential_id.to_string();
-        self.change(&target.name, &version, Some(value), Some(&target))
+        self.change(&target.name, &version, Some(value), Some(target))
             .await?;
-        Ok(StoreVersion {
-            store: "k8s",
-            reference: target.name,
-            version,
-        })
+        Ok(version)
     }
-    pub(crate) async fn get(&self, reference: &str, version: &str) -> Result<Vec<u8>, Error> {
+    pub async fn get(&self, reference: &str, version: &str) -> Result<Vec<u8>, Error> {
         let document = self
             .read(reference)
             .await?
@@ -130,75 +132,40 @@ impl KubernetesStore {
             .map(|bytes| bytes.0)
             .ok_or_else(|| failure("get", reference, "credential data is absent"))
     }
-    pub(crate) async fn destroy(&self, reference: &str, version: &str) -> Result<(), Error> {
+    pub async fn destroy(&self, reference: &str, version: &str) -> Result<(), Error> {
         self.change(reference, version, None, None).await
     }
 }
 
-/// Credential storage for the control process and the host.
-#[derive(Debug, Default)]
+/// The host's lazy Kubernetes credential transport.
+#[derive(Debug)]
 pub struct KubernetesCredentials {
-    host_store: Option<OnceCell<KubernetesStore>>,
+    host_store: OnceCell<CredentialSecrets>,
 }
 
 impl KubernetesCredentials {
     /// Cache the host's namespace client after the first successful initialization.
     pub fn for_host() -> Self {
         Self {
-            host_store: Some(OnceCell::new()),
+            host_store: OnceCell::new(),
         }
     }
-}
 
-#[async_trait::async_trait]
-impl ReadCredentials for KubernetesCredentials {
-    async fn read(&self, reference: &str, version: &str) -> anyhow::Result<Vec<u8>> {
-        if let Some(host_store) = &self.host_store {
-            let store = host_store
-                .get_or_try_init(|| async {
-                    if std::env::var_os("KUBERNETES_SERVICE_HOST").is_none() {
-                        let reason = "no credential store in local mode";
-                        tracing::warn!("{reason}");
-                        anyhow::bail!(reason);
-                    }
-                    Ok::<_, anyhow::Error>(KubernetesStore {
-                        secrets: KubernetesApi::host_credential_secrets()?,
-                    })
+    /// Read a versioned Secret value through the selected namespace client.
+    pub async fn read(&self, reference: &str, version: &str) -> anyhow::Result<Vec<u8>> {
+        let store = self
+            .host_store
+            .get_or_try_init(|| async {
+                if std::env::var_os("KUBERNETES_SERVICE_HOST").is_none() {
+                    let reason = "no credential store in local mode";
+                    tracing::warn!("{reason}");
+                    anyhow::bail!(reason);
+                }
+                Ok::<_, anyhow::Error>(CredentialSecrets {
+                    secrets: KubernetesApi::host_credential_secrets()?,
                 })
-                .await?;
-            return Ok(store.get(reference, version).await?);
-        }
-        let store = KubernetesStore::in_cluster().map_err(|error| {
-            let local = error.type_ == Some(ErrorType::NoCluster);
-            let error = anyhow::Error::new(error);
-            if local {
-                let reason = "no credential store in local mode";
-                tracing::warn!("{reason}");
-                error.context(reason)
-            } else {
-                error
-            }
-        })?;
+            })
+            .await?;
         Ok(store.get(reference, version).await?)
-    }
-}
-
-#[async_trait::async_trait]
-impl WriteCredentials for KubernetesCredentials {
-    async fn put(
-        &self,
-        target: CredentialSecret<'_>,
-        id: uuid::Uuid,
-        value: &[u8],
-    ) -> anyhow::Result<StoreVersion> {
-        Ok(KubernetesStore::in_cluster()?
-            .put(target, id, value)
-            .await?)
-    }
-
-    async fn destroy(&self, reference: &str, version: &str) -> anyhow::Result<()> {
-        Ok(KubernetesStore::in_cluster()?
-            .destroy(reference, version)
-            .await?)
     }
 }

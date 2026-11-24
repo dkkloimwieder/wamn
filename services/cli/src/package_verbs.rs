@@ -5,8 +5,8 @@ use std::path::PathBuf;
 use wamn_engine::component_admission::ReleaseComponentAdmission;
 use wamn_oci::package_artifact::OCI_CA_PATHS_ENV;
 use wamn_oci::package_artifact::PackageRegistry;
-use wamn_oci::release_package::RegistryPackagePublisher;
 use wamn_release::package_artifact::{ComponentPublisher, ComponentPush};
+use wamn_release::release_package::RegistryPackagePublisher;
 
 /// Registry access for package artifacts.
 #[derive(Debug, Args)]

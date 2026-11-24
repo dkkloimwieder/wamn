@@ -8,9 +8,8 @@ use std::{
 use anyhow::{Context as _, ensure};
 use serde_json::Value;
 
-use wamn_platform_install::release_chart::{
-    ChartImageValidation, POD_REGISTRY, pod_registry_reference,
-};
+use super::{POD_REGISTRY, pod_registry_reference};
+use crate::platform_registry::require_image_digest;
 
 /// A prepared platform chart validated before provider setup.
 #[derive(Debug)]
@@ -65,7 +64,7 @@ impl SelectedChart {
 ///
 /// # Errors
 /// Returns an error for missing payload files, invalid metadata, or unpinned images.
-pub fn select(chart: &Path, images: &impl ChartImageValidation) -> anyhow::Result<SelectedChart> {
+pub fn select(chart: &Path) -> anyhow::Result<SelectedChart> {
     let reference = chart.to_str().context("chart reference must be UTF-8")?;
     let download = if let Some(oci_reference) = reference.strip_prefix("oci://") {
         let (_, digest) = reference
@@ -80,22 +79,8 @@ pub fn select(chart: &Path, images: &impl ChartImageValidation) -> anyhow::Resul
         } else {
             Cow::Borrowed(reference)
         };
-        let mut command = std::process::Command::new("helm");
-        command
-            .args(["pull", pull_reference.as_ref(), "--untar", "--untardir"])
-            .arg(directory.path());
-        if loopback || authority == POD_REGISTRY {
-            command.arg("--plain-http");
-        }
-        if let Some(configuration) = std::env::var_os("WAMN_REGISTRY_AUTH_FILE") {
-            command.arg("--registry-config").arg(configuration);
-        }
-        let output = command.output().context("fetch the selected chart")?;
-        ensure!(
-            output.status.success(),
-            "fetch chart: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
+        let plain_http = loopback || authority == POD_REGISTRY;
+        wamn_kubernetes::helm::pull_chart(&pull_reference, directory.path(), plain_http)?;
         Some(directory)
     } else {
         None
@@ -140,11 +125,8 @@ pub fn select(chart: &Path, images: &impl ChartImageValidation) -> anyhow::Resul
         .as_str()
         .context("host has no image")?
         .to_owned();
-    images
-        .require_image_digest(&host)
-        .context("invalid selected host image")?;
-    validate_platform_images(&values["platform"], images)
-        .context("invalid selected platform image")?;
+    require_image_digest(&host).context("invalid selected host image")?;
+    validate_platform_images(&values["platform"]).context("invalid selected platform image")?;
     for name in [
         "ctl",
         "control",
@@ -189,27 +171,22 @@ fn require_file(file: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn validate_platform_images(
-    value: &Value,
-    images: &impl ChartImageValidation,
-) -> anyhow::Result<()> {
+fn validate_platform_images(value: &Value) -> anyhow::Result<()> {
     match value {
         Value::Object(fields) => {
             for (name, value) in fields {
                 if name == "image" {
                     if !value.is_null() && value != "" {
-                        images.require_image_digest(
-                            value.as_str().context("image must be a string")?,
-                        )?;
+                        require_image_digest(value.as_str().context("image must be a string")?)?;
                     }
                 } else {
-                    validate_platform_images(value, images)?;
+                    validate_platform_images(value)?;
                 }
             }
         }
         Value::Array(entries) => {
             for entry in entries {
-                validate_platform_images(entry, images)?;
+                validate_platform_images(entry)?;
             }
         }
         _ => {}
@@ -263,7 +240,6 @@ fn copy_package_output(from: &Path, to: &Path) -> anyhow::Result<()> {
 mod tests {
     use super::*;
     use serde_json::json;
-    use wamn_oci::platform_install::PlatformRegistry;
 
     use crate::release_chart::test_util::{Chart, prepared_chart as prepare_fixture};
 
@@ -304,7 +280,7 @@ mod tests {
     #[test]
     fn selection_accepts_independent_registries_and_tags() {
         let chart = prepared_chart();
-        let selected = select(&chart.0.join("platform/.."), &PlatformRegistry).unwrap();
+        let selected = select(&chart.0.join("platform/..")).unwrap();
         assert_eq!(selected.directory(), chart.0.canonicalize().unwrap());
         assert_eq!(
             selected.version,
@@ -329,7 +305,7 @@ mod tests {
     #[test]
     fn selection_requires_each_selected_core_image() {
         let chart = prepared_chart();
-        let mut values = select(&chart.0, &PlatformRegistry).unwrap().values;
+        let mut values = select(&chart.0).unwrap().values;
         let mut pointers = Vec::new();
         image_pointers(&values["platform"], "/platform", &mut pointers);
         for pointer in pointers {
@@ -337,7 +313,7 @@ mod tests {
             for missing in [Value::Null, json!("")] {
                 *values.pointer_mut(&pointer).unwrap() = missing;
                 write_values(&chart, &values);
-                assert!(select(&chart.0, &PlatformRegistry).is_err(), "{pointer}");
+                assert!(select(&chart.0).is_err(), "{pointer}");
             }
             *values.pointer_mut(&pointer).unwrap() = original;
         }
@@ -346,14 +322,14 @@ mod tests {
     #[test]
     fn selection_validates_all_selected_images_recursively() {
         let chart = prepared_chart();
-        let mut values = select(&chart.0, &PlatformRegistry).unwrap().values;
+        let mut values = select(&chart.0).unwrap().values;
         let digest = "a".repeat(64);
         values["platform"]["extra"] =
             json!({"nested": [{"image": format!("extra.example/optional@sha256:{digest}")}]});
         let mut pointers = Vec::new();
         image_pointers(&values["platform"], "/platform", &mut pointers);
         write_values(&chart, &values);
-        assert!(select(&chart.0, &PlatformRegistry).is_ok());
+        assert!(select(&chart.0).is_ok());
         for pointer in pointers {
             let original = values.pointer_mut(&pointer).unwrap().take();
             let image = original.as_str().unwrap();
@@ -366,7 +342,7 @@ mod tests {
             ] {
                 *values.pointer_mut(&pointer).unwrap() = invalid;
                 write_values(&chart, &values);
-                assert!(select(&chart.0, &PlatformRegistry).is_err(), "{pointer}");
+                assert!(select(&chart.0).is_err(), "{pointer}");
             }
             *values.pointer_mut(&pointer).unwrap() = original;
         }

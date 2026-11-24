@@ -69,10 +69,13 @@ async fn delete_locked(
     let Some((instance, drain_bound_seconds)) = system.delete_inputs(triple).await? else {
         if data {
             if release_present {
-                platform
-                    .cluster
-                    .remove_database(&platform.chart, &release, data)
-                    .await?;
+                wamn_platform_install::deployment::remove_database(
+                    &platform.cluster,
+                    &platform.chart,
+                    &release,
+                    data,
+                )
+                .await?;
                 lines.push("uninstalled the project release".into());
             }
             lines.extend(
@@ -169,10 +172,13 @@ async fn delete_locked(
         }
 
         let reader_release = (!data || release_present).then_some(release.as_str());
-        platform
-            .cluster
-            .delete_reader(&platform.chart, triple, reader_release)
-            .await?;
+        wamn_platform_install::deployment::delete_reader(
+            &platform.cluster,
+            &platform.chart,
+            triple,
+            reader_release,
+        )
+        .await?;
         lines.push(format!(
             "deleted the CDC reader of {triple} (or it was gone)"
         ));
@@ -233,10 +239,13 @@ async fn delete_locked(
         lock.release().await;
     }
     if release_present || (!data && cr_present) {
-        platform
-            .cluster
-            .remove_database(&platform.chart, &release, data)
-            .await?;
+        wamn_platform_install::deployment::remove_database(
+            &platform.cluster,
+            &platform.chart,
+            &release,
+            data,
+        )
+        .await?;
         lines.push("uninstalled the project release".into());
     }
     if data {

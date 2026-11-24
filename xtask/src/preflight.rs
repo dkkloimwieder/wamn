@@ -33,7 +33,7 @@ use serde_json::{Value, json};
 use wamn_environment::environment::document::EnvironmentFile;
 use wamn_environment::platform_environment;
 use wamn_environment::provision_project_env::workload;
-use wamn_kubernetes::release_chart::bundle;
+use wamn_platform_install::release_chart::bundle;
 use wamn_platform_install::release_chart::{POD_REGISTRY, pod_registry_reference};
 use wamn_postgres::build_database::PostgresBuildDatabase;
 use wamn_postgres::database::{capture_configuration, connection_for};
@@ -197,10 +197,7 @@ async fn render(
     directory: &Path,
     tally: &mut Tally,
 ) -> anyhow::Result<(Vec<Rendered>, Vec<String>)> {
-    let chart = bundle::select(
-        bundle_directory,
-        &wamn_oci::platform_install::PlatformRegistry,
-    )?;
+    let chart = bundle::select(bundle_directory)?;
     let charts = chart.directory().join("platform");
     let mut rendered = Vec::new();
 
@@ -313,7 +310,7 @@ async fn render(
         .as_str()
         .context("control configuration has no registry")?;
     let registry_token_metadata = control["registry_token_metadata"] == true;
-    let host_image = wamn_kubernetes::release_chart::image_set(chart.directory())
+    let host_image = wamn_platform_install::release_chart::image_set(chart.directory())
         .await?
         .host;
 

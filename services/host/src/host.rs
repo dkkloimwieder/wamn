@@ -534,9 +534,11 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     let database = Arc::clone(&pools);
     let authorization = Arc::new(
         Authorization::new(Arc::clone(&pools), database)
-            .with_credential_store(Box::new(
-                wamn_kubernetes::kubernetes::KubernetesCredentials::for_host(),
-            ))
+            .with_credential_store(
+                wamn_connection::connection_credentials::CredentialReader::new(
+                    wamn_kubernetes::kubernetes::KubernetesCredentials::for_host(),
+                ),
+            )
             .with_oauth_encryption(envelope),
     );
     let postgres = Arc::new(OperationHost::new(

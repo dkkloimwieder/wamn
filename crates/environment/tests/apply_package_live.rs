@@ -47,8 +47,8 @@ async fn package_apply_refuses_rebinding_an_existing_relation() -> anyhow::Resul
             })
         };
     let request = async |package| {
-        let directory = wamn_oci::package_source::read_package_root(&package)?;
-        let migration_root = wamn_oci::package_source::migration_root(&package.path);
+        let directory = wamn_release::package_source::read_package_root(&package)?;
+        let migration_root = wamn_release::package_source::migration_root(&package.path);
         apply_package::apply_package_from_directory(
             ApplyPackageRequest {
                 package,

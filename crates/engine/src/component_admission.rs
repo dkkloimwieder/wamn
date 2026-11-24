@@ -559,7 +559,7 @@ fn top_level_exports(component_bytes: &[u8]) -> anyhow::Result<Vec<String>> {
 #[derive(Debug)]
 pub struct ReleaseComponentAdmission;
 
-impl wamn_release::component_admission::ComponentAdmissionEngine for ReleaseComponentAdmission {
+impl wamn_component_policy::ComponentAdmissionEngine for ReleaseComponentAdmission {
     fn validate(
         &self,
         bytes: &[u8],

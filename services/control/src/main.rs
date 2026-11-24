@@ -84,7 +84,7 @@ async fn main() -> anyhow::Result<()> {
         Command::ProvisionOrg { org, database } => {
             let database = wamn_postgres::read_connection_config(&database).await?;
             let api = wamn_kubernetes::client::KubernetesApi::in_cluster()?;
-            let oauth_encryption = wamn_kubernetes::org_secrets::oauth_encryption().await?;
+            let oauth_encryption = wamn_platform_install::org_secrets::oauth_encryption().await?;
             wamn_platform_install::provision_org::provision_org(
                 &database,
                 &org,

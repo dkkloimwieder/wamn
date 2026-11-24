@@ -1,12 +1,10 @@
 //! Read exact component publication inputs.
+use crate::component_admission::{ComponentAdmission, ComponentPackage};
 use anyhow::Context as _;
 use std::collections::BTreeSet;
 use std::path::PathBuf;
-use wamn_component_policy::ComponentPackageCoordinate;
+use wamn_component_policy::{ComponentAdmissionEngine, ComponentPackageCoordinate};
 use wamn_package::ComponentDeclaration;
-use wamn_release::component_admission::{
-    ComponentAdmission, ComponentAdmissionEngine, ComponentPackage,
-};
 
 /// Source-owned inputs for one exact component admission.
 #[derive(Debug)]
@@ -43,7 +41,7 @@ pub fn admit_component(
             format!("parse component declaration {}", args.declaration.display())
         })?;
 
-    wamn_release::component_admission::admit_component(
+    crate::component_admission::admit_component(
         engine,
         &package,
         component_bytes,

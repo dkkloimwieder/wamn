@@ -7,8 +7,9 @@ use uuid::Uuid;
 use wamn_identity_protocol::PrincipalId;
 use wamn_registry::OrgId;
 
-use crate::connection_credentials::{CredentialSecret, StoreVersion, WriteCredentials};
+use crate::connection_credentials::{StoreVersion, WriteCredentials};
 use crate::references;
+use wamn_kubernetes::kubernetes::CredentialSecret;
 
 pub use crate::administration_store::{
     AdministrationStore, CopySource, Lookup, NewConnection, TokenChange,

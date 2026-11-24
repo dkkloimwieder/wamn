@@ -21,7 +21,6 @@ wamn-release.workspace = true
 wamn-registry.workspace = true
 
 [dev-dependencies]
-wamn-oci.workspace = true
 wamn-engine.workspace = true
 
 [lints]

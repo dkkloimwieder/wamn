@@ -31,6 +31,31 @@ pub async fn output(arguments: &[&OsStr]) -> anyhow::Result<std::process::Output
         .context("start helm")
 }
 
+/// Pull and unpack a chart at the selected registry reference.
+pub fn pull_chart(
+    reference: &str,
+    directory: &std::path::Path,
+    plain_http: bool,
+) -> anyhow::Result<()> {
+    let mut command = std::process::Command::new("helm");
+    command
+        .args(["pull", reference, "--untar", "--untardir"])
+        .arg(directory);
+    if plain_http {
+        command.arg("--plain-http");
+    }
+    if let Some(configuration) = std::env::var_os("WAMN_REGISTRY_AUTH_FILE") {
+        command.arg("--registry-config").arg(configuration);
+    }
+    let output = command.output().context("fetch the selected chart")?;
+    ensure!(
+        output.status.success(),
+        "fetch chart: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    Ok(())
+}
+
 pub fn template(entry: &serde_json::Value) -> anyhow::Result<Vec<serde_json::Value>> {
     use serde::Deserialize as _;
     use std::io::Write as _;

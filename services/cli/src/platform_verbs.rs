@@ -4,12 +4,11 @@ use std::path::PathBuf;
 
 use anyhow::Context as _;
 use clap::{Args, Subcommand, ValueEnum};
-use wamn_kubernetes::{
-    Target,
+use wamn_kubernetes::Target;
+use wamn_platform_install::{
     platform_install::{application_chart_reference, registry_egress},
     release_chart::bundle,
 };
-use wamn_oci::platform_install::PlatformRegistry;
 
 /// Platform verbs exposed by the product command.
 #[derive(Debug, Subcommand)]
@@ -105,7 +104,7 @@ async fn deploy(args: &DeployArgs) -> anyhow::Result<()> {
     let infrastructure = !matches!(args.only, Some(DeployChart::Platform));
     let platform = !matches!(args.only, Some(DeployChart::Infrastructure));
     let registry_egress = platform.then(|| registry_egress(&values)).transpose()?;
-    let chart = bundle::select(&args.chart, &PlatformRegistry)?;
+    let chart = bundle::select(&args.chart)?;
     let application_chart = application_chart_reference(&args.chart, chart.directory())?;
     let target = Target::developer("platform").await?;
     wamn_platform_install::install::install(

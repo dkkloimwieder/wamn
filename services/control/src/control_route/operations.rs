@@ -195,7 +195,7 @@ fn manifest(
             &[wamn_broker::nats::CREDENTIALS_KEY],
         );
     }
-    wamn_kubernetes::worker_mounts::mount_database_files(&mut job);
+    wamn_platform_install::worker_mounts::mount_database_files(&mut job);
     wamn_kubernetes::worker_mounts::mount_registry(&mut job, metadata);
     job
 }

@@ -11,7 +11,7 @@ use anyhow::Context as _;
 /// and migration bytes, so a test that changes those bytes under one
 /// coordinate presents another digest, as a second push would. It is not the
 /// package artifact digest of the tree
-/// (`wamn_oci::release_package::pack_package`).
+/// (`wamn_release::release_package::pack_package`).
 ///
 /// # Errors
 ///

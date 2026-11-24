@@ -19,10 +19,10 @@ use serde_json::{Value, json};
 use tokio::time::Instant;
 use wamn_component_policy::PackageManifest;
 use wamn_digest::Digest;
-use wamn_platform_install::deployment::Chart;
+use wamn_platform_install::release_chart::bundle::SelectedChart;
 use wamn_platform_install::release_chart::pod_registry_reference;
 use wamn_registry::Triple;
-use wamn_release::package_source::OpenPackage;
+use wamn_release::release_package::{OpenedPackage, open_package_digest};
 
 use super::{
     Platform, bindings,
@@ -37,7 +37,7 @@ pub enum Application<'a> {
         digest: Digest,
         integration_base: &'a str,
         component_base: &'a str,
-        chart: &'a dyn Chart,
+        chart: &'a SelectedChart,
         authority_port: write::AuthorityPort,
     },
     Apply(Digest),
@@ -48,7 +48,7 @@ pub enum Application<'a> {
 
 struct Packages {
     manifests: BTreeMap<PackageName, PackageManifest>,
-    artifacts: BTreeMap<PackageName, Box<dyn OpenPackage>>,
+    artifacts: BTreeMap<PackageName, OpenedPackage>,
 }
 
 impl Packages {
@@ -67,7 +67,7 @@ impl Packages {
             if !visited.insert(digest) {
                 continue;
             }
-            let (artifact, manifest) = registry.open_digest(&digest).await?;
+            let (artifact, manifest) = open_package_digest(&registry, &digest).await?;
             let pins_by_alias = &manifest
                 .deploy
                 .as_ref()
@@ -110,7 +110,7 @@ impl Packages {
         })
     }
 
-    fn order(&self) -> anyhow::Result<Vec<&dyn OpenPackage>> {
+    fn order(&self) -> anyhow::Result<Vec<&OpenedPackage>> {
         let bases = self
             .manifests
             .iter()
@@ -127,7 +127,7 @@ impl Packages {
             .collect::<Vec<_>>();
         Ok(stage::apply_order(&bases)?
             .into_iter()
-            .map(|index| self.artifacts[bases[index].0].as_ref())
+            .map(|index| &self.artifacts[bases[index].0])
             .collect())
     }
 }
@@ -162,7 +162,7 @@ pub async fn application(
     operation: Application<'_>,
 ) -> anyhow::Result<Value> {
     let triple = document.triple();
-    LifecycleLock::hold(
+    Box::pin(LifecycleLock::hold(
         DatabaseConnection::Direct(&platform.system_database_url),
         &triple,
         async |system| {
@@ -237,15 +237,14 @@ pub async fn application(
                     project.create_number_sequences(&sequences).await?;
                     let timeout =
                         Duration::from_secs(u64::try_from(document.readiness_budget_seconds)?);
-                    platform
-                        .cluster
-                        .apply_application(
-                            chart.directory(),
-                            &release,
-                            &values,
-                            deploy_job_deadline(platform).await?,
-                        )
-                        .await?;
+                    wamn_platform_install::deployment::apply_application(
+                        &platform.cluster,
+                        chart.directory(),
+                        &release,
+                        &values,
+                        deploy_job_deadline(platform).await?,
+                    )
+                    .await?;
                     for role in roles {
                         let workload = wamn_application_chart::workload_name(&release, role);
                         platform
@@ -264,7 +263,7 @@ pub async fn application(
                     let digest = if let Some(digest) = digest {
                         digest
                     } else {
-                        super::document::workload_release(&*platform.cluster, &triple, name)
+                        super::document::workload_release(&platform.cluster, &triple, name)
                             .await?
                             .context("application has no deployed package")?
                             .package_digest
@@ -273,12 +272,7 @@ pub async fn application(
                     let candidates = packages
                         .order()?
                         .into_iter()
-                        .map(|artifact| {
-                            sql::schema::Candidate::source(
-                                &*platform.packages,
-                                artifact.package_root(),
-                            )
-                        })
+                        .map(|artifact| sql::schema::Candidate::source(artifact.package_root()))
                         .collect::<Result<Vec<_>, _>>()?;
                     let key =
                         wamn_registry::project_env_key(&triple.org, &triple.project, &triple.env);
@@ -305,11 +299,11 @@ pub async fn application(
             })
             .await
         },
-    )
+    ))
     .await
 }
 
-fn use_pod_registry(chart: &dyn Chart, values: &mut serde_yaml::Value) -> anyhow::Result<()> {
+fn use_pod_registry(chart: &SelectedChart, values: &mut serde_yaml::Value) -> anyhow::Result<()> {
     if let Cow::Owned(image) = pod_registry_reference(chart.image("ingress")?) {
         values["platform"]["roles"]["ingress"]["image"] = image.into();
     }
@@ -349,17 +343,14 @@ async fn apply_sql(
     let migration =
         wamn_postgres::migration_scope::MigrationDatabase::Project.configuration(owner)?;
     for artifact in order {
-        apply_package(
-            platform,
-            ApplyPackageRequest {
-                package: artifact.package_root(),
-                database_url: owner.into(),
-                migration_database_url: migration.clone(),
-                org: triple.org.clone(),
-                project: triple.project.clone(),
-                environment: triple.env.clone(),
-            },
-        )
+        apply_package(ApplyPackageRequest {
+            package: artifact.package_root(),
+            database_url: owner.into(),
+            migration_database_url: migration.clone(),
+            org: triple.org.clone(),
+            project: triple.project.clone(),
+            environment: triple.env.clone(),
+        })
         .await?;
     }
     let cluster = connection
@@ -376,10 +367,13 @@ async fn apply_sql(
     values["cdcReader"] = json!({"pause":paused});
     let coord =
         wamn_registry::name::environment_resource_name(&triple.org, &triple.project, &triple.env);
-    platform
-        .cluster
-        .update_project(&platform.chart, &coord, values)
-        .await?;
+    wamn_platform_install::deployment::update_project(
+        &platform.cluster,
+        &platform.chart,
+        &coord,
+        values,
+    )
+    .await?;
     if schemas.is_empty() {
         return Ok(());
     }
@@ -425,7 +419,7 @@ async fn publication_schemas(
         }
         let digest =
             digest.with_context(|| format!("installed package {id} requires a pinned artifact"))?;
-        let (_, manifest) = registry.open_digest(&digest).await?;
+        let (_, manifest) = open_package_digest(&registry, &digest).await?;
         schemas.extend(
             manifest
                 .models
@@ -441,7 +435,7 @@ pub async fn reset(platform: &Platform, document: &EnvironmentDocument) -> anyho
     let triple = document.triple();
     // Reset has no application selection. Its SQL application sources are the
     // exact installed artifact digests of the whole database.
-    LifecycleLock::hold(
+    Box::pin(LifecycleLock::hold(
         DatabaseConnection::Direct(&platform.system_database_url),
         &triple,
         async |system| {
@@ -474,7 +468,7 @@ pub async fn reset(platform: &Platform, document: &EnvironmentDocument) -> anyho
                         let digest = digest.with_context(|| {
                             format!("installed package {id} requires a pinned artifact")
                         })?;
-                        let (artifact, manifest) = registry.open_digest(&digest).await?;
+                        let (artifact, manifest) = open_package_digest(&registry, &digest).await?;
                         ensure!(
                             manifest.package.id == id,
                             "installed artifact {digest} is not {id}"
@@ -503,6 +497,6 @@ pub async fn reset(platform: &Platform, document: &EnvironmentDocument) -> anyho
             )
             .await
         },
-    )
+    ))
     .await
 }

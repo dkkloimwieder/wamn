@@ -113,6 +113,15 @@ pub async fn wait(jobs: &Api<Job>, name: &str, timeout: Duration) -> anyhow::Res
 }
 
 /// Wait for the previous Job to terminate, then delete it and wait for the name to disappear.
+pub async fn remove_previous_in_target(
+    target: &Target,
+    name: &str,
+    timeout: Duration,
+) -> anyhow::Result<()> {
+    let jobs = Api::namespaced(target.client.client(), &target.namespace);
+    remove_previous(&jobs, name, timeout).await
+}
+
 pub async fn remove_previous(jobs: &Api<Job>, name: &str, timeout: Duration) -> anyhow::Result<()> {
     tokio::time::timeout(timeout, clear(jobs, name))
         .await

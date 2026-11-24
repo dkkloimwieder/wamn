@@ -1,13 +1,11 @@
 //! Stage database credentials from Kubernetes Secrets.
 
 use anyhow::Context as _;
-use k8s_openapi::api::core::v1::Secret;
-use kube::Api;
 use std::sync::Arc;
 use tokio::io::AsyncWriteExt as _;
 use wamn_postgres::database::{ConnectionConfig, DATABASE_DIR, credential_directory};
 
-use crate::client::{KubernetesApi, REQUEST_TIMEOUT};
+use wamn_kubernetes::client::{KubernetesApi, secret_entry};
 
 /// A worker's Kubernetes access to the database files it stages in its pod.
 #[derive(Debug)]
@@ -47,14 +45,10 @@ impl DatabaseFiles {
         let root = Path::new(DATABASE_DIR);
         let directory = credential_directory(root, &config.credentials.name)?;
         credential_directory(root, &config.server_ca.name)?;
-        let secrets = Api::<Secret>::namespaced(self.0.client(), &self.0.namespace);
-        let (login, ca) = tokio::time::timeout(REQUEST_TIMEOUT, async {
-            tokio::try_join!(
-                secrets.get(&config.credentials.name),
-                secrets.get(&config.server_ca.name)
-            )
-        })
-        .await??;
+        let (login, ca) = self
+            .0
+            .database_secrets(&config.credentials.name, &config.server_ca.name)
+            .await?;
         let credentials = match login.type_.as_deref() {
             Some("kubernetes.io/tls") => [
                 ("tls.crt", secret_entry(&login, "tls.crt")?),
@@ -99,15 +93,6 @@ impl DatabaseFiles {
         }
         Ok(())
     }
-}
-
-fn secret_entry<'a>(secret: &'a Secret, key: &str) -> anyhow::Result<&'a [u8]> {
-    secret
-        .data
-        .as_ref()
-        .and_then(|data| data.get(key))
-        .map(|bytes| bytes.0.as_slice())
-        .with_context(|| format!("database Secret key {key} is absent"))
 }
 
 /// The worker could not stage a database's login or CA files.

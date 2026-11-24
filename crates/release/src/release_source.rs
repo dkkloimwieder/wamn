@@ -1,22 +1,22 @@
 //! Read built package documents for release assembly.
+use crate::component_admission::ComponentAdmission;
 use std::collections::BTreeMap;
 use std::fmt;
 use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
+use wamn_component_policy::ComponentAdmissionEngine;
 #[cfg(test)]
 use wamn_edge_document::ServingRoute;
 use wamn_package::{ServingAttachment, canonical_name::CanonicalName};
 use wamn_registry::ProjectEnvKey;
-use wamn_release::component_admission::{ComponentAdmission, ComponentAdmissionEngine};
-use wamn_release::package_source::LocalReleaseSource;
 
 use crate::component_declaration::{authored_base_digests, render_package_declaration};
-use crate::release_component::{AdmitComponentRequest, admit_component};
-use wamn_release::publish_release::{
+use crate::publish_release::{
     AssembledRelease, PublishManifestError, PublishManifestErrorType, PublishReleaseRequest,
     RouteContracts, merge_package_attachment_documents, route_contracts,
 };
+use crate::release_component::{AdmitComponentRequest, admit_component};
 
 type PackageManifestSources = (
     BTreeMap<wamn_package::PackageName, wamn_component_policy::PackageManifest>,
@@ -103,12 +103,12 @@ pub fn read_package_manifests(
 pub fn assemble_release(
     args: &PublishReleaseRequest,
     roots: &[PathBuf],
-    admissions: &[wamn_release::component_admission::ComponentAdmission],
-    palette: &[wamn_release::palette::PaletteComponent],
+    admissions: &[crate::component_admission::ComponentAdmission],
+    palette: &[crate::palette::PaletteComponent],
 ) -> anyhow::Result<AssembledRelease> {
     let authored = read_package_attachments(roots)?;
     let (manifests, contracts) = read_package_manifests(roots)?;
-    wamn_release::publish_release::assemble_release(
+    crate::publish_release::assemble_release(
         args, &authored, &manifests, &contracts, admissions, palette,
     )
 }
@@ -126,8 +126,8 @@ impl fmt::Debug for LocalReleaseFiles<'_> {
     }
 }
 
-impl LocalReleaseSource for LocalReleaseFiles<'_> {
-    fn admit(
+impl LocalReleaseFiles<'_> {
+    pub fn admit(
         &self,
         package: &Path,
         component: &CanonicalName,
@@ -152,7 +152,7 @@ impl LocalReleaseSource for LocalReleaseFiles<'_> {
         )
     }
 
-    fn assemble(
+    pub fn assemble(
         &self,
         request: &PublishReleaseRequest,
         package: &Path,
@@ -242,7 +242,7 @@ fn package_route(
                 source,
             )
         })?;
-    wamn_release::publish_release::package_route(&manifest, component, operation)
+    crate::publish_release::package_route(&manifest, component, operation)
 }
 
 #[cfg(test)]

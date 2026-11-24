@@ -16,7 +16,8 @@ use std::fmt;
 
 use anyhow::Context as _;
 use wamn_component_policy::{
-    AdmittedComponent, ComponentAdmissionRequest, ComponentDescriptor, ComponentPackageCoordinate,
+    AdmittedComponent, ComponentAdmissionEngine, ComponentAdmissionRequest, ComponentDescriptor,
+    ComponentPackageCoordinate,
 };
 use wamn_connection_type::ComponentConnectionRequirement;
 use wamn_connection_type::ConnectionTypeDescriptor;
@@ -206,15 +207,6 @@ pub fn admit_component(
         connections: facts.connections.into_boxed_slice(),
         requirements: requirements.into_boxed_slice(),
     })
-}
-
-/// Check a component against the runtime's import and export rules.
-pub trait ComponentAdmissionEngine: Send + Sync {
-    fn validate(
-        &self,
-        bytes: &[u8],
-        request: ComponentAdmissionRequest,
-    ) -> anyhow::Result<ComponentDescriptor>;
 }
 
 /// Admit component bytes and bind the component to the package's operation contract.

@@ -116,17 +116,16 @@ impl Configuration {
             )?),
             chart: self.chart.clone(),
             chart_download: None,
-            packages: std::sync::Arc::new(wamn_oci::deploy_packages::DeployPackages {
+            packages: std::sync::Arc::new(wamn_release::deploy_packages::DeployPackages {
                 registry_token_metadata: self.registry_token_metadata,
                 registry_auth_file: REGISTRY_AUTH_FILE.into(),
                 insecure_registry,
                 oci_ca_paths: self.oci_ca_paths.clone(),
             }),
             select_chart: |path| {
-                Ok(Arc::new(wamn_kubernetes::release_chart::bundle::select(
-                    path,
-                    &wamn_oci::platform_install::PlatformRegistry,
-                )?))
+                Ok(Arc::new(
+                    wamn_platform_install::release_chart::bundle::select(path)?,
+                ))
             },
             registry_token_metadata: self.registry_token_metadata,
             oci_ca_paths: self.oci_ca_paths.clone(),

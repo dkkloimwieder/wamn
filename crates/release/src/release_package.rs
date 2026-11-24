@@ -2,9 +2,7 @@
 //! Publication admits the build's components and pins the stock OCI images.
 
 pub(super) mod plan;
-use plan::{
-    image_manifest, package_coordinate, refuse_workflow_declarations, tar_layer, validate_append,
-};
+use plan::{package_coordinate, refuse_workflow_declarations, tar_layer, validate_append};
 use wamn_package::PackageCoordinate;
 use wamn_package::manifest::PolicyContractState;
 use wamn_package::manifest::deploy::PublishedComponent;
@@ -14,28 +12,26 @@ use std::os::unix::fs::DirBuilderExt as _;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use crate::package_artifact::registry_credentials::read_registry_credentials;
 use anyhow::{Context as _, bail, ensure};
-use oci_client::manifest::OCI_IMAGE_MEDIA_TYPE;
 use wamn_component_policy::PackageManifest;
 use wamn_digest::Digest;
+use wamn_oci::package_artifact::registry_credentials::read_registry_credentials;
 use wamn_oci_reference::{OciTag, ParseOciTagError, component_artifact_reference};
 
 use crate::component_declaration::package_declaration;
-use crate::package_artifact::{CREATED_ANNOTATION, PulledPackage, Repository, is_dev_tag};
-pub use crate::package_artifact::{
-    NoPackageArtifact, PACKAGE_ARTIFACT_TYPE, PACKAGE_MANIFEST_MEDIA_TYPE, PACKAGE_TAR_MEDIA_TYPE,
-    PackageRegistry, PackedLayer,
+use crate::package_artifact::{
+    ComponentPublisher, ComponentPush, VerifiedComponent, verify_component,
 };
+use crate::package_source::PackageRoot;
+use wamn_component_policy::ComponentAdmissionEngine;
 use wamn_digest::bytes_sha256;
-use wamn_release::component_admission::ComponentAdmissionEngine;
-use wamn_release::package_artifact::{
-    ComponentPublisher, ComponentPush, PackagePublisher, VerifiedComponent, verify_component,
+use wamn_oci::package_artifact::{CREATED_ANNOTATION, PulledPackage, Repository, is_dev_tag};
+use wamn_oci::package_artifact::{
+    EMPTY_CONFIG, NoPackageArtifact, PACKAGE_ARTIFACT_TYPE, PACKAGE_MANIFEST_MEDIA_TYPE,
+    PACKAGE_TAR_MEDIA_TYPE, PackageRegistry, PackedLayer, artifact_layer, encode_artifact_manifest,
+    wasm_layer_matches,
 };
-use wamn_release::package_source::PackageRoot;
 
-const EMPTY_CONFIG_MEDIA_TYPE: &str = "application/vnd.oci.empty.v1+json";
-const EMPTY_CONFIG: &[u8] = b"{}";
 const TITLE_ANNOTATION: &str = "org.opencontainers.image.title";
 const CREATED_FILE: &str = "artifact-created-at";
 const PACKAGE_ID_ANNOTATION: &str = "wamn.package.id";
@@ -135,7 +131,13 @@ fn pack_layers(manifest_bytes: Vec<u8>, migrations: PackedLayer) -> anyhow::Resu
         (PACKAGE_ID_ANNOTATION.to_owned(), package_id.to_string()),
         (PACKAGE_VERSION_ANNOTATION.to_owned(), version.to_string()),
     ]);
-    let manifest = image_manifest(&layers, &annotations, OCI_IMAGE_MEDIA_TYPE);
+    let manifest = encode_artifact_manifest(
+        PACKAGE_ARTIFACT_TYPE,
+        layers
+            .iter()
+            .map(|layer| artifact_layer(&layer.media_type, &layer.bytes, Some(&layer.annotations))),
+        Some(&annotations),
+    );
     Ok(PackedPackage {
         package_id,
         version,
@@ -312,7 +314,7 @@ fn admit_components(
         )?;
         if !manifest.connections.is_empty() {
             let declaration = &manifest.components[name.as_str()];
-            wamn_release::connection_requirement::validate_connections(
+            crate::connection_requirement::validate_connections(
                 verified.bytes(),
                 manifest,
                 &declaration.connections,
@@ -340,20 +342,16 @@ async fn push_artifact(repository: &Repository, packed: PackedPackage) -> anyhow
     {
         let digest = bytes_sha256(&bytes).to_string();
         repository
-            .client
-            .push_blob(&repository.reference, bytes, &digest)
+            .push_blob(bytes, &digest)
             .await
-            .with_context(|| format!("push a blob of package artifact {}", repository.reference))?;
+            .with_context(|| {
+                format!("push a blob of package artifact {}", repository.reference())
+            })?;
     }
     repository
-        .client
-        .push_manifest_raw(
-            &repository.reference,
-            packed.manifest,
-            http::HeaderValue::from_static(OCI_IMAGE_MEDIA_TYPE),
-        )
+        .push_image_manifest(packed.manifest)
         .await
-        .with_context(|| format!("push package artifact {}", repository.reference))?;
+        .with_context(|| format!("push package artifact {}", repository.reference()))?;
     Ok(())
 }
 
@@ -383,9 +381,9 @@ impl<'a> RegistryPackagePublisher<'a> {
     }
 }
 
-#[async_trait::async_trait]
-impl PackagePublisher for RegistryPackagePublisher<'_> {
-    async fn publish(&self, mut roots: Vec<PathBuf>) -> anyhow::Result<Digest> {
+impl RegistryPackagePublisher<'_> {
+    /// Publish a built source closure in dependency order.
+    pub async fn publish(&self, mut roots: Vec<PathBuf>) -> anyhow::Result<Digest> {
         let variable = |name: &str| {
             std::env::var(name).with_context(|| format!("set {name} for source publication"))
         };
@@ -616,16 +614,12 @@ async fn component_image(
         oci_ca_paths: registry.oci_ca_paths.clone(),
     };
     let tag: OciTag = artifact.tag().parse()?;
-    let auth = crate::package_artifact::registry_auth(credentials.as_ref());
-    let repository = Repository::with_auth(&transport, &tag, auth)?;
+    let repository = Repository::with_credentials(&transport, &tag, credentials)?;
     let Some((bytes, image)) = repository.manifest().await? else {
         return Ok(None);
     };
-    let manifest: oci_client::manifest::OciImageManifest = serde_json::from_slice(&bytes)?;
     ensure!(
-        matches!(manifest.layers.as_slice(), [layer]
-            if layer.media_type == "application/wasm"
-                && layer.digest.parse::<Digest>().ok().as_ref() == Some(digest)),
+        wasm_layer_matches(&bytes, digest)?,
         "component image {artifact} differs from its byte pin"
     );
     Ok(Some(image))
@@ -643,14 +637,10 @@ async fn push_component_artifact(
             .context("derive the component artifact reference")?;
     let credentials = read_registry_credentials(&registry.registry_auth_file, artifact.registry())
         .context("load the component registry push credential")?;
-    let reference = oci_client::Reference::with_tag(
-        artifact.registry().to_owned(),
-        artifact.repository().to_owned(),
-        artifact.tag().to_owned(),
-    );
+    let reference = artifact.to_string();
     publisher
         .push(ComponentPush {
-            reference: &reference.to_string(),
+            reference: &reference,
             component,
             credentials: credentials
                 .as_ref()
@@ -670,6 +660,13 @@ pub struct OpenedPackage {
 }
 
 impl OpenedPackage {
+    /// Read the opened package's verified manifest.
+    pub fn read_manifest(&self) -> anyhow::Result<PackageManifest> {
+        let path = wamn_codegen::package_manifest_path(self.root());
+        let bytes = std::fs::read(&path).with_context(|| format!("read {}", path.display()))?;
+        Ok(PackageManifest::from_slice(&bytes)?)
+    }
+
     /// The package root.
     pub fn root(&self) -> &Path {
         &self.root
@@ -849,13 +846,15 @@ mod tests {
         );
         write(&root, CREATED_FILE, b"2026-11-01T00:00:00Z");
         let packed = pack_package(&root)?;
-        let manifest: oci_client::manifest::OciImageManifest =
-            serde_json::from_slice(&packed.manifest)?;
-        let annotations = manifest.annotations.context("published annotations")?;
+        let manifest: serde_json::Value = serde_json::from_slice(&packed.manifest)?;
+        let annotations = manifest["annotations"]
+            .as_object()
+            .context("published annotations")?;
         assert_eq!(
             chrono::DateTime::parse_from_rfc3339(
                 annotations
                     .get(CREATED_ANNOTATION)
+                    .and_then(serde_json::Value::as_str)
                     .context("publication time")?
             )?,
             chrono::DateTime::parse_from_rfc3339("2026-11-01T00:00:00Z")?,

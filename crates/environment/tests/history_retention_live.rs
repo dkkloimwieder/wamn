@@ -137,8 +137,8 @@ async fn apply(url: &str, migration: &str, package: &Path) -> anyhow::Result<App
             wamn_test_infrastructure::fixture_digest::fixture_artifact_digest(package)?,
         ),
     };
-    let directory = wamn_oci::package_source::read_package_root(&package)?;
-    let migration_root = wamn_oci::package_source::migration_root(&package.path);
+    let directory = wamn_release::package_source::read_package_root(&package)?;
+    let migration_root = wamn_release::package_source::migration_root(&package.path);
     apply_package::apply_package_from_directory(
         ApplyPackageRequest {
             migration_database_url: migration.to_owned(),

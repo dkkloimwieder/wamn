@@ -11,14 +11,16 @@ postgres-protocol.workspace = true
 sha2.workspace = true
 url.workspace = true
 sqlx = { workspace = true, features = ["migrate", "postgres", "runtime-tokio", "tls-rustls"] }
+wamn-kubernetes.workspace = true
+tempfile.workspace = true
+wamn-oci.workspace = true
 wamn-role.workspace = true
 anyhow.workspace = true
-async-trait.workspace = true
 ring.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 serde_yaml.workspace = true
-tokio = { workspace = true, features = ["time"] }
+tokio = { workspace = true, features = ["time", "fs", "io-util", "macros"] }
 wamn-digest.workspace = true
 wamn-postgres.workspace = true
 wamn-registry.workspace = true

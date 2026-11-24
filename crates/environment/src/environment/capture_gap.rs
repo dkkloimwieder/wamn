@@ -18,14 +18,13 @@ pub(super) async fn set_paused(
 ) -> anyhow::Result<()> {
     let name =
         wamn_registry::name::environment_resource_name(&triple.org, &triple.project, &triple.env);
-    platform
-        .cluster
-        .update_project(
-            &platform.chart,
-            &name,
-            json!({"cdcReader":{"pause":paused}}),
-        )
-        .await?;
+    wamn_platform_install::deployment::update_project(
+        &platform.cluster,
+        &platform.chart,
+        &name,
+        json!({"cdcReader":{"pause":paused}}),
+    )
+    .await?;
     if !paused && platform.cluster.reader_exists(triple).await? {
         platform.cluster.wait_reader_ready(triple).await?;
     }

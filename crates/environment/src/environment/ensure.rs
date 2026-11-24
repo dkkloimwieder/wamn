@@ -29,11 +29,14 @@ pub(super) async fn suspend_project(
         drain_bound_seconds,
     )
     .await?;
-    platform
-        .cluster
-        .prepare_host_upgrade(&platform.chart, name.clone(), &values)
-        .await?
-        .await?;
+    wamn_platform_install::deployment::prepare_host_upgrade(
+        &platform.cluster,
+        &platform.chart,
+        name.clone(),
+        &values,
+    )
+    .await?
+    .await?;
     let connection = system.connection(triple).await?;
     let started = Instant::now();
     let mut deadline = started + Duration::from_secs(120);
@@ -111,10 +114,13 @@ pub(super) async fn prepare_host_upgrade<'a>(
                 .context("invalid host replica count")?,
         )?
     };
-    let upgrade = platform
-        .cluster
-        .prepare_host_upgrade(&platform.chart, name, &values)
-        .await?;
+    let upgrade = wamn_platform_install::deployment::prepare_host_upgrade(
+        &platform.cluster,
+        &platform.chart,
+        name,
+        &values,
+    )
+    .await?;
     Ok((replicas, upgrade))
 }
 
@@ -149,7 +155,7 @@ async fn host_values(
     .filter_map(|key| group.get(key).map(|value| (key, value)))
     .map(|(key, value)| Ok((key.into(), serde_json::to_value(value)?)))
     .collect::<serde_json::Result<_>>()?;
-    let image = platform.cluster.host_image(&platform.chart).await?;
+    let image = wamn_platform_install::deployment::host_image(&platform.chart).await?;
 
     let mut eligible = serde_json::Map::new();
     for project in projects {

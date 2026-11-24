@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 use std::path::Path;
 use wamn_environment::environment::document::EnvironmentFile;
 use wamn_registry::ApplicationName;
-use wamn_release::package_artifact::PackagePublisher;
+use wamn_release::release_package::RegistryPackagePublisher;
 
 use super::{Deploy, DevInvalidationSource, WatchInputs};
 use crate::source_deploy::{self, PackageSource, SourceBuild};
@@ -44,7 +44,7 @@ impl<'a, B: SourceBuild> Development<'a, B> {
         self,
         source: Option<S>,
         shutdown: tokio::sync::watch::Receiver<bool>,
-        publisher: &dyn PackagePublisher,
+        publisher: &RegistryPackagePublisher<'_>,
         deployer: &impl Deploy,
         report_retry: impl Fn(&anyhow::Error),
     ) -> anyhow::Result<()> {

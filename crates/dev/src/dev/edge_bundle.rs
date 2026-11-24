@@ -17,8 +17,8 @@ use wamn_identity_protocol::ADMIN_ROLE;
 use wamn_package::PackageCoordinate;
 use wamn_registry::project_env_key;
 
-use wamn_release::package_source::LocalReleaseSource;
 use wamn_release::publish_release::PublishReleaseRequest;
+use wamn_release::release_source::LocalReleaseFiles;
 
 /// The environment coordinate from the edge configuration's `[target]`.
 /// The `project_env_key` of the release is [`project_env_key`] of the three.
@@ -41,7 +41,7 @@ impl EdgeTarget<'_> {
 ///
 /// It admits the bytes and assembles the release without a database or session.
 pub fn write_package(
-    release: &dyn LocalReleaseSource,
+    release: &LocalReleaseFiles<'_>,
     package: &Path,
     component: &wamn_package::canonical_name::CanonicalName,
     bytes: &Path,

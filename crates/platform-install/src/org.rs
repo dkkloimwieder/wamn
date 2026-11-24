@@ -8,6 +8,7 @@ use wamn_registry::OrgId;
 
 use crate::provision_org::{APPLY_SECRET, CONTROL_SECRET, OAUTH_ENCRYPTION_INPUT};
 use crate::release_chart::POD_REGISTRY;
+use crate::{org_install::OrgInstaller, platform_registry::docker_configuration};
 use wamn_postgres::database::ConnectionConfig;
 
 const LOCAL_PROVIDER: &str = "kind";
@@ -23,50 +24,8 @@ pub struct OrgInputs {
     pub api_server: Vec<Value>,
 }
 
-/// Org chart and Job operations in the target cluster.
-pub trait OrgInstallation {
-    fn inputs(&self) -> impl Future<Output = anyhow::Result<OrgInputs>> + Send;
-    fn install_release(
-        &self,
-        org: &OrgId,
-        values: &Value,
-    ) -> impl Future<Output = anyhow::Result<()>> + Send;
-    fn write_registry_credentials(
-        &self,
-        org: &OrgId,
-        credentials: &[u8],
-    ) -> impl Future<Output = anyhow::Result<()>> + Send;
-    fn provision_logins(
-        &self,
-        org: &OrgId,
-        image: &str,
-        database: &ConnectionConfig,
-    ) -> impl Future<Output = anyhow::Result<String>> + Send;
-    fn reload_control(
-        &self,
-        org: &OrgId,
-        job_uid: &str,
-    ) -> impl Future<Output = anyhow::Result<()>> + Send;
-    fn invite_owner(
-        &self,
-        org: &OrgId,
-        image: &str,
-        owner: &str,
-    ) -> impl Future<Output = anyhow::Result<()>> + Send;
-}
-
-/// Project the login from the developer registry to the registry visible to pods.
-pub trait RegistryCredentials {
-    fn docker_configuration(&self, registry: &str, pod_registry: &str) -> anyhow::Result<Vec<u8>>;
-}
-
 /// Install the org release, provision its logins, then invite its owner.
-pub async fn create(
-    org: &OrgId,
-    owner: &str,
-    installation: &impl OrgInstallation,
-    registry: &impl RegistryCredentials,
-) -> anyhow::Result<()> {
+pub async fn create(org: &OrgId, owner: &str, installation: &OrgInstaller) -> anyhow::Result<()> {
     let OrgInputs {
         values: inputs,
         database,
@@ -94,10 +53,10 @@ pub async fn create(
     let credentials = if registry_token_metadata(inputs)? {
         None
     } else {
-        Some(
-            registry
-                .docker_configuration(field(inputs, "registry")?, field(&values, "registry")?)?,
-        )
+        Some(docker_configuration(
+            field(inputs, "registry")?,
+            field(&values, "registry")?,
+        )?)
     };
     installation.install_release(org, &values).await?;
     if let Some(credentials) = credentials {

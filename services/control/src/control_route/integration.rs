@@ -3,12 +3,12 @@
 use super::{ControlRoutes, ProjectTarget, Refusal, parse};
 use serde_json::{Value, json};
 use sqlx::Connection as _;
+use wamn_connection::connection_credentials::KubernetesStore;
 use wamn_connection::{
     administration::{self, ConnectionError},
     references,
 };
 use wamn_identity_protocol::PrincipalId;
-use wamn_kubernetes::kubernetes::KubernetesCredentials;
 use wamn_postgres::project_connections::Administration;
 use wamn_routes::HostAttachment;
 
@@ -132,7 +132,7 @@ impl ControlRoutes<'_> {
                 )
             }),
         );
-        let credentials = KubernetesCredentials::default();
+        let credentials = KubernetesStore;
         let mut result = administration::execute(
             &mut database,
             &credentials,
@@ -169,7 +169,7 @@ impl ControlRoutes<'_> {
         }
         project.commit().await?;
         if let Some(credentials) = result.get("credentials") {
-            references::destroy_credentials(&KubernetesCredentials::default(), credentials).await?;
+            references::destroy_credentials(&KubernetesStore, credentials).await?;
         }
         if let Some(row) = result.as_object_mut() {
             let _ = row.remove("credentials");

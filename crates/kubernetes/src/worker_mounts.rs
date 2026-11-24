@@ -46,15 +46,3 @@ pub fn mount_identity_worker_token(job: &mut Value, token_file: &Path, audience:
         json!({"name":"identity-token","mountPath":token_file.parent().expect("token directory"),"readOnly":true}),
     ]);
 }
-
-/// Mount the worker's credential staging directory.
-pub fn mount_database_files(job: &mut Value) {
-    job["spec"]["template"]["spec"]["volumes"]
-        .as_array_mut()
-        .expect("worker volumes")
-        .push(json!({"name":"database-files","emptyDir":{"medium":"Memory"}}));
-    job::container(job)["volumeMounts"]
-        .as_array_mut()
-        .expect("worker volume mounts")
-        .push(json!({"name":"database-files","mountPath":wamn_postgres::database::DATABASE_DIR}));
-}

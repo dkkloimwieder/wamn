@@ -4,48 +4,47 @@ use std::{net::IpAddr, path::Path, time::Duration};
 
 use anyhow::Context as _;
 use serde_json::Value;
-use wamn_platform_install::install::PlatformInstallation;
-
-use crate::{Target, helm, job};
+use wamn_kubernetes::{Target, helm, job};
 
 const INFRASTRUCTURE_RELEASE: &str = "wamn-infrastructure";
 const PLATFORM_RELEASE: &str = "wamn";
 const SYSTEM_SQL_JOB: &str = "wamn-system-sql";
 const ROLLOUT_TIMEOUT: Duration = Duration::from_mins(16);
 
-impl PlatformInstallation for Target {
-    async fn install_infrastructure(&self, charts: &Path, values: &Path) -> anyhow::Result<()> {
-        upgrade(
-            self,
-            &charts.join("infra"),
-            INFRASTRUCTURE_RELEASE,
-            &[values],
-            helm::Install::CreateNamespace,
-        )
-        .await
-    }
+pub(crate) async fn install_infrastructure(
+    target: &Target,
+    charts: &Path,
+    values: &Path,
+) -> anyhow::Result<()> {
+    upgrade(
+        target,
+        &charts.join("infra"),
+        INFRASTRUCTURE_RELEASE,
+        &[values],
+        helm::Install::CreateNamespace,
+    )
+    .await
+}
 
-    async fn install_platform(
-        &self,
-        charts: &Path,
-        values: &Path,
-        overrides: &Value,
-    ) -> anyhow::Result<()> {
-        let chart_values = tempfile::NamedTempFile::new()
-            .context("create a file for the resolved platform values")?;
-        serde_json::to_writer(chart_values.as_file(), overrides)
-            .context("write the resolved platform values")?;
-        let jobs = kube::Api::namespaced(self.client.client(), &self.namespace);
-        job::remove_previous(&jobs, SYSTEM_SQL_JOB, ROLLOUT_TIMEOUT).await?;
-        upgrade(
-            self,
-            &charts.join("platform"),
-            PLATFORM_RELEASE,
-            &[values, chart_values.path()],
-            helm::Install::ExistingNamespace,
-        )
-        .await
-    }
+pub(crate) async fn install_platform(
+    target: &Target,
+    charts: &Path,
+    values: &Path,
+    overrides: &Value,
+) -> anyhow::Result<()> {
+    let chart_values =
+        tempfile::NamedTempFile::new().context("create a file for the resolved platform values")?;
+    serde_json::to_writer(chart_values.as_file(), overrides)
+        .context("write the resolved platform values")?;
+    job::remove_previous_in_target(target, SYSTEM_SQL_JOB, ROLLOUT_TIMEOUT).await?;
+    upgrade(
+        target,
+        &charts.join("platform"),
+        PLATFORM_RELEASE,
+        &[values, chart_values.path()],
+        helm::Install::ExistingNamespace,
+    )
+    .await
 }
 
 /// Resolve the published application chart reference used by the platform.

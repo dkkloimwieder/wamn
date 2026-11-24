@@ -5,9 +5,8 @@ use wamn_routes::HostAttachment;
 
 use serde_json::{Value, json};
 use wamn_connection::administration;
-use wamn_connection::connection_credentials::ReadCredentials as _;
+use wamn_connection::connection_credentials::KubernetesStore;
 use wamn_identity_protocol::PrincipalId;
-use wamn_kubernetes::kubernetes::KubernetesCredentials;
 use wamn_postgres::project_connections::{Administration, required_connection_version};
 
 use super::{ControlRoutes, ProjectTarget, Refusal, parse};
@@ -150,7 +149,7 @@ impl ControlRoutes<'_> {
             ),
             None if context["credential"].is_object() => {
                 let stored = &context["credential"];
-                let bytes = KubernetesCredentials::default()
+                let bytes = KubernetesStore
                     .read(
                         stored["ref"]
                             .as_str()

@@ -22,9 +22,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use wamn_identity_protocol::nats::BrokerIdentity;
-use wamn_platform_install::deployment::{Chart, Cluster, DatabaseFiles};
+use wamn_kubernetes::Target;
+use wamn_platform_install::{database_files::DatabaseFiles, release_chart::bundle::SelectedChart};
 
-type ChartSelector = fn(&Path) -> anyhow::Result<Arc<dyn Chart>>;
+type ChartSelector = fn(&Path) -> anyhow::Result<Arc<SelectedChart>>;
 
 /// The platform inputs of the lifecycle verbs.
 #[derive(Debug)]
@@ -32,14 +33,14 @@ pub struct Platform {
     /// The system database URL selected for this verb.
     pub system_database_url: String,
     /// The operation worker's writer for database credentials.
-    pub database_files: Option<Arc<dyn DatabaseFiles>>,
+    pub database_files: Option<Arc<DatabaseFiles>>,
     /// The cluster, its context and the operator release's namespace (R6).
-    pub cluster: Arc<dyn Cluster>,
+    pub cluster: Arc<Target>,
     /// A stamped release chart directory.
     pub chart: PathBuf,
     /// Keep fetched chart files alive for this operation.
-    pub chart_download: Option<Arc<dyn Chart>>,
-    pub packages: Arc<dyn wamn_release::package_source::PackageSource>,
+    pub chart_download: Option<Arc<SelectedChart>>,
+    pub packages: Arc<wamn_release::deploy_packages::DeployPackages>,
     pub select_chart: ChartSelector,
     pub registry_token_metadata: bool,
     pub oci_ca_paths: Vec<PathBuf>,
@@ -72,7 +73,7 @@ impl Platform {
         config: &wamn_postgres::database::ConnectionConfig,
     ) -> anyhow::Result<()> {
         if let Some(files) = &self.database_files {
-            files.materialize(config).await?;
+            Box::pin(files.materialize(config)).await?;
         }
         Ok(())
     }

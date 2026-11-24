@@ -8,7 +8,7 @@ use wamn_package::PackageName;
 use wamn_package::manifest::BaseDependencyRequirement;
 use wamn_package::manifest::PackageIdentity;
 use wamn_package::manifest::source_name::SourceName;
-use wamn_release::package_artifact::PackagePublisher;
+use wamn_release::release_package::RegistryPackagePublisher;
 
 use anyhow::{Context as _, ensure};
 
@@ -41,7 +41,7 @@ pub trait SourceBuild: Sync {
 /// Build and publish source using its committed database evidence.
 pub async fn publish_from_env(
     build: &impl SourceBuild,
-    publisher: &dyn PackagePublisher,
+    publisher: &RegistryPackagePublisher<'_>,
     document: &EnvironmentDocument,
     root: &Path,
 ) -> anyhow::Result<(wamn_registry::ApplicationName, wamn_digest::Digest)> {
@@ -52,7 +52,7 @@ pub async fn publish_from_env(
 /// Build and publish the source documents already compiled for this dev pass.
 pub(crate) async fn publish_development<B: SourceBuild>(
     build: &B,
-    publisher: &dyn PackagePublisher,
+    publisher: &RegistryPackagePublisher<'_>,
     application: wamn_registry::ApplicationName,
     sources: Vec<B::Prepared>,
 ) -> anyhow::Result<(wamn_registry::ApplicationName, wamn_digest::Digest)> {
@@ -68,7 +68,7 @@ pub(crate) async fn publish_development<B: SourceBuild>(
 
 async fn build_and_publish<B: SourceBuild>(
     build: &B,
-    publisher: &dyn PackagePublisher,
+    publisher: &RegistryPackagePublisher<'_>,
     application: wamn_registry::ApplicationName,
     sources: Vec<B::Prepared>,
     mode: BuildMode,
@@ -84,7 +84,7 @@ async fn build_and_publish<B: SourceBuild>(
 /// Publish the selected package's existing build output without rebuilding.
 pub async fn publish_built_from_env(
     build: &impl SourceBuild,
-    publisher: &dyn PackagePublisher,
+    publisher: &RegistryPackagePublisher<'_>,
     root: &Path,
 ) -> anyhow::Result<wamn_digest::Digest> {
     let root = build.built_root(&root.canonicalize()?);

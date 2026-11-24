@@ -114,7 +114,7 @@ impl Execution {
                 wamn_identity_client::TOKEN_AUDIENCE,
             );
         }
-        wamn_kubernetes::worker_mounts::mount_database_files(&mut job);
+        wamn_platform_install::worker_mounts::mount_database_files(&mut job);
         wamn_kubernetes::worker_mounts::mount_registry(&mut job, self.registry_token_metadata);
         wamn_kubernetes::job::submit(&api, &mut job, payload).await
     }
@@ -124,7 +124,7 @@ impl Execution {
 pub async fn execute(config: &Configuration, payload: &str) -> anyhow::Result<Value> {
     let request: Task = serde_json::from_str(payload)?;
     let mut platform = config.platform()?;
-    let files = wamn_kubernetes::database_files::DatabaseFiles::in_cluster()?;
+    let files = wamn_platform_install::database_files::DatabaseFiles::in_cluster()?;
     files.materialize(&config.apply_database).await?;
     platform.database_files = Some(std::sync::Arc::new(files));
     crate::write_kubeconfig(
