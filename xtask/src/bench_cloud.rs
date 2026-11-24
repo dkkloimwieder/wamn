@@ -278,7 +278,7 @@ pub async fn pg(root: &Path, _args: &PgArgs) -> anyhow::Result<()> {
             .arg(root.join("apps/wamn_receiving")),
     )
     .await?;
-    process::execute(tokio::process::Command::new("psql").current_dir(root).args([database,"-X","-v","ON_ERROR_STOP=1","-v","scale=1000","-c","SET auto_explain.sample_rate=0; SET log_transaction_sample_rate=0; SET log_statement_sample_rate=0","-f"]).arg(root.join("apps/wamn_receiving/tests/fixtures/receiving-seed.sql"))).await?;
+    process::execute(tokio::process::Command::new("psql").current_dir(root).args([database,"-X","-v","ON_ERROR_STOP=1","-v","scale=1000","-c","SET auto_explain.sample_rate=0; SET log_transaction_sample_rate=0; SET log_statement_sample_rate=0","-f"]).arg(root.join("tests/receiving-tests/fixtures/receiving-seed.sql"))).await?;
     sql(
         database,
         "CREATE EXTENSION IF NOT EXISTS pg_stat_statements",

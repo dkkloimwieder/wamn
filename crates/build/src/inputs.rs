@@ -16,7 +16,7 @@ pub fn paths(source: &PreparedSource) -> Result<BTreeSet<PathBuf>> {
     let repository = workspace.parent().context("package workspace parent")?;
     let mut inputs = [
         root.to_owned(),
-        repository.join("guests"),
+        repository.join("apps/guests"),
         repository.join("wit"),
         repository.join("crates/authority/wit/deps"),
         workspace.join("Cargo.toml"),

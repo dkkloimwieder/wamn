@@ -54,7 +54,7 @@ Discard removes the entry and reverts its tentative row.
 [`bench/follow.mjs`](bench/follow.mjs) opens it in headless Chrome and forwards `/wamn` to the host with the caller's token.
 That fixture supplies `WAMN_USER_ID` from its operator principal and `WAMN_AUD` from its environment coordinates with the test-only instance suffix `localapp`.
 The driver uses them for its mocked session reply and page route because the fixture has no identity service.
-The test `local_feed` in `apps/wamn_wms/tests` runs it against a local WMS host:
+The test `local_feed` in `tests/wms-tests` runs it against a local WMS host:
 
 ```bash
 cd web/sync-bench && pnpm run build && cd ../..

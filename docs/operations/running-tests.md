@@ -25,7 +25,7 @@ It builds every application under `apps/` that has a `wamn.k` file.
 It builds each base before its overlays, with the committed SQL describe evidence and no database.
 The output of each application goes to `apps/target/wamn/<package>`.
 If `WAMN_KCL` is not set, the command installs the pinned KCL compiler under `.tools/kcl/`.
-It also builds the pinned `ingress` guest from `guests/ingress` and the workflow service from `guests/workflow-service`.
+It also builds the pinned `ingress` guest from `apps/guests/ingress` and the workflow service from `apps/guests/workflow-service`.
 
 The command then prints one `export` line for each prepared input.
 `eval` sets these variables in the current shell:
@@ -267,7 +267,7 @@ Exact text remains in the cases below, because the bytes or the literal are the 
 The linked assertions hold the exact vectors. Do not copy those vectors into another fixture.
 Do not use these exceptions for diagnostic wording.
 
-- [Record history projection](../../crates/record-history/tests/fold.rs), `retained_columns_keep_their_raw_spelling_and_order` and `retained_timestamptz_columns_take_one_spelling_from_either_spelling`: retained JSON tokens keep their spelling and order.
+- [Record history projection](../../apps/crates/record-history/tests/fold.rs), `retained_columns_keep_their_raw_spelling_and_order` and `retained_timestamptz_columns_take_one_spelling_from_either_spelling`: retained JSON tokens keep their spelling and order.
 - [Catalog serialization](../../crates/schema/src/ir.rs), `catalog_without_views_keeps_canonical_bytes`: canonical persisted bytes define identity. [Durable JSON identity](../../crates/digest/src/lib.rs) keeps numeric spelling, signed zero and canonical key order.
 - [SHA-256 vectors](../../crates/digest/src/lib.rs) and [HMAC vectors](../../crates/http/src/authentication.rs): independent encoded vectors define the digest or the signature.
 - Frozen serialized variants, refusal codes, media types, SQLSTATEs, token prefixes and protocol identifiers remain literal comparisons. Their owners include [SQL values](../../crates/scalar/src/lib.rs) and [identity protocols](../../crates/identity-protocol/src).
@@ -292,7 +292,7 @@ cargo test -p wamn-receiving-tests -- --ignored
 
 The edge tests in `wamn-edge` read `WAMN_INGRESS_COMPONENT` and `WAMN_EDGE_DEVICE_COMPONENT` from `prepare-tests`.
 Each test binary builds the release bundle of [`apps/edge_device`](../../apps/edge_device/README.md) once.
-The `ingress` guest must match its pin in `guests/ingress/ingress.wasm.sha256`.
+The `ingress` guest must match its pin in `apps/guests/ingress/ingress.wasm.sha256`.
 
 ### Local saved-edit acceptance
 

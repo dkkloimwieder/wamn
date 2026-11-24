@@ -11,7 +11,7 @@
 wit_bindgen::generate!({
     path: [
         "../../../wit/wamn-integration",
-        "../../../guests/modbus/wit",
+        "../../guests/modbus/wit",
         "../../../wit/wamn-node",
         "../../target/wamn/modbus_reader/wit",
         "wit/authored.wit",

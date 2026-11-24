@@ -6,8 +6,7 @@ Native builds require system compiler tools and `protoc`.
 The web workspace uses Node 24.21.0 LTS and pnpm 12.9.1.
 TypeScript 7 compiles the web packages. The TypeScript 6 compatibility package supplies the API that ESLint requires.
 The guest workspace is `apps/Cargo.toml`.
-It includes application components, platform components under `guests/`, guest libraries under `crates/`, and guest fixtures under `test-support/fixtures/guests/`.
-Each moved guest package declares that workspace explicitly. Native workspace exclusions keep the two owners distinct.
+It includes application components, platform components under `apps/guests/`, guest libraries under `apps/crates/`, and guest fixtures under `apps/fixtures/guests/`.
 [Components](../architecture/components.md) defines artifact and interface boundaries.
 
 Before a lane or test run, prepare the checkout once from its repository root.
@@ -104,11 +103,11 @@ Cargo then hashes relative package paths, including packages outside `apps/`.
 The builder preserves dependency declarations and remaps the source view to `/wamn`.
 It refreshes the copied lock file offline for that workspace before the locked build.
 The same sources, lockfile and toolchain produce the same bytes in different checkouts.
-`cargo xtask build-component guests/ingress/Cargo.toml` uses that path for one guest.
+`cargo xtask build-component apps/guests/ingress/Cargo.toml` uses that path for one guest.
 The build refuses a built guest that contains `/home/`, the Cargo home, or the repository path.
 A guest crate can hold a pin file beside its `Cargo.toml`, named for the artifact, for example `ingress.wasm.sha256`.
 The build and the Dockerfile stage refuse a guest that does not match its pin.
-If you change the router on purpose, write its new digest to `guests/ingress/ingress.wasm.sha256`.
+If you change the router on purpose, write its new digest to `apps/guests/ingress/ingress.wasm.sha256`.
 A plain `cargo build` bypasses the source view, so its bytes can depend on the checkout path.
 Use the component builder when you update a pin.
 The release publisher also needs the pinned `ingress` guest.
@@ -139,7 +138,7 @@ Publication repeats this comparison.
 
 The build writes each package component to `components/<name>.wasm` under its build output.
 Publication checks the fingerprint beside that output and hashes the files it reads.
-The dev loop watches package roots, `guests/`, shared WIT, and the local Cargo dependency closure.
+The dev loop watches package roots, `apps/guests/`, shared WIT, and the local Cargo dependency closure.
 An edit to these inputs rebuilds the affected components.
 
 WIT bindings read canonical package directories through ordered `path` lists. Put dependencies before the consumer world.

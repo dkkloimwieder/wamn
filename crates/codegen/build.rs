@@ -43,7 +43,7 @@ fn main() {
         "../routes/src/route_identity.rs",
         "../schema/src",
         "../scalar/src",
-        "../record-history/src",
+        "../../apps/crates/record-history/src",
         "../number-pattern/src",
         "../postgres/src/build_database.rs",
         "../postgres/src/catalog.rs",

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/role", "crates/jsonata", "crates/event", "crates/postgres", "crates/digest", "crates/scalar", "services/host", "services/control", "services/edge", "services/web", "services/identity-service", "services/cli", "services/cdc-reader", "xtask", "crates/build", "tests/journeys", "test-support/fixtures/package", "test-support/infrastructure", "apps/wamn_receiving/tests", "apps/wamn_wms/tests", "crates/connection-type", "crates/oci/reference", "crates/run-state", "crates/codegen", "crates/schema", "crates/number-pattern", "crates/component-policy", "crates/application", "crates/application-chart", "crates/engine", "crates/authority", "crates/connection", "crates/envelope", "crates/plugin", "crates/http", "crates/http-client", "crates/blobstore", "crates/storage", "crates/authentication", "crates/publish", "crates/environment", "crates/platform-install", "crates/dev", "crates/provision", "crates/registry", "crates/identity-client", "crates/identity-protocol", "crates/principal", "crates/kubernetes", "crates/broker", "crates/oci", "crates/gcp-metadata", "crates/key", "crates/package", "crates/routes", "crates/workflow-graph", "services/edge/document", "test-support/grant-tests"]
+members = ["crates/role", "crates/jsonata", "crates/event", "crates/postgres", "crates/digest", "crates/scalar", "services/host", "services/control", "services/edge", "services/web", "services/identity-service", "services/cli", "services/cdc-reader", "xtask", "crates/build", "tests/journeys", "test-support/fixtures/package", "test-support/infrastructure", "tests/receiving-tests", "tests/wms-tests", "crates/connection-type", "crates/oci/reference", "crates/run-state", "crates/codegen", "crates/schema", "crates/number-pattern", "crates/component-policy", "crates/application", "crates/application-chart", "crates/engine", "crates/authority", "crates/connection", "crates/envelope", "crates/plugin", "crates/http", "crates/http-client", "crates/blobstore", "crates/storage", "crates/authentication", "crates/publish", "crates/environment", "crates/platform-install", "crates/dev", "crates/provision", "crates/registry", "crates/identity-client", "crates/identity-protocol", "crates/principal", "crates/kubernetes", "crates/broker", "crates/oci", "crates/gcp-metadata", "crates/key", "crates/package", "crates/routes", "crates/workflow-graph", "services/edge/document", "test-support/grant-tests"]
 default-members = [
   "crates/connection-type",
   "crates/oci/reference",
@@ -19,7 +19,7 @@ default-members = [
   "crates/event",
 ]
 # Guest components are built separately for wasm32-wasip2 (see apps/*).
-exclude = ["apps", "guests", "crates/guest", "crates/record-history", "test-support/fixtures/guests"]
+exclude = ["apps"]
 
 [workspace.package]
 version = "0.1.0"
@@ -257,8 +257,8 @@ wamn-number-pattern = { path = "crates/number-pattern", version = "0.1.0" }
 wamn-identity-client = { path = "crates/identity-client", version = "0.1.0" }
 wamn-identity-protocol = { path = "crates/identity-protocol", version = "0.1.0" }
 wamn-principal = { path = "crates/principal", version = "0.1.0" }
-wamn-record-history = { path = "crates/record-history", version = "0.1.0" }
-wamn-guest = { path = "crates/guest" }
+wamn-record-history = { path = "apps/crates/record-history", version = "0.1.0" }
+wamn-guest = { path = "apps/crates/guest" }
 wamn-run-state = { path = "crates/run-state", version = "0.1.0" }
 wamn-authority = { path = "crates/authority", version = "0.1.0" }
 wamn-connection = { path = "crates/connection", version = "0.1.0" }

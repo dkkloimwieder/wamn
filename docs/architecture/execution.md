@@ -326,7 +326,7 @@ The body carries the RFC 6901 pointer of the offending value in `data.pointer`:
 For an unexpected property, the pointer names that property.
 An unparseable payload carries the root pointer `""`.
 A platform cause, such as a missing or uncompiled schema, gives a body with no `data`.
-The [route validator](../../crates/engine/src/ingress.rs) and the [HTTP route adapter](../../guests/ingress/src/lib.rs) own this response.
+The [route validator](../../crates/engine/src/ingress.rs) and the [HTTP route adapter](../../apps/guests/ingress/src/lib.rs) own this response.
 
 An unknown hostname returns the native 404 response.
 An explicit hostname in the release returns 503 while its route binding is absent.
@@ -580,7 +580,7 @@ Apply assigns a role with those permissions. Repeated applies write no principal
 The executor's database role reads only `id`, `type`, `status`, and `email` from `platform."user"`.
 It can insert the principal into a run but cannot change that identity afterward.
 
-The [JSONata node](../../guests/jsonata-expression/src/lib.rs) is a palette node compiled to wasm.
+The [JSONata node](../../apps/guests/jsonata-expression/src/lib.rs) is a palette node compiled to wasm.
 Its parameter `expression` is JSONata text, and the node evaluates it on its input inside the guest.
 The result leaves on port `main`, or on the selected port `items`.
 The graph can include `input-schema` and `output-schema` in the node's parameters.

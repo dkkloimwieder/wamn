@@ -130,9 +130,9 @@ Combining unrelated guests can change dependency features and therefore compiled
 Standard-library guests target `wasm32-wasip2`.
 The build preserves their WASI imports, and admission applies the ordinary import policy.
 The host supplies an empty application environment. Guest bytes are never rewritten.
-Platform component sources live under `guests/`. Each component has one directory.
+Platform component sources live under `apps/guests/`. Each component has one directory.
 The palette and Modbus guests use standard WASI in the guest workspace.
-Shared guest libraries live under `crates/`. Guest fixtures live under `test-support/fixtures/guests/`.
+Shared guest libraries live under `apps/crates/`. Guest fixtures live under `apps/fixtures/guests/`.
 The [directory map](overview.md#directory-owners) names each owner once.
 Each dependency inherits its governed identity from its workspace.
 Directory containment does not define dependency ownership.
@@ -145,7 +145,7 @@ The label renderer is an effect-free transform from fields to ZPL printer text.
 The closed template set is `packaging`, `location`, and `product`.
 An unknown template refuses during declaration validation or rendering.
 
-The shared [label template module](../../guests/label-render/src/template.rs) emits `^PW812`, `^LL1218`, and `^MD0`.
+The shared [label template module](../../apps/guests/label-render/src/template.rs) emits `^PW812`, `^LL1218`, and `^MD0`.
 This means 812 by 1,218 dots for provisional 4-by-6-inch labels at 203 dpi.
 The geometry is provisional.
 There is no public interface for template authoring.

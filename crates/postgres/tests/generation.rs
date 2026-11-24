@@ -909,7 +909,6 @@ fn compile_inventory_item_component(package: &GeneratedPackage, export_tests: &s
         .unwrap_or_else(|error| panic!("write {target}: {error}"));
     }
 
-    let libraries = root.join("crates");
     std::fs::write(
         scratch.join("Cargo.toml"),
         format!(
@@ -920,7 +919,7 @@ fn compile_inventory_item_component(package: &GeneratedPackage, export_tests: &s
              wamn-guest = {{ path = \"{}\" }}\n\
              \n[lib]\ncrate-type = [\"cdylib\"]\n\n[workspace]\n",
             root.join("crates/scalar").display(),
-            libraries.join("guest").display(),
+            root.join("apps/crates/guest").display(),
         ),
     )
     .expect("write fixture manifest");

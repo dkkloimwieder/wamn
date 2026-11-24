@@ -27,7 +27,6 @@ COPY crates ./crates
 COPY wit ./wit
 # Both workspaces consume guest libraries and binding sources.
 COPY apps ./apps
-COPY guests ./guests
 COPY services ./services
 COPY test-support ./test-support
 COPY tests ./tests

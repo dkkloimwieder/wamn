@@ -9,6 +9,6 @@ Acme owns package `client_acme_receiving`, its Receiving overlay, SQL, guest, an
 Generated output: Derived contracts, SQL, and client code. `wamn build` writes it to `apps/target/wamn/client_acme_receiving/`, outside Git.
 [Component](component/): Application guest.
 The manifest declares the component, routes, and the `quality.create_inspection` handler.
-The [Receiving data access tests](../wamn_receiving/tests/receiving_data_access.rs) cover the overlay SQL.
+The [Receiving data access tests](../../tests/receiving-tests/receiving_data_access.rs) cover the overlay SQL.
 [Running tests](../../docs/operations/running-tests.md): Commands and required inputs.
 [Development loop](../../docs/operations/development-loop.md): Generation and SQLx preparation.

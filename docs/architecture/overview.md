@@ -9,11 +9,11 @@ The [architecture index](README.md) links the contracts for each part.
 
 The root `Cargo.toml` owns native libraries, services, repository tasks, and native tests.
 `apps/Cargo.toml` owns application guests, platform guests, guest libraries, and guest fixtures.
-A package outside the workspace directory declares its workspace explicitly.
-Cargo owns membership, dependencies, features, and targets. Directory placement does not decide dependency ownership.
+Each workspace keeps its members below its own directory. Cargo owns membership, dependencies, features, and targets.
 
 Applications live directly under `apps/<exact-package-id>/`.
-Each application keeps its manifest, migrations, authored SQL, component, browser code, and tests together.
+Each application keeps its manifest, migrations, authored SQL, component, and browser code together.
+The Receiving and WMS native tests live under `tests/`.
 `wamn_integration` is an application base package beside its consumers.
 Overlays declare exact base versions and digests.
 
@@ -62,17 +62,17 @@ Each library has one concern. Directory names follow crate names without the `wa
 | `crates/authentication` | `wamn-authentication`: route authentication, password rules, session verification, and signing |
 | `crates/identity-client` | `wamn-identity-client`: HTTPS client for identity administration |
 | `crates/identity-protocol` | `wamn-identity-protocol`: principal IDs, database login names, roles, credential formats, and public key documents |
-| `crates/guest` | `wamn-guest`: guest cursors, pages, scalar conversion, operation SQL, and document numbering |
-| `crates/record-history` | `wamn-record-history`: reconstruction of a row from its history |
-| `guests/ingress` | HTTP matching and JSON invocation of typed application operations |
-| `guests/blob-put` | Palette node that writes one object |
+| `apps/crates/guest` | `wamn-guest`: guest cursors, pages, scalar conversion, operation SQL, and document numbering |
+| `apps/crates/record-history` | `wamn-record-history`: reconstruction of a row from its history |
+| `apps/guests/ingress` | HTTP matching and JSON invocation of typed application operations |
+| `apps/guests/blob-put` | Palette node that writes one object |
 | `crates/jsonata` | `wamn-jsonata`: expression evaluation for the JSONata guest |
-| `guests/jsonata-expression` | Palette node that evaluates a JSONata expression |
-| `guests/http-page` | Palette node that reads HTTP pages |
-| `guests/http-request` | Palette node that makes an HTTP request |
-| `guests/label-render` | Palette node that renders label text |
-| `guests/modbus` | Bound Modbus register operations |
-| `guests/transform` | Palette node that transforms its input |
+| `apps/guests/jsonata-expression` | Palette node that evaluates a JSONata expression |
+| `apps/guests/http-page` | Palette node that reads HTTP pages |
+| `apps/guests/http-request` | Palette node that makes an HTTP request |
+| `apps/guests/label-render` | Palette node that renders label text |
+| `apps/guests/modbus` | Bound Modbus register operations |
+| `apps/guests/transform` | Palette node that transforms its input |
 | `services/host` | `wamn-host`: shared environment host for HTTP, workflow lifecycle and workflow dispatch |
 | `services/control` | `wamn-control`: authenticated org control service |
 | `services/identity-service` | `wamn-identity-service` (binary `wamn-identity`): session issuer, passwords, user management, and public verification keys |
@@ -83,7 +83,7 @@ Each library has one concern. Directory names follow crate names without the `wa
 | `test-support/infrastructure` | Temporary external resources, HTTP fixtures, and shared test adapters |
 | `test-support/grant-tests` | `wamn-grant-tests`: grant refusal tests of every restricted deployed login |
 | `test-support/fixtures/package` | Platform fixture application paths and inputs |
-| `test-support/fixtures/guests` | Guest components used by interface tests |
+| `apps/fixtures/guests` | Guest components used by interface tests |
 | `tests/journeys` | Tests across services through product commands and routes |
 | `xtask` | Repository tasks, build orchestration, and test selection |
 | `crates/build` | `wamn-build`: shared package and guest build implementation |

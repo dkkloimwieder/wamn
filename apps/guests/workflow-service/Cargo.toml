@@ -1,0 +1,17 @@
+[package]
+name = "workflow-service"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[target.'cfg(target_env = "p3")'.dependencies]
+futures = { version = "0.3", default-features = false, features = ["alloc", "async-await"] }
+serde = { workspace = true, features = ["derive", "rc"] }
+serde_json = { workspace = true, features = ["raw_value"] }
+wit-bindgen = { workspace = true, features = ["async-spawn", "std"] }
+
+[lints]
+workspace = true

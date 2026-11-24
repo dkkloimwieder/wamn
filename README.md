@@ -22,7 +22,7 @@ Start with the [documentation index](docs/README.md) or the [architecture overvi
 | [apps/rest_connector](apps/rest_connector/README.md) | Scheduled REST integration and consumer event workflow |
 | [apps/rest_consumer_fixture](apps/rest_consumer_fixture/README.md) | Domain items consumed from the REST integration |
 | [apps/wamn_integration](apps/wamn_integration/README.md) | Shared integration state application |
-| [guests](guests/) | Platform components in the guest workspace |
+| [guests](apps/guests/) | Platform components in the guest workspace |
 | [services](services/) | Deployable native processes, including the combined HTTP and queue host, and their service tests |
 | [crates](crates/) | Libraries with one directory per concern |
 | [crates/schema](crates/schema/) | Normalized catalog records |

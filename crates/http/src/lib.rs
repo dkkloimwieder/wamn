@@ -315,7 +315,7 @@ fn outbound_headers(
 
 /// The W3C fields of the effect span, written onto one outbound request.
 ///
-/// A field the guest already sent stays: `guests/http-request`
+/// A field the guest already sent stays: `apps/guests/http-request`
 /// forwards its node context's traceparent with `push_header_unless_present`,
 /// and the host adds context rather than rewriting the guest's.
 struct TraceContextHeaders<'a> {

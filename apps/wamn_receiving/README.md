@@ -11,6 +11,6 @@ Generated output: Derived contracts, SQL, and client code. `wamn build` writes i
 [Publication](publication/): The attachments and the component definition.
 [Web application](web/README.md): The browser page, with its route table.
 [Tests](tests/): Application interface tests.
-[Change walkthrough](tests/field-change-walkthrough.md): A Rust-only change through the development loop and its executed test.
+[Change walkthrough](../../tests/receiving-tests/field-change-walkthrough.md): A Rust-only change through the development loop and its executed test.
 [Running tests](../../docs/operations/running-tests.md): Commands and required inputs.
 [Development loop](../../docs/operations/development-loop.md): Generation and SQLx preparation.

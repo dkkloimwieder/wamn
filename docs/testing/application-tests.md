@@ -44,7 +44,7 @@ The Receiving tests observe stamps and the log through real routes and commands:
 - In the same tests, `receiving.record_receipt` stamps the order and its receipt with one instant, and an Acme overlay update stamps the base columns.
 - The route tests also fold the purchase order history that the server served. No served image carries an Acme column, and the fold matches the purchase order that the database holds.
 - In the same tests, an operator who holds every grant except the history token gets `permission-denied` before the component runs.
-- The [data access test](../../apps/wamn_receiving/tests/receiving_data_access.rs) installs the declared triggers with its own SQL and tests insert, update, and no-op stamps.
+- The [data access test](../../tests/receiving-tests/receiving_data_access.rs) installs the declared triggers with its own SQL and tests insert, update, and no-op stamps.
 - In the same test, an Acme overlay update logs a changed-column diff that folds to the effective base and overlay row. The Receiving history read returns only its base columns. An idempotent receipt replay appends no entry.
 
 See [database tests](database-tests.md#record-history) for the fixture rules and limits.

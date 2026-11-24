@@ -59,7 +59,7 @@ fn build_bundle() -> PathBuf {
     let package = repository.join("apps/edge_device");
     let ingress = prepared("WAMN_INGRESS_COMPONENT");
     let device = prepared("WAMN_EDGE_DEVICE_COMPONENT");
-    let pin = std::fs::read_to_string(repository.join("guests/ingress/ingress.wasm.sha256"))
+    let pin = std::fs::read_to_string(repository.join("apps/guests/ingress/ingress.wasm.sha256"))
         .expect("read the ingress pin");
     let ingress_digest = bytes_sha256(&std::fs::read(&ingress).expect("read the route guest"));
     assert_eq!(

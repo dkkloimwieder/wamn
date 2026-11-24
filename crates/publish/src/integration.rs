@@ -92,7 +92,7 @@ fn source_digest(root: &Path) -> anyhow::Result<wamn_digest::Digest> {
 /// Refuses failed builds and outputs that are not components.
 pub async fn build(repository: &Path, code: &IntegrationCode) -> anyhow::Result<BuiltIntegration> {
     let repository = repository.canonicalize()?;
-    let guest = repository.join("guests").join(code.as_str());
+    let guest = repository.join("apps/guests").join(code.as_str());
     let source = if guest.join("Cargo.toml").is_file() {
         guest
     } else {

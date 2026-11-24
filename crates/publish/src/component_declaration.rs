@@ -260,7 +260,7 @@ mod tests {
     /// A configured palette connection requires a binding selection.
     #[test]
     fn a_palette_declaration_requires_a_binding_selection() {
-        let palette = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../guests");
+        let palette = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps/guests");
         let target = wamn_component_policy::ComponentPackageCoordinate {
             project_env_key: "org-a--dev--project".parse().unwrap(),
             package_id: "wamn_wms".parse().unwrap(),

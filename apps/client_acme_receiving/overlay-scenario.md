@@ -63,7 +63,7 @@ The event retains its causation identity.
 
 Repeated delivery for the same receipt must leave one inspection.
 A distinct receipt must receive its own inspection.
-The [Receiving data access tests](../wamn_receiving/tests/receiving_data_access.rs) run the inspection SQL twice for the same receipt and expect one insert.
+The [Receiving data access tests](../../tests/receiving-tests/receiving_data_access.rs) run the inspection SQL twice for the same receipt and expect one insert.
 Payload recovery remains limited by broker retention.
 
 ERP synchronization remains deferred because this application declares no ERP consumer.

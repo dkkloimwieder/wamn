@@ -1,0 +1,15 @@
+[package]
+name = "label-render"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+serde_json.workspace = true
+wit-bindgen = { workspace = true }
+
+[lib]
+crate-type = ["cdylib"]
+bench = false
+
+[lints]
+workspace = true

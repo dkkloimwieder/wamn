@@ -80,7 +80,7 @@ pub(super) async fn run(root: &Path) -> Result<()> {
     let rollback_variant = rollback_variant(root, &fixture, fixture_version)
         .await
         .context("prepare the second rollback fixture build")?;
-    let ingress = wamn_build::build_component(root, &root.join("guests/ingress/Cargo.toml"))
+    let ingress = wamn_build::build_component(root, &root.join("apps/guests/ingress/Cargo.toml"))
         .await
         .context("build pinned ingress component")?;
     let workflow = wamn_build::build_guest(
@@ -194,7 +194,6 @@ async fn rollback_variant(root: &Path, fixture: &Path, mut version: Version) -> 
         .get_mut("workspace")
         .and_then(toml::Value::as_table_mut)
         .context("read guest workspace settings")?;
-    settings.remove("exclude");
     settings.insert(
         "members".to_owned(),
         toml::Value::Array(vec![toml::Value::String(format!(
@@ -215,6 +214,11 @@ async fn rollback_variant(root: &Path, fixture: &Path, mut version: Version) -> 
                     == Some(true)
             });
     }
+    settings
+        .get_mut("dependencies")
+        .and_then(|dependencies| dependencies.get_mut("wamn-guest"))
+        .context("read rollback fixture guest dependency")?["path"] =
+        toml::Value::String("../apps/crates/guest".to_owned());
     fs::write(workspace.join("Cargo.toml"), toml::to_string(&manifest)?)?;
     fs::copy(apps.join("Cargo.lock"), workspace.join("Cargo.lock"))?;
 

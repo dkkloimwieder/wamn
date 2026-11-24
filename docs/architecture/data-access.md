@@ -809,7 +809,7 @@ It reads none of its columns, constraints, indexes, sequences, triggers, rules, 
 The schema state id therefore stays the same when a relation starts or stops logging.
 
 The generator recognizes the history table of each logged model by its name, and it adds no history table to the catalog.
-It takes the history columns from `HISTORY_COLUMNS` in the [`wamn-record-history`](../../crates/record-history/src/lib.rs) crate.
+It takes the history columns from `HISTORY_COLUMNS` in the [`wamn-record-history`](../../apps/crates/record-history/src/lib.rs) crate.
 Authored SQL analysis and the required schema contract use that column list.
 A custom operation cannot require or map a constraint of a history table.
 The compiler writes history DDL as immutable files under `history/`.
@@ -1132,7 +1132,7 @@ An overlay history read uses the same rule with its own columns.
 The compiler uses `pg_query` to read PostgreSQL syntax.
 A whole-row reference reads every column of its relation.
 
-The [`wamn-record-history`](../../crates/record-history/src/lib.rs) crate holds the one fold, and both workspaces register it for guests, the client, and tests.
+The [`wamn-record-history`](../../apps/crates/record-history/src/lib.rs) crate holds the one fold, and both workspaces register it for guests, the client, and tests.
 `state_at` takes every row of every page and returns `Present`, `Absent`, or `Unavailable` at a per-row position.
 It folds backward from the current row, or from the `before` image of a final delete.
 It keeps each column value as raw JSON text and replaces whole values, so numeric scale and every other spelling survive.

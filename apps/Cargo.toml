@@ -1,13 +1,11 @@
 [workspace]
 resolver = "2"
-# Application guests, platform guests, shared libraries and fixtures retain
-# one guest workspace, independently of their source directory.
 members = [
-    "../guests/http-page",
-    "../guests/http-request",
-    "../guests/label-render",
-    "../guests/modbus",
-    "../guests/transform",
+    "guests/http-page",
+    "guests/http-request",
+    "guests/label-render",
+    "guests/modbus",
+    "guests/transform",
     "modbus_reader/component",
     "client_acme_receiving/component",
     "edge_device/component",
@@ -20,17 +18,13 @@ members = [
     "platform_fixture_overlay/component",
     "wamn_receiving/component",
     "wamn_wms/component",
-    "../guests/ingress",
-    "../guests/workflow-service",
-    "../guests/blob-put",
-    "../guests/jsonata-expression",
-    "../crates/guest",
-    "../crates/record-history",
-    "../test-support/fixtures/guests/connection-http-standard",
-]
-exclude = [
-    "wamn_receiving/tests",
-    "wamn_wms/tests",
+    "guests/ingress",
+    "guests/workflow-service",
+    "guests/blob-put",
+    "guests/jsonata-expression",
+    "crates/guest",
+    "crates/record-history",
+    "fixtures/guests/connection-http-standard",
 ]
 
 # Lint policy. IDENTICAL to the root workspace's by intent -- see the root
@@ -111,8 +105,8 @@ serde_json = "1"
 wit-bindgen = { version = "0.62.0", default-features = false, features = ["async", "macros", "realloc"] }
 
 # Guest-owned path identities are independent of the native workspace contract.
-wamn-guest = { path = "../crates/guest", version = "0.1.0" }
-wamn-record-history = { path = "../crates/record-history", version = "0.1.0" }
+wamn-guest = { path = "crates/guest", version = "0.1.0" }
+wamn-record-history = { path = "crates/record-history", version = "0.1.0" }
 
 [profile.release]
 opt-level = "s"
