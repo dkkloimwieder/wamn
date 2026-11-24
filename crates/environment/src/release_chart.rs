@@ -1,12 +1,18 @@
-pub(super) mod plan;
-pub(crate) use plan::published_components;
-pub use plan::{
-    Role, RoleName, TELEMETRY_VARIABLES, ValuesInput, component_name, host_interfaces,
-    release_name, roles, values, workload_name,
-};
-
-use anyhow::ensure;
-use serde_yaml::{Mapping, Value};
-
 #[doc(inline)]
 pub use wamn_platform_install::release_chart::bundle;
+
+/// Validate the environment coordinates and derive the application release name.
+pub fn release_name(
+    org: &wamn_registry::OrgId,
+    project: &wamn_registry::ProjectId,
+    env: &wamn_registry::EnvName,
+    application: &wamn_registry::ApplicationName,
+) -> anyhow::Result<String> {
+    wamn_provision::validate_project_env(org, project, env)?;
+    Ok(wamn_application_chart::release_name(
+        org,
+        project,
+        env,
+        application,
+    ))
+}

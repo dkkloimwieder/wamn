@@ -257,7 +257,7 @@ pub async fn application(
                     )
                     .await?;
                     for role in roles {
-                        let workload = crate::release_chart::workload_name(&release, role);
+                        let workload = wamn_application_chart::workload_name(&release, role);
                         wait_workload_ready(&platform.target, &workload, timeout).await?;
                     }
                     Ok(json!({"release":digest}))

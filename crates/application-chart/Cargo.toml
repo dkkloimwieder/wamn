@@ -1,0 +1,26 @@
+[package]
+name = "wamn-application-chart"
+description = "Application release chart inputs and values."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+wamn-application.workspace = true
+wamn-authority.workspace = true
+wamn-component-policy.workspace = true
+wamn-connection-type.workspace = true
+wamn-digest.workspace = true
+wamn-oci-reference.workspace = true
+wamn-package.workspace = true
+wamn-registry.workspace = true
+wamn-routes.workspace = true
+
+[dev-dependencies]
+url.workspace = true
+
+[lints]
+workspace = true

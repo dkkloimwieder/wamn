@@ -8,6 +8,7 @@ license.workspace = true
 [dependencies]
 kube = { workspace = true }
 k8s-openapi = { workspace = true }
+wamn-application-chart.workspace = true
 wamn-package.workspace = true
 wamn-role.workspace = true
 anyhow.workspace = true

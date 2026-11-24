@@ -9,6 +9,7 @@ use plan::{mode_satisfies, refuse};
 use std::collections::BTreeMap;
 use std::fmt;
 
+use wamn_application_chart::{Binding, ResolvedConnection};
 use wamn_component_policy::PackageManifest;
 use wamn_package::manifest::{ConnectionDeclaration, ConnectionMode};
 use wamn_postgres::LifecycleLock;
@@ -40,27 +41,6 @@ impl From<sqlx::Error> for BindingError {
             source: Some(Box::new(source)),
         }
     }
-}
-
-/// One declared name resolved to an active environment connection and version.
-#[derive(Debug, Clone)]
-pub struct Binding {
-    pub application: wamn_registry::ApplicationName,
-    pub alias: String,
-    pub interface: String,
-    pub components: std::collections::BTreeSet<String>,
-    pub runtime_type: wamn_connection_type::RuntimeType,
-    pub target_type: String,
-    pub connection_id: String,
-    pub authority: Option<String>,
-    pub integration_type: wamn_registry::integration_code::IntegrationCode,
-    pub exclusive: bool,
-    pub generation: i64,
-    pub mode: ConnectionMode,
-    pub digest: Option<wamn_digest::Digest>,
-    pub exports: Vec<String>,
-    pub write_interfaces: Vec<String>,
-    pub resolved: Option<crate::org_connection::ResolvedConnection>,
 }
 
 /// Read project authority without creating or changing a connection.
@@ -214,7 +194,7 @@ pub async fn analyse(
                 let requirement_type =
                     wamn_connection_type::RequirementType::for_integration(&integration_type)
                         .ok_or_else(|| refuse("integration_version_unserved", &at))?;
-                Some(crate::org_connection::ResolvedConnection {
+                Some(ResolvedConnection {
                     requirement_type,
                     definition: row.get(3),
                     credential_handle: (integration_type.as_str() != "gcs")

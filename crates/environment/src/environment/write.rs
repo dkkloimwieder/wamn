@@ -7,13 +7,13 @@ use std::path::Path;
 
 use anyhow::Context as _;
 use serde_yaml::{Mapping, Value};
+use wamn_application_chart::{Binding, RoleName, ValuesInput};
 
 use super::document::EnvironmentDocument;
-use crate::release_chart::{self, RoleName, ValuesInput};
 
 /// Render application values without host configuration.
 pub fn render(input: &ValuesInput<'_>) -> anyhow::Result<Value> {
-    release_chart::values(input)
+    wamn_application_chart::values(input)
 }
 
 /// Build release values from the application selection and artifact repositories.
@@ -30,7 +30,7 @@ pub fn release_values(
         wamn_component_policy::PackageManifest,
     >,
     package_digest: &wamn_digest::Digest,
-    bindings: &[super::bindings::Binding],
+    bindings: &[Binding],
     integration_repository: &str,
     component_repository: &str,
 ) -> anyhow::Result<(Value, Vec<RoleName>)> {

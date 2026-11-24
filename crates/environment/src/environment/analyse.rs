@@ -53,7 +53,7 @@ pub struct ReleaseFacts {
 #[derive(Debug, Clone)]
 pub struct Authorities {
     pub release_name: String,
-    pub connections: BTreeMap<String, crate::org_connection::ResolvedConnection>,
+    pub connections: BTreeMap<String, wamn_application_chart::ResolvedConnection>,
     /// Application-qualified names resolved to published wasm artifacts.
     pub artifact_bindings: BTreeSet<String>,
     pub row: Option<EnvironmentRow>,

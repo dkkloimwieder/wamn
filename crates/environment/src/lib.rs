@@ -7,7 +7,6 @@ pub mod environment;
 pub mod ident;
 pub mod migrations;
 pub mod org;
-pub mod org_connection;
 pub mod platform_migrations;
 pub mod provision_project_env;
 pub mod status;

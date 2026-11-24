@@ -4,6 +4,7 @@ use serde_json::{Value, json};
 use std::path::Path;
 use std::time::Duration;
 use tokio::time::{Instant, timeout_at};
+use wamn_application_chart::{RoleName, release_name, workload_name};
 use wamn_kubernetes::{
     Target,
     helm::{self, Install, Wait},
@@ -130,13 +131,8 @@ pub fn set_operation_values<'a>(
     let capture = wamn_provision::cdc_reader_name(&triple.org, &triple.project, &triple.env);
     let diff_workloads: Vec<_> = applications
         .map(|application| {
-            let release = wamn_registry::resource_names::application_release_name(
-                &triple.org,
-                &triple.project,
-                &triple.env,
-                application,
-            );
-            wamn_registry::name::resource_suffix(&release, "http")
+            let release = release_name(&triple.org, &triple.project, &triple.env, application);
+            workload_name(&release, RoleName::Http)
         })
         .collect();
     let diff_secrets = [

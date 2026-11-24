@@ -6211,6 +6211,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "wamn-application-chart"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde_json",
+ "serde_yaml",
+ "url",
+ "wamn-application",
+ "wamn-authority",
+ "wamn-component-policy",
+ "wamn-connection-type",
+ "wamn-digest",
+ "wamn-oci-reference",
+ "wamn-package",
+ "wamn-registry",
+ "wamn-routes",
+]
+
+[[package]]
 name = "wamn-authentication"
 version = "0.1.0"
 dependencies = [
@@ -6665,8 +6684,8 @@ dependencies = [
  "url",
  "uuid",
  "wamn-application",
+ "wamn-application-chart",
  "wamn-authentication",
- "wamn-authority",
  "wamn-broker",
  "wamn-codegen",
  "wamn-component-policy",
@@ -6688,7 +6707,6 @@ dependencies = [
  "wamn-publish",
  "wamn-registry",
  "wamn-role",
- "wamn-routes",
  "wamn-run-state",
  "wamn-test-infrastructure",
  "wamn-workflow-graph",
@@ -7110,6 +7128,7 @@ dependencies = [
  "sqlx",
  "tempfile",
  "tokio",
+ "wamn-application-chart",
  "wamn-digest",
  "wamn-kubernetes",
  "wamn-oci",

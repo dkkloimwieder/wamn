@@ -1,14 +1,19 @@
-use super::{Mapping, Value, ensure};
-use anyhow::Context as _;
 use std::collections::{BTreeMap, BTreeSet};
-const INGRESS_BINDING: &str = "ingress";
-const WORKFLOW_BINDING: &str = "workflow";
+
+use anyhow::{Context as _, ensure};
+use serde_yaml::{Mapping, Value};
 use wamn_component_policy::{ComponentDescriptor, PackageManifest};
-use wamn_package::PackageName;
 use wamn_package::canonical_name::CanonicalName;
 use wamn_package::manifest::deploy::PublishedComponent;
+use wamn_package::{OperationType, PackageName};
 use wamn_registry::configuration::Client;
 use wamn_registry::platform_domain::PlatformDomain;
+use wamn_routes::http_route_data::RouteDefinition;
+
+use crate::Binding;
+
+const INGRESS_BINDING: &str = "ingress";
+const WORKFLOW_BINDING: &str = "workflow";
 
 /// The Helm release name of an application: `r-<slug>-<hash>`.
 ///
@@ -20,13 +25,8 @@ pub fn release_name(
     project: &wamn_registry::ProjectId,
     env: &wamn_registry::EnvName,
     application: &wamn_registry::ApplicationName,
-) -> anyhow::Result<String> {
-    Ok(wamn_provision::environment_names::application_release_name(
-        org,
-        project,
-        env,
-        application,
-    )?)
+) -> String {
+    wamn_registry::resource_names::application_release_name(org, project, env, application)
 }
 
 /// The name the release chart gives the WorkloadDeployment of `role` in
@@ -34,6 +34,21 @@ pub fn release_name(
 /// the same name.
 pub fn workload_name(release_name: &str, role: RoleName) -> String {
     wamn_registry::name::resource_suffix(release_name, role.as_str())
+}
+
+/// Publication results used to configure an application workload.
+#[derive(Debug)]
+pub struct Publication<'a> {
+    pub routes: Vec<RouteDefinition>,
+    pub operations: BTreeMap<PackageName, BTreeMap<CanonicalName, PublishedOperation>>,
+    pub schemas: BTreeMap<&'a PackageName, Option<String>>,
+}
+
+/// The dispatch type and input key recorded for a compiled operation.
+#[derive(Debug)]
+pub struct PublishedOperation {
+    pub type_: OperationType,
+    pub idempotency: Option<String>,
 }
 
 /// Every application has one route workload, including applications without HTTP routes.
@@ -44,14 +59,15 @@ pub fn workload_name(release_name: &str, role: RoleName) -> String {
 )]
 pub fn roles(
     package_manifests: &BTreeMap<PackageName, PackageManifest>,
-    package_digest: &wamn_digest::Digest,
+    publication: &Publication<'_>,
     org: &wamn_registry::OrgId,
     project: &wamn_registry::ProjectId,
     env: &wamn_registry::EnvName,
     application: &wamn_registry::ApplicationName,
     grant_cache_seconds: u32,
-    bindings: &[crate::environment::bindings::Binding],
+    bindings: &[Binding],
     integration_repository: &str,
+    wasm_authority_port: impl Fn(&str) -> anyhow::Result<u16>,
 ) -> anyhow::Result<Vec<Role>> {
     use wamn_application::application_config::{
         ApplicationComponent, ApplicationConfig, ApplicationConnection, ApplicationDataChange,
@@ -69,22 +85,6 @@ pub fn roles(
     let mut subscriptions = BTreeSet::new();
     let mut handlers = BTreeMap::new();
     let mut typed_operations = BTreeSet::new();
-    let route_contracts = wamn_publish::publish_release::route_contracts(package_manifests)?;
-    let routes = wamn_publish::publish_release::deployment_routes(
-        package_manifests,
-        &route_contracts,
-        application,
-        package_digest,
-    )?;
-    let schemas = package_manifests
-        .iter()
-        .map(|(id, package)| {
-            Ok((
-                id,
-                wamn_publish::publish_release::deploy_runtime_schema(package, package_manifests)?,
-            ))
-        })
-        .collect::<anyhow::Result<BTreeMap<_, _>>>()?;
     for (package_id, component) in published_components(package_manifests) {
         let name = component_name(package_id, &component.descriptor.component);
         let mut connections = Vec::new();
@@ -157,7 +157,7 @@ pub fn roles(
                     .authority
                     .as_deref()
                     .context("wasm connection has no fixed authority")?;
-                let port = crate::wasm_authority::wasm_authority_port(authority)
+                let port = wasm_authority_port(authority)
                     .with_context(|| format!("wasm connection {}", binding.alias))?;
                 integrations.entry(&binding.alias).or_insert_with(|| {
                     serde_json::json!({
@@ -197,10 +197,11 @@ pub fn roles(
             });
         }
         let mut operations = std::collections::BTreeMap::new();
+        let published_operations = publication.operations.get(package_id);
         for (operation_name, operation) in &component.descriptor.operations {
-            let route = route_contracts
-                .get(&(package_id.clone(), operation_name.clone()))
-                .filter(|route| route.type_ != wamn_package::OperationType::EventHandler);
+            let route = published_operations
+                .and_then(|operations| operations.get(operation_name))
+                .filter(|route| route.type_ != OperationType::EventHandler);
             let type_ =
                 route.and_then(|route| ApplicationOperationType::from_operation(route.type_));
             if type_.is_some() {
@@ -286,7 +287,11 @@ pub fn roles(
             package: package_id.clone(),
             digest: component.descriptor.component_digest,
             connections,
-            schema: schemas[package_id].clone(),
+            schema: publication
+                .schemas
+                .get(package_id)
+                .with_context(|| format!("missing runtime schema result for {package_id}"))?
+                .clone(),
             operations,
             data_change,
         });
@@ -303,7 +308,7 @@ pub fn roles(
     for (key, value) in [
         (
             "wamn.project_env_key",
-            wamn_provision::project_env_key(org, project, env).to_string(),
+            wamn_registry::project_env_key(org, project, env).to_string(),
         ),
         ("wamn.project", project.to_string()),
         ("wamn.environment", env.to_string()),
@@ -312,7 +317,7 @@ pub fn roles(
     }
     config.insert(
         wamn_routes::HTTP_ROUTES_CONFIG.into(),
-        serde_json::to_string(&routes)?.into(),
+        serde_json::to_string(&publication.routes)?.into(),
     );
     config.insert(
         wamn_application::application_config::APPLICATION_CONFIG.into(),
@@ -416,7 +421,8 @@ pub fn host_interfaces<'a>(
     Ok(interfaces)
 }
 
-pub(crate) fn published_components(
+/// Iterate the published components in a package closure.
+pub fn published_components(
     packages: &BTreeMap<PackageName, PackageManifest>,
 ) -> impl Iterator<
     Item = (
@@ -535,7 +541,7 @@ pub fn values(input: &ValuesInput<'_>) -> anyhow::Result<Value> {
     Ok(Value::Mapping(values))
 }
 
-pub(super) fn mapping<const N: usize>(entries: [(&str, String); N]) -> Value {
+fn mapping<const N: usize>(entries: [(&str, String); N]) -> Value {
     Value::Mapping(
         entries
             .into_iter()
@@ -602,8 +608,11 @@ pub const TELEMETRY_VARIABLES: [(&str, &str); 4] = [
 
 #[cfg(test)]
 mod tests {
-    use super::{BTreeMap, PackageManifest, PackageName, roles};
-    use crate::environment::bindings::Binding;
+    use super::{
+        BTreeMap, OperationType, PackageManifest, PackageName, Publication, PublishedOperation,
+        roles,
+    };
+    use crate::{Binding, ResolvedConnection};
 
     const OPERATION: &str = "source-fixture:item/get@1.0.0";
 
@@ -644,9 +653,7 @@ mod tests {
                 .unwrap()
                 .to_owned()
         };
-        let mut document =
-            serde_json::to_value(wamn_test_infrastructure::publish::source_manifest()).unwrap();
-        document["components"] = components
+        let declarations: serde_json::Map<String, serde_json::Value> = components
             .iter()
             .map(|(component, ops)| {
                 let declaration = if ops.is_empty() {
@@ -657,14 +664,23 @@ mod tests {
                 (name(component), declaration)
             })
             .collect();
-        document["deploy"] = serde_json::json!({
-            "routes": {},
-            "components": components
-                .iter()
-                .map(|(component, _)| (name(component), component.clone()))
-                .collect::<serde_json::Map<_, _>>(),
-        });
-        let manifest: PackageManifest = serde_json::from_value(document).unwrap();
+        let deployed: serde_json::Map<String, serde_json::Value> = components
+            .iter()
+            .map(|(component, _)| (name(component), component.clone()))
+            .collect();
+        let manifest: PackageManifest = serde_json::from_value(serde_json::json!({
+            "package": {"id": "source_fixture", "version": "1.0.0"},
+            "required_platform_policy_contract": {
+                "id": "fixture_data_access", "state": "satisfied"
+            },
+            "models": {"item": {
+                "schema": "inventory", "table": "item", "owner": "source_fixture", "operations": {}
+            }},
+            "connections": {},
+            "components": declarations,
+            "deploy": {"routes": {}, "components": deployed},
+        }))
+        .unwrap();
         BTreeMap::from([(manifest.package.id.clone(), manifest)])
     }
 
@@ -694,9 +710,24 @@ mod tests {
         packages: &BTreeMap<PackageName, PackageManifest>,
         bindings: &[Binding],
     ) -> anyhow::Result<Vec<super::Role>> {
+        let (package, _) = packages.first_key_value().unwrap();
+        let publication = Publication {
+            routes: Vec::new(),
+            operations: BTreeMap::from([(
+                package.clone(),
+                BTreeMap::from([(
+                    OPERATION.parse().unwrap(),
+                    PublishedOperation {
+                        type_: OperationType::Get,
+                        idempotency: None,
+                    },
+                )]),
+            )]),
+            schemas: BTreeMap::from([(package, None)]),
+        };
         roles(
             packages,
-            &wamn_digest::bytes_sha256(b"package"),
+            &publication,
             &"acme".parse().unwrap(),
             &"shop".parse().unwrap(),
             &"dev".parse().unwrap(),
@@ -704,6 +735,7 @@ mod tests {
             60,
             bindings,
             "registry.example/integrations",
+            |_| anyhow::bail!("the fixture declares no wasm authority"),
         )
     }
 
@@ -822,7 +854,7 @@ mod tests {
             .into_iter()
             .enumerate()
             .map(|(index, definition)| Binding {
-                resolved: Some(crate::org_connection::ResolvedConnection {
+                resolved: Some(ResolvedConnection {
                     requirement_type: wamn_connection_type::RequirementType::Http,
                     definition,
                     credential_handle: None,

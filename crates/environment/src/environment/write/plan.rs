@@ -1,5 +1,10 @@
-use super::{EnvironmentDocument, RoleName, Value, ValuesInput, release_chart};
+use std::collections::BTreeMap;
+
 use anyhow::Context as _;
+use wamn_application_chart::{self as chart, Binding, Publication, PublishedOperation};
+use wamn_publish::publish_release::{deploy_runtime_schema, deployment_routes, route_contracts};
+
+use super::{EnvironmentDocument, RoleName, Value, ValuesInput};
 
 /// Build release values from the document, artifact, and host overlay.
 #[expect(
@@ -15,16 +20,40 @@ pub(super) fn release_values(
         wamn_component_policy::PackageManifest,
     >,
     package_digest: &wamn_digest::Digest,
-    bindings: &[super::super::bindings::Binding],
+    bindings: &[Binding],
     integration_repository: &str,
     component_repository: &str,
 ) -> anyhow::Result<(Value, Vec<RoleName>)> {
     let seconds = document
         .revocation_seconds
         .context("deploy requires revocation_seconds from the environment input")?;
-    let roles = release_chart::roles(
+    let contracts = route_contracts(package_manifests)?;
+    let routes = deployment_routes(package_manifests, &contracts, application, package_digest)?;
+    let schemas = package_manifests
+        .iter()
+        .map(|(id, package)| Ok((id, deploy_runtime_schema(package, package_manifests)?)))
+        .collect::<anyhow::Result<_>>()?;
+    let mut operations = BTreeMap::new();
+    for ((package, operation), contract) in contracts {
+        operations
+            .entry(package)
+            .or_insert_with(BTreeMap::new)
+            .insert(
+                operation,
+                PublishedOperation {
+                    type_: contract.type_,
+                    idempotency: contract.idempotency,
+                },
+            );
+    }
+    let publication = Publication {
+        routes,
+        operations,
+        schemas,
+    };
+    let roles = chart::roles(
         package_manifests,
-        package_digest,
+        &publication,
         &document.settings.org,
         &document.settings.project,
         &document.settings.env,
@@ -32,6 +61,7 @@ pub(super) fn release_values(
         seconds,
         bindings,
         integration_repository,
+        |authority| Ok(crate::wasm_authority::wasm_authority_port(authority)?),
     )?;
     let names = roles.iter().map(|role| role.name).collect();
     let selection = &document.applications[application];
@@ -42,7 +72,7 @@ pub(super) fn release_values(
             connections: std::collections::BTreeMap::new(),
         },
     )]);
-    let mut rendered = release_chart::values(&ValuesInput {
+    let mut rendered = chart::values(&ValuesInput {
         org: document.settings.org.clone(),
         project: document.settings.project.clone(),
         env: document.settings.env.clone(),
@@ -54,9 +84,9 @@ pub(super) fn release_values(
         roles,
     })?;
     let repository = wamn_oci_reference::parse_component_artifact_base(component_repository)?;
-    let components = release_chart::published_components(package_manifests)
+    let components = chart::published_components(package_manifests)
         .map(|(package, component)| {
-            let name = release_chart::component_name(package, &component.descriptor.component);
+            let name = chart::component_name(package, &component.descriptor.component);
             let image = format!(
                 "{}/{}@{}",
                 repository.registry(),
