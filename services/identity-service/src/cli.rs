@@ -31,7 +31,7 @@ pub struct Cli {
 #[serde(deny_unknown_fields)]
 struct Settings {
     issuer: String,
-    database: wamn_postgres::ConnectionConfig,
+    database: wamn_postgres::database::ConnectionConfig,
     envelope: Configuration,
     mail: Option<MailSettings>,
     nats: Option<nats::Settings>,

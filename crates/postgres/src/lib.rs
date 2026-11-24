@@ -1,23 +1,22 @@
 //! Verified PostgreSQL connections from explicit component configuration.
 
-use std::path::Path;
-
-use anyhow::Context as _;
-use sqlx::postgres::PgConnectOptions;
-
 pub mod administration;
 pub mod audit_retention;
 pub mod authorization;
 pub mod build_database;
 pub mod capture_sql;
 pub mod catalog;
+mod connection_guard;
+mod connection_options;
 pub mod control;
+pub mod database;
 pub mod environment_configuration;
 pub mod environment_fill;
 pub mod environment_org;
 pub mod environment_registry;
 pub mod environment_schema;
 pub mod environment_sql;
+mod executor;
 mod file_catalog;
 pub mod file_connections;
 pub mod identity;
@@ -38,114 +37,19 @@ pub mod provisioning_transaction;
 pub mod prune_record_history;
 pub mod prune_run_history;
 pub mod release_requirements;
-pub mod replication;
 
 pub use platform_identity::{bind_platform_principal, bind_platform_principal_sql};
 pub use wamn_identity_protocol::PlatformComponent;
 
-pub use build_database::{
-    ConnectionInput, configuration, connect, connect_options, database_configuration, identity,
-    pool, read_password,
+pub use connection_guard::ConnectionGuard;
+pub use connection_options::{
+    ConnectionInput, IdentityMismatch, configuration, connect, connect_options,
+    database_configuration, identity, mounted_options, pool, read_connection_config, read_password,
+    require_identity,
 };
-
-pub use wamn_platform_install::database::{
-    ConnectionConfig, DATABASE_DIR, SecretRef, credential_directory,
+pub use executor::{
+    ExecutorOpenError, open_executor_read, open_executor_transaction, run_executor_transaction,
 };
-
-/// Read public connection configuration from a file.
-pub async fn read_connection_config(path: &Path) -> anyhow::Result<ConnectionConfig> {
-    let contents = tokio::fs::read(path)
-        .await
-        .with_context(|| format!("read database configuration {}", path.display()))?;
-    serde_json::from_slice(&contents)
-        .with_context(|| format!("decode database configuration {}", path.display()))
-}
-
-/// Read a public connection file and the login directory next to it.
-pub async fn mounted_options(path: &Path) -> anyhow::Result<PgConnectOptions> {
-    let root = path
-        .parent()
-        .context("database configuration has no parent directory")?;
-    let config = read_connection_config(path).await?;
-    build_database::mounted_options(&config, root).await
-}
-
-impl std::fmt::Debug for ConnectionInput<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ConnectionInput").finish_non_exhaustive()
-    }
-}
-impl<'a> From<&'a String> for ConnectionInput<'a> {
-    fn from(value: &'a String) -> Self {
-        Self::Configuration(value)
-    }
-}
-impl From<PgConnectOptions> for ConnectionInput<'_> {
-    fn from(value: PgConnectOptions) -> Self {
-        Self::Options(Box::new(value))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use sqlx::postgres::PgSslMode;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn explicit_connections_require_identity_and_verified_tls() {
-        for input in [
-            "postgres://localhost/database",
-            "postgres://user@localhost/",
-        ] {
-            assert!(connect_options(input).await.is_err());
-        }
-        let options =
-            connect_options("postgres://user:password@localhost/database?sslmode=disable")
-                .await
-                .unwrap();
-        assert!(matches!(options.get_ssl_mode(), PgSslMode::VerifyFull));
-    }
-
-    #[tokio::test]
-    async fn old_url_documents_are_refused() {
-        assert!(
-            connect_options(r#"{"url":"postgres://user:password@localhost/database"}"#)
-                .await
-                .is_err()
-        );
-    }
-}
-
-/// An explicit connection names another role or database than its consumer.
-#[derive(Debug)]
-pub struct IdentityMismatch {
-    pub username: wamn_role::LoginName,
-    pub database: String,
-}
-impl std::fmt::Display for IdentityMismatch {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("database connection identity refused")
-    }
-}
-impl std::error::Error for IdentityMismatch {}
-
-/// Check component authority before opening a socket or reading credential material.
-pub fn require_identity(
-    input: &str,
-    username: &wamn_role::LoginName,
-    database: &str,
-) -> anyhow::Result<()> {
-    let (actual_user, actual_database) = identity(input)?;
-    if &actual_user != username || actual_database != database {
-        return Err(IdentityMismatch {
-            username: actual_user,
-            database: actual_database,
-        }
-        .into());
-    }
-    Ok(())
-}
 
 pub mod operation;
 pub mod project_connections;
@@ -153,8 +57,14 @@ pub mod run_store;
 pub mod schema;
 pub mod workflow;
 
+mod sql_error;
+pub use sql_error::{connection_lost, map_pg_error, postgres_error_detail};
+
 mod transaction_identity;
-pub use transaction_identity::{bind_transaction_identity, transaction_identity_sql};
+pub use transaction_identity::{
+    BoundIdentity, TransactionIdentity, bind_transaction_identity, prepare_identity,
+    transaction_identity_sql,
+};
 
 mod checkout;
 mod host_project;

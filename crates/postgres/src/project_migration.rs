@@ -1,35 +1,5 @@
 //! One restricted migration login per project database.
 
-use anyhow::{Context as _, ensure};
-
-/// The fixed owner login in a project Cluster.
-pub use wamn_platform_install::environment::project_migration_login as login;
-
-/// Check the authenticated session before any package-controlled SQL runs.
-pub async fn require_login(
-    connection: &mut sqlx::PgConnection,
-) -> anyhow::Result<wamn_role::LoginName> {
-    let (session, current, restricted): (String, String, bool) = sqlx::query_as(
-        "SELECT session_user::text, current_user::text, \
-         NOT (rolsuper OR rolcreatedb OR rolcreaterole OR rolreplication OR rolbypassrls) \
-         FROM pg_roles WHERE rolname = session_user",
-    )
-    .fetch_one(&mut *connection)
-    .await?;
-    let session = wamn_role::LoginName::try_from(session).context("decode the session login")?;
-    let current = wamn_role::LoginName::try_from(current).context("decode the current login")?;
-    let expected = login();
-    ensure!(
-        session == expected && current == session && restricted,
-        "package SQL requires the direct restricted migration login"
-    );
-    let owns_database: bool = sqlx::query_scalar(
-        "SELECT datdba = (SELECT oid FROM pg_roles WHERE rolname = session_user) FROM pg_database WHERE datname = current_database()",
-    ).fetch_one(&mut *connection).await?;
-    ensure!(owns_database, "migration login must own its database");
-    Ok(session)
-}
-
 /// The history table name includes both package and environment identity.
 pub fn history_table(
     project_env_key: &wamn_registry::ProjectEnvKey,

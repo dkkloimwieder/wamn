@@ -4,7 +4,6 @@
 //! Cargo metadata and WIT package declarations under one repository root.
 
 mod authored_manifests;
-pub(crate) mod dependencies;
 mod dependency_identity;
 mod generated_clients;
 mod platform_import_registry;

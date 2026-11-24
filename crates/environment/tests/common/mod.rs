@@ -1,7 +1,7 @@
 //! Logins that CNPG manages, created the way it creates them.
 
 use postgres_protocol::escape::{escape_identifier, escape_literal};
-use wamn_provision::WorkloadRoleFamily;
+use wamn_identity_protocol::workload_role::WorkloadRoleFamily;
 use wamn_provision::sql::{ensure_workload_acl_role_sql, grant_workload_login_sql};
 
 /// Create a password login of `family` as CNPG would, with the grants that provisioning adds.

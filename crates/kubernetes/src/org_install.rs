@@ -17,10 +17,10 @@ use serde::Deserialize as _;
 use serde_json::{Value, json};
 use std::{net::IpAddr, path::PathBuf, time::Duration};
 use wamn_platform_install::{
-    database::{ConnectionConfig, DATABASE_DIR},
     org::{OrgInputs, OrgInstallation, field},
     provision_org::{CONTROL_AUDIENCE, INVITATION_ACCOUNT, ORG_INPUTS_DIR, SQL_ACCOUNT},
 };
+use wamn_postgres::database::{ConnectionConfig, DATABASE_DIR};
 use wamn_registry::{OrgId, name::REGISTRY_PULL};
 
 use crate::{

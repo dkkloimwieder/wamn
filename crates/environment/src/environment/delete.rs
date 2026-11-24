@@ -104,7 +104,7 @@ async fn delete_locked(
             .database_cluster_exists(&name::project_cluster(&database))
             .await?;
     let project_connection = (database_managed && !cluster_missing)
-        .then(|| wamn_platform_install::environment::connection_for(triple, &instance));
+        .then(|| wamn_postgres::database::connection_for(triple, &instance));
     let project_lock = if cluster_missing {
         lines.push(format!(
             "--data: project database {database} unreachable (Cluster is absent). Deleted without the database-side steps."
@@ -195,9 +195,8 @@ async fn delete_locked(
                     .capture_exists(&project_connection, &replication_name, data)
                     .await?
                 {
-                    let mut capture = wamn_platform_install::environment::capture_configuration(
-                        project_connection,
-                    )?;
+                    let mut capture =
+                        wamn_postgres::database::capture_configuration(project_connection)?;
                     capture.database = "postgres".into();
                     platform.prepare_database(&capture).await?;
                     platform
@@ -245,9 +244,9 @@ async fn delete_locked(
                 .delete_kept_project_resources(triple, &release)
                 .await?,
         );
-        let logins: Vec<_> = wamn_platform_install::workload_role::WorkloadRoleFamily::ALL
+        let logins: Vec<_> = wamn_identity_protocol::workload_role::WorkloadRoleFamily::ALL
             .into_iter()
-            .map(wamn_platform_install::workload_role::WorkloadRoleFamily::login_name)
+            .map(wamn_identity_protocol::workload_role::WorkloadRoleFamily::login_name)
             .chain([wamn_role::CDC_LOGIN])
             .collect();
         platform

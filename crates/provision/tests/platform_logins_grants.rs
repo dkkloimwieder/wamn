@@ -2,7 +2,8 @@
 
 pub mod common;
 use common::grants;
-use wamn_provision::{WorkloadRoleFamily, migrations::MigrationDatabase};
+use wamn_identity_protocol::workload_role::WorkloadRoleFamily;
+use wamn_provision::migrations::MigrationDatabase;
 
 #[tokio::test]
 #[ignore = "requires: docker"]

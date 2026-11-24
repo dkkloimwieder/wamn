@@ -1,32 +1,45 @@
 # Crate structure
 
-These rules apply to every crate in the root workspace and in `apps/`. Each review checks a change against them. Tests and `xtask` are outside the class rules, but the naming and code rules apply to them too.
+These rules cover the root workspace and the `apps/` workspace. Crate boundaries and `pub(crate)` limit what other crates can use. Code review enforces the rules.
 
-## Classes
+## Roles
 
-Every crate has one class: domain, implementation or binary.
+| Role | Crates | Dependencies and responsibilities |
+| --- | --- | --- |
+| Portable | digest, registry, package, role, principal, scalar, routes, identity-protocol, connection-type, component-policy, event, workflow-graph, schema, number-pattern, oci-reference, application, edge-document, envelope, jsonata, guest, record-history | Portable crates can link other portable crates. They must link no input or output library. They must never access files or the network. |
+| Infrastructure | postgres kernel, kubernetes, oci, broker, http-client, storage, gcp-metadata, key, identity-client | Infrastructure can link portable crates, other infrastructure crates, and its own input or output library. It can hold WAMN identifiers and rules for storage or protocols. It must leave domain decisions and lifecycle steps to domain crates. |
+| Runtime domain | engine, plugin, authority, http, blobstore, connection, authentication, run-state | Runtime domain crates can call portable, infrastructure, and runtime domain crates directly. They can link SQLx and the host libraries `wash-runtime`, `wasmtime`, `hyper`, and `reqwest`. They own their SQL. |
+| Deployment domain | environment, platform-install, release, build, codegen, identity, provision, application-chart, dev | Deployment domain crates can call any crate except a binary. They can link SQLx and own their SQL. |
+| Binary | Runtime binaries are host, edge, web, and cdc-reader. Deployment binaries are control, cli, identity-service, and xtask. | Binaries set up the process and connect its parts. They can own SQL that only they use. No crate can depend on a binary. |
 
-- A domain crate holds types, traits and logic that calls only domain traits. It depends only on domain crates and plain value libraries, for example serde, uuid or ring.
-- A domain crate links no client or runtime crate, directly or through another crate. Examples are sqlx, kube, k8s-openapi, wasmtime, `wasmtime-*`, wash-runtime, reqwest, hyper, async-nats, object_store and oci-client.
-- An implementation crate implements domain traits for one technology: Postgres, Kubernetes, the wasmCloud host, HTTP, NATS, OCI or object storage. It depends on domain crates and on its own technology. It gets other technologies through domain traits.
-- A domain crate never depends on an implementation crate.
-- A binary (`services/*` and the CLI) holds wiring and process setup only. It creates the implementations and passes them to the domain logic. It depends on no other binary.
-- Build support (`wamn-build`, `wamn-codegen`) links no Postgres, Kubernetes or wasm runtime. The caller supplies results or a trait.
-- A guest links only plain domain crates, the guest WIT and guest support.
+The apps workspace links only portable crates. Runtime binaries and runtime domain crates must have no dependency path to a deployment domain crate. Deployment binaries can link runtime domain crates.
+
+Among library crates, only infrastructure crates link Kubernetes, OCI, and NATS client libraries directly. Binaries can link these libraries for their own wiring.
+
+The authentication crate owns token checks, authorization reads, route authentication, and project administration. The identity crate owns sessions, passwords, account OAuth, service principals, workload identity, platform identity, logins, and NATS signing. The connection crate owns connection OAuth token refresh.
+
+`HostRouteSet::contract_files` can read files until Epic 2 removes the authored JSON shapes and their loader.
 
 ## Traits
 
-- A trait lives in a domain crate. Its implementations live in implementation crates.
-- A trait has a reason to exist: two implementations, or a technology on the other side. If a binary trait has one implementation and one caller, call the code directly.
-- A test double is not a reason for a trait. A test that needs Postgres or NATS starts a real container.
+Use a trait only if one of these conditions applies.
+
+- It has two production implementations.
+- A test uses its own implementation.
+- It prevents a dependency cycle.
+- It keeps Wasmtime and the engine out of a crate that does not need them.
+
+Use a direct call in other cases. Before you remove a trait, name the location of the call that replaces it. Keep `HostPolicy` to prevent a dependency cycle and share the upstream host matching rules.
 
 ## SQL and rows
 
-- SQL lives only in `wamn-postgres` and `wamn-provision`.
-- One exception: the SQLite store of the edge stays private in `wamn-edge`. The rule that SQL lives in `wamn-postgres` applies to Postgres only.
-- No domain type derives or implements a sqlx trait.
-- At the query, bind and read plain values, for example `String`, `Uuid` or arrays. Make the domain value with its own constructor.
-- If a record maps often or the mapping can fail, use a private row struct in `wamn-postgres`.
+- The Postgres kernel holds SQL for shared database mechanics and persistence conventions. These include transaction identity binding and the migration runner. Keep domain SQL in the runtime domain crate, deployment domain crate, or binary that owns it.
+- Keep the SQLite store private in `wamn-edge`.
+- Give each logical operation one transaction owner. That owner commits or rolls back the transaction. Helpers can borrow the transaction. The host can keep the transaction across guest callbacks.
+- When you replace a transaction trait with direct SQLx calls, keep the existing transaction, lock, cancellation, and commit boundaries.
+- Session exchange must keep membership checks, signing, and commit in one transaction. Session renewal must still commit revocation in the same refusal paths.
+- Bind and read plain values, such as `String`, `Uuid`, or arrays. Use the constructor to make the domain value.
+- If you map a record often or the mapping can fail, use a private row struct in the crate that owns the SQL.
 
 ## Jobs and names
 
@@ -40,4 +53,3 @@ Every crate has one class: domain, implementation or binary.
 - Do not copy code. If two crates need the same code, it goes to the crate that owns the job.
 - A crate declares no dependency that it does not use. `cargo xtask machete` finds them. An ignore entry carries a comment that gives the reason.
 - No public item exists only for tests.
-- `cargo xtask repo-lint-dependencies` names the crates of each rule and refuses a link that breaks one.

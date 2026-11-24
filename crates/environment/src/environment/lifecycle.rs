@@ -9,7 +9,7 @@ use crate::provision_project_env::workload;
 use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
 use wamn_platform_install as installer;
-use wamn_platform_install::database::ConnectionConfig;
+use wamn_postgres::database::{ConnectionConfig, capture_configuration, connection_for};
 use wamn_registry::{Triple, name};
 
 pub async fn configure(
@@ -61,8 +61,7 @@ pub async fn configure(
             .await?;
             let configure_projects = async {
                 for (project, instance) in projects.iter().zip(reserved) {
-                    let connection =
-                        installer::environment::connection_for(&project.triple(), &instance);
+                    let connection = connection_for(&project.triple(), &instance);
                     let database = (platform.database_values)(
                         &connection,
                         replicas,
@@ -144,7 +143,7 @@ async fn configure_project(
         );
         resources::publication_schemas(platform, lock, document).await?
     };
-    let capture = installer::environment::capture_configuration(connection.clone())?;
+    let capture = capture_configuration(connection.clone())?;
     let publication =
         wamn_registry::name::cdc_object_name(&triple.org, &triple.project, &triple.env, instance);
     let connections = workload::connections(connection)?;

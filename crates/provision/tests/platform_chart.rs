@@ -7,7 +7,7 @@ use std::path::Path;
 fn project_retains_only_the_operator_policy_for_each_cluster() -> anyhow::Result<()> {
     use wamn_environment::environment::chart_values::set_operation_values;
     use wamn_kubernetes::platform_environment::entry;
-    use wamn_platform_install::environment::connection_for;
+    use wamn_postgres::database::connection_for;
     use wamn_provision::platform_environment::database_values;
     use wamn_registry::name;
 

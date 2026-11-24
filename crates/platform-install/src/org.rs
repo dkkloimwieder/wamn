@@ -6,9 +6,9 @@ use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
 use wamn_registry::OrgId;
 
-use crate::database::ConnectionConfig;
 use crate::provision_org::{APPLY_SECRET, CONTROL_SECRET, OAUTH_ENCRYPTION_INPUT};
 use crate::release_chart::POD_REGISTRY;
+use wamn_postgres::database::ConnectionConfig;
 
 const LOCAL_PROVIDER: &str = "kind";
 

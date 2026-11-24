@@ -1,5 +1,7 @@
 //! Start and reopen sessions for the change capture process.
 
+pub mod replication;
+
 use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -8,7 +10,8 @@ use anyhow::bail;
 use tokio_util::sync::CancellationToken;
 use wamn_broker::publisher::JetStreamPublisher;
 use wamn_event::reader::{ReaderConfig, SessionFate, drain};
-use wamn_postgres::replication::ReplicationSource;
+
+use crate::replication::ReplicationSource;
 
 const CAPTURE_GAP_EVENT: &str = "CDC_CAPTURE_GAP";
 

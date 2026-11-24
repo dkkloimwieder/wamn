@@ -19,7 +19,7 @@ use wamn_registry::{
     },
 };
 
-use crate::{Registry, WamnPostgres, operation::open_executor_read};
+use crate::{ExecutorOpenError, Registry, WamnPostgres, open_executor_read};
 
 pub use oauth::write_token;
 
@@ -34,7 +34,9 @@ impl ProjectDatabase<'_> {
         context: &'static str,
         read: impl AsyncFnOnce(&mut Registry<'_>) -> Result<T, sqlx::Error>,
     ) -> anyhow::Result<T> {
-        let mut guard = open_executor_read(self.pools, self.project).await?;
+        let mut guard = open_executor_read(self.pools, self.project)
+            .await
+            .map_err(ExecutorOpenError::into_read_error)?;
         let value = read(&mut Registry::new(guard.connection()))
             .await
             .context(context)?;

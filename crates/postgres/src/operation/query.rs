@@ -5,9 +5,10 @@ use tokio::sync::{mpsc, oneshot};
 use tracing::Instrument as _;
 use wamn_application::database::{SqlError, SqlRows, SqlValue};
 
-use super::ConnectionGuard;
 use super::transaction::{SharedTxnState, restore_connection};
-use super::values::{PgParam, columns_of, decode_row, map_pg_error};
+use super::values::{PgParam, columns_of, decode_row};
+use crate::connection_guard::ConnectionGuard;
+use crate::map_pg_error;
 
 const STREAM_BATCH_ROWS: usize = 500;
 

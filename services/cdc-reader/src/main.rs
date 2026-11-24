@@ -9,8 +9,8 @@ use clap::Parser;
 use tokio_util::sync::CancellationToken;
 use wamn_broker::nats::{CA_FILE, PlatformNats};
 use wamn_broker::publisher::JetStreamPublisher;
+use wamn_cdc_reader::replication::ReplicationSource;
 use wamn_event::reader::ReaderConfig;
-use wamn_postgres::replication::ReplicationSource;
 use wamn_registry::Triple;
 
 #[derive(Parser)]
@@ -27,7 +27,7 @@ struct Settings {
     org: wamn_registry::OrgId,
     project: wamn_registry::ProjectId,
     env: wamn_registry::EnvName,
-    database: wamn_postgres::ConnectionConfig,
+    database: wamn_postgres::database::ConnectionConfig,
     cdc_name: String,
     nats_url: String,
     nats_creds: PathBuf,

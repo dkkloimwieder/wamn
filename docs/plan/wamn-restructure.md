@@ -257,7 +257,7 @@ Order: the five epics run one after another, because each one changes the root `
 
 End checks of every epic, before merge:
 
-- the standard checks: `cargo build` and `cargo clippy` for both workspaces with zero errors, `cargo xtask build-platform`, the schema apply to a fresh local Postgres, `cargo xtask helm-size`, `cargo xtask repo-lint-dependencies`, and `cargo xtask machete` for both workspaces
+- the standard checks: `cargo build` and `cargo clippy` for both workspaces with zero errors, `cargo xtask build-platform`, the schema apply to a fresh local Postgres, `cargo xtask helm-size`, and `cargo xtask machete` for both workspaces
 - `cargo test --workspace` and the ignored run
 
 Closing check after Epic 22: `cargo xtask prepare-tests`, `cargo test --workspace`, the ignored run, `cargo xtask preflight`, and the full journey run (Epics 15 and 16) on fresh local kind clusters, up to 12 orgs each.
@@ -269,14 +269,14 @@ The closing check did not run. The restructure phase closed on 2026-11-24 (Open 
 - 17.2 Renames: `test-support/resources` becomes `test-support/infrastructure`, and `wamn-test-sql` (`test-support/sql`) becomes `wamn-grant-tests` (`test-support/grant-tests`). The root `Cargo.toml`, `docs/operations/running-tests.md` and every other live reference change with them. The Part 2 history and the archived review stay as they are.
 - 17.3 `cargo xtask machete` runs cargo-machete over both workspaces, with its version pinned in `mise.toml`. Each `[package.metadata.cargo-machete] ignored` entry carries a comment that gives the reason. Every finding is fixed, in its own commit before the check.
 - 17.4 A new crate `wamn-workflow-graph` (`crates/workflow-graph`) takes the graph from `crates/routes/src/wiring.rs` as `WorkflowGraph`, with `graph_hash`. The HTTP prefix and permission helpers stay in wamn-routes. The full rename from "wiring" to "workflow graph": the graph JSON (format 0.3), the SQL (`runs.wiring_id`, `wiring_version`, `wiring_hash`, `runs_wiring_identity_check`, `catalog.workflows.wiring_hash`, in `deploy/sql/{run-state,catalog-schema,catalog-schema-prefix}.sql`), the HTTP field, the `node-context` fields with a new `wamn:node` version in `wit/wamn-node/package.wit`, the trace keys, the run result key and the error strings. The guests and apps that use them are rebuilt. wamn is greenfield, so there is no compatibility path and no migration. `.beads/issues.jsonl`, the archived review and the Part 2 history stay as they are.
-- 17.5 The lint lines: wamn-workflow-graph links no implementation crate, and `repo-lint-dependencies` reads both workspaces.
+- 17.5 wamn-workflow-graph links only portable crates.
 
 ### Epic 18: application and Postgres
 
 - 18.1 A new crate `wamn-application` (`crates/application`) holds the plain application contract from wamn-engine: `application_config`, `native_routes`, the plain part of ingress and its refusals, the callers, the delivery records, the time limits (`MAX_HOST_CALL_DURATION`), the traits `RouteProvider`, `RouteAuthenticator`, `EnvironmentStatus` and `InvocationAuthority`, `ResultSigner` (from wamn-operation), and the plain SQL values of the operation session. The engine converts WIT records at its entry, and `ResultSigner` takes a plain error in place of the generated `NodeError` (choice 2a, rulings 7 and 8).
 - 18.2 The `host` feature of wamn-postgres goes, with every use of it in the Cargo.toml files. `pool.rs` takes the time limit from wamn-application. `checkout.rs` gets its own error type in place of the generated `PgError`. `types.rs` (the SQL value conversion for the `wamn:postgres` guest interface) moves to wamn-operation. `crates/postgres/tests/project_schema.rs` stays and calls `wamn_scalar::format_timestamptz` (corrected ruling 5, ruling 6).
 
-Lint lines: wamn-application, wamn-postgres and wamn-cdc-reader link no wasmtime, `wasmtime-*` or wash-runtime, in the workspace and in the shared Docker build.
+wamn-application, wamn-postgres and wamn-cdc-reader link no wasmtime, `wasmtime-*` or wash-runtime, in the workspace and in the shared Docker build.
 
 ### Epic 19: plain data
 
@@ -289,8 +289,6 @@ Row mapping (choice 6a): the query binds and reads plain values, and the domain 
 - 19.5 The 18 SQL calls of wamn-run-state move to wamn-postgres behind a run store trait. `UnfinishedRun` (`crates/environment/src/environment/drain.rs:10`) and `PatRecord` (`crates/identity/src/application/service.rs:167`) lose `FromRow`, and wamn-postgres gets `UnfinishedRunRow` and `PatRow`.
 - 19.6 `OciTag` moves to wamn-oci-reference, and its sqlx impls go (choice 9a).
 - 19.7 `wamn-schema-introspection` becomes `wamn-schema` (`crates/schema`) with the catalog records only. The catalog reader (`postgres.rs`) moves to wamn-postgres. wamn-codegen gets a trait for live descriptions and checks, which wamn-postgres implements and the CLI wires. The generator fingerprint changes with it (choices 7a and 14a).
-
-No new lint lines. Epic 21 replaces the per-epic lists with one lint.
 
 ### Epic 20: host, identity and cloud
 
@@ -312,8 +310,6 @@ No new lint lines. Epic 21 replaces the per-epic lists with one lint.
 - 20.15 Binary traits with one implementation (`ControlExecution`, `StatusSource`, `ArtifactSource`, `ApplicationHost`, `InvocationPolicy`) become direct calls. Before a trait goes, the issue lists its test doubles, and those tests move to real containers. SQLite stays private in wamn-edge (choice 16a).
 - 20.16 SQL items in `crates/registry/src/sql.rs` move to wamn-postgres with the code that runs them. The identity items move with 20.2. The item used by `crates/environment/src/credential_cleanup.rs` moves with 20.5. The control items move with 20.12. In both epics, a shared constant moves with its first caller. The other callers take it from wamn-postgres in the same change.
 
-No new lint lines. Epic 21 replaces the per-epic lists with one lint.
-
 ### Epic 21: deploy and publish
 
 - 21.0 wamn-plugin links no sqlx and no wamn-postgres. This finishes 20.9 and choice 15a.
@@ -328,7 +324,7 @@ No new lint lines. Epic 21 replaces the per-epic lists with one lint.
 - 21.9 Every member of the apps workspace moves under `apps/`: the guests under `guests/`, `test-support/fixtures/guests/connection-http-standard`, `crates/guest` and `crates/record-history` (for example, to `apps/crates/`). The root crates that use wamn-record-history change only their path dependency. `apps/wamn_wms/tests` and `apps/wamn_receiving/tests` move into the root tree, under `tests/`, with directory names from the naming rule. After the move, `xtask/src/machete.rs` keeps only the version check and one run for each workspace, and the staging code goes (D, 2026-11-23, item 1).
 - 21.10 The environment items in `crates/registry/src/sql.rs` move to wamn-postgres with 21.2. The platform-install items move with 21.3. The provision item used by `crates/provision/src/identity_role.rs` also moves to wamn-postgres. The last move deletes `sql.rs` and its unused items. After that, wamn-registry holds no SQL text.
 
-Epic 21 replaces the per-epic lists with one lint. It uses one list of domain crates and one list of banned technology crates. Domain crates link none of these technology crates (`sqlx`, `kube`, `k8s-openapi`, `wasmtime`, `wasmtime-*`, `wash-runtime`, `reqwest`, `hyper`, `async-nats`, `oci-client`, `object_store`). The lint follows the `cargo metadata` graph with all features enabled. `wamn-control` and `wamn-identity-service` link no `wasmtime`, `wasmtime-*` or `wash-runtime`. `wamn-edge` and `wamn-edge-document` link no service clients. No product crate links `wamn-test-infrastructure`. Keep `xtask/src/repo_policy/dependencies.rs` under 100 lines. Remove `WORKFLOW_GRAPH_REFUSED`, `WITHOUT_WASM_RUNTIME`, `WITHOUT_POSTGRES` and every other per-epic list.
+The current crate rules are in [Crate structure](../structure.md).
 
 ### Epic 22: control's outbound calls move to the host (wamn-i6kl1)
 
@@ -411,7 +407,7 @@ Next: the restructure ends. The review work in the Claude Doc "wamn review" foll
 - Crate graph review (2026-11-21): `wamn-registry` and `wamn-package` (30 dependents each) link sqlx with postgres, so `wamn-web`, `wamn-edge`, `wamn-event` and `wamn-broker` compile a database driver. The fix is choice 6a: the sqlx impls go from the domain types, the queries bind and read plain values, and wamn-postgres keeps private row structs. Epic 19 does it.
 - Replace the generator fingerprint (a hand-written list of source paths in `crates/codegen/build.rs`) with a check that regenerates and compares. After the restructure.
 - Control's outbound calls. Control has no public egress (`deploy/charts/org/templates/network-policies.yaml:12-15`). The OAuth code exchange and the connection test likely fail on a cluster that enforces NetworkPolicy. `services/control/src/control_route/oauth_authorization.rs::Authorization::callback` reaches `crates/http/src/oauth.rs::exchange_code` through `Authorization::exchange`. `services/control/src/control_route/connection_test.rs::connection_test_in` reaches `crates/http/src/lib.rs::health` through `crates/http/src/connection_health.rs::ConnectionHealth::probe`. No journey test covers either call. Option (a) adds a control NetworkPolicy for the declared connection ports. It follows the host policy, which permits public addresses and excludes private ranges (`deploy/charts/application/templates/network-policy.yaml`). Two journey tests use a fixture on a test-only Docker bridge on the kind network, at an address the stock policy permits, with a test CA (Epic 22 scout). Option (b) moves both calls to the host. It needs a control-to-host route. `services/control/src/host_route.rs` serves only calls from clients to control. It also needs a token check, such as the TokenReview that `services/control/src/first_owner.rs` uses. The environment chart needs to open egress ports before any application deploys. `crates/application-chart/src/plan.rs::http_connection_ports` opens ports only from deployed applications. The move also needs answers to the lock questions in the OAuth locks item below.
-- Control links wash-runtime for good. Control parses addresses with the stock `AllowedHost` (`crates/http/src/wasm_authority.rs:8`, called from `services/control/src/platform.rs:139` and `services/control/src/control_route/integration.rs:139`). Ruling Q-A refuses a copy, and the no-upstream rule refuses a split. So the control exception in the dependency lint is permanent.
+- Control links wash-runtime for good. Control parses addresses with the stock `AllowedHost` (`crates/http/src/wasm_authority.rs:8`, called from `services/control/src/platform.rs:139` and `services/control/src/control_route/integration.rs:139`). Ruling Q-A refuses a copy, and the no-upstream rule refuses a split.
 - The full journey run (Epics 15 and 16) on fresh kind clusters did not run on the crates of Epics 17 to 21.
 - OAuth locks. The callback locks the pending row and then the connection (`services/control/src/control_route/oauth_authorization.rs::Authorization::exchange`, called by `Authorization::callback`). Generation writes lock them in the opposite order (`crates/postgres/src/project_connections/administration.rs`). OAuth refresh holds a database guard across the provider call (`crates/postgres/src/project_connections/oauth.rs`). This breaks the rule "The host holds no database guard across an external call" (Part 1, line 77 of this file at commit 3e254c957).
 - wamn-environment reads files with std::fs (`crates/environment/src/environment/document/file.rs::EnvironmentFile::compile`, `crates/environment/src/environment/write.rs::host_group`). It turns on the tokio features fs, process and signal (`crates/environment/Cargo.toml`). No production code uses them.
@@ -2106,7 +2102,7 @@ Epic 11 closed on 2026-11-20 after review. The smoke run on kind passed.
 **Ruled (D, 2026-11-20): Epic 12 questions Q1 to Q3.** Q1 corrects ruling 4 above, because kube 5.1.0 is the current release.
 - Q1: pin `kube` =5.1.0 and `k8s-openapi` =0.29.0, with the feature `v1_35`. Reason: kube 4.2.0's optional `serde-saphyr` ^0.0.29 needs `smallvec` below 1.16, and the `pg_walstream` fork (rev 9957974) needs 1.16.4 or later, so the workspace does not resolve. kube 5.1.0 (released 2026-11-12) uses `serde-saphyr` 2, needs Rust 1.95, and resolves with the current fork. The fork does not change, and no `[patch.crates-io]` is added.
 - Q2: the connection types leave `wamn-catalog` for a new small crate, `wamn-connection-type`, below `wamn-engine` and `wamn-authority`. Reason: `wamn-connection` would make the cycles authority → connection → authority and engine → connection → engine, and `wamn-registry` keeps only its database (one owner per fact).
-- Q3: the artifact reference module and `validate_composed_entry_path` go to a new crate under `crates/oci/` with no network code, `wamn-oci-reference`. `wamn-oci` and `wamn-edge` both depend on it. Reason: `wamn-edge` validates composed-entry references, and `repo-lint-dependencies` forbids network crates in `wamn-edge`. No feature flag is added, and the dependency check rules do not change.
+- Q3: the artifact reference module and `validate_composed_entry_path` go to a new crate under `crates/oci/` with no network code, `wamn-oci-reference`. `wamn-oci` and `wamn-edge` both depend on it. Reason: `wamn-edge` validates composed-entry references through the portable crate. No feature flag is added.
 - With Q2 and Q3 done, `wamn-catalog` is deleted.
 
 Epic 12 closed on 2026-11-20 after review. The smoke run on kind passed.
@@ -2324,7 +2320,7 @@ Epic 14 closed on 2026-11-21 after review. cargo test --workspace: 617 passed in
 **Epic 16 closed (2026-11-22).** Epic 16 closed on 2026-11-22 after review. cargo test --workspace: 631 passed. --ignored: 101 passed. All five Epic 16 test files passed on kind, with no failed call during the rollback.
 
 **Ruled (D, 2026-11-22): Epic 17 scope (crate graph).**
-- Issues 17.0 to 17.9: 17.0 the plan; 17.1 the grant SQL moves to `wamn-authentication`; 17.2 the cloud metadata client leaves `wamn-oci`; 17.3 `test-support/resources` becomes `test-support/infrastructure`; 17.4 `wamn-postgres` splits into two crates; 17.5 the plain shared types leave `wamn-engine`; 17.6 `wamn-environment` splits by job; 17.7 `wiring.rs` leaves `wamn-routes` with the "wiring" rename, a schema change with no migration; 17.8 the dev-dependency cycles go where the moves allow; 17.9 the dependency lint covers every crate. Reason: the crate graph review of 2026-11-21.
+- Issues 17.0 to 17.9: 17.0 the plan; 17.1 the grant SQL moves to `wamn-authentication`; 17.2 the cloud metadata client leaves `wamn-oci`; 17.3 `test-support/resources` becomes `test-support/infrastructure`; 17.4 `wamn-postgres` splits into two crates; 17.5 the plain shared types leave `wamn-engine`; 17.6 `wamn-environment` splits by job; 17.7 `wiring.rs` leaves `wamn-routes` with the "wiring" rename, a schema change with no migration; 17.8 the dev-dependency cycles go where the moves allow; 17.9 reviews the crate graph. Reason: the crate graph review of 2026-11-21.
 - sqlx in `wamn-registry` and `wamn-package` stays out, because it waits for the edge device design. The "ProjectDatabase" claim stays out, because no such type exists.
 - The full journey run on fresh clusters runs once, at the end of this epic, as the restructure's closing check. Reason: the ruling of 2026-11-22, "finishing Epic 16".
 
@@ -2343,7 +2339,7 @@ Epic 14 closed on 2026-11-21 after review. cargo test --workspace: 617 passed in
 - Choice 16 is (a). Before a trait goes, its test doubles are listed, and those tests move to real containers.
 - Choice 19: the naming rule lets test crates keep the `-tests` ending, so wamn-test-sql becomes wamn-grant-tests, as ruled.
 - Choice 20: the unused `async-nats` lines in wamn-authority and wamn-connection go as the first code commit of Epic 17.
-- Choice 18 is dropped. There are no class declarations and no source parsing. The lint names crates in xtask, as it does today, and each epic adds its lint lines.
+- Choice 18 is dropped. There are no class declarations and no source parsing.
 - Choices 1a, 2a, 3a, 4a, 6a, 7a, 9a, 10a, 13a, 14a, 15a and 17a are accepted as recommended, with 17a changed as above.
 - Tests: every epic runs `cargo test --workspace` and the ignored run before merge. The journey run on fresh kind clusters runs once, after the last epic.
 - cargo-machete joins the standard checks for both workspaces, through xtask, with its version pinned. Each ignore entry carries a comment with the reason, and every finding is fixed.
@@ -2358,12 +2354,8 @@ Epic 14 closed on 2026-11-21 after review. cargo test --workspace: 617 passed in
 - Item 5: accepted. Directories under `test-support/` drop the `test-` prefix.
 - Item 6: the rule that root writes no fixes covers generated output too. 92a37b8e1 and 94084391f stay, because a wrong digest fails the build. From now on, the agent that changes the inputs runs the refresh and writes the pins in the same commit. Root writes nothing to the repository. There is no new command for writing pins.
 
-**Ruled (D, 2026-11-23): lint scope.**
-- Epics 19 and 20 add no lint lines. They move code and run the existing end checks. Lint lines already committed, including `WITHOUT_POSTGRES` from 19.7, stay until Epic 21.
-- Epic 21 replaces the per-epic lists with one lint. It uses one list of domain crates and one list of banned technology crates. Domain crates link none of these technology crates (`sqlx`, `kube`, `k8s-openapi`, `wasmtime`, `wasmtime-*`, `wash-runtime`, `reqwest`, `hyper`, `async-nats`, `oci-client`, `object_store`). The lint follows the `cargo metadata` graph with all features enabled. `wamn-control` and `wamn-identity-service` link no `wasmtime`, `wasmtime-*` or `wash-runtime`. `wamn-edge` and `wamn-edge-document` link no service clients. No product crate links `wamn-test-infrastructure`. Keep `xtask/src/repo_policy/dependencies.rs` under 100 lines. Remove `WORKFLOW_GRAPH_REFUSED`, `WITHOUT_WASM_RUNTIME`, `WITHOUT_POSTGRES` and every other per-epic list.
+**Ruled (D, 2026-11-23): generator fingerprint.**
 - The 19.7 ruling on the generator fingerprint stands. Narrow the inputs to the files that generation reads. Check the Epic 18 moves. The Open item records the later replacement.
-- D withdraws the edit that added `WITHOUT_POSTGRES` to the Epic 19 lint lines.
-- The per-epic lists made the checks grow faster than the crate structure changed. One dependency check, `cargo xtask machete` and review against `docs/structure.md` enforce the rule.
 
 **Ruled (D, 2026-11-23): review of Epics 18 and 19.**
 - The review found no merge blockers at `cbe015455`. Main fast-forwarded to that commit.
@@ -2384,11 +2376,11 @@ Epic 14 closed on 2026-11-21 after review. cargo test --workspace: 617 passed in
 **Ruled (D, 2026-11-24): Epic 22.**
 - The wash-runtime conflict (wamn-fmvz4.14) goes with option (b). Control's OAuth code exchange (`crates/http/src/oauth.rs`, called from `services/control/src/control_route/oauth_authorization.rs`) and its connection health check (`crates/http/src/lib.rs`, called from `services/control/src/control_route/connection_test.rs`) move to the host.
 - Reason: control's org namespace is default-deny with no public egress (`deploy/charts/org/templates/network-policies.yaml`). Only host pods get public egress, on the connection ports (`deploy/charts/application/templates/network-policy.yaml`). So on a cluster that enforces NetworkPolicy, both calls likely fail today. No journey test covers either one.
-- Moving them keeps the stock egress policy as the one owner (ruling Q-A). Control stops fetching URLs that users supply, and wasmtime leaves control with no exception. This makes the existing design work, so the freeze allows it.
-- Merge of Epics 20 and 21: one lint exception lets control link wash-runtime through wamn-http. The lint names it with the comment "removed by Epic 22 (wamn-fmvz4.14)", in its own commit. The end checks run at the new head, with the full ignored run. Main fast-forwards to the branch head without waiting for the peer session. An owner rule of 2026-11-24 forbids messages to peer sessions, so the peer is not told.
+- Moving them keeps the stock egress policy as the one owner (ruling Q-A). Control stops fetching URLs that users supply, and wasmtime leaves control. This makes the existing design work, so the freeze allows it.
+- Merge of Epics 20 and 21: the end checks run at the new head, with the full ignored run. Main fast-forwards to the branch head without waiting for the peer session. An owner rule of 2026-11-24 forbids messages to peer sessions, so the peer is not told.
 - An outside review found that the host compiled wamn-environment, and so the deploy steps, wamn-platform-install and wamn-release, but used no wamn_environment item (wamn-fmvz4.16). Fix, before the merge, one commit for each move: `BrokerIdentity` moves to wamn-identity-protocol, which owns the NATS signing messages. `Chart`, `Cluster`, `DatabaseFiles` and `Upgrade` move to wamn-platform-install, which holds `ConnectionConfig`. No new crate. Then neither wamn-kubernetes nor wamn-identity-client lists wamn-environment.
 - The host still reached wamn-environment through wamn-postgres, because 21.2 put the environment SQL there. Option (a): `environment_sql_effects.rs` and `apply_package.rs` move from wamn-postgres to wamn-provision, unchanged in behavior. Only control and the CLI link wamn-provision. Only the wamn-postgres helpers that the moved code calls become public. This changes the 21.2 placement.
-- The dependency lint gets one line: wamn-host links no wamn-environment.
+- wamn-host links no wamn-environment.
 - The Epic 20 and Epic 21 beads close with notes, including wamn-5wonb.9. wamn-fmvz4.14 moves to Epic 22 (wamn-i6kl1).
 - The Epic 22 scout also lists each file-system use and each tokio feature (process, fs, signal) in wamn-environment, and proposes where each file read belongs.
 - The closing journey run on fresh kind clusters moves to after Epic 22.
@@ -2396,6 +2388,5 @@ Epic 14 closed on 2026-11-21 after review. cargo test --workspace: 617 passed in
 **Ruled (D, 2026-11-24): the restructure phase closes.**
 - The restructure phase closes on 2026-11-24. Epic 22 was not built. Its findings are Open items.
 - The closing journey run on fresh kind clusters did not run. It is an Open item.
-- The control exception in the dependency lint is permanent: stock address parsing and the egress policy (ruling Q-A). Its comment says so and points to the Open items.
-- No code changes, except that lint comment. Main fast-forwards to the branch head after `cargo xtask repo-lint` and `cargo build` exit 0.
+- Main fast-forwards to the branch head after `cargo xtask repo-lint` and `cargo build` exit 0.
 - wamn-fmvz4.14 and wamn-i6kl1 close without a build.

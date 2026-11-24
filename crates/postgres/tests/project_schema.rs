@@ -5,7 +5,10 @@ use std::fmt::Write as _;
 use std::path::Path;
 
 use postgres_protocol::escape::{escape_identifier, escape_literal};
-use wamn_provision::{WorkloadRoleFamily, WorkloadRoleIdentity, sql, workload_login};
+use wamn_identity_protocol::workload_role::{
+    WorkloadRoleFamily, WorkloadRoleIdentity, workload_login,
+};
+use wamn_provision::sql;
 
 const APP_GENERATION_PASSWORD: &str = "test-owned-app-generation-password";
 const OTHER_APP_PASSWORD: &str = "other-test-app-password";

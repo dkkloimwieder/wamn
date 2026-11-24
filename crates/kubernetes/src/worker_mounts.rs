@@ -56,5 +56,5 @@ pub fn mount_database_files(job: &mut Value) {
     job::container(job)["volumeMounts"]
         .as_array_mut()
         .expect("worker volume mounts")
-        .push(json!({"name":"database-files","mountPath":wamn_platform_install::database::DATABASE_DIR}));
+        .push(json!({"name":"database-files","mountPath":wamn_postgres::database::DATABASE_DIR}));
 }

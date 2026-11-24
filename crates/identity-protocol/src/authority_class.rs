@@ -3,8 +3,7 @@
 //! `wamn-0h0g.22.14` ruled this vocabulary closed and total: one role family per
 //! class, no wildcard arm, no default arm, and an added or unmapped class is a
 //! COMPILE ERROR rather than a runtime fallback. The projection onto the
-//! provisioning families lives beside `WorkloadRoleFamily` in
-//! `wamn-provision`, because that is where the target type is defined.
+//! provisioning families lives in [`crate::workload_role`].
 //!
 //! # Why there is deliberately no parser
 //!

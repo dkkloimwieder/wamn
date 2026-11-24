@@ -45,7 +45,7 @@ pub async fn recover(
         &triple,
         async |lock| {
             let instance = lock.capture_instance(&triple).await?;
-            let owner = wamn_platform_install::environment::connection_for(&triple, &instance);
+            let owner = wamn_postgres::database::connection_for(&triple, &instance);
             let publication_exists = platform
                 .cluster
                 .publication_exists(&owner.database)
@@ -55,7 +55,7 @@ pub async fn recover(
                 publication_exists,
                 "{triple} has no CDC Publication to recover"
             );
-            let capture = wamn_platform_install::environment::capture_configuration(owner)?;
+            let capture = wamn_postgres::database::capture_configuration(owner)?;
             platform.prepare_database(&capture).await?;
             recovery::recover_capture_gap(args, &instance, &capture.to_json()?, platform, lock)
                 .await

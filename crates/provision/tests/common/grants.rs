@@ -1,9 +1,12 @@
 //! Shared installation of a login fixture for the definer tests.
 
 use postgres_protocol::escape::escape_identifier;
+use wamn_identity_protocol::workload_role::WorkloadRoleIdentityType;
+use wamn_identity_protocol::workload_role::{
+    WorkloadRoleFamily, WorkloadRoleIdentity, workload_login,
+};
 use wamn_provision::migrations::MigrationDatabase;
-use wamn_provision::workload_role::WorkloadRoleIdentityType;
-use wamn_provision::{WorkloadRoleFamily, WorkloadRoleIdentity, sql, workload_login};
+use wamn_provision::sql;
 
 #[derive(Debug)]
 pub struct Fixture {

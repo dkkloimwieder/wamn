@@ -25,7 +25,7 @@ use wamn_identity_protocol::nats::BrokerIdentity;
 use wamn_platform_install::deployment::{Chart, Cluster, DatabaseFiles};
 
 type DatabaseValues = fn(
-    &wamn_platform_install::database::ConnectionConfig,
+    &wamn_postgres::database::ConnectionConfig,
     u32,
     serde_json::Value,
     &serde_json::Value,
@@ -78,7 +78,7 @@ impl Platform {
     /// Stage this database's credentials when running in an operation Job.
     pub async fn prepare_database(
         &self,
-        config: &wamn_platform_install::database::ConnectionConfig,
+        config: &wamn_postgres::database::ConnectionConfig,
     ) -> anyhow::Result<()> {
         if let Some(files) = &self.database_files {
             files.materialize(config).await?;

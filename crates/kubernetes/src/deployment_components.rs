@@ -15,8 +15,8 @@ use kube::{
 use serde_json::Value;
 use std::{collections::BTreeMap, ffi::OsStr, path::Path, sync::Mutex, time::Duration};
 use tokio::time::Instant;
-use wamn_platform_install::database::ConnectionConfig;
 use wamn_platform_install::deployment::{Chart, Cluster, DatabaseFiles, Upgrade};
+use wamn_postgres::database::ConnectionConfig;
 use wamn_registry::{ApplicationName, Triple, name};
 
 use crate::client::{

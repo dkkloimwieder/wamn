@@ -8,12 +8,13 @@ use chrono::{DateTime, Utc};
 use wamn_application::application_config::ApplicationConfig;
 use wamn_component_policy::PackageManifest;
 use wamn_digest::Digest;
+use wamn_identity_protocol::workload_role::WorkloadRoleFamily;
 use wamn_package::{
     PackageName,
     canonical_name::CanonicalName,
     package_schema::{AppliedPackage, PackageDirectory},
 };
-use wamn_platform_install::{database::ConnectionConfig, workload_role::WorkloadRoleFamily};
+use wamn_postgres::database::ConnectionConfig;
 use wamn_registry::{
     ApplicationName, EnvName, EnvironmentRow, OrgId, ProjectEnvKey, ProjectId, Triple,
     configuration::EnvironmentConfiguration, instance_suffix::InstanceSuffix,

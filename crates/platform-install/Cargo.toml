@@ -15,7 +15,7 @@ serde_json.workspace = true
 serde_yaml.workspace = true
 tokio = { workspace = true, features = ["time"] }
 wamn-digest.workspace = true
-wamn-identity-protocol.workspace = true
+wamn-postgres.workspace = true
 wamn-registry.workspace = true
 
 [lints]

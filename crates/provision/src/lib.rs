@@ -23,7 +23,6 @@ pub mod sql;
 pub mod system_reader;
 pub use wamn_postgres::platform_identity as transaction_identity;
 pub use wamn_postgres::provisioning_transaction as transaction;
-pub mod workload_role;
 
 pub use error::ProvisionError;
 pub use name::{
@@ -35,10 +34,6 @@ pub use name::{
 pub use transaction_identity::{bind_platform_principal, bind_platform_principal_sql};
 /// The platform component list, for callers that bind a component as the actor.
 pub use wamn_postgres::PlatformComponent;
-pub use workload_role::{
-    WorkloadRoleFamily, WorkloadRoleIdentity, WorkloadRoleIdentityError, WorkloadRoleIdentityType,
-    workload_login,
-};
 
 /// Core control-database schema, applied first by a fresh bootstrap.
 ///

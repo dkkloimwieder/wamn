@@ -328,7 +328,7 @@ async fn resolve_relation_classification(
     schema: &str,
     relation_oid: u32,
 ) -> Result<RelationClassification, ReplicationError> {
-    let mut client = crate::connect(connection)
+    let mut client = wamn_postgres::connect(connection)
         .await
         .map_err(|e| ReplicationError::TransientConnection(format!("relation-map connect: {e}")))?;
 
@@ -440,7 +440,7 @@ async fn wait_for_replication(
 ) -> anyhow::Result<sqlx::postgres::PgConnectOptions> {
     let timeout = Duration::from_secs(120);
     let wait = async {
-        let options = crate::connect_options(input).await?;
+        let options = wamn_postgres::connect_options(input).await?;
         let mut client = sqlx::PgConnection::connect_with(&options).await?;
         while !sqlx::query_scalar::<_, bool>(
             "SELECT EXISTS (SELECT FROM pg_catalog.pg_replication_slots WHERE slot_name = $1)",
@@ -550,7 +550,7 @@ fn confirmed_lsn_age_seconds(last_lsn_advance_ms: &AtomicI64) -> i64 {
 
 /// Poll WAL retention over a query connection and emit its health and progress.
 async fn poll_retention(source: &ReplicationSource, warn_minimum: i64) -> anyhow::Result<()> {
-    let mut client = crate::connect(source.connection.as_str())
+    let mut client = wamn_postgres::connect(source.connection.as_str())
         .await
         .context("slot-monitor connect")?;
 

@@ -13,8 +13,8 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use sqlx::PgConnection;
 use url::Url;
+use wamn_identity_protocol::workload_role::WorkloadRoleFamily;
 use wamn_platform_install::provision_org::OrgLogin;
-use wamn_provision::WorkloadRoleFamily;
 use wamn_provision::migrations::MigrationDatabase;
 pub use wamn_provision::{
     provision_system::install_control_store, transaction::provisioning_transaction,
@@ -282,16 +282,16 @@ pub async fn project() -> Result<Project> {
         &"a1b2c3d4".parse()?,
     );
     let owner = WorkloadRoleFamily::Migration.login_name();
-    let connection = wamn_postgres::ConnectionConfig {
+    let connection = wamn_postgres::database::ConnectionConfig {
         host: "127.0.0.1".into(),
         port: 5432,
         database: database.clone(),
         username: owner.parse()?,
-        credentials: wamn_postgres::SecretRef {
+        credentials: wamn_postgres::database::SecretRef {
             namespace: org.as_str().to_owned(),
             name: wamn_registry::name::project_login_certificate(&database, owner),
         },
-        server_ca: wamn_postgres::SecretRef {
+        server_ca: wamn_postgres::database::SecretRef {
             namespace: org.as_str().to_owned(),
             name: "ca".into(),
         },

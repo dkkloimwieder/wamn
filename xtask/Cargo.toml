@@ -24,6 +24,7 @@ wamn-registry.workspace = true
 wamn-component-policy.workspace = true
 wamn-environment.workspace = true
 wamn-postgres.workspace = true
+wamn-identity-protocol.workspace = true
 sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "tls-rustls", "chrono", "uuid", "json"] }
 wamn-build.workspace = true
 anyhow.workspace = true

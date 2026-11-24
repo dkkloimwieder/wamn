@@ -18,6 +18,7 @@ wamn-connection = { workspace = true }
 wamn-event.workspace = true
 wamn-envelope.workspace = true
 wamn-platform-install.workspace = true
+wamn-postgres.workspace = true
 wamn-authentication.workspace = true
 wamn-digest.workspace = true
 wit-parser = { workspace = true }
@@ -40,7 +41,6 @@ wamn-release = { workspace = true }
 
 [dev-dependencies]
 postgres-protocol = { workspace = true }
-wamn-postgres.workspace = true
 wamn-provision.workspace = true
 wamn-oci.workspace = true
 url = { workspace = true }

@@ -1,6 +1,5 @@
 //! PostgreSQL implementation of authorized application database operations.
 
-mod connection;
 mod identity;
 mod native;
 mod query;
@@ -22,10 +21,9 @@ use wamn_registry::{ProjectEnvKey, ProjectId};
 
 use crate::WamnPostgres;
 
-use connection::ConnectionGuard;
-use identity::prepare_identity;
+use crate::connection_guard::ConnectionGuard;
+use crate::transaction_identity::prepare_identity;
 pub use native::lock_operation_grants;
-pub(crate) use native::open_executor_read;
 use query::{QueryTransaction, open_stream};
 use transaction::Transaction;
 use values::checkout_pg_error;

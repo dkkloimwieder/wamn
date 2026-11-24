@@ -6,8 +6,6 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-wamn-platform-install.workspace = true
-pg_walstream.workspace = true
 wamn-application.workspace = true
 wamn-authentication.workspace = true
 wamn-authority.workspace = true
@@ -60,7 +58,6 @@ async-nats = { workspace = true, features = ["aws-lc-rs", "nkeys"] }
 base64.workspace = true
 wamn-key.workspace = true
 wamn-oci.workspace = true
-bytes.workspace = true
 pg_query = "=6.2.1"
 syn = { workspace = true, features = ["full"] }
 tempfile.workspace = true

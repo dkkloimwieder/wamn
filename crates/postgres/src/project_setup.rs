@@ -3,7 +3,7 @@
 use std::fmt::Write as _;
 
 use postgres_protocol::escape::{escape_identifier, escape_literal};
-use wamn_platform_install::workload_role::WorkloadRoleFamily;
+use wamn_identity_protocol::workload_role::WorkloadRoleFamily;
 
 /// Idempotently create or harden one stable workload ACL role as NOLOGIN.
 pub fn ensure_workload_acl_role_sql(family: WorkloadRoleFamily) -> String {
@@ -149,7 +149,7 @@ pub fn privilege_sql(database: &str) -> String {
 /// Grant each project login its database surface once CloudNativePG has created it.
 pub async fn grant(
     project: &mut sqlx::PgConnection,
-    connections: &[(WorkloadRoleFamily, crate::ConnectionConfig)],
+    connections: &[(WorkloadRoleFamily, crate::database::ConnectionConfig)],
 ) -> anyhow::Result<()> {
     for (family, connection) in connections {
         crate::platform_database::wait_role(project, &connection.username).await?;

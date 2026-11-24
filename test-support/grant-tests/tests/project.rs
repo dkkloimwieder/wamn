@@ -2,7 +2,7 @@
 
 pub mod common;
 
-use wamn_provision::WorkloadRoleFamily;
+use wamn_identity_protocol::workload_role::WorkloadRoleFamily;
 use wamn_test_infrastructure::database::{self, PASSWORD, Project, execute};
 
 /// Log in as `login`, then check its catalog-derived refusals and the `contract` actions.

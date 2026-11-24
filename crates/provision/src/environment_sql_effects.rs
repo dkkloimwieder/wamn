@@ -7,7 +7,7 @@ use wamn_environment::environment::database::{
     MISSING_CAPTURE_REASON, PendingCaptureGap,
 };
 use wamn_package::canonical_name::CanonicalName;
-use wamn_platform_install::database::ConnectionConfig;
+use wamn_postgres::database::ConnectionConfig;
 use wamn_postgres::environment_sql::{
     close_capture_gap_sql, insert_capture_gap_sql, lock_newest_capture_gap_sql,
     select_event_reader_origin_sql, upsert_event_reader_sql,
@@ -487,7 +487,7 @@ async fn reset_database(
     wamn_postgres::bind_platform_principal(&mut tx, wamn_postgres::PlatformComponent::Provisioning)
         .await?;
     let mut migration = wamn_postgres::connect(migration_url).await?;
-    let login = wamn_postgres::project_migration::require_login(&mut migration).await?;
+    let login = wamn_postgres::migration_scope::require_project_login(&mut migration).await?;
     let migration_database: String = sqlx::query_scalar("SELECT current_database()::text")
         .fetch_one(&mut migration)
         .await?;
@@ -543,7 +543,7 @@ async fn reset_database(
     sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
         "{} {}",
         wamn_postgres::project_setup::grant_workload_login_sql(
-            wamn_platform_install::workload_role::WorkloadRoleFamily::Migration,
+            wamn_identity_protocol::workload_role::WorkloadRoleFamily::Migration,
             &database,
             &login,
         ),
@@ -1176,8 +1176,8 @@ use wamn_environment::apply_package::{ApplyOutcome, ApplyPackageRequest};
 use wamn_environment::environment::database::{
     Database, DatabaseConnection, DatabaseSession, LifecycleLock, PackageMigrations,
 };
+use wamn_identity_protocol::workload_role::WorkloadRoleFamily;
 use wamn_package::package_schema::PackageDirectory;
-use wamn_platform_install::workload_role::WorkloadRoleFamily;
 use wamn_registry::lifecycle_lock::LifecycleLocks as _;
 
 /// Postgres environment deployment adapter.

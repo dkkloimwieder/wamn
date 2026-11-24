@@ -103,7 +103,7 @@ async fn apply(
     let mut executor = wamn_postgres::connect(migration_options)
         .await
         .context("connect as the migration login")?;
-    let login = wamn_postgres::project_migration::require_login(&mut executor).await?;
+    let login = wamn_postgres::migration_scope::require_project_login(&mut executor).await?;
     let catalog_database: String = sqlx::query_scalar("SELECT current_database()::text")
         .fetch_one(&mut *client)
         .await?;

@@ -86,14 +86,12 @@ pub async fn wait_project_connection(
 pub async fn connection(
     registry: &mut sqlx::PgConnection,
     triple: &wamn_registry::Triple,
-) -> anyhow::Result<crate::ConnectionConfig> {
+) -> anyhow::Result<crate::database::ConnectionConfig> {
     let instance = crate::Registry::new(registry)
         .instance_suffix(triple)
         .await?
         .with_context(|| format!("project deployment {triple} is absent"))?;
-    Ok(wamn_platform_install::environment::connection_for(
-        triple, &instance,
-    ))
+    Ok(crate::database::connection_for(triple, &instance))
 }
 
 /// Take the org lock for the lifetime of the dedicated connection.

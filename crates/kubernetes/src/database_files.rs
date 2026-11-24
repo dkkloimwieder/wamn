@@ -5,7 +5,7 @@ use k8s_openapi::api::core::v1::Secret;
 use kube::Api;
 use std::sync::Arc;
 use tokio::io::AsyncWriteExt as _;
-use wamn_platform_install::database::{ConnectionConfig, DATABASE_DIR, credential_directory};
+use wamn_postgres::database::{ConnectionConfig, DATABASE_DIR, credential_directory};
 
 use crate::client::{KubernetesApi, REQUEST_TIMEOUT};
 

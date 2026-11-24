@@ -2,8 +2,8 @@
 
 use anyhow::Context as _;
 use serde_json::{Value, json};
-use wamn_platform_install::database::ConnectionConfig;
-use wamn_platform_install::workload_role::WorkloadRoleFamily;
+use wamn_identity_protocol::workload_role::WorkloadRoleFamily;
+use wamn_postgres::database::ConnectionConfig;
 use wamn_registry::Triple;
 
 /// The connection of each project login, derived from the owner connection.

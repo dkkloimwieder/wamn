@@ -1,8 +1,9 @@
 //! Test databases with the control store installed, and the logins that CNPG manages.
 
 use postgres_protocol::escape::{escape_identifier, escape_literal};
+use wamn_identity_protocol::workload_role::WorkloadRoleFamily;
 use wamn_provision::migrations::MigrationDatabase;
-use wamn_provision::{PlatformComponent, WorkloadRoleFamily, sql};
+use wamn_provision::{PlatformComponent, sql};
 
 /// Create the control owner role with the attributes of the production bootstrap.
 const SYSTEM_ROLE_SQL: &str = "DO $system_role$ BEGIN \

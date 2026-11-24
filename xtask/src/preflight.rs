@@ -33,9 +33,9 @@ use serde_json::{Value, json};
 use wamn_environment::environment::document::EnvironmentFile;
 use wamn_environment::provision_project_env::workload;
 use wamn_kubernetes::release_chart::bundle;
-use wamn_platform_install::environment as installer;
 use wamn_platform_install::release_chart::{POD_REGISTRY, pod_registry_reference};
 use wamn_postgres::build_database::PostgresBuildDatabase;
+use wamn_postgres::database::{capture_configuration, connection_for};
 use wamn_provision::platform_environment;
 use wamn_registry::{OrgId, name};
 
@@ -248,7 +248,7 @@ async fn render(
     // wamn org create: org values from the rendered platform inputs.
     let org: OrgId = ORG.parse()?;
     let inputs = &find(&platform.objects, "ConfigMap", "wamn-org-inputs")?["data"];
-    let database: wamn_postgres::ConnectionConfig = serde_json::from_str(
+    let database: wamn_postgres::database::ConnectionConfig = serde_json::from_str(
         find(&platform.objects, "ConfigMap", "wamn-system-sql")?["data"]["database.json"]
             .as_str()
             .context("wamn-system-sql has no database.json")?,
@@ -307,7 +307,7 @@ async fn render(
         .context("the environment has one project")?;
     let triple = document.triple();
     let instance: wamn_registry::instance_suffix::InstanceSuffix = STAND_IN_INSTANCE.parse()?;
-    let connection = installer::connection_for(&triple, &instance);
+    let connection = connection_for(&triple, &instance);
     let connections = workload::connections(&connection)?;
     let registry = control["registry"]
         .as_str()
@@ -322,10 +322,10 @@ async fn render(
     let mut logins = serde_json::Map::new();
     for (family, login) in &connections {
         let role = match family {
-            wamn_provision::WorkloadRoleFamily::App => "guest-sql",
-            wamn_provision::WorkloadRoleFamily::Query => "dynamic-sql",
-            wamn_provision::WorkloadRoleFamily::Platform => "platform",
-            wamn_provision::WorkloadRoleFamily::Migration => continue,
+            wamn_identity_protocol::workload_role::WorkloadRoleFamily::App => "guest-sql",
+            wamn_identity_protocol::workload_role::WorkloadRoleFamily::Query => "dynamic-sql",
+            wamn_identity_protocol::workload_role::WorkloadRoleFamily::Platform => "platform",
+            wamn_identity_protocol::workload_role::WorkloadRoleFamily::Migration => continue,
         };
         logins.insert(role.into(), login.credentials.name.clone().into());
     }
@@ -411,7 +411,7 @@ async fn render(
         "image": host_image,
         "registrySecret": (!registry_token_metadata).then_some(name::REGISTRY_PULL),
         "natsSecret": name::project_nats_secret(&triple, "cdc"),
-        "database": installer::capture_configuration(connection)?,
+        "database": capture_configuration(connection)?,
         "natsUrl": control["nats_url"],
         "pause": false,
     });
@@ -548,7 +548,7 @@ fn org_create_objects(
     org: &OrgId,
     helm_namespace: &str,
     image: &str,
-    database: &wamn_postgres::ConnectionConfig,
+    database: &wamn_postgres::database::ConnectionConfig,
     inputs: &Value,
     org_values: &Value,
 ) -> anyhow::Result<Vec<Value>> {
@@ -632,7 +632,7 @@ fn org_create_objects(
     spec["containers"][0]["volumeMounts"] = json!([
         {"name": "configuration", "mountPath": "/etc/wamn/system-sql", "readOnly": true},
         {"name": "org-inputs", "mountPath": "/etc/wamn/org-inputs", "readOnly": true},
-        {"name": "database", "mountPath": wamn_postgres::DATABASE_DIR, "readOnly": true},
+        {"name": "database", "mountPath": wamn_postgres::database::DATABASE_DIR, "readOnly": true},
     ]);
     let mut invitation = job(
         INVITATION_ACCOUNT,

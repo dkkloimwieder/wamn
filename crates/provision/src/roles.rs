@@ -1,7 +1,7 @@
 //! CloudNativePG managed roles for project databases.
 
-use crate::WorkloadRoleFamily;
 use serde::Serialize;
+use wamn_identity_protocol::workload_role::WorkloadRoleFamily;
 use wamn_registry::name::project_login_certificate;
 
 #[derive(Serialize)]

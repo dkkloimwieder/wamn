@@ -1,6 +1,6 @@
 //! Guest SQL gets no grant on the credential tables of a project database.
 
-use wamn_provision::WorkloadRoleFamily;
+use wamn_identity_protocol::workload_role::WorkloadRoleFamily;
 use wamn_test_infrastructure::database;
 
 const CREDENTIAL_TABLES: [&str; 3] = [

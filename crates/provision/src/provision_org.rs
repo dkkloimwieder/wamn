@@ -2,12 +2,10 @@
 
 use anyhow::Context as _;
 use ring::rand::{SecureRandom as _, SystemRandom};
-use wamn_platform_install::{
-    database::ConnectionConfig,
-    provision_org::{
-        APPLY_SECRET, CONTROL_SECRET, LockedOrg, OrgDatabase, OrgLogin, apply_login, control_login,
-    },
+use wamn_platform_install::provision_org::{
+    APPLY_SECRET, CONTROL_SECRET, LockedOrg, OrgDatabase, OrgLogin, apply_login, control_login,
 };
+use wamn_postgres::database::ConnectionConfig;
 use wamn_registry::OrgId;
 
 use crate::provision_system::{PostgresBootstrap, connect_system_database};

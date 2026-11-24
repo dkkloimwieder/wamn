@@ -2,7 +2,7 @@
 
 use anyhow::Context as _;
 use serde_json::{Value, json};
-use wamn_platform_install::database::ConnectionConfig;
+use wamn_postgres::database::ConnectionConfig;
 
 /// Project sizing and role values for the chart.
 pub fn database_values(

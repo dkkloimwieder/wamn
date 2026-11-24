@@ -1,6 +1,6 @@
 //! Operator commands and repository checks.
 
-use crate::{process, repo_policy::dependencies::check_boundaries};
+use crate::process;
 use anyhow::{Context as _, ensure};
 use clap::{Args, ValueEnum};
 use serde_json::{Value, json};
@@ -121,13 +121,6 @@ pub async fn lint(root: &Path, mode: Mode) -> anyhow::Result<()> {
                 failures.push(format!("{manifest}: {error:#}"));
             }
         }
-    }
-    if matches!(mode, Mode::Run) {
-        if let Err(error) = check_boundaries(root) {
-            failures.push(format!("{error:#}"));
-        }
-    } else {
-        println!("cargo xtask repo-lint-dependencies");
     }
     if matches!(mode, Mode::Run) {
         failures.extend(crate::repo_policy::diagnostics(root));

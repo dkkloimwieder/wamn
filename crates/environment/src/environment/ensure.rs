@@ -163,10 +163,10 @@ async fn host_values(
         let mut logins = serde_json::Map::new();
         for (family, config) in crate::provision_project_env::workload::connections(&connection)? {
             let role = match family {
-                wamn_platform_install::workload_role::WorkloadRoleFamily::App => "guest-sql",
-                wamn_platform_install::workload_role::WorkloadRoleFamily::Query => "dynamic-sql",
-                wamn_platform_install::workload_role::WorkloadRoleFamily::Platform => "platform",
-                wamn_platform_install::workload_role::WorkloadRoleFamily::Migration => continue,
+                wamn_identity_protocol::workload_role::WorkloadRoleFamily::App => "guest-sql",
+                wamn_identity_protocol::workload_role::WorkloadRoleFamily::Query => "dynamic-sql",
+                wamn_identity_protocol::workload_role::WorkloadRoleFamily::Platform => "platform",
+                wamn_identity_protocol::workload_role::WorkloadRoleFamily::Migration => continue,
             };
             logins.insert(role.into(), config.credentials.name.into());
         }

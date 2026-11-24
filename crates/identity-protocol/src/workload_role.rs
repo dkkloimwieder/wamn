@@ -2,7 +2,7 @@
 
 use std::fmt;
 
-use wamn_identity_protocol::AuthorityClass;
+use crate::AuthorityClass;
 
 /// Project database login families.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

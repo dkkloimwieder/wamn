@@ -10,7 +10,7 @@ use serde_json::Value;
 use tokio::time::Instant;
 use wamn_registry::{ApplicationName, Triple};
 
-use crate::database::ConnectionConfig;
+use wamn_postgres::database::ConnectionConfig;
 
 /// The pending host upgrade after preparation completes.
 pub type Upgrade<'a> = Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + 'a>>;

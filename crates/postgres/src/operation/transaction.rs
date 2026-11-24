@@ -13,9 +13,9 @@ use wamn_registry::ApplicationName;
 
 use crate::{Object, destroy_connection};
 
-use super::ConnectionGuard;
 use super::query::{QueryTransaction, open_stream};
-use super::values::{connection_lost, map_pg_error};
+use crate::connection_guard::ConnectionGuard;
+use crate::{connection_lost, map_pg_error};
 
 #[derive(Debug)]
 pub(super) struct TxnState {

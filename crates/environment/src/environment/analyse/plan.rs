@@ -6,8 +6,7 @@ pub(crate) fn project_url(
     document: &EnvironmentDocument,
     row: &EnvironmentRow,
 ) -> anyhow::Result<String> {
-    wamn_platform_install::environment::connection_for(&document.triple(), &row.instance_suffix)
-        .to_json()
+    wamn_postgres::database::connection_for(&document.triple(), &row.instance_suffix).to_json()
 }
 
 pub fn refusals(document: &EnvironmentDocument, authorities: &Authorities) -> Vec<String> {

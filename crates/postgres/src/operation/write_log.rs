@@ -11,9 +11,10 @@ use wamn_application::database::{Claim, DatabaseTarget, SqlError, SqlValue};
 
 use crate::WamnPostgres;
 
-use super::ConnectionGuard;
 use super::transaction::{Transaction, restore_connection, take_conn};
-use super::values::{PgParam, checkout_pg_error, map_pg_error};
+use super::values::{PgParam, checkout_pg_error};
+use crate::connection_guard::ConnectionGuard;
+use crate::map_pg_error;
 
 /// Insert the claim of one key, or nothing when a committed row holds the key.
 ///

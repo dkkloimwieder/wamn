@@ -1,6 +1,7 @@
 //! Project login configuration and its mounted credentials.
 use crate::{
     WamnPostgres,
+    database::{DATABASE_DIR, credential_directory},
     pool::{
         ClassCredentials, CredentialProvider, ProjectConfig, ResolvedCredential,
         StaticCredentialProvider,
@@ -52,7 +53,7 @@ impl WamnPostgres {
                         .any(|entry| entry.as_str() == class),
                     "unknown database authority class"
                 );
-                crate::credential_directory(std::path::Path::new(crate::DATABASE_DIR), secret)?;
+                credential_directory(std::path::Path::new(DATABASE_DIR), secret)?;
             }
         }
         let credentials = Arc::new(HostCredentials::default());
@@ -81,8 +82,7 @@ impl WamnPostgres {
             let Some(secret) = config.logins.get(class.as_str()) else {
                 continue;
             };
-            let directory =
-                crate::credential_directory(std::path::Path::new(crate::DATABASE_DIR), secret)?;
+            let directory = credential_directory(std::path::Path::new(DATABASE_DIR), secret)?;
             let username: wamn_role::LoginName = match class {
                 AuthorityClass::GuestSql => wamn_role::APP_LOGIN,
                 AuthorityClass::DynamicSql => wamn_role::QUERY_LOGIN,

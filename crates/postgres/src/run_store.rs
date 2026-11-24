@@ -654,14 +654,20 @@ fn decode_row_error(field: &str, error: &sqlx::Error) -> ProductionLeaseError {
 /// Preserve the database message and constraint, without row-bearing DETAIL or HINT.
 /// Run rows contain application inputs, results, and invocation context.
 pub fn postgres_error(operation: &'static str, error: &sqlx::Error) -> ProductionLeaseError {
-    let detail = match error.as_database_error() {
-        Some(database) => match database.constraint() {
-            Some(constraint) => format!("{} ({constraint})", database.message()),
-            None => database.message().to_owned(),
-        },
-        None => error.to_string(),
-    };
-    ProductionLeaseError::new(ProductionLeaseErrorType::Storage, operation, detail)
+    ProductionLeaseError::new(
+        ProductionLeaseErrorType::Storage,
+        operation,
+        crate::postgres_error_detail(error),
+    )
+}
+
+pub(super) fn executor_open_error(error: crate::ExecutorOpenError) -> ProductionLeaseError {
+    let (operation, source) = error.into_parts();
+    ProductionLeaseError::storage(operation, source)
+}
+
+pub(super) fn executor_commit_error(error: &sqlx::Error) -> ProductionLeaseError {
+    postgres_error("commit executor transaction", error)
 }
 
 fn invalid_parameters(detail: &'static str) -> ProductionLeaseError {

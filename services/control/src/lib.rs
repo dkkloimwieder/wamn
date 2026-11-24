@@ -39,8 +39,8 @@ const SETTINGS_FILE: &str = "/etc/wamn/control/settings.json";
 pub struct Configuration {
     pub org: wamn_registry::OrgId,
     pub public_origin: String,
-    pub database: wamn_postgres::ConnectionConfig,
-    pub apply_database: wamn_postgres::ConnectionConfig,
+    pub database: wamn_postgres::database::ConnectionConfig,
+    pub apply_database: wamn_postgres::database::ConnectionConfig,
     pub identity_issuer: String,
     pub nats_url: String,
     pub registry: String,

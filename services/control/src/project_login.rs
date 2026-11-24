@@ -53,8 +53,8 @@ impl ProjectLogins {
         triple: &Triple,
         instance: &InstanceSuffix,
     ) -> anyhow::Result<PgConnectOptions> {
-        let config = wamn_provision::workload_role::platform_connection(
-            wamn_platform_install::environment::connection_for(triple, instance),
+        let config = wamn_postgres::platform_login::platform_connection(
+            wamn_postgres::database::connection_for(triple, instance),
         )?;
         let server_ca = wamn_registry::name::project_server_ca_copy(
             &wamn_registry::name::project_cluster(&config.database),

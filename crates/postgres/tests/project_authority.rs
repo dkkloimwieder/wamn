@@ -19,7 +19,9 @@
 
 use std::fmt::Write as _;
 
-use wamn_provision::{WorkloadRoleFamily, WorkloadRoleIdentity, workload_login};
+use wamn_identity_protocol::workload_role::{
+    WorkloadRoleFamily, WorkloadRoleIdentity, workload_login,
+};
 
 /// The project every probe runs under, and the user its seeded rows belong to.
 const PROJECT_ENV_KEY: &str = "t1--dev--project";

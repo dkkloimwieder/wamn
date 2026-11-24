@@ -7,6 +7,12 @@ license.workspace = true
 
 [dependencies]
 wamn-postgres.workspace = true
+pg_walstream.workspace = true
+postgres-protocol.workspace = true
+sqlx = { workspace = true, features = ["postgres", "runtime-tokio"] }
+chrono = { workspace = true, features = ["clock"] }
+url.workspace = true
+wamn-package.workspace = true
 wamn-broker = { workspace = true }
 anyhow = { workspace = true }
 clap = { workspace = true, features = ["derive"] }
@@ -22,6 +28,9 @@ rustls = { workspace = true, features = ["aws_lc_rs", "std", "tls12"] }
 wamn-event = { workspace = true }
 wamn-registry.workspace = true
 serde.workspace = true
+
+[dev-dependencies]
+bytes.workspace = true
 
 [lints]
 workspace = true

@@ -35,16 +35,16 @@ async fn application_mutations_require_row_security_in_each_database() {
                  WHERE granted_role.rolname::text = ANY($1) ORDER BY 1,2",
         )
         .bind(
-            wamn_provision::WorkloadRoleFamily::ALL
+            wamn_identity_protocol::workload_role::WorkloadRoleFamily::ALL
                 .into_iter()
                 .filter(|family| {
                     matches!(
                         family,
-                        wamn_provision::WorkloadRoleFamily::App
-                            | wamn_provision::WorkloadRoleFamily::Query
+                        wamn_identity_protocol::workload_role::WorkloadRoleFamily::App
+                            | wamn_identity_protocol::workload_role::WorkloadRoleFamily::Query
                     )
                 })
-                .map(wamn_provision::WorkloadRoleFamily::acl_role)
+                .map(wamn_identity_protocol::workload_role::WorkloadRoleFamily::acl_role)
                 .collect::<Vec<_>>(),
         )
         .fetch_all(&mut *client)

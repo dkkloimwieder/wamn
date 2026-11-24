@@ -1,8 +1,8 @@
 //! Provision an org's system database logins, registry row, and local OAuth key.
 
-use crate::database::ConnectionConfig;
 use ring::rand::{SecureRandom as _, SystemRandom};
 use std::fmt;
+use wamn_postgres::database::ConnectionConfig;
 use wamn_registry::OrgId;
 use wamn_role::LoginName;
 

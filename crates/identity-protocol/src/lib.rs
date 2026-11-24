@@ -10,6 +10,7 @@ pub mod pat_prefix;
 pub mod records;
 pub mod secret;
 pub mod wire;
+pub mod workload_role;
 
 pub use wamn_principal::{
     PLATFORM_PRINCIPAL_PREFIX, ParseIdentityError, PlatformComponent, PrincipalId, WAMN_NAMESPACE,

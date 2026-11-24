@@ -8,7 +8,6 @@ Run `cargo xtask --help` from the repository root. The `justfile` calls these co
 | `test-changes` | `cargo xtask test-changes` |
 | `require-test-result` | `cargo xtask require-test-result` |
 | `repo-lint` | `cargo xtask repo-lint` |
-| `repo-lint-dependencies` | `cargo xtask repo-lint-dependencies` |
 | `compile-packages-alone` | `cargo xtask compile-packages-alone` |
 | `contract-diff` | `cargo xtask contract-diff` |
 | `wasmcloud-release-tests` | `cargo xtask wasmcloud-release-tests` |

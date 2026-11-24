@@ -26,14 +26,14 @@ impl MigrationDatabase {
     pub fn owner_role(self) -> String {
         match self {
             Self::System => wamn_role::SYSTEM_ROLE.to_owned(),
-            Self::Project => crate::project_migration::login().to_string(),
+            Self::Project => crate::database::project_migration_login().to_string(),
         }
     }
 
     /// One bounded migration login for this database and platform scope.
     pub fn login(self, database: &str) -> wamn_role::LoginName {
         match self {
-            Self::Project => crate::project_migration::login(),
+            Self::Project => crate::database::project_migration_login(),
             Self::System => {
                 let digest = wamn_digest::canonical_json_sha256(&serde_json::json!([
                     "platform-migration",
@@ -65,7 +65,7 @@ impl MigrationDatabase {
         if !input.trim_start().starts_with('{') {
             return Ok(input.into_owned());
         }
-        let mut config: crate::ConnectionConfig = serde_json::from_str(&input)?;
+        let mut config: crate::database::ConnectionConfig = serde_json::from_str(&input)?;
         config.username = self.login(&config.database);
         config.credentials.name = self.credential_secret(&config.database);
         config.to_json()
@@ -77,7 +77,7 @@ impl MigrationDatabase {
         connection: &mut sqlx::PgConnection,
     ) -> anyhow::Result<wamn_role::LoginName> {
         if self == Self::Project {
-            return crate::project_migration::require_login(connection).await;
+            return require_project_login(connection).await;
         }
         let (session, current, database, restricted, member): (String, String, String, bool, bool) =
             sqlx::query_as(
@@ -98,4 +98,29 @@ impl MigrationDatabase {
         );
         Ok(session)
     }
+}
+
+/// Check the authenticated session before any package-controlled SQL runs.
+pub async fn require_project_login(
+    connection: &mut sqlx::PgConnection,
+) -> anyhow::Result<wamn_role::LoginName> {
+    let (session, current, restricted): (String, String, bool) = sqlx::query_as(
+        "SELECT session_user::text, current_user::text, \
+         NOT (rolsuper OR rolcreatedb OR rolcreaterole OR rolreplication OR rolbypassrls) \
+         FROM pg_roles WHERE rolname = session_user",
+    )
+    .fetch_one(&mut *connection)
+    .await?;
+    let session = wamn_role::LoginName::try_from(session).context("decode the session login")?;
+    let current = wamn_role::LoginName::try_from(current).context("decode the current login")?;
+    let expected = crate::database::project_migration_login();
+    anyhow::ensure!(
+        session == expected && current == session && restricted,
+        "package SQL requires the direct restricted migration login"
+    );
+    let owns_database: bool = sqlx::query_scalar(
+        "SELECT datdba = (SELECT oid FROM pg_roles WHERE rolname = session_user) FROM pg_database WHERE datname = current_database()",
+    ).fetch_one(&mut *connection).await?;
+    anyhow::ensure!(owns_database, "migration login must own its database");
+    Ok(session)
 }

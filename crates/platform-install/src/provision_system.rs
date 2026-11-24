@@ -5,7 +5,7 @@ use std::num::NonZeroU32;
 use anyhow::Context as _;
 use wamn_registry::platform_domain::PlatformDomain;
 
-use crate::database::ConnectionConfig;
+use wamn_postgres::database::ConnectionConfig;
 
 /// Database containing the control store and identity issuer surface.
 pub const SYSTEM_DATABASE: &str = "wamn_system";

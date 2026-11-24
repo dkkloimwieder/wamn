@@ -368,7 +368,7 @@ async fn apply_sql(
     platform: &Platform,
     system: &dyn DatabaseSession,
     triple: &Triple,
-    connection: &wamn_platform_install::database::ConnectionConfig,
+    connection: &wamn_postgres::database::ConnectionConfig,
     owner: &str,
     packages: &Packages,
 ) -> anyhow::Result<()> {
@@ -410,7 +410,7 @@ async fn apply_sql(
     if schemas.is_empty() {
         return Ok(());
     }
-    let capture = wamn_platform_install::environment::capture_configuration(connection.clone())?;
+    let capture = wamn_postgres::database::capture_configuration(connection.clone())?;
     platform.prepare_database(&capture).await?;
     platform
         .database
