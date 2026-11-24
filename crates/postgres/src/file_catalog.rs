@@ -7,6 +7,7 @@ use wamn_blobstore::file_route::{
     Exposure, FileCatalog, FileError, FileExposure, FileInsert, FileRecord, FileRefusal, failed,
     refused, valid_media_type,
 };
+use wamn_connection::administration_transaction::administration_transaction;
 use wamn_identity_protocol::{AuthorityClass, PrincipalId};
 use wamn_package::canonical_name::CanonicalName;
 use wamn_registry::{ApplicationName, ProjectId};
@@ -54,7 +55,7 @@ impl FileCatalog for WamnPostgres {
         let sql = format!(
             "SELECT {FILE_COLUMNS} FROM platform.file WHERE id = $1::text::uuid AND application = $2"
         );
-        self.administration_transaction(project, principal, operation, async |client| {
+        administration_transaction(self, project, principal, operation, async |client| {
             let row = sqlx::query(sqlx::AssertSqlSafe(sql))
                 .bind(id.to_string())
                 .bind(application.as_str())
@@ -75,7 +76,7 @@ impl FileCatalog for WamnPostgres {
         operation: &CanonicalName,
         file: FileInsert<'_>,
     ) -> Result<(), FileError> {
-        self.administration_transaction(project, principal, operation, async |client| {
+        administration_transaction(self, project, principal, operation, async |client| {
             sqlx::query(
                 "INSERT INTO platform.file (id, application, connection_id, name, media_type, size, sha256, blob_key, exposure) VALUES ($1::text::uuid,$2,$3::text::uuid,$4,$5,$6,$7,$8,'application')",
             )
@@ -104,7 +105,7 @@ impl FileCatalog for WamnPostgres {
         application: &ApplicationName,
         id: Uuid,
     ) -> Result<(), FileError> {
-        self.administration_transaction(project, principal, operation, async |client| {
+        administration_transaction(self, project, principal, operation, async |client| {
             let deleted = sqlx::query(
                 "DELETE FROM platform.file WHERE id = $1::text::uuid AND application = $2",
             )
@@ -129,7 +130,7 @@ impl FileCatalog for WamnPostgres {
         operation: &CanonicalName,
         file: FileExposure<'_>,
     ) -> Result<Result<(), FileError>, FileError> {
-        self.administration_transaction(project, principal, operation, async |client| {
+        administration_transaction(self, project, principal, operation, async |client| {
             sqlx::query("UPDATE platform.file SET exposure = $3, url = $4 WHERE id = $1::text::uuid AND application = $2 AND (exposure IS DISTINCT FROM $3 OR url IS DISTINCT FROM $4)")
                 .bind(file.id.to_string())
                 .bind(file.application.as_str())

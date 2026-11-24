@@ -9,8 +9,7 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use wamn_authentication::authorization::AuthorizationStore as _;
-use wamn_postgres::DEFAULT_PROJECT;
+use wamn_registry::DEFAULT_PROJECT;
 use wash_runtime::engine::ctx::{SharedCtx, extract_active_ctx};
 use wash_runtime::engine::workload::WorkloadItem;
 use wash_runtime::plugin::{HostPlugin, WitInterfaces};
@@ -19,7 +18,6 @@ use wash_runtime::wit::{WitInterface, WitWorld};
 
 pub mod blobstore;
 pub mod bound_http;
-mod executor;
 mod host;
 pub mod host_policy;
 pub mod invocation;
@@ -349,9 +347,7 @@ impl HostPlugin for OperationHost {
             self.store
                 .bind_host_project(&application.project, &key)
                 .await?;
-            if let Some(store) = &self.authorization {
-                store.configure_application(application)?;
-            }
+            self.authorization.configure_application(application)?;
         }
         if interfaces.contains("wamn", "operation", &["operation"]) {
             let WorkloadItem::Component(component) = item else {

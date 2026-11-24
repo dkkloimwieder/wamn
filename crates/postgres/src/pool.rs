@@ -9,6 +9,7 @@ use sqlx::PgPool;
 pub type Object = sqlx::pool::PoolConnection<sqlx::Postgres>;
 
 use wamn_identity_protocol::AuthorityClass;
+use wamn_registry::DEFAULT_PROJECT;
 
 use wamn_application::MAX_HOST_CALL_DURATION;
 
@@ -339,11 +340,6 @@ pub fn destroy_connection(obj: Object, counter: &AtomicU64) {
     counter.fetch_add(1, Ordering::Relaxed);
     drop(obj.detach());
 }
-
-/// The project id used when a component names none — the single database a
-/// [`WamnPostgresConfig`] URL points at.
-pub static DEFAULT_PROJECT: std::sync::LazyLock<wamn_registry::ProjectId> =
-    std::sync::LazyLock::new(|| "default".parse().expect("fixed default project"));
 
 /// Names the shape only: the credential provider and the live pools carry
 /// connection material that must not reach a log.

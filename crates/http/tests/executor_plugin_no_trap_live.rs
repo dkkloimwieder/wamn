@@ -206,7 +206,11 @@ fn offline_postgres() -> OperationHost {
     })
     .expect("offline postgres pools build");
     let pools = Arc::new(pools);
-    OperationHost::new(Arc::clone(&pools), pools, None)
+    let authorization = wamn_postgres::authorization::Authorization::new(
+        Arc::clone(&pools),
+        Arc::clone(&pools) as _,
+    );
+    OperationHost::new(pools, Arc::new(authorization), None)
 }
 
 /// Query reaches credential resolution after the host binds the project.

@@ -219,15 +219,14 @@ mod tests {
             Arc::clone(&pools),
             database,
         ));
-        let operation_store = Arc::clone(&pools);
         let postgres = Arc::new(wamn_plugin::OperationHost::new(
-            Arc::clone(&pools),
-            operation_store,
+            Arc::clone(&pools) as _,
+            Arc::clone(&authorization) as _,
             None,
         ));
         let files = Arc::new(Files::new(
             &postgres,
-            pools,
+            Arc::clone(&pools) as _,
             Arc::new(wamn_storage::ObjectStorage::default()),
             authorization,
         ));
@@ -238,6 +237,7 @@ mod tests {
         ));
         let workflow = Arc::new(Workflow::new(
             postgres,
+            pools,
             operations,
             "nats://nats.example.com:4222".to_owned(),
             false,

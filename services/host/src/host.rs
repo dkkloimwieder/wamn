@@ -539,11 +539,10 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             ))
             .with_oauth_encryption(envelope),
     );
-    let operation_store = Arc::clone(&pools);
     let postgres = Arc::new(OperationHost::new(
-        Arc::clone(&pools),
-        operation_store,
-        Some(Arc::clone(&authorization)),
+        Arc::clone(&pools) as _,
+        Arc::clone(&authorization) as _,
+        Some(Arc::clone(&authorization) as _),
     ));
     let integration = Arc::new(wamn_plugin::integrations::IntegrationBound::new(
         Arc::clone(&authorization) as _,
@@ -561,7 +560,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     ));
     let files = Arc::new(files::Files::new(
         &postgres,
-        pools,
+        Arc::clone(&pools) as _,
         storage,
         Arc::clone(&authorization),
     ));
@@ -603,6 +602,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     ));
     let workflow = Arc::new(workflow::Workflow::new(
         Arc::clone(&postgres),
+        pools,
         Arc::clone(&operations),
         settings.nats_url,
         args.data_nats_tls_first,

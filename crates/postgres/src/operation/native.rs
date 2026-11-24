@@ -3,7 +3,11 @@
 use std::sync::Arc;
 
 use anyhow::Context as _;
+use wamn_connection::administration_transaction::{
+    AdministrationOutcome, AdministrationSession, AdministrationTransactions,
+};
 use wamn_identity_protocol::{AuthorityClass, PlatformComponent, PrincipalId};
+use wamn_package::canonical_name::CanonicalName;
 use wamn_registry::{ProjectEnvKey, ProjectId};
 use wamn_run_state::run_store::ProductionLeaseError;
 
@@ -132,34 +136,39 @@ pub async fn open_executor_read(
     open_executor_transaction(postgres, project, None, true).await
 }
 
-impl WamnPostgres {
-    pub async fn administration_transaction<T, E>(
-        &self,
-        project: &wamn_registry::ProjectId,
-        principal_id: &wamn_identity_protocol::PrincipalId,
-        operation: &wamn_package::canonical_name::CanonicalName,
-        work: impl AsyncFnOnce(&mut sqlx::PgConnection) -> Result<T, E>,
-    ) -> anyhow::Result<Result<T, E>> {
-        let mut connection = self
-            .begin_administration(project, principal_id, operation)
-            .await?;
-        let result = work(connection.connection()).await;
-        let end = if result.is_ok() { "COMMIT" } else { "ROLLBACK" };
-        finish_transaction(connection.connection(), end)
-            .await
-            .context("end the host route transaction")?;
-        connection.repool();
-        Ok(result)
+impl AdministrationSession for ConnectionGuard {
+    type Connection = sqlx::PgConnection;
+
+    fn connection(&mut self) -> &mut Self::Connection {
+        self.connection()
     }
 
-    /// Open an administration transaction on an owned platform session.
-    /// The caller can retain the session across commit to hold a session lock.
-    pub async fn begin_administration(
+    async fn finish(mut self, outcome: AdministrationOutcome) -> anyhow::Result<()> {
+        let end = match outcome {
+            AdministrationOutcome::Commit => "COMMIT",
+            AdministrationOutcome::Rollback => "ROLLBACK",
+        };
+        finish_transaction(self.connection(), end)
+            .await
+            .context("end the host route transaction")?;
+        self.repool();
+        Ok(())
+    }
+
+    fn repool(self) {
+        self.repool();
+    }
+}
+
+impl AdministrationTransactions for WamnPostgres {
+    type Session = ConnectionGuard;
+
+    async fn begin_administration(
         &self,
-        project: &wamn_registry::ProjectId,
-        principal_id: &wamn_identity_protocol::PrincipalId,
-        operation: &wamn_package::canonical_name::CanonicalName,
-    ) -> anyhow::Result<ConnectionGuard> {
+        project: &ProjectId,
+        principal_id: &PrincipalId,
+        operation: &CanonicalName,
+    ) -> anyhow::Result<Self::Session> {
         let (connection, policy) = self
             .checkout_platform(project, AuthorityClass::Platform)
             .await
@@ -182,27 +191,5 @@ impl WamnPostgres {
         .await
         .context("begin the host route transaction")?;
         Ok(connection)
-    }
-
-    pub async fn workflow_role_permissions(
-        &self,
-        project: &ProjectId,
-        principal: &PrincipalId,
-        role: &str,
-    ) -> anyhow::Result<Option<Vec<String>>> {
-        self.executor_read(project, async |connection| {
-            Ok(sqlx::query_scalar::<_, Vec<String>>(
-                "SELECT ARRAY(SELECT permission FROM platform.permission WHERE role_name = r.name)
-                       FROM platform.role AS r
-                      WHERE r.name = $1 AND EXISTS (
-                          SELECT 1 FROM platform.\"user\" WHERE id = $2 AND status = 'active'
-                      )",
-            )
-            .bind(role)
-            .bind(uuid::Uuid::from(*principal))
-            .fetch_optional(connection)
-            .await?)
-        })
-        .await
     }
 }

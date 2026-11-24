@@ -27,7 +27,6 @@ wamn-blobstore.workspace = true
 http.workspace = true
 opentelemetry = { workspace = true, features = ["metrics", "trace"] }
 serde_json = { workspace = true }
-sqlx = { workspace = true, features = ["postgres"] }
 tokio = { workspace = true, features = ["time", "fs", "net", "io-util", "rt", "macros", "sync"] }
 tracing = { workspace = true }
 uuid = { workspace = true, features = ["serde", "v4"] }
@@ -38,15 +37,14 @@ wamn-digest = { workspace = true }
 wamn-engine = { workspace = true }
 wamn-event = { workspace = true }
 wamn-identity-protocol.workspace = true
-wamn-postgres.workspace = true
 wamn-registry = { workspace = true }
 wamn-routes.workspace = true
 wamn-role.workspace = true
-wamn-run-state = { workspace = true }
 wash-runtime = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
+wamn-postgres.workspace = true
 
 [lints]
 workspace = true

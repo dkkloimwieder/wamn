@@ -1,8 +1,12 @@
 //! Validated names of registry projects.
 
-use std::{fmt, str::FromStr};
+use std::{fmt, str::FromStr, sync::LazyLock};
 
 use serde::{Deserialize, Serialize};
+
+/// The project selected when a component names none.
+pub static DEFAULT_PROJECT: LazyLock<ProjectId> =
+    LazyLock::new(|| "default".parse().expect("fixed default project"));
 
 /// A lowercase project slug of at most 40 bytes, with isolated hyphens.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]

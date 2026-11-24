@@ -41,7 +41,7 @@ impl Workflow {
         if let Some(generation) = authority.generation {
             let checked_at = Instant::now();
             let remaining = self
-                .postgres
+                .database
                 .executor_write(&workload.application.project, async |connection| {
                     PostgresRunStore::new(connection)
                         .lease_remaining_ms(&authority.delivery, &workload.runner, generation)

@@ -25,7 +25,7 @@ pub use types::{Environment, EnvironmentRow, EnvironmentStatus, Triple};
 mod org_id;
 mod project_id;
 pub use org_id::{OrgId, ParseOrgIdError};
-pub use project_id::{ParseProjectIdError, ProjectId};
+pub use project_id::{DEFAULT_PROJECT, ParseProjectIdError, ProjectId};
 
 mod env_name;
 mod project_env_key;

@@ -8,9 +8,11 @@ use std::sync::Arc;
 use wamn_application::application_config::{ApplicationConfig, check_authored_workflow};
 use wamn_application::ingress::AuthenticatedCaller;
 use wamn_application::native_routes::DeliveryError;
+use wamn_connection::administration_transaction::{
+    AdministrationSession, AdministrationTransactions, administration_transaction,
+};
 use wamn_identity_protocol::PrincipalId;
 use wamn_package::canonical_name::CanonicalName;
-use wamn_plugin::OperationHost;
 use wamn_postgres::{control, workflow};
 use wamn_routes::HostAttachment;
 use wamn_routes::HostHandler;
@@ -84,36 +86,42 @@ impl Workflow {
         ) {
             let version = parse(payload)?;
             let broker = Arc::clone(&self.broker);
-            let postgres = Arc::clone(&self.postgres);
+            let pools = Arc::clone(&self.database);
             let principal = *caller.principal_id();
             // Finish the database and broker change even if the HTTP caller leaves.
             return tokio::spawn(async move {
                 change(
-                    &postgres, &broker, &state, &principal, &operation, handler, version,
+                    pools.as_ref(),
+                    &broker,
+                    &state,
+                    &principal,
+                    &operation,
+                    handler,
+                    version,
                 )
                 .await
             })
             .await
             .context("finish workflow lifecycle operation")?;
         }
-        self.postgres
-            .administration_transaction(
-                &app.project,
-                caller.principal_id(),
-                &operation,
-                async |connection| {
-                    let result = match handler {
-                        HostHandler::WorkflowList => workflow::list(connection, app).await?,
-                        HostHandler::WorkflowAuthor => {
-                            require_lock(workflow::try_author_lock(connection, app).await?)?;
-                            author(connection, app, caller, parse(payload)?).await?
-                        }
-                        _ => return Err(Refusal::Delivery(DeliveryError::SourceNotFound)),
-                    };
-                    Ok(json!({"result": result}))
-                },
-            )
-            .await?
+        administration_transaction(
+            self.database.as_ref(),
+            &app.project,
+            caller.principal_id(),
+            &operation,
+            async |connection| {
+                let result = match handler {
+                    HostHandler::WorkflowList => workflow::list(connection, app).await?,
+                    HostHandler::WorkflowAuthor => {
+                        require_lock(workflow::try_author_lock(connection, app).await?)?;
+                        author(connection, app, caller, parse(payload)?).await?
+                    }
+                    _ => return Err(Refusal::Delivery(DeliveryError::SourceNotFound)),
+                };
+                Ok(json!({"result": result}))
+            },
+        )
+        .await?
     }
 }
 
@@ -135,7 +143,7 @@ enum ConsumerChange {
 }
 
 async fn change(
-    postgres: &OperationHost,
+    pools: &impl AdministrationTransactions<Session: AdministrationSession<Connection = PgConnection>>,
     broker: &Broker,
     workload: &Workload,
     principal: &PrincipalId,
@@ -144,7 +152,7 @@ async fn change(
     version: Version,
 ) -> Result<Value, Refusal> {
     let app = &workload.application;
-    let mut session = postgres
+    let mut session = pools
         .begin_administration(&app.project, principal, operation)
         .await?;
     let connection = session.connection();

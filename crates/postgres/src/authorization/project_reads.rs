@@ -5,6 +5,7 @@ use std::sync::Arc;
 use anyhow::Context as _;
 use sqlx::Row as _;
 use tracing::Instrument as _;
+use wamn_application::database::SqlError;
 use wamn_authentication::authorization::{
     ProjectPat, SessionIdentityError, SessionIdentityErrorType,
 };
@@ -189,7 +190,10 @@ async fn read_principal_grants(
     class: AuthorityClass,
 ) -> anyhow::Result<wamn_authority::auth_cache::PrincipalGrants> {
     let (mut connection, _policy) = match class {
-        AuthorityClass::GuestSql => postgres.checkout_guest(project, project_env_key).await?,
+        AuthorityClass::GuestSql => postgres
+            .checkout_guest(project, project_env_key)
+            .await
+            .context(SqlError::ConnectionUnavailable)?,
         _ => postgres.checkout_platform(project, class).await?,
     };
     let result = principal_grants(&mut connection, principal)
@@ -230,7 +234,7 @@ pub(super) async fn read_environment_inactive(
 }
 
 /// Read the grants used to check a workflow caller's role without consulting the cache.
-pub async fn read_guest_grants(
+pub(super) async fn read_guest_grants(
     postgres: &WamnPostgres,
     project: &wamn_registry::ProjectId,
     key: &wamn_registry::ProjectEnvKey,

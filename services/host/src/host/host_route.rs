@@ -63,8 +63,8 @@ impl HostRouteDelivery {
                         caller.principal_id(),
                     )
                     .await?;
-                let enabled = self
-                    .postgres
+                let enabled = workflow
+                    .database
                     .executor_read(&self.config.project, async |connection| {
                         Ok(workflow::lifecycle::permissions(connection, &self.config).await?)
                     })
@@ -95,6 +95,7 @@ impl HostRouteDelivery {
             _ => {
                 ApplicationRoutes {
                     postgres: &self.postgres,
+                    pools: &workflow.database,
                     project: &self.config.project,
                     config: &self.config,
                     project_env_key: &self.project_env_key,

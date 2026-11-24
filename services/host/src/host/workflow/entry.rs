@@ -54,7 +54,7 @@ impl Workflow {
         let workload = self.workload(request.workload)?;
         let app = &workload.application;
         let prepare = self
-            .postgres
+            .database
             .executor_write(&app.project, async |connection| {
                 let definition = stored::request_workflow(connection, app, request.path).await?;
                 let Some(definition) = definition else {
@@ -191,7 +191,7 @@ impl Workflow {
         let workload = self.workload(request.workload)?;
         let app = &workload.application;
         let admitted = self
-            .postgres
+            .database
             .executor_write(&app.project, async |connection| {
                 let definition =
                     stored::run_now_workflow(connection, app, request.workflow_id).await?;

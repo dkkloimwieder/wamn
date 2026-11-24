@@ -29,6 +29,7 @@ use wamn_authentication::administration::{
     AdministrationError, AdministrationRefusal, GrantAuthority, GrantChange, GrantError,
     permission_is_grantable,
 };
+use wamn_connection::administration_transaction::administration_transaction;
 use wamn_plugin::OperationHost;
 use wamn_plugin::number_counter::{CounterSet, CounterSetRefusal};
 use wamn_postgres::administration::{
@@ -40,6 +41,7 @@ use super::route_refusal::{Refusal, parse};
 /// What the application routes of one host use.
 pub(crate) struct ApplicationRoutes<'a> {
     pub(crate) postgres: &'a OperationHost,
+    pub(crate) pools: &'a wamn_postgres::WamnPostgres,
     pub(crate) project: &'a wamn_registry::ProjectId,
     pub(crate) config: &'a ApplicationConfig,
     pub(crate) project_env_key: &'a wamn_registry::ProjectEnvKey,
@@ -344,19 +346,19 @@ impl ApplicationRoutes<'_> {
         work: impl AsyncFnOnce(&mut Client) -> Result<Value, Refusal>,
     ) -> Result<Value, Refusal> {
         let project_env_key = self.project_env_key;
-        self.postgres
-            .administration_transaction(
-                self.project,
-                principal,
-                &attachment.operation.clone().into(),
-                async |client| {
-                    if lock {
-                        lock_operation_grants(client, project_env_key).await?;
-                    }
-                    work(client).await
-                },
-            )
-            .await?
+        administration_transaction(
+            self.pools,
+            self.project,
+            principal,
+            &attachment.operation.clone().into(),
+            async |client| {
+                if lock {
+                    lock_operation_grants(client, project_env_key).await?;
+                }
+                work(client).await
+            },
+        )
+        .await?
     }
 
     /// Each operation the release serves and each stored permission of the

@@ -140,9 +140,8 @@ pub use checkout::CheckoutError;
 pub use host_project::HostProject;
 pub use package_catalog::installed_package_artifacts;
 pub use pool::{
-    ClassCredentials, CredentialProvider, DEFAULT_PROJECT, Object, ProjectConfig, ProjectPool,
-    ResolvedCredential, StaticCredentialProvider, WamnPostgres, WamnPostgresConfig,
-    destroy_connection,
+    ClassCredentials, CredentialProvider, Object, ProjectConfig, ProjectPool, ResolvedCredential,
+    StaticCredentialProvider, WamnPostgres, WamnPostgresConfig, destroy_connection,
 };
 
 mod registry;

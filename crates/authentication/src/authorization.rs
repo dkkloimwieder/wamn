@@ -102,6 +102,24 @@ pub trait AuthorizationStore: std::fmt::Debug + Send + Sync {
         key: &wamn_registry::ProjectEnvKey,
         principal: &wamn_identity_protocol::PrincipalId,
     ) -> anyhow::Result<PrincipalGrants>;
+
+    /// Read current principal grants using the guest authority without consulting the cache.
+    ///
+    /// A checkout failure carries [`wamn_application::database::SqlError::ConnectionUnavailable`].
+    async fn guest_principal_grants(
+        &self,
+        project: &wamn_registry::ProjectId,
+        key: &wamn_registry::ProjectEnvKey,
+        principal: &PrincipalId,
+    ) -> anyhow::Result<PrincipalGrants>;
+
+    /// Read role permissions for an active workflow service principal.
+    async fn workflow_role_permissions(
+        &self,
+        project: &wamn_registry::ProjectId,
+        principal: &PrincipalId,
+        role: &str,
+    ) -> anyhow::Result<Option<Vec<String>>>;
 }
 
 /// The active local service admitted by a PAT.

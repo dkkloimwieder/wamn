@@ -49,6 +49,7 @@ const LEASE_TTL: Duration = Duration::from_secs(30);
 /// Shared owner of the service dispatch target and guest import authority.
 pub(super) struct Workflow {
     postgres: Arc<OperationHost>,
+    pub(super) database: Arc<wamn_postgres::WamnPostgres>,
     operations: Arc<WamnOperation>,
     workloads: RwLock<HashMap<Box<str>, Arc<Workload>>>,
     broker: Arc<broker::Broker>,
@@ -91,12 +92,14 @@ impl std::fmt::Debug for Workflow {
 impl Workflow {
     pub(super) fn new(
         postgres: Arc<OperationHost>,
+        pools: Arc<wamn_postgres::WamnPostgres>,
         operations: Arc<WamnOperation>,
         nats_server: String,
         tls_first: bool,
     ) -> Self {
         Self {
             postgres,
+            database: pools,
             operations,
             workloads: RwLock::default(),
             broker: Arc::new(broker::Broker::new(nats_server, tls_first)),

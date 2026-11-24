@@ -1,22 +1,21 @@
-//! Compose the operation plugin with project pools and the host's shared authorization.
+//! Compose the operation plugin with the host's stores.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use wamn_application::database::OperationStore;
+use wamn_application::database::{OperationStore, SqlError};
 use wamn_application::result_signing::ResultSigner;
-use wamn_postgres::authorization::Authorization;
-use wamn_postgres::{CheckoutError, WamnPostgres};
+use wamn_authentication::authorization::AuthorizationStore;
+use wamn_connection::connection_facts::ConnectionCache;
 
 use crate::PgError;
 
 /// Host plugin for guest and native operations over PostgreSQL.
 pub struct OperationHost {
-    // Native callbacks still use an open SQLx connection.
-    pub(super) pools: Arc<WamnPostgres>,
     pub(super) store: Arc<dyn OperationStore>,
     pub(super) result_signer: std::sync::OnceLock<std::sync::Weak<dyn ResultSigner>>,
-    pub(super) authorization: Option<Arc<Authorization>>,
+    pub(super) authorization: Arc<dyn AuthorizationStore>,
+    pub(super) connection_cache: Option<Arc<dyn ConnectionCache>>,
     pub(super) operation_metrics: super::operation::OperationMetrics,
     pub(super) operation_workloads:
         std::sync::RwLock<HashMap<String, Arc<super::operation::OperationWorkload>>>,
@@ -35,16 +34,16 @@ impl std::fmt::Debug for OperationHost {
 }
 
 impl OperationHost {
-    /// Use the project's pools and, when serving applications, the shared authorization store.
+    /// Use the host's operation and authorization stores and its application connection cache.
     pub fn new(
-        pools: Arc<WamnPostgres>,
         store: Arc<dyn OperationStore>,
-        authorization: Option<Arc<Authorization>>,
+        authorization: Arc<dyn AuthorizationStore>,
+        connection_cache: Option<Arc<dyn ConnectionCache>>,
     ) -> Self {
         Self {
-            pools,
             store,
             authorization,
+            connection_cache,
             result_signer: std::sync::OnceLock::new(),
             operation_metrics: super::operation::OperationMetrics::default(),
             operation_workloads: std::sync::RwLock::default(),
@@ -71,30 +70,6 @@ impl OperationHost {
             });
     }
 
-    pub async fn administration_transaction<T, E>(
-        &self,
-        project: &wamn_registry::ProjectId,
-        principal_id: &wamn_identity_protocol::PrincipalId,
-        operation: &wamn_package::canonical_name::CanonicalName,
-        work: impl AsyncFnOnce(&mut sqlx::PgConnection) -> Result<T, E>,
-    ) -> anyhow::Result<Result<T, E>> {
-        self.pools
-            .administration_transaction(project, principal_id, operation, work)
-            .await
-    }
-
-    /// Open a native administration transaction.
-    pub async fn begin_administration(
-        &self,
-        project: &wamn_registry::ProjectId,
-        principal_id: &wamn_identity_protocol::PrincipalId,
-        operation: &wamn_package::canonical_name::CanonicalName,
-    ) -> anyhow::Result<wamn_postgres::operation::ConnectionGuard> {
-        self.pools
-            .begin_administration(project, principal_id, operation)
-            .await
-    }
-
     /// The caller of one node of a workflow run that executes as `principal_id`
     /// with `role` active, from the grants the principal holds now, read
     /// through the project's guest login
@@ -111,7 +86,7 @@ impl OperationHost {
         if *principal_id == wamn_identity_protocol::workflow_user_id() {
             use wamn_application::ingress::{AuthenticatedCaller, CredentialType};
             let permissions = self
-                .pools
+                .authorization
                 .workflow_role_permissions(project, principal_id, role)
                 .await?;
             return Ok(permissions.map(|permissions| {
@@ -125,17 +100,20 @@ impl OperationHost {
                 )
             }));
         }
-        let grants = wamn_postgres::authorization::read_guest_grants(
-            &self.pools,
-            project,
-            project_env_key,
-            principal_id,
-        )
-        .await
-        .map_err(|error| match error.downcast::<CheckoutError>() {
-            Ok(_) => PgError::ConnectionUnavailable.into(),
-            Err(error) => error,
-        })?;
+        let grants = self
+            .authorization
+            .guest_principal_grants(project, project_env_key, principal_id)
+            .await
+            .map_err(|error| {
+                if matches!(
+                    error.downcast_ref::<SqlError>(),
+                    Some(SqlError::ConnectionUnavailable)
+                ) {
+                    PgError::ConnectionUnavailable.into()
+                } else {
+                    error
+                }
+            })?;
         Ok(grants
             .active
             .then(|| wamn_authority::auth_cache::role_caller(principal_id, role, &grants.roles))

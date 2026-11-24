@@ -22,7 +22,7 @@ use wamn_registry::{ProjectEnvKey, ProjectId};
 
 use crate::WamnPostgres;
 
-pub use connection::ConnectionGuard;
+use connection::ConnectionGuard;
 use identity::prepare_identity;
 pub use native::lock_operation_grants;
 pub(crate) use native::open_executor_read;

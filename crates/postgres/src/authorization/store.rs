@@ -23,7 +23,8 @@ use wamn_registry::{ProjectEnvKey, ProjectId};
 use crate::WamnPostgres;
 
 use super::project_reads::{
-    read_environment_inactive, read_platform_grants, read_project_pat, resolve_subject,
+    read_environment_inactive, read_guest_grants, read_platform_grants, read_project_pat,
+    resolve_subject,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -186,6 +187,38 @@ impl AuthorizationStore for Authorization {
             self.answers.insert(key, Answer::Grants(grants.clone()));
         }
         Ok(grants)
+    }
+
+    async fn guest_principal_grants(
+        &self,
+        project: &ProjectId,
+        key: &ProjectEnvKey,
+        principal: &PrincipalId,
+    ) -> anyhow::Result<PrincipalGrants> {
+        read_guest_grants(&self.postgres, project, key, principal).await
+    }
+
+    async fn workflow_role_permissions(
+        &self,
+        project: &ProjectId,
+        principal: &PrincipalId,
+        role: &str,
+    ) -> anyhow::Result<Option<Vec<String>>> {
+        self.postgres
+            .executor_read(project, async |connection| {
+                Ok(sqlx::query_scalar::<_, Vec<String>>(
+                    "SELECT ARRAY(SELECT permission FROM platform.permission WHERE role_name = r.name)
+                       FROM platform.role AS r
+                      WHERE r.name = $1 AND EXISTS (
+                          SELECT 1 FROM platform.\"user\" WHERE id = $2 AND status = 'active'
+                      )",
+                )
+                .bind(role)
+                .bind(uuid::Uuid::from(*principal))
+                .fetch_optional(connection)
+                .await?)
+            })
+            .await
     }
 
     async fn resolve_subject(

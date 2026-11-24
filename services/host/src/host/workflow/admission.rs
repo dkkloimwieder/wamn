@@ -157,7 +157,7 @@ impl Workflow {
         let input = serde_json::json!({ "due": &key });
         let app = &workload.application;
         let admitted = self
-            .postgres
+            .database
             .executor_write(&app.project, async |connection| {
                 let rows = stored::schedules(connection, app).await?;
                 let mut admitted = Vec::new();
@@ -207,7 +207,7 @@ impl Workflow {
     ) -> Result<Vec<wit_run::DataChangeConsumer>, Refusal> {
         let app = &workload.application;
         let workflows = self
-            .postgres
+            .database
             .executor_read(&app.project, async |connection| {
                 Ok(stored::consumer_workflows(connection, app).await?)
             })
@@ -264,7 +264,7 @@ impl Workflow {
             return Err(invalid("data-change subject disagrees with the envelope"));
         }
         let result = self
-            .postgres
+            .database
             .executor_write(&app.project, async |connection| {
                 let row =
                     stored::data_change(connection, app, &message.workflow_id, &envelope).await?;
@@ -306,7 +306,7 @@ impl Workflow {
     async fn take(&self, workload: &Workload) -> Result<Option<wit_run::LeasedRun>, Refusal> {
         let app = &workload.application;
         let result = self
-            .postgres
+            .database
             .executor_write(&app.project, async |connection| {
                 let mut runs = PostgresRunStore::new(connection);
                 runs.reap_exhausted(&app.application, &app.environment, 0)
@@ -466,7 +466,7 @@ impl<T: Send + 'static> wit_run::HostWithStore<T> for SharedCtx {
         Ok(async {
             let (plugin, workload, authority, generation) = lease(service, &handle)?;
             let outcome = plugin
-                .postgres
+                .database
                 .executor_write(&workload.application.project, async |connection| {
                     PostgresRunStore::new(connection)
                         .renew(&authority.delivery, &workload.runner, generation, LEASE_MS)
@@ -502,7 +502,7 @@ impl<T: Send + 'static> wit_run::HostWithStore<T> for SharedCtx {
             let state = serde_json::from_str(&state_json)
                 .map_err(|_| Refusal::InvalidInput("invalid checkpoint JSON".into()))?;
             let stored = plugin
-                .postgres
+                .database
                 .executor_write(&workload.application.project, async |connection| {
                     PostgresRunStore::new(connection)
                         .checkpoint(&authority.delivery, &workload.runner, generation, &state)
@@ -531,7 +531,7 @@ impl<T: Send + 'static> wit_run::HostWithStore<T> for SharedCtx {
             let outcome = completion(outcome)
                 .map_err(|_| Refusal::InvalidInput("invalid result JSON".into()))?;
             let finished = plugin
-                .postgres
+                .database
                 .executor_write(&workload.application.project, async |connection| {
                     PostgresRunStore::new(connection)
                         .complete(&authority.delivery, &workload.runner, generation, &outcome)

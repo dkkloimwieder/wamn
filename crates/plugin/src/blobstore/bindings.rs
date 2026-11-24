@@ -1,7 +1,7 @@
 //! Host-side bindings for `wasmcloud:blobstore@0.1.0`.
 //!
 //! Generated from the WIT vendored at `wit/wasmcloud-blobstore/`,
-//! following the `wamn_postgres` pattern: WAMN owns this interface, generates
+//! following the `wamn:postgres` pattern: WAMN owns this interface, generates
 //! its own bindings, and needs nothing from upstream's `wasi_blobstore`
 //! module — which is not even compiled, since the `wasi-blobstore` cargo
 //! feature stays off (wamn-jpxo).
@@ -23,7 +23,7 @@
 //!
 //! The two `*WithStore<D>` traits carry the concurrent, stream-bearing methods
 //! and require `Self: HasData`, so the implementation attaches to the store
-//! context the way `wamn_postgres` attaches to `ActiveCtx`.
+//! context the way the `wamn:postgres` plugin attaches to `ActiveCtx`.
 //!
 //! `copy_object` and `move_object` are the **refused verbs** (owner ruling):
 //! they take bare `object-id` strings carrying no backend or binding

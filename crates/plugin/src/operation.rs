@@ -26,7 +26,6 @@ use super::scope_registry;
 use super::write_log::{Claim, WriteLogStore};
 use super::{OperationHost, OperationTransaction, PgCommitFailure, WAMN_POSTGRES_ID};
 use wamn_authentication::authorization::{SessionIdentityError, SessionIdentityErrorType};
-use wamn_connection::connection_facts::ConnectionCache as _;
 
 /// Delivery counters shared by all operations of this PostgreSQL plugin.
 #[derive(Debug)]
@@ -76,7 +75,7 @@ impl OperationHost {
         component: &str,
         config: Arc<ApplicationConfig>,
     ) -> anyhow::Result<()> {
-        if let Some(cache) = &self.authorization {
+        if let Some(cache) = &self.connection_cache {
             cache.bind_application(workload, &config)?;
         }
         let context = if config
@@ -85,7 +84,7 @@ impl OperationHost {
             .any(|component| !component.connections.is_empty())
         {
             let cache = self
-                .authorization
+                .connection_cache
                 .as_ref()
                 .context("connection cache is not configured")?;
             Some(Arc::new(wamn_connection::invocation::ReleaseContext::new(

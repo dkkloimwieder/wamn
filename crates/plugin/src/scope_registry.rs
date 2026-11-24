@@ -7,7 +7,7 @@ use wamn_connection::connection::ConnectionInvocation;
 use wamn_connection::invocation::ReleaseContext;
 use wamn_engine::invocation_scope::InvocationScopes;
 use wamn_event::Causation;
-use wamn_postgres::DEFAULT_PROJECT;
+use wamn_registry::DEFAULT_PROJECT;
 
 pub fn validate_context(
     identity: &SessionIdentity,
