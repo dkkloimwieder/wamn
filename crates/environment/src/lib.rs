@@ -1,6 +1,5 @@
 //! Environment lifecycle and authorized control execution.
 
-pub mod api_service;
 pub mod apply_package;
 pub mod configuration;
 pub mod environment;

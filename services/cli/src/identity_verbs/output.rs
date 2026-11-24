@@ -1,7 +1,10 @@
 //! Provisioning output files and private credential replacement.
 
-pub(super) mod plan;
-pub use plan::ensure_secret_path;
+mod plan;
+pub(super) use plan::ensure_secret_path;
+
+#[cfg(test)]
+mod tests;
 
 use std::io::Write as _;
 use std::os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _};
@@ -14,7 +17,7 @@ use std::fs::{File, OpenOptions, Permissions};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-pub(super) static SECRET_TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+static SECRET_TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 fn create_secret_temp(path: &Path) -> anyhow::Result<(PathBuf, File)> {
     let parent = path
@@ -53,7 +56,7 @@ fn create_secret_temp(path: &Path) -> anyhow::Result<(PathBuf, File)> {
     )
 }
 
-pub fn write_secret_json(path: &Path, doc: &Value) -> anyhow::Result<()> {
+pub(super) fn write_secret_json(path: &Path, doc: &Value) -> anyhow::Result<()> {
     let mut bytes = serde_json::to_vec_pretty(doc).context("serialize Secret JSON")?;
     bytes.push(b'\n');
     let (temp_path, mut file) = create_secret_temp(path)?;

@@ -3,16 +3,76 @@
 use sqlx::FromRow as _;
 use sqlx::types::Uuid;
 use std::time::Duration;
+use wamn_authentication::administration::{GrantAuthority, GrantChange, GrantError};
+use wamn_authentication::api_service::ApiServiceStore;
 use wamn_authentication::service::{ServiceError, ServiceErrorType};
 use wamn_identity_protocol::records::PatRecord;
 use wamn_identity_protocol::{
     PrincipalId, pat_prefix::PatPrefix, secret::PatToken, wire::PatResponse,
 };
-use wamn_registry::platform_domain::PlatformDomain;
+use wamn_registry::{ProjectEnvKey, platform_domain::PlatformDomain};
 
 pub use super::user::{disable, write_service};
 
 const MAX_PAT_TTL: Duration = Duration::from_hours(365 * 24);
+
+struct ApiServiceTransaction<'transaction, 'connection>(
+    &'transaction mut sqlx::Transaction<'connection, sqlx::Postgres>,
+);
+
+/// Adapt the caller's prepared transaction for API service creation.
+pub fn api_service_transaction(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+) -> impl ApiServiceStore {
+    ApiServiceTransaction(transaction)
+}
+
+#[async_trait::async_trait]
+impl ApiServiceStore for ApiServiceTransaction<'_, '_> {
+    async fn lock_grants(&mut self, key: &ProjectEnvKey) -> Result<(), ServiceError> {
+        crate::operation::lock_operation_grants(self.0, key)
+            .await
+            .map_err(|source| ServiceError::database("lock project operation grants", source))
+    }
+
+    async fn write_service(
+        &mut self,
+        domain: &PlatformDomain,
+        subject: &str,
+        display_name: &str,
+    ) -> Result<PrincipalId, ServiceError> {
+        write_service(self.0, domain, subject, display_name).await
+    }
+
+    async fn grant_role(
+        &mut self,
+        key: &ProjectEnvKey,
+        principal: &PrincipalId,
+        role: &wamn_role::RoleName,
+    ) -> Result<(), GrantError> {
+        crate::administration::mutate_grant(
+            self.0,
+            key,
+            GrantAuthority::Provisioning,
+            GrantChange::UserRole {
+                user_id: principal,
+                role: role.as_str(),
+                grant: true,
+            },
+        )
+        .await
+        .map(drop)
+    }
+
+    async fn issue_pat(
+        &mut self,
+        principal: &PrincipalId,
+        label: &str,
+        lifetime: Duration,
+    ) -> Result<PatResponse, ServiceError> {
+        issue(self.0, principal, label, lifetime).await
+    }
+}
 
 /// Read the platform domain from the system database.
 pub async fn platform_domain(

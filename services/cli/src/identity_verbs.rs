@@ -1,6 +1,8 @@
 //! Arguments and output of the `provision-identity-issuer`,
 //! `grant-project-env-membership` and `revoke-project-env-membership` verbs.
 
+mod output;
+
 use std::fmt;
 
 use clap::Args;
@@ -32,15 +34,12 @@ impl fmt::Debug for ApiServiceArgs {
 }
 
 pub async fn create_api_service(args: ApiServiceArgs) -> anyhow::Result<()> {
-    wamn_environment::provision_project_env::ensure_secret_path(
-        &args.emit_secret,
-        "API service PAT",
-    )?;
+    output::ensure_secret_path(&args.emit_secret, "API service PAT")?;
     let token = crate::operation_verbs::ControlHost::from_env()?.call("api_service.create", &json!({
         "project":args.project,"env":args.env,"name":args.name,"display_name":args.display_name,
         "roles":args.role,"lifetime_seconds":args.lifetime_seconds,
     })).await?;
-    wamn_environment::provision_project_env::write_secret_json(&args.emit_secret, &token)?;
+    output::write_secret_json(&args.emit_secret, &token)?;
     println!("created API service principal_id={}", token["principal_id"]);
     Ok(())
 }

@@ -5,7 +5,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use sqlx::Connection as _;
 use std::time::Duration;
-use wamn_environment::api_service;
+use wamn_authentication::api_service;
 use wamn_identity_protocol::{PrincipalId, pat_prefix::PatPrefix};
 use wamn_package::canonical_name::CanonicalName;
 use wamn_postgres::identity::application::service;
@@ -88,7 +88,7 @@ impl Execution {
                 let domain = domain.as_ref().expect("service creation read the domain");
                 let key = wamn_registry::project_env_key(&self.org, &triple.project, &triple.env);
                 let token = api_service::create(
-                    &mut transaction,
+                    &mut service::api_service_transaction(&mut transaction),
                     &key,
                     domain,
                     &api_service::Request {

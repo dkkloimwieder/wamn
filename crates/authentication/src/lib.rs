@@ -2,6 +2,7 @@
 
 pub mod access_token;
 pub mod administration;
+pub mod api_service;
 pub mod authorization;
 pub mod control_admission;
 pub mod identity_error;
