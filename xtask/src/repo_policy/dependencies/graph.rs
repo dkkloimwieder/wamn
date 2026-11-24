@@ -40,7 +40,7 @@ pub(super) fn report(
                 ));
             }
             for dep in &nodes[id].deps {
-                // removed by Epic 22 (wamn-fmvz4.14)
+                // permanent: stock address parsing and egress policy (ruling Q-A). See Open items.
                 let next = (
                     &dep.pkg,
                     runtime_exempt || (source == "wamn-control" && names[&dep.pkg] == "wamn-http"),
