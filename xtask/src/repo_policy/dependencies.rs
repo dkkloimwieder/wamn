@@ -94,5 +94,6 @@ fn refused(source: &str, target: &str, runtime_exempt: bool) -> bool {
             && !runtime_exempt)
         || (matches!(source, "wamn-edge" | "wamn-edge-document")
             && SERVICE_CLIENTS.contains(&target))
+        || (source == "wamn-host" && target == "wamn-environment")
         || (target == TEST_INFRASTRUCTURE && !TEST_AND_TOOL_PACKAGES.contains(&source))
 }
