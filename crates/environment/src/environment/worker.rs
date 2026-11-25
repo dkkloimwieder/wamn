@@ -2,7 +2,7 @@
 
 use super::{
     Platform, capture_gap,
-    document::{EnvironmentDocument, EnvironmentFile},
+    document::{EnvironmentDocument, EnvironmentFile, WorkloadRelease},
     operation,
 };
 use anyhow::{Context as _, ensure};
@@ -72,9 +72,9 @@ pub async fn execute(
     org_origin: &str,
     platform_origin: &str,
     platform: Platform,
-    operation: Operation,
-    request: Request,
+    (operation, request): (Operation, Request),
     authority_port: super::write::AuthorityPort,
+    release: &mut Option<WorkloadRelease>,
 ) -> anyhow::Result<Value> {
     let triple = Triple::new(org.clone(), request.env, request.project);
     let chart = (platform.select_chart)(&platform.chart)?;
@@ -156,6 +156,7 @@ pub async fn execute(
                         unreachable!("handled project operation")
                     }
                 },
+                release,
             )
             .await
         }
@@ -189,7 +190,7 @@ pub enum Task {
     },
 }
 
-/// Execute an authorized task inside an operation Job.
+/// Execute an authorized task inside an operation Job and record its resolved release.
 pub async fn execute_task(
     mut platform: Platform,
     org: &OrgId,
@@ -197,6 +198,7 @@ pub async fn execute_task(
     platform_origin: &str,
     request: Task,
     authority: super::write::AuthorityPort,
+    release: &mut Option<WorkloadRelease>,
 ) -> anyhow::Result<Value> {
     let mut output = Vec::new();
     match request {
@@ -206,9 +208,9 @@ pub async fn execute_task(
                 org_origin,
                 platform_origin,
                 platform,
-                operation,
-                request,
+                (operation, request),
                 authority,
+                release,
             )
             .await
         }

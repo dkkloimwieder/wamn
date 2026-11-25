@@ -4,17 +4,23 @@ use anyhow::{Context as _, ensure};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use wamn_environment::environment::worker::{self, Task};
+use wamn_kubernetes::client::KubernetesApi;
 
-use crate::{Configuration, execution::Execution};
+use crate::{
+    Configuration,
+    execution::Execution,
+    platform_event::{self, Command, Outcome},
+};
 
 impl Execution {
     pub(crate) async fn platform_schema(
         &self,
         operation: &wamn_package::canonical_name::CanonicalName,
         payload: &str,
+        command: Option<&Command>,
     ) -> anyhow::Result<Value> {
         if operation.as_str() == "platform.operation_status" {
-            return self.operation_job(operation, payload).await;
+            return self.operation_job(operation, payload, command).await;
         }
         let mut input: Value = serde_json::from_str(payload)?;
         let fields = input
@@ -28,13 +34,15 @@ impl Execution {
             fields.insert("type".into(), "schema".into()).is_none(),
             "platform SQL request cannot select a worker task"
         );
-        self.operation_job(operation, &input.to_string()).await
+        self.operation_job(operation, &input.to_string(), command)
+            .await
     }
 
     async fn operation_job(
         &self,
         operation: &wamn_package::canonical_name::CanonicalName,
         payload: &str,
+        command: Option<&Command>,
     ) -> anyhow::Result<Value> {
         let api = wamn_kubernetes::client::KubernetesApi::in_cluster()?;
         ensure!(
@@ -116,30 +124,102 @@ impl Execution {
         }
         wamn_platform_install::worker_mounts::mount_database_files(&mut job);
         wamn_kubernetes::worker_mounts::mount_registry(&mut job, self.registry_token_metadata);
-        wamn_kubernetes::job::submit(&api, &mut job, payload).await
+        submit(&api, &mut job, &input, command).await
     }
+}
+
+pub(crate) async fn submit(
+    api: &KubernetesApi,
+    job: &mut Value,
+    task: &Value,
+    command: Option<&Command>,
+) -> anyhow::Result<Value> {
+    let input = match command {
+        Some(command) => json!({
+            "task": task,
+            "command": command,
+            "job_namespace": api.namespace,
+            "job_name": job["metadata"]["name"]
+        })
+        .to_string(),
+        None => task.to_string(),
+    };
+    wamn_kubernetes::job::submit(api, job, &input).await
 }
 
 /// Run a server-authorized lifecycle operation or platform SQL task in its Job.
 pub async fn execute(config: &Configuration, payload: &str) -> anyhow::Result<Value> {
-    let request: Task = serde_json::from_str(payload)?;
-    let mut platform = config.platform()?;
+    #[derive(Deserialize)]
+    #[serde(untagged, deny_unknown_fields)]
+    enum Request {
+        Journaled {
+            task: Task,
+            command: Command,
+            job_namespace: String,
+            job_name: String,
+        },
+        Plain(Task),
+    }
+
+    let (task, journal) = match serde_json::from_str(payload)? {
+        Request::Journaled {
+            task,
+            command,
+            job_namespace,
+            job_name,
+        } => (task, Some((command, job_namespace, job_name))),
+        Request::Plain(task) => (task, None),
+    };
     let files = wamn_platform_install::database_files::DatabaseFiles::in_cluster()?;
     files.materialize(&config.apply_database).await?;
-    platform.database_files = Some(std::sync::Arc::new(files));
-    crate::write_kubeconfig(
-        std::path::Path::new(crate::WORKER_KUBECONFIG),
-        config.org.as_str(),
-    )?;
-    worker::execute_task(
-        platform,
-        &config.org,
-        &config.registry,
-        &config.platform_registry,
-        request,
-        wamn_http::wasm_authority::wasm_authority_port,
-    )
-    .await
+    let mut release = None;
+    let result = async {
+        let mut platform = config.platform()?;
+        platform.database_files = Some(std::sync::Arc::new(files));
+        crate::write_kubeconfig(
+            std::path::Path::new(crate::WORKER_KUBECONFIG),
+            config.org.as_str(),
+        )?;
+        worker::execute_task(
+            platform,
+            &config.org,
+            &config.registry,
+            &config.platform_registry,
+            task,
+            wamn_http::wasm_authority::wasm_authority_port,
+            &mut release,
+        )
+        .await
+    }
+    .await;
+    if let Some((mut command, job_namespace, job_name)) = journal {
+        if let Some(release) = release {
+            command.package_digest = Some(release.package_digest);
+            command.helm_revision = i32::try_from(release.revision).ok();
+        }
+        let outcome = match &result {
+            Err(_) => Outcome::Failed("The lifecycle operation Job failed."),
+            Ok(_) => Outcome::Succeeded,
+        };
+        let recorded = async {
+            let mut connection = wamn_postgres::connect(&config.apply_database.to_json()?).await?;
+            platform_event::record(
+                &mut connection,
+                &config.org,
+                &command,
+                outcome,
+                Some((&job_namespace, &job_name)),
+            )
+            .await
+        }
+        .await;
+        if result.is_ok() {
+            recorded?;
+        } else if let Err(error) = recorded {
+            tracing::error!(%error, command_id = %command.id, "record the worker command outcome");
+        }
+    }
+    result
 }
 
 impl Execution {
@@ -147,6 +227,7 @@ impl Execution {
         &self,
         operation: &wamn_package::canonical_name::CanonicalName,
         payload: &str,
+        command: Option<&Command>,
     ) -> anyhow::Result<Value> {
         #[derive(Deserialize)]
         #[serde(deny_unknown_fields)]
@@ -160,10 +241,11 @@ impl Execution {
             data: bool,
         }
         if operation.as_str().ends_with("operation_status") {
-            return self.operation_job(operation, payload).await;
+            return self.operation_job(operation, payload, command).await;
         }
         let input: Input = serde_json::from_str(payload)?;
         let payload = json!({"type":"environment","operation":operation,"project":input.project,"env":input.env,"document":input.document,"application":input.application,"disposable":input.disposable,"data":input.data});
-        self.operation_job(operation, &payload.to_string()).await
+        self.operation_job(operation, &payload.to_string(), command)
+            .await
     }
 }

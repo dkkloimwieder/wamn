@@ -21,10 +21,11 @@ impl Execution {
         operation: &wamn_package::canonical_name::CanonicalName,
         caller: &PrincipalId,
         payload: &str,
+        command: Option<&crate::platform_event::Command>,
     ) -> anyhow::Result<Value> {
         match operation.as_str() {
             "environment.configure" | "environment.delete" | "environment.operation_status" => {
-                self.environment(operation, payload).await
+                self.environment(operation, payload, command).await
             }
             "api_service.create"
             | "service_principal.create"
@@ -33,7 +34,7 @@ impl Execution {
             | "pat.list"
             | "pat.revoke" => self.service(operation, caller, payload).await,
             "platform.schema" | "platform.operation_status" => {
-                self.platform_schema(operation, payload).await
+                self.platform_schema(operation, payload, command).await
             }
             _ => anyhow::bail!("unknown control execution operation {operation}"),
         }

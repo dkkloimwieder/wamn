@@ -26,7 +26,7 @@ use wamn_release::release_package::{OpenedPackage, open_package_digest};
 
 use super::{
     Platform, bindings,
-    document::{DeclaredRelease, EnvironmentDocument},
+    document::{DeclaredRelease, EnvironmentDocument, WorkloadRelease},
     sql, stage, write,
 };
 use crate::apply_package::{ApplyPackageRequest, apply_package};
@@ -160,6 +160,7 @@ pub async fn application(
     mut document: EnvironmentDocument,
     name: &ApplicationName,
     operation: Application<'_>,
+    journal_release: &mut Option<WorkloadRelease>,
 ) -> anyhow::Result<Value> {
     let triple = document.triple();
     Box::pin(LifecycleLock::hold(
@@ -254,6 +255,10 @@ pub async fn application(
                         deploy_job_deadline(platform).await?,
                     )
                     .await?;
+                    match super::document::workload_release(&platform.cluster, &triple, name).await {
+                        Ok(release) => *journal_release = release.filter(|release| release.package_digest == digest),
+                        Err(error) => tracing::warn!(%error, "read the deployed revision for the platform journal"),
+                    }
                     let workload = crate::application_chart::plan::workload_name(&release);
                     platform
                         .cluster
@@ -293,6 +298,7 @@ pub async fn application(
                     let revision =
                         rollback::target(platform, &triple, name, &release, revision).await?;
                     let (digest, app) = rollback::application(platform, &release, revision).await?;
+                    *journal_release = Some(WorkloadRelease { package_digest: digest, revision });
                     let packages = Packages::open(platform, digest).await?;
                     rollback::verify_package_components(&app, &packages.manifests)?;
                     project.check_workflows(&app).await?;

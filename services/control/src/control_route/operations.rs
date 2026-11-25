@@ -25,6 +25,7 @@ impl ControlRoutes<'_> {
         attachment: &HostAttachment,
         caller: &PrincipalId,
         payload: &str,
+        command: Option<&crate::platform_event::Command>,
     ) -> Result<Value, Refusal> {
         let request: Request = serde_json::from_str(payload).map_err(|_| invalid("value"))?;
         let coordinate = wamn_environment::environment_names::environment_resource_name(
@@ -105,7 +106,7 @@ impl ControlRoutes<'_> {
             self.registry_token_metadata,
         );
         let input = json!({"type":"project_operation","operation":operation,"request":request});
-        wamn_kubernetes::job::submit(api, &mut job, &input.to_string())
+        crate::platform::submit(api, &mut job, &input, command)
             .await
             .map_err(Refusal::from)
     }

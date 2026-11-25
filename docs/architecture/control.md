@@ -33,7 +33,7 @@ Control listens on port 80. It derives the JWKS URL and org audience and verifie
 The worker ConfigMap and service account names follow from the org.
 
 Control authorizes the target and submits one Kubernetes Job.
-It puts the request and authenticated actor in an immutable ConfigMap owned by that Job.
+It puts the request in an immutable ConfigMap owned by that Job. For a journaled command, the ConfigMap also carries the command ID and authenticated actor.
 The worker mounts the request and reads applied project configuration from the registry.
 The request cannot select an image, command, credential, namespace, or chart path.
 
@@ -43,6 +43,7 @@ After those reads and the workflow checks pass, deploy applies SQL and upgrades 
 Control reads the current package digest and content revision from the WorkloadDeployment.
 Only the rollback worker reads Helm history for the target package and application configuration.
 Job status is visible only through the authorized target and operation annotations.
+Control writes command starts and dispatch refusals or failures to `provisioning.platform_event`. Workers use the apply login to write the result of a command they run.
 
 Deploy, rollback, stop, schema apply, schema reset, capture-gap recovery and close, and environment lifecycle Jobs use the org worker account for Helm.
 The project chart creates the `<coordinate>-operation` account for schema diff. It stages files from named database Secrets and reads declared application workloads.

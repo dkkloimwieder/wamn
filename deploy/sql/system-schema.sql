@@ -53,7 +53,7 @@
 -- Stored coordinates also enforce their character and length constraints.
 -- ---------------------------------------------------------------------------
 -- Schemas. `registry` = the org/project placement model (wamn-q3n.1);
--- `provisioning` = operations state, empty today; `identity` = first-party platform principals,
+-- `provisioning` = operations state; `identity` = first-party platform principals,
 -- local user credential hashes, project-role assignments (wamn-ctc8.6), and
 -- Distinct schemas keep each control-plane subsystem namespaced.
 -- Owned by the `wamn_system` role the T1 cluster bootstraps (wamn-q3n.2).
@@ -677,6 +677,72 @@ CREATE TABLE registry.environments (
 CREATE TRIGGER wamn_record_history_stamp BEFORE INSERT OR UPDATE ON registry.environments
     FOR EACH ROW EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 
+CREATE TABLE registry.platform_event_type (
+    code text PRIMARY KEY,
+    label text NOT NULL
+);
+INSERT INTO registry.platform_event_type (code, label) VALUES
+    ('org_create', 'Create organization'),
+    ('environment_apply', 'Apply environment'),
+    ('environment_delete', 'Delete environment'),
+    ('deploy', 'Deploy application'),
+    ('rollback', 'Roll back application'),
+    ('schema_apply', 'Apply schema'),
+    ('schema_reset', 'Reset schema'),
+    ('capture_gap_repair', 'Repair capture gap');
+
+CREATE TABLE registry.platform_event_outcome (
+    code text PRIMARY KEY,
+    label text NOT NULL,
+    success boolean CHECK ((success IS NULL) = (code = 'started'))
+);
+INSERT INTO registry.platform_event_outcome (code, label, success) VALUES
+    ('started', 'Started', NULL),
+    ('succeeded', 'Succeeded', true),
+    ('failed', 'Failed', false),
+    ('rolled_back', 'Rolled back', false),
+    ('refused', 'Refused', false);
+
+CREATE TABLE provisioning.platform_event (
+    id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    occurred_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    command_id uuid NOT NULL,
+    event_type text NOT NULL REFERENCES registry.platform_event_type (code),
+    outcome text NOT NULL REFERENCES registry.platform_event_outcome (code),
+    principal_id uuid NOT NULL REFERENCES identity.principals (id),
+    org text NOT NULL REFERENCES registry.orgs (id),
+    env text,
+    project text,
+    application text,
+    package_digest text CHECK (package_digest ~ '^sha256:[0-9a-f]{64}$'),
+    helm_revision integer,
+    job_namespace text,
+    job_name text,
+    failure_summary text CHECK (
+        failure_summary IS NULL OR (outcome = 'failed' AND char_length(failure_summary) <= 500)
+    ),
+    FOREIGN KEY (org, env) REFERENCES registry.environments (org, env),
+    FOREIGN KEY (org, project) REFERENCES registry.projects (org, id)
+);
+CREATE INDEX platform_event_command_id ON provisioning.platform_event (command_id);
+CREATE INDEX platform_event_org_env_occurred_at ON provisioning.platform_event (org, env, occurred_at);
+CREATE INDEX platform_event_org_project_occurred_at ON provisioning.platform_event (org, project, occurred_at);
+
+CREATE FUNCTION provisioning.reject_immutable_row_change() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    RAISE EXCEPTION USING
+        ERRCODE = '55000',
+        MESSAGE = TG_TABLE_SCHEMA || '.' || TG_TABLE_NAME || ' is immutable';
+END
+$$;
+REVOKE ALL ON FUNCTION provisioning.reject_immutable_row_change() FROM PUBLIC;
+CREATE TRIGGER platform_event_immutable
+    BEFORE UPDATE OR DELETE ON provisioning.platform_event
+    FOR EACH ROW EXECUTE FUNCTION provisioning.reject_immutable_row_change();
+
+ALTER TABLE provisioning.platform_event ENABLE ROW LEVEL SECURITY;
+
 CREATE TABLE registry.environment_projects (
     org              text NOT NULL,
     env              text NOT NULL,
@@ -1036,6 +1102,11 @@ BEGIN
                        relation_name, predicate, bound_actor, predicate);
     END LOOP;
 
+    EXECUTE format('CREATE POLICY login_org ON provisioning.platform_event
+        USING (CASE WHEN %s THEN org = (SELECT registry.login_org())
+            AND principal_id = (SELECT wamn_authority.current_principal_id())
+            ELSE false END)', org_login);
+
     ALTER TABLE identity.principals ENABLE ROW LEVEL SECURITY;
     EXECUTE format('CREATE POLICY login_org_select ON identity.principals FOR SELECT
                     USING (CASE WHEN %s THEN registry.login_principal(id) ELSE true END)', org_login);
@@ -1056,6 +1127,8 @@ BEGIN
         GRANT EXECUTE ON FUNCTION registry.login_org(), registry.login_principal(uuid),
             identity.principal_in_login_org_only(uuid) TO wamn_control;
         GRANT SELECT ON registry.environments TO wamn_control;
+        GRANT USAGE ON SCHEMA provisioning TO wamn_control;
+        GRANT INSERT, SELECT (command_id, outcome) ON provisioning.platform_event TO wamn_control;
     END IF;
 END
 $control_security$;

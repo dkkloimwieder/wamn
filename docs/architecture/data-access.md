@@ -1077,10 +1077,10 @@ Each relation carries the four stamp columns as `NOT NULL` with no default, and 
 The full system schema also stamps `registry.meta`, `orgs`, `environments`, `projects`, `environment_projects`, `retired_project_envs`, and `capture_gap`.
 It stamps `identity.session_keys`, `session_signing_state`, and `password_attempts` too.
 The full control schema stamps registry declarations and `wamn_authority.author_login_projects`.
-The system operations tables carry no stamps.
+The system operations tables carry no stamps. The append-only `provisioning.platform_event` journal records each lifecycle event with its own timestamp, caller, and command ID.
 In the system database, the actor is an `identity.principals` id.
 The system identity tables record the actor only. A control route inserts `operation` to its sealed operation id, and no column stores it.
-The system database keeps stamps only and no history table, as its [limits](#limits) state.
+System database record history consists of stamps, as described in its [limits](#limits).
 
 The `SYSTEM_SCHEMA_SQL` composition in [platform installation](../../crates/platform-install/src/lib.rs) installs `record-history.sql` before [`deploy/sql/system-schema.sql`](../../deploy/sql/system-schema.sql).
 Initialization creates the `NOLOGIN` owner roles before installing these helpers.

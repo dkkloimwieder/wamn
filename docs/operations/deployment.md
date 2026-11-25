@@ -244,7 +244,10 @@ States are `pending`, `running`, `succeeded`, and `failed`.
 Every read repeats project authorization and compares the Job's target with the request.
 Jobs stop after 15 minutes. The CLI polls for up to 16 minutes.
 Kubernetes removes completed Jobs after one hour.
-There is no operation history database.
+The system database keeps an append-only journal for environment apply and delete, deploy, rollback, schema apply and reset, and capture-gap repair.
+Control records the authenticated caller and command start.
+Control records dispatch failures and refusals, and workers record the results of operations they run.
+The journal remains after Kubernetes removes the Job and its logs.
 
 The server selects the image, command, namespace, actor, chart, and credential references.
 Operation workers stage the org's apply login and system database CA in the Job's in-memory volume.

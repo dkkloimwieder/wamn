@@ -203,6 +203,7 @@ impl ControlRoutes<'_> {
         attachment: &HostAttachment,
         caller: &PrincipalId,
         payload: &str,
+        command: Option<&crate::platform_event::Command>,
     ) -> Result<Value, Refusal> {
         let input: Value = serde_json::from_str(payload).map_err(anyhow::Error::from)?;
         let mut writer = self.writer.lock().await?;
@@ -227,6 +228,7 @@ impl ControlRoutes<'_> {
                 &attachment.route.operation.parse().expect("host operation"),
                 caller,
                 payload,
+                command,
             )
             .await
             .map_err(operation_refusal)
@@ -238,6 +240,42 @@ impl ControlRoutes<'_> {
         attachment: &HostAttachment,
         caller: &PrincipalId,
         payload: &str,
+    ) -> Result<Value, Refusal> {
+        use crate::platform_event::{self, Outcome};
+
+        let command = platform_event::command(attachment.route.operation, *caller, payload);
+        if let Some(command) = &command {
+            let mut writer = self.writer.lock().await?;
+            platform_event::record(&mut writer, self.org, command, Outcome::Started, None).await?;
+        }
+        let result = self
+            .handle_command(attachment, caller, payload, command.as_ref())
+            .await;
+        if let (Some(command), Err(error)) = (&command, &result) {
+            let outcome = match error {
+                Refusal::Failed(_) => {
+                    Outcome::Failed("Control could not dispatch the lifecycle command.")
+                }
+                Refusal::Declared { .. } | Refusal::Delivery(_) => Outcome::Refused,
+            };
+            let recorded = async {
+                let mut writer = self.writer.lock().await?;
+                platform_event::record(&mut writer, self.org, command, outcome, None).await
+            }
+            .await;
+            if let Err(error) = recorded {
+                tracing::error!(%error, command_id = %command.id, "record the control command outcome");
+            }
+        }
+        result
+    }
+
+    async fn handle_command(
+        &self,
+        attachment: &HostAttachment,
+        caller: &PrincipalId,
+        payload: &str,
+        command: Option<&crate::platform_event::Command>,
     ) -> Result<Value, Refusal> {
         let admitted = match attachment.route.authority {
             HostRouteAuthority::OrgAdmin => {
@@ -283,8 +321,13 @@ impl ControlRoutes<'_> {
             return Err(denied(attachment));
         }
         match attachment.route.handler {
-            HostHandler::ControlExecution => self.execute(attachment, caller, payload).await,
-            HostHandler::OperationJob => self.operation_job(attachment, caller, payload).await,
+            HostHandler::ControlExecution => {
+                self.execute(attachment, caller, payload, command).await
+            }
+            HostHandler::OperationJob => {
+                self.operation_job(attachment, caller, payload, command)
+                    .await
+            }
             HostHandler::IntegrationAdministration => {
                 self.integration_administration(attachment, caller, payload)
                     .await

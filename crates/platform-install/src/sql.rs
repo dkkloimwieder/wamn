@@ -65,14 +65,15 @@ const CONTROL_WRITE: &[&str] = &["SELECT", "INSERT", "UPDATE", "DELETE"];
 /// wamn-a40n.3). It reads who is a user and whether the password login of a
 /// control session is live. It writes the org memberships and the org and project
 /// grants of the org operations. It reads the projects and environments those grants cover. The `project.create` route writes a
-/// project. It also stores encrypted OAuth tokens and pending authorizations.
-pub const CONTROL_SURFACE: [(&str, &str, &[&str]); 18] = [
+/// project. It also stores encrypted OAuth tokens and pending authorizations and appends platform events.
+pub const CONTROL_SURFACE: [(&str, &str, &[&str]); 19] = [
     ("identity", "org_memberships", CONTROL_WRITE),
     ("identity", "org_roles", CONTROL_WRITE),
     ("identity", "password_logins", &["SELECT"]),
     ("identity", "principals", &["SELECT", "INSERT", "UPDATE"]),
     ("identity", "project_env_memberships", CONTROL_WRITE),
     ("identity", "project_roles", CONTROL_WRITE),
+    ("provisioning", "platform_event", &["INSERT"]),
     ("registry", "environment_projects", &["SELECT"]),
     ("registry", "environment_applications", &["SELECT"]),
     (
@@ -91,13 +92,16 @@ pub const CONTROL_SURFACE: [(&str, &str, &[&str]); 18] = [
     ("registry", "projects", &["SELECT", "INSERT"]),
 ];
 
-/// The columns the control host writes in a relation of which it otherwise only
-/// reads, with the privilege it holds on them. The status routes write the
-/// status of an environment (docs/architecture/execution.md#host-run-routes,
-/// wamn-zua8.2). The other columns of `registry.environment_projects` belong to
-/// provisioning.
-pub const CONTROL_COLUMN_SURFACE: [(&str, &str, &str, &[&str]); 1] =
-    [("registry", "environments", "UPDATE", &["active"])];
+/// The columns on which the control host holds an additional privilege.
+pub const CONTROL_COLUMN_SURFACE: [(&str, &str, &str, &[&str]); 2] = [
+    ("registry", "environments", "UPDATE", &["active"]),
+    (
+        "provisioning",
+        "platform_event",
+        "SELECT",
+        &["command_id", "outcome"],
+    ),
+];
 
 /// The schemas of [`CONTROL_SURFACE`], in which the control role holds `USAGE`.
-pub const CONTROL_SCHEMAS: [&str; 2] = ["identity", "registry"];
+pub const CONTROL_SCHEMAS: [&str; 3] = ["identity", "provisioning", "registry"];

@@ -7,6 +7,7 @@ mod execution;
 pub mod first_owner;
 mod host_route;
 pub mod platform;
+mod platform_event;
 mod project_login;
 pub mod retention;
 mod writer;

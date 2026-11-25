@@ -292,6 +292,18 @@ fn seeds(org: &Org<'_>) -> Vec<Seed> {
             &[("org", name), ("env", ENVIRONMENT)],
         ),
         Seed::new(
+            "provisioning.platform_event",
+            &[
+                ("org", name),
+                ("env", ENVIRONMENT),
+                ("project", PROJECT),
+                ("command_id", principal),
+                ("principal_id", principal),
+                ("event_type", "environment_apply"),
+                ("outcome", "started"),
+            ],
+        ),
+        Seed::new(
             "registry.environment_projects",
             &at_target(&[("secret_name", "database"), ("instance_suffix", "a1b2c3d4")]),
         ),

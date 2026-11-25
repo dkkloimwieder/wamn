@@ -229,7 +229,7 @@ The request names `project` and `env`.
 The server builds the command and credential references after it repeats authorization and resolves the target.
 Each start route returns a Kubernetes Job name.
 `operation.status` compares that Job's target and reads its state and bounded log tail.
-The service submits Jobs through the shared runner and keeps no operation history.
+The service submits Jobs through the shared runner. Control and its workers append lifecycle events to the system database under the same command ID and caller.
 [Deployment routes](../operations/deployment.md#application-and-schema-operations) defines inputs, credential target, deadlines, and result bounds.
 
 The [native route types](../../crates/routes/src/host_wire.rs) define the request and result schemas. The platform UI generates its clients from their OpenAPI documents.
