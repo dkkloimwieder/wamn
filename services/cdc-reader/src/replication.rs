@@ -1,5 +1,6 @@
 //! PostgreSQL input for the event reader.
 
+use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, Ordering};
@@ -8,14 +9,14 @@ use std::time::Duration;
 use anyhow::Context as _;
 use pg_walstream::{
     CancellationToken, ColumnValue, EventStream, EventType, LogicalReplicationStream,
-    ReplicationError, ReplicationStreamConfig, RetryConfig, RowData, StreamingMode,
+    RelationColumn, ReplicationError, ReplicationStreamConfig, RetryConfig, RowData, StreamingMode,
 };
 use postgres_protocol::escape::escape_identifier;
 use sqlx::{ConnectOptions as _, Connection as _, Row as _};
-use wamn_event::Op;
 use wamn_event::reader::{
     RelationClassification, ReplicationFrame, ReplicationInput, SessionFailure, SessionFate,
 };
+use wamn_event::{Image, Op, UnavailableColumn};
 
 /// A verified connection and progress shared by one reader's sessions.
 pub struct ReplicationSource {
@@ -121,6 +122,35 @@ pub struct ReplicationSession<'a> {
     stream: EventStream,
     identity: pg_walstream::ServerIdentity,
     history: Vec<pg_walstream::TimelineSwitch>,
+    relations: HashMap<u32, Relation>,
+}
+
+struct Relation {
+    columns: Vec<RelationColumn>,
+    replica_key: Arc<[Arc<str>]>,
+}
+
+impl Relation {
+    fn unavailable(&self, old: Option<&RowData>, new: Option<&RowData>) -> Vec<UnavailableColumn> {
+        let mut unavailable = Vec::new();
+        // pg_walstream skips unchanged TOAST values. A key-only old tuple
+        // carries only replica identity values. FULL marks every column as key.
+        for (image, row) in [(Image::Old, old), (Image::New, new)] {
+            let Some(row) = row else { continue };
+            if row.len() == self.columns.len() {
+                continue;
+            }
+            for column in &self.columns {
+                if (image == Image::New || column.is_key) && row.get(&column.name).is_none() {
+                    unavailable.push(UnavailableColumn {
+                        image,
+                        column: column.name.to_string(),
+                    });
+                }
+            }
+        }
+        unavailable
+    }
 }
 
 impl fmt::Debug for ReplicationSession<'_> {
@@ -135,6 +165,32 @@ impl ReplicationSession<'_> {
     /// Stop reading and release the replication connection.
     pub async fn shutdown(&mut self) {
         let _ = self.stream.shutdown().await;
+    }
+
+    fn row(
+        &self,
+        op: Op,
+        schema: Arc<str>,
+        table: Arc<str>,
+        relation_oid: u32,
+        old: Option<RowData>,
+        new: Option<RowData>,
+    ) -> Result<ReplicationFrame<RowData>, SessionFailure> {
+        let relation = self.relations.get(&relation_oid).ok_or_else(|| {
+            session_failure(ReplicationError::Protocol(format!(
+                "CDC row arrived without a relation frame for OID {relation_oid}"
+            )))
+        })?;
+        Ok(ReplicationFrame::Row {
+            op,
+            schema,
+            table,
+            relation_oid,
+            unavailable: relation.unavailable(old.as_ref(), new.as_ref()),
+            old,
+            new,
+            replica_key: Arc::clone(&relation.replica_key),
+        })
     }
 }
 
@@ -170,14 +226,7 @@ impl ReplicationInput for ReplicationSession<'_> {
                     table,
                     relation_oid,
                     data,
-                } => ReplicationFrame::Row {
-                    op: Op::Insert,
-                    schema,
-                    table,
-                    relation_oid,
-                    old: None,
-                    new: Some(data),
-                },
+                } => self.row(Op::Insert, schema, table, relation_oid, None, Some(data))?,
                 EventType::Update {
                     schema,
                     table,
@@ -185,28 +234,28 @@ impl ReplicationInput for ReplicationSession<'_> {
                     old_data,
                     new_data,
                     ..
-                } => ReplicationFrame::Row {
-                    op: Op::Update,
+                } => self.row(
+                    Op::Update,
                     schema,
                     table,
                     relation_oid,
-                    old: old_data,
-                    new: Some(new_data),
-                },
+                    old_data,
+                    Some(new_data),
+                )?,
                 EventType::Delete {
                     schema,
                     table,
                     relation_oid,
                     old_data,
                     ..
-                } => ReplicationFrame::Row {
-                    op: Op::Delete,
+                } => self.row(
+                    Op::Delete,
                     schema,
                     table,
                     relation_oid,
-                    old: Some(old_data),
-                    new: None,
-                },
+                    Some(old_data),
+                    None,
+                )?,
                 EventType::Message {
                     flags,
                     prefix,
@@ -221,7 +270,26 @@ impl ReplicationInput for ReplicationSession<'_> {
                 EventType::Keepalive { wal_end } => ReplicationFrame::Keepalive {
                     wal_end: wal_end.value(),
                 },
-                EventType::Relation { .. } | EventType::Type { .. } | EventType::Origin { .. } => {
+                EventType::Relation {
+                    relation_id,
+                    columns,
+                    ..
+                } => {
+                    let replica_key = columns
+                        .iter()
+                        .filter(|column| column.is_key)
+                        .map(|column| Arc::clone(&column.name))
+                        .collect();
+                    self.relations.insert(
+                        relation_id,
+                        Relation {
+                            columns,
+                            replica_key,
+                        },
+                    );
+                    continue;
+                }
+                EventType::Type { .. } | EventType::Origin { .. } => {
                     continue;
                 }
                 other => {
@@ -242,6 +310,33 @@ impl ReplicationInput for ReplicationSession<'_> {
         resolve_relation_classification(&self.source.connection, schema, relation_oid)
             .await
             .map_err(session_failure)
+    }
+
+    async fn key_columns(&mut self, relation_oid: u32) -> Result<Vec<String>, SessionFailure> {
+        // pgoutput marks the replica identity, which can use a different index
+        // from the primary key. It does not mark generated identity columns.
+        let lookup = async {
+            let mut client = wamn_postgres::connect(&self.source.connection).await?;
+            let columns = sqlx::query_scalar(
+                "SELECT attribute.attname::text FROM pg_catalog.pg_attribute AS attribute
+                 WHERE attribute.attrelid = $1 AND attribute.attnum > 0 AND NOT attribute.attisdropped
+                   AND (attribute.attidentity <> '' OR EXISTS (
+                      SELECT FROM pg_catalog.pg_constraint AS pk
+                      WHERE pk.conrelid = attribute.attrelid AND pk.contype = 'p'
+                        AND attribute.attnum = ANY(pk.conkey)
+                   ))",
+            )
+            .bind(sqlx::postgres::types::Oid(relation_oid))
+            .fetch_all(&mut client)
+            .await?;
+            anyhow::Ok(columns)
+        };
+        lookup.await.map_err(|source| SessionFailure {
+            fate: SessionFate::Reopen,
+            source: source.context(format!(
+                "read CDC key columns for relation OID {relation_oid}"
+            )),
+        })
     }
 
     fn decode_row(
@@ -402,8 +497,8 @@ async fn resolve_relation_classification(
 }
 
 /// pgoutput text row → the envelope's column→value map. Values stay in text
-/// representation (string or null); an unchanged TOAST column is ABSENT from
-/// the source `RowData`, so it stays absent here (distinguishable from NULL).
+/// representation (string or null). The relation metadata identifies unchanged
+/// TOAST columns, which are already absent from `RowData`.
 ///
 /// The v3 wire carries each value as a JSON string, so it must be valid UTF-8.
 /// A non-UTF-8 value means the source database is not UTF-8-encoded — refuse it
@@ -498,6 +593,7 @@ async fn open_session(
         stream: stream.into_stream(token),
         identity,
         history,
+        relations: HashMap::new(),
     })
 }
 
@@ -622,6 +718,34 @@ fn replication_url(input: &str) -> anyhow::Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn relation_metadata_identifies_toast_without_marking_a_null_or_a_missing_old_image() {
+        let relation = Relation {
+            columns: [("id", true), ("memo", false), ("note", false)]
+                .into_iter()
+                .map(|(name, is_key)| RelationColumn {
+                    name: name.into(),
+                    is_key,
+                    type_id: 25,
+                    type_modifier: -1,
+                })
+                .collect(),
+            replica_key: ["id".into()].into(),
+        };
+        let new = RowData::from_pairs(vec![
+            ("id", ColumnValue::text("7")),
+            ("note", ColumnValue::Null),
+        ]);
+        let unavailable = [UnavailableColumn {
+            image: Image::New,
+            column: "memo".into(),
+        }];
+        assert_eq!(relation.unavailable(None, Some(&new)), unavailable);
+
+        let old = RowData::from_pairs(vec![("id", ColumnValue::text("6"))]);
+        assert_eq!(relation.unavailable(Some(&old), Some(&new)), unavailable);
+    }
 
     #[test]
     fn classify_routes_the_session_fates() {

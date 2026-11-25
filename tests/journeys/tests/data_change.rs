@@ -1,5 +1,5 @@
-//! Data change K24 through product deployment: a Receiving receipt insert reaches the
-//! Acme overlay's Data change handler, which creates the receipt's inspection.
+//! A Receiving receipt reaches the Acme overlay's Data change handler after an
+//! oversized event in the same project. The handler creates the receipt's inspection.
 
 mod common;
 
@@ -38,7 +38,11 @@ async fn a_receipt_creates_its_inspection() -> anyhow::Result<()> {
     let routes = &application.routes;
     let suffix = uuid::Uuid::new_v4().simple().to_string();
 
-    let supplier = create(routes, "supplier", json!({"name": "Example supplier"})).await?;
+    // The create request fits the HTTP body limit. The supplier's CDC record
+    // has more metadata and exceeds the NATS limit, so capture must trim it
+    // before the later receipt can reach its handler.
+    let supplier_name = "s".repeat(1024 * 1024 - 200);
+    let supplier = create(routes, "supplier", json!({"name": supplier_name})).await?;
     let item = create(
         routes,
         "item",

@@ -1,6 +1,6 @@
 //! Build event condition inputs and read the row project.
 
-use crate::Envelope;
+use crate::{Envelope, UnavailableColumn};
 use serde::Serialize;
 use serde_json::{Map, Value, json};
 use wamn_package::RowOperation as Op;
@@ -21,11 +21,8 @@ enum RowProject {
 ///
 /// The column maps pass through VERBATIM (pgoutput **text** representation —
 /// values are JSON strings or `null`), so exact-decimal / >2^53 numbers arrive
-/// as strings and the platform's no-float rule holds trivially. An unchanged
-/// out-of-line TOAST column is ABSENT from the map (distinguishable from a
-/// real NULL, which is present as `null`) — a condition over such a column
-/// sees `null` either way in v1; the distinction becomes load-bearing only
-/// with old-image conditions (l5i9.31).
+/// as strings. Unavailable columns are absent from the maps. In a condition,
+/// both an absent value and a SQL NULL evaluate to `null`.
 fn event_context(envelope: &Envelope) -> Value {
     // The members stand in sorted order, so the context serializes the same
     // with or without serde_json/preserve_order (wamn-g1jd).
@@ -77,6 +74,8 @@ struct EventInput<'a> {
     new: Option<&'a Map<String, Value>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     old: Option<&'a Map<String, Value>>,
+    #[serde(skip_serializing_if = "<[UnavailableColumn]>::is_empty")]
+    unavailable: &'a [UnavailableColumn],
 }
 
 /// Project one wire envelope into the component-facing event document.
@@ -85,6 +84,7 @@ pub fn event_input(envelope: &Envelope) -> Value {
         event: envelope.op.as_str(),
         new: envelope.new.as_ref(),
         old: envelope.old.as_ref(),
+        unavailable: &envelope.unavailable,
     })
     .expect("event input serializes")
 }

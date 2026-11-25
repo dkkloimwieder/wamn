@@ -536,6 +536,7 @@ It acknowledges each message after admission and then runs any workflow for whic
 It sends JetStream progress acknowledgements during long deliveries.
 For Data change, the host verifies the subject and the `Nats-Msg-Id` against the CDC envelope.
 It checks the source package, entity, operation and optional JMESPath condition.
+A workflow receives `event`, its available row images, and the `unavailable` list when it contains entries. See the [CDC event fields](platform-services.md#events).
 A change qualifies when its commit log sequence number is at least the workflow's enable LSN.
 The workflow version and source event identity identify a data-change run.
 Admission records the actor from the changed record's history when the actor is available.

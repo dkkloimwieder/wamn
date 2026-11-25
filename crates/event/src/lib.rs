@@ -32,7 +32,23 @@ pub struct CdcIdentity {
     pub row_ordinal: u64,
 }
 
-/// One captured row. Unchanged TOAST values are absent; SQL NULL stays null.
+/// The row image that contains a column.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Image {
+    Old,
+    New,
+}
+
+/// A column whose value PostgreSQL or the reader omitted from an image.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UnavailableColumn {
+    pub image: Image,
+    pub column: String,
+}
+
+/// One captured row. SQL NULL stays null in an image.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Envelope {
@@ -41,6 +57,9 @@ pub struct Envelope {
     pub old: Option<serde_json::Map<String, serde_json::Value>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub new: Option<serde_json::Map<String, serde_json::Value>>,
+    /// Unchanged TOAST columns and columns omitted to fit the broker limit.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unavailable: Vec<UnavailableColumn>,
     pub package_id: wamn_package::PackageName,
     #[serde(deserialize_with = "source_name")]
     pub entity: String,
@@ -234,6 +253,7 @@ mod tests {
             op: Op::Update,
             old: None,
             new: Some(new),
+            unavailable: Vec::new(),
             package_id: "orders".parse().unwrap(),
             entity: "sales_orders".into(),
             table: "orders2".into(),
@@ -249,10 +269,9 @@ mod tests {
                 .with_timezone(&chrono::Utc),
             causation: None,
         };
-        // Round-trip; an unchanged-TOAST column stays ABSENT (not null).
         let back: Envelope = serde_json::from_str(&serde_json::to_string(&env).unwrap()).unwrap();
         assert_eq!(back, env);
-        assert!(back.new.as_ref().unwrap().get("big").is_none());
+        assert!(back.old.is_none());
         assert!(back.new.as_ref().unwrap().get("note").unwrap().is_null());
     }
 

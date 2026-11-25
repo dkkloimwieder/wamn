@@ -126,7 +126,7 @@ Org → environment → project → application. One boundary per level.
 - Each CDC reader has its own publish-only user in the environment account. The source stream keeps messages for 7 days and up to 256 MiB.
 - Components export `wamn:handler@0.1.0/data-change` for Data change. The handler uses the component's own connection bindings.
 - The project chart creates the publication and CDC reader when deployed models need change capture. The recovery user can read only its project's stream and its own replies.
-- If a CDC event exceeds 1 MiB, the reader omits the largest column values until the final encoded event fits. It lists all unavailable columns by image (`old` or `new`) and name, including unchanged TOAST values. An absent image stays absent. The reader logs the subject, message ID, table, omitted columns, and original size. If the key alone exceeds the limit, the reader stops and reports the event. A handler that needs an unavailable value reads the current row. [L6](review-restructure.md#l6-oversized-cdc-events)
+- If a CDC event exceeds 1 MiB, the reader omits the largest encoded values from `old`, then from `new`, until the event fits. The reader keeps key and identity columns. It lists all unavailable columns by image and name, including unchanged TOAST values. An absent image stays absent. The reader logs the subject, message ID, table, omitted columns, and original size. If the remaining event exceeds the limit, the reader stops and reports it. A handler that needs an unavailable value reads the current row. [L6](review-restructure.md#l6-oversized-cdc-events)
 
 ## Identity and login
 

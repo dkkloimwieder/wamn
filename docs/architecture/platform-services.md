@@ -310,6 +310,16 @@ The [components page](components.md#shared-label-renderer) describes its composi
 PostgreSQL change capture publishes the [event contract](../../crates/event/src/lib.rs).
 `wamn-event` decodes records and verifies the source identity of CDC records.
 CDC records carry `"type": "cdc"` and use underscore field names.
+The `old` and `new` objects hold the row values before and after the change. The record omits any absent image.
+The `unavailable` list names each omitted value by `image` (`old` or `new`) and `column`. The record omits an empty list.
+PostgreSQL can omit unchanged TOAST values, which are large values stored outside the row. SQL NULL appears as `null`.
+
+When an event exceeds the NATS limit of 1 MiB, the reader removes the largest encoded values from `old`, then from `new`.
+It keeps primary keys, replica identity columns, generated identity columns, and `project_id`.
+The reader logs the event subject, message ID, table, removed columns, and original body size.
+If the remaining event still exceeds the limit, the reader reports it and stops without advancing the slot.
+If a handler needs an unavailable value, it reads the current row.
+
 Workflow admission rejects invalid envelopes. Capture recovery skips them.
 Subjects use `evt.<org>.<env>.<project>.<entity>.<op>`.
 Each project has its own source stream. Length-prefixed stream names distinguish the full org, environment, and project coordinates.

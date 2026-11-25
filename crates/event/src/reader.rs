@@ -1,6 +1,7 @@
 //! Read committed row changes into the environment event stream.
 //! A transaction advances only after every broker acknowledgement settles.
 
+use std::cmp::Reverse;
 use std::collections::{BTreeMap, HashMap, hash_map::Entry};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -9,7 +10,9 @@ use bytes::Bytes;
 use wamn_package::{PackageName, manifest::CONTROL_OWNED_RELATION_TABLES};
 use wamn_registry::Triple;
 
-use crate::{Causation, CdcIdentity, Envelope, Op, SourceEvent, msg_id, subject};
+use crate::{
+    Causation, CdcIdentity, Envelope, Image, Op, SourceEvent, UnavailableColumn, msg_id, subject,
+};
 
 /// The changes captured by every CDC publication.
 pub const CDC_PUBLISH: &str = "insert, update, delete";
@@ -79,6 +82,9 @@ pub enum ReplicationFrame<R> {
         relation_oid: u32,
         old: Option<R>,
         new: Option<R>,
+        /// Columns marked as replica identity in the WAL relation frame.
+        replica_key: Arc<[Arc<str>]>,
+        unavailable: Vec<UnavailableColumn>,
     },
     Message {
         flags: u8,
@@ -110,6 +116,12 @@ pub trait ReplicationInput {
         relation_oid: u32,
     ) -> impl Future<Output = Result<RelationClassification, SessionFailure>> + Send;
 
+    /// Find primary key and generated identity columns before trimming a row.
+    fn key_columns(
+        &mut self,
+        relation_oid: u32,
+    ) -> impl Future<Output = Result<Vec<String>, SessionFailure>> + Send;
+
     /// Decode the selected row into the envelope's wire representation.
     fn decode_row(row: &Self::Row) -> Result<RowImage, SessionFailure>;
 
@@ -123,6 +135,12 @@ pub trait ReplicationInput {
 /// Send events and settle their broker acknowledgements separately.
 pub trait EventPublisher {
     type Ack: Send;
+
+    /// Maximum encoded body size after allowing for this message's headers.
+    fn payload_limit(&self, id: &str) -> usize;
+
+    /// Whether the broker refused the size of this message.
+    fn is_payload_error(&self, error: &anyhow::Error) -> bool;
 
     /// Submit one message without waiting for its server acknowledgement.
     fn send(
@@ -193,6 +211,9 @@ struct PendingRow {
     op: Op,
     old: Option<RowImage>,
     new: Option<RowImage>,
+    unavailable: Vec<UnavailableColumn>,
+    replica_key: Arc<[Arc<str>]>,
+    relation_oid: u32,
     package_id: PackageName,
     entity_id: String,
     table: String,
@@ -279,7 +300,7 @@ async fn drain_frames<I: ReplicationInput>(
     // OIDs survive renames, so a resolution stays correct for this session.
     let mut relation_classifications: HashMap<u32, RelationClassification> = HashMap::new();
     while let Some(frame) = input.next_frame().await? {
-        let (op, old, new, schema, table, relation_oid) = match frame {
+        let (op, old, new, schema, table, relation_oid, replica_key, unavailable) = match frame {
             ReplicationFrame::Begin { txid, commit_ts } => {
                 txn = Some(Txn {
                     txid,
@@ -311,6 +332,7 @@ async fn drain_frames<I: ReplicationInput>(
                         op: row.op,
                         old: row.old,
                         new: row.new,
+                        unavailable: row.unavailable,
                         package_id: row.package_id,
                         entity: row.entity_id,
                         table: row.table,
@@ -332,19 +354,19 @@ async fn drain_frames<I: ReplicationInput>(
                         row.op,
                     );
                     let id = msg_id(&args.target.project, &args.target.env, &envelope.identity);
-                    let payload = serde_json::to_vec(&SourceEvent::Cdc(envelope))
-                        .map_err(|error| {
-                            let message = format!("IO error: {error}");
-                            let source =
-                                std::io::Error::new(std::io::ErrorKind::InvalidData, error);
-                            SessionFailure::reopen(anyhow::Error::new(source).context(message))
-                        })?
-                        .into();
-                    msgs.push(PreparedMsg {
-                        subject,
-                        id,
-                        payload,
-                    });
+                    let limit = publisher.payload_limit(&id);
+                    msgs.push(
+                        prepare_message(
+                            input,
+                            row.relation_oid,
+                            envelope,
+                            subject,
+                            id,
+                            limit,
+                            &row.replica_key,
+                        )
+                        .await?,
+                    );
                 }
                 // E1: pipeline the txn's publishes — sent without awaiting, the
                 // ack futures held in publish order, ALL settled here before the
@@ -357,7 +379,7 @@ async fn drain_frames<I: ReplicationInput>(
                     &msgs,
                     args.stall_threshold,
                 )
-                .await
+                .await?
                 else {
                     return Ok(());
                 };
@@ -406,7 +428,18 @@ async fn drain_frames<I: ReplicationInput>(
                 schema,
                 table,
                 relation_oid,
-            } => (op, old, new, schema, table, relation_oid),
+                replica_key,
+                unavailable,
+            } => (
+                op,
+                old,
+                new,
+                schema,
+                table,
+                relation_oid,
+                replica_key,
+                unavailable,
+            ),
             ReplicationFrame::Truncate { tables } => {
                 // The declared publication omits `truncate`, so a TRUNCATE
                 // frame proves the publication drifted after this session
@@ -481,6 +514,9 @@ async fn drain_frames<I: ReplicationInput>(
                     op,
                     old: old.as_ref().map(I::decode_row).transpose()?,
                     new: new.as_ref().map(I::decode_row).transpose()?,
+                    unavailable,
+                    replica_key,
+                    relation_oid,
                     package_id: package_id.clone(),
                     entity_id: entity_id.clone(),
                     table: table.to_string(),
@@ -511,6 +547,101 @@ struct PreparedMsg {
     payload: Bytes,
 }
 
+async fn prepare_message(
+    input: &mut impl ReplicationInput,
+    relation_oid: u32,
+    envelope: Envelope,
+    subject: String,
+    id: String,
+    limit: usize,
+    replica_key: &[Arc<str>],
+) -> Result<PreparedMsg, SessionFailure> {
+    let mut event = SourceEvent::Cdc(envelope);
+    let mut payload = Vec::new();
+    encode(&mut payload, &event)?;
+    if payload.len() <= limit {
+        return Ok(PreparedMsg {
+            subject,
+            id,
+            payload: payload.into(),
+        });
+    }
+
+    let original_size = payload.len();
+    let key_columns = input.key_columns(relation_oid).await?;
+    let SourceEvent::Cdc(envelope) = &mut event;
+    let unavailable_before = envelope.unavailable.len();
+    let mut candidates = Vec::new();
+    for (image, values) in [(Image::Old, &envelope.old), (Image::New, &envelope.new)] {
+        let Some(values) = values else { continue };
+        let start = candidates.len();
+        for (column, value) in values {
+            if column == "project_id"
+                || replica_key.iter().any(|name| &**name == column)
+                || key_columns.contains(column)
+            {
+                continue;
+            }
+            encode(&mut payload, value)?;
+            candidates.push((Reverse(payload.len()), column.clone(), image));
+        }
+        candidates[start..].sort_unstable_by(|a, b| (&a.0, &a.1).cmp(&(&b.0, &b.1)));
+    }
+
+    for (_, column, image) in candidates {
+        let SourceEvent::Cdc(envelope) = &mut event;
+        let values = match image {
+            Image::Old => &mut envelope.old,
+            Image::New => &mut envelope.new,
+        };
+        values
+            .as_mut()
+            .expect("trim candidates have an image")
+            .remove(&column);
+        envelope
+            .unavailable
+            .push(UnavailableColumn { image, column });
+        encode(&mut payload, &event)?;
+        if payload.len() <= limit {
+            let SourceEvent::Cdc(envelope) = &event;
+            tracing::warn!(
+                target: "wamn::event_reader",
+                %subject,
+                %id,
+                table = %envelope.table,
+                omitted_columns = ?&envelope.unavailable[unavailable_before..],
+                original_size,
+                "CDC event trimmed to fit the broker payload limit"
+            );
+            payload.shrink_to_fit();
+            return Ok(PreparedMsg {
+                subject,
+                id,
+                payload: payload.into(),
+            });
+        }
+    }
+
+    let SourceEvent::Cdc(envelope) = &event;
+    Err(SessionFailure {
+        fate: SessionFate::Fatal,
+        source: anyhow::anyhow!(
+            "CDC event {id} on {subject} for table {} needs {} bytes with only protected columns and envelope metadata. The body limit is {limit} bytes.",
+            envelope.table,
+            payload.len()
+        ),
+    })
+}
+
+fn encode(payload: &mut Vec<u8>, value: &impl serde::Serialize) -> Result<(), SessionFailure> {
+    payload.clear();
+    serde_json::to_writer(payload, value).map_err(|error| {
+        let message = format!("IO error: {error}");
+        let source = std::io::Error::new(std::io::ErrorKind::InvalidData, error);
+        SessionFailure::reopen(anyhow::Error::new(source).context(message))
+    })
+}
+
 /// Running publish/dedupe counts for one transaction, folded into the
 /// `DrainSummary` once the whole txn has settled.
 #[derive(Default)]
@@ -539,7 +670,7 @@ fn stall_level(stall: Duration, threshold: Duration) -> StallLevel {
 }
 
 /// Publish one whole transaction's messages and settle every server ack —
-/// retrying FOREVER (bounded only by shutdown). JetStream down ⇒ we hold here ⇒
+/// retrying transient failures until shutdown. JetStream down ⇒ we hold here ⇒
 /// the LSN holds ⇒ WAL is retained: delayed, never lost. But a held LSN silently
 /// freezes WAL retention on the source DB, so once the retries pass
 /// `stall_threshold` this escalates from ordinary warns to a distinct
@@ -559,7 +690,7 @@ async fn publish_txn(
     wait_to_retry: &impl AsyncFn(Duration) -> bool,
     msgs: &[PreparedMsg],
     stall_threshold: Duration,
-) -> Option<PublishTally> {
+) -> Result<Option<PublishTally>, SessionFailure> {
     let mut tally = PublishTally::default();
     let mut first_unacked = 0usize;
     let mut delay = Duration::from_millis(500);
@@ -568,7 +699,7 @@ async fn publish_txn(
     let mut stalled = false;
     loop {
         if is_stopping() {
-            return None;
+            return Ok(None);
         }
         match publish_pass(publisher, is_stopping, msgs, &mut first_unacked, &mut tally).await {
             PassOutcome::Complete => {
@@ -581,10 +712,20 @@ async fn publish_txn(
                         "JetStream publish recovered — the LSN can advance again"
                     );
                 }
-                return Some(tally);
+                return Ok(Some(tally));
             }
-            PassOutcome::Cancelled => return None,
-            PassOutcome::Failed(e) => {
+            PassOutcome::Cancelled => return Ok(None),
+            PassOutcome::Failed { index, source: e } => {
+                if publisher.is_payload_error(&e) {
+                    let msg = &msgs[index];
+                    return Err(SessionFailure {
+                        fate: SessionFate::Fatal,
+                        source: e.context(format!(
+                            "broker refused CDC event {} on {} due to its size",
+                            msg.id, msg.subject
+                        )),
+                    });
+                }
                 publish_retries += 1;
                 let stall = first_attempt.elapsed();
                 // The retry restart point — the row alerts should bind to.
@@ -597,7 +738,7 @@ async fn publish_txn(
                         id,
                         publish_retries,
                         publish_stall_seconds = stall.as_secs(),
-                        error = %e,
+                        error = %format_args!("{e:#}"),
                         "publish unacked — holding the LSN; retrying from the first unacked row"
                     ),
                     StallLevel::Stalled => {
@@ -609,13 +750,13 @@ async fn publish_txn(
                             id,
                             publish_retries,
                             publish_stall_seconds = stall.as_secs(),
-                            error = %e,
+                            error = %format_args!("{e:#}"),
                             "JetStream publish STALLED past threshold — LSN held, WAL retention frozen on the source DB; fix JetStream, do NOT drop the slot (v3 §11)"
                         );
                     }
                 }
                 if wait_to_retry(delay).await {
-                    return None;
+                    return Ok(None);
                 }
                 delay = (delay * 2).min(Duration::from_secs(10));
             }
@@ -633,7 +774,7 @@ async fn publish_txn(
 enum PassOutcome {
     Complete,
     Cancelled,
-    Failed(anyhow::Error),
+    Failed { index: usize, source: anyhow::Error },
 }
 
 async fn publish_pass(
@@ -651,20 +792,27 @@ async fn publish_pass(
         }
         match publisher.send(&msg.subject, &msg.id, &msg.payload).await {
             Ok(ack) => held.push((idx, ack)),
-            Err(e) => return PassOutcome::Failed(e),
+            Err(source) => return PassOutcome::Failed { index: idx, source },
         }
         if held.len() >= MAX_IN_FLIGHT {
             // In-flight bound hit mid-transaction: settle the held batch, then
             // keep publishing. The LSN hold is unaffected.
-            if let Err(e) = settle_all(publisher, msgs, first_unacked, &mut held, tally).await {
-                return PassOutcome::Failed(e);
+            if let Err(source) = settle_all(publisher, msgs, first_unacked, &mut held, tally).await
+            {
+                return PassOutcome::Failed {
+                    index: *first_unacked,
+                    source,
+                };
             }
         }
     }
     // Settle any remaining held acks BEFORE the caller advances the LSN.
     match settle_all(publisher, msgs, first_unacked, &mut held, tally).await {
         Ok(()) => PassOutcome::Complete,
-        Err(e) => PassOutcome::Failed(e),
+        Err(source) => PassOutcome::Failed {
+            index: *first_unacked,
+            source,
+        },
     }
 }
 
@@ -703,16 +851,16 @@ mod tests {
     use std::task::{Context, Poll, Waker};
 
     struct Input<'a> {
-        frames: VecDeque<ReplicationFrame<()>>,
+        frames: VecDeque<ReplicationFrame<RowImage>>,
         confirmed: &'a AtomicU64,
     }
 
     impl ReplicationInput for Input<'_> {
-        type Row = ();
+        type Row = RowImage;
 
         fn next_frame(
             &mut self,
-        ) -> impl Future<Output = Result<Option<ReplicationFrame<()>>, SessionFailure>> + Send
+        ) -> impl Future<Output = Result<Option<ReplicationFrame<Self::Row>>, SessionFailure>> + Send
         {
             ready(Ok(self.frames.pop_front()))
         }
@@ -728,8 +876,15 @@ mod tests {
             }))
         }
 
-        fn decode_row((): &()) -> Result<RowImage, SessionFailure> {
-            Ok(RowImage::new())
+        fn key_columns(
+            &mut self,
+            _: u32,
+        ) -> impl Future<Output = Result<Vec<String>, SessionFailure>> + Send {
+            ready(Ok(vec!["id".into(), "serial".into()]))
+        }
+
+        fn decode_row(row: &Self::Row) -> Result<RowImage, SessionFailure> {
+            Ok(row.clone())
         }
 
         fn origin(&self, _: u64) -> (u64, u32) {
@@ -750,10 +905,21 @@ mod tests {
         sent: Mutex<Vec<u64>>,
         last_failed: AtomicBool,
         last_ready: AtomicBool,
+        refuse_payload: bool,
     }
+
+    const PAYLOAD_LIMIT: usize = 1024 * 1024;
 
     impl EventPublisher for Publisher {
         type Ack = u64;
+
+        fn payload_limit(&self, _: &str) -> usize {
+            PAYLOAD_LIMIT
+        }
+
+        fn is_payload_error(&self, _: &anyhow::Error) -> bool {
+            self.refuse_payload
+        }
 
         fn send(
             &self,
@@ -764,7 +930,11 @@ mod tests {
             let (_, ordinal) = id.rsplit_once(':').unwrap();
             let ordinal = ordinal.parse().unwrap();
             self.sent.lock().unwrap().push(ordinal);
-            ready(Ok(ordinal))
+            ready(if self.refuse_payload {
+                Err(anyhow::anyhow!("payload refused"))
+            } else {
+                Ok(ordinal)
+            })
         }
 
         async fn settle(&self, ack: Self::Ack) -> anyhow::Result<bool> {
@@ -793,7 +963,9 @@ mod tests {
             table: "orders".into(),
             relation_oid: 1,
             old: None,
-            new: Some(()),
+            new: Some(RowImage::new()),
+            replica_key: Arc::default(),
+            unavailable: Vec::new(),
         };
         let mut input = Input {
             frames: [
@@ -837,6 +1009,166 @@ mod tests {
         };
         outcome.result.unwrap();
         assert_eq!(confirmed.load(Relaxed), commit_end);
+    }
+
+    fn prepare_test_message(envelope: Envelope, replica_key: &[Arc<str>]) -> PreparedMsg {
+        let confirmed = AtomicU64::new(1);
+        let mut input = Input {
+            frames: VecDeque::new(),
+            confirmed: &confirmed,
+        };
+        let mut prepared = pin!(prepare_message(
+            &mut input,
+            1,
+            envelope,
+            "subject".into(),
+            "id".into(),
+            PAYLOAD_LIMIT,
+            replica_key,
+        ));
+        let mut context = Context::from_waker(Waker::noop());
+        let Poll::Ready(result) = prepared.as_mut().poll(&mut context) else {
+            panic!("preparing an event with a ready source must settle");
+        };
+        result.unwrap()
+    }
+
+    #[test]
+    fn oversized_event_trims_old_then_new_by_encoded_value_size() {
+        let envelope = serde_json::from_value(serde_json::json!({
+            "op": "update",
+            "old": {
+                "id": "k".repeat(560_000), "replica_key": "r".repeat(50_000),
+                "serial": "12", "project_id": "acme--dev--orders",
+                "escaped": "\"".repeat(270_000), "plain": "p".repeat(330_000)
+            },
+            "new": {"id": "7", "big": "b".repeat(800_000), "keep": "k".repeat(100_000), "note": null},
+            "unavailable": [{"image": "new", "column": "toasted"}],
+            "package_id": "orders", "entity": "order", "table": "orders",
+            "identity": {"system_id": 1, "timeline": 1, "commit_lsn": 41, "row_ordinal": 0},
+            "txid": 1, "commit_ts": "2026-07-18T12:00:00Z"
+        }))
+        .unwrap();
+        let msg = prepare_test_message(envelope, &["replica_key".into()]);
+        assert!(msg.payload.len() <= PAYLOAD_LIMIT);
+        let SourceEvent::Cdc(event) = SourceEvent::decode(&msg.payload).unwrap();
+        assert_eq!(
+            event
+                .unavailable
+                .iter()
+                .map(|column| (column.image, column.column.as_str()))
+                .collect::<Vec<_>>(),
+            [
+                (Image::New, "toasted"),
+                (Image::Old, "escaped"),
+                (Image::Old, "plain"),
+                (Image::New, "big")
+            ],
+        );
+        let old = event.old.as_ref().unwrap();
+        assert_eq!(old["id"].as_str().unwrap().len(), 560_000);
+        assert_eq!(old["replica_key"].as_str().unwrap().len(), 50_000);
+        assert_eq!(old["serial"], "12");
+        assert_eq!(old["project_id"], "acme--dev--orders");
+        assert!(!old.contains_key("escaped") && !old.contains_key("plain"));
+        let new = event.new.as_ref().unwrap();
+        assert!(!new.contains_key("big") && !new.contains_key("toasted"));
+        assert!(new["note"].is_null());
+        let input = crate::matching::event_input(&event);
+        assert_eq!(
+            input["unavailable"],
+            serde_json::json!([
+                {"image": "new", "column": "toasted"}, {"image": "old", "column": "escaped"},
+                {"image": "old", "column": "plain"}, {"image": "new", "column": "big"}
+            ])
+        );
+    }
+
+    #[test]
+    fn size_check_includes_unavailable_entries_and_preserves_an_absent_image() {
+        let envelope: Envelope = serde_json::from_value(serde_json::json!({
+            "op": "update", "new": {"id": "7", "body": ""},
+            "unavailable": [{"image": "new", "column": "toasted"}],
+            "package_id": "orders", "entity": "order", "table": "orders",
+            "identity": {"system_id": 1, "timeline": 1, "commit_lsn": 41, "row_ordinal": 0},
+            "txid": 1, "commit_ts": "2026-07-18T12:00:00Z"
+        }))
+        .unwrap();
+        let event = SourceEvent::Cdc(envelope);
+        let fixed_size = serde_json::to_vec(&event).unwrap().len();
+        let SourceEvent::Cdc(mut envelope) = event;
+        envelope.new.as_mut().unwrap()["body"] = "b".repeat(PAYLOAD_LIMIT - fixed_size + 1).into();
+        let msg = prepare_test_message(envelope, &[]);
+        let SourceEvent::Cdc(event) = SourceEvent::decode(&msg.payload).unwrap();
+        assert!(event.old.is_none());
+        let new = event.new.unwrap();
+        assert_eq!(new["id"], "7");
+        assert!(!new.contains_key("body"));
+        assert!(event.unavailable.contains(&UnavailableColumn {
+            image: Image::New,
+            column: "body".into()
+        }));
+    }
+
+    #[test]
+    fn a_large_key_or_a_broker_size_refusal_stops_without_retry_or_confirmation() {
+        for (size, refuse_payload) in [(PAYLOAD_LIMIT, false), (1, true)] {
+            let confirmed = AtomicU64::new(1);
+            let mut input = Input {
+                frames: [
+                    ReplicationFrame::Begin {
+                        txid: 1,
+                        commit_ts: chrono::DateTime::UNIX_EPOCH,
+                    },
+                    ReplicationFrame::Row {
+                        op: Op::Insert,
+                        schema: "orders".into(),
+                        table: "orders".into(),
+                        relation_oid: 1,
+                        old: None,
+                        new: Some(
+                            [("id".into(), "k".repeat(size).into())]
+                                .into_iter()
+                                .collect(),
+                        ),
+                        replica_key: Arc::default(),
+                        unavailable: Vec::new(),
+                    },
+                    ReplicationFrame::Commit {
+                        commit_lsn: 41,
+                        end_lsn: 42,
+                    },
+                ]
+                .into(),
+                confirmed: &confirmed,
+            };
+            let config = ReaderConfig {
+                target: Triple::new(
+                    "acme".parse().unwrap(),
+                    "dev".parse().unwrap(),
+                    "orders".parse().unwrap(),
+                ),
+                stall_threshold: Duration::from_secs(30),
+            };
+            let publisher = Publisher {
+                refuse_payload,
+                ..Publisher::default()
+            };
+            let retry = async |_| panic!("a payload refusal cannot be retried");
+            let mut reader = pin!(drain(&mut input, &config, &publisher, &|| false, &retry));
+            let mut context = Context::from_waker(Waker::noop());
+            let Poll::Ready(outcome) = reader.as_mut().poll(&mut context) else {
+                panic!("a payload refusal must stop the reader");
+            };
+            assert_eq!(outcome.result.unwrap_err().fate, SessionFate::Fatal);
+            assert_eq!(confirmed.load(Relaxed), 1);
+            let sent = publisher.sent.lock().unwrap();
+            if refuse_payload {
+                assert_eq!(*sent, [0]);
+            } else {
+                assert!(sent.is_empty());
+            }
+        }
     }
 
     #[test]
