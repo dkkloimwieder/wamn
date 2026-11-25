@@ -51,6 +51,7 @@ pub(crate) enum Outcome {
     Started,
     Succeeded,
     Failed(&'static str),
+    RolledBack,
     Refused,
 }
 
@@ -112,6 +113,7 @@ pub(crate) async fn record(
         Outcome::Started => ("started", None),
         Outcome::Succeeded => ("succeeded", None),
         Outcome::Failed(summary) => ("failed", Some(summary)),
+        Outcome::RolledBack => ("rolled_back", None),
         Outcome::Refused => ("refused", None),
     };
     let mut transaction = connection.begin().await?;

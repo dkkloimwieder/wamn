@@ -305,7 +305,7 @@ The platform's `platformDomain` value supplies the base for both deploy and web.
 An application connection alias names a connection from the shared `connections` map.
 Set `revocation_seconds` to an integer from 0 to 3600 for the environment.
 Deploy takes this applied value from the registry and sets the grant cache lifetime on each application workload. Zero disables the cache.
-The optional `readiness_budget_seconds` field sets how long deploy waits for the application workload to become ready.
+The optional `readiness_budget_seconds` field caps the wait for the selected application template after Helm returns. The wait also shares the Helm command's time budget.
 It defaults to 600 seconds.
 The optional `drain_bound_seconds` field sets how long the host can drain before shutdown.
 It defaults to 300 seconds.
@@ -401,11 +401,13 @@ Status reports application release state.
 The route ConfigMaps carry `wamn.route=true`. The edge reads that label.
 A source deploy builds and publishes once. A digest deploy starts with the published package.
 Both forms submit one Job. The worker resolves the package closure and environment bindings under the lifecycle lock.
+Before deployment or explicit rollback, the worker checks that the deployed Helm revision is serving. If it is unready, the worker restores the newest earlier successful Helm revision before it proceeds. The worker uninstalls an interrupted first install.
 It refuses if an enabled workflow calls a sibling or export absent from the candidate.
 It allows up to 120 seconds for the project database to accept a SQL connection.
 It applies pending SQL and creates the application principals before running `helm upgrade --wait=watcher --rollback-on-failure`.
-The worker starts the Helm upgrade only if at least 120 seconds remain in the Job. Helm gets at most half the remaining time for the upgrade and the same timeout for rollback.
-If Helm detects a failed upgrade, it attempts to restore the previous release. The operation reports the upgrade failure and any rollback failure.
+The worker starts the Helm upgrade only if at least 120 seconds remain in the Job. The Helm command and the worker's check for the new template share at most half the remaining time. Helm uses the same timeout for its own rollback.
+If Helm returns success, the worker verifies that each workload from the release is serving its selected template. The current replica set must report Ready for its current generation.
+If that check fails, the worker restores the previous release and checks that it serves again. If this was the first install, the worker uninstalls it. The operation reports the original failure and any rollback or cleanup failure.
 Committed migrations remain installed. Application developers choose schema compatibility and migrate forward if the restored code cannot use the migrated schema. See [Application schema changes](../application-schema-changes.md).
 Environment apply refuses unfinished runs in the selected application.
 Environment delete checks all applications in the project environment unless you pass `--data`.
@@ -930,6 +932,7 @@ Use `wamn rollback APP --revision N --env environment.yaml` to restore the conte
 Without `--revision`, the worker finds the newest earlier deploy. It skips revisions that record a rollback.
 If no older deploy exists, the command reports the current content revision and refuses.
 The worker reads the target package digest from Helm, checks enabled workflows, and runs `helm rollback --wait=watcher` under the lifecycle lock.
+Before reporting success, the worker verifies that the restored templates are serving. The Helm command and the readiness check share the rollback phase budget within the Job deadline.
 Rollback keeps installed SQL migrations.
 
 The WorkloadDeployment annotation `wamn.release-revision` names the revision whose content is live.

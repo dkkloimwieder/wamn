@@ -4,11 +4,13 @@ use anyhow::{Context as _, ensure};
 use serde_json::Value;
 use std::{
     borrow::Cow,
+    error::Error,
     ffi::OsStr,
+    fmt,
     process::{Output, Stdio},
     time::Duration,
 };
-use tokio::time::Instant;
+use tokio::time::{Instant, timeout_at};
 
 use crate::Target;
 use plan::{Recovery, application_recovery_revision, recovery};
@@ -148,14 +150,17 @@ pub enum Wait {
         jobs: bool,
     },
     /// Use the watcher for application operations bounded by the deploy Job deadline.
-    WatcherUntil(Instant),
+    WatcherUntil {
+        deadline: Instant,
+        readiness: Duration,
+    },
 }
 
 fn timeout_seconds(operation: &str, wait: Wait, now: Instant) -> anyhow::Result<u64> {
     const DEFAULT_TIMEOUT_SECONDS: u64 = 600;
     const MINIMUM_UPGRADE_BUDGET_SECONDS: u64 = 120;
     let seconds = match wait {
-        Wait::WatcherUntil(deadline) => {
+        Wait::WatcherUntil { deadline, .. } => {
             let remaining = deadline.saturating_duration_since(now).as_secs();
             let budget = if operation == "upgrade" {
                 ensure!(
@@ -187,7 +192,7 @@ fn mutation_arguments<'a>(
     }
     if operation == "upgrade" {
         match wait {
-            Wait::WatcherUntil(_) => args.push(OsStr::new("--rollback-on-failure")),
+            Wait::WatcherUntil { .. } => args.push(OsStr::new("--rollback-on-failure")),
             Wait::Platform { jobs: true, .. } => args.push(OsStr::new("--wait-for-jobs")),
             _ => {}
         }
@@ -203,18 +208,19 @@ async fn mutation_output(
     operation: &str,
     arguments: &[&OsStr],
     wait: Wait,
-) -> anyhow::Result<Output> {
+) -> anyhow::Result<(Output, Instant)> {
     let mut args = target_arguments(
         target,
         namespace,
         &[OsStr::new(operation), OsStr::new(name)],
     );
     args.extend_from_slice(arguments);
-    let seconds = timeout_seconds(operation, wait, Instant::now())
+    let start = Instant::now();
+    let seconds = timeout_seconds(operation, wait, start)
         .with_context(|| format!("prepare Helm {operation} for {namespace}/{name}"))?;
     let timeout = format!("{seconds}s");
     let args = mutation_arguments(args, operation, wait, &timeout);
-    output(&args).await
+    Ok((output(&args).await?, start + Duration::from_secs(seconds)))
 }
 
 /// Prerequisites for the install path of an upgrade.
@@ -233,7 +239,7 @@ pub async fn update_values(
     name: &str,
     values: &std::path::Path,
 ) -> anyhow::Result<()> {
-    let output = mutation_output(
+    let (output, _) = mutation_output(
         target,
         namespace,
         name,
@@ -251,6 +257,40 @@ pub async fn update_values(
     )
     .await?;
     stdout(output, "helm").map(drop)
+}
+
+/// An application upgrade failed and its previous release was restored.
+#[derive(Debug)]
+pub struct UpgradeRolledBack {
+    release: String,
+    revision: u32,
+    source: anyhow::Error,
+}
+
+impl UpgradeRolledBack {
+    pub fn new(namespace: &str, release: &str, revision: u32, source: anyhow::Error) -> Self {
+        Self {
+            release: format!("{namespace}/{release}"),
+            revision,
+            source,
+        }
+    }
+}
+
+impl fmt::Display for UpgradeRolledBack {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "Helm upgrade for {} failed and rolled back to revision {}",
+            self.release, self.revision
+        )
+    }
+}
+
+impl Error for UpgradeRolledBack {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        Some(self.source.as_ref())
+    }
 }
 
 /// Install or upgrade one release, applying the values files in order.
@@ -279,15 +319,181 @@ pub async fn upgrade(
         Install::SkipCrds => arguments.push("--skip-crds".as_ref()),
         Install::ExistingNamespace => {}
     }
-    let output = mutation_output(target, namespace, name, "upgrade", &arguments, wait).await?;
-    // Helm reports the upgrade error and any rollback error together on stderr.
-    stdout(output, "helm").map(drop)
+    let previous = if matches!(wait, Wait::WatcherUntil { .. }) {
+        arguments.extend([OsStr::new("--output"), OsStr::new("json")]);
+        release_row(target, namespace, name, &["--deployed"])
+            .await?
+            .as_ref()
+            .map(release_revision)
+            .transpose()?
+    } else {
+        None
+    };
+    let (output, phase_end) =
+        mutation_output(target, namespace, name, "upgrade", &arguments, wait).await?;
+    let output = match stdout(output, "helm") {
+        Ok(output) => output,
+        Err(source) => {
+            if let (Some(revision), Wait::WatcherUntil { deadline, .. }) = (previous, wait)
+                && let Ok(Ok(history)) = timeout_at(
+                    deadline - Duration::from_secs(1),
+                    release_history(target, namespace, name),
+                )
+                .await
+                && helm_rolled_back(&history, revision)
+            {
+                return Err(UpgradeRolledBack::new(namespace, name, revision, source).into());
+            }
+            // Helm reports the upgrade error and any rollback error together on stderr.
+            return Err(source);
+        }
+    };
+    let Wait::WatcherUntil {
+        deadline,
+        readiness,
+    } = wait
+    else {
+        return Ok(());
+    };
+    let rollout = async {
+        let candidate =
+            serde_json::from_slice::<Value>(&output).context("decode the upgraded Helm release")?;
+        let manifest = candidate["manifest"]
+            .as_str()
+            .context("upgraded Helm release has no manifest")?;
+        wait_application(
+            target,
+            name,
+            manifest.as_bytes(),
+            phase_end.min(Instant::now() + readiness),
+        )
+        .await
+    }
+    .await;
+    let Err(upgrade) = rollout else {
+        return Ok(());
+    };
+    // Leave a second before the Job deadline to report both failures.
+    let deadline = deadline - Duration::from_secs(1);
+    let wait = Wait::WatcherUntil {
+        deadline,
+        readiness,
+    };
+    let restore = timeout_at(deadline, async {
+        match previous {
+            Some(revision) => rollback(target, namespace, name, Some(revision), wait).await,
+            None => uninstall(target, namespace, name, wait).await,
+        }
+    })
+    .await
+    .context("Job budget expired restoring the Helm release")
+    .flatten();
+    let action = if previous.is_some() {
+        "rollback"
+    } else {
+        "failed install cleanup"
+    };
+    match (restore, previous) {
+        (Ok(()), Some(revision)) => {
+            Err(UpgradeRolledBack::new(namespace, name, revision, upgrade).into())
+        }
+        (Ok(()), None) => Err(upgrade.context(format!(
+            "Helm upgrade did not become Ready and {action} completed"
+        ))),
+        (Err(restore), _) => anyhow::bail!(
+            "Helm upgrade did not become Ready: {upgrade:#}\nHelm {action} failed: {restore:#}"
+        ),
+    }
+}
+
+fn helm_rolled_back(history: &[Value], previous: u32) -> bool {
+    let Some(latest) = history.iter().max_by_key(|row| row["revision"].as_u64()) else {
+        return false;
+    };
+    let Some(failed) = latest["revision"].as_u64().and_then(|n| n.checked_sub(1)) else {
+        return false;
+    };
+    // A successful Helm rollback appends a deployed revision with its target
+    // in the description. The failed upgrade is the preceding revision.
+    failed > u64::from(previous)
+        && latest["status"] == "deployed"
+        && latest["description"] == format!("Rollback to {previous}")
+        && history
+            .iter()
+            .any(|row| row["revision"].as_u64() == Some(failed) && row["status"] == "failed")
+}
+
+async fn wait_application(
+    target: &Target,
+    release: &str,
+    manifest: &[u8],
+    deadline: Instant,
+) -> anyhow::Result<()> {
+    timeout_at(
+        deadline,
+        crate::deployment_components::wait_application_ready(target, manifest),
+    )
+    .await
+    .with_context(|| {
+        format!("release {release} did not serve its selected template before the rollout deadline")
+    })?
+}
+
+async fn release_row(
+    target: &Target,
+    namespace: &str,
+    name: &str,
+    states: &[&str],
+) -> anyhow::Result<Option<Value>> {
+    let filter = format!("^{name}$");
+    let mut arguments = target_arguments(
+        target,
+        namespace,
+        &[
+            "list".as_ref(),
+            "--filter".as_ref(),
+            filter.as_ref(),
+            "-o".as_ref(),
+            "json".as_ref(),
+        ],
+    );
+    arguments.extend(states.iter().map(OsStr::new));
+    let listed = run_text(&arguments).await?;
+    let releases: Vec<Value> = serde_json::from_str(&listed).context("decode helm list")?;
+    Ok(releases.into_iter().find(|release| release["name"] == name))
+}
+
+fn release_revision(row: &Value) -> anyhow::Result<u32> {
+    row["revision"]
+        .as_str()
+        .context("Helm release revision is absent")?
+        .parse()
+        .context("invalid Helm release revision")
+}
+
+async fn release_history(
+    target: &Target,
+    namespace: &str,
+    name: &str,
+) -> anyhow::Result<Vec<Value>> {
+    let history = run_text(&target_arguments(
+        target,
+        namespace,
+        &[
+            "history".as_ref(),
+            name.as_ref(),
+            "-o".as_ref(),
+            "json".as_ref(),
+        ],
+    ))
+    .await?;
+    serde_json::from_str(&history).context("decode Helm history")
 }
 
 /// Recover an interrupted release operation under its lifecycle lock.
 ///
-/// A Job-bounded application deploy also recovers a failed revision left by
-/// interrupted cleanup. Other callers recover pending operations only.
+/// Also recover failed application revisions and deployed application revisions
+/// whose templates are missing or unready.
 ///
 /// # Errors
 ///
@@ -298,58 +504,42 @@ pub async fn recover_pending(
     name: &str,
     wait: Wait,
 ) -> anyhow::Result<()> {
-    let filter = format!("^{name}$");
-    let application = matches!(wait, Wait::WatcherUntil(_));
-    let mut arguments = target_arguments(
-        target,
-        namespace,
-        &[
-            "list".as_ref(),
-            "--pending".as_ref(),
-            "--filter".as_ref(),
-            filter.as_ref(),
-            "-o".as_ref(),
-            "json".as_ref(),
-        ],
-    );
-    if application {
-        arguments.push("--failed".as_ref());
-    }
-    let listed = run_text(&arguments).await?;
-    let releases: Vec<serde_json::Value> =
-        serde_json::from_str(&listed).context("decode helm list")?;
-    let Some(status) = releases
-        .iter()
-        .find(|release| release["name"] == name)
-        .and_then(|release| release["status"].as_str())
-    else {
+    let application = matches!(wait, Wait::WatcherUntil { .. });
+    let filters: &[_] = if application {
+        &["--pending", "--failed", "--deployed"]
+    } else {
+        &["--pending"]
+    };
+    let Some(entry) = release_row(target, namespace, name, filters).await? else {
         return Ok(());
     };
+    let status = entry["status"].as_str().unwrap_or_default();
     match recovery(status, application) {
-        Some(Recovery::Uninstall) => uninstall(target, namespace, name, wait).await,
-        Some(Recovery::Rollback) if application => {
-            let history = run_text(&target_arguments(
-                target,
-                namespace,
-                &[
-                    "history".as_ref(),
-                    name.as_ref(),
-                    "-o".as_ref(),
-                    "json".as_ref(),
-                ],
-            ))
-            .await?;
-            let history =
-                serde_json::from_str::<Vec<Value>>(&history).context("decode helm history")?;
-            match application_recovery_revision(&history)
-                .with_context(|| format!("recover Helm release {namespace}/{name}"))?
-            {
-                Some(revision) => rollback(target, namespace, name, Some(revision), wait).await,
-                None => uninstall(target, namespace, name, wait).await,
-            }
+        Some(Recovery::Uninstall) => return uninstall(target, namespace, name, wait).await,
+        Some(Recovery::Rollback) if !application => {
+            return rollback(target, namespace, name, None, wait).await;
         }
-        Some(Recovery::Rollback) => rollback(target, namespace, name, None, wait).await,
-        None => Ok(()),
+        None if !application || status != "deployed" => return Ok(()),
+        _ => {}
+    }
+
+    let interrupted = release_revision(&entry)?;
+    if status == "deployed" {
+        let manifest = get(target, "manifest", name, interrupted)
+            .await?
+            .with_context(|| {
+                format!("Helm release manifest for revision {interrupted} is absent")
+            })?;
+        if crate::deployment_components::application_serves(target, &manifest).await? {
+            return Ok(());
+        }
+    }
+    let history = release_history(target, namespace, name).await?;
+    match application_recovery_revision(&history, interrupted)
+        .with_context(|| format!("recover Helm release {namespace}/{name}"))?
+    {
+        Some(revision) => rollback(target, namespace, name, Some(revision), wait).await,
+        None => uninstall(target, namespace, name, wait).await,
     }
 }
 
@@ -360,17 +550,37 @@ pub(crate) async fn rollback(
     revision: Option<u32>,
     wait: Wait,
 ) -> anyhow::Result<()> {
+    let readiness = if let Wait::WatcherUntil { readiness, .. } = wait {
+        let revision = revision.context("application rollback requires a Helm revision")?;
+        let manifest = get(target, "manifest", name, revision)
+            .await?
+            .with_context(|| format!("Helm release manifest for revision {revision} is absent"))?;
+        Some((readiness, manifest))
+    } else {
+        None
+    };
     let operation = if revision.is_some() {
         "helm rollback"
     } else {
         "helm"
     };
-    let revision = revision.map(|revision| revision.to_string());
+    let revision_arg = revision.map(|revision| revision.to_string());
     let mut arguments = Vec::new();
-    arguments.extend(revision.as_deref().map(OsStr::new));
+    arguments.extend(revision_arg.as_deref().map(OsStr::new));
     arguments.push(OsStr::new("--server-side=true"));
-    let output = mutation_output(target, namespace, name, "rollback", &arguments, wait).await?;
-    stdout(output, operation).map(drop)
+    let (output, phase_end) =
+        mutation_output(target, namespace, name, "rollback", &arguments, wait).await?;
+    stdout(output, operation)?;
+    if let Some((readiness, manifest)) = readiness {
+        wait_application(
+            target,
+            name,
+            &manifest,
+            phase_end.min(Instant::now() + readiness),
+        )
+        .await?;
+    }
+    Ok(())
 }
 
 /// Uninstall a release with its owner's wait strategy.
@@ -380,7 +590,7 @@ pub async fn uninstall(
     name: &str,
     wait: Wait,
 ) -> anyhow::Result<()> {
-    let output = mutation_output(
+    let (output, _) = mutation_output(
         target,
         namespace,
         name,
@@ -448,7 +658,10 @@ mod tests {
 
     #[test]
     fn application_upgrade_requests_rollback_with_the_watcher() {
-        let wait = Wait::WatcherUntil(Instant::now() + Duration::from_secs(120));
+        let wait = Wait::WatcherUntil {
+            deadline: Instant::now() + Duration::from_secs(120),
+            readiness: Duration::from_secs(120),
+        };
         let arguments = mutation_arguments(Vec::new(), "upgrade", wait, "60s");
         assert!(arguments.contains(&OsStr::new("--rollback-on-failure")));
         assert!(arguments.contains(&OsStr::new("--wait=watcher")));
@@ -472,7 +685,10 @@ mod tests {
     fn application_upgrade_reserves_rollback_time_and_requires_a_minimum_budget() {
         let now = Instant::now();
         let timeout = |operation, remaining| {
-            let wait = Wait::WatcherUntil(now + Duration::from_secs(remaining));
+            let wait = Wait::WatcherUntil {
+                deadline: now + Duration::from_secs(remaining),
+                readiness: Duration::from_secs(120),
+            };
             timeout_seconds(operation, wait, now)
         };
         assert!(timeout("upgrade", 119).is_err());
@@ -502,14 +718,28 @@ mod tests {
             json!({"revision":4,"status":"failed","description":"Rollback \"app\" failed: update"}),
             json!({"revision":5,"status":"pending-rollback","description":"Rollback to 2"}),
         ];
-        assert_eq!(application_recovery_revision(&history).unwrap(), Some(2));
+        assert_eq!(application_recovery_revision(&history, 5).unwrap(), Some(2));
     }
 
     #[test]
     fn application_recovery_uninstalls_a_failed_first_install() {
         let first = json!({"revision":1,"status":"failed"});
-        assert_eq!(application_recovery_revision(&[first]).unwrap(), None);
+        assert_eq!(application_recovery_revision(&[first], 1).unwrap(), None);
         let later = json!({"revision":2,"status":"failed"});
-        assert!(application_recovery_revision(&[later]).is_err());
+        assert!(application_recovery_revision(&[later], 2).is_err());
+    }
+
+    #[test]
+    fn application_recovery_excludes_the_deployed_revision_that_does_not_serve() {
+        let history = [
+            json!({"revision":1,"status":"superseded","description":"Install complete"}),
+            json!({"revision":2,"status":"superseded","description":"Rollback to 1"}),
+            json!({"revision":3,"status":"failed","description":"Upgrade failed"}),
+            json!({"revision":4,"status":"deployed","description":"Upgrade complete"}),
+        ];
+        assert_eq!(application_recovery_revision(&history, 4).unwrap(), Some(2));
+
+        let first = json!({"revision":1,"status":"deployed","description":"Install complete"});
+        assert_eq!(application_recovery_revision(&[first], 1).unwrap(), None);
     }
 }

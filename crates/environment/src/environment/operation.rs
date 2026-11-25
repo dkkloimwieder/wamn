@@ -16,9 +16,10 @@ use wamn_registry::ApplicationName;
 
 use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
-use tokio::time::Instant;
+use tokio::time::{Instant, timeout_at};
 use wamn_component_policy::PackageManifest;
 use wamn_digest::Digest;
+use wamn_kubernetes::helm::{self, Wait};
 use wamn_platform_install::release_chart::bundle::SelectedChart;
 use wamn_platform_install::release_chart::{POD_REGISTRY, pod_registry_reference};
 use wamn_registry::Triple;
@@ -132,26 +133,49 @@ impl Packages {
     }
 }
 
-async fn deploy_job_deadline(platform: &Platform) -> anyhow::Result<Instant> {
+async fn operation_job_deadline(platform: &Platform) -> anyhow::Result<Instant> {
     let job = platform.cluster.current_job().await?;
     let start = job["status"]["startTime"]
         .as_str()
-        .context("deploy Job start time is absent")?;
+        .context("application operation Job start time is absent")?;
     let start =
-        chrono::DateTime::parse_from_rfc3339(start).context("invalid deploy Job start time")?;
+        chrono::DateTime::parse_from_rfc3339(start).context("invalid operation Job start time")?;
     let budget = job["spec"]["activeDeadlineSeconds"]
         .as_i64()
         .and_then(chrono::TimeDelta::try_seconds)
-        .context("invalid deploy Job activeDeadlineSeconds")?;
+        .context("invalid operation Job activeDeadlineSeconds")?;
     let deadline = start
         .checked_add_signed(budget)
-        .context("invalid deploy Job deadline")?;
+        .context("invalid operation Job deadline")?;
     let now = Instant::now();
     let remaining = (deadline.to_utc() - chrono::Utc::now())
         .to_std()
-        .context("deploy Job deadline elapsed")?;
+        .context("operation Job deadline elapsed")?;
     now.checked_add(remaining)
-        .context("invalid deploy Job deadline")
+        .context("invalid operation Job deadline")
+}
+
+async fn recover_release(
+    platform: &Platform,
+    document: &EnvironmentDocument,
+    release: &str,
+) -> anyhow::Result<(Instant, Duration)> {
+    let deadline = operation_job_deadline(platform).await?;
+    let readiness = Duration::from_secs(u64::try_from(document.readiness_budget_seconds)?);
+    let namespace = helm::org_release_namespace(&platform.cluster.namespace);
+    let wait = Wait::WatcherUntil {
+        deadline,
+        readiness,
+    };
+    timeout_at(
+        deadline,
+        helm::recover_pending(&platform.cluster, &namespace, release, wait),
+    )
+    .await
+    .with_context(|| {
+        format!("operation Job deadline reached recovering {namespace}/{release}")
+    })??;
+    Ok((deadline, readiness))
 }
 
 /// Execute an application operation using its applied project document.
@@ -196,6 +220,8 @@ pub async fn application(
                     chart,
                     authority_port,
                 } => {
+                    let (deadline, readiness) =
+                        recover_release(platform, &document, &release).await?;
                     let packages = Packages::open(platform, digest).await?;
                     let selection = document
                         .applications
@@ -245,25 +271,19 @@ pub async fn application(
                     )
                     .await?;
                     project.create_number_sequences(&sequences).await?;
-                    let timeout =
-                        Duration::from_secs(u64::try_from(document.readiness_budget_seconds)?);
                     wamn_platform_install::deployment::apply_application(
                         &platform.cluster,
                         chart.directory(),
                         &release,
                         &values,
-                        deploy_job_deadline(platform).await?,
+                        deadline,
+                        readiness,
                     )
                     .await?;
                     match super::document::workload_release(&platform.cluster, &triple, name).await {
                         Ok(release) => *journal_release = release.filter(|release| release.package_digest == digest),
                         Err(error) => tracing::warn!(%error, "read the deployed revision for the platform journal"),
                     }
-                    let workload = crate::application_chart::plan::workload_name(&release);
-                    platform
-                        .cluster
-                        .wait_workload_ready(&workload, timeout)
-                        .await?;
                     Ok(json!({"release":digest}))
                 }
                 Application::Apply(digest) => {
@@ -295,6 +315,8 @@ pub async fn application(
                     Ok(serde_json::to_value(diff)?)
                 }
                 Application::Rollback(revision) => {
+                    let (deadline, readiness) =
+                        recover_release(platform, &document, &release).await?;
                     let revision =
                         rollback::target(platform, &triple, name, &release, revision).await?;
                     let (digest, app) = rollback::application(platform, &release, revision).await?;
@@ -302,7 +324,7 @@ pub async fn application(
                     let packages = Packages::open(platform, digest).await?;
                     rollback::verify_package_components(&app, &packages.manifests)?;
                     project.check_workflows(&app).await?;
-                    rollback::run(platform, &release, revision).await?;
+                    rollback::run(platform, &release, revision, deadline, readiness).await?;
                     Ok(json!({"release":digest,"revision":revision}))
                 }
                 Application::Stop => {

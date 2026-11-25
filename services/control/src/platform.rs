@@ -5,6 +5,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use wamn_environment::environment::worker::{self, Task};
 use wamn_kubernetes::client::KubernetesApi;
+use wamn_kubernetes::helm::UpgradeRolledBack;
 
 use crate::{
     Configuration,
@@ -197,10 +198,7 @@ pub async fn execute(config: &Configuration, payload: &str) -> anyhow::Result<Va
             command.package_digest = Some(release.package_digest);
             command.helm_revision = i32::try_from(release.revision).ok();
         }
-        let outcome = match &result {
-            Err(_) => Outcome::Failed("The lifecycle operation Job failed."),
-            Ok(_) => Outcome::Succeeded,
-        };
+        let outcome = worker_outcome(&result);
         let recorded = async {
             let mut connection = wamn_postgres::connect(&config.apply_database.to_json()?).await?;
             platform_event::record(
@@ -220,6 +218,26 @@ pub async fn execute(config: &Configuration, payload: &str) -> anyhow::Result<Va
         }
     }
     result
+}
+
+fn worker_outcome(result: &anyhow::Result<Value>) -> Outcome {
+    match result {
+        Err(error) if error.downcast_ref::<UpgradeRolledBack>().is_some() => Outcome::RolledBack,
+        Err(_) => Outcome::Failed("The lifecycle operation Job failed."),
+        Ok(_) => Outcome::Succeeded,
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn worker_outcome_records_a_restored_upgrade_as_rolled_back() {
+    let source = anyhow::anyhow!("upgrade failed");
+    let restored = UpgradeRolledBack::new("wamn-helm-example", "shop", 2, source);
+    let result = Err(anyhow::Error::new(restored).context("deploy application"));
+    assert!(matches!(worker_outcome(&result), Outcome::RolledBack));
+
+    let failed = Err(anyhow::anyhow!("restore failed"));
+    assert!(matches!(worker_outcome(&failed), Outcome::Failed(_)));
 }
 
 impl Execution {

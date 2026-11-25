@@ -13,6 +13,9 @@ Without an explicit revision, the worker selects the newest earlier revision who
 The worker reads `route.config` from the target revision's saved values to check enabled workflows before it runs Helm rollback.
 Application upgrades and rollbacks use `--wait=watcher`. The org worker Role grants `list` and `watch` on the non-Secret resources the watcher observes.
 Application upgrades also use `--rollback-on-failure`. Automatic and manual rollback both keep committed SQL migrations.
+After Helm returns success, the worker checks that each workload's current replica set serves the selected template and reports Ready for its generation. It uses the time left in the Helm phase for this check.
+If the upgraded template does not serve in time, the worker rolls back and checks the restored template. If the release was a first install, the worker uninstalls it. The org worker Role grants `get` on WorkloadReplicaSets for these checks.
+At the start of a deploy or rollback, the worker checks the deployed Helm revision. If it is unready, the worker restores the newest earlier successful revision or uninstalls an interrupted first install.
 
 Deploy uses the `workflow` NATS binding for the workflow service. It adds the `ingress` binding when the application declares Data change handlers.
 

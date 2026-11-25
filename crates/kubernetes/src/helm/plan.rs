@@ -10,31 +10,32 @@ pub(super) fn recovery(status: &str, application: bool) -> Option<Recovery> {
     }
 }
 
-/// Select the last successful revision, or uninstall a failed first install.
-pub(super) fn application_recovery_revision(history: &[Value]) -> anyhow::Result<Option<u32>> {
+/// Select the newest successful revision before the one being recovered.
+pub(super) fn application_recovery_revision(
+    history: &[Value],
+    interrupted: u32,
+) -> anyhow::Result<Option<u32>> {
     let revision = history
         .iter()
         .filter_map(|entry| {
             let description = entry["description"].as_str().unwrap_or_default();
-            let deployed = match entry["status"].as_str() {
-                Some("deployed") => true,
+            match entry["status"].as_str() {
+                Some("deployed") => {}
                 // A failed Helm rollback can mark its predecessor superseded.
                 Some("superseded")
                     if matches!(description, "Install complete" | "Upgrade complete")
-                        || description.starts_with("Rollback to ") =>
-                {
-                    false
-                }
+                        || description.starts_with("Rollback to ") => {}
                 _ => return None,
-            };
+            }
             let revision = u32::try_from(entry["revision"].as_u64()?).ok()?;
-            Some((deployed, revision))
+            (revision < interrupted).then_some(revision)
         })
-        .max()
-        .map(|(_, revision)| revision);
+        .max();
     ensure!(
         revision.is_some()
-            || matches!(history, [entry] if entry["revision"] == 1 && entry["status"] == "failed"),
+            || (interrupted == 1
+                && matches!(history, [entry] if entry["revision"] == 1
+                    && matches!(entry["status"].as_str(), Some("failed" | "deployed")))),
         "Helm history contains no successful revision to restore"
     );
     Ok(revision)

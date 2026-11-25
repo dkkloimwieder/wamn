@@ -23,6 +23,7 @@ The ignored run leaves out `wamn-journey-tests`, because its only test target ne
 `cargo xtask prepare-tests` builds the test inputs once, before the run.
 It builds every application under `apps/` that has a `wamn.k` file.
 It builds each base before its overlays, with the committed SQL describe evidence and no database.
+For the rollback variants, set `DATABASE_URL` to a PostgreSQL 18 superuser URL. The package build creates a temporary verification database and generates SQL describe evidence and history migrations in the staged variants.
 The output of each application goes to `apps/target/wamn/<package>`.
 If `WAMN_KCL` is not set, the command installs the pinned KCL compiler under `.tools/kcl/`.
 It also builds the pinned `ingress` guest from `apps/guests/ingress` and the workflow service from `apps/guests/workflow-service`.
@@ -37,6 +38,9 @@ The command then prints one `export` line for each prepared input.
 | `WAMN_EDGE_DEVICE_COMPONENT` | `apps/target/wamn/edge_device/components/device.wasm` |
 | `WAMN_INGRESS_COMPONENT` | The release build of the `ingress` guest |
 | `WAMN_WORKFLOW_SERVICE_COMPONENT` | The release build of the `workflow-service` guest |
+| `WAMN_ROLLBACK_FIXTURE_V1_SOURCE` | The original platform fixture source |
+| `WAMN_ROLLBACK_FIXTURE_V2_SOURCE` | The next healthy release of the platform fixture |
+| `WAMN_ROLLBACK_FIXTURE_FAILED_SOURCE` | The platform fixture release that cannot link on the host |
 
 A test whose prepared input is missing fails. It does not skip.
 After a source change to an application or to `ingress`, run `prepare-tests` again.

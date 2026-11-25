@@ -1,10 +1,11 @@
 //! Resolve an explicit Helm rollback target under the worker's lifecycle lock.
 
-use std::num::NonZeroU32;
+use std::{num::NonZeroU32, time::Duration};
 
 use anyhow::{Context as _, ensure};
 use serde::Deserialize as _;
 use serde_json::Value;
+use tokio::time::Instant;
 use wamn_application::application_config::{APPLICATION_CONFIG, ApplicationConfig};
 use wamn_digest::Digest;
 use wamn_registry::ApplicationName;
@@ -109,6 +110,15 @@ pub(super) fn verify_package_components(
     Ok(())
 }
 
-pub(super) async fn run(platform: &Platform, release: &str, revision: u32) -> anyhow::Result<()> {
-    platform.cluster.rollback(release, revision).await
+pub(super) async fn run(
+    platform: &Platform,
+    release: &str,
+    revision: u32,
+    deadline: Instant,
+    readiness: Duration,
+) -> anyhow::Result<()> {
+    platform
+        .cluster
+        .rollback(release, revision, deadline, readiness)
+        .await
 }

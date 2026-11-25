@@ -37,6 +37,140 @@ const CALL_DEADLINE: Duration = Duration::from_secs(10);
 
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires: cluster, bin:helm"]
+async fn failed_rollout_restores_the_serving_replica_set() -> anyhow::Result<()> {
+    let original = rollback_source("WAMN_ROLLBACK_FIXTURE_V1_SOURCE")?;
+    let broken = rollback_source("WAMN_ROLLBACK_FIXTURE_FAILED_SOURCE")?;
+    let next = rollback_source("WAMN_ROLLBACK_FIXTURE_V2_SOURCE")?;
+    let application = within(
+        DEPLOY_DEADLINE,
+        "deploy the original fixture",
+        Application::prepare(&original),
+    )
+    .await?;
+    let environment = &application.environment;
+    let routes = &application.routes;
+    let widget = create_widget(routes).await?;
+    require_version(routes, &widget, Version::One).await?;
+
+    let triple = &environment.triple;
+    let release = resource_names::application_release_name(
+        &triple.org,
+        &triple.project,
+        &triple.env,
+        &FIXTURE.parse()?,
+    );
+    let workload = format!("{release}-http");
+    let client = &environment.org.cluster.client;
+    let namespace = triple.org.as_str();
+    let deployments = runtime(
+        client,
+        namespace,
+        "WorkloadDeployment",
+        "workloaddeployments",
+    );
+    let replica_sets = runtime(
+        client,
+        namespace,
+        "WorkloadReplicaSet",
+        "workloadreplicasets",
+    );
+    let replicas = runtime(client, namespace, "Workload", "workloads");
+    let original = deployments.get(&workload).await?;
+    let original_digest = original
+        .metadata
+        .annotations
+        .as_ref()
+        .and_then(|annotations| annotations.get("wamn.package-digest"))
+        .context("original workload package digest")?;
+    let original_set = original.data["status"]["currentReplicaSet"]["name"]
+        .as_str()
+        .context("original replica set")?;
+    let original_replica_set = replica_sets.get(original_set).await?;
+    let original_uid = original_replica_set
+        .metadata
+        .uid
+        .as_deref()
+        .context("original replica set UID")?;
+
+    let deploy = async {
+        let result = timeout(DEPLOY_DEADLINE, environment.deploy(&broken, FIXTURE))
+            .await
+            .context("deploy did not report an outcome")?;
+        let Err(error) = result else {
+            anyhow::bail!("the failing release reported success");
+        };
+        eprintln!("expected rollout failure: {error:#}");
+        Ok(())
+    };
+    let observe = until(
+        DEPLOY_DEADLINE,
+        "a workload of the failing release is created",
+        || async {
+            let deployment = deployments.get(&workload).await?;
+            let Some(set) = deployment.data["status"]["currentReplicaSet"]["name"]
+                .as_str()
+                .filter(|name| *name != original_set)
+            else {
+                return Ok(None);
+            };
+            let Some(set) = replica_sets.get_opt(set).await? else {
+                return Ok(None);
+            };
+            let Some(uid) = set.metadata.uid.as_deref() else {
+                return Ok(None);
+            };
+            let workloads = replicas.list(&ListParams::default()).await?;
+            Ok(workloads
+                .items
+                .iter()
+                .any(|workload| {
+                    workload
+                        .metadata
+                        .owner_references
+                        .as_deref()
+                        .unwrap_or_default()
+                        .iter()
+                        .any(|owner| owner.controller == Some(true) && owner.uid == uid)
+                })
+                .then_some(()))
+        },
+    );
+    tokio::try_join!(deploy, observe)?;
+
+    let restored = deployments.get(&workload).await?;
+    ensure!(
+        restored
+            .metadata
+            .annotations
+            .as_ref()
+            .and_then(|annotations| annotations.get("wamn.package-digest"))
+            == Some(original_digest),
+        "the deploy did not restore the original package"
+    );
+    ensure!(
+        restored.data["status"]["currentReplicaSet"]["name"] == original_set
+            && replica_sets
+                .get(original_set)
+                .await?
+                .metadata
+                .uid
+                .as_deref()
+                == Some(original_uid),
+        "the deploy did not keep the original serving replica set"
+    );
+    require_version(routes, &widget, Version::One).await?;
+
+    within(
+        DEPLOY_DEADLINE,
+        "deploy the next healthy release",
+        environment.deploy(&next, FIXTURE),
+    )
+    .await?;
+    require_version(routes, &widget, Version::Two).await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires: cluster, bin:helm"]
 async fn rollback_serves_every_call_through_web() -> anyhow::Result<()> {
     let v1 = rollback_source("WAMN_ROLLBACK_FIXTURE_V1_SOURCE")?;
     let v2 = rollback_source("WAMN_ROLLBACK_FIXTURE_V2_SOURCE")?;

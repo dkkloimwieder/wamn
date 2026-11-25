@@ -1,6 +1,6 @@
 //! Cluster observations and resource mutations for deployment.
 
-use anyhow::Context as _;
+use anyhow::{Context as _, ensure};
 use k8s_openapi::{
     ByteString,
     api::{
@@ -10,10 +10,12 @@ use k8s_openapi::{
 };
 use kube::{
     Api,
-    api::{ListParams, ObjectMeta, Patch, PatchParams},
+    api::{DynamicObject, ListParams, ObjectMeta, Patch, PatchParams},
 };
+use serde::Deserialize as _;
 use serde_json::Value;
-use std::{collections::BTreeMap, sync::Mutex, time::Duration};
+use std::{collections::BTreeMap, time::Duration};
+use tokio::time::{Instant, timeout_at};
 use wamn_registry::{ApplicationName, Triple, name};
 
 use crate::client::{
@@ -243,53 +245,153 @@ async fn delete_database_certificate_secrets(
     Ok(())
 }
 
-async fn wait_workload_ready(target: &Target, name: &str, timeout: Duration) -> anyhow::Result<()> {
-    let diagnostics = Mutex::new(String::new());
-    let workloads = workloads(target.client.client(), &target.namespace);
-    wait_named(&workloads, name, timeout, |object| {
-        let Some(object) = object else {
-            return Ok(None);
+pub(crate) async fn wait_application_ready(target: &Target, manifest: &[u8]) -> anyhow::Result<()> {
+    let expected = application_workloads(target, manifest)?;
+    while !workloads_serve(target, &expected).await? {
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+    Ok(())
+}
+
+pub(crate) async fn application_serves(target: &Target, manifest: &[u8]) -> anyhow::Result<bool> {
+    let expected = application_workloads(target, manifest)?;
+    workloads_serve(target, &expected).await
+}
+
+fn application_workloads(target: &Target, manifest: &[u8]) -> anyhow::Result<Vec<Value>> {
+    let mut expected = Vec::new();
+    for document in serde_yaml::Deserializer::from_slice(manifest) {
+        let document = Value::deserialize(document).context("read Helm release manifest")?;
+        if document["kind"] == "WorkloadDeployment" {
+            ensure!(
+                document["metadata"]["namespace"] == target.namespace,
+                "Helm workload is outside the selected namespace"
+            );
+            expected.push(document);
+        }
+    }
+    ensure!(
+        !expected.is_empty(),
+        "Helm release contains no application workloads"
+    );
+    Ok(expected)
+}
+
+async fn workloads_serve(target: &Target, expected: &[Value]) -> anyhow::Result<bool> {
+    let deployments = workloads(target.client.client(), &target.namespace);
+    let replica_sets = resource(
+        target.client.client(),
+        &target.namespace,
+        "runtime.wasmcloud.dev",
+        "v1alpha1",
+        "WorkloadReplicaSet",
+        "workloadreplicasets",
+    );
+    for expected in expected {
+        let name = expected["metadata"]["name"]
+            .as_str()
+            .context("Helm workload has no name")?;
+        let Some(deployment) = deployments.get_opt(name).await? else {
+            return Ok(false);
         };
-        let conditions = object.data["status"]["conditions"]
-            .as_array()
-            .map_or(&[][..], Vec::as_slice);
-        if conditions
-            .iter()
-            .any(|condition| condition["type"] == "Ready" && condition["status"] == "True")
+        let Some(current) = deployment.data["status"]["currentReplicaSet"]["name"]
+            .as_str()
+            .filter(|name| !name.is_empty())
+        else {
+            return Ok(false);
+        };
+        if !replica_sets
+            .get_opt(current)
+            .await?
+            .is_some_and(|set| workload_serves(expected, &deployment, &set))
         {
-            return Ok(Some(()));
+            return Ok(false);
         }
-        let messages = conditions
+    }
+    Ok(true)
+}
+
+fn workload_serves(expected: &Value, deployment: &DynamicObject, set: &DynamicObject) -> bool {
+    let deployment_spec = &deployment.data["spec"];
+    let set_spec = &set.data["spec"];
+    let revision = &expected["metadata"]["annotations"];
+    let Some(annotations) = &deployment.metadata.annotations else {
+        return false;
+    };
+    let Some(uid) = deployment.metadata.uid.as_deref() else {
+        return false;
+    };
+    let Some(generation) = set.metadata.generation.filter(|generation| *generation > 0) else {
+        return false;
+    };
+    ["wamn.package-digest", "wamn.release-revision"]
+        .iter()
+        .all(|key| {
+            revision[key]
+                .as_str()
+                .zip(annotations.get(*key))
+                .is_some_and(|(expected, actual)| expected == actual)
+        })
+        && deployment.metadata.deletion_timestamp.is_none()
+        && set.metadata.deletion_timestamp.is_none()
+        && ready(deployment)
+        && set
+            .metadata
+            .owner_references
+            .as_deref()
+            .unwrap_or_default()
             .iter()
-            .filter_map(|condition| {
-                let type_ = condition["type"].as_str()?;
-                let status = condition["status"].as_str()?;
-                let message = condition["message"].as_str().unwrap_or_default();
-                (type_ == "Ready" || matches!(status, "False" | "Unknown"))
-                    .then(|| format!("{type_}={status} {message:?}"))
+            .any(|owner| {
+                owner.controller == Some(true)
+                    && owner.uid == uid
+                    && owner.kind == "WorkloadDeployment"
+                    && owner.api_version == "runtime.wasmcloud.dev/v1alpha1"
             })
-            .collect::<Vec<_>>()
-            .join(", ");
-        *diagnostics.lock().expect("lock workload diagnostics") = messages;
-        Ok(None)
-    })
-    .await
-    .map_err(|error| {
-        if error.is::<tokio::time::error::Elapsed>() {
-            let diagnostics = diagnostics.into_inner().expect("read workload diagnostics");
-            let diagnostics = if diagnostics.is_empty() {
-                "no Ready, False, or Unknown conditions observed"
-            } else {
-                &diagnostics
-            };
-            error.context(format!(
-                "WorkloadDeployment {name} did not become Ready within {} seconds ({diagnostics})",
-                timeout.as_secs()
-            ))
-        } else {
-            error
+        && deployment_spec["replicas"]
+            .as_u64()
+            .is_some_and(|replicas| replicas > 0)
+        && deployment_spec["replicas"] == set_spec["replicas"]
+        && deployment_spec["template"].is_object()
+        && same_workload_template(&expected["spec"]["template"], &deployment_spec["template"])
+        && same_workload_template(&deployment_spec["template"], &set_spec["template"])
+        && set.data["status"]["conditions"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(|condition| {
+                condition["type"] == "Ready"
+                    && condition["status"] == "True"
+                    && condition["observedGeneration"].as_i64() == Some(generation)
+            })
+}
+
+fn same_workload_template(left: &Value, right: &Value) -> bool {
+    // The controller serializes these optional zero or empty chart fields as absent.
+    let omitted = |key: &str, value: &Value| match key {
+        "poolSize" => value.as_u64() == Some(0),
+        "allowedIpNameLookups" => value.as_array().is_some_and(Vec::is_empty),
+        _ => false,
+    };
+    match (left, right) {
+        (Value::Object(left), Value::Object(right)) => {
+            left.iter().all(|(key, value)| {
+                right.get(key).map_or_else(
+                    || omitted(key, value),
+                    |right| same_workload_template(value, right),
+                )
+            }) && right
+                .iter()
+                .all(|(key, value)| left.contains_key(key) || omitted(key, value))
         }
-    })
+        (Value::Array(left), Value::Array(right)) => {
+            left.len() == right.len()
+                && left
+                    .iter()
+                    .zip(right)
+                    .all(|(left, right)| same_workload_template(left, right))
+        }
+        _ => left == right,
+    }
 }
 
 async fn postgres_settings(target: &Target) -> anyhow::Result<serde_json::Value> {
@@ -563,10 +665,6 @@ impl Target {
         applications(self, triple).await
     }
 
-    pub async fn wait_workload_ready(&self, name: &str, timeout: Duration) -> anyhow::Result<()> {
-        wait_workload_ready(self, name, timeout).await
-    }
-
     pub async fn current_job(&self) -> anyhow::Result<Value> {
         crate::job::current(&KubernetesApi::in_cluster()?).await
     }
@@ -587,16 +685,32 @@ impl Target {
         helm::get(self, "values", release, revision).await
     }
 
-    pub async fn rollback(&self, release: &str, revision: u32) -> anyhow::Result<()> {
+    /// Restore the saved application release and wait for its template to serve.
+    pub async fn rollback(
+        &self,
+        release: &str,
+        revision: u32,
+        deadline: Instant,
+        readiness: Duration,
+    ) -> anyhow::Result<()> {
         let namespace = helm::org_release_namespace(&self.namespace);
-        helm::rollback(
-            self,
-            &namespace,
-            release,
-            Some(revision),
-            helm::Wait::Watcher,
+        timeout_at(
+            deadline,
+            helm::rollback(
+                self,
+                &namespace,
+                release,
+                Some(revision),
+                helm::Wait::WatcherUntil {
+                    deadline,
+                    readiness,
+                },
+            ),
         )
         .await
+        .with_context(|| {
+            format!("Job deadline reached rolling back Helm release {namespace}/{release}")
+        })?
     }
 
     pub async fn uninstall(&self, release: &str) -> anyhow::Result<()> {
@@ -654,5 +768,47 @@ impl Target {
         .get_opt(name)
         .await?
         .is_some())
+    }
+}
+
+#[cfg(test)]
+mod rollout_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn only_the_owned_current_template_ready_at_its_generation_serves() {
+        let expected = json!({
+            "metadata":{"annotations":{"wamn.package-digest":"new","wamn.release-revision":"2"}},
+            "spec":{"replicas":1,"template":{"spec":{"components":[{"image":"new","poolSize":0,"localResources":{"allowedIpNameLookups":[]}}]}}},
+        });
+        let deployment: DynamicObject = serde_json::from_value(json!({
+            "metadata":{"uid":"deployment","annotations":expected["metadata"]["annotations"]},
+            "spec":expected["spec"],
+            "status":{"conditions":[{"type":"Ready","status":"True"}]},
+        }))
+        .unwrap();
+        let mut set: DynamicObject = serde_json::from_value(json!({
+            "metadata":{"generation":3,"ownerReferences":[{"apiVersion":"runtime.wasmcloud.dev/v1alpha1","kind":"WorkloadDeployment","name":"app","uid":"deployment","controller":true}]},
+            "spec":{"replicas":1,"template":{"spec":{"components":[{"image":"old","localResources":{}}]}}},
+            "status":{"conditions":[{"type":"Ready","status":"True","observedGeneration":3}]},
+        })).unwrap();
+        assert!(
+            !workload_serves(&expected, &deployment, &set),
+            "old template is still Ready"
+        );
+        set.data["spec"]["template"]["spec"]["components"][0]["image"] = json!("new");
+        assert!(workload_serves(&expected, &deployment, &set));
+        set.metadata.generation = Some(4);
+        assert!(
+            !workload_serves(&expected, &deployment, &set),
+            "previous generation is still Ready"
+        );
+        set.data["status"]["conditions"][0]["observedGeneration"] = json!(4);
+        set.metadata.owner_references.as_mut().unwrap()[0].uid = "another-deployment".into();
+        assert!(
+            !workload_serves(&expected, &deployment, &set),
+            "another deployment owns the set"
+        );
     }
 }
