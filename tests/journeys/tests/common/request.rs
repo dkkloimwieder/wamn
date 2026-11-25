@@ -17,7 +17,7 @@ use wamn_identity_protocol::PrincipalId;
 use wamn_registry::{EnvName, Triple, name};
 use wamn_test_infrastructure::scratch::ScratchRoot;
 
-use super::{Application, CALLER_ROLE, Environment, Org, PROJECT, Routes, run};
+use super::{Application, CALLER_ROLE, Environment, Org, PROJECT, Routes, failure, run};
 
 /// How long a host pod takes to start again, and its workloads to be placed.
 pub const RESTART_DEADLINE: Duration = Duration::from_secs(300);
@@ -45,7 +45,7 @@ pub fn fixture(application: &str) -> std::path::PathBuf {
         .join(application)
 }
 
-/// One more environment of an org, with one application. Drop runs `wamn env delete`.
+/// One more environment of an org. Runs `wamn env delete` after failure capture, if enabled.
 pub struct OtherEnvironment<'a> {
     org: &'a Org,
     pub triple: Triple,
@@ -76,6 +76,7 @@ impl<'a> OtherEnvironment<'a> {
             file,
             _scratch: scratch,
         };
+        failure::environment(&environment.triple);
         let mut command = org.command();
         command.args(["env", "apply"]).arg(&environment.file);
         run(command).await?;
@@ -85,17 +86,7 @@ impl<'a> OtherEnvironment<'a> {
 
 impl Drop for OtherEnvironment<'_> {
     fn drop(&mut self) {
-        let mut command = self.org.command();
-        command.args(["env", "delete", &self.triple.to_string()]);
-        match command.output() {
-            Ok(output) if output.status.success() => {}
-            Ok(output) => eprintln!(
-                "wamn env delete {} failed: {}",
-                self.triple,
-                String::from_utf8_lossy(&output.stderr)
-            ),
-            Err(error) => eprintln!("wamn env delete {}: {error}", self.triple),
-        }
+        failure::delete_environment(self.org, &self.triple);
     }
 }
 

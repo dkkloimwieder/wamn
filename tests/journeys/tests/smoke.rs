@@ -16,6 +16,14 @@ const APPLICATION: &str = "wamn_receiving";
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires: cluster, bin:helm"]
 async fn the_owner_reaches_an_application_and_control_through_web() -> anyhow::Result<()> {
+    common::capture(
+        "the_owner_reaches_an_application_and_control_through_web",
+        the_owner_reaches_an_application_and_control_through_web_case,
+    )
+    .await
+}
+
+async fn the_owner_reaches_an_application_and_control_through_web_case() -> anyhow::Result<()> {
     let source = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../apps")
         .join(APPLICATION);

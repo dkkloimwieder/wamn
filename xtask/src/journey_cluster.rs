@@ -5,6 +5,7 @@
 
 use crate::{kind, platform, process};
 use anyhow::{Context as _, ensure};
+use k8s_openapi::api::apps::v1::Deployment;
 use k8s_openapi::api::core::v1::{ConfigMap, Namespace, Pod, Secret};
 use k8s_openapi::api::networking::v1::NetworkPolicy;
 use kube::Api;
@@ -15,7 +16,7 @@ use sqlx::ConnectOptions as _;
 use sqlx::postgres::{PgConnectOptions, PgSslMode};
 use std::io::{Read as _, Write as _};
 use std::net::Ipv4Addr;
-use std::os::unix::fs::OpenOptionsExt as _;
+use std::os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -63,7 +64,11 @@ struct Outputs<'a> {
 
 /// Create or reuse the cluster and platform, then write the outputs file.
 pub async fn run(root: &Path, args: Args) -> anyhow::Result<()> {
-    let endpoint = kind::create_cluster(root).await?;
+    let results = std::env::var_os("WAMN_RESULTS")
+        .filter(|path| !path.is_empty())
+        .map(|path| telemetry_directory(Path::new(&path)))
+        .transpose()?;
+    let endpoint = kind::create_cluster_with_results(root, results.as_deref()).await?;
     let directory = root.join(OUTPUTS);
     std::fs::create_dir_all(&directory)?;
     let kubeconfig = directory.join("kubeconfig");
@@ -110,7 +115,8 @@ pub async fn run(root: &Path, args: Args) -> anyhow::Result<()> {
         .await?;
         out
     };
-    let (values, base_domain) = platform_values(&bundle, &endpoint, &directory)?;
+    let (values, base_domain) =
+        platform_values(root, &bundle, &endpoint, &directory, results.is_some())?;
     let registry_auth_file = directory.join("registry-auth.json");
     std::fs::write(
         &registry_auth_file,
@@ -135,7 +141,18 @@ pub async fn run(root: &Path, args: Args) -> anyhow::Result<()> {
         .await?
         .and_then(|map| map.data)
         .and_then(|mut data| data.remove("applicationChart"));
-    if installed.as_deref() == Some(reference.trim()) {
+    let collector_mount = Api::<Deployment>::namespaced(client.clone(), PLATFORM)
+        .get_opt("otel-collector")
+        .await?
+        .and_then(|deployment| deployment.spec?.template.spec?.volumes)
+        .is_some_and(|volumes| {
+            volumes.into_iter().any(|volume| {
+                volume
+                    .host_path
+                    .is_some_and(|path| path.path == kind::RESULTS_MOUNT)
+            })
+        });
+    if installed.as_deref() == Some(reference.trim()) && collector_mount == results.is_some() {
         println!("The platform is installed at {}.", reference.trim());
     } else {
         process::execute(
@@ -177,11 +194,23 @@ pub async fn run(root: &Path, args: Args) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Write the bundle's kind values with the registry endpoint, and return their path and base domain.
+fn telemetry_directory(results: &Path) -> anyhow::Result<PathBuf> {
+    let directory = results.canonicalize()?.join("telemetry");
+    match std::fs::DirBuilder::new().mode(0o700).create(&directory) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists && directory.is_dir() => {}
+        Err(error) => return Err(error).with_context(|| format!("create {}", directory.display())),
+    }
+    Ok(directory)
+}
+
+/// Write the bundle's kind values with the registry endpoint and optional telemetry.
 fn platform_values(
+    root: &Path,
     bundle: &Path,
     endpoint: &kind::RegistryEndpoint,
     directory: &Path,
+    capture: bool,
 ) -> anyhow::Result<(PathBuf, String)> {
     let charts = bundle.join("platform/platform");
     let mut values: serde_yaml::Mapping =
@@ -194,6 +223,41 @@ fn platform_values(
             "port": endpoint.port,
         }))?,
     );
+    if capture {
+        // Read the capture configuration from this checkout so a prebuilt bundle can use it.
+        let mut kind_values: serde_yaml::Mapping = serde_yaml::from_reader(std::fs::File::open(
+            root.join("deploy/charts/platform/values-kind.yaml"),
+        )?)?;
+        let key = serde_yaml::Value::from("opentelemetry-collector");
+        let mut collector = kind_values
+            .remove(&key)
+            .context("kind collector values are missing")?;
+        let mount: serde_yaml::Mapping = serde_yaml::from_value(serde_yaml::to_value(
+            serde_json::json!({
+                "extraVolumes": [{
+                    "name": "journey-results",
+                    "hostPath": {"path": kind::RESULTS_MOUNT, "type": "Directory"}
+                }],
+                "extraVolumeMounts": [{"name": "journey-results", "mountPath": kind::RESULTS_MOUNT}],
+                "securityContext": {
+                    "runAsUser": rustix::process::getuid().as_raw(),
+                    "runAsGroup": rustix::process::getgid().as_raw(),
+                },
+            }),
+        )?)?;
+        collector
+            .as_mapping_mut()
+            .context("kind collector values must be a map")?
+            .extend(mount);
+        for signal in ["traces", "logs"] {
+            collector["config"]["service"]["pipelines"][signal] =
+                serde_yaml::to_value(serde_json::json!({
+                    "processors": ["memory_limiter", "transform/journey", "batch"],
+                    "exporters": ["debug", "file/journey"],
+                }))?;
+        }
+        values.insert(key, collector);
+    }
     let defaults: serde_yaml::Value =
         serde_yaml::from_slice(&std::fs::read(charts.join("values.yaml"))?)?;
     let base_domain = values

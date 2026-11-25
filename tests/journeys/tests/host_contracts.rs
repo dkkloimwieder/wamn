@@ -37,6 +37,14 @@ const REVOCATION_MARGIN: Duration = Duration::from_secs(10);
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires: cluster, bin:helm"]
 async fn the_host_pod_becomes_ready_through_its_probes() -> anyhow::Result<()> {
+    common::capture(
+        "the_host_pod_becomes_ready_through_its_probes",
+        the_host_pod_becomes_ready_through_its_probes_case,
+    )
+    .await
+}
+
+async fn the_host_pod_becomes_ready_through_its_probes_case() -> anyhow::Result<()> {
     let application = Application::prepare(&fixture()).await?;
     let pods = common::host::host_pods(&application.environment).await?;
     let pod = pods.first().context("the environment has no host pod")?;
@@ -100,6 +108,14 @@ async fn the_host_pod_becomes_ready_through_its_probes() -> anyhow::Result<()> {
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires: cluster, bin:helm"]
 async fn the_host_nats_user_is_refused_outside_its_subjects() -> anyhow::Result<()> {
+    common::capture(
+        "the_host_nats_user_is_refused_outside_its_subjects",
+        the_host_nats_user_is_refused_outside_its_subjects_case,
+    )
+    .await
+}
+
+async fn the_host_nats_user_is_refused_outside_its_subjects_case() -> anyhow::Result<()> {
     let environment = Org::create().await?.apply(FIXTURE).await?;
     let client = &environment.org.cluster.client;
     let triple = &environment.triple;
@@ -221,6 +237,14 @@ async fn token(
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires: cluster, bin:helm"]
 async fn application_stop_leaves_its_host() -> anyhow::Result<()> {
+    common::capture(
+        "application_stop_leaves_its_host",
+        application_stop_leaves_its_host_case,
+    )
+    .await
+}
+
+async fn application_stop_leaves_its_host_case() -> anyhow::Result<()> {
     let environment = Org::create().await?.apply(FIXTURE).await?;
     reapply(&environment, |file| declare(file, SECOND, "second")).await?;
     environment.deploy(&fixture(), FIXTURE).await?;
@@ -317,6 +341,14 @@ async fn application_stop_leaves_its_host() -> anyhow::Result<()> {
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires: cluster, bin:helm"]
 async fn env_apply_stops_an_unlisted_application_and_keeps_its_data() -> anyhow::Result<()> {
+    common::capture(
+        "env_apply_stops_an_unlisted_application_and_keeps_its_data",
+        env_apply_stops_an_unlisted_application_and_keeps_its_data_case,
+    )
+    .await
+}
+
+async fn env_apply_stops_an_unlisted_application_and_keeps_its_data_case() -> anyhow::Result<()> {
     let application = Application::prepare(&fixture()).await?;
     let environment = &application.environment;
     let id = uuid::Uuid::now_v7().to_string();
@@ -366,6 +398,14 @@ async fn env_apply_stops_an_unlisted_application_and_keeps_its_data() -> anyhow:
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires: cluster, bin:helm"]
 async fn a_revoked_grant_is_refused_within_the_revocation_lifetime() -> anyhow::Result<()> {
+    common::capture(
+        "a_revoked_grant_is_refused_within_the_revocation_lifetime",
+        a_revoked_grant_is_refused_within_the_revocation_lifetime_case,
+    )
+    .await
+}
+
+async fn a_revoked_grant_is_refused_within_the_revocation_lifetime_case() -> anyhow::Result<()> {
     let environment = Org::create().await?.apply(FIXTURE).await?;
     reapply(&environment, |file| {
         file["revocation_seconds"] = REVOCATION_SECONDS.into();

@@ -66,6 +66,14 @@ fn hold(key: &str) -> Value {
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires: cluster, bin:helm"]
 async fn a_claim_commits_with_its_work_or_not_at_all() -> anyhow::Result<()> {
+    common::capture(
+        "a_claim_commits_with_its_work_or_not_at_all",
+        a_claim_commits_with_its_work_or_not_at_all_case,
+    )
+    .await
+}
+
+async fn a_claim_commits_with_its_work_or_not_at_all_case() -> anyhow::Result<()> {
     let application = Application::prepare(&request::fixture("platform_fixture")).await?;
     let routes = &application.routes;
     let mut database = application.environment.observe().await?;
@@ -125,6 +133,14 @@ async fn a_claim_commits_with_its_work_or_not_at_all() -> anyhow::Result<()> {
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires: cluster, bin:helm"]
 async fn a_competing_claim_waits_for_the_first() -> anyhow::Result<()> {
+    common::capture(
+        "a_competing_claim_waits_for_the_first",
+        a_competing_claim_waits_for_the_first_case,
+    )
+    .await
+}
+
+async fn a_competing_claim_waits_for_the_first_case() -> anyhow::Result<()> {
     let application = Application::prepare(&request::fixture("platform_fixture")).await?;
     let routes = &application.routes;
     let mut database = application.environment.observe().await?;
@@ -157,6 +173,14 @@ async fn a_competing_claim_waits_for_the_first() -> anyhow::Result<()> {
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires: cluster, bin:helm"]
 async fn a_lost_session_refuses_and_frees_its_key() -> anyhow::Result<()> {
+    common::capture(
+        "a_lost_session_refuses_and_frees_its_key",
+        a_lost_session_refuses_and_frees_its_key_case,
+    )
+    .await
+}
+
+async fn a_lost_session_refuses_and_frees_its_key_case() -> anyhow::Result<()> {
     let application = Application::prepare(&request::fixture("platform_fixture")).await?;
     let routes = &application.routes;
     let environment = &application.environment;

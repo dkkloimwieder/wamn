@@ -30,6 +30,14 @@ const OBSERVE: Duration = Duration::from_secs(30);
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires: cluster, bin:helm"]
 async fn commands_wait_for_their_resources() -> anyhow::Result<()> {
+    common::capture(
+        "commands_wait_for_their_resources",
+        commands_wait_for_their_resources_case,
+    )
+    .await
+}
+
+async fn commands_wait_for_their_resources_case() -> anyhow::Result<()> {
     let source = request::fixture(APPLICATION);
     ensure!(source.is_dir(), "missing fixture {}", source.display());
     let org = timeout(COMMAND, Org::create())

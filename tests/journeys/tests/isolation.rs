@@ -58,6 +58,14 @@ exit 0
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires: cluster, bin:helm"]
 async fn environments_in_one_org_are_isolated() -> anyhow::Result<()> {
+    common::capture(
+        "environments_in_one_org_are_isolated",
+        environments_in_one_org_are_isolated_case,
+    )
+    .await
+}
+
+async fn environments_in_one_org_are_isolated_case() -> anyhow::Result<()> {
     let b = timeout(DEPLOY_DEADLINE, Application::prepare(&fixture()))
         .await
         .context("deploy the application in B")??;
@@ -74,6 +82,14 @@ async fn environments_in_one_org_are_isolated() -> anyhow::Result<()> {
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires: cluster, bin:helm"]
 async fn environments_in_two_orgs_are_isolated() -> anyhow::Result<()> {
+    common::capture(
+        "environments_in_two_orgs_are_isolated",
+        environments_in_two_orgs_are_isolated_case,
+    )
+    .await
+}
+
+async fn environments_in_two_orgs_are_isolated_case() -> anyhow::Result<()> {
     let b = timeout(DEPLOY_DEADLINE, Application::prepare(&fixture()))
         .await
         .context("deploy the application in B")??;

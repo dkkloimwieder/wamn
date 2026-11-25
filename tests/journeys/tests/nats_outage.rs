@@ -51,6 +51,14 @@ const EDGE_DEADLINE: Duration = Duration::from_secs(60);
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires: cluster, bin:helm"]
 async fn the_host_serves_through_a_nats_outage_and_recovers() -> anyhow::Result<()> {
+    common::capture(
+        "the_host_serves_through_a_nats_outage_and_recovers",
+        the_host_serves_through_a_nats_outage_and_recovers_case,
+    )
+    .await
+}
+
+async fn the_host_serves_through_a_nats_outage_and_recovers_case() -> anyhow::Result<()> {
     let application = Application::prepare(&fixture()).await?;
     let environment = &application.environment;
     let client = &environment.org.cluster.client;

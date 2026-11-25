@@ -19,6 +19,14 @@ const PACKAGE: &str = "platform_fixture";
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires: cluster, bin:helm"]
 async fn env_apply_uses_the_installed_digest_after_a_tag_moves() -> anyhow::Result<()> {
+    common::capture(
+        "env_apply_uses_the_installed_digest_after_a_tag_moves",
+        env_apply_uses_the_installed_digest_after_a_tag_moves_case,
+    )
+    .await
+}
+
+async fn env_apply_uses_the_installed_digest_after_a_tag_moves_case() -> anyhow::Result<()> {
     let org = Org::create().await?;
     let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../..")

@@ -42,6 +42,14 @@ type Fingerprint = [u8; 32];
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires: cluster, bin:helm"]
 async fn the_control_pooler_serves_its_renewed_certificate() -> anyhow::Result<()> {
+    common::capture(
+        "the_control_pooler_serves_its_renewed_certificate",
+        the_control_pooler_serves_its_renewed_certificate_case,
+    )
+    .await
+}
+
+async fn the_control_pooler_serves_its_renewed_certificate_case() -> anyhow::Result<()> {
     let environment = timeout(SETUP, async {
         Org::create().await?.apply(host::FIXTURE).await
     })

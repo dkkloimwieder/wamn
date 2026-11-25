@@ -14,6 +14,14 @@ use sqlx::Row as _;
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires: cluster, bin:helm"]
 async fn a_retry_with_reordered_lines_is_an_idempotency_conflict() -> anyhow::Result<()> {
+    common::capture(
+        "a_retry_with_reordered_lines_is_an_idempotency_conflict",
+        a_retry_with_reordered_lines_is_an_idempotency_conflict_case,
+    )
+    .await
+}
+
+async fn a_retry_with_reordered_lines_is_an_idempotency_conflict_case() -> anyhow::Result<()> {
     let application = fixture(&"platform_fixture".parse().unwrap()).await?;
     let routes = &application.routes;
     let mut database = application.environment.observe().await?;
@@ -120,6 +128,14 @@ async fn a_retry_with_reordered_lines_is_an_idempotency_conflict() -> anyhow::Re
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires: cluster, bin:helm"]
 async fn a_read_above_its_declared_maximum_is_refused() -> anyhow::Result<()> {
+    common::capture(
+        "a_read_above_its_declared_maximum_is_refused",
+        a_read_above_its_declared_maximum_is_refused_case,
+    )
+    .await
+}
+
+async fn a_read_above_its_declared_maximum_is_refused_case() -> anyhow::Result<()> {
     let application = fixture(&"platform_fixture".parse().unwrap()).await?;
     let paths = &application.routes;
     let load = json!([{"limit": 100_000}]);
@@ -160,6 +176,14 @@ async fn fixture(package: &wamn_package::PackageName) -> anyhow::Result<Applicat
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires: cluster, bin:helm"]
 async fn a_command_numbers_without_a_record_and_with_a_key_map() -> anyhow::Result<()> {
+    common::capture(
+        "a_command_numbers_without_a_record_and_with_a_key_map",
+        a_command_numbers_without_a_record_and_with_a_key_map_case,
+    )
+    .await
+}
+
+async fn a_command_numbers_without_a_record_and_with_a_key_map_case() -> anyhow::Result<()> {
     let application = fixture(&"platform_fixture".parse().unwrap()).await?;
     let paths = &application.routes;
     for (index, batch, keyed) in [
@@ -194,6 +218,14 @@ async fn a_command_numbers_without_a_record_and_with_a_key_map() -> anyhow::Resu
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires: cluster, bin:helm"]
 async fn an_overlay_insert_inherits_numbering_and_actor_stamps() -> anyhow::Result<()> {
+    common::capture(
+        "an_overlay_insert_inherits_numbering_and_actor_stamps",
+        an_overlay_insert_inherits_numbering_and_actor_stamps_case,
+    )
+    .await
+}
+
+async fn an_overlay_insert_inherits_numbering_and_actor_stamps_case() -> anyhow::Result<()> {
     let application = fixture(&"platform_fixture_overlay".parse().unwrap()).await?;
     let caller = application.caller().to_string();
     let paths = &application.routes;
@@ -231,6 +263,14 @@ async fn post(paths: &Routes, path: &str, body: &Value) -> anyhow::Result<Value>
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires: cluster, bin:helm"]
 async fn a_role_without_the_list_permission_is_refused_the_feed() -> anyhow::Result<()> {
+    common::capture(
+        "a_role_without_the_list_permission_is_refused_the_feed",
+        a_role_without_the_list_permission_is_refused_the_feed_case,
+    )
+    .await
+}
+
+async fn a_role_without_the_list_permission_is_refused_the_feed_case() -> anyhow::Result<()> {
     let application = fixture(&"platform_fixture".parse().unwrap()).await?;
     let paths = &application.routes;
     let caller = application.caller().to_string();

@@ -24,6 +24,14 @@ const CONNECTION: &str = "upstream";
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires: cluster, bin:helm"]
 async fn another_environments_credential_is_refused() -> anyhow::Result<()> {
+    common::capture(
+        "another_environments_credential_is_refused",
+        another_environments_credential_is_refused_case,
+    )
+    .await
+}
+
+async fn another_environments_credential_is_refused_case() -> anyhow::Result<()> {
     let org = Org::create().await?;
     let a = OtherEnvironment::apply(&org, "alpha", "platform_fixture").await?;
     let b = OtherEnvironment::apply(&org, "beta", "platform_fixture").await?;
@@ -139,6 +147,14 @@ async fn another_environments_credential_is_refused() -> anyhow::Result<()> {
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires: cluster, bin:helm"]
 async fn each_session_carries_its_own_identity() -> anyhow::Result<()> {
+    common::capture(
+        "each_session_carries_its_own_identity",
+        each_session_carries_its_own_identity_case,
+    )
+    .await
+}
+
+async fn each_session_carries_its_own_identity_case() -> anyhow::Result<()> {
     let application = Application::prepare(&request::fixture("platform_fixture")).await?;
     let client = &application.environment.org.cluster.client;
     let environment = &application.environment;

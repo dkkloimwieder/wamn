@@ -326,7 +326,7 @@ With `--print-cluster-requests`, it prints the cluster requests and does not rea
 It creates or reuses the `wamn-local` cluster and its registry on port 5001.
 If the cluster CNI does not enforce NetworkPolicy, it fails.
 It uses the bundle that `--chart <bundle>` names, or builds one under `target/journey/bundle`.
-If the platform does not run that bundle yet, it runs `wamn platform deploy`.
+If the bundle or the capture setting changes, it runs `wamn platform deploy`.
 It records container restarts, and fails only on a platform pod that never becomes ready.
 Then it creates the read-only observer login on the system database.
 It writes `target/journey/kubeconfig` and `target/journey/cluster.json`.
@@ -335,7 +335,8 @@ The tests read `cluster.json`. A missing file or entry fails the test.
 Each test creates its own org with `wamn org create` and a unique owner email, and opens the owner session.
 Then it applies its own environment with `wamn env apply`.
 At most 4 tests hold an org at one time.
-At the end of a test, a plain `wamn env delete` removes its environment, also after a failure.
+At the end of a test, a plain `wamn env delete` removes its environment.
+If capture is enabled and a test fails, the suite saves evidence before it deletes the environment.
 The org stays.
 One cluster holds up to about 12 orgs, because of the Pooler limits of the system database (wamn-44p7o).
 A run that needs more orgs uses a second fresh cluster.
@@ -364,7 +365,27 @@ Run output stays local and does not go into the checkout.
 For a command that needs a result directory, create a temporary one:
 
 ```bash
-WAMN_RESULTS="$(mktemp -d)"
+export WAMN_RESULTS="$(mktemp -d)"
+```
+
+When a journey returns an error or panics, it creates its own folder under `WAMN_RESULTS`.
+It records pod logs, including the previous logs of restarted containers, and Kubernetes events.
+It also records WorkloadDeployment, WorkloadReplicaSet and CloudNativePG Cluster status.
+The capture covers the org, environment, project and platform namespaces.
+Helm history contains revision, time, state, chart and app version.
+Helm status contains release name, namespace, revision, state and deployment times.
+The capture omits Helm notes, values, manifests and Kubernetes Secret data.
+If collection is incomplete, the test output names the missing evidence.
+
+On kind, set `WAMN_RESULTS` before you create the cluster with `journey-cluster`.
+The collector writes spans and logs to `$WAMN_RESULTS/telemetry/otel.jsonl` through a kind mount.
+The same kind cluster can reuse that directory.
+If the directory changes, create a fresh journey cluster for the new mount.
+Pass the path of an existing bundle to reuse its images.
+
+```bash
+cargo xtask journey-cluster --chart <bundle>
+cargo test --locked -p wamn-journey-tests -- --ignored
 ```
 
 Keep the source unchanged while a command runs.

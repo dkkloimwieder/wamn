@@ -6,3 +6,27 @@ traefik:
   enabled: true
 identity:
   localMail: /var/run/wamn-identity/mail/outbox.jsonl
+# journey-cluster mounts the run directory and activates these components when WAMN_RESULTS is set.
+opentelemetry-collector:
+  config:
+    exporters:
+      file/journey:
+        path: /var/local/wamn-journey-results/otel.jsonl
+        append: true
+    processors:
+      transform/journey:
+        error_mode: propagate
+        trace_statements:
+          - keep_keys(resource.attributes, ["service.name", "service.instance.id", "k8s.namespace.name", "k8s.pod.name"])
+          - keep_keys(scope.attributes, [])
+          - keep_keys(span.attributes, ["http.request.method", "http.response.status_code", "rpc.system", "rpc.service", "rpc.method"])
+          - set(span.status.message, "")
+          - set(span.trace_state, "")
+          - keep_keys(spanevent.attributes, [])
+          - set(spanevent.name, "[redacted]") where IsMatch(spanevent.name, "(?i)(password|authorization|bearer |token|credential|secret|wamn_pat_|eyJ)")
+        log_statements:
+          - keep_keys(resource.attributes, ["service.name", "service.instance.id", "k8s.namespace.name", "k8s.pod.name"])
+          - keep_keys(scope.attributes, [])
+          - keep_keys(log.attributes, [])
+          - set(log.body, "[redacted]") where not IsString(log.body)
+          - set(log.body, "[redacted]") where IsMatch(log.body, "(?i)(password|passwd|authorization|bearer |token|credential|invitation code|private key|secret|wamn_pat_|eyJ|://[^ ]*@|-----BEGIN )")

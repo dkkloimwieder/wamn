@@ -39,6 +39,8 @@ use wamn_package::local_operation::LocalOperation;
 use wamn_registry::{OrgId, Triple, name};
 use wamn_test_infrastructure::scratch::ScratchRoot;
 
+mod failure;
+pub use failure::capture;
 pub mod host;
 pub mod request;
 mod routes;
@@ -206,16 +208,17 @@ pub struct Org {
     pub name: OrgId,
     pub owner: PrincipalId,
     pub token: String,
-    _capacity: Capacity,
+    _capacity: Option<Capacity>,
 }
 
 impl Org {
     /// Run `wamn org create` with a unique org and owner email, and open the owner session.
     pub async fn create() -> anyhow::Result<Self> {
-        let capacity = Capacity::acquire();
+        let capacity = failure::hold_capacity(Capacity::acquire());
         let cluster = Cluster::load().await?;
         let name: OrgId =
             format!("j{}", &uuid::Uuid::new_v4().simple().to_string()[..10]).parse()?;
+        failure::org(&name);
         let email = format!("owner-{name}@example.com");
         let mut command = cluster.command();
         command.args(["org", "create", name.as_str(), "--owner", &email]);
@@ -262,6 +265,7 @@ impl Org {
             }))?,
         )?;
         let triple = Triple::new(self.name.clone(), ENV.parse()?, PROJECT.parse()?);
+        failure::environment(&triple);
         // The guard exists first, so a failed apply is also deleted.
         let environment = Environment {
             org: self,
@@ -276,7 +280,7 @@ impl Org {
     }
 }
 
-/// One applied environment. Drop runs a plain `wamn env delete`, also after a failure.
+/// One applied environment. Runs a plain `wamn env delete` after failure capture, if enabled.
 pub struct Environment {
     pub org: Org,
     pub file: PathBuf,
@@ -307,17 +311,7 @@ impl Environment {
 
 impl Drop for Environment {
     fn drop(&mut self) {
-        let mut command = self.org.command();
-        command.args(["env", "delete", &self.triple.to_string()]);
-        match command.output() {
-            Ok(output) if output.status.success() => {}
-            Ok(output) => eprintln!(
-                "wamn env delete {} failed: {}",
-                self.triple,
-                String::from_utf8_lossy(&output.stderr)
-            ),
-            Err(error) => eprintln!("wamn env delete {}: {error}", self.triple),
-        }
+        failure::delete_environment(&self.org, &self.triple);
     }
 }
 

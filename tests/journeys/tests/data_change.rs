@@ -34,6 +34,14 @@ async fn create(routes: &Routes, model: &str, fields: Value) -> anyhow::Result<V
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires: cluster, bin:helm"]
 async fn a_receipt_creates_its_inspection() -> anyhow::Result<()> {
+    common::capture(
+        "a_receipt_creates_its_inspection",
+        a_receipt_creates_its_inspection_case,
+    )
+    .await
+}
+
+async fn a_receipt_creates_its_inspection_case() -> anyhow::Result<()> {
     let application = Application::prepare(&request::fixture("client_acme_receiving")).await?;
     let routes = &application.routes;
     let suffix = uuid::Uuid::new_v4().simple().to_string();

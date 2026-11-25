@@ -107,6 +107,14 @@ async fn runs(database: &mut common::Observed, id: &str) -> anyhow::Result<Vec<(
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires: cluster, bin:helm"]
 async fn each_trigger_runs_its_workflow() -> anyhow::Result<()> {
+    common::capture(
+        "each_trigger_runs_its_workflow",
+        each_trigger_runs_its_workflow_case,
+    )
+    .await
+}
+
+async fn each_trigger_runs_its_workflow_case() -> anyhow::Result<()> {
     let application = Application::prepare(&request::fixture(APPLICATION)).await?;
     let workflows = Workflows {
         application: &application,

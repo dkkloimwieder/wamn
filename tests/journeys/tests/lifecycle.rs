@@ -38,6 +38,14 @@ const CALL_DEADLINE: Duration = Duration::from_secs(10);
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires: cluster, bin:helm"]
 async fn failed_rollout_restores_the_serving_replica_set() -> anyhow::Result<()> {
+    common::capture(
+        "failed_rollout_restores_the_serving_replica_set",
+        failed_rollout_restores_the_serving_replica_set_case,
+    )
+    .await
+}
+
+async fn failed_rollout_restores_the_serving_replica_set_case() -> anyhow::Result<()> {
     let original = rollback_source("WAMN_ROLLBACK_FIXTURE_V1_SOURCE")?;
     let broken = rollback_source("WAMN_ROLLBACK_FIXTURE_FAILED_SOURCE")?;
     let next = rollback_source("WAMN_ROLLBACK_FIXTURE_V2_SOURCE")?;
@@ -172,6 +180,14 @@ async fn failed_rollout_restores_the_serving_replica_set() -> anyhow::Result<()>
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires: cluster, bin:helm"]
 async fn rollback_serves_every_call_through_web() -> anyhow::Result<()> {
+    common::capture(
+        "rollback_serves_every_call_through_web",
+        rollback_serves_every_call_through_web_case,
+    )
+    .await
+}
+
+async fn rollback_serves_every_call_through_web_case() -> anyhow::Result<()> {
     let v1 = rollback_source("WAMN_ROLLBACK_FIXTURE_V1_SOURCE")?;
     let v2 = rollback_source("WAMN_ROLLBACK_FIXTURE_V2_SOURCE")?;
     let mut application = within(
@@ -469,6 +485,14 @@ fn workload_ready(workload: &DynamicObject) -> bool {
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires: cluster, bin:helm"]
 async fn plain_delete_keeps_data_and_apply_creates_a_new_cluster() -> anyhow::Result<()> {
+    common::capture(
+        "plain_delete_keeps_data_and_apply_creates_a_new_cluster",
+        plain_delete_keeps_data_and_apply_creates_a_new_cluster_case,
+    )
+    .await
+}
+
+async fn plain_delete_keeps_data_and_apply_creates_a_new_cluster_case() -> anyhow::Result<()> {
     let application = within(
         DEPLOY_DEADLINE,
         "prepare the fixture",
@@ -680,6 +704,14 @@ printf '%s %s %s\n' "$host" "$port" "$result"
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires: cluster, bin:helm"]
 async fn data_delete_removes_resources_kept_by_plain_delete() -> anyhow::Result<()> {
+    common::capture(
+        "data_delete_removes_resources_kept_by_plain_delete",
+        data_delete_removes_resources_kept_by_plain_delete_case,
+    )
+    .await
+}
+
+async fn data_delete_removes_resources_kept_by_plain_delete_case() -> anyhow::Result<()> {
     let environment = within(
         COMMAND_DEADLINE,
         "create the org and apply the environment",

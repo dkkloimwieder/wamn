@@ -44,6 +44,14 @@ const RESUME_DEADLINE: Duration = Duration::from_secs(10);
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires: cluster, bin:helm"]
 async fn each_login_queues_at_its_connection_limit() -> anyhow::Result<()> {
+    common::capture(
+        "each_login_queues_at_its_connection_limit",
+        each_login_queues_at_its_connection_limit_case,
+    )
+    .await
+}
+
+async fn each_login_queues_at_its_connection_limit_case() -> anyhow::Result<()> {
     let environment = provision().await?;
     let org = &environment.org;
     let mut control = RestoreControl {
@@ -75,6 +83,14 @@ async fn each_login_queues_at_its_connection_limit() -> anyhow::Result<()> {
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires: cluster, bin:helm"]
 async fn each_pooler_admits_its_provisioned_login() -> anyhow::Result<()> {
+    common::capture(
+        "each_pooler_admits_its_provisioned_login",
+        each_pooler_admits_its_provisioned_login_case,
+    )
+    .await
+}
+
+async fn each_pooler_admits_its_provisioned_login_case() -> anyhow::Result<()> {
     let environment = provision().await?;
     let org = &environment.org;
     let pods = platform_pods(org);
@@ -103,6 +119,14 @@ async fn each_pooler_admits_its_provisioned_login() -> anyhow::Result<()> {
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires: cluster, bin:helm"]
 async fn each_pooler_reports_its_wait_settings() -> anyhow::Result<()> {
+    common::capture(
+        "each_pooler_reports_its_wait_settings",
+        each_pooler_reports_its_wait_settings_case,
+    )
+    .await
+}
+
+async fn each_pooler_reports_its_wait_settings_case() -> anyhow::Result<()> {
     let environment = provision().await?;
     let pods = platform_pods(&environment.org);
     for (family, query_wait) in [(CONTROL, 120), (APPLY, 900)] {
