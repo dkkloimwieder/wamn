@@ -75,19 +75,6 @@ pub fn select_application(
     })
 }
 
-/// The targeted application's Helm release and host group identity.
-pub fn application_release_name(
-    document: &EnvironmentDocument,
-    application: &wamn_registry::ApplicationName,
-) -> anyhow::Result<String> {
-    super::super::release_chart::release_name(
-        &document.settings.org,
-        &document.settings.project,
-        &document.settings.env,
-        application,
-    )
-}
-
 /// Derive application release names from declarations and observed workloads.
 pub(crate) async fn application_releases(
     platform: &Platform,
