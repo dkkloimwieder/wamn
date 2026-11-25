@@ -105,6 +105,7 @@ pub struct PermissionGrantResult {
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PermissionListRequest {
+    #[schemars(title = "Role")]
     pub role: String,
 }
 
@@ -115,6 +116,7 @@ pub struct PermissionListRequest {
     reason = "Each flag is a separate native wire field"
 )]
 pub struct PermissionListResultOperation {
+    #[schemars(title = "Operation")]
     pub operation: String,
     pub served: bool,
     pub grantable: bool,
@@ -125,6 +127,7 @@ pub struct PermissionListResultOperation {
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PermissionListResult {
+    #[schemars(title = "Role")]
     pub role: String,
     pub admin: bool,
     pub operations: Vec<PermissionListResultOperation>,
@@ -156,6 +159,7 @@ pub struct RoleDeleteResult {
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RoleListResult {
+    #[schemars(title = "Role")]
     pub roles: Vec<String>,
 }
 
@@ -165,10 +169,14 @@ pub struct ApplicationUserListResultUser {
     #[schemars(regex(
         pattern = r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
     ))]
+    #[schemars(title = "User ID")]
     pub id: String,
+    #[schemars(title = "Email")]
     pub email: String,
     #[schemars(schema_with = "nullable::<String>")]
+    #[schemars(title = "User name")]
     pub display_name: Option<String>,
+    #[schemars(title = "Role")]
     pub roles: Vec<String>,
     pub admin_covered: bool,
 }
@@ -185,7 +193,9 @@ pub struct UserRoleGrantRequest {
     #[schemars(regex(
         pattern = r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
     ))]
+    #[schemars(title = "User")]
     pub user_id: String,
+    #[schemars(title = "Role")]
     pub role: String,
 }
 
@@ -271,7 +281,9 @@ pub struct ApiServiceCreateResult {
 pub struct ApplicationDeployRequest {
     pub project: String,
     pub env: String,
+    #[schemars(title = "Release digest")]
     pub release: String,
+    #[schemars(title = "Application")]
     pub application: String,
 }
 
@@ -286,7 +298,9 @@ pub struct ApplicationDeployResult {
 pub struct ApplicationRollbackRequest {
     pub project: String,
     pub env: String,
+    #[schemars(title = "Application")]
     pub application: String,
+    #[schemars(title = "Revision")]
     pub revision: Option<std::num::NonZeroU32>,
 }
 
@@ -295,6 +309,7 @@ pub struct ApplicationRollbackRequest {
 pub struct ApplicationStopRequest {
     pub project: String,
     pub env: String,
+    #[schemars(title = "Application")]
     pub application: String,
 }
 
@@ -390,13 +405,16 @@ pub struct ControlMineRequest {
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ControlMineResultProject {
+    #[schemars(title = "Project")]
     pub project: String,
+    #[schemars(title = "Project admin")]
     pub project_admin: bool,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ControlMineResult {
+    #[schemars(title = "Org admin")]
     pub org_admin: bool,
     pub projects: Vec<ControlMineResultProject>,
     #[schemars(schema_with = "nullable::<String>")]
@@ -449,6 +467,7 @@ pub enum EnvironmentListResultEnvironmentState {
 #[serde(deny_unknown_fields)]
 pub struct EnvironmentListResultEnvironment {
     pub name: String,
+    #[schemars(title = "State")]
     pub state: EnvironmentListResultEnvironmentState,
 }
 
@@ -474,7 +493,9 @@ pub struct EnvironmentOperationStatusRequest {
 #[serde(deny_unknown_fields)]
 pub struct EnvironmentOperationStatusResult {
     pub job: String,
+    #[schemars(title = "State")]
     pub state: String,
+    #[schemars(title = "Log tail")]
     pub log: String,
 }
 
@@ -490,32 +511,44 @@ pub struct EnvironmentStatusResultRollout {
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct EnvironmentStatusResultWorkloadCondition {
+    #[schemars(title = "Condition")]
     pub r#type: Value,
+    #[schemars(title = "State")]
     pub status: Value,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct EnvironmentStatusResultWorkload {
+    #[schemars(title = "Workload")]
     pub name: String,
     #[schemars(schema_with = "nullable::<String>")]
+    #[schemars(title = "Application")]
     pub application: Option<String>,
+    #[schemars(title = "Package digest")]
     pub package_digest: String,
     #[schemars(range(min = 1))]
+    #[schemars(title = "Revision")]
     pub revision: u32,
+    #[schemars(title = "Conditions")]
     pub conditions: Vec<EnvironmentStatusResultWorkloadCondition>,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct EnvironmentStatusResult {
+    #[schemars(title = "Host replicas")]
     pub rollout: EnvironmentStatusResultRollout,
+    #[schemars(title = "Workloads")]
     pub workloads: Vec<EnvironmentStatusResultWorkload>,
     #[schemars(schema_with = "nullable::<i32>")]
+    #[schemars(title = "Users with a role")]
     pub users_with_role: Option<i32>,
     #[schemars(schema_with = "nullable::<i32>")]
+    #[schemars(title = "Roles")]
     pub roles: Option<i32>,
     #[schemars(schema_with = "nullable::<i32>")]
+    #[schemars(title = "Memberships")]
     pub memberships: Option<i32>,
 }
 
@@ -547,12 +580,15 @@ pub struct IntegrationTypeListResult {
 #[serde(deny_unknown_fields)]
 pub struct MemberGrantRequest {
     #[schemars(with = "String")]
+    #[schemars(title = "Project")]
     pub project: wamn_registry::ProjectId,
     #[schemars(with = "String")]
+    #[schemars(title = "Environment")]
     pub env: wamn_registry::EnvName,
     #[schemars(regex(
         pattern = r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
     ))]
+    #[schemars(title = "User ID")]
     pub principal_id: String,
 }
 
@@ -589,11 +625,17 @@ pub struct MemberListResultMember {
     #[schemars(regex(
         pattern = r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
     ))]
+    #[schemars(title = "User ID")]
     pub principal_id: String,
+    #[schemars(title = "Email")]
     pub email: String,
+    #[schemars(title = "Display name")]
     pub display_name: String,
+    #[schemars(title = "Org admin")]
     pub org_admin: bool,
+    #[schemars(title = "Project admin")]
     pub project_admin: bool,
+    #[schemars(title = "Memberships")]
     pub environments: Vec<String>,
 }
 
@@ -707,7 +749,9 @@ pub struct ProjectListResult {
 pub struct SchemaDiffRequest {
     pub project: String,
     pub env: String,
+    #[schemars(title = "Application")]
     pub application: String,
+    #[schemars(title = "Release digest")]
     pub release: Option<String>,
 }
 
@@ -763,7 +807,9 @@ pub struct UserCreateResult {
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct UserInviteRequest {
+    #[schemars(title = "Email")]
     pub email: String,
+    #[schemars(title = "Display name")]
     pub display_name: String,
     #[serde(default)]
     pub org_admin: bool,
@@ -791,11 +837,16 @@ pub struct UserListResultUser {
     #[schemars(regex(
         pattern = r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
     ))]
+    #[schemars(title = "User ID")]
     pub principal_id: String,
+    #[schemars(title = "Email")]
     pub email: String,
+    #[schemars(title = "Display name")]
     pub display_name: String,
+    #[schemars(title = "State")]
     pub status: String,
     pub principal_status: String,
+    #[schemars(title = "Org admin")]
     pub org_admin: bool,
 }
 

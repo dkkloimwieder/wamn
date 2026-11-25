@@ -189,6 +189,8 @@ The shared crate `wamn-guest` holds the keyset cursor, the query page, scalar pa
 The compiled `wamn.json` carries `compiled_operations`, including described statements and their transaction facts.
 Readers borrow each operation through `wamn_catalog::operation_contract`. The compiler emits no contract files, source maps, or native verifier rows.
 `generated/openapi.json` describes the published HTTP interface with OpenAPI 3.1. GET parameters carry separate JSON values.
+Field schemas use the authored label as their `title` and carry the authored `description` when supplied.
+If the author omits the label, the title is the field name with spaces in place of underscores.
 Every list schema has a maximum. Generated exports enforce page and feed limits before they call application code.
 A data crate includes `data/mod.rs` of its build output as its public module `generated`, through a path relative to the crate. The generated files include each other by paths relative to themselves.
 A component includes `generated/component/mod.rs` in a module that names that data module `data`.

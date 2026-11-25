@@ -450,11 +450,11 @@ pub mod row_key {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FieldText {
-    /// What a control, a column header or a term reads. The default is the
-    /// field name with its underscores as spaces, applied by the emitter.
+    /// Authored field title for OpenAPI. When absent, OpenAPI uses the field
+    /// name with spaces in place of underscores.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
-    /// One sentence for an author. It reaches a comment, never a screen.
+    /// Authored field description for OpenAPI.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
 }

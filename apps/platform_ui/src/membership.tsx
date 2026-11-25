@@ -2,7 +2,7 @@ import { createSignal, onCleanup, Show, untrack } from "solid-js";
 import { FieldError } from "@wfe/components/fields";
 import { createForm } from "@wfe/form";
 import { FormView, type FormDescription } from "@wfe/generator";
-import { environment, member, project } from "./control-client";
+import { controlFields, environment, member, project } from "./control-client";
 import { Page } from "./page";
 import { value } from "./outcome";
 import type { ScreenProps } from "./shell";
@@ -71,10 +71,20 @@ export function GrantMembership(props: ScreenProps & { returnTo: string }) {
               id: "grant-membership",
               fields: [
                 ...(!props.params.principal
-                  ? [{ field: "principal_id", label: "User ID", control: "text" } as const]
+                  ? [
+                      {
+                        field: "principal_id",
+                        label: controlFields.grantMember.principal_id.title,
+                        control: "text",
+                      } as const,
+                    ]
                   : []),
-                ...(!props.params.project ? [{ field: "project", label: "Project", control: "select" } as const] : []),
-                ...(!props.params.env ? [{ field: "env", label: "Environment", control: "select" } as const] : []),
+                ...(!props.params.project
+                  ? [{ field: "project", label: controlFields.grantMember.project.title, control: "select" } as const]
+                  : []),
+                ...(!props.params.env
+                  ? [{ field: "env", label: controlFields.grantMember.env.title, control: "select" } as const]
+                  : []),
               ],
               submit: { id: "grant", label: "Grant membership" },
               actions: [{ id: "cancel", label: "Cancel", variant: "ghost" }],

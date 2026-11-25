@@ -4,6 +4,21 @@ import { hostOperations, type OperationResult } from "./host-client";
 
 const bind = hostOperations(document);
 
+const paths = document.paths;
+export const applicationFields = {
+  createRole:
+    paths["/wamn_control/role/create"].post.requestBody.content["application/json"].schema.items.properties.value
+      .properties,
+  grantRole:
+    paths["/wamn_control/user_role/grant"].post.requestBody.content["application/json"].schema.items.properties.value
+      .properties,
+  permissions:
+    paths["/wamn_control/permission/list"].get.responses["200"].content["application/json"].schema.items.oneOf[0]!
+      .properties.value!.properties,
+  user: paths["/wamn_control/user/list"].get.responses["200"].content["application/json"].schema.items.oneOf[0]!
+    .properties.value!.properties.users.items.properties,
+};
+
 export const permission = {
   list: bind("permission.list", sdk.wamnControlPermissionList_090),
   mine: bind("permission.mine", sdk.wamnControlPermissionMine_090),

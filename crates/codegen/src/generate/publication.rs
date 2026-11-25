@@ -243,6 +243,45 @@ fn object_schema(fields: &[FieldIr]) -> Value {
     json!({"type": "object", "properties": properties, "required": required, "additionalProperties": false})
 }
 
+fn document_fields(schema: &mut Value, fields: &[FieldIr]) {
+    if let Some(properties) = schema.get_mut("properties").and_then(Value::as_object_mut) {
+        for (name, property) in properties {
+            let field = fields.iter().find(|field| {
+                field
+                    .path
+                    .rsplit('.')
+                    .next()
+                    .unwrap_or_default()
+                    .trim_end_matches("[]")
+                    == name
+            });
+            // A repeated scalar carries its authored text on the item descriptor.
+            let item = field.and_then(|field| match field.children.as_slice() {
+                [item] if item.path == field.path => Some(item),
+                _ => None,
+            });
+            let label = field
+                .and_then(|field| field.label.as_deref())
+                .or_else(|| item.and_then(|item| item.label.as_deref()));
+            property["title"] =
+                label.map_or_else(|| json!(name.replace('_', " ")), |label| json!(label));
+            if let Some(description) = field
+                .and_then(|field| field.description.as_deref())
+                .or_else(|| item.and_then(|item| item.description.as_deref()))
+            {
+                property["description"] = json!(description);
+            }
+            document_fields(
+                property,
+                field.map_or(&[], |field| field.children.as_slice()),
+            );
+        }
+    }
+    if let Some(items) = schema.get_mut("items") {
+        document_fields(items, fields);
+    }
+}
+
 pub(crate) fn result_schema(description: &OperationDescription) -> Value {
     if description.result.is_null() {
         return input_schema(description);
@@ -381,11 +420,11 @@ pub(crate) fn openapi(
             continue;
         };
         let method = operation.operation.type_.http_method();
-        let input = attachment
+        let mut input = attachment
             .pointer("/definition/input-schema")
             .cloned()
             .unwrap_or_else(|| input_schema(operation));
-        let output = components
+        let mut output = components
             .get(attachment["component"].as_str().unwrap_or_default())
             .and_then(|component| component["operations"].get(identity))
             .and_then(|operation| operation["output-ports"].as_array())
@@ -393,6 +432,31 @@ pub(crate) fn openapi(
             .and_then(|port| port.get("schema"))
             .cloned()
             .unwrap_or_else(|| result_schema(operation));
+        // The attachment and port schemas participate in release identity.
+        // Add documentation only to the OpenAPI copies.
+        let input_fields = input_fields_of(&operation.input);
+        document_fields(&mut input, &input_fields);
+        if operation.result.is_null() {
+            document_fields(&mut output, &input_fields);
+        } else if let Some(value) = output.pointer_mut("/items/oneOf/0/properties/value") {
+            let fields = fields_of(&operation.result);
+            let paths: &[&str] = match operation.operation.result.as_deref() {
+                Some("one") => &[""],
+                Some("optional_one") => &["/anyOf/0"],
+                Some("bounded_list") => &["/properties/rows/items"],
+                Some("page") if operation.input.get("feed").is_some() => &[
+                    "/oneOf/0/properties/item/items",
+                    "/oneOf/1/properties/rows/items/properties/data",
+                ],
+                Some("page") => &["/properties/item/items"],
+                _ => &[],
+            };
+            for path in paths {
+                if let Some(row) = value.pointer_mut(path) {
+                    document_fields(row, &fields);
+                }
+            }
+        }
         add_route(
             &mut paths,
             path,
@@ -453,6 +517,7 @@ mod tests {
             "models": {"record": {
                 "schema": "app", "table": "record", "owner": "example",
                 "audit_log": {"columns": ["created_at"], "retention": "unlimited"},
+                "field_text": {"code": {"label": "Record code", "description": "External record code."}},
                 "server_owned_fields": ["revision"],
                 "operations": {"query": {
                     "permission": "record.query", "result": "page", "filters": [{"field": "code"}],
@@ -465,6 +530,19 @@ mod tests {
         let manifest = crate::derive_manifest(&catalog, &authored, &[], &[]).unwrap();
         let facts = StatementTransactionality::from_paths(BTreeMap::new());
         let package = generate(&GenerationInput::new(&catalog, &manifest, &[], &facts)).unwrap();
+        let api: Value =
+            serde_json::from_slice(package.file("generated/openapi.json").unwrap().bytes())
+                .unwrap();
+        let update = &api["paths"]["/record/update"]["post"];
+        let input = &update["requestBody"]["content"]["application/json"]["schema"]["items"]["properties"]
+            ["change"]["properties"];
+        assert_eq!(input["code"]["title"], "Record code");
+        assert_eq!(input["code"]["description"], "External record code.");
+        let query = &api["paths"]["/record/query"]["get"];
+        let rows = &query["responses"]["200"]["content"]["application/json"]["schema"]["items"]["oneOf"]
+            [0]["properties"]["value"]["oneOf"][0]["properties"]["item"]["items"]["properties"];
+        assert_eq!(rows["code"]["title"], "Record code");
+        assert_eq!(rows["created_at"]["title"], "created at");
         let mut duplicate: Value = serde_json::from_slice(&manifest).unwrap();
         duplicate["routes"]["operations"] = json!({
             "record.query": {"id": "record-http", "path": "/record/query"},

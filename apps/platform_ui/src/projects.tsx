@@ -7,6 +7,7 @@ import { createServerPage, Records } from "./records";
 import { createForm } from "@wfe/form";
 import {
   control,
+  controlFields,
   environment,
   member,
   project,
@@ -67,12 +68,20 @@ function Projects(props: ScreenProps): JSX.Element {
         rows={page.rows()}
         rowKey={(entry) => entry.name}
         columns={[
-          { id: "project", header: "Project" },
+          { id: "project", header: controlFields.current.projects.items.properties.project.title },
           ...(props.holds(project.list.route.operation)
-            ? [{ id: "state", header: "State", accessorKey: "state" as const }]
+            ? [{ id: "state", header: controlFields.environment.state.title, accessorKey: "state" as const }]
             : []),
-          { id: "project_admin", header: "Project admin", accessorKey: "project_admin" },
-          { id: "org_admin", header: "Org admin", accessorFn: () => props.controlMine?.org_admin },
+          {
+            id: "project_admin",
+            header: controlFields.current.projects.items.properties.project_admin.title,
+            accessorKey: "project_admin",
+          },
+          {
+            id: "org_admin",
+            header: controlFields.current.org_admin.title,
+            accessorFn: () => props.controlMine?.org_admin,
+          },
         ]}
         formats={{ project_admin: "boolean-symbol", org_admin: "boolean-symbol" }}
         cells={{
@@ -111,7 +120,7 @@ function CreateProject(props: ScreenProps): JSX.Element {
         description={
           {
             id: "create-project",
-            fields: [{ field: "project", label: "Project name", control: "text" }],
+            fields: [{ field: "project", label: controlFields.createProject.project.title, control: "text" }],
             submit: { id: "create-project", label: "Create project" },
             actions: [{ id: "cancel", label: "Cancel", variant: "ghost" }],
           } as const satisfies FormDescription<typeof defaults>
@@ -254,7 +263,9 @@ export function Project(props: ScreenProps & { table?: "environments" | "members
           }
         >
           <Show when={state()}>
-            <p>State: {state()}</p>
+            <p>
+              {controlFields.environment.state.title}: {state()}
+            </p>
           </Show>
         </Page>
       </Show>
@@ -268,8 +279,8 @@ export function Project(props: ScreenProps & { table?: "environments" | "members
             rows={environmentPage.rows()}
             rowKey={(env) => env.name}
             columns={[
-              { id: "environment", header: "Environment" },
-              { id: "state", header: "State", accessorKey: "state" },
+              { id: "environment", header: controlFields.grantMember.env.title },
+              { id: "state", header: controlFields.environment.state.title, accessorKey: "state" },
             ]}
             cells={{
               environment: (cell) => (
@@ -296,14 +307,29 @@ export function Project(props: ScreenProps & { table?: "environments" | "members
                 : undefined
             }
             columns={[
-              { id: "display_name", header: "Display name", accessorKey: "display_name", size: 180 },
-              { id: "email", header: "Email", accessorKey: "email", size: 250 },
-              { id: "principal_id", header: "User ID", accessorKey: "principal_id", size: 120 },
-              { id: "org_admin", header: "Org admin", accessorKey: "org_admin", size: 100 },
-              { id: "project_admin", header: "Project admin", accessorKey: "project_admin", size: 120 },
+              {
+                id: "display_name",
+                header: controlFields.member.display_name.title,
+                accessorKey: "display_name",
+                size: 180,
+              },
+              { id: "email", header: controlFields.member.email.title, accessorKey: "email", size: 250 },
+              {
+                id: "principal_id",
+                header: controlFields.member.principal_id.title,
+                accessorKey: "principal_id",
+                size: 120,
+              },
+              { id: "org_admin", header: controlFields.member.org_admin.title, accessorKey: "org_admin", size: 100 },
+              {
+                id: "project_admin",
+                header: controlFields.member.project_admin.title,
+                accessorKey: "project_admin",
+                size: 120,
+              },
               {
                 id: "memberships",
-                header: "Memberships",
+                header: controlFields.member.environments.title,
                 accessorFn: (entry) => entry.environments.length,
               },
             ]}
@@ -363,7 +389,7 @@ export function Project(props: ScreenProps & { table?: "environments" | "members
                     : undefined
                 }
                 columns={[
-                  { id: "env", header: "Environment" },
+                  { id: "env", header: controlFields.grantMember.env.title },
                   { id: "revoke", header: "Action", size: 80, sortable: false, filterable: false },
                 ]}
                 cells={{

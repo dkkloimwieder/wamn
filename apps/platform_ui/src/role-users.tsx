@@ -2,7 +2,7 @@ import { createSignal, onCleanup, Show, untrack } from "solid-js";
 import { FieldError } from "@wfe/components/fields";
 import { createForm } from "@wfe/form";
 import { FormView } from "@wfe/generator";
-import { role, user, userRole, type UserListResult } from "./application-client";
+import { applicationFields, role, user, userRole, type UserListResult } from "./application-client";
 import { ConfirmAction } from "./confirm-action";
 import { MissingPage, Page, RecordLink } from "./page";
 import { Records } from "./records";
@@ -44,8 +44,8 @@ export function RoleUsers(props: ScreenProps) {
           refresh={refresh}
           create={{ label: "Grant to user", run: () => props.open(`${rolePath(name)}/users/grant`) }}
           columns={[
-            { id: "name", header: "User name" },
-            { id: "email", header: "Email", accessorKey: "email" },
+            { id: "name", header: applicationFields.user.display_name.title },
+            { id: "email", header: applicationFields.user.email.title, accessorKey: "email" },
             { id: "actions", header: "Actions", size: 80, sortable: false, filterable: false },
           ]}
           cells={{
@@ -130,7 +130,7 @@ export function GrantRoleToUser(props: ScreenProps) {
           <FormView
             description={{
               id: "grant-role-to-user",
-              fields: [{ field: "user_id", label: "User", control: "select" }],
+              fields: [{ field: "user_id", label: applicationFields.grantRole.user_id.title, control: "select" }],
               submit: { id: "grant", label: "Grant to user" },
               actions: [{ id: "cancel", label: "Cancel", variant: "ghost" }],
             }}

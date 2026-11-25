@@ -327,10 +327,10 @@ pub struct FieldIr {
     /// Closed value domain, when the contract declares one. Empty means open.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub values: Vec<String>,
-    /// Authored text, or the exact field path when no label is declared.
+    /// Authored field title, when declared.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
-    /// Authored text for an author, which reaches a comment and no screen.
+    /// Authored field description, when declared.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     /// The record this input names, when it names one.

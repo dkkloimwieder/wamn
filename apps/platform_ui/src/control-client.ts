@@ -4,6 +4,49 @@ import { hostOperations, type OperationResult } from "./host-client";
 
 const bind = hostOperations(document);
 
+const paths = document.paths;
+export const controlFields = {
+  deploy:
+    paths["/wamn_control/application/deploy"].post.requestBody.content["application/json"].schema.items.properties.value
+      .properties,
+  stop: paths["/wamn_control/application/stop"].post.requestBody.content["application/json"].schema.items.properties
+    .value.properties,
+  rollback:
+    paths["/wamn_control/application/rollback"].post.requestBody.content["application/json"].schema.items.properties
+      .value.properties,
+  diff: paths["/wamn_control/schema/diff"].post.requestBody.content["application/json"].schema.items.properties.value
+    .properties,
+  apply:
+    paths["/wamn_control/schema/apply"].post.requestBody.content["application/json"].schema.items.properties.value
+      .properties,
+  createProject:
+    paths["/wamn_control/project/create"].post.requestBody.content["application/json"].schema.items.properties.value
+      .properties,
+  inviteUser:
+    paths["/wamn_control/user/invite"].post.requestBody.content["application/json"].schema.items.properties.value
+      .properties,
+  grantMember:
+    paths["/wamn_control/member/grant"].post.requestBody.content["application/json"].schema.items.properties.value
+      .properties,
+  current:
+    paths["/wamn_control/control/mine"].get.responses["200"].content["application/json"].schema.items.oneOf[0]!
+      .properties.value!.properties,
+  environment:
+    paths["/wamn_control/environment/list"].get.responses["200"].content["application/json"].schema.items.oneOf[0]!
+      .properties.value!.properties.environments.items.properties,
+  member:
+    paths["/wamn_control/member/list"].get.responses["200"].content["application/json"].schema.items.oneOf[0]!
+      .properties.value!.properties.members.items.properties,
+  operation:
+    paths["/wamn_control/environment/operation_status"].get.responses["200"].content["application/json"].schema.items
+      .oneOf[0]!.properties.value!.properties,
+  user: paths["/wamn_control/user/list"].get.responses["200"].content["application/json"].schema.items.oneOf[0]!
+    .properties.value!.properties.users.items.properties,
+  status:
+    paths["/wamn_control/environment/status"].get.responses["200"].content["application/json"].schema.items.oneOf[0]!
+      .properties.value!.properties,
+};
+
 export const application = {
   deploy: bind("application.deploy", sdk.wamnControlApplicationDeploy_090),
   stop: bind("application.stop", sdk.wamnControlApplicationStop_090),

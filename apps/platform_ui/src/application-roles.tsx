@@ -3,7 +3,7 @@ import { Checkbox } from "@wfe/components";
 import { FieldError } from "@wfe/components/fields";
 import { createForm } from "@wfe/form";
 import { FormView } from "@wfe/generator";
-import { permission, role, type PermissionListResult } from "./application-client";
+import { applicationFields, permission, role, type PermissionListResult } from "./application-client";
 import { ConfirmAction } from "./confirm-action";
 import { MissingPage, Page, RecordLink } from "./page";
 import { Records } from "./records";
@@ -55,7 +55,12 @@ export function ApplicationRoles(props: ScreenProps & { overview?: boolean }) {
                 rowKey={(op) => op.operation}
                 refresh={refresh}
                 columns={[
-                  { id: "operation", header: "Operation", accessorKey: "operation", size: 420 },
+                  {
+                    id: "operation",
+                    header: applicationFields.permissions.operations.items.properties.operation.title,
+                    accessorKey: "operation",
+                    size: 420,
+                  },
                   ...lists.map((list) => ({
                     id: `role:${list.role}`,
                     header: list.role,
@@ -78,7 +83,7 @@ export function ApplicationRoles(props: ScreenProps & { overview?: boolean }) {
           refresh={refresh}
           create={{ label: "Create role", run: () => props.open(`${rolesPath}/create`) }}
           columns={[
-            { id: "role", header: "Role", accessorKey: "role" },
+            { id: "role", header: applicationFields.permissions.role.title, accessorKey: "role" },
             { id: "operations", header: "Granted operations", accessorFn: (list) => grantedOperations(list).length },
             { id: "actions", header: "Actions", size: 80, sortable: false, filterable: false },
           ]}
@@ -190,7 +195,12 @@ export function RolePermissions(props: ScreenProps) {
           rowKey={(op) => op.operation}
           refresh={refresh}
           columns={[
-            { id: "operation", header: "Operation", accessorKey: "operation", size: 420 },
+            {
+              id: "operation",
+              header: applicationFields.permissions.operations.items.properties.operation.title,
+              accessorKey: "operation",
+              size: 420,
+            },
             { id: "granted", header: "Granted", size: 150 },
           ]}
           cells={{
@@ -236,7 +246,7 @@ export function CreateRole(props: ScreenProps) {
       <FormView
         description={{
           id: "create-role",
-          fields: [{ field: "role", label: "Role", control: "text" }],
+          fields: [{ field: "role", label: applicationFields.createRole.role.title, control: "text" }],
           submit: { id: "create", label: "Create role" },
           actions: [{ id: "cancel", label: "Cancel", variant: "ghost" }],
         }}

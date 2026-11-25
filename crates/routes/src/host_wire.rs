@@ -66,6 +66,7 @@ fn openapi_schema(schema: &mut Value) {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ProjectCreateRequest {
+    #[schemars(title = "Project name")]
     pub project: String,
 }
 

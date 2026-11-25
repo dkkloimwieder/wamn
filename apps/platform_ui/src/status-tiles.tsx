@@ -1,6 +1,6 @@
 import { createMemo } from "solid-js";
 import { StatusTile, TileRow } from "@wfe/components";
-import type { EnvironmentStatusResult } from "./control-client";
+import { controlFields, type EnvironmentStatusResult } from "./control-client";
 
 export function EnvironmentTiles(props: { status?: EnvironmentStatusResult; error?: string }) {
   const complete = () => {
@@ -23,7 +23,7 @@ export function EnvironmentTiles(props: { status?: EnvironmentStatusResult; erro
   return (
     <TileRow role="region" aria-label="Environment status">
       <StatusTile
-        label="Host replicas"
+        label={controlFields.status.rollout.title}
         value={
           props.status
             ? `${props.status.rollout.ready_replicas} ready / ${props.status.rollout.replicas} total`
@@ -33,25 +33,25 @@ export function EnvironmentTiles(props: { status?: EnvironmentStatusResult; erro
         detail={props.error}
       />
       <StatusTile
-        label="Users with a role"
+        label={controlFields.status.users_with_role.title}
         value={props.status?.users_with_role ?? "Unknown"}
         state={props.status?.users_with_role == null ? "unknown" : "ok"}
         detail={props.error}
       />
       <StatusTile
-        label="Roles"
+        label={controlFields.status.roles.title}
         value={props.status?.roles ?? "Unknown"}
         state={props.status?.roles == null ? "unknown" : "ok"}
         detail={props.error}
       />
       <StatusTile
-        label="Memberships"
+        label={controlFields.status.memberships.title}
         value={props.status?.memberships ?? "Unknown"}
         state={props.status?.memberships == null ? "unknown" : "ok"}
         detail={props.error}
       />
       <StatusTile
-        label="Workloads"
+        label={controlFields.status.workloads.title}
         value={workloads() ? `${workloads()!.ready} ready / ${workloads()!.notReady} not ready` : "Unknown"}
         state={!workloads() ? "unknown" : workloads()!.notReady ? "warning" : "ok"}
         detail={props.error}

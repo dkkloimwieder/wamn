@@ -6,6 +6,7 @@ import { createForm } from "@wfe/form";
 import { FormView, type FormDescription } from "@wfe/generator";
 import {
   application,
+  controlFields,
   environment,
   operation,
   schema,
@@ -18,6 +19,8 @@ import { EnvironmentTiles } from "./status-tiles";
 import { Records } from "./records";
 import { value } from "./outcome";
 import type { ScreenProps } from "./shell";
+
+const workloadFields = controlFields.status.workloads.items.properties;
 
 const operationActions = {
   deploy: { label: "Deploy release", route: application.deploy.route, effect: "" },
@@ -92,6 +95,9 @@ function OperationControls(props: ScreenProps) {
             const needsApplication = selected !== "reset";
             const needsRevision = selected === "rollback";
             const needsRelease = selected !== "stop" && selected !== "reset" && !needsRevision;
+            const applicationField = needsApplication ? controlFields[selected].application : undefined;
+            const revisionField = needsRevision ? controlFields[selected].revision : undefined;
+            const releaseField = needsRelease ? controlFields[selected].release : undefined;
             const requiresRelease = selected === "deploy" || selected === "apply";
             const start = async (snapshot: typeof defaults) => {
               if (busy() || controller.signal.aborted || !props.holds(entry.route.operation, config.project)) return;
@@ -189,20 +195,26 @@ function OperationControls(props: ScreenProps) {
                       id: "environment-operation",
                       title: entry.label,
                       fields: [
-                        ...(needsApplication
-                          ? [{ field: "application", label: "Application", control: "text" } as const]
+                        ...(applicationField
+                          ? [{ field: "application", label: applicationField.title, control: "text" } as const]
                           : []),
-                        ...(needsRelease
+                        ...(releaseField
                           ? [
                               {
                                 field: "release",
-                                label: requiresRelease ? "Release digest" : "Release digest (optional)",
+                                label: requiresRelease ? releaseField.title : `${releaseField.title} (optional)`,
                                 control: "text",
                               } as const,
                             ]
                           : []),
-                        ...(needsRevision
-                          ? [{ field: "revision", label: "Revision (optional)", control: "text" } as const]
+                        ...(revisionField
+                          ? [
+                              {
+                                field: "revision",
+                                label: `${revisionField.title} (optional)`,
+                                control: "text",
+                              } as const,
+                            ]
                           : []),
                       ],
                       submit: { id: "start", label: `Start ${entry.label.toLowerCase()}` },
@@ -248,8 +260,10 @@ function OperationControls(props: ScreenProps) {
           {(current) => (
             <div role="region" aria-label="Operation status">
               <p>Job: {current().job}</p>
-              <p role="status">State: {current().state}</p>
-              <pre aria-label="Log tail">{current().log}</pre>
+              <p role="status">
+                {controlFields.operation.state.title}: {current().state}
+              </p>
+              <pre aria-label={controlFields.operation.log.title}>{current().log}</pre>
             </div>
           )}
         </Show>
@@ -332,7 +346,9 @@ export function Environment(
           }
         >
           <Show when={state()}>
-            <p>State: {state()}</p>
+            <p>
+              {controlFields.environment.state.title}: {state()}
+            </p>
           </Show>
           <EnvironmentTiles status={status()} />
           <OperationControls {...props} />
@@ -347,10 +363,10 @@ export function Environment(
             rows={status()?.workloads ?? []}
             rowKey={(entry) => entry.name}
             columns={[
-              { id: "name", header: "Workload", accessorKey: "name" },
+              { id: "name", header: workloadFields.name.title, accessorKey: "name" },
               {
                 id: "conditions",
-                header: "Conditions",
+                header: workloadFields.conditions.title,
                 accessorFn: (entry) => entry.conditions.length,
                 size: 350,
               },
@@ -363,8 +379,12 @@ export function Environment(
                 rows={cell.row.conditions}
                 rowKey={(entry) => entry.type as string}
                 columns={[
-                  { id: "type", header: "Condition", accessorKey: "type" },
-                  { id: "status", header: "State", accessorKey: "status" },
+                  { id: "type", header: workloadFields.conditions.items.properties.type.title, accessorKey: "type" },
+                  {
+                    id: "status",
+                    header: workloadFields.conditions.items.properties.status.title,
+                    accessorKey: "status",
+                  },
                 ]}
               />
             )}
@@ -380,9 +400,14 @@ export function Environment(
             rows={status()?.workloads ?? []}
             rowKey={(entry) => entry.name}
             columns={[
-              { id: "application", header: "Application", accessorKey: "application" },
-              { id: "package_digest", header: "Package digest", accessorKey: "package_digest", size: 150 },
-              { id: "revision", header: "Revision", accessorKey: "revision" },
+              { id: "application", header: workloadFields.application.title, accessorKey: "application" },
+              {
+                id: "package_digest",
+                header: workloadFields.package_digest.title,
+                accessorKey: "package_digest",
+                size: 150,
+              },
+              { id: "revision", header: workloadFields.revision.title, accessorKey: "revision" },
             ]}
             formats={{ package_digest: "short-hash" }}
           />

@@ -2,7 +2,15 @@ import { createSignal, onCleanup, Show, untrack } from "solid-js";
 import { FieldError } from "@wfe/components/fields";
 import { createForm } from "@wfe/form";
 import { FormView } from "@wfe/generator";
-import { permission, role, user, userRole, type PermissionListResult, type UserListResult } from "./application-client";
+import {
+  applicationFields,
+  permission,
+  role,
+  user,
+  userRole,
+  type PermissionListResult,
+  type UserListResult,
+} from "./application-client";
 import { ConfirmAction } from "./confirm-action";
 import { MissingPage, Page, RecordLink } from "./page";
 import { Records } from "./records";
@@ -52,9 +60,9 @@ export function ApplicationUsers(props: ScreenProps) {
           rowKey={(entry) => entry.id}
           refresh={refresh}
           columns={[
-            { id: "name", header: "User name", size: 220 },
-            { id: "email", header: "Email", accessorKey: "email", size: 280 },
-            { id: "id", header: "User ID", accessorKey: "id", size: 160 },
+            { id: "name", header: applicationFields.user.display_name.title, size: 220 },
+            { id: "email", header: applicationFields.user.email.title, accessorKey: "email", size: 280 },
+            { id: "id", header: applicationFields.user.id.title, accessorKey: "id", size: 160 },
           ]}
           formats={{ id: "short-hash" }}
           cells={{
@@ -80,7 +88,7 @@ export function ApplicationUsers(props: ScreenProps) {
                 run: () => props.open(`${applicationUsersPath}/${encodeURIComponent(current().id)}/grant`),
               }}
               columns={[
-                { id: "role", header: "Role", accessorFn: (name) => name },
+                { id: "role", header: applicationFields.user.roles.title, accessorFn: (name) => name },
                 { id: "actions", header: "Actions", size: 80, sortable: false, filterable: false },
               ]}
               details={(cell) => (
@@ -90,7 +98,13 @@ export function ApplicationUsers(props: ScreenProps) {
                   rows={operations(cell.row)}
                   rowKey={(op) => op.operation}
                   refresh={refresh}
-                  columns={[{ id: "operation", header: "Operation", accessorKey: "operation" }]}
+                  columns={[
+                    {
+                      id: "operation",
+                      header: applicationFields.permissions.operations.items.properties.operation.title,
+                      accessorKey: "operation",
+                    },
+                  ]}
                 />
               )}
               cells={{
@@ -176,7 +190,7 @@ export function GrantApplicationRole(props: ScreenProps) {
           <FormView
             description={{
               id: "grant-application-role",
-              fields: [{ field: "role", label: "Role", control: "select" }],
+              fields: [{ field: "role", label: applicationFields.grantRole.role.title, control: "select" }],
               submit: { id: "grant", label: "Grant role" },
               actions: [{ id: "cancel", label: "Cancel", variant: "ghost" }],
             }}

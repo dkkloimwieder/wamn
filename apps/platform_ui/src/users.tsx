@@ -7,6 +7,7 @@ import { createServerPage, Records } from "./records";
 import { emailError } from "./email";
 import { createForm } from "@wfe/form";
 import {
+  controlFields,
   environment,
   member,
   orgAdmin,
@@ -56,11 +57,11 @@ export function Users(props: ScreenProps): JSX.Element {
         rows={page.rows()}
         rowKey={(person) => person.principal_id}
         columns={[
-          { id: "name", header: "Display name", size: 180 },
-          { id: "email", header: "Email", accessorKey: "email", size: 250 },
-          { id: "principal_id", header: "User ID", accessorKey: "principal_id", size: 120 },
-          { id: "state", header: "State", accessorKey: "status", size: 170 },
-          { id: "org_admin", header: "Org admin", accessorKey: "org_admin", size: 120 },
+          { id: "name", header: controlFields.user.display_name.title, size: 180 },
+          { id: "email", header: controlFields.user.email.title, accessorKey: "email", size: 250 },
+          { id: "principal_id", header: controlFields.user.principal_id.title, accessorKey: "principal_id", size: 120 },
+          { id: "state", header: controlFields.user.status.title, accessorKey: "status", size: 170 },
+          { id: "org_admin", header: controlFields.user.org_admin.title, accessorKey: "org_admin", size: 120 },
         ]}
         formats={{ principal_id: "short-hash", org_admin: "boolean-symbol" }}
         cells={{
@@ -119,8 +120,8 @@ export function InviteUser(props: ScreenProps): JSX.Element {
           {
             id: "invite-user",
             fields: [
-              { field: "email", label: "Email", control: "custom" },
-              { field: "display_name", label: "Display name", control: "text" },
+              { field: "email", label: controlFields.inviteUser.email.title, control: "custom" },
+              { field: "display_name", label: controlFields.inviteUser.display_name.title, control: "text" },
             ],
             submit: { id: "invite-user", label: "Invite user" },
             actions: [{ id: "cancel", label: "Cancel", variant: "ghost" }],
@@ -283,14 +284,16 @@ export function User(props: ScreenProps & { table?: "projects" | "memberships" }
                 }
               >
                 <p>{current().email}</p>
-                <p>State: {current().status}</p>
+                <p>
+                  {controlFields.user.status.title}: {current().status}
+                </p>
                 <FormGrid columns={2}>
                   <Field>
-                    <Label>User ID</Label>
+                    <Label>{controlFields.user.principal_id.title}</Label>
                     <FieldValue value={current().principal_id} format="short-hash" />
                   </Field>
                   <Field>
-                    <Label>Org admin</Label>
+                    <Label>{controlFields.user.org_admin.title}</Label>
                     <FieldValue value={current().org_admin} format="boolean-symbol" />
                   </Field>
                 </FormGrid>
@@ -306,30 +309,44 @@ export function User(props: ScreenProps & { table?: "projects" | "memberships" }
                   rows={projectPage.rows()}
                   rowKey={(entry) => entry.project}
                   columns={[
-                    { id: "project", header: "Project", accessorKey: "project" },
-                    { id: "state", header: "State", accessorKey: "state" },
+                    {
+                      id: "project",
+                      header: controlFields.current.projects.items.properties.project.title,
+                      accessorKey: "project",
+                    },
+                    { id: "state", header: controlFields.environment.state.title, accessorKey: "state" },
                     {
                       id: "display_name",
-                      header: "Display name",
+                      header: controlFields.member.display_name.title,
                       accessorFn: (entry) => entry.member?.display_name,
                       size: 180,
                     },
-                    { id: "email", header: "Email", accessorFn: (entry) => entry.member?.email, size: 250 },
+                    {
+                      id: "email",
+                      header: controlFields.member.email.title,
+                      accessorFn: (entry) => entry.member?.email,
+                      size: 250,
+                    },
                     {
                       id: "principal_id",
-                      header: "User ID",
+                      header: controlFields.member.principal_id.title,
                       accessorFn: (entry) => entry.member?.principal_id,
                       size: 120,
                     },
-                    { id: "org_admin", header: "Org admin", accessorFn: (entry) => entry.member?.org_admin, size: 100 },
+                    {
+                      id: "org_admin",
+                      header: controlFields.member.org_admin.title,
+                      accessorFn: (entry) => entry.member?.org_admin,
+                      size: 100,
+                    },
                     {
                       id: "project_admin",
-                      header: "Project admin",
+                      header: controlFields.member.project_admin.title,
                       accessorFn: (entry) => entry.member?.project_admin ?? false,
                     },
                     {
                       id: "memberships",
-                      header: "Memberships",
+                      header: controlFields.member.environments.title,
                       accessorFn: (entry) => entry.member?.environments.length ?? 0,
                     },
                   ]}
@@ -400,9 +417,9 @@ export function User(props: ScreenProps & { table?: "projects" | "memberships" }
                   )}
                   rowKey={(env) => JSON.stringify([env.project, env.name])}
                   columns={[
-                    { id: "project", header: "Project" },
-                    { id: "env", header: "Environment" },
-                    { id: "state", header: "State", accessorKey: "state" },
+                    { id: "project", header: controlFields.current.projects.items.properties.project.title },
+                    { id: "env", header: controlFields.grantMember.env.title },
+                    { id: "state", header: controlFields.environment.state.title, accessorKey: "state" },
                     { id: "revoke", header: "Action", size: 80, sortable: false, filterable: false },
                   ]}
                   cells={{
