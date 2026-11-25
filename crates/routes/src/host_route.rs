@@ -940,6 +940,7 @@ const ROUTES: &[HostRoute] = &[
             TransactionInvariant("referenced", None),
             TransactionInvariant("resource_in_use", None),
             TransactionInvariant("unsupported_auth_type", None),
+            TransactionInvariant("workload_not_ready", None),
         ],
     },
     HostRoute {

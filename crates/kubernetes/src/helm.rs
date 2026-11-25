@@ -11,7 +11,7 @@ use std::{
 use tokio::time::Instant;
 
 use crate::Target;
-use plan::{Recovery, recovery};
+use plan::{Recovery, application_recovery_revision, recovery};
 
 /// The Helm storage namespace for releases owned by an org.
 pub fn org_release_namespace(org_namespace: &str) -> Cow<'_, str> {
@@ -147,8 +147,53 @@ pub enum Wait {
         timeout: Duration,
         jobs: bool,
     },
-    /// Use the watcher and cap the Helm timeout at this deadline.
+    /// Use the watcher for application operations bounded by the deploy Job deadline.
     WatcherUntil(Instant),
+}
+
+fn timeout_seconds(operation: &str, wait: Wait, now: Instant) -> anyhow::Result<u64> {
+    const DEFAULT_TIMEOUT_SECONDS: u64 = 600;
+    const MINIMUM_UPGRADE_BUDGET_SECONDS: u64 = 120;
+    let seconds = match wait {
+        Wait::WatcherUntil(deadline) => {
+            let remaining = deadline.saturating_duration_since(now).as_secs();
+            let budget = if operation == "upgrade" {
+                ensure!(
+                    remaining >= MINIMUM_UPGRADE_BUDGET_SECONDS,
+                    "at least {MINIMUM_UPGRADE_BUDGET_SECONDS}s must remain for Helm upgrade and rollback ({remaining}s left)"
+                );
+                // Helm gives its rollback or failed-install cleanup this same timeout.
+                remaining / 2
+            } else {
+                remaining
+            };
+            budget.min(DEFAULT_TIMEOUT_SECONDS)
+        }
+        Wait::None | Wait::Watcher => DEFAULT_TIMEOUT_SECONDS,
+        Wait::Platform { timeout, .. } => timeout.as_secs(),
+    };
+    ensure!(seconds > 0, "no time left for Helm {operation}");
+    Ok(seconds)
+}
+
+fn mutation_arguments<'a>(
+    mut args: Vec<&'a OsStr>,
+    operation: &str,
+    wait: Wait,
+    timeout: &'a str,
+) -> Vec<&'a OsStr> {
+    if !matches!(wait, Wait::None) {
+        args.push(OsStr::new("--wait=watcher"));
+    }
+    if operation == "upgrade" {
+        match wait {
+            Wait::WatcherUntil(_) => args.push(OsStr::new("--rollback-on-failure")),
+            Wait::Platform { jobs: true, .. } => args.push(OsStr::new("--wait-for-jobs")),
+            _ => {}
+        }
+    }
+    args.extend([OsStr::new("--timeout"), OsStr::new(timeout)]);
+    args
 }
 
 async fn mutation_output(
@@ -159,33 +204,16 @@ async fn mutation_output(
     arguments: &[&OsStr],
     wait: Wait,
 ) -> anyhow::Result<Output> {
-    const DEFAULT_TIMEOUT_SECONDS: u64 = 600;
-    let seconds = match wait {
-        Wait::WatcherUntil(deadline) => deadline
-            .saturating_duration_since(Instant::now())
-            .as_secs()
-            .min(DEFAULT_TIMEOUT_SECONDS),
-        Wait::None | Wait::Watcher => DEFAULT_TIMEOUT_SECONDS,
-        Wait::Platform { timeout, .. } => timeout.as_secs(),
-    };
-    ensure!(
-        seconds > 0,
-        "no time left to {operation} Helm release {namespace}/{name}"
-    );
-    let timeout = format!("{seconds}s");
     let mut args = target_arguments(
         target,
         namespace,
         &[OsStr::new(operation), OsStr::new(name)],
     );
     args.extend_from_slice(arguments);
-    if !matches!(wait, Wait::None) {
-        args.push(OsStr::new("--wait=watcher"));
-    }
-    if operation == "upgrade" && matches!(wait, Wait::Platform { jobs: true, .. }) {
-        args.push(OsStr::new("--wait-for-jobs"));
-    }
-    args.extend([OsStr::new("--timeout"), OsStr::new(&timeout)]);
+    let seconds = timeout_seconds(operation, wait, Instant::now())
+        .with_context(|| format!("prepare Helm {operation} for {namespace}/{name}"))?;
+    let timeout = format!("{seconds}s");
+    let args = mutation_arguments(args, operation, wait, &timeout);
     output(&args).await
 }
 
@@ -225,8 +253,8 @@ pub async fn update_values(
     stdout(output, "helm").map(drop)
 }
 
-/// Install or upgrade one Helm release and leave failed revisions available for inspection.
-/// Helm applies the values files in the given order.
+/// Install or upgrade one release, applying the values files in order.
+/// A Job-bounded upgrade asks Helm to roll back on failure.
 pub async fn upgrade(
     target: &Target,
     namespace: &str,
@@ -252,16 +280,14 @@ pub async fn upgrade(
         Install::ExistingNamespace => {}
     }
     let output = mutation_output(target, namespace, name, "upgrade", &arguments, wait).await?;
+    // Helm reports the upgrade error and any rollback error together on stderr.
     stdout(output, "helm").map(drop)
 }
 
-/// Clear a pending operation on one application's release (wamn-jovpg).
+/// Recover an interrupted release operation under its lifecycle lock.
 ///
-/// Only the apply of this application writes its release, and it holds the
-/// install lock, so a pending operation here belongs to a writer that died,
-/// for example an install Job deleted while Helm waited. Helm refuses every
-/// later upgrade with "another operation (install/upgrade/rollback) is in
-/// progress" until the pending revision is cleared.
+/// A Job-bounded application deploy also recovers a failed revision left by
+/// interrupted cleanup. Other callers recover pending operations only.
 ///
 /// # Errors
 ///
@@ -273,7 +299,8 @@ pub async fn recover_pending(
     wait: Wait,
 ) -> anyhow::Result<()> {
     let filter = format!("^{name}$");
-    let listed = run_text(&target_arguments(
+    let application = matches!(wait, Wait::WatcherUntil(_));
+    let mut arguments = target_arguments(
         target,
         namespace,
         &[
@@ -284,8 +311,11 @@ pub async fn recover_pending(
             "-o".as_ref(),
             "json".as_ref(),
         ],
-    ))
-    .await?;
+    );
+    if application {
+        arguments.push("--failed".as_ref());
+    }
+    let listed = run_text(&arguments).await?;
     let releases: Vec<serde_json::Value> =
         serde_json::from_str(&listed).context("decode helm list")?;
     let Some(status) = releases
@@ -295,8 +325,29 @@ pub async fn recover_pending(
     else {
         return Ok(());
     };
-    match recovery(status) {
+    match recovery(status, application) {
         Some(Recovery::Uninstall) => uninstall(target, namespace, name, wait).await,
+        Some(Recovery::Rollback) if application => {
+            let history = run_text(&target_arguments(
+                target,
+                namespace,
+                &[
+                    "history".as_ref(),
+                    name.as_ref(),
+                    "-o".as_ref(),
+                    "json".as_ref(),
+                ],
+            ))
+            .await?;
+            let history =
+                serde_json::from_str::<Vec<Value>>(&history).context("decode helm history")?;
+            match application_recovery_revision(&history)
+                .with_context(|| format!("recover Helm release {namespace}/{name}"))?
+            {
+                Some(revision) => rollback(target, namespace, name, Some(revision), wait).await,
+                None => uninstall(target, namespace, name, wait).await,
+            }
+        }
         Some(Recovery::Rollback) => rollback(target, namespace, name, None, wait).await,
         None => Ok(()),
     }
@@ -393,13 +444,72 @@ pub(crate) async fn project_release_exists(target: &Target, release: &str) -> an
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
-    fn only_a_pending_operation_is_recovered() {
-        assert_eq!(recovery("pending-install"), Some(Recovery::Uninstall));
-        assert_eq!(recovery("pending-upgrade"), Some(Recovery::Rollback));
-        assert_eq!(recovery("pending-rollback"), Some(Recovery::Rollback));
-        assert_eq!(recovery("deployed"), None);
-        assert_eq!(recovery("failed"), None);
+    fn application_upgrade_requests_rollback_with_the_watcher() {
+        let wait = Wait::WatcherUntil(Instant::now() + Duration::from_secs(120));
+        let arguments = mutation_arguments(Vec::new(), "upgrade", wait, "60s");
+        assert!(arguments.contains(&OsStr::new("--rollback-on-failure")));
+        assert!(arguments.contains(&OsStr::new("--wait=watcher")));
+        assert!(
+            arguments
+                .windows(2)
+                .any(|pair| pair == ["--timeout", "60s"])
+        );
+
+        for (operation, wait) in [
+            ("rollback", wait),
+            ("uninstall", wait),
+            ("upgrade", Wait::None),
+        ] {
+            let arguments = mutation_arguments(Vec::new(), operation, wait, "60s");
+            assert!(!arguments.contains(&OsStr::new("--rollback-on-failure")));
+        }
+    }
+
+    #[test]
+    fn application_upgrade_reserves_rollback_time_and_requires_a_minimum_budget() {
+        let now = Instant::now();
+        let timeout = |operation, remaining| {
+            let wait = Wait::WatcherUntil(now + Duration::from_secs(remaining));
+            timeout_seconds(operation, wait, now)
+        };
+        assert!(timeout("upgrade", 119).is_err());
+        assert_eq!(timeout("upgrade", 120).unwrap(), 60);
+        assert_eq!(timeout("upgrade", 123).unwrap(), 61);
+        assert_eq!(timeout("upgrade", 1800).unwrap(), 600);
+        assert_eq!(timeout("rollback", 119).unwrap(), 119);
+        assert_eq!(timeout("uninstall", 119).unwrap(), 119);
+    }
+
+    #[test]
+    fn pending_and_failed_operations_are_recovered() {
+        assert_eq!(recovery("pending-install", true), Some(Recovery::Uninstall));
+        assert_eq!(recovery("pending-upgrade", true), Some(Recovery::Rollback));
+        assert_eq!(recovery("pending-rollback", true), Some(Recovery::Rollback));
+        assert_eq!(recovery("deployed", true), None);
+        assert_eq!(recovery("failed", false), None);
+        assert_eq!(recovery("failed", true), Some(Recovery::Rollback));
+    }
+
+    #[test]
+    fn application_recovery_restores_the_last_success_after_an_interrupted_rollback() {
+        let history = [
+            json!({"revision":1,"status":"superseded","description":"Install complete"}),
+            json!({"revision":2,"status":"superseded","description":"Upgrade complete"}),
+            json!({"revision":3,"status":"superseded","description":"Upgrade \"app\" failed: timeout"}),
+            json!({"revision":4,"status":"failed","description":"Rollback \"app\" failed: update"}),
+            json!({"revision":5,"status":"pending-rollback","description":"Rollback to 2"}),
+        ];
+        assert_eq!(application_recovery_revision(&history).unwrap(), Some(2));
+    }
+
+    #[test]
+    fn application_recovery_uninstalls_a_failed_first_install() {
+        let first = json!({"revision":1,"status":"failed"});
+        assert_eq!(application_recovery_revision(&[first]).unwrap(), None);
+        let later = json!({"revision":2,"status":"failed"});
+        assert!(application_recovery_revision(&[later]).is_err());
     }
 }

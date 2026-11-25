@@ -400,9 +400,10 @@ A source deploy builds and publishes once. A digest deploy starts with the publi
 Both forms submit one Job. The worker resolves the package closure and environment bindings under the lifecycle lock.
 It refuses if an enabled workflow calls a sibling or export absent from the candidate.
 It allows up to 120 seconds for the project database to accept a SQL connection.
-It applies pending SQL and creates the application principals before running `helm upgrade --wait=watcher`.
-Deploy preserves installed data. Write migrations that remain compatible with the code already running.
-If the Helm upgrade fails, the SQL that committed remains installed. Retry with the same package digest after fixing the failure.
+It applies pending SQL and creates the application principals before running `helm upgrade --wait=watcher --rollback-on-failure`.
+The worker starts the Helm upgrade only if at least 120 seconds remain in the Job. Helm gets at most half the remaining time for the upgrade and the same timeout for rollback.
+If Helm detects a failed upgrade, it attempts to restore the previous release. The operation reports the upgrade failure and any rollback failure.
+Committed migrations remain installed. Application developers choose schema compatibility and migrate forward if the restored code cannot use the migrated schema. See [Application schema changes](../application-schema-changes.md).
 Environment apply refuses unfinished runs in the selected application.
 Environment delete checks all applications in the project environment unless you pass `--data`.
 If the lifecycle lock session fails, the operation stops and returns an error.
@@ -603,6 +604,7 @@ Each verb reads its JSON request from `--file`.
 The request names the project, and connection requests also name the environment in `env`.
 The first connection write reads the credential value from `--credential-file`, except for authentication type `none`.
 `connection set-credential` reads later values from that flag too.
+`connection delete` returns `workload_not_ready` if any deployed application in the selected project environment lacks a true Ready condition.
 
 ### Integration write interfaces
 

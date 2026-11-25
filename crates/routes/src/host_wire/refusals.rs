@@ -122,4 +122,7 @@ pub enum DeclaredRefusal {
     },
     WorkflowVersionExists {},
     WorkflowVersionNotFound {},
+    WorkloadNotReady {
+        field: Value,
+    },
 }

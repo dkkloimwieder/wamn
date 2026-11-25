@@ -12,6 +12,7 @@ Status reports N after that rollback. Use the same number with `wamn rollback --
 Without an explicit revision, the worker selects the newest earlier revision whose manifest contains its own revision number.
 The worker reads `route.config` from the target revision's saved values to check enabled workflows before it runs Helm rollback.
 Application upgrades and rollbacks use `--wait=watcher`. The org worker Role grants `list` and `watch` on the non-Secret resources the watcher observes.
+Application upgrades also use `--rollback-on-failure`. Automatic and manual rollback both keep committed SQL migrations.
 
 Deploy uses the `workflow` NATS binding for the workflow service. It adds the `ingress` binding when the application declares Data change handlers.
 

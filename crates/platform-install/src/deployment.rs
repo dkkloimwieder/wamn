@@ -41,6 +41,7 @@ pub async fn prepare_host_upgrade<'a>(
 }
 
 /// Upgrade one application with SQL and workflow checks already complete.
+/// Helm reserves time for rollback within the deploy Job deadline.
 pub async fn apply_application(
     target: &Target,
     chart: &Path,
@@ -53,14 +54,15 @@ pub async fn apply_application(
     std::fs::write(&path, serde_yaml::to_string(values)?)?;
     let namespace = helm::org_release_namespace(&target.namespace);
     timeout_at(deadline, async {
-        helm::recover_pending(target, &namespace, name, Wait::Watcher).await?;
+        let wait = Wait::WatcherUntil(deadline);
+        helm::recover_pending(target, &namespace, name, wait).await?;
         helm::upgrade(
             target,
             &namespace,
             &chart.join("platform/application"),
             name,
             &[&path],
-            Wait::WatcherUntil(deadline),
+            wait,
             Install::SkipCrds,
         )
         .await

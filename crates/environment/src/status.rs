@@ -113,7 +113,8 @@ pub fn runtime_status<'a>(
     })
 }
 
-/// Read the declared application of each workload in one project environment.
+/// Read application bindings when every workload in the project environment is Ready.
+/// Returns `None` while any of those workloads lacks a true Ready condition.
 ///
 /// # Errors
 /// Returns an error if a matching workload lacks a valid application for this coordinate.
@@ -122,8 +123,19 @@ pub fn applications<'a>(
     project: &ProjectId,
     env: &EnvName,
     workloads: impl IntoIterator<Item = Workload<'a>>,
-) -> anyhow::Result<Vec<ApplicationConfig>> {
-    project_workloads(org, project, env, workloads)
+) -> anyhow::Result<Option<Vec<ApplicationConfig>>> {
+    let workloads = project_workloads(org, project, env, workloads).collect::<Vec<_>>();
+    if workloads.iter().any(|workload| {
+        !workload.data["status"]["conditions"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(|condition| condition["type"] == "Ready" && condition["status"] == "True")
+    }) {
+        return Ok(None);
+    }
+    workloads
+        .into_iter()
         .map(|workload| {
             let components = workload.data["spec"]["template"]["spec"]["components"]
                 .as_array()
@@ -143,7 +155,8 @@ pub fn applications<'a>(
             );
             Ok(application)
         })
-        .collect()
+        .collect::<anyhow::Result<_>>()
+        .map(Some)
 }
 
 /// Update the system first on activation, and the project databases first on inactivation.

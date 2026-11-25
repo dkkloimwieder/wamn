@@ -4,5 +4,6 @@ WAMN runs application operations from declared packages, compiled components, an
 
 - [Architecture](architecture/README.md): the current system, contracts, ownership, and limitations.
 - [Operations](operations/README.md): development, builds, tests, and deployment commands.
+- [Application schema changes](application-schema-changes.md): migration compatibility, package versions, and recovery after a failed deploy.
 - [Testing](testing/README.md): methods, expected observations, and limits.
 - [Crate structure](structure.md): the rules for crate classes, traits, SQL, names and code.
