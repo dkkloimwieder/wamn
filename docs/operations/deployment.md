@@ -105,6 +105,7 @@ An inactive membership in another org also blocks the invitation.
 Run `wamn org create <org> --owner <email>` with the admin kubeconfig.
 On kind, the command copies the registry entry into the org's `wamn-registry-pull` Secret.
 The command installs the org chart with public platform settings. Its platform Job writes the control and apply passwords to their org Secrets before the invitation Job runs.
+The Job records its start and result as `org_create` in the system journal, including failures before the org is registered.
 For local OAuth encryption, the same Job generates a separate 32-byte key in `<org>/wamn-oauth` if the `key` entry is absent. Cloud KMS uses no org OAuth Secret. [Org chart](../../deploy/charts/org/README.md)
 
 If the owner email belongs to another org, control refuses the invitation with HTTP 409.

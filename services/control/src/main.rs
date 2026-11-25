@@ -82,16 +82,17 @@ async fn main() -> anyhow::Result<()> {
             wamn_platform_install::provision_system::provision_system(&request).await
         }
         Command::ProvisionOrg { org, database } => {
-            let database = wamn_postgres::read_connection_config(&database).await?;
-            let api = wamn_kubernetes::client::KubernetesApi::in_cluster()?;
-            let oauth_encryption = wamn_platform_install::org_secrets::oauth_encryption().await?;
-            wamn_platform_install::provision_org::provision_org(
-                &database,
-                &org,
-                &oauth_encryption,
-                &api,
-            )
-            .await
+            let database = wamn_postgres::read_connection_config(&database)
+                .await?
+                .to_json()?;
+            let setup = async {
+                let api = wamn_kubernetes::client::KubernetesApi::in_cluster()?;
+                let oauth_encryption =
+                    wamn_platform_install::org_secrets::oauth_encryption().await?;
+                Ok((api, oauth_encryption))
+            }
+            .await;
+            wamn_platform_install::provision_org::provision_org(&database, &org, setup).await
         }
         Command::InviteOrgOwner { org, owner } => {
             wamn_control::first_owner::invite(&org, &owner).await

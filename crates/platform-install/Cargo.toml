@@ -10,7 +10,7 @@ hex.workspace = true
 postgres-protocol.workspace = true
 sha2.workspace = true
 url.workspace = true
-sqlx = { workspace = true, features = ["migrate", "postgres", "runtime-tokio", "tls-rustls"] }
+sqlx = { workspace = true, features = ["migrate", "postgres", "runtime-tokio", "tls-rustls", "uuid"] }
 wamn-kubernetes.workspace = true
 tempfile.workspace = true
 wamn-oci.workspace = true
@@ -23,13 +23,13 @@ serde_yaml.workspace = true
 tokio = { workspace = true, features = ["time", "fs", "io-util", "macros"] }
 wamn-digest.workspace = true
 wamn-postgres.workspace = true
+wamn-principal.workspace = true
 wamn-registry.workspace = true
 
 [dev-dependencies]
 wamn-environment.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 wamn-identity-protocol.workspace = true
-wamn-principal.workspace = true
 wamn-test-infrastructure.workspace = true
 
 [lints]

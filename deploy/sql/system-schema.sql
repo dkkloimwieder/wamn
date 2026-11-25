@@ -648,9 +648,13 @@ CREATE TABLE provisioning.platform_event (
     event_type text NOT NULL REFERENCES registry.platform_event_type (code),
     outcome text NOT NULL REFERENCES registry.platform_event_outcome (code),
     principal_id uuid NOT NULL REFERENCES identity.principals (id),
-    org text NOT NULL REFERENCES registry.orgs (id),
-    env text,
-    project text,
+    org text NOT NULL CHECK (org ~ '^[a-z0-9]+(-[a-z0-9]+)*$'
+                             AND char_length(org) <= 40
+                             AND org <> 'wamn' AND org NOT LIKE 'wamn-%'),
+    env text CHECK (env ~ '^[a-z0-9]+(-[a-z0-9]+)*$' AND char_length(env) <= 40),
+    project text CHECK (project ~ '^[a-z0-9]+(-[a-z0-9]+)*$'
+                        AND char_length(project) <= 40
+                        AND project <> 'wamn' AND project NOT LIKE 'wamn-%'),
     application text,
     package_digest text CHECK (package_digest ~ '^sha256:[0-9a-f]{64}$'),
     helm_revision integer,
@@ -658,9 +662,7 @@ CREATE TABLE provisioning.platform_event (
     job_name text,
     failure_summary text CHECK (
         failure_summary IS NULL OR (outcome = 'failed' AND char_length(failure_summary) <= 500)
-    ),
-    FOREIGN KEY (org, env) REFERENCES registry.environments (org, env),
-    FOREIGN KEY (org, project) REFERENCES registry.projects (org, id)
+    )
 );
 CREATE INDEX platform_event_command_id ON provisioning.platform_event (command_id);
 CREATE INDEX platform_event_org_env_occurred_at ON provisioning.platform_event (org, env, occurred_at);

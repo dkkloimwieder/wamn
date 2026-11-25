@@ -4,11 +4,15 @@ use anyhow::Context as _;
 use ring::rand::{SecureRandom as _, SystemRandom};
 use std::fmt;
 use wamn_kubernetes::client::KubernetesApi;
-use wamn_postgres::database::ConnectionConfig;
+use wamn_principal::PlatformComponent;
 use wamn_registry::OrgId;
 use wamn_role::LoginName;
 
-use crate::provision_system::connect_system_database;
+use crate::{
+    org_install::{PLATFORM, PROVISION_JOB},
+    platform_event::{Command, EventType, Outcome, record},
+    provision_system::connect_system_database,
+};
 
 pub const CONTROL_SECRET: &str = "wamn-control-db";
 pub const APPLY_SECRET: &str = "wamn-apply-db";
@@ -36,14 +40,73 @@ pub fn apply_login(org: &OrgId, database: &str) -> LoginName {
     )
 }
 
-/// Initialize the local OAuth key if needed, record the org, and rotate both logins.
+/// Provision the org's credentials and record the Job's start and result.
+///
+/// # Errors
+///
+/// Returns an error if database access, journal writes or Secret provisioning fail.
+/// A Job setup error is recorded after the system database can be reached.
 pub async fn provision_org(
-    database: &ConnectionConfig,
+    database: &str,
+    org: &OrgId,
+    setup: anyhow::Result<(KubernetesApi, serde_json::Value)>,
+) -> anyhow::Result<()> {
+    let (_, database_name) = wamn_postgres::identity(database)?;
+    let mut connection = connect_system_database(database)
+        .await
+        .context("connect to the system database for org provisioning")?;
+    let command = Command {
+        id: sqlx::query_scalar("SELECT gen_random_uuid()")
+            .fetch_one(&mut connection)
+            .await
+            .context("allocate the org provisioning command ID")?,
+        event_type: EventType::OrgCreate,
+        principal_id: PlatformComponent::Provisioning.principal_id(),
+        env: None,
+        project: None,
+        application: None,
+        package_digest: None,
+        helm_revision: None,
+    };
+    let job = Some((PLATFORM, PROVISION_JOB));
+    record(&mut connection, org, &command, Outcome::Started, job).await?;
+    let result = match setup {
+        Ok((secrets, oauth_encryption)) => {
+            provision(
+                &mut connection,
+                &database_name,
+                org,
+                &oauth_encryption,
+                &secrets,
+            )
+            .await
+        }
+        Err(error) => Err(error),
+    };
+    let outcome = if result.is_ok() {
+        Outcome::Succeeded
+    } else {
+        Outcome::Failed("The org provisioning Job failed.")
+    };
+    let recorded = record(&mut connection, org, &command, outcome, job).await;
+    match (result, recorded) {
+        (Ok(()), recorded) => recorded,
+        (Err(error), Ok(())) => Err(error),
+        (Err(error), Err(journal)) => Err(error.context(format!(
+            "also failed to record the org provisioning outcome: {journal:#}"
+        ))),
+    }
+}
+
+async fn provision(
+    connection: &mut sqlx::PgConnection,
+    database: &str,
     org: &OrgId,
     oauth_encryption: &serde_json::Value,
     secrets: &KubernetesApi,
 ) -> anyhow::Result<()> {
-    let mut locked = lock_org(database, org).await?;
+    let control = control_login(org, database);
+    crate::platform_database::lock_org_login(connection, &control).await?;
     if oauth_encryption["provider"] == "local"
         && !secrets
             .secret_contains_key(org.as_str(), OAUTH_SECRET, "key")
@@ -59,7 +122,7 @@ pub async fn provision_org(
             .await?;
     }
 
-    for login in create_org_logins(&mut locked, org, &database.database).await? {
+    for login in create_org_logins(connection, org, database).await? {
         secrets
             .patch_namespaced_secret_data(
                 org.as_str(),
@@ -69,7 +132,6 @@ pub async fn provision_org(
             )
             .await?;
     }
-    drop(locked);
     Ok(())
 }
 
@@ -90,16 +152,6 @@ impl fmt::Debug for OrgLogin {
             .field("secret", &self.secret)
             .finish_non_exhaustive()
     }
-}
-
-/// Open the dedicated Postgres session that holds the org advisory lock.
-async fn lock_org(database: &ConnectionConfig, org: &OrgId) -> anyhow::Result<sqlx::PgConnection> {
-    let mut connection = connect_system_database(&database.to_json()?)
-        .await
-        .context("connect to the system database for org provisioning")?;
-    let control = control_login(org, &database.database);
-    crate::platform_database::lock_org_login(&mut connection, &control).await?;
-    Ok(connection)
 }
 
 /// Create or rotate the org's control and apply logins and record the org, in one transaction.

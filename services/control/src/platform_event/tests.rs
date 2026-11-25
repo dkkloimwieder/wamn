@@ -31,14 +31,6 @@ async fn a_platform_command_keeps_two_immutable_events() -> anyhow::Result<()> {
     let mut control = wamn_postgres::connect(login_url(CONTROL_SECRET)?.as_str()).await?;
     let mut worker = wamn_postgres::connect(login_url(APPLY_SECRET)?.as_str()).await?;
     let actor = PlatformComponent::Provisioning.principal_id();
-    let mut registration =
-        wamn_postgres::provisioning_transaction::provisioning_transaction(&mut admin).await?;
-    sqlx::query("INSERT INTO registry.projects (org, id) VALUES ($1, 'stock')")
-        .bind(org.as_str())
-        .execute(&mut *registration)
-        .await?;
-    registration.commit().await?;
-
     let command = command(
         "environment.configure",
         actor,
@@ -91,7 +83,7 @@ async fn a_platform_command_keeps_two_immutable_events() -> anyhow::Result<()> {
         assert_eq!(row.0, "environment_apply");
         assert_eq!(row.2, uuid::Uuid::from(actor));
         assert_eq!(row.3, org.as_str());
-        assert_eq!(row.4, None, "the environment is not registered");
+        assert_eq!(row.4.as_deref(), Some("dev"));
         assert_eq!(row.5.as_deref(), Some("stock"));
     }
     assert_eq!(
@@ -134,6 +126,86 @@ async fn a_platform_command_keeps_two_immutable_events() -> anyhow::Result<()> {
                 .as_deref(),
             Some("55000")
         );
+    }
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires: docker"]
+async fn org_provisioning_journals_success_and_early_failure() -> anyhow::Result<()> {
+    use hyper::{Method, service::service_fn};
+    use hyper_util::rt::TokioIo;
+    use serde_json::json;
+    use std::convert::Infallible;
+    use wamn_http::body::json_response;
+    use wamn_kubernetes::client::KubernetesApi;
+    use wamn_platform_install::provision_org::provision_org;
+
+    let postgres = start_postgres().await?;
+    let mut cluster = wamn_postgres::connect(postgres.admin_url()).await?;
+    sqlx::raw_sql("CREATE ROLE wamn_apply NOLOGIN NOINHERIT")
+        .execute(&mut cluster)
+        .await?;
+    let url = wamn_test_infrastructure::identity::system(&postgres).await;
+    let mut admin = wamn_postgres::connect(url.as_str()).await?;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let server_uri = format!("http://{}", listener.local_addr()?);
+    let mut server = tokio::task::JoinSet::<anyhow::Result<()>>::new();
+    server.spawn(async move {
+        loop {
+            let (stream, _) = listener.accept().await?;
+            let fixture = service_fn(|request: hyper::Request<hyper::body::Incoming>| async move {
+                let response = if request.method() == Method::GET {
+                    json_response(403, &json!({"kind":"Status","status":"Failure","reason":"Forbidden","code":403}))
+                } else {
+                    json_response(200, &json!({"apiVersion":"v1","kind":"Secret","metadata":{"name":"fixture"}}))
+                };
+                Ok::<_, Infallible>(response)
+            });
+            hyper::server::conn::http1::Builder::new()
+                .keep_alive(false)
+                .serve_connection(TokioIo::new(stream), fixture)
+                .await?;
+        }
+    });
+
+    for (name, oauth, expected) in [
+        ("refused-org", json!({"provider":"local"}), "failed"),
+        (
+            "created-org",
+            json!({"provider":"gcp","project":"fixture","region":"us-central1"}),
+            "succeeded",
+        ),
+    ] {
+        let org = name.parse()?;
+        let mut config = kube::Config::new(server_uri.parse()?);
+        config.default_namespace = "platform".into();
+        let secrets = KubernetesApi::from_config(config)?;
+        let result = provision_org(url.as_str(), &org, Ok((secrets, oauth))).await;
+        let registered: bool =
+            sqlx::query_scalar("SELECT EXISTS (SELECT FROM registry.orgs WHERE id = $1)")
+                .bind(name)
+                .fetch_one(&mut admin)
+                .await?;
+        assert_eq!(
+            registered,
+            expected == "succeeded",
+            "provisioning result: {result:?}"
+        );
+        assert_eq!(result.is_ok(), registered, "{result:?}");
+        let events = sqlx::query_as::<_, (uuid::Uuid, uuid::Uuid, String)>(
+            "SELECT command_id, principal_id, outcome
+             FROM provisioning.platform_event WHERE event_type = 'org_create' AND org = $1 ORDER BY id",
+        )
+        .bind(name)
+        .fetch_all(&mut admin)
+        .await?;
+        let [started, ended] = events.as_slice() else {
+            panic!("expected two events for {name}, got {events:?}");
+        };
+        let actor = uuid::Uuid::from(PlatformComponent::Provisioning.principal_id());
+        assert_eq!(started, &(ended.0, actor, "started".to_owned()));
+        assert_eq!(ended, &(started.0, actor, expected.to_owned()));
     }
     Ok(())
 }

@@ -12,10 +12,10 @@ use crate::{
     provision_org::{CONTROL_AUDIENCE, INVITATION_ACCOUNT, ORG_INPUTS_DIR, SQL_ACCOUNT},
 };
 
-const PLATFORM: &str = "platform";
+pub(crate) const PLATFORM: &str = "platform";
 const ORG_INPUTS: &str = "wamn-org-inputs";
 const SYSTEM_SQL_CONFIG: &str = "wamn-system-sql";
-const PROVISION_JOB: &str = "wamn-provision-org";
+pub(crate) const PROVISION_JOB: &str = "wamn-provision-org";
 const SQL_CONFIG_PATH: &str = "/etc/wamn/system-sql/database.json";
 const DEADLINE: Duration = Duration::from_secs(300);
 
