@@ -592,7 +592,7 @@ The gap record is one row per gap in `registry.capture_gap`. Its key is the `reg
 The recovery reader verifies the event envelope against its `Nats-Msg-Id`.
 The id carries the Postgres system identifier, the timeline containing the commit LSN,
 the commit LSN and the row ordinal. Recovery uses that commit LSN.
-It skips derived events and old event shapes.
+It skips records with an invalid CDC envelope or message ID.
 
 After issue 1, the confirmed position can sit past the last commit, so `start_at` is an earlier bound than the true gap start. The resync then reads more rows than the gap changed, and misses none.
 

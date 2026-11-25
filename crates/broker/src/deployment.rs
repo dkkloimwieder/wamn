@@ -89,7 +89,7 @@ async fn last_cdc_event(
                     .get_all(NATS_MESSAGE_ID)
                     .map(async_nats::HeaderValue::as_str)
                     .collect::<Vec<_>>();
-                // Derived records and old coordinates do not establish a CDC position.
+                // A record with an invalid CDC envelope or message ID does not establish a CDC position.
                 if let Ok(SourceEvent::Cdc(envelope)) = SourceEvent::decode(&message.payload)
                     && verified_source_event_id(project, env, &envelope, &ids).is_some()
                 {

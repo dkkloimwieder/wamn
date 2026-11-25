@@ -18,8 +18,7 @@ WIT operation exports replace them with hyphens.
 Application names are nonempty SQL text. They have no character-class rule.
 `wamn_catalog::ApplicationName` refuses empty text and NUL bytes. It preserves all other text.
 
-Derived events name their application. Captured database events name their package.
-The derived event record keeps its published `package_id` JSON key for the application name.
+Captured database events name their package in the `package_id` JSON field.
 Run records and trace fields also keep their published wire spelling.
 
 Authored declaration names use `wamn_codegen::source_name::SourceName`.

@@ -308,7 +308,7 @@ The [components page](components.md#shared-label-renderer) describes its composi
 PostgreSQL change capture publishes the [event contract](../../crates/event/src/lib.rs).
 `wamn-event` decodes records and verifies the source identity of CDC records.
 CDC records carry `"type": "cdc"` and use underscore field names.
-Workflow admission and capture recovery skip legacy derived records.
+Workflow admission rejects invalid envelopes. Capture recovery skips them.
 Subjects use `evt.<org>.<env>.<project>.<entity>.<op>`.
 Each project has its own source stream. Length-prefixed stream names distinguish the full org, environment, and project coordinates.
 The stream keeps messages for up to seven days and holds up to 256 MiB. It discards the oldest messages first.

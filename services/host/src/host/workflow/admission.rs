@@ -239,10 +239,7 @@ impl Workflow {
             return Err(invalid("invalid stream sequence"));
         }
         let SourceEvent::Cdc(envelope) = SourceEvent::decode(&message.body)
-            .map_err(|_| invalid("invalid data-change envelope"))?
-        else {
-            return Ok(None);
-        };
+            .map_err(|_| invalid("invalid data-change envelope"))?;
         let headers: Vec<_> = message.message_ids.iter().map(String::as_str).collect();
         let source_id = wamn_event::verified_source_event_id(
             &app.project,
