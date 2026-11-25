@@ -473,6 +473,7 @@ From the restructure plan's open items (`docs/plan/wamn-restructure.md`) (F for 
 
 - Connection budget per org (Epic 5). The Pooler per-login pools and the computed `max_connections` (206) cap the org count near 12 per system database (wamn-44p7o). Identity could not get a database connection under parallel journey load (measured on kind, Not verified here). Decide identity's pool, and whether its key route reads the database per request, with the budget.
 - One lock per environment (Epic 5). `ensure_environment` takes a lock shared by every environment of the installation (`crates/identity/src/identity/nats_store.rs`), so env applies are serialized across all orgs. The NATS account revision check must stay under the lock.
+- The connection credential hint (Epic 5). crates/connection/src/administration.rs stores the last four characters of the raw credential string as hint, and every connection response returns it (F). For a JSON credential that is "} and two characters of the secret, and a unit test expects it. The hint goes, or becomes a value that shows no secret characters.
 - System schema migrations (Epic 7), before any install that must survive an upgrade. The system schema loads only when it is absent, and no system migration exists.
 - A fleet rollout command (Epic 7), run after `wamn platform deploy`. It applies every org and environment again, records each environment's bundle digest, and can resume.
 - NATS as a cluster of 3 with three-replica streams (Epic 7).
