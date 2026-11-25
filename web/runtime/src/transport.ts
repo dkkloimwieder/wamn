@@ -14,7 +14,6 @@ import { encodeReadQuery } from "./readQuery.js";
 import { createReadStore, writeTouches, type ReadReply } from "./readCache.js";
 import type {
   ErrorCase,
-  FieldMap,
   InvokeOptions,
   JsonValue,
   OperationRoute,
@@ -691,39 +690,18 @@ function declaredPath(pointer: string): string | null {
   return path === "" ? null : path;
 }
 
-/**
- * The member path that a validated input refuses, in the contract's spelling.
- *
- * A schema names its path in TypeScript member spelling, with a number for
- * each element of a repeated group. A control states the path the contract
- * declares, which keeps the wire spelling, so the field map turns one into
- * the other. `refusalMarks` then reads the answer exactly as it reads a
- * refusal that the release sent.
- */
-export function refusedInputMember(path: readonly (string | number)[] | undefined, fields: FieldMap): string | null {
+/** Format a validation path in wire spelling for the matching control. */
+export function refusedInputMember(path: readonly (string | number)[] | undefined): string | null {
   if (path === undefined || path.length === 0) {
     return null;
   }
   let member = "";
-  let level: FieldMap | null = fields;
   for (const segment of path) {
     if (typeof segment === "number") {
-      // The field map spells a repeated group's key with `[]`, and the index
-      // fills those brackets rather than adding a second pair.
       member = member.endsWith("[]") ? `${member.slice(0, -2)}[${segment}]` : `${member}[${segment}]`;
-      continue;
+    } else {
+      member = member === "" ? segment : `${member}.${segment}`;
     }
-    const entries: [string, FieldMap[string]][] = Object.entries(level ?? {});
-    const found = entries.find(([, value]) =>
-      typeof value === "string" ? value === segment : value.member === segment,
-    );
-    if (found === undefined) {
-      return null;
-    }
-    const wireKey: string = found[0];
-    const value: FieldMap[string] = found[1];
-    level = typeof value === "string" ? null : value.fields;
-    member = member === "" ? wireKey : `${member}.${wireKey}`;
   }
   return member === "" ? null : member;
 }

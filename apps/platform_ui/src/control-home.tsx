@@ -14,9 +14,9 @@ import type { ScreenProps } from "./shell";
 export function ControlHome(props: ScreenProps) {
   const [projects, setProjects] = createSignal<string[]>(
     untrack(() =>
-      props.controlMine?.orgAdmin
+      props.controlMine?.org_admin
         ? []
-        : (props.controlMine?.projects.filter((entry) => entry.projectAdmin).map((entry) => entry.project) ?? []),
+        : (props.controlMine?.projects.filter((entry) => entry.project_admin).map((entry) => entry.project) ?? []),
     ),
   );
   const [trouble, setTrouble] = createSignal<string>();
@@ -28,7 +28,7 @@ export function ControlHome(props: ScreenProps) {
     const names = value(await project.list(props.transport, [{}])).projects.map((entry) => entry.name);
     if (active) setProjects(names);
   };
-  if (untrack(() => props.controlMine?.orgAdmin))
+  if (untrack(() => props.controlMine?.org_admin))
     void untrack(load).catch((error: unknown) => {
       if (active) setTrouble(String(error));
     });

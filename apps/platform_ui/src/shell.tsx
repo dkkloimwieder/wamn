@@ -62,7 +62,7 @@ export function useSession(): Session | undefined {
 export interface ScreenProps {
   readonly transport: Transport;
   readonly holds: Holds;
-  readonly controlMine?: Pick<ControlMineResult, "orgAdmin" | "projects">;
+  readonly controlMine?: Pick<ControlMineResult, "org_admin" | "projects">;
   readonly params: Readonly<Record<string, string | undefined>>;
   readonly search: Readonly<Record<string, string | undefined>>;
   readonly open: (path: string) => void;
@@ -100,7 +100,7 @@ type Holds = (operation: string, project?: string) => boolean;
 interface View {
   readonly holds: Holds;
   readonly sections: readonly ShellSection[];
-  readonly controlMine?: Pick<ControlMineResult, "orgAdmin" | "projects">;
+  readonly controlMine?: Pick<ControlMineResult, "org_admin" | "projects">;
 }
 
 function reference(operation: string): string {
@@ -132,7 +132,7 @@ function applicationView(saved: SavedView, sections: readonly ShellSection[]): V
   };
 }
 
-export function controlHolds(mine: Pick<ControlMineResult, "orgAdmin" | "projects">): Holds {
+export function controlHolds(mine: Pick<ControlMineResult, "org_admin" | "projects">): Holds {
   const projectOperations = new Set([
     application.deploy.route.operation,
     application.stop.route.operation,
@@ -165,12 +165,12 @@ export function controlHolds(mine: Pick<ControlMineResult, "orgAdmin" | "project
   ]);
   return (operation, config) => {
     if (operation === control.mine.route.operation)
-      return mine.orgAdmin || mine.projects.some((entry) => entry.projectAdmin);
-    if (orgOperations.has(operation)) return mine.orgAdmin;
+      return mine.org_admin || mine.projects.some((entry) => entry.project_admin);
+    if (orgOperations.has(operation)) return mine.org_admin;
     return (
       projectOperations.has(operation) &&
-      (mine.orgAdmin ||
-        mine.projects.some((entry) => entry.projectAdmin && (config === undefined || entry.project === config)))
+      (mine.org_admin ||
+        mine.projects.some((entry) => entry.project_admin && (config === undefined || entry.project === config)))
     );
   };
 }
@@ -178,7 +178,7 @@ export function controlHolds(mine: Pick<ControlMineResult, "orgAdmin" | "project
 async function controlView(transport: Transport, sections: readonly ShellSection[]): Promise<View> {
   const outcome = await control.mine(transport, [{}]);
   if (outcome.status !== "completed") return { holds: () => false, sections: [] };
-  const projects = outcome.value.projects.filter((entry) => entry.projectAdmin).map((entry) => entry.project);
+  const projects = outcome.value.projects.filter((entry) => entry.project_admin).map((entry) => entry.project);
   const holds = controlHolds(outcome.value);
   return {
     holds,

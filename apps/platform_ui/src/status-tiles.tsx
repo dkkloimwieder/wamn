@@ -7,7 +7,7 @@ export function EnvironmentTiles(props: { status?: EnvironmentStatusResult; erro
     const rollout = props.status?.rollout;
     return (
       rollout &&
-      [rollout.updatedReplicas, rollout.readyReplicas, rollout.availableReplicas].every(
+      [rollout.updated_replicas, rollout.ready_replicas, rollout.available_replicas].every(
         (count) => count === rollout.replicas,
       )
     );
@@ -26,7 +26,7 @@ export function EnvironmentTiles(props: { status?: EnvironmentStatusResult; erro
         label="Host replicas"
         value={
           props.status
-            ? `${props.status.rollout.readyReplicas} ready / ${props.status.rollout.replicas} total`
+            ? `${props.status.rollout.ready_replicas} ready / ${props.status.rollout.replicas} total`
             : "Unknown"
         }
         state={!props.status ? "unknown" : complete() ? "ok" : "warning"}
@@ -34,8 +34,8 @@ export function EnvironmentTiles(props: { status?: EnvironmentStatusResult; erro
       />
       <StatusTile
         label="Users with a role"
-        value={props.status?.usersWithRole ?? "Unknown"}
-        state={props.status?.usersWithRole == null ? "unknown" : "ok"}
+        value={props.status?.users_with_role ?? "Unknown"}
+        state={props.status?.users_with_role == null ? "unknown" : "ok"}
         detail={props.error}
       />
       <StatusTile

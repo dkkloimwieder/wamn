@@ -1,13 +1,7 @@
 /**
- * The wire contract that every generated binding imports.
+ * The request and result types shared by browser transports and client bindings.
  *
- * It declares the type aliases, the field map that carries the member names,
- * the request envelope, the four outcomes of one intent, and the transport
- * interface that an application supplies. It holds no name rule: the generator
- * decides every member name and emits a field map beside each operation.
- *
- * This file is hand-written. `crates/codegen/src/client_ts.rs` emits
- * the modules that import it, and neither one repeats the other.
+ * The OpenAPI documents define the wire field names used by generated clients.
  */
 
 /** A UUID in hyphenated form. */
@@ -136,122 +130,24 @@ export interface Transport {
   onWrite?(listener: (writes: readonly string[] | null) => void): () => void;
 }
 
-/**
- * What one declared shape calls its members, on the wire and in TypeScript.
- *
- * The key is the wire key. A string value is the member name. An object value
- * is a declared object or array, and its `fields` describe each value inside
- * it. A key that no map declares keeps its spelling, so the inside of a `json`
- * value is never renamed.
- */
-export type FieldMap = { readonly [wireKey: string]: string | NestedFields };
-
-/** One declared object or array, and the members inside it. */
-export interface NestedFields {
-  /** The TypeScript member name. */
-  readonly member: string;
-  /** What each value inside carries. */
-  readonly fields: FieldMap;
+/** Give the transport outcome the result type declared by the operation. */
+export function reviveOutcome<T>(outcome: Outcome<JsonValue>): Outcome<T> {
+  return outcome as Outcome<T>;
 }
 
-/** The renamed key, and the map to walk with, or null to copy the value. */
-type Rename = (fields: FieldMap, name: string) => readonly [string, FieldMap | null];
-
-function walk(value: unknown, fields: FieldMap, rename: Rename): JsonValue {
-  if (Array.isArray(value)) {
-    return value.map((item) => walk(item, fields, rename));
-  }
-  if (value !== null && typeof value === "object") {
-    const converted: { [name: string]: JsonValue } = {};
-    for (const [name, member] of Object.entries(value)) {
-      const [renamed, nested] = rename(fields, name);
-      converted[renamed] = nested === null ? (member as JsonValue) : walk(member, nested, rename);
-    }
-    return converted;
-  }
-  return value as JsonValue;
-}
-
-/** Convert the wire keys of one declared shape to TypeScript members. */
-export function fromWire(value: unknown, fields: FieldMap): JsonValue {
-  return walk(value, fields, (map, name) => {
-    const entry = map[name];
-    if (entry === undefined) {
-      return [name, null];
-    }
-    return typeof entry === "string" ? [entry, null] : [entry.member, entry.fields];
-  });
-}
-
-/** Convert the TypeScript members of one declared shape to wire keys. */
-export function toWire(value: unknown, fields: FieldMap): JsonValue {
-  return walk(value, fields, (map, member) => {
-    for (const [name, entry] of Object.entries(map)) {
-      if (typeof entry === "string") {
-        if (entry === member) {
-          return [name, null];
-        }
-      } else if (entry.member === member) {
-        return [name, entry.fields];
-      }
-    }
-    return [member, null];
-  });
-}
-
-/**
- * Rename the keys inside one outcome and state its result type.
- *
- * The cast is unverified, exactly as the Rust client returns a JSON value that
- * the caller reads through its declared result type. The transport already
- * held the response to the operation's contract.
- *
- * A refusal detail and a failed outcome keep their wire spelling. Neither one
- * declares a field tree, so nothing states which of their keys is a name.
- */
-export function reviveOutcome<T>(outcome: Outcome<JsonValue>, fields: FieldMap): Outcome<T> {
-  switch (outcome.status) {
-    case "completed":
-      return { status: "completed", value: fromWire(outcome.value, fields) as T };
-    case "partiallyCompleted":
-      return {
-        status: "partiallyCompleted",
-        committedResult: fromWire(outcome.committedResult, fields) as T,
-        failedOutcome: outcome.failedOutcome,
-      };
-    default:
-      return outcome;
-  }
-}
-
-/**
- * One operation as data: its route and the field maps of its input and its
- * result. A table definition names the operations it calls this way, so a
- * generic table calls them without a generated function for each one.
- */
+/** The route a client binding uses to call one operation. */
 export interface OperationBinding {
   readonly route: OperationRoute;
-  readonly request: FieldMap;
-  readonly result: FieldMap;
 }
 
 /** Calls one operation through its binding, as its generated function does. */
 export async function callOperation<T>(
   transport: Transport,
   binding: OperationBinding,
-  items: readonly unknown[],
+  items: readonly JsonValue[],
   options?: InvokeOptions,
 ): Promise<Outcome<T>> {
-  return reviveOutcome<T>(
-    await transport.invoke(
-      {
-        ...binding.route,
-        items: items.map((item) => toWire(item, binding.request)),
-      },
-      options,
-    ),
-    binding.result,
-  );
+  return reviveOutcome<T>(await transport.invoke({ ...binding.route, items }, options));
 }
 
 /**
@@ -261,18 +157,12 @@ export async function callOperation<T>(
 export async function callEach<T>(
   transport: Transport,
   binding: OperationBinding,
-  items: readonly unknown[],
+  items: readonly JsonValue[],
   options?: InvokeOptions,
 ): Promise<readonly Outcome<T>[]> {
   if (transport.invokeEach === undefined) {
     throw new Error("this transport sends no call with many outer inputs");
   }
-  const outcomes = await transport.invokeEach(
-    {
-      ...binding.route,
-      items: items.map((item) => toWire(item, binding.request)),
-    },
-    options,
-  );
-  return outcomes.map((outcome) => reviveOutcome<T>(outcome, binding.result));
+  const outcomes = await transport.invokeEach({ ...binding.route, items }, options);
+  return outcomes.map(reviveOutcome<T>);
 }

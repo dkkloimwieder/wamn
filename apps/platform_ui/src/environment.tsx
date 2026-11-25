@@ -111,13 +111,13 @@ function OperationControls(props: ScreenProps) {
                   await (selected === "deploy"
                     ? application.deploy(
                         props.transport,
-                        [{ requestId, value: { ...target, release: snapshot.release.trim() } }],
+                        [{ request_id: requestId, value: { ...target, release: snapshot.release.trim() } }],
                         options,
                       )
                     : selected === "stop"
                       ? application.stop(
                           props.transport,
-                          [{ requestId, value: { ...config, application: target.application } }],
+                          [{ request_id: requestId, value: { ...config, application: target.application } }],
                           options,
                         )
                       : selected === "rollback"
@@ -125,7 +125,7 @@ function OperationControls(props: ScreenProps) {
                             props.transport,
                             [
                               {
-                                requestId,
+                                request_id: requestId,
                                 value: {
                                   ...config,
                                   application: target.application,
@@ -136,14 +136,14 @@ function OperationControls(props: ScreenProps) {
                             options,
                           )
                         : selected === "diff"
-                          ? schema.diff(props.transport, [{ requestId, value: target }], options)
+                          ? schema.diff(props.transport, [{ request_id: requestId, value: target }], options)
                           : selected === "apply"
                             ? schema.apply(
                                 props.transport,
-                                [{ requestId, value: { ...target, release: snapshot.release.trim() } }],
+                                [{ request_id: requestId, value: { ...target, release: snapshot.release.trim() } }],
                                 options,
                               )
-                            : schema.reset(props.transport, [{ requestId, value: config }], options)),
+                            : schema.reset(props.transport, [{ request_id: requestId, value: config }], options)),
                 );
                 if (controller.signal.aborted) return;
                 setObserved({ job: result.job, state: "pending", log: "" });
@@ -300,7 +300,7 @@ export function Environment(
     try {
       value(
         await (state() === "active" ? environment.inactivate : environment.activate)(props.transport, [
-          { requestId: crypto.randomUUID(), value: config },
+          { request_id: crypto.randomUUID(), value: config },
         ]),
       );
       await refresh();
@@ -381,10 +381,10 @@ export function Environment(
             rowKey={(entry) => entry.name}
             columns={[
               { id: "application", header: "Application", accessorKey: "application" },
-              { id: "packageDigest", header: "Package digest", accessorKey: "packageDigest", size: 150 },
+              { id: "package_digest", header: "Package digest", accessorKey: "package_digest", size: 150 },
               { id: "revision", header: "Revision", accessorKey: "revision" },
             ]}
-            formats={{ packageDigest: "short-hash" }}
+            formats={{ package_digest: "short-hash" }}
           />
         </div>
       </Show>

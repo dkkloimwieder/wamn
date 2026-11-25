@@ -23,14 +23,14 @@ import { Environment } from "./environment";
 import type { ScreenProps, ShellSection } from "./shell";
 
 function Projects(props: ScreenProps): JSX.Element {
-  const page = createServerPage<{ name: string; state?: string; projectAdmin?: boolean }>(async (input) => {
+  const page = createServerPage<{ name: string; state?: string; project_admin?: boolean }>(async (input) => {
     if (!props.holds(project.list.route.operation)) {
       const mine = value(await control.mine(props.transport, [input]));
       return {
         ...mine,
         rows: mine.projects
-          .filter((entry) => entry.projectAdmin)
-          .map((entry) => ({ name: entry.project, projectAdmin: entry.projectAdmin })),
+          .filter((entry) => entry.project_admin)
+          .map((entry) => ({ name: entry.project, project_admin: entry.project_admin })),
       };
     }
     const result = value(await project.list(props.transport, [input]));
@@ -38,7 +38,7 @@ function Projects(props: ScreenProps): JSX.Element {
       ...result,
       rows: result.projects.map((entry) => ({
         ...entry,
-        projectAdmin: props.controlMine?.projects.find((held) => held.project === entry.name)?.projectAdmin,
+        project_admin: props.controlMine?.projects.find((held) => held.project === entry.name)?.project_admin,
       })),
     };
   });
@@ -71,10 +71,10 @@ function Projects(props: ScreenProps): JSX.Element {
           ...(props.holds(project.list.route.operation)
             ? [{ id: "state", header: "State", accessorKey: "state" as const }]
             : []),
-          { id: "projectAdmin", header: "Project admin", accessorKey: "projectAdmin" },
-          { id: "orgAdmin", header: "Org admin", accessorFn: () => props.controlMine?.orgAdmin },
+          { id: "project_admin", header: "Project admin", accessorKey: "project_admin" },
+          { id: "org_admin", header: "Org admin", accessorFn: () => props.controlMine?.org_admin },
         ]}
-        formats={{ projectAdmin: "boolean-symbol", orgAdmin: "boolean-symbol" }}
+        formats={{ project_admin: "boolean-symbol", org_admin: "boolean-symbol" }}
         cells={{
           project: (cell) => (
             <RecordLink screen={props} path={`projects/${encodeURIComponent(cell.row.name)}`}>
@@ -97,7 +97,7 @@ function CreateProject(props: ScreenProps): JSX.Element {
     validate: (snapshot) => (snapshot.project.trim() ? {} : { form: "Enter a project name." }),
     onSubmit: async (snapshot, context) => {
       try {
-        value(await project.create(props.transport, [{ requestId: crypto.randomUUID(), value: snapshot }]));
+        value(await project.create(props.transport, [{ request_id: crypto.randomUUID(), value: snapshot }]));
         if (!context.signal.aborted) props.open("projects?created=1");
         return { ok: true };
       } catch (error) {
@@ -222,7 +222,7 @@ export function Project(props: ScreenProps & { table?: "environments" | "members
       if (active) setPending(false);
     }
   };
-  const person = () => members().find((entry) => entry.principalId === props.params.principal);
+  const person = () => members().find((entry) => entry.principal_id === props.params.principal);
   return (
     <Show when={!missing() && !(loaded() && props.params.principal && !person())} fallback={<MissingPage />}>
       <Show when={trouble()}>{(text) => <FieldError role="alert">{text()}</FieldError>}</Show>
@@ -243,7 +243,7 @@ export function Project(props: ScreenProps & { table?: "environments" | "members
                 onClick={() =>
                   void write(() =>
                     (state() === "active" ? project.inactivate : project.activate)(props.transport, [
-                      { requestId: crypto.randomUUID(), value: { project: name() } },
+                      { request_id: crypto.randomUUID(), value: { project: name() } },
                     ]),
                   )
                 }
@@ -289,29 +289,29 @@ export function Project(props: ScreenProps & { table?: "environments" | "members
             id="members"
             title="Members"
             rows={memberPage.rows()}
-            rowKey={(entry) => entry.principalId}
+            rowKey={(entry) => entry.principal_id}
             create={
               props.holds(member.grant.route.operation)
                 ? { label: "Grant membership", run: () => props.open(`${base()}/members/grant`) }
                 : undefined
             }
             columns={[
-              { id: "displayName", header: "Display name", accessorKey: "displayName", size: 180 },
+              { id: "display_name", header: "Display name", accessorKey: "display_name", size: 180 },
               { id: "email", header: "Email", accessorKey: "email", size: 250 },
-              { id: "principalId", header: "User ID", accessorKey: "principalId", size: 120 },
-              { id: "orgAdmin", header: "Org admin", accessorKey: "orgAdmin", size: 100 },
-              { id: "projectAdmin", header: "Project admin", accessorKey: "projectAdmin", size: 120 },
+              { id: "principal_id", header: "User ID", accessorKey: "principal_id", size: 120 },
+              { id: "org_admin", header: "Org admin", accessorKey: "org_admin", size: 100 },
+              { id: "project_admin", header: "Project admin", accessorKey: "project_admin", size: 120 },
               {
                 id: "memberships",
                 header: "Memberships",
                 accessorFn: (entry) => entry.environments.length,
               },
             ]}
-            formats={{ principalId: "short-hash", orgAdmin: "boolean-symbol", projectAdmin: "boolean-symbol" }}
+            formats={{ principal_id: "short-hash", org_admin: "boolean-symbol", project_admin: "boolean-symbol" }}
             cells={{
-              displayName: (cell) => (
-                <RecordLink screen={props} path={`${base()}/members/${encodeURIComponent(cell.row.principalId)}`}>
-                  {cell.row.displayName}
+              display_name: (cell) => (
+                <RecordLink screen={props} path={`${base()}/members/${encodeURIComponent(cell.row.principal_id)}`}>
+                  {cell.row.display_name}
                 </RecordLink>
               ),
             }}
@@ -322,27 +322,27 @@ export function Project(props: ScreenProps & { table?: "environments" | "members
         {(current) => (
           <>
             <Page
-              title={current().displayName}
+              title={current().display_name}
               actions={
                 <Show
                   when={props.holds(
-                    current().projectAdmin ? projectAdmin.revoke.route.operation : projectAdmin.grant.route.operation,
+                    current().project_admin ? projectAdmin.revoke.route.operation : projectAdmin.grant.route.operation,
                   )}
                 >
                   <Button
                     disabled={pending()}
                     onClick={() =>
                       void write(() =>
-                        (current().projectAdmin ? projectAdmin.revoke : projectAdmin.grant)(props.transport, [
+                        (current().project_admin ? projectAdmin.revoke : projectAdmin.grant)(props.transport, [
                           {
-                            requestId: crypto.randomUUID(),
-                            value: { project: name(), principalId: current().principalId },
+                            request_id: crypto.randomUUID(),
+                            value: { project: name(), principal_id: current().principal_id },
                           },
                         ]),
                       )
                     }
                   >
-                    {current().projectAdmin ? "Revoke project admin" : "Grant project admin"}
+                    {current().project_admin ? "Revoke project admin" : "Grant project admin"}
                   </Button>
                 </Show>
               }
@@ -358,7 +358,7 @@ export function Project(props: ScreenProps & { table?: "environments" | "members
                   props.holds(member.grant.route.operation)
                     ? {
                         label: "Grant membership",
-                        run: () => props.open(`${base()}/members/${encodeURIComponent(current().principalId)}/grant`),
+                        run: () => props.open(`${base()}/members/${encodeURIComponent(current().principal_id)}/grant`),
                       }
                     : undefined
                 }
@@ -383,8 +383,8 @@ export function Project(props: ScreenProps & { table?: "environments" | "members
                           void write(() =>
                             member.revoke(props.transport, [
                               {
-                                requestId: crypto.randomUUID(),
-                                value: { project: name(), env: cell.row, principalId: current().principalId },
+                                request_id: crypto.randomUUID(),
+                                value: { project: name(), env: cell.row, principal_id: current().principal_id },
                               },
                             ]),
                           )

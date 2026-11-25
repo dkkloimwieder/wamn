@@ -12,7 +12,7 @@ import { NotFoundBoundary } from "../src/page";
 import { InviteUser, User, Users, userSections } from "../src/users";
 import { CONTROL, identity, input } from "./fixtures";
 
-const admin = controlHolds({ orgAdmin: true, projects: [] });
+const admin = controlHolds({ org_admin: true, projects: [] });
 const principalId = "00000000-0000-4000-8000-000000000001";
 const otherId = "00000000-0000-4000-8000-000000000002";
 const person = {
@@ -37,10 +37,10 @@ const operations = [
 describe("Users authority", () => {
   it.each(operations)("uses control.mine for %s", (operation) => {
     expect(admin(operation)).toBe(true);
-    expect(controlHolds({ orgAdmin: false, projects: [{ project: "widgets", projectAdmin: true }] })(operation)).toBe(
+    expect(controlHolds({ org_admin: false, projects: [{ project: "widgets", project_admin: true }] })(operation)).toBe(
       false,
     );
-    expect(controlHolds({ orgAdmin: false, projects: [] })(operation)).toBe(false);
+    expect(controlHolds({ org_admin: false, projects: [] })(operation)).toBe(false);
   });
   it.each(["users", "invite-user", `users/${principalId}`])(
     "shows no page at %s without org authority",

@@ -54,19 +54,19 @@ export function Users(props: ScreenProps): JSX.Element {
             : undefined
         }
         rows={page.rows()}
-        rowKey={(person) => person.principalId}
+        rowKey={(person) => person.principal_id}
         columns={[
           { id: "name", header: "Display name", size: 180 },
           { id: "email", header: "Email", accessorKey: "email", size: 250 },
-          { id: "principalId", header: "User ID", accessorKey: "principalId", size: 120 },
+          { id: "principal_id", header: "User ID", accessorKey: "principal_id", size: 120 },
           { id: "state", header: "State", accessorKey: "status", size: 170 },
-          { id: "orgAdmin", header: "Org admin", accessorKey: "orgAdmin", size: 120 },
+          { id: "org_admin", header: "Org admin", accessorKey: "org_admin", size: 120 },
         ]}
-        formats={{ principalId: "short-hash", orgAdmin: "boolean-symbol" }}
+        formats={{ principal_id: "short-hash", org_admin: "boolean-symbol" }}
         cells={{
           name: (cell) => (
-            <RecordLink screen={props} path={`users/${encodeURIComponent(cell.row.principalId)}`}>
-              {cell.row.displayName}
+            <RecordLink screen={props} path={`users/${encodeURIComponent(cell.row.principal_id)}`}>
+              {cell.row.display_name}
             </RecordLink>
           ),
         }}
@@ -76,7 +76,7 @@ export function Users(props: ScreenProps): JSX.Element {
 }
 
 export function InviteUser(props: ScreenProps): JSX.Element {
-  const defaults = { email: "", displayName: "" };
+  const defaults = { email: "", display_name: "" };
   const Email = (field: CustomFieldProps<typeof defaults, "email">) => <Input {...field} type="email" />;
   const [values, setValues] = createSignal(defaults);
   const form = createForm({
@@ -86,7 +86,7 @@ export function InviteUser(props: ScreenProps): JSX.Element {
     validate: (snapshot) => {
       const email = emailError(snapshot.email);
       if (email) return { fields: { email } };
-      return snapshot.email.trim() && snapshot.displayName.trim()
+      return snapshot.email.trim() && snapshot.display_name.trim()
         ? {}
         : { form: "Enter an email address and a display name." };
     },
@@ -95,12 +95,12 @@ export function InviteUser(props: ScreenProps): JSX.Element {
         const invited = value(
           await user.invite(props.transport, [
             {
-              requestId: crypto.randomUUID(),
+              request_id: crypto.randomUUID(),
               value: {
                 ...snapshot,
                 memberships: [],
-                projectAdmins: [],
-                orgAdmin: false,
+                project_admins: [],
+                org_admin: false,
               },
             },
           ]),
@@ -120,7 +120,7 @@ export function InviteUser(props: ScreenProps): JSX.Element {
             id: "invite-user",
             fields: [
               { field: "email", label: "Email", control: "custom" },
-              { field: "displayName", label: "Display name", control: "text" },
+              { field: "display_name", label: "Display name", control: "text" },
             ],
             submit: { id: "invite-user", label: "Invite user" },
             actions: [{ id: "cancel", label: "Cancel", variant: "ghost" }],
@@ -169,7 +169,7 @@ export function User(props: ScreenProps & { table?: "projects" | "memberships" }
             project: name,
             state,
             environments: value(environments).environments,
-            member: value(members).members.find((entry) => entry.principalId === principalId()),
+            member: value(members).members.find((entry) => entry.principal_id === principalId()),
           };
         }),
     );
@@ -182,7 +182,7 @@ export function User(props: ScreenProps & { table?: "projects" | "memberships" }
     const current = ++refreshGeneration;
     setTrouble(undefined);
     const found = value(await user.list(props.transport, [{}])).users.find(
-      (entry) => entry.principalId === principalId(),
+      (entry) => entry.principal_id === principalId(),
     );
     if (!active || current !== refreshGeneration) return;
     setMissing(!found);
@@ -240,7 +240,7 @@ export function User(props: ScreenProps & { table?: "projects" | "memberships" }
           <>
             <Show when={!props.table}>
               <Page
-                title={current().displayName}
+                title={current().display_name}
                 actions={
                   <>
                     <Show
@@ -253,7 +253,7 @@ export function User(props: ScreenProps & { table?: "projects" | "memberships" }
                         onClick={() =>
                           void write(() =>
                             (current().status === "active" ? user.deactivate : user.activate)(props.transport, [
-                              { requestId: crypto.randomUUID(), value: { principalId: principalId() } },
+                              { request_id: crypto.randomUUID(), value: { principal_id: principalId() } },
                             ]),
                           )
                         }
@@ -263,20 +263,20 @@ export function User(props: ScreenProps & { table?: "projects" | "memberships" }
                     </Show>
                     <Show
                       when={props.holds(
-                        current().orgAdmin ? orgAdmin.revoke.route.operation : orgAdmin.grant.route.operation,
+                        current().org_admin ? orgAdmin.revoke.route.operation : orgAdmin.grant.route.operation,
                       )}
                     >
                       <Button
                         disabled={pending()}
                         onClick={() =>
                           void write(() =>
-                            (current().orgAdmin ? orgAdmin.revoke : orgAdmin.grant)(props.transport, [
-                              { requestId: crypto.randomUUID(), value: { principalId: principalId() } },
+                            (current().org_admin ? orgAdmin.revoke : orgAdmin.grant)(props.transport, [
+                              { request_id: crypto.randomUUID(), value: { principal_id: principalId() } },
                             ]),
                           )
                         }
                       >
-                        {current().orgAdmin ? "Revoke org admin" : "Grant org admin"}
+                        {current().org_admin ? "Revoke org admin" : "Grant org admin"}
                       </Button>
                     </Show>
                   </>
@@ -287,11 +287,11 @@ export function User(props: ScreenProps & { table?: "projects" | "memberships" }
                 <FormGrid columns={2}>
                   <Field>
                     <Label>User ID</Label>
-                    <FieldValue value={current().principalId} format="short-hash" />
+                    <FieldValue value={current().principal_id} format="short-hash" />
                   </Field>
                   <Field>
                     <Label>Org admin</Label>
-                    <FieldValue value={current().orgAdmin} format="boolean-symbol" />
+                    <FieldValue value={current().org_admin} format="boolean-symbol" />
                   </Field>
                 </FormGrid>
               </Page>
@@ -309,23 +309,23 @@ export function User(props: ScreenProps & { table?: "projects" | "memberships" }
                     { id: "project", header: "Project", accessorKey: "project" },
                     { id: "state", header: "State", accessorKey: "state" },
                     {
-                      id: "displayName",
+                      id: "display_name",
                       header: "Display name",
-                      accessorFn: (entry) => entry.member?.displayName,
+                      accessorFn: (entry) => entry.member?.display_name,
                       size: 180,
                     },
                     { id: "email", header: "Email", accessorFn: (entry) => entry.member?.email, size: 250 },
                     {
-                      id: "principalId",
+                      id: "principal_id",
                       header: "User ID",
-                      accessorFn: (entry) => entry.member?.principalId,
+                      accessorFn: (entry) => entry.member?.principal_id,
                       size: 120,
                     },
-                    { id: "orgAdmin", header: "Org admin", accessorFn: (entry) => entry.member?.orgAdmin, size: 100 },
+                    { id: "org_admin", header: "Org admin", accessorFn: (entry) => entry.member?.org_admin, size: 100 },
                     {
-                      id: "projectAdmin",
+                      id: "project_admin",
                       header: "Project admin",
-                      accessorFn: (entry) => entry.member?.projectAdmin ?? false,
+                      accessorFn: (entry) => entry.member?.project_admin ?? false,
                     },
                     {
                       id: "memberships",
@@ -333,7 +333,7 @@ export function User(props: ScreenProps & { table?: "projects" | "memberships" }
                       accessorFn: (entry) => entry.member?.environments.length ?? 0,
                     },
                   ]}
-                  formats={{ principalId: "short-hash", orgAdmin: "boolean-symbol", projectAdmin: "boolean-symbol" }}
+                  formats={{ principal_id: "short-hash", org_admin: "boolean-symbol", project_admin: "boolean-symbol" }}
                   cells={{
                     project: (cell) => (
                       <RecordLink screen={props} path={`${base()}/projects/${encodeURIComponent(cell.row.project)}`}>
@@ -352,7 +352,7 @@ export function User(props: ScreenProps & { table?: "projects" | "memberships" }
                     actions={
                       <Show
                         when={props.holds(
-                          entry().member?.projectAdmin
+                          entry().member?.project_admin
                             ? projectAdmin.revoke.route.operation
                             : projectAdmin.grant.route.operation,
                           entry().project,
@@ -362,19 +362,19 @@ export function User(props: ScreenProps & { table?: "projects" | "memberships" }
                           disabled={pending()}
                           onClick={() =>
                             void write(() =>
-                              (entry().member?.projectAdmin ? projectAdmin.revoke : projectAdmin.grant)(
+                              (entry().member?.project_admin ? projectAdmin.revoke : projectAdmin.grant)(
                                 props.transport,
                                 [
                                   {
-                                    requestId: crypto.randomUUID(),
-                                    value: { project: entry().project, principalId: principalId() },
+                                    request_id: crypto.randomUUID(),
+                                    value: { project: entry().project, principal_id: principalId() },
                                   },
                                 ],
                               ),
                             )
                           }
                         >
-                          {entry().member?.projectAdmin ? "Revoke project admin" : "Grant project admin"}
+                          {entry().member?.project_admin ? "Revoke project admin" : "Grant project admin"}
                         </Button>
                       </Show>
                     }
@@ -430,8 +430,8 @@ export function User(props: ScreenProps & { table?: "projects" | "memberships" }
                             void write(() =>
                               member.revoke(props.transport, [
                                 {
-                                  requestId: crypto.randomUUID(),
-                                  value: { project: cell.row.project, env: cell.row.name, principalId: principalId() },
+                                  request_id: crypto.randomUUID(),
+                                  value: { project: cell.row.project, env: cell.row.name, principal_id: principalId() },
                                 },
                               ]),
                             )

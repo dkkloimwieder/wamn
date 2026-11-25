@@ -60,7 +60,7 @@ export function ApplicationUsers(props: ScreenProps) {
           cells={{
             name: (cell) => (
               <RecordLink screen={props} path={`${applicationUsersPath}/${encodeURIComponent(cell.row.id)}`}>
-                {cell.row.displayName ?? cell.row.email}
+                {cell.row.display_name ?? cell.row.email}
               </RecordLink>
             ),
           }}
@@ -71,7 +71,7 @@ export function ApplicationUsers(props: ScreenProps) {
           {(current) => (
             <Records
               id="application-user-roles"
-              title={`Roles for ${current().displayName ?? current().email}`}
+              title={`Roles for ${current().display_name ?? current().email}`}
               rows={current().roles}
               rowKey={(name) => name}
               refresh={refresh}
@@ -103,11 +103,11 @@ export function ApplicationUsers(props: ScreenProps) {
                   <Show when={cell.row !== "admin"}>
                     <ConfirmAction
                       label={`Revoke role ${cell.row}`}
-                      description={`Revoke ${cell.row} from ${current().displayName ?? current().email}?`}
+                      description={`Revoke ${cell.row} from ${current().display_name ?? current().email}?`}
                       run={async () => {
                         value(
                           await userRole.revoke(props.transport, [
-                            { requestId: crypto.randomUUID(), value: { userId: current().id, role: cell.row } },
+                            { request_id: crypto.randomUUID(), value: { user_id: current().id, role: cell.row } },
                           ]),
                         );
                         await refresh();
@@ -158,7 +158,7 @@ export function GrantApplicationRole(props: ScreenProps) {
       try {
         value(
           await userRole.grant(props.transport, [
-            { requestId: crypto.randomUUID(), value: { userId, role: snapshot.role } },
+            { request_id: crypto.randomUUID(), value: { user_id: userId, role: snapshot.role } },
           ]),
         );
         if (!context.signal.aborted) props.open(returnTo);

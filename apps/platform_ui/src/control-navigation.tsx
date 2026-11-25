@@ -23,7 +23,7 @@ type Navigation = Parameters<NonNullable<DashboardShellProps["navigation"]>>[0];
 export function ControlNavigation(props: {
   org: string;
   aud: string;
-  mine: Pick<ControlMineResult, "orgAdmin" | "projects">;
+  mine: Pick<ControlMineResult, "org_admin" | "projects">;
   holds: ScreenProps["holds"];
   params: Readonly<Record<string, string | undefined>>;
   address: Address;

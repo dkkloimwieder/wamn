@@ -1,9 +1,6 @@
 import {
   callOperation,
-  reviveOutcome,
-  toWire,
   transportFetch,
-  type FieldMap,
   type InvokeOptions,
   type JsonValue,
   type OperationBinding,
@@ -14,31 +11,20 @@ import {
 import { createClient } from "./generated/wamn_control/client/index.js";
 import { createClientConfig } from "./client-config";
 
-interface Schema {
-  properties?: Record<string, Schema>;
-  items?: Schema;
-  oneOf?: Schema[];
-}
-
 interface HostOperation {
   operationId: string;
   "x-wamn-contract": ResponseContract;
-  parameters?: { name: string; content: { "application/json": { schema: Schema } } }[];
-  requestBody?: { content: { "application/json": { schema: Schema } } };
-  responses: { 200: { content: { "application/json": { schema: Schema } } } };
 }
 
 type HostDocument = { paths: Record<string, { get?: HostOperation; post?: HostOperation }> };
 type SdkOperation = (...args: never[]) => Promise<unknown>;
-
-type Camel<S extends string> = S extends `${infer Head}_${infer Tail}` ? `${Head}${Capitalize<Camel<Tail>>}` : S;
 
 type Members<T> = unknown extends T
   ? JsonValue
   : T extends readonly (infer Item)[]
     ? readonly Members<Item>[]
     : T extends object
-      ? { [Key in keyof T as Key extends string ? Camel<Key> : Key]: Members<T[Key]> }
+      ? { [Key in keyof T]: Members<T[Key]> }
       : T;
 
 type RequestItem<F extends SdkOperation> =
@@ -59,29 +45,9 @@ export type OperationResult<F extends (transport: Transport, items: never) => Pr
   { status: "completed" }
 >["value"];
 
-function fieldMap(properties: Record<string, Schema> = {}): FieldMap {
-  return Object.fromEntries(
-    Object.entries(properties).map(([name, schema]) => {
-      const member = name.replace(/_([a-z])/g, (_, letter: string) => letter.toUpperCase());
-      const nested = schema.properties ?? schema.items?.properties;
-      return [name, nested ? { member, fields: fieldMap(nested) } : member];
-    }),
-  );
-}
-
 function binding(template: string, operation: HostOperation, method: string): OperationBinding {
-  const request =
-    operation.requestBody?.content["application/json"].schema.items?.properties ??
-    Object.fromEntries(
-      (operation.parameters ?? []).map(({ name, content }) => [name, content["application/json"].schema]),
-    );
-  const result = operation.responses[200].content["application/json"].schema.items?.oneOf?.find(
-    (variant) => variant.properties?.value,
-  )?.properties?.value?.properties;
   return {
     route: { operation: operation.operationId, method, template, contract: operation["x-wamn-contract"] },
-    request: fieldMap(request),
-    result: fieldMap(result),
   };
 }
 
@@ -96,7 +62,7 @@ export function hostOperations(document: unknown) {
   return function bind<F extends SdkOperation>(name: string, operation: F) {
     const operationBinding = bindings.get(name);
     if (!operationBinding) throw new Error(`Missing host operation ${name}`);
-    const { route, request, result } = operationBinding;
+    const { route } = operationBinding;
 
     const invoke = async (
       transport: Transport,
@@ -112,11 +78,6 @@ export function hostOperations(document: unknown) {
           fetch: transportFetch(transport, route),
         }),
       );
-      client.interceptors.request.use(async (outgoing) => {
-        const body = toWire(await outgoing.clone().json(), request);
-        return new Request(outgoing, { body: JSON.stringify(body) });
-      });
-      client.interceptors.response.use(async (reply) => Response.json(reviveOutcome(await reply.json(), result)));
       const send = operation as unknown as (options: {
         client: typeof client;
         body: readonly RequestItem<F>[];
@@ -124,7 +85,7 @@ export function hostOperations(document: unknown) {
         responseStyle: "data";
         throwOnError: true;
       }) => Promise<unknown>;
-      // The interceptor replaces the wire envelope with the transport outcome.
+      // The transport supplies the operation outcome as the response body.
       return (await send({
         client,
         body: items,

@@ -9,7 +9,7 @@ import type { ScreenProps } from "./shell";
 
 export function GrantMembership(props: ScreenProps & { returnTo: string }) {
   const defaults = untrack(() => ({
-    principalId: props.params.principal ?? "",
+    principal_id: props.params.principal ?? "",
     project: props.params.project ?? "",
     env: props.params.env ?? "",
   }));
@@ -48,12 +48,12 @@ export function GrantMembership(props: ScreenProps & { returnTo: string }) {
     defaults: () => defaults,
     onValuesChange: (next) => setValues(next.project === values().project ? next : { ...next, env: "" }),
     validate: (snapshot) =>
-      snapshot.principalId.trim() && snapshot.project && snapshot.env
+      snapshot.principal_id.trim() && snapshot.project && snapshot.env
         ? {}
         : { form: "Enter a user ID and select a project and an environment." },
     onSubmit: async (snapshot, context) => {
       try {
-        value(await member.grant(props.transport, [{ requestId: crypto.randomUUID(), value: snapshot }]));
+        value(await member.grant(props.transport, [{ request_id: crypto.randomUUID(), value: snapshot }]));
         if (!context.signal.aborted) props.open(props.returnTo);
         return { ok: true };
       } catch (error) {
@@ -71,7 +71,7 @@ export function GrantMembership(props: ScreenProps & { returnTo: string }) {
               id: "grant-membership",
               fields: [
                 ...(!props.params.principal
-                  ? [{ field: "principalId", label: "User ID", control: "text" } as const]
+                  ? [{ field: "principal_id", label: "User ID", control: "text" } as const]
                   : []),
                 ...(!props.params.project ? [{ field: "project", label: "Project", control: "select" } as const] : []),
                 ...(!props.params.env ? [{ field: "env", label: "Environment", control: "select" } as const] : []),

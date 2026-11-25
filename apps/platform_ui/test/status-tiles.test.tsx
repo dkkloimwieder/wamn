@@ -7,15 +7,15 @@ import { ControlHome } from "../src/control-home";
 import { CONTROL } from "./fixtures";
 
 const status: EnvironmentStatusResult = {
-  rollout: { replicas: 2, updatedReplicas: 2, readyReplicas: 2, availableReplicas: 2 },
-  usersWithRole: 3,
+  rollout: { replicas: 2, updated_replicas: 2, ready_replicas: 2, available_replicas: 2 },
+  users_with_role: 3,
   roles: 4,
   memberships: 5,
   workloads: [
     {
       name: "http",
       application: "orders",
-      packageDigest: "sha256:release",
+      package_digest: "sha256:release",
       revision: 2,
       conditions: [{ type: "Ready", status: "True" }],
     },
@@ -41,7 +41,7 @@ describe("Environment tiles", () => {
   });
 
   it("keeps missing counters unknown without hiding measured workloads and replicas", () => {
-    render(() => <EnvironmentTiles status={{ ...status, usersWithRole: null, roles: null, memberships: null }} />);
+    render(() => <EnvironmentTiles status={{ ...status, users_with_role: null, roles: null, memberships: null }} />);
     for (const label of ["Users with a role", "Roles", "Memberships"]) tile(label, []);
     tile("Workloads", [1, 0]);
     tile("Host replicas", [2, 2]);
@@ -54,7 +54,7 @@ describe("Environment tiles", () => {
 
   it("preserves measured zeros", () => {
     render(() => (
-      <EnvironmentTiles status={{ ...status, usersWithRole: 0, roles: 0, memberships: 0, workloads: [] }} />
+      <EnvironmentTiles status={{ ...status, users_with_role: 0, roles: 0, memberships: 0, workloads: [] }} />
     ));
     for (const label of ["Users with a role", "Roles", "Memberships"]) tile(label, [0]);
     tile("Workloads", [0, 0]);
@@ -139,11 +139,11 @@ describe("Control splash", () => {
           transport={transport}
           holds={() => true}
           controlMine={{
-            orgAdmin,
+            org_admin: orgAdmin,
             projects: [
-              { project: "widgets", projectAdmin: true },
-              { project: "gadgets", projectAdmin: true },
-              { project: "unheld", projectAdmin: false },
+              { project: "widgets", project_admin: true },
+              { project: "gadgets", project_admin: true },
+              { project: "unheld", project_admin: false },
             ],
           }}
           params={{ aud: CONTROL }}

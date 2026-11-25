@@ -40,12 +40,12 @@ describe.skipIf(baseUrl === undefined)("the generated control org client", () =>
         expect(observed).toHaveProperty(["value", "projects", String(index), "project"], row["project"]),
       );
       rows.forEach((row, index) =>
-        expect(observed).toHaveProperty(["value", "projects", String(index), "projectAdmin"], row["project_admin"]),
+        expect(observed).toHaveProperty(["value", "projects", String(index), "project_admin"], row["project_admin"]),
       );
-      expect(observed).toHaveProperty(["value", "orgAdmin"], wire.org_admin);
+      expect(observed).toHaveProperty(["value", "org_admin"], wire.org_admin);
       for (const [wireName, member] of [
         ["total", "total"],
-        ["next_cursor", "nextCursor"],
+        ["next_cursor", "next_cursor"],
       ] as const) {
         if (wireName in wire) expect(observed).toHaveProperty(["value", member], wire[wireName]);
       }
@@ -57,23 +57,23 @@ describe.skipIf(baseUrl === undefined)("the generated control org client", () =>
       const rows = wire["users"] as Record<string, unknown>[];
       expect(observed).toHaveProperty(["value", "users", "length"], rows.length);
       rows.forEach((row, index) =>
-        expect(observed).toHaveProperty(["value", "users", String(index), "principalId"], row["principal_id"]),
+        expect(observed).toHaveProperty(["value", "users", String(index), "principal_id"], row["principal_id"]),
       );
       rows.forEach((row, index) =>
         expect(observed).toHaveProperty(["value", "users", String(index), "email"], row["email"]),
       );
       rows.forEach((row, index) =>
-        expect(observed).toHaveProperty(["value", "users", String(index), "displayName"], row["display_name"]),
+        expect(observed).toHaveProperty(["value", "users", String(index), "display_name"], row["display_name"]),
       );
       rows.forEach((row, index) =>
         expect(observed).toHaveProperty(["value", "users", String(index), "status"], row["status"]),
       );
       rows.forEach((row, index) =>
-        expect(observed).toHaveProperty(["value", "users", String(index), "orgAdmin"], row["org_admin"]),
+        expect(observed).toHaveProperty(["value", "users", String(index), "org_admin"], row["org_admin"]),
       );
       for (const [wireName, member] of [
         ["total", "total"],
-        ["next_cursor", "nextCursor"],
+        ["next_cursor", "next_cursor"],
       ] as const) {
         if (wireName in wire) expect(observed).toHaveProperty(["value", member], wire[wireName]);
       }
@@ -90,20 +90,20 @@ describe.skipIf(baseUrl === undefined)("the generated control org client", () =>
       const rows = wire["members"] as Record<string, unknown>[];
       expect(observed).toHaveProperty(["value", "members", "length"], rows.length);
       rows.forEach((row, index) =>
-        expect(observed).toHaveProperty(["value", "members", String(index), "principalId"], row["principal_id"]),
+        expect(observed).toHaveProperty(["value", "members", String(index), "principal_id"], row["principal_id"]),
       );
       rows.forEach((row, index) =>
-        expect(observed).toHaveProperty(["value", "members", String(index), "orgAdmin"], row["org_admin"]),
+        expect(observed).toHaveProperty(["value", "members", String(index), "org_admin"], row["org_admin"]),
       );
       rows.forEach((row, index) =>
-        expect(observed).toHaveProperty(["value", "members", String(index), "projectAdmin"], row["project_admin"]),
+        expect(observed).toHaveProperty(["value", "members", String(index), "project_admin"], row["project_admin"]),
       );
       rows.forEach((row, index) =>
         expect(observed).toHaveProperty(["value", "members", String(index), "environments"], row["environments"]),
       );
       for (const [wireName, member] of [
         ["total", "total"],
-        ["next_cursor", "nextCursor"],
+        ["next_cursor", "next_cursor"],
       ] as const) {
         if (wireName in wire) expect(observed).toHaveProperty(["value", member], wire[wireName]);
       }
@@ -120,23 +120,23 @@ describe.skipIf(baseUrl === undefined)("the generated control org client", () =>
       const rows = wire["users"] as Record<string, unknown>[];
       expect(observed).toHaveProperty(["value", "users", "length"], rows.length);
       rows.forEach((row, index) =>
-        expect(observed).toHaveProperty(["value", "users", String(index), "principalId"], row["principal_id"]),
+        expect(observed).toHaveProperty(["value", "users", String(index), "principal_id"], row["principal_id"]),
       );
       rows.forEach((row, index) =>
         expect(observed).toHaveProperty(["value", "users", String(index), "email"], row["email"]),
       );
       rows.forEach((row, index) =>
-        expect(observed).toHaveProperty(["value", "users", String(index), "displayName"], row["display_name"]),
+        expect(observed).toHaveProperty(["value", "users", String(index), "display_name"], row["display_name"]),
       );
       rows.forEach((row, index) =>
         expect(observed).toHaveProperty(["value", "users", String(index), "status"], row["status"]),
       );
       rows.forEach((row, index) =>
-        expect(observed).toHaveProperty(["value", "users", String(index), "orgAdmin"], row["org_admin"]),
+        expect(observed).toHaveProperty(["value", "users", String(index), "org_admin"], row["org_admin"]),
       );
       for (const [wireName, member] of [
         ["total", "total"],
-        ["next_cursor", "nextCursor"],
+        ["next_cursor", "next_cursor"],
       ] as const) {
         if (wireName in wire) expect(observed).toHaveProperty(["value", member], wire[wireName]);
       }
@@ -155,32 +155,32 @@ describe.skipIf(baseUrl === undefined)("the generated control org client", () =>
       );
       for (const [wireName, member] of [
         ["total", "total"],
-        ["next_cursor", "nextCursor"],
+        ["next_cursor", "next_cursor"],
       ] as const) {
         if (wireName in wire) expect(observed).toHaveProperty(["value", member], wire[wireName]);
       }
     }
     {
-      const observed = await user.activate(transport, [{ requestId: requestId(), value: { principalId: annId } }]);
+      const observed = await user.activate(transport, [{ request_id: requestId(), value: { principal_id: annId } }]);
       expect(observed).toHaveProperty(["status"], "completed");
-      expect(observed).toHaveProperty(["value", "principalId"], annId);
+      expect(observed).toHaveProperty(["value", "principal_id"], annId);
       expect(observed).toHaveProperty(["value", "status"], "active");
     }
     {
-      const observed = await user.activate(transport, [{ requestId: requestId(), value: { principalId: danId } }]);
+      const observed = await user.activate(transport, [{ request_id: requestId(), value: { principal_id: danId } }]);
       expect(observed).toHaveProperty(["status"], "refused");
       expect(observed).toHaveProperty(["code"], "user_not_found");
       expect(observed).toHaveProperty(["detail", "detail", "field"], "principal_id");
     }
     {
-      const observed = await orgAdmin.grant(transport, [{ requestId: requestId(), value: { principalId: danId } }]);
+      const observed = await orgAdmin.grant(transport, [{ request_id: requestId(), value: { principal_id: danId } }]);
       expect(observed).toHaveProperty(["status"], "refused");
       expect(observed).toHaveProperty(["code"], "user_not_active");
       expect(observed).toHaveProperty(["detail", "detail", "field"], "principal_id");
     }
     {
       const observed = await member.grant(transport, [
-        { requestId: requestId(), value: { project: "billing", env: "prod", principalId: annId } },
+        { request_id: requestId(), value: { project: "billing", env: "prod", principal_id: annId } },
       ]);
       expect(observed).toHaveProperty(["status"], "refused");
       expect(observed).toHaveProperty(["code"], "environment_not_found");
@@ -188,7 +188,7 @@ describe.skipIf(baseUrl === undefined)("the generated control org client", () =>
     }
     {
       const observed = await projectAdmin.grant(transport, [
-        { requestId: requestId(), value: { project: "nowhere", principalId: annId } },
+        { request_id: requestId(), value: { project: "nowhere", principal_id: annId } },
       ]);
       expect(observed).toHaveProperty(["status"], "refused");
       expect(observed).toHaveProperty(["code"], "project_not_found");
@@ -196,7 +196,7 @@ describe.skipIf(baseUrl === undefined)("the generated control org client", () =>
     }
     {
       const observed = await projectAdmin.revoke(transport, [
-        { requestId: requestId(), value: { project: "billing", principalId: bossId } },
+        { request_id: requestId(), value: { project: "billing", principal_id: bossId } },
       ]);
       expect(observed).toHaveProperty(["status"], "refused");
       expect(observed).toHaveProperty(["code"], "admin_covered");

@@ -8,12 +8,12 @@ import { GrantMembership } from "../src/membership";
 import { controlSections, Project } from "../src/projects";
 import { CONTROL, identity, input } from "./fixtures";
 
-const admin = controlHolds({ orgAdmin: true, projects: [] });
+const admin = controlHolds({ org_admin: true, projects: [] });
 const projectAdminOnly = controlHolds({
-  orgAdmin: false,
+  org_admin: false,
   projects: [
-    { project: "widgets", projectAdmin: true },
-    { project: "gadgets", projectAdmin: false },
+    { project: "widgets", project_admin: true },
+    { project: "gadgets", project_admin: false },
   ],
 });
 const projectOperations = [
@@ -39,7 +39,7 @@ describe("control holds", () => {
   it("admits the Projects screen through control.mine only for administrators", () => {
     expect(admin(control.mine.route.operation)).toBe(true);
     expect(projectAdminOnly(control.mine.route.operation)).toBe(true);
-    expect(controlHolds({ orgAdmin: false, projects: [] })(control.mine.route.operation)).toBe(false);
+    expect(controlHolds({ org_admin: false, projects: [] })(control.mine.route.operation)).toBe(false);
   });
   it.each([...projectOperations, ...orgOperations])(
     "admits an org admin to %s, including newly created projects",
@@ -58,7 +58,7 @@ describe("control holds", () => {
     expect(projectAdminOnly(operation)).toBe(false);
   });
   it("grants no control screen to a member without administration", () => {
-    const holds = controlHolds({ orgAdmin: false, projects: [{ project: "widgets", projectAdmin: false }] });
+    const holds = controlHolds({ org_admin: false, projects: [{ project: "widgets", project_admin: false }] });
     for (const operation of [...projectOperations, ...orgOperations]) expect(holds(operation, "widgets")).toBe(false);
     expect(admin("unknown:operation@1.0.0")).toBe(false);
   });

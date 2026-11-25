@@ -60,20 +60,20 @@ describe.skipIf(baseUrl === undefined)("the generated control client", () => {
         expect(observed).toHaveProperty(["value", "users", String(index), "email"], row["email"]),
       );
       rows.forEach((row, index) =>
-        expect(observed).toHaveProperty(["value", "users", String(index), "displayName"], row["display_name"]),
+        expect(observed).toHaveProperty(["value", "users", String(index), "display_name"], row["display_name"]),
       );
       rows.forEach((row, index) =>
         expect(observed).toHaveProperty(["value", "users", String(index), "roles"], row["roles"]),
       );
       for (const [wireName, member] of [
         ["total", "total"],
-        ["next_cursor", "nextCursor"],
+        ["next_cursor", "next_cursor"],
       ] as const) {
         if (wireName in wire) expect(observed).toHaveProperty(["value", member], wire[wireName]);
       }
     }
     {
-      const observed = await role.create(transport, [{ requestId: requestId(), value: { role: "clerk" } }]);
+      const observed = await role.create(transport, [{ request_id: requestId(), value: { role: "clerk" } }]);
       expect(observed).toHaveProperty(["status"], "completed");
       expect(observed).toHaveProperty(["value", "created"], true);
     }
@@ -86,36 +86,36 @@ describe.skipIf(baseUrl === undefined)("the generated control client", () => {
       expect(observed).toHaveProperty(["value", "roles"], wire.roles);
       for (const [wireName, member] of [
         ["total", "total"],
-        ["next_cursor", "nextCursor"],
+        ["next_cursor", "next_cursor"],
       ] as const) {
         if (wireName in wire) expect(observed).toHaveProperty(["value", member], wire[wireName]);
       }
     }
     {
-      const observed = await role.delete_(transport, [{ requestId: requestId(), value: { role: "admin" } }]);
+      const observed = await role.delete_(transport, [{ request_id: requestId(), value: { role: "admin" } }]);
       expect(observed).toHaveProperty(["status"], "refused");
       expect(observed).toHaveProperty(["code"], "admin_fixed");
       expect(observed).toHaveProperty(["detail", "detail", "field"], "role");
     }
 
     const granted = await permission.grant(transport, [
-      { requestId: requestId(), value: { role: "clerk", operation: WRITE } },
+      { request_id: requestId(), value: { role: "clerk", operation: WRITE } },
     ]);
     {
       const observed = granted;
       expect(observed).toHaveProperty(["status"], "completed");
-      expect(observed).toHaveProperty(["value", "rowsAdded"], 1);
+      expect(observed).toHaveProperty(["value", "rows_added"], 1);
     }
     {
       const observed = await permission.grant(transport, [
-        { requestId: requestId(), value: { role: "clerk", operation: READ } },
+        { request_id: requestId(), value: { role: "clerk", operation: READ } },
       ]);
       expect(observed).toHaveProperty(["status"], "completed");
-      expect(observed).toHaveProperty(["value", "rowsAdded"], 1);
+      expect(observed).toHaveProperty(["value", "rows_added"], 1);
     }
     {
       const observed = await permission.grant(transport, [
-        { requestId: requestId(), value: { role: "clerk", operation: "wamn-control:role/list" } },
+        { request_id: requestId(), value: { role: "clerk", operation: "wamn-control:role/list" } },
       ]);
       expect(observed).toHaveProperty(["status"], "refused");
       expect(observed).toHaveProperty(["code"], "operation_not_grantable");
@@ -130,25 +130,25 @@ describe.skipIf(baseUrl === undefined)("the generated control client", () => {
       expect(observed).toHaveProperty(["operation"], READ);
       expect(observed).toHaveProperty(["served"], true);
       expect(observed).toHaveProperty(["grantable"], true);
-      expect(observed).toHaveProperty(["adminOnly"], false);
+      expect(observed).toHaveProperty(["admin_only"], false);
       expect(observed).toHaveProperty(["selected"], true);
     }
     {
       const observed = operations.find((entry) => entry.operation === "wamn-control:role/list");
       expect(observed).toHaveProperty(["grantable"], false);
-      expect(observed).toHaveProperty(["adminOnly"], true);
+      expect(observed).toHaveProperty(["admin_only"], true);
     }
 
     {
       const observed = await permission.revoke(transport, [
-        { requestId: requestId(), value: { role: "clerk", operation: READ } },
+        { request_id: requestId(), value: { role: "clerk", operation: READ } },
       ]);
       expect(observed).toHaveProperty(["status"], "completed");
       expect(observed).toHaveProperty(["value"], {});
     }
     {
       const observed = await permission.revoke(transport, [
-        { requestId: requestId(), value: { role: "clerk", operation: READ } },
+        { request_id: requestId(), value: { role: "clerk", operation: READ } },
       ]);
       expect(observed).toHaveProperty(["status"], "refused");
       expect(observed).toHaveProperty(["code"], "permission_not_held");
@@ -157,14 +157,14 @@ describe.skipIf(baseUrl === undefined)("the generated control client", () => {
 
     {
       const observed = await userRole.grant(transport, [
-        { requestId: requestId(), value: { userId: memberId, role: "clerk" } },
+        { request_id: requestId(), value: { user_id: memberId, role: "clerk" } },
       ]);
       expect(observed).toHaveProperty(["status"], "completed");
       expect(observed).toHaveProperty(["value", "granted"], true);
     }
     {
       const observed = await userRole.revoke(transport, [
-        { requestId: requestId(), value: { userId: adminId, role: "admin" } },
+        { request_id: requestId(), value: { user_id: adminId, role: "admin" } },
       ]);
       expect(observed).toHaveProperty(["status"], "refused");
       expect(observed).toHaveProperty(["code"], "admin_covered");
@@ -172,7 +172,7 @@ describe.skipIf(baseUrl === undefined)("the generated control client", () => {
     }
     {
       const observed = await userRole.revoke(transport, [
-        { requestId: requestId(), value: { userId: memberId, role: "clerk" } },
+        { request_id: requestId(), value: { user_id: memberId, role: "clerk" } },
       ]);
       expect(observed).toHaveProperty(["status"], "completed");
       expect(observed).toHaveProperty(["value", "revoked"], true);

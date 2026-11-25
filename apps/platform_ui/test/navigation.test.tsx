@@ -112,7 +112,10 @@ function mountNavigation(path: string) {
       <ControlNavigation
         org="acme"
         aud={CONTROL}
-        mine={{ orgAdmin: true, projects: ["widgets", "gadgets"].map((project) => ({ project, projectAdmin: true })) }}
+        mine={{
+          org_admin: true,
+          projects: ["widgets", "gadgets"].map((project) => ({ project, project_admin: true })),
+        }}
         holds={() => true}
         params={params}
         address={createAddress()}

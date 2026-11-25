@@ -156,7 +156,7 @@ describe("Records server pages", () => {
       expect(observed).toHaveProperty(["0", "limit"], 25);
     }
     expect(next().disabled).toBe(true);
-    waiting.shift()!.resolve({ rows: [{ id: "first" }], nextCursor: "second", total: null });
+    waiting.shift()!.resolve({ rows: [{ id: "first" }], next_cursor: "second", total: null });
     await screen.findByRole("cell", { name: "first" });
     expect(page.pagination()).not.toHaveProperty("totalRows");
     expect(
@@ -177,11 +177,11 @@ describe("Records server pages", () => {
     expect(screen.getByRole("cell", { name: "first" })).toBeTruthy();
     expect(previous().disabled).toBe(true);
     fireEvent.click(next());
-    waiting.shift()!.resolve({ rows: [{ id: "second" }], nextCursor: "third", total: null });
+    waiting.shift()!.resolve({ rows: [{ id: "second" }], next_cursor: "third", total: null });
     await screen.findByRole("cell", { name: "second" });
     expect(screen.queryByRole("cell", { name: "first" })).toBeNull();
     fireEvent.click(next());
-    waiting.shift()!.resolve({ rows: [{ id: "third" }], nextCursor: null, total: null });
+    waiting.shift()!.resolve({ rows: [{ id: "third" }], next_cursor: null, total: null });
     await screen.findByRole("cell", { name: "third" });
     expect(next().disabled).toBe(true);
     expect(
@@ -193,10 +193,10 @@ describe("Records server pages", () => {
       ),
     ).toEqual([3]);
     fireEvent.click(previous());
-    waiting.shift()!.resolve({ rows: [{ id: "second" }], nextCursor: "third", total: null });
+    waiting.shift()!.resolve({ rows: [{ id: "second" }], next_cursor: "third", total: null });
     await screen.findByRole("cell", { name: "second" });
     fireEvent.click(previous());
-    waiting.shift()!.resolve({ rows: [{ id: "first" }], nextCursor: "second", total: null });
+    waiting.shift()!.resolve({ rows: [{ id: "first" }], next_cursor: "second", total: null });
     await screen.findByRole("cell", { name: "first" });
     {
       const observed = requests;
@@ -213,7 +213,7 @@ describe("Records server pages", () => {
       expect(observed).toHaveProperty(["5", "limit"], 25);
     }
     fireEvent.click(screen.getByRole("button", { name: "Refresh results" }));
-    waiting.shift()!.resolve({ rows: [], nextCursor: null, total: 0 });
+    waiting.shift()!.resolve({ rows: [], next_cursor: null, total: 0 });
     await waitFor(() => expect(page.pagination().totalRows).toBe(0));
     expect(within(screen.getByRole("table")).queryAllByRole("cell")).toHaveLength(0);
     expect(previous().disabled).toBe(true);
@@ -239,7 +239,7 @@ describe("Records server pages", () => {
     }
     render(() => <Harness />);
     void page.refresh();
-    waiting.shift()!.resolve({ rows: ["old view"], nextCursor: null, total: 1 });
+    waiting.shift()!.resolve({ rows: ["old view"], next_cursor: null, total: 1 });
     await screen.findByRole("cell", { name: "old view" });
     page.reset();
     const failed = page.refresh();
@@ -270,9 +270,9 @@ describe("Records server pages", () => {
     render(() => <Harness />);
     const old = page.refresh();
     const current = page.refresh();
-    waiting[1]!({ rows: ["new view"], nextCursor: null, total: 1 });
+    waiting[1]!({ rows: ["new view"], next_cursor: null, total: 1 });
     await current;
-    waiting[0]!({ rows: ["old view"], nextCursor: "old cursor", total: null });
+    waiting[0]!({ rows: ["old view"], next_cursor: "old cursor", total: null });
     await old;
     flush();
     expect(screen.getByRole("cell", { name: "new view" })).toBeTruthy();

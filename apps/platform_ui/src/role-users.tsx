@@ -51,18 +51,18 @@ export function RoleUsers(props: ScreenProps) {
           cells={{
             name: (cell) => (
               <RecordLink screen={props} path={`${applicationUsersPath}/${encodeURIComponent(cell.row.id)}`}>
-                {cell.row.displayName ?? cell.row.email}
+                {cell.row.display_name ?? cell.row.email}
               </RecordLink>
             ),
             actions: (cell) => (
               <Show when={name !== "admin"}>
                 <ConfirmAction
-                  label={`Revoke ${name} from ${cell.row.displayName ?? cell.row.email}`}
-                  description={`Revoke ${name} from ${cell.row.displayName ?? cell.row.email}?`}
+                  label={`Revoke ${name} from ${cell.row.display_name ?? cell.row.email}`}
+                  description={`Revoke ${name} from ${cell.row.display_name ?? cell.row.email}?`}
                   run={async () => {
                     value(
                       await userRole.revoke(props.transport, [
-                        { requestId: crypto.randomUUID(), value: { userId: cell.row.id, role: name } },
+                        { request_id: crypto.randomUUID(), value: { user_id: cell.row.id, role: name } },
                       ]),
                     );
                     await refresh();
@@ -84,7 +84,7 @@ export function GrantRoleToUser(props: ScreenProps) {
   const [loaded, setLoaded] = createSignal(false);
   const [missing, setMissing] = createSignal(false);
   const [trouble, setTrouble] = createSignal<string>();
-  const [values, setValues] = createSignal({ userId: "" });
+  const [values, setValues] = createSignal({ user_id: "" });
   let active = true;
   onCleanup(() => {
     active = false;
@@ -104,14 +104,15 @@ export function GrantRoleToUser(props: ScreenProps) {
   });
   const form = createForm({
     values,
-    defaults: () => ({ userId: "" }),
+    defaults: () => ({ user_id: "" }),
     onValuesChange: setValues,
-    validate: (snapshot) => (choices().some((entry) => entry.id === snapshot.userId) ? {} : { form: "Select a user." }),
+    validate: (snapshot) =>
+      choices().some((entry) => entry.id === snapshot.user_id) ? {} : { form: "Select a user." },
     onSubmit: async (snapshot, context) => {
       try {
         value(
           await userRole.grant(props.transport, [
-            { requestId: crypto.randomUUID(), value: { userId: snapshot.userId, role: name } },
+            { request_id: crypto.randomUUID(), value: { user_id: snapshot.user_id, role: name } },
           ]),
         );
         if (!context.signal.aborted) props.open(returnTo);
@@ -129,14 +130,15 @@ export function GrantRoleToUser(props: ScreenProps) {
           <FormView
             description={{
               id: "grant-role-to-user",
-              fields: [{ field: "userId", label: "User", control: "select" }],
+              fields: [{ field: "user_id", label: "User", control: "select" }],
               submit: { id: "grant", label: "Grant to user" },
               actions: [{ id: "cancel", label: "Cancel", variant: "ghost" }],
             }}
             bindings={{
               form,
               choices: {
-                userId: () => choices().map((entry) => ({ value: entry.id, label: entry.displayName ?? entry.email })),
+                user_id: () =>
+                  choices().map((entry) => ({ value: entry.id, label: entry.display_name ?? entry.email })),
               },
               actions: { cancel: { run: () => props.open(returnTo) } },
             }}

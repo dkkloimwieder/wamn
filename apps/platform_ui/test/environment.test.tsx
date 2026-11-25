@@ -63,7 +63,7 @@ function mount(data: ReturnType<typeof fixture>, orgAdmin = true) {
   render(() => (
     <Environment
       transport={data.transport}
-      holds={controlHolds({ orgAdmin, projects: [{ project: "widgets", projectAdmin: true }] })}
+      holds={controlHolds({ org_admin: orgAdmin, projects: [{ project: "widgets", project_admin: true }] })}
       params={{ aud: CONTROL, project: "widgets", env: "dev" }}
       search={{}}
       open={() => {}}
@@ -80,7 +80,7 @@ describe("Environment", () => {
       <Project
         table="environments"
         transport={data.transport}
-        holds={controlHolds({ orgAdmin: false, projects: [{ project: "widgets", projectAdmin: true }] })}
+        holds={controlHolds({ org_admin: false, projects: [{ project: "widgets", project_admin: true }] })}
         params={{ project: "widgets" }}
         search={{}}
         open={(path) => {
@@ -327,8 +327,8 @@ function operationsFixture(options: { refuse?: boolean; states?: string[]; proje
     <Environment
       transport={createTransport({ baseUrl: "/api", fetch })}
       holds={controlHolds({
-        orgAdmin: false,
-        projects: [{ project: options.project ?? "widgets", projectAdmin: options.admin ?? true }],
+        org_admin: false,
+        projects: [{ project: options.project ?? "widgets", project_admin: options.admin ?? true }],
       })}
       params={{ aud: CONTROL, project: "widgets", env: "dev" }}
       search={{}}

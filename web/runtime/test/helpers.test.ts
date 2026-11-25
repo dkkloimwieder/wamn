@@ -240,29 +240,14 @@ describe("the bounds of a repeated group", () => {
 });
 
 describe("the member a validated input refuses", () => {
-  const FIELDS = {
-    request_id: "requestId",
-    value: {
-      member: "value",
-      fields: {
-        maker_id: "makerId",
-        "line[]": {
-          member: "line",
-          fields: { quantity: "quantity" },
-        },
-      },
-    },
-  };
-
-  it("states nothing for a path no field map holds", () => {
-    expect(refusedInputMember(undefined, FIELDS)).toBe(null);
-    expect(refusedInputMember([], FIELDS)).toBe(null);
-    expect(refusedInputMember(["value", "unknown"], FIELDS)).toBe(null);
+  it("states nothing for a missing or empty path", () => {
+    expect(refusedInputMember(undefined)).toBe(null);
+    expect(refusedInputMember([])).toBe(null);
   });
 
   it("marks the control that names the same declared path", () => {
-    const member = refusedInputMember(["value", "line", 2, "quantity"], FIELDS);
-    expect(refusalMarks(member, "value.line[].quantity", 2)).toBe(true);
-    expect(refusalMarks(member, "value.line[].quantity", 1)).toBe(false);
+    const member = refusedInputMember(["value", "line", 2, "unit_quantity"]);
+    expect(refusalMarks(member, "value.line[].unit_quantity", 2)).toBe(true);
+    expect(refusalMarks(member, "value.line[].unit_quantity", 1)).toBe(false);
   });
 });

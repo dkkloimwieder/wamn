@@ -7,7 +7,7 @@ import type { JSX } from "@solidjs/web";
 
 export interface ServerPage<Row> {
   readonly rows: readonly Row[];
-  readonly nextCursor: string | null;
+  readonly next_cursor: string | null;
   readonly total: number | null;
 }
 
@@ -49,7 +49,7 @@ export function createServerPage<Row>(load: (input: { limit: number; cursor?: st
       if (current !== generation) return;
       setRows(result.rows);
       setCursors(history);
-      setNext(result.nextCursor);
+      setNext(result.next_cursor);
       setTotal(result.total);
       return result;
     } catch (failure) {

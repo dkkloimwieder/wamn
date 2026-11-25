@@ -96,7 +96,7 @@ export function ApplicationRoles(props: ScreenProps & { overview?: boolean }) {
                   run={async () => {
                     value(
                       await role.delete_(props.transport, [
-                        { requestId: crypto.randomUUID(), value: { role: cell.row.role } },
+                        { request_id: crypto.randomUUID(), value: { role: cell.row.role } },
                       ]),
                     );
                     await refresh();
@@ -152,7 +152,7 @@ export function RolePermissions(props: ScreenProps) {
     if (
       list()?.admin ||
       name === "admin" ||
-      op.adminOnly ||
+      op.admin_only ||
       !op.grantable ||
       pending().has(op.operation) ||
       previous === enabled
@@ -165,7 +165,7 @@ export function RolePermissions(props: ScreenProps) {
     try {
       value<unknown>(
         await (enabled ? permission.grant : permission.revoke)(props.transport, [
-          { requestId: crypto.randomUUID(), value: { role: name, operation: op.operation } },
+          { request_id: crypto.randomUUID(), value: { role: name, operation: op.operation } },
         ]),
       );
       if (active) setResult(`${enabled ? "Granted" : "Revoked"} ${op.operation} ${enabled ? "to" : "from"} ${name}.`);
@@ -198,7 +198,7 @@ export function RolePermissions(props: ScreenProps) {
               <Checkbox
                 checked={selected(cell.row)}
                 readOnly={name === "admin" || list()?.admin}
-                disabled={cell.row.adminOnly || !cell.row.grantable || pending().has(cell.row.operation)}
+                disabled={cell.row.admin_only || !cell.row.grantable || pending().has(cell.row.operation)}
                 onChange={(selected) => void change(cell.row, selected)}
               >
                 <Checkbox.Input aria-label={`${cell.row.operation} ${name}`} />
@@ -223,7 +223,7 @@ export function CreateRole(props: ScreenProps) {
     validate: (snapshot) => (snapshot.role.trim() ? {} : { form: "Enter a role name." }),
     onSubmit: async (snapshot, context) => {
       try {
-        value(await role.create(props.transport, [{ requestId: crypto.randomUUID(), value: snapshot }]));
+        value(await role.create(props.transport, [{ request_id: crypto.randomUUID(), value: snapshot }]));
         if (!context.signal.aborted) props.open(rolesPath);
         return { ok: true };
       } catch (error) {
