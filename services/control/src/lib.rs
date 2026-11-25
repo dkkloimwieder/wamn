@@ -239,7 +239,7 @@ pub async fn serve(config: Configuration) -> anyhow::Result<()> {
                 &config.identity_issuer,
                 Path::new(IDENTITY_CA),
             )?),
-            issuer: config.identity_issuer,
+            issuer: config.identity_issuer.clone(),
             logins: Arc::clone(&logins),
             org: config.org.clone(),
         })
@@ -248,7 +248,7 @@ pub async fn serve(config: Configuration) -> anyhow::Result<()> {
             org: config.org.clone(),
             worker: worker.clone(),
             logins: Arc::clone(&logins),
-            control: pool,
+            control: pool.clone(),
             registry_token_metadata: config.registry_token_metadata,
         })
         .with_worker(worker)
@@ -268,8 +268,21 @@ pub async fn serve(config: Configuration) -> anyhow::Result<()> {
         ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             ticks.tick().await;
-            if let Err(error) = retention::identities(&retention_logins).await {
-                tracing::warn!(%error, "transaction identity retention failed");
+            if let Err(error) = retention::identities(
+                &pool,
+                &config.org,
+                &config.identity_issuer,
+                |triple, instance| {
+                    let logins = &retention_logins;
+                    async move {
+                        let login = logins.login(&triple, &instance).await;
+                        (triple, login)
+                    }
+                },
+            )
+            .await
+            {
+                tracing::warn!(%error, "project database maintenance failed");
             }
         }
     });

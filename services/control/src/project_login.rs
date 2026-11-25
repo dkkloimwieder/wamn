@@ -43,11 +43,6 @@ impl ProjectLogins {
         self.login(&triple, &instance).await
     }
 
-    /// Every recorded project environment of the org.
-    pub(crate) async fn recorded(&self) -> anyhow::Result<Vec<(Triple, InstanceSuffix)>> {
-        Ok(crate::control_sql::project_deployments(&self.control, &self.org).await?)
-    }
-
     /// The login of one project environment generation.
     pub(crate) async fn login(
         &self,

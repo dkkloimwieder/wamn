@@ -787,7 +787,7 @@ Grant or revoke system project-admin or org-admin to change application administ
 Control records `admin` in each project environment that the grant covers.
 Revoking the last grant that covers the user removes that assignment.
 The target needs an existing application user or service row.
-The HTTP owner refuses unknown users. A grant also refuses a missing role.
+The HTTP owner refuses unknown and disabled users. A grant also refuses a missing role.
 Service principal email addresses use `<subject>@<platform domain>`.
 Create an API service and its PAT through control with `wamn create-api-service`.
 
@@ -1005,7 +1005,9 @@ Identity prunes system transaction identities in its one-minute maintenance loop
 It calls `platform.prune_tx_identity()` with a five-second statement timeout and logs any error.
 
 Each org's control service removes expired project transaction identities every minute in a separate task.
-Cleanup runs do not overlap. Each database operation has a five-second limit.
+Maintenance runs do not overlap. For each project database, connection and cleanup share a five-second limit.
+The same task then has five seconds to copy current authority from the system database.
+It logs a failed target and proceeds to the next project database.
 Shutdown cancels the task before the service drains HTTP connections.
 It connects to each configured project as `wamn_platform_login`.
 It deletes rows with `xid < pg_snapshot_xmin(pg_current_snapshot())`.

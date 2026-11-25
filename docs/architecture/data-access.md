@@ -1158,22 +1158,21 @@ The release stage also creates one service principal for each application with a
 The stage writes the service row and its dependency grants in the project database.
 It reads the platform domain from `registry.meta.platform_domain`, and it refuses while that value is unset.
 It creates the `platform.number_sequence` row of each sequence that the packages declare, as [Numbering](#numbering) describes.
-It writes a user row for each eligible user with project environment membership or inherited administration.
-It removes the user row when the user loses access to the project environment.
+It writes or reactivates a user row for each eligible user with project environment membership or inherited administration.
+When the user loses access to that project environment, projection keeps the row for stamps, disables it, revokes its PATs, and removes its role assignments.
 `project_authority` uses `identity.is_project_admin` to set or remove the user's `admin` assignment in `platform.user_role`.
 The identity owner creates that user in `identity.principals`.
 One email address names one principal for the whole platform.
 A user who works in two organizations holds one principal and two memberships.
 A user row carries the email of that user from `identity.principals`.
 When an admin grant changes, control runs the same projection with the administration login bound to the caller and the route's sealed operation id.
+Control also runs the projection periodically under the provisioning identity.
 The application host writes roles, permissions and user roles through its [host routes](execution.md#host-run-routes) with the same login and the same binding.
 The bootstrap invitation writes system membership. The environment lifecycle projects it when the application database is initialized.
-A principal with no user row cannot write in the project.
-The invocation bind refuses it.
-`WamnPostgres::bind_session_identity` refuses a principal that owns no `platform."user"` row in the project database.
+A session requires an active `platform."user"` row in the project environment.
 The caller sees `permission-denied`.
 The host's [auth memory](execution.md#auth-memory) answers the test, and a miss reads the row.
-A removed row stays accepted until a change message clears the memory or 60 seconds pass.
+The host may accept a disabled user until its positive cache entry expires after `revocation_seconds`.
 There is still no foreign key on a stamp column.
 Application SQL cannot replace the host caller. A second identity insert fails, and application logins cannot update or delete identity rows.
 Administrative SQL still controls its own attribution.

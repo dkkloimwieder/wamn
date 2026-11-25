@@ -192,20 +192,21 @@ The system stores each explicit grant in `identity.org_roles` or `identity.proje
 `project_authority` records inherited administration as an `admin` assignment in each project environment database that the grant covers.
 
 Org token issuance requires active org membership.
-A revoke removes only the explicit grant that it names.
-Other explicit grants and ordinary memberships stay.
+A revoke removes only the explicit system grant that it names.
+Other system grants and ordinary memberships stay.
 The `admin` assignment stays while an org or project grant still covers the user.
 Inactive org membership grants no access.
 Services retain their explicit application roles.
 
-Deactivation removes the user's application identity and explicit grants within that org.
-It then marks the org membership inactive.
+Deactivation removes the user's system grants within that org and marks the org membership inactive.
+Projection disables the retained user row in each affected project environment, revokes its PATs, and removes its application roles.
 The global principal and access in other orgs stay.
 Reactivation restores the org membership and no removed grants.
 
 Disabling a user changes the global principal status and revokes password logins.
 Control refuses if another org has an active membership for the user.
-Project databases keep their user rows. Already issued access tokens have a 900-second lifetime. The disabled user cannot renew.
+Project databases keep their user rows. Control's maintenance loop projects the disabled authority into them.
+Already issued access tokens have a 900-second lifetime. The disabled user cannot renew.
 
 ## Native and cloud boundaries
 

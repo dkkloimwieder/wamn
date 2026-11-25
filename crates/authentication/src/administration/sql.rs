@@ -72,15 +72,15 @@ const PERMISSION_SQL: &str = "INSERT INTO platform.permission \
 const DROP_PERMISSION_SQL: &str = "DELETE FROM platform.permission \
     WHERE role_name = $1 AND permission = $2";
 
-const USER_EXISTS_SQL: &str = "SELECT 1 FROM platform.\"user\" \
-    WHERE id = $1 AND type IN ('user', 'service')";
+const LOCK_GRANT_RECIPIENT_SQL: &str = "SELECT 1 FROM platform.\"user\" \
+    WHERE id = $1 AND (type = 'service' OR (type = 'user' AND status <> 'disabled')) FOR SHARE";
 
 const USER_LIST_SQL: &str = "SELECT u.id, u.email, u.display_name, \
     COALESCE(array_agg(r.role_name ORDER BY r.role_name) \
              FILTER (WHERE r.role_name IS NOT NULL), '{}') \
     FROM platform.\"user\" u \
     LEFT JOIN platform.user_role r ON r.user_id = u.id \
-    WHERE u.type = 'user' \
+    WHERE u.type = 'user' AND u.status <> 'disabled' \
     GROUP BY u.id, u.email, u.display_name ORDER BY u.email, u.id";
 
 const ROLE_LIST_SQL: &str = "SELECT name FROM platform.role ORDER BY name";
@@ -88,7 +88,7 @@ const ROLE_LIST_SQL: &str = "SELECT name FROM platform.role ORDER BY name";
 const PERMISSION_LIST_SQL: &str = "SELECT permission FROM platform.permission \
     WHERE role_name = $1 ORDER BY permission";
 
-/// The application users of the database with their roles, by email.
+/// The application users eligible to hold roles, by email.
 pub async fn application_users(
     client: &mut sqlx::PgConnection,
 ) -> Result<Vec<ApplicationUserRow>, AdministrationError> {
@@ -148,11 +148,11 @@ pub(super) async fn role_exists(
         .is_some())
 }
 
-pub(super) async fn user_exists(
+pub(super) async fn lock_grant_recipient(
     client: &mut PgConnection,
     user_id: &PrincipalId,
 ) -> Result<bool, IdentityError> {
-    Ok(sqlx::query(USER_EXISTS_SQL)
+    Ok(sqlx::query(LOCK_GRANT_RECIPIENT_SQL)
         .bind(Uuid::from(*user_id))
         .fetch_optional(client)
         .await

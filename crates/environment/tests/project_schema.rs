@@ -255,19 +255,12 @@ async fn app_schema_applies_and_enforces_isolation_on_postgres() {
         )
         .expect("writing to a String cannot fail");
     }
-    // A second holder of the admin role, so the role cascade below removes a
-    // grant that the user cascade leaves.
+    // A disabled user row still identifies the actor in existing stamps.
     writeln!(
         script,
-        "INSERT INTO platform.user_role (user_id, role_name) VALUES ('{U2}','admin');"
-    )
-    .expect("writing to a String cannot fail");
-    // FK cascade: deleting U1 prunes its role grant.
-    writeln!(
-        script,
-        "DELETE FROM platform.\"user\" WHERE id='{U1}';\n\
+        "UPDATE platform.\"user\" SET status = 'disabled' WHERE id = '{U1}';\n\
          DO $$ BEGIN\n\
-           ASSERT (SELECT count(*) FROM platform.user_role WHERE user_id='{U1}')=0, 'user_role cascade';\n\
+           ASSERT EXISTS (SELECT FROM platform.\"user\" WHERE id = '{U1}' AND status = 'disabled');\n\
          END $$;"
     )
     .expect("writing to a String cannot fail");
@@ -381,8 +374,8 @@ async fn platform_relations_log_every_row_change_on_postgres() {
          BEGIN;\n\
          INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('{U3}'::uuid,'','fixture','{REMOVE}');\n\
          DELETE FROM platform.setting;\n\
-         DELETE FROM platform.\"user\" WHERE id = '{U1}';\n\
-         DELETE FROM platform.\"user\" WHERE id = '{U2}';\n\
+         UPDATE platform.\"user\" SET status = 'disabled' WHERE id = '{U1}';\n\
+         DELETE FROM platform.user_role WHERE user_id = '{U1}';\n\
          DELETE FROM platform.role WHERE name IN ('admin', 'auditor');\n\
          COMMIT;"
     )
@@ -390,14 +383,15 @@ async fn platform_relations_log_every_row_change_on_postgres() {
     // Each fixture mutation writes one entry. A key change writes a delete
     // and an insert instead of an update.
     for (table, inserted, updated, removed) in [
-        ("user", 3, 1, 2),
+        ("user", 3, 1, 0),
         ("role", 2, 1, 2),
         ("user_role", 2, 0, 2),
         ("permission", 1, 0, 1),
         ("setting", 1, 1, 1),
     ] {
         let key_change = updated == 0;
-        let changed = if key_change { 2 } else { updated };
+        let disabled = u32::from(table == "user");
+        let changed = if key_change { 2 } else { updated + disabled };
         writeln!(script, "DO $$ BEGIN
             ASSERT (SELECT count(*) FROM platform.{table}_history) = {inserted} + {changed} + {removed};
             ASSERT (SELECT count(*) FROM platform.{table}_history WHERE type = 'insert'
@@ -422,6 +416,9 @@ async fn platform_relations_log_every_row_change_on_postgres() {
     writeln!(script, "DO $$ BEGIN
         ASSERT EXISTS (SELECT FROM platform.user_history WHERE type = 'update'
             AND row_key ->> 'id' = '{U2}' AND before ->> 'status' = 'active' AND after ->> 'status' = 'disabled');
+        ASSERT EXISTS (SELECT FROM platform.user_history WHERE type = 'update'
+            AND operation = '{REMOVE}' AND changed_by = '{U3}'
+            AND row_key ->> 'id' = '{U1}' AND before ->> 'status' = 'active' AND after ->> 'status' = 'disabled');
         ASSERT EXISTS (SELECT FROM platform.role_history WHERE type = 'update'
             AND row_key ->> 'name' = 'admin' AND after ->> 'description' = 'administrators');
         ASSERT EXISTS (SELECT FROM platform.setting_history WHERE type = 'update'

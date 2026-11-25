@@ -5,7 +5,7 @@ use std::collections::BTreeSet;
 use wamn_authentication::administration::ApplicationTarget;
 use wamn_identity::identity::application;
 
-/// Fill member rows from system authority.
+/// Reconcile member rows in one project environment from current system authority.
 pub async fn fill(
     system: &mut sqlx::PgConnection,
     project: &mut sqlx::PgConnection,
@@ -32,9 +32,11 @@ pub async fn fill(
         .await?,
     );
     principals.extend(
-        sqlx::query_scalar::<_, uuid::Uuid>("SELECT id FROM platform.\"user\" WHERE type='user'")
-            .fetch_all(&mut *project)
-            .await?,
+        sqlx::query_scalar::<_, uuid::Uuid>(
+            "SELECT id FROM platform.\"user\" WHERE type='user' AND status<>'disabled'",
+        )
+        .fetch_all(&mut *project)
+        .await?,
     );
     for id in principals {
         let id = wamn_identity_protocol::PrincipalId::from(id);

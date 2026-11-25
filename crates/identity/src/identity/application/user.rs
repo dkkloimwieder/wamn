@@ -14,12 +14,10 @@ use super::service::active_service;
 
 const USER_ROW_SQL: &str = "INSERT INTO platform.\"user\" \
     (id, issuer, sub, type, email, display_name) VALUES ($1, $2, $3, 'user', $4, $5) \
-    ON CONFLICT (id) DO NOTHING";
+    ON CONFLICT (id) DO UPDATE SET status = 'active' \
+    WHERE platform.\"user\".type = 'user' AND platform.\"user\".status <> 'active'";
 
-const DROP_USER_ROW_SQL: &str = "DELETE FROM platform.\"user\" \
-    WHERE id = $1 AND type = 'user'";
-
-/// Write the user row of `user`, and keep a row that exists.
+/// Insert or reactivate a projected user, preserving its identity and creation stamps.
 pub async fn write_user(
     client: &mut sqlx::PgConnection,
     issuer: &str,
@@ -38,17 +36,34 @@ pub async fn write_user(
     Ok(())
 }
 
-/// Remove the user row of the principal. Its foreign keys remove its role
-/// rows and its API keys.
-pub async fn remove_user(
+/// Retain the user row for stamps and revoke its authority in the open transaction.
+pub(super) async fn disable_project_user(
     client: &mut sqlx::PgConnection,
     principal_id: &PrincipalId,
 ) -> Result<(), IdentityError> {
-    sqlx::query(DROP_USER_ROW_SQL)
-        .bind(Uuid::from(*principal_id))
-        .execute(&mut *client)
+    let principal = Uuid::from(*principal_id);
+    let disabled = sqlx::query(
+        r#"UPDATE platform."user" SET status = 'disabled'
+           WHERE id = $1 AND type = 'user' AND status <> 'disabled'"#,
+    )
+    .bind(principal)
+    .execute(&mut *client)
+    .await
+    .map_err(|error| database_error(&error))?;
+    if disabled.rows_affected() == 0 {
+        return Ok(());
+    }
+    sqlx::query(
+        "UPDATE platform.pat SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL",
+    )
+    .bind(principal)
+    .execute(&mut *client)
+    .await
+    .map_err(|error| database_error(&error))?;
+    sqlx::query("DELETE FROM platform.user_role WHERE user_id = $1")
+        .bind(principal)
+        .execute(client)
         .await
-        .map(|result| result.rows_affected())
         .map_err(|error| database_error(&error))?;
     Ok(())
 }

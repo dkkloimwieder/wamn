@@ -54,7 +54,7 @@ pub(crate) async fn project_deployments(
     org: &OrgId,
 ) -> Result<Vec<(Triple, InstanceSuffix)>, sqlx::Error> {
     let rows = sqlx::query_as::<_, (String, String, String)>(
-        "SELECT project, env, instance_suffix FROM registry.environment_projects WHERE org=$1",
+        "SELECT project, env, instance_suffix FROM registry.environment_projects WHERE org=$1 ORDER BY project, env",
     )
     .bind(org.as_str())
     .fetch_all(pool)

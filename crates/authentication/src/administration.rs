@@ -219,12 +219,12 @@ async fn require_role(
     }
 }
 
-/// Refuse unless the database has the application user `user_id`.
+/// Lock the role recipient against concurrent deactivation.
 async fn require_user(
     client: &mut sqlx::PgConnection,
     user_id: &wamn_identity_protocol::PrincipalId,
 ) -> Result<(), AdministrationError> {
-    let exists = sql::user_exists(client, user_id).await?;
+    let exists = sql::lock_grant_recipient(client, user_id).await?;
     if exists {
         Ok(())
     } else {

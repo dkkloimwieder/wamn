@@ -116,7 +116,7 @@ Any other payload answers 400 `delivery-invalid-payload`.
 | Route | Answer |
 | --- | --- |
 | `wamn-control:permission/mine@0.9.0` | `admin`, and the stable references the caller holds. An `admin` holds every operation the release serves. |
-| `wamn-control:user/list@0.9.0` (application) | Each entry in `users` has `id`, `email`, `display_name`, `roles` and `admin_covered`. `admin_covered` is true when the user holds `admin`. |
+| `wamn-control:user/list@0.9.0` (application) | Lists active and invited project users. Each entry in `users` has `id`, `email`, `display_name`, `roles` and `admin_covered`. `admin_covered` is true when the user holds `admin`. |
 | `wamn-control:role/list@0.9.0` | `roles`: every role of the project, `admin` included. |
 | `wamn-control:role/create@0.9.0` | Takes `role` and creates the empty authored role. Answers `created`. |
 | `wamn-control:role/delete@0.9.0` | Takes `role` and deletes the authored role with its assignments and permissions. Answers `deleted`. |
@@ -212,7 +212,8 @@ Projection locks `identity.org_memberships` for the principal and org, then read
 It commits the application write before releasing that system lock.
 If an environment fails, the route answers `application_write_incomplete` with that environment and the environments that completed.
 The system mutation remains committed.
-The next system mutation or `environment::apply` repairs application rows from current authority.
+Control's maintenance loop also reconciles each recorded project environment from current system authority.
+The provisional period is 60 seconds. An unavailable database does not stop the other copies.
 The four status routes need `org-admin`, and they write `registry.environments.status` through the `control` family, which holds `UPDATE` on that column only.
 Each status route also writes the status into the one row of `platform.environment` in each environment, with the same administration login.
 An inactivation writes the environments first and commits its system rows last, and an activation commits its system rows first.
