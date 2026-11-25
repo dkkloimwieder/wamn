@@ -2,24 +2,47 @@
 
 use anyhow::{Context as _, bail, ensure};
 use serde_json::{Map, Value, json};
+use wash_runtime::wasmtime::component::types::{Record, ResultType};
 use wash_runtime::wasmtime::component::{Type, Val};
 
 /// Convert the published request envelope into the typed operation argument.
 pub fn input(ty: &Type, value: &Value) -> anyhow::Result<Val> {
-    if matches!(ty, Type::Record(_))
-        && !is_json(ty)
-        && let Value::Array(items) = value
-    {
-        let [item] = items.as_slice() else {
-            bail!("a read takes one request element")
-        };
-        return decode(ty, Some(item));
+    match ty {
+        Type::Record(record) if !is_json(record) => {
+            let value = if let Value::Array(items) = value {
+                let [item] = items.as_slice() else {
+                    bail!("a read takes one request element")
+                };
+                item
+            } else {
+                value
+            };
+            request_value(record, value, false, false)
+        }
+        Type::List(list) => {
+            if let Type::Record(record) = list.ty()
+                && !is_json(&record)
+            {
+                return Ok(Val::List(
+                    value
+                        .as_array()
+                        .context("expected list")?
+                        .iter()
+                        .map(|item| request_value(&record, item, false, false))
+                        .collect::<anyhow::Result<_>>()?,
+                ));
+            }
+            decode(ty, Some(value))
+        }
+        _ => decode(ty, Some(value)),
     }
-    decode(ty, Some(value))
 }
 
-fn is_json(ty: &Type) -> bool {
-    matches!(ty, Type::Record(record) if record.fields().map(|field| (field.name, field.ty)).eq([("encoded-json", Type::String)]))
+fn is_json(record: &Record) -> bool {
+    record
+        .fields()
+        .map(|field| (field.name, field.ty))
+        .eq([("encoded-json", Type::String)])
 }
 
 #[expect(
@@ -73,12 +96,11 @@ fn decode(ty: &Type, value: Option<&Value>) -> anyhow::Result<Val> {
                 .map(|value| decode(&list.ty(), Some(value)))
                 .collect::<anyhow::Result<_>>()?,
         ),
-        Type::Record(_) if is_json(ty) => Val::Record(vec![(
+        Type::Record(record) if is_json(record) => Val::Record(vec![(
             "encoded-json".into(),
             Val::String(value.to_string()),
         )]),
-        Type::Record(record) => record_value(record, value, false, false)?,
-        Type::Result(result) => result_value(result, value, false)?,
+        Type::Record(record) => record_value(record, value)?,
         Type::Tuple(tuple) => {
             let items = value.as_array().context("expected tuple")?;
             ensure!(items.len() == tuple.types().len(), "tuple length differs");
@@ -137,15 +159,33 @@ fn decode(ty: &Type, value: Option<&Value>) -> anyhow::Result<Val> {
     })
 }
 
-fn result_value(
-    result: &wash_runtime::wasmtime::component::types::ResultType,
-    value: &Value,
-    correlation: bool,
-) -> anyhow::Result<Val> {
+fn record_value(record: &Record, value: &Value) -> anyhow::Result<Val> {
+    let object = value.as_object().context("expected object")?;
+    for key in object.keys() {
+        ensure!(
+            record
+                .fields()
+                .any(|field| field.name.replace('-', "_") == *key),
+            "unknown input member {key}"
+        );
+    }
+    let values = record
+        .fields()
+        .map(|field| {
+            let name = field.name.replace('-', "_");
+            let value = decode(&field.ty, object.get(&name))
+                .with_context(|| format!("input member {name}"))?;
+            Ok((field.name.to_owned(), value))
+        })
+        .collect::<anyhow::Result<_>>()?;
+    Ok(Val::Record(values))
+}
+
+fn result_value(result: &ResultType, value: &Value, correlation: bool) -> anyhow::Result<Val> {
     let decoded = result
         .ok()
         .map(|ty| match ty {
-            Type::Record(record) => record_value(&record, value, correlation, true),
+            Type::Record(record) => request_value(&record, value, correlation, true),
             Type::Enum(enumeration)
                 if enumeration.names().eq(["request"])
                     && value.as_object().is_some_and(|object| {
@@ -170,17 +210,18 @@ fn result_value(
     })
 }
 
-fn record_value(
-    record: &wash_runtime::wasmtime::component::types::Record,
+fn request_value(
+    record: &Record,
     value: &Value,
     correlation: bool,
     envelope: bool,
 ) -> anyhow::Result<Val> {
     let object = value.as_object().context("expected object")?;
     let fields: Vec<_> = record.fields().collect();
-    let item = fields
-        .iter()
-        .any(|field| field.name == "input" && matches!(field.ty, Type::Result(_)));
+    let item = !envelope
+        && fields
+            .iter()
+            .any(|field| field.name == "input" && matches!(field.ty, Type::Result(_)));
     let wrapped = envelope
         && object.contains_key("value")
         && !fields.iter().any(|field| field.name == "value");
@@ -259,8 +300,7 @@ fn record_value(
     Ok(Val::Record(values))
 }
 
-/// Convert a typed result into the public outcome envelope.
-pub(super) fn output(value: &Val) -> anyhow::Result<Value> {
+fn output(value: &Val) -> anyhow::Result<Value> {
     match value {
         Val::Bool(v) => Ok(json!(v)),
         Val::S8(v) => Ok(json!(v)),
@@ -283,44 +323,11 @@ pub(super) fn output(value: &Val) -> anyhow::Result<Value> {
             {
                 return serde_json::from_str(encoded).context("invalid JSON field result");
             }
-            let change =
-                fields
-                    .iter()
-                    .map(|(name, _)| name.as_str())
-                    .eq(["id", "row-version", "data"]);
             let mut object = Map::new();
             for (name, value) in fields {
-                if name == "outcome" && matches!(value, Val::Result(_)) {
-                    let Value::Object(value) = output(value)? else {
-                        bail!("outcome must be a result")
-                    };
-                    object.extend(value);
-                } else {
-                    object.insert(name.replace('-', "_"), output(value)?);
-                }
-            }
-            if change {
-                let deleted = matches!(&fields[2].1, Val::Option(None));
-                object.insert("deleted".into(), Value::Bool(deleted));
-                if deleted {
-                    object.remove("data");
-                }
+                object.insert(name.replace('-', "_"), output(value)?);
             }
             Ok(Value::Object(object))
-        }
-        Val::Result(Ok(value)) => {
-            let value = match value.as_deref() {
-                Some(Val::Record(fields)) if fields.len() == 1 && fields[0].0 == "value" => {
-                    output(&fields[0].1)?
-                }
-                Some(value) => output(value)?,
-                None => Value::Null,
-            };
-            Ok(json!({"value": value}))
-        }
-        Val::Result(Err(value)) => Ok(json!({"error": value.as_deref().map(error).transpose()?})),
-        Val::Variant(name, value) if name == "page" || name == "changes" => {
-            value.as_deref().map_or(Ok(Value::Null), output)
         }
         Val::Variant(name, value) => {
             Ok(json!({"type": name, "value": value.as_deref().map(output).transpose()?}))
@@ -334,6 +341,95 @@ pub(super) fn output(value: &Val) -> anyhow::Result<Value> {
         )),
         _ => bail!("WIT value cannot be carried by HTTP JSON"),
     }
+}
+
+fn outcome(value: &Val) -> anyhow::Result<Value> {
+    let Val::Record(fields) = value else {
+        return output(value);
+    };
+    if !fields
+        .iter()
+        .any(|(name, value)| name == "outcome" && matches!(value, Val::Result(_)))
+    {
+        return output(value);
+    }
+    let mut object = Map::new();
+    for (name, value) in fields {
+        let (name, value) = match (name.as_str(), value) {
+            ("outcome", Val::Result(Ok(value))) => {
+                ("value".into(), outcome_value(value.as_deref())?)
+            }
+            ("outcome", Val::Result(Err(value))) => (
+                "error".into(),
+                value
+                    .as_deref()
+                    .map(error)
+                    .transpose()?
+                    .unwrap_or(Value::Null),
+            ),
+            _ => (name.replace('-', "_"), output(value)?),
+        };
+        object.insert(name, value);
+    }
+    Ok(Value::Object(object))
+}
+
+fn outcome_value(value: Option<&Val>) -> anyhow::Result<Value> {
+    if let Some(Val::Record(fields)) = value
+        && let [(name, payload)] = fields.as_slice()
+        && name == "value"
+    {
+        return output(payload);
+    }
+    match value {
+        Some(Val::Variant(name, value)) if name == "page" => {
+            value.as_deref().map_or(Ok(Value::Null), output)
+        }
+        Some(Val::Variant(name, value)) if name == "changes" => {
+            value.as_deref().map_or(Ok(Value::Null), feed_changes)
+        }
+        Some(value) => output(value),
+        None => Ok(Value::Null),
+    }
+}
+
+fn feed_changes(value: &Val) -> anyhow::Result<Value> {
+    let Val::Record(fields) = value else {
+        return output(value);
+    };
+    let mut object = Map::new();
+    for (name, value) in fields {
+        let value = match (name.as_str(), value) {
+            ("rows", Val::List(rows)) => rows
+                .iter()
+                .map(feed_change)
+                .collect::<anyhow::Result<_>>()?,
+            _ => output(value)?,
+        };
+        object.insert(name.replace('-', "_"), value);
+    }
+    Ok(Value::Object(object))
+}
+
+fn feed_change(value: &Val) -> anyhow::Result<Value> {
+    if let Val::Record(fields) = value
+        && let [(id_name, id), (version_name, version), (data_name, data)] = fields.as_slice()
+        && id_name == "id"
+        && version_name == "row-version"
+        && data_name == "data"
+    {
+        let deleted = matches!(data, Val::Option(None));
+        let mut change = Map::from_iter([
+            ("id".into(), output(id)?),
+            ("row_version".into(), output(version)?),
+            ("deleted".into(), Value::Bool(deleted)),
+        ]);
+        if !deleted {
+            change.insert("data".into(), output(data)?);
+        }
+        return Ok(Value::Object(change));
+    }
+    output(value)
 }
 
 fn error(value: &Val) -> anyhow::Result<Value> {
@@ -381,7 +477,10 @@ pub fn emission(
                     port,
                 }));
             }
-            let mut payload = output(value)?;
+            let mut payload = match value.as_ref() {
+                Val::List(items) => items.iter().map(outcome).collect::<anyhow::Result<_>>()?,
+                value => outcome(value)?,
+            };
             if !payload.is_array() {
                 payload = json!([payload]);
             }
@@ -597,9 +696,16 @@ mod tests {
             "record row { name: string } record input { id: string, row-version: s64, data: option<row> }",
         );
         for (data, deleted) in [(Value::Null, true), (json!({"name":"present"}), false)] {
-            let change =
-                output(&input(&ty, &json!({"id":"1", "row_version":"2", "data":data})).unwrap())
-                    .unwrap();
+            let row = input(&ty, &json!({"id":"1", "row_version":"2", "data":data})).unwrap();
+            let changes = Val::Record(vec![
+                ("rows".into(), Val::List(vec![row])),
+                ("next-cursor".into(), Val::String("cursor".into())),
+                ("complete".into(), Val::Bool(true)),
+            ]);
+            let changes = Val::Variant("changes".into(), Some(Box::new(changes)));
+            let result = Val::Result(Ok(Some(Box::new(changes))));
+            let envelope = outcome(&Val::Record(vec![("outcome".into(), result)])).unwrap();
+            let change = &envelope["value"]["rows"][0];
             assert_eq!(change["deleted"], json!(deleted));
             assert_eq!(change.get("data").is_none(), deleted);
             if !deleted {
@@ -608,7 +714,7 @@ mod tests {
         }
         let result = Val::Result(Err(Some(Box::new(Val::Variant("not-found".into(), None)))));
         {
-            let observed = &(output(&result).unwrap());
+            let observed = outcome(&Val::Record(vec![("outcome".into(), result)])).unwrap();
             assert_eq!(observed["error"]["code"], serde_json::json!("not_found"));
             assert!(
                 observed["error"]["detail"]
@@ -624,7 +730,7 @@ mod tests {
         let refusal = Val::Variant("unique-violation".into(), Some(Box::new(detail)));
         let result = Val::Result(Err(Some(Box::new(refusal))));
         {
-            let observed = &(output(&result).unwrap());
+            let observed = outcome(&Val::Record(vec![("outcome".into(), result)])).unwrap();
             assert_eq!(
                 observed["error"]["code"],
                 serde_json::json!("unique_violation")
@@ -644,7 +750,7 @@ mod tests {
         )]);
         let result = Val::Result(Ok(Some(Box::new(Val::Record(vec![("value".into(), row)])))));
         assert_eq!(
-            output(&result).unwrap(),
+            outcome(&Val::Record(vec![("outcome".into(), result)])).unwrap(),
             json!({"value": {"outcome": "deleted"}})
         );
     }
