@@ -409,19 +409,11 @@ async fn publication_schemas(
                 .map(|model| model.schema.clone().into())
         })
         .collect::<BTreeSet<_>>();
-    let installed = environment_sql_effects::installed_packages(owner).await?;
-    let base = platform
-        .package_artifact_base
-        .as_deref()
-        .context("package artifact base is absent")?;
-    let registry = platform.packages.repository(base).await?;
-    for (id, digest) in installed {
-        if selected.contains_key(&id) {
-            continue;
-        }
-        let digest =
-            digest.with_context(|| format!("installed package {id} requires a pinned artifact"))?;
-        let (_, manifest) = open_package_digest(&registry, &digest).await?;
+    let installed = environment_sql_effects::installed_packages(owner)
+        .await?
+        .into_iter()
+        .filter(|(id, _)| !selected.contains_key(id));
+    for (_, _, manifest) in stage::open(platform, installed).await? {
         schemas.extend(
             manifest
                 .models
@@ -457,24 +449,11 @@ pub async fn reset(platform: &Platform, document: &EnvironmentDocument) -> anyho
                         super::drain::describe(&unfinished)
                     );
                     let installed = project.installed_packages().await?;
-                    let base = platform
-                        .package_artifact_base
-                        .as_deref()
-                        .context("package artifact base is absent")?;
-                    let registry = platform.packages.repository(base).await?;
                     let mut packages = Packages {
                         manifests: BTreeMap::new(),
                         artifacts: BTreeMap::new(),
                     };
-                    for (id, digest) in installed {
-                        let digest = digest.with_context(|| {
-                            format!("installed package {id} requires a pinned artifact")
-                        })?;
-                        let (artifact, manifest) = open_package_digest(&registry, &digest).await?;
-                        ensure!(
-                            manifest.package.id == id,
-                            "installed artifact {digest} is not {id}"
-                        );
+                    for (id, artifact, manifest) in stage::open(platform, installed).await? {
                         packages.manifests.insert(id.clone(), manifest);
                         packages.artifacts.insert(id, artifact);
                     }

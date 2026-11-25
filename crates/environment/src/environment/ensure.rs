@@ -264,12 +264,15 @@ async fn installed_manifests(
     system: &PostgresSession,
     document: &EnvironmentDocument,
 ) -> anyhow::Result<Vec<wamn_component_policy::PackageManifest>> {
-    let mut manifests = Vec::new();
-    for (id, baseline) in super::stage::installed(system, document).await? {
-        let package = super::stage::open(platform, &id, &baseline.current).await?;
-        manifests.push(package.read_manifest()?);
-    }
-    Ok(manifests)
+    let installed = super::stage::installed(system, document)
+        .await?
+        .into_iter()
+        .map(|(id, baseline)| (id, baseline.artifact_digest));
+    Ok(super::stage::open(platform, installed)
+        .await?
+        .into_iter()
+        .map(|(_, _, manifest)| manifest)
+        .collect())
 }
 
 /// Provision the project source stream through its environment account.

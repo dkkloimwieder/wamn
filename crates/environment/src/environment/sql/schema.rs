@@ -114,33 +114,6 @@ pub async fn database_state(
     })
 }
 
-pub(super) async fn open(
-    platform: &Platform,
-    id: &wamn_package::PackageName,
-    version: &wamn_package::package_version::PackageVersion,
-    digest: Option<&wamn_digest::Digest>,
-) -> anyhow::Result<Candidate> {
-    let artifact = stage::open(platform, id, version).await?;
-    let root = artifact.package_root();
-    if let Some(digest) = digest {
-        ensure!(
-            root.artifact_digest.as_ref() == Some(digest),
-            "installed schema source for {id}@{version} differs from recorded artifact {digest}"
-        );
-    }
-    let candidate = Candidate::source(root)?;
-    let manifest =
-        wamn_component_policy::PackageManifest::from_slice(&candidate.directory.manifest_bytes)?;
-    ensure!(
-        &manifest.package.id == id && &manifest.package.version == version,
-        "package artifact does not declare {id}@{version}"
-    );
-    Ok(Candidate {
-        _artifact: Some(artifact),
-        ..candidate
-    })
-}
-
 /// Compare selected files with SQLx versions and checksums.
 pub async fn plan(
     document: &EnvironmentDocument,
@@ -234,15 +207,22 @@ pub async fn reset_candidates(
         "reset is missing schema sources: {:?}",
         diff.missing_reset_sources
     );
-    for (id, source) in &diff.reset_sources {
-        if diff.packages.contains_key(id) {
-            continue;
-        }
-        let digest = source
-            .artifact
-            .as_ref()
-            .with_context(|| format!("retained package {id} has no published source"))?;
-        selected.push(open(platform, id, &source.version, Some(digest)).await?);
+    let retained = diff
+        .reset_sources
+        .iter()
+        .filter(|(id, _)| !diff.packages.contains_key(*id))
+        .map(|(id, source)| (id.clone(), source.artifact));
+    for (id, artifact, manifest) in stage::open(platform, retained).await? {
+        let version = &diff.reset_sources[&id].version;
+        ensure!(
+            &manifest.package.version == version,
+            "package artifact does not declare {id}@{version}"
+        );
+        let candidate = Candidate::source(artifact.package_root())?;
+        selected.push(Candidate {
+            _artifact: Some(artifact),
+            ..candidate
+        });
     }
     Ok(selected)
 }

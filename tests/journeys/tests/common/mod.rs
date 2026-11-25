@@ -821,8 +821,8 @@ pub(crate) async fn exec<const N: usize>(
     Ok(output)
 }
 
-/// Run one `wamn` child and return its output.
-async fn run(command: std::process::Command) -> anyhow::Result<String> {
+/// Run a command and return its standard output.
+pub(super) async fn run(command: std::process::Command) -> anyhow::Result<String> {
     let mut command = tokio::process::Command::from(command);
     let output = command.kill_on_drop(true).output().await?;
     ensure!(

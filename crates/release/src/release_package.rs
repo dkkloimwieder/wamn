@@ -660,13 +660,6 @@ pub struct OpenedPackage {
 }
 
 impl OpenedPackage {
-    /// Read the opened package's verified manifest.
-    pub fn read_manifest(&self) -> anyhow::Result<PackageManifest> {
-        let path = wamn_codegen::package_manifest_path(self.root());
-        let bytes = std::fs::read(&path).with_context(|| format!("read {}", path.display()))?;
-        Ok(PackageManifest::from_slice(&bytes)?)
-    }
-
     /// The package root.
     pub fn root(&self) -> &Path {
         &self.root

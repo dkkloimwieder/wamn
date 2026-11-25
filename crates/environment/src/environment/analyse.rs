@@ -15,8 +15,8 @@ use super::document::EnvironmentDocument;
 /// One installed package in the project database.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct Installed {
-    /// The installed package baseline.
-    pub current: wamn_package::package_version::PackageVersion,
+    /// The published artifact that supplied the installed schema.
+    pub artifact_digest: Option<wamn_digest::Digest>,
 }
 
 /// What the project database holds.

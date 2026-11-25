@@ -349,6 +349,7 @@ Project upgrades omit the Helm wait flag. Each project Cluster has a CA that sig
 See [Backup and recovery](backup-and-recovery.md) for backup settings.
 The worker reads each required PostgreSQL cluster, Database, and reader Deployment by name.
 The project chart creates the PostgreSQL publication for change data capture (CDC).
+Environment apply reads the schemas for that publication from the package digests recorded in the project database.
 For each project, the worker waits for the database to be applied and allows up to 120 seconds for it to accept a SQL connection.
 CloudNativePG creates the database and assigns ownership to `wamn_migration`. The worker installs the project schema before restoring platform migrations. It checks the publication in SQL before it creates the replication slot.
 The CDC reader waits up to 120 seconds for its slot before it starts replication.

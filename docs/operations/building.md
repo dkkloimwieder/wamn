@@ -337,7 +337,7 @@ Each argument is the full package artifact digest that source publication prints
 A digest prefix is refused.
 A line that starts with `-` shows the value in the first artifact, and a line that starts with `+` shows the value in the second.
 Identical documents print nothing.
-Both commands pull from the registry only, by full digest or tag, because no database holds a package row.
+Both commands inspect the registry directly. The project database records the digest of each installed package.
 They test each layer against its digest.
 They accept these registry flags: `--artifact-base`, `--registry-auth-file`, `--insecure-registry` and `--oci-ca-path`.
 

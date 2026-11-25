@@ -98,24 +98,12 @@ pub(crate) async fn read_project(url: &str) -> anyhow::Result<Option<ProjectStat
         Err(error) => return Err(error.context("project database state is unknown")),
     };
     let mut transaction = client.begin().await.context("begin the project read")?;
-    let mut installed = BTreeMap::<wamn_package::PackageName, Installed>::new();
-    for row in sqlx::query("SELECT package_id, package_version FROM catalog.packages")
-        .fetch_all(&mut *transaction)
+    let installed = crate::package_catalog::installed_package_artifacts(&mut transaction)
         .await
         .context("read the installed packages")?
-    {
-        installed.insert(
-            row.try_get::<String, _>(0)?
-                .try_into()
-                .context("decode package_id")?,
-            Installed {
-                current: row
-                    .try_get::<String, _>(1)?
-                    .try_into()
-                    .context("decode package_version")?,
-            },
-        );
-    }
+        .into_iter()
+        .map(|(id, artifact_digest)| (id, Installed { artifact_digest }))
+        .collect();
     let schema_report = Some(crate::platform_migrations::observe_project(&mut transaction).await?);
     transaction.commit().await.context("end the project read")?;
     Ok(Some(ProjectState {

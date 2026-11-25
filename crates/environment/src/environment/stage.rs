@@ -6,12 +6,15 @@ pub use plan::{apply_order, sequence_defaults};
 use std::collections::BTreeMap;
 
 use crate::environment_sql_effects::{self, PostgresSession};
-use anyhow::{Context as _, bail};
+use anyhow::{Context as _, ensure};
 
 use super::Platform;
 use super::analyse::{self, Installed};
 use super::document::EnvironmentDocument;
-use wamn_release::release_package::{OpenedPackage, open_package};
+use wamn_component_policy::PackageManifest;
+use wamn_digest::Digest;
+use wamn_package::PackageName;
+use wamn_release::release_package::{OpenedPackage, open_package_digest};
 
 /// The installed packages of the project database, read now.
 pub(super) async fn installed(
@@ -30,22 +33,34 @@ pub(super) async fn installed(
     )
 }
 
-/// The package artifact `<id>-<version>`, pulled from the registry.
+/// Open installed packages by their recorded artifact digests.
 pub(super) async fn open(
     platform: &Platform,
-    id: &wamn_package::PackageName,
-    version: &wamn_package::package_version::PackageVersion,
-) -> anyhow::Result<OpenedPackage> {
-    let Some(base) = &platform.package_artifact_base else {
-        bail!(
-            "release names package {id}@{version}; set WAMN_PACKAGE_ARTIFACT_BASE to read \
-             its artifact"
-        );
-    };
+    installed: impl IntoIterator<Item = (PackageName, Option<Digest>)>,
+) -> anyhow::Result<Vec<(PackageName, OpenedPackage, PackageManifest)>> {
+    let mut installed = installed.into_iter().peekable();
+    if installed.peek().is_none() {
+        return Ok(Vec::new());
+    }
+    let base = platform
+        .package_artifact_base
+        .as_deref()
+        .context("package artifact base is absent")?;
     let registry = platform.packages.repository(base).await?;
-    open_package(&registry, id, version)
-        .await
-        .with_context(|| format!("open package artifact {id}@{version}"))
+    let mut packages = Vec::with_capacity(installed.size_hint().0);
+    for (id, digest) in installed {
+        let digest =
+            digest.with_context(|| format!("installed package {id} requires a pinned artifact"))?;
+        let (artifact, manifest) = open_package_digest(&registry, &digest)
+            .await
+            .with_context(|| format!("open installed package {id} at {digest}"))?;
+        ensure!(
+            manifest.package.id == id,
+            "installed artifact {digest} is not {id}"
+        );
+        packages.push((id, artifact, manifest));
+    }
+    Ok(packages)
 }
 
 #[cfg(test)]
