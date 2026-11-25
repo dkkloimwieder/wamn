@@ -389,7 +389,7 @@ Next: the restructure ends. The review work in the Claude Doc "wamn review" foll
 - The environment document has two owners: the ConfigMap from `project/templates/operations.yaml` and the registry rows. Design one owner.
 - Org, project and environment are written five times in workload config (`release_chart/plan.rs::roles`, the `wamn.project_env_key` annotation in `workloads.yaml`) and never compared. Design one source.
 - After the first kind run:
-  - Charts: `enablePDB: false` for single-instance project clusters; delete the dropped `affinity` and `topologySpreadConstraints` host values, or render them.
+  - Charts: `enablePDB: false` for single-instance project clusters.
 - An org login (control, apply) can INSERT `identity.principals`, and the policy checks only a bound identity, not the org. Least-privilege check: should these logins insert principals at all?
 - Ruled (D, 2026-11-23), done in Epic 21 (21.9): every member of a workspace moves under the directory of that workspace. Until then, `cargo xtask machete` stages 14 members in a scratch tree, because cargo-machete finds the workspace by walking up from each manifest.
 - Crate graph review (2026-11-21): `wamn-registry` and `wamn-package` (30 dependents each) link sqlx with postgres, so `wamn-web`, `wamn-edge`, `wamn-event` and `wamn-broker` compile a database driver. The fix is choice 6a: the sqlx impls go from the domain types, the queries bind and read plain values, and wamn-postgres keeps private row structs. Epic 19 does it.

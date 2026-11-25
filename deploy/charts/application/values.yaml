@@ -1,6 +1,6 @@
 namespace: ""
 
-# Defaults for application workloads.
+# Defaults for the application route workload.
 
 platform:
   roles:
@@ -26,7 +26,8 @@ webClients: {}
 webDigests: {}
 # Organization whose platform UI configuration the edge serves.
 org: ""
-roles: []
+route:
+  config: {}
 # Application and integration sibling components pinned by OCI manifest digest.
 components: []
 # TCP ports of the bound host HTTP connections, opened to public IPv4.
@@ -34,5 +35,5 @@ connectionPorts: []
 # Platform interfaces and named NATS bindings for this workload.
 hostInterfaces: []
 
-# Shared environment host selected by application workloads.
+# Shared environment host selected by the application workload.
 hostGroup: ""

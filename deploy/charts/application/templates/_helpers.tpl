@@ -8,12 +8,12 @@ wamn.application: {{ keys . | first | quote }}
 {{- end }}
 {{- end }}
 
-{{/* Application workloads share their environment host. */}}
+{{/* The route workload runs on the shared environment host. */}}
 {{- define "application.hostSelector" -}}
 hostgroup: {{ required "hostGroup is required" .Values.hostGroup | quote }}
 {{- end }}
 
-{{/* Require both application workload guests. */}}
+{{/* Require both guests of the route workload. */}}
 {{- define "application.requireImageSet" -}}
 {{- $_ := required "platform.roles.ingress.image is required: stamp the platform image set" .Values.platform.roles.ingress.image }}
 {{- $_ := required "platform.workflow.image is required: stamp the platform image set" .Values.platform.workflow.image }}

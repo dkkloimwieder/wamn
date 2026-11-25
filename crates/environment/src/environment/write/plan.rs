@@ -7,7 +7,7 @@ use crate::application_chart::{
 use anyhow::Context as _;
 use wamn_release::publish_release::{deploy_runtime_schema, deployment_routes, route_contracts};
 
-use super::{EnvironmentDocument, RoleName, Value, ValuesInput};
+use super::{EnvironmentDocument, Value, ValuesInput};
 
 /// Build release values from the document, artifact, and host overlay.
 #[expect(
@@ -27,7 +27,7 @@ pub(super) fn release_values(
     integration_repository: &str,
     component_repository: &str,
     authority_port: super::AuthorityPort,
-) -> anyhow::Result<(Value, Vec<RoleName>)> {
+) -> anyhow::Result<Value> {
     let seconds = document
         .revocation_seconds
         .context("deploy requires revocation_seconds from the environment input")?;
@@ -55,7 +55,7 @@ pub(super) fn release_values(
         operations,
         schemas,
     };
-    let roles = chart::roles(
+    let route = chart::roles(
         package_manifests,
         &publication,
         &document.settings.org,
@@ -67,7 +67,6 @@ pub(super) fn release_values(
         integration_repository,
         |authority| Ok(authority_port(authority)?),
     )?;
-    let names = roles.iter().map(|role| role.name).collect();
     let selection = &document.applications[application];
     let applications = std::collections::BTreeMap::from([(
         application.to_owned(),
@@ -85,7 +84,7 @@ pub(super) fn release_values(
         platform_domain,
         client: selection.client.as_ref(),
         applications,
-        roles,
+        route,
     })?;
     let repository = wamn_oci_reference::parse_component_artifact_base(component_repository)?;
     let components = chart::published_components(package_manifests)
@@ -104,5 +103,5 @@ pub(super) fn release_values(
         .as_sequence_mut()
         .expect("release values contain a component list")
         .extend(components);
-    Ok((rendered, names))
+    Ok(rendered)
 }

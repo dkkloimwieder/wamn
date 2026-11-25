@@ -29,11 +29,11 @@ pub fn release_name(
     wamn_registry::resource_names::application_release_name(org, project, env, application)
 }
 
-/// The name the release chart gives the WorkloadDeployment of `role` in
-/// release `release_name`: `<release>-<role>`. The http role's Service has
-/// the same name.
-pub fn workload_name(release_name: &str, role: RoleName) -> String {
-    wamn_registry::name::resource_suffix(release_name, role.as_str())
+const HTTP_SUFFIX: &str = "http";
+
+/// The route WorkloadDeployment and its Service share the name `<release>-http`.
+pub fn workload_name(release_name: &str) -> String {
+    wamn_registry::name::resource_suffix(release_name, HTTP_SUFFIX)
 }
 
 /// Publication results used to configure an application workload.
@@ -52,10 +52,10 @@ pub struct PublishedOperation {
 }
 
 /// Every application has one route workload, including applications without HTTP routes.
-/// Each role's configuration derives from the coordinate.
+/// Its configuration derives from the coordinate.
 #[expect(
     clippy::too_many_arguments,
-    reason = "roles derive from separate project, package, and binding inputs"
+    reason = "the route workload derives from separate project, package, and binding inputs"
 )]
 pub fn roles(
     package_manifests: &BTreeMap<PackageName, PackageManifest>,
@@ -68,7 +68,7 @@ pub fn roles(
     bindings: &[Binding],
     integration_repository: &str,
     wasm_authority_port: impl Fn(&str) -> anyhow::Result<u16>,
-) -> anyhow::Result<Vec<Role>> {
+) -> anyhow::Result<Role> {
     use wamn_application::application_config::{
         ApplicationComponent, ApplicationConfig, ApplicationConnection, ApplicationDataChange,
         ApplicationOperation, ApplicationOperationType, DataChangeModel,
@@ -357,13 +357,12 @@ pub fn roles(
             },
         }));
     }
-    Ok(vec![Role {
-        name: RoleName::Http,
+    Ok(Role {
         config,
         host_interfaces,
         integration_components: integrations.into_values().collect(),
         connection_ports,
-    }])
+    })
 }
 
 /// The TCP ports of one host HTTP connection: its primary authority and its
@@ -458,17 +457,6 @@ pub fn values(input: &ValuesInput<'_>) -> anyhow::Result<Value> {
         route_host.len() <= 253,
         "application host exceeds 253 bytes"
     );
-    let roles = input
-        .roles
-        .iter()
-        .map(|role| {
-            let mut entry = Mapping::new();
-            entry.insert("name".into(), role.name.as_str().into());
-            entry.insert("config".into(), Value::Mapping(role.config.clone()));
-
-            Ok(Value::Mapping(entry))
-        })
-        .collect::<anyhow::Result<_>>()?;
     let mut values = Mapping::new();
     values.insert(
         "release".into(),
@@ -503,36 +491,24 @@ pub fn values(input: &ValuesInput<'_>) -> anyhow::Result<Value> {
         "applications".into(),
         serde_yaml::to_value(&input.applications).context("render the applications")?,
     );
-    values.insert("roles".into(), Value::Sequence(roles));
+    values.insert(
+        "route".into(),
+        Value::Mapping(Mapping::from_iter([(
+            "config".into(),
+            Value::Mapping(input.route.config.clone()),
+        )])),
+    );
     values.insert(
         "components".into(),
-        serde_yaml::to_value(
-            input
-                .roles
-                .iter()
-                .flat_map(|role| &role.integration_components)
-                .collect::<Vec<_>>(),
-        )?,
+        serde_yaml::to_value(&input.route.integration_components)?,
     );
     values.insert(
         "connectionPorts".into(),
-        serde_yaml::to_value(
-            input
-                .roles
-                .iter()
-                .flat_map(|role| &role.connection_ports)
-                .collect::<BTreeSet<_>>(),
-        )?,
+        serde_yaml::to_value(&input.route.connection_ports)?,
     );
     values.insert(
         "hostInterfaces".into(),
-        serde_yaml::to_value(
-            input
-                .roles
-                .iter()
-                .flat_map(|role| &role.host_interfaces)
-                .collect::<Vec<_>>(),
-        )?,
+        serde_yaml::to_value(&input.route.host_interfaces)?,
     );
     values.insert(
         "hostGroup".into(),
@@ -550,31 +526,15 @@ fn mapping<const N: usize>(entries: [(&str, String); N]) -> Value {
     )
 }
 
-/// One application HTTP workload with its configuration.
+/// The application's route workload and its configuration.
 #[derive(Debug, Clone)]
 pub struct Role {
-    pub name: RoleName,
-    /// `localResources.config` of the role's component.
+    /// `localResources.config` of the ingress component.
     pub config: Mapping,
     pub host_interfaces: Vec<serde_json::Value>,
     pub integration_components: Vec<serde_json::Value>,
     /// The ports of the bound host HTTP connections, opened to public IPv4.
     pub connection_ports: BTreeSet<u16>,
-}
-
-/// The roles a release can imply (R4).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RoleName {
-    Http,
-}
-
-impl RoleName {
-    /// The suffix of the role's object names.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Http => "http",
-        }
-    }
 }
 
 /// The inputs of one application's install values.
@@ -590,7 +550,7 @@ pub struct ValuesInput<'a> {
     pub client: Option<&'a Client>,
     /// Exactly one application's membership, retained in Helm values for status reads.
     pub applications: wamn_registry::EnvironmentApplications,
-    pub roles: Vec<Role>,
+    pub route: Role,
 }
 
 /// The host samples traces at their start and exports to the cluster's collector.
@@ -709,7 +669,7 @@ mod tests {
     fn render(
         packages: &BTreeMap<PackageName, PackageManifest>,
         bindings: &[Binding],
-    ) -> anyhow::Result<Vec<super::Role>> {
+    ) -> anyhow::Result<super::Role> {
         let (package, _) = packages.first_key_value().unwrap();
         let publication = Publication {
             routes: Vec::new(),
@@ -863,8 +823,8 @@ mod tests {
                 ..binding(&format!("api{index}"), &format!("c{index}"), &a)
             })
             .collect();
-        let roles = render(&packages, &bindings).unwrap();
-        assert_eq!(roles[0].connection_ports, expected);
+        let route = render(&packages, &bindings).unwrap();
+        assert_eq!(route.connection_ports, expected);
     }
 
     #[test]

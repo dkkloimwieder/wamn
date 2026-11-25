@@ -69,7 +69,7 @@ pub(super) async fn application(
         .as_str()
         .context("rollback revision has no package digest")?
         .parse()?;
-    let app = values["roles"][0]["config"][APPLICATION_CONFIG]
+    let app = values["route"]["config"][APPLICATION_CONFIG]
         .as_str()
         .context("rollback revision has no wamn.application configuration")?;
     Ok((digest, serde_json::from_str(app)?))

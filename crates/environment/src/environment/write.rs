@@ -7,7 +7,7 @@ use std::path::Path;
 
 use crate::application_chart::{
     binding::Binding,
-    plan::{self as chart, RoleName, ValuesInput},
+    plan::{self as chart, ValuesInput},
 };
 use anyhow::Context as _;
 use serde_yaml::{Mapping, Value};
@@ -40,7 +40,7 @@ pub fn release_values(
     integration_repository: &str,
     component_repository: &str,
     authority_port: AuthorityPort,
-) -> anyhow::Result<(Value, Vec<RoleName>)> {
+) -> anyhow::Result<Value> {
     plan::release_values(
         document,
         platform_domain,

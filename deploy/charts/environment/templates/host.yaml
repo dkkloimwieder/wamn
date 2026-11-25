@@ -87,7 +87,7 @@ data:
 {{- if not $tag }}
 {{- fail "image must include a tag and a sha256 digest." }}
 {{- end }}
-{{- $placement := pick .Values.placement "replicas" "nodeSelector" "tolerations" "affinity" "topologySpreadConstraints" "resources" }}
+{{- $placement := pick .Values.placement "replicas" "nodeSelector" "tolerations" "resources" }}
 {{- if $placement.resources }}
 {{- $_ := set $placement "resources" (mergeOverwrite (deepCopy $runtime.resources) $placement.resources) }}
 {{- end }}

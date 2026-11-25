@@ -206,7 +206,7 @@ pub async fn application(
                     let bindings =
                         bindings::analyse(system, project, &document, packages.manifests.values())
                             .await?;
-                    let (mut values, roles) = write::release_values(
+                    let mut values = write::release_values(
                         &document,
                         &platform_domain,
                         name,
@@ -245,14 +245,11 @@ pub async fn application(
                         deploy_job_deadline(platform).await?,
                     )
                     .await?;
-                    for role in roles {
-                        let workload =
-                            crate::application_chart::plan::workload_name(&release, role);
-                        platform
-                            .cluster
-                            .wait_workload_ready(&workload, timeout)
-                            .await?;
-                    }
+                    let workload = crate::application_chart::plan::workload_name(&release);
+                    platform
+                        .cluster
+                        .wait_workload_ready(&workload, timeout)
+                        .await?;
                     Ok(json!({"release":digest}))
                 }
                 Application::Apply(digest) => {
@@ -325,7 +322,7 @@ fn use_pod_registry(chart: &SelectedChart, values: &mut serde_yaml::Value) -> an
 }
 
 fn application_config(values: &serde_yaml::Value) -> anyhow::Result<ApplicationConfig> {
-    let text = values["roles"][0]["config"][APPLICATION_CONFIG]
+    let text = values["route"]["config"][APPLICATION_CONFIG]
         .as_str()
         .context("release has no wamn.application configuration")?;
     Ok(serde_json::from_str(text)?)

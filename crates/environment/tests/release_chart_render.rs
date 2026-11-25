@@ -89,7 +89,7 @@ fn the_egress_policy_opens_each_declared_port() {
             "environment": "acme/shop/dev",
             "routeHost": "app.example.com",
             "applications": {"app": {}},
-            "roles": [{"name": "http", "config": {"wamn.project_env_key": "key"}}],
+            "route": {"config": {"wamn.project_env_key": "key"}},
             "components": components,
             "connectionPorts": connection_ports,
             "hostGroup": "host",

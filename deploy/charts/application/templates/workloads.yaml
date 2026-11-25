@@ -1,31 +1,30 @@
 {{- include "application.requireImageSet" . }}
-{{- range .Values.roles }}
-{{- if eq .name "http" }}
+{{- $config := required "route.config is required" .Values.route.config }}
 ---
 apiVersion: runtime.wasmcloud.dev/v1alpha1
 kind: WorkloadDeployment
 metadata:
-  name: {{ (default $.Release.Name $.Values.name) }}-http
-  namespace: {{ include "application.namespace" $ | quote }}
+  name: {{ (default .Release.Name .Values.name) }}-http
+  namespace: {{ include "application.namespace" . | quote }}
   annotations:
-    {{- include "application.annotations" $ | nindent 4 }}
-    wamn.package-digest: {{ $.Values.release.manifestDigest | quote }}
-    wamn.release-revision: {{ $.Release.Revision | quote }}
+    {{- include "application.annotations" . | nindent 4 }}
+    wamn.package-digest: {{ .Values.release.manifestDigest | quote }}
+    wamn.release-revision: {{ .Release.Revision | quote }}
 spec:
   replicas: 1
   template:
     annotations:
-      {{- include "application.annotations" $ | nindent 6 }}
-      wamn.project_env_key: {{ required "roles[http].config.wamn.project_env_key is required" (index .config "wamn.project_env_key") | quote }}
+      {{- include "application.annotations" . | nindent 6 }}
+      wamn.project_env_key: {{ required "route.config.wamn.project_env_key is required" (index $config "wamn.project_env_key") | quote }}
     spec:
       hostSelector:
-        {{- include "application.hostSelector" $ | nindent 8 }}
-      environment: {{ include "application.namespace" $ | quote }}
+        {{- include "application.hostSelector" . | nindent 8 }}
+      environment: {{ include "application.namespace" . | quote }}
       kubernetes:
         service:
-          name: {{ (default $.Release.Name $.Values.name) }}-http
+          name: {{ (default .Release.Name .Values.name) }}-http
       service:
-        image: {{ $.Values.platform.workflow.image | quote }}
+        image: {{ .Values.platform.workflow.image | quote }}
         imagePullPolicy: Always
         maxRestarts: 3
       hostInterfaces:
@@ -34,7 +33,7 @@ spec:
           version: "0.3.0"
           interfaces: [handler]
           config:
-            host: {{ required "routeHost is required for the http role" $.Values.routeHost | quote }}
+            host: {{ required "routeHost is required for the route workload" .Values.routeHost | quote }}
         - namespace: wamn
           package: ingress
           version: "0.1.0"
@@ -55,20 +54,20 @@ spec:
           package: clocks
           version: "0.3.0"
           interfaces: [monotonic-clock, system-clock]
-        {{- with $.Values.hostInterfaces }}
+        {{- with .Values.hostInterfaces }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
       components:
         - name: ingress
-          image: {{ required "platform.roles.ingress.image is required: stamp the platform image set" $.Values.platform.roles.ingress.image | quote }}
+          image: {{ required "platform.roles.ingress.image is required: stamp the platform image set" .Values.platform.roles.ingress.image | quote }}
           imagePullPolicy: Always
           poolSize: 0
-          maxConcurrency: {{ $.Values.platform.roles.ingress.maxConcurrency }}
+          maxConcurrency: {{ .Values.platform.roles.ingress.maxConcurrency }}
           localResources:
             allowedIpNameLookups: []
             config:
-              {{- toYaml (required "roles[http].config is required" .config) | nindent 14 }}
-        {{- range $.Values.components }}
+              {{- toYaml $config | nindent 14 }}
+        {{- range .Values.components }}
         - name: {{ .name | quote }}
           image: {{ .image | quote }}
           imagePullPolicy: Always
@@ -82,7 +81,3 @@ spec:
               wamn.integration: {{ . | quote }}
             {{- end }}
         {{- end }}
-{{- else }}
-{{- fail (printf "unknown role %q: the application role is http" .name) }}
-{{- end }}
-{{- end }}

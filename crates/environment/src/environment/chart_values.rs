@@ -1,6 +1,6 @@
 //! Project deployment chart values.
 
-use crate::application_chart::plan::{RoleName, release_name, workload_name};
+use crate::application_chart::plan::{release_name, workload_name};
 use serde_json::{Value, json};
 use wamn_platform_install::provision_org::APPLY_SECRET;
 use wamn_registry::{Triple, name};
@@ -28,7 +28,7 @@ pub fn set_operation_values<'a>(
     let diff_workloads: Vec<_> = applications
         .map(|application| {
             let release = release_name(&triple.org, &triple.project, &triple.env, application);
-            workload_name(&release, RoleName::Http)
+            workload_name(&release)
         })
         .collect();
     let diff_secrets = [

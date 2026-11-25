@@ -143,18 +143,12 @@ async fn host_values(
     }
 
     let group = super::write::host_group(platform.host_group.as_deref())?;
-    let placement: serde_json::Map<String, serde_json::Value> = [
-        "replicas",
-        "nodeSelector",
-        "tolerations",
-        "affinity",
-        "topologySpreadConstraints",
-        "resources",
-    ]
-    .into_iter()
-    .filter_map(|key| group.get(key).map(|value| (key, value)))
-    .map(|(key, value)| Ok((key.into(), serde_json::to_value(value)?)))
-    .collect::<serde_json::Result<_>>()?;
+    let placement: serde_json::Map<String, serde_json::Value> =
+        ["replicas", "nodeSelector", "tolerations", "resources"]
+            .into_iter()
+            .filter_map(|key| group.get(key).map(|value| (key, value)))
+            .map(|(key, value)| Ok((key.into(), serde_json::to_value(value)?)))
+            .collect::<serde_json::Result<_>>()?;
     let image = wamn_platform_install::deployment::host_image(&platform.chart).await?;
 
     let mut eligible = serde_json::Map::new();

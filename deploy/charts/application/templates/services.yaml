@@ -1,13 +1,11 @@
-{{- range .Values.roles }}
-{{- if eq .name "http" }}
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ (default $.Release.Name $.Values.name) }}-http
-  namespace: {{ include "application.namespace" $ | quote }}
+  name: {{ (default .Release.Name .Values.name) }}-http
+  namespace: {{ include "application.namespace" . | quote }}
   annotations:
-    {{- include "application.annotations" $ | nindent 4 }}
+    {{- include "application.annotations" . | nindent 4 }}
 spec:
   type: ClusterIP
   ports:
@@ -15,5 +13,3 @@ spec:
       port: 80
       targetPort: 9191
       protocol: TCP
-{{- end }}
-{{- end }}

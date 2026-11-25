@@ -181,7 +181,7 @@ async fn record_bytes(
         .first_key_value()
         .context("the environment has one application")?;
     let settings = &document.settings;
-    let (values, _) = wamn_environment::environment::write::release_values(
+    let values = wamn_environment::environment::write::release_values(
         &document,
         &"wamn.example.com".parse()?,
         application,

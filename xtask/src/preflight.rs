@@ -457,7 +457,7 @@ async fn render(
         .as_str()
         .context("org inputs have no base")?
         .parse()?;
-    let (mut application_values, _) = wamn_environment::environment::write::release_values(
+    let mut application_values = wamn_environment::environment::write::release_values(
         &document,
         &platform_domain,
         &application,

@@ -1,4 +1,3 @@
-{{- if .Values.roles }}
 {{- $ports := list }}
 {{- range .Values.components }}
 {{- if .authority }}
@@ -40,5 +39,4 @@ spec:
         {{- range uniq $ports }}
         - {port: {{ . }}, protocol: TCP}
         {{- end }}
-{{- end }}
 {{- end }}
