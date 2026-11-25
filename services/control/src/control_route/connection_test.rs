@@ -2,6 +2,7 @@
 
 use std::time::Duration;
 use wamn_routes::HostAttachment;
+use wamn_routes::host_wire::ConnectionTest;
 
 use serde_json::{Value, json};
 use wamn_connection::administration;
@@ -26,13 +27,14 @@ impl ControlRoutes<'_> {
         {
             Ok(Ok(result)) => Ok(result),
             Ok(Err(error @ Refusal::Delivery(_))) => Err(error),
-            Ok(Err(Refusal::Declared { code, detail })) => Ok(
-                json!({"ok":false,"error":format!("{code}: {}", detail["field"].as_str().unwrap_or("value"))}),
-            ),
+            Ok(Err(Refusal::Declared { code, detail })) => test_outcome(Err(format!(
+                "{code}: {}",
+                detail["field"].as_str().unwrap_or("value")
+            ))),
             Ok(Err(Refusal::Failed(_))) => {
-                Ok(json!({"ok":false,"error":"connection health unavailable"}))
+                test_outcome(Err("connection health unavailable".into()))
             }
-            Err(_) => Ok(json!({"ok":false,"error":"connection health timed out"})),
+            Err(_) => test_outcome(Err("connection health timed out".into())),
         }
     }
 
@@ -92,9 +94,9 @@ impl ControlRoutes<'_> {
             (context, pin)
         };
         if matches!(context["runtime_type"].as_str(), Some("wasm" | "native")) {
-            return Ok(
-                json!({"ok":false,"error":"integration health unavailable outside an application workload"}),
-            );
+            return test_outcome(Err(
+                "integration health unavailable outside an application workload".into(),
+            ));
         }
         let schemas = context["schemas"]
             .as_array()
@@ -194,9 +196,14 @@ impl ControlRoutes<'_> {
                 || wamn_storage::client::health(&integration_type, parameters, credential),
             )
             .await;
-        Ok(match result {
-            Ok(()) => json!({"ok":true}),
-            Err(error) => json!({"ok":false,"error":error}),
-        })
+        test_outcome(result)
     }
+}
+
+fn test_outcome(result: Result<(), String>) -> Result<Value, Refusal> {
+    Ok(serde_json::to_value(ConnectionTest {
+        ok: result.is_ok(),
+        error: result.err(),
+    })
+    .map_err(anyhow::Error::from)?)
 }

@@ -4,15 +4,16 @@ use wamn_registry::ApplicationName;
 
 pub mod exposure;
 mod host_route;
+pub mod host_wire;
 pub mod http_route_data;
 pub mod read_query;
 mod route_host;
 mod route_identity;
 
 pub use host_route::{
-    HostAttachment, HostHandler, HostRoute, HostRouteAuthority, HostRouteContractError,
-    HostRouteSet, host_route_package, host_route_path_prefix, host_route_version,
-    is_granted_host_route_operation, is_host_route_operation,
+    HostAttachment, HostHandler, HostRoute, HostRouteAuthority, HostRouteSet, host_route_package,
+    host_route_path_prefix, host_route_version, is_granted_host_route_operation,
+    is_host_route_operation,
 };
 pub use route_host::valid_route_host;
 pub use route_identity::{route_attachment_id, route_path};

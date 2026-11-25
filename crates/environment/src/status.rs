@@ -3,9 +3,13 @@
 use std::{collections::BTreeMap, time::Duration};
 
 use anyhow::Context as _;
-use serde_json::{Value, json};
+use serde_json::Value;
 use wamn_application::application_config::{APPLICATION_CONFIG, ApplicationConfig};
 use wamn_registry::{EnvName, EnvironmentStatus, OrgId, ProjectId, name};
+use wamn_routes::host_wire::{
+    EnvironmentStatusResult, EnvironmentStatusResultRollout, EnvironmentStatusResultWorkload,
+    EnvironmentStatusResultWorkloadCondition,
+};
 
 use crate::environment::document::release_annotations;
 
@@ -62,7 +66,7 @@ pub fn runtime_status<'a>(
     env: &EnvName,
     deployments: impl IntoIterator<Item = HostDeployment<'a>>,
     workloads: impl IntoIterator<Item = Workload<'a>>,
-) -> anyhow::Result<Value> {
+) -> anyhow::Result<EnvironmentStatusResult> {
     let environment = format!("{org}/{env}");
     let group = name::environment_host_name(org, env);
     let deployment_name = name::host_deployment_name(&group);
@@ -81,23 +85,32 @@ pub fn runtime_status<'a>(
                 .as_array()
                 .into_iter()
                 .flatten()
-                .map(|row| json!({"type":row["type"],"status":row["status"]}))
+                .map(|row| EnvironmentStatusResultWorkloadCondition {
+                    r#type: row["type"].clone(),
+                    status: row["status"].clone(),
+                })
                 .collect::<Vec<_>>();
-            Ok(json!({
-                "name":name,"application":workload.annotation("wamn.application"),
-                "package_digest":release.package_digest,"revision":release.revision,"conditions":conditions,
-            }))
+            Ok(EnvironmentStatusResultWorkload {
+                name: name.to_owned(),
+                application: workload.annotation("wamn.application").map(str::to_owned),
+                package_digest: release.package_digest.to_string(),
+                revision: release.revision,
+                conditions,
+            })
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
-    Ok(json!({
-        "rollout":{
-            "replicas":rollout.replicas.unwrap_or(0),
-            "updated_replicas":rollout.updated_replicas.unwrap_or(0),
-            "ready_replicas":rollout.ready_replicas.unwrap_or(0),
-            "available_replicas":rollout.available_replicas.unwrap_or(0),
+    Ok(EnvironmentStatusResult {
+        rollout: EnvironmentStatusResultRollout {
+            replicas: rollout.replicas.unwrap_or(0),
+            updated_replicas: rollout.updated_replicas.unwrap_or(0),
+            ready_replicas: rollout.ready_replicas.unwrap_or(0),
+            available_replicas: rollout.available_replicas.unwrap_or(0),
         },
-        "workloads":workloads,
-    }))
+        workloads,
+        users_with_role: None,
+        roles: None,
+        memberships: None,
+    })
 }
 
 /// Read the declared application of each workload in one project environment.
@@ -187,19 +200,19 @@ async fn optional_status_count<T>(
 
 /// Add independent count results to runtime status, using null for unavailable counts.
 pub async fn status_with_counts(
-    mut status: Value,
+    mut status: EnvironmentStatusResult,
     project: &ProjectId,
     env: &EnvName,
     application: impl Future<Output = anyhow::Result<(i32, i32)>>,
     memberships: impl Future<Output = anyhow::Result<i32>>,
-) -> Value {
+) -> EnvironmentStatusResult {
     let (application, memberships) = tokio::join!(
         optional_status_count(project, env, "application", application),
         optional_status_count(project, env, "memberships", memberships),
     );
-    status["users_with_role"] = json!(application.map(|counts| counts.0));
-    status["roles"] = json!(application.map(|counts| counts.1));
-    status["memberships"] = json!(memberships);
+    status.users_with_role = application.map(|counts| counts.0);
+    status.roles = application.map(|counts| counts.1);
+    status.memberships = memberships;
     status
 }
 
@@ -207,41 +220,48 @@ pub async fn status_with_counts(
 mod tests {
     use super::*;
 
+    fn sample_status() -> EnvironmentStatusResult {
+        EnvironmentStatusResult {
+            rollout: EnvironmentStatusResultRollout {
+                replicas: 1,
+                updated_replicas: 1,
+                ready_replicas: 1,
+                available_replicas: 1,
+            },
+            workloads: Vec::new(),
+            users_with_role: None,
+            roles: None,
+            memberships: None,
+        }
+    }
+
     #[tokio::test]
     async fn status_answers_when_count_reads_fail() {
-        let status = json!({"digest": "sha256:live", "workloads": [], "live": [], "rollout": {"replicas": 1}});
+        let status = sample_status();
+        let expected = serde_json::to_value(&status).unwrap();
         let answer = status_with_counts(
-            status.clone(),
+            status,
             &"billing".parse().unwrap(),
             &"dev".parse().unwrap(),
             async { anyhow::bail!("application unavailable") },
             async { anyhow::bail!("control unavailable") },
         )
         .await;
-        for name in ["users_with_role", "roles", "memberships"] {
-            assert!(answer[name].is_null());
-        }
-        for (name, value) in status.as_object().unwrap() {
-            assert_eq!(answer[name], *value, "{name}");
-        }
+        assert_eq!(serde_json::to_value(answer).unwrap(), expected);
     }
 
     #[tokio::test]
     async fn status_answers_when_count_reads_time_out() {
-        let status = json!({"digest": "sha256:live"});
+        let status = sample_status();
+        let expected = serde_json::to_value(&status).unwrap();
         let answer = status_with_counts(
-            status.clone(),
+            status,
             &"billing".parse().unwrap(),
             &"dev".parse().unwrap(),
             std::future::pending(),
             std::future::pending(),
         )
         .await;
-        for name in ["users_with_role", "roles", "memberships"] {
-            assert!(answer[name].is_null());
-        }
-        for (name, value) in status.as_object().unwrap() {
-            assert_eq!(answer[name], *value, "{name}");
-        }
+        assert_eq!(serde_json::to_value(answer).unwrap(), expected);
     }
 }

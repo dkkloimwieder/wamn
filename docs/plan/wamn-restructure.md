@@ -195,7 +195,7 @@ Org → environment → project → application. One boundary per level.
 - Authored WIT files carry no package line. Only the generated `package.wit` declares the package and its version, and the development-build version rewrite touches only that file.
 - Generate Rust with `quote` and format it with `prettyplease`. Start the formatted Rust with a fixed `// @generated` line. Spell keywords and dotted names as wit-bindgen does.
 - Generate WIT with `wit-encoder =0.254.2`. A labeled world import is one identifier. It is the only WIT string fragment and carries a comment.
-- Generate each application's `openapi.json` with typed OpenAPI 3.1 structs from `oas3`. Generate control's OpenAPI from the contract JSON files. Keep those files and `contract_files.rs`.
+- Generate each application's `openapi.json` with typed OpenAPI 3.1 structs from `oas3`. Generate the native route OpenAPI documents from the Serde and `schemars` types in `wamn-routes`.
 - Pin `@hey-api/openapi-ts` and use only its type, SDK and fetch-client plugins. The client uses the `@wamn/web-runtime` transport as its fetch implementation and sends and reads field names as specified in OpenAPI. The client serializer JSON-encodes query values as `readQuery.ts` does. Reads use `readQuery` and `readCache`. The server keeps its query format.
 - A pnpm script in `apps/platform_ui` runs the generator from the existing build. It writes `src/generated/{wamn_control,wamn_control_org}`. Keep the examples under `web/wfe` as they are.
 - A `cargo xtask` command writes control's OpenAPI files to `apps/target/wamn/platform_ui/`. `cargo xtask build-platform` calls the same xtask function directly before its pnpm build. The pnpm script calls the xtask command only for local UI work. `crates/codegen/build.rs` writes no files for other tools.
@@ -381,7 +381,6 @@ Next: the restructure ends. The review work in the Claude Doc "wamn review" foll
 - Postgres array columns have no WIT type. Decide when a second real case appears.
 - A WIT package whose name is a Rust keyword, such as `type`: pinned wit-bindgen writes the module name bare, which does not compile. Decide whether validation refuses such names or WIT generation derives a safe package name.
 - Variant case names go on the wire in kebab-case (462 cases today). Record fields, error codes, enum cases and flags use snake_case. Decide whether variants follow the same rule.
-- Typed control inputs, then OpenAPI derived with `schemars`.
 - The JSONata output check: P146 says output is validated at run time, but `walk.rs::invoke` only checks that the output is JSON.
 - Where `revocation_seconds` lives: P43 and P336 set the grant cache lifetime per project, but the environment file has one top-level `revocation_seconds`.
 - `HostArgs` (`services/host/src/host.rs`) is a hand-kept copy of the stock host flags. Check the wash-runtime 2.12.3 interface before changing it.

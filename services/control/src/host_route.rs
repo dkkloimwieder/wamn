@@ -11,6 +11,7 @@ use wamn_identity::identity::control::{control_projects_page, is_org_admin, org_
 use wamn_routes::HostAttachment;
 use wamn_routes::HostHandler;
 use wamn_routes::HostRouteSet;
+use wamn_routes::host_wire::{ControlMineResult, ControlMineResultProject};
 
 use serde_json::{Value, json};
 use wamn_application::ingress::AuthenticatedCaller;
@@ -24,6 +25,9 @@ use wamn_identity_client::users::UserClient;
 use crate::Writer;
 use crate::control_route::{ControlRoutes, Refusal, control_page, oauth_authorization};
 use crate::execution::Execution;
+
+#[cfg(test)]
+mod tests;
 
 /// The control routes of one org, through its `control` login.
 pub struct HostRouteHandlers {
@@ -189,21 +193,32 @@ impl HostRouteDelivery {
                 };
                 let mut rows = Vec::with_capacity(projects.len());
                 for project in projects {
+                    let Value::String(project) = project else {
+                        unreachable!("project identifiers serialize to strings")
+                    };
                     let project_admin = org_admin
                         || wamn_identity::identity::control::is_project_admin(
                             &mut transaction,
                             principal,
                             org,
-                            &serde_json::from_value::<wamn_registry::ProjectId>(project.clone())
-                                .map_err(anyhow::Error::from)?,
+                            &project.parse().map_err(anyhow::Error::from)?,
                         )
                         .await?;
-                    rows.push(json!({"project":project,"project_admin":project_admin}));
+                    rows.push(ControlMineResultProject {
+                        project,
+                        project_admin,
+                    });
                 }
-                answer["projects"] = Value::Array(rows);
-                answer["org_admin"] = json!(org_admin);
+                let result = ControlMineResult {
+                    org_admin,
+                    projects: rows,
+                    next_cursor: serde_json::from_value(answer["next_cursor"].take())
+                        .map_err(anyhow::Error::from)?,
+                    total: serde_json::from_value(answer["total"].take())
+                        .map_err(anyhow::Error::from)?,
+                };
                 transaction.commit().await?;
-                Ok(answer)
+                Ok(serde_json::to_value(result).map_err(anyhow::Error::from)?)
             }
             _ => {
                 ControlRoutes {

@@ -6541,6 +6541,7 @@ dependencies = [
  "wamn-role",
  "wamn-routes",
  "wamn-storage",
+ "wamn-test-infrastructure",
  "zeroize",
 ]
 
@@ -7329,6 +7330,7 @@ dependencies = [
 name = "wamn-routes"
 version = "0.1.0"
 dependencies = [
+ "schemars 0.8.22",
  "serde",
  "serde_json",
  "url",

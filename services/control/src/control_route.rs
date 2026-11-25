@@ -38,6 +38,11 @@ use wamn_registry::EnvironmentStatus;
 use wamn_routes::HostAttachment;
 use wamn_routes::HostHandler;
 use wamn_routes::HostRouteAuthority;
+use wamn_routes::host_wire::{
+    EnvironmentRequest, MemberGrantRequest, MemberGrantResult, OrgAdminGrantRequest,
+    OrgAdminGrantResult, ProjectAdminGrantRequest, ProjectAdminGrantResult, ProjectCreateRequest,
+    ProjectCreated, ProjectRequest, ProjectStatus, UserActivateResult,
+};
 mod connection_test;
 mod integration;
 pub(crate) mod oauth_authorization;
@@ -175,12 +180,6 @@ pub(crate) struct ControlRoutes<'a> {
     pub(crate) connection_health: Option<&'a wamn_http::connection_health::ConnectionHealth>,
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct PrincipalRequest {
-    principal_id: wamn_identity_protocol::PrincipalId,
-}
-
 /// The project that a project route names, read before its own request.
 #[derive(Deserialize)]
 struct ProjectTarget {
@@ -196,40 +195,6 @@ struct MemberListTarget {
     project: wamn_registry::ProjectId,
     #[serde(default)]
     environment: Value,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ProjectRequest {
-    project: wamn_registry::ProjectId,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ProjectCreateRequest {
-    project: String,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ProjectPrincipalRequest {
-    project: wamn_registry::ProjectId,
-    principal_id: wamn_identity_protocol::PrincipalId,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct MemberRequest {
-    project: wamn_registry::ProjectId,
-    env: wamn_registry::EnvName,
-    principal_id: wamn_identity_protocol::PrincipalId,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct EnvironmentRequest {
-    project: wamn_registry::ProjectId,
-    env: wamn_registry::EnvName,
 }
 
 impl ControlRoutes<'_> {
@@ -372,7 +337,11 @@ impl ControlRoutes<'_> {
                 let mut transaction = self.begin(&mut writer, attachment, caller).await?;
                 reactivate_org_membership(&mut transaction, &principal, self.org).await?;
                 transaction.commit().await?;
-                Ok(json!({ "principal_id": principal.to_string().as_str(), "status": "active" }))
+                Ok(serde_json::to_value(UserActivateResult {
+                    principal_id: principal.to_string(),
+                    status: "active".into(),
+                })
+                .map_err(anyhow::Error::from)?)
             }
             HostHandler::UserDeactivate => {
                 let principal = principal(payload)?;
@@ -383,7 +352,11 @@ impl ControlRoutes<'_> {
                 let environments = self.environments(caller, None).await?;
                 self.write_applications(&mut writer, attachment, caller, &principal, &environments)
                     .await?;
-                Ok(json!({ "principal_id": principal.to_string().as_str(), "status": "inactive" }))
+                Ok(serde_json::to_value(UserActivateResult {
+                    principal_id: principal.to_string(),
+                    status: "inactive".into(),
+                })
+                .map_err(anyhow::Error::from)?)
             }
             HostHandler::OrgAdminGrant => {
                 let principal = principal(payload)?;
@@ -394,7 +367,11 @@ impl ControlRoutes<'_> {
                 let environments = self.environments(caller, None).await?;
                 self.write_applications(&mut writer, attachment, caller, &principal, &environments)
                     .await?;
-                Ok(json!({ "principal_id": principal.to_string().as_str(), "org_admin": true }))
+                Ok(serde_json::to_value(OrgAdminGrantResult {
+                    principal_id: principal.to_string(),
+                    org_admin: true,
+                })
+                .map_err(anyhow::Error::from)?)
             }
             HostHandler::OrgAdminRevoke => {
                 let principal = principal(payload)?;
@@ -405,7 +382,11 @@ impl ControlRoutes<'_> {
                 let environments = self.environments(caller, None).await?;
                 self.write_applications(&mut writer, attachment, caller, &principal, &environments)
                     .await?;
-                Ok(json!({ "principal_id": principal.to_string().as_str(), "org_admin": false }))
+                Ok(serde_json::to_value(OrgAdminGrantResult {
+                    principal_id: principal.to_string(),
+                    org_admin: false,
+                })
+                .map_err(anyhow::Error::from)?)
             }
             HostHandler::EnvironmentList => {
                 let request: ProjectTarget = parse(payload)?;
@@ -472,14 +453,15 @@ impl ControlRoutes<'_> {
                     transaction.commit().await?;
                     anyhow::Ok(count)
                 };
-                Ok(Box::pin(status::status_with_counts(
+                let result = Box::pin(status::status_with_counts(
                     status,
                     &request.project,
                     &request.env,
                     application,
                     memberships,
                 ))
-                .await)
+                .await;
+                Ok(serde_json::to_value(result).map_err(anyhow::Error::from)?)
             }
             HostHandler::MemberList => {
                 let request: MemberListTarget = parse(payload)?;
@@ -519,8 +501,8 @@ impl ControlRoutes<'_> {
                 }))
             }
             HostHandler::MemberGrant => {
-                let request: MemberRequest = parse(payload)?;
-                let principal: PrincipalId = request.principal_id;
+                let request: MemberGrantRequest = parse(payload)?;
+                let principal = parse_principal(&request.principal_id)?;
                 let mut writer = self.writer.lock().await?;
                 let mut transaction = self
                     .begin_in(&mut writer, attachment, caller, Some(&request.project))
@@ -537,16 +519,17 @@ impl ControlRoutes<'_> {
                 let environment = [(request.project.clone(), request.env.clone())];
                 self.write_applications(&mut writer, attachment, caller, &principal, &environment)
                     .await?;
-                Ok(json!({
-                    "principal_id": &principal,
-                    "project": request.project,
-                    "env": request.env,
-                    "member": true,
-                }))
+                Ok(serde_json::to_value(MemberGrantResult {
+                    principal_id: principal.to_string(),
+                    project: request.project.to_string(),
+                    env: request.env.to_string(),
+                    member: true,
+                })
+                .map_err(anyhow::Error::from)?)
             }
             HostHandler::MemberRevoke => {
-                let request: MemberRequest = parse(payload)?;
-                let principal: PrincipalId = request.principal_id;
+                let request: MemberGrantRequest = parse(payload)?;
+                let principal = parse_principal(&request.principal_id)?;
                 let mut writer = self.writer.lock().await?;
                 let mut transaction = self
                     .begin_in(&mut writer, attachment, caller, Some(&request.project))
@@ -563,16 +546,17 @@ impl ControlRoutes<'_> {
                 let environment = [(request.project.clone(), request.env.clone())];
                 self.write_applications(&mut writer, attachment, caller, &principal, &environment)
                     .await?;
-                Ok(json!({
-                    "principal_id": &principal,
-                    "project": request.project,
-                    "env": request.env,
-                    "member": false,
-                }))
+                Ok(serde_json::to_value(MemberGrantResult {
+                    principal_id: principal.to_string(),
+                    project: request.project.to_string(),
+                    env: request.env.to_string(),
+                    member: false,
+                })
+                .map_err(anyhow::Error::from)?)
             }
             HostHandler::ProjectAdminGrant => {
-                let request: ProjectPrincipalRequest = parse(payload)?;
-                let principal: PrincipalId = request.principal_id;
+                let request: ProjectAdminGrantRequest = parse(payload)?;
+                let principal = parse_principal(&request.principal_id)?;
                 let mut writer = self.writer.lock().await?;
                 let mut transaction = self
                     .begin_in(&mut writer, attachment, caller, Some(&request.project))
@@ -583,15 +567,16 @@ impl ControlRoutes<'_> {
                 let environments = self.environments(caller, Some(&request.project)).await?;
                 self.write_applications(&mut writer, attachment, caller, &principal, &environments)
                     .await?;
-                Ok(json!({
-                    "principal_id": &principal,
-                    "project": request.project,
-                    "project_admin": true,
-                }))
+                Ok(serde_json::to_value(ProjectAdminGrantResult {
+                    principal_id: principal.to_string(),
+                    project: request.project.to_string(),
+                    project_admin: true,
+                })
+                .map_err(anyhow::Error::from)?)
             }
             HostHandler::ProjectAdminRevoke => {
-                let request: ProjectPrincipalRequest = parse(payload)?;
-                let principal: PrincipalId = request.principal_id;
+                let request: ProjectAdminGrantRequest = parse(payload)?;
+                let principal = parse_principal(&request.principal_id)?;
                 let mut writer = self.writer.lock().await?;
                 let mut transaction = self
                     .begin_in(&mut writer, attachment, caller, Some(&request.project))
@@ -602,11 +587,12 @@ impl ControlRoutes<'_> {
                 let environments = self.environments(caller, Some(&request.project)).await?;
                 self.write_applications(&mut writer, attachment, caller, &principal, &environments)
                     .await?;
-                Ok(json!({
-                    "principal_id": &principal,
-                    "project": request.project,
-                    "project_admin": false,
-                }))
+                Ok(serde_json::to_value(ProjectAdminGrantResult {
+                    principal_id: principal.to_string(),
+                    project: request.project.to_string(),
+                    project_admin: false,
+                })
+                .map_err(anyhow::Error::from)?)
             }
             HostHandler::EnvironmentActivate | HostHandler::EnvironmentInactivate => {
                 let request: EnvironmentRequest = parse(payload)?;
@@ -623,11 +609,14 @@ impl ControlRoutes<'_> {
                     status,
                 )
                 .await?;
-                Ok(json!({
-                    "project": request.project,
-                    "env": request.env,
-                    "status": status.as_str(),
-                }))
+                Ok(
+                    serde_json::to_value(wamn_routes::host_wire::EnvironmentStatus {
+                        project: request.project,
+                        env: request.env,
+                        status: status.as_str(),
+                    })
+                    .map_err(anyhow::Error::from)?,
+                )
             }
             HostHandler::ProjectActivate | HostHandler::ProjectInactivate => {
                 let request: ProjectRequest = parse(payload)?;
@@ -638,7 +627,11 @@ impl ControlRoutes<'_> {
                 };
                 self.set_status(attachment, caller, &request.project, None, status)
                     .await?;
-                Ok(json!({ "project": request.project, "status": status.as_str() }))
+                Ok(serde_json::to_value(ProjectStatus {
+                    project: request.project,
+                    status: status.as_str(),
+                })
+                .map_err(anyhow::Error::from)?)
             }
             HostHandler::ProjectCreate => {
                 let request: ProjectCreateRequest = parse(payload)?;
@@ -652,7 +645,10 @@ impl ControlRoutes<'_> {
                 crate::control_sql::check_project_roles(&mut transaction, self.org, &project)
                     .await?;
                 transaction.commit().await?;
-                Ok(json!({ "project": project }))
+                Ok(
+                    serde_json::to_value(ProjectCreated { project })
+                        .map_err(anyhow::Error::from)?,
+                )
             }
             handler => Err(Refusal::Failed(anyhow::anyhow!(
                 "the control host does not serve the host handler {handler:?}"
@@ -1019,9 +1015,14 @@ pub(crate) fn parse<T: serde::de::DeserializeOwned>(payload: &str) -> Result<T, 
 
 /// The principal a write route names.
 fn principal(payload: &str) -> Result<PrincipalId, Refusal> {
-    let request: PrincipalRequest = serde_json::from_str(payload)
-        .map_err(|_| Refusal::Delivery(DeliveryError::InvalidPayload))?;
-    Ok(request.principal_id)
+    let request: OrgAdminGrantRequest = parse(payload)?;
+    parse_principal(&request.principal_id)
+}
+
+fn parse_principal(principal_id: &str) -> Result<PrincipalId, Refusal> {
+    principal_id
+        .parse()
+        .map_err(|_| Refusal::Delivery(DeliveryError::InvalidPayload))
 }
 
 /// The refusal of a write whose application rows stopped at `project/env`,

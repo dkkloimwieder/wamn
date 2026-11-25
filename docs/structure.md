@@ -20,8 +20,6 @@ Among library crates, only infrastructure crates link Kubernetes, OCI, and NATS 
 
 The authentication crate owns token checks, authorization reads, route authentication, and project administration. The identity crate owns sessions, passwords, account OAuth, service principals, workload identity, platform identity, logins, and NATS signing. The connection crate owns connection OAuth token refresh.
 
-`HostRouteSet::contract_files` can read files until Epic 2 removes the authored JSON shapes and their loader.
-
 ## Traits
 
 Use a trait only if one of these conditions applies.

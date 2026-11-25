@@ -1,7 +1,6 @@
 //! Control user routes and their identity adapter calls.
 
 use anyhow::Context as _;
-use serde::Deserialize;
 use serde_json::{Value, json};
 use sqlx::PgConnection;
 use wamn_authentication::identity_error::IdentityRefusal;
@@ -9,33 +8,13 @@ use wamn_identity::identity::org::invite_member;
 use wamn_identity::principal::require_user_contact;
 use wamn_identity_client::users::{DisableOutcome, UserClient, UserRefused};
 use wamn_identity_protocol::records::MemberGrants;
-use wamn_identity_protocol::{
-    PrincipalId,
-    wire::{UserRequest, UserResponse},
-};
+use wamn_identity_protocol::{PrincipalId, wire::UserResponse};
 use wamn_routes::HostAttachment;
+use wamn_routes::host_wire::{
+    UserActivateResult, UserCreateRequest, UserCreateResult, UserInviteRequest, UserInviteResult,
+};
 
 use super::{ControlRoutes, Refusal, parse, principal};
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct InviteRequest {
-    email: String,
-    display_name: String,
-    #[serde(default)]
-    org_admin: bool,
-    #[serde(default)]
-    project_admins: Vec<wamn_registry::ProjectId>,
-    #[serde(default)]
-    memberships: Vec<MembershipRequest>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct MembershipRequest {
-    project: wamn_registry::ProjectId,
-    env: wamn_registry::EnvName,
-}
 
 impl ControlRoutes<'_> {
     fn identity_users(&self) -> Result<&UserClient, Refusal> {
@@ -50,7 +29,7 @@ impl ControlRoutes<'_> {
         caller: &PrincipalId,
         payload: &str,
     ) -> Result<Value, Refusal> {
-        let request: UserRequest = parse(payload)?;
+        let request: UserCreateRequest = parse(payload)?;
         let user = create_identity(
             self.identity_users()?,
             &request.email,
@@ -66,14 +45,22 @@ impl ControlRoutes<'_> {
             &MemberGrants::default(),
         )
         .await?;
-        Ok(json!(user))
+        Ok(serde_json::to_value(UserCreateResult {
+            principal_id: user.principal_id.to_string(),
+            enrolled: user.enrolled,
+        })
+        .map_err(anyhow::Error::from)?)
     }
 
     pub(super) async fn disable_user(&self, payload: &str) -> Result<Value, Refusal> {
         let principal = principal(payload)?;
         let code = match self.identity_users()?.disable(&principal).await? {
             DisableOutcome::Disabled => {
-                return Ok(json!({"principal_id": principal, "status": "disabled"}));
+                return Ok(serde_json::to_value(UserActivateResult {
+                    principal_id: principal.to_string(),
+                    status: "disabled".into(),
+                })
+                .map_err(anyhow::Error::from)?);
             }
             DisableOutcome::UserNotFound => "user_not_found",
             DisableOutcome::UserInAnotherOrg => "user_in_another_org",
@@ -124,7 +111,7 @@ impl ControlRoutes<'_> {
         caller: &PrincipalId,
         payload: &str,
     ) -> Result<Value, Refusal> {
-        let request: InviteRequest = parse(payload)?;
+        let request: UserInviteRequest = parse(payload)?;
         let identity = self.identity_users()?;
         let user = create_identity(identity, &request.email, &request.display_name).await?;
         let grants = MemberGrants {
@@ -166,11 +153,12 @@ impl ControlRoutes<'_> {
         if !user.enrolled {
             identity.invite(&user.principal_id).await?;
         }
-        Ok(json!({
-            "principal_id": user.principal_id,
-            "enrolled": user.enrolled,
-            "invited": !user.enrolled,
-        }))
+        Ok(serde_json::to_value(UserInviteResult {
+            principal_id: user.principal_id.to_string(),
+            enrolled: user.enrolled,
+            invited: !user.enrolled,
+        })
+        .map_err(anyhow::Error::from)?)
     }
 }
 

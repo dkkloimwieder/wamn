@@ -88,10 +88,10 @@ The guest interface stays unchanged.
 
 A host-run route is a route that the host answers with a fixed handler instead of a component.
 It keeps the route table, the credentials, the CSRF treatment and the operation grant of any route.
-The fixed route sets live in [`wamn_catalog::host_route`](../../crates/catalog/src/host_route.rs) and are built with the platform.
+The fixed route sets live in [`wamn-routes`](../../crates/routes/src/host_route.rs) and are built with the platform.
 A serving manifest names the sets it serves in `host-routes`, and it leaves the member out when the list is empty.
-The control contract authors its package id `wamn_control`, its version and its route prefixes in [`host_route/wamn.json`](../../crates/catalog/src/host_route/wamn.json).
-A host route derives its sealed operation id, its path and its attachment id from that file, as generation does for a package operation.
+The native route table declares its package id `wamn_control`, its version and its route prefixes in [`host_route.rs`](../../crates/routes/src/host_route.rs).
+A host route derives its sealed operation id, its path and its attachment id from those constants, as generation does for a package operation.
 For example, `permission.mine` is `wamn-control:permission/mine@0.9.0`, at `/wamn_control/permission/mine`, with the attachment id `wamn-control-permission-mine-http`.
 
 There are two sets.
@@ -231,7 +231,7 @@ Each start route returns a Kubernetes Job name.
 The service submits Jobs through the shared runner and keeps no operation history.
 [Deployment routes](../operations/deployment.md#application-and-schema-operations) defines inputs, credential target, deadlines, and result bounds.
 
-The [control route contracts](../../crates/catalog/src/host_route/control/contracts) define the request and result schemas.
+The [native route types](../../crates/routes/src/host_wire.rs) define the request and result schemas. The platform UI generates its clients from their OpenAPI documents.
 Both route sets serve `user.list` and use separate client modules.
 
 The native control service has no application release or guest connection.

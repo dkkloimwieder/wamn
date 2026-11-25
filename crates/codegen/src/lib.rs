@@ -24,7 +24,6 @@ mod describe_cache;
 pub mod feed;
 pub mod fingerprint;
 mod generate;
-mod host_openapi;
 mod inheritance;
 pub mod kcl;
 mod key;
@@ -45,7 +44,6 @@ pub use generate::{
     AuthoredSql, GeneratedFile, GeneratedPackage, GenerationInput, OperationDescription,
     StatementTransactionality, derive_manifest, generate,
 };
-pub use host_openapi::host_openapi;
 pub use materialize::introspect_package;
 pub use output::{is_input_path, output_root, package_workspace, source_root};
 pub use package_catalog::project_package_catalog;

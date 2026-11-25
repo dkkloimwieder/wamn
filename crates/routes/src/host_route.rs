@@ -6,14 +6,37 @@
 //! fixed handler instead of a guest component. The platform builds the routes
 //! of each set, and a serving manifest records only which sets it serves.
 //!
-//! The control contract authors its package id, its version and its route
-//! prefixes in `host_route/wamn.json`, as a package does in its `wamn.json`.
-//! Each route derives its operation token, path and attachment id from that
-//! file exactly as a generated package operation does.
+//! Each route derives its operation token, path and attachment id from the
+//! native package identity and route prefixes, as a generated package route does.
 
-mod contract_files;
-
+use crate::host_wire::{
+    ApiServiceCreateRequest, ApiServiceCreateResult, ApplicationDeployRequest,
+    ApplicationDeployResult, ApplicationRollbackRequest, ApplicationStopRequest,
+    ApplicationUserListResult, CaptureGapCloseRequest, ConnectionAuthorizeRequest,
+    ConnectionAuthorizeResult, ConnectionCopyRequest, ConnectionDeleteResult, ConnectionGetResult,
+    ConnectionListResult, ConnectionSetCredentialRequest, ConnectionSummary, ConnectionTest,
+    ConnectionTestRequest, ConnectionWriteRequest, ControlMineRequest, ControlMineResult,
+    DeclaredRefusal, Empty, EnvironmentConfigureRequest, EnvironmentDeleteRequest,
+    EnvironmentListRequest, EnvironmentListResult, EnvironmentOperationStatusRequest,
+    EnvironmentOperationStatusResult, EnvironmentRequest, EnvironmentStatus,
+    EnvironmentStatusResult, ExternalSystemDeleteResult, ExternalSystemListResult,
+    FileDeleteRequest, FileDeleteResult, FileExposeRequest, FileExposeResult, FileGetRequest,
+    FilePutRequest, IntegrationTypeListRequest, IntegrationTypeListResult, MemberGrantRequest,
+    MemberGrantResult, MemberListRequest, MemberListResult, NumberCounterSetRequest,
+    NumberCounterSetResult, OrgAdminGrantRequest, OrgAdminGrantResult, PatIssueRequest,
+    PatListRequest, PatListResult, PatRevokeRequest, PermissionGrantRequest, PermissionGrantResult,
+    PermissionListRequest, PermissionListResult, PermissionMineResult, PermissionRevokeResult,
+    PlatformSchemaRequest, ProjectAdminGrantRequest, ProjectAdminGrantResult, ProjectCreateRequest,
+    ProjectCreated, ProjectListResult, ProjectRequest, ProjectStatus, RoleCreateResult,
+    RoleDeleteResult, RoleListResult, SchemaDiffRequest, ServicePrincipalCreateRequest,
+    ServicePrincipalCreateResult, ServicePrincipalDisableResult, UserActivateResult,
+    UserCreateRequest, UserCreateResult, UserInviteRequest, UserInviteResult, UserListResult,
+    UserRoleGrantRequest, UserRoleGrantResult, UserRoleRevokeResult, WorkflowAuthorRequest,
+    WorkflowAuthorResult, WorkflowDisableRequest, WorkflowRunRequest, WorkflowRunResult, schema,
+    schemas,
+};
 use crate::{route_attachment_id, route_path};
+use RefusalSource::{MalformedInput, PermissionDenied, TransactionInvariant};
 use std::collections::BTreeMap;
 use std::sync::LazyLock;
 use wamn_package::canonical_name::CanonicalName;
@@ -26,43 +49,23 @@ use wamn_package::{
 };
 use wamn_package::{operation_token, sealed_operation_reference};
 
-pub use contract_files::HostRouteContractError;
-
-/// The control contract's manifest: the one place its version is authored.
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ControlContract {
-    package: ControlPackage,
-    routes: ControlRoutes,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ControlPackage {
-    id: wamn_package::PackageName,
-    version: wamn_package::package_version::PackageVersion,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ControlRoutes {
-    path_prefix: String,
-    id_prefix: String,
-}
-
-static CONTRACT: LazyLock<ControlContract> = LazyLock::new(|| {
-    serde_json::from_str(include_str!("host_route/wamn.json"))
-        .expect("the control contract manifest is valid")
-});
+const PACKAGE: &str = "wamn_control";
+const VERSION: &str = "0.9.0";
+const PATH_PREFIX: &str = "/wamn_control";
+const ID_PREFIX: &str = "wamn-control";
 
 /// The package of every host route. No application package has this id.
 pub fn host_route_package() -> &'static wamn_package::PackageName {
-    &CONTRACT.package.id
+    static ID: LazyLock<wamn_package::PackageName> =
+        LazyLock::new(|| PACKAGE.parse().expect("fixed native package id"));
+    &ID
 }
 
 /// The authored version of the host route contract.
 pub fn host_route_version() -> &'static wamn_package::package_version::PackageVersion {
-    &CONTRACT.package.version
+    static PARSED_VERSION: LazyLock<wamn_package::package_version::PackageVersion> =
+        LazyLock::new(|| VERSION.parse().expect("fixed native package version"));
+    &PARSED_VERSION
 }
 
 /// Whether a stable operation reference or sealed operation id names a host
@@ -71,11 +74,9 @@ pub fn host_route_version() -> &'static wamn_package::package_version::PackageVe
 /// [`HostRouteAuthority::Granted`] route is the exception: see
 /// [`is_granted_host_route_operation`].
 pub fn is_host_route_operation(operation: &str) -> bool {
-    static TOKEN_PACKAGE: LazyLock<String> =
-        LazyLock::new(|| CONTRACT.package.id.as_str().replace('_', "-"));
     operation
         .split_once(':')
-        .is_some_and(|(package, _)| package == TOKEN_PACKAGE.as_str())
+        .is_some_and(|(package, _)| package == ID_PREFIX)
 }
 
 /// Whether a stable operation reference or sealed operation id names a host
@@ -92,7 +93,7 @@ pub fn is_granted_host_route_operation(operation: &str) -> bool {
 /// The path prefix of every host route, with its closing `/`. Publish
 /// refuses an authored route under it.
 pub fn host_route_path_prefix() -> &'static str {
-    static PREFIX: LazyLock<String> = LazyLock::new(|| format!("{}/", CONTRACT.routes.path_prefix));
+    static PREFIX: LazyLock<String> = LazyLock::new(|| format!("{PATH_PREFIX}/"));
     &PREFIX
 }
 
@@ -244,6 +245,26 @@ pub struct HostRoute {
     pub type_: OperationType,
     pub authority: HostRouteAuthority,
     pub handler: HostHandler,
+    schemas: fn() -> (Value, Value),
+    write_transaction: bool,
+    refusals: &'static [RefusalSource],
+}
+
+#[derive(Debug)]
+enum RefusalSource {
+    MalformedInput(&'static str, Option<&'static str>),
+    PermissionDenied,
+    TransactionInvariant(&'static str, Option<&'static str>),
+}
+
+impl RefusalSource {
+    fn parts(&self) -> (&'static str, Option<&'static str>, &'static str) {
+        match *self {
+            Self::MalformedInput(code, text) => (code, text, "malformed_input"),
+            Self::PermissionDenied => ("permission_denied", None, "permission_denied"),
+            Self::TransactionInvariant(code, text) => (code, text, "transaction_invariant"),
+        }
+    }
 }
 
 const ROUTES: &[HostRoute] = &[
@@ -253,6 +274,14 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Command,
         authority: HostRouteAuthority::OrgAdmin,
         handler: HostHandler::ControlExecution,
+        schemas: schemas::<EnvironmentConfigureRequest, ApplicationDeployResult>,
+        write_transaction: false,
+        refusals: &[
+            TransactionInvariant("environment_not_found", None),
+            TransactionInvariant("invalid_input", None),
+            TransactionInvariant("not_found", None),
+            PermissionDenied,
+        ],
     },
     HostRoute {
         set: HostRouteSet::Control,
@@ -260,6 +289,14 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Command,
         authority: HostRouteAuthority::ProjectAdmin,
         handler: HostHandler::ControlExecution,
+        schemas: schemas::<EnvironmentDeleteRequest, ApplicationDeployResult>,
+        write_transaction: false,
+        refusals: &[
+            TransactionInvariant("environment_not_found", None),
+            TransactionInvariant("invalid_input", None),
+            TransactionInvariant("not_found", None),
+            PermissionDenied,
+        ],
     },
     HostRoute {
         set: HostRouteSet::Control,
@@ -267,6 +304,14 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Get,
         authority: HostRouteAuthority::ProjectAdmin,
         handler: HostHandler::ControlExecution,
+        schemas: schemas::<EnvironmentOperationStatusRequest, EnvironmentOperationStatusResult>,
+        write_transaction: false,
+        refusals: &[
+            TransactionInvariant("environment_not_found", None),
+            TransactionInvariant("invalid_input", None),
+            TransactionInvariant("not_found", None),
+            PermissionDenied,
+        ],
     },
     HostRoute {
         set: HostRouteSet::Control,
@@ -274,6 +319,14 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Command,
         authority: HostRouteAuthority::ProjectAdmin,
         handler: HostHandler::ControlExecution,
+        schemas: schemas::<ServicePrincipalCreateRequest, ServicePrincipalCreateResult>,
+        write_transaction: false,
+        refusals: &[
+            TransactionInvariant("environment_not_found", None),
+            TransactionInvariant("invalid_input", None),
+            TransactionInvariant("not_found", None),
+            PermissionDenied,
+        ],
     },
     HostRoute {
         set: HostRouteSet::Control,
@@ -281,6 +334,14 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Command,
         authority: HostRouteAuthority::ProjectAdmin,
         handler: HostHandler::ControlExecution,
+        schemas: schemas::<PatListRequest, ServicePrincipalDisableResult>,
+        write_transaction: false,
+        refusals: &[
+            TransactionInvariant("environment_not_found", None),
+            TransactionInvariant("invalid_input", None),
+            TransactionInvariant("not_found", None),
+            PermissionDenied,
+        ],
     },
     HostRoute {
         set: HostRouteSet::Control,
@@ -288,6 +349,14 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Command,
         authority: HostRouteAuthority::ProjectAdmin,
         handler: HostHandler::ControlExecution,
+        schemas: schemas::<PatIssueRequest, ApiServiceCreateResult>,
+        write_transaction: false,
+        refusals: &[
+            TransactionInvariant("environment_not_found", None),
+            TransactionInvariant("invalid_input", None),
+            TransactionInvariant("not_found", None),
+            PermissionDenied,
+        ],
     },
     HostRoute {
         set: HostRouteSet::Control,
@@ -295,6 +364,14 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Get,
         authority: HostRouteAuthority::ProjectAdmin,
         handler: HostHandler::ControlExecution,
+        schemas: schemas::<PatListRequest, PatListResult>,
+        write_transaction: false,
+        refusals: &[
+            TransactionInvariant("environment_not_found", None),
+            TransactionInvariant("invalid_input", None),
+            TransactionInvariant("not_found", None),
+            PermissionDenied,
+        ],
     },
     HostRoute {
         set: HostRouteSet::Control,
@@ -302,6 +379,14 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Command,
         authority: HostRouteAuthority::OrgAdmin,
         handler: HostHandler::ControlExecution,
+        schemas: schemas::<PatRevokeRequest, UserRoleRevokeResult>,
+        write_transaction: false,
+        refusals: &[
+            TransactionInvariant("environment_not_found", None),
+            TransactionInvariant("invalid_input", None),
+            TransactionInvariant("not_found", None),
+            PermissionDenied,
+        ],
     },
     HostRoute {
         set: HostRouteSet::Application,
@@ -309,6 +394,17 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Command,
         authority: HostRouteAuthority::Granted,
         handler: HostHandler::FilePut,
+        schemas: schemas::<FilePutRequest, FileDeleteResult>,
+        write_transaction: false,
+        refusals: &[
+            TransactionInvariant("binding_refused", None),
+            TransactionInvariant("cdn_host_required", None),
+            TransactionInvariant("file_not_found", None),
+            TransactionInvariant("file_private", None),
+            TransactionInvariant("file_referenced", None),
+            MalformedInput("invalid_input", None),
+            PermissionDenied,
+        ],
     },
     HostRoute {
         set: HostRouteSet::Application,
@@ -316,6 +412,17 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Get,
         authority: HostRouteAuthority::Granted,
         handler: HostHandler::FileGet,
+        schemas: schemas::<FileGetRequest, FileExposeResult>,
+        write_transaction: false,
+        refusals: &[
+            TransactionInvariant("binding_refused", None),
+            TransactionInvariant("cdn_host_required", None),
+            TransactionInvariant("file_not_found", None),
+            TransactionInvariant("file_private", None),
+            TransactionInvariant("file_referenced", None),
+            MalformedInput("invalid_input", None),
+            PermissionDenied,
+        ],
     },
     HostRoute {
         set: HostRouteSet::Application,
@@ -323,6 +430,17 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Command,
         authority: HostRouteAuthority::Granted,
         handler: HostHandler::FileDelete,
+        schemas: schemas::<FileDeleteRequest, FileDeleteResult>,
+        write_transaction: false,
+        refusals: &[
+            TransactionInvariant("binding_refused", None),
+            TransactionInvariant("cdn_host_required", None),
+            TransactionInvariant("file_not_found", None),
+            TransactionInvariant("file_private", None),
+            TransactionInvariant("file_referenced", None),
+            MalformedInput("invalid_input", None),
+            PermissionDenied,
+        ],
     },
     HostRoute {
         set: HostRouteSet::Application,
@@ -330,6 +448,17 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Command,
         authority: HostRouteAuthority::Granted,
         handler: HostHandler::FileExpose,
+        schemas: schemas::<FileExposeRequest, FileExposeResult>,
+        write_transaction: false,
+        refusals: &[
+            TransactionInvariant("binding_refused", None),
+            TransactionInvariant("cdn_host_required", None),
+            TransactionInvariant("file_not_found", None),
+            TransactionInvariant("file_private", None),
+            TransactionInvariant("file_referenced", None),
+            MalformedInput("invalid_input", None),
+            PermissionDenied,
+        ],
     },
     HostRoute {
         set: HostRouteSet::Control,
@@ -337,6 +466,14 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Command,
         authority: HostRouteAuthority::ProjectAdmin,
         handler: HostHandler::OperationJob,
+        schemas: schemas::<CaptureGapCloseRequest, ApplicationDeployResult>,
+        write_transaction: false,
+        refusals: &[
+            TransactionInvariant("environment_not_found", None),
+            TransactionInvariant("invalid_input", None),
+            TransactionInvariant("not_found", None),
+            PermissionDenied,
+        ],
     },
     HostRoute {
         set: HostRouteSet::Control,
@@ -344,6 +481,14 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Command,
         authority: HostRouteAuthority::ProjectAdmin,
         handler: HostHandler::OperationJob,
+        schemas: schemas::<CaptureGapCloseRequest, ApplicationDeployResult>,
+        write_transaction: false,
+        refusals: &[
+            TransactionInvariant("environment_not_found", None),
+            TransactionInvariant("invalid_input", None),
+            TransactionInvariant("not_found", None),
+            PermissionDenied,
+        ],
     },
     HostRoute {
         set: HostRouteSet::Control,
@@ -351,6 +496,14 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Command,
         authority: HostRouteAuthority::OrgAdmin,
         handler: HostHandler::ControlExecution,
+        schemas: schemas::<PlatformSchemaRequest, ApplicationDeployResult>,
+        write_transaction: false,
+        refusals: &[
+            TransactionInvariant("environment_not_found", None),
+            TransactionInvariant("invalid_input", None),
+            TransactionInvariant("not_found", None),
+            PermissionDenied,
+        ],
     },
     HostRoute {
         set: HostRouteSet::Control,
@@ -358,6 +511,14 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Get,
         authority: HostRouteAuthority::OrgAdmin,
         handler: HostHandler::ControlExecution,
+        schemas: schemas::<ApplicationDeployResult, EnvironmentOperationStatusResult>,
+        write_transaction: false,
+        refusals: &[
+            TransactionInvariant("environment_not_found", None),
+            TransactionInvariant("invalid_input", None),
+            TransactionInvariant("not_found", None),
+            PermissionDenied,
+        ],
     },
     HostRoute {
         set: HostRouteSet::Control,
@@ -365,6 +526,14 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Command,
         authority: HostRouteAuthority::ProjectAdmin,
         handler: HostHandler::ControlExecution,
+        schemas: schemas::<ApiServiceCreateRequest, ApiServiceCreateResult>,
+        write_transaction: false,
+        refusals: &[
+            TransactionInvariant("environment_not_found", None),
+            TransactionInvariant("invalid_input", None),
+            TransactionInvariant("not_found", None),
+            PermissionDenied,
+        ],
     },
     HostRoute {
         set: HostRouteSet::Control,
@@ -372,6 +541,14 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Command,
         authority: HostRouteAuthority::ProjectAdmin,
         handler: HostHandler::OperationJob,
+        schemas: schemas::<ApplicationStopRequest, ApplicationDeployResult>,
+        write_transaction: false,
+        refusals: &[
+            TransactionInvariant("environment_not_found", None),
+            TransactionInvariant("invalid_input", None),
+            TransactionInvariant("not_found", None),
+            PermissionDenied,
+        ],
     },
     HostRoute {
         set: HostRouteSet::Control,
@@ -379,6 +556,14 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Command,
         authority: HostRouteAuthority::ProjectAdmin,
         handler: HostHandler::OperationJob,
+        schemas: schemas::<ApplicationDeployRequest, ApplicationDeployResult>,
+        write_transaction: false,
+        refusals: &[
+            TransactionInvariant("environment_not_found", None),
+            TransactionInvariant("invalid_input", None),
+            TransactionInvariant("not_found", None),
+            PermissionDenied,
+        ],
     },
     HostRoute {
         set: HostRouteSet::Control,
@@ -386,6 +571,14 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Command,
         authority: HostRouteAuthority::ProjectAdmin,
         handler: HostHandler::OperationJob,
+        schemas: schemas::<ApplicationRollbackRequest, ApplicationDeployResult>,
+        write_transaction: false,
+        refusals: &[
+            TransactionInvariant("environment_not_found", None),
+            TransactionInvariant("invalid_input", None),
+            TransactionInvariant("not_found", None),
+            PermissionDenied,
+        ],
     },
     HostRoute {
         set: HostRouteSet::Control,
@@ -393,6 +586,14 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Command,
         authority: HostRouteAuthority::ProjectAdmin,
         handler: HostHandler::OperationJob,
+        schemas: schemas::<SchemaDiffRequest, ApplicationDeployResult>,
+        write_transaction: false,
+        refusals: &[
+            TransactionInvariant("environment_not_found", None),
+            TransactionInvariant("invalid_input", None),
+            TransactionInvariant("not_found", None),
+            PermissionDenied,
+        ],
     },
     HostRoute {
         set: HostRouteSet::Control,
@@ -400,6 +601,14 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Command,
         authority: HostRouteAuthority::ProjectAdmin,
         handler: HostHandler::OperationJob,
+        schemas: schemas::<ApplicationDeployRequest, ApplicationDeployResult>,
+        write_transaction: false,
+        refusals: &[
+            TransactionInvariant("environment_not_found", None),
+            TransactionInvariant("invalid_input", None),
+            TransactionInvariant("not_found", None),
+            PermissionDenied,
+        ],
     },
     HostRoute {
         set: HostRouteSet::Control,
@@ -407,6 +616,14 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Command,
         authority: HostRouteAuthority::ProjectAdmin,
         handler: HostHandler::OperationJob,
+        schemas: schemas::<CaptureGapCloseRequest, ApplicationDeployResult>,
+        write_transaction: false,
+        refusals: &[
+            TransactionInvariant("environment_not_found", None),
+            TransactionInvariant("invalid_input", None),
+            TransactionInvariant("not_found", None),
+            PermissionDenied,
+        ],
     },
     HostRoute {
         set: HostRouteSet::Control,
@@ -414,6 +631,14 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Get,
         authority: HostRouteAuthority::ProjectAdmin,
         handler: HostHandler::OperationJob,
+        schemas: schemas::<EnvironmentOperationStatusRequest, EnvironmentOperationStatusResult>,
+        write_transaction: true,
+        refusals: &[
+            TransactionInvariant("environment_not_found", None),
+            TransactionInvariant("invalid_input", None),
+            TransactionInvariant("not_found", None),
+            PermissionDenied,
+        ],
     },
     HostRoute {
         set: HostRouteSet::Control,
@@ -421,6 +646,25 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Get,
         authority: HostRouteAuthority::ProjectAdmin,
         handler: HostHandler::IntegrationAdministration,
+        schemas: schemas::<IntegrationTypeListRequest, IntegrationTypeListResult>,
+        write_transaction: false,
+        refusals: &[
+            TransactionInvariant(
+                "application_write_incomplete",
+                Some(
+                    "The application rows stopped at this environment. The completed environments are done.",
+                ),
+            ),
+            TransactionInvariant("deployment_in_progress", None),
+            TransactionInvariant("immutable_field", None),
+            TransactionInvariant("invalid_input", None),
+            TransactionInvariant("ipv6_authority_not_supported", None),
+            TransactionInvariant("not_found", None),
+            PermissionDenied,
+            TransactionInvariant("referenced", None),
+            TransactionInvariant("resource_in_use", None),
+            TransactionInvariant("unsupported_auth_type", None),
+        ],
     },
     HostRoute {
         set: HostRouteSet::Control,
@@ -428,6 +672,25 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Command,
         authority: HostRouteAuthority::ProjectAdmin,
         handler: HostHandler::IntegrationAdministration,
+        schemas: schemas::<ConnectionAuthorizeRequest, ExternalSystemDeleteResult>,
+        write_transaction: false,
+        refusals: &[
+            TransactionInvariant(
+                "application_write_incomplete",
+                Some(
+                    "The application rows stopped at this environment. The completed environments are done.",
+                ),
+            ),
+            TransactionInvariant("deployment_in_progress", None),
+            TransactionInvariant("immutable_field", None),
+            TransactionInvariant("invalid_input", None),
+            TransactionInvariant("ipv6_authority_not_supported", None),
+            TransactionInvariant("not_found", None),
+            PermissionDenied,
+            TransactionInvariant("referenced", None),
+            TransactionInvariant("resource_in_use", None),
+            TransactionInvariant("unsupported_auth_type", None),
+        ],
     },
     HostRoute {
         set: HostRouteSet::Control,
@@ -435,6 +698,25 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Get,
         authority: HostRouteAuthority::ProjectAdmin,
         handler: HostHandler::IntegrationAdministration,
+        schemas: schemas::<CaptureGapCloseRequest, ExternalSystemListResult>,
+        write_transaction: false,
+        refusals: &[
+            TransactionInvariant(
+                "application_write_incomplete",
+                Some(
+                    "The application rows stopped at this environment. The completed environments are done.",
+                ),
+            ),
+            TransactionInvariant("deployment_in_progress", None),
+            TransactionInvariant("immutable_field", None),
+            TransactionInvariant("invalid_input", None),
+            TransactionInvariant("ipv6_authority_not_supported", None),
+            TransactionInvariant("not_found", None),
+            PermissionDenied,
+            TransactionInvariant("referenced", None),
+            TransactionInvariant("resource_in_use", None),
+            TransactionInvariant("unsupported_auth_type", None),
+        ],
     },
     HostRoute {
         set: HostRouteSet::Control,
@@ -442,6 +724,25 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Command,
         authority: HostRouteAuthority::ProjectAdmin,
         handler: HostHandler::IntegrationAdministration,
+        schemas: schemas::<ConnectionAuthorizeRequest, ExternalSystemDeleteResult>,
+        write_transaction: false,
+        refusals: &[
+            TransactionInvariant(
+                "application_write_incomplete",
+                Some(
+                    "The application rows stopped at this environment. The completed environments are done.",
+                ),
+            ),
+            TransactionInvariant("deployment_in_progress", None),
+            TransactionInvariant("immutable_field", None),
+            TransactionInvariant("invalid_input", None),
+            TransactionInvariant("ipv6_authority_not_supported", None),
+            TransactionInvariant("not_found", None),
+            PermissionDenied,
+            TransactionInvariant("referenced", None),
+            TransactionInvariant("resource_in_use", None),
+            TransactionInvariant("unsupported_auth_type", None),
+        ],
     },
     HostRoute {
         set: HostRouteSet::Control,
@@ -449,6 +750,28 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Command,
         authority: HostRouteAuthority::ProjectAdmin,
         handler: HostHandler::IntegrationAdministration,
+        schemas: schemas::<ConnectionWriteRequest, ConnectionSummary>,
+        write_transaction: false,
+        refusals: &[
+            TransactionInvariant(
+                "application_write_incomplete",
+                Some(
+                    "The application rows stopped at this environment. The completed environments are done.",
+                ),
+            ),
+            TransactionInvariant("deployment_in_progress", None),
+            TransactionInvariant(
+                "exclusive_connection_requires_local_target",
+                Some("Exclusive connections belong to local targets."),
+            ),
+            TransactionInvariant("immutable_field", None),
+            TransactionInvariant("invalid_input", None),
+            TransactionInvariant("ipv6_authority_not_supported", None),
+            TransactionInvariant("not_found", None),
+            PermissionDenied,
+            TransactionInvariant("referenced", None),
+            TransactionInvariant("resource_in_use", None),
+        ],
     },
     HostRoute {
         set: HostRouteSet::Control,
@@ -456,6 +779,25 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Command,
         authority: HostRouteAuthority::ProjectAdmin,
         handler: HostHandler::IntegrationAdministration,
+        schemas: schemas::<ConnectionAuthorizeRequest, ConnectionAuthorizeResult>,
+        write_transaction: false,
+        refusals: &[
+            TransactionInvariant(
+                "application_write_incomplete",
+                Some(
+                    "The application rows stopped at this environment. The completed environments are done.",
+                ),
+            ),
+            TransactionInvariant("deployment_in_progress", None),
+            TransactionInvariant("immutable_field", None),
+            TransactionInvariant("invalid_input", None),
+            TransactionInvariant("ipv6_authority_not_supported", None),
+            TransactionInvariant("not_found", None),
+            PermissionDenied,
+            TransactionInvariant("referenced", None),
+            TransactionInvariant("resource_in_use", None),
+            TransactionInvariant("unsupported_auth_type", None),
+        ],
     },
     HostRoute {
         set: HostRouteSet::Control,
@@ -463,6 +805,12 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Command,
         authority: HostRouteAuthority::ProjectAdmin,
         handler: HostHandler::IntegrationAdministration,
+        schemas: schemas::<ConnectionTestRequest, ConnectionTest>,
+        write_transaction: false,
+        refusals: &[
+            TransactionInvariant("invalid_input", None),
+            PermissionDenied,
+        ],
     },
     HostRoute {
         set: HostRouteSet::Control,
@@ -470,6 +818,25 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Command,
         authority: HostRouteAuthority::ProjectAdmin,
         handler: HostHandler::IntegrationAdministration,
+        schemas: schemas::<ConnectionCopyRequest, ConnectionSummary>,
+        write_transaction: false,
+        refusals: &[
+            TransactionInvariant(
+                "application_write_incomplete",
+                Some(
+                    "The application rows stopped at this environment. The completed environments are done.",
+                ),
+            ),
+            TransactionInvariant("deployment_in_progress", None),
+            TransactionInvariant("immutable_field", None),
+            TransactionInvariant("invalid_input", None),
+            TransactionInvariant("ipv6_authority_not_supported", None),
+            TransactionInvariant("not_found", None),
+            PermissionDenied,
+            TransactionInvariant("referenced", None),
+            TransactionInvariant("resource_in_use", None),
+            TransactionInvariant("unsupported_auth_type", None),
+        ],
     },
     HostRoute {
         set: HostRouteSet::Control,
@@ -477,6 +844,25 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Command,
         authority: HostRouteAuthority::ProjectAdmin,
         handler: HostHandler::IntegrationAdministration,
+        schemas: schemas::<ConnectionSetCredentialRequest, ConnectionSummary>,
+        write_transaction: false,
+        refusals: &[
+            TransactionInvariant(
+                "application_write_incomplete",
+                Some(
+                    "The application rows stopped at this environment. The completed environments are done.",
+                ),
+            ),
+            TransactionInvariant("deployment_in_progress", None),
+            TransactionInvariant("immutable_field", None),
+            TransactionInvariant("invalid_input", None),
+            TransactionInvariant("ipv6_authority_not_supported", None),
+            TransactionInvariant("not_found", None),
+            PermissionDenied,
+            TransactionInvariant("referenced", None),
+            TransactionInvariant("resource_in_use", None),
+            TransactionInvariant("unsupported_auth_type", None),
+        ],
     },
     HostRoute {
         set: HostRouteSet::Control,
@@ -484,6 +870,25 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Command,
         authority: HostRouteAuthority::ProjectAdmin,
         handler: HostHandler::IntegrationAdministration,
+        schemas: schemas::<ConnectionAuthorizeRequest, ConnectionDeleteResult>,
+        write_transaction: false,
+        refusals: &[
+            TransactionInvariant(
+                "application_write_incomplete",
+                Some(
+                    "The application rows stopped at this environment. The completed environments are done.",
+                ),
+            ),
+            TransactionInvariant("deployment_in_progress", None),
+            TransactionInvariant("immutable_field", None),
+            TransactionInvariant("invalid_input", None),
+            TransactionInvariant("ipv6_authority_not_supported", None),
+            TransactionInvariant("not_found", None),
+            PermissionDenied,
+            TransactionInvariant("referenced", None),
+            TransactionInvariant("resource_in_use", None),
+            TransactionInvariant("unsupported_auth_type", None),
+        ],
     },
     HostRoute {
         set: HostRouteSet::Control,
@@ -491,6 +896,25 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Command,
         authority: HostRouteAuthority::ProjectAdmin,
         handler: HostHandler::IntegrationAdministration,
+        schemas: schemas::<ConnectionAuthorizeRequest, ConnectionDeleteResult>,
+        write_transaction: false,
+        refusals: &[
+            TransactionInvariant(
+                "application_write_incomplete",
+                Some(
+                    "The application rows stopped at this environment. The completed environments are done.",
+                ),
+            ),
+            TransactionInvariant("deployment_in_progress", None),
+            TransactionInvariant("immutable_field", None),
+            TransactionInvariant("invalid_input", None),
+            TransactionInvariant("ipv6_authority_not_supported", None),
+            TransactionInvariant("not_found", None),
+            PermissionDenied,
+            TransactionInvariant("referenced", None),
+            TransactionInvariant("resource_in_use", None),
+            TransactionInvariant("unsupported_auth_type", None),
+        ],
     },
     HostRoute {
         set: HostRouteSet::Control,
@@ -498,6 +922,25 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Command,
         authority: HostRouteAuthority::ProjectAdmin,
         handler: HostHandler::IntegrationAdministration,
+        schemas: schemas::<ConnectionAuthorizeRequest, ConnectionDeleteResult>,
+        write_transaction: false,
+        refusals: &[
+            TransactionInvariant(
+                "application_write_incomplete",
+                Some(
+                    "The application rows stopped at this environment. The completed environments are done.",
+                ),
+            ),
+            TransactionInvariant("deployment_in_progress", None),
+            TransactionInvariant("immutable_field", None),
+            TransactionInvariant("invalid_input", None),
+            TransactionInvariant("ipv6_authority_not_supported", None),
+            TransactionInvariant("not_found", None),
+            PermissionDenied,
+            TransactionInvariant("referenced", None),
+            TransactionInvariant("resource_in_use", None),
+            TransactionInvariant("unsupported_auth_type", None),
+        ],
     },
     HostRoute {
         set: HostRouteSet::Control,
@@ -505,6 +948,25 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Get,
         authority: HostRouteAuthority::ProjectAdmin,
         handler: HostHandler::IntegrationAdministration,
+        schemas: schemas::<CaptureGapCloseRequest, ConnectionListResult>,
+        write_transaction: false,
+        refusals: &[
+            TransactionInvariant(
+                "application_write_incomplete",
+                Some(
+                    "The application rows stopped at this environment. The completed environments are done.",
+                ),
+            ),
+            TransactionInvariant("deployment_in_progress", None),
+            TransactionInvariant("immutable_field", None),
+            TransactionInvariant("invalid_input", None),
+            TransactionInvariant("ipv6_authority_not_supported", None),
+            TransactionInvariant("not_found", None),
+            PermissionDenied,
+            TransactionInvariant("referenced", None),
+            TransactionInvariant("resource_in_use", None),
+            TransactionInvariant("unsupported_auth_type", None),
+        ],
     },
     HostRoute {
         set: HostRouteSet::Control,
@@ -512,6 +974,25 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Get,
         authority: HostRouteAuthority::ProjectAdmin,
         handler: HostHandler::IntegrationAdministration,
+        schemas: schemas::<ConnectionAuthorizeRequest, ConnectionGetResult>,
+        write_transaction: false,
+        refusals: &[
+            TransactionInvariant(
+                "application_write_incomplete",
+                Some(
+                    "The application rows stopped at this environment. The completed environments are done.",
+                ),
+            ),
+            TransactionInvariant("deployment_in_progress", None),
+            TransactionInvariant("immutable_field", None),
+            TransactionInvariant("invalid_input", None),
+            TransactionInvariant("ipv6_authority_not_supported", None),
+            TransactionInvariant("not_found", None),
+            PermissionDenied,
+            TransactionInvariant("referenced", None),
+            TransactionInvariant("resource_in_use", None),
+            TransactionInvariant("unsupported_auth_type", None),
+        ],
     },
     HostRoute {
         set: HostRouteSet::Application,
@@ -519,6 +1000,9 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Get,
         authority: HostRouteAuthority::Member,
         handler: HostHandler::PermissionMine,
+        schemas: schemas::<Empty, PermissionMineResult>,
+        write_transaction: false,
+        refusals: &[PermissionDenied],
     },
     HostRoute {
         set: HostRouteSet::Application,
@@ -526,6 +1010,9 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Get,
         authority: HostRouteAuthority::Admin,
         handler: HostHandler::ApplicationUserList,
+        schemas: schemas::<Empty, ApplicationUserListResult>,
+        write_transaction: false,
+        refusals: &[PermissionDenied],
     },
     HostRoute {
         set: HostRouteSet::Application,
@@ -533,6 +1020,9 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Get,
         authority: HostRouteAuthority::Admin,
         handler: HostHandler::RoleList,
+        schemas: schemas::<Empty, RoleListResult>,
+        write_transaction: false,
+        refusals: &[PermissionDenied],
     },
     HostRoute {
         set: HostRouteSet::Application,
@@ -540,6 +1030,18 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Command,
         authority: HostRouteAuthority::Admin,
         handler: HostHandler::RoleCreate,
+        schemas: schemas::<PermissionListRequest, RoleCreateResult>,
+        write_transaction: false,
+        refusals: &[
+            TransactionInvariant(
+                "admin_fixed",
+                Some(
+                    "The admin role is built in. It holds every operation, and it cannot be created, deleted or given a permission.",
+                ),
+            ),
+            MalformedInput("invalid_input", None),
+            PermissionDenied,
+        ],
     },
     HostRoute {
         set: HostRouteSet::Application,
@@ -547,6 +1049,18 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Command,
         authority: HostRouteAuthority::Admin,
         handler: HostHandler::RoleDelete,
+        schemas: schemas::<PermissionListRequest, RoleDeleteResult>,
+        write_transaction: false,
+        refusals: &[
+            TransactionInvariant(
+                "admin_fixed",
+                Some(
+                    "The admin role is built in. It holds every operation, and it cannot be created, deleted or given a permission.",
+                ),
+            ),
+            MalformedInput("invalid_input", None),
+            PermissionDenied,
+        ],
     },
     HostRoute {
         set: HostRouteSet::Application,
@@ -554,6 +1068,13 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Get,
         authority: HostRouteAuthority::Admin,
         handler: HostHandler::PermissionList,
+        schemas: schemas::<PermissionListRequest, PermissionListResult>,
+        write_transaction: false,
+        refusals: &[
+            MalformedInput("invalid_input", None),
+            PermissionDenied,
+            TransactionInvariant("role_not_found", Some("This role does not exist.")),
+        ],
     },
     HostRoute {
         set: HostRouteSet::Application,
@@ -561,6 +1082,27 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Command,
         authority: HostRouteAuthority::Admin,
         handler: HostHandler::PermissionGrant,
+        schemas: schemas::<PermissionGrantRequest, PermissionGrantResult>,
+        write_transaction: false,
+        refusals: &[
+            TransactionInvariant(
+                "admin_fixed",
+                Some(
+                    "The admin role is built in. It holds every operation, and it cannot be created, deleted or given a permission.",
+                ),
+            ),
+            MalformedInput("invalid_input", None),
+            TransactionInvariant(
+                "operation_not_grantable",
+                Some("This operation is fixed to admin or to every member, so no role takes it."),
+            ),
+            TransactionInvariant(
+                "operation_not_served",
+                Some("The current release does not serve this operation."),
+            ),
+            PermissionDenied,
+            TransactionInvariant("role_not_found", Some("This role does not exist.")),
+        ],
     },
     HostRoute {
         set: HostRouteSet::Application,
@@ -568,6 +1110,17 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Command,
         authority: HostRouteAuthority::Admin,
         handler: HostHandler::PermissionRevoke,
+        schemas: schemas::<PermissionGrantRequest, PermissionRevokeResult>,
+        write_transaction: false,
+        refusals: &[
+            MalformedInput("invalid_input", None),
+            PermissionDenied,
+            TransactionInvariant(
+                "permission_not_held",
+                Some("The role does not hold this operation."),
+            ),
+            TransactionInvariant("role_not_found", Some("This role does not exist.")),
+        ],
     },
     HostRoute {
         set: HostRouteSet::Application,
@@ -575,6 +1128,14 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Command,
         authority: HostRouteAuthority::Admin,
         handler: HostHandler::UserRoleGrant,
+        schemas: schemas::<UserRoleGrantRequest, UserRoleGrantResult>,
+        write_transaction: false,
+        refusals: &[
+            MalformedInput("invalid_input", None),
+            PermissionDenied,
+            TransactionInvariant("role_not_found", Some("This role does not exist.")),
+            TransactionInvariant("user_not_found", Some("The application has no such user.")),
+        ],
     },
     HostRoute {
         set: HostRouteSet::Application,
@@ -582,6 +1143,19 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Command,
         authority: HostRouteAuthority::Admin,
         handler: HostHandler::UserRoleRevoke,
+        schemas: schemas::<UserRoleGrantRequest, UserRoleRevokeResult>,
+        write_transaction: false,
+        refusals: &[
+            TransactionInvariant(
+                "admin_covered",
+                Some(
+                    "The user holds project-admin or org-admin, so admin stays. Revoke that first.",
+                ),
+            ),
+            MalformedInput("invalid_input", None),
+            PermissionDenied,
+            TransactionInvariant("user_not_found", Some("The application has no such user.")),
+        ],
     },
     HostRoute {
         set: HostRouteSet::Application,
@@ -589,6 +1163,28 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Command,
         authority: HostRouteAuthority::Granted,
         handler: HostHandler::NumberCounterSet,
+        schemas: schemas::<NumberCounterSetRequest, NumberCounterSetResult>,
+        write_transaction: false,
+        refusals: &[
+            TransactionInvariant(
+                "counter_assigned_per_key",
+                Some("A per= counter gives each key one number for good, so it is never set."),
+            ),
+            TransactionInvariant(
+                "counter_not_found",
+                Some("The pattern of the sequence has no counter of this name."),
+            ),
+            TransactionInvariant(
+                "idempotency_conflict",
+                Some("This request id was used for a different set."),
+            ),
+            MalformedInput("invalid_input", None),
+            PermissionDenied,
+            TransactionInvariant(
+                "sequence_not_found",
+                Some("The application has no number sequence of this name."),
+            ),
+        ],
     },
     HostRoute {
         set: HostRouteSet::Application,
@@ -596,6 +1192,15 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Command,
         authority: HostRouteAuthority::Admin,
         handler: HostHandler::WorkflowAuthor,
+        schemas: schemas::<WorkflowAuthorRequest, WorkflowAuthorResult>,
+        write_transaction: false,
+        refusals: &[
+            TransactionInvariant("apply_in_progress", None),
+            MalformedInput("invalid_input", None),
+            PermissionDenied,
+            TransactionInvariant("workflow_path_taken", None),
+            TransactionInvariant("workflow_version_exists", None),
+        ],
     },
     HostRoute {
         set: HostRouteSet::Application,
@@ -603,6 +1208,15 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Command,
         authority: HostRouteAuthority::Admin,
         handler: HostHandler::WorkflowEnable,
+        schemas: schemas::<WorkflowDisableRequest, WorkflowAuthorResult>,
+        write_transaction: false,
+        refusals: &[
+            TransactionInvariant("apply_in_progress", None),
+            MalformedInput("invalid_input", None),
+            PermissionDenied,
+            TransactionInvariant("workflow_path_taken", None),
+            TransactionInvariant("workflow_version_not_found", None),
+        ],
     },
     HostRoute {
         set: HostRouteSet::Application,
@@ -610,6 +1224,14 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Command,
         authority: HostRouteAuthority::Admin,
         handler: HostHandler::WorkflowDisable,
+        schemas: schemas::<WorkflowDisableRequest, WorkflowAuthorResult>,
+        write_transaction: false,
+        refusals: &[
+            TransactionInvariant("apply_in_progress", None),
+            MalformedInput("invalid_input", None),
+            PermissionDenied,
+            TransactionInvariant("workflow_version_not_found", None),
+        ],
     },
     HostRoute {
         set: HostRouteSet::Application,
@@ -617,6 +1239,9 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Get,
         authority: HostRouteAuthority::Admin,
         handler: HostHandler::WorkflowList,
+        schemas: schemas::<Empty, WorkflowAuthorResult>,
+        write_transaction: false,
+        refusals: &[MalformedInput("invalid_input", None), PermissionDenied],
     },
     HostRoute {
         set: HostRouteSet::Application,
@@ -624,6 +1249,15 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Command,
         authority: HostRouteAuthority::Admin,
         handler: HostHandler::WorkflowRun,
+        schemas: schemas::<WorkflowRunRequest, WorkflowRunResult>,
+        write_transaction: false,
+        refusals: &[
+            TransactionInvariant("active_role_required", None),
+            TransactionInvariant("idempotency_conflict", None),
+            MalformedInput("invalid_input", None),
+            PermissionDenied,
+            TransactionInvariant("workflow_not_enabled", None),
+        ],
     },
     HostRoute {
         set: HostRouteSet::Control,
@@ -631,6 +1265,9 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Get,
         authority: HostRouteAuthority::Member,
         handler: HostHandler::ControlMine,
+        schemas: schemas::<ControlMineRequest, ControlMineResult>,
+        write_transaction: false,
+        refusals: &[MalformedInput("invalid_input", None), PermissionDenied],
     },
     HostRoute {
         set: HostRouteSet::Control,
@@ -638,6 +1275,9 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Get,
         authority: HostRouteAuthority::Member,
         handler: HostHandler::UserList,
+        schemas: schemas::<ControlMineRequest, UserListResult>,
+        write_transaction: false,
+        refusals: &[MalformedInput("invalid_input", None), PermissionDenied],
     },
     HostRoute {
         set: HostRouteSet::Control,
@@ -645,6 +1285,20 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Command,
         authority: HostRouteAuthority::OrgAdmin,
         handler: HostHandler::UserCreate,
+        schemas: schemas::<UserCreateRequest, UserCreateResult>,
+        write_transaction: false,
+        refusals: &[
+            MalformedInput("invalid_input", None),
+            PermissionDenied,
+            TransactionInvariant(
+                "user_in_another_org",
+                Some("The user already belongs to another org."),
+            ),
+            TransactionInvariant(
+                "user_refused",
+                Some("Identity refused the user of this email, for example a disabled user."),
+            ),
+        ],
     },
     HostRoute {
         set: HostRouteSet::Control,
@@ -652,6 +1306,35 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Command,
         authority: HostRouteAuthority::OrgAdmin,
         handler: HostHandler::UserInvite,
+        schemas: schemas::<UserInviteRequest, UserInviteResult>,
+        write_transaction: false,
+        refusals: &[
+            TransactionInvariant(
+                "application_write_incomplete",
+                Some(
+                    "The application rows stopped at this environment. The completed environments are done.",
+                ),
+            ),
+            TransactionInvariant(
+                "environment_not_found",
+                Some("This environment is not an environment of the org."),
+            ),
+            MalformedInput("invalid_input", None),
+            PermissionDenied,
+            TransactionInvariant(
+                "project_not_found",
+                Some("This project is not a project of the org."),
+            ),
+            TransactionInvariant(
+                "user_in_another_org",
+                Some("The user already belongs to another org."),
+            ),
+            TransactionInvariant("user_not_found", Some("The org has no such user.")),
+            TransactionInvariant(
+                "user_refused",
+                Some("Identity refused the user of this email, for example a disabled user."),
+            ),
+        ],
     },
     HostRoute {
         set: HostRouteSet::Control,
@@ -659,6 +1342,17 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Command,
         authority: HostRouteAuthority::OrgAdmin,
         handler: HostHandler::UserDisable,
+        schemas: schemas::<OrgAdminGrantRequest, UserActivateResult>,
+        write_transaction: false,
+        refusals: &[
+            MalformedInput("invalid_input", None),
+            PermissionDenied,
+            TransactionInvariant(
+                "user_in_another_org",
+                Some("The user has an active membership in another org."),
+            ),
+            TransactionInvariant("user_not_found", Some("The org has no such user.")),
+        ],
     },
     HostRoute {
         set: HostRouteSet::Control,
@@ -666,6 +1360,17 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Command,
         authority: HostRouteAuthority::OrgAdmin,
         handler: HostHandler::UserActivate,
+        schemas: schemas::<OrgAdminGrantRequest, UserActivateResult>,
+        write_transaction: false,
+        refusals: &[
+            MalformedInput("invalid_input", None),
+            PermissionDenied,
+            TransactionInvariant(
+                "user_in_another_org",
+                Some("The user already belongs to another org."),
+            ),
+            TransactionInvariant("user_not_found", Some("The org has no such user.")),
+        ],
     },
     HostRoute {
         set: HostRouteSet::Control,
@@ -673,6 +1378,19 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Command,
         authority: HostRouteAuthority::OrgAdmin,
         handler: HostHandler::UserDeactivate,
+        schemas: schemas::<OrgAdminGrantRequest, UserActivateResult>,
+        write_transaction: false,
+        refusals: &[
+            TransactionInvariant(
+                "application_write_incomplete",
+                Some(
+                    "The application rows stopped at this environment. The completed environments are done.",
+                ),
+            ),
+            MalformedInput("invalid_input", None),
+            PermissionDenied,
+            TransactionInvariant("user_not_found", Some("The org has no such user.")),
+        ],
     },
     // project.list state is active when any environment is active, inactive otherwise.
     // A project with no environments is inactive. registry.project_envs.status owns the state.
@@ -682,6 +1400,9 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Get,
         authority: HostRouteAuthority::OrgAdmin,
         handler: HostHandler::ProjectList,
+        schemas: schemas::<ControlMineRequest, ProjectListResult>,
+        write_transaction: false,
+        refusals: &[MalformedInput("invalid_input", None), PermissionDenied],
     },
     HostRoute {
         set: HostRouteSet::Control,
@@ -689,6 +1410,23 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Command,
         authority: HostRouteAuthority::OrgAdmin,
         handler: HostHandler::OrgAdminGrant,
+        schemas: schemas::<OrgAdminGrantRequest, OrgAdminGrantResult>,
+        write_transaction: false,
+        refusals: &[
+            TransactionInvariant(
+                "application_write_incomplete",
+                Some(
+                    "The application rows stopped at this environment. The completed environments are done.",
+                ),
+            ),
+            MalformedInput("invalid_input", None),
+            PermissionDenied,
+            TransactionInvariant(
+                "user_not_active",
+                Some("The user is not an active member of the org."),
+            ),
+            TransactionInvariant("user_not_found", Some("The org has no such user.")),
+        ],
     },
     HostRoute {
         set: HostRouteSet::Control,
@@ -696,6 +1434,18 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Command,
         authority: HostRouteAuthority::OrgAdmin,
         handler: HostHandler::OrgAdminRevoke,
+        schemas: schemas::<OrgAdminGrantRequest, OrgAdminGrantResult>,
+        write_transaction: false,
+        refusals: &[
+            TransactionInvariant(
+                "application_write_incomplete",
+                Some(
+                    "The application rows stopped at this environment. The completed environments are done.",
+                ),
+            ),
+            MalformedInput("invalid_input", None),
+            PermissionDenied,
+        ],
     },
     HostRoute {
         set: HostRouteSet::Control,
@@ -703,6 +1453,9 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Get,
         authority: HostRouteAuthority::ProjectAdmin,
         handler: HostHandler::EnvironmentList,
+        schemas: schemas::<EnvironmentListRequest, EnvironmentListResult>,
+        write_transaction: false,
+        refusals: &[MalformedInput("invalid_input", None), PermissionDenied],
     },
     HostRoute {
         set: HostRouteSet::Control,
@@ -710,6 +1463,16 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Get,
         authority: HostRouteAuthority::ProjectAdmin,
         handler: HostHandler::EnvironmentStatus,
+        schemas: schemas::<EnvironmentRequest, EnvironmentStatusResult>,
+        write_transaction: false,
+        refusals: &[
+            TransactionInvariant(
+                "environment_not_found",
+                Some("This environment is not an environment of the org."),
+            ),
+            MalformedInput("invalid_input", None),
+            PermissionDenied,
+        ],
     },
     HostRoute {
         set: HostRouteSet::Control,
@@ -717,6 +1480,9 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Get,
         authority: HostRouteAuthority::ProjectAdmin,
         handler: HostHandler::MemberList,
+        schemas: schemas::<MemberListRequest, MemberListResult>,
+        write_transaction: false,
+        refusals: &[MalformedInput("invalid_input", None), PermissionDenied],
     },
     HostRoute {
         set: HostRouteSet::Control,
@@ -724,6 +1490,27 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Command,
         authority: HostRouteAuthority::ProjectAdmin,
         handler: HostHandler::MemberGrant,
+        schemas: schemas::<MemberGrantRequest, MemberGrantResult>,
+        write_transaction: false,
+        refusals: &[
+            TransactionInvariant(
+                "application_write_incomplete",
+                Some(
+                    "The application rows stopped at this environment. The completed environments are done.",
+                ),
+            ),
+            TransactionInvariant(
+                "environment_not_found",
+                Some("This environment is not an environment of the org."),
+            ),
+            MalformedInput("invalid_input", None),
+            PermissionDenied,
+            TransactionInvariant(
+                "user_not_active",
+                Some("The user is not an active member of the org."),
+            ),
+            TransactionInvariant("user_not_found", Some("The org has no such user.")),
+        ],
     },
     HostRoute {
         set: HostRouteSet::Control,
@@ -731,6 +1518,24 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Command,
         authority: HostRouteAuthority::ProjectAdmin,
         handler: HostHandler::MemberRevoke,
+        schemas: schemas::<MemberGrantRequest, MemberGrantResult>,
+        write_transaction: false,
+        refusals: &[
+            TransactionInvariant(
+                "admin_covered",
+                Some(
+                    "The user holds org-admin or project-admin, which covers this grant. Revoke that first.",
+                ),
+            ),
+            TransactionInvariant(
+                "application_write_incomplete",
+                Some(
+                    "The application rows stopped at this environment. The completed environments are done.",
+                ),
+            ),
+            MalformedInput("invalid_input", None),
+            PermissionDenied,
+        ],
     },
     HostRoute {
         set: HostRouteSet::Control,
@@ -738,6 +1543,27 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Command,
         authority: HostRouteAuthority::ProjectAdmin,
         handler: HostHandler::ProjectAdminGrant,
+        schemas: schemas::<ProjectAdminGrantRequest, ProjectAdminGrantResult>,
+        write_transaction: false,
+        refusals: &[
+            TransactionInvariant(
+                "application_write_incomplete",
+                Some(
+                    "The application rows stopped at this environment. The completed environments are done.",
+                ),
+            ),
+            MalformedInput("invalid_input", None),
+            PermissionDenied,
+            TransactionInvariant(
+                "project_not_found",
+                Some("This project is not a project of the org."),
+            ),
+            TransactionInvariant(
+                "user_not_active",
+                Some("The user is not an active member of the org."),
+            ),
+            TransactionInvariant("user_not_found", Some("The org has no such user.")),
+        ],
     },
     HostRoute {
         set: HostRouteSet::Control,
@@ -745,6 +1571,24 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Command,
         authority: HostRouteAuthority::ProjectAdmin,
         handler: HostHandler::ProjectAdminRevoke,
+        schemas: schemas::<ProjectAdminGrantRequest, ProjectAdminGrantResult>,
+        write_transaction: false,
+        refusals: &[
+            TransactionInvariant(
+                "admin_covered",
+                Some(
+                    "The user holds org-admin or project-admin, which covers this grant. Revoke that first.",
+                ),
+            ),
+            TransactionInvariant(
+                "application_write_incomplete",
+                Some(
+                    "The application rows stopped at this environment. The completed environments are done.",
+                ),
+            ),
+            MalformedInput("invalid_input", None),
+            PermissionDenied,
+        ],
     },
     HostRoute {
         set: HostRouteSet::Control,
@@ -752,6 +1596,22 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Command,
         authority: HostRouteAuthority::OrgAdmin,
         handler: HostHandler::EnvironmentActivate,
+        schemas: schemas::<EnvironmentRequest, EnvironmentStatus>,
+        write_transaction: false,
+        refusals: &[
+            TransactionInvariant(
+                "application_write_incomplete",
+                Some(
+                    "The application rows stopped at this environment. The completed environments are done.",
+                ),
+            ),
+            TransactionInvariant(
+                "environment_not_found",
+                Some("This environment is not an environment of the org."),
+            ),
+            MalformedInput("invalid_input", None),
+            PermissionDenied,
+        ],
     },
     HostRoute {
         set: HostRouteSet::Control,
@@ -759,6 +1619,22 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Command,
         authority: HostRouteAuthority::OrgAdmin,
         handler: HostHandler::EnvironmentInactivate,
+        schemas: schemas::<EnvironmentRequest, EnvironmentStatus>,
+        write_transaction: false,
+        refusals: &[
+            TransactionInvariant(
+                "application_write_incomplete",
+                Some(
+                    "The application rows stopped at this environment. The completed environments are done.",
+                ),
+            ),
+            TransactionInvariant(
+                "environment_not_found",
+                Some("This environment is not an environment of the org."),
+            ),
+            MalformedInput("invalid_input", None),
+            PermissionDenied,
+        ],
     },
     HostRoute {
         set: HostRouteSet::Control,
@@ -766,6 +1642,22 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Command,
         authority: HostRouteAuthority::OrgAdmin,
         handler: HostHandler::ProjectActivate,
+        schemas: schemas::<ProjectRequest, ProjectStatus>,
+        write_transaction: false,
+        refusals: &[
+            TransactionInvariant(
+                "application_write_incomplete",
+                Some(
+                    "The application rows stopped at this environment. The completed environments are done.",
+                ),
+            ),
+            MalformedInput("invalid_input", None),
+            PermissionDenied,
+            TransactionInvariant(
+                "project_not_found",
+                Some("This project is not a project of the org."),
+            ),
+        ],
     },
     HostRoute {
         set: HostRouteSet::Control,
@@ -773,6 +1665,22 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Command,
         authority: HostRouteAuthority::OrgAdmin,
         handler: HostHandler::ProjectInactivate,
+        schemas: schemas::<ProjectRequest, ProjectStatus>,
+        write_transaction: false,
+        refusals: &[
+            TransactionInvariant(
+                "application_write_incomplete",
+                Some(
+                    "The application rows stopped at this environment. The completed environments are done.",
+                ),
+            ),
+            MalformedInput("invalid_input", None),
+            PermissionDenied,
+            TransactionInvariant(
+                "project_not_found",
+                Some("This project is not a project of the org."),
+            ),
+        ],
     },
     HostRoute {
         set: HostRouteSet::Control,
@@ -780,6 +1688,16 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Command,
         authority: HostRouteAuthority::OrgAdmin,
         handler: HostHandler::ProjectCreate,
+        schemas: schemas::<ProjectCreateRequest, ProjectCreated>,
+        write_transaction: false,
+        refusals: &[
+            MalformedInput("invalid_input", None),
+            PermissionDenied,
+            TransactionInvariant(
+                "project_exists",
+                Some("This project is a project of the org already."),
+            ),
+        ],
     },
 ];
 
@@ -826,10 +1744,10 @@ static ATTACHMENTS: LazyLock<BTreeMap<(HostRouteSet, CanonicalName), HostAttachm
                     .operation
                     .split_once('.')
                     .expect("a host route names its model and action");
-                let id = route_attachment_id(&CONTRACT.routes.id_prefix, model, action);
+                let id = route_attachment_id(ID_PREFIX, model, action);
                 let operation = operation_token(
-                    &CONTRACT.package.id,
-                    &CONTRACT.package.version,
+                    host_route_package(),
+                    host_route_version(),
                     &route.operation.parse().expect("fixed local host operation"),
                 )
                 .expect("fixed registered host operation");
@@ -851,7 +1769,7 @@ static ATTACHMENTS: LazyLock<BTreeMap<(HostRouteSet, CanonicalName), HostAttachm
                         "route": {
                             "host": "*",
                             "method": method,
-                            "path": route_path(&CONTRACT.routes.path_prefix, model, action),
+                            "path": route_path(PATH_PREFIX, model, action),
                         },
                     }),
                     auth_policy: json!({ "modes": modes }),
@@ -862,6 +1780,73 @@ static ATTACHMENTS: LazyLock<BTreeMap<(HostRouteSet, CanonicalName), HostAttachm
     });
 
 impl HostRouteSet {
+    /// Generate the native contracts of the routes in this set.
+    pub fn openapi(self) -> Value {
+        let refusals = schema::<DeclaredRefusal>();
+        let refusal_shapes: BTreeMap<_, _> = refusals["oneOf"]
+            .as_array()
+            .expect("declared refusals are variants")
+            .iter()
+            .map(|shape| {
+                let code = shape["properties"]["code"]["enum"][0]
+                    .as_str()
+                    .expect("declared refusal has a code");
+                (code, shape)
+            })
+            .collect();
+        let paths = self.attachments().map(|(_, attachment)| {
+            let route = attachment.route;
+            let read = route.type_.is_read();
+            let (input, output) = (route.schemas)();
+            let mut errors = Vec::new();
+            let variants = route.refusals.iter().map(|refusal| {
+                let (code, text, source) = refusal.parts();
+                let mut shape = refusal_shapes[code].clone();
+                let required = shape["properties"]["detail"]["required"]
+                    .as_array().map_or(&[][..], Vec::as_slice);
+                errors.push(json!({"literal": code, "required": required, "sources": [source], "text": text}));
+                shape["properties"]["code"] = json!({"const": code});
+                shape["additionalProperties"] = json!(false);
+                shape
+            }).collect::<Vec<_>>();
+            let outcome = |member, value| wire_item(member, value, !read);
+            let mut operation = json!({
+                "operationId": attachment.operation.as_str(),
+                "responses": {"200": {
+                    "description": "Operation outcomes",
+                    "content": media_type(wire_array(json!({"oneOf": [
+                        outcome("value", output), outcome("error", json!({"oneOf": variants}))
+                    ]})))
+                }},
+                "x-wamn-contract": {
+                    "resultClass": "one", "partialSchema": null, "errors": errors, "replay": null,
+                    "direct": true, "type": if read { "get" } else { "command" },
+                    "transaction": if !read || route.write_transaction { "explicit_per_input" } else { "implicit" },
+                    "reads": [], "writes": null
+                }
+            });
+            if read {
+                let properties = input["properties"].as_object().into_iter().flatten();
+                let required = input["required"].as_array().map_or(&[][..], Vec::as_slice);
+                let parameters: Vec<_> = properties.map(|(name, value)| json!({
+                    "in": "query", "name": name,
+                    "required": required.iter().any(|key| key == name.as_str()),
+                    "content": media_type(value)
+                })).collect();
+                if !parameters.is_empty() {
+                    operation["parameters"] = json!(parameters);
+                }
+            } else {
+                operation["requestBody"] = json!({
+                    "required": true, "content": media_type(wire_array(wire_item("value", input, true)))
+                });
+            }
+            let path = attachment.definition["route"]["path"].as_str().expect("native route path");
+            (path, json!({ (if read { "get" } else { "post" }): operation }))
+        }).collect::<BTreeMap<_, _>>();
+        json!({"openapi": "3.1.0", "info": {"title": PACKAGE, "version": VERSION}, "paths": paths})
+    }
+
     /// Every route of this set, by attachment id.
     pub fn attachments(
         self,
@@ -879,12 +1864,35 @@ impl HostRouteSet {
     }
 }
 
+fn media_type(schema: impl Serialize) -> Value {
+    json!({"application/json": {"schema": schema}})
+}
+
+fn wire_array(items: Value) -> Value {
+    let mut schema = json!({"type": "array", "minItems": 1, "maxItems": 1});
+    schema["items"] = items;
+    schema
+}
+
+fn wire_item(member: &str, value: Value, keyed: bool) -> Value {
+    let mut item = json!({"type": "object", "properties": {}, "required": [member], "additionalProperties": false});
+    item["properties"][member] = value;
+    if keyed {
+        item["properties"]["request_id"] = json!({"type": "string"});
+        item["required"]
+            .as_array_mut()
+            .expect("required list")
+            .push(json!("request_id"));
+    }
+    item
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn host_routes_derive_their_ids_from_the_control_contract() {
+    fn host_routes_derive_their_ids_from_the_native_package_identity() {
         let application = HostRouteSet::Application
             .attachment(&"wamn-control-permission-mine-http".parse().unwrap())
             .expect("permission.mine is an application host route");
@@ -965,42 +1973,21 @@ mod tests {
 
     #[test]
     fn file_operations_are_grantable_and_contracts_carry_no_bytes_or_signed_url_switch() {
-        let contracts = [
-            (
-                "put",
-                include_str!("host_route/contracts/file/put.input.json"),
-            ),
-            (
-                "get",
-                include_str!("host_route/contracts/file/get.input.json"),
-            ),
-            (
-                "delete",
-                include_str!("host_route/contracts/file/delete.input.json"),
-            ),
-            (
-                "expose",
-                include_str!("host_route/contracts/file/expose.input.json"),
-            ),
-        ];
-        for (action, input) in contracts {
-            let id: CanonicalName = format!("wamn-control-file-{action}-http").parse().unwrap();
-            let route = HostRouteSet::Application.attachment(&id).unwrap();
+        for (id, route) in HostRouteSet::Application
+            .attachments()
+            .filter(|(_, attachment)| attachment.route.operation.starts_with("file."))
+        {
             assert_eq!(route.route.authority, HostRouteAuthority::Granted);
             assert!(route.registered_operation().is_some());
             assert!(is_granted_host_route_operation(&route.reference));
-            assert!(HostRouteSet::Control.attachment(&id).is_none());
-            let input: Value = serde_json::from_str(input).unwrap();
-            let fields = input["fields"].as_array().unwrap();
-            assert!(
-                fields
-                    .iter()
-                    .any(|field| field["path"].as_str().unwrap().ends_with("application"))
-            );
-            assert!(fields.iter().all(|field| {
+            assert!(HostRouteSet::Control.attachment(id).is_none());
+            let (input, _) = (route.route.schemas)();
+            let fields = input["properties"].as_object().unwrap();
+            assert!(fields.contains_key("application"));
+            assert!(fields.keys().all(|field| {
                 !["bytes", "signed", "lifetime", "url"]
                     .iter()
-                    .any(|name| field["path"].as_str().unwrap().ends_with(name))
+                    .any(|name| field.ends_with(name))
             }));
         }
     }

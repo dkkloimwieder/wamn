@@ -45,7 +45,8 @@ pub(crate) fn write_ui_openapi(root: &Path) -> anyhow::Result<()> {
         ("control.openapi.json", HostRouteSet::Control),
     ] {
         let mut document = tempfile::NamedTempFile::new_in(&output)?;
-        document.write_all(&wamn_codegen::host_openapi(set)?)?;
+        serde_json::to_writer(&mut document, &set.openapi())?;
+        document.write_all(b"\n")?;
         document.persist(output.join(file))?;
     }
     Ok(())

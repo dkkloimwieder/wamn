@@ -46,5 +46,8 @@ wamn-connection = { workspace = true }
 wamn-http = { workspace = true }
 wamn-authentication = { workspace = true }
 
+[dev-dependencies]
+wamn-test-infrastructure.workspace = true
+
 [lints]
 workspace = true

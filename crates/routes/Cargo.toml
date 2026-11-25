@@ -12,6 +12,7 @@ wamn-registry.workspace = true
 serde_json.workspace = true
 url.workspace = true
 serde = { workspace = true, features = ["derive"] }
+schemars.workspace = true
 
 [lints]
 workspace = true

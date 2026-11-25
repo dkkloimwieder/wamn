@@ -361,7 +361,7 @@ export function Environment(
                 id="conditions"
                 title={`Conditions for ${cell.row.name}`}
                 rows={cell.row.conditions}
-                rowKey={(entry) => entry.type}
+                rowKey={(entry) => entry.type as string}
                 columns={[
                   { id: "type", header: "Condition", accessorKey: "type" },
                   { id: "status", header: "State", accessorKey: "status" },

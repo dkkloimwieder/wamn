@@ -9,16 +9,16 @@ use kube::{
     Api,
     api::{DynamicObject, ListParams},
 };
-use serde_json::Value;
 use wamn_environment::status::{self, HostDeployment, HostRollout, Workload};
 use wamn_kubernetes::client::{KubernetesApi, workloads};
+use wamn_routes::host_wire::EnvironmentStatusResult;
 
 /// Read runtime status through the control pod's Kubernetes ServiceAccount.
 pub(crate) async fn read(
     org: &wamn_registry::OrgId,
     project: &wamn_registry::ProjectId,
     env: &wamn_registry::EnvName,
-) -> anyhow::Result<Value> {
+) -> anyhow::Result<EnvironmentStatusResult> {
     let api = KubernetesApi::in_cluster()?;
     let namespace = &api.namespace;
     let params = ListParams::default();

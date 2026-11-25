@@ -11,6 +11,7 @@ use wamn_connection::{
 };
 use wamn_identity_protocol::PrincipalId;
 use wamn_routes::HostAttachment;
+use wamn_routes::host_wire::ConnectionAuthorizeResult;
 
 impl From<ConnectionError> for Refusal {
     fn from(error: ConnectionError) -> Self {
@@ -156,7 +157,10 @@ impl ControlRoutes<'_> {
                 .await
                 .map_err(|e| Refusal::Failed(e.into()))?;
             project.commit().await?;
-            return Ok(json!({"authorization_url":url}));
+            return Ok(serde_json::to_value(ConnectionAuthorizeResult {
+                authorization_url: url,
+            })
+            .map_err(anyhow::Error::from)?);
         }
         if operation == "connection.delete" {
             let principal = result["principal_id"]
