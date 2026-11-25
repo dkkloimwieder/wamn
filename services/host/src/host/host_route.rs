@@ -1,5 +1,8 @@
 //! Application host routes served on the workload's native ingress.
 
+#[cfg(test)]
+mod tests;
+
 use std::collections::BTreeSet;
 use std::sync::Arc;
 use wamn_routes::HostAttachment;

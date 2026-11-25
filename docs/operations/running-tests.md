@@ -460,6 +460,18 @@ pnpm --filter @wamn/platform-ui test
 pnpm --filter @wamn/platform-ui build
 ```
 
+The live client tests start the native control and application HTTP handlers.
+Each test uses a private PostgreSQL container. Install Docker and the web
+packages before you run the tests. The application test uses Helm to render
+the database configuration locally.
+
+```bash
+pnpm --filter @wamn/platform-ui run generate:clients
+pnpm run wfe:build
+cargo test --locked --lib -p wamn-control generated_org_client_live -- --ignored --nocapture
+cargo test --locked --bin wamn-host -p wamn-host generated_application_client_live -- --ignored --nocapture
+```
+
 ### Platform sign-in and application screens
 
 Browser sessions use the installed web, identity and control services.

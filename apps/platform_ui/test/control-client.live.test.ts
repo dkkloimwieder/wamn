@@ -3,9 +3,9 @@
  * The application administration routes through their generated client
  * (docs/plan/platform-ui.md §4.6).
  *
- * `control_client_live` in `crates/execution-host/tests` serves the routes over HTTP
- * and runs this file with the endpoint and two session tokens. Without them
- * it skips.
+ * `generated_application_client_live` in `services/host/src/host/host_route/tests.rs`
+ * serves the native application routes and supplies the endpoint, access
+ * tokens and user IDs. This suite skips during regular UI test runs.
  */
 import { describe, expect, test } from "vitest";
 

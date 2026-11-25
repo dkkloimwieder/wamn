@@ -3,9 +3,9 @@
  * The org and project routes of the control serving root through their
  * generated client (docs/plan/platform-ui.md §4.4 and §4.5).
  *
- * `control_client_live` in `crates/execution-host/tests` serves the routes over HTTP
- * and runs this file with the endpoint, two session tokens and the user ids.
- * Without them it skips.
+ * `generated_org_client_live` in `services/control/src/host_route/tests.rs`
+ * serves the native control routes and supplies the endpoint, session tokens
+ * and user IDs. This suite skips during regular UI test runs.
  */
 import { describe, expect, test } from "vitest";
 
