@@ -227,11 +227,12 @@ F. `env apply` saves the applied configuration once per project, at the end of `
 **Rule.**
 
 - That loop also copies the current system authority into every project database of the org.
+- A user row in a project database is never deleted, because created_by and updated_by on other rows name it. When a user loses all access to the project, the row stays with status set to disabled, the user's PATs get revoked_at, and the user's role rows go. A later re-add sets the row active again, with no roles. Today remove_user (`crates/identity/src/identity/application/user.rs`) deletes the row, and the delete fails for a user who holds a PAT, because `platform.pat.user_id` is ON DELETE RESTRICT (F). That foreign key stays.
 - No pending table, retry record or status route.
 - The route keeps answering `application_write_incomplete` at once.
 - While control and a project database are up, a revocation reaches that database within one period, plus `revocation_seconds` for the host cache.
 - The period is set after measuring the copy. The copy holds the org membership lock briefly (`crates/environment/src/environment_fill.rs::fill`).
-- The copy writes only the rows that come from the system database. It never removes a grant that the project owns.
+- The copy writes only rows that come from the system database. It never removes a grant of a principal who still has access to the project.
 - One unreachable project database does not stop the copy to the others.
 
 **Check.** On real system and project databases: leave one copy behind, change the grant again, run one production pass, and assert that the latest state wins. If the code promises it, check that an unreachable target does not stop the others. A one-pass test does not set a bound for a long outage.
