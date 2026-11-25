@@ -1,6 +1,8 @@
 import { fireEvent, render, screen, waitFor, within } from "@solidjs/testing-library";
 import { describe, expect, it } from "vitest";
 import { createTransport } from "@wamn/web-runtime";
+import applicationOpenApi from "../../target/wamn/platform_ui/application.openapi.json";
+import controlOpenApi from "../../target/wamn/platform_ui/control.openapi.json";
 import { Environment } from "../src/environment";
 import { controlHolds, Shell } from "../src/shell";
 import { controlSections, Project } from "../src/projects";
@@ -286,16 +288,11 @@ describe("Environment", () => {
   );
 });
 
-const operationContracts = import.meta.glob<{
-  fields: { path: string; nullable: boolean }[];
-}>("../../../crates/routes/src/host_route/control/contracts/{application,schema}/*.input.json", {
-  eager: true,
-  import: "default",
-});
-const statusContract = import.meta.glob<{ fields: { path: string }[] }>(
-  "../../../crates/routes/src/host_route/control/contracts/operation/status.input.json",
-  { eager: true, import: "default" },
-);
+const paths = { ...applicationOpenApi.paths, ...controlOpenApi.paths };
+const statusParameters = paths["/wamn_control/operation/status"].get.parameters
+  .filter((parameter) => parameter.in === "query")
+  .map((parameter) => parameter.name)
+  .sort();
 const releaseDigest = `sha256:${"a".repeat(64)}`;
 
 function operationsFixture(options: { refuse?: boolean; states?: string[]; project?: string; admin?: boolean } = {}) {
@@ -355,11 +352,17 @@ async function openOperation(action: string, withTarget = true) {
 }
 
 describe("environment operation controls", () => {
-  for (const [path, contract] of Object.entries(operationContracts)) {
-    const [family, filename] = path.split("/").slice(-2);
-    const action = filename!.split(".")[0]!;
-    const target = contract.fields.find((field) => ["value.release", "value.revision"].includes(field.path));
-    for (const withTarget of target?.nullable ? [true, false] : [true]) {
+  for (const [path, operation] of Object.entries(paths)) {
+    const [, family, action] = /^\/wamn_control\/(application|schema)\/([^/]+)$/.exec(path) ?? [];
+    if (!family || !action) continue;
+    if (!("post" in operation)) throw new Error(`Missing POST contract for ${path}`);
+    const { properties } = operation.post.requestBody.content["application/json"].schema.items;
+    if (!("value" in properties)) throw new Error(`Missing request value schema for ${path}`);
+    const valueProperties = properties.value.properties;
+    const fields = Object.keys(valueProperties).sort();
+    const target = Object.entries(valueProperties).find(([name]) => name === "release" || name === "revision")?.[1];
+    const nullableTarget = target && "type" in target && Array.isArray(target.type) && target.type.includes("null");
+    for (const withTarget of nullableTarget ? [true, false] : [true]) {
       it(`sends the contract fields for ${family}.${action}, explicit target=${withTarget}`, async () => {
         const data = operationsFixture();
         await openOperation(action, withTarget);
@@ -370,16 +373,13 @@ describe("environment operation controls", () => {
             expect(observed).toHaveProperty(["length"], 0);
           }
           const scope = dialog.getByText((text) => text.includes("widgets") && text.includes("dev"));
-          if (contract.fields.some((field) => field.path === "value.application"))
-            expect(scope.textContent).toContain("receiving");
+          if (fields.includes("application")) expect(scope.textContent).toContain("receiving");
           fireEvent.click(dialog.getByRole("button", { name: /^Confirm / }));
         }
         await waitFor(() => expect(screen.getByRole("status").textContent).toContain(data.statuses.at(-1)!.state!));
         const write = data.writes[0]!;
-        expect(write.route).toBe(`/api/wamn_control/${family}/${action}`);
-        expect(Object.keys(write.body[0]!).sort()).toEqual(
-          [...new Set(contract.fields.map((field) => field.path.split(".")[0]))].sort(),
-        );
+        expect(write.route).toBe(`/api${path}`);
+        expect(Object.keys(write.body[0]!).sort()).toEqual(Object.keys(properties).sort());
         expect(write.body[0]!.request_id).toBeTruthy();
         const expectedValues: Record<string, unknown> = {
           project: "widgets",
@@ -388,17 +388,10 @@ describe("environment operation controls", () => {
           release: withTarget ? releaseDigest : null,
           revision: withTarget ? 2 : null,
         };
-        const fields = contract.fields
-          .filter((field) => field.path.startsWith("value."))
-          .map((field) => field.path.slice("value.".length));
-        expect(Object.keys(write.body[0]!.value).sort()).toEqual(fields.sort());
+        expect(Object.keys(write.body[0]!.value).sort()).toEqual(fields);
         for (const name of fields) expect(write.body[0]!.value[name]).toEqual(expectedValues[name]);
         expect(screen.getByLabelText("Log tail").textContent).toBe(data.statuses.at(-1)!.log);
-        expect([...data.reads[0]!.params.keys()].sort()).toEqual(
-          Object.values(statusContract)
-            .flatMap((entry) => entry.fields.map((field) => field.path))
-            .sort(),
-        );
+        expect([...data.reads[0]!.params.keys()].sort()).toEqual(statusParameters);
         {
           const observed = Object.fromEntries(
             [...data.reads[0]!.params].map(([key, value]) => [key, JSON.parse(value)]),
