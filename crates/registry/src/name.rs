@@ -181,37 +181,8 @@ pub fn project_server_ca_copy(cluster: &str) -> String {
     format!("{cluster}-ca-crt")
 }
 
-/// The per-project-env Kubernetes namespace:
-/// `wamn-<org>--<env>--<project>--<instance>`.
-///
-/// One wamn environment `(org, project, env)` is one namespace (wamn-0h0g.15.3),
-/// so every environment-targeted resource — the credential Secrets, the release
-/// manifest, the environment's hosts — is addressed by DERIVING this name from
-/// the triple and the environment's minted instance suffix. It is never
-/// configured alongside the triple and never parsed back out of a resource.
-///
-/// `instance` is the environment's stored `registry.environment_projects.instance_suffix`,
-/// NOT a fresh draw: minting is the effect driver's job, and re-deriving under a
-/// new suffix would orphan every resource the old one named. The suffix is what
-/// makes delete-and-recreate safe — the recreated environment lands in a
-/// different namespace and cannot inherit the deleted one's contents.
-///
-/// Validate the triple's assembled length with the provisioning coordinate validator and the
-/// suffix through `InstanceSuffix`; a triple that does not fit is refused.
-pub fn project_env_namespace(
-    org: &crate::OrgId,
-    project: &crate::ProjectId,
-    env: &crate::EnvName,
-    instance: &InstanceSuffix,
-) -> String {
-    format!(
-        "{}{INSTANCE_SUFFIX_SEPARATOR}{instance}",
-        project_env_namespace_stem(org, project, env)
-    )
-}
-
-/// The namespace's identity stem `wamn-<org>--<env>--<project>` — the part the
-/// triple contributes, bounded by [`MAX_NAMESPACE_STEM_LEN`].
+/// The namespace stem `wamn-<org>--<env>--<project>` used in coordinate validation.
+/// The validator applies [`MAX_NAMESPACE_STEM_LEN`].
 pub fn project_env_namespace_stem(
     org: &crate::OrgId,
     project: &crate::ProjectId,

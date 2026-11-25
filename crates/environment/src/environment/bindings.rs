@@ -2,7 +2,6 @@
 
 pub(super) mod plan;
 pub(crate) use plan::exports_satisfy;
-pub use plan::key;
 use plan::{mode_satisfies, refuse};
 
 use std::collections::BTreeMap;

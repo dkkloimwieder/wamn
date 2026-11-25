@@ -6,13 +6,9 @@ use std::fmt;
 /// A project id could not be turned into safe database / role / Secret names.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProvisionError {
-    /// An assembled per-project-env name exceeds the Postgres identifier /
-    /// DNS-1123 label limit. Either `wamn-db-<org>--<project>--<env>--<instance>`
-    /// (wamn-q3n.7, bounded by `MAX_DB_NAME_LEN`) or the namespace stem
-    /// `wamn-<org>--<project>--<env>`, which is bounded by
-    /// `MAX_NAMESPACE_STEM_LEN` rather than 63 because the minted instance
-    /// suffix and its separator are appended after it (wamn-0h0g.13.57).
-    /// `name` says which one. Shorten the org or project id.
+    /// A database name, CDC object name, or namespace stem exceeds its limit.
+    /// The namespace stem limit still reserves space for the instance suffix and its separator.
+    /// `name` identifies the resource. Shorten the org or project id.
     NameTooLong {
         /// The over-long assembled name.
         name: String,

@@ -1,26 +1,13 @@
-//! Analysis of the environment authorities in
-//! `docs/architecture/overview.md#environment-lifecycle`.
-//!
-//! Analysis compiles nothing new and writes nothing. It reads each authority
-//! once (§5): the environment row in the system database, the
-//! package closure from OCI, the installed state in the project database, and
-//! the live set. It then tests the document
-//! against them and returns the plan, or the refusals.
+//! Application selection, installed project state, and workload lookups.
 
 use crate::environment_sql_effects::PostgresSession;
 pub(super) mod plan;
 pub(crate) use plan::project_url;
-pub use plan::refusals;
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use anyhow::{Context as _, ensure};
 use serde_json::Value;
-use wamn_component_policy::PackageManifest;
-use wamn_package::PackageName;
-use wamn_registry::EnvironmentRow;
-
-use crate::application_chart::resolved_connection::ResolvedConnection;
 
 use super::Platform;
 use super::document::EnvironmentDocument;
@@ -37,59 +24,6 @@ pub struct Installed {
 pub struct ProjectState {
     pub installed: BTreeMap<wamn_package::PackageName, Installed>,
     pub schema_report: Option<crate::migrations::SchemaReport>,
-}
-
-/// The release the document names, as OCI holds it.
-#[derive(Debug, Clone)]
-pub struct ReleaseFacts {
-    pub digest: wamn_digest::Digest,
-    pub packages: BTreeMap<PackageName, PackageManifest>,
-}
-
-#[derive(Debug, Clone)]
-pub struct Authorities {
-    pub release_name: String,
-    pub connections: BTreeMap<String, ResolvedConnection>,
-    /// Application-qualified names resolved to published wasm artifacts.
-    pub artifact_bindings: BTreeSet<String>,
-    pub row: Option<EnvironmentRow>,
-    pub project: Option<ProjectState>,
-    pub release: Option<ReleaseFacts>,
-    /// Loaded application and digest pairs observed from the environment hosts.
-    pub live: BTreeMap<(wamn_registry::ApplicationName, wamn_digest::Digest), usize>,
-}
-
-/// The result of analysis: the authorities and the differences to apply.
-#[derive(Debug, Clone)]
-pub struct Analysis {
-    pub schema_mode: super::document::SchemaMode,
-    pub authorities: Authorities,
-    pub application: wamn_registry::ApplicationName,
-    pub notices: Vec<Notice>,
-    pub actor: String,
-    pub plan: Vec<String>,
-    pub packages: Vec<wamn_component_policy::PackageManifest>,
-}
-
-/// Evidence that does not prevent application activation.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
-pub struct Notice {
-    pub application: wamn_registry::ApplicationName,
-    pub identity: String,
-    pub observed: Observation,
-    pub next_action: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
-#[serde(tag = "type", rename_all = "kebab-case")]
-pub enum Observation {
-    PlatformSchema {
-        report: crate::migrations::SchemaReport,
-    },
-    SchemaDifference {
-        installed: Option<String>,
-        selected: String,
-    },
 }
 
 /// Select one application's inputs while preserving shared configuration.

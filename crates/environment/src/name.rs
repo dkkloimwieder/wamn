@@ -34,8 +34,7 @@ pub fn validate_project_env_cdc(
 mod tests {
     use super::*;
     use wamn_registry::name::{
-        MAX_DB_NAME_LEN, MAX_NAMESPACE_LEN, MAX_NAMESPACE_STEM_LEN, cdc_object_name,
-        project_env_database_name, project_env_namespace,
+        MAX_DB_NAME_LEN, MAX_NAMESPACE_STEM_LEN, cdc_object_name, project_env_database_name,
     };
 
     const INSTANCE: &str = "k3m9x2p7";
@@ -57,41 +56,6 @@ mod tests {
                 &"canary".parse().unwrap()
             )
             .is_err()
-        );
-    }
-
-    #[test]
-    fn the_environment_namespace_is_a_valid_dns_1123_label() {
-        // A Kubernetes namespace name is a DNS-1123 LABEL: at most 63 bytes,
-        // `[a-z0-9-]`, starting and ending alphanumeric. The database's suffixed
-        // 63-byte bound is tighter; take its longest admitted triple.
-        let org = "o".repeat(37);
-        assert!(
-            validate_project_env(
-                &org.parse().unwrap(),
-                &"pp".parse().unwrap(),
-                &"de".parse().unwrap()
-            )
-            .is_ok()
-        );
-        let namespace = project_env_namespace(
-            &org.parse().unwrap(),
-            &"pp".parse().unwrap(),
-            &"de".parse().unwrap(),
-            &"0z9a8b7c"
-                .parse::<wamn_registry::instance_suffix::InstanceSuffix>()
-                .unwrap(),
-        );
-        assert!(namespace.len() <= MAX_NAMESPACE_LEN);
-        assert!(
-            namespace
-                .bytes()
-                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-'),
-            "a DNS-1123 label admits only [a-z0-9-]: {namespace:?}"
-        );
-        assert!(
-            !namespace.starts_with('-') && !namespace.ends_with('-'),
-            "a DNS-1123 label starts and ends alphanumeric: {namespace:?}"
         );
     }
 
@@ -148,7 +112,7 @@ mod tests {
             other => panic!("suffixed database candidate was not refused: {other:?}"),
         }
 
-        // The namespace formula independently budgets the same ten bytes.
+        // The namespace stem limit reserves the same ten bytes.
         let org = "o".repeat(40);
         let stem = wamn_registry::name::project_env_namespace_stem(
             &org.parse().unwrap(),
@@ -156,16 +120,6 @@ mod tests {
             &"de".parse().unwrap(),
         );
         assert_eq!(stem.len(), MAX_NAMESPACE_STEM_LEN);
-        assert_eq!(
-            project_env_namespace(
-                &org.parse().unwrap(),
-                &"pp".parse().unwrap(),
-                &"de".parse().unwrap(),
-                &INSTANCE.parse().unwrap()
-            )
-            .len(),
-            MAX_NAMESPACE_LEN
-        );
     }
 
     #[test]

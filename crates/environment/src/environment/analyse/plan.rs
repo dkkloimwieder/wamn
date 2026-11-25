@@ -1,59 +1,10 @@
-use super::{Authorities, EnvironmentDocument};
+use super::EnvironmentDocument;
 use wamn_registry::EnvironmentRow;
 
-/// Resolve the project endpoint from the generation read during analysis.
+/// Resolve the project endpoint from the instance suffix in the environment row.
 pub(crate) fn project_url(
     document: &EnvironmentDocument,
     row: &EnvironmentRow,
 ) -> anyhow::Result<String> {
     wamn_postgres::database::connection_for(&document.triple(), &row.instance_suffix).to_json()
-}
-
-pub fn refusals(document: &EnvironmentDocument, authorities: &Authorities) -> Vec<String> {
-    let mut refusals = Vec::new();
-    if let Some(release) = &authorities.release {
-        for package in release.packages.values() {
-            let application = document.application_for_package(&package.package.id);
-            for requirement in package
-                .deploy
-                .iter()
-                .flat_map(|deploy| deploy.components.values())
-                .flat_map(|component| &component.descriptor.connections)
-            {
-                let Some(alias) = requirement.store_alias.name() else {
-                    continue;
-                };
-                let Some(application) = application else {
-                    refusals.push(format!(
-                        "connection_unbound: package {} has no application for {alias}",
-                        package.package.id,
-                    ));
-                    continue;
-                };
-                let key = super::super::bindings::key(application, alias.as_str());
-                if let Some(connection) = authorities.connections.get(&key) {
-                    if !matches!(
-                        (connection.requirement_type, requirement.requirement_type),
-                        (
-                            wamn_connection_type::RequirementType::Http,
-                            wamn_package::ComponentConnectionType::Http
-                        ) | (
-                            wamn_connection_type::RequirementType::Blobstore,
-                            wamn_package::ComponentConnectionType::Blobstore
-                        )
-                    ) {
-                        refusals.push(format!(
-                            "connection {alias} has a different type from its release requirement"
-                        ));
-                    }
-                } else if !authorities.artifact_bindings.contains(&key) {
-                    refusals.push(format!(
-                        "connection_unbound: {key} is required by release {}",
-                        release.digest
-                    ));
-                }
-            }
-        }
-    }
-    refusals
 }

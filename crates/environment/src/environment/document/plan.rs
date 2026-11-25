@@ -164,20 +164,6 @@ impl EnvironmentDocument {
         require_applications(&self.applications, &self.settings.integrations)
     }
 
-    /// Find the sole application that owns a package.
-    pub fn application_for_package(
-        &self,
-        package: &wamn_package::PackageName,
-    ) -> Option<&wamn_registry::ApplicationName> {
-        let mut owners = self
-            .applications
-            .iter()
-            .filter(|(_, application)| application.packages.contains(package))
-            .map(|(name, _)| name);
-        let owner = owners.next()?;
-        owners.next().is_none().then_some(owner)
-    }
-
     /// Runtime membership excludes deployment selections.
     pub fn membership(&self) -> EnvironmentApplications {
         self.applications
