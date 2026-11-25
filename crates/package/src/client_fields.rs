@@ -17,7 +17,6 @@ fn field(path: String, type_name: String, required: bool, nullable: bool) -> Fie
         minimum: None,
         maximum: None,
         label: None,
-        visible: None,
         description: None,
         references: None,
         column: None,
@@ -138,7 +137,6 @@ pub fn fields_of(contract: &Value) -> Vec<FieldIr> {
             .and_then(|revision| serde_json::from_value(revision.clone()).ok())
             .unwrap_or_default();
         (leaf.label, leaf.description) = text(declared);
-        leaf.visible = declared.get("visible").and_then(Value::as_bool);
         leaf.references = reference(declared);
         insert(&mut tree, leaf, &path.split('.').collect::<Vec<_>>(), "");
     }
@@ -192,7 +190,6 @@ pub fn input_fields_of(contract: &Value) -> Vec<FieldIr> {
                 .and_then(|revision| serde_json::from_value(revision.clone()).ok())
                 .unwrap_or_default();
             (declared.label, declared.description) = text(member);
-            declared.visible = member.get("visible").and_then(Value::as_bool);
             declared.references = reference(member);
             tree.push(declared);
         }
@@ -223,7 +220,6 @@ pub fn input_fields_of(contract: &Value) -> Vec<FieldIr> {
         );
         declared.values = values(writable.get("values"));
         (declared.label, declared.description) = text(writable);
-        declared.visible = writable.get("visible").and_then(Value::as_bool);
         declared.references = reference(writable);
         declared.column = writable
             .get("field")
@@ -260,7 +256,6 @@ pub fn input_fields_of(contract: &Value) -> Vec<FieldIr> {
                 let mut repeated = field(path.clone(), "array".into(), false, false);
                 let mut item = field(path.clone(), type_name.into(), true, false);
                 (item.label, item.description) = text(filter);
-                item.visible = filter.get("visible").and_then(Value::as_bool);
                 repeated.children.push(item);
                 (path, repeated)
             }
@@ -268,7 +263,6 @@ pub fn input_fields_of(contract: &Value) -> Vec<FieldIr> {
                 let path = format!("filter.{name}");
                 let mut range = field(path.clone(), "object".into(), sent, false);
                 (range.label, range.description) = text(filter);
-                range.visible = filter.get("visible").and_then(Value::as_bool);
                 for bound in ["max", "min"] {
                     range.children.push(field(
                         format!("{path}.{bound}"),
@@ -283,7 +277,6 @@ pub fn input_fields_of(contract: &Value) -> Vec<FieldIr> {
                 let path = format!("filter.{name}");
                 let mut empty = field(path.clone(), "boolean".into(), false, false);
                 (empty.label, empty.description) = text(filter);
-                empty.visible = filter.get("visible").and_then(Value::as_bool);
                 (path, empty)
             }
             _ => continue,
@@ -337,9 +330,6 @@ pub struct FieldIr {
     /// Authored text, or the exact field path when no label is declared.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
-    /// Authored selection for generated table and detail fields.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub visible: Option<bool>,
     /// Authored text for an author, which reaches a comment and no screen.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,

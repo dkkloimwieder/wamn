@@ -15,7 +15,7 @@ manifest.Package {
             table = "item"
             owner = "wamn_receiving"
             server_owned_fields = []
-            field_text = {item_number = {label = "Item number", visible = True}}
+            field_text = {item_number = {label = "Item number"}}
             audit_log = {columns = [], retention = "P30D"}
             operations: {
                 create: {writable_fields = ["item_number"], label = "Add an item", result = "one"}
@@ -25,7 +25,7 @@ manifest.Package {
             table = "location"
             owner = "wamn_receiving"
             server_owned_fields = []
-            field_text = {location_code = {label = "Location code", visible = True}}
+            field_text = {location_code = {label = "Location code"}}
             audit_log = {columns = []}
             operations: {
                 create: {writable_fields = ["location_code"], label = "Add a location", result = "one"}
@@ -37,10 +37,10 @@ manifest.Package {
             client_field_extensible = True
             server_owned_fields = ["purchase_order_number", "status", "row_version"]
             field_text = {
-                purchase_order_number = {label = "Order number", visible = True}
-                supplier_id = {label = "Supplier", visible = True}
-                status = {label = "Status", visible = True}
-                row_version = {label = "Revision", visible = True}
+                purchase_order_number = {label = "Order number"}
+                supplier_id = {label = "Supplier"}
+                status = {label = "Status"}
+                row_version = {label = "Revision"}
                 created_at = {label = "Created"}
                 created_by = {label = "Created by"}
                 updated_at = {label = "Updated"}
@@ -83,10 +83,10 @@ manifest.Package {
             owner = "wamn_receiving"
             server_owned_fields = []
             field_text = {
-                line_number = {label = "Line", visible = True}
-                item_id = {label = "Item", visible = True}
-                ordered_quantity = {label = "Ordered", visible = True}
-                received_quantity = {label = "Received", visible = True}
+                line_number = {label = "Line"}
+                item_id = {label = "Item"}
+                ordered_quantity = {label = "Ordered"}
+                received_quantity = {label = "Received"}
             }
             audit_log = {columns = [], retention = "P30D"}
             operations: {
@@ -102,9 +102,9 @@ manifest.Package {
             owner = "wamn_receiving"
             server_owned_fields = ["purchase_order_id", "receipt_reference", "occurred_at"]
             field_text = {
-                receipt_reference = {label = "Receipt reference", visible = True}
-                purchase_order_id = {label = "Purchase order", visible = True}
-                occurred_at = {label = "Received at", visible = True}
+                receipt_reference = {label = "Receipt reference"}
+                purchase_order_id = {label = "Purchase order"}
+                occurred_at = {label = "Received at"}
                 created_at = {label = "Recorded"}
                 created_by = {label = "Recorded by"}
             }
@@ -119,9 +119,9 @@ manifest.Package {
             owner = "wamn_receiving"
             server_owned_fields = []
             field_text = {
-                quantity = {label = "Quantity", visible = True}
-                location_id = {label = "Location", visible = True}
-                purchase_order_line_id = {label = "Order line", visible = True}
+                quantity = {label = "Quantity"}
+                location_id = {label = "Location"}
+                purchase_order_line_id = {label = "Order line"}
             }
             audit_log = {columns = []}
             operations = {}
@@ -131,7 +131,7 @@ manifest.Package {
             owner = "wamn_receiving"
             min_lengths = {name = 1}
             server_owned_fields = []
-            field_text = {name = {label = "Supplier name", visible = True}, created_at = {label = "Added"}}
+            field_text = {name = {label = "Supplier name"}, created_at = {label = "Added"}}
             audit_log = {columns = ["created_at"]}
             operations: {
                 create: {writable_fields = ["name"], label = "Add a supplier", result = "one"}
@@ -161,8 +161,8 @@ manifest.Package {
                 labels = {
                     "receipt_id" = {"label" = "Receipt"}
                     "purchase_order_id" = {"label" = "Purchase order"}
-                    "purchase_order_status" = {"label" = "Status", "visible" = True}
-                    "row_version" = {"label" = "Revision", "visible" = True}
+                    "purchase_order_status" = {"label" = "Status"}
+                    "row_version" = {"label" = "Revision"}
                 }
             }
             error_text = {"purchase_order_not_open" = "This purchase order is not open, so it takes no receipt."}
@@ -183,15 +183,15 @@ manifest.Package {
             }
             result: {
                 labels = {
-                    "purchase_order_number" = {"label" = "Order number", "visible" = True}
-                    "purchase_order_status" = {"label" = "Status", "visible" = True}
+                    "purchase_order_number" = {"label" = "Order number"}
+                    "purchase_order_status" = {"label" = "Status"}
                     "supplier_id" = {"label" = "Supplier"}
-                    "purchase_order_row_version" = {"label" = "Revision", "visible" = True}
-                    "line_number" = {"label" = "Line", "visible" = True}
-                    "item_number" = {"label" = "Item", "visible" = True}
-                    "ordered_quantity" = {"label" = "Ordered", "visible" = True}
-                    "received_quantity" = {"label" = "Received", "visible" = True}
-                    "remaining_quantity" = {"label" = "Remaining", "visible" = True}
+                    "purchase_order_row_version" = {"label" = "Revision"}
+                    "line_number" = {"label" = "Line"}
+                    "item_number" = {"label" = "Item"}
+                    "ordered_quantity" = {"label" = "Ordered"}
+                    "received_quantity" = {"label" = "Received"}
+                    "remaining_quantity" = {"label" = "Remaining"}
                 }
             }
             lists = {"model" = "purchase_order_line", "key_field" = "line_id", "display_field" = "item_number"}
@@ -205,15 +205,15 @@ manifest.Package {
             sync = True
             result: {
                 labels = {
-                    "purchase_order_number" = {"label" = "Order number", "visible" = True}
-                    "purchase_order_status" = {"label" = "Status", "visible" = True}
+                    "purchase_order_number" = {"label" = "Order number"}
+                    "purchase_order_status" = {"label" = "Status"}
                     "supplier_id" = {"label" = "Supplier"}
-                    "purchase_order_row_version" = {"label" = "Revision", "visible" = True}
-                    "line_number" = {"label" = "Line", "visible" = True}
-                    "item_number" = {"label" = "Item", "visible" = True}
-                    "ordered_quantity" = {"label" = "Ordered", "visible" = True}
-                    "received_quantity" = {"label" = "Received", "visible" = True}
-                    "remaining_quantity" = {"label" = "Remaining", "visible" = True}
+                    "purchase_order_row_version" = {"label" = "Revision"}
+                    "line_number" = {"label" = "Line"}
+                    "item_number" = {"label" = "Item"}
+                    "ordered_quantity" = {"label" = "Ordered"}
+                    "received_quantity" = {"label" = "Received"}
+                    "remaining_quantity" = {"label" = "Remaining"}
                 }
             }
             lists = {"model" = "purchase_order_line", "key_field" = "line_id", "display_field" = "item_number"}
@@ -233,14 +233,14 @@ manifest.Package {
             result: {
                 labels = {
                     "id" = {"label" = "Entry"}
-                    "cursor" = {"label" = "Position", "visible" = True}
-                    "type" = {"label" = "Change", "visible" = True}
-                    "operation" = {"label" = "Operation", "visible" = True}
+                    "cursor" = {"label" = "Position"}
+                    "type" = {"label" = "Change"}
+                    "operation" = {"label" = "Operation"}
                     "changed_by" = {"label" = "Changed by"}
-                    "changed_at" = {"label" = "Changed at", "visible" = True}
-                    "before" = {"label" = "Before", "visible" = True}
-                    "after" = {"label" = "After", "visible" = True}
-                    "current" = {"label" = "Current", "visible" = True}
+                    "changed_at" = {"label" = "Changed at"}
+                    "before" = {"label" = "Before"}
+                    "after" = {"label" = "After"}
+                    "current" = {"label" = "Current"}
                 }
             }
             lists = {"key_field" = "id"}
@@ -265,7 +265,7 @@ manifest.Package {
             label = "Locations"
             result: {
                 labels = {
-                    "location_code" = {"label" = "Location code", "visible" = True}
+                    "location_code" = {"label" = "Location code"}
                 }
             }
             lists = {"model" = "location", "key_field" = "id", "display_field" = "location_code"}

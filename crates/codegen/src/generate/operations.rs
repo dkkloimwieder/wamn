@@ -197,7 +197,6 @@ pub(super) fn compile_custom<'a>(
                 revision: wamn_package::manifest::Revision::Flag(false),
                 values: Vec::new(),
                 label: None,
-                visible: None,
                 description: None,
                 references: None,
             });
@@ -944,10 +943,6 @@ fn model_text_members(model: &ModelDeclaration, column: &str) -> Vec<(String, Va
         .map(|label| ("label".to_owned(), json!(label)))
         .into_iter()
         .chain(
-            text.visible
-                .map(|visible| ("visible".to_owned(), json!(visible))),
-        )
-        .chain(
             text.description
                 .map(|description| ("description".to_owned(), json!(description))),
         )
@@ -989,7 +984,6 @@ fn crud_result_contract(
                 // A generated action declares no result field, so the column's
                 // own text is the only text this result can carry.
                 label: model_text(model, &column.name).label,
-                visible: model_text(model, &column.name).visible,
                 description: model_text(model, &column.name).description,
                 // The column's own foreign key states the record it names,
                 // so a table can show that record's text instead of its key.

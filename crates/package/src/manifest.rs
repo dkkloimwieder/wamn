@@ -366,9 +366,6 @@ pub struct ContractFieldDeclaration {
     /// refusal of a misspelled key is the rule this epic keeps.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
-    /// Whether generated tables and details show this field.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub visible: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     /// The record this input names, when it names one.
@@ -445,7 +442,7 @@ pub mod row_key {
     }
 }
 
-/// Authored field text and selection for generated screens.
+/// Authored field text for generated screens.
 ///
 /// Display text, never a name: it changes no path, no wire spelling and
 /// no generated identifier. An absent member writes nothing, so a package that
@@ -457,9 +454,6 @@ pub struct FieldText {
     /// field name with its underscores as spaces, applied by the emitter.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
-    /// Whether generated tables and details show this field.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub visible: Option<bool>,
     /// One sentence for an author. It reaches a comment, never a screen.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
@@ -469,7 +463,7 @@ impl FieldText {
     /// Whether the author omitted every member.
     #[must_use]
     pub const fn is_empty(&self) -> bool {
-        self.label.is_none() && self.visible.is_none() && self.description.is_none()
+        self.label.is_none() && self.description.is_none()
     }
 }
 

@@ -2,7 +2,6 @@
 
 The Receiving web app renders generator-emitted wfe descriptions through the [platform UI shell](../../platform_ui/README.md).
 Descriptions supply operation and field labels from the client contract.
-Fields with `visible = True` in `wamn.k` appear in generated tables and details.
 If a screen has no marked fields, it shows fields other than keys, IDs, audit fields, and timestamps.
 They also name the display fields and lookup operations for references to other records.
 Application bindings own requests, reference selectors, validation, and navigation.
