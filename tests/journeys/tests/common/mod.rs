@@ -73,8 +73,7 @@ pub struct Outputs {
     pub bundle: PathBuf,
     pub wamn: PathBuf,
     pub registry_auth_file: PathBuf,
-    pub package_artifact_base: String,
-    pub component_artifact_base: String,
+    pub registry: String,
     pub web_address: SocketAddr,
     pub base_domain: String,
     pub observer_role: String,
@@ -127,11 +126,7 @@ impl Cluster {
         command
             .env("KUBECONFIG", &outputs.kubeconfig)
             .env("WAMN_REGISTRY_AUTH_FILE", &outputs.registry_auth_file)
-            .env("WAMN_PACKAGE_ARTIFACT_BASE", &outputs.package_artifact_base)
-            .env(
-                "WAMN_COMPONENT_ARTIFACT_BASE",
-                &outputs.component_artifact_base,
-            )
+            .env("WAMN_REGISTRY", &outputs.registry)
             .env_remove("WAMN_CONTROL_URL")
             .env_remove("WAMN_TOKEN")
             .env_remove("WAMN_RELEASE_CHART");

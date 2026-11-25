@@ -32,6 +32,14 @@ pub use project_env_key::{ParseProjectEnvKeyError, ProjectEnvKey};
 mod project_identity;
 pub use project_identity::{app_identity_hash, apply_identity_hash, control_identity_hash};
 
+/// Return the package and component artifact bases for an org origin, in that order.
+pub fn org_artifact_bases(origin: &str) -> (String, String) {
+    (
+        format!("{origin}/wamn/packages"),
+        format!("{origin}/wamn/components"),
+    )
+}
+
 /// Whether native tools can use HTTP for this registry endpoint.
 pub fn registry_is_loopback(registry: &str) -> bool {
     matches!(

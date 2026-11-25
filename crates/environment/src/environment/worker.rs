@@ -137,7 +137,7 @@ pub async fn execute(
                 match operation {
                     Operation::Deploy => {
                         integration_base = format!("{platform_origin}/wamn/integrations");
-                        component_base = format!("{org_origin}/wamn/components");
+                        (_, component_base) = wamn_registry::org_artifact_bases(org_origin);
                         operation::Application::Deploy {
                             digest: request.release.context("package digest is required")?,
                             integration_base: &integration_base,

@@ -181,6 +181,7 @@ async fn record_bytes(
         .first_key_value()
         .context("the environment has one application")?;
     let settings = &document.settings;
+    let (_, component_base) = wamn_registry::org_artifact_bases("registry.example.com");
     let values = wamn_environment::environment::write::release_values(
         &document,
         &"wamn.example.com".parse()?,
@@ -189,7 +190,7 @@ async fn record_bytes(
         &package_digest(id),
         &[],
         "registry.example.com/wamn/integrations",
-        "registry.example.com/wamn/components",
+        &component_base,
         wamn_http::wasm_authority::wasm_authority_port,
     )?;
     let path = directory.join("application.yaml");

@@ -12,7 +12,7 @@ use super::{Binding, EnvironmentDocument, release_values, workload_images};
 fn workload_images_keep_each_repository_and_digest() -> anyhow::Result<()> {
     let org_origin = "org.example/artifacts";
     let platform_origin = "platform.example/shared";
-    let application_repository = format!("{org_origin}/wamn/components");
+    let (_, application_repository) = wamn_registry::org_artifact_bases(org_origin);
     let integration_repository = format!("{platform_origin}/wamn/integrations");
     let component_digest = bytes_sha256(b"component bytes");
     let component_image = bytes_sha256(b"component image");

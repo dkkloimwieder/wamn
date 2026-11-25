@@ -421,7 +421,7 @@ async fn render(
     let manifests = BTreeMap::from([(package, manifest)]);
     let platform_registry = wamn_platform_install::org::field(control, "platform_registry")?;
     let integration_base = format!("{platform_registry}/wamn/integrations");
-    let component_base = format!("{registry}/wamn/components");
+    let (_, component_base) = wamn_registry::org_artifact_bases(registry);
     let platform_domain = inputs["base"]
         .as_str()
         .context("org inputs have no base")?

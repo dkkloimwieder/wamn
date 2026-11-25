@@ -112,9 +112,7 @@ A plain `cargo build` bypasses the source view, so its bytes can depend on the c
 Use the component builder when you update a pin.
 The release publisher also needs the pinned `ingress` guest.
 The ctl image carries it at `/usr/local/share/wamn/ingress.wasm`.
-For native publication, set `WAMN_INGRESS_COMPONENT` to the built guest and `WAMN_COMPONENT_ARTIFACT_BASE` to the component repository.
-Publication pushes the separate route component to `<component-artifact-base>/entries`.
-The manifest records only the path `entries@sha256:<manifest-digest>`, relative to the component artifact base.
+For edge bundle tests, set `WAMN_INGRESS_COMPONENT` to the built guest.
 
 The workload guest `ingress` belongs to no package.
 
@@ -319,7 +317,9 @@ The command refuses an existing implementation or output file.
 ## Pushing a package
 
 Build the package and any bases before publication.
+Set `WAMN_REGISTRY` to the org registry origin and `WAMN_REGISTRY_AUTH_FILE` to the registry credential file.
 Run `wamn publish <build directory>` to publish that build output.
+Publication writes packages under `<org-origin>/wamn/packages` and components under `<org-origin>/wamn/components`.
 The command prints the top package OCI digest. An OCI digest is the SHA-256 hash of an image manifest.
 Publication checks the built bytes before pushing.
 A new tag starts a migration history. A replacement keeps every existing migration name and byte, including `history/`.

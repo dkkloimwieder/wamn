@@ -17,6 +17,7 @@ Set `control.image` and `control.configuration` to deploy the org's control serv
 The control API route uses `<org>.<base>`. The `wamn org create` command reads the platform wildcard base from `wamn-org-inputs`.
 The command also reads `applicationChart` from that ConfigMap and sets the `chart` value in the control configuration.
 Set `control.configuration.registry` to the org origin for packages and application components.
+Set `WAMN_REGISTRY` to that org origin when you publish. On kind, use `localhost:5001` from the publishing machine.
 Set `control.configuration.platform_registry` to the platform origin for integrations.
 `wamn org create` currently initializes both from `registry` in `wamn-org-inputs`.
 Pin `control.image` by digest. Set `control.platformUi` to publish the UI release at that host.

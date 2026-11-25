@@ -111,6 +111,7 @@ impl Configuration {
         let insecure_registry = wamn_registry::registry_is_loopback(&self.registry)
             || self.registry.split('/').next()
                 == Some(wamn_platform_install::release_chart::POD_REGISTRY);
+        let (package_base, _) = wamn_registry::org_artifact_bases(&self.registry);
         Ok(Platform {
             system_database_url: self.apply_database.to_json()?,
             database_files: None,
@@ -135,7 +136,7 @@ impl Configuration {
             registry_token_metadata: self.registry_token_metadata,
             oci_ca_paths: self.oci_ca_paths.clone(),
             insecure_registry,
-            package_artifact_base: Some(format!("{}/wamn/packages", self.registry)),
+            package_artifact_base: Some(package_base),
             host_group: None,
             identity_issuer: self.identity_issuer.clone(),
             broker_identity: |issuer| {

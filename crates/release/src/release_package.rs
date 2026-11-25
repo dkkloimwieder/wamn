@@ -387,8 +387,9 @@ impl RegistryPackagePublisher<'_> {
         let variable = |name: &str| {
             std::env::var(name).with_context(|| format!("set {name} for source publication"))
         };
-        let artifact_base = variable("WAMN_PACKAGE_ARTIFACT_BASE")?;
-        let insecure_registry = url::Url::parse(&format!("http://{artifact_base}"))?
+        let origin = variable("WAMN_REGISTRY")?;
+        let (artifact_base, component_artifact_base) = wamn_registry::org_artifact_bases(&origin);
+        let insecure_registry = url::Url::parse(&format!("http://{origin}"))?
             .host_str()
             .is_some_and(|host| matches!(host, "localhost" | "127.0.0.1" | "[::1]"));
         let registry = PackageRegistry {
@@ -403,7 +404,6 @@ impl RegistryPackagePublisher<'_> {
                 .map(Into::into)
                 .collect(),
         };
-        let component_artifact_base = variable("WAMN_COMPONENT_ARTIFACT_BASE")?;
         // A dependency-first walk visits the selected source package last.
         let top = roots.pop().context("source package closure is empty")?;
         let mut publication = PushPackageRequest {

@@ -16,7 +16,8 @@ Set `WAMN_CONTROL_URL` to the control service URL and `WAMN_TOKEN` to the caller
 If SQL or the verification schema changes, refresh the [committed describe evidence](building.md#wamn-build).
 Pass `--refresh-describe` to a dev invocation to refresh with the dev base pins.
 Set `DATABASE_URL` or pass `--database-url` for that invocation.
-Set `WAMN_PACKAGE_ARTIFACT_BASE`, `WAMN_COMPONENT_ARTIFACT_BASE` and `WAMN_REGISTRY_AUTH_FILE` for publication.
+Set `WAMN_REGISTRY` to the org registry origin for publication.
+Set `WAMN_REGISTRY_AUTH_FILE` to the registry credential file.
 `WAMN_INGRESS_COMPONENT` selects the stamped HTTP route component and its adjacent palette.
 If the registry needs extra trust roots, set `WAMN_OCI_CA_PATHS`.
 The platform and local publication inputs must use the same stamped artifacts.

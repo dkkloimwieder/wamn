@@ -92,10 +92,8 @@ async fn env_apply_uses_the_installed_digest_after_a_tag_moves() -> anyhow::Resu
         "B must add a publication schema"
     );
     let outputs = &environment.org.cluster.outputs;
-    let (registry, repository) = outputs
-        .package_artifact_base
-        .split_once('/')
-        .context("package repository")?;
+    let (package_base, _) = wamn_registry::org_artifact_bases(&outputs.registry);
+    let (registry, repository) = package_base.split_once('/').context("package repository")?;
     let tag = format!("{PACKAGE}-{version}");
     let tagged = HttpClient::shared()?
         .request(
@@ -204,10 +202,11 @@ async fn publish(
 
 async fn schemas(environment: &Environment, digest: &str) -> anyhow::Result<BTreeSet<String>> {
     let outputs = &environment.org.cluster.outputs;
+    let (package_base, _) = wamn_registry::org_artifact_bases(&outputs.registry);
     let mut inspect = environment.org.command();
     inspect
         .args(["inspect", digest, "--insecure-registry", "--artifact-base"])
-        .arg(&outputs.package_artifact_base)
+        .arg(package_base)
         .arg("--registry-auth-file")
         .arg(&outputs.registry_auth_file);
     let manifest: Value = serde_json::from_str(&run(inspect).await?)?;

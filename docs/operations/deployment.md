@@ -277,9 +277,8 @@ Control selects the runtime inputs.
 Source publication stays local and returns the top package OCI digest.
 Source builds use [committed PostgreSQL describe evidence](building.md#wamn-build) and the existing registry inputs.
 To refresh the evidence during a source deploy, pass `--refresh-describe` with `--database-url` or set `DATABASE_URL`.
-Set `WAMN_PACKAGE_ARTIFACT_BASE`, `WAMN_COMPONENT_ARTIFACT_BASE` and `WAMN_REGISTRY_AUTH_FILE` for publication.
-On kind, set `WAMN_PACKAGE_ARTIFACT_BASE` to `localhost:5001/wamn/packages`.
-Set `WAMN_COMPONENT_ARTIFACT_BASE` to `localhost:5001/wamn/components`.
+Set `WAMN_REGISTRY` to the org registry origin for publication.
+On kind, set `WAMN_REGISTRY` to `localhost:5001`.
 Set `WAMN_REGISTRY_AUTH_FILE` to the path of the registry auth file you created for `wamn org create`.
 `WAMN_OCI_CA_PATHS` supplies optional registry certificates.
 The worker uses the org origin for packages and application components. It uses the platform origin for integrations.
@@ -549,7 +548,6 @@ Candidate parameters must pass the same rules as a connection write, including i
 An HTTP candidate needs an HTTPS authority and `tls-verification` set to `verify-authority`.
 Responses 401, 403 and 5xx fail with their status as the error. Other HTTP responses are healthy.
 The control host needs its existing component registry configuration for wasm and native candidates.
-It reads `WAMN_COMPONENT_ARTIFACT_BASE` with `WAMN_REGISTRY_AUTH_FILE` or registry token metadata.
 Registry, GCS and KMS share the pod metadata token service.
 The service refreshes tokens thirty seconds before expiry. It reads no local Google credential file.
 
@@ -677,8 +675,8 @@ Run this command after building the package and its bases.
 wamn publish apps/target/wamn/wamn_receiving
 ```
 
-Set `WAMN_PACKAGE_ARTIFACT_BASE` and `WAMN_COMPONENT_ARTIFACT_BASE` to the package and component repositories.
-Set `WAMN_REGISTRY_AUTH_FILE` to a credential file with access to both repositories.
+Set `WAMN_REGISTRY` to the org registry origin. Publication adds `/wamn/packages` and `/wamn/components` to this origin.
+Set `WAMN_REGISTRY_AUTH_FILE` to a credential file with write access to the org repository.
 Publication pushes the bases first and records their OCI digests in the dependent packages.
 The command prints the digest of the top package. [Package and component formats](building.md#reading-a-pushed-package)
 
