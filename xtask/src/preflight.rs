@@ -419,7 +419,8 @@ async fn render(
         .into_iter()
         .collect();
     let manifests = BTreeMap::from([(package, manifest)]);
-    let integration_base = format!("{registry}/wamn/integrations");
+    let platform_registry = wamn_platform_install::org::field(control, "platform_registry")?;
+    let integration_base = format!("{platform_registry}/wamn/integrations");
     let component_base = format!("{registry}/wamn/components");
     let platform_domain = inputs["base"]
         .as_str()
@@ -436,9 +437,7 @@ async fn render(
         &component_base,
         wamn_http::wasm_authority::wasm_authority_port,
     )?;
-    if insecure_registry {
-        operation::use_pod_registry(&chart, &mut application_values)?;
-    }
+    operation::use_pod_registry(&chart, &mut application_values)?;
     let application_file = directory.join("application-values.yaml");
     std::fs::write(
         &application_file,

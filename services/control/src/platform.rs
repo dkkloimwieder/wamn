@@ -135,6 +135,7 @@ pub async fn execute(config: &Configuration, payload: &str) -> anyhow::Result<Va
         platform,
         &config.org,
         &config.registry,
+        &config.platform_registry,
         request,
         wamn_http::wasm_authority::wasm_authority_port,
     )

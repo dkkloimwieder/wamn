@@ -22,8 +22,9 @@ It checks that the apply login name matches the org and database.
 | `nats_url` | Shared in-cluster NATS endpoint |
 | `worker_image` | Pinned control image for operation Jobs |
 | `chart` | Installed immutable chart reference |
-| `registry` | Installed registry authority |
-| `registry_token_metadata` | Use the metadata credential source for the registry |
+| `registry` | Org origin for package artifacts and application components |
+| `platform_registry` | Platform origin for integration components |
+| `registry_token_metadata` | Use the metadata credential source for registry reads |
 | `oci_ca_paths` | Mounted registry trust bundles |
 | `events` | Optional event policy with `stream_replicas` and `dup_window_secs` |
 | `oauth_encryption` | Optional envelope encryption configuration |
@@ -36,7 +37,9 @@ It puts the request and authenticated actor in an immutable ConfigMap owned by t
 The worker mounts the request and reads applied project configuration from the registry.
 The request cannot select an image, command, credential, namespace, or chart path.
 
-Deploy resolves the package closure and bindings, checks enabled workflows, applies SQL, and upgrades the application under the lifecycle lock.
+Deploy resolves the package closure and bindings under the lifecycle lock.
+It reads the manifest of each application and integration image and of the ingress and workflow images pinned in the chart.
+After those reads and the workflow checks pass, deploy applies SQL and upgrades the application.
 Control reads the current package digest and content revision from the WorkloadDeployment.
 Only the rollback worker reads Helm history for the target package and application configuration.
 Job status is visible only through the authorized target and operation annotations.

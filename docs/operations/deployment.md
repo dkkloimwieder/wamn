@@ -278,7 +278,8 @@ On kind, set `WAMN_PACKAGE_ARTIFACT_BASE` to `localhost:5001/wamn/packages`.
 Set `WAMN_COMPONENT_ARTIFACT_BASE` to `localhost:5001/wamn/components`.
 Set `WAMN_REGISTRY_AUTH_FILE` to the path of the registry auth file you created for `wamn org create`.
 `WAMN_OCI_CA_PATHS` supplies optional registry certificates.
-Control derives HTTP registry access from the installed registry address using the loopback rule.
+The worker uses the org origin for packages and application components. It uses the platform origin for integrations.
+On kind, both origins use the local registry. The worker uses HTTP for its local registry reads.
 `wamn publish` uses the existing build output and starts no Job.
 
 Application, schema and administration commands require `WAMN_CONTROL_URL` and `WAMN_TOKEN`.
@@ -627,14 +628,15 @@ Do not repeat the removed numbered installer or its initial application pass.
 
 Application publication is independent of the destination database.
 `wamn env apply` provisions shared environment resources.
-The deploy Job applies SQL before upgrading the application release.
+The deploy Job reads each workload image manifest before it applies SQL.
+If a manifest is missing, the Job reports the image reference and stops.
+After SQL applies, the Job upgrades the application release.
 Platform deployment performs no application pass.
 
 The optional `client` field pins an application web artifact: `client = {package = "wamn_receiving", web = "<full web digest>"}`.
 The web digest is `sha256:` and 64 lowercase hexadecimal digits, as `wamn web push` prints it.
 Without `client`, the host serves no application web client, even when the release contains one client package.
-Apply pulls the artifact from `WAMN_PACKAGE_ARTIFACT_BASE` with the existing registry credentials and CA paths.
-It refuses a web artifact whose package id differs from `client.package` or whose package version is absent from the release.
+`wamn web upload --web` pulls the artifact by digest from the repository in `--artifact-base` and writes its files to the bucket.
 The revision values keep the host-to-package map in `webClients` and the host-to-web-digest map in `webDigests`.
 
 The same immutable web artifact can serve more than one environment.

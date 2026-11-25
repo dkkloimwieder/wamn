@@ -44,7 +44,10 @@ pub struct Configuration {
     pub apply_database: wamn_postgres::database::ConnectionConfig,
     pub identity_issuer: String,
     pub nats_url: String,
+    /// The org's package and application component origin.
     pub registry: String,
+    /// The shared integration origin from the platform installation.
+    pub platform_registry: String,
     pub worker_image: String,
     pub chart: PathBuf,
     #[serde(default)]

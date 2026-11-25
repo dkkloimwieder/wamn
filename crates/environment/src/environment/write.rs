@@ -3,11 +3,12 @@
 
 pub(super) mod plan;
 
-use std::path::Path;
+use std::{collections::BTreeSet, path::Path};
 
 use crate::application_chart::{binding::Binding, plan::ValuesInput};
 use anyhow::Context as _;
 use serde_yaml::{Mapping, Value};
+use wamn_platform_install::release_chart::bundle::SelectedChart;
 
 use super::document::EnvironmentDocument;
 
@@ -46,6 +47,25 @@ pub fn release_values(
     )
 }
 
+/// Read the distinct images that the application workload will pull.
+pub(super) fn workload_images<'a>(
+    values: &'a Value,
+    chart: &'a SelectedChart,
+) -> anyhow::Result<BTreeSet<&'a str>> {
+    let platform = &values["platform"];
+    let ingress = platform["roles"]["ingress"]["image"]
+        .as_str()
+        .unwrap_or(chart.image("ingress")?);
+    let workflow = platform["workflow"]["image"]
+        .as_str()
+        .unwrap_or(chart.image("workflow")?);
+    let mut images = BTreeSet::from([ingress, workflow]);
+    for component in values["components"].as_sequence().context("components")? {
+        images.insert(component["image"].as_str().context("component image")?);
+    }
+    Ok(images)
+}
+
 /// Read the host placement body used to observe replica policy.
 /// Project credentials come only from the environment chart projection.
 pub fn host_group(path: Option<&Path>) -> anyhow::Result<Mapping> {
@@ -58,3 +78,6 @@ pub fn host_group(path: Option<&Path>) -> anyhow::Result<Mapping> {
     };
     Ok(group)
 }
+
+#[cfg(test)]
+mod tests;

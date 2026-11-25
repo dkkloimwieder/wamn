@@ -20,7 +20,7 @@ use tokio::time::Instant;
 use wamn_component_policy::PackageManifest;
 use wamn_digest::Digest;
 use wamn_platform_install::release_chart::bundle::SelectedChart;
-use wamn_platform_install::release_chart::pod_registry_reference;
+use wamn_platform_install::release_chart::{POD_REGISTRY, pod_registry_reference};
 use wamn_registry::Triple;
 use wamn_release::release_package::{OpenedPackage, open_package_digest};
 
@@ -217,8 +217,17 @@ pub async fn application(
                         component_base,
                         authority_port,
                     )?;
-                    if platform.insecure_registry {
-                        use_pod_registry(chart, &mut values)?;
+                    use_pod_registry(chart, &mut values)?;
+                    for image in write::workload_images(&values, chart)? {
+                        let (authority, _) = image
+                            .split_once('/')
+                            .with_context(|| format!("image {image} is missing its registry"))?;
+                        let insecure_registry = authority == POD_REGISTRY
+                            || wamn_registry::registry_is_loopback(authority);
+                        platform
+                            .packages
+                            .require_image(image, insecure_registry)
+                            .await?;
                     }
                     let app = application_config(&values)?;
                     let sequences = stage::sequence_defaults(

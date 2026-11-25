@@ -155,6 +155,7 @@ pub fn org_values(
                 "identity_issuer": field(inputs, "identityIssuer")?,
                 "nats_url": field(inputs, "natsUrl")?,
                 "registry": internal_registry,
+                "platform_registry": internal_registry,
                 "worker_image": image,
                 "chart": application_chart,
                 "registry_token_metadata": registry_token_metadata(inputs)?,

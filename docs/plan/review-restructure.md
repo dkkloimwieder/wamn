@@ -254,7 +254,7 @@ F. `env apply` saves the applied configuration once per project, at the end of `
 - The worker takes the org origin and the platform origin separately.
 - In the same change, deploy checks that every resolved image exists before it applies SQL. Today a missing image is found at rollout, after the SQL is in (I).
 - Nothing is copied at deploy, at `env apply` or at platform publish.
-- The web artifact goes in one of the two repositories. Where it is published and pulled today is Not verified (`crates/release/src/web_artifact.rs`).
+- The web artifact goes in one of the two repositories. `wamn web push` and `wamn web upload --web` use the caller's `--artifact-base`. The push writes to that base, and the upload reads from it by digest (`services/cli/src/web.rs::run` and `upload`, `crates/release/src/web_artifact.rs::push_web_artifact` and `RegistryWebArtifacts::read_web`). (F)
 - No host image rebuild (I).
 
 **Check.** Call `write::release_values` with two distinct repository prefixes and fixed digests. Assert that application and integration references take their owners' prefixes and keep their digests, and that stamped platform references are unchanged. Do not write the expected image references by hand. Cloud pull grants need their own check on GKE.

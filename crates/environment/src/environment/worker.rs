@@ -66,9 +66,11 @@ impl Operation {
     }
 }
 
+/// Execute a project operation using the org and platform artifact origins.
 pub async fn execute(
     org: &OrgId,
-    registry: &str,
+    org_origin: &str,
+    platform_origin: &str,
     platform: Platform,
     operation: Operation,
     request: Request,
@@ -134,8 +136,8 @@ pub async fn execute(
                 &application,
                 match operation {
                     Operation::Deploy => {
-                        integration_base = format!("{registry}/wamn/integrations");
-                        component_base = format!("{registry}/wamn/components");
+                        integration_base = format!("{platform_origin}/wamn/integrations");
+                        component_base = format!("{org_origin}/wamn/components");
                         operation::Application::Deploy {
                             digest: request.release.context("package digest is required")?,
                             integration_base: &integration_base,
@@ -191,14 +193,24 @@ pub enum Task {
 pub async fn execute_task(
     mut platform: Platform,
     org: &OrgId,
-    registry: &str,
+    org_origin: &str,
+    platform_origin: &str,
     request: Task,
     authority: super::write::AuthorityPort,
 ) -> anyhow::Result<Value> {
     let mut output = Vec::new();
     match request {
         Task::ProjectOperation { operation, request } => {
-            execute(org, registry, platform, operation, request, authority).await
+            execute(
+                org,
+                org_origin,
+                platform_origin,
+                platform,
+                operation,
+                request,
+                authority,
+            )
+            .await
         }
         Task::Environment {
             operation,
