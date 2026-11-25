@@ -1,3 +1,3 @@
 CREATE TABLE digest_extra.entry (
-    id uuid PRIMARY KEY
+    id uuid CONSTRAINT entry_id_pkey PRIMARY KEY
 );
