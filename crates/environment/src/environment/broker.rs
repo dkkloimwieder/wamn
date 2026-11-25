@@ -1,7 +1,6 @@
 //! Org-owned NATS credentials and the environment's resolver account.
 
 use anyhow::Context as _;
-use serde_json::json;
 use wamn_event::deploy_broker::CREDENTIALS_KEY;
 use wamn_identity_protocol::nats::{BrokerIdentity, EnsureAccount, SignUser, UserPurpose};
 
@@ -156,18 +155,17 @@ async fn delete_secret(platform: &Platform, name: &str) -> anyhow::Result<()> {
     platform.cluster.delete_secret(name).await.map(drop)
 }
 
-pub(super) async fn binding(
+pub(super) async fn inbox(
     platform: &Platform,
     org: &OrgId,
     env: &EnvName,
     purpose_name: &str,
-) -> anyhow::Result<serde_json::Value> {
+) -> anyhow::Result<String> {
     let name = name::environment_nats_secret(org, env, purpose_name);
     let creds = read_user(platform, &name)
         .await?
         .context("host NATS credential is absent")?;
-    let inbox = platform.broker.credentials_inbox(&creds)?;
-    Ok(json!({"secret": name, "inbox": inbox}))
+    platform.broker.credentials_inbox(&creds)
 }
 
 pub(super) async fn admin(

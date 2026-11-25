@@ -2,8 +2,8 @@
 //! resolve, the wamn containers accept their arguments, and the Kubernetes API
 //! server accepts every object in a server-side dry run.
 //!
-//! The values come from the product's builders where they are public. Values that
-//! exist only at deploy time are stand-ins:
+//! The values come from the product's builders. Values that exist only at deploy
+//! time are stand-ins:
 //! - the identity, NATS and system PostgreSQL CAs of the org values (`STAND_IN_CA`);
 //! - the project instance suffix (`STAND_IN_INSTANCE`);
 //! - the NATS public keys behind the host's workflow and ingress inboxes (`STAND_IN_NATS_KEY`);
@@ -21,20 +21,21 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{Context as _, bail, ensure};
-use base64::Engine as _;
 use clap::Args as ClapArgs;
-use k8s_openapi::api::core::v1::{Namespace, Secret, Service};
-use k8s_openapi::api::discovery::v1::EndpointSlice;
+use k8s_openapi::api::core::v1::{Namespace, Secret};
 use k8s_openapi::apiextensions_apiserver::pkg::apis::apiextensions::v1::CustomResourceDefinition;
 use kube::api::{Api, DeleteParams, DynamicObject, ListParams, Patch, PatchParams, PostParams};
 use kube::core::GroupVersionKind;
 use kube::discovery::{ApiCapabilities, ApiResource, Scope};
 use serde_json::{Value, json};
 use wamn_environment::environment::document::EnvironmentFile;
+use wamn_environment::environment::{ensure as host, lifecycle, operation};
 use wamn_environment::platform_environment;
 use wamn_environment::provision_project_env::workload;
+use wamn_kubernetes::org_resources;
+use wamn_platform_install::release_chart::POD_REGISTRY;
 use wamn_platform_install::release_chart::bundle;
-use wamn_platform_install::release_chart::{POD_REGISTRY, pod_registry_reference};
+use wamn_platform_install::{deployment, org_install, platform_install};
 use wamn_postgres::database::{capture_configuration, connection_for};
 use wamn_registry::{OrgId, name};
 
@@ -151,14 +152,12 @@ pub async fn run(root: &Path, args: Args) -> anyhow::Result<()> {
         let config = kube::Config::from_kubeconfig(&options).await?;
         (endpoint, Some(kube::Client::try_from(config)?))
     };
-    let api_server = match &client {
-        Some(client) => api_destinations(client).await?,
+    let api_addresses = match &client {
+        Some(client) => org_resources::api_addresses(client.clone()).await?,
         // The kind defaults: the kubernetes Service and its control plane endpoint.
-        None => vec![
-            json!({"cidr": "10.96.0.1/32", "port": 443}),
-            json!({"cidr": "172.18.0.3/32", "port": 6443}),
-        ],
+        None => BTreeSet::from([([10, 96, 0, 1].into(), 443), ([172, 18, 0, 3].into(), 6443)]),
     };
+    let api_server = org_install::api_destinations(api_addresses)?;
 
     let mut tally = Tally::default();
     let (rendered, deploy_bases) = render(
@@ -210,10 +209,9 @@ async fn render(
     std::fs::write(&platform_file, serde_yaml::to_string(&platform_values)?)?;
     let chart_reference = std::fs::read_to_string(chart.directory().join("chart.ref"))
         .context("read chart.ref of the bundle")?;
-    // A copy of the private platform_verbs.rs::registry_egress for an IPv4 endpoint.
     let resolved = json!({
         "applicationChart": chart_reference.trim(),
-        "registryEgress": [{"cidr": format!("{}/32", endpoint.address), "port": endpoint.port}],
+        "registryEgress": platform_install::registry_egress(&platform_file)?,
     });
     let resolved_file = write_json(directory, "platform-resolved.json", &resolved)?;
     rendered.push(
@@ -309,57 +307,33 @@ async fn render(
         .as_str()
         .context("control configuration has no registry")?;
     let registry_token_metadata = control["registry_token_metadata"] == true;
-    let host_image = wamn_platform_install::release_chart::image_set(chart.directory())
-        .await?
-        .host;
+    let host_image = deployment::host_image(chart.directory()).await?;
 
-    // A copy of the shape of the private ensure.rs::host_values. Platform comes
-    // from control's configuration (services/control/src/lib.rs::platform).
-    let mut logins = serde_json::Map::new();
-    for (family, login) in &connections {
-        let role = match family {
-            wamn_identity_protocol::workload_role::WorkloadRoleFamily::App => "guest-sql",
-            wamn_identity_protocol::workload_role::WorkloadRoleFamily::Query => "dynamic-sql",
-            wamn_identity_protocol::workload_role::WorkloadRoleFamily::Platform => "platform",
-            wamn_identity_protocol::workload_role::WorkloadRoleFamily::Migration => continue,
-        };
-        logins.insert(role.into(), login.credentials.name.clone().into());
-    }
     let (org_id, env, project) = (&triple.org, &triple.env, &triple.project);
     let inbox = name::nats_user_inbox(STAND_IN_NATS_KEY);
-    let host_values = json!({
-        "org": org_id,
-        "env": env,
-        "hostName": name::environment_host_name(org_id, env),
-        "serviceAccount": name::environment_service_account(org_id, env),
-        "image": host_image,
-        "placement": {},
-        "drainBoundSeconds": document.drain_bound_seconds,
-        "projects": {project.as_str(): {
-            "host": connection.host,
-            "port": connection.port,
-            "database": connection.database,
-            "cluster": name::project_cluster(&connection.database),
-            "logins": logins,
-            "serverCa": connection.server_ca.name,
-            "credentialSecret": name::credential_secret_name(org_id, project, env),
-            "stream": name::stream_name(org_id, project, env),
-        }},
-        "natsUrl": control["nats_url"],
-        "identityIssuer": control["identity_issuer"],
-        "registryTokenMetadata": registry_token_metadata,
-        "insecureRegistry": wamn_registry::registry_is_loopback(registry)
-            || registry.split('/').next() == Some(POD_REGISTRY),
-        "ociCaPaths": [],
-        "oauthEncryption": control["oauth_encryption"],
-        "environmentNats": {
-            "data": name::environment_nats_secret(org_id, env, "data"),
-            "native": name::environment_nats_secret(org_id, env, "workflow-native"),
-            "workflow": {"secret": name::environment_nats_secret(org_id, env, "workflow"), "inbox": inbox},
-            "ingress": {"secret": name::environment_nats_secret(org_id, env, "ingress"), "inbox": inbox},
-            "subjects": name::environment_event_subjects(org_id, env),
-        },
-    });
+    let nats_url = wamn_platform_install::org::field(control, "nats_url")?;
+    let identity_issuer = wamn_platform_install::org::field(control, "identity_issuer")?;
+    let insecure_registry = wamn_registry::registry_is_loopback(registry)
+        || registry.split('/').next() == Some(POD_REGISTRY);
+    let host_values = host::host_values(
+        org_id,
+        env,
+        &host_image,
+        &serde_json::Map::new(),
+        document.drain_bound_seconds,
+        &serde_json::Map::from_iter([(
+            project.to_string(),
+            host::host_project_values(&triple, &connection)?,
+        )]),
+        nats_url,
+        identity_issuer,
+        registry_token_metadata,
+        insecure_registry,
+        &[],
+        &control["oauth_encryption"],
+        &inbox,
+        &inbox,
+    );
     let host_file = write_json(directory, "environment-values.json", &host_values)?;
     rendered.push(
         template(
@@ -399,18 +373,14 @@ async fn render(
     project_values["databaseConfig"] =
         workload::configuration_values(&triple, &instance, &connections)?;
     project_values["environmentDocument"] = applied_document.into();
-    // A copy of the shape of the private lifecycle.rs::reader_values.
-    project_values["cdcReader"] = json!({
-        "name": name::cdc_reader_name(org_id, project, env),
-        "key": name::project_env_key(org_id, project, env),
-        "coordinate": triple.to_string(),
-        "image": host_image,
-        "registrySecret": (!registry_token_metadata).then_some(name::REGISTRY_PULL),
-        "natsSecret": name::project_nats_secret(&triple, "cdc"),
-        "database": capture_configuration(connection)?,
-        "natsUrl": control["nats_url"],
-        "pause": false,
-    });
+    project_values["cdcReader"] = lifecycle::reader_values(
+        &triple,
+        &capture_configuration(connection)?,
+        &host_image,
+        nats_url,
+        registry_token_metadata,
+    );
+    project_values["cdcReader"]["pause"] = false.into();
     let project_release = name::environment_resource_name(org_id, project, env);
     let project_file = write_json(directory, "project-values.json", &project_values)?;
     rendered.push(
@@ -468,26 +438,8 @@ async fn render(
         &component_base,
         wamn_http::wasm_authority::wasm_authority_port,
     )?;
-    if host_values["insecureRegistry"] == true {
-        // A copy of the private operation.rs::use_pod_registry.
-        for (path, image) in [
-            (["roles", "ingress"].as_slice(), chart.image("ingress")?),
-            (["workflow"].as_slice(), chart.image("workflow")?),
-        ] {
-            let mut field = &mut application_values["platform"];
-            for key in path {
-                field = &mut field[*key];
-            }
-            field["image"] = pod_registry_reference(image).into_owned().into();
-        }
-        for component in application_values["components"]
-            .as_sequence_mut()
-            .context("release values have no component list")?
-        {
-            if let Some(image) = component["image"].as_str() {
-                component["image"] = pod_registry_reference(image).into_owned().into();
-            }
-        }
+    if insecure_registry {
+        operation::use_pod_registry(&chart, &mut application_values)?;
     }
     let application_file = directory.join("application-values.yaml");
     std::fs::write(
@@ -548,107 +500,28 @@ fn org_create_objects(
     inputs: &Value,
     org_values: &Value,
 ) -> anyhow::Result<Vec<Value>> {
-    use wamn_platform_install::provision_org::{CONTROL_AUDIENCE, INVITATION_ACCOUNT, SQL_ACCOUNT};
-    let job = |account: &str, namespace: &str, args: Vec<String>| {
-        json!({
-            "apiVersion": "batch/v1", "kind": "Job",
-            "metadata": {"generateName": format!("{account}-"), "namespace": namespace},
-            "spec": {
-                "activeDeadlineSeconds": 300, "ttlSecondsAfterFinished": 3600, "backoffLimit": 0,
-                "template": {
-                    "metadata": {"labels": {"app.kubernetes.io/component": account}},
-                    "spec": {
-                        "serviceAccountName": account, "automountServiceAccountToken": false,
-                        "restartPolicy": "Never",
-                        "containers": [{"name": account, "image": image, "args": args}],
-                    },
-                },
-            },
-        })
-    };
-    let mut objects = vec![json!({
-        "apiVersion": "v1", "kind": "Namespace",
-        "metadata": {"name": helm_namespace, "labels": {"app.kubernetes.io/part-of": "wamn"}},
-    })];
-    if inputs["provider"] == "kind" {
+    use wamn_platform_install::org::{field, registry_configuration};
+
+    let mut objects = vec![org_resources::helm_storage_namespace(helm_namespace)];
+    if org_values["control"]["configuration"]["registry_token_metadata"] == false {
         // The registry auth file that docs/operations/deployment.md writes on kind.
         let auth = write_json(
             directory,
             "registry-auth.json",
             &json!({"auths": {LOCAL_REGISTRY: {}}}),
         )?;
-        let authority = |value: &Value| {
-            value
-                .as_str()
-                .unwrap_or_default()
-                .split('/')
-                .next()
-                .unwrap_or_default()
-                .to_owned()
-        };
-        let config =
-            wamn_oci::package_artifact::registry_credentials::project_registry_credentials(
-                &auth,
-                &authority(&inputs["registry"]),
-                &authority(&org_values["registry"]),
-            )?;
-        objects.push(json!({
-            "apiVersion": "v1", "kind": "Secret", "type": "kubernetes.io/dockerconfigjson",
-            "metadata": {"name": name::REGISTRY_PULL, "namespace": org},
-            "data": {".dockerconfigjson": base64::engine::general_purpose::STANDARD.encode(serde_json::to_vec(&config)?)},
-        }));
+        let config = registry_configuration(
+            &auth,
+            field(inputs, "registry")?,
+            field(org_values, "registry")?,
+        )?;
+        objects.push(org_resources::registry_credentials(org, &config));
     }
-    let login = &database.credentials.name;
-    let mut sql = job(
-        SQL_ACCOUNT,
-        PLATFORM,
-        vec![
-            "provision-org".into(),
-            org.to_string(),
-            "--database".into(),
-            "/etc/wamn/system-sql/database.json".into(),
-        ],
-    );
-    sql["metadata"] = json!({"name": "wamn-provision-org", "namespace": PLATFORM});
-    let spec = &mut sql["spec"]["template"]["spec"];
-    spec["automountServiceAccountToken"] = true.into();
-    spec["volumes"] = json!([
-        {"name": "configuration", "configMap": {"name": "wamn-system-sql"}},
-        {"name": "org-inputs", "configMap": {"name": "wamn-org-inputs"}},
-        {"name": "database", "projected": {"defaultMode": 256, "sources": [
-            {"secret": {"name": login, "items": [
-                {"key": "tls.crt", "path": format!("{login}/tls.crt")},
-                {"key": "tls.key", "path": format!("{login}/tls.key")},
-            ]}},
-            {"secret": {"name": database.server_ca.name, "items": [
-                {"key": "ca.crt", "path": format!("{login}/ca.crt")},
-            ]}},
-        ]}},
-    ]);
-    spec["containers"][0]["volumeMounts"] = json!([
-        {"name": "configuration", "mountPath": "/etc/wamn/system-sql", "readOnly": true},
-        {"name": "org-inputs", "mountPath": "/etc/wamn/org-inputs", "readOnly": true},
-        {"name": "database", "mountPath": wamn_postgres::database::DATABASE_DIR, "readOnly": true},
-    ]);
-    let mut invitation = job(
-        INVITATION_ACCOUNT,
-        org.as_str(),
-        vec![
-            "invite-org-owner".into(),
-            org.to_string(),
-            format!("--owner={OWNER}"),
-        ],
-    );
-    invitation["spec"]["backoffLimit"] = 5.into();
-    let spec = &mut invitation["spec"]["template"]["spec"];
-    spec["volumes"] = json!([
-        {"name": "control-token", "projected": {"defaultMode": 256, "sources": [
-            {"serviceAccountToken": {"audience": CONTROL_AUDIENCE, "expirationSeconds": 600, "path": "token"}},
-        ]}},
-    ]);
-    spec["containers"][0]["volumeMounts"] = json!([
-        {"name": "control-token", "mountPath": "/var/run/secrets/wamn-control", "readOnly": true},
-    ]);
+    let mut sql = org_install::provision_job(org, image, database);
+    let mut invitation = org_install::invitation_job(org, image, OWNER);
+    // The installer supplies these namespaces on its API requests.
+    sql["metadata"]["namespace"] = PLATFORM.into();
+    invitation["metadata"]["namespace"] = org.as_str().into();
     objects.extend([sql, invitation]);
     std::fs::write(
         directory.join("render/org-create.json"),
@@ -1298,46 +1171,4 @@ fn write_json(directory: &Path, file: &str, value: &Value) -> anyhow::Result<Pat
     let path = directory.join(file);
     std::fs::write(&path, serde_json::to_vec_pretty(value)?)?;
     Ok(path)
-}
-
-/// The Kubernetes API addresses for the control NetworkPolicy. A copy of the
-/// private org.rs::api_destinations.
-async fn api_destinations(client: &kube::Client) -> anyhow::Result<Vec<Value>> {
-    let services = Api::<Service>::namespaced(client.clone(), "default");
-    let slices = Api::<EndpointSlice>::namespaced(client.clone(), "default")
-        .list(&ListParams::default().labels("kubernetes.io/service-name=kubernetes"))
-        .await?;
-    let service = services.get("kubernetes").await?;
-    let mut destinations = BTreeSet::new();
-    if let Some(spec) = service.spec
-        && let Some(ip) = spec.cluster_ip
-        && let Some(port) = spec.ports.as_ref().and_then(|ports| ports.first())
-    {
-        destinations.insert((ip, port.port));
-    }
-    for slice in slices.items {
-        for port in slice
-            .ports
-            .unwrap_or_default()
-            .into_iter()
-            .filter_map(|entry| entry.port)
-        {
-            for endpoint in &slice.endpoints {
-                destinations.extend(
-                    endpoint
-                        .addresses
-                        .iter()
-                        .map(|address| (address.clone(), port)),
-                );
-            }
-        }
-    }
-    destinations
-        .into_iter()
-        .map(|(address, port)| {
-            let ip: std::net::IpAddr = address.parse()?;
-            let mask = if ip.is_ipv4() { 32 } else { 128 };
-            Ok(json!({"cidr": format!("{ip}/{mask}"), "port": port}))
-        })
-        .collect()
 }

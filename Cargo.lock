@@ -8912,7 +8912,6 @@ dependencies = [
  "wamn-environment",
  "wamn-http",
  "wamn-http-client",
- "wamn-identity-protocol",
  "wamn-kubernetes",
  "wamn-oci",
  "wamn-package",

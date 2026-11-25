@@ -3,6 +3,9 @@
 
 use crate::environment_sql_effects::PostgresSession;
 use anyhow::Context as _;
+use serde_json::{Map, Value, json};
+use std::path::PathBuf;
+use wamn_postgres::database::ConnectionConfig;
 use wamn_registry::{EnvName, OrgId, ProjectId, Triple, name};
 
 use super::Platform;
@@ -19,7 +22,7 @@ pub(super) async fn suspend_project(
     use tokio::time::{Instant, sleep_until, timeout_at};
 
     let name = name::environment_host_name(&triple.org, &triple.env);
-    let values = host_values(
+    let values = read_host_values(
         platform,
         system,
         &triple.org,
@@ -94,7 +97,7 @@ pub(super) async fn prepare_host_upgrade<'a>(
     reserved: &[&str],
 ) -> anyhow::Result<(u32, impl Future<Output = anyhow::Result<()>> + use<'a>)> {
     let name = name::environment_host_name(org, env);
-    let values = host_values(
+    let values = read_host_values(
         platform,
         system,
         org,
@@ -124,7 +127,7 @@ pub(super) async fn prepare_host_upgrade<'a>(
     Ok((replicas, upgrade))
 }
 
-async fn host_values(
+async fn read_host_values(
     platform: &Platform,
     system: &PostgresSession,
     org: &OrgId,
@@ -132,9 +135,7 @@ async fn host_values(
     reserved: &[&str],
     excluded: Option<&ProjectId>,
     drain_bound_seconds: Option<i32>,
-) -> anyhow::Result<serde_json::Value> {
-    use serde_json::json;
-
+) -> anyhow::Result<Value> {
     let (projects, drain_bound_seconds) = system
         .host_projects(org, env, reserved, excluded, drain_bound_seconds)
         .await?;
@@ -143,52 +144,96 @@ async fn host_values(
     }
 
     let group = super::write::host_group(platform.host_group.as_deref())?;
-    let placement: serde_json::Map<String, serde_json::Value> =
-        ["replicas", "nodeSelector", "tolerations", "resources"]
-            .into_iter()
-            .filter_map(|key| group.get(key).map(|value| (key, value)))
-            .map(|(key, value)| Ok((key.into(), serde_json::to_value(value)?)))
-            .collect::<serde_json::Result<_>>()?;
+    let placement: Map<String, Value> = ["replicas", "nodeSelector", "tolerations", "resources"]
+        .into_iter()
+        .filter_map(|key| group.get(key).map(|value| (key, value)))
+        .map(|(key, value)| Ok((key.into(), serde_json::to_value(value)?)))
+        .collect::<serde_json::Result<_>>()?;
     let image = wamn_platform_install::deployment::host_image(&platform.chart).await?;
 
-    let mut eligible = serde_json::Map::new();
+    let mut eligible = Map::new();
     for project in projects {
         let triple = Triple::new(org.clone(), env.clone(), project);
         let connection = system.connection(&triple).await?;
-        anyhow::ensure!(
-            connection.credentials.namespace == org.as_str()
-                && connection.server_ca.namespace == org.as_str(),
-            "project login Secrets and host must share an org"
-        );
-        let mut logins = serde_json::Map::new();
-        for (family, config) in crate::provision_project_env::workload::connections(&connection)? {
-            let role = match family {
-                wamn_identity_protocol::workload_role::WorkloadRoleFamily::App => "guest-sql",
-                wamn_identity_protocol::workload_role::WorkloadRoleFamily::Query => "dynamic-sql",
-                wamn_identity_protocol::workload_role::WorkloadRoleFamily::Platform => "platform",
-                wamn_identity_protocol::workload_role::WorkloadRoleFamily::Migration => continue,
-            };
-            logins.insert(role.into(), config.credentials.name.into());
-        }
         eligible.insert(
             triple.project.to_string(),
-            json!({
-                "host":connection.host,
-                "port":connection.port,
-                "database":connection.database,
-                "cluster":name::project_cluster(&connection.database),
-                "logins":logins,
-                "serverCa":connection.server_ca.name,
-                "credentialSecret":name::credential_secret_name(org, &triple.project, env),
-                "stream":name::stream_name(org, &triple.project, env),
-            }),
+            host_project_values(&triple, &connection)?,
         );
     }
     let (workflow, ingress) = tokio::try_join!(
-        super::broker::binding(platform, org, env, "workflow"),
-        super::broker::binding(platform, org, env, "ingress"),
+        super::broker::inbox(platform, org, env, "workflow"),
+        super::broker::inbox(platform, org, env, "ingress"),
     )?;
+    Ok(host_values(
+        org,
+        env,
+        &image,
+        &placement,
+        drain_bound_seconds,
+        &eligible,
+        &platform.nats_url,
+        &platform.identity_issuer,
+        platform.registry_token_metadata,
+        platform.insecure_registry,
+        &platform.oci_ca_paths,
+        &serde_json::to_value(&platform.oauth_encryption)?,
+        &workflow,
+        &ingress,
+    ))
+}
+
+/// Build the host chart values for one project's connection and workload logins.
+pub fn host_project_values(
+    triple: &Triple,
+    connection: &ConnectionConfig,
+) -> anyhow::Result<Value> {
+    let (org, project, env) = (&triple.org, &triple.project, &triple.env);
+    anyhow::ensure!(
+        connection.credentials.namespace == org.as_str()
+            && connection.server_ca.namespace == org.as_str(),
+        "project login Secrets and host must share an org"
+    );
+    let mut logins = Map::new();
+    for (family, config) in crate::provision_project_env::workload::connections(connection)? {
+        let role = match family {
+            wamn_identity_protocol::workload_role::WorkloadRoleFamily::App => "guest-sql",
+            wamn_identity_protocol::workload_role::WorkloadRoleFamily::Query => "dynamic-sql",
+            wamn_identity_protocol::workload_role::WorkloadRoleFamily::Platform => "platform",
+            wamn_identity_protocol::workload_role::WorkloadRoleFamily::Migration => continue,
+        };
+        logins.insert(role.into(), config.credentials.name.into());
+    }
     Ok(json!({
+        "host":connection.host,
+        "port":connection.port,
+        "database":connection.database,
+        "cluster":name::project_cluster(&connection.database),
+        "logins":logins,
+        "serverCa":connection.server_ca.name,
+        "credentialSecret":name::credential_secret_name(org, project, env),
+        "stream":name::stream_name(org, project, env),
+    }))
+}
+
+/// Build the environment host chart values from resolved deployment inputs.
+#[expect(clippy::too_many_arguments, reason = "resolved inputs for one chart")]
+pub fn host_values(
+    org: &OrgId,
+    env: &EnvName,
+    image: &str,
+    placement: &Map<String, Value>,
+    drain_bound_seconds: i32,
+    projects: &Map<String, Value>,
+    nats_url: &str,
+    identity_issuer: &str,
+    registry_token_metadata: bool,
+    insecure_registry: bool,
+    oci_ca_paths: &[PathBuf],
+    oauth_encryption: &Value,
+    workflow_inbox: &str,
+    ingress_inbox: &str,
+) -> Value {
+    json!({
         "org":org,
         "env":env,
         "hostName":name::environment_host_name(org, env),
@@ -196,21 +241,21 @@ async fn host_values(
         "image":image,
         "placement":placement,
         "drainBoundSeconds":drain_bound_seconds,
-        "projects":eligible,
-        "natsUrl":platform.nats_url,
-        "identityIssuer":platform.identity_issuer,
-        "registryTokenMetadata":platform.registry_token_metadata,
-        "insecureRegistry":platform.insecure_registry,
-        "ociCaPaths":platform.oci_ca_paths,
-        "oauthEncryption":platform.oauth_encryption,
+        "projects":projects,
+        "natsUrl":nats_url,
+        "identityIssuer":identity_issuer,
+        "registryTokenMetadata":registry_token_metadata,
+        "insecureRegistry":insecure_registry,
+        "ociCaPaths":oci_ca_paths,
+        "oauthEncryption":oauth_encryption,
         "environmentNats":{
             "data":name::environment_nats_secret(org,env,"data"),
             "native":name::environment_nats_secret(org,env,"workflow-native"),
-            "workflow":workflow,
-            "ingress":ingress,
+            "workflow":{"secret":name::environment_nats_secret(org,env,"workflow"), "inbox":workflow_inbox},
+            "ingress":{"secret":name::environment_nats_secret(org,env,"ingress"), "inbox":ingress_inbox},
             "subjects":name::environment_event_subjects(org, env),
         },
-    }))
+    })
 }
 
 /// Read every installed baseline, independent of the selected application release.

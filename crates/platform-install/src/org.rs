@@ -11,6 +11,8 @@ use crate::release_chart::POD_REGISTRY;
 use crate::{org_install::OrgInstaller, platform_registry::docker_configuration};
 use wamn_postgres::database::ConnectionConfig;
 
+pub use crate::platform_registry::registry_configuration;
+
 const LOCAL_PROVIDER: &str = "kind";
 
 /// Public data used to prepare an org release.

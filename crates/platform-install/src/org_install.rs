@@ -2,7 +2,7 @@
 
 use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
-use std::{path::PathBuf, time::Duration};
+use std::{collections::BTreeSet, net::IpAddr, path::PathBuf, time::Duration};
 use wamn_kubernetes::{Target, helm, job, org_resources};
 use wamn_postgres::database::{ConnectionConfig, DATABASE_DIR};
 use wamn_registry::OrgId;
@@ -43,7 +43,7 @@ impl OrgInstaller {
             org_resources::config_map(target, PLATFORM, SYSTEM_SQL_CONFIG),
             org_resources::config_map(target, "hosts", "identity-ca"),
             org_resources::secret_entry(target, "wasmcloud-ca", "tls.crt"),
-            api_destinations(target),
+            async { api_destinations(org_resources::api_addresses(target.client.client()).await?) },
         )?;
         let database: ConnectionConfig =
             serde_json::from_str(field(&database_config["data"], "database.json")?)
@@ -95,34 +95,12 @@ impl OrgInstaller {
         image: &str,
         database: &ConnectionConfig,
     ) -> anyhow::Result<String> {
-        let login = &database.credentials.name;
-        let mut sql = org_job(
-            SQL_ACCOUNT,
-            image,
-            &["provision-org", org.as_str(), "--database", SQL_CONFIG_PATH],
-        );
-        sql["metadata"] = json!({"name": PROVISION_JOB});
-        let spec = &mut sql["spec"]["template"]["spec"];
-        spec["automountServiceAccountToken"] = true.into();
-        spec["volumes"] = json!([
-            {"name": "configuration", "configMap": {"name": SYSTEM_SQL_CONFIG}},
-            {"name": "org-inputs", "configMap": {"name": ORG_INPUTS}},
-            {"name": "database", "projected": {"defaultMode": 256, "sources": [
-                {"secret": {"name": login, "items": [
-                    {"key": "tls.crt", "path": format!("{login}/tls.crt")},
-                    {"key": "tls.key", "path": format!("{login}/tls.key")},
-                ]}},
-                {"secret": {"name": database.server_ca.name, "items": [
-                    {"key": "ca.crt", "path": format!("{login}/ca.crt")},
-                ]}},
-            ]}},
-        ]);
-        spec["containers"][0]["volumeMounts"] = json!([
-            {"name": "configuration", "mountPath": "/etc/wamn/system-sql", "readOnly": true},
-            {"name": "org-inputs", "mountPath": ORG_INPUTS_DIR, "readOnly": true},
-            {"name": "database", "mountPath": DATABASE_DIR, "readOnly": true},
-        ]);
-        job::run_exclusive(&self.target, &sql, DEADLINE + Duration::from_secs(30)).await
+        job::run_exclusive(
+            &self.target,
+            &provision_job(org, image, database),
+            DEADLINE + Duration::from_secs(30),
+        )
+        .await
     }
 
     pub(crate) async fn reload_control(
@@ -139,26 +117,13 @@ impl OrgInstaller {
         image: &str,
         owner: &str,
     ) -> anyhow::Result<()> {
-        let mut invitation = org_job(
-            INVITATION_ACCOUNT,
-            image,
-            &[
-                "invite-org-owner",
-                org.as_str(),
-                &format!("--owner={owner}"),
-            ],
-        );
-        invitation["spec"]["backoffLimit"] = 5.into();
-        let spec = &mut invitation["spec"]["template"]["spec"];
-        spec["volumes"] = json!([
-            {"name": "control-token", "projected": {"defaultMode": 256, "sources": [
-                {"serviceAccountToken": {"audience": CONTROL_AUDIENCE, "expirationSeconds": 600, "path": "token"}},
-            ]}},
-        ]);
-        spec["containers"][0]["volumeMounts"] = json!([
-            {"name": "control-token", "mountPath": "/var/run/secrets/wamn-control", "readOnly": true},
-        ]);
-        org_resources::run_job(&self.target, org, &invitation, DEADLINE).await
+        org_resources::run_job(
+            &self.target,
+            org,
+            &invitation_job(org, image, owner),
+            DEADLINE,
+        )
+        .await
     }
 }
 
@@ -171,8 +136,8 @@ fn org_chart() -> anyhow::Result<PathBuf> {
         .context("locate deploy/charts/org in the repository or installed chart directory")
 }
 
-async fn api_destinations(target: &Target) -> anyhow::Result<Vec<Value>> {
-    let destinations = org_resources::api_addresses(target).await?;
+/// Build the control NetworkPolicy destinations from the Kubernetes API addresses.
+pub fn api_destinations(destinations: BTreeSet<(IpAddr, i32)>) -> anyhow::Result<Vec<Value>> {
     ensure!(
         !destinations.is_empty(),
         "no Kubernetes API address for the control NetworkPolicy"
@@ -184,6 +149,62 @@ async fn api_destinations(target: &Target) -> anyhow::Result<Vec<Value>> {
             json!({"cidr": format!("{ip}/{mask}"), "port": port})
         })
         .collect())
+}
+
+/// Build the platform Job that provisions an org's database logins.
+pub fn provision_job(org: &OrgId, image: &str, database: &ConnectionConfig) -> Value {
+    let login = &database.credentials.name;
+    let mut sql = org_job(
+        SQL_ACCOUNT,
+        image,
+        &["provision-org", org.as_str(), "--database", SQL_CONFIG_PATH],
+    );
+    sql["metadata"] = json!({"name": PROVISION_JOB});
+    let spec = &mut sql["spec"]["template"]["spec"];
+    spec["automountServiceAccountToken"] = true.into();
+    spec["volumes"] = json!([
+        {"name": "configuration", "configMap": {"name": SYSTEM_SQL_CONFIG}},
+        {"name": "org-inputs", "configMap": {"name": ORG_INPUTS}},
+        {"name": "database", "projected": {"defaultMode": 256, "sources": [
+            {"secret": {"name": login, "items": [
+                {"key": "tls.crt", "path": format!("{login}/tls.crt")},
+                {"key": "tls.key", "path": format!("{login}/tls.key")},
+            ]}},
+            {"secret": {"name": database.server_ca.name, "items": [
+                {"key": "ca.crt", "path": format!("{login}/ca.crt")},
+            ]}},
+        ]}},
+    ]);
+    spec["containers"][0]["volumeMounts"] = json!([
+        {"name": "configuration", "mountPath": "/etc/wamn/system-sql", "readOnly": true},
+        {"name": "org-inputs", "mountPath": ORG_INPUTS_DIR, "readOnly": true},
+        {"name": "database", "mountPath": DATABASE_DIR, "readOnly": true},
+    ]);
+    sql
+}
+
+/// Build the org Job that sends the first owner's invitation.
+pub fn invitation_job(org: &OrgId, image: &str, owner: &str) -> Value {
+    let mut invitation = org_job(
+        INVITATION_ACCOUNT,
+        image,
+        &[
+            "invite-org-owner",
+            org.as_str(),
+            &format!("--owner={owner}"),
+        ],
+    );
+    invitation["spec"]["backoffLimit"] = 5.into();
+    let spec = &mut invitation["spec"]["template"]["spec"];
+    spec["volumes"] = json!([
+        {"name": "control-token", "projected": {"defaultMode": 256, "sources": [
+            {"serviceAccountToken": {"audience": CONTROL_AUDIENCE, "expirationSeconds": 600, "path": "token"}},
+        ]}},
+    ]);
+    spec["containers"][0]["volumeMounts"] = json!([
+        {"name": "control-token", "mountPath": "/var/run/secrets/wamn-control", "readOnly": true},
+    ]);
+    invitation
 }
 
 fn org_job(account: &str, image: &str, args: &[&str]) -> Value {

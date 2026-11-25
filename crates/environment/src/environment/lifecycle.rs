@@ -165,7 +165,14 @@ async fn configure_project(
             .take();
     values["databaseConfig"] = workload::configuration_values(triple, instance, &connections)?;
     values["environmentDocument"] = applied_document.into();
-    values["cdcReader"] = reader_values(platform, triple, &capture).await?;
+    let image = wamn_platform_install::deployment::host_image(&platform.chart).await?;
+    values["cdcReader"] = reader_values(
+        triple,
+        &capture,
+        &image,
+        &platform.nats_url,
+        platform.registry_token_metadata,
+    );
     let paused = lock.has_capture_gap(triple).await?;
     values["cdcReader"]["pause"] = paused.into();
     // Wait for the database first because the reader needs the slot created below.
@@ -248,22 +255,24 @@ async fn configure_project(
     .await
 }
 
-async fn reader_values(
-    platform: &Platform,
+/// Build CDC reader chart values from resolved connection and image settings.
+pub fn reader_values(
     triple: &Triple,
     capture: &ConnectionConfig,
-) -> anyhow::Result<Value> {
-    let image = wamn_platform_install::deployment::host_image(&platform.chart).await?;
+    image: &str,
+    nats_url: &str,
+    registry_token_metadata: bool,
+) -> Value {
     let (org, project, env) = (&triple.org, &triple.project, &triple.env);
     let capture_name = wamn_registry::name::cdc_reader_name(org, project, env);
-    Ok(json!({
+    json!({
         "name":capture_name,
         "key": name::project_env_key(org, project, env),
         "coordinate": triple.to_string(),
         "image": image,
-        "registrySecret": (!platform.registry_token_metadata).then_some(name::REGISTRY_PULL),
+        "registrySecret": (!registry_token_metadata).then_some(name::REGISTRY_PULL),
         "natsSecret": name::project_nats_secret(triple, "cdc"),
         "database": capture,
-        "natsUrl": platform.nats_url,
-    }))
+        "natsUrl": nats_url,
+    })
 }

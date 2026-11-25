@@ -301,7 +301,11 @@ pub async fn application(
     .await
 }
 
-fn use_pod_registry(chart: &SelectedChart, values: &mut serde_yaml::Value) -> anyhow::Result<()> {
+/// Apply the pod-local registry references for an application deployment.
+pub fn use_pod_registry(
+    chart: &SelectedChart,
+    values: &mut serde_yaml::Value,
+) -> anyhow::Result<()> {
     if let Cow::Owned(image) = pod_registry_reference(chart.image("ingress")?) {
         values["platform"]["roles"]["ingress"]["image"] = image.into();
     }

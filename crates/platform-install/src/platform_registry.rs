@@ -1,6 +1,6 @@
 //! OCI operations for platform and org installation.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, ensure};
 
@@ -13,9 +13,18 @@ pub(crate) fn docker_configuration(registry: &str, pod_registry: &str) -> anyhow
         .filter(|path| !path.is_empty())
         .map(PathBuf::from)
         .context("registry-credentials-file-required: set WAMN_REGISTRY_AUTH_FILE")?;
+    registry_configuration(&path, registry, pod_registry)
+}
+
+/// Read the registry credentials to pass to the org's image-pull Secret.
+pub fn registry_configuration(
+    path: &Path,
+    registry: &str,
+    pod_registry: &str,
+) -> anyhow::Result<Vec<u8>> {
     let registry = registry.split('/').next().unwrap_or_default();
     let pod_registry = pod_registry.split('/').next().unwrap_or_default();
-    let config = project_registry_credentials(&path, registry, pod_registry)?;
+    let config = project_registry_credentials(path, registry, pod_registry)?;
     Ok(serde_json::to_vec(&config)?)
 }
 

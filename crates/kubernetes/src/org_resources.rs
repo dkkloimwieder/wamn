@@ -35,14 +35,19 @@ pub async fn ensure_helm_storage_namespace(target: &Target, storage: &str) -> an
         .patch(
             storage,
             &apply,
-            &Patch::Apply(json!({
-                "apiVersion": "v1", "kind": "Namespace",
-                "metadata": {"name": storage, "labels": {"app.kubernetes.io/part-of": "wamn"}},
-            })),
+            &Patch::Apply(helm_storage_namespace(storage)),
         )
         .await
         .context("create the org Helm storage namespace")?;
     Ok(())
+}
+
+/// Build the Namespace that holds an org's Helm release records.
+pub fn helm_storage_namespace(storage: &str) -> Value {
+    json!({
+        "apiVersion": "v1", "kind": "Namespace",
+        "metadata": {"name": storage, "labels": {"app.kubernetes.io/part-of": "wamn"}},
+    })
 }
 
 pub async fn write_registry_credentials(
@@ -50,21 +55,25 @@ pub async fn write_registry_credentials(
     org: &OrgId,
     credentials: &[u8],
 ) -> anyhow::Result<()> {
-    let secret = json!({
-        "apiVersion": "v1", "kind": "Secret", "type": "kubernetes.io/dockerconfigjson",
-        "metadata": {"name": REGISTRY_PULL, "namespace": org},
-        "data": {".dockerconfigjson": STANDARD.encode(credentials)},
-    });
     let secrets = Api::<Secret>::namespaced(target.client.client(), org.as_str());
     secrets
         .patch(
             REGISTRY_PULL,
             &PatchParams::apply(APPLY_MANAGER),
-            &Patch::Apply(secret),
+            &Patch::Apply(registry_credentials(org, credentials)),
         )
         .await
         .with_context(|| format!("apply {REGISTRY_PULL} in {org}"))?;
     Ok(())
+}
+
+/// Build the org's image-pull Secret from its Docker configuration bytes.
+pub fn registry_credentials(org: &OrgId, credentials: &[u8]) -> Value {
+    json!({
+        "apiVersion": "v1", "kind": "Secret", "type": "kubernetes.io/dockerconfigjson",
+        "metadata": {"name": REGISTRY_PULL, "namespace": org},
+        "data": {".dockerconfigjson": STANDARD.encode(credentials)},
+    })
 }
 
 pub async fn reload_control(
@@ -187,9 +196,10 @@ pub async fn secret_entry(target: &Target, name: &str, key: &str) -> anyhow::Res
     Ok(bytes.0)
 }
 
-pub async fn api_addresses(target: &Target) -> anyhow::Result<BTreeSet<(IpAddr, i32)>> {
-    let services = Api::<Service>::namespaced(target.client.client(), "default");
-    let endpoints = Api::<EndpointSlice>::namespaced(target.client.client(), "default");
+/// Read the Kubernetes API Service and EndpointSlice addresses.
+pub async fn api_addresses(client: kube::Client) -> anyhow::Result<BTreeSet<(IpAddr, i32)>> {
+    let services = Api::<Service>::namespaced(client.clone(), "default");
+    let endpoints = Api::<EndpointSlice>::namespaced(client, "default");
     let params = ListParams::default().labels("kubernetes.io/service-name=kubernetes");
     let (service, slices) = tokio::try_join!(services.get("kubernetes"), endpoints.list(&params))?;
     let mut destinations = BTreeSet::new();
