@@ -80,19 +80,19 @@ async fn disabling_a_connection_preserves_file_references_and_referenced_delete_
         "admin:file-fixture",
     )
     .await?;
-    sqlx::query("UPDATE platform.connection SET status='disabled' WHERE id=$1::text::uuid")
+    sqlx::query("UPDATE platform.connection SET active=false WHERE id=$1::text::uuid")
         .bind(files::CONNECTION)
         .execute(&mut *writer)
         .await
         .map(|result| result.rows_affected())?;
     writer.commit().await?;
     let row = sqlx::query(
-        "SELECT c.status,f.connection_id::text FROM file_fixture.document d \
+        "SELECT c.active,f.connection_id::text FROM file_fixture.document d \
          JOIN platform.file f ON f.id=d.file_id JOIN platform.connection c ON c.id=f.connection_id",
     )
     .fetch_one(&mut fixture.guest)
     .await?;
-    assert_eq!(row.get::<String, _>(0), "disabled");
+    assert!(!row.get::<bool, _>(0));
     assert_eq!(row.get::<String, _>(1), files::CONNECTION);
     let mut writer = files::transaction(
         &mut fixture.writer,

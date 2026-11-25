@@ -110,7 +110,7 @@ async fn maintenance_copies_current_authority_past_an_unreachable_database() -> 
 
     let roles = sqlx::query_scalar::<_, String>(
         "SELECT r.role_name FROM platform.user_role r JOIN platform.\"user\" u ON u.id = r.user_id
-         WHERE u.id = $1 AND u.status = 'active' ORDER BY r.role_name",
+         WHERE u.id = $1 AND u.active ORDER BY r.role_name",
     )
     .bind(uuid::Uuid::from(member))
     .fetch_all(&mut target)

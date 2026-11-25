@@ -14,8 +14,8 @@ use super::service::active_service;
 
 const USER_ROW_SQL: &str = "INSERT INTO platform.\"user\" \
     (id, issuer, sub, type, email, display_name) VALUES ($1, $2, $3, 'user', $4, $5) \
-    ON CONFLICT (id) DO UPDATE SET status = 'active' \
-    WHERE platform.\"user\".type = 'user' AND platform.\"user\".status <> 'active'";
+    ON CONFLICT (id) DO UPDATE SET active = true \
+    WHERE platform.\"user\".type = 'user' AND NOT platform.\"user\".active";
 
 /// Insert or reactivate a projected user, preserving its identity and creation stamps.
 pub async fn write_user(
@@ -43,8 +43,8 @@ pub(super) async fn disable_project_user(
 ) -> Result<(), IdentityError> {
     let principal = Uuid::from(*principal_id);
     let disabled = sqlx::query(
-        r#"UPDATE platform."user" SET status = 'disabled'
-           WHERE id = $1 AND type = 'user' AND status <> 'disabled'"#,
+        r#"UPDATE platform."user" SET active = false
+           WHERE id = $1 AND type = 'user' AND active"#,
     )
     .bind(principal)
     .execute(&mut *client)
@@ -124,7 +124,7 @@ pub async fn disable(
     principal: &PrincipalId,
 ) -> Result<(), ServiceError> {
     sqlx::query_scalar(
-        r#"UPDATE platform."user" SET status='disabled'
+        r#"UPDATE platform."user" SET active=false
            WHERE id=$1 AND issuer='wamn' AND type='service' RETURNING id"#,
     )
     .bind(Uuid::from(*principal))
@@ -145,10 +145,10 @@ pub async fn disable_connection_services(
     project: &mut sqlx::PgConnection,
 ) -> Result<(), sqlx::Error> {
     sqlx::query(
-        r#"UPDATE platform."user" u SET status='disabled'
+        r#"UPDATE platform."user" u SET active=false
            FROM platform.connection c
            WHERE u.id=c.service_principal_id AND u.issuer='wamn'
-             AND u.type='service' AND u.status<>'disabled'"#,
+             AND u.type='service' AND u.active"#,
     )
     .execute(project)
     .await?;

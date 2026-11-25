@@ -22,7 +22,7 @@ impl<'a> ConnectionStore<'a> {
     }
 
     pub(super) async fn fact(&mut self, id: &Uuid) -> Result<Option<ConnectionFact>, sqlx::Error> {
-        let Some(row) = sqlx::query("SELECT c.active_generation,c.status='active' AS active,g.credential_id,c.target_id,c.resource_key,c.service_principal_id,c.authority FROM platform.connection c JOIN platform.connection_generation g ON (g.connection_id,g.generation)=(c.id,c.active_generation) WHERE c.id=$1")
+        let Some(row) = sqlx::query("SELECT c.active_generation,c.active,g.credential_id,c.target_id,c.resource_key,c.service_principal_id,c.authority FROM platform.connection c JOIN platform.connection_generation g ON (g.connection_id,g.generation)=(c.id,c.active_generation) WHERE c.id=$1")
         .bind(id).fetch_optional(&mut *self.connection).await? else { return Ok(None); };
         Ok(Some(ConnectionFact {
             active_generation: row.try_get("active_generation")?,

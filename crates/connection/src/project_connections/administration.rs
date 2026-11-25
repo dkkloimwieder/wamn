@@ -366,14 +366,14 @@ impl<'a, 'session> Administration<'a, 'session> {
         Ok(sqlx::query_scalar("SELECT jsonb_build_object('store',k.store,'ref',k.ref,'version',k.version) FROM platform.connection c JOIN platform.connection_generation g ON (g.connection_id,g.generation)=(c.id,c.active_generation) JOIN platform.credential k ON k.id=g.credential_id WHERE c.id=$1").bind(id).fetch_optional(&mut **self.project).await.map_err(database_error)?.unwrap_or(Value::Null))
     }
 
-    pub(crate) async fn set_connection_status(
+    pub(crate) async fn set_connection_active(
         &mut self,
         id: Uuid,
-        status: &str,
+        active: bool,
     ) -> Result<(), ConnectionError> {
-        sqlx::query("UPDATE platform.connection SET status=$2 WHERE id=$1")
+        sqlx::query("UPDATE platform.connection SET active=$2 WHERE id=$1")
             .bind(id)
-            .bind(status)
+            .bind(active)
             .execute(&mut **self.project)
             .await
             .map_err(connection_write_error)?;
@@ -392,7 +392,7 @@ impl<'a, 'session> Administration<'a, 'session> {
     }
 
     pub(crate) async fn connection_summary(&mut self, id: Uuid) -> Result<Value, ConnectionError> {
-        sqlx::query_scalar("SELECT to_jsonb(c)||jsonb_build_object('parameters',g.parameters,'hint',k.hint,'credential_created_at',k.created_at,'credential_created_by',k.created_by,'refresh_status',o.refresh_status,'expires_at',o.expires_at) FROM platform.connection c JOIN platform.connection_generation g ON (g.connection_id,g.generation)=(c.id,c.active_generation) LEFT JOIN platform.credential k ON k.id=g.credential_id LEFT JOIN platform.oauth_token o ON o.connection_id=c.id WHERE c.id=$1")
+        sqlx::query_scalar("SELECT (to_jsonb(c)-'active')||jsonb_build_object('status',CASE WHEN c.active THEN 'active' ELSE 'disabled' END,'parameters',g.parameters,'hint',k.hint,'credential_created_at',k.created_at,'credential_created_by',k.created_by,'refresh_status',o.refresh_status,'expires_at',o.expires_at) FROM platform.connection c JOIN platform.connection_generation g ON (g.connection_id,g.generation)=(c.id,c.active_generation) LEFT JOIN platform.credential k ON k.id=g.credential_id LEFT JOIN platform.oauth_token o ON o.connection_id=c.id WHERE c.id=$1")
         .bind(id).fetch_one(&mut **self.project).await.map_err(database_error)
     }
 

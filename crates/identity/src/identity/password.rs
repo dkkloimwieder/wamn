@@ -145,7 +145,7 @@ async fn usable_token(
     hash: &wamn_digest::Digest,
     purpose: &str,
 ) -> Result<Option<RefusalCause>, PasswordError> {
-    let row = sqlx::query("SELECT t.consumed_at IS NOT NULL, t.expires_at <= clock_timestamp(), p.status = 'active' AND p.type = 'user' FROM identity.password_tokens t JOIN identity.principals p ON p.id = t.principal_id WHERE t.token_hash = $1 AND t.principal_id = $2 AND t.purpose = $3").bind(hash.to_string()).bind(Uuid::from(*principal)).bind(purpose).fetch_optional(&mut *client).await.map_err(|source| database(&source))?;
+    let row = sqlx::query("SELECT t.consumed_at IS NOT NULL, t.expires_at <= clock_timestamp(), p.active AND p.type = 'user' FROM identity.password_tokens t JOIN identity.principals p ON p.id = t.principal_id WHERE t.token_hash = $1 AND t.principal_id = $2 AND t.purpose = $3").bind(hash.to_string()).bind(Uuid::from(*principal)).bind(purpose).fetch_optional(&mut *client).await.map_err(|source| database(&source))?;
     let Some(row) = row else {
         return Ok(Some(RefusalCause::UnknownSecret));
     };
@@ -273,14 +273,14 @@ async fn password_candidate(
     client: &mut Client,
     email: &str,
 ) -> Result<Option<PasswordCandidate>, PasswordError> {
-    let row = sqlx::query("SELECT p.id, p.type, p.subject, p.display_name, p.status, c.password_hash FROM identity.principals p JOIN identity.password_credentials c ON c.principal_id = p.id WHERE p.email = $1 AND p.type = 'user'")
+    let row = sqlx::query("SELECT p.id, p.type, p.subject, p.display_name, p.active, c.password_hash FROM identity.principals p JOIN identity.password_credentials c ON c.principal_id = p.id WHERE p.email = $1 AND p.type = 'user'")
         .bind(email)
         .fetch_optional(client)
         .await
         .map_err(|source| database(&source))?;
     Ok(row.map(|row| PasswordCandidate {
         hash: row.get(5),
-        active: row.get::<&str, _>(4) == "active",
+        active: row.get(4),
         principal: decode_principal(&row),
     }))
 }

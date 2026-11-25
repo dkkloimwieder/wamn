@@ -48,7 +48,7 @@ pub enum EnvironmentStatus {
 }
 
 impl EnvironmentStatus {
-    /// The stored value.
+    /// The status literal used by the control routes.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Active => "active",

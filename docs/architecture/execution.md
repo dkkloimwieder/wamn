@@ -22,9 +22,9 @@ The host makes sure that the original caller holds the entry, once, before the e
 Component membership alone grants no permission to call an operation.
 
 An application host makes sure of the status of its environment for each request, before the auth policy of the route.
-It reads its row of `platform.environment` through the compiled SQL login of its project. That login inherits `wamn_app`. No row means active.
+It reads the `active` flag from `platform.environment` through the compiled SQL login of its project. That login inherits `wamn_app`. No row means active.
 The host keeps the answer in its [auth memory](#auth-memory).
-While the status is `inactive`, every route answers 503 with the code `environment-inactive`, and an anonymous route does too.
+While the flag is `false`, every route answers 503 with the code `environment-inactive`, and an anonymous route does too.
 A failed read answers 503 `authentication-unavailable`.
 The control host and an edge box read no status.
 The [status routes](#host-run-routes) of the control host write the row.
@@ -116,7 +116,7 @@ Any other payload answers 400 `delivery-invalid-payload`.
 | Route | Answer |
 | --- | --- |
 | `wamn-control:permission/mine@0.9.0` | `admin`, and the stable references the caller holds. An `admin` holds every operation the release serves. |
-| `wamn-control:user/list@0.9.0` (application) | Lists active and invited project users. Each entry in `users` has `id`, `email`, `display_name`, `roles` and `admin_covered`. `admin_covered` is true when the user holds `admin`. |
+| `wamn-control:user/list@0.9.0` (application) | Lists active project users. Each entry in `users` has `id`, `email`, `display_name`, `roles` and `admin_covered`. `admin_covered` is true when the user holds `admin`. |
 | `wamn-control:role/list@0.9.0` | `roles`: every role of the project, `admin` included. |
 | `wamn-control:role/create@0.9.0` | Takes `role` and creates the empty authored role. Answers `created`. |
 | `wamn-control:role/delete@0.9.0` | Takes `role` and deletes the authored role with its assignments and permissions. Answers `deleted`. |
@@ -214,8 +214,8 @@ If an environment fails, the route answers `application_write_incomplete` with t
 The system mutation remains committed.
 Control's maintenance loop also reconciles each recorded project environment from current system authority.
 The provisional period is 60 seconds. An unavailable database does not stop the other copies.
-The four status routes need `org-admin`, and they write `registry.environments.status` through the `control` family, which holds `UPDATE` on that column only.
-Each status route also writes the status into the one row of `platform.environment` in each environment, with the same administration login.
+The four status routes need `org-admin`, and they write `registry.environments.active` through the `control` family, which holds `UPDATE` on that column only.
+Each status route also writes the flag into the one row of `platform.environment` in each environment, with the same administration login.
 An inactivation writes the environments first and commits its system rows last, and an activation commits its system rows first.
 Data, membership and role rows do not change with the status, and CDC stays attached.
 Control calls identity over HTTPS with a projected service account token for the `wamn-identity` audience.
@@ -559,7 +559,7 @@ Repeated applies retain its identity and grants.
 
 Publish authorizes the operations that the application declares as dependencies.
 Apply assigns a role with those permissions. Repeated applies write no principal or role rows.
-The executor's database role reads only `id`, `type`, `status`, and `email` from `platform."user"`.
+The executor's database role reads only `id`, `type`, `active`, and `email` from `platform."user"`.
 It can insert the principal into a run but cannot change that identity afterward.
 
 The [JSONata node](../../apps/guests/jsonata-expression/src/lib.rs) is a palette node compiled to wasm.

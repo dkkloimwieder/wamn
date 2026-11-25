@@ -1104,7 +1104,7 @@ async fn connection_binding(
     project: &PgLifecycleLock,
     name: &str,
 ) -> anyhow::Result<Option<ConnectionBinding>> {
-    let connection=sqlx::query("SELECT c.id::text,c.integration_type,g.parameters,c.active_generation,c.target_id::text,c.authority FROM platform.connection c JOIN platform.connection_generation g ON (g.connection_id,g.generation)=(c.id,c.active_generation) WHERE c.name=$1 AND c.status='active'")
+    let connection=sqlx::query("SELECT c.id::text,c.integration_type,g.parameters,c.active_generation,c.target_id::text,c.authority FROM platform.connection c JOIN platform.connection_generation g ON (g.connection_id,g.generation)=(c.id,c.active_generation) WHERE c.name=$1 AND c.active")
             .bind(name).fetch_optional(&mut *project.client().await).await?;
     connection
         .map(|row| {
@@ -1127,7 +1127,7 @@ async fn integration_binding(
     version: i32,
     connection: &ConnectionBinding,
 ) -> anyhow::Result<Option<IntegrationBinding>> {
-    let row=sqlx::query("SELECT $1::text AS id,t.code,t.runtime_type,$3::jsonb AS parameters,v.parameter_schema,v.digest,v.operations,$6::bigint AS generation,t.exclusive,v.exports,v.write_interfaces,destination.type FROM registry.integration_type t JOIN registry.target destination ON destination.id=$4::text::uuid AND destination.name=$5 AND destination.status='active' JOIN registry.environments e ON e.org=$7 AND e.env=$8 LEFT JOIN registry.integration_type_version v ON v.integration_type=t.code AND v.version=$9 WHERE t.code=$2")
+    let row=sqlx::query("SELECT $1::text AS id,t.code,t.runtime_type,$3::jsonb AS parameters,v.parameter_schema,v.digest,v.operations,$6::bigint AS generation,t.exclusive,v.exports,v.write_interfaces,destination.type FROM registry.integration_type t JOIN registry.target destination ON destination.id=$4::text::uuid AND destination.name=$5 AND destination.active JOIN registry.environments e ON e.org=$7 AND e.env=$8 LEFT JOIN registry.integration_type_version v ON v.integration_type=t.code AND v.version=$9 WHERE t.code=$2")
             .bind(&connection.id).bind(&connection.integration_type).bind(&connection.parameters).bind(&connection.target).bind(target).bind(connection.generation).bind(triple.org.as_str()).bind(triple.env.as_str()).bind(version)
             .fetch_optional(&mut *system.client().await).await?;
     row.map(|row| {

@@ -33,7 +33,7 @@ async fn native_connection_summary_decodes_query_rows() -> anyhow::Result<()> {
     .await?;
     transaction.commit().await?;
 
-    let mut transaction = project.begin().await?;
+    let mut transaction = provisioning_transaction(&mut project).await?;
     let mut administration = Administration::new(&mut transaction, &mut system, None, None);
     let org = "acme".parse()?;
     let listed = configure(
@@ -48,6 +48,7 @@ async fn native_connection_summary_decodes_query_rows() -> anyhow::Result<()> {
     assert!(rows.iter().any(|row| row["name"] == "authenticated"));
     for row in rows {
         let summary: ConnectionSummary = serde_json::from_value(row.clone())?;
+        assert_eq!(summary.status, "active");
         assert_eq!(serde_json::to_value(&summary)?, *row);
         let found: Value = configure(
             &mut administration,
@@ -58,6 +59,15 @@ async fn native_connection_summary_decodes_query_rows() -> anyhow::Result<()> {
         .await?;
         let summary: ConnectionSummary = serde_json::from_value(found.clone())?;
         assert_eq!(serde_json::to_value(summary)?, found);
+    }
+    let plain = json!({"project":"billing", "env":"dev", "name":"plain"});
+    for (operation, expected) in [
+        ("connection.disable", "disabled"),
+        ("connection.enable", "active"),
+    ] {
+        configure(&mut administration, &org, operation, &plain).await?;
+        let found = configure(&mut administration, &org, "connection.get", &plain).await?;
+        assert_eq!(found["status"], expected);
     }
     Ok(())
 }

@@ -14,7 +14,7 @@ pub const IDENTITY_ISSUER_READ_COLUMNS: [(&str, &str, &[&str]); 9] = [
     (
         "identity",
         "principals",
-        &["id", "type", "subject", "display_name", "status"],
+        &["id", "type", "subject", "display_name", "active"],
     ),
     (
         "identity",
@@ -36,12 +36,12 @@ pub const IDENTITY_ISSUER_READ_COLUMNS: [(&str, &str, &[&str]); 9] = [
     ),
     ("registry", "orgs", &["id"]),
     ("registry", "projects", &["org", "id"]),
-    ("registry", "environments", &["org", "env", "status"]),
+    ("registry", "environments", &["org", "env", "active"]),
     ("identity", "org_roles", &["principal_id", "org", "role"]),
     (
         "identity",
         "org_memberships",
-        &["principal_id", "org", "status"],
+        &["principal_id", "org", "active"],
     ),
 ];
 
@@ -53,7 +53,7 @@ pub const IDENTITY_ISSUER_PASSWORD_COLUMNS: &[(&str, &str, &[&str])] = &[
         "INSERT",
         &["type", "subject", "email", "display_name"],
     ),
-    ("principals", "UPDATE", &["status", "disabled_at"]),
+    ("principals", "UPDATE", &["active"]),
     (
         "password_credentials",
         "SELECT",

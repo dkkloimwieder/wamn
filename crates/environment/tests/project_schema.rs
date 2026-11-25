@@ -114,7 +114,6 @@ async fn app_schema_applies_and_enforces_isolation_on_postgres() {
     const U1: &str = "11111111-1111-1111-1111-111111111111";
     const U2: &str = "22222222-2222-2222-2222-222222222222";
     const U3: &str = "33333333-3333-3333-3333-333333333333";
-    const U4: &str = "44444444-4444-4444-4444-444444444444";
     const PROJECT_ENV_KEY_1: &str = "t1--dev--project";
     const PROJECT_ENV_KEY_2: &str = "t2--dev--project";
 
@@ -216,16 +215,6 @@ async fn app_schema_applies_and_enforces_isolation_on_postgres() {
            ASSERT d IS NULL, 'users.id must have no server default; the org issues it';\n\
          END $$;\n",
     );
-    // The status CHECK rejects a bad row.
-    writeln!(
-        script,
-        "DO $$ BEGIN BEGIN\n\
-           INSERT INTO platform.\"user\" (id, issuer, sub, type, email, status) \
-             VALUES ('{U4}','https://fixture.example','{U4}','user','x@t1','zombie');\n\
-           ASSERT false, 'an unknown user status must be rejected';\n\
-         EXCEPTION WHEN check_violation THEN NULL; END; END $$;"
-    )
-    .expect("writing to a String cannot fail");
     script.push_str("DO $$ BEGIN ASSERT NOT EXISTS (
         SELECT FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
         WHERE n.nspname='platform' AND c.relkind IN ('r','p') AND (
@@ -258,9 +247,9 @@ async fn app_schema_applies_and_enforces_isolation_on_postgres() {
     // A disabled user row still identifies the actor in existing stamps.
     writeln!(
         script,
-        "UPDATE platform.\"user\" SET status = 'disabled' WHERE id = '{U1}';\n\
+        "UPDATE platform.\"user\" SET active = false WHERE id = '{U1}';\n\
          DO $$ BEGIN\n\
-           ASSERT EXISTS (SELECT FROM platform.\"user\" WHERE id = '{U1}' AND status = 'disabled');\n\
+           ASSERT EXISTS (SELECT FROM platform.\"user\" WHERE id = '{U1}' AND NOT active);\n\
          END $$;"
     )
     .expect("writing to a String cannot fail");
@@ -365,7 +354,7 @@ async fn platform_relations_log_every_row_change_on_postgres() {
          COMMIT;\n\
          BEGIN;\n\
          INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('{U2}'::uuid,'','fixture','{CHANGE}');\n\
-         UPDATE platform.\"user\" SET status = 'disabled' WHERE id = '{U2}';\n\
+         UPDATE platform.\"user\" SET active = false WHERE id = '{U2}';\n\
          UPDATE platform.role SET description = 'administrators' WHERE name = 'admin';\n\
          UPDATE platform.user_role SET role_name = 'auditor' WHERE user_id = '{U3}';\n\
          UPDATE platform.permission SET permission = 'platform-fixture:widget/list';\n\
@@ -374,7 +363,7 @@ async fn platform_relations_log_every_row_change_on_postgres() {
          BEGIN;\n\
          INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('{U3}'::uuid,'','fixture','{REMOVE}');\n\
          DELETE FROM platform.setting;\n\
-         UPDATE platform.\"user\" SET status = 'disabled' WHERE id = '{U1}';\n\
+         UPDATE platform.\"user\" SET active = false WHERE id = '{U1}';\n\
          DELETE FROM platform.user_role WHERE user_id = '{U1}';\n\
          DELETE FROM platform.role WHERE name IN ('admin', 'auditor');\n\
          COMMIT;"
@@ -415,10 +404,10 @@ async fn platform_relations_log_every_row_change_on_postgres() {
     }
     writeln!(script, "DO $$ BEGIN
         ASSERT EXISTS (SELECT FROM platform.user_history WHERE type = 'update'
-            AND row_key ->> 'id' = '{U2}' AND before ->> 'status' = 'active' AND after ->> 'status' = 'disabled');
+            AND row_key ->> 'id' = '{U2}' AND before -> 'active' = 'true'::jsonb AND after -> 'active' = 'false'::jsonb);
         ASSERT EXISTS (SELECT FROM platform.user_history WHERE type = 'update'
             AND operation = '{REMOVE}' AND changed_by = '{U3}'
-            AND row_key ->> 'id' = '{U1}' AND before ->> 'status' = 'active' AND after ->> 'status' = 'disabled');
+            AND row_key ->> 'id' = '{U1}' AND before -> 'active' = 'true'::jsonb AND after -> 'active' = 'false'::jsonb);
         ASSERT EXISTS (SELECT FROM platform.role_history WHERE type = 'update'
             AND row_key ->> 'name' = 'admin' AND after ->> 'description' = 'administrators');
         ASSERT EXISTS (SELECT FROM platform.setting_history WHERE type = 'update'

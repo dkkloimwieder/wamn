@@ -160,7 +160,7 @@ The hierarchy is org, environment, project, application.
 `wamn-registry` defines the values that registry readers return.
 `wamn-environment` owns SQL for deployment records, applied configuration, and lifecycle locks.
 `wamn-platform-install` owns SQL for system and org setup. `wamn-connection` holds the project connection store.
-`registry.environments` stores each environment's status, disposable setting, target, readiness budget, drain bound, and grant cache lifetime.
+`registry.environments` stores each environment's active flag, disposable setting, target, readiness budget, drain bound, and grant cache lifetime.
 `registry.projects` holds org-level project definitions.
 `registry.environment_projects` places a project under an environment and owns its database Secret and instance suffix.
 Applications are releases under those project deployments.
@@ -180,7 +180,7 @@ Request settings cannot select a different org.
 ## Organization membership and administration
 
 A principal is global. Membership of an org is explicit.
-`identity.org_memberships` holds one row for each principal and org, with the status `active` or `inactive`.
+`identity.org_memberships` holds one row for each principal and org, and uses a boolean `active` flag.
 `user.create` and `user.invite` create or reuse the principal and activate its org membership.
 Control refuses a new or reactivated membership if the user belongs to another org, including an inactive membership.
 An active member can hold no project access, a membership of environments, application roles, `project-admin`, or `org-admin`.
@@ -203,7 +203,7 @@ Projection disables the retained user row in each affected project environment, 
 The global principal and access in other orgs stay.
 Reactivation restores the org membership and no removed grants.
 
-Disabling a user changes the global principal status and revokes password logins.
+Disabling a user clears the global principal’s active flag and revokes password logins.
 Control refuses if another org has an active membership for the user.
 Project databases keep their user rows. Control's maintenance loop projects the disabled authority into them.
 Already issued access tokens have a 900-second lifetime. The disabled user cannot renew.

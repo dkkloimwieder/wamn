@@ -149,10 +149,10 @@ CREATE TABLE registry.target (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     name text NOT NULL UNIQUE,
     type text NOT NULL CHECK (type IN ('local', 'cloud')),
-    status text NOT NULL,
+    active boolean NOT NULL DEFAULT true,
     last_seen_at timestamptz
 );
-INSERT INTO registry.target (name, type, status) VALUES ('cloud', 'cloud', 'active');
+INSERT INTO registry.target (name, type) VALUES ('cloud', 'cloud');
 
 
 -- ---------------------------------------------------------------------------
@@ -297,8 +297,7 @@ CREATE TABLE identity.principals (
     subject      text NOT NULL,
     email        text,
     display_name text NOT NULL,
-    status       text NOT NULL DEFAULT 'active',
-    disabled_at  timestamptz,
+    active       boolean NOT NULL DEFAULT true,
     created_at   timestamptz NOT NULL,
     created_by   uuid NOT NULL,
     updated_at   timestamptz NOT NULL,
@@ -319,10 +318,6 @@ CREATE TABLE identity.principals (
                         AND char_length(email) <= 254))),
     CONSTRAINT principals_display_name_check
         CHECK (btrim(display_name) <> '' AND char_length(display_name) <= 200),
-    CONSTRAINT principals_status_check
-        CHECK (status IN ('active', 'disabled')),
-    CONSTRAINT principals_disabled_at_check
-        CHECK ((status = 'disabled') = (disabled_at IS NOT NULL)),
     CONSTRAINT principals_platform_principal_check
         CHECK (CASE WHEN type = 'platform'
                     THEN (subject, display_name, id) IN (
@@ -369,14 +364,14 @@ CREATE TRIGGER wamn_record_history_stamp
 -- ---------------------------------------------------------------------------
 
 -- A user's membership of one org (docs/plan/platform-ui.md §2.7). The
--- principal stays global, and the membership status is org-local: an
+-- principal stays global, and the membership's active flag is org-local: an
 -- inactive member keeps the row and holds no access in the org.
 CREATE TABLE identity.org_memberships (
     principal_id   uuid NOT NULL,
     principal_type text NOT NULL DEFAULT 'user',
     org            text NOT NULL
         REFERENCES registry.orgs (id) ON DELETE CASCADE,
-    status         text NOT NULL,
+    active         boolean NOT NULL DEFAULT true,
     created_at     timestamptz NOT NULL,
     created_by     uuid NOT NULL,
     updated_at     timestamptz NOT NULL,
@@ -385,9 +380,7 @@ CREATE TABLE identity.org_memberships (
     FOREIGN KEY (principal_id, principal_type)
         REFERENCES identity.principals (id, type) ON DELETE CASCADE,
     CONSTRAINT org_memberships_user_check
-        CHECK (principal_type = 'user'),
-    CONSTRAINT org_memberships_status_check
-        CHECK (status IN ('active', 'inactive'))
+        CHECK (principal_type = 'user')
 );
 CREATE TRIGGER wamn_record_history_stamp
     BEFORE INSERT OR UPDATE ON identity.org_memberships
@@ -399,7 +392,7 @@ CREATE TRIGGER wamn_record_history_stamp
 CREATE FUNCTION identity.check_org_membership() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
 BEGIN
-    IF TG_OP = 'UPDATE' AND NEW.status <> 'active'
+    IF TG_OP = 'UPDATE' AND NOT NEW.active
        AND (NEW.principal_id, NEW.org) = (OLD.principal_id, OLD.org) THEN
         RETURN NEW;
     END IF;
@@ -418,7 +411,7 @@ END;
 $$;
 REVOKE ALL ON FUNCTION identity.check_org_membership() FROM PUBLIC;
 CREATE TRIGGER check_org_membership
-    AFTER INSERT OR UPDATE OF principal_id, org, status ON identity.org_memberships
+    AFTER INSERT OR UPDATE OF principal_id, org, active ON identity.org_memberships
     FOR EACH ROW EXECUTE FUNCTION identity.check_org_membership();
 
 -- A user's administrative role in one org (docs/plan/platform-ui.md §4.4).
@@ -541,8 +534,8 @@ END;
 $$;
 REVOKE ALL ON FUNCTION identity.revoke_disabled_password_logins() FROM PUBLIC;
 CREATE TRIGGER revoke_disabled_password_logins
-    AFTER UPDATE OF status ON identity.principals
-    FOR EACH ROW WHEN (NEW.status = 'disabled')
+    AFTER UPDATE OF active ON identity.principals
+    FOR EACH ROW WHEN (NOT NEW.active)
     EXECUTE FUNCTION identity.revoke_disabled_password_logins();
 
 -- never per-session state. A fresh UUID kid is generated for each publication;
@@ -662,7 +655,7 @@ CREATE TRIGGER wamn_record_history_stamp
 -- anchored in THIS row, never in a CLI argument or a stage: the target decides.
 -- Lifecycle state belongs to registry.environments. Project database state belongs to its deployment.
 --
--- `status` is `active` or `inactive` (docs/plan/platform-ui.md §5.4). Identity
+-- The active flag controls admission (docs/plan/platform-ui.md §5.4). Identity
 -- offers no audience of an inactive environment, and its host serves none of
 -- its routes. CDC, data and grants stay as they are.
 -- ---------------------------------------------------------------------------
@@ -673,7 +666,7 @@ CREATE TABLE registry.environments (
     readiness_budget_seconds int NOT NULL DEFAULT 600 CHECK (readiness_budget_seconds > 0),
     drain_bound_seconds int NOT NULL DEFAULT 300 CHECK (drain_bound_seconds > 0),
     revocation_seconds int NOT NULL DEFAULT 60 CHECK (revocation_seconds BETWEEN 0 AND 3600),
-    status text NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'inactive')),
+    active boolean NOT NULL DEFAULT true,
     disposable boolean NOT NULL DEFAULT false,
     created_at timestamptz NOT NULL,
     created_by uuid NOT NULL,
@@ -919,7 +912,7 @@ CREATE FUNCTION identity.lock_password_principal(principal uuid) RETURNS boolean
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
 DECLARE eligible boolean;
 BEGIN
-    SELECT status = 'active' AND type = 'user' INTO eligible
+    SELECT active AND type = 'user' INTO eligible
     FROM identity.principals WHERE id = principal FOR UPDATE;
     RETURN COALESCE(eligible, false);
 END;
@@ -989,7 +982,7 @@ CREATE TRIGGER wamn_record_history_stamp
 DO $control_surface$ BEGIN
   IF EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_control') THEN
     EXECUTE format('GRANT CONNECT ON DATABASE %I TO wamn_control', current_database());
-    REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA "identity", "provisioning", "registry" FROM "wamn_control"; REVOKE ALL PRIVILEGES ON SCHEMA "identity", "provisioning", "registry" FROM "wamn_control"; GRANT USAGE ON SCHEMA "identity", "registry" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."org_memberships" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."org_roles" TO "wamn_control"; GRANT SELECT ON TABLE "identity"."password_logins" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE ON TABLE "identity"."principals" TO "wamn_control"; GRANT SELECT (platform_domain) ON registry.meta TO wamn_control; GRANT SELECT ON registry.integration_type, registry.integration_type_version, registry.integration_type_auth, registry.auth_type TO wamn_control; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."project_env_memberships" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."project_roles" TO "wamn_control"; GRANT SELECT ON TABLE "registry"."environment_projects", "registry"."environment_applications", "registry"."environment_application_connections", "registry"."environment_integrations", "registry"."target" TO "wamn_control"; GRANT SELECT, INSERT ON TABLE "registry"."projects" TO "wamn_control"; GRANT UPDATE ("status") ON TABLE "registry"."environments" TO "wamn_control";
+    REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA "identity", "provisioning", "registry" FROM "wamn_control"; REVOKE ALL PRIVILEGES ON SCHEMA "identity", "provisioning", "registry" FROM "wamn_control"; GRANT USAGE ON SCHEMA "identity", "registry" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."org_memberships" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."org_roles" TO "wamn_control"; GRANT SELECT ON TABLE "identity"."password_logins" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE ON TABLE "identity"."principals" TO "wamn_control"; GRANT SELECT (platform_domain) ON registry.meta TO wamn_control; GRANT SELECT ON registry.integration_type, registry.integration_type_version, registry.integration_type_auth, registry.auth_type TO wamn_control; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."project_env_memberships" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."project_roles" TO "wamn_control"; GRANT SELECT ON TABLE "registry"."environment_projects", "registry"."environment_applications", "registry"."environment_application_connections", "registry"."environment_integrations", "registry"."target" TO "wamn_control"; GRANT SELECT, INSERT ON TABLE "registry"."projects" TO "wamn_control"; GRANT UPDATE ("active") ON TABLE "registry"."environments" TO "wamn_control";
   END IF;
 END $control_surface$;
 
@@ -1008,7 +1001,7 @@ REVOKE ALL ON FUNCTION identity.principal_in_login_org_only(uuid) FROM PUBLIC;
 
 DO $identity_membership_read$ BEGIN
     IF to_regrole('wamn_system_reader') IS NOT NULL THEN
-        GRANT SELECT (principal_id, org, status) ON identity.org_memberships TO wamn_system_reader;
+        GRANT SELECT (principal_id, org, active) ON identity.org_memberships TO wamn_system_reader;
         GRANT EXECUTE ON FUNCTION registry.login_org(), registry.login_principal(uuid) TO wamn_system_reader;
     END IF;
 END $identity_membership_read$;
@@ -1071,8 +1064,8 @@ $control_security$;
 CREATE FUNCTION identity.is_project_admin(principal uuid, org_id text, project_id text)
 RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
     SELECT EXISTS (SELECT FROM identity.principals p
-        JOIN identity.org_memberships m ON m.principal_id=p.id AND m.org=org_id AND m.status='active'
-        WHERE p.id=principal AND p.type='user' AND p.status='active'
+        JOIN identity.org_memberships m ON m.principal_id=p.id AND m.org=org_id AND m.active
+        WHERE p.id=principal AND p.type='user' AND p.active
         AND (NOT ((COALESCE(pg_has_role(session_user, to_regrole('wamn_control'), 'member'), false)
                    OR COALESCE(pg_has_role(session_user, to_regrole('wamn_apply'), 'member'), false))
                   AND NOT EXISTS (SELECT FROM pg_roles WHERE rolname = session_user AND rolsuper))
@@ -1094,7 +1087,7 @@ RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalo
         JOIN identity.org_memberships om USING (principal_id,org)
         JOIN identity.principals p ON p.id=m.principal_id
         WHERE m.principal_id=principal AND m.org=org_id AND m.env=environment AND m.project=project_id
-          AND om.status='active' AND p.status='active' AND p.type='user'))
+          AND om.active AND p.active AND p.type='user'))
 $$;
 REVOKE ALL ON FUNCTION identity.has_project_access(uuid,text,text,text) FROM PUBLIC;
 DO $authority_grants$

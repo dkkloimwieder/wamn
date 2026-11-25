@@ -15,13 +15,13 @@ use wamn_postgres::WamnPostgres;
 
 /// The status row of the environment, which `wamn_app` reads under its
 /// database boundary.
-const ENVIRONMENT_INACTIVE_SQL: &str = "SELECT status = 'inactive' FROM platform.environment";
+const ENVIRONMENT_INACTIVE_SQL: &str = "SELECT NOT active FROM platform.environment";
 
 /// The user row of one principal, each role it holds and each permission
 /// of that role, in one read. No row means no user row. A role without
 /// permissions, such as `admin`, yields one row with a null permission, and a
 /// principal without roles yields one row with a null role.
-const PRINCIPAL_GRANTS_SQL: &str = "SELECT u.status = 'active', r.role_name, p.permission, u.type = 'user' \
+const PRINCIPAL_GRANTS_SQL: &str = "SELECT u.active, r.role_name, p.permission, u.type = 'user' \
     FROM platform.\"user\" u LEFT JOIN platform.user_role r \
     ON r.user_id = u.id \
     LEFT JOIN platform.permission p \
@@ -75,7 +75,7 @@ async fn project_pat(
         r#"SELECT u.id, u.sub, p.hash, p.expires_at
            FROM platform.pat p JOIN platform."user" u ON u.id=p.user_id
            WHERE p.prefix=$1 AND p.revoked_at IS NULL AND p.expires_at > now()
-             AND u.issuer='wamn' AND u.type='service' AND u.status='active'"#,
+             AND u.issuer='wamn' AND u.type='service' AND u.active"#,
     )
     .bind(token.lookup().to_string())
     .fetch_optional(project)
@@ -130,7 +130,7 @@ pub(super) async fn resolve_subject(
         .checkout_platform(project, AuthorityClass::Platform)
         .await?;
     let result = sqlx::query_scalar::<_, uuid::Uuid>(
-        "SELECT id FROM platform.\"user\" WHERE issuer = $1 AND sub = $2 AND status = 'active' AND type = 'user'",
+        "SELECT id FROM platform.\"user\" WHERE issuer = $1 AND sub = $2 AND active AND type = 'user'",
     )
     .bind(issuer)
     .bind(subject)

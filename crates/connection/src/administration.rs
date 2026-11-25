@@ -524,12 +524,9 @@ pub async fn configure(
             Ok(row)
         }
         "connection.enable" | "connection.disable" => {
-            let status = if operation.ends_with(".enable") {
-                "active"
-            } else {
-                "disabled"
-            };
-            database.set_connection_status(id, status).await?;
+            database
+                .set_connection_active(id, operation == "connection.enable")
+                .await?;
             Ok(
                 json!({"id":id,"name":name,"env":request["env"],"principal_id":row["service_principal_id"]}),
             )

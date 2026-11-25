@@ -80,12 +80,19 @@ async fn literal_control_http_wire() -> anyhow::Result<()> {
         wamn_postgres::provisioning_transaction::provisioning_transaction(&mut admin).await?;
     sqlx::raw_sql(
         "INSERT INTO registry.projects (org, id) VALUES ('acme', 'alpha'), ('acme', 'beta');
+         INSERT INTO registry.environments (org, env, active) VALUES
+           ('acme', 'dev', true), ('acme', 'paused', false);
+         INSERT INTO registry.environment_projects (org, env, project, secret_name, instance_suffix)
+           SELECT org, env, 'alpha', 'fixture-only', 'a1b2c3d4'
+           FROM registry.environments WHERE org = 'acme';
          INSERT INTO identity.principals (id, type, subject, email, display_name) VALUES
            ('00000000-0000-0000-0000-000000000001', 'user', 'admin@example.invalid', 'admin@example.invalid', 'Admin'),
            ('00000000-0000-0000-0000-000000000002', 'user', 'member@example.invalid', 'member@example.invalid', 'Member'),
            ('00000000-0000-0000-0000-000000000003', 'user', 'project@example.invalid', 'project@example.invalid', 'Project');
-         INSERT INTO identity.org_memberships (principal_id, org, status)
-           SELECT id, 'acme', 'active' FROM identity.principals WHERE email LIKE '%@example.invalid';
+         INSERT INTO identity.principals (type, subject, email, display_name, active) VALUES
+           ('user', 'disabled@example.invalid', 'disabled@example.invalid', 'Disabled', false);
+         INSERT INTO identity.org_memberships (principal_id, org, active)
+           SELECT id, 'acme', active FROM identity.principals WHERE email LIKE '%@example.invalid';
          INSERT INTO identity.org_roles (principal_id, org, role) VALUES
            ('00000000-0000-0000-0000-000000000001', 'acme', 'org-admin');
          INSERT INTO identity.project_roles (principal_id, org, project, role) VALUES
@@ -135,7 +142,7 @@ async fn literal_control_http_wire() -> anyhow::Result<()> {
             "GET /wamn_control/environment/list?project=%22alpha%22",
             "",
             200,
-            r#"[{"value":{"environments":[],"next_cursor":null,"total":0}}]"#,
+            r#"[{"value":{"environments":[{"name":"dev","state":"active"},{"name":"paused","state":"inactive"}],"next_cursor":null,"total":2}}]"#,
         ),
         (
             2,
@@ -152,6 +159,20 @@ async fn literal_control_http_wire() -> anyhow::Result<()> {
             (status, serde_json::from_str(expected)?),
             "{line}"
         );
+    }
+    let (status, body) = request(address, &tokens[0], "GET /wamn_control/user/list", "").await?;
+    assert_eq!(status, 200);
+    let users = body[0]["value"]["users"].as_array().expect("user list");
+    for (email, membership, principal) in [
+        ("admin@example.invalid", "active", "active"),
+        ("disabled@example.invalid", "inactive", "disabled"),
+    ] {
+        let user = users
+            .iter()
+            .find(|user| user["email"] == email)
+            .expect(email);
+        assert_eq!(user["status"], membership);
+        assert_eq!(user["principal_status"], principal);
     }
     Ok(())
 }

@@ -509,11 +509,13 @@ pub(crate) mod tests {
             .await
             .unwrap();
         for member in &members {
-            sqlx::query("INSERT INTO identity.org_memberships (principal_id, org, status) VALUES ($1, 'demo', 'active')")
-                .bind(sqlx::types::Uuid::from(*member.id()))
-                .execute(&mut *tx)
-                .await
-                .unwrap();
+            sqlx::query(
+                "INSERT INTO identity.org_memberships (principal_id, org) VALUES ($1, 'demo')",
+            )
+            .bind(sqlx::types::Uuid::from(*member.id()))
+            .execute(&mut *tx)
+            .await
+            .unwrap();
         }
         tx.commit().await.unwrap();
         url.set_username(identity_issuer_login(issuer).unwrap().as_str())

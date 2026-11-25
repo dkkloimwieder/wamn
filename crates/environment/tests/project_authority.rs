@@ -191,13 +191,13 @@ END $$;
 
 BEGIN;
 INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('{U1}'::uuid,'','fixture','admin:authority-fixture');
-UPDATE platform."user" SET status = 'disabled' WHERE id = '{U1}';
+UPDATE platform."user" SET active = false WHERE id = '{U1}';
 SET LOCAL ROLE {app_generation};
 
 DO $$ BEGIN
   ASSERT current_user = '{app_generation}',
     'the project authority is the prepared App generation';
-  ASSERT EXISTS (SELECT FROM platform."user" WHERE id = '{U1}' AND status = 'disabled'),
+  ASSERT EXISTS (SELECT FROM platform."user" WHERE id = '{U1}' AND NOT active),
     'disabled users are still readable';
   ASSERT (SELECT count(*) FROM platform.user_role) = 1,
     'the role linkage 4.2 resolves app.role from is still readable';
@@ -209,7 +209,7 @@ BEGIN
   FOREACH probe_sql IN ARRAY ARRAY[
     'INSERT INTO platform."user" (id, issuer, sub, type, email) VALUES (''{U2}'', ''https://fixture.example'', ''{U2}'', ''user'', ''intruder@t1'')',
     'INSERT INTO platform."user" (id, issuer, sub, type, email, display_name) VALUES (''{PROVISIONING}'', ''wamn:platform'', ''{PROVISIONING}'', ''platform'', ''provisioning@example.invalid'', ''wamn:provisioning'')',
-    'UPDATE platform."user" SET status = ''active''',
+    'UPDATE platform."user" SET active = true',
     'UPDATE platform."user" SET display_name = ''wamn:intruder''',
     'DELETE FROM platform."user"',
     'INSERT INTO platform.role (name) VALUES (''superadmin'')',
@@ -230,8 +230,8 @@ BEGIN
     'UPDATE platform.setting SET locked = true',
     'INSERT INTO platform.external_system (id,name) VALUES (gen_random_uuid(),''forged'')',
     'DELETE FROM platform.connection',
-    'INSERT INTO platform.environment (status) VALUES (''active'')',
-    'UPDATE platform.environment SET status = ''active''',
+    'INSERT INTO platform.environment (active) VALUES (true)',
+    'UPDATE platform.environment SET active = true',
     'DELETE FROM platform.environment'
   ] LOOP
     BEGIN

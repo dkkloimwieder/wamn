@@ -72,7 +72,7 @@ CREATE TABLE platform.connection (
     authority text CHECK (authority IS NULL OR authority <> ''),
     active_generation bigint NOT NULL,
     service_principal_id uuid NOT NULL UNIQUE,
-    status text NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'disabled'))
+    active boolean NOT NULL DEFAULT true
 );
 CREATE UNIQUE INDEX connection_resource_per_target
     ON platform.connection (target_id, resource_key)

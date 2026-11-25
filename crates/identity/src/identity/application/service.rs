@@ -45,7 +45,7 @@ pub async fn active_service(
 ) -> Result<Option<PrincipalId>, ServiceError> {
     sqlx::query_scalar::<_, Uuid>(
         r#"SELECT id FROM platform."user"
-           WHERE issuer='wamn' AND sub=$1 AND type='service' AND status='active'
+           WHERE issuer='wamn' AND sub=$1 AND type='service' AND active
            FOR UPDATE"#,
     )
     .bind(subject)
@@ -95,7 +95,7 @@ pub async fn issue(
         r#"INSERT INTO platform.pat (user_id, prefix, hash, label, expires_at)
            SELECT id, $2, $3, $4, now() + ($5::bigint * interval '1 second')
            FROM platform."user"
-           WHERE id=$1 AND issuer='wamn' AND type='service' AND status='active'
+           WHERE id=$1 AND issuer='wamn' AND type='service' AND active
            FOR UPDATE
            RETURNING to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
                      to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')"#,

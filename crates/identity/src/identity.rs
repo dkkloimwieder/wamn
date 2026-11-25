@@ -36,21 +36,21 @@ pub mod transaction;
 
 const INSERT_USER_SQL: &str = "INSERT INTO identity.principals \
     (type, subject, email, display_name) VALUES ('user', $1, $2, $3) \
-    RETURNING id, type, subject, display_name, status";
+    RETURNING id, type, subject, display_name, active";
 /// The user insert of [`create_or_reuse_user`]. An existing email or subject
 /// skips it.
 const INSERT_USER_IF_ABSENT_SQL: &str = "INSERT INTO identity.principals \
     (type, subject, email, display_name) VALUES ('user', $1, $2, $3) \
     ON CONFLICT DO NOTHING";
-const SELECT_USER_BY_EMAIL_SQL: &str = "SELECT p.id, p.status, EXISTS (\
+const SELECT_USER_BY_EMAIL_SQL: &str = "SELECT p.id, p.active, EXISTS (\
     SELECT 1 FROM identity.password_credentials c WHERE c.principal_id = p.id) \
     FROM identity.principals p WHERE p.type = 'user' AND p.email = $1";
 const SELECT_PRINCIPAL_BY_ID_SQL: &str = "SELECT id, type, subject, \
-    display_name, status FROM identity.principals WHERE id = $1";
+    display_name, active FROM identity.principals WHERE id = $1";
 const DISABLE_PRINCIPAL_SQL: &str = "UPDATE identity.principals \
-    SET status = 'disabled', disabled_at = COALESCE(disabled_at, now()) \
+    SET active = false \
     WHERE id = $1 \
-    RETURNING id, type, subject, display_name, status";
+    RETURNING id, type, subject, display_name, active";
 const ASSIGN_PROJECT_ROLE_SQL: &str = "INSERT INTO identity.project_roles \
     (principal_id, org, project, role) VALUES ($1, $2, $3, $4) \
     ON CONFLICT DO NOTHING";
@@ -126,8 +126,8 @@ pub async fn create_or_reuse_user(
         row.try_get::<Uuid, _>(0)
             .map_err(|error| database_error(&error))?,
     );
-    let status: String = row.try_get(1).map_err(|error| database_error(&error))?;
-    if status != "active" {
+    let active: bool = row.try_get(1).map_err(|error| database_error(&error))?;
+    if !active {
         return Err(IdentityError::new(
             IdentityErrorType::Conflict,
             format!("principal {principal_id} is disabled"),
@@ -304,6 +304,6 @@ fn decode_principal(row: &Row) -> Result<Principal, IdentityError> {
     let type_: String = row.try_get(1).map_err(|error| database_error(&error))?;
     let subject: String = row.try_get(2).map_err(|error| database_error(&error))?;
     let display_name: String = row.try_get(3).map_err(|error| database_error(&error))?;
-    let status: String = row.try_get(4).map_err(|error| database_error(&error))?;
-    Principal::from_storage(id, &type_, subject, display_name, &status)
+    let active: bool = row.try_get(4).map_err(|error| database_error(&error))?;
+    Principal::from_storage(id, &type_, subject, display_name, active)
 }

@@ -201,7 +201,7 @@ impl Authorization {
                     "SELECT ARRAY(SELECT permission FROM platform.permission WHERE role_name = r.name)
                        FROM platform.role AS r
                       WHERE r.name = $1 AND EXISTS (
-                          SELECT 1 FROM platform.\"user\" WHERE id = $2 AND status = 'active'
+                          SELECT 1 FROM platform.\"user\" WHERE id = $2 AND active
                       )",
                 )
                 .bind(role)

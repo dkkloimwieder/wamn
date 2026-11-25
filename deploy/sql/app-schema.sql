@@ -76,8 +76,8 @@ GRANT USAGE ON SCHEMA platform TO wamn_app;
 -- User — application accounts. `id` (uuid) is org-issued at birth and has no
 -- database default. Identity
 -- only: no credential material lives here (auth is 4.2/8.1).
--- `status` conditions whether the account may authenticate (enforced by 4.2, not this
--- schema). Email is unique in the database.
+-- The host checks `active` when the account authenticates. Email is unique in
+-- the database.
 --
 -- `type` names the type of principal: a user, a service (a station or an
 -- integration), or a platform component. It has no default, so every insert
@@ -97,7 +97,7 @@ CREATE TABLE platform."user" (
     type         text NOT NULL,
     email        text NOT NULL,
     display_name text,
-    status       text NOT NULL DEFAULT 'active',
+    active       boolean NOT NULL DEFAULT true,
     created_at   timestamptz NOT NULL,
     created_by   uuid NOT NULL,
     updated_at   timestamptz NOT NULL,
@@ -105,8 +105,6 @@ CREATE TABLE platform."user" (
     PRIMARY KEY (id),
     UNIQUE (issuer, sub),
     UNIQUE (email),
-    CONSTRAINT user_status_check
-        CHECK (status IN ('active', 'disabled', 'invited')),
     CONSTRAINT user_type_check
         CHECK (type IN ('user', 'service', 'platform')),
     CONSTRAINT user_platform_principal_check
@@ -239,8 +237,8 @@ CREATE TRIGGER wamn_record_history_stamp
 GRANT SELECT ON platform.permission TO wamn_app;
 
 -- ---------------------------------------------------------------------------
--- Environment — the status of this environment, mirrored from
--- registry.environments.status in the system database (docs/plan/platform-ui.md
+-- Environment — the active flag of this environment, mirrored from
+-- registry.environments.active in the system database (docs/plan/platform-ui.md
 -- §5.4, owner rulings of 2026-10-02 on wamn-zua8.2). The host reads it as
 -- wamn_app on each request and answers environment-inactive while it is
 -- inactive. No row means active: the first status route of the control host
@@ -248,7 +246,7 @@ GRANT SELECT ON platform.permission TO wamn_app;
 -- ---------------------------------------------------------------------------
 CREATE TABLE platform.environment (
     id         boolean NOT NULL DEFAULT true CHECK (id),
-    status     text NOT NULL CHECK (status IN ('active', 'inactive')),
+    active     boolean NOT NULL DEFAULT true,
     created_at timestamptz NOT NULL,
     created_by uuid NOT NULL,
     updated_at timestamptz NOT NULL,

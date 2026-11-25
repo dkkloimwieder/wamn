@@ -266,7 +266,7 @@ fn seeds(org: &Org<'_>) -> Vec<Seed> {
             &[
                 ("principal_id", principal),
                 ("org", name),
-                ("status", "active"),
+                ("active", "true"),
             ],
         ),
         Seed::new(
@@ -654,7 +654,7 @@ async fn org_logins_reach_no_other_org() -> Result<()> {
         &[
             ("principal_id", &other_principal),
             ("org", home.name),
-            ("status", "active"),
+            ("active", "true"),
         ],
     );
     let mut joins = 0;

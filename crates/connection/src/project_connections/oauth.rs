@@ -44,7 +44,7 @@ async fn lock(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     request: &Refresh<'_>,
 ) -> anyhow::Result<()> {
-    let generation: Option<i64> = sqlx::query_scalar("SELECT active_generation FROM platform.connection WHERE id=$1 AND status='active' FOR NO KEY UPDATE")
+    let generation: Option<i64> = sqlx::query_scalar("SELECT active_generation FROM platform.connection WHERE id=$1 AND active FOR NO KEY UPDATE")
         .bind(request.connection).fetch_optional(&mut **tx).await?;
     anyhow::ensure!(
         generation == Some(request.generation),

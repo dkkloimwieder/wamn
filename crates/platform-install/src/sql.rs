@@ -52,7 +52,7 @@ pub const IDENTITY_READER_RELATIONS: [&str; 4] = [
 
 /// Session admission tests the active org membership (`wamn-ms1sn.2`).
 pub const IDENTITY_READER_COLUMNS: [(&str, &[&str]); 1] =
-    [("org_memberships", &["principal_id", "org", "status"])];
+    [("org_memberships", &["principal_id", "org", "active"])];
 
 /// Non-secret connection functions available to the control host.
 pub const CONTROL_CONNECTION_FUNCTIONS: &[&str] = &["configure_integration_type(text,text,jsonb)"];
@@ -97,7 +97,7 @@ pub const CONTROL_SURFACE: [(&str, &str, &[&str]); 18] = [
 /// wamn-zua8.2). The other columns of `registry.environment_projects` belong to
 /// provisioning.
 pub const CONTROL_COLUMN_SURFACE: [(&str, &str, &str, &[&str]); 1] =
-    [("registry", "environments", "UPDATE", &["status"])];
+    [("registry", "environments", "UPDATE", &["active"])];
 
 /// The schemas of [`CONTROL_SURFACE`], in which the control role holds `USAGE`.
 pub const CONTROL_SCHEMAS: [&str; 2] = ["identity", "registry"];

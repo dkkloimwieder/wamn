@@ -1394,7 +1394,7 @@ const ROUTES: &[HostRoute] = &[
         ],
     },
     // project.list state is active when any environment is active, inactive otherwise.
-    // A project with no environments is inactive. registry.project_envs.status owns the state.
+    // A project with no environments is inactive. registry.environments.active owns the state.
     HostRoute {
         set: HostRouteSet::Control,
         operation: "project.list",

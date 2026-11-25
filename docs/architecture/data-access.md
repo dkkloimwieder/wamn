@@ -923,7 +923,7 @@ The writer keeps a row that already holds the given values, and it removes no ro
 The stamped relations in [`deploy/sql/app-schema.sql`](../../deploy/sql/app-schema.sql) carry four stamp columns as `NOT NULL` and a `wamn_record_history_stamp` trigger.
 The account relations are `user`, `role`, `user_role`, `permission`, `api_key`, and `environment`.
 The configuration relations are `file`, `number_sequence`, `number_counter`, and `setting`.
-`environment` holds at most one row, the status of the environment that the host reads. No row means active.
+`environment` holds at most one row. The host reads its boolean `active` flag. No row means active.
 An integration selects a published type and authentication scheme for one project.
 A connection holds that integration's configuration for one environment.
 An external system identifies the external account that records come from.
@@ -1066,7 +1066,7 @@ The system database owns the integration catalog, `registry.integration_type` an
 It also owns `registry.target`, the deployment target identities.
 The full system schema files install these tables.
 The catalog seeds `http`, `gcs`, and `s3`, each with `runtime_type = host` and `exclusive = false`.
-The target table stores `id`, unique `name`, `type` (`local` or `cloud`), `status`, and nullable `last_seen_at`.
+The target table stores `id`, unique `name`, `type` (`local` or `cloud`), `active`, and nullable `last_seen_at`.
 It seeds one active target named `cloud`, with no release time. Repeated schema upgrades create no additional seeds.
 These catalog and target tables exist only in the system database and grant no application access.
 An environment stores its target identity on first apply. The target cannot change. `target_application` and the target platform connection remain separate work.

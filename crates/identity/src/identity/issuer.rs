@@ -101,7 +101,7 @@ impl Issuer<'_> {
         )
         .await
         .map_err(|error| database_error(&error))?;
-        let row = sqlx::query("SELECT p.id FROM identity.principals p JOIN identity.password_credentials c ON c.principal_id=p.id WHERE p.email=$1 AND p.type='user' AND p.status='active'")
+        let row = sqlx::query("SELECT p.id FROM identity.principals p JOIN identity.password_credentials c ON c.principal_id=p.id WHERE p.email=$1 AND p.type='user' AND p.active")
             .bind(email).fetch_optional(&mut *tx).await.map_err(|error| database_error(&error))?;
         tx.commit().await.map_err(|error| database_error(&error))?;
         row.map(|row| {
@@ -144,8 +144,8 @@ impl Issuer<'_> {
         let email = sqlx::query_scalar(
             "SELECT p.email FROM identity.principals p
              JOIN identity.org_memberships m ON m.principal_id = p.id
-             WHERE p.id = $1 AND p.type = 'user' AND p.status = 'active'
-                   AND m.org = $2 AND m.status = 'active'",
+             WHERE p.id = $1 AND p.type = 'user' AND p.active
+                   AND m.org = $2 AND m.active",
         )
         .bind(Uuid::from(*principal))
         .bind(org.as_str())

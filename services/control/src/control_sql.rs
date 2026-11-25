@@ -135,7 +135,7 @@ pub(crate) async fn principal_active(
     connection: &mut PgConnection,
     principal: &PrincipalId,
 ) -> Result<bool, sqlx::Error> {
-    sqlx::query_scalar("SELECT status = 'active' FROM identity.principals WHERE id = $1")
+    sqlx::query_scalar("SELECT active FROM identity.principals WHERE id = $1")
         .bind(Uuid::from(*principal))
         .fetch_one(connection)
         .await

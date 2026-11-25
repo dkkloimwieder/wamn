@@ -85,7 +85,7 @@ pub(super) async fn lock_connection(
     transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     connection: Uuid,
 ) -> Result<Option<Value>, sqlx::Error> {
-    sqlx::query_scalar("SELECT to_jsonb(c)||jsonb_build_object('parameters',g.parameters,'credential',jsonb_build_object('store',k.store,'ref',k.ref,'version',k.version)) FROM platform.connection c JOIN platform.connection_generation g ON (g.connection_id,g.generation)=(c.id,c.active_generation) LEFT JOIN platform.credential k ON k.id=g.credential_id WHERE c.id=$1 AND c.status='active' FOR NO KEY UPDATE OF c")
+    sqlx::query_scalar("SELECT to_jsonb(c)||jsonb_build_object('parameters',g.parameters,'credential',jsonb_build_object('store',k.store,'ref',k.ref,'version',k.version)) FROM platform.connection c JOIN platform.connection_generation g ON (g.connection_id,g.generation)=(c.id,c.active_generation) LEFT JOIN platform.credential k ON k.id=g.credential_id WHERE c.id=$1 AND c.active FOR NO KEY UPDATE OF c")
         .bind(connection).fetch_optional(&mut **transaction).await
 }
 

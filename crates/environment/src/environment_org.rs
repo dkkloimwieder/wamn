@@ -137,7 +137,7 @@ pub async fn set_environment_status(
                 .map(wamn_registry::EnvName::as_str)
                 .collect::<Vec<_>>(),
         )
-        .bind(status.as_str())
+        .bind(status == EnvironmentStatus::Active)
         .execute(&mut *client)
         .await
         .map(|result| result.rows_affected())

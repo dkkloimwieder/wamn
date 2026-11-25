@@ -19,11 +19,11 @@ use wamn_identity_protocol::PrincipalId;
 
 /// Create the active membership, or make an inactive membership active.
 const ACTIVATE_MEMBERSHIP_SQL: &str = "INSERT INTO identity.org_memberships \
-    (principal_id, org, status) VALUES ($1, $2, 'active') \
-    ON CONFLICT (principal_id, org) DO UPDATE SET status = 'active' \
-    WHERE identity.org_memberships.status <> 'active'";
+    (principal_id, org, active) VALUES ($1, $2, true) \
+    ON CONFLICT (principal_id, org) DO UPDATE SET active = true \
+    WHERE NOT identity.org_memberships.active";
 
-const ACTIVE_MEMBER_SQL: &str = "SELECT status FROM identity.org_memberships \
+const ACTIVE_MEMBER_SQL: &str = "SELECT active FROM identity.org_memberships \
     WHERE principal_id = $1 AND org = $2 FOR UPDATE";
 
 const PROJECT_IN_ORG_SQL: &str = crate::identity_sql::PROJECT_IN_ORG_SQL;
@@ -225,7 +225,7 @@ pub(crate) async fn active_member(
 ) -> Result<(), IdentityError> {
     let active = lock_membership(client, principal_id, org)
         .await?
-        .is_some_and(|status| status == "active");
+        .unwrap_or(false);
     if !active {
         return Err(IdentityError::refused(
             IdentityErrorType::NotFound,
@@ -236,8 +236,8 @@ pub(crate) async fn active_member(
     Ok(())
 }
 
-const REACTIVATE_MEMBERSHIP_SQL: &str = "UPDATE identity.org_memberships SET status = 'active' \
-    WHERE principal_id = $1 AND org = $2 AND status <> 'active'";
+const REACTIVATE_MEMBERSHIP_SQL: &str = "UPDATE identity.org_memberships SET active = true \
+    WHERE principal_id = $1 AND org = $2 AND NOT active";
 
 const DROP_ENV_MEMBERSHIPS_SQL: &str = "DELETE FROM identity.project_env_memberships \
     WHERE principal_id = $1 AND org = $2";
@@ -250,10 +250,10 @@ const DROP_PROJECT_ROLES_SQL: &str = "DELETE FROM identity.project_roles \
 const DROP_ORG_ROLES_SQL: &str = "DELETE FROM identity.org_roles \
     WHERE principal_id = $1 AND org = $2 AND ($3::text IS NULL OR role = $3)";
 
-const DEACTIVATE_MEMBERSHIP_SQL: &str = "UPDATE identity.org_memberships SET status = 'inactive' \
-    WHERE principal_id = $1 AND org = $2 AND status <> 'inactive'";
+const DEACTIVATE_MEMBERSHIP_SQL: &str = "UPDATE identity.org_memberships SET active = false \
+    WHERE principal_id = $1 AND org = $2 AND active";
 
-const ORG_USERS_SQL: &str = "SELECT p.id, p.email, p.display_name, m.status, p.status, \
+const ORG_USERS_SQL: &str = "SELECT p.id, p.email, p.display_name, m.active, p.active, \
     EXISTS (SELECT 1 FROM identity.org_roles o \
         WHERE o.principal_id = p.id AND o.org = $1 AND o.role = $2) \
     FROM identity.org_memberships m JOIN identity.principals p ON p.id = m.principal_id \
@@ -301,7 +301,7 @@ pub async fn disable_user(
     let (member, active_elsewhere): (bool, bool) = sqlx::query_as(
         "SELECT EXISTS (SELECT FROM identity.org_memberships WHERE principal_id = $1 AND org = $2),
                 EXISTS (SELECT FROM identity.org_memberships
-                        WHERE principal_id = $1 AND org <> $2 AND status = 'active')",
+                        WHERE principal_id = $1 AND org <> $2 AND active)",
     )
     .bind(Uuid::from(*principal))
     .bind(org.as_str())
@@ -442,8 +442,16 @@ pub async fn org_users_page(
                 ),
                 email: row.try_get(1).map_err(|error| database_error(&error))?,
                 display_name: row.try_get(2).map_err(|error| database_error(&error))?,
-                status: row.try_get(3).map_err(|error| database_error(&error))?,
-                principal_status: row.try_get(4).map_err(|error| database_error(&error))?,
+                status: if row.try_get(3).map_err(|error| database_error(&error))? {
+                    "active".into()
+                } else {
+                    "inactive".into()
+                },
+                principal_status: if row.try_get(4).map_err(|error| database_error(&error))? {
+                    "active".into()
+                } else {
+                    "disabled".into()
+                },
                 org_admin: row.try_get(5).map_err(|error| database_error(&error))?,
             })
         })
@@ -516,7 +524,11 @@ pub async fn project_envs_page(
                     .try_get::<String, _>(0)
                     .and_then(|value| wamn_postgres::decode_text(value, 0))
                     .map_err(|error| database_error(&error))?,
-                state: row.get(1),
+                state: if row.try_get(1).map_err(|error| database_error(&error))? {
+                    "active".into()
+                } else {
+                    "inactive".into()
+                },
             })
         })
         .collect::<Result<_, IdentityError>>()
@@ -602,18 +614,17 @@ async fn member(
 }
 
 /// Lock a user's org membership until the caller's system transaction ends.
-/// An absent row grants no authority. Services have no org membership.
+/// Return the active flag when the row exists. Services have no org membership.
 pub async fn lock_membership(
     client: &mut sqlx::PgConnection,
     principal: &PrincipalId,
     org: &wamn_registry::OrgId,
-) -> Result<Option<String>, IdentityError> {
-    sqlx::query(ACTIVE_MEMBER_SQL)
+) -> Result<Option<bool>, IdentityError> {
+    sqlx::query_scalar(ACTIVE_MEMBER_SQL)
         .bind(Uuid::from(*principal))
         .bind(org.as_str())
         .fetch_optional(&mut *client)
         .await
-        .map(|row| row.map(|row| row.get(0)))
         .map_err(|error| database_error(&error))
 }
 

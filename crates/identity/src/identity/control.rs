@@ -21,8 +21,8 @@ const ORG_PROJECTS_SQL: &str = crate::identity_sql::ORG_PROJECTS_SQL;
 const ORG_ADMIN_SQL: &str = "SELECT EXISTS (SELECT 1 FROM identity.org_roles r \
     JOIN identity.principals p ON p.id = r.principal_id \
     WHERE r.principal_id = $1 AND r.org = $2 AND r.role = $3 \
-    AND p.type = 'user' AND p.status = 'active' \
-    AND EXISTS (SELECT 1 FROM identity.org_memberships m WHERE m.principal_id=p.id AND m.org=$2 AND m.status='active'))";
+    AND p.type = 'user' AND p.active \
+    AND EXISTS (SELECT 1 FROM identity.org_memberships m WHERE m.principal_id=p.id AND m.org=$2 AND m.active))";
 
 const PROJECT_ADMIN_SQL: &str = "SELECT identity.is_project_admin($1,$2,$3) AND $4='project-admin'";
 

@@ -23,9 +23,9 @@ const DROP_USER_ROLE_SQL: &str = "DELETE FROM platform.user_role \
 
 /// The status row of the environment. No row means active.
 const ENVIRONMENT_STATUS_ROW_SQL: &str = "INSERT INTO platform.environment \
-    (status) VALUES ($1) \
-    ON CONFLICT (id) DO UPDATE SET status = EXCLUDED.status \
-    WHERE platform.environment.status <> EXCLUDED.status";
+    (active) VALUES ($1) \
+    ON CONFLICT (id) DO UPDATE SET active = EXCLUDED.active \
+    WHERE platform.environment.active <> EXCLUDED.active";
 
 /// Refuse a project database without platform rows. The database is the org
 /// boundary, so its rows name no project: the caller derives the project of
@@ -53,7 +53,7 @@ pub async fn write_environment_status(
     status: wamn_registry::EnvironmentStatus,
 ) -> Result<(), IdentityError> {
     sqlx::query(ENVIRONMENT_STATUS_ROW_SQL)
-        .bind(status.as_str())
+        .bind(status == wamn_registry::EnvironmentStatus::Active)
         .execute(&mut *client)
         .await
         .map(|result| result.rows_affected())
@@ -73,14 +73,14 @@ const DROP_PERMISSION_SQL: &str = "DELETE FROM platform.permission \
     WHERE role_name = $1 AND permission = $2";
 
 const LOCK_GRANT_RECIPIENT_SQL: &str = "SELECT 1 FROM platform.\"user\" \
-    WHERE id = $1 AND (type = 'service' OR (type = 'user' AND status <> 'disabled')) FOR SHARE";
+    WHERE id = $1 AND (type = 'service' OR (type = 'user' AND active)) FOR SHARE";
 
 const USER_LIST_SQL: &str = "SELECT u.id, u.email, u.display_name, \
     COALESCE(array_agg(r.role_name ORDER BY r.role_name) \
              FILTER (WHERE r.role_name IS NOT NULL), '{}') \
     FROM platform.\"user\" u \
     LEFT JOIN platform.user_role r ON r.user_id = u.id \
-    WHERE u.type = 'user' AND u.status <> 'disabled' \
+    WHERE u.type = 'user' AND u.active \
     GROUP BY u.id, u.email, u.display_name ORDER BY u.email, u.id";
 
 const ROLE_LIST_SQL: &str = "SELECT name FROM platform.role ORDER BY name";
@@ -296,8 +296,8 @@ pub async fn read_project_authority(
     principal: &PrincipalId,
 ) -> Result<Option<ProjectAuthority>, IdentityError> {
     let row = sqlx::query(
-        "SELECT p.type, p.status, p.email, p.display_name, \
-         EXISTS (SELECT 1 FROM identity.org_memberships m WHERE m.principal_id=p.id AND m.org=$2 AND m.status='active'), \
+        "SELECT p.type, p.active, p.email, p.display_name, \
+         EXISTS (SELECT 1 FROM identity.org_memberships m WHERE m.principal_id=p.id AND m.org=$2 AND m.active), \
          identity.has_project_access(p.id,$2,$4,$3), \
          identity.is_project_admin(p.id,$2,$3) \
          FROM identity.principals p WHERE p.id=$1",
@@ -313,7 +313,7 @@ pub async fn read_project_authority(
         return Ok(None);
     };
     let type_: String = row.get(0);
-    let active = row.get::<String, _>(1) == "active";
+    let active = row.get::<bool, _>(1);
     if type_ != "user" || !active || !row.get::<bool, _>(4) || !row.get::<bool, _>(5) {
         return Ok(None);
     }

@@ -33,7 +33,7 @@ pub async fn fill(
     );
     principals.extend(
         sqlx::query_scalar::<_, uuid::Uuid>(
-            "SELECT id FROM platform.\"user\" WHERE type='user' AND status<>'disabled'",
+            "SELECT id FROM platform.\"user\" WHERE type='user' AND active",
         )
         .fetch_all(&mut *project)
         .await?,

@@ -27,7 +27,7 @@ GRANT SELECT, INSERT, UPDATE ON registry.event_readers TO wamn_apply;
 GRANT SELECT, INSERT, UPDATE (resync_at) ON registry.capture_gap TO wamn_apply;
 
 -- The grant projection locks the org membership row (wamn-ms1sn.2).
-GRANT SELECT (principal_id, org, status), UPDATE (status)
+GRANT SELECT (principal_id, org, active), UPDATE (active)
     ON identity.org_memberships TO wamn_apply;
 
 GRANT SELECT, INSERT ON registry.environments TO wamn_apply;

@@ -59,22 +59,11 @@ pub enum PrincipalStatus {
 }
 
 impl PrincipalStatus {
-    /// Return the stable database literal.
+    /// Return the stable status literal.
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Active => "active",
             Self::Disabled => "disabled",
-        }
-    }
-
-    fn parse(value: &str) -> Result<Self, IdentityError> {
-        match value {
-            "active" => Ok(Self::Active),
-            "disabled" => Ok(Self::Disabled),
-            other => Err(IdentityError::new(
-                IdentityErrorType::CorruptData,
-                format!("unknown stored principal status {other:?}"),
-            )),
         }
     }
 }
@@ -97,20 +86,24 @@ pub struct Principal {
 }
 
 impl Principal {
-    /// Decode the principal's stored type and status with its record fields.
+    /// Decode the principal's stored type and active flag with its record fields.
     pub fn from_storage(
         id: PrincipalId,
         type_: &str,
         subject: String,
         display_name: String,
-        status: &str,
+        active: bool,
     ) -> Result<Self, IdentityError> {
         Ok(Self {
             id,
             type_: PrincipalType::parse(type_)?,
             subject: subject.into(),
             display_name: display_name.into(),
-            status: PrincipalStatus::parse(status)?,
+            status: if active {
+                PrincipalStatus::Active
+            } else {
+                PrincipalStatus::Disabled
+            },
         })
     }
 

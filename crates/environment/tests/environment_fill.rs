@@ -114,11 +114,11 @@ async fn provisioning_disables_and_reactivates_environment_member_rows() -> anyh
         target,
     )
     .await?;
-    let status: String = sqlx::query_scalar("SELECT status FROM platform.\"user\" WHERE id = $1")
+    let active: bool = sqlx::query_scalar("SELECT active FROM platform.\"user\" WHERE id = $1")
         .bind(member_id)
         .fetch_one(&mut client)
         .await?;
-    assert_eq!(status, "disabled");
+    assert!(!active);
     assert!(
         application_users(&mut client)
             .await?
@@ -175,8 +175,8 @@ async fn provisioning_disables_and_reactivates_environment_member_rows() -> anyh
         target,
     )
     .await?;
-    let (status, has_roles, pat_revoked): (String, bool, bool) = sqlx::query_as(
-        "SELECT status,
+    let (active, has_roles, pat_revoked): (bool, bool, bool) = sqlx::query_as(
+        "SELECT active,
                 EXISTS(SELECT FROM platform.user_role WHERE user_id = u.id),
                 (SELECT revoked_at IS NOT NULL FROM platform.pat WHERE id = $2)
            FROM platform.\"user\" u WHERE id = $1",
@@ -185,9 +185,6 @@ async fn provisioning_disables_and_reactivates_environment_member_rows() -> anyh
     .bind(pat_id)
     .fetch_one(&mut client)
     .await?;
-    assert_eq!(
-        (status.as_str(), has_roles, pat_revoked),
-        ("active", false, true)
-    );
+    assert_eq!((active, has_roles, pat_revoked), (true, false, true));
     Ok(())
 }

@@ -334,14 +334,12 @@ async fn disable_waits_for_issuance_and_reenable_cannot_restore_a_family() {
     tx.commit().await.unwrap();
     racing.await.unwrap();
     assert!(rotate(&mut first, issued.secret()).await.is_none());
-    sqlx::query(
-        "UPDATE identity.principals SET status='active',disabled_at=NULL WHERE id=$1::text::uuid",
-    )
-    .bind(user.to_string().as_str())
-    .execute(&mut first)
-    .await
-    .map(|result| result.rows_affected())
-    .unwrap();
+    sqlx::query("UPDATE identity.principals SET active=true WHERE id=$1::text::uuid")
+        .bind(user.to_string().as_str())
+        .execute(&mut first)
+        .await
+        .map(|result| result.rows_affected())
+        .unwrap();
     assert!(rotate(&mut first, issued.secret()).await.is_none());
     let fresh = create(&mut first, &user).await;
     let mut tx = first.begin().await.unwrap();

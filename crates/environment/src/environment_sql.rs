@@ -52,7 +52,7 @@ pub fn close_capture_gap_sql() -> &'static str {
 }
 
 /// Registry statement used by [`crate::environment_org::set_environment_status`].
-pub const IDENTITY_PLATFORM_SRC_ORG_ENVIRONMENT_STATUS_SQL: &str = "UPDATE registry.environments SET status = $4 \
+pub const IDENTITY_PLATFORM_SRC_ORG_ENVIRONMENT_STATUS_SQL: &str = "UPDATE registry.environments SET active = $4 \
     WHERE org = $1 AND env = ANY($3) AND EXISTS (SELECT FROM registry.environment_projects p WHERE p.org=$1 AND p.env=registry.environments.env AND p.project=$2)";
 
 /// Registry statement used by [`crate::environment_org::org_environments`].
