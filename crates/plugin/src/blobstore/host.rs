@@ -430,10 +430,7 @@ where
             let span = super::blobstore_span(&plugin, &component_id, operation);
             // Declared before the effect so it outlives the instrumented future. An
             // effect dropped mid-flight records `cancelled` through this guard.
-            let evidence = plugin
-                .invocation(&component_id)
-                .and_then(|invocation| invocation.effects);
-            let mut observed = EffectOutcomeGuard::new(&span, evidence);
+            let mut observed = EffectOutcomeGuard::new(&span);
             let started = std::time::Instant::now();
             let execution = plugin.scopes.execution(&component_id).ok_or_else(|| {
                 wash_runtime::wasmtime::Error::msg("invocation scope was revoked")
@@ -487,7 +484,7 @@ where
                 record_duration("");
             }
             let observation = store_outcome(outcome.as_ref().err());
-            observed.settle(observation, outcome.is_err());
+            observed.settle(observation);
             if let Err(error) = &outcome {
                 tracing::warn!(
                     effect.operation = operation,

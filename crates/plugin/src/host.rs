@@ -22,8 +22,6 @@ pub struct OperationHost {
         std::sync::RwLock<HashMap<String, Arc<super::operation::OperationWorkload>>>,
     /// The single invocation and workload authority registry.
     pub scopes: Arc<wamn_engine::invocation_scope::InvocationScopes>,
-    /// How many times each half of the un-fused workload bind has run.
-    pub(super) bind_counters: super::BindCounters,
 }
 
 impl std::fmt::Debug for OperationHost {
@@ -49,7 +47,6 @@ impl OperationHost {
             operation_metrics: super::operation::OperationMetrics::default(),
             operation_workloads: std::sync::RwLock::default(),
             scopes: Arc::default(),
-            bind_counters: super::BindCounters::default(),
         }
     }
 

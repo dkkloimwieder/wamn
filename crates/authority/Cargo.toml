@@ -1,6 +1,6 @@
 [package]
 name = "wamn-authority"
-description = "Host invocation identity, connection policy and effect evidence."
+description = "Host invocation identity, connection policy and effect tracing."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

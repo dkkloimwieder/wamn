@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 use wamn_application::application_config::{ApplicationConfig, ApplicationConnection};
-use wamn_authority::effect_span::{EffectEvidence, EffectGraph, EffectSource};
+use wamn_authority::effect_span::{EffectGraph, EffectSource};
 
 /// Host-attested identity of one component invocation.
 ///
@@ -18,9 +18,6 @@ pub struct ConnectionInvocation {
     pub component_digest: wamn_digest::Digest,
     pub component: wamn_package::canonical_name::CanonicalName,
     pub operation: Option<wamn_package::canonical_name::CanonicalName>,
-    pub closure: ConnectionExecutionClosure,
-    /// Optional bounded failure evidence owned by this invocation.
-    pub effects: Option<EffectEvidence>,
 }
 
 impl ConnectionInvocation {
@@ -74,8 +71,6 @@ impl ConnectionInvocation {
             component_digest: component.digest,
             component: name,
             operation: Some(operation.clone()),
-            closure: ConnectionExecutionClosure::Released,
-            effects: None,
         })
     }
 
@@ -142,11 +137,4 @@ pub struct GraphPosition {
     pub configuration: Arc<
         std::collections::BTreeMap<wamn_package::canonical_name::CanonicalName, serde_json::Value>,
     >,
-}
-
-/// Host-owned authority closure for one component invocation.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ConnectionExecutionClosure {
-    /// Workload configuration owns the declared component and connection bindings.
-    Released,
 }

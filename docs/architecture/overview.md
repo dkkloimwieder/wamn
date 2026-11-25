@@ -47,7 +47,7 @@ Each library has one concern. Directory names follow crate names without the `wa
 | `crates/build` | `wamn-build` owns package builds, overlay and base composition, source publication, and watched deployment |
 | `crates/engine` | `wamn-engine`: native loading, dispatch, and the invocation scope registry |
 | `crates/workflow-graph` | `wamn-workflow-graph` owns authored graphs, validation, and canonical identity |
-| `crates/authority` | `wamn-authority`: shared invocation identity and effect evidence |
+| `crates/authority` | `wamn-authority`: shared invocation identity and effect tracing |
 | `crates/postgres` | `wamn-postgres`: PostgreSQL connection configuration and transport |
 | `crates/plugin` | `wamn-plugin`: host operation transactions, workflow runs, and file catalogue access |
 | `crates/http` | `wamn-http`: authorized outbound HTTP and OAuth |

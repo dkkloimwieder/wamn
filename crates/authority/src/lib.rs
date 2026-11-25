@@ -1,4 +1,4 @@
-//! Shared host authority, connection policy and effect evidence.
+//! Shared host authority, connection policy and effect tracing.
 
 pub mod auth_cache;
 pub mod connection;

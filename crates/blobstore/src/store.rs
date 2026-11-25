@@ -74,7 +74,7 @@ pub struct ObjectHead {
     pub last_modified_unix_nanos: u64,
 }
 
-/// The backend outcomes distinguished by the guest contract and effect evidence.
+/// The backend outcomes used in guest errors and effect traces.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BackendErrorType {
     NotFound,

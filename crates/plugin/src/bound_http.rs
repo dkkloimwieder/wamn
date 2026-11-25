@@ -375,10 +375,7 @@ impl<T: Send + 'static> http::HostWithStore<T> for SharedCtx {
                         .as_ref()
                         .map(wamn_connection::connection::ConnectionInvocation::effect_graph),
                 );
-                let mut observed = EffectOutcomeGuard::new(
-                    &span,
-                    invocation.and_then(|invocation| invocation.effects),
-                );
+                let mut observed = EffectOutcomeGuard::new(&span);
                 let started = std::time::Instant::now();
                 let result = plugin.send(&scope, request).instrument(span).await;
                 record_effect_ms(
@@ -404,7 +401,7 @@ impl<T: Send + 'static> http::HostWithStore<T> for SharedCtx {
                     Err(ConnectionError::Transport(_)) => EffectOutcome::EffectUncertain,
                     Err(_) => EffectOutcome::RefusedBeforeDispatch,
                 };
-                observed.settle(outcome, result.is_err());
+                observed.settle(outcome);
                 Ok(result.map_err(wit_error))
             })
             .await

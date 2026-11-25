@@ -111,9 +111,7 @@ use bindings::wamn::postgres::types::{PgError, SqlValue};
 
 pub const WAMN_POSTGRES_ID: &str = "wamn-postgres";
 
-/// Link dynamic reads and SQL in the host operation transaction.
-/// The host path calls this from [`HostPlugin::on_workload_item_bind`]; the
-/// `pgbench` harness calls it to link the host service into a hand-built store.
+/// Link dynamic reads and SQL into a test store.
 pub fn add_to_linker(linker: &mut Linker<SharedCtx>) -> wash_runtime::wasmtime::Result<()> {
     client::add_to_linker::<_, SharedCtx>(linker, extract_active_ctx)?;
     statement_wit::add_to_linker::<_, SharedCtx>(linker, extract_active_ctx)
@@ -146,24 +144,11 @@ pub const RUNNER_CONFIG_KEY: &str = "wamn.runner";
 // Plugin configuration
 // ---------------------------------------------------------------------------
 
-/// How many times each half of the un-fused workload bind has run.
-///
-/// Observability for the count rule on `wamn-0h0g.17.15` -- registration once
-/// per request, linker entries once per digest -- not state a request reads.
-#[derive(Default)]
-pub(crate) struct BindCounters {
-    linker_entries: std::sync::atomic::AtomicU64,
-    scope_registrations: std::sync::atomic::AtomicU64,
-}
-
 impl OperationHost {
-    /// The per-REQUEST half of the workload bind: every identity keyed by `scope`.
+    /// Register workload identity under `scope` during workload bind.
     ///
-    /// Un-fused from [`HostPlugin::on_workload_item_bind`] so the router driver
-    /// can run this once per request while [`Self::add_linker_entries`] runs
-    /// once per digest and backs a shared `InstancePre`. Registers nothing when
-    /// the workload imports no wamn:postgres interface, exactly as the fused
-    /// hook did.
+    /// This applies to workloads that import `wamn:postgres/client` or
+    /// `wamn:postgres/statements`.
     pub fn register_workload_scope(
         &self,
         scope: &str,
@@ -175,9 +160,6 @@ impl OperationHost {
         if !has_client && !has_statements {
             return Ok(());
         }
-        self.bind_counters
-            .scope_registrations
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         if let Some(project_env_key) = config.get(PROJECT_ENV_KEY_CONFIG_KEY) {
             let project_env_key: wamn_registry::ProjectEnvKey = project_env_key.parse()?;
             scope_registry::set_project_env_key(&self.scopes, scope, &project_env_key);
@@ -219,23 +201,12 @@ impl OperationHost {
                 "wamn:postgres runner lease-owner registered"
             );
         }
-        // Release identity is deliberately NOT read here. Under ruling
-        // `wamn-0h0g.15.102` the mounted manifest is the sole carrier of the
-        // (release version, manifest digest) pair, so the serving process injects
-        // it from its loaded release at instantiation — see
-        // `ExecutionHost::instantiate`. A bind-time config read would be a second,
-        // *asserted* carrier that cannot correct the loaded one, and the pair it
-        // asserted could disagree with the manifest the same pod resolves plans
-        // against.
         Ok(())
     }
 
-    /// The per-DIGEST half: this plugin's host definitions on `linker`.
+    /// Add this plugin's host definitions for the component's imports to `linker`.
     ///
-    /// CAPTURES NOTHING PER-REQUEST. Every definition reaches its state through
-    /// the store's active ctx, so a linker carrying these entries is shareable
-    /// by digest -- which is what lets the driver seal it into an `InstancePre`
-    /// once and instantiate from it on every request.
+    /// Each definition accesses its state through the store's active context.
     pub fn add_linker_entries(
         &self,
         linker: &mut Linker<SharedCtx>,
@@ -260,9 +231,6 @@ impl OperationHost {
         if !has_client && !has_statements {
             return Ok(());
         }
-        self.bind_counters
-            .linker_entries
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         #[cfg(not(feature = "wasm_component_model_implements"))]
         let _ = component;
         #[cfg(not(feature = "wasm_component_model_implements"))]
@@ -294,20 +262,6 @@ impl OperationHost {
             }
         }
         Ok(())
-    }
-
-    /// Linker-entry binds since startup: one per digest under the driver.
-    pub fn linker_entry_binds(&self) -> u64 {
-        self.bind_counters
-            .linker_entries
-            .load(std::sync::atomic::Ordering::Relaxed)
-    }
-
-    /// Scope registrations since startup: one per request under the driver.
-    pub fn scope_registrations(&self) -> u64 {
-        self.bind_counters
-            .scope_registrations
-            .load(std::sync::atomic::Ordering::Relaxed)
     }
 }
 
@@ -369,7 +323,6 @@ impl HostPlugin for OperationHost {
             // A control root links the interface without operation authority.
             // Calls on an unbound instance refuse before accessing SQL or identity.
         }
-        // The wash host path: one workload, one bind, both halves in order.
         item.add_plugin(
             wamn_engine::invocation_scope::INVOCATION_SCOPES_ID,
             Arc::clone(&self.scopes) as _,

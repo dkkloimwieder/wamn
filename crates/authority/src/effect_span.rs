@@ -85,7 +85,6 @@
 //! `effect.operation`, which is the host service method. Neither answers "which
 //! component, running which node operation, raised this effect".
 
-use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crate::EffectOutcome;
@@ -162,58 +161,6 @@ pub struct EffectRun<'a> {
     pub requirement: &'a str,
 }
 
-/// Failure evidence shared only by one invocation and its nested calls.
-///
-/// Successful host service attempts contribute no failure evidence. Exactly one
-/// failed attempt supplies its observed outcome; two or more are ambiguous.
-/// Dropping the last handle discards the evidence with its invocation.
-#[derive(Debug, Clone, Default)]
-pub struct EffectEvidence {
-    state: Arc<Mutex<FailureEvidence>>,
-}
-
-#[derive(Debug, Default)]
-enum FailureEvidence {
-    #[default]
-    None,
-    One(EffectOutcome),
-    Ambiguous,
-}
-
-impl EffectEvidence {
-    /// Start an invocation with no observed failed host service attempt.
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// The sole failed attempt's outcome, absent when missing or ambiguous.
-    #[must_use]
-    pub fn outcome(&self) -> Option<EffectOutcome> {
-        match *self.state.lock().ok()? {
-            FailureEvidence::One(outcome) => Some(outcome),
-            FailureEvidence::None | FailureEvidence::Ambiguous => None,
-        }
-    }
-
-    fn record_failure(&self, outcome: EffectOutcome) {
-        if let Ok(mut state) = self.state.lock() {
-            *state = match *state {
-                FailureEvidence::None => FailureEvidence::One(outcome),
-                FailureEvidence::One(_) | FailureEvidence::Ambiguous => FailureEvidence::Ambiguous,
-            };
-        }
-    }
-}
-
-impl PartialEq for EffectEvidence {
-    fn eq(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.state, &other.state)
-    }
-}
-
-impl Eq for EffectEvidence {}
-
 /// The span field one outcome is recorded under, beside [`EFFECT_OPERATION`].
 pub const EFFECT_OUTCOME: &str = "effect.outcome";
 
@@ -233,38 +180,25 @@ pub const EFFECT_OUTCOME: &str = "effect.outcome";
 pub struct EffectOutcomeGuard {
     span: tracing::Span,
     outcome: EffectOutcome,
-    failed: bool,
-    evidence: Option<EffectEvidence>,
 }
 
 impl EffectOutcomeGuard {
-    pub fn new(span: &tracing::Span, evidence: Option<EffectEvidence>) -> Self {
+    pub fn new(span: &tracing::Span) -> Self {
         Self {
             span: span.clone(),
             outcome: EffectOutcome::Cancelled,
-            failed: true,
-            evidence,
         }
     }
 
-    /// Name the observed outcome and whether the host service returned an error.
-    ///
-    /// A successful response contributes no failure evidence, even though both
-    /// success and some backend refusals are classified as `responded`.
-    pub fn settle(&mut self, outcome: EffectOutcome, failed: bool) {
+    /// Set the outcome to record when the guard drops.
+    pub fn settle(&mut self, outcome: EffectOutcome) {
         self.outcome = outcome;
-        self.failed = failed;
     }
 }
 
 impl Drop for EffectOutcomeGuard {
     fn drop(&mut self) {
         self.span.record(EFFECT_OUTCOME, self.outcome.label());
-        if self.failed
-            && let Some(evidence) = &self.evidence
-        {
-            evidence.record_failure(self.outcome);
-        }
     }
 }
 
@@ -543,53 +477,6 @@ mod span_tests {
 mod tests {
     use super::*;
 
-    fn settled_evidence(evidence: &EffectEvidence, outcome: EffectOutcome, failed: bool) {
-        let mut guard = EffectOutcomeGuard::new(&tracing::Span::none(), Some(evidence.clone()));
-        guard.settle(outcome, failed);
-    }
-
-    #[test]
-    fn one_failure_survives_successes_but_never_another_failure() {
-        let evidence = EffectEvidence::new();
-        let nested = evidence.clone();
-        assert_eq!(evidence, nested);
-        assert_ne!(evidence, EffectEvidence::new());
-        assert_eq!(evidence.outcome(), None);
-        settled_evidence(&evidence, EffectOutcome::Responded, false);
-        assert_eq!(evidence.outcome(), None);
-        settled_evidence(&nested, EffectOutcome::Timeout, true);
-        settled_evidence(&evidence, EffectOutcome::Responded, false);
-        assert_eq!(evidence.outcome(), Some(EffectOutcome::Timeout));
-        // Even equal labels are two attempts, not corroborating evidence.
-        settled_evidence(&nested, EffectOutcome::Timeout, true);
-        assert_eq!(evidence.outcome(), None);
-        settled_evidence(&evidence, EffectOutcome::RefusedBeforeDispatch, true);
-        assert_eq!(evidence.outcome(), None);
-        assert_eq!(EffectEvidence::new().outcome(), None);
-    }
-
-    #[test]
-    fn a_responded_backend_refusal_is_failed_evidence() {
-        let evidence = EffectEvidence::new();
-        settled_evidence(&evidence, EffectOutcome::Responded, true);
-        assert_eq!(evidence.outcome(), Some(EffectOutcome::Responded));
-    }
-
-    #[test]
-    fn a_dropped_unsettled_guard_contributes_one_cancelled_attempt() {
-        let evidence = EffectEvidence::new();
-        drop(EffectOutcomeGuard::new(
-            &tracing::Span::none(),
-            Some(evidence.clone()),
-        ));
-        assert_eq!(evidence.outcome(), Some(EffectOutcome::Cancelled));
-        drop(EffectOutcomeGuard::new(
-            &tracing::Span::none(),
-            Some(evidence.clone()),
-        ));
-        assert_eq!(evidence.outcome(), None);
-    }
-
     /// One effect span, opened and settled the way a surface settles it, read
     /// back as the value `effect.outcome` carries.
     fn observed_outcome(tracer: &'static str, settled: Option<EffectOutcome>) -> String {
@@ -607,9 +494,9 @@ mod tests {
                 None,
                 effect.operation = "probe",
             );
-            let mut guard = EffectOutcomeGuard::new(&span, None);
+            let mut guard = EffectOutcomeGuard::new(&span);
             if let Some(outcome) = settled {
-                guard.settle(outcome, true);
+                guard.settle(outcome);
             }
         }
         harness

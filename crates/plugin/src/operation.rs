@@ -14,9 +14,7 @@ use wamn_application::ingress::AuthenticatedCaller;
 use wamn_application::native_routes::{DeliveryClass, OPERATION_METRICS_ID, OperationRefusal};
 use wamn_application::result_signing::ResultSigning;
 use wamn_application::session_identity::SessionIdentity;
-use wamn_connection::connection::{
-    ConnectionExecutionClosure, ConnectionInvocation, InvocationEntry,
-};
+use wamn_connection::connection::{ConnectionInvocation, InvocationEntry};
 use wamn_engine::entry_operation::operation::{self as wit, Begun, Refusal};
 use wamn_engine::operation::WamnOperation;
 use wash_runtime::engine::ctx::ActiveCtx;
@@ -1101,8 +1099,6 @@ impl OperationWorkload {
                     component_digest: component.digest,
                     component: component.name.parse()?,
                     operation: request.operation.cloned(),
-                    closure: ConnectionExecutionClosure::Released,
-                    effects: None,
                 }),
                 read: request.read,
             },
