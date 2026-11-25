@@ -30,7 +30,7 @@ This document is the work list for wamn, from the crate cleanup to the workflow 
 | Epic | Scope | Depends on | Host image rebuild |
 | --- | --- | --- | --- |
 | 1 | Crate cleanup: R1, in its own document. Done at `31703d9bb`. | — | Yes: `wamn-plugin`, the host and the CDC reader change. |
-| 2 | Deletion and API contracts: R2, R3, R4, R5, C2. | 1 | Yes (I): R2 touches host crates. |
+| 2 | Deletion and API contracts: R2, R3, R4, R5, C2. | 1 | Yes: R2 and R3 touch host crates (`wamn-routes` and `wamn-package` are host crates). |
 | 3 | State and lifecycle: C1, L1, L2, L3, L4, L5, L6. | 2. L2 uses the shared Helm helper of R4. | Yes, for L6. The rest needs none (I). |
 | 4 | Org boundary on kind: T3, T9, T12, and the kind pin and refusal tests of T13. | 1. Can run beside 2 and 3. | Yes: the non-root `USER` in the `Dockerfile`. |
 | 5 | Environment boundary: T1, T2, T4, T5, T10, and the T16 items on connections and locking. | 4 | Yes: the host's `--environment` argument. |
@@ -63,7 +63,7 @@ R1 is Epic 1, and it is done (commit `31703d9bb`). Its facts, rule, steps and ch
 
 | Delete | Why | Keep |
 | --- | --- | --- |
-| `Analysis`, `Authorities`, `ReleaseFacts`, `Notice`, `Observation` (`crates/environment/src/environment/analyse.rs`) and `analyse/plan.rs::refusals` | No caller outside the module. | The live readers in the same module (`read_row`, `read_project`, the installed-state and schema readers). |
+| `Analysis`, `Authorities`, `ReleaseFacts`, `Notice`, `Observation` (`crates/environment/src/environment/analyse.rs`) and `analyse/plan.rs::refusals` | No caller outside the module. | The live readers: `read_row`, `read_project` (`crates/environment/src/environment_sql_effects.rs`), and the installed-state and schema readers. |
 | `ConnectionExecutionClosure` and the `closure` field (`crates/connection/src/connection.rs`) | One variant, `Released`. Both production constructors set it. Nothing reads it. |  |
 | `EffectEvidence` (`crates/authority/src/effect_span.rs`), the `effects` field (`crates/connection/src/connection.rs`), its `Option` plumbing in the HTTP and blobstore adapters (`crates/plugin/src/bound_http.rs`, `crates/plugin/src/blobstore/host.rs`), and its own tests | Production sets `effects: None` (`crates/plugin/src/operation.rs`, `crates/connection/src/connection.rs`). Only unit tests construct it. | `EffectOutcomeGuard` and the exported outcome trace. |
 | The bind counters and `linker_entry_binds`, `scope_registrations` (`crates/plugin/src/lib.rs`) | No caller. The comments describe a removed driver. | Correct the comments. |
@@ -73,7 +73,7 @@ R1 is Epic 1, and it is done (commit `31703d9bb`). Its facts, rule, steps and ch
 | The Role rule `configmaps get, list` in `environment/templates/credential-access.yaml` | No host code uses it. | The Secret read. |
 | The `DELETE` grant on `wamn_run.runs` to `wamn_platform`, the trigger `runs_terminal_delete_only` and its function `guard_terminal_run_delete`, and their comments (`deploy/sql/run-state.sql`) | Their one user, `prune_run_history`, was deleted in Epic 1. No code deletes from the table. `wamn_app` holds only `SELECT`, so the comment that it keeps `DELETE` is wrong (F). | The other grants on the table, and `guard_run_admission_pins_immutable`. |
 
-Leftovers to remove with the code they belong to: the `roles` loop with one legal value in the application chart; `normalize_explicit_ingress_stop` and `WorkloadDrain` in the host shutdown code (`services/host/src/host.rs`). `release.manifestDigest` is not a leftover: rollback reads it (`crates/environment/src/environment/operation/rollback.rs::application`), and the chart writes it into the `wamn.package-digest` annotation (F).
+Leftovers to remove with the code they belong to: the `roles` loop with one legal value in the application chart. `normalize_explicit_ingress_stop` (`services/host/src/host.rs`) and `WorkloadDrain` (`services/host/src/host/commands.rs`) are live code in the host shutdown (F). They stay until the ingress code goes, and W1 deletes them. `release.manifestDigest` is not a leftover: rollback reads it (`crates/environment/src/environment/operation/rollback.rs::application`), and the chart writes it into the `wamn.package-digest` annotation (F).
 
 **Check.** Recheck callers when editing. Compile the affected packages and their dependents. Run `effect_span::tests::every_effect_outcome_reaches_the_exported_span`. Delete tests whose only subject is the deleted code. Do not add tests that search for absent fields or count enum variants.
 
@@ -91,11 +91,11 @@ Leftovers to remove with the code they belong to: the `roles` loop with one lega
 
 - One name per field. The database column, the wire, OpenAPI and TypeScript use the same snake\_case name. Filters, sort keys, refusal detail paths and `required` lists use it too. Nothing renames a field at run time.
 - The one fixed mapping is WIT, which requires kebab-case. Codegen turns `_` into `-` (`crates/codegen/src/authored_wit.rs`), and `crates/engine/src/operation/json.rs` turns `-` back into `_`. It stays.
-- Delete in `web/runtime/src/wire.ts`: `FieldMap`, `NestedFields`, `fromWire`, `toWire`, and the renaming step in `reviveOutcome`. Delete `fieldMap` and the interceptors in `apps/platform_ui/src/host-client.ts`. `transport.ts::refusedInputMember` uses the wire path as it is. `web/runtime/test/conversion.test.ts` goes with the code it tests.
+- Delete in `web/runtime/src/wire.ts`: `FieldMap`, `NestedFields`, `fromWire`, `toWire`, the renaming step in `reviveOutcome`, and the `FieldMap` parameters of `OperationBinding`, `callOperation` and `callEach`. Delete `fieldMap` and the interceptors in `apps/platform_ui/src/host-client.ts`. `transport.ts::refusedInputMember` uses the wire path as it is. `web/runtime/test/conversion.test.ts` goes with the code it tests. The `refusedInputMember` cases in `web/runtime/test/helpers.test.ts` follow the change.
 - Keep the wire types, `ResponseContract`, the outcomes and the transport.
 - The header comment of `wire.ts` names `crates/codegen/src/client_ts.rs`, which does not exist (F). Correct it.
-- Every JS client is generated by `@hey-api/openapi-ts` from OpenAPI: the platform UI from the native API documents, and an application from its published OpenAPI (`crates/codegen/src/generate/publication.rs::openapi`). wamn has no TypeScript emitter of its own (F), and none is added.
-- No host image rebuild (I). Only the web runtime, the platform UI and codegen change.
+- Every JS client is generated by `@hey-api/openapi-ts` from OpenAPI: the platform UI from the native API documents, and an application from its published OpenAPI (`crates/codegen/src/generate/publication.rs::openapi`). wamn has no TypeScript emitter of its own (F), and none is added. `apps/wamn_receiving/web` still imports the output of the deleted emitter (`src/forms.tsx`, `./generated/...`), so it does not build (F). Moving it to generated clients is a later epic. R3's checks compile the platform UI only.
+- This forces a host image rebuild: `wamn-routes` and `wamn-package` are host crates. The schema derives stay on the workspace's schemars 0.8, unless the baseline difference shows a change in the emitted contract.
 
 **UI labels.**
 
@@ -118,7 +118,7 @@ The two live client tests (`apps/platform_ui/test/control-client.live.test.ts`, 
 **F.**
 
 - Helm execution policy is split between `crates/kubernetes/src/helm.rs` (`upgrade`, `recover_pending`) and `crates/kubernetes/src/deployment_components.rs` (the explicit rollback). Upgrade waits until the Job deadline, explicit rollback uses `600s`, and recovery rollback passes no timeout. Common command, context, wait and deadline policy moves to `crates/kubernetes/src/helm.rs`. Rollback target selection stays in `crates/environment/src/environment/operation/rollback.rs`.
-- `xtask/src/preflight.rs` copies private production code instead of calling it (F): `org_create_objects` copies the shapes of `crates/platform-install/src/org.rs::create` and `org_install.rs::org_job`; `api_destinations` copies `org_install.rs::api_destinations`; and it copies `platform_install.rs::registry_egress`, `crates/environment/src/environment/ensure.rs::host_values`, `lifecycle.rs::reader_values` and `operation.rs::use_pod_registry`. Preflight calls the production builders instead, made public where needed. The preflight checks stay.
+- `xtask/src/preflight.rs` copies private production code instead of calling it (F): `org_create_objects` copies the shapes of `crates/platform-install/src/org.rs::create` and `org_install.rs::org_job`; `api_destinations` copies `org_install.rs::api_destinations`; and it copies `platform_install.rs::registry_egress`, `crates/environment/src/environment/ensure.rs::host_values`, `lifecycle.rs::reader_values` and `operation.rs::use_pod_registry`. Preflight calls the production builders instead, made public where needed. `registry_egress` is already public. `host_values` reads the system database and the image, and `reader_values` reads the image, so each splits into its reads and a builder with no I/O, which preflight calls. The preflight checks stay.
 
 **Check.** For a pure extraction, compile the callers and keep the existing chart render checks. If output changes, compare only meaningful rendered fields: namespace, service account, image and arguments, mounts, policy scope and artifact references. A render shows object shape, not admission, scheduling or rollback.
 
@@ -126,11 +126,11 @@ The two live client tests (`apps/platform_ui/test/control-client.live.test.ts`, 
 
 **F.** `docs/README.md` calls `docs/architecture` the current system. Correct these:
 
-- `docs/architecture/execution.md` describes a warm pool of reusable instances. The application chart sets no `poolSize` on application components and `poolSize: 0` on `ingress`. Upstream keeps no instance warm when the value is unset. `crates/engine/src/engine.rs` states that allocator capacity is not reusable guest state.
+- `docs/architecture/execution.md` describes a warm pool of reusable instances. The application chart sets no `poolSize` on application components and `poolSize: 0` on `ingress`. Upstream keeps no instance warm when the value is unset. `crates/engine/src/engine.rs` states that allocator capacity is not reusable guest state. The "Trusted component reuse" section of `docs/operations/deployment.md` documents `--trusted-warm-component-digest` and `WAMN_TRUSTED_WARM_COMPONENT_DIGESTS`, and no code reads either (F).
 - `docs/architecture/platform-services.md` says the system database supplies connection parameters. Connection rows are in the project database, written in the project transaction (`crates/connection/src/project_connections/administration.rs`). The integration catalogue is a separate, public, system table.
 - The same document describes one basic-auth Secret per authority class. The project chart uses certificate logins (`deploy/charts/project/templates/cluster.yaml`, `crates/identity-protocol/src/authority_class.rs`).
 - `docs/plan/wamn-restructure.md` says in one place that `ProjectDatabase` does not exist, and in another that it is a trait in `crates/connection/src/database.rs`. It is now a private struct in `crates/connection/src/project_connections/mod.rs` (F). Correct both.
-- `docs/testing/` names eight test paths that no longer exist, among them `crates/dev/tests/platform_apply_kind` and `crates/identity/tests/pat_live`.
+- `docs/testing/` names six test paths that no longer exist, among them `crates/identity/tests/pat_live`.
 - Trust wording: the environment is the shared execution trust group. The project is the data, ownership and recovery boundary.
 
 **Check.** Trace each corrected claim to its code and check its links. Do not add source-text tests or another layer of architecture documents.
