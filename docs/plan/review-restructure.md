@@ -147,7 +147,7 @@ The two live client tests (`apps/platform_ui/test/control-client.live.test.ts`, 
 - Package tags are mutable. A publish under an existing tag runs the migration-prefix check and moves the tag (`crates/release/src/release_package.rs::push_package`). The digest is the identity of a package. The version is a tag.
 - Sequence (I): deploy A; publish B under the same version without deploying it; apply the unchanged environment. Environment apply then uses B's schemas while the database records A.
 
-**Rule.** One loader opens installed manifests by recorded digest, shared by deploy and environment apply. Version-tag lookup stays for explicit inspection of a published version. Republishing stays allowed. No new installed-state record. No host image rebuild (I).
+**Rule.** One loader opens installed manifests by recorded digest, shared by deploy and environment apply. Version-tag lookup stays for explicit inspection of a published version. Republishing stays allowed. No new installed-state record. No host image rebuild (I). The recorded digest is the package that migrated the project database (`crates/environment/src/apply_package/package_version.rs::record_package_schema`). Deploy and env apply use it for the CDC publication schemas, and reset to rebuild the schema (F). After a failed rollout of B, B's migrations stay applied, so the record stays B while A serves. Helm records the serving release. An equal digest skips nothing: `ApplyOutcome.changed` is never read (F).
 
 **Check.** One journey test with a test-owned fixture and artifact namespace on the real registry: deploy A; add a migration and model with a second schema and publish B under the same version without deploying; confirm the tag names B and the installed record names A; run `wamn env apply` unchanged; assert that the installed digest, the publication's schemas and the stored CDC schema configuration all still describe A. The test must fail on the old reader and pass on the shared loader. The scripted OCI test server cannot tell a tag from a digest request, so it cannot show this failure. Use the real registry path.
 
@@ -204,6 +204,7 @@ F. `env apply` saves the applied configuration once per project, at the end of `
 - `connection.delete` refuses while the application's workload is not Ready.
 - Helm 4.2.2 gives the rollback the same timeout as the upgrade (`pkg/action/upgrade.go::failRelease`). The upgrade timeout is therefore at most half of the time left before the Job deadline.
 - The shared Helm helper of R4 owns this budget.
+- If the time left after the SQL and the image checks is below a minimum, the deploy stops before `helm upgrade` starts. The minimum is set after measuring a rollout on kind.
 - When the rollback also fails, apply reports the original failure and the rollback failure.
 - wamn promises nothing about earlier code on a migrated schema. Schema compatibility is the application developer's decision. Rolling back code does not undo a migration.
 - The automatic rollback returns the previous code on the migrated schema. When that code does not work there, the developer migrates the schema forward.
@@ -277,7 +278,7 @@ F. The CDC reader retries a refused publish without end and does not advance (`c
 
 **Rule.**
 
-- The reader leaves out the largest column values until the event fits 1 MiB.
+- The reader leaves out column values until the event fits 1 MiB: the largest first, and values of the old image before any value of the new image. Key and identity columns are never left out.
 - The envelope lists its unavailable columns, for both causes: an unchanged TOAST value and a value left out for size. Each entry names the image, `old` or `new`, and the column. An image that is absent stays absent.
 - Each trimmed event is logged with its subject, message id, table, omitted columns and size before trimming.
 - If the key columns alone do not fit, the reader stops and reports it, as it does for a value that is not UTF-8 (I).
@@ -360,7 +361,7 @@ Sound today (F): orgs never share a namespace and `allowSharedHosts: false` is s
   - the Service is `ClusterIP`, with no selector and no external address;
   - a workload refers only to the Service with its own name, `<release>-http`.
 - The policy needs no data and has no parameter. The binding selects namespaces by an environment label. It covers create and update of WorkloadDeployment, Service and NetworkPolicy. Delete stays with RBAC.
-- When the policy cannot be evaluated, the request is refused. The account filter is simple text matching that cannot fail.
+- The policy runs in Warn mode on kind while it is built, and in Deny mode before any real customer. In Deny mode, a request the policy cannot evaluate is refused. Its CEL expressions use `has()` guards, so a schema change in the upstream wasmCloud resource type makes a check miss rather than fail. Such changes come only with chart upgrades, which go through review and a kind run with the admission refusal test. The account filter is simple text matching that cannot fail.
 - Projects of one environment trust each other at run time. The policy does not check the project in workload config, the stream and subject grants, route hosts or object names. A defect in a deploy Job could therefore bind a workload to another project of the same environment.
 - Future option: make the plain key `wamn.project` the one source the host reads (`crates/plugin/src/lib.rs::PROJECT_CONFIG_KEY`), drop org, project and environment from the JSON in `wamn.application` (`crates/application/src/application_config.rs`), and add the project check with data. The host reads both today and never compares them. That forces a host image rebuild.
 - The policy text is not written.
@@ -373,20 +374,21 @@ Sound today (F): orgs never share a namespace and `allowSharedHosts: false` is s
 ### T6. System database and key custody
 
 - The system database gets a backup. Production runs more than one instance. During development it runs one.
-- The NATS operator root key stays in the system database. The signing-key layer goes: `operator-signing`, `system-signing`, `platform-signing` and `environment-signing` in `identity.nats_keys`.
+- The NATS operator root key stays in the system database. The signing-key layer goes: `operator-signing`, `system-signing`, `platform-signing` and `environment-signing` in `identity.nats_keys`. Revocation entries then clear only when the account key is rotated (T10).
 - Identity is trusted with every key. The key table is encrypted under a cloud KMS key on GCP, and that key outlives the cluster so a restore works.
 - The system database's `max_connections` is set once, with headroom. `_system-database.tpl systemDatabaseMaxConnections` goes. The Pooler totals stay chart values, and a change is a reload.
 
 ### T7. Backups and files
 
 - No org may read or delete another org's backups, and dev may not reach prod's.
-- Postgres pods reach the bucket by workload identity, with no stored key.
-- One backup bucket per environment. Inside it, one managed folder per database cluster, with one grant to that cluster's own account. The path is `<cluster>/wal/` in the environment's bucket. Each project database is its own cluster, so each backup belongs to one project in one environment.
-- The provisioning command (T2) creates the environment's bucket and gives the environment account admin on that bucket only. Env apply creates the folder and grant when it adds a project database. Org and environment separation rest on the bucket boundary, not on IAM conditions inside a shared bucket. The system database backup uses the same mechanism under `platform`.
+- Postgres pods reach the bucket through GKE Workload Identity Federation, with no stored key.
+- One backup bucket per environment, with uniform bucket-level access. Each database cluster writes under `<cluster>/wal/`. No managed folders. Each project database is its own cluster, so each prefix belongs to one project in one environment. Managed folders can be added later on the same prefixes with no data move.
+- The provisioning command (T2) creates the environment's bucket. Org and environment separation rest on the bucket boundary, not on IAM conditions inside a shared bucket. The system database backup uses the same mechanism under `platform`. Whether env apply makes any cloud IAM change depends on the grant scope below.
 - Open in the chart (F): `project/templates/cluster.yaml` still renders `accessKeyId` and `secretAccessKey` and the path `s3://<bucket>/wal/<name>`; `crates/environment/src/platform_environment.rs::database_values` copies endpoint, bucket and Secret from the installation settings.
-- A restore runs as a new cluster `<name>-restore`, whose account needs read on the source folder. That exception is not designed.
+- A restore runs as a new cluster `<name>-restore` in the same environment and reads the source prefix in the same bucket. Its access follows the grant scope below.
 - The pods need an egress rule to the metadata server.
-- Needs one backup and one restore on GKE. Fallback if the plugin path fails: a cloud service account and key per org.
+- Needs one backup and one restore on GKE. Fallback if the plugin path fails: a cloud service account and key per environment.
+- Grant scope (open, Epic 7). The host calls the metadata server at run time for its KMS key (`services/host/src/host.rs`, `wamn_key::open`) (F), so one grant to every service account of the environment namespace would let host pods, which run tenant code, read and write backups. Options: one bucket grant per database cluster account (env apply then makes one binding per project); a separate namespace for the environment's database clusters, with one grant made by the provisioning command; or one shared CloudNativePG service account, if CloudNativePG allows it (Not verified). Decided with the GKE check.
 - On kind, backups stay off.
 
 **Files.** Application files go through a blobstore connection, an integration of type `gcs` or `s3` (`crates/connection-type/src/lib.rs::blobstore_v1`) (F).
@@ -412,7 +414,7 @@ Sound today (F): orgs never share a namespace and `allowSharedHosts: false` is s
 - cert-manager makes the identity CA and the system database CA: a self-signed Issuer, an `isCA` Certificate and a CA Issuer, as the chart already does for the NATS CA. The `genCA` and `lookup` blocks go. No chart generates a key.
 - trust-manager distributes the CA certificates. Its source namespace is `platform` (I).
 - The CSRF key, its cookie `__Host-wamn-web-csrf`, its header `x-wamn-csrf`, `platform/templates/edge-csrf-secret.yaml`, `web/runtime/src/csrf.ts` and the HMAC code in `services/web/src/browser_session.rs` go.
-- The web proxy checks `Sec-Fetch-Site` on every unsafe request with a session cookie: `same-origin` and `none` pass, `same-site` and `cross-site` are refused. Without the header it compares `Origin` with `Host`. A request with neither passes. An old browser that sends neither header is covered only by `SameSite=Strict`.
+- The web proxy checks `Sec-Fetch-Site` on every unsafe request with a session cookie: `same-origin` and `none` pass, `same-site` and `cross-site` are refused. Without that header it compares `Origin` with `Host`. A request with neither header is refused. Callers that are not browsers use bearer tokens, not the session cookie, so the refusal does not reach them.
 - These rebuild the web proxy image and the web runtime, not the host image.
 
 ### T10. NATS
@@ -421,7 +423,7 @@ Sound today (F): orgs never share a namespace and `allowSharedHosts: false` is s
 - Each environment's account limits are data with defaults, changed without a redeploy: connections 64, consumers 2,000, subscriptions 10,000, payload 1 MiB, and two streams and 512 MiB of disk per project. None is measured. Identity re-signs and pushes a change.
 - `global.maxProjects` goes, with `registry.meta.max_projects`, `registry.project_capacity_available`, the check in `crates/environment/src/environment_sql_effects.rs`, the identity setting (`crates/identity/src/identity/nats_store.rs`), the control argument and the chart arithmetic. The platform value is the NATS store size in bytes, holding two streams per project. Identity refuses a storage limit that would overfill the store.
 - Whether NATS 2.12 raises its store size by reload is not verified.
-- Identity revokes users through the account's `revocations` field. Deleting a project or environment revokes its users. An entry stays until every JWT it covers has expired or its signing key is retired, so entries for creds that never expire stay.
+- Identity revokes users through the account's `revocations` field. Deleting a project revokes its users. Deleting an environment removes its whole account. An entry stays until every JWT it covers has expired. Host and CDC reader creds never expire, so their entries stay until the account key is rotated or expiring creds land. Entries accrue only when a project is deleted, so they grow slowly (I). No signing-key layer is kept to clear them: it adds key management that is not worth it before expiring creds.
 - The stream-admin and recovery Job users are not stored as Secrets. The Job makes a key in memory and asks identity for a JWT that expires with the Job.
 - Host and CDC reader creds do not expire. Expiry with rotation is a future option and needs a host image rebuild, because wamn's scheduler connection and the CDC reader read the creds file once (`crates/broker/src/nats.rs::credentials_options`).
 - Identity gives a project's account only its own project's recovery user (I).
@@ -438,7 +440,7 @@ Sound today (F): orgs never share a namespace and `allowSharedHosts: false` is s
 - The proxy checks the environment from the name: a route in `<org>--<env>` may claim only `<env>.<org>.<domain>`, and only the environment marked prod may claim `<org>.<domain>`. Names may not contain two hyphens in a row (`crates/registry/src/identifiers.rs`), so `<org>--<env>` splits cleanly.
 - The label setting goes: the `label` column, `UNIQUE (org, label)`, `application_host` (`crates/registry/src/name.rs`), `MAX_APPLICATION_LABEL_LEN` and the route label in `crates/environment/src/application_chart/plan.rs`.
 - The default application is a setting of the user. After login at the org address a user lands on it, or chooses when there are several.
-- To design: a certificate per org for its other environments, made without a platform redeploy (the wildcard covers one level only); the landing page and chooser, listing only applications the user may use; the fixed root paths (`/api/`, `/config.json`, `/password/`, `/oauth/callback`, `/wamn_control/`) as names a project may not take; and what a session's active role means across projects.
+- To design: the landing page and chooser, listing only applications the user may use; the fixed root paths (`/api/`, `/config.json`, `/password/`, `/oauth/callback`, `/wamn_control/`) as names a project may not take; and what a session's active role means across projects. The certificate is decided: `wamn org create` makes one wildcard certificate `*.<org>.<domain>`, with `<org>.<domain>` as a second name, through GCP Certificate Manager and a certificate map, beside the org's repository. On kind, cert-manager's local CA Issuer signs it. No platform redeploy.
 - One origin per org and environment: one login covers every application there, and a script fault in one application can act in the others (I).
 - Dev cannot act on prod in the browser: a `__Host-` cookie is not shared with a subdomain, and the CSRF check refuses `same-site` requests.
 
@@ -471,7 +473,7 @@ Sound today (F): orgs never share a namespace and `allowSharedHosts: false` is s
 
 From the restructure plan's open items (`docs/plan/wamn-restructure.md`) (F for the plan text). Each is designed in its epic.
 
-- Connection budget per org (Epic 5). The Pooler per-login pools and the computed `max_connections` (206) cap the org count near 12 per system database (wamn-44p7o). Identity could not get a database connection under parallel journey load (measured on kind, Not verified here). Decide identity's pool, and whether its key route reads the database per request, with the budget.
+- Connection budget per org (Epic 5). The Pooler per-login pools and the computed `max_connections` (206) cap the org count near 12 per system database (wamn-44p7o). Identity could not get a database connection under parallel journey load (measured on kind, Not verified here). Decide identity's pool, and whether its key route reads the database per request, with the budget. The budget lands before, or together with, T1's per-environment worker logins, which add logins per org.
 - One lock per environment (Epic 5). `ensure_environment` takes a lock shared by every environment of the installation (`crates/identity/src/identity/nats_store.rs`), so env applies are serialized across all orgs. The NATS account revision check must stay under the lock.
 - The connection credential hint (Epic 5). crates/connection/src/administration.rs stores the last four characters of the raw credential string as hint, and every connection response returns it (F). For a JSON credential that is "} and two characters of the secret, and a unit test expects it. The hint goes, or becomes a value that shows no secret characters.
 - Connection responses (Epic 5). The connection handlers still send to_jsonb(c) plus extra columns (crates/connection/src/project_connections/administration.rs), and wamn_routes::host_wire::ConnectionSummary only describes that JSON (F, at eec9f3bf4). A new column changes the wire with no type change, and the OpenAPI, which allows no other fields, is then wrong. The handlers build ConnectionSummary from the row, so the type owns the shape.
@@ -573,6 +575,7 @@ Built last. Nothing here is built during orders 1 to 4. Workflows are the least 
 - When a handler's consumer cannot be created, the host refuses to start that workload. The rollout then does not become available, and the old release keeps running.
 - Workflow consumers are created at enable and deleted at disable.
 - Building this changes host code and needs a host image rebuild.
+- W12's first item is decided before this is built: how a handler's consumer changes when a release changes its subjects.
 
 ### W4. Delivery
 
@@ -635,7 +638,7 @@ Built last. Nothing here is built during orders 1 to 4. Workflows are the least 
 
 ### W12. Not decided in the workflow design
 
-- What happens to a handler's place when a release changes its subjects.
+- What happens to a handler's consumer when a release changes its subjects. Decided before W3 is built.
 - An authoring check refusing a workflow whose publish subject matches its own entry subject.
 - A run rate limit per workflow.
 - A Request workflow gets a new delivery for each caller request, so a caller's own retry has a new key.
@@ -711,7 +714,7 @@ Run as `cargo test -p wamn-journey-tests --test <target> <name> -- --ignored --e
 - R3: literal native HTTP requests, the live client tests on a current test setup, and labels in the published OpenAPI.
 - The kind smoke run: the NetworkPolicy refusal test (T13), and the admission refusal test, in which a project account creates a workload with a `secretFrom` entry and is refused (T4).
 - One kind run with `restricted` enforced, to confirm the CloudNativePG pods (T3).
-- On GKE, when a cluster exists: one backup and restore through workload identity (T7), and Config Connector for managed folders and registry grants. If Config Connector works, the grants become chart objects and Rust makes no cloud calls.
+- On GKE, when a cluster exists: one backup and restore through workload identity (T7), and a check that pods other than the CloudNativePG pods cannot use the backup grant. Cloud resources and their grants are made by the provisioning command, never by a controller in the cluster.
 - Two runtime operators in one cluster, when an org first needs its own (T15).
 
 Do not build a fault-injection framework, a crash-point matrix, a WIT-wide property suite, source-text tests, or a schema compared with itself as a wire check.
@@ -743,7 +746,6 @@ Do not build a fault-injection framework, a crash-point matrix, a WIT-wide prope
 - [cert-manager supported releases](https://cert-manager.io/docs/releases/), [Helm version support](https://helm.sh/docs/topics/version_skew/), [CloudNativePG 1.30 supported releases](https://cloudnative-pg.io/docs/1.30/supported_releases).
 - [GKE Dataplane V2](https://docs.cloud.google.com/kubernetes-engine/docs/concepts/dataplane-v2): chosen only at cluster creation.
 - [Workload Identity Federation for GKE](https://docs.cloud.google.com/kubernetes-engine/docs/concepts/workload-identity), [Cloud Storage managed folders](https://docs.cloud.google.com/storage/docs/managed-folders), [Credential Access Boundaries](https://docs.cloud.google.com/iam/docs/downscoping-short-lived-credentials), [Artifact Registry access control](https://docs.cloud.google.com/artifact-registry/docs/access-control), [Service account credentials](https://docs.cloud.google.com/iam/docs/service-account-creds).
-- [Config Connector overview](https://docs.cloud.google.com/config-connector/docs/overview). It does not confirm managed folders or IAM grants.
 - [NATS ADR-34](https://www.github.com/nats-io/nats-architecture-and-design/blob/main/adr/ADR-34.md): filter subjects of one consumer cannot overlap. [NATS Server 2.9](https://nats.io/blog/nats-server-29-release): inactive threshold on durable consumers. [JetStream streams](https://docs.nats.io/nats-concepts/jetstream/streams): `Nats-Msg-Id` and discard policy.
 - [trust-manager](https://cert-manager.io/docs/trust/trust-manager/).
 - [MDN Sec-Fetch-Site](https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Sec-Fetch-Site) and [MDN Set-Cookie](https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Set-Cookie).
