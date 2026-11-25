@@ -1,6 +1,6 @@
 //! Cluster observations and resource mutations for deployment.
 
-use anyhow::{Context as _, ensure};
+use anyhow::Context as _;
 use k8s_openapi::{
     ByteString,
     api::{
@@ -13,7 +13,7 @@ use kube::{
     api::{ListParams, ObjectMeta, Patch, PatchParams},
 };
 use serde_json::Value;
-use std::{collections::BTreeMap, ffi::OsStr, sync::Mutex, time::Duration};
+use std::{collections::BTreeMap, sync::Mutex, time::Duration};
 use wamn_registry::{ApplicationName, Triple, name};
 
 use crate::client::{
@@ -111,28 +111,6 @@ async fn require_ownership(target: &Target, triple: &Triple, database: &str) -> 
         );
     }
     Ok(())
-}
-
-async fn project_release_exists(target: &Target, release: &str) -> anyhow::Result<bool> {
-    let namespace = helm::org_release_namespace(&target.namespace);
-    let filter = format!("^{release}$");
-    let output = helm::run_text(&[
-        "list".as_ref(),
-        "--filter".as_ref(),
-        filter.as_ref(),
-        "-o".as_ref(),
-        "json".as_ref(),
-        "--kubeconfig".as_ref(),
-        target.kubeconfig.as_os_str(),
-        "--kube-context".as_ref(),
-        target.context.as_ref(),
-        "--namespace".as_ref(),
-        std::ffi::OsStr::new(namespace.as_ref()),
-    ])
-    .await
-    .with_context(|| format!("look up project release {release}"))?;
-    let releases: Vec<Value> = serde_json::from_str(&output).context("decode Helm release list")?;
-    Ok(releases.iter().any(|entry| entry["name"] == release))
 }
 
 /// Remove chart resources left by uninstalled project generations.
@@ -312,54 +290,6 @@ async fn wait_workload_ready(target: &Target, name: &str, timeout: Duration) -> 
             error
         }
     })
-}
-
-async fn helm(target: &Target, arguments: &[&str]) -> anyhow::Result<std::process::Output> {
-    let namespace = helm::org_release_namespace(&target.namespace);
-    let mut args = vec![
-        OsStr::new("--kubeconfig"),
-        target.kubeconfig.as_os_str(),
-        OsStr::new("--kube-context"),
-        target.context.as_ref(),
-        OsStr::new("--namespace"),
-        OsStr::new(namespace.as_ref()),
-    ];
-    args.extend(arguments.iter().map(OsStr::new));
-    helm::output(&args).await
-}
-
-async fn get(target: &Target, args: &[&str]) -> anyhow::Result<Option<Vec<u8>>> {
-    let output = helm(target, args).await?;
-    if output.status.success() {
-        return Ok(Some(output.stdout));
-    }
-    let error = String::from_utf8_lossy(&output.stderr);
-    if error.contains("release: not found") || error.contains("release not found") {
-        return Ok(None);
-    }
-    anyhow::bail!("helm {} failed: {}", args.join(" "), error.trim())
-}
-
-async fn run(target: &Target, release: &str, revision: u32) -> anyhow::Result<()> {
-    let output = helm(
-        target,
-        &[
-            "rollback",
-            release,
-            &revision.to_string(),
-            "--server-side=true",
-            "--wait=watcher",
-            "--timeout",
-            "600s",
-        ],
-    )
-    .await?;
-    ensure!(
-        output.status.success(),
-        "helm rollback failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    Ok(())
 }
 
 async fn postgres_settings(target: &Target) -> anyhow::Result<serde_json::Value> {
@@ -646,17 +576,7 @@ impl Target {
         release: &str,
         revision: u32,
     ) -> anyhow::Result<Option<Vec<u8>>> {
-        get(
-            self,
-            &[
-                "get",
-                "manifest",
-                release,
-                "--revision",
-                &revision.to_string(),
-            ],
-        )
-        .await
+        helm::get(self, "manifest", release, revision).await
     }
 
     pub async fn release_values(
@@ -664,23 +584,12 @@ impl Target {
         release: &str,
         revision: u32,
     ) -> anyhow::Result<Option<Vec<u8>>> {
-        get(
-            self,
-            &[
-                "get",
-                "values",
-                release,
-                "--revision",
-                &revision.to_string(),
-                "-o",
-                "json",
-            ],
-        )
-        .await
+        helm::get(self, "values", release, revision).await
     }
 
     pub async fn rollback(&self, release: &str, revision: u32) -> anyhow::Result<()> {
-        run(self, release, revision).await
+        let namespace = helm::org_release_namespace(&self.namespace);
+        helm::rollback(self, &namespace, release, Some(revision), helm::Wait::Watcher).await
     }
 
     pub async fn uninstall(&self, release: &str) -> anyhow::Result<()> {
@@ -693,7 +602,7 @@ impl Target {
     }
 
     pub async fn project_release_exists(&self, release: &str) -> anyhow::Result<bool> {
-        project_release_exists(self, release).await
+        helm::project_release_exists(self, release).await
     }
 
     pub async fn delete_kept_project_resources(
