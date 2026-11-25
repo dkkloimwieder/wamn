@@ -1079,8 +1079,9 @@ It stamps `identity.session_keys`, `session_signing_state`, and `password_attemp
 The full control schema stamps registry declarations and `wamn_authority.author_login_projects`.
 The system operations tables carry no stamps. The append-only `provisioning.platform_event` journal records each lifecycle event with its own timestamp, caller, and command ID.
 In the system database, the actor is an `identity.principals` id.
-The system identity tables record the actor only. A control route inserts `operation` to its sealed operation id, and no column stores it.
-System database record history consists of stamps, as described in its [limits](#limits).
+Registry rows keep unlimited history, with an exception for `registry.environment_application_connections` while its derived constraint name exceeds PostgreSQL's limit.
+The system logs changes to the identity authority relations listed above and to `identity.password_credentials`.
+History keeps the actor, operation, and row changes. A control route binds its sealed operation id.
 
 The `SYSTEM_SCHEMA_SQL` composition in [platform installation](../../crates/platform-install/src/lib.rs) installs `record-history.sql` before [`deploy/sql/system-schema.sql`](../../deploy/sql/system-schema.sql).
 Initialization creates the `NOLOGIN` owner roles before installing these helpers.
@@ -1091,17 +1092,16 @@ A separate managed migration login inherits the selected owner role and runs the
 A `platform` row carries its `wamn:<component>` name in `subject` and in `display_name`, and its derived id.
 The `principals_platform_principal_check` constraint pins that subject, display name, and id.
 It also refuses a `wamn:` display name on another type, and the subject pattern of another type refuses a colon.
-Only `wamn:provisioning` writes in the system database, so the schema creates only its row.
-The schema binds `wamn:provisioning` for the transaction that creates the row, so the row stamps itself.
+The schema seeds `wamn:provisioning` and `wamn:identity-service` under the provisioning principal.
 A platform principal cannot authenticate.
-The system identity issuer binds `wamn:provisioning` when it writes.
+The system identity issuer binds `wamn:identity-service` for service writes.
 Control binds the calling administrator when it writes a project service row or a PAT.
 
 Project service principals are `platform."user"` rows with type `service` and issuer `wamn`.
 Their subject identifies the service. Their email uses that subject and `registry.meta.platform_domain`.
 Project PATs live in `platform.pat` and reference the local service principal.
-The platform login can select, insert, and update PAT rows. Guest SQL cannot read them.
-Each PAT has history stamps. The table has no row history.
+The platform login can select, insert, and update PAT rows. Guest SQL cannot read PAT rows or their history.
+PATs, connections, connection generations, external systems, packages, connection requirements, and workflows keep unlimited row history.
 
 ### History read
 
@@ -1186,8 +1186,6 @@ The history read has two more limits:
 
 - The fold does not compare the current row with the newest entry. It cannot see a change that the log did not record, such as a change while the retention was `"none"`.
 - The fold does not follow a column that a migration adds or drops between entries.
-
-The system database keeps stamps only. A delete has no stamp.
 
 ## Event capture
 

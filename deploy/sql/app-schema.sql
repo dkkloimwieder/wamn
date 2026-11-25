@@ -138,7 +138,7 @@ CREATE TRIGGER wamn_record_history_stamp
     EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 GRANT SELECT ON platform."user" TO wamn_app;
 
--- Only the platform login reads or writes PATs. Retain stamps without row images.
+-- Only the platform login reads or writes PATs and their history.
 CREATE TABLE platform.pat (
     id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id    uuid NOT NULL REFERENCES platform."user" (id) ON DELETE RESTRICT,
@@ -266,7 +266,7 @@ GRANT SELECT ON platform.environment TO wamn_app;
 DO $history_tables$ BEGIN
   PERFORM wamn_history.create_history_table('platform', 'user', false);
   PERFORM wamn_history.create_history_table('platform', relation, false)
-     FROM unnest(ARRAY['role', 'user_role', 'permission', 'environment']) AS relation;
+     FROM unnest(ARRAY['role', 'user_role', 'permission', 'environment', 'pat']) AS relation;
 END $history_tables$;
 
 CREATE TRIGGER wamn_record_history_log
@@ -291,6 +291,11 @@ CREATE TRIGGER wamn_record_history_log
 
 CREATE TRIGGER wamn_record_history_log
     AFTER INSERT OR UPDATE OR DELETE ON platform.environment
+    FOR EACH ROW
+    EXECUTE FUNCTION wamn_history.log_row_change('unlimited');
+
+CREATE TRIGGER wamn_record_history_log
+    AFTER INSERT OR UPDATE OR DELETE ON platform.pat
     FOR EACH ROW
     EXECUTE FUNCTION wamn_history.log_row_change('unlimited');
 

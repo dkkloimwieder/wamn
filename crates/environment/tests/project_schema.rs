@@ -315,6 +315,62 @@ fn run(url: &str, script: &str) -> String {
     String::from_utf8(out.stdout).expect("psql output is utf-8")
 }
 
+/// Project history covers the platform and catalog while PAT images stay private.
+#[tokio::test]
+#[ignore = "requires: docker, bin:psql"]
+async fn project_history_covers_platform_and_catalog_writes() {
+    let postgres = wamn_test_infrastructure::containers::start_postgres()
+        .await
+        .unwrap();
+    let database = wamn_test_infrastructure::identity::project(&postgres, "platform_history").await;
+    run(
+        database.as_str(),
+        r#"
+DO $$
+DECLARE
+  source record;
+  logs_rows boolean;
+BEGIN
+  FOR source IN
+    SELECT schemaname, tablename FROM pg_tables
+    WHERE schemaname IN ('platform', 'catalog')
+      AND tablename::text !~ '_history$'
+  LOOP
+    logs_rows := source.schemaname = 'catalog' OR source.tablename NOT IN (
+      'credential', 'oauth_token', 'oauth_authorization', 'number_counter',
+      'write_log', 'tx_identity', 'login_principal'
+    );
+    ASSERT logs_rows = EXISTS (
+      SELECT FROM pg_trigger
+      WHERE tgrelid = to_regclass(format('%I.%I', source.schemaname, source.tablename))
+        AND tgfoid = 'wamn_history.log_row_change()'::regprocedure
+    ), format('%I.%I', source.schemaname, source.tablename);
+  END LOOP;
+  ASSERT NOT has_table_privilege('wamn_query', 'platform.pat_history', 'SELECT');
+END $$;
+
+BEGIN;
+SET LOCAL ROLE wamn_platform;
+INSERT INTO platform.tx_identity (principal_id, role, application, operation)
+VALUES ('11111111-1111-1111-1111-111111111111', '', '', 'admin:pat-history-fixture');
+INSERT INTO platform."user" (id, issuer, sub, type, email)
+VALUES ('11111111-1111-1111-1111-111111111111', 'wamn', 'fixture', 'service', 'fixture@example.invalid');
+INSERT INTO platform.pat (user_id, prefix, hash, label, expires_at)
+VALUES ('11111111-1111-1111-1111-111111111111', '0123456789abcdef',
+        'sha256:' || repeat('0', 64), 'fixture', now() + interval '1 day');
+COMMIT;
+
+DO $$ BEGIN
+  ASSERT EXISTS (
+    SELECT FROM platform.pat p JOIN platform.pat_history h ON h.row_key = jsonb_build_object('id', p.id)
+    WHERE p.prefix = '0123456789abcdef' AND h.type = 'insert'
+      AND h.changed_by = p.user_id AND h.operation = 'admin:pat-history-fixture'
+  );
+END $$;
+"#,
+    );
+}
+
 /// Row changes record the actor and operation, including key changes and cascades.
 #[tokio::test]
 #[ignore = "requires: docker, bin:psql"]

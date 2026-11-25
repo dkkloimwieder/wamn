@@ -168,6 +168,9 @@ pub fn grants_sql() -> String {
     let mut sql = format!(
         "DO $$ BEGIN EXECUTE format('GRANT CONNECT ON DATABASE %I TO {role}', current_database()); END $$; \
          GRANT USAGE ON SCHEMA identity, registry, platform, wamn_authority TO {role}; \
+         GRANT USAGE ON SCHEMA wamn_history TO {role}; \
+         GRANT EXECUTE ON FUNCTION wamn_history.row_image(record) TO {role}; \
+         GRANT INSERT ON identity.principals_history, identity.password_credentials_history TO {role}; \
          GRANT INSERT ON platform.tx_identity TO {role}; \
          GRANT EXECUTE ON FUNCTION wamn_authority.current_identity(), wamn_authority.current_principal_id(), wamn_authority.current_role(), wamn_authority.current_application() TO {role}; \
          GRANT SELECT, INSERT, UPDATE, DELETE ON \

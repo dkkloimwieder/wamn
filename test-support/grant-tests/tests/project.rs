@@ -137,7 +137,7 @@ async fn app_login_refusals() -> anyhow::Result<()> {
         &wamn_principal::PlatformComponent::ApplyPackage.principal_id(),
         "",
         "fixture",
-        None,
+        Some("wamn:apply-package"),
         None,
     )
     .await?;

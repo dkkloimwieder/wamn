@@ -12,7 +12,7 @@ use wamn_test_infrastructure::identity as common;
 fn seed_org_project_env_sql() -> String {
     let actor = wamn_principal::PlatformComponent::Provisioning.principal_id();
     format!(
-        "INSERT INTO platform.tx_identity(principal_id,role,application) VALUES('{actor}','','fixture'); \
+        "INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('{actor}','','fixture','wamn:provisioning'); \
          INSERT INTO registry.orgs(id) VALUES ('fill'); \
          INSERT INTO registry.projects(org,id) VALUES ('fill','fixture'); \
          WITH parent_environment AS (INSERT INTO registry.environments (org,env) VALUES ('fill','dev')) \

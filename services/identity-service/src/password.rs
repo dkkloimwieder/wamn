@@ -437,7 +437,7 @@ pub(crate) mod tests {
     use hyper::service::service_fn;
     use hyper_util::rt::TokioIo;
     use serde_json::json;
-    use sqlx::{Connection as _, Row as _};
+    use sqlx::Row as _;
     use std::convert::Infallible;
     use std::sync::Arc;
     use tokio::net::TcpListener;
@@ -496,14 +496,10 @@ pub(crate) mod tests {
                 .unwrap(),
             );
         }
-        let mut tx = admin.client.begin().await.unwrap();
-        sqlx::query(
-            "INSERT INTO platform.tx_identity(principal_id,role,application) VALUES($1,'','')",
-        )
-        .bind(sqlx::types::Uuid::from(actor))
-        .execute(&mut *tx)
-        .await
-        .unwrap();
+        let mut tx =
+            wamn_postgres::provisioning_transaction::provisioning_transaction(&mut admin.client)
+                .await
+                .unwrap();
         sqlx::query("INSERT INTO registry.orgs (id) VALUES ('demo')")
             .execute(&mut *tx)
             .await

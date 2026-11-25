@@ -308,6 +308,20 @@ pub async fn install_control_store(admin: &mut Client) -> anyhow::Result<bool> {
                 &wamn_role::SYSTEM_ROLE.parse()?,
             )
             .await?;
+            sqlx::raw_sql(
+                "SELECT wamn_history.create_history_table('registry', '_sqlx_migrations', false);
+                 CREATE TRIGGER wamn_record_history_log AFTER INSERT OR UPDATE OR DELETE
+                     ON registry._sqlx_migrations FOR EACH ROW
+                     EXECUTE FUNCTION wamn_history.log_row_change('unlimited');
+                 DO $$ BEGIN
+                     IF to_regrole('wamn_platform') IS NOT NULL THEN
+                         REVOKE ALL ON registry._sqlx_migrations_history FROM wamn_platform;
+                     END IF;
+                 END $$;",
+            )
+            .execute(&mut *admin)
+            .await
+            .context("log system migration rows")?;
         }
         sqlx::raw_sql("COMMIT")
             .execute(&mut *admin)

@@ -457,7 +457,7 @@ Before stopping users, WAMN resolves all retained package artifacts and validate
 The lifecycle lock excludes application deployment during reset.
 Reset stops application hosts and event users.
 It drops the objects owned by the migration login and restores that login's grants.
-It clears application catalog state, runs, queued events, and authored workflows.
+It clears application catalog state and its history, runs, queued events, and authored workflows.
 It then applies every selected package's migrations in dependency order.
 
 Platform-owned schemas, database credentials, CDC publications, and replication slots remain.

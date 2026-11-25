@@ -39,8 +39,28 @@ GRANT INSERT, SELECT (command_id, outcome) ON provisioning.platform_event TO wam
 
 GRANT EXECUTE ON FUNCTION identity.is_project_admin(uuid,text,text), identity.has_project_access(uuid,text,text,text) TO wamn_apply;
 
-DO $$ BEGIN
+GRANT USAGE ON SCHEMA wamn_history TO wamn_apply;
+GRANT EXECUTE ON FUNCTION wamn_history.row_image(record) TO wamn_apply;
+
+DO $apply_history$
+DECLARE source record;
+BEGIN
+    FOR source IN
+        SELECT n.nspname, c.relname
+        FROM pg_trigger t
+        JOIN pg_class c ON c.oid = t.tgrelid
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE t.tgfoid = 'wamn_history.log_row_change()'::regprocedure
+          AND n.nspname IN ('registry', 'identity')
+          AND (has_any_column_privilege('wamn_apply', c.oid, 'INSERT,UPDATE')
+               OR has_table_privilege('wamn_apply', c.oid, 'DELETE'))
+    LOOP
+        EXECUTE format('GRANT INSERT ON %I.%I TO wamn_apply',
+                       source.nspname, source.relname || '_history');
+    END LOOP;
+
     IF to_regclass('registry._sqlx_migrations') IS NOT NULL THEN
         GRANT SELECT ON registry._sqlx_migrations TO wamn_apply;
     END IF;
-END $$;
+END
+$apply_history$;

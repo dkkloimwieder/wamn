@@ -1,7 +1,8 @@
 -- Package and release facts carry the four NOT NULL record history stamps.
 -- Their triggers use wamn_history.stamp_row(), installed by CATALOG_SCHEMA_SQL.
--- Package application binds wamn:apply-package; environment and connection
--- provisioning bind wamn:provisioning. Release connections and bindings also log history.
+-- Package application binds wamn:apply-package. Connection and workflow
+-- administration bind the caller and the sealed operation. The history tables
+-- below retain row changes for unlimited time.
 
 CREATE TABLE catalog.packages (
     package_id         text        NOT NULL,
@@ -341,6 +342,25 @@ GRANT SELECT ON catalog.packages,
     catalog.connection_requirement,
     catalog.workflows
 TO wamn_app;
+
+DO $record_history$
+DECLARE source record;
+BEGIN
+    FOR source IN SELECT * FROM (VALUES
+        ('platform', 'connection'),
+        ('platform', 'connection_generation'),
+        ('platform', 'external_system'),
+        ('catalog', 'packages'),
+        ('catalog', 'connection_requirement'),
+        ('catalog', 'workflows')
+    ) AS relations(schema_name, relation_name) LOOP
+        PERFORM wamn_history.create_history_table(source.schema_name, source.relation_name, false);
+        EXECUTE format('CREATE TRIGGER wamn_record_history_log AFTER INSERT OR UPDATE OR DELETE '
+                       'ON %I.%I FOR EACH ROW EXECUTE FUNCTION wamn_history.log_row_change(''unlimited'')',
+                       source.schema_name, source.relation_name);
+    END LOOP;
+END
+$record_history$;
 
 REVOKE ALL ON ALL TABLES IN SCHEMA catalog FROM PUBLIC;
 REVOKE ALL ON ALL FUNCTIONS IN SCHEMA catalog FROM PUBLIC;

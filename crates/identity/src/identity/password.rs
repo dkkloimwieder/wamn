@@ -35,8 +35,9 @@ fn database(source: &sqlx::Error) -> PasswordError {
 async fn bind_actor(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     actor: &PrincipalId,
+    operation: Option<&str>,
 ) -> Result<(), PasswordError> {
-    wamn_postgres::bind_transaction_identity(tx, actor, "", "", None, None)
+    wamn_postgres::bind_transaction_identity(tx, actor, "", "", operation, None)
         .await
         .map_err(|source| database(&source))
 }
@@ -113,7 +114,7 @@ async fn issue_token(
     let hash = token.digest();
     let secret = token.into_secret();
     let mut tx = client.begin().await.map_err(|source| database(&source))?;
-    bind_actor(&mut tx, actor).await?;
+    bind_actor(&mut tx, actor, None).await?;
     if let Some((cause, reason)) =
         lock_account(&mut tx, principal, purpose == RESET_PURPOSE).await?
     {
@@ -211,7 +212,7 @@ async fn establish_password(
         .begin_with("BEGIN ISOLATION LEVEL REPEATABLE READ")
         .await
         .map_err(|source| database(&source))?;
-    bind_actor(&mut read, principal).await?;
+    bind_actor(&mut read, principal, None).await?;
     sqlx::query("SET TRANSACTION READ ONLY")
         .execute(&mut *read)
         .await
@@ -233,7 +234,12 @@ async fn store_password(
     purpose: &str,
 ) -> Result<(), PasswordError> {
     let mut tx = client.begin().await.map_err(|source| database(&source))?;
-    bind_actor(&mut tx, principal).await?;
+    let operation = if purpose == RESET_PURPOSE {
+        "admin:password-reset"
+    } else {
+        "admin:password-enroll"
+    };
+    bind_actor(&mut tx, principal, Some(operation)).await?;
     if let Some((cause, reason)) =
         lock_account(&mut tx, principal, purpose == RESET_PURPOSE).await?
     {

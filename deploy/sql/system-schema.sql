@@ -26,7 +26,8 @@
 -- composition in wamn-platform-install carries it. The system database owner,
 -- wamn_system, owns its record history helpers. Every write to these relations
 -- binds a transaction principal. The identity issuer binds wamn:identity-service
--- for service writes. Provisioning binds wamn:provisioning.
+-- for service writes. Provisioning binds wamn:provisioning. Logged relations
+-- keep unlimited row images with the actor and operation.
 --
 -- THE FOUR INVARIANTS for T1, and how this schema
 -- encodes / makes each testable:
@@ -97,54 +98,6 @@ CREATE TABLE registry.integration_type_auth (
     PRIMARY KEY (integration_type, auth_type)
 );
 
-INSERT INTO registry.integration_type (code, runtime_type, exclusive, resource_key_template) VALUES
-    ('http', 'host', false, NULL), ('gcs', 'host', false, NULL), ('s3', 'host', false, NULL),
-    ('modbus', 'wasm', true, 'tcp:{authority}');
-
-INSERT INTO registry.integration_type_version
-    (integration_type, version, digest, parameter_schema, operations, exports, write_interfaces, published_at) VALUES
-    ('http', 1, NULL,
-     '{"type":"object","properties":{"primary-authority":{"type":"string","minLength":1,"immutable":true},"tls-verification":{"type":"string","enum":["disabled","verify-authority"]}},"required":["primary-authority","tls-verification"]}', 'wamn:connection/http', ARRAY['wamn:connection/http@0.1.0'], '{}', transaction_timestamp()),
-    ('gcs', 1, NULL,
-     '{"type":"object","properties":{"provider":{"type":"string","enum":["gcs"],"immutable":true},"container":{"type":"string","minLength":1,"immutable":true},"prefix":{"type":"string","minLength":1,"immutable":true},"cdn_host":{"type":"string","minLength":1}},"required":["container","prefix","provider"]}', 'wasmcloud:blobstore/imports@0.1.0', ARRAY['wasmcloud:blobstore/types@0.1.0','wasmcloud:blobstore/container@0.1.0','wasmcloud:blobstore/blobstore@0.1.0'], '{}', transaction_timestamp()),
-    ('s3', 1, NULL,
-     '{"type":"object","properties":{"provider":{"type":"string","enum":["s3"],"immutable":true},"container":{"type":"string","minLength":1,"immutable":true},"prefix":{"type":"string","minLength":1,"immutable":true},"cdn_host":{"type":"string","minLength":1},"endpoint":{"type":"string","minLength":1,"immutable":true}},"required":["container","prefix","endpoint"]}', 'wasmcloud:blobstore/imports@0.1.0', ARRAY['wasmcloud:blobstore/types@0.1.0','wasmcloud:blobstore/container@0.1.0','wasmcloud:blobstore/blobstore@0.1.0'], '{}', transaction_timestamp()),
-    ('modbus', 1, 'sha256:37c3fc98df0a7b1cdf230dfa16956d34e832b6f1198a04293932170674e0d682',
-     '{"type":"object","properties":{},"additionalProperties":false}', 'wamn:modbus/client@1.0.0', ARRAY['wamn:modbus/read@1.0.0','wamn:modbus/write@1.0.0','wamn:integration/health@0.1.0'], ARRAY['wamn:modbus/write@1.0.0'], transaction_timestamp());
-
-INSERT INTO registry.auth_type (code, credential_schema, parameter_schema, http_only) VALUES
-    ('http_basic', '{"type":"object","properties":{"username":{"type":"string"},"password":{"type":"string"}},"required":["username","password"]}',
-     '{"type":"object","properties":{},"additionalProperties":false}', true),
-    ('api_key', '{"type":"object","properties":{"key":{"type":"string"}},"required":["key"]}',
-     '{"type":"object","properties":{"in":{"type":"string","enum":["header","query"]},"name":{"type":"string"}},"required":["in","name"]}', true),
-    ('hmac', '{"type":"object","properties":{"secret":{"type":"string","minLength":1}},"required":["secret"],"additionalProperties":false}',
-     '{"type":"object","properties":{"algorithm":{"type":"string","enum":["sha256"]},"header":{"type":"string","minLength":1}},"required":["algorithm","header"],"additionalProperties":false}', true),
-    ('oauth2_client_credentials', '{"type":"object","properties":{"client_secret":{"type":"string"}},"required":["client_secret"]}',
-     '{"type":"object","properties":{"client_id":{"type":"string"},"token_url":{"type":"string"},"token_authority":{"type":"string","minLength":1},"scopes":{"type":"array","items":{"type":"string"}}},"required":["client_id","token_url","scopes"]}', true),
-    ('oauth2_client_credentials_jwt', '{"type":"object","properties":{"private_key":{"type":"string"}},"required":["private_key"],"additionalProperties":false}',
-     '{"type":"object","properties":{"client_id":{"type":"string"},"token_url":{"type":"string"},"token_authority":{"type":"string","minLength":1},"scopes":{"type":"array","items":{"type":"string"}},"key_id":{"type":"string"},"algorithm":{"type":"string","enum":["PS256","ES256","RS256"]},"scope_separator":{"type":"string","enum":[" ",","],"default":" "}},"required":["client_id","token_url","key_id","algorithm"],"additionalProperties":false}', true),
-    ('oauth2_authorization_code', '{"type":"object","properties":{"client_secret":{"type":"string"}},"required":["client_secret"]}',
-     '{"type":"object","properties":{"client_id":{"type":"string"},"authorize_url":{"type":"string"},"token_url":{"type":"string"},"token_authority":{"type":"string","minLength":1},"scopes":{"type":"array","items":{"type":"string"}}},"required":["client_id","authorize_url","token_url","scopes"]}', true),
-    ('aws_sigv4', '{"type":"object","properties":{"access_key_id":{"type":"string"},"secret_access_key":{"type":"string"}},"required":["access_key_id","secret_access_key"]}',
-     '{"type":"object","properties":{"region":{"type":"string"},"service":{"type":"string"}},"required":["region","service"]}', true),
-    ('custom', '{"type":"object"}',
-     '{"type":"object","properties":{},"additionalProperties":false}', false),
-    ('none', '{"type":"object","properties":{},"additionalProperties":false}',
-     '{"type":"object","properties":{},"additionalProperties":false}', false);
-
-INSERT INTO registry.integration_type_auth (integration_type, auth_type) VALUES
-    ('http', 'http_basic'),
-    ('http', 'api_key'),
-    ('http', 'hmac'),
-    ('http', 'oauth2_client_credentials'),
-    ('http', 'oauth2_client_credentials_jwt'),
-    ('http', 'oauth2_authorization_code'),
-    ('http', 'aws_sigv4'),
-    ('http', 'none'),
-    ('gcs', 'custom'),
-    ('s3', 'custom'),
-    ('modbus', 'none');
-
 CREATE TABLE registry.target (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     name text NOT NULL UNIQUE,
@@ -152,8 +105,6 @@ CREATE TABLE registry.target (
     active boolean NOT NULL DEFAULT true,
     last_seen_at timestamptz
 );
-INSERT INTO registry.target (name, type) VALUES ('cloud', 'cloud');
-
 
 -- ---------------------------------------------------------------------------
 -- Platform configuration shared by all orgs.
@@ -187,10 +138,6 @@ CREATE TRIGGER wamn_record_history_stamp
     BEFORE INSERT OR UPDATE ON registry.meta
     FOR EACH ROW
     EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
--- The deployment metadata seed uses the schema owner's login principal.
-DO $meta$ BEGIN
-  INSERT INTO registry.meta DEFAULT VALUES;
-END $meta$;
 
 -- ---------------------------------------------------------------------------
 -- Organizations are the units of isolation and billing.
@@ -331,15 +278,6 @@ CREATE TRIGGER wamn_record_history_stamp
     FOR EACH ROW
     EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 
--- The system owner stamps both platform principals as wamn:provisioning.
-DO $provisioning$ BEGIN
-  INSERT INTO identity.principals (id, type, subject, display_name)
-  VALUES ('770df186-ac15-579e-b46b-c297cae2011b', 'platform',
-          'wamn:provisioning', 'wamn:provisioning'),
-         ('63082942-c2ba-5970-9b32-e86ed5c3eb79', 'platform',
-          'wamn:identity-service', 'wamn:identity-service');
-END $provisioning$;
-
 CREATE TABLE identity.project_roles (
     principal_id uuid NOT NULL
         REFERENCES identity.principals (id) ON DELETE CASCADE,
@@ -437,7 +375,7 @@ CREATE TRIGGER wamn_record_history_stamp
     EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 
 -- Password enrollment (wamn-a045.1). Only user principals can enroll.
--- These tables hold credential material and stamps, never row-image history.
+-- Password credentials keep stamps and row images. Password tokens keep stamps.
 -- The identity library serializes enrollment on the principal row and consumes
 -- all outstanding invitations in the same transaction as password creation.
 -- Authorized issuer grants belong to the password endpoint implementation.
@@ -1045,10 +983,106 @@ CREATE TRIGGER wamn_record_history_stamp
     FOR EACH ROW
     EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 
+-- Install history before provisioning seeds so the owner login records them.
+DO $record_history$
+DECLARE source record;
+BEGIN
+    FOR source IN
+        SELECT schemaname, tablename FROM pg_catalog.pg_tables
+        WHERE schemaname = 'registry'
+          AND tablename <> 'environment_application_connections' -- Its derived constraint name exceeds 63 bytes.
+        UNION ALL
+        SELECT 'identity', unnest(ARRAY[
+            'principals', 'org_memberships', 'org_roles', 'project_roles',
+            'project_env_memberships', 'password_credentials'
+        ])
+    LOOP
+        PERFORM wamn_history.create_history_table(source.schemaname, source.tablename, false);
+        EXECUTE format('CREATE TRIGGER wamn_record_history_log AFTER INSERT OR UPDATE OR DELETE '
+                       'ON %I.%I FOR EACH ROW EXECUTE FUNCTION wamn_history.log_row_change(''unlimited'')',
+                       source.schemaname, source.tablename);
+        IF to_regrole('wamn_platform') IS NOT NULL THEN
+            EXECUTE format('REVOKE ALL ON %I.%I FROM wamn_platform',
+                           source.schemaname, source.tablename || '_history');
+        END IF;
+    END LOOP;
+END
+$record_history$;
+
+INSERT INTO registry.integration_type (code, runtime_type, exclusive, resource_key_template) VALUES
+    ('http', 'host', false, NULL), ('gcs', 'host', false, NULL), ('s3', 'host', false, NULL),
+    ('modbus', 'wasm', true, 'tcp:{authority}');
+
+INSERT INTO registry.integration_type_version
+    (integration_type, version, digest, parameter_schema, operations, exports, write_interfaces, published_at) VALUES
+    ('http', 1, NULL,
+     '{"type":"object","properties":{"primary-authority":{"type":"string","minLength":1,"immutable":true},"tls-verification":{"type":"string","enum":["disabled","verify-authority"]}},"required":["primary-authority","tls-verification"]}', 'wamn:connection/http', ARRAY['wamn:connection/http@0.1.0'], '{}', transaction_timestamp()),
+    ('gcs', 1, NULL,
+     '{"type":"object","properties":{"provider":{"type":"string","enum":["gcs"],"immutable":true},"container":{"type":"string","minLength":1,"immutable":true},"prefix":{"type":"string","minLength":1,"immutable":true},"cdn_host":{"type":"string","minLength":1}},"required":["container","prefix","provider"]}', 'wasmcloud:blobstore/imports@0.1.0', ARRAY['wasmcloud:blobstore/types@0.1.0','wasmcloud:blobstore/container@0.1.0','wasmcloud:blobstore/blobstore@0.1.0'], '{}', transaction_timestamp()),
+    ('s3', 1, NULL,
+     '{"type":"object","properties":{"provider":{"type":"string","enum":["s3"],"immutable":true},"container":{"type":"string","minLength":1,"immutable":true},"prefix":{"type":"string","minLength":1,"immutable":true},"cdn_host":{"type":"string","minLength":1},"endpoint":{"type":"string","minLength":1,"immutable":true}},"required":["container","prefix","endpoint"]}', 'wasmcloud:blobstore/imports@0.1.0', ARRAY['wasmcloud:blobstore/types@0.1.0','wasmcloud:blobstore/container@0.1.0','wasmcloud:blobstore/blobstore@0.1.0'], '{}', transaction_timestamp()),
+    ('modbus', 1, 'sha256:37c3fc98df0a7b1cdf230dfa16956d34e832b6f1198a04293932170674e0d682',
+     '{"type":"object","properties":{},"additionalProperties":false}', 'wamn:modbus/client@1.0.0', ARRAY['wamn:modbus/read@1.0.0','wamn:modbus/write@1.0.0','wamn:integration/health@0.1.0'], ARRAY['wamn:modbus/write@1.0.0'], transaction_timestamp());
+
+INSERT INTO registry.auth_type (code, credential_schema, parameter_schema, http_only) VALUES
+    ('http_basic', '{"type":"object","properties":{"username":{"type":"string"},"password":{"type":"string"}},"required":["username","password"]}',
+     '{"type":"object","properties":{},"additionalProperties":false}', true),
+    ('api_key', '{"type":"object","properties":{"key":{"type":"string"}},"required":["key"]}',
+     '{"type":"object","properties":{"in":{"type":"string","enum":["header","query"]},"name":{"type":"string"}},"required":["in","name"]}', true),
+    ('hmac', '{"type":"object","properties":{"secret":{"type":"string","minLength":1}},"required":["secret"],"additionalProperties":false}',
+     '{"type":"object","properties":{"algorithm":{"type":"string","enum":["sha256"]},"header":{"type":"string","minLength":1}},"required":["algorithm","header"],"additionalProperties":false}', true),
+    ('oauth2_client_credentials', '{"type":"object","properties":{"client_secret":{"type":"string"}},"required":["client_secret"]}',
+     '{"type":"object","properties":{"client_id":{"type":"string"},"token_url":{"type":"string"},"token_authority":{"type":"string","minLength":1},"scopes":{"type":"array","items":{"type":"string"}}},"required":["client_id","token_url","scopes"]}', true),
+    ('oauth2_client_credentials_jwt', '{"type":"object","properties":{"private_key":{"type":"string"}},"required":["private_key"],"additionalProperties":false}',
+     '{"type":"object","properties":{"client_id":{"type":"string"},"token_url":{"type":"string"},"token_authority":{"type":"string","minLength":1},"scopes":{"type":"array","items":{"type":"string"}},"key_id":{"type":"string"},"algorithm":{"type":"string","enum":["PS256","ES256","RS256"]},"scope_separator":{"type":"string","enum":[" ",","],"default":" "}},"required":["client_id","token_url","key_id","algorithm"],"additionalProperties":false}', true),
+    ('oauth2_authorization_code', '{"type":"object","properties":{"client_secret":{"type":"string"}},"required":["client_secret"]}',
+     '{"type":"object","properties":{"client_id":{"type":"string"},"authorize_url":{"type":"string"},"token_url":{"type":"string"},"token_authority":{"type":"string","minLength":1},"scopes":{"type":"array","items":{"type":"string"}}},"required":["client_id","authorize_url","token_url","scopes"]}', true),
+    ('aws_sigv4', '{"type":"object","properties":{"access_key_id":{"type":"string"},"secret_access_key":{"type":"string"}},"required":["access_key_id","secret_access_key"]}',
+     '{"type":"object","properties":{"region":{"type":"string"},"service":{"type":"string"}},"required":["region","service"]}', true),
+    ('custom', '{"type":"object"}',
+     '{"type":"object","properties":{},"additionalProperties":false}', false),
+    ('none', '{"type":"object","properties":{},"additionalProperties":false}',
+     '{"type":"object","properties":{},"additionalProperties":false}', false);
+
+INSERT INTO registry.integration_type_auth (integration_type, auth_type) VALUES
+    ('http', 'http_basic'),
+    ('http', 'api_key'),
+    ('http', 'hmac'),
+    ('http', 'oauth2_client_credentials'),
+    ('http', 'oauth2_client_credentials_jwt'),
+    ('http', 'oauth2_authorization_code'),
+    ('http', 'aws_sigv4'),
+    ('http', 'none'),
+    ('gcs', 'custom'),
+    ('s3', 'custom'),
+    ('modbus', 'none');
+
+INSERT INTO registry.target (name, type) VALUES ('cloud', 'cloud');
+
+-- The deployment metadata seed uses the schema owner's login principal.
+DO $meta$ BEGIN
+  INSERT INTO registry.meta DEFAULT VALUES;
+END $meta$;
+
+-- The system owner stamps both platform principals as wamn:provisioning.
+DO $provisioning$ BEGIN
+  INSERT INTO identity.principals (id, type, subject, display_name)
+  VALUES ('770df186-ac15-579e-b46b-c297cae2011b', 'platform',
+          'wamn:provisioning', 'wamn:provisioning'),
+         ('63082942-c2ba-5970-9b32-e86ed5c3eb79', 'platform',
+          'wamn:identity-service', 'wamn:identity-service');
+END $provisioning$;
+
 DO $control_surface$ BEGIN
   IF EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_control') THEN
     EXECUTE format('GRANT CONNECT ON DATABASE %I TO wamn_control', current_database());
     REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA "identity", "provisioning", "registry" FROM "wamn_control"; REVOKE ALL PRIVILEGES ON SCHEMA "identity", "provisioning", "registry" FROM "wamn_control"; GRANT USAGE ON SCHEMA "identity", "registry" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."org_memberships" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."org_roles" TO "wamn_control"; GRANT SELECT ON TABLE "identity"."password_logins" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE ON TABLE "identity"."principals" TO "wamn_control"; GRANT SELECT (platform_domain) ON registry.meta TO wamn_control; GRANT SELECT ON registry.integration_type, registry.integration_type_version, registry.integration_type_auth, registry.auth_type TO wamn_control; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."project_env_memberships" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."project_roles" TO "wamn_control"; GRANT SELECT ON TABLE "registry"."environment_projects", "registry"."environment_applications", "registry"."environment_application_connections", "registry"."environment_integrations", "registry"."target" TO "wamn_control"; GRANT SELECT, INSERT ON TABLE "registry"."projects" TO "wamn_control"; GRANT UPDATE ("active") ON TABLE "registry"."environments" TO "wamn_control";
+    GRANT USAGE ON SCHEMA wamn_history TO wamn_control;
+    GRANT EXECUTE ON FUNCTION wamn_history.row_image(record) TO wamn_control;
+    GRANT INSERT ON identity.principals_history, identity.org_memberships_history,
+        identity.org_roles_history, identity.project_roles_history,
+        identity.project_env_memberships_history, registry.projects_history,
+        registry.environments_history TO wamn_control;
   END IF;
 END $control_surface$;
 

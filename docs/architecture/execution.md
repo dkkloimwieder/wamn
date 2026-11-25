@@ -930,7 +930,7 @@ Renewal, logout, and password reset use the same principal lock.
 Principal disablement revokes its families through a database trigger, so reactivation cannot restore them.
 
 The issuer cannot change a login's principal, audience, authentication time, or absolute deadline.
-All writes require an actor, and credential tables have no row-image history.
+All writes require an actor. Password credentials keep row history, and password tokens and renewal credentials keep stamps.
 Consumed credentials remain until absolute expiry.
 Global request admission removes at most 100 expired families per call, including their credentials.
 

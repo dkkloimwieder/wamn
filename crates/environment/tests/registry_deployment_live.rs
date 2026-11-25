@@ -1,4 +1,3 @@
-use sqlx::Connection as _;
 use wamn_environment::registry::deployment;
 use wamn_platform_install::provision_system::install_control_store;
 use wamn_postgres::provisioning_transaction::provisioning_transaction;
@@ -89,12 +88,7 @@ async fn a_record_without_a_marker_keeps_the_disposable_row() {
         .await
         .map(drop)
         .unwrap();
-    let mut transaction = client.begin().await.unwrap();
-    sqlx::raw_sql("INSERT INTO platform.tx_identity(principal_id,role,application) VALUES('770df186-ac15-579e-b46b-c297cae2011b','','fixture')")
-        .execute(&mut *transaction)
-        .await
-        .map(drop)
-        .unwrap();
+    let mut transaction = provisioning_transaction(&mut client).await.unwrap();
     sqlx::raw_sql("INSERT INTO registry.orgs (id) VALUES ('demo')")
         .execute(&mut *transaction)
         .await

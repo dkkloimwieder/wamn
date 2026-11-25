@@ -60,12 +60,12 @@ pub fn grant_dynamic_sql_surface_sql() -> String {
            EXECUTE format('GRANT USAGE ON SCHEMA %I TO {role}', target.nspname); \
            FOR relation IN SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace \
              WHERE n.nspname=target.nspname AND c.relkind IN ('r','p','v','m','f') \
-             AND NOT (n.nspname='platform' AND c.relname IN ('credential','oauth_token','oauth_authorization','pat')) LOOP \
+             AND NOT (n.nspname='platform' AND c.relname IN ('credential','oauth_token','oauth_authorization','pat','pat_history')) LOOP \
              EXECUTE format('GRANT SELECT ON %I.%I TO {role}', target.nspname, relation.relname); \
            END LOOP; \
          END LOOP; \
          FOR target IN SELECT c.oid::regclass AS relation FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace \
-           WHERE n.nspname='platform' AND c.relname IN ('credential','oauth_token','oauth_authorization','pat') LOOP \
+           WHERE n.nspname='platform' AND c.relname IN ('credential','oauth_token','oauth_authorization','pat','pat_history') LOOP \
            EXECUTE format('REVOKE ALL ON %s FROM {role}', target.relation); \
          END LOOP; END $read$; \
          REVOKE ALL ON platform.tx_identity, platform.login_principal FROM {role}; \

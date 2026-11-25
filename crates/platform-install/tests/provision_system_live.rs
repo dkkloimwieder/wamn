@@ -128,6 +128,39 @@ async fn bootstrap_is_atomic_and_uses_database_facts() {
         system_state(&mut client).await.unwrap(),
         SystemState::Complete
     );
+    let wrong_history: Vec<String> = sqlx::query_scalar(
+        "SELECT format('%I.%I', schemaname, tablename) FROM pg_tables
+         WHERE schemaname IN ('registry', 'identity')
+           AND tablename::text !~ '_history$'
+           AND (schemaname = 'registry' AND tablename <> 'environment_application_connections'
+                OR schemaname = 'identity' AND tablename NOT IN (
+                    'session_keys', 'nats_keys', 'password_logins', 'password_tokens',
+                    'password_attempts', 'renewal_credentials', 'session_signing_state'
+                )) <> EXISTS (
+               SELECT FROM pg_trigger
+               WHERE tgrelid = to_regclass(format('%I.%I', schemaname, tablename))
+                 AND tgfoid = 'wamn_history.log_row_change()'::regprocedure
+           )",
+    )
+    .fetch_all(&mut client)
+    .await
+    .unwrap();
+    assert!(wrong_history.is_empty(), "{wrong_history:?}");
+    let recorded_seed: bool = sqlx::query_scalar(
+        "SELECT EXISTS (
+            SELECT FROM registry.target t
+            JOIN registry.target_history h ON h.row_key = jsonb_build_object('id', t.id)
+            WHERE t.name = 'cloud' AND h.type = 'insert'
+              AND h.changed_by = $1 AND h.operation = 'wamn:provisioning'
+         )",
+    )
+    .bind(sqlx::types::Uuid::from(
+        wamn_principal::PlatformComponent::Provisioning.principal_id(),
+    ))
+    .fetch_one(&mut client)
+    .await
+    .unwrap();
+    assert!(recorded_seed);
     let concurrent_database = postgres.create_database("fixture_2").await.unwrap();
     let mut first = connect(concurrent_database.as_str()).await;
     let mut second = connect(concurrent_database.as_str()).await;

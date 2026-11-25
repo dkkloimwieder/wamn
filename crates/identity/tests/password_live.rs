@@ -343,12 +343,23 @@ async fn reset_consumes_email_credentials_and_revokes_renewal_but_preserves_pat(
     let mut client = connect(database.as_str()).await;
     let user = new_user(&mut client, "reset-user").await;
     let other = new_user(&mut client, "reset-other").await;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        wamn_platform_install::identity_role::grant_identity_issuer_surface_sql(),
+    ))
+    .execute(&mut wamn_postgres::connect(database.as_str()).await.unwrap())
+    .await
+    .unwrap();
+    let mut issuer = wamn_postgres::connect(database.as_str()).await.unwrap();
+    sqlx::raw_sql("SET ROLE wamn_identity_issuer")
+        .execute(&mut issuer)
+        .await
+        .unwrap();
     let work = password_work();
     let invitation = issue_invitation(&mut client, &actor(), user.id())
         .await
         .unwrap();
     enroll_password(
-        &mut client,
+        &mut issuer,
         &work,
         user.id(),
         invitation.secret(),
@@ -390,7 +401,7 @@ async fn reset_consumes_email_credentials_and_revokes_renewal_but_preserves_pat(
             .is_err()
     );
     let replacement = || Password::new("the new long replacement password".into()).unwrap();
-    reset_password(&mut client, &work, user.id(), first.secret(), replacement())
+    reset_password(&mut issuer, &work, user.id(), first.secret(), replacement())
         .await
         .unwrap();
     assert!(
@@ -425,6 +436,26 @@ async fn reset_consumes_email_credentials_and_revokes_renewal_but_preserves_pat(
         .await
         .unwrap()
         .is_some()
+    );
+    let principal_id = sqlx::types::Uuid::from(*user.id());
+    let history: Vec<(sqlx::types::Uuid, String, String)> = sqlx::query_as(
+        "SELECT changed_by, type, operation FROM identity.password_credentials_history
+         WHERE row_key = jsonb_build_object('principal_id', $1::uuid)
+         ORDER BY position",
+    )
+    .bind(principal_id)
+    .fetch_all(&mut client)
+    .await
+    .unwrap();
+    assert!(
+        history
+            .iter()
+            .map(|(actor, event_type, operation)| (*actor, event_type.as_str(), operation.as_str()))
+            .eq([
+                (principal_id, "insert", "admin:password-enroll"),
+                (principal_id, "update", "admin:password-reset"),
+            ]),
+        "{history:?}"
     );
     let mut tx = client.begin().await.unwrap();
     assert!(

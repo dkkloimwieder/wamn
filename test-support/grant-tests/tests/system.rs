@@ -428,8 +428,15 @@ async fn attempt(
     statement: &str,
 ) -> Result<Result<u64, sqlx::Error>> {
     let mut transaction = actor.begin().await?;
-    wamn_postgres::bind_transaction_identity(&mut transaction, principal, "", "", None, None)
-        .await?;
+    wamn_postgres::bind_transaction_identity(
+        &mut transaction,
+        principal,
+        "",
+        "",
+        Some("admin:grant-test"),
+        None,
+    )
+    .await?;
     let result = sqlx::raw_sql(sqlx::AssertSqlSafe(statement))
         .execute(&mut *transaction)
         .await
@@ -460,8 +467,15 @@ where
 /// Run `statement` as `actor` under `principal`, and commit it.
 async fn commit(actor: &mut PgConnection, principal: &PrincipalId, statement: &str) -> Result<()> {
     let mut transaction = actor.begin().await?;
-    wamn_postgres::bind_transaction_identity(&mut transaction, principal, "", "", None, None)
-        .await?;
+    wamn_postgres::bind_transaction_identity(
+        &mut transaction,
+        principal,
+        "",
+        "",
+        Some("admin:grant-test"),
+        None,
+    )
+    .await?;
     database::execute(&mut transaction, statement).await?;
     transaction.commit().await?;
     Ok(())
@@ -783,7 +797,7 @@ async fn org_logins_reach_no_other_org() -> Result<()> {
                 principal,
                 "",
                 "",
-                None,
+                Some("admin:grant-test"),
                 None,
             )
             .await?;
