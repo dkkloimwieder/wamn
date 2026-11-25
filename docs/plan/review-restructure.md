@@ -485,6 +485,7 @@ From the restructure plan's open items (`docs/plan/wamn-restructure.md`) (F for 
 - Readiness probes for control, which needs a health route, and for the CDC reader, which needs a check that its replication session is open (Epic 7).
 - `wamn deploy` and rollback can report Ready before the new template is live (D15, Epic 7).
 - X4 (Epic 7): write-log expiry has no production caller.
+- CDC session failure classes (Epic 7). `services/cdc-reader/src/replication.rs::classify` searches the error text for "invalidat" before it reads the error type (F). A configuration error that names a column such as `invalidated_at`, for example a value that is not UTF-8, is then treated as a capture gap, not as a fatal error. Match the typed errors first.
 - X5 is in T1.
 
 ## 5. Threat model
