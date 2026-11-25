@@ -32,6 +32,7 @@ This document is the work list for wamn, from the crate cleanup to the workflow 
 | 1 | Crate cleanup: R1, in its own document. Done at `31703d9bb`. | — | Yes: `wamn-plugin`, the host and the CDC reader change. |
 | 2 | Deletion and API contracts: R2, R3, R4, R5, C2. | 1 | Yes: R2 and R3 touch host crates (`wamn-routes` and `wamn-package` are host crates). |
 | 3 | State and lifecycle: C1, L1, L2, L3, L4, L5, L6, L7, L8, L9. | 2. L2 uses the shared Helm helper of R4. | Yes, for L6, L7, L8 and L9, in one rebuild at the end of the epic. |
+| Rename | R6. | 3 merged. Runs before 4. | Yes. |
 | 4 | Org boundary on kind: T3, T9, T12, and the kind pin and refusal tests of T13. | 1. Can run beside 2 and 3. | Yes: the non-root `USER` in the `Dockerfile`. |
 | 5 | Environment boundary: T1, T2, T4, T5, T10, and the T16 items on connections and locking. | 4 | Yes: the host's `--environment` argument. |
 | 6 | Public addresses: T11, and client base paths. | 5 | No (I). |
@@ -135,6 +136,17 @@ The two live client tests (`apps/platform_ui/test/control-client.live.test.ts`, 
 - Trust wording: the environment is the shared execution trust group. The project is the data, ownership and recovery boundary.
 
 **Check.** Trace each corrected claim to its code and check its links. Do not add source-text tests or another layer of architecture documents.
+
+### R6. Names: singular tables and the short forms org, env and app
+
+**F.** 24 of the 54 tables have plural names: in registry, orgs, projects, environments, environment_projects, environment_applications, environment_integrations, environment_application_connections, event_readers, retired_project_envs; in identity, principals, org_memberships, org_roles, project_roles, project_env_memberships, password_credentials, password_logins, password_tokens, password_attempts, renewal_credentials, session_keys, nats_keys; in catalog, packages, workflows; wamn_run.runs; wamn_history.pruning_watermarks. The project platform schema is singular. org is always short. Environment is mixed: env columns, wamn env apply and EnvName, but registry.environments, environment_* tables and Environment* types. Application is always long: application columns and tables, ApplicationName, routes `/api/<application>`.
+
+**Rule.**
+
+- Every table name is singular, for example registry.env, identity.principal, wamn_run.run. platform."user" stays quoted, because user is a reserved word.
+- org, env and app are the standard short forms, everywhere: SQL tables and columns, Rust types and modules, wire fields, routes, CLI flags, chart values and wamn.k keys. No other abbreviation is used.
+- One rename pass, after Epic 3 merges and before Epic 4. It changes the public wire and the generated clients.
+- This forces a host image rebuild.
 
 ## 2. Consistency fixes
 
@@ -243,7 +255,9 @@ F. `env apply` saves the applied configuration once per project, at the end of `
 
 **F.**
 
-- A deploy builds image references from `<registry>/wamn/components` and `<registry>/wamn/integrations`, both from one registry value (`crates/environment/src/environment/worker.rs::execute`).
+- A deploy builds application component references from `<org_origin>/wamn/components` and integration references from `<platform_origin>/wamn/integrations` (`crates/environment/src/environment/worker.rs::execute`). Control passes `Configuration.registry` as the org origin and `Configuration.platform_registry` as the platform origin (`services/control/src/platform.rs::execute`).
+- The deploy package resolver reads packages from `PackageRegistry.artifact_base`, set to `<org_origin>/wamn/packages` from the same `Configuration.registry` (`services/control/src/lib.rs::Configuration::platform`). At deploy, the component path and `artifact_base` are in the same org repository.
+- Publication reads the two bases from two separate variables, `WAMN_PACKAGE_ARTIFACT_BASE` and `WAMN_COMPONENT_ARTIFACT_BASE` (`crates/release/src/release_package.rs::RegistryPackagePublisher::publish`). Nothing makes sure that they name the same org repository.
 - An integration component's digest comes from the platform catalogue by type and version (`bindings.rs::analyse`, `registry.integration_type_version`). The catalogue has no org column. The version comes from the environment file.
 - `ingress` and the workflow service come from the chart's stamped image set (`crates/platform-install/src/release_chart.rs::image_set`).
 
@@ -310,6 +324,8 @@ F. The CDC reader retries a refused publish without end and does not advance (`c
 - In the system database, these tables are logged: every `registry.*` table, and `identity.principals`, `identity.org_memberships`, `identity.org_roles`, `identity.project_roles`, `identity.project_env_memberships` and `identity.password_credentials`. The record history functions are installed in the system database if they are not there.
 - These tables are not logged: `platform.credential` (Epic 5, after the hint fix), `platform.oauth_token`, `platform.oauth_authorization`, `identity.session_keys`, `identity.nats_keys`, `identity.password_tokens`, `identity.password_attempts`, `identity.renewal_credentials`, `identity.session_signing_state`, the write log, `number_counter`, the run queue and the run state.
 - Grants follow the existing pattern of the logged project tables.
+- `registry.environment_application_connections` has no history until R6 gives it a short singular name. `create_history_table` refuses its 67-byte derived constraint name with `history-name-too-long` (F, `deploy/sql/record-history.sql`). The history naming rule does not change (owner ruling 2026-11-25).
+- Schema reset empties every catalog table, the catalog history tables included (`crates/environment/src/environment_sql_effects.rs::reset_database`). The reset itself is recorded as a `schema_reset` row in `platform_event` (L9).
 - This forces a host image rebuild, in the one rebuild at the end of the epic.
 
 ### L9. Platform events
@@ -326,14 +342,14 @@ F. The CDC reader retries a refused publish without end and does not advance (`c
   - `command_id uuid NOT NULL`
   - `event_type` and `outcome`, the foreign keys above
   - `principal_id uuid NOT NULL`, a foreign key to `identity.principals`
-  - `org text NOT NULL`, a foreign key to `registry.orgs`
-  - `env text NULL`, with `org` a foreign key to `registry.environments`
-  - `project text NULL`, with `org` a foreign key to `registry.projects`
+  - `org text NOT NULL`, `env text NULL` and `project text NULL`, with no foreign key. Each has a CHECK on the registry identifier pattern (`crates/registry/src/identifiers.rs`).
   - `application text NULL`, with no foreign key
   - `package_digest text NULL`, in `sha256:` form
   - `helm_revision integer NULL`, `job_namespace text NULL` and `job_name text NULL`
   - `failure_summary text NULL`, at most 500 characters, written by wamn on a failed end row only
 - Each command writes two rows with the same `command_id`: outcome `started` when it begins, and its result when it ends.
+- A command is recorded even when it fails before, or because, its org, environment or project is registered (owner ruling 2026-11-25).
+- The provision-org Job records `org_create` as the seeded principal `wamn:provisioning`. The system schema seeds that principal before any org exists, and the provisioning login binds it (F, `deploy/sql/system-schema.sql`).
 - Indexes: `(command_id)`, `(org, env, occurred_at)` and `(org, project, occurred_at)`.
 - If any code deletes a `registry.environments` or `registry.projects` row, the work stops and reports it. At `67bda3772` only a test deletes one (`crates/identity/tests/identity_live.rs`) (F).
 - This forces a host image rebuild, in the one rebuild at the end of the epic.
