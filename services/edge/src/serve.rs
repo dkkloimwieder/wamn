@@ -131,7 +131,7 @@ impl EdgeHost {
 
 /// The memory cap of one guest memory on the box (docs/history/edge.md 4.9).
 const EDGE_MEMORY_CAP_BYTES: usize = 256 << 20;
-/// The warm instance pool size. Overflow calls use one-shot stores.
+/// The number of route requests used to size the device engine's allocator slots.
 const EDGE_POOL_SIZE: NonZeroUsize = NonZeroUsize::new(4).expect("four is not zero");
 /// The compile cache directory, beside the run-state file.
 const COMPILE_CACHE_DIR: &str = "compile-cache";

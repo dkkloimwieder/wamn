@@ -27,8 +27,8 @@ Upstream NATS, PostgreSQL, telemetry, and S3 plugins also gain input and transpo
 Those changes apply where their native implementations run. WAMN-owned clients and plugins retain their own behavior.
 The chart and operator pins remain separate from this runtime source update.
 
-Native loading and dispatch own compilation, linking, fresh and warm stores, epoch interruption, and guest cancellation.
-WAMN uses public `GuestCall`, `InstancePolicy::Ephemeral`, `InstancePolicy::Warm`, `ProbeState`, `Liveness`, and bounded flush operations.
+Native loading and dispatch own compilation, linking, stores, epoch interruption, and guest cancellation.
+WAMN uses public `GuestCall`, `ProbeState`, `Liveness`, and bounded flush operations.
 Host process construction calls native `raise_descriptor_limit()` before sizing descriptor-dependent resources.
 Its Tokio runtime uses `event_interval(1)` for timely timer polling.
 These choices make no general performance assertion.
@@ -41,7 +41,7 @@ These choices make no general performance assertion.
 | Ambient WASI CLI | Keep process arguments, environment and standard streams out of application and integration guests. | Native store construction must supply an empty CLI context. |
 | [Import admission](platform-services.md#import-admission) | Publication refuses unsupported authority before distribution. | Preserve the project contract when considering any native replacement. |
 | [Immutable workflow graph releases](overview.md#release-identity) | Project-owned declarations need admission, rollback identity, and exact provenance. | Reconsider when native links supply equivalent project and per-link authorization. |
-| [Invocation authority](execution.md#native-dispatch) | Deployment-trusted code can reuse native instances. Host authority remains per invocation. Guest data and task cleanup depend on reviewed component correctness. | Native dispatch owns store boundaries, overflow, and retirement. Unreviewed units remain fresh. |
+| [Invocation authority](execution.md#native-dispatch) | The host supplies authority for each invocation. | Native dispatch owns the lifetime of each call's store. |
 | [`wamn build`](../operations/building.md#native-programs-and-app-components) | Per-guest builds preserve digest identity and admission integration. | Native build and OCI publication must supply the same declared selection and admission requirements. |
 | Operator Event permissions | Chart `2.11.0` lacks the modern `events.k8s.io` permission in watched namespaces. | Remove the targeted `create,patch` Role only when the pinned chart grants it. |
 | [Memory and egress enforcement](execution.md#native-dispatch) | The host and environment chart enforce guest memory and raw-socket egress. Each linear memory has a 256 MiB ceiling. The shared guest budget derives from the container limit. | W28 uses the pinned wash runtime without a fork. Existing flags still accept count for observation. |

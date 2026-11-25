@@ -7,9 +7,7 @@ Live database races still require the observations in [database tests](database-
 
 ## Existing boundaries
 
-The [graph tests](../../crates/workflow/src/graph/walk_tests.rs) drive the private workflow walk with supplied outcomes and a controlled clock.
-They cover graph order, ports, retries and the fixed invocation limit.
-These tests establish graph decisions, not guest execution or process recovery.
+The [schedule test](../../crates/workflow-graph/src/schedule.rs) supplies fixed UTC minutes and checks which ones match a workflow schedule.
 
 ## Event traffic
 

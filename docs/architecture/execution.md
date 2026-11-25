@@ -5,7 +5,6 @@ The host binds the route to one component operation or to an admitted graph in t
 A route target calls its operation once, with no graph walk and no retry.
 For a graph, the router decides which operation runs next. Native dispatch executes each operation.
 A hot HTTP request creates no run or queue row.
-The warm pool holds reusable instances. Overflow calls use fresh stores.
 
 ## Routing and availability
 
@@ -102,7 +101,8 @@ Native ingress serves the control routes directly. Control loads no HTTP guest.
 Control roots have no release record.
 Publish refuses an authored attachment under `/wamn_control/`.
 
-[`HostRouteDelivery`](../../crates/execution-host/src/host_route.rs) serves the host routes of the loaded release.
+[`HostRouteDelivery` in the host](../../services/host/src/host/host_route.rs) serves the application route set of the loaded release.
+[`HostRouteDelivery` in control](../../services/control/src/host_route.rs) serves the control route set.
 It refuses an attachment outside the native platform endpoints.
 The caller must match the attachment, and the route makes sure of its operation grant as any route does.
 A route of authority `Admin` passes only `admin`.
@@ -352,10 +352,8 @@ Applications can select identical release bytes. They share verified bytes and c
 The host prepares releases independently and starts each ready queue immediately.
 Each resident release runs file orphan collection. Unloading stops its collector, and host shutdown cancels and joins every collector.
 A release stays resident while selected, while an unfinished run pins it, or while a workload or invocation retains it.
-Native dispatch reuses compiled component bytes. Untrusted components receive a fresh store, which holds guest memory and resources, for each call.
-The deployment owner can select reviewed component digests for native warm-instance reuse.
-[Deployment configuration](../operations/deployment.md#trusted-component-reuse) owns this selection and pool sizing.
-Application manifests cannot grant that trust.
+Native dispatch reuses compiled component bytes. Each call gets a fresh store for guest memory and resources.
+The [application chart](../../deploy/charts/application/templates/workloads.yaml) sets `poolSize: 0` for `ingress` and omits `poolSize` for application components. Both settings use fresh stores.
 
 An application is one composed component, and it loads as its own native workload.
 Publication records the separate route component in the release's entry record.
@@ -367,19 +365,11 @@ The host serves platform endpoints natively under the same ingress host.
 Local publication records an absolute `file:` reference to a digest-named artifact. The existing local file loader makes sure of its bytes before binding.
 
 No two applications share a store, and wash-runtime links no application to another.
-Applications in one release can use different lifetimes.
 A call across applications is a workflow call through the host.
 
 Each call receives a new host-owned invocation scope.
 Host service calls use that scope, and cancellation revokes it independently of native store teardown.
 A retained guest context cannot select the next call's permissions.
-A call that leaves host resource handles open discards those resources and retires its instance while preserving its completed result.
-The host never clears a resource table and then reuses that instance, because old handles can alias new resources.
-
-Trusted component code owns request-local caller data, caller-dependent cache cleanup, and completion or cancellation of spawned tasks before return.
-The host does not sanitize guest memory or enforce those promises against faulty or malicious trusted code.
-Use fresh instances wherever that trust is unacceptable.
-`maxConcurrency = 1` serializes calls on an instance. It does not isolate guest memory or background tasks.
 One absolute deadline covers initialization and execution.
 A guest cannot extend that deadline.
 
@@ -398,18 +388,9 @@ The column retains the latest attempt that reports a change.
 An absent header or null column means that no change was reported.
 Nested calls still inherit the enclosing deadline. Their remaining time is not a separate node deadline adjustment.
 
-Native dispatch retires warm instances after traps, deadlines, or cancellation.
-An admission refusal also retires the instance selected for that call before the host returns the original error.
-This includes an unavailable credential or a refused database login. The guest handler does not run, and recovery creates a fresh instance.
 Caller authority ends immediately. Physical teardown follows native cancellation rules. The engine sets wash-runtime's abandoned-call grace to zero, so a cancelled call's store traps at its next epoch yield and returns its memory.
-Successful calls can reuse an eligible instance only when no host resource handles remain.
-A full pool serves overflow from fresh stores.
-Native idle reclamation and a 1,000-call instance limit bound retention.
-Pools belong to one immutable release or candidate and never cross project or environment boundaries.
-A replacement release or deployment trust configuration uses new pools.
 Credential tests retain the exact pinned generation rules above.
 
-Pool capacity does not limit request admission or total memory.
 A chart host derives its guest memory budget from its cgroup: three quarters of the 768Mi limit, which is 576 MiB.
 A process memory guard at 90 percent of the limit refuses guest growth and new workloads in every mode.
 The guard samples resident memory once per second, so it is not a hard allocation cap.
@@ -419,7 +400,7 @@ The host flags `--guest-memory-mode` and `--socket-egress` each accept count or 
 Both default to enforce. Each linear memory has a 256 MiB ceiling.
 The shared guest memory budget remains derived from the container limit.
 Existing route and queue admission limits and deployment memory limits remain independent.
-Wasmtime's pooling allocator remains enabled under its separate resource limits.
+Wasmtime's [pooling allocator](../../crates/engine/src/engine.rs) reserves capacity for core instances. Guest state stays in each call's store.
 The host defaults to 64 KiB of resident linear memory, 4 KiB of resident table memory, and 8 KiB of resident async stack memory per allocator slot.
 These values change residency only. They do not increase slot counts or memory ceilings.
 Wasmtime leaves async stack zeroing disabled, so its async stack residency value has no effect under this configuration.
@@ -1354,12 +1335,12 @@ A cursor of another model, or one that does not decode, refuses with `invalid_in
 ### Device ingress
 
 The device listens only on a loopback address. A non-loopback address refuses before startup.
-The device has no request counter that sheds calls. Its instance pool retains warm instances only.
-Calls beyond the warm pool can use one-shot stores.
+The device sizes its [Wasmtime allocator](../../services/edge/src/serve.rs) for the core modules of four route requests and the device loop.
 
 ### Environment placement
 
 One native runtime serves every project of its org and environment.
+The environment is the shared execution trust group. Each project is its own data, ownership, and recovery boundary.
 The environment chart projects the allowed project names through `--projects`.
 Each project has its own database connection configuration, connection reader, and event client certificate.
 The host refuses a workload outside that project set before it loads components.

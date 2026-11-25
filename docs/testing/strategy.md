@@ -103,7 +103,6 @@ runs, authored workflows and queued events before restoring selected releases.
 
 **Bad:** make sure that a package-copy helper wrote a directory and assert deployed SQL uses published bytes.
 **Good:** publish through the product owner, retain the immutable digest, make the source unavailable, apply the selected release, and inspect its database effect and recorded artifact identity.
-`crates/environment/tests/application_activation_live.rs` contains this test shape.
 
 Use a real registry when the publication/pull behavior is the subject.
 An executor-only test may supply verified artifacts directly but must not assert registry or deployed Job coverage.

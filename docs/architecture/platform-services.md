@@ -70,9 +70,9 @@ Reference names remain valid. This pattern test cannot identify every arbitrary 
 The platform supplies the complete connection semantics.
 Publication and activation refuse absent or incompatible bindings before executing effects.
 
-An administrator creates each project integration and its environment connection in the system database.
-The connection stores its active generation of parameters and a reference to private credentials.
-The environment database holds a projection of each integration and connection.
+Connection administration writes the connection and its generations in the [project database transaction](../../crates/connection/src/project_connections/administration.rs).
+The active generation holds the parameters and a reference to private credentials.
+The system database holds a separate [public integration catalogue](../../deploy/sql/system-schema.sql) shared by all organizations.
 
 A package declares each connection name, WIT interfaces, and access mode in `wamn.k`.
 Install refuses a declared interface that the component does not import.
@@ -84,8 +84,8 @@ Apply refuses missing pins, inactive connections, or versions that lack a requir
 Interface versions follow component-model compatibility rules.
 Apply writes no connection generation and changes no connection lifecycle.
 
-The host reads the loaded release's names, modes, and versions from the environment catalog.
-The system database supplies each selected Wasm digest and the active connection parameters.
+The host reads connection names, modes, and versions from the loaded release.
+Deploy resolves each selected Wasm digest from the system integration catalogue. The host reads active connection parameters from the project database.
 The host refuses a name that the calling component did not declare.
 HTTP method authorization and object-store access enforce a declaration's read mode.
 
@@ -103,7 +103,9 @@ The [database contract](data-access.md) owns SQL-specific authorization and tran
 
 `wamn:postgres` binds no connection instance, so it has no connection generation.
 The host selects the one project-environment database from its trusted project.
-Each authority class uses one login and one basic-auth Secret. CloudNativePG manages the login. The cluster, its consumers and its Secrets share the org namespace. Component configuration names the database, login, host and Secret references. The shared SQLx constructor verifies the server certificate with the cluster CA.
+Each [authority class](../../crates/identity-protocol/src/authority_class.rs) selects a project login that inherits the class's database role.
+CloudNativePG manages the [certificate logins](../../deploy/charts/project/templates/cluster.yaml), and cert-manager writes their client certificates and keys into [Secrets](../../deploy/charts/project/templates/login-certificates.yaml).
+The cluster, its consumers, and its Secrets share the org namespace. The shared SQLx constructor verifies the server certificate with the cluster CA.
 
 ## Outbound HTTP
 
