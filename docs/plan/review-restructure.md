@@ -31,7 +31,7 @@ This document is the work list for wamn, from the crate cleanup to the workflow 
 | --- | --- | --- | --- |
 | 1 | Crate cleanup: R1, in its own document. Done at `31703d9bb`. | — | Yes: `wamn-plugin`, the host and the CDC reader change. |
 | 2 | Deletion and API contracts: R2, R3, R4, R5, C2. | 1 | Yes: R2 and R3 touch host crates (`wamn-routes` and `wamn-package` are host crates). |
-| 3 | State and lifecycle: C1, L1, L2, L3, L4, L5, L6. | 2. L2 uses the shared Helm helper of R4. | Yes, for L6. The rest needs none (I). |
+| 3 | State and lifecycle: C1, L1, L2, L3, L4, L5, L6, L7, L8, L9. | 2. L2 uses the shared Helm helper of R4. | Yes, for L6, L7, L8 and L9, in one rebuild at the end of the epic. |
 | 4 | Org boundary on kind: T3, T9, T12, and the kind pin and refusal tests of T13. | 1. Can run beside 2 and 3. | Yes: the non-root `USER` in the `Dockerfile`. |
 | 5 | Environment boundary: T1, T2, T4, T5, T10, and the T16 items on connections and locking. | 4 | Yes: the host's `--environment` argument. |
 | 6 | Public addresses: T11, and client base paths. | 5 | No (I). |
@@ -210,6 +210,8 @@ F. `env apply` saves the applied configuration once per project, at the end of `
 - The automatic rollback returns the previous code on the migrated schema. When that code does not work there, the developer migrates the schema forward.
 - The developer chooses the rollback target with `wamn rollback --revision`. Without it, rollback picks the newest earlier deploy (`rollback.rs::target`) (F).
 - A guide for application developers covers breaking schema changes and how package versions mark them. No such guide exists in `docs/` (F). It is written in Epic 3.
+- Deploy and rollback do not report Ready until the new template is live (D15, moved from T16 by the owner, 2026-11-25). Without it, a failed release can look Ready on the old replica set, and no rollback runs. The WorkloadDeployment and WorkloadReplicaSet CRDs of runtime-operator 2.12.3 have no top-level `status.observedGeneration`, so the Helm 4.2.2 watcher can accept the previous release's `Ready=True` (F, `deploy/charts/platform/charts/runtime-operator-2.12.3.tgz`).
+- wamn copies no upstream code into wamn, and no upstream naming of replica sets. If the only way to tell that the new template is live needs upstream internals, the work stops and a way is proposed to the owner before any code.
 - After an apply ends, the desired release is the serving release, so the policy, the delete check, status and the rollback target need no other change (I).
 - No host image rebuild (I).
 
@@ -250,7 +252,6 @@ F. `env apply` saves the applied configuration once per project, at the end of `
 - Integrations are public: an integration type and its component are platform code, the same for every org. Connections are private: a connection's row is in the project database and its credential in a Secret of that project environment.
 - The org's repository holds what the org publishes. Publish mirrors into it, by digest, every shared artifact that a package pins. The package resolver keeps one base (`PackageRegistry.artifact_base`).
 - The platform repository holds integration components and platform components.
-- Each environment namespace gets one read grant on each repository, for all its service accounts. It covers the host, the environment account and every project account.
 - The worker takes the org origin and the platform origin separately.
 - In the same change, deploy checks that every resolved image exists before it applies SQL. Today a missing image is found at rollout, after the SQL is in (I).
 - Nothing is copied at deploy, at `env apply` or at platform publish.
@@ -287,6 +288,55 @@ F. The CDC reader retries a refused publish without end and does not advance (`c
 - wamn does not promise the historical value of an unavailable column. A handler that needs it reads the current row.
 - The size check is one length comparison on the final bytes, unavailable list included, which the reader already builds (`PreparedMsg`).
 - This forces a host image rebuild: the reader ships in the host image (`Dockerfile`, `host` stage).
+
+### L7. Flags are booleans
+
+**Rule.**
+
+- Each of these text flag columns becomes `active boolean NOT NULL DEFAULT true`. In the project database: `platform."user".status`, `platform.environment.status` and `platform.connection.status`. In the system database: `identity.principals.status`, `identity.org_memberships.status`, `registry.environments.status` and `registry.target.status`.
+- `identity.principals.disabled_at` goes, with its CHECK. The L8 row history records when a flag changed.
+- `'invited'` on `platform."user"` is a separate fact. If any code or SQL sets or reads it, the work stops and reports where. If none does, it goes.
+- The schemas are edited in place. No migration.
+- Every reader and writer changes, the L3 work included. L3 uses `status = 'disabled'` today. A disabled user becomes `active = false`.
+- `wamn_run.runs.status` (the workflow design) and `platform.oauth_token.refresh_status` (Epic 5) do not change.
+- This forces a host image rebuild, in the one rebuild at the end of the epic.
+
+### L8. Row history on platform tables
+
+**Rule.**
+
+- Row history uses the existing `wamn_history.create_history_table` and `wamn_history.log_row_change('unlimited')` (`deploy/sql/record-history.sql`).
+- In the project database, these tables are logged: `platform.pat`, `platform.connection`, `platform.connection_generation`, `platform.external_system`, `catalog.packages`, `catalog.connection_requirement` and `catalog.workflows`.
+- In the system database, these tables are logged: every `registry.*` table, and `identity.principals`, `identity.org_memberships`, `identity.org_roles`, `identity.project_roles`, `identity.project_env_memberships` and `identity.password_credentials`. The record history functions are installed in the system database if they are not there.
+- These tables are not logged: `platform.credential` (Epic 5, after the hint fix), `platform.oauth_token`, `platform.oauth_authorization`, `identity.session_keys`, `identity.nats_keys`, `identity.password_tokens`, `identity.password_attempts`, `identity.renewal_credentials`, `identity.session_signing_state`, the write log, `number_counter`, the run queue and the run state.
+- Grants follow the existing pattern of the logged project tables.
+- This forces a host image rebuild, in the one rebuild at the end of the epic.
+
+### L9. Platform events
+
+**Rule.**
+
+- `platform_event` is an immutable table in the system database. A trigger refuses every UPDATE and DELETE. No retention job touches it.
+- `event_type` and `outcome` are foreign keys to `registry.platform_event_type` and `registry.platform_event_outcome`. Each has `code text PRIMARY KEY` and `label text NOT NULL`. The outcome table also has `success boolean`, NULL for `started`. The schema seeds both tables.
+- Event types: `org_create`, `environment_apply`, `environment_delete`, `deploy`, `rollback`, `schema_apply`, `schema_reset` and `capture_gap_repair`.
+- Outcomes: `started`, `succeeded`, `failed`, `rolled_back` and `refused`.
+- Columns:
+  - `id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY`
+  - `occurred_at timestamptz NOT NULL DEFAULT clock_timestamp()`
+  - `command_id uuid NOT NULL`
+  - `event_type` and `outcome`, the foreign keys above
+  - `principal_id uuid NOT NULL`, a foreign key to `identity.principals`
+  - `org text NOT NULL`, a foreign key to `registry.orgs`
+  - `env text NULL`, with `org` a foreign key to `registry.environments`
+  - `project text NULL`, with `org` a foreign key to `registry.projects`
+  - `application text NULL`, with no foreign key
+  - `package_digest text NULL`, in `sha256:` form
+  - `helm_revision integer NULL`, `job_namespace text NULL` and `job_name text NULL`
+  - `failure_summary text NULL`, at most 500 characters, written by wamn on a failed end row only
+- Each command writes two rows with the same `command_id`: outcome `started` when it begins, and its result when it ends.
+- Indexes: `(command_id)`, `(org, env, occurred_at)` and `(org, project, occurred_at)`.
+- If any code deletes a `registry.environments` or `registry.projects` row, the work stops and reports it. At `67bda3772` only a test deletes one (`crates/identity/tests/identity_live.rs`) (F).
+- This forces a host image rebuild, in the one rebuild at the end of the epic.
 
 ## 4. Tenancy and security target
 
@@ -334,6 +384,7 @@ Sound today (F): orgs never share a namespace and `allowSharedHosts: false` is s
 ### T2. Environment provisioning
 
 - A CLI command run by the platform operator with the admin kubeconfig creates an environment: the namespace with its labels, the Helm storage namespace, the quota, the environment account and its Role, the default-deny policy, the mapping row, the registry read grants, and the environment's backup bucket with admin on it for the environment account. `wamn org create` creates an org the same way (`crates/platform-install/src/org.rs`). The command name is not set.
+- Each environment namespace gets one read grant on each L4 repository, the org repository and the platform repository, for all its service accounts. It covers the host, the environment account and every project account. These are cloud IAM grants, and the provisioning command makes them (moved from L4 by the owner, 2026-11-25).
 - `env apply` does not change. The CLI calls the org's control service, which starts a Job in the environment namespace as the environment account.
 - No wamn component in the cluster gets a cluster-wide right to create namespaces. The only cluster-wide rights are token review for control and identity, and the web proxy's ConfigMap read until T11 removes it (F).
 - An org owner cannot create an environment alone.
@@ -484,7 +535,6 @@ From the restructure plan's open items (`docs/plan/wamn-restructure.md`) (F for 
 - NATS as a cluster of 3 with three-replica streams (Epic 7).
 - A PriorityClass for production environments (Epic 7).
 - Readiness probes for control, which needs a health route, and for the CDC reader, which needs a check that its replication session is open (Epic 7).
-- `wamn deploy` and rollback can report Ready before the new template is live (D15, Epic 7).
 - X4 (Epic 7): write-log expiry has no production caller.
 - CDC session failure classes (Epic 7). `services/cdc-reader/src/replication.rs::classify` searches the error text for "invalidat" before it reads the error type (F). A configuration error that names a column such as `invalidated_at`, for example a value that is not UTF-8, is then treated as a capture gap, not as a fatal error. Match the typed errors first.
 - Unread project schema report (Epic 7). `crates/environment/src/environment_sql_effects.rs::read_project` runs `platform_migrations::observe_project` on every project read and stores it in `analyse::ProjectState::schema_report`, which no code reads (F). Delete the field and its query.
