@@ -173,7 +173,11 @@ async fn mutation_output(
         "no time left to {operation} Helm release {namespace}/{name}"
     );
     let timeout = format!("{seconds}s");
-    let mut args = target_arguments(target, namespace, &[OsStr::new(operation), OsStr::new(name)]);
+    let mut args = target_arguments(
+        target,
+        namespace,
+        &[OsStr::new(operation), OsStr::new(name)],
+    );
     args.extend_from_slice(arguments);
     if !matches!(wait, Wait::None) {
         args.push(OsStr::new("--wait=watcher"));
@@ -305,7 +309,11 @@ pub(crate) async fn rollback(
     revision: Option<u32>,
     wait: Wait,
 ) -> anyhow::Result<()> {
-    let operation = if revision.is_some() { "helm rollback" } else { "helm" };
+    let operation = if revision.is_some() {
+        "helm rollback"
+    } else {
+        "helm"
+    };
     let revision = revision.map(|revision| revision.to_string());
     let mut arguments = Vec::new();
     arguments.extend(revision.as_deref().map(OsStr::new));

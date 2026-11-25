@@ -589,7 +589,14 @@ impl Target {
 
     pub async fn rollback(&self, release: &str, revision: u32) -> anyhow::Result<()> {
         let namespace = helm::org_release_namespace(&self.namespace);
-        helm::rollback(self, &namespace, release, Some(revision), helm::Wait::Watcher).await
+        helm::rollback(
+            self,
+            &namespace,
+            release,
+            Some(revision),
+            helm::Wait::Watcher,
+        )
+        .await
     }
 
     pub async fn uninstall(&self, release: &str) -> anyhow::Result<()> {
