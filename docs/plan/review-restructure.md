@@ -146,6 +146,18 @@ The two live client tests (`apps/platform_ui/test/control-client.live.test.ts`, 
 - Every table name is singular, for example registry.env, identity.principal, wamn_run.run. platform."user" stays quoted, because user is a reserved word.
 - org, env and app are the standard short forms, everywhere: SQL tables and columns, Rust types and modules, wire fields, routes, CLI flags, chart values and wamn.k keys. No other abbreviation is used.
 - One rename pass, after Epic 3 merges and before Epic 4. It changes the public wire and the generated clients.
+- org, env, project, app, role and connection cannot be deleted by standard means. They can only be deactivated (owner ruling 2026-11-25).
+  - Add `active boolean NOT NULL DEFAULT true` to the org, project and role tables. The env table (L7) and the connection table already have it.
+  - App: when env apply finds an app missing from the env file, it sets `active = false` on the app row (now `registry.environment_applications`, `crates/environment/src/registry/configuration.rs`). It no longer deletes the row. Adding the app back sets `active = true`.
+  - Project in env (now `registry.environment_projects`): the delete command sets `active = false` and still tears down the project database (`crates/environment/src/environment/delete.rs::delete`). The row stays.
+  - Role: the drop command (`crates/authentication/src/administration/sql.rs::DROP_ROLE_SQL`) sets `active = false`. The user-role and role-permission rows stay. An inactive role grants nothing: every permission check ignores it. Activating the role restores the same grants.
+  - Connection: the delete command (`crates/connection/src/project_connections/administration.rs`) sets `active = false` and deletes the connection's `platform.credential`, `platform.oauth_token` and `platform.oauth_authorization` rows in the same transaction. `platform.connection_generation` stays. Activating a connection needs a new credential or a new OAuth authorization. A call through an inactive connection is refused: check this, record it as F, and fix it if it is not true.
+  - Rename the command for removing a project from an env, its request type and its `platform_event_type` code to match what it does (now `environment.delete`, `EnvironmentDeleteRequest`, `environment_delete`). The pass chooses the name, within the naming rule above.
+- No `ON DELETE CASCADE` where the parent has no delete path through the API. Change each such foreign key to `RESTRICT`. This covers the parents org, project, env, project in env, app, role, connection, identity principal, org membership, event reader, `platform."user"`, number sequence and run.
+- Keep the cascade only where the API deletes the parent: identity password logins (expiry cleanup), and the application connections and integrations that env apply replaces. Check each remaining cascade in `deploy/sql` against this rule, and record each one as F with its delete path.
+- `crates/identity/tests/identity_live.rs` deletes a project to test the cascade. Change it to assert that the delete is refused.
+- `connection_event` (Epic 5) can hold a foreign key to the connection, because connections are never deleted.
+- At `9cf40e569`, the only API deletes of the parents above are the four this rule changes: app, project in env, role and connection (F, a search for `DELETE FROM` outside tests).
 - This forces a host image rebuild.
 
 ## 2. Consistency fixes
