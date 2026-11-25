@@ -16,6 +16,9 @@ runtime-operator:
     tls:
       enabled: false
   operator:
+    image:
+      # The upstream template appends this value after a colon.
+      tag: "2.12.3@sha256:f3e267e6585a6d99fd6df8b72396bf29f1436a3874aa93ef974aa1d6bc383211"
     allowSharedHosts: false
     extraArgs:
       - --nats-inbox-prefix=_INBOX_wasmcloud-operator

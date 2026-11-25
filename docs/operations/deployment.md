@@ -17,6 +17,22 @@ Use `wamn env apply` to roll out a host image.
 Set `registryEgress` to the registry's CIDR blocks and TCP ports. If the list is empty, the command uses the IP address and port from `registryEndpoint`.
 The platform install requires one of these inputs and records the resolved list in `wamn-org-inputs`.
 
+## Upgrade the runtime operator to 2.12.3
+
+On an existing cluster, apply the four updated workload custom resource definitions (CRDs) before you run `wamn platform deploy`.
+Helm installs these definitions on a fresh cluster and skips existing definitions in the chart's `crds/` directory. [Helm CRD handling](https://helm.sh/docs/chart_best_practices/custom_resource_definitions/)
+
+Run this command from the repository root with the target Kubernetes context selected.
+
+```bash
+tar -xOzf deploy/charts/platform/charts/runtime-operator-2.12.3.tgz \
+  runtime-operator/crds/runtime.wasmcloud.dev_workloaddaemonsets.yaml \
+  runtime-operator/crds/runtime.wasmcloud.dev_workloaddeployments.yaml \
+  runtime-operator/crds/runtime.wasmcloud.dev_workloadreplicasets.yaml \
+  runtime-operator/crds/runtime.wasmcloud.dev_workloads.yaml |
+  kubectl apply --server-side --force-conflicts -f -
+```
+
 ## Local platform
 
 Use Docker, kind 0.32, Helm, kubectl, OpenSSL, and the pinned KCL compiler on the deployment host.
