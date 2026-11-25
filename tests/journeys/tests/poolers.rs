@@ -40,130 +40,106 @@ const QUEUE_DEADLINE: Duration = Duration::from_secs(30);
 /// Time to close a held session and receive the queued answer.
 const RESUME_DEADLINE: Duration = Duration::from_secs(10);
 
-/// C7. The next client waits at each per-login limit and proceeds when one session closes.
-#[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: cluster, bin:helm"]
-async fn each_login_queues_at_its_connection_limit() -> anyhow::Result<()> {
-    common::capture(
-        "each_login_queues_at_its_connection_limit",
-        each_login_queues_at_its_connection_limit_case,
-    )
-    .await
+common::journey! {
+    /// C7. The next client waits at each per-login limit and proceeds when one session closes.
+    async fn each_login_queues_at_its_connection_limit() -> anyhow::Result<()> {
+        let environment = provision().await?;
+        let org = &environment.org;
+        let mut control = RestoreControl {
+            org,
+            name: wamn_registry::name::control_resource(&org.name),
+            armed: true,
+        };
+        let result = async {
+            control.scale(0).await?;
+            wait_for_idle_org(org, &control.name).await?;
+            let pods = platform_pods(org);
+            for (family, limit) in [(CONTROL, 8), (APPLY, 16)] {
+                let pod = ready_pooler(&pods, family).await?;
+                assert_queue(org, &pods, &pod, family, limit)
+                    .await
+                    .with_context(|| format!("check the {family} login limit on {pod}"))?;
+            }
+            Ok(())
+        }
+        .await;
+        let restored = control.restore().await;
+        match (result, restored) {
+            (result, Ok(())) | (Ok(()), result) => result,
+            (Err(test), Err(restore)) => Err(test.context(format!("restore control: {restore:#}"))),
+        }
+    }
 }
 
-async fn each_login_queues_at_its_connection_limit_case() -> anyhow::Result<()> {
-    let environment = provision().await?;
-    let org = &environment.org;
-    let mut control = RestoreControl {
-        org,
-        name: wamn_registry::name::control_resource(&org.name),
-        armed: true,
-    };
-    let result = async {
-        control.scale(0).await?;
-        wait_for_idle_org(org, &control.name).await?;
+common::journey! {
+    /// C8. Each Pooler admits the matching provisioned org login through its auth query.
+    async fn each_pooler_admits_its_provisioned_login() -> anyhow::Result<()> {
+        let environment = provision().await?;
+        let org = &environment.org;
         let pods = platform_pods(org);
-        for (family, limit) in [(CONTROL, 8), (APPLY, 16)] {
+        for family in [CONTROL, APPLY] {
             let pod = ready_pooler(&pods, family).await?;
-            assert_queue(org, &pods, &pod, family, limit)
+            let login = pooler_login(org, &pods, &pod, family).await?;
+            let probe = async {
+                let connection = login
+                    .options
+                    .connect()
+                    .await
+                    .context("connect to the Pooler")?;
+                select_one(connection).await
+            };
+            timeout(REQUEST_DEADLINE, probe)
                 .await
-                .with_context(|| format!("check the {family} login limit on {pod}"))?;
+                .with_context(|| {
+                    format!("{family} login probe through {pod} exceeded {REQUEST_DEADLINE:?}")
+                })?
+                .with_context(|| format!("{family} login answers SELECT 1 through {pod}"))?;
         }
         Ok(())
     }
-    .await;
-    let restored = control.restore().await;
-    match (result, restored) {
-        (result, Ok(())) | (Ok(()), result) => result,
-        (Err(test), Err(restore)) => Err(test.context(format!("restore control: {restore:#}"))),
-    }
 }
 
-/// C8. Each Pooler admits the matching provisioned org login through its auth query.
-#[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: cluster, bin:helm"]
-async fn each_pooler_admits_its_provisioned_login() -> anyhow::Result<()> {
-    common::capture(
-        "each_pooler_admits_its_provisioned_login",
-        each_pooler_admits_its_provisioned_login_case,
-    )
-    .await
-}
-
-async fn each_pooler_admits_its_provisioned_login_case() -> anyhow::Result<()> {
-    let environment = provision().await?;
-    let org = &environment.org;
-    let pods = platform_pods(org);
-    for family in [CONTROL, APPLY] {
-        let pod = ready_pooler(&pods, family).await?;
-        let login = pooler_login(org, &pods, &pod, family).await?;
-        let probe = async {
-            let connection = login
-                .options
-                .connect()
-                .await
-                .context("connect to the Pooler")?;
-            select_one(connection).await
-        };
-        timeout(REQUEST_DEADLINE, probe)
+common::journey! {
+    /// C9. The local admin console reports the live query and apply login wait settings.
+    async fn each_pooler_reports_its_wait_settings() -> anyhow::Result<()> {
+        let environment = provision().await?;
+        let pods = platform_pods(&environment.org);
+        for (family, query_wait) in [(CONTROL, 120), (APPLY, 900)] {
+            let pod = ready_pooler(&pods, family).await?;
+            // CloudNativePG configures peer authentication on this local console.
+            let config = timeout(
+                REQUEST_DEADLINE,
+                exec(
+                    &pods,
+                    &pod,
+                    &AttachParams::default().container("pgbouncer"),
+                    [
+                        "psql",
+                        "-XAtw",
+                        "-F",
+                        "\t",
+                        "-h",
+                        "/controller/run",
+                        "-p",
+                        "5432",
+                        "-U",
+                        "pgbouncer",
+                        "-d",
+                        "pgbouncer",
+                        "-c",
+                        "SHOW CONFIG",
+                    ],
+                ),
+            )
             .await
-            .with_context(|| {
-                format!("{family} login probe through {pod} exceeded {REQUEST_DEADLINE:?}")
-            })?
-            .with_context(|| format!("{family} login answers SELECT 1 through {pod}"))?;
-    }
-    Ok(())
-}
-
-/// C9. The local admin console reports the live query and apply login wait settings.
-#[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: cluster, bin:helm"]
-async fn each_pooler_reports_its_wait_settings() -> anyhow::Result<()> {
-    common::capture(
-        "each_pooler_reports_its_wait_settings",
-        each_pooler_reports_its_wait_settings_case,
-    )
-    .await
-}
-
-async fn each_pooler_reports_its_wait_settings_case() -> anyhow::Result<()> {
-    let environment = provision().await?;
-    let pods = platform_pods(&environment.org);
-    for (family, query_wait) in [(CONTROL, 120), (APPLY, 900)] {
-        let pod = ready_pooler(&pods, family).await?;
-        // CloudNativePG configures peer authentication on this local console.
-        let config = timeout(
-            REQUEST_DEADLINE,
-            exec(
-                &pods,
-                &pod,
-                &AttachParams::default().container("pgbouncer"),
-                [
-                    "psql",
-                    "-XAtw",
-                    "-F",
-                    "\t",
-                    "-h",
-                    "/controller/run",
-                    "-p",
-                    "5432",
-                    "-U",
-                    "pgbouncer",
-                    "-d",
-                    "pgbouncer",
-                    "-c",
-                    "SHOW CONFIG",
-                ],
-            ),
-        )
-        .await
-        .with_context(|| format!("SHOW CONFIG on {pod} within {REQUEST_DEADLINE:?}"))??;
-        assert_setting(&pod, &config, "query_wait_timeout", query_wait)?;
-        if family == APPLY {
-            assert_setting(&pod, &config, "client_login_timeout", 900)?;
+            .with_context(|| format!("SHOW CONFIG on {pod} within {REQUEST_DEADLINE:?}"))??;
+            assert_setting(&pod, &config, "query_wait_timeout", query_wait)?;
+            if family == APPLY {
+                assert_setting(&pod, &config, "client_login_timeout", 900)?;
+            }
         }
+        Ok(())
     }
-    Ok(())
 }
 
 async fn provision() -> anyhow::Result<Environment> {

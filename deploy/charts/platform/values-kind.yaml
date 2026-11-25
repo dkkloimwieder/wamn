@@ -16,17 +16,19 @@ opentelemetry-collector:
     processors:
       transform/journey:
         error_mode: propagate
+        # Keep the value patterns aligned with tests/journeys/tests/common/failure.rs.
+        # The journey harness also knows the observer password and tracks PEM blocks across lines.
         trace_statements:
           - keep_keys(resource.attributes, ["service.name", "service.instance.id", "k8s.namespace.name", "k8s.pod.name"])
           - keep_keys(scope.attributes, [])
           - keep_keys(span.attributes, ["http.request.method", "http.response.status_code", "rpc.system", "rpc.service", "rpc.method"])
-          - set(span.status.message, "")
+          - replace_pattern(span.status.message, "(?s:\\A.*-----BEGIN.*\\z)|(?m:^[^\\r\\n]*(?:wamn_pat_|eyJ|(?i:bearer )|://[^[:space:]/?#\"'<>:@]+:[^[:space:]/?#\"'<>@]+@|(?i:[[:alnum:]_.-]*(?:password|passwd|token|secret|credential)[[:alnum:]_.-]*)[\\\\\"']*[[:blank:]]*[:=][[:blank:]]*(?:\"[[:blank:]]*[^[:space:]\"]|'[[:blank:]]*[^[:space:]']|\\\\\"[[:blank:]]*(?:[^[:space:]\"\\\\]|\\\\[^\"])|\\\\'[[:blank:]]*(?:[^[:space:]'\\\\]|\\\\[^'])|[^[:space:],;\\]}\\\\\"']|\\\\[^\"']))[^\\r\\n]*)", "[redacted]")
           - set(span.trace_state, "")
           - keep_keys(spanevent.attributes, [])
-          - set(spanevent.name, "[redacted]") where IsMatch(spanevent.name, "(?i)(password|authorization|bearer |token|credential|secret|wamn_pat_|eyJ)")
+          - replace_pattern(spanevent.name, "(?s:\\A.*-----BEGIN.*\\z)|(?m:^[^\\r\\n]*(?:wamn_pat_|eyJ|(?i:bearer )|://[^[:space:]/?#\"'<>:@]+:[^[:space:]/?#\"'<>@]+@|(?i:[[:alnum:]_.-]*(?:password|passwd|token|secret|credential)[[:alnum:]_.-]*)[\\\\\"']*[[:blank:]]*[:=][[:blank:]]*(?:\"[[:blank:]]*[^[:space:]\"]|'[[:blank:]]*[^[:space:]']|\\\\\"[[:blank:]]*(?:[^[:space:]\"\\\\]|\\\\[^\"])|\\\\'[[:blank:]]*(?:[^[:space:]'\\\\]|\\\\[^'])|[^[:space:],;\\]}\\\\\"']|\\\\[^\"']))[^\\r\\n]*)", "[redacted]")
         log_statements:
           - keep_keys(resource.attributes, ["service.name", "service.instance.id", "k8s.namespace.name", "k8s.pod.name"])
           - keep_keys(scope.attributes, [])
           - keep_keys(log.attributes, [])
           - set(log.body, "[redacted]") where not IsString(log.body)
-          - set(log.body, "[redacted]") where IsMatch(log.body, "(?i)(password|passwd|authorization|bearer |token|credential|invitation code|private key|secret|wamn_pat_|eyJ|://[^ ]*@|-----BEGIN )")
+          - replace_pattern(log.body, "(?s:\\A.*-----BEGIN.*\\z)|(?m:^[^\\r\\n]*(?:wamn_pat_|eyJ|(?i:bearer )|://[^[:space:]/?#\"'<>:@]+:[^[:space:]/?#\"'<>@]+@|(?i:[[:alnum:]_.-]*(?:password|passwd|token|secret|credential)[[:alnum:]_.-]*)[\\\\\"']*[[:blank:]]*[:=][[:blank:]]*(?:\"[[:blank:]]*[^[:space:]\"]|'[[:blank:]]*[^[:space:]']|\\\\\"[[:blank:]]*(?:[^[:space:]\"\\\\]|\\\\[^\"])|\\\\'[[:blank:]]*(?:[^[:space:]'\\\\]|\\\\[^'])|[^[:space:],;\\]}\\\\\"']|\\\\[^\"']))[^\\r\\n]*)", "[redacted]")

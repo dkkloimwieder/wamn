@@ -35,285 +35,269 @@ const DEPLOY_DEADLINE: Duration = Duration::from_mins(20);
 const OBSERVE_DEADLINE: Duration = Duration::from_mins(5);
 const CALL_DEADLINE: Duration = Duration::from_secs(10);
 
-#[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: cluster, bin:helm"]
-async fn failed_rollout_restores_the_serving_replica_set() -> anyhow::Result<()> {
-    common::capture(
-        "failed_rollout_restores_the_serving_replica_set",
-        failed_rollout_restores_the_serving_replica_set_case,
-    )
-    .await
-}
+common::journey! {
+    async fn failed_rollout_restores_the_serving_replica_set() -> anyhow::Result<()> {
+        let original = rollback_source("WAMN_ROLLBACK_FIXTURE_V1_SOURCE")?;
+        let broken = rollback_source("WAMN_ROLLBACK_FIXTURE_FAILED_SOURCE")?;
+        let next = rollback_source("WAMN_ROLLBACK_FIXTURE_V2_SOURCE")?;
+        let application = within(
+            DEPLOY_DEADLINE,
+            "deploy the original fixture",
+            Application::prepare(&original),
+        )
+        .await?;
+        let environment = &application.environment;
+        let routes = &application.routes;
+        let widget = create_widget(routes).await?;
+        require_version(routes, &widget, Version::One).await?;
 
-async fn failed_rollout_restores_the_serving_replica_set_case() -> anyhow::Result<()> {
-    let original = rollback_source("WAMN_ROLLBACK_FIXTURE_V1_SOURCE")?;
-    let broken = rollback_source("WAMN_ROLLBACK_FIXTURE_FAILED_SOURCE")?;
-    let next = rollback_source("WAMN_ROLLBACK_FIXTURE_V2_SOURCE")?;
-    let application = within(
-        DEPLOY_DEADLINE,
-        "deploy the original fixture",
-        Application::prepare(&original),
-    )
-    .await?;
-    let environment = &application.environment;
-    let routes = &application.routes;
-    let widget = create_widget(routes).await?;
-    require_version(routes, &widget, Version::One).await?;
-
-    let triple = &environment.triple;
-    let release = resource_names::application_release_name(
-        &triple.org,
-        &triple.project,
-        &triple.env,
-        &FIXTURE.parse()?,
-    );
-    let workload = format!("{release}-http");
-    let client = &environment.org.cluster.client;
-    let namespace = triple.org.as_str();
-    let deployments = runtime(
-        client,
-        namespace,
-        "WorkloadDeployment",
-        "workloaddeployments",
-    );
-    let replica_sets = runtime(
-        client,
-        namespace,
-        "WorkloadReplicaSet",
-        "workloadreplicasets",
-    );
-    let replicas = runtime(client, namespace, "Workload", "workloads");
-    let original = deployments.get(&workload).await?;
-    let original_digest = original
-        .metadata
-        .annotations
-        .as_ref()
-        .and_then(|annotations| annotations.get("wamn.package-digest"))
-        .context("original workload package digest")?;
-    let original_set = original.data["status"]["currentReplicaSet"]["name"]
-        .as_str()
-        .context("original replica set")?;
-    let original_replica_set = replica_sets.get(original_set).await?;
-    let original_uid = original_replica_set
-        .metadata
-        .uid
-        .as_deref()
-        .context("original replica set UID")?;
-
-    let deploy = async {
-        let result = timeout(DEPLOY_DEADLINE, environment.deploy(&broken, FIXTURE))
-            .await
-            .context("deploy did not report an outcome")?;
-        let Err(error) = result else {
-            anyhow::bail!("the failing release reported success");
-        };
-        eprintln!("expected rollout failure: {error:#}");
-        Ok(())
-    };
-    let observe = until(
-        DEPLOY_DEADLINE,
-        "a workload of the failing release is created",
-        || async {
-            let deployment = deployments.get(&workload).await?;
-            let Some(set) = deployment.data["status"]["currentReplicaSet"]["name"]
-                .as_str()
-                .filter(|name| *name != original_set)
-            else {
-                return Ok(None);
-            };
-            let Some(set) = replica_sets.get_opt(set).await? else {
-                return Ok(None);
-            };
-            let Some(uid) = set.metadata.uid.as_deref() else {
-                return Ok(None);
-            };
-            let workloads = replicas.list(&ListParams::default()).await?;
-            Ok(workloads
-                .items
-                .iter()
-                .any(|workload| {
-                    workload
-                        .metadata
-                        .owner_references
-                        .as_deref()
-                        .unwrap_or_default()
-                        .iter()
-                        .any(|owner| owner.controller == Some(true) && owner.uid == uid)
-                })
-                .then_some(()))
-        },
-    );
-    tokio::try_join!(deploy, observe)?;
-
-    let restored = deployments.get(&workload).await?;
-    ensure!(
-        restored
+        let triple = &environment.triple;
+        let release = resource_names::application_release_name(
+            &triple.org,
+            &triple.project,
+            &triple.env,
+            &FIXTURE.parse()?,
+        );
+        let workload = format!("{release}-http");
+        let client = &environment.org.cluster.client;
+        let namespace = triple.org.as_str();
+        let deployments = runtime(
+            client,
+            namespace,
+            "WorkloadDeployment",
+            "workloaddeployments",
+        );
+        let replica_sets = runtime(
+            client,
+            namespace,
+            "WorkloadReplicaSet",
+            "workloadreplicasets",
+        );
+        let replicas = runtime(client, namespace, "Workload", "workloads");
+        let original = deployments.get(&workload).await?;
+        let original_digest = original
             .metadata
             .annotations
             .as_ref()
             .and_then(|annotations| annotations.get("wamn.package-digest"))
-            == Some(original_digest),
-        "the deploy did not restore the original package"
-    );
-    ensure!(
-        restored.data["status"]["currentReplicaSet"]["name"] == original_set
-            && replica_sets
-                .get(original_set)
-                .await?
-                .metadata
-                .uid
-                .as_deref()
-                == Some(original_uid),
-        "the deploy did not keep the original serving replica set"
-    );
-    require_version(routes, &widget, Version::One).await?;
-
-    within(
-        DEPLOY_DEADLINE,
-        "deploy the next healthy release",
-        environment.deploy(&next, FIXTURE),
-    )
-    .await?;
-    require_version(routes, &widget, Version::Two).await
-}
-
-#[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: cluster, bin:helm"]
-async fn rollback_serves_every_call_through_web() -> anyhow::Result<()> {
-    common::capture(
-        "rollback_serves_every_call_through_web",
-        rollback_serves_every_call_through_web_case,
-    )
-    .await
-}
-
-async fn rollback_serves_every_call_through_web_case() -> anyhow::Result<()> {
-    let v1 = rollback_source("WAMN_ROLLBACK_FIXTURE_V1_SOURCE")?;
-    let v2 = rollback_source("WAMN_ROLLBACK_FIXTURE_V2_SOURCE")?;
-    let mut application = within(
-        DEPLOY_DEADLINE,
-        "prepare rollback fixture version 1",
-        Application::prepare(&v1),
-    )
-    .await?;
-    application.routes.client = HttpClient::builder()
-        .timeout(CALL_DEADLINE)
-        .redirects(Redirects::None)
-        .build()?;
-    let environment = &application.environment;
-    let routes = &application.routes;
-    let widget = create_widget(routes).await?;
-    require_version(routes, &widget, Version::One).await?;
-
-    let triple = &environment.triple;
-    let release = resource_names::application_release_name(
-        &triple.org,
-        &triple.project,
-        &triple.env,
-        &FIXTURE.parse()?,
-    );
-    let workload = format!("{release}-http");
-    let workloads = runtime(
-        &environment.org.cluster.client,
-        triple.org.as_str(),
-        "WorkloadDeployment",
-        "workloaddeployments",
-    );
-    let (revision, original) = within(OBSERVE_DEADLINE, "read version 1 workload", async {
-        let object = workloads.get(&workload).await?;
-        let revision: NonZeroU32 = object
+            .context("original workload package digest")?;
+        let original_set = original.data["status"]["currentReplicaSet"]["name"]
+            .as_str()
+            .context("original replica set")?;
+        let original_replica_set = replica_sets.get(original_set).await?;
+        let original_uid = original_replica_set
             .metadata
-            .annotations
-            .as_ref()
-            .and_then(|annotations| annotations.get("wamn.release-revision"))
-            .context("the version 1 workload has no Helm revision")?
-            .parse()
-            .context("parse the version 1 Helm revision")?;
-        Ok((revision, component_digests(&object)?))
-    })
-    .await?;
+            .uid
+            .as_deref()
+            .context("original replica set UID")?;
 
-    within(
-        DEPLOY_DEADLINE,
-        "deploy rollback fixture version 2",
-        environment.deploy(&v2, FIXTURE),
-    )
-    .await?;
-    let second = within(OBSERVE_DEADLINE, "read version 2 workload", async {
-        component_digests(&workloads.get(&workload).await?)
-    })
-    .await?;
-    ensure!(
-        original
-            .iter()
-            .any(|(name, digest)| { second.get(name).is_some_and(|deployed| deployed != digest) }),
-        "the fixture versions need different component digests: {original:?} and {second:?}"
-    );
-    require_version(routes, &widget, Version::Two).await?;
+        let deploy = async {
+            let result = timeout(DEPLOY_DEADLINE, environment.deploy(&broken, FIXTURE))
+                .await
+                .context("deploy did not report an outcome")?;
+            let Err(error) = result else {
+                anyhow::bail!("the failing release reported success");
+            };
+            eprintln!("expected rollout failure: {error:#}");
+            Ok(())
+        };
+        let observe = until(
+            DEPLOY_DEADLINE,
+            "a workload of the failing release is created",
+            || async {
+                let deployment = deployments.get(&workload).await?;
+                let Some(set) = deployment.data["status"]["currentReplicaSet"]["name"]
+                    .as_str()
+                    .filter(|name| *name != original_set)
+                else {
+                    return Ok(None);
+                };
+                let Some(set) = replica_sets.get_opt(set).await? else {
+                    return Ok(None);
+                };
+                let Some(uid) = set.metadata.uid.as_deref() else {
+                    return Ok(None);
+                };
+                let workloads = replicas.list(&ListParams::default()).await?;
+                Ok(workloads
+                    .items
+                    .iter()
+                    .any(|workload| {
+                        workload
+                            .metadata
+                            .owner_references
+                            .as_deref()
+                            .unwrap_or_default()
+                            .iter()
+                            .any(|owner| owner.controller == Some(true) && owner.uid == uid)
+                    })
+                    .then_some(()))
+            },
+        );
+        tokio::try_join!(deploy, observe)?;
 
-    let mut command = environment.org.command();
-    command
-        .args([
-            "rollback",
-            FIXTURE,
-            "--revision",
-            &revision.to_string(),
-            "--env",
-        ])
-        .arg(&environment.file);
-    let (complete, completion) = oneshot::channel();
-    let rollout = async {
-        let result = async {
-            within(COMMAND_DEADLINE, "roll back the fixture", output(command)).await?;
-            let waiting = "version 1 WorkloadDeployment becomes Ready";
-            within(
-                OBSERVE_DEADLINE,
-                waiting,
-                until(OBSERVE_DEADLINE, waiting, || async {
-                    let Some(object) = workloads.get_opt(&workload).await? else {
-                        return Ok(None);
-                    };
-                    Ok(
-                        (workload_ready(&object) && component_digests(&object)? == original)
-                            .then_some(()),
-                    )
-                }),
-            )
-            .await
-        }
-        .await;
-        let _ = complete.send(result.is_ok());
-        result
-    };
-    // Poll the client first so its first request starts before the rollback command.
-    let ((calls, restored), rollout) =
-        tokio::join!(biased; call_during_rollback(routes, &widget, completion), rollout);
-    let failures: Vec<_> = calls
-        .iter()
-        .filter_map(|call| {
-            let error = call.result.as_ref().err()?;
-            let status = call
-                .status
-                .map_or_else(|| "unavailable".into(), |code| code.to_string());
-            Some(format!(
-                "+{:?}, status {status}, error {error:#}",
-                call.time
-            ))
+        let restored = deployments.get(&workload).await?;
+        ensure!(
+            restored
+                .metadata
+                .annotations
+                .as_ref()
+                .and_then(|annotations| annotations.get("wamn.package-digest"))
+                == Some(original_digest),
+            "the deploy did not restore the original package"
+        );
+        ensure!(
+            restored.data["status"]["currentReplicaSet"]["name"] == original_set
+                && replica_sets
+                    .get(original_set)
+                    .await?
+                    .metadata
+                    .uid
+                    .as_deref()
+                    == Some(original_uid),
+            "the deploy did not keep the original serving replica set"
+        );
+        require_version(routes, &widget, Version::One).await?;
+
+        within(
+            DEPLOY_DEADLINE,
+            "deploy the next healthy release",
+            environment.deploy(&next, FIXTURE),
+        )
+        .await?;
+        require_version(routes, &widget, Version::Two).await
+    }
+}
+
+common::journey! {
+    async fn rollback_serves_every_call_through_web() -> anyhow::Result<()> {
+        let v1 = rollback_source("WAMN_ROLLBACK_FIXTURE_V1_SOURCE")?;
+        let v2 = rollback_source("WAMN_ROLLBACK_FIXTURE_V2_SOURCE")?;
+        let mut application = within(
+            DEPLOY_DEADLINE,
+            "prepare rollback fixture version 1",
+            Application::prepare(&v1),
+        )
+        .await?;
+        application.routes.client = HttpClient::builder()
+            .timeout(CALL_DEADLINE)
+            .redirects(Redirects::None)
+            .build()?;
+        let environment = &application.environment;
+        let routes = &application.routes;
+        let widget = create_widget(routes).await?;
+        require_version(routes, &widget, Version::One).await?;
+
+        let triple = &environment.triple;
+        let release = resource_names::application_release_name(
+            &triple.org,
+            &triple.project,
+            &triple.env,
+            &FIXTURE.parse()?,
+        );
+        let workload = format!("{release}-http");
+        let workloads = runtime(
+            &environment.org.cluster.client,
+            triple.org.as_str(),
+            "WorkloadDeployment",
+            "workloaddeployments",
+        );
+        let (revision, original) = within(OBSERVE_DEADLINE, "read version 1 workload", async {
+            let object = workloads.get(&workload).await?;
+            let revision: NonZeroU32 = object
+                .metadata
+                .annotations
+                .as_ref()
+                .and_then(|annotations| annotations.get("wamn.release-revision"))
+                .context("the version 1 workload has no Helm revision")?
+                .parse()
+                .context("parse the version 1 Helm revision")?;
+            Ok((revision, component_digests(&object)?))
         })
-        .collect();
-    ensure!(
-        failures.is_empty(),
-        "{} of {} calls failed during rollback:\n{}\nRollback and readiness: {rollout:?}",
-        failures.len(),
-        calls.len(),
-        failures.join("\n"),
-    );
-    rollout?;
-    ensure!(
-        restored,
-        "the web edge did not serve version 1 within {OBSERVE_DEADLINE:?} after rollback and readiness"
-    );
-    Ok(())
+        .await?;
+
+        within(
+            DEPLOY_DEADLINE,
+            "deploy rollback fixture version 2",
+            environment.deploy(&v2, FIXTURE),
+        )
+        .await?;
+        let second = within(OBSERVE_DEADLINE, "read version 2 workload", async {
+            component_digests(&workloads.get(&workload).await?)
+        })
+        .await?;
+        ensure!(
+            original
+                .iter()
+                .any(|(name, digest)| { second.get(name).is_some_and(|deployed| deployed != digest) }),
+            "the fixture versions need different component digests: {original:?} and {second:?}"
+        );
+        require_version(routes, &widget, Version::Two).await?;
+
+        let mut command = environment.org.command();
+        command
+            .args([
+                "rollback",
+                FIXTURE,
+                "--revision",
+                &revision.to_string(),
+                "--env",
+            ])
+            .arg(&environment.file);
+        let (complete, completion) = oneshot::channel();
+        let rollout = async {
+            let result = async {
+                within(COMMAND_DEADLINE, "roll back the fixture", output(command)).await?;
+                let waiting = "version 1 WorkloadDeployment becomes Ready";
+                within(
+                    OBSERVE_DEADLINE,
+                    waiting,
+                    until(OBSERVE_DEADLINE, waiting, || async {
+                        let Some(object) = workloads.get_opt(&workload).await? else {
+                            return Ok(None);
+                        };
+                        Ok(
+                            (workload_ready(&object) && component_digests(&object)? == original)
+                                .then_some(()),
+                        )
+                    }),
+                )
+                .await
+            }
+            .await;
+            let _ = complete.send(result.is_ok());
+            result
+        };
+        // Poll the client first so its first request starts before the rollback command.
+        let ((calls, restored), rollout) =
+            tokio::join!(biased; call_during_rollback(routes, &widget, completion), rollout);
+        let failures: Vec<_> = calls
+            .iter()
+            .filter_map(|call| {
+                let error = call.result.as_ref().err()?;
+                let status = call
+                    .status
+                    .map_or_else(|| "unavailable".into(), |code| code.to_string());
+                Some(format!(
+                    "+{:?}, status {status}, error {error:#}",
+                    call.time
+                ))
+            })
+            .collect();
+        ensure!(
+            failures.is_empty(),
+            "{} of {} calls failed during rollback:\n{}\nRollback and readiness: {rollout:?}",
+            failures.len(),
+            calls.len(),
+            failures.join("\n"),
+        );
+        rollout?;
+        ensure!(
+            restored,
+            "the web edge did not serve version 1 within {OBSERVE_DEADLINE:?} after rollback and readiness"
+        );
+        Ok(())
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -482,127 +466,119 @@ fn workload_ready(workload: &DynamicObject) -> bool {
             })
 }
 
-#[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: cluster, bin:helm"]
-async fn plain_delete_keeps_data_and_apply_creates_a_new_cluster() -> anyhow::Result<()> {
-    common::capture(
-        "plain_delete_keeps_data_and_apply_creates_a_new_cluster",
-        plain_delete_keeps_data_and_apply_creates_a_new_cluster_case,
-    )
-    .await
-}
+common::journey! {
+    async fn plain_delete_keeps_data_and_apply_creates_a_new_cluster() -> anyhow::Result<()> {
+        let application = within(
+            DEPLOY_DEADLINE,
+            "prepare the fixture",
+            Application::prepare(&fixture()),
+        )
+        .await?;
+        let environment = &application.environment;
+        let platform = &environment.org.cluster;
+        let namespace = environment.triple.org.as_str();
+        let widget = create_widget(&application.routes).await?;
+        let clusters = project_api(environment, "postgresql.cnpg.io", "Cluster", "clusters");
+        let certificates = project_api(
+            environment,
+            "cert-manager.io",
+            "Certificate",
+            "certificates",
+        );
+        let secrets = Api::<Secret>::namespaced(platform.client.clone(), namespace);
+        let capture = async {
+            let kept = active_project_cluster(platform, &environment.triple).await?;
+            wait_cluster_ready(&clusters, &kept).await?;
+            let mut signed = Vec::new();
+            for certificate in release_objects(environment, &certificates).await? {
+                let name = certificate
+                    .metadata
+                    .name
+                    .context("a project Certificate has no name")?;
+                let secret = certificate.data["spec"]["secretName"]
+                    .as_str()
+                    .with_context(|| format!("Certificate {name} has no secretName"))?;
+                secrets
+                    .get_metadata(secret)
+                    .await
+                    .with_context(|| format!("read Secret {secret} before delete"))?;
+                signed.push((name, secret.to_owned()));
+            }
+            Ok((kept, signed))
+        };
+        let (kept, signed) = within(
+            OBSERVE_DEADLINE,
+            "capture the active Cluster and certificates",
+            capture,
+        )
+        .await?;
+        within(
+            OBSERVE_DEADLINE,
+            "probe product access before plain delete",
+            probe_project_primary(environment, &kept, "connected"),
+        )
+        .await?;
 
-async fn plain_delete_keeps_data_and_apply_creates_a_new_cluster_case() -> anyhow::Result<()> {
-    let application = within(
-        DEPLOY_DEADLINE,
-        "prepare the fixture",
-        Application::prepare(&fixture()),
-    )
-    .await?;
-    let environment = &application.environment;
-    let platform = &environment.org.cluster;
-    let namespace = environment.triple.org.as_str();
-    let widget = create_widget(&application.routes).await?;
-    let clusters = project_api(environment, "postgresql.cnpg.io", "Cluster", "clusters");
-    let certificates = project_api(
-        environment,
-        "cert-manager.io",
-        "Certificate",
-        "certificates",
-    );
-    let secrets = Api::<Secret>::namespaced(platform.client.clone(), namespace);
-    let capture = async {
-        let kept = active_project_cluster(platform, &environment.triple).await?;
-        wait_cluster_ready(&clusters, &kept).await?;
-        let mut signed = Vec::new();
-        for certificate in release_objects(environment, &certificates).await? {
-            let name = certificate
-                .metadata
-                .name
-                .context("a project Certificate has no name")?;
-            let secret = certificate.data["spec"]["secretName"]
-                .as_str()
-                .with_context(|| format!("Certificate {name} has no secretName"))?;
-            secrets
-                .get_metadata(secret)
-                .await
-                .with_context(|| format!("read Secret {secret} before delete"))?;
-            signed.push((name, secret.to_owned()));
-        }
-        Ok((kept, signed))
-    };
-    let (kept, signed) = within(
-        OBSERVE_DEADLINE,
-        "capture the active Cluster and certificates",
-        capture,
-    )
-    .await?;
-    within(
-        OBSERVE_DEADLINE,
-        "probe product access before plain delete",
-        probe_project_primary(environment, &kept, "connected"),
-    )
-    .await?;
+        plain_delete(environment).await?;
+        let retained = async {
+            require_no_active_project(environment).await?;
+            wait_cluster_ready(&clusters, &kept).await?;
+            for (certificate, secret) in &signed {
+                require_present(&certificates, certificate).await?;
+                let metadata = secrets
+                    .get_metadata(secret)
+                    .await
+                    .with_context(|| format!("read retained Secret {secret}"))?
+                    .metadata;
+                ensure!(
+                    metadata.deletion_timestamp.is_none(),
+                    "retained Secret {secret} is being deleted"
+                );
+            }
+            let mut database = observe_project_cluster(platform, namespace, &kept).await?;
+            let code: String =
+                sqlx::query_scalar("SELECT code::text FROM inventory.widget WHERE id = $1::uuid")
+                    .bind(&widget)
+                    .fetch_one(&mut database.connection)
+                    .await
+                    .with_context(|| format!("read widget {widget} on retained Cluster {kept}"))?;
+            ensure!(code == "standard", "widget {widget} retained code {code:?}");
+            Ok(())
+        };
+        within(
+            OBSERVE_DEADLINE,
+            "observe retained resources and data",
+            retained,
+        )
+        .await?;
+        within(
+            OBSERVE_DEADLINE,
+            "probe product access after plain delete",
+            probe_project_primary(environment, &kept, "timeout"),
+        )
+        .await?;
 
-    plain_delete(environment).await?;
-    let retained = async {
-        require_no_active_project(environment).await?;
-        wait_cluster_ready(&clusters, &kept).await?;
-        for (certificate, secret) in &signed {
-            require_present(&certificates, certificate).await?;
-            let metadata = secrets
-                .get_metadata(secret)
-                .await
-                .with_context(|| format!("read retained Secret {secret}"))?
-                .metadata;
-            ensure!(
-                metadata.deletion_timestamp.is_none(),
-                "retained Secret {secret} is being deleted"
-            );
-        }
-        let mut database = observe_project_cluster(platform, namespace, &kept).await?;
-        let code: String =
-            sqlx::query_scalar("SELECT code::text FROM inventory.widget WHERE id = $1::uuid")
-                .bind(&widget)
-                .fetch_one(&mut database.connection)
-                .await
-                .with_context(|| format!("read widget {widget} on retained Cluster {kept}"))?;
-        ensure!(code == "standard", "widget {widget} retained code {code:?}");
-        Ok(())
-    };
-    within(
-        OBSERVE_DEADLINE,
-        "observe retained resources and data",
-        retained,
-    )
-    .await?;
-    within(
-        OBSERVE_DEADLINE,
-        "probe product access after plain delete",
-        probe_project_primary(environment, &kept, "timeout"),
-    )
-    .await?;
-
-    let mut apply = environment.org.command();
-    apply.args(["env", "apply"]).arg(&environment.file);
-    within(
-        COMMAND_DEADLINE,
-        "apply the same environment file again",
-        output(apply),
-    )
-    .await?;
-    let after_apply = async {
-        let active = active_project_cluster(platform, &environment.triple).await?;
-        ensure!(active != kept, "apply reused retained Cluster {kept}");
-        wait_cluster_ready(&clusters, &active).await?;
-        require_present(&clusters, &kept).await
-    };
-    within(
-        OBSERVE_DEADLINE,
-        "observe the new and retained Clusters",
-        after_apply,
-    )
-    .await
+        let mut apply = environment.org.command();
+        apply.args(["env", "apply"]).arg(&environment.file);
+        within(
+            COMMAND_DEADLINE,
+            "apply the same environment file again",
+            output(apply),
+        )
+        .await?;
+        let after_apply = async {
+            let active = active_project_cluster(platform, &environment.triple).await?;
+            ensure!(active != kept, "apply reused retained Cluster {kept}");
+            wait_cluster_ready(&clusters, &active).await?;
+            require_present(&clusters, &kept).await
+        };
+        within(
+            OBSERVE_DEADLINE,
+            "observe the new and retained Clusters",
+            after_apply,
+        )
+        .await
+    }
 }
 
 async fn probe_project_primary(
@@ -701,111 +677,103 @@ printf '%s %s %s\n' "$host" "$port" "$result"
     Ok(())
 }
 
-#[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: cluster, bin:helm"]
-async fn data_delete_removes_resources_kept_by_plain_delete() -> anyhow::Result<()> {
-    common::capture(
-        "data_delete_removes_resources_kept_by_plain_delete",
-        data_delete_removes_resources_kept_by_plain_delete_case,
-    )
-    .await
-}
-
-async fn data_delete_removes_resources_kept_by_plain_delete_case() -> anyhow::Result<()> {
-    let environment = within(
-        COMMAND_DEADLINE,
-        "create the org and apply the environment",
-        async { Org::create().await?.apply(FIXTURE).await },
-    )
-    .await?;
-    within(
-        DEPLOY_DEADLINE,
-        "deploy the fixture",
-        environment.deploy(&fixture(), FIXTURE),
-    )
-    .await?;
-    let clusters = project_api(&environment, "postgresql.cnpg.io", "Cluster", "clusters");
-    let certificates = project_api(
-        &environment,
-        "cert-manager.io",
-        "Certificate",
-        "certificates",
-    );
-    let issuers = project_api(&environment, "cert-manager.io", "Issuer", "issuers");
-    let capture = async {
-        let active = active_project_cluster(&environment.org.cluster, &environment.triple).await?;
-        wait_cluster_ready(&clusters, &active).await?;
-        let names = async |api: &Api<DynamicObject>| {
-            release_objects(&environment, api)
-                .await?
-                .into_iter()
-                .map(|object| {
-                    object
-                        .metadata
-                        .name
-                        .context("a project resource has no name")
-                })
-                .collect::<anyhow::Result<Vec<_>>>()
+common::journey! {
+    async fn data_delete_removes_resources_kept_by_plain_delete() -> anyhow::Result<()> {
+        let environment = within(
+            COMMAND_DEADLINE,
+            "create the org and apply the environment",
+            async { Org::create().await?.apply(FIXTURE).await },
+        )
+        .await?;
+        within(
+            DEPLOY_DEADLINE,
+            "deploy the fixture",
+            environment.deploy(&fixture(), FIXTURE),
+        )
+        .await?;
+        let clusters = project_api(&environment, "postgresql.cnpg.io", "Cluster", "clusters");
+        let certificates = project_api(
+            &environment,
+            "cert-manager.io",
+            "Certificate",
+            "certificates",
+        );
+        let issuers = project_api(&environment, "cert-manager.io", "Issuer", "issuers");
+        let capture = async {
+            let active = active_project_cluster(&environment.org.cluster, &environment.triple).await?;
+            wait_cluster_ready(&clusters, &active).await?;
+            let names = async |api: &Api<DynamicObject>| {
+                release_objects(&environment, api)
+                    .await?
+                    .into_iter()
+                    .map(|object| {
+                        object
+                            .metadata
+                            .name
+                            .context("a project resource has no name")
+                    })
+                    .collect::<anyhow::Result<Vec<_>>>()
+            };
+            let certificate_names = names(&certificates).await?;
+            let issuer_names = names(&issuers).await?;
+            Ok([
+                (clusters, vec![active]),
+                (certificates, certificate_names),
+                (issuers, issuer_names),
+            ])
         };
-        let certificate_names = names(&certificates).await?;
-        let issuer_names = names(&issuers).await?;
-        Ok([
-            (clusters, vec![active]),
-            (certificates, certificate_names),
-            (issuers, issuer_names),
-        ])
-    };
-    let resources = within(
-        OBSERVE_DEADLINE,
-        "capture the active project's resources",
-        capture,
-    )
-    .await?;
-    let captured = || {
-        resources
-            .iter()
-            .flat_map(|(api, names)| names.iter().map(move |name| (api, name)))
-    };
+        let resources = within(
+            OBSERVE_DEADLINE,
+            "capture the active project's resources",
+            capture,
+        )
+        .await?;
+        let captured = || {
+            resources
+                .iter()
+                .flat_map(|(api, names)| names.iter().map(move |name| (api, name)))
+        };
 
-    plain_delete(&environment).await?;
-    let retained = async {
-        require_no_active_project(&environment).await?;
-        for (api, name) in captured() {
-            require_present(api, name).await?;
-        }
-        Ok(())
-    };
-    within(
-        OBSERVE_DEADLINE,
-        "observe kept resources before data delete",
-        retained,
-    )
-    .await?;
+        plain_delete(&environment).await?;
+        let retained = async {
+            require_no_active_project(&environment).await?;
+            for (api, name) in captured() {
+                require_present(api, name).await?;
+            }
+            Ok(())
+        };
+        within(
+            OBSERVE_DEADLINE,
+            "observe kept resources before data delete",
+            retained,
+        )
+        .await?;
 
-    let coordinate = environment.triple.to_string();
-    let args = [
-        "env",
-        "delete",
-        &coordinate,
-        "--data",
-        "--confirm",
-        &coordinate,
-    ];
-    within(
-        COMMAND_DEADLINE,
-        "delete the kept project data",
-        wamn(&environment.org, &args),
-    )
-    .await?;
-    let gone = captured().map(|(api, name)| async move {
-        let waiting = format!("{}/{name} is gone", api.resource_url());
-        let poll = until(OBSERVE_DEADLINE, &waiting, || async {
-            Ok(api.get_opt(name).await?.is_none().then_some(()))
+        let coordinate = environment.triple.to_string();
+        let args = [
+            "env",
+            "delete",
+            &coordinate,
+            "--data",
+            "--confirm",
+            &coordinate,
+        ];
+        within(
+            COMMAND_DEADLINE,
+            "delete the kept project data",
+            wamn(&environment.org, &args),
+        )
+        .await?;
+        let gone = captured().map(|(api, name)| async move {
+            let waiting = format!("{}/{name} is gone", api.resource_url());
+            let poll = until(OBSERVE_DEADLINE, &waiting, || async {
+                Ok(api.get_opt(name).await?.is_none().then_some(()))
+            });
+            within(OBSERVE_DEADLINE, &waiting, poll).await
         });
-        within(OBSERVE_DEADLINE, &waiting, poll).await
-    });
-    try_join_all(gone).await?;
-    Ok(())
+        try_join_all(gone).await?;
+        Ok(())
+    }
 }
 
 async fn create_widget(routes: &Routes) -> anyhow::Result<String> {

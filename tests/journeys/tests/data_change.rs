@@ -29,108 +29,100 @@ async fn create(routes: &Routes, model: &str, fields: Value) -> anyhow::Result<V
         .with_context(|| format!("{model}.create refused: {answer}"))
 }
 
-/// A goods-in receipt on a purchase order that requires inspection makes the
-/// `client_acme_receiving` Data change handler create a pending inspection.
-#[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: cluster, bin:helm"]
-async fn a_receipt_creates_its_inspection() -> anyhow::Result<()> {
-    common::capture(
-        "a_receipt_creates_its_inspection",
-        a_receipt_creates_its_inspection_case,
-    )
-    .await
-}
+common::journey! {
+    /// A goods-in receipt on a purchase order that requires inspection makes the
+    /// `client_acme_receiving` Data change handler create a pending inspection.
+    async fn a_receipt_creates_its_inspection() -> anyhow::Result<()> {
+        let application = Application::prepare(&request::fixture("client_acme_receiving")).await?;
+        let routes = &application.routes;
+        let suffix = uuid::Uuid::new_v4().simple().to_string();
 
-async fn a_receipt_creates_its_inspection_case() -> anyhow::Result<()> {
-    let application = Application::prepare(&request::fixture("client_acme_receiving")).await?;
-    let routes = &application.routes;
-    let suffix = uuid::Uuid::new_v4().simple().to_string();
-
-    // The create request fits the HTTP body limit. The supplier's CDC record
-    // has more metadata and exceeds the NATS limit, so capture must trim it
-    // before the later receipt can reach its handler.
-    let supplier_name = "s".repeat(1024 * 1024 - 200);
-    let supplier = create(routes, "supplier", json!({"name": supplier_name})).await?;
-    let item = create(
-        routes,
-        "item",
-        json!({"item_number": format!("I-{suffix}")}),
-    )
-    .await?;
-    let location = create(
-        routes,
-        "location",
-        json!({"location_code": format!("L-{suffix}")}),
-    )
-    .await?;
-    let order = create(
-        routes,
-        "purchase_order",
-        json!({"supplier_id": supplier["id"]}),
-    )
-    .await?;
-    let line = create(
-        routes,
-        "purchase_order_line",
-        json!({"purchase_order_id": order["id"], "line_number": 1, "item_id": item["id"], "ordered_quantity": "5"}),
-    )
-    .await?;
-    let required = routes
-        .post(
-            "/acme/purchase_order/update",
-            json!({
-                "request_id": "require",
-                "id": order["id"],
-                "expected_row_version": order["row_version"],
-                "change": {
-                    "acme_inspection_required": true,
-                    "acme_quality_status": "pending",
-                },
-            }),
+        // The create request fits the HTTP body limit. The supplier's CDC record
+        // has more metadata and exceeds the NATS limit, so capture must trim it
+        // before the later receipt can reach its handler.
+        let supplier_name = "s".repeat(1024 * 1024 - 200);
+        let supplier = create(routes, "supplier", json!({"name": supplier_name})).await?;
+        let item = create(
+            routes,
+            "item",
+            json!({"item_number": format!("I-{suffix}")}),
         )
         .await?;
-    ensure!(
-        required.get("value").is_some(),
-        "the order requires inspection: {required}"
-    );
-
-    let receipt = routes
-        .post(
-            "/receiving/record_receipt",
-            json!({"request_id": "receipt", "value": {
-                "idempotency_key": "receipt",
-                "purchase_order_id": order["id"],
-                "receipt_reference": format!("R-{suffix}"),
-                "occurred_at": "2026-11-21T10:00:00Z",
-                "line": [{"purchase_order_line_id": line["id"], "location_id": location["id"], "quantity": "5"}],
-            }}),
+        let location = create(
+            routes,
+            "location",
+            json!({"location_code": format!("L-{suffix}")}),
         )
         .await?;
-    let receipt_id = receipt["value"]["receipt_id"]
-        .as_str()
-        .with_context(|| format!("the receipt records: {receipt}"))?
-        .to_owned();
-
-    let mut database = application.environment.observe().await?;
-    let end = Instant::now() + HANDLER_DEADLINE;
-    loop {
-        let status: Option<String> = sqlx::query_scalar(
-            "SELECT status FROM receiving.quality_inspection WHERE receipt_id = $1::uuid",
+        let order = create(
+            routes,
+            "purchase_order",
+            json!({"supplier_id": supplier["id"]}),
         )
-        .bind(&receipt_id)
-        .fetch_optional(&mut database.connection)
         .await?;
-        if let Some(status) = status {
-            ensure!(
-                status == "pending",
-                "the handler's inspection is pending, not {status}"
-            );
-            return Ok(());
-        }
+        let line = create(
+            routes,
+            "purchase_order_line",
+            json!({"purchase_order_id": order["id"], "line_number": 1, "item_id": item["id"], "ordered_quantity": "5"}),
+        )
+        .await?;
+        let required = routes
+            .post(
+                "/acme/purchase_order/update",
+                json!({
+                    "request_id": "require",
+                    "id": order["id"],
+                    "expected_row_version": order["row_version"],
+                    "change": {
+                        "acme_inspection_required": true,
+                        "acme_quality_status": "pending",
+                    },
+                }),
+            )
+            .await?;
         ensure!(
-            Instant::now() < end,
-            "receipt {receipt_id} has no inspection within {HANDLER_DEADLINE:?}"
+            required.get("value").is_some(),
+            "the order requires inspection: {required}"
         );
-        tokio::time::sleep(Duration::from_secs(1)).await;
+
+        let receipt = routes
+            .post(
+                "/receiving/record_receipt",
+                json!({"request_id": "receipt", "value": {
+                    "idempotency_key": "receipt",
+                    "purchase_order_id": order["id"],
+                    "receipt_reference": format!("R-{suffix}"),
+                    "occurred_at": "2026-11-21T10:00:00Z",
+                    "line": [{"purchase_order_line_id": line["id"], "location_id": location["id"], "quantity": "5"}],
+                }}),
+            )
+            .await?;
+        let receipt_id = receipt["value"]["receipt_id"]
+            .as_str()
+            .with_context(|| format!("the receipt records: {receipt}"))?
+            .to_owned();
+
+        let mut database = application.environment.observe().await?;
+        let end = Instant::now() + HANDLER_DEADLINE;
+        loop {
+            let status: Option<String> = sqlx::query_scalar(
+                "SELECT status FROM receiving.quality_inspection WHERE receipt_id = $1::uuid",
+            )
+            .bind(&receipt_id)
+            .fetch_optional(&mut database.connection)
+            .await?;
+            if let Some(status) = status {
+                ensure!(
+                    status == "pending",
+                    "the handler's inspection is pending, not {status}"
+                );
+                return Ok(());
+            }
+            ensure!(
+                Instant::now() < end,
+                "receipt {receipt_id} has no inspection within {HANDLER_DEADLINE:?}"
+            );
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
     }
 }

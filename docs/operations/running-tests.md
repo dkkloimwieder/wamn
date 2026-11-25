@@ -375,10 +375,14 @@ The capture covers the org, environment, project and platform namespaces.
 Helm history contains revision, time, state, chart and app version.
 Helm status contains release name, namespace, revision, state and deployment times.
 The capture omits Helm notes, values, manifests and Kubernetes Secret data.
+Pod logs, events and resource status keep references such as Secret names and token types.
+The suite masks credential assignments with a value, credentials in URLs, tokens and PEM blocks.
+It also masks the observer password.
 If collection is incomplete, the test output names the missing evidence.
 
 On kind, set `WAMN_RESULTS` before you create the cluster with `journey-cluster`.
 The collector writes spans and logs to `$WAMN_RESULTS/telemetry/otel.jsonl` through a kind mount.
+Span status messages keep their text, with credential patterns masked.
 The same kind cluster can reuse that directory.
 If the directory changes, create a fresh journey cluster for the new mount.
 Pass the path of an existing bundle to reuse its images.

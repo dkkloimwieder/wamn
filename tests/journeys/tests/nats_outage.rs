@@ -43,196 +43,188 @@ const OPERATOR_DEADLINE: Duration = Duration::from_secs(300);
 /// How long the web edge waits for the recovered Service endpoint.
 const EDGE_DEADLINE: Duration = Duration::from_secs(60);
 
-/// During the outage, the host pod serves a call that needs no NATS.
-/// The test logs the web edge status during the outage.
-/// When NATS returns, the operator is Ready and the Host reports a newer `lastSeen`.
-/// The stock operator places the first application again before the edge call.
-/// The web edge serves a call and the second `WorkloadDeployment` is Ready.
-#[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: cluster, bin:helm"]
-async fn the_host_serves_through_a_nats_outage_and_recovers() -> anyhow::Result<()> {
-    common::capture(
-        "the_host_serves_through_a_nats_outage_and_recovers",
-        the_host_serves_through_a_nats_outage_and_recovers_case,
-    )
-    .await
-}
+common::journey! {
+    /// During the outage, the host pod serves a call that needs no NATS.
+    /// The test logs the web edge status during the outage.
+    /// When NATS returns, the operator is Ready and the Host reports a newer `lastSeen`.
+    /// The stock operator places the first application again before the edge call.
+    /// The web edge serves a call and the second `WorkloadDeployment` is Ready.
+    async fn the_host_serves_through_a_nats_outage_and_recovers() -> anyhow::Result<()> {
+        let application = Application::prepare(&fixture()).await?;
+        let environment = &application.environment;
+        let client = &environment.org.cluster.client;
+        let pod = ready_host_pod(environment, HOST_DEADLINE).await?;
+        let pod = &pod;
+        let reporting = || async move {
+            let host = host_object(client, pod).await?;
+            Ok(host.and_then(|host| {
+                (condition(&host, "Reporting") == Some("True"))
+                    .then(|| Time::deserialize(&host.data["status"]["lastSeen"]).ok())
+            }))
+        };
+        let before = until(REPORTING_DEADLINE, "the Host object reports", reporting)
+            .await?
+            .context("the reporting Host object has no lastSeen")?;
 
-async fn the_host_serves_through_a_nats_outage_and_recovers_case() -> anyhow::Result<()> {
-    let application = Application::prepare(&fixture()).await?;
-    let environment = &application.environment;
-    let client = &environment.org.cluster.client;
-    let pod = ready_host_pod(environment, HOST_DEADLINE).await?;
-    let pod = &pod;
-    let reporting = || async move {
-        let host = host_object(client, pod).await?;
-        Ok(host.and_then(|host| {
-            (condition(&host, "Reporting") == Some("True"))
-                .then(|| Time::deserialize(&host.data["status"]["lastSeen"]).ok())
-        }))
-    };
-    let before = until(REPORTING_DEADLINE, "the Host object reports", reporting)
-        .await?
-        .context("the reporting Host object has no lastSeen")?;
+        let namespace = pod
+            .metadata
+            .namespace
+            .as_deref()
+            .context("host pod namespace")?;
+        let pod_name = pod.metadata.name.as_deref().context("host pod name")?;
+        let port = pod
+            .spec
+            .iter()
+            .flat_map(|spec| &spec.containers)
+            .flat_map(|container| container.ports.iter().flatten())
+            .find(|port| port.name.as_deref() == Some("http"))
+            .context("the host pod has no named http port")?;
+        let forward = PortForward::start(
+            Api::namespaced(client.clone(), namespace),
+            pod_name,
+            u16::try_from(port.container_port).context("invalid host HTTP port")?,
+        )
+        .await?;
+        let edge = &application.routes;
+        let direct = Routes {
+            endpoint: format!("http://{}", forward.address),
+            host: edge.host.clone(),
+            bearer: edge.bearer.clone(),
+            client: edge.client.clone(),
+        };
 
-    let namespace = pod
-        .metadata
-        .namespace
-        .as_deref()
-        .context("host pod namespace")?;
-    let pod_name = pod.metadata.name.as_deref().context("host pod name")?;
-    let port = pod
-        .spec
-        .iter()
-        .flat_map(|spec| &spec.containers)
-        .flat_map(|container| container.ports.iter().flatten())
-        .find(|port| port.name.as_deref() == Some("http"))
-        .context("the host pod has no named http port")?;
-    let forward = PortForward::start(
-        Api::namespaced(client.clone(), namespace),
-        pod_name,
-        u16::try_from(port.container_port).context("invalid host HTTP port")?,
-    )
-    .await?;
-    let edge = &application.routes;
-    let direct = Routes {
-        endpoint: format!("http://{}", forward.address),
-        host: edge.host.clone(),
-        bearer: edge.bearer.clone(),
-        client: edge.client.clone(),
-    };
+        let pods = Api::<Pod>::namespaced(client.clone(), PLATFORM);
+        let pods = &pods;
+        let restarts = operator_restarts(pods).await?;
+        anyhow::ensure!(
+            !restarts.is_empty(),
+            "no runtime-operator pod in {PLATFORM}"
+        );
 
-    let pods = Api::<Pod>::namespaced(client.clone(), PLATFORM);
-    let pods = &pods;
-    let restarts = operator_restarts(pods).await?;
-    anyhow::ensure!(
-        !restarts.is_empty(),
-        "no runtime-operator pod in {PLATFORM}"
-    );
+        let sets = Api::<StatefulSet>::namespaced(client.clone(), PLATFORM);
+        let restore = Restore(sets.clone());
+        scale(&sets, 0).await?;
+        until(NATS_DEADLINE, "the NATS pod stops", || async {
+            Ok(pods.get_opt(NATS_POD).await?.is_none().then_some(()))
+        })
+        .await?;
+        // The stock behaviour: the runtime-operator exits while NATS is unreachable, so
+        // its pod restarts or is replaced.
+        until(
+            OPERATOR_DEADLINE,
+            "the runtime-operator exits during the NATS outage",
+            || async { Ok((operator_restarts(pods).await? != restarts).then_some(())) },
+        )
+        .await?;
+        let path = "/widget/create";
+        let request = json!({
+            "request_id": "outage-call",
+            "id": uuid::Uuid::now_v7().to_string(),
+            "idempotency_key": "outage-call",
+            "code": "standard"
+        });
+        let edge_call = edge
+            .client
+            .post(format!("{}{path}", edge.endpoint))
+            .header("Host", &edge.host)
+            .bearer_auth(&edge.bearer)
+            .json(std::slice::from_ref(&request));
+        let created = direct.post(path, request).await;
+        match edge_call.send().await {
+            Ok(response) => eprintln!(
+                "web edge during NATS outage (stock runtime-operator behaviour) answered {}",
+                response.status()
+            ),
+            Err(error) => eprintln!("web edge request during NATS outage failed: {error:#}"),
+        }
 
-    let sets = Api::<StatefulSet>::namespaced(client.clone(), PLATFORM);
-    let restore = Restore(sets.clone());
-    scale(&sets, 0).await?;
-    until(NATS_DEADLINE, "the NATS pod stops", || async {
-        Ok(pods.get_opt(NATS_POD).await?.is_none().then_some(()))
-    })
-    .await?;
-    // The stock behaviour: the runtime-operator exits while NATS is unreachable, so
-    // its pod restarts or is replaced.
-    until(
-        OPERATOR_DEADLINE,
-        "the runtime-operator exits during the NATS outage",
-        || async { Ok((operator_restarts(pods).await? != restarts).then_some(())) },
-    )
-    .await?;
-    let path = "/widget/create";
-    let request = json!({
-        "request_id": "outage-call",
-        "id": uuid::Uuid::now_v7().to_string(),
-        "idempotency_key": "outage-call",
-        "code": "standard"
-    });
-    let edge_call = edge
-        .client
-        .post(format!("{}{path}", edge.endpoint))
-        .header("Host", &edge.host)
-        .bearer_auth(&edge.bearer)
-        .json(std::slice::from_ref(&request));
-    let created = direct.post(path, request).await;
-    match edge_call.send().await {
-        Ok(response) => eprintln!(
-            "web edge during NATS outage (stock runtime-operator behaviour) answered {}",
-            response.status()
-        ),
-        Err(error) => eprintln!("web edge request during NATS outage failed: {error:#}"),
-    }
+        let created = created.context("a direct call to the host pod during the NATS outage")?;
+        anyhow::ensure!(
+            created.get("value").is_some(),
+            "the host pod creates a widget during the NATS outage: {created}"
+        );
+        drop(forward);
 
-    let created = created.context("a direct call to the host pod during the NATS outage")?;
-    anyhow::ensure!(
-        created.get("value").is_some(),
-        "the host pod creates a widget during the NATS outage: {created}"
-    );
-    drop(forward);
-
-    scale(&sets, 1).await?;
-    until(
-        NATS_DEADLINE,
-        "the NATS pod is Ready after the outage",
-        || async { Ok(pods.get_opt(NATS_POD).await?.filter(ready).map(drop)) },
-    )
-    .await?;
-    until(
-        OPERATOR_DEADLINE,
-        "the runtime-operator is Ready after NATS returns",
-        || async {
-            let operators = pods.list(&ListParams::default().labels(OPERATOR)).await?;
-            Ok((!operators.items.is_empty() && operators.items.iter().all(ready)).then_some(()))
-        },
-    )
-    .await?;
-    until(
-        REPORTING_DEADLINE,
-        "the Host object reports with a newer lastSeen after NATS returns",
-        || async { Ok(reporting().await?.flatten().filter(|seen| *seen > before)) },
-    )
-    .await?;
-    until(
-        HOST_DEADLINE,
-        "the first application's workloads are Ready after NATS returns",
-        || async {
-            let workloads =
-                application_objects(environment, "Workload", "workloads", FIXTURE).await?;
-            Ok((!workloads.is_empty()
-                && workloads
-                    .iter()
-                    .all(|workload| condition(workload, "Ready") == Some("True")))
-            .then_some(()))
-        },
-    )
-    .await?;
-    let id = uuid::Uuid::now_v7().to_string();
-    let recovery = until(
-        EDGE_DEADLINE,
-        "the web edge serves a recovery call",
-        || async {
-            match edge
-                .create("recovery-call", "recovery-call", &id, "priority")
-                .await
-            {
-                Ok(response) => Ok(Some(response)),
-                Err(error) => {
-                    eprintln!("web edge recovery call failed: {error:#}");
-                    Ok(None)
+        scale(&sets, 1).await?;
+        until(
+            NATS_DEADLINE,
+            "the NATS pod is Ready after the outage",
+            || async { Ok(pods.get_opt(NATS_POD).await?.filter(ready).map(drop)) },
+        )
+        .await?;
+        until(
+            OPERATOR_DEADLINE,
+            "the runtime-operator is Ready after NATS returns",
+            || async {
+                let operators = pods.list(&ListParams::default().labels(OPERATOR)).await?;
+                Ok((!operators.items.is_empty() && operators.items.iter().all(ready)).then_some(()))
+            },
+        )
+        .await?;
+        until(
+            REPORTING_DEADLINE,
+            "the Host object reports with a newer lastSeen after NATS returns",
+            || async { Ok(reporting().await?.flatten().filter(|seen| *seen > before)) },
+        )
+        .await?;
+        until(
+            HOST_DEADLINE,
+            "the first application's workloads are Ready after NATS returns",
+            || async {
+                let workloads =
+                    application_objects(environment, "Workload", "workloads", FIXTURE).await?;
+                Ok((!workloads.is_empty()
+                    && workloads
+                        .iter()
+                        .all(|workload| condition(workload, "Ready") == Some("True")))
+                .then_some(()))
+            },
+        )
+        .await?;
+        let id = uuid::Uuid::now_v7().to_string();
+        let recovery = until(
+            EDGE_DEADLINE,
+            "the web edge serves a recovery call",
+            || async {
+                match edge
+                    .create("recovery-call", "recovery-call", &id, "priority")
+                    .await
+                {
+                    Ok(response) => Ok(Some(response)),
+                    Err(error) => {
+                        eprintln!("web edge recovery call failed: {error:#}");
+                        Ok(None)
+                    }
                 }
-            }
-        },
-    );
-    tokio::time::timeout(EDGE_DEADLINE, recovery)
-        .await
-        .context("waiting for the web edge recovery call to complete")??;
-    drop(restore);
+            },
+        );
+        tokio::time::timeout(EDGE_DEADLINE, recovery)
+            .await
+            .context("waiting for the web edge recovery call to complete")??;
+        drop(restore);
 
-    reapply(environment, |file| declare(file, SECOND, "second")).await?;
-    environment.deploy(&fixture(), SECOND).await?;
-    until(
-        HOST_DEADLINE,
-        "the WorkloadDeployment applied after the outage is Ready",
-        || async {
-            let deployments = application_objects(
-                environment,
-                "WorkloadDeployment",
-                "workloaddeployments",
-                SECOND,
-            )
-            .await?;
-            Ok((!deployments.is_empty()
-                && deployments
-                    .iter()
-                    .all(|deployment| condition(deployment, "Ready") == Some("True")))
-            .then_some(()))
-        },
-    )
-    .await
+        reapply(environment, |file| declare(file, SECOND, "second")).await?;
+        environment.deploy(&fixture(), SECOND).await?;
+        until(
+            HOST_DEADLINE,
+            "the WorkloadDeployment applied after the outage is Ready",
+            || async {
+                let deployments = application_objects(
+                    environment,
+                    "WorkloadDeployment",
+                    "workloaddeployments",
+                    SECOND,
+                )
+                .await?;
+                Ok((!deployments.is_empty()
+                    && deployments
+                        .iter()
+                        .all(|deployment| condition(deployment, "Ready") == Some("True")))
+                .then_some(()))
+            },
+        )
+        .await
+    }
 }
 
 /// The container restarts of each runtime-operator pod, by pod uid. A changed map

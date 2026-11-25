@@ -306,9 +306,9 @@ async fn save_logs(
     let mut logs = std::pin::pin!(api.log_stream(pod, params).await?);
     let mut file = BufWriter::new(std::fs::File::create(path)?);
     let mut line = String::new();
-    let mut pem = false;
+    let mut pem_end = None;
     while logs.read_line(&mut line).await? != 0 {
-        file.write_all(redact_line(&line, password, &mut pem).as_bytes())?;
+        file.write_all(redact_line(&line, password, &mut pem_end).as_bytes())?;
         line.clear();
     }
     Ok(file.flush()?)
@@ -360,10 +360,22 @@ async fn capture_status(api: &Api<DynamicObject>, path: &Path, password: &str) {
 fn scrub_status(status: &mut Value, password: &str) {
     match status {
         Value::Object(fields) => {
-            fields.retain(|key, _| !credential_marker(key));
-            for value in fields.values_mut() {
-                scrub_status(value, password);
-            }
+            fields.retain(|key, value| {
+                if redact_line(key, password, &mut None) != key {
+                    return false;
+                }
+                let has_value = match value {
+                    Value::Null => false,
+                    Value::String(value) => !value.trim().is_empty(),
+                    _ => true,
+                };
+                if has_value && credential_key(key) {
+                    *value = "[redacted]".into();
+                } else {
+                    scrub_status(value, password);
+                }
+                true
+            });
         }
         Value::Array(items) => {
             for item in items {
@@ -375,38 +387,88 @@ fn scrub_status(status: &mut Value, password: &str) {
     }
 }
 
+fn contains_ignoring_ascii_case(text: &str, marker: &str) -> bool {
+    text.as_bytes()
+        .windows(marker.len())
+        .any(|window| window.eq_ignore_ascii_case(marker.as_bytes()))
+}
+
+fn credential_key(key: &str) -> bool {
+    ["password", "passwd", "token", "secret", "credential"]
+        .iter()
+        .any(|marker| contains_ignoring_ascii_case(key, marker))
+}
+
+fn assigned_value(text: &str) -> bool {
+    let text = text.trim_start();
+    for quote in ["\\\"", "\\'", "\"", "'"] {
+        if let Some(value) = text.strip_prefix(quote) {
+            let value = value.trim_start();
+            return !value.is_empty() && !value.starts_with(quote);
+        }
+    }
+    !text.is_empty() && !text.starts_with([',', ';', ']', '}'])
+}
+
 fn credential_marker(text: &str) -> bool {
-    let lower = text.to_ascii_lowercase();
-    [
-        "password",
-        "passwd",
-        "authorization",
-        "bearer ",
-        "token",
-        "credential",
-        "invitation code",
-        "private key",
-        "secret",
-        PAT_TOKEN_PREFIX,
-    ]
-    .iter()
-    .any(|marker| lower.contains(marker))
+    text.contains(PAT_TOKEN_PREFIX)
         || text.contains("eyJ")
-        || (text.contains("://") && text.contains('@'))
+        || contains_ignoring_ascii_case(text, "bearer ")
+        || text.split("://").skip(1).any(|url| {
+            let authority = url
+                .split(|c: char| c.is_whitespace() || "/?#\"'<>".contains(c))
+                .next()
+                .unwrap_or_default();
+            authority
+                .split_once('@')
+                .and_then(|(userinfo, _)| userinfo.split_once(':'))
+                .is_some_and(|(user, password)| !user.is_empty() && !password.is_empty())
+        })
+        || text.match_indices(['=', ':']).any(|(at, _)| {
+            let key = text[..at]
+                .trim_end()
+                .trim_end_matches(['\\', '"', '\''])
+                .rsplit(|c: char| !(c.is_ascii_alphanumeric() || "_.-".contains(c)))
+                .next()
+                .unwrap_or_default();
+            credential_key(key) && assigned_value(&text[at + 1..])
+        })
 }
 
 fn redact(text: &str, password: &str) -> String {
-    let mut pem = false;
+    let mut pem_end = None;
     text.split_inclusive('\n')
-        .map(|line| redact_line(line, password, &mut pem))
+        .map(|line| redact_line(line, password, &mut pem_end))
         .collect()
 }
 
-fn redact_line<'a>(line: &'a str, password: &str, pem: &mut bool) -> &'a str {
-    *pem |= line.contains("-----BEGIN ");
-    let redact =
-        *pem || credential_marker(line) || (!password.is_empty() && line.contains(password));
-    *pem &= !line.contains("-----END ");
+fn pem_line(line: &str, pem_end: &mut Option<String>) -> bool {
+    if pem_end.is_none() && !line.contains("-----BEGIN") {
+        return false;
+    }
+    let mut parts = line.split("-----BEGIN ");
+    let prefix = parts.next().unwrap_or_default();
+    if pem_end.as_deref().is_some_and(|end| prefix.contains(end)) {
+        *pem_end = None;
+    }
+    for part in parts {
+        if pem_end.is_none()
+            && let Some((label, _)) = part.split_once("-----")
+            && !label.is_empty()
+        {
+            *pem_end = Some(format!("-----END {label}-----"));
+        }
+        if pem_end.as_deref().is_some_and(|end| part.contains(end)) {
+            *pem_end = None;
+        }
+    }
+    true
+}
+
+fn redact_line<'a>(line: &'a str, password: &str, pem_end: &mut Option<String>) -> &'a str {
+    let redact = pem_line(line, pem_end)
+        || credential_marker(line)
+        || (!password.is_empty() && line.contains(password));
     match (redact, line.ends_with('\n')) {
         (true, true) => "[redacted]\n",
         (true, false) => "[redacted]",

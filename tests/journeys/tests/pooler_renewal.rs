@@ -39,97 +39,89 @@ const RECONCILE: Duration = Duration::from_secs(180);
 
 type Fingerprint = [u8; 32];
 
-#[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: cluster, bin:helm"]
-async fn the_control_pooler_serves_its_renewed_certificate() -> anyhow::Result<()> {
-    common::capture(
-        "the_control_pooler_serves_its_renewed_certificate",
-        the_control_pooler_serves_its_renewed_certificate_case,
-    )
-    .await
-}
+common::journey! {
+    async fn the_control_pooler_serves_its_renewed_certificate() -> anyhow::Result<()> {
+        let environment = timeout(SETUP, async {
+            Org::create().await?.apply(host::FIXTURE).await
+        })
+        .await
+        .context("create the renewal test environment")??;
+        let client = &environment.org.cluster.client;
+        let pods = Api::namespaced(client.clone(), PLATFORM);
+        let (selector, tls, old_secret) = timeout(API, async {
+            let service = Api::<Service>::namespaced(client.clone(), PLATFORM)
+                .get(POOLER)
+                .await
+                .context("read the control Pooler Service")?;
+            let labels = service
+                .spec
+                .and_then(|spec| spec.selector)
+                .filter(|labels| !labels.is_empty())
+                .context("the control Pooler Service has no pod selector")?;
+            let selector = ListParams::default().labels(
+                &labels
+                    .into_iter()
+                    .map(|(key, value)| format!("{key}={value}"))
+                    .collect::<Vec<_>>()
+                    .join(","),
+            );
+            let ca = secret_key(client, PLATFORM, "wamn-pg-ca", "ca.crt").await?;
+            anyhow::Ok((selector, connector(&ca)?, secret_fingerprint(client).await?))
+        })
+        .await
+        .context("read the Pooler Service and certificate inputs")??;
 
-async fn the_control_pooler_serves_its_renewed_certificate_case() -> anyhow::Result<()> {
-    let environment = timeout(SETUP, async {
-        Org::create().await?.apply(host::FIXTURE).await
-    })
-    .await
-    .context("create the renewal test environment")??;
-    let client = &environment.org.cluster.client;
-    let pods = Api::namespaced(client.clone(), PLATFORM);
-    let (selector, tls, old_secret) = timeout(API, async {
-        let service = Api::<Service>::namespaced(client.clone(), PLATFORM)
-            .get(POOLER)
+        let old_served = timeout(HANDSHAKE, served_fingerprint(&pods, &selector, &tls))
             .await
-            .context("read the control Pooler Service")?;
-        let labels = service
-            .spec
-            .and_then(|spec| spec.selector)
-            .filter(|labels| !labels.is_empty())
-            .context("the control Pooler Service has no pod selector")?;
-        let selector = ListParams::default().labels(
-            &labels
-                .into_iter()
-                .map(|(key, value)| format!("{key}={value}"))
-                .collect::<Vec<_>>()
-                .join(","),
+            .context("read the baseline Pooler certificate")??;
+        ensure!(
+            old_served == old_secret,
+            "Pooler serves {old_served:02x?}, but {TLS_SECRET} contains {old_secret:02x?}"
         );
-        let ca = secret_key(client, PLATFORM, "wamn-pg-ca", "ca.crt").await?;
-        anyhow::Ok((selector, connector(&ca)?, secret_fingerprint(client).await?))
-    })
-    .await
-    .context("read the Pooler Service and certificate inputs")??;
 
-    let old_served = timeout(HANDSHAKE, served_fingerprint(&pods, &selector, &tls))
+        timeout(API, request_renewal(client))
+            .await
+            .context("request Pooler certificate renewal")??;
+        let renewed = timeout(
+            RECONCILE,
+            until(RECONCILE, "the Pooler Secret changes", || async {
+                let fingerprint = secret_fingerprint(client).await?;
+                Ok((fingerprint != old_secret).then_some(fingerprint))
+            }),
+        )
         .await
-        .context("read the baseline Pooler certificate")??;
-    ensure!(
-        old_served == old_secret,
-        "Pooler serves {old_served:02x?}, but {TLS_SECRET} contains {old_secret:02x?}"
-    );
+        .with_context(|| format!("{TLS_SECRET} still held {old_secret:02x?} after {RECONCILE:?}"))??;
 
-    timeout(API, request_renewal(client))
-        .await
-        .context("request Pooler certificate renewal")??;
-    let renewed = timeout(
-        RECONCILE,
-        until(RECONCILE, "the Pooler Secret changes", || async {
-            let fingerprint = secret_fingerprint(client).await?;
-            Ok((fingerprint != old_secret).then_some(fingerprint))
-        }),
-    )
-    .await
-    .with_context(|| format!("{TLS_SECRET} still held {old_secret:02x?} after {RECONCILE:?}"))??;
+        timeout(RECONCILE, restart_operator(client))
+            .await
+            .with_context(|| {
+                format!("a replacement CloudNativePG operator is Ready within {RECONCILE:?}")
+            })??;
 
-    timeout(RECONCILE, restart_operator(client))
-        .await
-        .with_context(|| {
-            format!("a replacement CloudNativePG operator is Ready within {RECONCILE:?}")
-        })??;
-
-    let mut last_served = old_served;
-    let mut last_error = None;
-    timeout(RECONCILE, async {
-        loop {
-            match timeout(HANDSHAKE, served_fingerprint(&pods, &selector, &tls)).await {
-                Ok(Ok(fingerprint)) if fingerprint == renewed => return,
-                Ok(Ok(fingerprint)) => {
-                    last_served = fingerprint;
-                    last_error = None;
+        let mut last_served = old_served;
+        let mut last_error = None;
+        timeout(RECONCILE, async {
+            loop {
+                match timeout(HANDSHAKE, served_fingerprint(&pods, &selector, &tls)).await {
+                    Ok(Ok(fingerprint)) if fingerprint == renewed => return,
+                    Ok(Ok(fingerprint)) => {
+                        last_served = fingerprint;
+                        last_error = None;
+                    }
+                    Ok(Err(error)) => last_error = Some(format!("{error:#}")),
+                    Err(error) => last_error = Some(error.to_string()),
                 }
-                Ok(Err(error)) => last_error = Some(format!("{error:#}")),
-                Err(error) => last_error = Some(error.to_string()),
+                sleep(Duration::from_secs(1)).await;
             }
-            sleep(Duration::from_secs(1)).await;
-        }
-    })
-    .await
-    .with_context(|| format!(
-        "within {RECONCILE:?}, wanted {renewed:02x?}, last served {last_served:02x?}, last probe error {last_error:?}"
-    ))?;
+        })
+        .await
+        .with_context(|| format!(
+            "within {RECONCILE:?}, wanted {renewed:02x?}, last served {last_served:02x?}, last probe error {last_error:?}"
+        ))?;
 
-    // The renewed certificate is valid. Each probe closes its own port-forward.
-    Ok(())
+        // The renewed certificate is valid. Each probe closes its own port-forward.
+        Ok(())
+    }
 }
 
 fn connector(ca: &[u8]) -> anyhow::Result<TlsConnector> {

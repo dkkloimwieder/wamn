@@ -55,50 +55,34 @@ done
 exit 0
 "#;
 
-#[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: cluster, bin:helm"]
-async fn environments_in_one_org_are_isolated() -> anyhow::Result<()> {
-    common::capture(
-        "environments_in_one_org_are_isolated",
-        environments_in_one_org_are_isolated_case,
-    )
-    .await
-}
-
-async fn environments_in_one_org_are_isolated_case() -> anyhow::Result<()> {
-    let b = timeout(DEPLOY_DEADLINE, Application::prepare(&fixture()))
+common::journey! {
+    async fn environments_in_one_org_are_isolated() -> anyhow::Result<()> {
+        let b = timeout(DEPLOY_DEADLINE, Application::prepare(&fixture()))
+            .await
+            .context("deploy the application in B")??;
+        let org = &b.environment.org;
+        let a = timeout(
+            APPLY_DEADLINE,
+            OtherEnvironment::apply(org, "alpha", FIXTURE),
+        )
         .await
-        .context("deploy the application in B")??;
-    let org = &b.environment.org;
-    let a = timeout(
-        APPLY_DEADLINE,
-        OtherEnvironment::apply(org, "alpha", FIXTURE),
-    )
-    .await
-    .context("apply environment A in the shared org")??;
-    check_isolation(&org.cluster, &a.triple, &b).await
+        .context("apply environment A in the shared org")??;
+        check_isolation(&org.cluster, &a.triple, &b).await
+    }
 }
 
-#[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: cluster, bin:helm"]
-async fn environments_in_two_orgs_are_isolated() -> anyhow::Result<()> {
-    common::capture(
-        "environments_in_two_orgs_are_isolated",
-        environments_in_two_orgs_are_isolated_case,
-    )
-    .await
-}
-
-async fn environments_in_two_orgs_are_isolated_case() -> anyhow::Result<()> {
-    let b = timeout(DEPLOY_DEADLINE, Application::prepare(&fixture()))
+common::journey! {
+    async fn environments_in_two_orgs_are_isolated() -> anyhow::Result<()> {
+        let b = timeout(DEPLOY_DEADLINE, Application::prepare(&fixture()))
+            .await
+            .context("deploy the application in B")??;
+        let a = timeout(APPLY_DEADLINE, async {
+            Org::create().await?.apply(FIXTURE).await
+        })
         .await
-        .context("deploy the application in B")??;
-    let a = timeout(APPLY_DEADLINE, async {
-        Org::create().await?.apply(FIXTURE).await
-    })
-    .await
-    .context("create the second org and apply environment A")??;
-    check_isolation(&a.org.cluster, &a.triple, &b).await
+        .context("create the second org and apply environment A")??;
+        check_isolation(&a.org.cluster, &a.triple, &b).await
+    }
 }
 
 async fn check_isolation(cluster: &Cluster, a: &Triple, b: &Application) -> anyhow::Result<()> {

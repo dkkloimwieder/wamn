@@ -40,11 +40,23 @@ use wamn_registry::{OrgId, Triple, name};
 use wamn_test_infrastructure::scratch::ScratchRoot;
 
 mod failure;
-pub use failure::capture;
+pub(super) use failure::capture;
 pub mod host;
 pub mod request;
 mod routes;
 pub use routes::Routes;
+
+macro_rules! journey {
+    ($(#[$attribute:meta])* async fn $name:ident() -> anyhow::Result<()> $body:block) => {
+        $(#[$attribute])*
+        #[tokio::test(flavor = "multi_thread")]
+        #[ignore = "requires: cluster, bin:helm"]
+        async fn $name() -> anyhow::Result<()> {
+            $crate::common::capture(stringify!($name), || async move $body).await
+        }
+    };
+}
+pub(super) use journey;
 
 /// The number of tests that hold an org and environment at one time (Epic 15 ruling C9).
 const CAPACITY: usize = 4;

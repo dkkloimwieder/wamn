@@ -102,153 +102,145 @@ async fn runs(database: &mut common::Observed, id: &str) -> anyhow::Result<Vec<(
     .await?)
 }
 
-/// W1 to W5: a Request graph that reads runs inline, one that writes runs durably, Run
-/// now admits a run, a minute Schedule admits a run, and a Data change admits a run.
-#[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: cluster, bin:helm"]
-async fn each_trigger_runs_its_workflow() -> anyhow::Result<()> {
-    common::capture(
-        "each_trigger_runs_its_workflow",
-        each_trigger_runs_its_workflow_case,
-    )
-    .await
-}
+common::journey! {
+    /// W1 to W5: a Request graph that reads runs inline, one that writes runs durably, Run
+    /// now admits a run, a minute Schedule admits a run, and a Data change admits a run.
+    async fn each_trigger_runs_its_workflow() -> anyhow::Result<()> {
+        let application = Application::prepare(&request::fixture(APPLICATION)).await?;
+        let workflows = Workflows {
+            application: &application,
+            scratch: ScratchRoot::create()?,
+        };
+        // The Schedule and Data change entries give an entry output that no operation
+        // export accepts, so their calls refuse; the contract is the admitted run.
+        workflows
+            .enable(
+                &graph(
+                    "minute",
+                    &json!({"schedule": {"cron": "* * * * *"}}),
+                    ISSUE,
+                    false,
+                ),
+                Some("admin"),
+            )
+            .await?;
+        let change =
+            json!({"data-change": {"package": APPLICATION, "entity": "counter", "ops": ["insert"]}});
+        workflows
+            .enable(&graph("change", &change, ISSUE, false), Some("admin"))
+            .await?;
+        workflows
+            .enable(
+                &graph(
+                    "inline",
+                    &json!({"request": {"path": "/inline"}}),
+                    LIST,
+                    true,
+                ),
+                None,
+            )
+            .await?;
+        workflows
+            .enable(
+                &graph(
+                    "durable",
+                    &json!({"request": {"path": "/durable"}}),
+                    ISSUE,
+                    true,
+                ),
+                None,
+            )
+            .await?;
+        let mut database = application.environment.observe().await?;
 
-async fn each_trigger_runs_its_workflow_case() -> anyhow::Result<()> {
-    let application = Application::prepare(&request::fixture(APPLICATION)).await?;
-    let workflows = Workflows {
-        application: &application,
-        scratch: ScratchRoot::create()?,
-    };
-    // The Schedule and Data change entries give an entry output that no operation
-    // export accepts, so their calls refuse; the contract is the admitted run.
-    workflows
-        .enable(
-            &graph(
-                "minute",
-                &json!({"schedule": {"cron": "* * * * *"}}),
-                ISSUE,
-                false,
-            ),
-            Some("admin"),
-        )
-        .await?;
-    let change =
-        json!({"data-change": {"package": APPLICATION, "entity": "counter", "ops": ["insert"]}});
-    workflows
-        .enable(&graph("change", &change, ISSUE, false), Some("admin"))
-        .await?;
-    workflows
-        .enable(
-            &graph(
-                "inline",
-                &json!({"request": {"path": "/inline"}}),
-                LIST,
-                true,
-            ),
-            None,
-        )
-        .await?;
-    workflows
-        .enable(
-            &graph(
-                "durable",
-                &json!({"request": {"path": "/durable"}}),
-                ISSUE,
-                true,
-            ),
-            None,
-        )
-        .await?;
-    let mut database = application.environment.observe().await?;
-
-    let (status, body) = workflows.request("/inline", &json!([{}])).await?;
-    ensure!(
-        status == 200 && body.is_array(),
-        "W1 answers its read: {status} {body}"
-    );
-    let rows = runs(&mut database, "inline").await?;
-    ensure!(
-        rows.is_empty(),
-        "W1 runs inline and writes no run row: {rows:?}"
-    );
-
-    let (status, body) = workflows.request("/durable", &issue("w2")).await?;
-    ensure!(
-        status == 200 && body[0]["value"]["bare"].is_string(),
-        "W2 answers the command's result: {status} {body}"
-    );
-    let rows = runs(&mut database, "durable").await?;
-    ensure!(
-        rows.iter()
-            .map(|(source, _)| source.as_str())
-            .eq(["request"]),
-        "W2 runs durably with one request run row: {rows:?}"
-    );
-
-    let input = workflows.file("run-now.json", &issue("w3"))?;
-    let run = workflows
-        .wamn(&[
-            "run",
-            "--workflow-id",
-            "durable",
-            "--run-as",
-            "admin",
-            "--idempotency-key",
-            "w3",
-            "--input",
-            &input,
-        ])
-        .await?;
-    let run = run.trim();
-    let end = Instant::now() + RUN_DEADLINE;
-    let (source, status) = loop {
-        let row: Option<(String, String)> = sqlx::query_as(
-            "SELECT trigger_source, status FROM wamn_run.runs WHERE run_id::text = $1",
-        )
-        .bind(run)
-        .fetch_optional(&mut database.connection)
-        .await?;
-        match row {
-            Some((_, status)) if status == "running" || status == "dispatched" => {}
-            Some(row) => break row,
-            None => {}
-        }
+        let (status, body) = workflows.request("/inline", &json!([{}])).await?;
         ensure!(
-            Instant::now() < end,
-            "W3 run {run} ends within {RUN_DEADLINE:?}"
+            status == 200 && body.is_array(),
+            "W1 answers its read: {status} {body}"
         );
-        tokio::time::sleep(Duration::from_secs(1)).await;
-    };
-    ensure!(
-        source == "manual" && status == "completed",
-        "W3 run {run}: {source} {status}"
-    );
+        let rows = runs(&mut database, "inline").await?;
+        ensure!(
+            rows.is_empty(),
+            "W1 runs inline and writes no run row: {rows:?}"
+        );
 
-    let key = format!("w5-{}", uuid::Uuid::new_v4().simple());
-    application
-        .routes
-        .post(
-            "/counter/create",
-            json!({"request_id": key, "idempotency_key": key, "label": key}),
-        )
-        .await?;
-    for (id, source, deadline) in [
-        ("change", "event", RUN_DEADLINE),
-        ("minute", "schedule", SCHEDULE_DEADLINE),
-    ] {
-        let end = Instant::now() + deadline;
-        while !runs(&mut database, id)
-            .await?
-            .iter()
-            .any(|(found, _)| found == source)
-        {
+        let (status, body) = workflows.request("/durable", &issue("w2")).await?;
+        ensure!(
+            status == 200 && body[0]["value"]["bare"].is_string(),
+            "W2 answers the command's result: {status} {body}"
+        );
+        let rows = runs(&mut database, "durable").await?;
+        ensure!(
+            rows.iter()
+                .map(|(source, _)| source.as_str())
+                .eq(["request"]),
+            "W2 runs durably with one request run row: {rows:?}"
+        );
+
+        let input = workflows.file("run-now.json", &issue("w3"))?;
+        let run = workflows
+            .wamn(&[
+                "run",
+                "--workflow-id",
+                "durable",
+                "--run-as",
+                "admin",
+                "--idempotency-key",
+                "w3",
+                "--input",
+                &input,
+            ])
+            .await?;
+        let run = run.trim();
+        let end = Instant::now() + RUN_DEADLINE;
+        let (source, status) = loop {
+            let row: Option<(String, String)> = sqlx::query_as(
+                "SELECT trigger_source, status FROM wamn_run.runs WHERE run_id::text = $1",
+            )
+            .bind(run)
+            .fetch_optional(&mut database.connection)
+            .await?;
+            match row {
+                Some((_, status)) if status == "running" || status == "dispatched" => {}
+                Some(row) => break row,
+                None => {}
+            }
             ensure!(
                 Instant::now() < end,
-                "{id} admits a {source} run within {deadline:?}"
+                "W3 run {run} ends within {RUN_DEADLINE:?}"
             );
             tokio::time::sleep(Duration::from_secs(1)).await;
+        };
+        ensure!(
+            source == "manual" && status == "completed",
+            "W3 run {run}: {source} {status}"
+        );
+
+        let key = format!("w5-{}", uuid::Uuid::new_v4().simple());
+        application
+            .routes
+            .post(
+                "/counter/create",
+                json!({"request_id": key, "idempotency_key": key, "label": key}),
+            )
+            .await?;
+        for (id, source, deadline) in [
+            ("change", "event", RUN_DEADLINE),
+            ("minute", "schedule", SCHEDULE_DEADLINE),
+        ] {
+            let end = Instant::now() + deadline;
+            while !runs(&mut database, id)
+                .await?
+                .iter()
+                .any(|(found, _)| found == source)
+            {
+                ensure!(
+                    Instant::now() < end,
+                    "{id} admits a {source} run within {deadline:?}"
+                );
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
         }
+        Ok(())
     }
-    Ok(())
 }

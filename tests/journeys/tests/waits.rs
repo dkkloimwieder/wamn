@@ -27,43 +27,35 @@ const APPLICATION: &str = "client_acme_receiving";
 const COMMAND: Duration = Duration::from_mins(20);
 const OBSERVE: Duration = Duration::from_secs(30);
 
-#[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: cluster, bin:helm"]
-async fn commands_wait_for_their_resources() -> anyhow::Result<()> {
-    common::capture(
-        "commands_wait_for_their_resources",
-        commands_wait_for_their_resources_case,
-    )
-    .await
-}
+common::journey! {
+    async fn commands_wait_for_their_resources() -> anyhow::Result<()> {
+        let source = request::fixture(APPLICATION);
+        ensure!(source.is_dir(), "missing fixture {}", source.display());
+        let org = timeout(COMMAND, Org::create())
+            .await
+            .context("create the waits org")??;
+        timeout(OBSERVE, check_org(&org))
+            .await
+            .context("read the control rollout after org create")??;
+        let mut watches = timeout(OBSERVE, Watches::start(&org))
+            .await
+            .context("start the rollout watches")??;
 
-async fn commands_wait_for_their_resources_case() -> anyhow::Result<()> {
-    let source = request::fixture(APPLICATION);
-    ensure!(source.is_dir(), "missing fixture {}", source.display());
-    let org = timeout(COMMAND, Org::create())
-        .await
-        .context("create the waits org")??;
-    timeout(OBSERVE, check_org(&org))
-        .await
-        .context("read the control rollout after org create")??;
-    let mut watches = timeout(OBSERVE, Watches::start(&org))
-        .await
-        .context("start the rollout watches")??;
+        let environment = timeout(COMMAND, org.apply(APPLICATION))
+            .await
+            .context("initial env apply")??;
+        watches.check(&environment, Stage::Apply).await?;
 
-    let environment = timeout(COMMAND, org.apply(APPLICATION))
-        .await
-        .context("initial env apply")??;
-    watches.check(&environment, Stage::Apply).await?;
+        timeout(COMMAND, environment.deploy(&source, APPLICATION))
+            .await
+            .context("deploy the capture fixture")??;
+        watches.check(&environment, Stage::Deploy).await?;
 
-    timeout(COMMAND, environment.deploy(&source, APPLICATION))
-        .await
-        .context("deploy the capture fixture")??;
-    watches.check(&environment, Stage::Deploy).await?;
-
-    timeout(COMMAND, host::reapply(&environment, |_| {}))
-        .await
-        .context("reapply the environment")??;
-    watches.check(&environment, Stage::Reapply).await
+        timeout(COMMAND, host::reapply(&environment, |_| {}))
+            .await
+            .context("reapply the environment")??;
+        watches.check(&environment, Stage::Reapply).await
+    }
 }
 
 async fn check_org(org: &Org) -> anyhow::Result<()> {
