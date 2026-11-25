@@ -31,8 +31,6 @@ fn project_retains_only_the_operator_policy_for_each_cluster() -> anyhow::Result
             &connection.database,
             std::iter::empty(),
         )?;
-        values["environmentDocument"] =
-            "org: acme\nenv: dev\nprojects:\n  - name: billing\n".into();
         let entry = entry(&chart, triple.org.as_str(), &release, values)?;
         let objects = wamn_kubernetes::helm::template(&entry)?;
         let mut kept = objects.iter().filter(|object| {
@@ -79,13 +77,6 @@ fn operation_worker_bindings_use_their_own_accounts_and_namespace_resources() ->
         std::iter::once(&application),
     )?;
     values["namespace"] = json!(document.org);
-    values["environmentDocument"] = format!(
-        "org: {}\nenv: {}\ntarget: cloud\nrevocation_seconds: 60\n\
-         database: {{instances: 1, storage: 2Gi, cpu: 200m, memory: 256Mi}}\n\
-         projects:\n  - name: {}\n    applications:\n      {application}: {{label: {application}}}\n",
-        document.org, document.env, document.project,
-    )
-    .into();
     let entry = wamn_kubernetes::platform_environment::entry(
         &repository.join("deploy/charts/project"),
         document.org.as_str(),

@@ -372,6 +372,21 @@ async fn a_revoked_grant_is_refused_within_the_revocation_lifetime() -> anyhow::
     })
     .await?;
     environment.deploy(&fixture(), FIXTURE).await?;
+    let workloads = application_objects(
+        &environment,
+        "WorkloadDeployment",
+        "workloaddeployments",
+        FIXTURE,
+    )
+    .await?;
+    let configuration = workloads
+        .iter()
+        .filter_map(|workload| workload.data["spec"]["template"]["spec"]["components"].as_array())
+        .flatten()
+        .find_map(|component| component["localResources"]["config"]["wamn.application"].as_str())
+        .context("the deployed workload has no wamn.application configuration")?;
+    let configuration: serde_json::Value = serde_json::from_str(configuration)?;
+    assert_eq!(configuration["grant-cache-seconds"], REVOCATION_SECONDS);
     let org = &environment.org;
     let (principal, token) = member(org, &format!("member-{}@example.com", org.name)).await?;
     let call = || application_get(&environment, FIXTURE, "role.list", &token);

@@ -4,7 +4,6 @@ database: null
 publication: null
 cdcReader: null
 operations: null
-environmentDocument: null
 cluster: null
 recovery: null
 deleteData: false

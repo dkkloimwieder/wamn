@@ -98,7 +98,7 @@ impl EnvironmentFile {
             &self.target,
             self.readiness_budget_seconds,
             self.drain_bound_seconds,
-            Some(self.revocation_seconds),
+            self.revocation_seconds,
             &self.connections,
         )?;
         let db = &self.database;
@@ -212,7 +212,7 @@ impl EnvironmentFile {
                 },
                 readiness_budget_seconds: self.readiness_budget_seconds,
                 drain_bound_seconds: self.drain_bound_seconds,
-                revocation_seconds: Some(self.revocation_seconds),
+                revocation_seconds: self.revocation_seconds,
                 applications: project.applications,
             })
     }
@@ -229,7 +229,7 @@ impl EnvironmentFile {
             },
             readiness_budget_seconds: self.readiness_budget_seconds,
             drain_bound_seconds: self.drain_bound_seconds,
-            revocation_seconds: Some(self.revocation_seconds),
+            revocation_seconds: self.revocation_seconds,
             applications: project.applications,
         }
     }

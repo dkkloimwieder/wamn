@@ -287,7 +287,7 @@ The CLI sends database operations to the control service.
 See [Native control](../architecture/control.md) for the service and worker configuration.
 
 The registry stores applied project settings, application host labels, client pins, and connection aliases.
-The shared environment owns its target, readiness budget, drain bound, and connection versions.
+The shared environment owns its target, readiness budget, drain bound, grant cache lifetime, and connection versions.
 The top package pins its base packages by OCI digest.
 Helm records the release history. A WorkloadDeployment exposes the applied package digest and Helm revision.
 
@@ -300,8 +300,8 @@ The example uses `receiving--local.wamn.localhost`.
 The platform's `platformDomain` value supplies the base for both deploy and web.
 An application connection alias names a connection from the shared `connections` map.
 Set `revocation_seconds` to an integer from 0 to 3600 for the environment.
-Deploy sets this grant cache lifetime on each application workload. Zero disables the cache.
-The optional `readiness_budget_seconds` field sets how long delete waits for control to observe the removal of its administration settings.
+Deploy takes this applied value from the registry and sets the grant cache lifetime on each application workload. Zero disables the cache.
+The optional `readiness_budget_seconds` field sets how long deploy waits for the application workload to become ready.
 It defaults to 600 seconds.
 The optional `drain_bound_seconds` field sets how long the host can drain before shutdown.
 It defaults to 300 seconds.
@@ -335,11 +335,12 @@ Use this layout for new installs. Existing Helm records and their resource owner
 The kstatus watcher retains `list` and `watch` on the non-Secret kinds that environment and application charts render.
 
 `wamn env apply environment.yaml` holds one environment lock.
-The worker reserves the selected projects, asks identity to publish the environment account, and writes the host and admin credential Secrets. It starts one environment chart upgrade with `--wait=watcher` before it configures the projects.
+The worker reserves the selected projects, asks identity to publish the environment account, and writes the host and admin credential Secrets.
 It upgrades one project chart per project and runs that project's SQL in file order.
 If the file no longer lists an application of a project, the worker stops that application. When one of these applications has unfinished runs, the worker refuses before it stops any of them, and names each unfinished run. Otherwise it prints `stopping <application> (release <name>)` and uninstalls each release. The project database and its data stay.
-After the last project succeeds, the worker checks the environment chart's Helm result and removes unused connection pins on a full apply.
-If a project fails, the worker stops and names the project. Fix the error and run the command again to continue.
+After the last project succeeds, the worker stages the three timing settings in the registry and upgrades the environment chart with `--wait=watcher`, using the stored drain bound.
+The worker commits the settings and, on a full apply, removes unused connection pins after Helm succeeds.
+A failed apply keeps the previous environment timing settings. If a project fails, the worker stops and names it. Fix the error and run the command again to continue.
 New projects later in the file stay reserved without applied configuration.
 An omitted project schema mode follows the environment's disposable setting.
 Use `--disposable` only when first recording an environment that can be reset.
@@ -354,7 +355,6 @@ For each project, the worker waits for the database to be applied and allows up 
 CloudNativePG creates the database and assigns ownership to `wamn_migration`. The worker installs the project schema before restoring platform migrations. It checks the publication in SQL before it creates the replication slot.
 The CDC reader waits up to 120 seconds for its slot before it starts replication.
 The worker creates the stream with the environment's `stream-admin` credentials and saves the project's applied configuration.
-The project chart mounts the YAML document in later project Jobs.
 The reader stays paused while a capture gap is open.
 The shared host group uses the runtime operator chart at version 2.12.3.
 At startup, the host uses `POD_NAME` as its host ID and generates a scheduler user key in memory.

@@ -174,13 +174,11 @@ fn manifest(
     job["spec"]["template"]["spec"]["automountServiceAccountToken"] = true.into();
     job["spec"]["template"]["spec"]["volumes"] = json!([
         {"name":"configuration","configMap":{"name":worker.configuration}},
-        {"name":"environment","configMap":{"name":format!("{coordinate}-operations")}},
         {"name":"work","emptyDir":{}}
     ]);
     let container = wamn_kubernetes::job::container(&mut job);
     container["volumeMounts"] = json!([
         {"name":"configuration","mountPath":"/etc/wamn/control","readOnly":true},
-        {"name":"environment","mountPath":"/etc/wamn/environment","readOnly":true},
         {"name":"work","mountPath":"/work"}
     ]);
     container["resources"] =

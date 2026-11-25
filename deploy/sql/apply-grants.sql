@@ -31,7 +31,7 @@ GRANT SELECT (principal_id, org, status), UPDATE (status)
     ON identity.org_memberships TO wamn_apply;
 
 GRANT SELECT, INSERT ON registry.environments TO wamn_apply;
-GRANT UPDATE (disposable, target_id, readiness_budget_seconds, drain_bound_seconds)
+GRANT UPDATE (disposable, target_id, readiness_budget_seconds, drain_bound_seconds, revocation_seconds)
     ON registry.environments TO wamn_apply;
 
 GRANT EXECUTE ON FUNCTION identity.is_project_admin(uuid,text,text), identity.has_project_access(uuid,text,text,text) TO wamn_apply;

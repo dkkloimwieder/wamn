@@ -50,7 +50,7 @@ The owner supplies these external cloud inputs.
    The control chart renders `hosts/wamn-control-<org>`.
    Environment provisioning creates `hosts/wamn-host-<org>--<env>--<project>` for application and shared hosts.
    Helm-running Jobs use `<org>/wamn-operation-<org>`. Schema diff uses `<org>/<coordinate>-operation`.
-   Use the applied project configuration ConfigMap name in the org namespace, with the `-operations` suffix removed, as the coordinate.
+   Use the schema diff ServiceAccount name in the org namespace, with the `-operation` suffix removed, as the coordinate.
 
    Set these values for one configured target before you grant access:
 

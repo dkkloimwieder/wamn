@@ -19,7 +19,7 @@ pub struct EnvironmentSettings {
     pub integrations: BTreeMap<String, Integration>,
 }
 
-/// The non-secret configuration for one project deployment.
+/// Applied project configuration with its shared environment settings.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EnvironmentConfiguration {
@@ -27,6 +27,7 @@ pub struct EnvironmentConfiguration {
     pub settings: EnvironmentSettings,
     pub readiness_budget_seconds: i32,
     pub drain_bound_seconds: i32,
+    pub revocation_seconds: u32,
     pub applications: BTreeMap<crate::ApplicationName, ApplicationConfiguration>,
 }
 

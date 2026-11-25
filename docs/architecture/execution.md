@@ -654,7 +654,7 @@ Control creates or reuses the service, grants its roles, and issues its PAT in o
 
 Host authentication keeps positive project facts in its local Moka cache.
 A key includes its project environment, so one project's results cannot authorize another.
-Deploy writes the environment input `revocation_seconds` into the workload's `wamn.application` configuration.
+Deploy reads the applied `revocation_seconds` from the registry and writes it into the workload's `wamn.application` configuration.
 The value sets the project cache lifetime and ranges from 0 to 3600 seconds. Zero disables caching.
 
 The host verifies every session token. A positive subject lookup maps the issuer and subject to the active user UUID.

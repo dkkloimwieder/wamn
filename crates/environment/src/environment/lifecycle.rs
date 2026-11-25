@@ -7,6 +7,7 @@ use super::{
 };
 use crate::environment_sql_effects::{self, PostgresSession};
 use crate::provision_project_env::workload;
+use crate::registry::configuration;
 use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
 use wamn_platform_install as installer;
@@ -28,8 +29,10 @@ pub async fn configure(
     .await?;
     let result = lock
         .protect(async {
-            let applied_document = document.to_yaml()?;
             let sizing = serde_json::to_value(&document.database)?;
+            let readiness_budget_seconds = document.readiness_budget_seconds;
+            let drain_bound_seconds = document.drain_bound_seconds;
+            let revocation_seconds = document.revocation_seconds;
             let settings = platform.cluster.postgres_settings().await?;
             let projects: Vec<_> = match application {
                 Some(application) => vec![document.into_application(application)?],
@@ -49,48 +52,57 @@ pub async fn configure(
                 .await?;
             super::broker::configure(platform, &first.settings.org, &first.settings.env, count)
                 .await?;
-            let (replicas, host) = resources::prepare_host_upgrade(
+            let (org, env) = (&first.settings.org, &first.settings.env);
+            let mut host_values = resources::read_host_values(
                 platform,
                 &lock.session,
-                &first.settings.org,
-                &first.settings.env,
-                first.drain_bound_seconds,
+                org,
+                env,
                 &project_names,
+                None,
+                None,
             )
             .await?;
-            let configure_projects = async {
-                for (project, instance) in projects.iter().zip(reserved) {
-                    let connection = connection_for(&project.triple(), &instance);
-                    let database = crate::platform_environment::database_values(
-                        &connection,
-                        replicas,
-                        sizing.clone(),
-                        &settings,
-                    )?;
-                    configure_project(
-                        platform,
-                        project,
-                        application,
-                        &instance,
-                        &connection,
-                        database,
-                        &lock.session,
-                        &applied_document,
-                    )
-                    .await
-                    .with_context(|| {
-                        format!(
-                            "Configure project {} failed. Run env apply again to continue.",
-                            project.settings.project
-                        )
-                    })?;
-                }
-                anyhow::Ok(())
+            // The runtime operator defaults the group to one replica.
+            let replicas = if host_values["placement"]["replicas"].is_null() {
+                1
+            } else {
+                u32::try_from(
+                    host_values["placement"]["replicas"]
+                        .as_u64()
+                        .context("invalid host replica count")?,
+                )?
             };
-            // Start Helm before project provisioning and observe its result after the project loop.
-            let (host_result, ()) =
-                tokio::try_join!(biased; async { anyhow::Ok(host.await) }, configure_projects)?;
-            host_result?;
+            for (project, instance) in projects.iter().zip(reserved) {
+                let connection = connection_for(&project.triple(), &instance);
+                let database = crate::platform_environment::database_values(
+                    &connection,
+                    replicas,
+                    sizing.clone(),
+                    &settings,
+                )?;
+                configure_project(
+                    platform,
+                    project,
+                    application,
+                    &instance,
+                    &connection,
+                    database,
+                    &lock.session,
+                )
+                .await
+                .with_context(|| {
+                    format!(
+                        "Configure project {} failed. Run env apply again to continue.",
+                        project.settings.project
+                    )
+                })?;
+            }
+            // Keep the lock session free for its heartbeat while Helm waits.
+            let mut connection = wamn_postgres::connect(&platform.system_database_url).await?;
+            let mut transaction =
+                wamn_postgres::provisioning_transaction::provisioning_transaction(&mut connection)
+                    .await?;
             if application.is_none() {
                 let names: Vec<_> = first
                     .settings
@@ -98,10 +110,23 @@ pub async fn configure(
                     .keys()
                     .map(String::as_str)
                     .collect();
-                lock.session
-                    .retain_integrations(&first.settings.org, &first.settings.env, &names)
-                    .await?;
+                configuration::retain_integrations(&mut transaction, org, env, &names)
+                    .await
+                    .context("remove connection pins after project configuration")?;
             }
+            let drain_bound_seconds = configuration::write_environment(
+                &mut transaction,
+                org,
+                env,
+                readiness_budget_seconds,
+                drain_bound_seconds,
+                revocation_seconds,
+            )
+            .await
+            .context("save the applied environment settings")?;
+            host_values["drainBoundSeconds"] = drain_bound_seconds.into();
+            resources::upgrade_host(platform, org, env, &host_values).await?;
+            transaction.commit().await?;
             Ok(())
         })
         .await;
@@ -109,10 +134,6 @@ pub async fn configure(
     result
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "configuration needs the project reservation, database values, and held lock"
-)]
 async fn configure_project(
     platform: &Platform,
     document: &EnvironmentDocument,
@@ -121,7 +142,6 @@ async fn configure_project(
     connection: &ConnectionConfig,
     mut values: Value,
     lock: &PostgresSession,
-    applied_document: &str,
 ) -> anyhow::Result<()> {
     let triple = &document.triple();
     let unconfigured = lock.read_configuration(triple).await?.is_none();
@@ -164,7 +184,6 @@ async fn configure_project(
             ["publication"]
             .take();
     values["databaseConfig"] = workload::configuration_values(triple, instance, &connections)?;
-    values["environmentDocument"] = applied_document.into();
     let image = wamn_platform_install::deployment::host_image(&platform.chart).await?;
     values["cdcReader"] = reader_values(
         triple,

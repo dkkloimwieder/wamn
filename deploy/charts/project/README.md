@@ -12,7 +12,6 @@ The environment file provides sizing. The installation values provide the image 
 If backups are configured, Helm creates an ObjectStore and ScheduledBackup for the project generation.
 Helm keeps the live Cluster and ObjectStore unless `env delete --data` removes them.
 To restore into a separate release, see [Backup and recovery](../../../docs/operations/backup-and-recovery.md).
-It saves the applied environment YAML in the project's operations ConfigMap. Later Jobs mount this file.
 The CDC reader projects its client certificate and key from `cdcReader.database.credentials` under `/etc/wamn/db/<login-secret>/`. It projects `ca.crt` from `cdcReader.database.server_ca` into the same directory.
 Operation Jobs fetch their named database Secrets and stage the same files in their own volume.
 

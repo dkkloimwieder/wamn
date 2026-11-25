@@ -33,7 +33,7 @@ The worker ConfigMap and service account names follow from the org.
 
 Control authorizes the target and submits one Kubernetes Job.
 It puts the request and authenticated actor in an immutable ConfigMap owned by that Job.
-The worker mounts this input and the applied environment document from the project chart.
+The worker mounts the request and reads applied project configuration from the registry.
 The request cannot select an image, command, credential, namespace, or chart path.
 
 Deploy resolves the package closure and bindings, checks enabled workflows, applies SQL, and upgrades the application under the lifecycle lock.

@@ -58,6 +58,7 @@ impl EnvironmentDocument {
             settings: self.settings.clone(),
             readiness_budget_seconds: self.readiness_budget_seconds,
             drain_bound_seconds: self.drain_bound_seconds,
+            revocation_seconds: self.revocation_seconds,
             applications: self
                 .applications
                 .iter()
@@ -82,7 +83,7 @@ impl EnvironmentDocument {
             settings: configuration.settings,
             readiness_budget_seconds: configuration.readiness_budget_seconds,
             drain_bound_seconds: configuration.drain_bound_seconds,
-            revocation_seconds: None,
+            revocation_seconds: configuration.revocation_seconds,
             applications: configuration
                 .applications
                 .into_iter()
@@ -162,6 +163,16 @@ mod tests {
                 "connections":{"erp":"shared-erp"},
                 "client":{"package":"wamn_wms","web":format!("sha256:{:064x}",1)}}},
             "integrations":{"shared-erp":{"version":1}}})
+    }
+
+    #[test]
+    fn applied_document_preserves_a_disabled_grant_cache() -> anyhow::Result<()> {
+        let mut input = configuration();
+        input["revocation_seconds"] = 0.into();
+        let document = EnvironmentDocument::from_json(&serde_json::to_vec(&input)?)?;
+        let applied = EnvironmentDocument::from_configuration(document.configuration());
+        assert_eq!(applied.revocation_seconds, 0);
+        Ok(())
     }
 
     #[test]

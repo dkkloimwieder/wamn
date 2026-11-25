@@ -10,7 +10,5 @@ pub struct Registration<'a> {
     pub secret_namespace: Option<&'a str>,
     pub instance_suffix: &'a InstanceSuffix,
     pub disposable: Option<bool>,
-    pub readiness_budget_seconds: i32,
-    pub drain_bound_seconds: i32,
     pub target_id: &'a str,
 }

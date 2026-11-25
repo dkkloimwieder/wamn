@@ -125,13 +125,14 @@ Clients check the pooler hostname and TLS certificate against the platform CA.
 The project chart owns each project's PostgreSQL Cluster, database, managed logins, backups, and change capture resources.
 The environment chart owns the shared host group.
 The application chart sets `wamn.package-digest` and `wamn.release-revision` on the WorkloadDeployment.
-The worker starts the environment chart upgrade first. It upgrades each project chart once in file order.
+The worker upgrades each project chart once in file order. It upgrades the environment chart after the projects succeed.
 Each project keeps its own database authority, connection facts, and loaded release selections.
 A workflow run keeps its workflow version and uses the live application workload.
 Environment apply and delete check for unfinished application runs.
 
 The control service authenticates each request and selects the operation worker, chart, credentials, and target.
-Each apply Job uses the system database session that holds its environment advisory lock for all system database work.
+Each apply Job holds the environment advisory lock on a dedicated system database session.
+It commits the environment timing settings on a separate session after the host upgrade succeeds.
 Workers apply package migrations through SQLx while logged in as the restricted migration role.
 Trusted catalog writes use a separate connection.
 The project chart creates each credential store Secret. Control writes individual credential keys through the Kubernetes API, so credential values stay outside Helm values.
@@ -159,7 +160,7 @@ The hierarchy is org, environment, project, application.
 `wamn-registry` defines the values that registry readers return.
 `wamn-environment` owns SQL for deployment records, applied configuration, and lifecycle locks.
 `wamn-platform-install` owns SQL for system and org setup. `wamn-connection` holds the project connection store.
-`registry.environments` stores each environment's status, disposable setting, target, readiness budget, and drain bound.
+`registry.environments` stores each environment's status, disposable setting, target, readiness budget, drain bound, and grant cache lifetime.
 `registry.projects` holds org-level project definitions.
 `registry.environment_projects` places a project under an environment and owns its database Secret and instance suffix.
 Applications are releases under those project deployments.

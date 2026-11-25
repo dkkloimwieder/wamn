@@ -29,12 +29,9 @@ pub async fn read_project_env_instance(
 /// Record the project and its deployment in the caller's reservation transaction.
 ///
 /// Returns the stored instance suffix. A new deployment uses `candidate`.
-#[expect(clippy::too_many_arguments)]
 pub async fn record_project_env(
     transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     triple: &Triple,
-    readiness_budget_seconds: i32,
-    drain_bound_seconds: i32,
     target: &str,
     secret_name: &str,
     secret_namespace: Option<&str>,
@@ -56,8 +53,6 @@ pub async fn record_project_env(
             secret_namespace,
             instance_suffix: candidate,
             disposable,
-            readiness_budget_seconds,
-            drain_bound_seconds,
             target_id: &target_id,
         },
     )

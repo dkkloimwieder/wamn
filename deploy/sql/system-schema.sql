@@ -666,12 +666,13 @@ CREATE TRIGGER wamn_record_history_stamp
 -- offers no audience of an inactive environment, and its host serves none of
 -- its routes. CDC, data and grants stay as they are.
 -- ---------------------------------------------------------------------------
--- An environment owns the readiness budget, drain bound, and lifecycle of its project deployments.
+-- An environment owns the readiness budget, drain bound, grant cache lifetime, and lifecycle of its project deployments.
 CREATE TABLE registry.environments (
     org text NOT NULL REFERENCES registry.orgs(id) ON DELETE CASCADE,
     env text NOT NULL CHECK (env ~ '^[a-z0-9]+(-[a-z0-9]+)*$' AND char_length(env) <= 40),
     readiness_budget_seconds int NOT NULL DEFAULT 600 CHECK (readiness_budget_seconds > 0),
     drain_bound_seconds int NOT NULL DEFAULT 300 CHECK (drain_bound_seconds > 0),
+    revocation_seconds int NOT NULL DEFAULT 60 CHECK (revocation_seconds BETWEEN 0 AND 3600),
     status text NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'inactive')),
     disposable boolean NOT NULL DEFAULT false,
     created_at timestamptz NOT NULL,

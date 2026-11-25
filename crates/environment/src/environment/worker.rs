@@ -1,10 +1,13 @@
-//! Execute a project operation against the mounted environment document.
+//! Execute a project operation against applied registry configuration.
 
-use super::{Platform, capture_gap, document::EnvironmentFile, operation};
+use super::{
+    Platform, capture_gap,
+    document::{EnvironmentDocument, EnvironmentFile},
+    operation,
+};
 use anyhow::{Context as _, ensure};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::path::Path;
 use wamn_registry::{OrgId, Triple};
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -71,12 +74,7 @@ pub async fn execute(
     request: Request,
     authority_port: super::write::AuthorityPort,
 ) -> anyhow::Result<Value> {
-    let file = EnvironmentFile::compile(Path::new("/etc/wamn/environment/environment.yaml"))?;
-    ensure!(
-        &file.org == org && file.env == request.env,
-        "mounted environment does not match the Job target"
-    );
-    let triple = Triple::new(file.org.clone(), request.env, request.project);
+    let triple = Triple::new(org.clone(), request.env, request.project);
     let chart = (platform.select_chart)(&platform.chart)?;
     let platform = Platform {
         chart: chart.directory().to_owned(),
@@ -121,10 +119,13 @@ pub async fn execute(
                 "resync_at":closed.resync_at.to_rfc3339()}),
             )
         }
-        Operation::Reset => operation::reset(&platform, &file.into_project(&triple.project)?).await,
+        Operation::Reset => {
+            let document = EnvironmentDocument::read(&platform, &triple).await?;
+            operation::reset(&platform, &document).await
+        }
         _ => {
             let application = request.application.context("application is required")?;
-            let document = file.into_project(&triple.project)?;
+            let document = EnvironmentDocument::read(&platform, &triple).await?;
             let integration_base;
             let component_base;
             operation::application(

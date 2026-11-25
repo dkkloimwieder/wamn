@@ -293,7 +293,6 @@ async fn render(
     let environment_file = directory.join("environment.yaml");
     std::fs::write(&environment_file, ENVIRONMENT)?;
     let file = EnvironmentFile::compile(&environment_file)?;
-    let applied_document = file.to_yaml()?;
     let sizing = serde_json::to_value(&file.database)?;
     let mut document = file
         .into_projects()
@@ -372,7 +371,6 @@ async fn render(
             .take();
     project_values["databaseConfig"] =
         workload::configuration_values(&triple, &instance, &connections)?;
-    project_values["environmentDocument"] = applied_document.into();
     project_values["cdcReader"] = lifecycle::reader_values(
         &triple,
         &capture_configuration(connection)?,

@@ -4,7 +4,6 @@ use crate::application_chart::{
     binding::Binding,
     plan::{self as chart, Publication, PublishedOperation},
 };
-use anyhow::Context as _;
 use wamn_release::publish_release::{deploy_runtime_schema, deployment_routes, route_contracts};
 
 use super::{EnvironmentDocument, Value, ValuesInput};
@@ -28,9 +27,6 @@ pub(super) fn release_values(
     component_repository: &str,
     authority_port: super::AuthorityPort,
 ) -> anyhow::Result<Value> {
-    let seconds = document
-        .revocation_seconds
-        .context("deploy requires revocation_seconds from the environment input")?;
     let contracts = route_contracts(package_manifests)?;
     let routes = deployment_routes(package_manifests, &contracts, application, package_digest)?;
     let schemas = package_manifests
@@ -62,7 +58,7 @@ pub(super) fn release_values(
         &document.settings.project,
         &document.settings.env,
         application,
-        seconds,
+        document.revocation_seconds,
         bindings,
         integration_repository,
         |authority| Ok(authority_port(authority)?),

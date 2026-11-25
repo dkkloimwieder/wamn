@@ -110,8 +110,6 @@ async fn a_record_without_a_marker_keeps_the_disposable_row() {
         secret_namespace: Some("system"),
         instance_suffix: &"abcd1234".parse().unwrap(),
         disposable: Some(true),
-        readiness_budget_seconds: 600,
-        drain_bound_seconds: 300,
         target_id: &target,
     };
     deployment::record(&mut transaction, &registration)
@@ -130,4 +128,60 @@ async fn a_record_without_a_marker_keeps_the_disposable_row() {
         disposable,
         "a record without a marker keeps the registry row"
     );
+}
+
+/// A project save uses the applied environment timings without replacing them.
+#[tokio::test]
+#[ignore = "requires: docker, bin:helm"]
+async fn project_configuration_keeps_applied_environment_timings() -> anyhow::Result<()> {
+    use wamn_environment::{environment::document::EnvironmentDocument, registry::configuration};
+
+    let system = wamn_test_infrastructure::database::system().await?;
+    let login = system.org_login(wamn_role::APPLY_ROLE)?;
+    let url = system.login_url(login.login.as_str(), &login.password)?;
+    let mut client = wamn_postgres::connect(url.as_str()).await?;
+    let document = EnvironmentDocument::from_json(
+        br#"{"org":"acme","project":"inventory","env":"dev","target":"cloud",
+             "readiness_budget_seconds":123,"drain_bound_seconds":234,"revocation_seconds":45,
+             "applications":{}}"#,
+    )?;
+    let triple = document.triple();
+    let mut transaction = provisioning_transaction(&mut client).await?;
+    wamn_environment::environment_registry::record_project_env(
+        &mut transaction,
+        &triple,
+        &document.settings.target,
+        "fixture-secret",
+        Some(triple.org.as_str()),
+        &"abcd1234".parse()?,
+        None,
+    )
+    .await?;
+    let stored = (321, 432, 75);
+    sqlx::query(
+        "UPDATE registry.environments
+         SET readiness_budget_seconds=$3, drain_bound_seconds=$4, revocation_seconds=$5
+         WHERE org=$1 AND env=$2",
+    )
+    .bind(triple.org.as_str())
+    .bind(triple.env.as_str())
+    .bind(stored.0)
+    .bind(stored.1)
+    .bind(stored.2)
+    .execute(&mut *transaction)
+    .await?;
+    assert!(configuration::write(&mut transaction, &document.configuration()).await?);
+    let applied = configuration::read(&mut transaction, &triple)
+        .await?
+        .expect("the project was configured");
+    assert_eq!(
+        (
+            applied.readiness_budget_seconds,
+            applied.drain_bound_seconds,
+            i32::try_from(applied.revocation_seconds)?,
+        ),
+        stored
+    );
+    transaction.commit().await?;
+    Ok(())
 }

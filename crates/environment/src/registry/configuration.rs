@@ -13,6 +13,7 @@ struct ConfigurationHeader<'a> {
     schema_mode: Option<&'a str>,
     readiness_budget_seconds: i32,
     drain_bound_seconds: i32,
+    revocation_seconds: i32,
 }
 
 /// Read applied settings and connection pins. Return none for an unconfigured deployment.
@@ -22,7 +23,7 @@ pub async fn read(
 ) -> Result<Option<EnvironmentConfiguration>, sqlx::Error> {
     // One statement gives every child the same snapshot, including concurrent client writes.
     let rows = sqlx::query(
-        "SELECT t.name AS target, e.readiness_budget_seconds, e.drain_bound_seconds, p.schema_mode, c.* \
+        "SELECT t.name AS target, e.readiness_budget_seconds, e.drain_bound_seconds, e.revocation_seconds, p.schema_mode, c.* \
          FROM registry.environment_projects p JOIN registry.environments e USING (org,env) \
          JOIN registry.target t ON t.id=e.target_id LEFT JOIN LATERAL ( \
            SELECT 1 AS record_type, application AS name, label AS value, \
@@ -45,6 +46,7 @@ pub async fn read(
         schema_mode: row.try_get("schema_mode")?,
         readiness_budget_seconds: row.try_get("readiness_budget_seconds")?,
         drain_bound_seconds: row.try_get("drain_bound_seconds")?,
+        revocation_seconds: row.try_get("revocation_seconds")?,
     };
     let mode = match header.schema_mode {
         Some("reset") => Some(SchemaMode::Reset),
@@ -63,6 +65,12 @@ pub async fn read(
         },
         readiness_budget_seconds: header.readiness_budget_seconds,
         drain_bound_seconds: header.drain_bound_seconds,
+        revocation_seconds: u32::try_from(header.revocation_seconds).map_err(|source| {
+            sqlx::Error::ColumnDecode {
+                index: "revocation_seconds".into(),
+                source: Box::new(source),
+            }
+        })?,
         applications: BTreeMap::new(),
     };
     for row in rows {
@@ -154,23 +162,6 @@ pub async fn write(
         transaction.rollback().await?;
         return Ok(false);
     }
-    // The shared environment owns the readiness budget, drain bound, and target.
-    let target: String = sqlx::query_scalar("SELECT id::text FROM registry.target WHERE name=$1")
-        .bind(&c.settings.target)
-        .fetch_one(&mut *transaction)
-        .await?;
-    sqlx::query(
-        "UPDATE registry.environments
-         SET readiness_budget_seconds=$3, drain_bound_seconds=$4, target_id=$5::text::uuid
-         WHERE org=$1 AND env=$2",
-    )
-    .bind(c.settings.org.as_str())
-    .bind(c.settings.env.as_str())
-    .bind(c.readiness_budget_seconds)
-    .bind(c.drain_bound_seconds)
-    .bind(target)
-    .execute(&mut *transaction)
-    .await?;
     for (name, integration) in &c.settings.integrations {
         sqlx::query("INSERT INTO registry.environment_integrations (org,env,name,version) VALUES ($1,$2,$3,$4) \
                      ON CONFLICT (org,env,name) DO UPDATE SET version=EXCLUDED.version")
@@ -219,6 +210,31 @@ pub async fn write(
     }
     transaction.commit().await?;
     Ok(true)
+}
+
+/// Write the applied timing settings after project configuration and return the stored drain bound.
+pub(crate) async fn write_environment(
+    connection: &mut sqlx::PgConnection,
+    org: &wamn_registry::OrgId,
+    env: &wamn_registry::EnvName,
+    readiness_budget_seconds: i32,
+    drain_bound_seconds: i32,
+    revocation_seconds: u32,
+) -> Result<i32, sqlx::Error> {
+    let revocation_seconds = i32::try_from(revocation_seconds)
+        .map_err(|source| sqlx::Error::Encode(Box::new(source)))?;
+    sqlx::query_scalar(
+        "UPDATE registry.environments
+         SET readiness_budget_seconds=$3, drain_bound_seconds=$4, revocation_seconds=$5
+         WHERE org=$1 AND env=$2 RETURNING drain_bound_seconds",
+    )
+    .bind(org.as_str())
+    .bind(env.as_str())
+    .bind(readiness_budget_seconds)
+    .bind(drain_bound_seconds)
+    .bind(revocation_seconds)
+    .fetch_one(&mut *connection)
+    .await
 }
 
 /// Remove stale pins after all project binding writes for the environment succeed.

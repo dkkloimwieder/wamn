@@ -463,16 +463,18 @@ pub async fn reset(platform: &Platform, document: &EnvironmentDocument) -> anyho
                         .configuration(&owner)?;
                     system.reset(&owner, &migration, &triple).await?;
                     apply_sql(platform, system, &triple, &conn, &owner, &packages).await?;
-                    let (_, host) = super::ensure::prepare_host_upgrade(
+                    let values = super::ensure::read_host_values(
                         platform,
                         system,
                         &triple.org,
                         &triple.env,
-                        document.drain_bound_seconds,
                         &[],
+                        None,
+                        None,
                     )
                     .await?;
-                    host.await?;
+                    super::ensure::upgrade_host(platform, &triple.org, &triple.env, &values)
+                        .await?;
                     Ok(json!({"reset":triple.project}))
                 },
             )

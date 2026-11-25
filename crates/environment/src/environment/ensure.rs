@@ -32,14 +32,7 @@ pub(super) async fn suspend_project(
         drain_bound_seconds,
     )
     .await?;
-    wamn_platform_install::deployment::prepare_host_upgrade(
-        &platform.cluster,
-        &platform.chart,
-        name.clone(),
-        &values,
-    )
-    .await?
-    .await?;
+    upgrade_host(platform, &triple.org, &triple.env, &values).await?;
     let connection = system.connection(triple).await?;
     let started = Instant::now();
     let mut deadline = started + Duration::from_secs(120);
@@ -87,47 +80,24 @@ pub(super) async fn suspend_project(
     }
 }
 
-/// Prepare the host upgrade with both configured and newly reserved projects.
-pub(super) async fn prepare_host_upgrade<'a>(
-    platform: &'a Platform,
-    system: &PostgresSession,
+/// Upgrade the environment host and wait for readiness.
+pub(super) async fn upgrade_host(
+    platform: &Platform,
     org: &OrgId,
     env: &EnvName,
-    drain_bound_seconds: i32,
-    reserved: &[&str],
-) -> anyhow::Result<(u32, impl Future<Output = anyhow::Result<()>> + use<'a>)> {
-    let name = name::environment_host_name(org, env);
-    let values = read_host_values(
-        platform,
-        system,
-        org,
-        env,
-        reserved,
-        None,
-        Some(drain_bound_seconds),
-    )
-    .await?;
-    // The runtime operator defaults the group to one replica.
-    let replicas = if values["placement"]["replicas"].is_null() {
-        1
-    } else {
-        u32::try_from(
-            values["placement"]["replicas"]
-                .as_u64()
-                .context("invalid host replica count")?,
-        )?
-    };
-    let upgrade = wamn_platform_install::deployment::prepare_host_upgrade(
+    values: &Value,
+) -> anyhow::Result<()> {
+    wamn_platform_install::deployment::prepare_host_upgrade(
         &platform.cluster,
         &platform.chart,
-        name,
-        &values,
+        name::environment_host_name(org, env),
+        values,
     )
-    .await?;
-    Ok((replicas, upgrade))
+    .await?
+    .await
 }
 
-async fn read_host_values(
+pub(super) async fn read_host_values(
     platform: &Platform,
     system: &PostgresSession,
     org: &OrgId,

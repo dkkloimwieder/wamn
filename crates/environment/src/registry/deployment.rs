@@ -98,8 +98,6 @@ pub async fn record(
         .bind(r.secret_namespace)
         .bind(r.instance_suffix.as_str())
         .bind(r.disposable)
-        .bind(r.readiness_budget_seconds)
-        .bind(r.drain_bound_seconds)
         .bind(r.target_id)
         .fetch_one(&mut *connection)
         .await?;
@@ -127,12 +125,11 @@ fn upsert_project_sql() -> &'static str {
 }
 
 /// Record the environment, then its project database. Parameters follow the caller's
-/// org, project, environment, Secret, namespace, suffix, disposable, readiness budget,
-/// drain bound, and target values.
+/// org, project, environment, Secret, namespace, suffix, disposable, and target values.
 fn upsert_project_env_sql() -> &'static str {
     "WITH parent AS (INSERT INTO registry.environments \
-       (org,env,disposable,readiness_budget_seconds,drain_bound_seconds,target_id) \
-       VALUES ($1,$3,COALESCE($7,false),$8,$9,$10::text::uuid) \
+       (org,env,disposable,target_id) \
+       VALUES ($1,$3,COALESCE($7,false),$8::text::uuid) \
        ON CONFLICT (org,env) DO UPDATE SET disposable=COALESCE($7,registry.environments.disposable), \
          target_id=EXCLUDED.target_id RETURNING org,env,disposable), \
      deployment AS (INSERT INTO registry.environment_projects \

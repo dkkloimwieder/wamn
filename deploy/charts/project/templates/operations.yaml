@@ -1,16 +1,6 @@
 {{- with .Values.operations }}
 {{- $operation := . }}
 apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: {{ .name }}-operations
-  namespace: {{ include "project.namespace" $ | quote }}
-data:
-  cluster: {{ .cluster | quote }}
-  environment.yaml: |-
-    {{- required "A project operation needs the applied environment document." $.Values.environmentDocument | nindent 4 }}
----
-apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: {{ .capture }}

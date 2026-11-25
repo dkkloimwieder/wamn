@@ -708,8 +708,6 @@ async fn reserve_project(
     crate::environment_registry::record_project_env(
         transaction,
         &document.triple(),
-        document.readiness_budget_seconds,
-        document.drain_bound_seconds,
         &document.settings.target,
         &name::project_env_secret_name(
             &document.settings.org,
@@ -1232,22 +1230,6 @@ impl PostgresSession {
         disposable: Option<bool>,
     ) -> anyhow::Result<Vec<InstanceSuffix>> {
         reserve(&self.0, projects, disposable).await
-    }
-
-    pub(crate) async fn retain_integrations(
-        &self,
-        org: &OrgId,
-        env: &EnvName,
-        names: &[&str],
-    ) -> anyhow::Result<()> {
-        let mut connection = self.0.client().await;
-        let mut transaction =
-            provision_project_env::provisioning_transaction(&mut connection).await?;
-        crate::registry::configuration::retain_integrations(&mut transaction, org, env, names)
-            .await
-            .context("remove connection pins after project configuration")?;
-        transaction.commit().await?;
-        Ok(())
     }
 
     pub(crate) async fn project_count(&self, org: &OrgId, env: &EnvName) -> anyhow::Result<u32> {

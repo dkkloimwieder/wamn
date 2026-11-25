@@ -8,15 +8,14 @@ use wamn_registry::configuration::EnvironmentSettings;
 pub struct EnvironmentDocument {
     #[serde(flatten)]
     pub settings: EnvironmentSettings,
-    /// Time to wait for changes to control administration.
+    /// Time to wait for the application workload to become ready.
     #[serde(default = "default_readiness_budget_seconds")]
     pub readiness_budget_seconds: i32,
     /// Time for the host to drain before shutdown.
     #[serde(default = "default_drain_bound_seconds")]
     pub drain_bound_seconds: i32,
-    /// Grant cache lifetime from deploy input; absent in applied registry settings.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub revocation_seconds: Option<u32>,
+    /// Grant cache lifetime in seconds. Zero disables the cache.
+    pub revocation_seconds: u32,
     /// Application name to its selection and membership.
     #[serde(deserialize_with = "read_applications")]
     pub applications: BTreeMap<wamn_registry::ApplicationName, ApplicationSelection>,
@@ -139,10 +138,6 @@ impl EnvironmentDocument {
     pub fn from_json(bytes: &[u8]) -> anyhow::Result<Self> {
         let document: Self =
             serde_json::from_slice(bytes).context("decode the environment JSON")?;
-        ensure!(
-            document.revocation_seconds.is_some(),
-            "revocation_seconds is required in environment input"
-        );
         document.require_valid()?;
         Ok(document)
     }
@@ -207,7 +202,7 @@ pub(super) fn require_settings(
     target: &str,
     readiness_budget_seconds: i32,
     drain_bound_seconds: i32,
-    revocation_seconds: Option<u32>,
+    revocation_seconds: u32,
     integrations: &BTreeMap<String, Integration>,
 ) -> anyhow::Result<()> {
     ensure!(!target.trim().is_empty(), "target is empty");
@@ -220,7 +215,7 @@ pub(super) fn require_settings(
         "drain_bound_seconds must be positive"
     );
     ensure!(
-        revocation_seconds.is_none_or(|seconds| seconds <= 3600),
+        revocation_seconds <= 3600,
         "revocation_seconds must be between 0 and 3600"
     );
     for (name, integration) in integrations {
