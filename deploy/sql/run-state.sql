@@ -63,29 +63,6 @@ END
 $$;
 REVOKE ALL ON FUNCTION wamn_run.guard_run_admission_pins_immutable() FROM PUBLIC;
 
--- `wamn_platform` holds DELETE, and `wamn_app` retains it pending the
--- guest-login retirement. This invoker-rights trigger permits deletion only
--- for terminal runs, regardless of the caller.
---
--- THE TRIGGER AND THE ROLE ARE INDEPENDENT LAYERS AND STAY THAT WAY
--- (wamn-0h0g.12.69): the grant bounds WHO may delete, this trigger bounds WHAT
--- may be deleted, and neither is absorbed into the other. The predicates and
--- the failure modes differ, so each keeps its own probe.
-CREATE FUNCTION wamn_run.guard_terminal_run_delete()
-RETURNS trigger
-LANGUAGE plpgsql
-AS $$
-BEGIN
-    IF OLD.status NOT IN ('completed', 'failed', 'infrastructure-failure') THEN
-        RAISE EXCEPTION USING
-            ERRCODE = '55000',
-            MESSAGE = 'run-delete-nonterminal';
-    END IF;
-    RETURN OLD;
-END
-$$;
-REVOKE ALL ON FUNCTION wamn_run.guard_terminal_run_delete() FROM PUBLIC;
-
 -- Owner ruling wamn-0h0g.20.7 (2026-08-21): the system env policy is projected
 -- by `reconcile-run-plane`; publication verifies the projected source identity.
 -- ---------------------------------------------------------------------------
@@ -208,12 +185,8 @@ BEFORE UPDATE OF package_id, environment,
                  execution_principal_id, execution_role, invoked_by, invoked_by_user_id
 ON wamn_run.runs
 FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_run_admission_pins_immutable();
-CREATE TRIGGER runs_terminal_delete_only
-BEFORE DELETE ON wamn_run.runs
-FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_terminal_run_delete();
--- Application SQL reads run history. Platform work also prunes terminal runs;
--- runs_terminal_delete_only keeps active runs from being deleted.
+-- Application SQL reads run history.
 REVOKE ALL PRIVILEGES ON TABLE wamn_run.runs
     FROM PUBLIC, wamn_app, wamn_platform;
 GRANT SELECT ON wamn_run.runs TO wamn_app;
-GRANT SELECT, INSERT, UPDATE, DELETE ON wamn_run.runs TO wamn_platform;
+GRANT SELECT, INSERT, UPDATE ON wamn_run.runs TO wamn_platform;

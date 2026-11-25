@@ -55,23 +55,8 @@ pub async fn transaction<'connection>(
 /// Install schema as bootstrap, then use targeted logins for every fixture write.
 pub async fn fixture(name: &str) -> anyhow::Result<Fixture> {
     let postgres = wamn_test_infrastructure::containers::start_postgres().await?;
-    let database = postgres.create_database(name).await?;
+    let database = wamn_test_infrastructure::identity::project(&postgres, name).await;
     let mut observer = connect(database.as_str()).await?;
-    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
-        "{} CREATE SCHEMA wamn_run",
-        wamn_environment::project_setup::ensure_project_roles_sql()
-    )))
-    .execute(&mut observer)
-    .await
-    .map(drop)?;
-    sqlx::raw_sql(wamn_environment::project_setup::CATALOG_SCHEMA_SQL)
-        .execute(&mut observer)
-        .await
-        .map(drop)?;
-    sqlx::raw_sql(wamn_environment::project_setup::APP_SCHEMA_SQL)
-        .execute(&mut observer)
-        .await
-        .map(drop)?;
     let mut logins = Vec::new();
     for family in [WorkloadRoleFamily::Platform, WorkloadRoleFamily::App] {
         let target = WorkloadRoleIdentity::ProjectEnvKey {
