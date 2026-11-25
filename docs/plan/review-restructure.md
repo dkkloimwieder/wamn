@@ -486,6 +486,7 @@ From the restructure plan's open items (`docs/plan/wamn-restructure.md`) (F for 
 - `wamn deploy` and rollback can report Ready before the new template is live (D15, Epic 7).
 - X4 (Epic 7): write-log expiry has no production caller.
 - CDC session failure classes (Epic 7). `services/cdc-reader/src/replication.rs::classify` searches the error text for "invalidat" before it reads the error type (F). A configuration error that names a column such as `invalidated_at`, for example a value that is not UTF-8, is then treated as a capture gap, not as a fatal error. Match the typed errors first.
+- Unread project schema report (Epic 7). `crates/environment/src/environment_sql_effects.rs::read_project` runs `platform_migrations::observe_project` on every project read and stores it in `analyse::ProjectState::schema_report`, which no code reads (F). Delete the field and its query.
 - X5 is in T1.
 
 ## 5. Threat model
