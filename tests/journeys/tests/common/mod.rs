@@ -16,6 +16,9 @@ use std::time::Duration;
 
 use anyhow::{Context as _, bail, ensure};
 use k8s_openapi::api::apps::v1::Deployment;
+use k8s_openapi::api::authorization::v1::{
+    ResourceAttributes, SubjectAccessReview, SubjectAccessReviewSpec,
+};
 use k8s_openapi::api::batch::v1::{Job, JobSpec};
 use k8s_openapi::api::core::v1::{
     Capabilities, ConfigMap, Pod, PodSecurityContext, PodTemplateSpec, SeccompProfile, Secret,
@@ -838,6 +841,37 @@ pub(crate) async fn exec<const N: usize>(
         status.message.unwrap_or_default()
     );
     Ok(output)
+}
+
+/// Ask the API server to authorize a request with the groups of a service-account token.
+pub(crate) async fn service_account_can(
+    reviews: &Api<SubjectAccessReview>,
+    namespace: &str,
+    account: &str,
+    attributes: ResourceAttributes,
+) -> anyhow::Result<bool> {
+    let review = SubjectAccessReview {
+        spec: SubjectAccessReviewSpec {
+            user: Some(format!("system:serviceaccount:{namespace}:{account}")),
+            groups: Some(vec![
+                "system:authenticated".into(),
+                "system:serviceaccounts".into(),
+                format!("system:serviceaccounts:{namespace}"),
+            ]),
+            resource_attributes: Some(attributes),
+            ..SubjectAccessReviewSpec::default()
+        },
+        ..SubjectAccessReview::default()
+    };
+    let status = reviews
+        .create(&PostParams::default(), &review)
+        .await?
+        .status
+        .context("subject access review has no status")?;
+    if let Some(error) = status.evaluation_error.filter(|error| !error.is_empty()) {
+        bail!("subject access review evaluation failed: {error}");
+    }
+    Ok(status.allowed)
 }
 
 /// Run a command and return its standard output.

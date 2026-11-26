@@ -2,7 +2,7 @@
 
 mod common;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::net::{IpAddr, Ipv6Addr, SocketAddr};
 use std::time::Duration;
 
@@ -10,8 +10,7 @@ use anyhow::{Context as _, ensure};
 use common::host::{FIXTURE, fixture, ready, ready_host_pod};
 use common::request::{self, OtherEnv, until};
 use common::{
-    App, Cluster, Org, PLATFORM, active_project_cluster, exec, identity_pods,
-    observe_project_cluster, probe_image, run_job,
+    App, Cluster, Org, PLATFORM, active_project_cluster, exec, identity_pods, probe_image, run_job,
 };
 use k8s_openapi::api::core::v1::{Container, Pod, PodSpec, PodTemplateSpec, Service};
 use k8s_openapi::api::discovery::v1::EndpointSlice;
@@ -40,7 +39,7 @@ export LC_ALL=C
 while (( $# )); do
     host=$1 port=$2
     shift 2
-    diagnostic=$(timeout 5s bash -c 'exec 3<>/dev/tcp/$1/$2' bash "$host" "$port" 2>&1)
+    diagnostic=$(timeout 5s bash -c 'exec 3<>"/dev/tcp/$1/$2"' bash "$host" "$port" 2>&1)
     status=$?
     if (( status == 0 )); then
         result=connected
@@ -49,7 +48,8 @@ while (( $# )); do
     elif (( status == 1 )) && [[ $diagnostic == *'Connection refused'* ]]; then
         result=refused
     else
-        result="error ($status) ${diagnostic//$'\n'/ }"
+        printf 'probe %s %s exited %s: %s\n' "$host" "$port" "$status" "$diagnostic" >&2
+        exit 1
     fi
     printf '%s %s %s\n' "$host" "$port" "$result"
 done
@@ -216,12 +216,8 @@ async fn check_isolation(cluster: &Cluster, a: &Triple, b: &App) -> anyhow::Resu
     for (target, address) in targets {
         let result = probe_result(results.next(), address)?;
         ensure!(
-            result != "connected",
-            "{a} connected to B's {target} at {address}"
-        );
-        ensure!(
             matches!(result, "timeout" | "refused"),
-            "{a} probe of B's {target} at {address} failed: {result}"
+            "{a} must be refused by B's {target} at {address}: {result}"
         );
     }
     ensure!(
@@ -312,13 +308,6 @@ async fn live_targets(b: &App) -> anyhow::Result<[(&'static str, SocketAddr); 5]
         .find(|pod| pod.metadata.deletion_timestamp.is_none() && ready(pod))
         .with_context(|| format!("{project} has no Ready primary pod"))?;
     let primary_ip = pod_ip(&primary)?;
-    let mut observed = observe_project_cluster(cluster, namespace, &project).await?;
-    let is_primary: bool = sqlx::query_scalar("SELECT NOT pg_is_in_recovery()")
-        .fetch_one(&mut observed.connection)
-        .await
-        .context("query B's primary as the observer")?;
-    ensure!(is_primary, "{project} observer reached a standby");
-
     let release = resource_names::app_release_name(
         &triple.org,
         &triple.project,
@@ -332,6 +321,30 @@ async fn live_targets(b: &App) -> anyhow::Result<[(&'static str, SocketAddr); 5]
         ready_service(client, namespace, &rw, POSTGRES, primary_postgres),
         ready_service(client, namespace, &http, APP_HTTP, host_http),
     )?;
+    let hosts = Api::namespaced(client.clone(), namespace);
+    let host_name = host.metadata.name.context("B's host pod name")?;
+    let primary_result = exec(
+        &hosts,
+        &host_name,
+        &AttachParams::default(),
+        [
+            "bash",
+            "-c",
+            PROBE,
+            "probe",
+            &primary_ip.to_string(),
+            &POSTGRES.to_string(),
+        ],
+    )
+    .await
+    .with_context(|| format!("probe {project}'s primary from B's host"))?;
+    let result = probe_result(Some(primary_result.trim_end()), primary_postgres)?;
+    ensure!(
+        result == "connected",
+        "B's host could not connect to its primary at {primary_postgres}: {result}"
+    );
+
+    // The Service endpoint above identifies the host that must serve this request.
     let (status, answer) = request::read(&b.routes, "/widget/list", &json!({}))
         .await
         .context("read B's fixture through the web edge")?;
@@ -401,27 +414,30 @@ async fn ready_service(
         OBSERVE_DEADLINE,
         &format!("Service {namespace}/{name} has Ready endpoint {backend}"),
         || async {
-            let serving = slices
+            let ready_addresses = slices
                 .list(&selector)
                 .await?
                 .items
                 .into_iter()
-                .any(|slice| {
+                .filter(|slice| {
                     slice
                         .ports
                         .iter()
                         .flatten()
                         .any(|port| port.port == Some(i32::from(backend.port())))
-                        && slice.endpoints.iter().any(|endpoint| {
-                            endpoint
-                                .conditions
-                                .as_ref()
-                                .and_then(|conditions| conditions.ready)
-                                != Some(false)
-                                && endpoint.addresses.contains(&ip)
-                        })
-                });
-            Ok(serving.then_some(address))
+                })
+                .flat_map(|slice| slice.endpoints)
+                .filter(|endpoint| {
+                    endpoint
+                        .conditions
+                        .as_ref()
+                        .and_then(|conditions| conditions.ready)
+                        != Some(false)
+                })
+                .flat_map(|endpoint| endpoint.addresses)
+                .collect::<BTreeSet<_>>();
+            // These Services must serve through the exact pod probed below.
+            Ok((ready_addresses.len() == 1 && ready_addresses.contains(&ip)).then_some(address))
         },
     )
     .await

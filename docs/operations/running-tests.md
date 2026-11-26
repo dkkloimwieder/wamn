@@ -347,6 +347,20 @@ The `nats_outage` target stops the platform NATS server, so it must run alone.
 Cargo runs the test targets one after another, so the command above runs it alone.
 Do not run it beside another journey run.
 
+### Kind smoke run
+
+After preflight and cluster setup, run the web, authorization, and cross-org network cases.
+
+```bash
+cargo test --locked -p wamn-journey-tests --test smoke -- --ignored
+cargo test --locked -p wamn-journey-tests --test isolation envs_in_two_orgs_are_isolated -- --ignored --exact
+```
+
+The authorization case reviews access for every service account in the source org and its Helm namespace.
+It requires access to be denied in the other org and its Helm namespace.
+Record each executed case name and the ignored and filtered counts.
+If a command runs zero cases, the smoke run is incomplete.
+
 ### Platform and environment apply on kind
 
 [Deployment](deployment.md#local-platform) gives the `wamn platform deploy` and `wamn env apply` procedure for a local cluster.
