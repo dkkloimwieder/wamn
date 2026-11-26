@@ -186,7 +186,7 @@ REVOKE ALL ON FUNCTION registry.login_org() FROM PUBLIC;
 -- FK to the owning org.
 -- ---------------------------------------------------------------------------
 CREATE TABLE registry.project (
-    org  text NOT NULL REFERENCES registry.org (id) ON DELETE CASCADE,
+    org  text NOT NULL REFERENCES registry.org (id) ON DELETE RESTRICT,
     id   text NOT NULL,
     active boolean NOT NULL DEFAULT true,
     created_at timestamptz NOT NULL,
@@ -282,7 +282,7 @@ CREATE TRIGGER wamn_record_history_stamp
 
 CREATE TABLE identity.project_role (
     principal_id uuid NOT NULL
-        REFERENCES identity.principal (id) ON DELETE CASCADE,
+        REFERENCES identity.principal (id) ON DELETE RESTRICT,
     org          text NOT NULL,
     project      text NOT NULL,
     role         text NOT NULL,
@@ -292,7 +292,7 @@ CREATE TABLE identity.project_role (
     updated_by   uuid NOT NULL,
     PRIMARY KEY (principal_id, org, project, role),
     FOREIGN KEY (org, project)
-        REFERENCES registry.project (org, id) ON DELETE CASCADE,
+        REFERENCES registry.project (org, id) ON DELETE RESTRICT,
     CONSTRAINT project_role_role_check
         CHECK (role ~ '^[a-z0-9][a-z0-9-]*$' AND char_length(role) <= 64)
 );
@@ -310,7 +310,7 @@ CREATE TABLE identity.org_membership (
     principal_id   uuid NOT NULL,
     principal_type text NOT NULL DEFAULT 'user',
     org            text NOT NULL
-        REFERENCES registry.org (id) ON DELETE CASCADE,
+        REFERENCES registry.org (id) ON DELETE RESTRICT,
     active         boolean NOT NULL DEFAULT true,
     created_at     timestamptz NOT NULL,
     created_by     uuid NOT NULL,
@@ -318,7 +318,7 @@ CREATE TABLE identity.org_membership (
     updated_by     uuid NOT NULL,
     PRIMARY KEY (principal_id, org),
     FOREIGN KEY (principal_id, principal_type)
-        REFERENCES identity.principal (id, type) ON DELETE CASCADE,
+        REFERENCES identity.principal (id, type) ON DELETE RESTRICT,
     CONSTRAINT org_membership_user_check
         CHECK (principal_type = 'user')
 );
@@ -355,8 +355,8 @@ CREATE TRIGGER check_org_membership
     FOR EACH ROW EXECUTE FUNCTION identity.check_org_membership();
 
 -- A user's administrative role in one org (docs/plan/platform-ui.md §4.4).
--- A role needs the user's membership of the org, and deleting the
--- membership deletes the role.
+-- A role needs the user's membership of the org. Membership deactivation
+-- revokes the role explicitly.
 CREATE TABLE identity.org_role (
     principal_id uuid NOT NULL,
     org          text NOT NULL,
@@ -367,7 +367,7 @@ CREATE TABLE identity.org_role (
     updated_by   uuid NOT NULL,
     PRIMARY KEY (principal_id, org, role),
     FOREIGN KEY (principal_id, org)
-        REFERENCES identity.org_membership (principal_id, org) ON DELETE CASCADE,
+        REFERENCES identity.org_membership (principal_id, org) ON DELETE RESTRICT,
     CONSTRAINT org_role_role_check
         CHECK (role = 'org-admin')
 );
@@ -519,7 +519,7 @@ CREATE TABLE identity.nats_key (
         'system-signing', 'platform-account', 'platform-signing',
         'runtime-operator', 'env', 'env-signing'
     )),
-    org text REFERENCES registry.org (id) ON DELETE CASCADE,
+    org text REFERENCES registry.org (id) ON DELETE RESTRICT,
     env text,
     public_key text NOT NULL,
     private_key_envelope bytea NOT NULL,
@@ -593,7 +593,7 @@ CREATE TRIGGER wamn_record_history_stamp
 -- ---------------------------------------------------------------------------
 -- An environment owns the readiness budget, drain bound, project fact cache lifetime, and lifecycle of its project deployments.
 CREATE TABLE registry.env (
-    org text NOT NULL REFERENCES registry.org(id) ON DELETE CASCADE,
+    org text NOT NULL REFERENCES registry.org(id) ON DELETE RESTRICT,
     env text NOT NULL CHECK (env ~ '^[a-z0-9]+(-[a-z0-9]+)*$' AND char_length(env) <= 40),
     readiness_budget_seconds int NOT NULL DEFAULT 600 CHECK (readiness_budget_seconds > 0),
     drain_bound_seconds int NOT NULL DEFAULT 300 CHECK (drain_bound_seconds > 0),
@@ -691,8 +691,8 @@ CREATE TABLE registry.project_env (
     updated_at timestamptz NOT NULL,
     updated_by uuid NOT NULL,
     PRIMARY KEY (org, env, project),
-    FOREIGN KEY (org, project) REFERENCES registry.project (org, id) ON DELETE CASCADE,
-    FOREIGN KEY (org, env) REFERENCES registry.env(org, env) ON DELETE CASCADE,
+    FOREIGN KEY (org, project) REFERENCES registry.project (org, id) ON DELETE RESTRICT,
+    FOREIGN KEY (org, env) REFERENCES registry.env(org, env) ON DELETE RESTRICT,
     CONSTRAINT project_env_instance_suffix_check
         CHECK (instance_suffix ~ '^[a-z0-9]{8}$')
 );
@@ -717,7 +717,7 @@ CREATE TABLE registry.env_app (
     PRIMARY KEY (org, env, project, app),
     UNIQUE (org, label),
     FOREIGN KEY (org, env, project)
-        REFERENCES registry.project_env (org, env, project) ON DELETE CASCADE,
+        REFERENCES registry.project_env (org, env, project) ON DELETE RESTRICT,
     CHECK ((client_package IS NULL) = (client_web IS NULL))
 );
 
@@ -728,7 +728,7 @@ CREATE TABLE registry.env_integration (
     version integer NOT NULL CHECK (version > 0),
     PRIMARY KEY (org, env, name),
     FOREIGN KEY (org, env)
-        REFERENCES registry.env (org, env) ON DELETE CASCADE
+        REFERENCES registry.env (org, env) ON DELETE RESTRICT
 );
 
 CREATE TABLE registry.env_app_connection (
@@ -740,7 +740,7 @@ CREATE TABLE registry.env_app_connection (
     connection_name text NOT NULL,
     PRIMARY KEY (org, env, project, app, alias),
     FOREIGN KEY (org, env, project, app)
-        REFERENCES registry.env_app (org, env, project, app) ON DELETE CASCADE,
+        REFERENCES registry.env_app (org, env, project, app) ON DELETE RESTRICT,
     FOREIGN KEY (org, env, connection_name)
         REFERENCES registry.env_integration (org, env, name)
 );
@@ -763,9 +763,9 @@ CREATE TABLE identity.project_env_membership (
     updated_by     uuid NOT NULL,
     PRIMARY KEY (principal_id, org, env, project),
     FOREIGN KEY (principal_id, principal_type)
-        REFERENCES identity.principal (id, type) ON DELETE CASCADE,
+        REFERENCES identity.principal (id, type) ON DELETE RESTRICT,
     FOREIGN KEY (org, env, project)
-        REFERENCES registry.project_env (org, env, project) ON DELETE CASCADE,
+        REFERENCES registry.project_env (org, env, project) ON DELETE RESTRICT,
     CONSTRAINT project_env_membership_user_check
         CHECK (principal_type = 'user')
 );
@@ -839,7 +839,7 @@ CREATE TABLE registry.event_reader (
     updated_at                   timestamptz NOT NULL DEFAULT now(),
     PRIMARY KEY (org, env, project),
     FOREIGN KEY (org, env, project)
-        REFERENCES registry.project_env (org, env, project) ON DELETE CASCADE
+        REFERENCES registry.project_env (org, env, project) ON DELETE RESTRICT
 );
 
 -- ---------------------------------------------------------------------------

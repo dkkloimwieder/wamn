@@ -959,7 +959,7 @@ It holds `USAGE` on `catalog` and `SELECT` on `catalog.releases`.
 Role commands use the application host's `wamn_platform` grants of `SELECT`, `INSERT`, and `UPDATE` on `role`. The next authorization read sees changes to role activity.
 Identity password login reads active org membership in the system database and needs no project role reader.
 The audit retention role holds no grant on these history tables, because their retention is `unlimited`.
-A foreign key cascade writes its delete entries with the actor and the operation of the deleting transaction.
+Foreign keys refuse deletion of a referenced user or role. Explicit grant revocations record the actor and operation in history.
 The log copies full rows, including `api_key.key_hash`.
 A column that is secret at rest does not belong in a stamped relation.
 Project initialization installs `record-history.sql` and then `record-history-app-grants.sql` before `app-schema.sql`.
@@ -1076,6 +1076,9 @@ The full control schema stamps registry declarations and `wamn_authority.author_
 The system operations tables carry no stamps. The append-only `provisioning.platform_event` journal records each lifecycle event with its own timestamp, caller, and command ID.
 In the system database, the actor is an `identity.principal` id.
 Registry rows, including app connection bindings, keep unlimited history.
+Foreign keys restrict parent deletion where the product has no row-delete path.
+Password login expiry can delete renewal credentials by cascade.
+Project reactivation explicitly deletes capture gaps before deleting the old reader registration. The foreign key from a gap to its reader allows a cascade.
 The system logs changes to the identity authority relations listed above and to `identity.password_credential`.
 History keeps the actor, operation, and row changes. A control route binds its sealed operation id.
 

@@ -186,8 +186,8 @@ CREATE TRIGGER wamn_record_history_stamp
 GRANT SELECT ON platform.role TO wamn_app;
 
 -- ---------------------------------------------------------------------------
--- User↔role linkage (many-to-many). Both sides FK ON DELETE CASCADE, so removing
--- a user or a role prunes the grant.
+-- User↔role linkage (many-to-many). A grant prevents deletion of either
+-- referenced row.
 -- ---------------------------------------------------------------------------
 CREATE TABLE platform.user_role (
     user_id    uuid NOT NULL,
@@ -198,9 +198,9 @@ CREATE TABLE platform.user_role (
     updated_by uuid NOT NULL,
     PRIMARY KEY (user_id, role_name),
     FOREIGN KEY (user_id)
-        REFERENCES platform."user" (id) ON DELETE CASCADE,
+        REFERENCES platform."user" (id) ON DELETE RESTRICT,
     FOREIGN KEY (role_name)
-        REFERENCES platform.role (name) ON DELETE CASCADE
+        REFERENCES platform.role (name) ON DELETE RESTRICT
 );
 CREATE TRIGGER wamn_record_history_stamp
     BEFORE INSERT OR UPDATE ON platform.user_role
@@ -214,7 +214,7 @@ GRANT SELECT ON platform.user_role TO wamn_app;
 -- operation reference `<package>:<interface>/<operation>`, with no package
 -- version. A caller holds exactly the rows of its roles; nothing derives
 -- into them. A row that the serving release does not serve grants nothing.
--- `admin` has no rows. FK to role ON DELETE CASCADE.
+-- `admin` has no rows. A permission prevents deletion of its role.
 -- ---------------------------------------------------------------------------
 CREATE TABLE platform.permission (
     role_name   text NOT NULL,
@@ -225,7 +225,7 @@ CREATE TABLE platform.permission (
     updated_by  uuid NOT NULL,
     PRIMARY KEY (role_name, permission),
     FOREIGN KEY (role_name)
-        REFERENCES platform.role (name) ON DELETE CASCADE,
+        REFERENCES platform.role (name) ON DELETE RESTRICT,
     CONSTRAINT permission_admin_check CHECK (role_name <> 'admin'),
     CONSTRAINT permission_reference_check
         CHECK (permission ~ '^[a-z][a-z0-9]*(-[a-z0-9]+)*:[a-z][a-z0-9]*(-[a-z0-9]+)*/[a-z][a-z0-9]*(-[a-z0-9]+)*$'
@@ -424,7 +424,7 @@ CREATE TABLE platform.number_counter (
     updated_by  uuid NOT NULL,
     PRIMARY KEY (sequence_id, counter, key_value),
     FOREIGN KEY (sequence_id)
-        REFERENCES platform.number_sequence (id) ON DELETE CASCADE
+        REFERENCES platform.number_sequence (id) ON DELETE RESTRICT
 );
 
 -- Display and view settings, resolved from least to most specific target. A

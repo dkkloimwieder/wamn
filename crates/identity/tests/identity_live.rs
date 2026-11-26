@@ -128,8 +128,11 @@ async fn platform_identity_round_trip_on_postgres() {
         "the principal and both roles stamp wamn:provisioning"
     );
 
+    // Only project roles reference widgets before the env fixtures are installed.
+    project_delete_refuses_when_referenced(&mut client, "widgets").await;
     project_env_membership_round_trip(&mut client, &user).await;
-    project_delete_removes_its_roles_and_memberships(&mut client, &user).await;
+    // Inventory has deployments but no project roles.
+    project_delete_refuses_when_referenced(&mut client, "inventory").await;
 
     let disabled = disable_principal(&mut client, user.id())
         .await
@@ -192,56 +195,19 @@ async fn one_address_admits_one_user(client: &mut sqlx::PgConnection) {
     assert_eq!(second.error_type(), IdentityErrorType::Conflict);
 }
 
-/// A project delete takes the project's roles and environment memberships with
-/// it, and leaves every other project's rows in place.
-async fn project_delete_removes_its_roles_and_memberships(
-    client: &mut sqlx::PgConnection,
-    user: &Principal,
-) {
-    async fn rows(
-        client: &mut sqlx::PgConnection,
-        project: &wamn_registry::ProjectId,
-    ) -> (i64, i64) {
-        sqlx::query(
-            "SELECT (SELECT count(*) FROM identity.project_role \
-                         WHERE org = 'demo' AND project = $1), \
-                        (SELECT count(*) FROM identity.project_env_membership \
-                         WHERE org = 'demo' AND project = $1)",
-        )
-        .bind(project.as_str())
-        .fetch_one(&mut *client)
-        .await
-        .map(|row| (row.get::<i64, _>(0), row.get::<i64, _>(1)))
-        .expect("count project roles and memberships")
-    }
-
-    assign_project_role(
-        client,
-        user.id(),
-        &"demo".parse().unwrap(),
-        &"inventory".parse().unwrap(),
-        "project-author",
-    )
-    .await
-    .expect("assign a role on the project to delete");
-    grant_project_env_membership(
-        client,
-        user.id(),
-        &"demo".parse().unwrap(),
-        &"inventory".parse().unwrap(),
-        &"dev".parse().unwrap(),
-    )
-    .await
-    .expect("grant a membership on the project to delete");
-    let widgets = rows(client, &"widgets".parse().unwrap()).await;
-    assert_eq!(rows(client, &"inventory".parse().unwrap()).await, (1, 1));
-    sqlx::query("DELETE FROM registry.project WHERE org = 'demo' AND id = 'inventory'")
+/// A role or deployment prevents deletion of its project.
+async fn project_delete_refuses_when_referenced(client: &mut sqlx::PgConnection, project: &str) {
+    let error = sqlx::query("DELETE FROM registry.project WHERE org = 'demo' AND id = $1")
+        .bind(project)
         .execute(&mut *client)
         .await
-        .map(|result| result.rows_affected())
-        .expect("delete the project");
-    assert_eq!(rows(client, &"inventory".parse().unwrap()).await, (0, 0));
-    assert_eq!(rows(client, &"widgets".parse().unwrap()).await, widgets);
+        .expect_err("a referenced project cannot be deleted");
+    assert!(
+        error
+            .as_database_error()
+            .is_some_and(sqlx::error::DatabaseError::is_foreign_key_violation),
+        "{error}"
+    );
 }
 
 async fn project_env_membership_round_trip(client: &mut sqlx::PgConnection, user: &Principal) {
@@ -447,31 +413,34 @@ async fn project_env_membership_round_trip(client: &mut sqlx::PgConnection, user
         );
     }
 
-    grant_project_env_membership(
+    // Give this principal only the foreign key reference under test.
+    let member = create_user(
         client,
-        other_user.id(),
-        &"demo".parse().unwrap(),
-        &"widgets".parse().unwrap(),
-        &"dev".parse().unwrap(),
+        "env-member@example.com",
+        "env-member@example.com",
+        "Env Member",
     )
     .await
-    .expect("grant another user before deletion");
-    sqlx::query("DELETE FROM identity.principal WHERE id = $1::text::uuid")
-        .bind(other_user.id().to_string().as_str())
+    .expect("create a principal with no existing references");
+    let member_id = sqlx::types::Uuid::from(*member.id());
+    sqlx::query(
+        "INSERT INTO identity.project_env_membership (principal_id, org, project, env) \
+         VALUES ($1, 'demo', 'widgets', 'dev')",
+    )
+    .bind(member_id)
+    .execute(&mut *client)
+    .await
+    .expect("seed the principal's sole reference");
+    let error = sqlx::query("DELETE FROM identity.principal WHERE id = $1")
+        .bind(member_id)
         .execute(&mut *client)
         .await
-        .map(|result| result.rows_affected())
-        .expect("delete a principal with no PAT audit records");
+        .expect_err("a principal with an env membership cannot be deleted");
     assert!(
-        !has_project_env_membership(
-            client,
-            other_user.id(),
-            &"demo".parse().unwrap(),
-            &"widgets".parse().unwrap(),
-            &"dev".parse().unwrap()
-        )
-        .await
-        .expect("principal deletion removes its membership")
+        error
+            .as_database_error()
+            .is_some_and(sqlx::error::DatabaseError::is_foreign_key_violation),
+        "{error}"
     );
 }
 

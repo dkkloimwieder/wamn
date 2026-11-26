@@ -29,9 +29,8 @@
 -- `infrastructure-failure` after the janitor grace period. Credential releases
 -- back off from one second, doubled per attempt, with up to 20 percent jitter.
 -- `queue::MAX_RETRY_BACKOFF_MS` caps the full delay at five minutes.
--- The FK to `run` ON DELETE CASCADE
--- ties the lease machinery to the run's immutable history. Status/lifecycle live
--- on `run` (5.7) — the queue is the lease layer, not a second run-state.
+-- A queue entry prevents deletion of its run. The host removes the queue
+-- entry explicitly when it finishes the run. Run status lives on `run` (5.7).
 -- ---------------------------------------------------------------------------
 CREATE TABLE wamn_run.run_queue (
     created_at timestamptz NOT NULL,
@@ -50,7 +49,7 @@ CREATE TABLE wamn_run.run_queue (
     max_attempts     int  NOT NULL DEFAULT 20,
     enqueued_at      timestamptz NOT NULL DEFAULT now(),
     PRIMARY KEY (run_id),
-    FOREIGN KEY (run_id) REFERENCES wamn_run.run (run_id) ON DELETE CASCADE
+    FOREIGN KEY (run_id) REFERENCES wamn_run.run (run_id) ON DELETE RESTRICT
 );
 CREATE TRIGGER wamn_record_history_stamp
     BEFORE INSERT OR UPDATE ON wamn_run.run_queue

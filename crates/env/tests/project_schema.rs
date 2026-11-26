@@ -253,15 +253,25 @@ async fn app_schema_applies_and_enforces_isolation_on_postgres() {
          END $$;"
     )
     .expect("writing to a String cannot fail");
-    // FK cascade: deleting the clerk role prunes its permission, and deleting
-    // the admin role prunes its remaining grant.
-    script.push_str(
-        "DELETE FROM platform.role WHERE name IN ('admin', 'clerk');\n\
-         DO $$ BEGIN\n\
-           ASSERT (SELECT count(*) FROM platform.permission WHERE role_name='clerk')=0, 'permission cascade';\n\
-           ASSERT (SELECT count(*) FROM platform.user_role WHERE role_name='admin')=0, 'user_role cascade from role';\n\
-         END $$;\n",
-    );
+    // Each delete has exactly one dependent row, so each FK is tested independently.
+    writeln!(
+        script,
+        "DO $$ BEGIN
+           BEGIN
+             DELETE FROM platform.role WHERE name = 'clerk';
+             ASSERT false, 'a role with a permission cannot be deleted';
+           EXCEPTION WHEN foreign_key_violation THEN NULL; END;
+           BEGIN
+             DELETE FROM platform.role WHERE name = 'admin';
+             ASSERT false, 'an assigned role cannot be deleted';
+           EXCEPTION WHEN foreign_key_violation THEN NULL; END;
+           BEGIN
+             DELETE FROM platform.\"user\" WHERE id = '{U1}';
+             ASSERT false, 'a user with a role assignment cannot be deleted';
+           EXCEPTION WHEN foreign_key_violation THEN NULL; END;
+         END $$;"
+    )
+    .expect("writing to a String cannot fail");
 
     script.push_str("DROP SCHEMA platform CASCADE;\n");
 
@@ -371,7 +381,7 @@ END $$;
     );
 }
 
-/// Row changes record the actor and operation, including key changes and cascades.
+/// Row changes record the actor and operation, including key changes and revocations.
 #[tokio::test]
 #[ignore = "requires: docker, bin:psql"]
 async fn platform_relations_log_every_row_change_on_postgres() {
@@ -420,8 +430,9 @@ async fn platform_relations_log_every_row_change_on_postgres() {
          INSERT INTO platform.tx_identity(principal_id,role,app,operation) VALUES('{U3}'::uuid,'','fixture','{REMOVE}');\n\
          DELETE FROM platform.setting;\n\
          UPDATE platform.\"user\" SET active = false WHERE id = '{U1}';\n\
-         DELETE FROM platform.user_role WHERE user_id = '{U1}';\n\
-         DELETE FROM platform.role WHERE name IN ('admin', 'auditor');\n\
+         UPDATE platform.role SET active = false WHERE name = 'auditor';\n\
+         DELETE FROM platform.user_role WHERE user_id = '{U1}' OR role_name = 'auditor';\n\
+         DELETE FROM platform.permission WHERE role_name = 'auditor';\n\
          COMMIT;"
     )
     .expect("writing to a String cannot fail");
@@ -429,14 +440,14 @@ async fn platform_relations_log_every_row_change_on_postgres() {
     // and an insert instead of an update.
     for (table, inserted, updated, removed) in [
         ("user", 3, 1, 0),
-        ("role", 2, 1, 2),
+        ("role", 2, 1, 0),
         ("user_role", 2, 0, 2),
         ("permission", 1, 0, 1),
         ("setting", 1, 1, 1),
     ] {
         let key_change = updated == 0;
-        let disabled = u32::from(table == "user");
-        let changed = if key_change { 2 } else { updated + disabled };
+        let deactivated = u32::from(matches!(table, "user" | "role"));
+        let changed = if key_change { 2 } else { updated + deactivated };
         writeln!(script, "DO $$ BEGIN
             ASSERT (SELECT count(*) FROM platform.{table}_history) = {inserted} + {changed} + {removed};
             ASSERT (SELECT count(*) FROM platform.{table}_history WHERE type = 'insert'
@@ -466,6 +477,9 @@ async fn platform_relations_log_every_row_change_on_postgres() {
             AND row_key ->> 'id' = '{U1}' AND before -> 'active' = 'true'::jsonb AND after -> 'active' = 'false'::jsonb);
         ASSERT EXISTS (SELECT FROM platform.role_history WHERE type = 'update'
             AND row_key ->> 'name' = 'admin' AND after ->> 'description' = 'administrators');
+        ASSERT EXISTS (SELECT FROM platform.role_history WHERE type = 'update'
+            AND operation = '{REMOVE}' AND changed_by = '{U3}'
+            AND row_key ->> 'name' = 'auditor' AND before -> 'active' = 'true'::jsonb AND after -> 'active' = 'false'::jsonb);
         ASSERT EXISTS (SELECT FROM platform.setting_history WHERE type = 'update'
             AND before ->> 'value' = 'dark' AND after ->> 'value' = 'light');
         ASSERT EXISTS (SELECT FROM platform.user_role_history WHERE type = 'delete'
