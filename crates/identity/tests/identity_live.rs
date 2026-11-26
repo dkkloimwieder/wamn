@@ -202,10 +202,12 @@ async fn project_delete_refuses_when_referenced(client: &mut sqlx::PgConnection,
         .execute(&mut *client)
         .await
         .expect_err("a referenced project cannot be deleted");
-    assert!(
+    assert_eq!(
         error
             .as_database_error()
-            .is_some_and(sqlx::error::DatabaseError::is_foreign_key_violation),
+            .and_then(sqlx::error::DatabaseError::code)
+            .as_deref(),
+        Some("23001"),
         "{error}"
     );
 }
@@ -436,10 +438,12 @@ async fn project_env_membership_round_trip(client: &mut sqlx::PgConnection, user
         .execute(&mut *client)
         .await
         .expect_err("a principal with an env membership cannot be deleted");
-    assert!(
+    assert_eq!(
         error
             .as_database_error()
-            .is_some_and(sqlx::error::DatabaseError::is_foreign_key_violation),
+            .and_then(sqlx::error::DatabaseError::code)
+            .as_deref(),
+        Some("23001"),
         "{error}"
     );
 }

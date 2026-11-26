@@ -260,15 +260,15 @@ async fn app_schema_applies_and_enforces_isolation_on_postgres() {
            BEGIN
              DELETE FROM platform.role WHERE name = 'clerk';
              ASSERT false, 'a role with a permission cannot be deleted';
-           EXCEPTION WHEN foreign_key_violation THEN NULL; END;
+           EXCEPTION WHEN restrict_violation THEN NULL; END;
            BEGIN
              DELETE FROM platform.role WHERE name = 'admin';
              ASSERT false, 'an assigned role cannot be deleted';
-           EXCEPTION WHEN foreign_key_violation THEN NULL; END;
+           EXCEPTION WHEN restrict_violation THEN NULL; END;
            BEGIN
              DELETE FROM platform.\"user\" WHERE id = '{U1}';
              ASSERT false, 'a user with a role assignment cannot be deleted';
-           EXCEPTION WHEN foreign_key_violation THEN NULL; END;
+           EXCEPTION WHEN restrict_violation THEN NULL; END;
          END $$;"
     )
     .expect("writing to a String cannot fail");
