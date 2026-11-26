@@ -449,40 +449,6 @@ async fn project_env_membership_round_trip(client: &mut sqlx::PgConnection, user
 
     grant_project_env_membership(
         client,
-        user.id(),
-        &"demo".parse().unwrap(),
-        &"widgets".parse().unwrap(),
-        &"dev".parse().unwrap(),
-    )
-    .await
-    .expect("grant before environment replacement");
-    sqlx::raw_sql(sqlx::AssertSqlSafe(
-        ("DELETE FROM registry.project_env \
-             WHERE org = 'demo' AND project = 'widgets' AND env = 'dev'; \
-             INSERT INTO registry.project_env \
-               (org, env, project, secret_name, instance_suffix) \
-             VALUES ('demo', 'dev', 'widgets', 'replacement-secret', 'e5f6g7h8');")
-            .to_string(),
-    ))
-    .execute(&mut *client)
-    .await
-    .map(drop)
-    .expect("replace the provisioned environment");
-    assert!(
-        !has_project_env_membership(
-            client,
-            user.id(),
-            &"demo".parse().unwrap(),
-            &"widgets".parse().unwrap(),
-            &"dev".parse().unwrap()
-        )
-        .await
-        .unwrap(),
-        "replacement environment must not inherit the deleted grant"
-    );
-
-    grant_project_env_membership(
-        client,
         other_user.id(),
         &"demo".parse().unwrap(),
         &"widgets".parse().unwrap(),

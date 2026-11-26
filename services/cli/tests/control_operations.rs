@@ -166,7 +166,7 @@ fn env_data_deletion_confirmation_without_terminal() -> anyhow::Result<()> {
     ] {
         assert_refuses(
             control_command(scratch.path(), UNREACHABLE_CONTROL_URL)
-                .args(["env", "delete", "acme/dev/apps", "--data"])
+                .args(["env", "deactivate-project", "acme/dev/apps", "--data"])
                 .args(confirmation),
             expected,
         )?;
@@ -174,7 +174,7 @@ fn env_data_deletion_confirmation_without_terminal() -> anyhow::Result<()> {
     let output = control_command(scratch.path(), UNREACHABLE_CONTROL_URL)
         .args([
             "env",
-            "delete",
+            "deactivate-project",
             "acme/dev/apps",
             "--confirm",
             "acme/dev/apps",

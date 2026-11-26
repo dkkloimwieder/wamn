@@ -6,7 +6,7 @@ mod broker;
 pub mod capture_gap;
 pub mod chart_values;
 pub mod database;
-pub mod delete;
+mod delete;
 pub mod document;
 pub mod drain;
 pub mod ensure;

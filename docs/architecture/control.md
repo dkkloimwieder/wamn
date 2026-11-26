@@ -76,7 +76,8 @@ Platform schema inspection and apply use `platform.schema` to start a SQL Job an
 The service selects the worker image.
 Cloud node pool administration belongs to the platform infrastructure tooling.
 
-Environment creation and configuration use `env.configure`. Deletion uses `env.delete`.
+Environment creation and configuration use `env.configure`.
+To deactivate a project in an environment, Control sends `project_env.deactivate` to the env worker.
 Their Jobs call installer-owned role and database interfaces and then the environment lifecycle owner.
 The installer runs a separate initial SQL bootstrap only when the baseline is absent and no configuration is recorded.
 Its private worker repeats the baseline refusal before DDL. It cannot update an existing baseline.

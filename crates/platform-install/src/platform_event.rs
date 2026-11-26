@@ -13,7 +13,7 @@ use wamn_registry::{AppName, EnvName, OrgId, ProjectId};
 pub enum EventType {
     OrgCreate,
     EnvApply,
-    EnvDelete,
+    ProjectEnvDeactivate,
     Deploy,
     Rollback,
     SchemaApply,
@@ -26,7 +26,7 @@ impl EventType {
         match self {
             Self::OrgCreate => "org_create",
             Self::EnvApply => "env_apply",
-            Self::EnvDelete => "env_delete",
+            Self::ProjectEnvDeactivate => "project_env_deactivate",
             Self::Deploy => "deploy",
             Self::Rollback => "rollback",
             Self::SchemaApply => "schema_apply",

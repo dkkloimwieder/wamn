@@ -436,7 +436,7 @@ pub struct EnvConfigureRequest {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct EnvDeleteRequest {
+pub struct ProjectEnvDeactivateRequest {
     pub project: String,
     pub env: String,
     pub data: bool,

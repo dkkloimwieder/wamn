@@ -582,7 +582,7 @@ For Data change, enable reads the source stream's last sequence before reading t
 It stores the log sequence number in `enable_lsn` and creates one durable pull consumer filtered to the entry's entity.
 The consumer starts at the next stream sequence. The host attempts to remove a newly created consumer if the database commit fails.
 Disable commits before it removes the consumer. The host retains the project database lock through consumer cleanup.
-Author, enable and disable take the environment advisory lock in the project database. Apply and delete take this lock after the system database lock.
+Author, enable and disable take the environment advisory lock in the project database. Apply and project deactivation take this lock after the system database lock.
 
 An invoker Request runs as its caller with their active role.
 An administrator has the `admin` role active. Other callers must hold exactly one role to invoke as themselves.
@@ -841,8 +841,8 @@ Its caller deletes the keys of the list after the commit. `wamn-broker::Publishe
 A failed delete is logged, the commit stands, and the 60 seconds bound it.
 A connection write, copy, credential change, disable, enable or delete deletes the key of that connection.
 A connection write, copy or delete also deletes the connection map of its environment, because it can create or remove a connection.
-An `environment::apply` deletes the release key of each release whose connection rows changed.
-An `env delete` deletes every key of the environment.
+`wamn env apply` deletes the release key of each release whose connection rows changed.
+`env deactivate-project` tears down the project deployment and removes its connection credentials.
 
 ### Control sessions
 

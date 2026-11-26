@@ -292,7 +292,7 @@ impl Org {
     }
 }
 
-/// One applied environment. Runs a plain `wamn env delete` after failure capture, if enabled.
+/// One applied environment. Runs a plain `wamn env deactivate-project` after failure capture, if enabled.
 pub struct Env {
     pub org: Org,
     pub file: PathBuf,

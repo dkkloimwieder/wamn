@@ -231,7 +231,7 @@ fn decode_project_roles(rows: Vec<Row>) -> Result<Vec<RoleName>, IdentityError> 
 /// Grant a user principal membership in one registered project-environment.
 ///
 /// Repeated grants are harmless. The database rejects service principals and
-/// missing environments. Membership does not create project users or assign roles.
+/// inactive or missing deployments. Membership does not create project users or assign roles.
 pub async fn grant_project_env_membership(
     client: &mut sqlx::PgConnection,
     principal_id: &PrincipalId,

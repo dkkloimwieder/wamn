@@ -1,4 +1,4 @@
-//! Application rollback and environment deletion through product commands.
+//! Application rollback and project deactivation through product commands.
 
 mod common;
 
@@ -518,6 +518,22 @@ common::journey! {
         .await?;
 
         plain_delete(env).await?;
+        let routes = &app.routes;
+        let create = format!("{}/widget/create", routes.endpoint);
+        until(OBSERVE_DEADLINE, "web removes the deactivated app route", || async {
+            let response = routes
+                .client
+                .post(&create)
+                .header("Host", &routes.host)
+                .bearer_auth(&routes.bearer)
+                .json(&serde_json::json!([{
+                    "request_id": widget, "id": widget, "idempotency_key": widget, "code": "standard"
+                }]))
+                .send()
+                .await?;
+            Ok((response.status() == StatusCode::NOT_FOUND).then_some(()))
+        })
+        .await?;
         let retained = async {
             require_no_active_project(env).await?;
             wait_cluster_ready(&clusters, &kept).await?;
@@ -746,7 +762,7 @@ common::journey! {
         let coordinate = env.triple.to_string();
         let args = [
             "env",
-            "delete",
+            "deactivate-project",
             &coordinate,
             "--data",
             "--confirm",
@@ -787,11 +803,11 @@ async fn create_widget(routes: &Routes) -> anyhow::Result<String> {
 
 async fn plain_delete(env: &Env) -> anyhow::Result<()> {
     let coordinate = env.triple.to_string();
-    // The shared Drop deletes the reapplied instance or accepts an absent registry row.
+    // The shared Drop also accepts a deployment that is already inactive.
     within(
         COMMAND_DEADLINE,
-        "plain delete the environment",
-        wamn(&env.org, &["env", "delete", &coordinate]),
+        "deactivate the project deployment",
+        wamn(&env.org, &["env", "deactivate-project", &coordinate]),
     )
     .await?;
     Ok(())

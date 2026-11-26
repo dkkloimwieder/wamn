@@ -8,7 +8,7 @@ use std::{io::IsTerminal as _, path::PathBuf};
 #[derive(Debug, Subcommand)]
 pub enum Command {
     Apply(Apply),
-    Delete(Delete),
+    DeactivateProject(DeactivateProject),
 }
 #[derive(Debug, Args)]
 pub struct Apply {
@@ -19,7 +19,7 @@ pub struct Apply {
     pub disposable: bool,
 }
 #[derive(Debug, Args)]
-pub struct Delete {
+pub struct DeactivateProject {
     pub coordinate: String,
     #[arg(long)]
     pub data: bool,
@@ -63,7 +63,7 @@ pub async fn run(command: Command) -> anyhow::Result<()> {
                 json!({"document":document,"disposable":args.disposable.then_some(true),"app":args.app}),
             )
         }
-        Command::Delete(args) => {
+        Command::DeactivateProject(args) => {
             let triple = parse_coordinate(&args.coordinate)?;
             if args.data {
                 let answer = if let Some(confirm) = args.confirm {
@@ -83,7 +83,7 @@ pub async fn run(command: Command) -> anyhow::Result<()> {
                     "environment confirmation differs"
                 );
             }
-            ("env.delete", triple, json!({"data":args.data}))
+            ("project_env.deactivate", triple, json!({"data":args.data}))
         }
     };
     ControlHost::from_env()?

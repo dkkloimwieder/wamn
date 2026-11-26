@@ -1,7 +1,7 @@
-//! `env delete <coordinate> [--data]`
+//! `env deactivate-project <coordinate> [--data]`
 //! (docs/architecture/overview.md#environment-lifecycle).
 //!
-//! Each step accepts absent resources so an interrupted delete can resume.
+//! Each step accepts absent resources so interrupted deactivation can resume.
 //! Under the lifecycle lock, test ownership and existing unfinished runs before
 //! uninstalling application releases. Drain their hosts and test runs again.
 //! Delete and drain the CDC reader before removing credentials or replication.
@@ -9,12 +9,12 @@
 //! Then remove the replication slot, Publication CR, and Database CR.
 //! With `--data`, remove the instance roles.
 //! Remove the credential store Secret and its account before the final transaction.
-//! That transaction removes connection references after external resources are gone.
-//! Delete the applied configuration with the environment row
-//! last and commit. Disable connection principals in a retained database.
+//! The final transaction marks the deployment inactive and removes its
+//! app bindings and memberships.
+//! Disable connection principals in a retained database.
 //!
 //! Helm preserves the Cluster, ObjectStore, and certificates unless deletion includes data.
-//! With `--data`, remove kept generations even when the registry row is gone.
+//! With `--data`, remove kept generations after deactivation.
 //! An absent or unreachable project database skips database-side cleanup.
 
 use super::database::{DatabaseConnection, LifecycleLock};
@@ -28,16 +28,16 @@ use wamn_registry::{Triple, name};
 use super::Platform;
 use super::analyse::app_releases;
 
-/// Delete the environment. With `data`, the database and its roles are
+/// Deactivate the project in env. With `data`, the database and its roles are
 /// dropped too, and an unfinished run or unreachable project database does
-/// not stop the delete. The caller confirms `data`. Returns one line per step.
+/// not stop deactivation. The caller confirms `data`. Returns one line per step.
 ///
 /// # Errors
 ///
 /// When the lock is held, pods are still live after the drain bound, a run is
 /// unfinished and `data` is false, the replication slot is active, the event
 /// broker is needed and not configured, or a step fails.
-pub async fn delete(
+pub(crate) async fn deactivate(
     platform: &mut Platform,
     triple: &Triple,
     data: bool,
@@ -46,17 +46,17 @@ pub async fn delete(
     LifecycleLock::hold(
         DatabaseConnection::Direct(&platform.system_database_url),
         triple,
-        async |lock| Box::pin(delete_locked(platform, triple, data, lock)).await,
+        async |lock| Box::pin(deactivate_locked(platform, triple, data, lock)).await,
     )
     .await
 }
 
-/// The steps of [`delete`] under the lifecycle lock.
+/// The steps of [`deactivate`] under the lifecycle lock.
 #[expect(
     clippy::too_many_lines,
     reason = "one ordered sequence of if-present steps, as §12.3 lists them"
 )]
-async fn delete_locked(
+async fn deactivate_locked(
     platform: &Platform,
     triple: &Triple,
     data: bool,
@@ -66,7 +66,7 @@ async fn delete_locked(
     let release = name::project_env_resource_name(org, project, env);
     let release_present = data && platform.cluster.project_release_exists(&release).await?;
     let mut lines = Vec::new();
-    let Some((instance, drain_bound_seconds)) = system.delete_inputs(triple).await? else {
+    let Some((instance, drain_bound_seconds)) = system.deactivation_inputs(triple).await? else {
         if data {
             if release_present {
                 wamn_platform_install::deployment::remove_database(
@@ -85,9 +85,7 @@ async fn delete_locked(
                     .await?,
             );
         } else {
-            lines.push(format!(
-                "{triple} has no environment row: nothing else to delete"
-            ));
+            lines.push(format!("{triple} has no active deployment"));
         }
         return Ok(lines);
     };
@@ -270,6 +268,6 @@ async fn delete_locked(
             "secret \"{secret}\" deleted from {namespace} namespace"
         ));
     }
-    lines.extend(system.delete_rows(triple).await?);
+    lines.extend(system.deactivate_row(triple).await?);
     Ok(lines)
 }

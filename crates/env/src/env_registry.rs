@@ -28,7 +28,7 @@ pub async fn read_project_env_instance(
 
 /// Record the project and its deployment in the caller's reservation transaction.
 ///
-/// Returns the stored instance suffix. A new deployment uses `candidate`.
+/// Returns the stored instance suffix. A new or re-added deployment uses `candidate`.
 pub async fn record_project_env(
     transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     triple: &Triple,

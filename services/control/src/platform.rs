@@ -50,7 +50,8 @@ impl Execution {
             api.namespace == self.org,
             "platform worker must share the org namespace"
         );
-        let env = operation.as_str().starts_with("env.");
+        let env = operation.as_str() == "project_env.deactivate"
+            || operation.as_str().starts_with("env.");
         let input: Value = serde_json::from_str(payload)?;
         let coordinate = if env {
             wamn_env::env_names::project_env_resource_name(

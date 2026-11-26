@@ -224,8 +224,8 @@ pub async fn execute_task(
             data,
         } => {
             let triple = wamn_registry::Triple::new(org.clone(), env, project);
-            if operation == "env.delete" {
-                let messages = super::delete::delete(&mut platform, &triple, data).await?;
+            if operation == "project_env.deactivate" {
+                let messages = super::delete::deactivate(&mut platform, &triple, data).await?;
                 return Ok(json!({"messages":messages}));
             }
             ensure!(

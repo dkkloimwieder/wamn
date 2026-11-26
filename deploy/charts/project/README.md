@@ -10,7 +10,7 @@ CloudNativePG creates the database at bootstrap. The Database resource installs 
 It also sets limits on the five managed logins from the host replica count.
 The environment file provides sizing. The installation values provide the image and object-storage connection.
 If backups are configured, Helm creates an ObjectStore and ScheduledBackup for the project generation.
-Helm keeps the live Cluster and ObjectStore unless `env delete --data` removes them.
+Helm keeps the live Cluster and ObjectStore unless `env deactivate-project --data` removes them.
 To restore into a separate release, see [Backup and recovery](../../../docs/operations/backup-and-recovery.md).
 The CDC reader projects its client certificate and key from `cdcReader.database.credentials` under `/etc/wamn/db/<login-secret>/`. It projects `ca.crt` from `cdcReader.database.server_ca` into the same directory.
 Operation Jobs fetch their named database Secrets and stage the same files in their own volume.

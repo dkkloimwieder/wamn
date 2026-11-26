@@ -6,7 +6,8 @@ pub fn upsert_event_reader_sql() -> &'static str {
     "INSERT INTO registry.event_reader \
        (org, project, env, publication, schema, slot, stream, \
         replication_secret_name, replication_secret_namespace) \
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) \
+     SELECT p.org, p.project, p.env, $4, $5, $6, $7, $8, $9 \
+     FROM registry.project_env p WHERE p.org = $1 AND p.project = $2 AND p.env = $3 AND p.active \
      ON CONFLICT (org, env, project) DO UPDATE SET \
        publication = EXCLUDED.publication, schema = EXCLUDED.schema, \
        slot = EXCLUDED.slot, stream = EXCLUDED.stream, \
@@ -19,9 +20,9 @@ pub fn upsert_event_reader_sql() -> &'static str {
 /// (`wamn-59z6`). Params: `$1` org, `$2` project, `$3` env. Returns the capture position,
 /// `stream`, and `created_at`, the start of a gap on a stream with no CDC event.
 pub fn select_event_reader_origin_sql() -> &'static str {
-    "SELECT slot, stream, created_at \
-     FROM registry.event_reader \
-     WHERE org = $1 AND project = $2 AND env = $3"
+    "SELECT r.slot, r.stream, r.created_at \
+     FROM registry.event_reader r JOIN registry.project_env p USING (org, env, project) \
+     WHERE r.org = $1 AND r.project = $2 AND r.env = $3 AND p.active"
 }
 
 /// Record one capture gap (`wamn-59z6`). Params: `$1` org, `$2` project, `$3`
@@ -37,10 +38,10 @@ pub fn insert_capture_gap_sql() -> &'static str {
 /// Lock the newest capture gap of one registration (`wamn-59z6`). Params: `$1`
 /// org, `$2` project, `$3` env. Returns creation time, capture position, and resynchronization time.
 pub fn lock_newest_capture_gap_sql() -> &'static str {
-    "SELECT created_at, slot, resync_at \
-     FROM registry.capture_gap \
-     WHERE org = $1 AND project = $2 AND env = $3 \
-     ORDER BY created_at DESC LIMIT 1 FOR UPDATE"
+    "SELECT g.created_at, g.slot, g.resync_at \
+     FROM registry.capture_gap g JOIN registry.project_env p USING (org, env, project) \
+     WHERE g.org = $1 AND g.project = $2 AND g.env = $3 AND p.active \
+     ORDER BY g.created_at DESC LIMIT 1 FOR UPDATE OF g"
 }
 
 /// Close one capture gap (`wamn-59z6`). Params: `$1` org, `$2` project, `$3`
@@ -53,24 +54,20 @@ pub fn close_capture_gap_sql() -> &'static str {
 
 /// Registry statement used by [`crate::env_org::set_env_status`].
 pub const IDENTITY_PLATFORM_SRC_ORG_ENV_STATUS_SQL: &str = "UPDATE registry.env SET active = $4 \
-    WHERE org = $1 AND env = ANY($3) AND EXISTS (SELECT FROM registry.project_env p WHERE p.org=$1 AND p.env=registry.env.env AND p.project=$2)";
+    WHERE org = $1 AND env = ANY($3) AND EXISTS (SELECT FROM registry.project_env p WHERE p.org=$1 AND p.env=registry.env.env AND p.project=$2 AND p.active)";
 
 /// Registry statement used by [`crate::env_org::org_project_envs`].
 pub const IDENTITY_PLATFORM_SRC_ORG_ORG_PROJECT_ENVS_SQL: &str = "SELECT project, env FROM registry.project_env \
-    WHERE org = $1 AND ($2::text IS NULL OR project = $2) ORDER BY project, env";
+    WHERE org = $1 AND active AND ($2::text IS NULL OR project = $2) ORDER BY project, env";
 
 /// Registry statement used by [`crate::env_org::create_project`].
 pub const IDENTITY_PLATFORM_SRC_ORG_CREATE_PROJECT_SQL: &str =
     "INSERT INTO registry.project (org, id) VALUES ($1, $2) ON CONFLICT (org, id) DO NOTHING";
 
-/// Read the environment's instance suffix and disposable designation.
-pub const CONTROL_ENV_SRC_ENV_ANALYSE_READ_ROW: &str = "SELECT instance_suffix, disposable FROM registry.project_env JOIN registry.env USING (org,env) \
-              WHERE org = $1 AND project = $2 AND env = $3";
+/// Read the active deployment's suffix and its env's disposable setting.
+pub const CONTROL_ENV_SRC_ENV_ANALYSE_READ_ROW: &str = "SELECT instance_suffix, disposable FROM registry.project_env p JOIN registry.env USING (org,env) \
+              WHERE org = $1 AND project = $2 AND env = $3 AND p.active";
 
-/// Read the instance suffix and drain bound before environment deletion.
-pub const CONTROL_ENV_SRC_ENV_DELETE_DELETE_LOCKED: &str = "SELECT instance_suffix, drain_bound_seconds FROM registry.project_env JOIN registry.env USING (org,env) \
-              WHERE org = $1 AND project = $2 AND env = $3";
-
-/// Delete the project deployment from the environment.
-pub const CONTROL_ENV_SRC_ENV_DELETE_ROWS_DELETE_REGISTRY_ROWS: &str =
-    "DELETE FROM registry.project_env WHERE org = $1 AND project = $2 AND env = $3";
+/// Read the instance suffix and drain bound before project deactivation.
+pub const PROJECT_ENV_DEACTIVATE_INPUTS: &str = "SELECT instance_suffix, drain_bound_seconds FROM registry.project_env p JOIN registry.env USING (org,env) \
+              WHERE org = $1 AND project = $2 AND env = $3 AND p.active";

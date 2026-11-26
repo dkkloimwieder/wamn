@@ -7,7 +7,7 @@ pub(crate) use wamn_platform_install::platform_event::{Command, Outcome, record}
 fn event_type(operation: &str) -> Option<EventType> {
     Some(match operation {
         "env.configure" => EventType::EnvApply,
-        "env.delete" => EventType::EnvDelete,
+        "project_env.deactivate" => EventType::ProjectEnvDeactivate,
         "app.deploy" => EventType::Deploy,
         "app.rollback" => EventType::Rollback,
         "schema.apply" | "platform.schema" => EventType::SchemaApply,

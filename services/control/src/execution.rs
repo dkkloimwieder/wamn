@@ -24,7 +24,7 @@ impl Execution {
         command: Option<&crate::platform_event::Command>,
     ) -> anyhow::Result<Value> {
         match operation.as_str() {
-            "env.configure" | "env.delete" | "env.operation_status" => {
+            "env.configure" | "project_env.deactivate" | "env.operation_status" => {
                 self.env(operation, payload, command).await
             }
             "api_service.create"

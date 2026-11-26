@@ -572,18 +572,10 @@ CREATE TRIGGER wamn_record_history_stamp
 -- url/password/dsn column here; compromise of this DB yields the org/placement
 -- *list*, never the keys to any org's data.
 --
--- `instance_suffix` is the provision-minted INSTANCE identity (wamn-0h0g.13.57):
--- 8 characters of `[a-z0-9]` randomness, drawn once by `provision-project-env`
--- and never refreshed. The triple names the environment; the suffix distinguishes
--- THIS provisioning of it from an earlier one. Physical names derive from
--- `<triple>--<instance_suffix>` (the Kubernetes namespace today), so deleting an
--- environment and recreating it under the same triple yields different physical
--- names and the new environment cannot inherit whatever survived the delete.
--- Randomness is the whole mechanism — no naming registry, no retry loop, no
--- derivation. It is deliberately NOT part of the PRIMARY KEY: the triple stays
--- the identity every FK here points at (`registry.event_reader`, and the
--- separately installed ops relations), and a re-provisioned environment must
--- REPLACE its row rather than accumulate one per instance.
+-- `instance_suffix` identifies one provisioning of the triple. Physical
+-- names include the suffix so a new provisioning uses new resources.
+-- Deactivation retains the row. Re-adding the project replaces the suffix
+-- and the prior suffix remains in row history.
 --
 -- `disposable` marks an environment whose admitted facts a development loop may
 -- REPLACE (wamn-10yt.38). `wamn dev up` provisions its own target with it true;
@@ -622,7 +614,7 @@ CREATE TABLE registry.platform_event_type (
 INSERT INTO registry.platform_event_type (code, label) VALUES
     ('org_create', 'Create org'),
     ('env_apply', 'Apply env'),
-    ('env_delete', 'Delete env'),
+    ('project_env_deactivate', 'Deactivate project in env'),
     ('deploy', 'Deploy app'),
     ('rollback', 'Roll back app'),
     ('schema_apply', 'Apply schema'),
@@ -690,6 +682,7 @@ CREATE TABLE registry.project_env (
     secret_name      text NOT NULL,
     secret_namespace text,
     instance_suffix  text NOT NULL,
+    active boolean NOT NULL DEFAULT true,
     schema_mode text CHECK (schema_mode IN ('reset', 'migrate')),
     created_at timestamptz NOT NULL,
     created_by uuid NOT NULL,
@@ -753,8 +746,8 @@ CREATE TABLE registry.env_app_connection (
 -- (wamn-ctc8.19). Keep the platform-issued principal UUID: platform."user"
 -- uses that same UUID for the environment's roles and permissions. Management
 -- project roles do not grant membership, and services use their existing
--- environment-bound authentication. Deleting an environment removes its
--- grants, so provisioning the same triple again cannot inherit them.
+-- environment-bound authentication. Deactivation removes the grants so a
+-- later provisioning of the same triple starts without explicit memberships.
 CREATE TABLE identity.project_env_membership (
     principal_id   uuid NOT NULL,
     principal_type text NOT NULL DEFAULT 'user',
@@ -778,63 +771,29 @@ CREATE TRIGGER wamn_record_history_stamp
     FOR EACH ROW
     EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 
--- ---------------------------------------------------------------------------
--- Retired project-envs — the handle a SUPERSEDED instance would otherwise not
--- have (wamn-0h0g.15.90). `registry.project_env` holds exactly one row per
--- triple and a re-provision must REPLACE it, so the instant an environment is
--- deleted the only record of its `instance_suffix` is gone — and with it every
--- name derived from it (the Kubernetes namespace above all). The orphaned
--- namespace and whatever survived inside it then have NO handle: nothing can
--- enumerate them, so nothing can release them.
---
--- This is RECLAIM, not collision-prevention. Randomness remains the entire
--- uniqueness mechanism (wamn-0h0g.13.57) and nothing here is ever consulted when
--- a suffix is minted; this table only remembers what was.
---
--- Deliberately NOT FK'd to registry.project_env: the whole point is to OUTLIVE the row, and the org/project CASCADE
--- that removes it, so an FK would erase the record at exactly the moment it
--- becomes the only copy. Keyed by (triple, instance_suffix) so a triple
--- accumulates one row per superseded instance and a repeated delete is idempotent.
---
--- Written by a BEFORE DELETE trigger, not by application code: every removal path
--- in the platform is a CASCADE from an org or project DELETE, which runs no
--- application code at all. A trigger is the only place that sees these rows.
--- ---------------------------------------------------------------------------
-CREATE TABLE registry.retired_project_envs (
-    org             text NOT NULL,
-    project         text NOT NULL,
-    env             text NOT NULL,
-    instance_suffix text NOT NULL,
-    retired_at      timestamptz NOT NULL DEFAULT now(),
-    created_at timestamptz NOT NULL,
-    created_by uuid NOT NULL,
-    updated_at timestamptz NOT NULL,
-    updated_by uuid NOT NULL,
-    PRIMARY KEY (org, env, project, instance_suffix)
-);
-CREATE TRIGGER wamn_record_history_stamp
-    BEFORE INSERT OR UPDATE ON registry.retired_project_envs
-    FOR EACH ROW
-    EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
-
-CREATE FUNCTION registry.retire_project_env() RETURNS trigger
-LANGUAGE plpgsql AS $$
+-- Serialize membership grants with the deployment update that revokes them.
+-- AFTER INSERT runs only for rows that pass the caller's RLS policy.
+CREATE FUNCTION identity.require_active_project_env() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
 BEGIN
-    INSERT INTO registry.retired_project_envs (org, project, env, instance_suffix)
-      VALUES (OLD.org, OLD.project, OLD.env, OLD.instance_suffix)
-      ON CONFLICT (org, project, env, instance_suffix) DO NOTHING;
-    RETURN OLD;
+    PERFORM 1 FROM registry.project_env
+    WHERE org = NEW.org AND env = NEW.env AND project = NEW.project AND active
+    FOR SHARE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'project env is inactive or missing' USING ERRCODE = '23503';
+    END IF;
+    RETURN NULL;
 END $$;
-REVOKE ALL ON FUNCTION registry.retire_project_env() FROM PUBLIC;
+REVOKE ALL ON FUNCTION identity.require_active_project_env() FROM PUBLIC;
 
-CREATE TRIGGER project_env_retire_instance
-    BEFORE DELETE ON registry.project_env
-    FOR EACH ROW EXECUTE FUNCTION registry.retire_project_env();
+CREATE TRIGGER project_env_membership_require_active
+    AFTER INSERT OR UPDATE OF org, env, project ON identity.project_env_membership
+    FOR EACH ROW EXECUTE FUNCTION identity.require_active_project_env();
 
 -- Call under the project stream capacity lock when reserving projects.
 CREATE FUNCTION registry.project_capacity_available(requested int) RETURNS boolean
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
-    SELECT (SELECT count(*) FROM registry.project_env) + requested <= max_projects
+    SELECT (SELECT count(*) FROM registry.project_env WHERE active) + requested <= max_projects
     FROM registry.meta
 $$;
 REVOKE ALL ON FUNCTION registry.project_capacity_available(int) FROM PUBLIC;
@@ -852,10 +811,10 @@ REVOKE ALL ON FUNCTION registry.project_capacity_available(int) FROM PUBLIC;
 -- namespace) is a reference only — the replication credential is its own tier
 -- ABOVE the wamn_app query credential, and its material lives in a K8s Secret,
 -- never here. Keyed by the identity triple; FK to the project-env it captures
--- through the same project-env identity, so a de-provisioned env (or a deleted
--- org, cascading through project_envs) drops its registration. The reader
--- configuration comes from a mounted JSON file. Control uses this registration
--- to locate the source stream and slot during recovery.
+-- through the same project-env identity. Reserving a new generation clears its
+-- previous registration. The reader configuration comes from a mounted JSON
+-- file. Control uses the active deployment's registration to locate the
+-- source stream and slot during recovery.
 --
 -- `schema` records the application schemas covered by the publication.
 -- Environment provisioning owns that declaration. The reader does not read
@@ -1124,7 +1083,7 @@ BEGIN
         'registry.env', 'registry.project_env',
         'registry.env_app', 'registry.env_app_connection',
         'registry.env_integration', 'registry.event_reader',
-        'registry.capture_gap', 'registry.retired_project_envs',
+        'registry.capture_gap',
         'identity.org_membership', 'identity.org_role',
         'identity.project_role', 'identity.project_env_membership'
     ] LOOP
@@ -1189,7 +1148,7 @@ RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalo
                   OR COALESCE(pg_has_role(session_user, to_regrole('wamn_apply'), 'member'), false))
                  AND NOT EXISTS (SELECT FROM pg_roles WHERE rolname = session_user AND rolsuper))
             OR org_id = registry.login_org())
-    AND EXISTS (SELECT FROM registry.project_env e WHERE e.org=org_id AND e.env=env_name AND e.project=project_id)
+    AND EXISTS (SELECT FROM registry.project_env e WHERE e.org=org_id AND e.env=env_name AND e.project=project_id AND e.active)
     AND (identity.is_project_admin(principal,org_id,project_id)
       OR EXISTS (SELECT FROM identity.project_env_membership m
         JOIN identity.org_membership om USING (principal_id,org)

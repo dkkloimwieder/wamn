@@ -176,12 +176,13 @@ async fn project_count(
     env: &EnvName,
 ) -> anyhow::Result<u32> {
     let mut tx = wamn_postgres::provisioning_transaction::provisioning_transaction(db).await?;
-    let count: i64 =
-        sqlx::query_scalar("SELECT count(*) FROM registry.project_env WHERE org=$1 AND env=$2")
-            .bind(org.as_str())
-            .bind(env.as_str())
-            .fetch_one(&mut *tx)
-            .await?;
+    let count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM registry.project_env WHERE org=$1 AND env=$2 AND active",
+    )
+    .bind(org.as_str())
+    .bind(env.as_str())
+    .fetch_one(&mut *tx)
+    .await?;
     tx.commit().await?;
     Ok(u32::try_from(count)?)
 }
@@ -211,7 +212,7 @@ async fn host_projects(
     let mut tx =
         wamn_postgres::provisioning_transaction::provisioning_transaction(&mut client).await?;
     let projects: Vec<ProjectId> = sqlx::query_scalar::<_, String>(
-        "SELECT project FROM registry.project_env WHERE org=$1 AND env=$2
+        "SELECT project FROM registry.project_env WHERE org=$1 AND env=$2 AND active
          AND ($3::text IS NULL OR project<>$3)
          AND (schema_mode IS NOT NULL OR project=ANY($4)) ORDER BY project",
     )
@@ -592,33 +593,22 @@ pub(crate) async fn observe_package_migrations(
     };
     Ok(migrations)
 }
-/// Remove the environment's registry rows last.
-/// The caller holds the lifecycle lock and removes external resources first.
-///
-/// # Errors
-///
-/// Returns an error if a database operation or row removal fails.
-async fn delete_registry_rows(
+/// Record deactivation after teardown while the caller holds the lifecycle lock.
+async fn deactivate_registry_row(
     system: &mut sqlx::PgConnection,
     triple: &Triple,
 ) -> anyhow::Result<Vec<String>> {
-    let (org, project, env) = (&triple.org, &triple.project, &triple.env);
     let mut transaction = wamn_postgres::provisioning_transaction::provisioning_transaction(system)
         .await
-        .context("begin the row delete")?;
-    sqlx::query(crate::env_sql::CONTROL_ENV_SRC_ENV_DELETE_ROWS_DELETE_REGISTRY_ROWS)
-        .bind(org.as_str())
-        .bind(project.as_str())
-        .bind(env.as_str())
-        .execute(&mut *transaction)
+        .context("begin the registry deactivation")?;
+    crate::registry::deployment::deactivate(&mut transaction, triple)
         .await
-        .map(|result| result.rows_affected())
-        .context("delete the registry.project_env row")?;
+        .context("deactivate the registry.project_env row")?;
     transaction
         .commit()
         .await
-        .context("commit the row delete")?;
-    Ok(vec![format!("deleted the environment row of {triple}")])
+        .context("commit the registry deactivation")?;
+    Ok(vec![format!("deactivated the project in env {triple}")])
 }
 
 async fn reserve(
@@ -646,7 +636,7 @@ async fn reserve(
                      FROM unnest($3::text[]) AS selected(project) \
                      WHERE NOT EXISTS (SELECT 1 FROM registry.project_env AS registered \
                          WHERE registered.org = $1 AND registered.env = $2 \
-                         AND registered.project = selected.project)",
+                         AND registered.project = selected.project AND registered.active)",
     )
     .bind(first.settings.org.as_str())
     .bind(first.settings.env.as_str())
@@ -773,20 +763,18 @@ async fn save_deployment(
     Ok(())
 }
 
-async fn delete_inputs(
+async fn deactivation_inputs(
     system: &PgLifecycleLock,
     triple: &Triple,
 ) -> anyhow::Result<Option<(InstanceSuffix, i32)>> {
     let (org, project, env) = (&triple.org, &triple.project, &triple.env);
-    let row = sqlx::query_as::<_, (String, i32)>(
-        crate::env_sql::CONTROL_ENV_SRC_ENV_DELETE_DELETE_LOCKED,
-    )
-    .bind(org.as_str())
-    .bind(project.as_str())
-    .bind(env.as_str())
-    .fetch_optional(&mut *system.client().await)
-    .await
-    .context("read the environment row")?;
+    let row = sqlx::query_as::<_, (String, i32)>(crate::env_sql::PROJECT_ENV_DEACTIVATE_INPUTS)
+        .bind(org.as_str())
+        .bind(project.as_str())
+        .bind(env.as_str())
+        .fetch_optional(&mut *system.client().await)
+        .await
+        .context("read the environment row")?;
     row.map(|(instance, drain)| {
         Ok((
             wamn_postgres::decode_text(instance, 0).context("read the environment row")?,
@@ -872,8 +860,9 @@ async fn capture_gap_open(
     triple: &Triple,
 ) -> anyhow::Result<bool> {
     Ok(sqlx::query_scalar(
-        "SELECT EXISTS (SELECT FROM registry.capture_gap
-         WHERE org = $1 AND project = $2 AND env = $3 AND resync_at IS NULL)",
+        "SELECT EXISTS (SELECT FROM registry.capture_gap g
+         JOIN registry.project_env p USING (org, env, project)
+         WHERE g.org = $1 AND g.project = $2 AND g.env = $3 AND p.active AND g.resync_at IS NULL)",
     )
     .bind(triple.org.as_str())
     .bind(triple.project.as_str())
@@ -1326,15 +1315,15 @@ impl PostgresSession {
         Ok(crate::registry::deployment::disposable(&mut *self.0.client().await, triple).await?)
     }
 
-    pub(crate) async fn delete_inputs(
+    pub(crate) async fn deactivation_inputs(
         &self,
         triple: &Triple,
     ) -> anyhow::Result<Option<(InstanceSuffix, i32)>> {
-        delete_inputs(&self.0, triple).await
+        deactivation_inputs(&self.0, triple).await
     }
 
-    pub(crate) async fn delete_rows(&self, triple: &Triple) -> anyhow::Result<Vec<String>> {
-        delete_registry_rows(&mut *self.0.client().await, triple).await
+    pub(crate) async fn deactivate_row(&self, triple: &Triple) -> anyhow::Result<Vec<String>> {
+        deactivate_registry_row(&mut *self.0.client().await, triple).await
     }
 
     pub(crate) async fn reset(

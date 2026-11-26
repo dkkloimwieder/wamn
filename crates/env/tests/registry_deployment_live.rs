@@ -189,3 +189,127 @@ async fn project_configuration_keeps_applied_env_timings() -> anyhow::Result<()>
     transaction.commit().await?;
     Ok(())
 }
+
+#[tokio::test]
+#[ignore = "requires: docker, bin:helm"]
+async fn project_deactivation_frees_capacity_and_readd_starts_a_new_generation()
+-> anyhow::Result<()> {
+    use wamn_env::{env::document::EnvDocument, registry::configuration};
+    use wamn_identity::identity::{
+        create_user, grant_project_env_membership, has_project_env_membership,
+        org::activate_org_membership,
+    };
+    let system = wamn_test_infrastructure::database::system().await?;
+    let mut admin = system.admin().await?;
+    let login = system.org_login(wamn_role::APPLY_ROLE)?;
+    let url = system.login_url(login.login.as_str(), &login.password)?;
+    let mut apply = wamn_postgres::connect(url.as_str()).await?;
+    let document = EnvDocument::from_json(
+        br#"{"org":"acme","project":"inventory","env":"dev","target":"cloud",
+             "revocation_seconds":60,"integrations":{"shared-erp":{"version":1}},
+             "apps":{"inventory":{"label":"inventory","connections":{"erp":"shared-erp"}}}}"#,
+    )?;
+    let triple = document.triple();
+    let (org, project, env) = (&triple.org, &triple.project, &triple.env);
+    let original = "abcd1234".parse()?;
+    let candidate = "efgh5678".parse()?;
+    let target = deployment::target_id(&mut apply, &document.settings.target)
+        .await?
+        .expect("fixture deployment target");
+    let mut registration = Registration {
+        triple: &triple,
+        secret_name: "fixture-secret",
+        secret_namespace: None,
+        instance_suffix: &original,
+        disposable: None,
+        target_id: &target,
+    };
+    let mut tx = provisioning_transaction(&mut apply).await?;
+    deployment::record_project(&mut tx, org, project).await?;
+    deployment::record(&mut tx, &registration).await?;
+    assert!(configuration::write(&mut tx, &document.configuration()).await?);
+    sqlx::raw_sql(
+        "INSERT INTO registry.event_reader
+           (org, project, env, publication, slot, stream, replication_secret_name)
+         VALUES ('acme', 'inventory', 'dev', 'capture', 'capture', 'stream', 'secret');
+         INSERT INTO registry.capture_gap (org, project, env, slot, start_at, reason, end_lsn)
+         VALUES ('acme', 'inventory', 'dev', 'capture', now(), 'lost', '0/1');",
+    )
+    .execute(&mut *tx)
+    .await?;
+    registration.instance_suffix = &candidate;
+    assert_eq!(deployment::record(&mut tx, &registration).await?, original);
+    tx.commit().await?;
+
+    let mut tx = provisioning_transaction(&mut admin).await?;
+    let email = "member@example.com";
+    let member = create_user(&mut tx, email, email, "Member").await?;
+    activate_org_membership(&mut tx, member.id(), org).await?;
+    grant_project_env_membership(&mut tx, member.id(), org, project, env).await?;
+    tx.commit().await?;
+
+    let available = || {
+        sqlx::query_scalar::<_, bool>(
+            "SELECT registry.project_capacity_available(max_projects::int) FROM registry.meta",
+        )
+    };
+    let reader = || {
+        sqlx::query(wamn_env::env_sql::select_event_reader_origin_sql())
+            .bind(org.as_str())
+            .bind(project.as_str())
+            .bind(env.as_str())
+    };
+    assert!(!available().fetch_one(&mut apply).await?);
+    assert!(configuration::read(&mut apply, &triple).await?.is_some());
+    assert!(reader().fetch_optional(&mut apply).await?.is_some());
+    assert!(has_project_env_membership(&mut admin, member.id(), org, project, env).await?);
+
+    let mut tx = provisioning_transaction(&mut apply).await?;
+    deployment::deactivate(&mut tx, &triple).await?;
+    tx.commit().await?;
+    let active: bool = sqlx::query_scalar(
+        "SELECT active FROM registry.project_env WHERE org='acme' AND project='inventory' AND env='dev'",
+    )
+    .fetch_one(&mut apply)
+    .await?;
+    assert!(!active);
+    assert!(available().fetch_one(&mut apply).await?);
+    assert!(configuration::read(&mut apply, &triple).await?.is_none());
+    assert!(reader().fetch_optional(&mut apply).await?.is_none());
+    let revoked: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT FROM identity.project_env_membership_history
+         WHERE type='delete' AND row_key->>'principal_id'=$1
+         AND row_key->>'org'='acme' AND row_key->>'project'='inventory' AND row_key->>'env'='dev')",
+    )
+    .bind(member.id().to_string())
+    .fetch_one(&mut admin)
+    .await?;
+    assert!(
+        revoked,
+        "deactivation records the revoked membership in history"
+    );
+
+    let mut tx = provisioning_transaction(&mut admin).await?;
+    let denied = grant_project_env_membership(&mut tx, member.id(), org, project, env)
+        .await
+        .expect_err("inactive deployments refuse new memberships");
+    assert_eq!(
+        denied.error_type(),
+        wamn_authentication::identity_error::IdentityErrorType::NotFound,
+    );
+    tx.rollback().await?;
+
+    let mut tx = provisioning_transaction(&mut apply).await?;
+    configuration::retain_integrations(&mut tx, org, env, &[]).await?;
+    let reserved = deployment::record(&mut tx, &registration).await?;
+    tx.commit().await?;
+    assert_eq!(reserved, candidate);
+    assert!(!available().fetch_one(&mut apply).await?);
+    assert!(configuration::read(&mut apply, &triple).await?.is_none());
+    assert!(
+        reader().fetch_optional(&mut apply).await?.is_none(),
+        "re-add discards the old reader registration"
+    );
+    assert!(!has_project_env_membership(&mut admin, member.id(), org, project, env).await?);
+    Ok(())
+}

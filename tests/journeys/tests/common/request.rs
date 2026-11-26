@@ -45,7 +45,7 @@ pub fn fixture(app: &str) -> std::path::PathBuf {
         .join(app)
 }
 
-/// One more environment of an org. Runs `wamn env delete` after failure capture, if enabled.
+/// One more environment of an org. Runs `wamn env deactivate-project` after failure capture, if enabled.
 pub struct OtherEnv<'a> {
     org: &'a Org,
     pub triple: Triple,

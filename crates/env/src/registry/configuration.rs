@@ -16,7 +16,7 @@ struct ConfigurationHeader<'a> {
     revocation_seconds: i32,
 }
 
-/// Read applied settings and connection pins. Return none for an unconfigured deployment.
+/// Read applied settings and connection pins. Return none for an inactive or unconfigured deployment.
 pub async fn read(
     connection: &mut sqlx::PgConnection,
     triple: &Triple,
@@ -33,7 +33,7 @@ pub async fn read(
            FROM registry.env_app_connection WHERE org=p.org AND env=p.env AND project=p.project \
            UNION ALL SELECT 3, name, NULL, NULL, NULL, NULL, version \
            FROM registry.env_integration WHERE org=p.org AND env=p.env \
-         ) c ON true WHERE p.org=$1 AND p.env=$2 AND p.project=$3 AND p.schema_mode IS NOT NULL \
+         ) c ON true WHERE p.org=$1 AND p.env=$2 AND p.project=$3 AND p.active AND p.schema_mode IS NOT NULL \
          ORDER BY c.record_type",
     )
     .bind(triple.org.as_str()).bind(triple.env.as_str()).bind(triple.project.as_str())
@@ -149,7 +149,7 @@ pub async fn write(
         "UPDATE registry.project_env p SET schema_mode=COALESCE($4, \
          (SELECT CASE WHEN e.disposable THEN 'reset' ELSE 'migrate' END \
           FROM registry.env e WHERE e.org=p.org AND e.env=p.env)) \
-         WHERE org=$1 AND env=$2 AND project=$3",
+         WHERE org=$1 AND env=$2 AND project=$3 AND p.active",
     )
     .bind(c.settings.org.as_str())
     .bind(c.settings.env.as_str())

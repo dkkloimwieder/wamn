@@ -245,7 +245,7 @@ States are `pending`, `running`, `succeeded`, and `failed`.
 Every read repeats project authorization and compares the Job's target with the request.
 Jobs stop after 15 minutes. The CLI polls for up to 16 minutes.
 Kubernetes removes completed Jobs after one hour.
-The system database keeps an append-only journal for environment apply and delete, deploy, rollback, schema apply and reset, and capture-gap repair.
+The system database keeps an append-only journal for environment apply and project deactivation, deploy, rollback, schema apply and reset, and capture-gap repair.
 Control records the authenticated caller and command start.
 Control records dispatch failures and refusals, and workers record the results of operations they run.
 The journal remains after Kubernetes removes the Job and its logs.
@@ -365,14 +365,14 @@ At startup, the host uses `POD_NAME` as its host ID and generates a scheduler us
 It sends the public key and its projected service account token to identity over HTTPS using `/etc/identity-ca/ca.crt`.
 The host reads its other NATS credentials from `/etc/wamn/nats/` and trusts the broker CA at `/etc/wamn/nats-ca/ca.crt`.
 
-Use `wamn env delete ORG/ENV/PROJECT` to remove a project deployment.
-A plain delete keeps the Cluster and ObjectStore for a manual dump. It also keeps the project certificate resources.
+Use `wamn env deactivate-project ORG/ENV/PROJECT` to deactivate a project deployment. The registry keeps the inactive deployment and removes its project env memberships.
+By default, deactivation keeps the Cluster, ObjectStore, and project certificate resources for recovery.
 The next `wamn env apply` creates a new database generation with a new Cluster.
-Run `wamn env delete ORG/ENV/PROJECT --data` to remove the kept resources after a plain delete. The command lists each one it deletes.
+Run `wamn env deactivate-project ORG/ENV/PROJECT --data` to remove resources kept by an earlier deactivation. The command lists each one it deletes.
 Type the same `ORG/ENV/PROJECT` at the terminal prompt, or pass `--confirm ORG/ENV/PROJECT` with `--data`.
-See [Recover after a plain delete](backup-and-recovery.md#recover-after-a-plain-delete) for cleanup when the Cluster is already gone.
-Delete stops the reader before it removes the stream, then removes the replication slot and publication.
-Delete removes the project’s CDC and recovery credential Secrets. For the last project it also removes the host group, the shared credentials, and the environment account.
+See [Recover after deactivation](backup-and-recovery.md#recover-after-deactivation) for cleanup when the Cluster is already gone.
+Deactivation stops the reader before it removes the stream, then removes the replication slot and publication.
+It removes the project’s CDC and recovery credential Secrets. For the last active project it also removes the host group, the shared credentials, and the environment account.
 These lifecycle requests return Jobs. The CLI polls `env.operation_status`.
 Use `wamn revoke-pat --project PROJECT --env ENV --prefix PREFIX` from an org admin session.
 Other lifecycle operations take the coordinate and read the registry.
@@ -410,7 +410,7 @@ If Helm returns success, the worker verifies that each workload from the release
 If that check fails, the worker restores the previous release and checks that it serves again. If this was the first install, the worker uninstalls it. The operation reports the original failure and any rollback or cleanup failure.
 Committed migrations remain installed. Application developers choose schema compatibility and migrate forward if the restored code cannot use the migrated schema. See [Application schema changes](../application-schema-changes.md).
 Environment apply refuses unfinished runs in the selected application.
-Environment delete checks all applications in the project environment unless you pass `--data`.
+Project deactivation checks all applications in the project environment unless you pass `--data`.
 If the lifecycle lock session fails, the operation stops and returns an error.
 
 ### Select SQL independently

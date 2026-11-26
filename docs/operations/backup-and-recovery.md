@@ -130,11 +130,11 @@ cat receipts.sql merge-receipts.sql |
 
 Make sure that the live database contains the expected rows before you resume writes.
 
-## Recover after a plain delete
+## Recover after deactivation
 
-`wamn env delete ORG/ENV/PROJECT` keeps the Cluster and ObjectStore for a manual dump.
+`wamn env deactivate-project ORG/ENV/PROJECT` keeps the Cluster and ObjectStore for a manual dump.
 The next `wamn env apply` creates a new database generation with a new Cluster.
-When you no longer need the kept data, run `wamn env delete ORG/ENV/PROJECT --data`.
+When you no longer need the kept data, run `wamn env deactivate-project ORG/ENV/PROJECT --data`.
 The command removes the kept resources and lists each one it deletes.
 If you already applied the environment again, `--data` also deletes the new generation.
 
@@ -150,12 +150,12 @@ If the Cluster is already gone, the command cannot find its ObjectStore, so dele
    ```
 
 3. After the restore and dump finish, delete the old project generation. This deletes the old ObjectStore.
-   With `--data`, the delete accepts an unreachable project database and reports that it skipped the database-side steps.
+   With `--data`, deactivation accepts an unreachable project database and reports that it skipped the database-side steps.
    Set `coordinate` to the project's org, environment, and project. Confirm the coordinate when prompted.
 
    ```bash
    coordinate='<org>/<env>/<project>'
-   wamn env delete "$coordinate" --data
+   wamn env deactivate-project "$coordinate" --data
    ```
 
 4. Apply the environment file. This creates a new generation with a new database, Cluster, archive prefix, login Secrets, and CDC slot.

@@ -506,7 +506,7 @@ It makes one public HTTPS GET and requires the UI document with certificate vali
 Application requests use a TLS port-forward with host names of the form `<label>--<org>.<base>`.
 The GKE body omits the kind-only outsider enrollment from the local mail file.
 
-The case attempts environment deletion and PAT revocation after operation success or failure.
+The case attempts project deactivation and PAT revocation after operation success or failure.
 It removes its temporary publishing checkout and local private files.
 It leaves the platform running for section 3.
 Cluster deletion removes the project row, operation Jobs, and partial resources that product cleanup cannot remove.
@@ -543,12 +543,10 @@ Secret Manager updates do not update the running identity service.
 GCP deployment integration for this step remains unfinished.
 Keep the old key active until the replacement serves a successful recovery request.
 
-### 5.5 Delete an environment
+### 5.5 Deactivate a project deployment
 
-The environment lifecycle owner deletes an environment and its deployed resources.
-It uninstalls releases, revokes PATs and removes credentials, streams, slots and registry rows.
-Deleting data also removes the database and its roles.
-The internal bootstrap worker no longer exposes environment deletion.
+`wamn env deactivate-project ORG/ENV/PROJECT` uninstalls releases and removes credentials, streams, and replication slots. It marks the registry deployment inactive and removes its project env memberships.
+Pass `--data` to also remove the retained database and its roles.
 
 ### 5.7 CDC slot lost
 

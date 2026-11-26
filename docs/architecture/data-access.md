@@ -1070,7 +1070,7 @@ An environment stores its target identity on first apply. The target cannot chan
 The system database (`wamn_system`) stamps its identity authority relations.
 These relations are `identity.principal`, `identity.org_membership`, `identity.org_role`, `identity.project_role`, and `identity.project_env_membership`.
 Each relation carries the four stamp columns as `NOT NULL` with no default, and a static `wamn_record_history_stamp` trigger.
-The full system schema also stamps `registry.meta`, `registry.org`, `registry.env`, `registry.project`, `registry.project_env`, `registry.retired_project_envs`, and `registry.capture_gap`.
+The full system schema also stamps `registry.meta`, `registry.org`, `registry.env`, `registry.project`, `registry.project_env`, and `registry.capture_gap`.
 It stamps `identity.session_key`, `identity.session_signing_state`, and `identity.password_attempt` too.
 The full control schema stamps registry declarations and `wamn_authority.author_login_projects`.
 The system operations tables carry no stamps. The append-only `provisioning.platform_event` journal records each lifecycle event with its own timestamp, caller, and command ID.
@@ -1149,7 +1149,7 @@ The guarantee is bounded historical state:
 
 Stamps and log entries are correct for writes through the supported platform paths.
 On those paths, the triggers exist and every writer binds its executing principal and its operation.
-`environment::apply` applies `app-schema.sql` to the project database and writes its platform rows.
+`wamn env apply` applies `app-schema.sql` to the project database and writes its platform rows.
 The release stage also creates one service principal for each application with a scheduled workflow, targeted to that environment.
 The stage writes the service row and its dependency grants in the project database.
 It reads the platform domain from `registry.meta.platform_domain`, and it refuses while that value is unset.

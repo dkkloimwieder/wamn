@@ -101,7 +101,7 @@ pub(super) fn env(triple: &Triple) {
 pub(super) fn delete_env(org: &Org, triple: &Triple) {
     let mut command = org.command();
     let coordinate = triple.to_string();
-    command.args(["env", "delete", &coordinate]);
+    command.args(["env", "deactivate-project", &coordinate]);
     let mut pending = Some((command, coordinate));
     let _ = CAPTURE.try_with(|capture| capture.borrow_mut().deletes.extend(pending.take()));
     if let Some((command, coordinate)) = pending {
@@ -113,10 +113,10 @@ fn delete(mut command: Command, coordinate: &str) {
     match command.output() {
         Ok(output) if output.status.success() => {}
         Ok(output) => eprintln!(
-            "wamn env delete {coordinate} failed: {}",
+            "wamn env deactivate-project {coordinate} failed: {}",
             String::from_utf8_lossy(&output.stderr)
         ),
-        Err(error) => eprintln!("wamn env delete {coordinate}: {error}"),
+        Err(error) => eprintln!("wamn env deactivate-project {coordinate}: {error}"),
     }
 }
 

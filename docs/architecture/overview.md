@@ -128,7 +128,7 @@ The application chart sets `wamn.package-digest` and `wamn.release-revision` on 
 The worker upgrades each project chart once in file order. It upgrades the environment chart after the projects succeed.
 Each project keeps its own database authority, connection facts, and loaded release selections.
 A workflow run keeps its workflow version and uses the live application workload.
-Environment apply and delete check for unfinished application runs.
+Environment apply and project deactivation check for unfinished application runs.
 
 The control service authenticates each request and selects the operation worker, chart, credentials, and target.
 Each apply Job holds the environment advisory lock on a dedicated system database session.
@@ -162,7 +162,7 @@ The hierarchy is org, environment, project, application.
 `wamn-platform-install` owns SQL for system and org setup. `wamn-connection` holds the project connection store.
 `registry.env` stores each environment's active flag, disposable setting, target, readiness budget, drain bound, and grant cache lifetime.
 `registry.project` holds org-level project definitions.
-`registry.project_env` places a project under an environment and owns its database Secret and instance suffix.
+`registry.project_env` records whether a project deployment is active, along with its database Secret and instance suffix. Deactivation keeps the row and removes its explicit memberships. Re-applying the project creates a new database generation.
 Applications are releases under those project deployments.
 `registry.env_app` stores the host label of each application and keeps it unique within the org.
 Deploy derives `<label>--<org>.<base>` using the base in `registry.meta.platform_domain`.

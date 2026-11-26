@@ -6,7 +6,7 @@ use wamn_identity_protocol::PrincipalId;
 use wamn_registry::{EnvName, OrgId, ProjectId, Triple, instance_suffix::InstanceSuffix};
 
 // Every project deployment affected by an environment lifecycle change.
-const PROJECT_ENVS: &str = "SELECT project,env FROM registry.project_env WHERE org=$1 AND env=ANY($2) ORDER BY env,project";
+const PROJECT_ENVS: &str = "SELECT project,env FROM registry.project_env WHERE org=$1 AND env=ANY($2) AND active ORDER BY env,project";
 
 /// Read the platform domain as stored, including an unset value.
 ///
@@ -45,7 +45,7 @@ pub(crate) async fn project_envs(
         .collect()
 }
 
-/// List the database generations recorded for an organization's project environments.
+/// List the active database generations for an organization.
 ///
 /// # Errors
 /// Returns an error if the query fails or a stored name cannot be decoded.
@@ -54,7 +54,7 @@ pub(crate) async fn project_deployments(
     org: &OrgId,
 ) -> Result<Vec<(Triple, InstanceSuffix)>, sqlx::Error> {
     let rows = sqlx::query_as::<_, (String, String, String)>(
-        "SELECT project, env, instance_suffix FROM registry.project_env WHERE org=$1 ORDER BY project, env",
+        "SELECT project, env, instance_suffix FROM registry.project_env WHERE org=$1 AND active ORDER BY project, env",
     )
     .bind(org.as_str())
     .fetch_all(pool)
@@ -80,8 +80,9 @@ pub(crate) async fn membership_count(
     env: &EnvName,
 ) -> Result<i32, sqlx::Error> {
     sqlx::query_scalar(
-        "SELECT count(*)::int4 FROM identity.project_env_membership \
-         WHERE org = $1 AND project = $2 AND env = $3",
+        "SELECT count(*)::int4 FROM identity.project_env_membership m \
+         JOIN registry.project_env p USING (org, env, project) \
+         WHERE m.org = $1 AND m.project = $2 AND m.env = $3 AND p.active",
     )
     .bind(org.as_str())
     .bind(project.as_str())

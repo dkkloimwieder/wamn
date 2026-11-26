@@ -335,8 +335,8 @@ The tests read `cluster.json`. A missing file or entry fails the test.
 Each test creates its own org with `wamn org create` and a unique owner email, and opens the owner session.
 Then it applies its own environment with `wamn env apply`.
 At most 4 tests hold an org at one time.
-At the end of a test, a plain `wamn env delete` removes its environment.
-If capture is enabled and a test fails, the suite saves evidence before it deletes the environment.
+At the end of a test, `wamn env deactivate-project` tears down its project deployment and retains its data for recovery.
+If capture is enabled and a test fails, the suite saves evidence before it deactivates the project deployment.
 The org stays.
 One cluster holds up to about 12 orgs, because of the Pooler limits of the system database (wamn-44p7o).
 A run that needs more orgs uses a second fresh cluster.

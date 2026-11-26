@@ -344,10 +344,6 @@ fn seeds(org: &Org<'_>) -> Vec<Seed> {
             ]),
         ),
         Seed::new(
-            "registry.retired_project_envs",
-            &at_target(&[("instance_suffix", "z9y8x7w6")]),
-        ),
-        Seed::new(
             "identity.password_login",
             &[
                 ("principal_id", principal),

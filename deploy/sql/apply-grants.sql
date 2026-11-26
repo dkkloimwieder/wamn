@@ -15,16 +15,14 @@ GRANT SELECT ON registry.integration_type, registry.integration_type_version TO 
 GRANT SELECT (platform_domain, max_projects) ON registry.meta TO wamn_apply;
 GRANT SELECT (org, id), INSERT (org, id) ON registry.project TO wamn_apply;
 GRANT INSERT (org, env, project, secret_name, secret_namespace, instance_suffix) ON registry.project_env TO wamn_apply;
-GRANT UPDATE (secret_name, secret_namespace, schema_mode)
+GRANT UPDATE (secret_name, secret_namespace, instance_suffix, active, schema_mode)
     ON registry.project_env TO wamn_apply;
-GRANT DELETE ON registry.project_env TO wamn_apply;
-GRANT INSERT, SELECT (org, project, env, instance_suffix)
-    ON registry.retired_project_envs TO wamn_apply;
 GRANT SELECT, INSERT, UPDATE, DELETE ON registry.env_app,
     registry.env_app_connection, registry.env_integration TO wamn_apply;
 GRANT INSERT (principal_id, org, project, env) ON identity.project_env_membership TO wamn_apply;
-GRANT SELECT, INSERT, UPDATE ON registry.event_reader TO wamn_apply;
-GRANT SELECT, INSERT, UPDATE (resync_at) ON registry.capture_gap TO wamn_apply;
+GRANT DELETE ON identity.project_env_membership TO wamn_apply;
+GRANT SELECT, INSERT, UPDATE, DELETE ON registry.event_reader TO wamn_apply;
+GRANT SELECT, INSERT, UPDATE (resync_at), DELETE ON registry.capture_gap TO wamn_apply;
 
 -- The grant projection locks the org membership row (wamn-ms1sn.2).
 GRANT SELECT (principal_id, org, active), UPDATE (active)

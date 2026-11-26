@@ -41,7 +41,7 @@ pub async fn create_project(
 
 const ORG_PROJECT_ENVS_SQL: &str = crate::env_sql::IDENTITY_PLATFORM_SRC_ORG_ORG_PROJECT_ENVS_SQL;
 
-/// The environments of `org`, or of one project of it, as `(project, env)`.
+/// Active project deployments of `org`, optionally limited to one project.
 pub async fn org_project_envs(
     client: &mut sqlx::PgConnection,
     org: &wamn_registry::OrgId,
