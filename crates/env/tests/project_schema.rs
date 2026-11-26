@@ -325,7 +325,7 @@ fn run(url: &str, script: &str) -> String {
     String::from_utf8(out.stdout).expect("psql output is utf-8")
 }
 
-/// Project history covers the platform and catalog while PAT images stay private.
+/// Project history covers the platform and catalog, including credential references.
 #[tokio::test]
 #[ignore = "requires: docker, bin:psql"]
 async fn project_history_covers_platform_and_catalog_writes() {
@@ -347,8 +347,8 @@ BEGIN
       AND tablename::text !~ '_history$'
   LOOP
     logs_rows := source.schemaname = 'catalog' OR source.tablename NOT IN (
-      'credential', 'oauth_token', 'oauth_authorization', 'number_counter',
-      'write_log', 'tx_identity', 'login_principal'
+      'oauth_token', 'oauth_authorization', 'number_counter', 'write_log',
+      'tx_identity', 'login_principal'
     );
     ASSERT logs_rows = EXISTS (
       SELECT FROM pg_trigger
@@ -362,19 +362,39 @@ END $$;
 BEGIN;
 SET LOCAL ROLE wamn_platform;
 INSERT INTO platform.tx_identity (principal_id, role, app, operation)
-VALUES ('11111111-1111-1111-1111-111111111111', '', '', 'admin:pat-history-fixture');
+VALUES ('11111111-1111-1111-1111-111111111111', '', '', 'admin:project-history-fixture');
 INSERT INTO platform."user" (id, issuer, sub, type, email)
 VALUES ('11111111-1111-1111-1111-111111111111', 'wamn', 'fixture', 'service', 'fixture@example.invalid');
 INSERT INTO platform.pat (user_id, prefix, hash, label, expires_at)
 VALUES ('11111111-1111-1111-1111-111111111111', '0123456789abcdef',
         'sha256:' || repeat('0', 64), 'fixture', now() + interval '1 day');
+WITH connection AS (
+  INSERT INTO platform.connection
+    (name, integration_type, auth_type, target_id, active_generation, service_principal_id)
+  VALUES ('fixture', 'http', 'api_key', gen_random_uuid(), 1, gen_random_uuid())
+  RETURNING id
+), credential AS (
+  INSERT INTO platform.credential (connection_id, store, ref, version)
+  SELECT id, 'k8s', 'fixture-store', 'fixture-version' FROM connection
+  RETURNING id, connection_id
+)
+INSERT INTO platform.connection_generation (connection_id, generation, credential_id)
+SELECT connection_id, 1, id FROM credential;
 COMMIT;
 
 DO $$ BEGIN
   ASSERT EXISTS (
     SELECT FROM platform.pat p JOIN platform.pat_history h ON h.row_key = jsonb_build_object('id', p.id)
     WHERE p.prefix = '0123456789abcdef' AND h.type = 'insert'
-      AND h.changed_by = p.user_id AND h.operation = 'admin:pat-history-fixture'
+      AND h.changed_by = p.user_id AND h.operation = 'admin:project-history-fixture'
+  );
+  ASSERT EXISTS (
+    SELECT FROM platform.credential c
+    JOIN platform.credential_history h ON h.row_key = jsonb_build_object('id', c.id)
+    WHERE h.type = 'insert' AND h.changed_by = c.created_by
+      AND h.operation = 'admin:project-history-fixture'
+      AND h.after ->> 'ref' = c.ref AND h.after ->> 'version' = c.version
+      AND NOT (h.after ? 'hint')
   );
 END $$;
 "#,

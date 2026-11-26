@@ -773,6 +773,9 @@ It spells each `timestamptz` column as the platform canonicalizer spells it: UTC
 Every other value keeps the `to_jsonb` spelling.
 The log function and the stamp function compare row values as JSONB text, so a change of numeric scale alone is a change.
 The generated functions of a package relation compare each column as text, with the same result.
+
+`platform.credential_history` keeps credential references and versions with unlimited retention.
+Among the project runtime logins, only the platform login can read it, as with `platform.pat_history`.
 Their images keep the `to_jsonb` spelling, so a `timestamptz` value carries the session offset.
 Earlier entries can hold the canonical spelling, and the [history read](#history-read) canonicalizes both.
 A primary key column of type `timestamptz` keeps the canonical spelling in `row_key`, so every entry of one row has one key.

@@ -249,6 +249,7 @@ The `project` and `system` targets also hold the cross-org row policy tests, the
 `wamn_system_reader` is a group with no deployed login. Its test enters the group with `SET ROLE`.
 
 `credential_tables` makes sure that `wamn_app_login` and `wamn_query_login` have no grant on `platform.credential`, `platform.oauth_token` or `platform.oauth_authorization`.
+It also makes sure that `wamn_platform_login` can read `platform.credential_history` and that PostgreSQL refuses reads from app and query logins.
 `transaction_identity` binds identities with `wamn_postgres::bind_transaction_identity`. A bound identity holds for its own transaction only.
 The migration and platform logins resolve a seeded platform principal through `platform.login_principal`.
 

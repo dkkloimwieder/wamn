@@ -350,6 +350,7 @@ BEGIN
     FOR source IN SELECT * FROM (VALUES
         ('platform', 'connection'),
         ('platform', 'connection_generation'),
+        ('platform', 'credential'),
         ('platform', 'external_system'),
         ('catalog', 'package'),
         ('catalog', 'connection_requirement'),

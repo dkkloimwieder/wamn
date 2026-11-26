@@ -39,3 +39,32 @@ async fn guest_sql_logins_have_no_grant_on_credential_tables() -> anyhow::Result
     }
     Ok(())
 }
+
+#[tokio::test]
+#[ignore = "requires: docker, bin:helm"]
+async fn only_the_platform_login_can_read_credential_history() -> anyhow::Result<()> {
+    const READ: &str = "SELECT * FROM platform.credential_history LIMIT 1";
+
+    let project = database::project().await?;
+    let login = WorkloadRoleFamily::Platform.login_name();
+    let mut platform = wamn_postgres::connect(project.login_url(login)?.as_str()).await?;
+    sqlx::query(READ).fetch_optional(&mut platform).await?;
+
+    for family in [WorkloadRoleFamily::App, WorkloadRoleFamily::Query] {
+        let login = family.login_name();
+        let mut guest = wamn_postgres::connect(project.login_url(login)?.as_str()).await?;
+        let error = sqlx::query(READ)
+            .fetch_optional(&mut guest)
+            .await
+            .expect_err("guest login can read credential history");
+        assert_eq!(
+            error
+                .as_database_error()
+                .and_then(sqlx::error::DatabaseError::code)
+                .as_deref(),
+            Some("42501"),
+            "{login}: {error}"
+        );
+    }
+    Ok(())
+}
