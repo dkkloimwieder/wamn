@@ -292,6 +292,8 @@ A matching schema alone does not establish operation or business compatibility.
 
 ## Inputs, queries, and transactions
 
+No network call runs while a database transaction is open: no mail send, HTTP request, Kubernetes API call or NATS request. Code makes such a call before the transaction begins or after it ends. The rule keeps row locks and pooled connections short, and it keeps a failed or slow remote call from deciding a commit. [Owner rule](../plan/review-restructure.md#fixed-constraints)
+
 Create input omits server-owned identity, generated, revision, and audit fields.
 Omission lets the declared database default apply, while explicit null requires a nullable writable field.
 Update input preserves three states: absent means unchanged, null means SQL NULL, and a supplied value replaces the field.
