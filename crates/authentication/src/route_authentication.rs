@@ -170,7 +170,19 @@ impl PlatformRouteAuthenticator {
             .ok_or_else(unauthorized)?
             .verify(token)
             .await
-            .map_err(|_| unauthorized())?;
+            .map_err(|error| {
+                if error.key_fetch_failed() {
+                    tracing::warn!(
+                        project_env = %request.target,
+                        attachment_id = %request.attachment_id,
+                        error = %error,
+                        "session signing keys unavailable"
+                    );
+                    authentication_unavailable()
+                } else {
+                    unauthorized()
+                }
+            })?;
         let principal = self
             .postgres
             .resolve_subject(project, request.target, token.issuer(), token.subject())

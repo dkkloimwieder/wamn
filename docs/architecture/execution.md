@@ -1064,6 +1064,9 @@ A fetch permits five seconds and 65,536 response bytes.
 A stale set refuses authentication even for a previously known key.
 Final admission cannot extend freshness after slow permission reads.
 
+If a key fetch fails or the refresh limit blocks it, the application host answers 503 `authentication-unavailable` and logs a warning without the token.
+The host answers 401 `unauthorized` if it rejects a token, including when a newly fetched key set lacks the token's key ID.
+
 On startup, identity creates the first key and active pointer for a new issuer in one transaction.
 Readiness requires a working database connection and an active key.
 During rotation, identity commits the new public key and waits at least 330 seconds before activation.

@@ -135,9 +135,15 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
     use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
-    use wamn_app::ingress::Header as RequestHeader;
+    use tracing::instrument::WithSubscriber as _;
+    use tracing_subscriber::fmt::writer::MakeWriterExt as _;
+    use wamn_app::ingress::{Header as RequestHeader, RoutePolicy, authenticate_policy};
 
-    use wamn_authentication::route_authentication::ControlRouteAuthenticator;
+    use wamn_authentication::authorization::Authorization;
+    use wamn_authentication::route_authentication::{
+        ControlRouteAuthenticator, PlatformRouteAuthenticator,
+    };
+    use wamn_postgres::{StaticCredentialProvider, WamnPostgres};
 
     const ISSUER: &str = "https://identity.example";
     const AUDIENCE: &str = "urn:wamn:org:acme";
@@ -314,6 +320,84 @@ mod tests {
             .authenticate_control(&attachment, &valid)
             .await
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn host_sessions_distinguish_unavailable_keys_from_invalid_tokens() {
+        let key = signing_key("current");
+        let other = signing_key("other");
+        let claims = claims();
+        let valid = token(&key, &header(key.kid), &claims);
+        let invalid = token(&other, &header(key.kid), &claims);
+        let unknown = token(&other, &header(other.kid), &claims);
+        let target = "acme--dev--billing".parse().unwrap();
+        let attachment = "session-http".parse().unwrap();
+        let policy = serde_json::json!({"modes": ["session"]});
+        let postgres = Arc::new(WamnPostgres::with_provider(Arc::new(
+            StaticCredentialProvider::default(),
+        )));
+        let authorization = Arc::new(Authorization::new(postgres));
+        let reject = async |authenticator: &PlatformRouteAuthenticator, jwt: &str| {
+            let rejection = authenticate_policy(
+                None,
+                Some(authenticator),
+                &target,
+                &attachment,
+                RoutePolicy { policy: &policy },
+                &[RequestHeader {
+                    name: "authorization".to_owned(),
+                    value: format!("Bearer {jwt}"),
+                }],
+                &[],
+            )
+            .await
+            .expect_err("the session must be refused");
+            (rejection.status, rejection.code)
+        };
+
+        let (_unavailable, verifier) = issuer(None).await;
+        let authenticator =
+            PlatformRouteAuthenticator::new(Arc::clone(&authorization), Some(verifier));
+        let log = tempfile::NamedTempFile::new().unwrap();
+        let warnings = log.reopen().unwrap().with_filter(|metadata| {
+            *metadata.level() == tracing::Level::WARN
+                && metadata.target() == "wamn_authentication::route_authentication"
+        });
+        let subscriber = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::WARN)
+            .with_ansi(false)
+            .with_writer(warnings)
+            .finish();
+        let (status, code) = reject(&authenticator, &valid)
+            .with_subscriber(subscriber)
+            .await;
+        assert_eq!((status, code.as_str()), (503, "authentication-unavailable"));
+        let warning = std::fs::read_to_string(log.path()).unwrap();
+        assert!(!warning.is_empty(), "a failed key fetch must log a warning");
+        assert!(
+            warning.contains(target.as_str()),
+            "the warning must identify the project deployment"
+        );
+        assert!(
+            !warning.contains(&valid),
+            "the warning must omit the bearer token"
+        );
+
+        let (available, verifier) = issuer(Some(vec![key.jwk])).await;
+        let authenticator = PlatformRouteAuthenticator::new(authorization, Some(verifier));
+        for (jwt, case) in [(&unknown, "missing key"), (&invalid, "invalid signature")] {
+            let (status, code) = reject(&authenticator, jwt).await;
+            assert_eq!((status, code.as_str()), (401, "unauthorized"), "{case}");
+        }
+
+        *available.keys.lock().unwrap() = None;
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        let (status, code) = reject(&authenticator, &unknown).await;
+        assert_eq!(
+            (status, code.as_str()),
+            (503, "authentication-unavailable"),
+            "failed refresh"
+        );
     }
 
     #[tokio::test]
