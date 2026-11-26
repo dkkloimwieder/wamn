@@ -6,7 +6,6 @@ pub mod audit_retention;
 pub mod capture_sql;
 pub mod configuration;
 pub mod env;
-pub mod env_configuration;
 pub mod env_fill;
 pub mod env_names;
 pub mod env_org;

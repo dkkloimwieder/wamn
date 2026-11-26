@@ -21,10 +21,6 @@ pub fn ensure_app_acl_role_sql() -> String {
     ensure_project_roles_sql().to_owned()
 }
 
-/// Catalog relations read by callable-HTTP connection authorization.
-///
-pub const HTTP_ADMITTER_CATALOG_RELATIONS: [&str; 2] = ["releases", "connection_requirement"];
-
 /// The `catalog.workflow` columns that callable-HTTP connection authorization
 /// reads: the key of one workflow version and its graph. The admitter gets
 /// these columns only, not the whole table.
@@ -33,23 +29,6 @@ pub const HTTP_ADMITTER_WORKFLOW_COLUMNS: [&str; 5] =
 
 /// The schemas that the callable-HTTP admitter uses.
 pub const HTTP_ADMITTER_SCHEMAS: [&str; 2] = ["catalog", "platform"];
-
-/// Every relation that the callable-HTTP admitter reads, as `(schema, relation)`.
-///
-/// [`grant_http_admitter_surface_sql`] grants `SELECT` on each, and the setup
-/// test expects exactly these grants, so the two cannot drift.
-pub fn http_admitter_relations() -> impl Iterator<Item = (&'static str, &'static str)> {
-    HTTP_ADMITTER_CATALOG_RELATIONS
-        .iter()
-        .map(|relation| ("catalog", *relation))
-        .chain([
-            ("platform", "connection"),
-            ("platform", "permission"),
-            ("platform", "setting"),
-            ("platform", "user"),
-            ("platform", "user_role"),
-        ])
-}
 
 /// Catalog relations the executor-platform family reads (`wamn-0h0g.22.37`).
 ///
@@ -113,28 +92,3 @@ pub const EXECUTOR_PLATFORM_QUEUE_INSERT_COLUMNS: [&str; 4] = [
 pub fn ensure_platform_group_role_sql() -> String {
     ensure_project_roles_sql().to_owned()
 }
-
-/// The application authorization relations the administration family reads and
-/// writes (docs/architecture/data-access.md#actors), the environment status
-/// that the status routes mirror
-/// (docs/architecture/execution.md#host-run-routes), and the platform
-/// configuration tables that the control host writes
-/// (docs/architecture/data-access.md#actors). `number_counter` is not one of
-/// them: only `platform.bump_counter`, `platform.assign_counter` and
-/// `platform.set_counter` write it.
-pub const ADMINISTRATION_RELATIONS: [&str; 14] = [
-    "user",
-    "role",
-    "user_role",
-    "permission",
-    "env",
-    "external_system",
-    "connection",
-    "file",
-    "connection_generation",
-    "credential",
-    "oauth_token",
-    "oauth_authorization",
-    "number_sequence",
-    "setting",
-];

@@ -5,10 +5,9 @@
 //! `wamn_record_history_log` trigger argument is `P<n>D`, and the verb reads that
 //! argument from `pg_trigger`. It skips an `unlimited` relation.
 //!
-//! **Role:** the verb connects as a targeted `wamn_platform` credential
-//! login. The platform role holds
-//! `DELETE` and `SELECT (row_key, position, changed_at, transaction_id)` on the history
-//! tables that the verb prunes. It also grants the watermark read and write.
+//! The caller supplies a connection to the project database. Pruning needs
+//! `DELETE` and `SELECT (row_key, position, changed_at, transaction_id)` on the
+//! history tables, plus read and write access to the pruning watermark.
 //!
 //! Each relation runs in its own transaction. The transaction binds
 //! `wamn:audit-retention` as the actor and the operation, and it takes the audit
@@ -39,25 +38,6 @@ use crate::audit_retention::{
 use wamn_postgres::bind_platform_principal;
 use wamn_principal::PlatformComponent;
 
-/// Inputs of one record history retention run.
-#[derive(Debug)]
-pub struct PruneRecordHistoryRequest {
-    /// Postgres URL for this project's `wamn_platform` credential
-    /// login.
-    pub database_url: String,
-
-    pub org: wamn_registry::OrgId,
-    pub project: wamn_registry::ProjectId,
-    pub env: wamn_registry::EnvName,
-}
-
-impl PruneRecordHistoryRequest {
-    /// The composed environment key derived from the environment coordinate.
-    pub fn project_env_key(&self) -> wamn_registry::ProjectEnvKey {
-        wamn_registry::project_env_key(&self.org, &self.project, &self.env)
-    }
-}
-
 /// The result of pruning one history table.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PrunedHistory {
@@ -69,22 +49,6 @@ pub struct PrunedHistory {
     pub days: i32,
     /// The number of entries that the delete removed.
     pub removed: u64,
-}
-
-/// Prune the expired record history of one project database and return what each
-/// history table lost, in the order the run visited the tables.
-pub async fn prune_expired_record_history(
-    request: PruneRecordHistoryRequest,
-) -> anyhow::Result<Vec<PrunedHistory>> {
-    let mut client = wamn_postgres::connect(
-        &wamn_identity::platform_login::platform_configuration(&request.database_url)?,
-    )
-    .await
-    .context("audit retention credential connect")?;
-
-    let result = async { prune(&mut client).await }.await;
-    drop(client);
-    result
 }
 
 /// Prune each history table whose relation keeps its entries for n days.
