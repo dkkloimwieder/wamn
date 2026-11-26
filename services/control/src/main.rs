@@ -3,6 +3,8 @@
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
+use wamn_platform_install::provision_org::{self, OrgActivity};
+
 #[derive(Parser)]
 struct Cli {
     #[arg(long)]
@@ -27,6 +29,18 @@ enum Command {
     },
     #[command(hide = true)]
     ProvisionOrg {
+        org: wamn_registry::OrgId,
+        #[arg(long)]
+        database: PathBuf,
+    },
+    #[command(hide = true)]
+    ActivateOrg {
+        org: wamn_registry::OrgId,
+        #[arg(long)]
+        database: PathBuf,
+    },
+    #[command(hide = true)]
+    DeactivateOrg {
         org: wamn_registry::OrgId,
         #[arg(long)]
         database: PathBuf,
@@ -93,6 +107,18 @@ async fn main() -> anyhow::Result<()> {
             }
             .await;
             wamn_platform_install::provision_org::provision_org(&database, &org, setup).await
+        }
+        Command::ActivateOrg { org, database } => {
+            let database = wamn_postgres::read_connection_config(&database)
+                .await?
+                .to_json()?;
+            provision_org::set_activity(&database, &org, OrgActivity::Active).await
+        }
+        Command::DeactivateOrg { org, database } => {
+            let database = wamn_postgres::read_connection_config(&database)
+                .await?
+                .to_json()?;
+            provision_org::set_activity(&database, &org, OrgActivity::Inactive).await
         }
         Command::InviteOrgOwner { org, owner } => {
             wamn_control::first_owner::invite(&org, &owner).await

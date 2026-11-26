@@ -38,11 +38,7 @@ pub async fn create(org: &OrgId, owner: &str, installation: &OrgInstaller) -> an
     } = installation.inputs().await?;
     ensure!(!nats_ca.is_empty(), "public NATS CA is absent");
     let inputs = &inputs["data"];
-    let image = field(inputs, "controlImage")?;
-    let (_, digest) = image.rsplit_once('@').context(
-        "pin systemSql.image in the platform release so org control and its worker use an immutable image",
-    )?;
-    digest.parse::<wamn_digest::Digest>()?;
+    let image = control_image(inputs)?;
     let values = org_values(
         inputs,
         &database,
@@ -69,6 +65,15 @@ pub async fn create(org: &OrgId, owner: &str, installation: &OrgInstaller) -> an
     let job_uid = installation.provision_logins(org, image, &database).await?;
     installation.reload_control(org, &job_uid).await?;
     installation.invite_owner(org, image, owner).await
+}
+
+pub(crate) fn control_image(inputs: &Value) -> anyhow::Result<&str> {
+    let image = field(inputs, "controlImage")?;
+    let (_, digest) = image.rsplit_once('@').context(
+        "pin systemSql.image in the platform release so org control and its Jobs use an immutable image",
+    )?;
+    digest.parse::<wamn_digest::Digest>()?;
+    Ok(image)
 }
 
 fn registry_token_metadata(inputs: &Value) -> anyhow::Result<bool> {

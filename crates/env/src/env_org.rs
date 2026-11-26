@@ -6,10 +6,8 @@
 use sqlx::Row as _;
 use wamn_authentication::identity_error::database_error;
 use wamn_authentication::identity_error::{IdentityError, IdentityErrorType, IdentityRefusal};
-use wamn_identity::identity::org::{lock_org_memberships, project_envs};
+use wamn_identity::identity::org::lock_org_memberships;
 use wamn_registry::EnvStatus;
-
-const PROJECT_IN_ORG_SQL: &str = wamn_identity::identity_sql::PROJECT_IN_ORG_SQL;
 
 const ENV_IN_PROJECT_SQL: &str = wamn_identity::identity_sql::ENV_IN_PROJECT_SQL;
 
@@ -21,6 +19,18 @@ pub async fn create_project(
     org: &wamn_registry::OrgId,
     project: &wamn_registry::ProjectId,
 ) -> Result<(), IdentityError> {
+    let active: bool =
+        sqlx::query_scalar("SELECT EXISTS (SELECT FROM registry.org WHERE id=$1 AND active)")
+            .bind(org.as_str())
+            .fetch_one(&mut *client)
+            .await
+            .map_err(|error| database_error(&error))?;
+    if !active {
+        return Err(IdentityError::new(
+            IdentityErrorType::NotFound,
+            format!("org {org} is not active"),
+        ));
+    }
     lock_org_memberships(client, org).await?;
     let created = sqlx::query(CREATE_PROJECT_SQL)
         .bind(org.as_str())
@@ -65,37 +75,13 @@ pub async fn org_project_envs(
         .map_err(|error| database_error(&error))
 }
 
-/// The environments of one project of `org` that a status route changes:
-/// one environment when `env` names it, or every environment of the project.
-/// A project or an environment outside the org is refused before anything
-/// is written.
+/// Resolve the named environment for a status change within the project.
 pub async fn status_envs(
     client: &mut sqlx::PgConnection,
     org: &wamn_registry::OrgId,
     project: &wamn_registry::ProjectId,
-    env: Option<&wamn_registry::EnvName>,
+    env: &wamn_registry::EnvName,
 ) -> Result<Vec<wamn_registry::EnvName>, IdentityError> {
-    let Some(env) = env else {
-        let in_org: bool = sqlx::query(PROJECT_IN_ORG_SQL)
-            .bind(org.as_str())
-            .bind(project.as_str())
-            .fetch_one(&mut *client)
-            .await
-            .map_err(|error| database_error(&error))?
-            .get(0);
-        if !in_org {
-            return Err(IdentityError::refused(
-                IdentityErrorType::NotFound,
-                IdentityRefusal::ProjectNotFound,
-                format!("project {project} is not a project of org {org}"),
-            ));
-        }
-        return Ok(project_envs(client, org, project)
-            .await?
-            .into_iter()
-            .map(|entry| entry.name)
-            .collect());
-    };
     let found: bool = sqlx::query(ENV_IN_PROJECT_SQL)
         .bind(org.as_str())
         .bind(project.as_str())

@@ -45,16 +45,22 @@ pub async fn begin_user_write(
 }
 
 impl Issuer<'_> {
+    /// Whether the org is registered and accepts new requests.
+    ///
+    /// # Errors
+    /// Returns an error if the org cannot be read.
     pub async fn registered(&mut self, org: &OrgId) -> Result<bool, IdentityError> {
         let actor = PlatformComponent::IdentityService.principal_id();
         let mut tx = transaction::read_connection(self.0, &actor)
             .await
             .map_err(|error| database_error(&error))?;
-        let exists = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM registry.org WHERE id = $1)")
-            .bind(org.as_str())
-            .fetch_one(&mut *tx)
-            .await
-            .map_err(|error| database_error(&error))?;
+        let exists = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM registry.org WHERE id = $1 AND active)",
+        )
+        .bind(org.as_str())
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(|error| database_error(&error))?;
         tx.commit().await.map_err(|error| database_error(&error))?;
         Ok(exists)
     }
@@ -143,6 +149,7 @@ impl Issuer<'_> {
         let email = sqlx::query_scalar(
             "SELECT p.email FROM identity.principal p
              JOIN identity.org_membership m ON m.principal_id = p.id
+             JOIN registry.org o ON o.id = m.org AND o.active
              WHERE p.id = $1 AND p.type = 'user' AND p.active
                    AND m.org = $2 AND m.active",
         )

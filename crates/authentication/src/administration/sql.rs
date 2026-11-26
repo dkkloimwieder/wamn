@@ -21,7 +21,7 @@ const USER_ROLE_SQL: &str = "INSERT INTO platform.user_role (user_id, role_name)
 const DROP_USER_ROLE_SQL: &str = "DELETE FROM platform.user_role \
     WHERE user_id = $1 AND role_name = $2";
 
-/// The status row of the environment. No row means active.
+/// The project database admission mirror. No row means active.
 const ENV_STATUS_ROW_SQL: &str = "INSERT INTO platform.env \
     (active) VALUES ($1) \
     ON CONFLICT (id) DO UPDATE SET active = EXCLUDED.active \
@@ -46,8 +46,7 @@ pub async fn require_platform_rows(client: &mut sqlx::PgConnection) -> Result<()
     }
 }
 
-/// Write the status row of the environment, the mirror of its system row that
-/// its host reads (docs/architecture/execution.md#routing-and-availability).
+/// Write the combined project and env status that the host reads for admission.
 pub async fn write_env_status(
     client: &mut sqlx::PgConnection,
     status: wamn_registry::EnvStatus,
@@ -312,7 +311,8 @@ pub struct ProjectAuthority {
     pub admin: bool,
 }
 
-/// Read a user's authority after the caller locks membership.
+/// Read retained grants for projection, including grants in an inactive project.
+/// The caller locks membership before this read.
 pub async fn read_project_authority(
     system: &mut PgConnection,
     coordinate: AppTarget<'_>,
@@ -321,8 +321,8 @@ pub async fn read_project_authority(
     let row = sqlx::query(
         "SELECT p.type, p.active, p.email, p.display_name, \
          EXISTS (SELECT 1 FROM identity.org_membership m WHERE m.principal_id=p.id AND m.org=$2 AND m.active), \
-         identity.has_project_access(p.id,$2,$4,$3), \
-         identity.is_project_admin(p.id,$2,$3) \
+         identity.project_access_grant(p.id,$2,$4,$3), \
+         identity.project_admin_grant(p.id,$2,$3) \
          FROM identity.principal p WHERE p.id=$1",
     )
     .bind(Uuid::from(*principal))

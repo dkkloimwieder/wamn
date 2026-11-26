@@ -166,6 +166,11 @@ export function Project(props: ScreenProps & { table?: "envs" | "members" }): JS
       setMissing(!found);
       if (!found) return;
       setState(found.state);
+      if (found.state === "inactive") {
+        setMembers([]);
+        setLoaded(true);
+        return;
+      }
     }
     if (props.table === "envs") {
       // The table shows its own page error.
@@ -244,7 +249,7 @@ export function Project(props: ScreenProps & { table?: "envs" | "members" }): JS
               when={
                 state() &&
                 props.holds(
-                  state() === "active" ? project.inactivate.route.operation : project.activate.route.operation,
+                  state() === "active" ? project.deactivate.route.operation : project.activate.route.operation,
                 )
               }
             >
@@ -252,13 +257,13 @@ export function Project(props: ScreenProps & { table?: "envs" | "members" }): JS
                 disabled={pending()}
                 onClick={() =>
                   void write(() =>
-                    (state() === "active" ? project.inactivate : project.activate)(props.transport, [
+                    (state() === "active" ? project.deactivate : project.activate)(props.transport, [
                       { request_id: crypto.randomUUID(), value: { project: name() } },
                     ]),
                   )
                 }
               >
-                {state() === "active" ? "Inactivate project" : "Activate project"}
+                {state() === "active" ? "Deactivate project" : "Activate project"}
               </Button>
             </Show>
           }
@@ -270,7 +275,7 @@ export function Project(props: ScreenProps & { table?: "envs" | "members" }): JS
           </Show>
         </Page>
       </Show>
-      <Show when={props.table === "envs"}>
+      <Show when={props.table === "envs" && state() !== "inactive"}>
         <div class="platform-table-screen">
           <Records
             refresh={refresh}
@@ -293,7 +298,7 @@ export function Project(props: ScreenProps & { table?: "envs" | "members" }): JS
           />
         </div>
       </Show>
-      <Show when={props.table === "members"}>
+      <Show when={props.table === "members" && state() !== "inactive"}>
         <div class="platform-table-screen">
           <Records
             refresh={refresh}

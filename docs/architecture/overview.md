@@ -178,6 +178,11 @@ The catalog holds no second environment identity table.
 Postgres row security restricts each control and apply login to the org encoded by its authenticated login.
 Request settings cannot select a different org.
 
+Org and project records have their own active flags.
+An inactive org refuses new commands and logins.
+An inactive project refuses admission while other projects in the same env can still serve.
+Membership and grant records stay available for activation.
+
 ## Organization membership and administration
 
 A principal is global. Membership of an org is explicit.

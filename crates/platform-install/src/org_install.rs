@@ -8,8 +8,10 @@ use wamn_postgres::database::{ConnectionConfig, DATABASE_DIR};
 use wamn_registry::OrgId;
 
 use crate::{
-    org::{OrgInputs, field},
-    provision_org::{CONTROL_AUDIENCE, INVITATION_ACCOUNT, ORG_INPUTS_DIR, SQL_ACCOUNT},
+    org::{OrgInputs, control_image, field},
+    provision_org::{
+        CONTROL_AUDIENCE, INVITATION_ACCOUNT, ORG_INPUTS_DIR, OrgActivity, SQL_ACCOUNT,
+    },
 };
 
 pub(crate) const PLATFORM: &str = "platform";
@@ -36,6 +38,28 @@ impl OrgInstaller {
 }
 
 impl OrgInstaller {
+    /// Run the activity command through the platform SQL Job in the selected cluster.
+    ///
+    /// # Errors
+    /// Returns an error if the cluster inputs cannot be read or the Job fails.
+    pub async fn set_activity(org: &OrgId, activity: OrgActivity) -> anyhow::Result<()> {
+        let target = Target::developer(PLATFORM).await?;
+        let (inputs, config) = tokio::try_join!(
+            org_resources::config_map(&target, PLATFORM, ORG_INPUTS),
+            org_resources::config_map(&target, PLATFORM, SYSTEM_SQL_CONFIG),
+        )?;
+        let image = control_image(&inputs["data"])?;
+        let database = serde_json::from_str(field(&config["data"], "database.json")?)
+            .context("decode the platform SQL Job connection")?;
+        let verb = match activity {
+            OrgActivity::Active => "activate-org",
+            OrgActivity::Inactive => "deactivate-org",
+        };
+        let manifest = sql_job(org, image, &database, verb);
+        job::run_exclusive(&target, &manifest, DEADLINE + Duration::from_secs(30)).await?;
+        Ok(())
+    }
+
     pub(crate) async fn inputs(&self) -> anyhow::Result<OrgInputs> {
         let target = &self.target;
         let (inputs, database_config, identity_ca, nats_ca, api_server) = tokio::try_join!(
@@ -153,18 +177,31 @@ pub fn api_destinations(destinations: BTreeSet<(IpAddr, i32)>) -> anyhow::Result
 
 /// Build the platform Job that provisions an org's database logins.
 pub fn provision_job(org: &OrgId, image: &str, database: &ConnectionConfig) -> Value {
+    let mut sql = sql_job(org, image, database, "provision-org");
+    let spec = &mut sql["spec"]["template"]["spec"];
+    spec["automountServiceAccountToken"] = true.into();
+    spec["volumes"]
+        .as_array_mut()
+        .expect("SQL Job volumes are an array")
+        .push(json!({"name": "org-inputs", "configMap": {"name": ORG_INPUTS}}));
+    spec["containers"][0]["volumeMounts"]
+        .as_array_mut()
+        .expect("SQL Job mounts are an array")
+        .push(json!({"name": "org-inputs", "mountPath": ORG_INPUTS_DIR, "readOnly": true}));
+    sql
+}
+
+fn sql_job(org: &OrgId, image: &str, database: &ConnectionConfig, verb: &str) -> Value {
     let login = &database.credentials.name;
     let mut sql = org_job(
         SQL_ACCOUNT,
         image,
-        &["provision-org", org.as_str(), "--database", SQL_CONFIG_PATH],
+        &[verb, org.as_str(), "--database", SQL_CONFIG_PATH],
     );
     sql["metadata"] = json!({"name": PROVISION_JOB});
     let spec = &mut sql["spec"]["template"]["spec"];
-    spec["automountServiceAccountToken"] = true.into();
     spec["volumes"] = json!([
         {"name": "configuration", "configMap": {"name": SYSTEM_SQL_CONFIG}},
-        {"name": "org-inputs", "configMap": {"name": ORG_INPUTS}},
         {"name": "database", "projected": {"defaultMode": 256, "sources": [
             {"secret": {"name": login, "items": [
                 {"key": "tls.crt", "path": format!("{login}/tls.crt")},
@@ -177,7 +214,6 @@ pub fn provision_job(org: &OrgId, image: &str, database: &ConnectionConfig) -> V
     ]);
     spec["containers"][0]["volumeMounts"] = json!([
         {"name": "configuration", "mountPath": "/etc/wamn/system-sql", "readOnly": true},
-        {"name": "org-inputs", "mountPath": ORG_INPUTS_DIR, "readOnly": true},
         {"name": "database", "mountPath": DATABASE_DIR, "readOnly": true},
     ]);
     sql

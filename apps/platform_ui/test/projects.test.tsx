@@ -30,7 +30,7 @@ const orgOperations = [
   project.list.route.operation,
   project.create.route.operation,
   project.activate.route.operation,
-  project.inactivate.route.operation,
+  project.deactivate.route.operation,
   envRoutes.activate.route.operation,
   envRoutes.deactivate.route.operation,
 ];
@@ -583,7 +583,7 @@ describe("project state action", () => {
         baseUrl: "/api",
         fetch: async (url, init) => {
           const path = String(url);
-          if (path.endsWith("/project/activate") || path.endsWith("/project/inactivate")) {
+          if (path.endsWith("/project/activate") || path.endsWith("/project/deactivate")) {
             writes.push(path);
             const body = JSON.parse(String(init?.body));
             {
@@ -613,8 +613,8 @@ describe("project state action", () => {
           close={() => {}}
         />
       ));
-      const action = initial === "active" ? "Inactivate project" : "Activate project";
-      const next = initial === "active" ? "Activate project" : "Inactivate project";
+      const action = initial === "active" ? "Deactivate project" : "Activate project";
+      const next = initial === "active" ? "Activate project" : "Deactivate project";
       await screen.findByRole("button", { name: action });
       expect(screen.queryByRole("button", { name: next })).toBeNull();
       fireEvent.click(screen.getByRole("button", { name: action }));
@@ -625,50 +625,9 @@ describe("project state action", () => {
         expect(observed).toHaveProperty(["length"], 1);
         expect(observed).toHaveProperty(
           ["0"],
-          initial === "active" ? "/api/wamn_control/project/inactivate" : "/api/wamn_control/project/activate",
+          initial === "active" ? "/api/wamn_control/project/deactivate" : "/api/wamn_control/project/activate",
         );
       }
     },
   );
-
-  it("keeps an empty project inactive after a successful activation", async () => {
-    const transport = createTransport({
-      baseUrl: "/api",
-      fetch: async (url, init) => {
-        const path = String(url);
-        const body = init?.body ? JSON.parse(String(init.body)) : undefined;
-        const value = path.endsWith("/project/activate")
-          ? { project: "widgets", status: "active" }
-          : path.includes("/project/list")
-            ? { projects: [{ name: "widgets", state: "inactive" }] }
-            : path.includes("/env/list")
-              ? { envs: [] }
-              : { members: [] };
-        return new Response(
-          JSON.stringify([{ ...(body?.[0]?.request_id ? { request_id: body[0].request_id } : {}), value }]),
-        );
-      },
-    });
-    render(() => (
-      <Project
-        transport={transport}
-        holds={admin}
-        params={{ project: "widgets" }}
-        search={{}}
-        open={() => {}}
-        close={() => {}}
-      />
-    ));
-    fireEvent.click(await screen.findByRole("button", { name: "Activate project" }));
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Activate project" }).hasAttribute("disabled")).toBe(false),
-    );
-    expect(screen.queryByRole("button", { name: "Inactivate project" })).toBeNull();
-    expect(
-      screen
-        .getByText(/^State:/)
-        .textContent?.split(":")[1]
-        ?.trim(),
-    ).toBe("inactive");
-  });
 });

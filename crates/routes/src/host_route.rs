@@ -189,7 +189,7 @@ pub enum HostHandler {
     /// Make every environment of one project active.
     ProjectActivate,
     /// Make every environment of one project inactive.
-    ProjectInactivate,
+    ProjectDeactivate,
     /// Create a project with no environment
     /// (docs/architecture/execution.md#host-run-routes).
     ProjectCreate,
@@ -1371,8 +1371,7 @@ const ROUTES: &[HostRoute] = &[
             TransactionInvariant("user_not_found", Some("The org has no such user.")),
         ],
     },
-    // project.list state is active when any environment is active, inactive otherwise.
-    // A project with no environments is inactive. registry.env.active owns the state.
+    // Project inventory includes inactive projects so org admins can activate them.
     HostRoute {
         set: HostRouteSet::Control,
         operation: "project.list",
@@ -1640,10 +1639,10 @@ const ROUTES: &[HostRoute] = &[
     },
     HostRoute {
         set: HostRouteSet::Control,
-        operation: "project.inactivate",
+        operation: "project.deactivate",
         type_: OperationType::Command,
         authority: HostRouteAuthority::OrgAdmin,
-        handler: HostHandler::ProjectInactivate,
+        handler: HostHandler::ProjectDeactivate,
         schemas: schemas::<ProjectRequest, ProjectStatus>,
         write_transaction: false,
         refusals: &[

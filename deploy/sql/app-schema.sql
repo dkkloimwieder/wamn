@@ -238,12 +238,9 @@ CREATE TRIGGER wamn_record_history_stamp
 GRANT SELECT ON platform.permission TO wamn_app;
 
 -- ---------------------------------------------------------------------------
--- Environment — the active flag of this environment, mirrored from
--- registry.env.active in the system database (docs/plan/platform-ui.md
--- §5.4, owner rulings of 2026-10-02 on wamn-zua8.2). The host reads it as
--- wamn_app on each request and answers env-inactive while it is
--- inactive. No row means active: the first status route of the control host
--- writes the row through the administration login.
+-- Admission mirror — active when both the project and its env are active.
+-- Control writes this row through the project administration login.
+-- The host reads it as wamn_app. No row means active.
 -- ---------------------------------------------------------------------------
 CREATE TABLE platform.env (
     id         boolean NOT NULL DEFAULT true CHECK (id),

@@ -87,7 +87,7 @@ export const orgAdmin = {
 export const project = {
   activate: bind("project.activate", sdk.wamnControlProjectActivate_0100),
   create: bind("project.create", sdk.wamnControlProjectCreate_0100),
-  inactivate: bind("project.inactivate", sdk.wamnControlProjectInactivate_0100),
+  deactivate: bind("project.deactivate", sdk.wamnControlProjectDeactivate_0100),
   list: bind("project.list", sdk.wamnControlProjectList_0100),
 };
 export type ProjectListResultProjects = OperationResult<typeof project.list>["projects"][number];

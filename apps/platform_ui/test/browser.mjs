@@ -462,7 +462,7 @@ try {
       .getByRole("link", { name: fixture.project, exact: true })
       .click();
     await second.getByRole("heading", { name: fixture.project, exact: true }).waitFor();
-    assert.equal(await second.getByRole("button", { name: /^(Activate|Inactivate) project$/ }).count(), 0);
+    assert.equal(await second.getByRole("button", { name: /^(Activate|Deactivate) project$/ }).count(), 0);
     await visit(second, `${base}${controlPath}/projects/receiving`);
     await second.getByText("This address names no page.", { exact: true }).waitFor();
     await capture(second, "not-found");
@@ -504,15 +504,15 @@ try {
     .getByRole("navigation", { name: "Platform location" })
     .getByRole("link", { name: fixture.project.toUpperCase(), exact: true })
     .click();
-  await page.getByRole("button", { name: "Inactivate project", exact: true }).click();
+  await page.getByRole("button", { name: "Deactivate project", exact: true }).click();
   await page.getByRole("button", { name: "Activate project", exact: true }).waitFor();
-  assert.equal(await page.getByRole("button", { name: "Inactivate project", exact: true }).count(), 0);
+  assert.equal(await page.getByRole("button", { name: "Deactivate project", exact: true }).count(), 0);
   await visit(page);
   await page.getByRole("button", { name: "Activate project", exact: true }).click();
-  await page.getByRole("button", { name: "Inactivate project", exact: true }).waitFor();
+  await page.getByRole("button", { name: "Deactivate project", exact: true }).waitFor();
   assert.equal(await page.getByRole("button", { name: "Activate project", exact: true }).count(), 0);
   await visit(page);
-  await page.getByRole("button", { name: "Inactivate project", exact: true }).waitFor();
+  await page.getByRole("button", { name: "Deactivate project", exact: true }).waitFor();
   const splashReads = [];
   const recordSplashRead = (request) => {
     if (new URL(request.url()).pathname.endsWith("/api/wamn_control/env/status"))
@@ -643,9 +643,9 @@ try {
   await visit(page);
   await page.getByRole("button", { name: "Deactivate environment", exact: true }).waitFor();
   assert.deepEqual(errors, []);
-  console.log("PASS: Environment navigation, local runtime status, single activate/inactivate action and reload state");
+  console.log("PASS: Environment navigation, local runtime status, single activate/deactivate action and reload state");
   console.log(
-    "PASS: Control hierarchy follows the address; create, membership grant/revoke, project-admin grant/revoke, viewed access, activate/inactivate and reload state",
+    "PASS: Control hierarchy follows the address; create, membership grant/revoke, project-admin grant/revoke, viewed access, project deactivation and activation, and reload state",
   );
   const receiving = await browser.newPage({ viewport });
   await signIn(receiving, required("WAMN_BROWSER_EMAIL"));

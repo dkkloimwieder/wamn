@@ -89,7 +89,9 @@ pub const CONTROL_SURFACE: [(&str, &str, &[&str]); 19] = [
 ];
 
 /// The columns on which the control host holds an additional privilege.
-pub const CONTROL_COLUMN_SURFACE: [(&str, &str, &str, &[&str]); 2] = [
+pub const CONTROL_COLUMN_SURFACE: [(&str, &str, &str, &[&str]); 4] = [
+    ("registry", "org", "SELECT", &["id", "active"]),
+    ("registry", "project", "UPDATE", &["active"]),
     ("registry", "env", "UPDATE", &["active"]),
     (
         "provisioning",

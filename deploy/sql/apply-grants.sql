@@ -13,7 +13,7 @@ GRANT SELECT ON registry.org, registry.project_env,
     identity.project_env_membership, identity.principal TO wamn_apply;
 GRANT SELECT ON registry.integration_type, registry.integration_type_version TO wamn_apply;
 GRANT SELECT (platform_domain, max_projects) ON registry.meta TO wamn_apply;
-GRANT SELECT (org, id), INSERT (org, id) ON registry.project TO wamn_apply;
+GRANT SELECT (org, id, active), INSERT (org, id) ON registry.project TO wamn_apply;
 GRANT INSERT (org, env, project, secret_name, secret_namespace, instance_suffix) ON registry.project_env TO wamn_apply;
 GRANT UPDATE (secret_name, secret_namespace, instance_suffix, active, schema_mode)
     ON registry.project_env TO wamn_apply;
@@ -37,6 +37,8 @@ GRANT USAGE ON SCHEMA provisioning TO wamn_apply;
 GRANT INSERT, SELECT (command_id, outcome) ON provisioning.platform_event TO wamn_apply;
 
 GRANT EXECUTE ON FUNCTION identity.is_project_admin(uuid,text,text), identity.has_project_access(uuid,text,text,text) TO wamn_apply;
+GRANT EXECUTE ON FUNCTION identity.project_admin_grant(uuid,text,text),
+    identity.project_access_grant(uuid,text,text,text) TO wamn_apply;
 
 GRANT USAGE ON SCHEMA wamn_history TO wamn_apply;
 GRANT EXECUTE ON FUNCTION wamn_history.row_image(record) TO wamn_apply;

@@ -7,7 +7,7 @@
 
 use std::fmt;
 use std::sync::Arc;
-use wamn_identity::identity::control::{control_projects_page, is_org_admin, org_projects_page};
+use wamn_identity::identity::control::{control_projects_page, is_org_admin};
 use wamn_routes::HostAttachment;
 use wamn_routes::HostHandler;
 use wamn_routes::HostRouteSet;
@@ -167,26 +167,18 @@ impl HostRouteDelivery {
                     wamn_identity::identity::transaction::read_pool(control, principal).await?;
                 let org_admin = is_org_admin(&mut transaction, principal, org).await?;
                 let page = control_page(payload, attachment, principal, org, None, Order::Project)?;
-                let projects = if org_admin {
-                    org_projects_page(&mut transaction, org, page.after(0), page.read_limit())
-                        .await?
-                        .into_iter()
-                        .map(|entry| entry.name)
-                        .collect()
-                } else {
-                    control_projects_page(
-                        &mut transaction,
-                        principal,
-                        org,
-                        page.after(0)
-                            .map(str::parse::<wamn_registry::ProjectId>)
-                            .transpose()
-                            .map_err(anyhow::Error::from)?
-                            .as_ref(),
-                        page.read_limit(),
-                    )
-                    .await?
-                };
+                let projects = control_projects_page(
+                    &mut transaction,
+                    principal,
+                    org,
+                    page.after(0)
+                        .map(str::parse::<wamn_registry::ProjectId>)
+                        .transpose()
+                        .map_err(anyhow::Error::from)?
+                        .as_ref(),
+                    page.read_limit(),
+                )
+                .await?;
                 let mut answer = page.answer("projects", projects, |project| json!([project]));
                 let Value::Array(projects) = answer["projects"].take() else {
                     unreachable!("page rows are an array")

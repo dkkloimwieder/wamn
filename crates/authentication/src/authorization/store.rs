@@ -153,7 +153,7 @@ impl Authorization {
             return Ok(false);
         }
         let inactive = read_env_inactive(&self.postgres, project, project_key).await?;
-        // Positive means admitted: an inactive environment is read again next time.
+        // Positive means admitted: read an inactive mirror again next time.
         if !inactive {
             self.answers.insert(key, Answer::ActiveEnv);
         }

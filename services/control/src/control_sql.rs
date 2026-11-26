@@ -3,10 +3,17 @@
 use sqlx::{PgConnection, PgPool};
 use uuid::Uuid;
 use wamn_identity_protocol::PrincipalId;
-use wamn_registry::{EnvName, OrgId, ProjectId, Triple, instance_suffix::InstanceSuffix};
+use wamn_registry::{
+    EnvName, EnvStatus, OrgId, ProjectId, Triple, instance_suffix::InstanceSuffix,
+};
 
-// Every project deployment affected by an environment lifecycle change.
-const PROJECT_ENVS: &str = "SELECT project,env FROM registry.project_env WHERE org=$1 AND env=ANY($2) AND active ORDER BY env,project";
+/// The admission value a status command writes to one project database.
+#[derive(Debug)]
+pub(crate) struct StatusMirror {
+    pub(crate) project: ProjectId,
+    pub(crate) env: EnvName,
+    pub(crate) status: EnvStatus,
+}
 
 /// Read the platform domain as stored, including an unset value.
 ///
@@ -20,29 +27,40 @@ pub(crate) async fn platform_domain(
         .await
 }
 
-/// Find project deployments for the selected organization and environments, in update order.
-///
-/// # Errors
-/// Returns an error if the query fails or a coordinate is invalid.
-pub(crate) async fn project_envs(
+/// Read effective admission for active deployments in the selected project or env.
+pub(crate) async fn status_mirrors(
     connection: &mut PgConnection,
     org: &OrgId,
-    envs: &[EnvName],
-) -> Result<Vec<(ProjectId, EnvName)>, sqlx::Error> {
-    let names: Vec<_> = envs.iter().map(EnvName::as_str).collect();
-    sqlx::query_as::<_, (String, String)>(PROJECT_ENVS)
-        .bind(org.as_str())
-        .bind(names)
-        .fetch_all(connection)
-        .await?
-        .into_iter()
-        .map(|(project, env)| {
-            Ok((
-                wamn_postgres::decode_text(project, 0)?,
-                wamn_postgres::decode_text(env, 1)?,
-            ))
+    project: Option<&ProjectId>,
+    env: Option<&EnvName>,
+) -> Result<Vec<StatusMirror>, sqlx::Error> {
+    sqlx::query_as::<_, (String, String, bool)>(
+        "SELECT d.project, d.env, p.active AND e.active
+         FROM registry.project_env d
+         JOIN registry.project p ON p.org=d.org AND p.id=d.project
+         JOIN registry.env e ON e.org=d.org AND e.env=d.env
+         WHERE d.org=$1 AND d.active AND ($2::text IS NULL OR d.project=$2)
+           AND ($3::text IS NULL OR d.env=$3)
+         ORDER BY d.env, d.project",
+    )
+    .bind(org.as_str())
+    .bind(project.map(ProjectId::as_str))
+    .bind(env.map(EnvName::as_str))
+    .fetch_all(connection)
+    .await?
+    .into_iter()
+    .map(|(project, env, active)| {
+        Ok(StatusMirror {
+            project: wamn_postgres::decode_text(project, 0)?,
+            env: wamn_postgres::decode_text(env, 1)?,
+            status: if active {
+                EnvStatus::Active
+            } else {
+                EnvStatus::Inactive
+            },
         })
-        .collect()
+    })
+    .collect()
 }
 
 /// List the active database generations for an organization.
@@ -106,6 +124,22 @@ pub(crate) async fn app_counts(connection: &mut PgConnection) -> Result<(i32, i3
     )
     .fetch_one(connection)
     .await
+}
+
+/// Change the project flag within the caller's org-admin transaction.
+pub(crate) async fn set_project_status(
+    connection: &mut PgConnection,
+    org: &OrgId,
+    project: &ProjectId,
+    status: EnvStatus,
+) -> Result<bool, sqlx::Error> {
+    let result = sqlx::query("UPDATE registry.project SET active=$3 WHERE org=$1 AND id=$2")
+        .bind(org.as_str())
+        .bind(project.as_str())
+        .bind(status == EnvStatus::Active)
+        .execute(connection)
+        .await?;
+    Ok(result.rows_affected() != 0)
 }
 
 /// Check that the current transaction can read project role principals.

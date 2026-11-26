@@ -13,7 +13,7 @@ use wamn_identity_protocol::{AuthorityClass, PrincipalId};
 
 use wamn_postgres::WamnPostgres;
 
-/// The status row of the environment, which `wamn_app` reads under its
+/// The project database admission mirror, which `wamn_app` reads under its
 /// database boundary.
 const ENV_INACTIVE_SQL: &str = "SELECT NOT active FROM platform.env";
 
@@ -208,7 +208,7 @@ async fn read_principal_grants(
     Ok(grants)
 }
 
-/// Whether the environment of `project_env_key` is inactive,
+/// Whether the project or env of `project_env_key` is inactive,
 /// from its row of `platform.env`, read as `wamn_app`
 /// (docs/architecture/execution.md#routing-and-availability). No row means
 /// active. The host keeps the answer in its [auth

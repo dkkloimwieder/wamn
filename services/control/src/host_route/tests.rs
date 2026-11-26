@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::io::Write as _;
 use std::net::SocketAddr;
 use std::os::unix::fs::OpenOptionsExt as _;
@@ -8,7 +9,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::Context as _;
 use serde_json::Value;
-use sqlx::Connection as _;
+use sqlx::{Connection as _, postgres::PgConnectOptions};
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::task::JoinSet;
 use wamn_authentication::access_token::{
@@ -18,6 +19,7 @@ use wamn_authentication::route_authentication::ControlRouteAuthenticator;
 use wamn_identity::identity::session_keys::{initialize_session_key, session_jwks};
 use wamn_identity::identity::session_token::sign_session_token_in_transaction;
 use wamn_identity_protocol::{PrincipalId, records::AccessTokenClaims};
+use wamn_registry::{OrgId, Triple};
 
 use super::{Arc, HostRouteDelivery, HostRouteHandlers, Writer};
 
@@ -272,11 +274,282 @@ async fn generated_org_client_live() -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn control_sessions(
-    admin: &mut sqlx::PgConnection,
+async fn activity_test_org(
+    postgres: &wamn_test_infrastructure::containers::Postgres,
     org: &wamn_registry::OrgId,
-    principals: &[PrincipalId],
-) -> anyhow::Result<(ControlRouteAuthenticator, Vec<String>)> {
+) -> anyhow::Result<(url::Url, String, PrincipalId)> {
+    use wamn_identity::identity::{create_user, org::invite_member};
+    use wamn_identity_protocol::records::MemberGrants;
+    use wamn_platform_install::provision_org::{control_login, create_org_logins};
+    use wamn_platform_install::provision_system::SYSTEM_DATABASE;
+
+    let mut cluster = wamn_postgres::connect(postgres.admin_url()).await?;
+    sqlx::raw_sql("CREATE ROLE wamn_apply NOLOGIN NOINHERIT")
+        .execute(&mut cluster)
+        .await?;
+    let database = wamn_test_infrastructure::identity::system(postgres).await;
+    let mut admin = wamn_postgres::connect(database.as_str()).await?;
+    let logins = create_org_logins(&mut admin, org, SYSTEM_DATABASE).await?;
+    let control = control_login(org, SYSTEM_DATABASE);
+    let login = logins
+        .iter()
+        .find(|login| login.login == control)
+        .context("control login")?;
+    let control_url =
+        postgres.database_url(SYSTEM_DATABASE, login.login.as_str(), &login.password)?;
+    let mut seed =
+        wamn_postgres::provisioning_transaction::provisioning_transaction(&mut admin).await?;
+    let email = "owner@example.invalid";
+    let owner = create_user(&mut seed, email, email, "Owner").await?;
+    let principal = *owner.id();
+    invite_member(
+        &mut seed,
+        &principal,
+        org,
+        &MemberGrants {
+            org_admin: true,
+            ..MemberGrants::default()
+        },
+    )
+    .await?;
+    seed.commit().await?;
+    Ok((database, control_url.to_string(), principal))
+}
+
+#[tokio::test]
+#[ignore = "requires: docker"]
+async fn org_activity_controls_new_commands_and_password_logins() -> anyhow::Result<()> {
+    use wamn_identity::identity::{issuer::Issuer, password};
+    use wamn_identity::password::{Password, password_work};
+    use wamn_identity::session_exchange::{self, Exchange, ExchangeFailure};
+    use wamn_platform_install::identity_role::grant_identity_issuer_surface_sql;
+    use wamn_platform_install::provision_org::{OrgActivity, set_activity};
+
+    let postgres = wamn_test_infrastructure::containers::start_postgres().await?;
+    let org = "activity-org".parse()?;
+    let (database, control_url, principal) = activity_test_org(&postgres, &org).await?;
+    let mut admin = wamn_postgres::connect(database.as_str()).await?;
+    let (authenticator, tokens) = control_sessions(&mut admin, &org, &[principal]).await?;
+    let (address, _server) = serve_control_http(control_url, org.clone(), authenticator).await?;
+
+    let email = "owner@example.invalid";
+    let work = password_work();
+    let passphrase = || {
+        Password::new("warehouse activity fixture password".to_owned())
+            .expect("valid fixture password")
+    };
+    let provisioning = wamn_identity_protocol::PlatformComponent::Provisioning.principal_id();
+    let invitation = password::issue_invitation(&mut admin, &provisioning, &principal).await?;
+    password::enroll_password(
+        &mut admin,
+        &work,
+        &principal,
+        invitation.secret(),
+        passphrase(),
+    )
+    .await?;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(grant_identity_issuer_surface_sql()))
+        .execute(&mut admin)
+        .await?;
+    let mut issuer = wamn_postgres::connect(database.as_str()).await?;
+    sqlx::raw_sql("SET ROLE wamn_identity_issuer")
+        .execute(&mut issuer)
+        .await?;
+    let envelope = control_session_envelope()?;
+    let audience = wamn_registry::name::org_audience(&org);
+    let exchange = || Exchange {
+        issuer: ISSUER,
+        audience: &audience,
+        started_at: session_exchange::unix_seconds().expect("current Unix time"),
+        envelope: &envelope,
+    };
+
+    set_activity(database.as_str(), &org, OrgActivity::Inactive).await?;
+    let command = "POST /wamn_control/project/create";
+    let input = r#"[{"request_id":"create","value":{"project":"widgets"}}]"#;
+    let (status, _) = request(address, &tokens[0], command, input).await?;
+    assert_eq!(status, 403);
+    assert!(matches!(
+        session_exchange::login(
+            &mut Issuer(&mut issuer),
+            exchange(),
+            &work,
+            email,
+            passphrase()
+        )
+        .await,
+        Err(ExchangeFailure::Unauthorized)
+    ));
+
+    set_activity(database.as_str(), &org, OrgActivity::Active).await?;
+    let session = session_exchange::login(
+        &mut Issuer(&mut issuer),
+        exchange(),
+        &work,
+        email,
+        passphrase(),
+    )
+    .await
+    .map_err(|error| anyhow::anyhow!("password login after activation failed: {error:?}"))?;
+    let (status, result) = request(address, session.token.token(), command, input).await?;
+    assert_eq!(status, 200);
+    assert_eq!(result[0]["value"]["project"], "widgets");
+    Ok(())
+}
+
+async fn mirror_databases(
+    postgres: &wamn_test_infrastructure::containers::Postgres,
+) -> anyhow::Result<[PgConnectOptions; 2]> {
+    let alpha = postgres.create_project_database("activity_alpha").await?;
+    let mut cluster = wamn_postgres::connect(postgres.admin_url()).await?;
+    sqlx::raw_sql("CREATE DATABASE activity_beta OWNER wamn_migration")
+        .execute(&mut cluster)
+        .await?;
+    sqlx::raw_sql("CREATE ROLE activity_platform LOGIN PASSWORD 'fixture' IN ROLE wamn_platform")
+        .execute(&mut cluster)
+        .await?;
+    let alpha: PgConnectOptions = alpha.as_str().parse()?;
+    let beta = alpha.clone().database("activity_beta");
+    for options in [alpha, beta] {
+        let mut migration = wamn_postgres::connect(options).await?;
+        wamn_env::platform_migrations::install_project(&mut migration).await?;
+    }
+    Ok([
+        postgres
+            .database_url("activity_alpha", "activity_platform", "fixture")?
+            .as_str()
+            .parse()?,
+        postgres
+            .database_url("activity_beta", "activity_platform", "fixture")?
+            .as_str()
+            .parse()?,
+    ])
+}
+
+async fn command_status(
+    address: SocketAddr,
+    token: &str,
+    route: &str,
+    input: &str,
+    expected: &str,
+) -> anyhow::Result<()> {
+    let (status, result) = request(address, token, route, input).await?;
+    assert_eq!(status, 200, "{route}: {result}");
+    assert_eq!(result[0]["value"]["status"], expected, "{route}: {result}");
+    Ok(())
+}
+
+async fn assert_mirrors(
+    databases: &mut [sqlx::PgConnection; 2],
+    expected: [bool; 2],
+) -> anyhow::Result<()> {
+    for (database, expected) in databases.iter_mut().zip(expected) {
+        let active: bool = sqlx::query_scalar("SELECT active FROM platform.env")
+            .fetch_one(database)
+            .await?;
+        assert_eq!(active, expected);
+    }
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires: docker"]
+async fn project_deactivation_refuses_access_and_preserves_its_sibling() -> anyhow::Result<()> {
+    let postgres = wamn_test_infrastructure::containers::start_postgres().await?;
+    let org = "activity-projects".parse::<OrgId>()?;
+    let (database, control_url, principal) = activity_test_org(&postgres, &org).await?;
+    let mut admin = wamn_postgres::connect(database.as_str()).await?;
+    let mut seed =
+        wamn_postgres::provisioning_transaction::provisioning_transaction(&mut admin).await?;
+    sqlx::query("INSERT INTO registry.project (org, id) VALUES ($1, 'alpha'), ($1, 'beta')")
+        .bind(org.as_str())
+        .execute(&mut *seed)
+        .await?;
+    sqlx::query("INSERT INTO registry.env (org, env) VALUES ($1, 'dev')")
+        .bind(org.as_str())
+        .execute(&mut *seed)
+        .await?;
+    sqlx::query(
+        "INSERT INTO registry.project_env (org, project, env, secret_name, instance_suffix)
+         SELECT org, id, 'dev', 'fixture-only', 'a1b2c3d4' FROM registry.project WHERE org=$1",
+    )
+    .bind(org.as_str())
+    .execute(&mut *seed)
+    .await?;
+    seed.commit().await?;
+
+    let (authenticator, tokens) = control_sessions(&mut admin, &org, &[principal]).await?;
+    let mut projection = wamn_postgres::connect(&control_url).await?;
+    let alpha_target = Triple::new(org.clone(), "dev".parse()?, "alpha".parse()?);
+    let beta_target = Triple::new(org.clone(), "dev".parse()?, "beta".parse()?);
+    let [alpha_db, beta_db] = mirror_databases(&postgres).await?;
+    let mut mirrors = [
+        wamn_postgres::connect(alpha_db.clone()).await?,
+        wamn_postgres::connect(beta_db.clone()).await?,
+    ];
+    let logins = HashMap::from([(alpha_target.clone(), alpha_db), (beta_target, beta_db)]);
+    let (address, _server) =
+        serve_control_http_with_projects(control_url, org, authenticator, logins).await?;
+    let token = &tokens[0];
+    let project_input = r#"[{"request_id":"project-status","value":{"project":"alpha"}}]"#;
+    let env_input = r#"[{"request_id":"env-status","value":{"project":"beta","env":"dev"}}]"#;
+    let project_deactivate = "POST /wamn_control/project/deactivate";
+    let project_activate = "POST /wamn_control/project/activate";
+    let env_activate = "POST /wamn_control/env/activate";
+    let env_deactivate = "POST /wamn_control/env/deactivate";
+
+    command_status(address, token, env_activate, env_input, "active").await?;
+    command_status(
+        address,
+        token,
+        project_deactivate,
+        project_input,
+        "inactive",
+    )
+    .await?;
+    assert_mirrors(&mut mirrors, [false, true]).await?;
+
+    let alpha = "GET /wamn_control/env/list?project=%22alpha%22";
+    let beta = "GET /wamn_control/env/list?project=%22beta%22";
+    assert_eq!(request(address, token, alpha, "").await?.0, 403);
+    let (status, result) = request(address, token, beta, "").await?;
+    assert_eq!(status, 200);
+    let envs = result[0]["value"]["envs"]
+        .as_array()
+        .context("sibling envs")?;
+    let dev = envs
+        .iter()
+        .find(|env| env["name"] == "dev")
+        .context("sibling dev env")?;
+    assert_eq!(dev["state"], "active");
+
+    let authority = wamn_authentication::administration::read_project_authority(
+        &mut projection,
+        wamn_authentication::administration::AppTarget {
+            org: &alpha_target.org,
+            project: &alpha_target.project,
+            env: &alpha_target.env,
+        },
+        &principal,
+    )
+    .await?
+    .context("retained project authority")?;
+    assert!(authority.admin);
+
+    command_status(address, token, env_deactivate, env_input, "inactive").await?;
+    command_status(address, token, env_activate, env_input, "active").await?;
+    assert_mirrors(&mut mirrors, [false, true]).await?;
+
+    command_status(address, token, env_deactivate, env_input, "inactive").await?;
+    command_status(address, token, project_activate, project_input, "active").await?;
+    assert_mirrors(&mut mirrors, [false, false]).await?;
+    assert_eq!(request(address, token, alpha, "").await?.0, 200);
+    command_status(address, token, env_activate, env_input, "active").await?;
+    assert_mirrors(&mut mirrors, [true, true]).await?;
+    Ok(())
+}
+
+fn control_session_envelope() -> anyhow::Result<wamn_envelope::encryption::Envelope> {
     let key_path = std::env::temp_dir().join(format!("wamn-wire-{}", uuid::Uuid::new_v4()));
     std::fs::OpenOptions::new()
         .write(true)
@@ -286,7 +559,15 @@ async fn control_sessions(
         .write_all(&[7; 32])?;
     let envelope = wamn_key::from_file(&key_path);
     std::fs::remove_file(key_path)?;
-    let envelope = envelope?;
+    envelope.map_err(Into::into)
+}
+
+async fn control_sessions(
+    admin: &mut sqlx::PgConnection,
+    org: &wamn_registry::OrgId,
+    principals: &[PrincipalId],
+) -> anyhow::Result<(ControlRouteAuthenticator, Vec<String>)> {
+    let envelope = control_session_envelope()?;
     let audience = wamn_registry::name::org_audience(org);
     initialize_session_key(admin, ISSUER, &envelope).await?;
     let jwks = serde_json::to_value(session_jwks(admin, ISSUER).await?)?;
@@ -330,17 +611,25 @@ async fn serve_control_http(
     org: wamn_registry::OrgId,
     authenticator: ControlRouteAuthenticator,
 ) -> anyhow::Result<(SocketAddr, JoinSet<anyhow::Result<()>>)> {
+    serve_control_http_with_projects(database, org, authenticator, HashMap::new()).await
+}
+
+async fn serve_control_http_with_projects(
+    database: String,
+    org: OrgId,
+    authenticator: ControlRouteAuthenticator,
+    logins: HashMap<Triple, PgConnectOptions>,
+) -> anyhow::Result<(SocketAddr, JoinSet<anyhow::Result<()>>)> {
     let control = wamn_postgres::pool(&database, 3).await?;
     let kubernetes = wamn_kubernetes::client::KubernetesApi::from_config(kube::Config::new(
         "http://127.0.0.1:1".parse()?,
     ))?;
+    let mut project_logins =
+        crate::project_login::ProjectLogins::new(kubernetes, control.clone(), org.clone());
+    project_logins.test_logins = logins;
     let delivery = Arc::new(
         HostRouteDelivery::new(HostRouteHandlers {
-            logins: Arc::new(crate::project_login::ProjectLogins::new(
-                kubernetes,
-                control.clone(),
-                org.clone(),
-            )),
+            logins: Arc::new(project_logins),
             org,
             control,
             writer: {

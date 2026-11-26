@@ -34,7 +34,7 @@ pub const IDENTITY_ISSUER_READ_COLUMNS: [(&str, &str, &[&str]); 9] = [
         "project_role",
         &["principal_id", "org", "project", "role"],
     ),
-    ("registry", "org", &["id"]),
+    ("registry", "org", &["id", "active"]),
     ("registry", "project", &["org", "id"]),
     ("registry", "env", &["org", "env", "active"]),
     ("identity", "org_role", &["principal_id", "org", "role"]),

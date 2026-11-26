@@ -20,14 +20,15 @@ const ORG_PROJECTS_SQL: &str = crate::identity_sql::ORG_PROJECTS_SQL;
 
 const ORG_ADMIN_SQL: &str = "SELECT EXISTS (SELECT 1 FROM identity.org_role r \
     JOIN identity.principal p ON p.id = r.principal_id \
+    JOIN registry.org o ON o.id = r.org AND o.active \
     WHERE r.principal_id = $1 AND r.org = $2 AND r.role = $3 \
     AND p.type = 'user' AND p.active \
     AND EXISTS (SELECT 1 FROM identity.org_membership m WHERE m.principal_id=p.id AND m.org=$2 AND m.active))";
 
 const PROJECT_ADMIN_SQL: &str = "SELECT identity.is_project_admin($1,$2,$3) AND $4='project-admin'";
 
-/// The projects of `org` where the active user principal is
-/// `project-admin`. An empty list means no control authority in the org.
+/// The active projects of an active org that the user administers.
+/// Org administrators can administer all active projects.
 pub async fn control_projects(
     client: &mut sqlx::PgConnection,
     principal_id: &PrincipalId,
@@ -62,7 +63,7 @@ pub async fn control_projects_page(
         .collect::<Result<_, _>>()
 }
 
-/// Whether the active user principal holds `org-admin` in `org`.
+/// Whether the active user principal holds `org-admin` in the active org.
 pub async fn is_org_admin(
     client: &mut sqlx::PgConnection,
     principal_id: &PrincipalId,

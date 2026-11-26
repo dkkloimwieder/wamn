@@ -159,7 +159,7 @@ export function controlHolds(mine: Pick<ControlMineResult, "org_admin" | "projec
     project.list.route.operation,
     project.create.route.operation,
     project.activate.route.operation,
-    project.inactivate.route.operation,
+    project.deactivate.route.operation,
     envRoutes.activate.route.operation,
     envRoutes.deactivate.route.operation,
   ]);

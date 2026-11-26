@@ -81,6 +81,10 @@ enum Command {
 #[cfg(target_os = "linux")]
 #[derive(Debug, Subcommand)]
 enum OrgCommand {
+    /// Refuse new commands and logins for an org.
+    Deactivate { org: wamn_registry::OrgId },
+    /// Restore admission for an org.
+    Activate { org: wamn_registry::OrgId },
     /// Install an org and invite its first owner using the active kubeconfig.
     Create {
         org: wamn_registry::OrgId,
@@ -134,6 +138,14 @@ async fn main() -> anyhow::Result<()> {
         Command::Status(args) => wamn_cli::app_verbs::status(args).await,
         Command::Schema(command) => wamn_cli::schema_verbs::run(command).await,
         Command::Platform(command) => wamn_cli::platform_verbs::run_product(command).await,
+        Command::Org(OrgCommand::Deactivate { org }) => {
+            use wamn_platform_install::{org_install::OrgInstaller, provision_org::OrgActivity};
+            OrgInstaller::set_activity(&org, OrgActivity::Inactive).await
+        }
+        Command::Org(OrgCommand::Activate { org }) => {
+            use wamn_platform_install::{org_install::OrgInstaller, provision_org::OrgActivity};
+            OrgInstaller::set_activity(&org, OrgActivity::Active).await
+        }
         Command::Org(OrgCommand::Create { org, owner }) => {
             wamn_identity::principal::require_user_contact(&owner, "Org owner")?;
             let installer = wamn_platform_install::org_install::OrgInstaller::developer().await?;

@@ -26,7 +26,7 @@ use crate::authorization::{Authorization, held_grants};
 use wamn_connection::connection_facts::ConnectionFacts;
 use wamn_connection::connection_memory::ConnectionStatus;
 
-/// The application host's read of the status of its environment
+/// The application host's read of its project and env admission status
 /// (docs/architecture/execution.md#routing-and-availability): its row of
 /// `platform.env`, as `wamn_app`, kept in the host's [auth
 /// memory](wamn_authority::auth_cache).

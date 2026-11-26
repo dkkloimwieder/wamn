@@ -89,6 +89,14 @@ pub async fn grant_project_admin(
     project: &wamn_registry::ProjectId,
 ) -> Result<(), IdentityError> {
     active_member(client, principal_id, org).await?;
+    super::write_project_role(client, principal_id, org, project, PROJECT_ADMIN_ROLE).await
+}
+
+pub(super) async fn require_active_project(
+    client: &mut sqlx::PgConnection,
+    org: &wamn_registry::OrgId,
+    project: &wamn_registry::ProjectId,
+) -> Result<(), IdentityError> {
     let in_org: bool = sqlx::query(PROJECT_IN_ORG_SQL)
         .bind(org.as_str())
         .bind(project.as_str())
@@ -103,7 +111,7 @@ pub async fn grant_project_admin(
             format!("project {project} is not a project of org {org}"),
         ));
     }
-    super::write_project_role(client, principal_id, org, project, PROJECT_ADMIN_ROLE).await
+    Ok(())
 }
 
 const ENV_IN_PROJECT_SQL: &str = crate::identity_sql::ENV_IN_PROJECT_SQL;

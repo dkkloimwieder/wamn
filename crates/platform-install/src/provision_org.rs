@@ -98,6 +98,35 @@ pub async fn provision_org(
     }
 }
 
+/// The platform operator's requested org activity.
+#[derive(Debug, Clone, Copy)]
+pub enum OrgActivity {
+    Active,
+    Inactive,
+}
+
+/// Update the org's admission flag using the platform SQL credential.
+///
+/// # Errors
+/// Returns an error if the org does not exist or the database write fails.
+pub async fn set_activity(
+    database: &str,
+    org: &OrgId,
+    activity: OrgActivity,
+) -> anyhow::Result<()> {
+    let mut connection = connect_system_database(database).await?;
+    let mut tx =
+        wamn_postgres::provisioning_transaction::provisioning_transaction(&mut connection).await?;
+    let result = sqlx::query("UPDATE registry.org SET active=$2 WHERE id=$1")
+        .bind(org.as_str())
+        .bind(matches!(activity, OrgActivity::Active))
+        .execute(&mut *tx)
+        .await
+        .with_context(|| format!("set activity for org {org}"))?;
+    anyhow::ensure!(result.rows_affected() != 0, "org {org} is not registered");
+    tx.commit().await.context("commit org activity")
+}
+
 async fn provision(
     connection: &mut sqlx::PgConnection,
     database: &str,

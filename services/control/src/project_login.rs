@@ -16,6 +16,8 @@ pub(crate) struct ProjectLogins {
     kubernetes: KubernetesApi,
     control: sqlx::PgPool,
     org: OrgId,
+    #[cfg(test)]
+    pub(crate) test_logins: std::collections::HashMap<Triple, PgConnectOptions>,
 }
 
 impl ProjectLogins {
@@ -24,6 +26,8 @@ impl ProjectLogins {
             kubernetes,
             control,
             org,
+            #[cfg(test)]
+            test_logins: std::collections::HashMap::new(),
         }
     }
 
@@ -49,6 +53,10 @@ impl ProjectLogins {
         triple: &Triple,
         instance: &InstanceSuffix,
     ) -> anyhow::Result<PgConnectOptions> {
+        #[cfg(test)]
+        if let Some(options) = self.test_logins.get(triple) {
+            return Ok(options.clone());
+        }
         let config = wamn_identity::platform_login::platform_connection(
             wamn_postgres::database::connection_for(triple, instance),
         )?;

@@ -21,12 +21,13 @@ The host begins a transaction for an operation whose admitted operation declares
 The host makes sure that the original caller holds the entry, once, before the entry runs. A caller holds exactly the permission rows of its roles.
 Component membership alone grants no permission to call an operation.
 
-An application host makes sure of the status of its environment for each request, before the auth policy of the route.
-It reads the `active` flag from `platform.env` through the compiled SQL login of its project. That login inherits `wamn_app`. No row means active.
-The host keeps the answer in its [auth memory](#auth-memory).
-While the flag is `false`, every route answers 503 with the code `env-inactive`, and an anonymous route does too.
+An application host checks admission for each request before it checks the route’s auth policy.
+The host reads its admission flag from `platform.env` through the project’s SQL login, which inherits `wamn_app`. No row means active.
+The mirror records whether both the project and its env are active.
+The host keeps that answer in its [auth memory](#auth-memory).
+When the mirror reports inactive, every route answers 503 with the code `env-inactive`. This includes anonymous routes.
 A failed read answers 503 `authentication-unavailable`.
-The control host and an edge box read no status.
+The control host checks the org and project flags for its own routes. An edge box reads no status.
 The [status routes](#host-run-routes) of the control host write the row.
 
 An attachment with auth policy `none` or `signature` has no principal, so it cannot write.
@@ -139,7 +140,7 @@ Any other payload answers 400 `delivery-invalid-payload`.
 | `wamn-control:user/disable@0.10.0` | Takes `principal_id` and disables the principal. Answers `principal_id` and `status: disabled`. Refuses with `user_in_another_org` if another org has an active membership for the user. |
 | `wamn-control:user/activate@0.10.0` | Takes `principal_id` and makes the org membership active. It restores no access. |
 | `wamn-control:user/deactivate@0.10.0` | Takes `principal_id`, removes the member's environment memberships, project roles and org roles in the org, then makes the membership inactive. |
-| `wamn-control:project/list@0.10.0` | `projects`: projects of the org as `{name, state}`. |
+| `wamn-control:project/list@0.10.0` | Lists the org’s projects as `{name, state}`. `state` comes from the project flag. |
 | `wamn-control:org-admin/grant@0.10.0` | Takes `principal_id` of an active member and writes only the explicit `org-admin` grant. Authorization derives access below it. |
 | `wamn-control:org-admin/revoke@0.10.0` | Takes `principal_id` and removes only `org-admin`. Other explicit grants stay. |
 | `wamn-control:env/list@0.10.0` | Takes `project`. Answers `envs`: environments of the project as `{name, state}`. |
@@ -153,8 +154,8 @@ Any other payload answers 400 `delivery-invalid-payload`.
 | `wamn-control:project-admin/revoke@0.10.0` | Takes `project` and `principal_id`, and removes `project-admin` in the project. It refuses while the user holds `org-admin`. Memberships stay. |
 | `wamn-control:env/activate@0.10.0` | Takes `project` and `env`, and makes the environment active. Answers `project`, `env` and `status`. |
 | `wamn-control:env/deactivate@0.10.0` | Takes `project` and `env`, and makes the environment inactive. Answers `project`, `env` and `status`. |
-| `wamn-control:project/activate@0.10.0` | Takes `project`, and makes every environment of the project active. Answers `project` and `status`. |
-| `wamn-control:project/inactivate@0.10.0` | Takes `project`, and makes every environment of the project inactive. Answers `project` and `status`. |
+| `wamn-control:project/activate@0.10.0` | Takes `project` and sets its active flag. Answers `project` and `status`. |
+| `wamn-control:project/deactivate@0.10.0` | Takes `project` and clears its active flag. Answers `project` and `status`. |
 
 `env.status` also answers three nullable `int32` members.
 `users_with_role` counts human users with at least one role, once per user.
@@ -215,9 +216,9 @@ If an environment fails, the route answers `app_write_incomplete` with that envi
 The system mutation remains committed.
 Control's maintenance loop also reconciles each recorded project environment from current system authority.
 The provisional period is 60 seconds. An unavailable database does not stop the other copies.
-The four status routes need `org-admin`, and they write `registry.env.active` through the `control` family, which holds `UPDATE` on that column only.
-Each status route also writes the flag into the one row of `platform.env` in each environment, with the same administration login.
-An inactivation writes the environments first and commits its system rows last, and an activation commits its system rows first.
+The four status routes need `org-admin`. A route updates the flag on its target in `registry.env` or `registry.project`.
+Control uses each affected project's administration login to write the combined project and env status to its row of `platform.env`.
+A deactivation commits the project database writes first. An activation commits the system row first.
 Data, membership and role rows do not change with the status, and CDC stays attached.
 Control calls identity over HTTPS with a projected service account token for the `wamn-identity` audience.
 `user.create` and `user.invite` call `POST /users` before writing the membership.

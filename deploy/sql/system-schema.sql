@@ -145,6 +145,7 @@ CREATE TRIGGER wamn_record_history_stamp
 -- ---------------------------------------------------------------------------
 CREATE TABLE registry.org (
     id             text PRIMARY KEY,
+    active         boolean NOT NULL DEFAULT true,
     created_at timestamptz NOT NULL,
     created_by uuid NOT NULL,
     updated_at timestamptz NOT NULL,
@@ -167,7 +168,7 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
         ('wamn_control_', 'wamn.control.identity.v0.1'),
         ('wamn_apply_', 'wamn.apply.identity.v0.1')
     ) AS family(prefix, domain)
-    WHERE starts_with(session_user::text, prefix)
+    WHERE o.active AND starts_with(session_user::text, prefix)
       AND session_user::text = prefix || left(encode(sha256(
           int8send(octet_length(convert_to(domain, 'UTF8'))::bigint) || convert_to(domain, 'UTF8')
           || int8send(3) || convert_to('org', 'UTF8')
@@ -187,6 +188,7 @@ REVOKE ALL ON FUNCTION registry.login_org() FROM PUBLIC;
 CREATE TABLE registry.project (
     org  text NOT NULL REFERENCES registry.org (id) ON DELETE CASCADE,
     id   text NOT NULL,
+    active boolean NOT NULL DEFAULT true,
     created_at timestamptz NOT NULL,
     created_by uuid NOT NULL,
     updated_at timestamptz NOT NULL,
@@ -1037,7 +1039,8 @@ END $provisioning$;
 DO $control_surface$ BEGIN
   IF EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_control') THEN
     EXECUTE format('GRANT CONNECT ON DATABASE %I TO wamn_control', current_database());
-    REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA "identity", "provisioning", "registry" FROM "wamn_control"; REVOKE ALL PRIVILEGES ON SCHEMA "identity", "provisioning", "registry" FROM "wamn_control"; GRANT USAGE ON SCHEMA "identity", "registry" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."org_membership" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."org_role" TO "wamn_control"; GRANT SELECT ON TABLE "identity"."password_login" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE ON TABLE "identity"."principal" TO "wamn_control"; GRANT SELECT (platform_domain) ON registry.meta TO wamn_control; GRANT SELECT ON registry.integration_type, registry.integration_type_version, registry.integration_type_auth, registry.auth_type TO wamn_control; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."project_env_membership" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."project_role" TO "wamn_control"; GRANT SELECT ON TABLE "registry"."project_env", "registry"."env_app", "registry"."env_app_connection", "registry"."env_integration", "registry"."target" TO "wamn_control"; GRANT SELECT, INSERT ON TABLE "registry"."project" TO "wamn_control"; GRANT UPDATE ("active") ON TABLE "registry"."env" TO "wamn_control";
+    REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA "identity", "provisioning", "registry" FROM "wamn_control"; REVOKE ALL PRIVILEGES ON SCHEMA "identity", "provisioning", "registry" FROM "wamn_control"; GRANT USAGE ON SCHEMA "identity", "registry" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."org_membership" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."org_role" TO "wamn_control"; GRANT SELECT ON TABLE "identity"."password_login" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE ON TABLE "identity"."principal" TO "wamn_control"; GRANT SELECT (platform_domain) ON registry.meta TO wamn_control; GRANT SELECT ON registry.integration_type, registry.integration_type_version, registry.integration_type_auth, registry.auth_type TO wamn_control; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."project_env_membership" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."project_role" TO "wamn_control"; GRANT SELECT ON TABLE "registry"."project_env", "registry"."env_app", "registry"."env_app_connection", "registry"."env_integration", "registry"."target" TO "wamn_control"; GRANT SELECT, INSERT ON TABLE "registry"."project" TO "wamn_control"; GRANT UPDATE ("active") ON TABLE "registry"."env", "registry"."project" TO "wamn_control";
+    GRANT SELECT (id, active) ON registry.org TO wamn_control;
     GRANT USAGE ON SCHEMA wamn_history TO wamn_control;
     GRANT EXECUTE ON FUNCTION wamn_history.row_image(record) TO wamn_control;
     GRANT INSERT ON identity.principal_history, identity.org_membership_history,
@@ -1128,8 +1131,8 @@ BEGIN
 END
 $control_security$;
 
--- Inherited authority is read from its owning grant on every authorization.
-CREATE FUNCTION identity.is_project_admin(principal uuid, org_id text, project_id text)
+-- Membership projection keeps grants current while a project is inactive.
+CREATE FUNCTION identity.project_admin_grant(principal uuid, org_id text, project_id text)
 RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
     SELECT EXISTS (SELECT FROM identity.principal p
         JOIN identity.org_membership m ON m.principal_id=p.id AND m.org=org_id AND m.active
@@ -1141,21 +1144,37 @@ RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalo
         AND (EXISTS (SELECT FROM identity.org_role r WHERE r.principal_id=p.id AND r.org=org_id AND r.role='org-admin')
           OR EXISTS (SELECT FROM identity.project_role r WHERE r.principal_id=p.id AND r.org=org_id AND r.project=project_id AND r.role='project-admin')))
 $$;
-REVOKE ALL ON FUNCTION identity.is_project_admin(uuid,text,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION identity.project_admin_grant(uuid,text,text) FROM PUBLIC;
 
-CREATE FUNCTION identity.has_project_access(principal uuid, org_id text, env_name text, project_id text)
+CREATE FUNCTION identity.project_access_grant(principal uuid, org_id text, env_name text, project_id text)
 RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
     SELECT (NOT ((COALESCE(pg_has_role(session_user, to_regrole('wamn_control'), 'member'), false)
                   OR COALESCE(pg_has_role(session_user, to_regrole('wamn_apply'), 'member'), false))
                  AND NOT EXISTS (SELECT FROM pg_roles WHERE rolname = session_user AND rolsuper))
             OR org_id = registry.login_org())
     AND EXISTS (SELECT FROM registry.project_env e WHERE e.org=org_id AND e.env=env_name AND e.project=project_id AND e.active)
-    AND (identity.is_project_admin(principal,org_id,project_id)
+    AND (identity.project_admin_grant(principal,org_id,project_id)
       OR EXISTS (SELECT FROM identity.project_env_membership m
         JOIN identity.org_membership om USING (principal_id,org)
         JOIN identity.principal p ON p.id=m.principal_id
         WHERE m.principal_id=principal AND m.org=org_id AND m.env=env_name AND m.project=project_id
           AND om.active AND p.active AND p.type='user'))
+$$;
+REVOKE ALL ON FUNCTION identity.project_access_grant(uuid,text,text,text) FROM PUBLIC;
+-- Operational authorization also checks activity on every request.
+CREATE FUNCTION identity.is_project_admin(principal uuid, org_id text, project_id text)
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
+    SELECT EXISTS (SELECT FROM registry.project p JOIN registry.org o ON o.id=p.org
+                   WHERE p.org=org_id AND p.id=project_id AND p.active AND o.active)
+    AND identity.project_admin_grant(principal,org_id,project_id)
+$$;
+REVOKE ALL ON FUNCTION identity.is_project_admin(uuid,text,text) FROM PUBLIC;
+
+CREATE FUNCTION identity.has_project_access(principal uuid, org_id text, env_name text, project_id text)
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
+    SELECT EXISTS (SELECT FROM registry.project p JOIN registry.org o ON o.id=p.org
+                   WHERE p.org=org_id AND p.id=project_id AND p.active AND o.active)
+    AND identity.project_access_grant(principal,org_id,env_name,project_id)
 $$;
 REVOKE ALL ON FUNCTION identity.has_project_access(uuid,text,text,text) FROM PUBLIC;
 DO $authority_grants$
@@ -1166,4 +1185,8 @@ BEGIN
             EXECUTE format('GRANT EXECUTE ON FUNCTION identity.is_project_admin(uuid,text,text), identity.has_project_access(uuid,text,text,text) TO %I',reader);
         END IF;
     END LOOP;
+    IF to_regrole('wamn_control') IS NOT NULL THEN
+        GRANT EXECUTE ON FUNCTION identity.project_admin_grant(uuid,text,text),
+            identity.project_access_grant(uuid,text,text,text) TO wamn_control;
+    END IF;
 END $authority_grants$;

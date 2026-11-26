@@ -201,15 +201,15 @@ pub trait RouteAuthenticator: Send + Sync + std::fmt::Debug {
     ) -> Result<Option<AuthenticatedCaller>, AuthRejection>;
 }
 
-/// The host's read of whether its environment is inactive.
+/// The host's admission check for the target project and environment.
 ///
 /// The route plugin asks it once for each request, before the route's policy,
-/// so an anonymous route is refused too. An inactive environment answers
+/// so an anonymous route is refused too. An inactive target answers
 /// `env-inactive` with 503. A failed read answers
 /// `authentication-unavailable`.
 #[async_trait::async_trait]
 pub trait EnvStatus: Send + Sync + std::fmt::Debug {
-    /// Whether the environment of `project_env_key` is inactive.
+    /// Whether the target of `project_env_key` is inactive.
     async fn inactive(
         &self,
         project_env_key: &wamn_registry::ProjectEnvKey,
@@ -254,7 +254,7 @@ pub async fn authenticate_policy(
 ) -> Result<Option<AuthenticatedCaller>, AuthRejection> {
     if let Some(env) = env {
         let inactive = env.inactive(target).await.map_err(|error| {
-            tracing::warn!(error = %error, "environment status unavailable");
+            tracing::warn!(error = %error, "host admission status unavailable");
             authentication_unavailable()
         })?;
         if inactive {

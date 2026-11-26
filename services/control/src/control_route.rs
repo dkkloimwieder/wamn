@@ -19,8 +19,8 @@
 //! The system lock lasts until the application commits. The route reports
 //! success only when every environment is done.
 //!
-//! The status routes mirror the status of each environment into its row of
-//! `platform.env` in the same way
+//! The status routes mirror the combined project and env flags into
+//! `platform.env` in each affected project database
 //! (docs/architecture/execution.md#routing-and-availability): an inactivation
 //! writes the environments first and commits the system rows last, and an
 //! activation commits the system rows first.
@@ -60,7 +60,7 @@ use wamn_authentication::identity_error::{IdentityError, IdentityRefusal};
 use wamn_authentication::paging::{ListPage, Order};
 use wamn_env::env_org::{create_project, org_project_envs, set_env_status, status_envs};
 use wamn_env::status;
-use wamn_identity::control_admission::{self, AdminAdmission};
+use wamn_identity::control_admission;
 use wamn_identity::identity::app::project_authority;
 use wamn_identity::identity::control::{
     control_projects_page, is_org_admin, is_project_admin, org_projects_page,
@@ -203,18 +203,20 @@ impl ControlRoutes<'_> {
     ) -> Result<Value, Refusal> {
         let input: Value = serde_json::from_str(payload).map_err(anyhow::Error::from)?;
         let mut writer = self.writer.lock().await?;
+        let project = input["project"]
+            .as_str()
+            .map(str::parse::<wamn_registry::ProjectId>)
+            .transpose()
+            .map_err(anyhow::Error::from)?;
+        // A first env apply can create projects. Its reservation checks each
+        // selected project's flag before it changes the deployment.
+        let project = if attachment.route.authority == HostRouteAuthority::ProjectAdmin {
+            project.as_ref()
+        } else {
+            None
+        };
         let transaction = self
-            .begin_in(
-                &mut writer,
-                attachment,
-                caller,
-                input["project"]
-                    .as_str()
-                    .map(str::parse::<wamn_registry::ProjectId>)
-                    .transpose()
-                    .map_err(anyhow::Error::from)?
-                    .as_ref(),
-            )
+            .begin_in(&mut writer, attachment, caller, project)
             .await?;
         transaction.commit().await?;
         drop(writer);
@@ -241,6 +243,14 @@ impl ControlRoutes<'_> {
 
         let command = platform_event::command(attachment.route.operation, *caller, payload);
         if let Some(command) = &command {
+            let active = self
+                .read(caller, async |connection| {
+                    Ok(crate::control_sql::login_matches_org(connection, self.org).await?)
+                })
+                .await?;
+            if !active {
+                return Err(denied(attachment));
+            }
             let mut writer = self.writer.lock().await?;
             platform_event::record(&mut writer, self.org, command, Outcome::Started, None).await?;
         }
@@ -654,7 +664,7 @@ impl ControlRoutes<'_> {
                 })
                 .map_err(anyhow::Error::from)?)
             }
-            HostHandler::ProjectActivate | HostHandler::ProjectInactivate => {
+            HostHandler::ProjectActivate | HostHandler::ProjectDeactivate => {
                 let request: ProjectRequest = parse(payload)?;
                 let status = if attachment.route.handler == HostHandler::ProjectActivate {
                     EnvStatus::Active
@@ -692,10 +702,7 @@ impl ControlRoutes<'_> {
         }
     }
 
-    /// Write the status of one environment, or of every environment of a
-    /// project, in the system rows and in each environment's row. An
-    /// inactivation writes the environments first and commits the system
-    /// rows last. An activation commits the system rows first.
+    /// Change one registry flag and mirror effective admission into the affected databases.
     async fn set_status(
         &self,
         attachment: &HostAttachment,
@@ -706,35 +713,55 @@ impl ControlRoutes<'_> {
     ) -> Result<(), Refusal> {
         let mut writer = self.writer.lock().await?;
         let mut transaction = self.begin(&mut writer, attachment, caller).await?;
-        let envs = status_envs(&mut transaction, self.org, project, env).await?;
-        let project_envs =
-            crate::control_sql::project_envs(&mut transaction, self.org, &envs).await?;
+        let project_scope = if let Some(env) = env {
+            let envs = status_envs(&mut transaction, self.org, project, env).await?;
+            set_env_status(&mut transaction, self.org, project, &envs, status).await?;
+            None
+        } else {
+            let updated =
+                crate::control_sql::set_project_status(&mut transaction, self.org, project, status)
+                    .await?;
+            if !updated {
+                return Err(Refusal::Declared {
+                    code: "project_not_found",
+                    detail: json!({"field":"project"}),
+                });
+            }
+            Some(project)
+        };
+        let mirrors =
+            crate::control_sql::status_mirrors(&mut transaction, self.org, project_scope, env)
+                .await?;
         status::change_status(
             status,
             move || async move {
-                set_env_status(&mut transaction, self.org, project, &envs, status).await?;
                 transaction.commit().await?;
                 Ok(())
             },
-            || self.write_statuses(attachment, caller, &project_envs, status),
+            || self.write_statuses(attachment, caller, &mirrors),
         )
         .await
     }
 
-    /// Write the status row of each environment, one transaction each, in
-    /// order. When an environment fails, the route refuses and names the
-    /// environments that completed.
+    /// Write each mirror in its own transaction and report any partial completion.
     async fn write_statuses(
         &self,
         attachment: &HostAttachment,
         caller: &PrincipalId,
-        project_envs: &[(wamn_registry::ProjectId, wamn_registry::EnvName)],
-        status: EnvStatus,
+        mirrors: &[crate::control_sql::StatusMirror],
     ) -> Result<(), Refusal> {
-        let logins = self.logins(project_envs).await?;
+        let mut logins = Vec::with_capacity(mirrors.len());
+        for mirror in mirrors {
+            logins.push(self.login(&mirror.project, &mirror.env).await?);
+        }
         let mut completed: Vec<String> = Vec::new();
-        for ((project, env), login) in project_envs.iter().zip(logins) {
-            match write_status(login, attachment, caller, status).await {
+        for (mirror, login) in mirrors.iter().zip(logins) {
+            let crate::control_sql::StatusMirror {
+                project,
+                env,
+                status,
+            } = mirror;
+            match write_status(login, attachment, caller, *status).await {
                 Ok(()) => {}
                 Err(error) => {
                     tracing::warn!(
@@ -742,7 +769,7 @@ impl ControlRoutes<'_> {
                         %project,
                         %env,
                         reference = attachment.reference,
-                        "an environment status write failed"
+                        "a project database status write failed"
                     );
                     return Err(incomplete(project, env, &completed));
                 }
@@ -908,13 +935,9 @@ impl ControlRoutes<'_> {
         caller: &PrincipalId,
         project: Option<&wamn_registry::ProjectId>,
     ) -> Result<bool, Refusal> {
-        let org_admin = is_org_admin(client, caller, self.org).await?;
-        match control_admission::admin_admission(org_admin, project) {
-            AdminAdmission::Admitted => Ok(true),
-            AdminAdmission::CheckProject(project) => {
-                Ok(is_project_admin(client, caller, self.org, project).await?)
-            }
-            AdminAdmission::Refused => Ok(false),
+        match project {
+            Some(project) => Ok(is_project_admin(client, caller, self.org, project).await?),
+            None => Ok(is_org_admin(client, caller, self.org).await?),
         }
     }
 }
@@ -965,7 +988,7 @@ async fn write_app(
     result
 }
 
-/// One environment's status row, in its own transaction on its
+/// One project database's admission mirror, in its own transaction on its
 /// administration login.
 async fn write_status(
     login: ConnectionInput<'_>,

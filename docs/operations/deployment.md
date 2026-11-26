@@ -103,6 +103,10 @@ If the platform uses registry token metadata, skip these two steps.
 A user can belong to only one org. Use an owner email that does not belong to a user in another org.
 An inactive membership in another org also blocks the invitation.
 Run `wamn org create <org> --owner <email>` with the admin kubeconfig.
+
+Use the same kubeconfig to run `wamn org deactivate <org>` or `wamn org activate <org>`.
+Deactivation refuses new commands and logins for the org. Its workloads keep running.
+Activation restores admission under the existing grants.
 On kind, the command copies the registry entry into the org's `wamn-registry-pull` Secret.
 The command installs the org chart with public platform settings. Its platform Job writes the control and apply passwords to their org Secrets before the invitation Job runs.
 The Job records its start and result as `org_create` in the system journal, including failures before the org is registered.

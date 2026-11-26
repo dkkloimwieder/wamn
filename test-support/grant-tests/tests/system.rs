@@ -523,12 +523,12 @@ fn org_call(function: &str, org: &Org<'_>) -> Option<(String, Refusal)> {
             format!("SELECT identity.principal_in_login_org_only({principal})"),
             Refusal::False,
         ),
-        "identity.is_project_admin(uuid,text,text)" => (
-            format!("SELECT identity.is_project_admin({principal}, {name}, {project})"),
+        "identity.project_admin_grant(uuid,text,text)" => (
+            format!("SELECT identity.project_admin_grant({principal}, {name}, {project})"),
             Refusal::False,
         ),
-        "identity.has_project_access(uuid,text,text,text)" => (
-            format!("SELECT identity.has_project_access({principal}, {name}, {env}, {project})"),
+        "identity.project_access_grant(uuid,text,text,text)" => (
+            format!("SELECT identity.project_access_grant({principal}, {name}, {env}, {project})"),
             Refusal::False,
         ),
         _ => return None,

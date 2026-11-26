@@ -41,6 +41,18 @@ pub async fn record_project_env(
     deployment::record_project(transaction, &triple.org, &triple.project)
         .await
         .context("record project")?;
+    let active: bool = sqlx::query_scalar(wamn_identity::identity_sql::PROJECT_IN_ORG_SQL)
+        .bind(triple.org.as_str())
+        .bind(triple.project.as_str())
+        .fetch_one(&mut **transaction)
+        .await
+        .context("read project activity")?;
+    anyhow::ensure!(
+        active,
+        "project {}/{} is inactive",
+        triple.org,
+        triple.project
+    );
     let target_id = deployment::target_id(transaction, target)
         .await
         .context("read deployment target")?

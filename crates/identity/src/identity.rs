@@ -190,6 +190,7 @@ async fn write_project_role(
     project: &wamn_registry::ProjectId,
     role: &str,
 ) -> Result<(), IdentityError> {
+    org::require_active_project(client, org, project).await?;
     sqlx::query(ASSIGN_PROJECT_ROLE_SQL)
         .bind(Uuid::from(*principal_id))
         .bind(org.as_str())
@@ -240,6 +241,7 @@ pub async fn grant_project_env_membership(
     env: &wamn_registry::EnvName,
 ) -> Result<(), IdentityError> {
     org::active_member(client, principal_id, org).await?;
+    org::require_active_project(client, org, project).await?;
     sqlx::query(GRANT_PROJECT_ENV_MEMBERSHIP_SQL)
         .bind(Uuid::from(*principal_id))
         .bind(org.as_str())
@@ -252,10 +254,8 @@ pub async fn grant_project_env_membership(
     Ok(())
 }
 
-/// Read the explicit membership fact for one principal and project-environment.
-///
-/// Credential authentication must separately verify that the principal is active.
-/// Project management roles and memberships in other environments do not count.
+/// Read effective access to one project environment through membership or administration.
+/// An inactive org or project confers no access.
 pub async fn has_project_env_membership(
     client: &mut sqlx::PgConnection,
     principal_id: &PrincipalId,
