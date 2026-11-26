@@ -28,6 +28,9 @@ pub enum DeclaredRefusal {
     CdnHostRequired {
         field: Value,
     },
+    ConnectionInactive {
+        field: Value,
+    },
     CounterAssignedPerKey {
         field: Value,
     },

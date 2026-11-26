@@ -1871,6 +1871,19 @@ mod tests {
     use super::*;
 
     #[test]
+    fn openapi_generates_for_each_host_route_set() {
+        let sets: std::collections::BTreeSet<_> = ROUTES.iter().map(|route| route.set).collect();
+        for set in sets {
+            let document = set.openapi();
+            assert!(
+                document["paths"]
+                    .as_object()
+                    .is_some_and(|paths| !paths.is_empty())
+            );
+        }
+    }
+
+    #[test]
     fn host_routes_derive_their_ids_from_the_native_package_identity() {
         let app = HostRouteSet::App
             .attachment(&"wamn-control-permission-mine-http".parse().unwrap())
