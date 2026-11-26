@@ -319,8 +319,10 @@ cargo test -p wamn-journey-tests -- --ignored
 ```
 
 `cargo xtask preflight` checks the charts before a platform deploy.
-It renders the charts, and checks that their images resolve and that the wamn containers accept their arguments.
+It renders the charts, checks that their images resolve, and checks that the wamn containers accept their arguments with the rendered user and group IDs.
 Then it sends every object to the kind API server in a server-side dry run.
+For `platform`, `hosts` and the org namespace, it also dry-runs each rendered pod template in a temporary namespace with the same Pod Security labels.
+The kind journeys exercise pods that operators generate after deployment.
 Without `--chart <bundle>`, it builds a bundle under `target/preflight`.
 With `--print-cluster-requests`, it prints the cluster requests and does not read the cluster.
 

@@ -3,5 +3,7 @@ kind: Namespace
 metadata:
   name: {{ required "Set org." .Values.org | quote }}
   labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/warn: restricted
     wamn.dev/org: "true"
     wamn.dev/identity-trust: "true"

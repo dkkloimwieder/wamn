@@ -64,6 +64,7 @@ Prepare the artifacts as [building](building.md#platform-artifacts) describes.
 
 Select the `kind-wamn-local` Kubernetes context.
 On a fresh cluster, create the `platform` namespace before you create the Secret.
+`wamn platform deploy` sets Pod Security enforcement and warnings to `restricted` on that namespace before installing either chart.
 Identity uses the `key` entry in `platform/wamn-oauth` to encrypt its signing keys.
 Create the Secret with a random 32-byte key if it is missing.
 

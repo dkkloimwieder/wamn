@@ -29,16 +29,23 @@ const CREDENTIAL_JOB: &str = "wamn.dev/control-credential-job";
 const REVISION: &str = "deployment.kubernetes.io/revision";
 
 pub async fn ensure_helm_storage_namespace(target: &Target, storage: &str) -> anyhow::Result<()> {
+    apply_namespace(target, storage, &helm_storage_namespace(storage))
+        .await
+        .context("create the org Helm storage namespace")
+}
+
+/// Create or update a Namespace by applying the supplied manifest.
+///
+/// # Errors
+///
+/// Returns an error if the Kubernetes API rejects the apply.
+pub async fn apply_namespace(target: &Target, name: &str, manifest: &Value) -> anyhow::Result<()> {
     let apply = PatchParams::apply(APPLY_MANAGER);
     let namespaces = Api::<Namespace>::all(target.client.client());
     namespaces
-        .patch(
-            storage,
-            &apply,
-            &Patch::Apply(helm_storage_namespace(storage)),
-        )
+        .patch(name, &apply, &Patch::Apply(manifest))
         .await
-        .context("create the org Helm storage namespace")?;
+        .with_context(|| format!("apply Namespace/{name}"))?;
     Ok(())
 }
 

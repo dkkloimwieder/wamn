@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 use wamn_kubernetes::{Target, org_resources};
 
 use crate::org_install::api_destinations;
-use crate::platform_install::{install_infrastructure, install_platform};
+use crate::platform_install::{install_infrastructure, install_platform, platform_namespace};
 
 /// Install the selected releases in dependency order.
 pub async fn install(
@@ -17,6 +17,11 @@ pub async fn install(
     app_chart: &str,
     registry_egress: Option<Value>,
 ) -> anyhow::Result<()> {
+    if infrastructure || registry_egress.is_some() {
+        let namespace = &installer.namespace;
+        org_resources::apply_namespace(installer, namespace, &platform_namespace(namespace))
+            .await?;
+    }
     if infrastructure {
         install_infrastructure(installer, charts, values).await?;
     }

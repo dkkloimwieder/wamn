@@ -16,6 +16,11 @@ fn platform_wamn_workloads_render_restricted_pods() -> anyhow::Result<()> {
         let registry = values["registry"].as_str().expect("platform registry");
         let wamn_images = format!("{registry}/wamn-");
         let objects = helm::template(&entry(&chart, "platform", "wamn", values)?)?;
+        let hosts = objects
+            .iter()
+            .find(|object| object["kind"] == "Namespace" && object["metadata"]["name"] == "hosts")
+            .expect("the platform chart must create the hosts namespace");
+        assert_restricted_namespace(hosts);
         pod_security::assert_restricted_pods(objects.iter().filter(|object| {
             object["spec"]["template"]["spec"]["containers"]
                 .as_array()
@@ -28,6 +33,34 @@ fn platform_wamn_workloads_render_restricted_pods() -> anyhow::Result<()> {
                 })
         }));
     }
+    Ok(())
+}
+
+fn assert_restricted_namespace(namespace: &serde_json::Value) {
+    let labels = &namespace["metadata"]["labels"];
+    for policy in ["enforce", "warn"] {
+        assert_eq!(
+            labels[format!("pod-security.kubernetes.io/{policy}")],
+            "restricted",
+            "Namespace/{} pod security {policy}",
+            namespace["metadata"]["name"]
+        );
+    }
+}
+
+#[test]
+fn the_org_chart_creates_a_restricted_namespace() -> anyhow::Result<()> {
+    let chart = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../deploy/charts/org");
+    let values: serde_json::Value =
+        serde_json::from_str(include_str!("support/org-chart-values.json"))?;
+    let org = values["org"].as_str().expect("org chart value").to_owned();
+    let entry = wamn_kubernetes::platform_env::entry(&chart, &org, &org, values)?;
+    let objects = wamn_kubernetes::helm::template(&entry)?;
+    let namespace = objects
+        .iter()
+        .find(|object| object["kind"] == "Namespace" && object["metadata"]["name"] == org)
+        .expect("the org chart must create the org namespace");
+    assert_restricted_namespace(namespace);
     Ok(())
 }
 

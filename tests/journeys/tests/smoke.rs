@@ -12,14 +12,15 @@ use anyhow::{Context as _, ensure};
 use common::{Org, host::FIXTURE, service_account_can};
 use futures_util::{StreamExt as _, TryStreamExt as _, stream};
 use k8s_openapi::api::authorization::v1::{ResourceAttributes, SubjectAccessReview};
-use k8s_openapi::api::core::v1::ServiceAccount;
+use k8s_openapi::api::core::v1::{Pod, ServiceAccount};
 use k8s_openapi::api::rbac::v1::{ClusterRole, PolicyRule, Role};
 use kube::{
     Api, Client,
-    api::ListParams,
+    api::{ListParams, PostParams},
     discovery::{Discovery, Scope},
 };
-use serde_json::Value;
+use serde::Deserialize as _;
+use serde_json::{Value, json};
 use tokio::time::timeout;
 use wamn_http_client::HttpClient;
 
@@ -291,4 +292,46 @@ async fn discover_resources(
         }
     }
     Ok(resources)
+}
+
+common::journey! {
+    /// The org admits a compliant Pod and refuses the same Pod with privilege enabled.
+    async fn an_org_refuses_a_privileged_pod() -> anyhow::Result<()> {
+        let org = Org::create().await?;
+        let pods = Api::<Pod>::namespaced(org.cluster.client.clone(), org.name.as_str());
+        let params = PostParams { dry_run: true, ..Default::default() };
+        let mut pod = json!({
+            "metadata": {"generateName": "pod-security-"},
+            "spec": {
+                "securityContext": {
+                    "runAsNonRoot": true,
+                    "runAsUser": 65532,
+                    "runAsGroup": 65532,
+                    "fsGroup": 65532,
+                    "seccompProfile": {"type": "RuntimeDefault"},
+                },
+                "containers": [{
+                    "name": "probe",
+                    "image": "registry.k8s.io/pause:3.10",
+                    "securityContext": {
+                        "allowPrivilegeEscalation": false,
+                        "capabilities": {"drop": ["ALL"]},
+                        "privileged": false,
+                    },
+                }],
+            },
+        });
+        pods.create(&params, &Pod::deserialize(&pod)?)
+            .await
+            .context("the compliant pod must be admitted")?;
+        pod["spec"]["containers"][0]["securityContext"]["privileged"] = true.into();
+        let result = pods.create(&params, &serde_json::from_value(pod)?).await;
+        ensure!(
+            matches!(&result, Err(kube::Error::Api(status)) if status.code == 403 && status.reason == "Forbidden"),
+            "the privileged pod must be forbidden in {}: {:?}",
+            org.name,
+            result.map(|_| ()),
+        );
+        Ok(())
+    }
 }

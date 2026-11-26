@@ -3,4 +3,6 @@ kind: Namespace
 metadata:
   name: hosts
   labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/warn: restricted
     wamn.dev/identity-trust: "true"

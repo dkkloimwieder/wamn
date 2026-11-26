@@ -226,7 +226,6 @@ async fn mutation_output(
 /// Prerequisites for the install path of an upgrade.
 #[derive(Clone, Copy, Debug)]
 pub enum Install {
-    CreateNamespace,
     ExistingNamespace,
     SkipCrds,
 }
@@ -315,7 +314,6 @@ pub async fn upgrade(
         arguments.extend([OsStr::new("-f"), file.as_os_str()]);
     }
     match install {
-        Install::CreateNamespace => arguments.push("--create-namespace".as_ref()),
         Install::SkipCrds => arguments.push("--skip-crds".as_ref()),
         Install::ExistingNamespace => {}
     }

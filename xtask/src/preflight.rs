@@ -1,6 +1,7 @@
 //! Preflight before a kind platform deploy: the charts render, their images
 //! resolve, the wamn containers accept their arguments, and the Kubernetes API
-//! server accepts every object in a server-side dry run.
+//! server accepts every object and admits its pod templates under the target
+//! namespace's pod security policy.
 //!
 //! The values come from the product's builders. Values that exist only at deploy
 //! time are stand-ins:
@@ -21,7 +22,7 @@ use std::time::Duration;
 
 use anyhow::{Context as _, bail, ensure};
 use clap::Args as ClapArgs;
-use k8s_openapi::api::core::v1::{Namespace, Secret};
+use k8s_openapi::api::core::v1::{Namespace, Pod, Secret, ServiceAccount};
 use k8s_openapi::apiextensions_apiserver::pkg::apis::apiextensions::v1::CustomResourceDefinition;
 use kube::api::{Api, DeleteParams, DynamicObject, ListParams, Patch, PatchParams, PostParams};
 use kube::core::GroupVersionKind;
@@ -46,6 +47,9 @@ const PLATFORM: &str = "platform";
 const INFRASTRUCTURE_RELEASE: &str = "wamn-infrastructure";
 const FIELD_MANAGER: &str = "helm";
 const CRD_MANAGER: &str = "wamn-preflight";
+const PREFLIGHT_ACCOUNT: &str = "wamn-preflight";
+const ENFORCE_LABEL: &str = "pod-security.kubernetes.io/enforce";
+const WARN_LABEL: &str = "pod-security.kubernetes.io/warn";
 const DEADLINE: Duration = Duration::from_secs(120);
 const RUN_DEADLINE: Duration = Duration::from_secs(300);
 const ORG: &str = "local";
@@ -212,6 +216,11 @@ async fn render(
         "apiServer": api_server,
     });
     let resolved_file = write_json(directory, "platform-resolved.json", &resolved)?;
+    rendered.push(Rendered {
+        label: "platform deploy".into(),
+        namespace: PLATFORM.into(),
+        objects: vec![platform_install::platform_namespace(PLATFORM)],
+    });
     rendered.push(
         template(
             directory,
@@ -729,7 +738,7 @@ async fn arguments(rendered: &[Rendered], tally: &mut Tally) -> anyhow::Result<(
         for object in &chart.objects {
             let mut found = Vec::new();
             containers(object, &mut found);
-            for container in found {
+            for (pod, container) in found {
                 let image = container["image"].as_str().unwrap_or_default();
                 if !wamn_image(image) {
                     continue;
@@ -751,11 +760,12 @@ async fn arguments(rendered: &[Rendered], tally: &mut Tally) -> anyhow::Result<(
                 };
                 let (command, mut args) = (strings("command"), strings("args"));
                 args.push("--help".into());
-                let key = (local_reference(image), command, args);
+                let user = docker_user(pod, container);
+                let key = (local_reference(image), user, command, args);
                 if seen.contains(&key) {
                     continue;
                 }
-                let (local, command, args) = &key;
+                let (local, user, command, args) = &key;
                 let line = command
                     .iter()
                     .chain(args)
@@ -779,6 +789,9 @@ async fn arguments(rendered: &[Rendered], tally: &mut Tally) -> anyhow::Result<(
                     "--name",
                     &container_name,
                 ]);
+                if let Some(user) = user {
+                    run.args(["--user", user]);
+                }
                 if let Some(entrypoint) = command.first() {
                     run.args(["--entrypoint", entrypoint]);
                 }
@@ -817,14 +830,19 @@ async fn arguments(rendered: &[Rendered], tally: &mut Tally) -> anyhow::Result<(
     Ok(())
 }
 
-fn containers<'a>(value: &'a Value, found: &mut Vec<&'a Value>) {
+fn containers<'a>(value: &'a Value, found: &mut Vec<(&'a Value, &'a Value)>) {
     match value {
         Value::Object(fields) => {
             for (key, child) in fields {
                 if matches!(key.as_str(), "containers" | "initContainers")
                     && let Some(entries) = child.as_array()
                 {
-                    found.extend(entries.iter().filter(|entry| entry["image"].is_string()));
+                    found.extend(
+                        entries
+                            .iter()
+                            .filter(|entry| entry["image"].is_string())
+                            .map(|entry| (value, entry)),
+                    );
                 } else {
                     containers(child, found);
                 }
@@ -836,6 +854,23 @@ fn containers<'a>(value: &'a Value, found: &mut Vec<&'a Value>) {
             }
         }
         _ => {}
+    }
+}
+
+fn docker_user(pod: &Value, container: &Value) -> Option<String> {
+    let effective_id = |field: &str| {
+        container["securityContext"][field]
+            .as_i64()
+            .or_else(|| pod["securityContext"][field].as_i64())
+    };
+    let uid = effective_id("runAsUser");
+    let gid = effective_id("runAsGroup");
+    match (uid, gid) {
+        (Some(uid), Some(gid)) => Some(format!("{uid}:{gid}")),
+        (Some(uid), None) => Some(uid.to_string()),
+        // The WAMN images default to UID 0.
+        (None, Some(gid)) => Some(format!("0:{gid}")),
+        (None, None) => None,
     }
 }
 
@@ -889,6 +924,69 @@ struct Planned<'a> {
     namespace: Option<String>,
 }
 
+fn restricted_namespaces(rendered: &[Rendered]) -> BTreeMap<&str, &Value> {
+    rendered
+        .iter()
+        .flat_map(|chart| &chart.objects)
+        .filter(|object| {
+            object["kind"] == "Namespace"
+                && object["metadata"]["labels"][ENFORCE_LABEL] == "restricted"
+        })
+        .filter_map(|object| {
+            Some((
+                object["metadata"]["name"].as_str()?,
+                &object["metadata"]["labels"],
+            ))
+        })
+        .collect()
+}
+
+fn admission_pod(object: &Value) -> Option<Value> {
+    let template = match object["kind"].as_str()? {
+        "Pod" => object,
+        "CronJob" => &object["spec"]["jobTemplate"]["spec"]["template"],
+        _ => &object["spec"]["template"],
+    };
+    if !template["spec"]["containers"].is_array() {
+        return None;
+    }
+    let mut pod = json!({
+        "apiVersion": "v1",
+        "kind": "Pod",
+        "metadata": {"generateName": "wamn-preflight-"},
+        "spec": template["spec"],
+    });
+    for field in ["labels", "annotations"] {
+        if let Some(value) = template["metadata"].get(field) {
+            pod["metadata"][field] = value.clone();
+        }
+    }
+    // The real service account is itself only dry-run. Pod admission requires
+    // a stored account even for a dry run.
+    pod["spec"]["serviceAccountName"] = PREFLIGHT_ACCOUNT.into();
+    pod["spec"].as_object_mut()?.remove("serviceAccount");
+    // The StatefulSet controller supplies a PVC volume for each claim template.
+    if object["kind"] == "StatefulSet"
+        && let Some(claims) = object["spec"]["volumeClaimTemplates"].as_array()
+    {
+        let mut volumes = pod["spec"]["volumes"].take();
+        if volumes.is_null() {
+            volumes = json!([]);
+        }
+        let volumes = volumes.as_array_mut()?;
+        for claim in claims {
+            let name = claim["metadata"]["name"].as_str()?;
+            volumes.retain(|volume| volume["name"] != name);
+            volumes.push(json!({
+                "name": name,
+                "persistentVolumeClaim": {"claimName": name},
+            }));
+        }
+        pod["spec"]["volumes"] = json!(volumes);
+    }
+    Some(pod)
+}
+
 /// Install the CRDs if Helm does not own them, dry-run every object, and clean up.
 async fn cluster(
     client: &kube::Client,
@@ -901,6 +999,7 @@ async fn cluster(
     let helm_owns_crds = !releases.items.is_empty();
     let definitions = Api::<CustomResourceDefinition>::all(client.clone());
     let namespaces = Api::<Namespace>::all(client.clone());
+    let restricted = restricted_namespaces(rendered);
     let mut installed = Vec::new();
     let mut temporary = BTreeMap::<String, String>::new();
     let result = async {
@@ -944,10 +1043,16 @@ async fn cluster(
                         .to_owned()
                 });
                 if let Some(namespace) = &namespace
-                    && !existing.contains(namespace)
                     && !temporary.contains_key(namespace)
+                    && (!existing.contains(namespace) || restricted.contains_key(namespace.as_str()))
                 {
-                    let stand_in = json!({"metadata": {"generateName": "wamn-preflight-"}});
+                    let mut stand_in = json!({"metadata": {"generateName": "wamn-preflight-"}});
+                    if let Some(labels) = restricted.get(namespace.as_str()) {
+                        stand_in["metadata"]["labels"] = json!({
+                            (ENFORCE_LABEL): labels[ENFORCE_LABEL],
+                            (WARN_LABEL): labels[WARN_LABEL],
+                        });
+                    }
                     let stand_in = namespaces
                         .create(&PostParams::default(), &serde_json::from_value(stand_in)?)
                         .await?
@@ -955,7 +1060,15 @@ async fn cluster(
                         .name
                         .context("the API server returned no namespace name")?;
                     println!("-- temporary namespace {stand_in} stands in for {namespace}");
+                    let accounts = Api::<ServiceAccount>::namespaced(client.clone(), &stand_in);
                     temporary.insert(namespace.clone(), stand_in);
+                    if restricted.contains_key(namespace.as_str()) {
+                        let account = json!({"metadata": {"name": PREFLIGHT_ACCOUNT}});
+                        accounts
+                            .create(&PostParams::default(), &serde_json::from_value(account)?)
+                            .await
+                            .with_context(|| format!("create the pod dry-run account for {namespace}"))?;
+                    }
                 }
                 planned.push(Planned {
                     label: &chart.label,
@@ -968,7 +1081,11 @@ async fn cluster(
         for mut planned in planned {
             let api: Api<DynamicObject> = match &planned.namespace {
                 Some(namespace) => {
-                    let namespace = temporary.get(namespace).unwrap_or(namespace);
+                    let namespace = if existing.contains(namespace) {
+                        namespace
+                    } else {
+                        &temporary[namespace]
+                    };
                     planned.object["metadata"]["namespace"] = namespace.as_str().into();
                     Api::namespaced_with(client.clone(), namespace, &planned.resource)
                 }
@@ -980,6 +1097,20 @@ async fn cluster(
                 describe(&planned.object),
                 planned.namespace.as_deref().map_or_default(|namespace| format!(" in {namespace}"))
             );
+            // Always check the policy from the deployment, even when the
+            // existing namespace still has different labels.
+            if let Some(namespace) = &planned.namespace
+                && restricted.contains_key(namespace.as_str())
+                && let Some(pod) = admission_pod(&planned.object)
+            {
+                let api = Api::<Pod>::namespaced(client.clone(), &temporary[namespace]);
+                let params = PostParams { dry_run: true, ..Default::default() };
+                let result = api.create(&params, &serde_json::from_value(pod)?).await;
+                match result {
+                    Ok(_) => tally.check("restricted pod", true, &subject),
+                    Err(error) => tally.check("restricted pod", false, format!("{subject}: {error}")),
+                }
+            }
             let result = if let Some(name) = planned.object["metadata"]["name"].as_str() {
                 let params = PatchParams::apply(FIELD_MANAGER).force().dry_run();
                 api.patch(name, &params, &Patch::Apply(&planned.object)).await.map(drop)
@@ -1101,12 +1232,13 @@ fn print_cluster(rendered: &[Rendered], tally: &mut Tally) {
         }
     }
     let mut namespaces = BTreeSet::new();
+    let restricted = restricted_namespaces(rendered);
     for chart in rendered {
         for object in &chart.objects {
             let namespace = object["metadata"]["namespace"]
                 .as_str()
                 .unwrap_or(&chart.namespace);
-            namespaces.insert(namespace.to_owned());
+            namespaces.insert(namespace);
             let action = if object["metadata"]["name"].is_string() {
                 "would dry-run apply"
             } else {
@@ -1121,12 +1253,29 @@ fn print_cluster(rendered: &[Rendered], tally: &mut Tally) {
                     describe(object)
                 ),
             );
+            if restricted.contains_key(namespace) && admission_pod(object).is_some() {
+                tally.note(
+                    "restricted pod",
+                    "would dry-run create",
+                    format!(
+                        "{} {} in the stand-in for {namespace}",
+                        chart.label,
+                        describe(object)
+                    ),
+                );
+            }
         }
     }
     for namespace in namespaces {
-        println!(
-            "-- would create a temporary namespace for {namespace} if it is absent, then delete it"
-        );
+        if restricted.contains_key(namespace) {
+            println!(
+                "-- would create a restricted stand-in and pod dry-run account for {namespace}, then delete the namespace"
+            );
+        } else {
+            println!(
+                "-- would create a temporary namespace for {namespace} if it is absent, then delete it"
+            );
+        }
     }
     println!("-- would delete the CRDs that this run installed and wait until they are gone");
 }
@@ -1151,4 +1300,63 @@ fn write_json(directory: &Path, file: &str, value: &Value) -> anyhow::Result<Pat
     let path = directory.join(file);
     std::fs::write(&path, serde_json::to_vec_pretty(value)?)?;
     Ok(path)
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::{PREFLIGHT_ACCOUNT, admission_pod, docker_user};
+
+    #[test]
+    fn docker_run_uses_container_identity_before_pod_defaults() {
+        let pod = json!({"securityContext": {"runAsUser": 65532, "runAsGroup": 65532}});
+        let container = json!({"securityContext": {"runAsGroup": 2000}});
+        assert_eq!(docker_user(&pod, &container).as_deref(), Some("65532:2000"));
+        assert_eq!(
+            docker_user(&json!({}), &container).as_deref(),
+            Some("0:2000")
+        );
+    }
+
+    #[test]
+    fn a_stateful_set_dry_run_pod_preserves_security_fields_and_mounts_its_claims() {
+        let context = json!({"runAsNonRoot": true, "seccompProfile": {"type": "RuntimeDefault"}});
+        let containers = json!([{
+            "name": "server",
+            "image": "example.invalid/server",
+            "volumeMounts": [{"name": "data", "mountPath": "/data"}],
+            "securityContext": {"allowPrivilegeEscalation": false, "capabilities": {"drop": ["ALL"]}},
+        }]);
+        let annotations =
+            json!({"container.apparmor.security.beta.kubernetes.io/server": "runtime/default"});
+        let object = json!({
+            "kind": "StatefulSet",
+            "spec": {
+                "template": {
+                    "metadata": {"annotations": annotations},
+                    "spec": {
+                        "securityContext": context,
+                        "containers": containers,
+                        "serviceAccountName": "server",
+                    },
+                },
+                "volumeClaimTemplates": [{"metadata": {"name": "data"}}],
+            },
+        });
+        let pod = admission_pod(&object).expect("StatefulSet Pod");
+        assert_eq!(pod["kind"], "Pod");
+        assert_eq!(pod["metadata"]["annotations"], annotations);
+        assert_eq!(pod["spec"]["securityContext"], context);
+        assert_eq!(pod["spec"]["containers"], containers);
+        assert_eq!(pod["spec"]["serviceAccountName"], PREFLIGHT_ACCOUNT);
+        let mount = &pod["spec"]["containers"][0]["volumeMounts"][0]["name"];
+        let volume = pod["spec"]["volumes"]
+            .as_array()
+            .expect("Pod volumes")
+            .iter()
+            .find(|volume| volume["name"] == *mount)
+            .expect("volume for the StatefulSet claim");
+        assert_eq!(volume["persistentVolumeClaim"]["claimName"], *mount);
+    }
 }

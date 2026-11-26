@@ -2,6 +2,7 @@
 
 The org chart declares the tenant namespace, base RBAC, resource quota, and default-deny ingress and egress.
 The platform selects the namespace by its `wamn.dev/org` label.
+The chart sets Pod Security enforcement and warnings to `restricted` in the org namespace.
 Set `org` to the registry org slug. The platform, hosts, cert-manager, default, kube-* and wamn names are reserved.
 The quota caps object counts and storage requests. Set individual limits in `quota`.
 

@@ -3,7 +3,7 @@
 use std::{net::IpAddr, path::Path, time::Duration};
 
 use anyhow::Context as _;
-use serde_json::Value;
+use serde_json::{Value, json};
 use wamn_kubernetes::{Target, helm, job, org_resources};
 
 const INFRASTRUCTURE_RELEASE: &str = "wamn-infrastructure";
@@ -12,6 +12,17 @@ const TRUST_MANAGER_WEBHOOK: &str = "trust-manager";
 const PLATFORM_RELEASE: &str = "wamn";
 const SYSTEM_SQL_JOB: &str = "wamn-system-sql";
 const ROLLOUT_TIMEOUT: Duration = Duration::from_mins(16);
+
+/// Build the Namespace that the platform installer owns.
+pub fn platform_namespace(name: &str) -> Value {
+    json!({
+        "apiVersion": "v1", "kind": "Namespace",
+        "metadata": {"name": name, "labels": {
+            "pod-security.kubernetes.io/enforce": "restricted",
+            "pod-security.kubernetes.io/warn": "restricted",
+        }},
+    })
+}
 
 pub(crate) async fn install_infrastructure(
     target: &Target,
@@ -32,26 +43,12 @@ pub(crate) async fn install_infrastructure(
     // On a fresh cluster, finish the cert-manager startup check first.
     if !org_resources::webhook_configured(target, CERT_MANAGER_WEBHOOK).await? {
         set_trust_manager(false)?;
-        upgrade(
-            target,
-            &infrastructure,
-            INFRASTRUCTURE_RELEASE,
-            values,
-            helm::Install::CreateNamespace,
-        )
-        .await?;
+        upgrade(target, &infrastructure, INFRASTRUCTURE_RELEASE, values).await?;
         org_resources::wait_for_webhook_ca(target, CERT_MANAGER_WEBHOOK, ROLLOUT_TIMEOUT).await?;
     }
     // Explicitly enable it even when Helm would carry forward the bootstrap values.
     set_trust_manager(true)?;
-    upgrade(
-        target,
-        &infrastructure,
-        INFRASTRUCTURE_RELEASE,
-        values,
-        helm::Install::CreateNamespace,
-    )
-    .await?;
+    upgrade(target, &infrastructure, INFRASTRUCTURE_RELEASE, values).await?;
     org_resources::wait_for_webhook_ca(target, TRUST_MANAGER_WEBHOOK, ROLLOUT_TIMEOUT).await
 }
 
@@ -72,7 +69,6 @@ pub(crate) async fn install_platform(
         &charts.join("platform"),
         PLATFORM_RELEASE,
         &[values, chart_values.path()],
-        helm::Install::ExistingNamespace,
     )
     .await?;
     org_resources::wait_for_public_root(target, "hosts", "identity-ca", ROLLOUT_TIMEOUT).await
@@ -149,7 +145,6 @@ async fn upgrade(
     chart: &Path,
     release: &str,
     values: &[&Path],
-    install: helm::Install,
 ) -> anyhow::Result<()> {
     helm::upgrade(
         target,
@@ -161,7 +156,7 @@ async fn upgrade(
             timeout: ROLLOUT_TIMEOUT,
             jobs: release == PLATFORM_RELEASE,
         },
-        install,
+        helm::Install::ExistingNamespace,
     )
     .await
     .with_context(|| format!("install or upgrade {release}"))
