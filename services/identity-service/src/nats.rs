@@ -1,6 +1,6 @@
 //! NATS resolver publication and the permission templates owned by identity.
 
-use std::{path::PathBuf, time::Duration};
+use std::{path::PathBuf, sync::Weak, time::Duration};
 
 use async_nats::{Client, ConnectOptions, ServerAddr};
 use http_body_util::Full;
@@ -10,11 +10,11 @@ use sqlx::PgConnection;
 use tokio::sync::OnceCell;
 use wamn_identity::authentication_event::{Event, Outcome};
 use wamn_identity::identity::nats as key_store;
-use wamn_identity::nats::{self, Authority, LimitsPerProject};
+use wamn_identity::nats::{self, Authority};
 use wamn_identity::workload_identity;
 use wamn_identity_protocol::nats::{Account, EnsureAccount, SignHostUser, SignUser, SignedUser};
 use wamn_kubernetes::client::KubernetesApi;
-use wamn_registry::{OrgId, name};
+use wamn_registry::{EnvName, OrgId, name};
 
 use crate::{IdentityServiceError, Inner, response, unavailable};
 
@@ -22,14 +22,14 @@ const PLATFORM_NAMESPACE: &str = "platform";
 const OPERATOR_SECRET: &str = "wamn-nats-operator";
 const RUNTIME_OPERATOR_SECRET: &str = "wamn-nats-runtime-operator";
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
+const REFRESH_INTERVAL: Duration = Duration::from_secs(30);
 
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct Settings {
     url: String,
     tls_ca: PathBuf,
-    max_projects: i64,
-    limits_per_project: LimitsPerProject,
+    file_store_bytes: i64,
 }
 
 pub(super) struct State {
@@ -46,21 +46,24 @@ impl State {
             .await
     }
 
-    async fn lookup_account(&self, account: &str) -> Result<Bytes, IdentityServiceError> {
-        let subject = nats::LOOKUP_SUBJECT.replacen('*', account, 1);
+    async fn request(
+        &self,
+        subject: String,
+        body: &'static [u8],
+    ) -> Result<Bytes, IdentityServiceError> {
         tokio::time::timeout(REQUEST_TIMEOUT, async {
             let client = self
                 .client()
                 .await
                 .map_err(|_| IdentityServiceError::new("connect to NATS resolver failed"))?;
             client
-                .request(subject, Bytes::new())
+                .request(subject, Bytes::from_static(body))
                 .await
                 .map(|message| message.payload)
-                .map_err(|_| IdentityServiceError::new("request NATS account lookup failed"))
+                .map_err(|_| IdentityServiceError::new("request NATS account information failed"))
         })
         .await
-        .map_err(|_| IdentityServiceError::new("NATS account lookup timed out"))?
+        .map_err(|_| IdentityServiceError::new("NATS account information request timed out"))?
     }
 
     async fn resolver_request(
@@ -119,15 +122,14 @@ pub(super) async fn start(
     let Some(Settings {
         url,
         tls_ca,
-        max_projects,
-        limits_per_project,
+        file_store_bytes,
     }) = settings
     else {
         return Ok(None);
     };
-    if max_projects < 1 {
+    if file_store_bytes < 1 {
         return Err(IdentityServiceError::new(
-            "NATS project limit must be positive",
+            "NATS file store capacity must be positive",
         ));
     }
     let server: ServerAddr = url
@@ -144,7 +146,7 @@ pub(super) async fn start(
             "identity NATS bootstrap requires the platform namespace",
         ));
     }
-    let bootstrap = key_store::bootstrap(db, issuer, envelope, max_projects, limits_per_project)
+    let bootstrap = key_store::bootstrap(db, issuer, envelope, file_store_bytes)
         .await
         .map_err(|error| {
             tracing::error!(%error, "NATS bootstrap failed");
@@ -226,13 +228,37 @@ pub(super) async fn ensure_account(
             Err(error) => signing_error(&error),
         };
     }
-    let public_key = match key_store::ensure_env(
+    match publish_account(inner, state, client, org, &request.env, Some(count)).await {
+        Ok(Some(public_key)) => json(&Account { public_key }),
+        Ok(None) => unavailable(),
+        Err(error) if error.is_limit_refused() => {
+            tracing::warn!(error = ?error, "NATS environment limits refused");
+            response(
+                StatusCode::CONFLICT,
+                "application/json",
+                br#"{"error":"NATS environment limits conflict with usage or store capacity"}"#
+                    .to_vec(),
+            )
+        }
+        Err(error) => signing_error(&error),
+    }
+}
+
+async fn publish_account(
+    inner: &Inner,
+    state: &State,
+    client: PgConnection,
+    org: &OrgId,
+    env: &EnvName,
+    project_count: Option<i32>,
+) -> Result<Option<String>, nats::Error> {
+    key_store::ensure_env(
         &state.authority,
         client,
         &inner.envelope,
-        (&inner.issuer, org, &request.env),
-        count,
-        async |account| state.lookup_account(account).await,
+        (&inner.issuer, org, env),
+        project_count,
+        |subject, body| state.request(subject, body),
         async |account, jwt| {
             state
                 .resolver_request(nats::UPDATE_SUBJECT, Some(account), jwt)
@@ -240,18 +266,53 @@ pub(super) async fn ensure_account(
         },
     )
     .await
-    {
-        Ok(value) => value,
-        Err(error) if error.is_project_limit() => {
-            return response(
-                StatusCode::CONFLICT,
-                "application/json",
-                br#"{"error":"platform NATS project limit exceeded"}"#.to_vec(),
-            );
+}
+
+/// Apply operator SQL edits and retry pending account publications.
+pub(super) async fn refresh_accounts(inner: Weak<Inner>) {
+    loop {
+        tokio::time::sleep(REFRESH_INTERVAL).await;
+        let Some(inner) = inner.upgrade() else { return };
+        let Some(state) = inner.nats.as_ref() else {
+            return;
+        };
+        if let Err(error) = refresh_pending(&inner, state).await {
+            tracing::warn!(error = ?error, "scan NATS account changes failed");
         }
-        Err(error) => return signing_error(&error),
+    }
+}
+
+async fn refresh_pending(inner: &Inner, state: &State) -> Result<(), nats::Error> {
+    let _slot = inner
+        .request_slots
+        .acquire()
+        .await
+        .map_err(|source| nats::Error::new("acquire NATS refresh slot", source))?;
+    let connect = async || {
+        crate::connect_database(&inner.connection)
+            .await
+            .map_err(|source| nats::Error::new("connect for NATS limit refresh", source))
     };
-    json(&Account { public_key })
+    let pending = {
+        let mut db = inner.pool.acquire().await.map_err(|source| {
+            nats::Error::new("acquire connection for NATS refresh scan", source)
+        })?;
+        key_store::accounts_to_refresh(&mut db, &inner.issuer).await?
+    };
+    for (org, env) in pending {
+        let org = org
+            .parse()
+            .map_err(|source| nats::Error::new("read NATS account org", source))?;
+        let env = env
+            .parse()
+            .map_err(|source| nats::Error::new("read NATS account env", source))?;
+        if let Err(error) =
+            publish_account(inner, state, connect().await?.client, &org, &env, None).await
+        {
+            tracing::warn!(%org, %env, error = ?error, "refresh NATS environment limits failed");
+        }
+    }
+    Ok(())
 }
 
 pub(super) async fn sign_user(

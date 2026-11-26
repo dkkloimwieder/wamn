@@ -11,7 +11,6 @@ pub mod migrations;
 pub mod operation_grant_lock;
 pub mod package_migrations;
 pub mod platform_identity;
-pub mod platform_sql;
 pub mod provisioning_transaction;
 
 pub use platform_identity::{bind_platform_principal, bind_platform_principal_sql};

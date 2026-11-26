@@ -67,7 +67,7 @@ async fn post<T: DeserializeOwned>(
     let mut response = http.post(endpoint, serde_json::to_vec(request)?).await?;
     anyhow::ensure!(
         response.status() != StatusCode::CONFLICT,
-        "platform NATS project limit exceeded"
+        "NATS environment limits conflict with usage or store capacity"
     );
     anyhow::ensure!(
         response.status() == StatusCode::OK,

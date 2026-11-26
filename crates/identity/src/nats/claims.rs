@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha512_256};
 use zeroize::Zeroizing;
 
-use super::Error;
+use super::{Error, Limits};
 
 const HEADER: &[u8] = br#"{"typ":"JWT","alg":"ed25519-nkey"}"#;
 const UNLIMITED: i64 = -1;
@@ -51,51 +51,43 @@ struct Account<'a> {
 
 #[derive(Serialize)]
 struct AccountLimits {
-    subs: i64,
+    #[serde(flatten)]
+    adjustable: Limits,
     data: i64,
-    payload: i64,
-    conn: i64,
     leaf: i64,
     imports: i64,
     exports: i64,
     disallow_bearer: bool,
     mem_storage: i64,
-    disk_storage: i64,
-    streams: i64,
-    consumer: i64,
 }
 
-#[derive(Debug, Default, Deserialize, PartialEq, Eq)]
-#[serde(default)]
-pub struct ClientLimits {
-    pub conn: i64,
-    pub subs: i64,
-    pub payload: i64,
-}
-
-pub(super) const UNLIMITED_CLIENT_LIMITS: ClientLimits = ClientLimits {
+pub(super) const PLATFORM_LIMITS: Limits = Limits {
     conn: UNLIMITED,
     subs: UNLIMITED,
     payload: UNLIMITED,
+    consumer: 0,
+    streams: 0,
+    disk_storage: 0,
 };
 
-pub(crate) fn account_revision_to_replace(
-    jwt: &[u8],
-    issued_at: i64,
-    limits: &ClientLimits,
-) -> Result<Option<i64>, Error> {
-    #[derive(Deserialize)]
-    struct StoredAccount {
-        iat: i64,
-        nats: StoredNats,
-    }
+#[derive(Deserialize)]
+pub(crate) struct AccountRevision {
+    pub iat: i64,
+    nats: RevisionClaims,
+}
 
-    #[derive(Deserialize)]
-    struct StoredNats {
-        #[serde(default)]
-        limits: ClientLimits,
+impl AccountRevision {
+    pub(crate) fn limits(&self) -> Limits {
+        self.nats.limits
     }
+}
 
+#[derive(Deserialize)]
+struct RevisionClaims {
+    limits: Limits,
+}
+
+pub(crate) fn account_revision(jwt: &[u8]) -> Result<Option<AccountRevision>, Error> {
     if jwt.is_empty() {
         return Ok(None);
     }
@@ -110,13 +102,9 @@ pub(crate) fn account_revision_to_replace(
     let decoded = URL_SAFE_NO_PAD
         .decode(payload)
         .map_err(|source| Error::new("decode NATS resolver account JWT payload", source))?;
-    let stored: StoredAccount = serde_json::from_slice(&decoded)
-        .map_err(|source| Error::new("decode NATS resolver account claims", source))?;
-    // An older resolver revision means the committed revision is still pending.
-    Ok(
-        (stored.iat > issued_at || (stored.iat == issued_at && stored.nats.limits != *limits))
-            .then_some(stored.iat),
-    )
+    serde_json::from_slice(&decoded)
+        .map(Some)
+        .map_err(|source| Error::new("decode NATS resolver account claims", source))
 }
 
 #[derive(Serialize)]
@@ -187,12 +175,9 @@ pub(super) fn account(
     subject: &str,
     name: &str,
     issued_at: i64,
-    project_count: i32,
-    client_limits: &ClientLimits,
+    limits: Limits,
     signing_keys: &[String],
 ) -> Result<String, Error> {
-    // One file-backed stream of 256 MiB per project.
-    let disk_storage = i64::from(project_count) * 256 * 1024 * 1024;
     encode(
         issuer,
         subject,
@@ -202,18 +187,13 @@ pub(super) fn account(
             claim_type: "account",
             version: 2,
             limits: AccountLimits {
-                subs: client_limits.subs,
+                adjustable: limits,
                 data: UNLIMITED,
-                payload: client_limits.payload,
-                conn: client_limits.conn,
                 leaf: 0,
                 imports: 0,
                 exports: 0,
                 disallow_bearer: true,
                 mem_storage: 0,
-                disk_storage,
-                streams: i64::from(project_count),
-                consumer: if project_count == 0 { 0 } else { UNLIMITED },
             },
             signing_keys,
         },
@@ -324,29 +304,34 @@ mod tests {
     use super::*;
 
     #[test]
-    fn an_account_stores_256_mib_per_project_and_sets_no_data_limit() {
-        let operator = KeyPair::new_operator();
+    fn only_streams_and_disk_scale_with_the_project_count() {
+        let op = KeyPair::new_operator();
         let account = KeyPair::new_account();
-        for projects in [0, 1, 3] {
-            let jwt = super::account(
-                &operator,
-                &account.public_key(),
-                "env",
-                1,
-                projects,
-                &UNLIMITED_CLIENT_LIMITS,
-                &[],
-            )
-            .unwrap();
-            let payload = jwt.split('.').nth(1).unwrap();
-            let claims: serde_json::Value =
-                serde_json::from_slice(&URL_SAFE_NO_PAD.decode(payload).unwrap()).unwrap();
-            let limits = &claims["nats"]["limits"];
-            assert_eq!(
-                limits["disk_storage"],
-                i64::from(projects) * 256 * 1024 * 1024
-            );
-            assert_eq!(limits["data"], -1);
-        }
+        let configured = super::super::EnvLimits {
+            connections: 52,
+            consumers: 1400,
+            subscriptions: 8000,
+            payload_bytes: 512 * 1024,
+            streams_per_project: 3,
+            disk_bytes_per_project: 512 * 1024 * 1024,
+        };
+        let limits = super::super::env_limits(&configured, 3).unwrap();
+        let jwt = super::account(&op, &account.public_key(), "env", 1, limits, &[]).unwrap();
+        let revision = account_revision(jwt.as_bytes()).unwrap().unwrap();
+        let payload = jwt.split('.').nth(1).unwrap();
+        let claims: serde_json::Value =
+            serde_json::from_slice(&URL_SAFE_NO_PAD.decode(payload).unwrap()).unwrap();
+        assert_eq!(claims["nats"]["limits"]["data"], UNLIMITED);
+        assert_eq!(
+            revision.limits(),
+            Limits {
+                conn: configured.connections,
+                consumer: configured.consumers,
+                subs: configured.subscriptions,
+                payload: configured.payload_bytes,
+                streams: 9,
+                disk_storage: 1536 * 1024 * 1024,
+            }
+        );
     }
 }

@@ -4,7 +4,7 @@
 use std::{io::Write as _, time::Duration};
 
 use anyhow::{Context as _, Result, ensure};
-use async_nats::{Client, ConnectErrorKind, Event, ServerError, Subscriber};
+use async_nats::{Client, ConnectErrorKind, Event, ServerError, Subscriber, jetstream};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use futures_util::StreamExt as _;
 use nkeys::KeyPair;
@@ -16,7 +16,7 @@ use tokio::sync::{mpsc, oneshot};
 use tokio::time::{sleep, timeout};
 use wamn_envelope::encryption::Envelope;
 use wamn_identity::identity::nats as key_store;
-use wamn_identity::nats::{self, Bootstrap, LimitsPerProject, Permissions, SubjectPermission};
+use wamn_identity::nats::{self, Bootstrap, Permissions, SubjectPermission};
 use wamn_registry::{EnvName, OrgId};
 use wamn_test_infrastructure::{
     containers::{self, Nats},
@@ -42,8 +42,7 @@ struct DatabaseSettings {
 
 #[derive(Deserialize)]
 struct NatsSettings {
-    max_projects: i64,
-    limits_per_project: LimitsPerProject,
+    file_store_bytes: i64,
 }
 
 /// The identity database, the bootstrapped authority and the NATS server that trusts it.
@@ -62,14 +61,14 @@ async fn platform() -> Result<Platform> {
     let rendered = containers::render_platform()?;
     let settings = identity_settings(&rendered)?;
     let system = database::system().await?;
+    register_envs(&system).await?;
     let mut db = connect_identity(&system, &settings.database.username).await?;
     let envelope = local_envelope()?;
     let bootstrap = key_store::bootstrap(
         &mut db,
         &settings.issuer,
         &envelope,
-        settings.nats.max_projects,
-        settings.nats.limits_per_project,
+        settings.nats.file_store_bytes,
     )
     .await?;
     let nats = containers::start_nats(&rendered, &bootstrap.operator_include).await?;
@@ -89,6 +88,31 @@ async fn platform() -> Result<Platform> {
         nats,
         resolver,
     })
+}
+
+async fn register_envs(system: &System) -> Result<()> {
+    let mut admin = system.admin().await?;
+    let mut tx =
+        wamn_postgres::provisioning_transaction::provisioning_transaction(&mut admin).await?;
+    sqlx::query("INSERT INTO registry.env (org, env) SELECT $1, unnest(ARRAY['dev', 'prod'])")
+        .bind(ORG)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+async fn edit_disk_limits(system: &System, bytes: i64) -> Result<()> {
+    let mut admin = system.admin().await?;
+    let mut tx =
+        wamn_postgres::provisioning_transaction::provisioning_transaction(&mut admin).await?;
+    sqlx::query("UPDATE registry.env SET nats_disk_bytes_per_project = $1 WHERE org = $2")
+        .bind(bytes)
+        .bind(ORG)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(())
 }
 
 fn identity_settings(rendered: &[Value]) -> Result<Settings> {
@@ -116,20 +140,22 @@ fn local_envelope() -> Result<Envelope> {
 }
 
 impl Platform {
-    /// Ensure the environment account for one project and publish it to the resolver.
     async fn env(&self, env: &str) -> Result<(String, Value)> {
+        self.publish(env, Some(1)).await
+    }
+
+    async fn publish(&self, env: &str, project_count: Option<i32>) -> Result<(String, Value)> {
         let mut account_claims = Value::Null;
         let account = key_store::ensure_env(
             &self.bootstrap.authority,
             connect_identity(&self.system, &self.database_login).await?,
             &self.envelope,
             (&self.issuer, &ORG.parse()?, &env.parse()?),
-            1,
-            async |account| {
-                let subject = nats::LOOKUP_SUBJECT.replacen('*', account, 1);
+            project_count,
+            |subject, body| async move {
                 let reply = self
                     .resolver
-                    .request(subject, "".into())
+                    .request(subject, body.into())
                     .await
                     .map_err(std::io::Error::other)?;
                 Ok::<_, std::io::Error>(reply.payload)
@@ -150,7 +176,8 @@ impl Platform {
                 Ok(())
             },
         )
-        .await?;
+        .await?
+        .context("expected an environment account publication")?;
         Ok((account, account_claims))
     }
 
@@ -225,6 +252,7 @@ async fn env_account_publication_serializes_one_env_and_retries_its_committed_re
 -> Result<()> {
     let settings = identity_settings(&containers::render_platform()?)?;
     let system = database::system().await?;
+    register_envs(&system).await?;
     let connect = || connect_identity(&system, &settings.database.username);
     let mut first = connect().await?;
     let mut second = connect().await?;
@@ -242,15 +270,14 @@ async fn env_account_publication_serializes_one_env_and_retries_its_committed_re
         &mut first,
         issuer,
         &envelope,
-        settings.nats.max_projects,
-        settings.nats.limits_per_project,
+        settings.nats.file_store_bytes,
     )
     .await?
     .authority;
     let org = ORG.parse()?;
     let dev = "dev".parse()?;
     let prod = "prod".parse()?;
-    let missing = async |_: &str| Ok::<_, std::io::Error>(Vec::<u8>::new());
+    let missing = |_: String, _: &'static [u8]| async { Ok::<_, std::io::Error>(Vec::<u8>::new()) };
     let (publishing, publication) = oneshot::channel();
     let (release, finish) = oneshot::channel();
     let initial = key_store::ensure_env(
@@ -258,7 +285,7 @@ async fn env_account_publication_serializes_one_env_and_retries_its_committed_re
         first,
         &envelope,
         (issuer, &org, &dev),
-        1,
+        Some(1),
         missing,
         async move |_, jwt| {
             publishing
@@ -278,7 +305,7 @@ async fn env_account_publication_serializes_one_env_and_retries_its_committed_re
             second,
             &envelope,
             (issuer, &org, &dev),
-            1,
+            Some(1),
             missing,
             async |_, jwt| {
                 retry_jwt = jwt;
@@ -321,7 +348,7 @@ async fn env_account_publication_serializes_one_env_and_retries_its_committed_re
                     sibling,
                     &envelope,
                     (issuer, &org, &prod),
-                    1,
+                    Some(1),
                     missing,
                     async |_, _| Ok(()),
                 ),
@@ -346,6 +373,92 @@ async fn env_account_publication_serializes_one_env_and_retries_its_committed_re
     let (initial, concurrent) = timeout(WAIT, async { tokio::join!(initial, concurrent) }).await?;
     concurrent?;
     ensure!(initial.is_err(), "unacknowledged publication must fail");
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires: docker, bin:helm"]
+async fn concurrent_env_allocations_share_the_file_store_budget() -> Result<()> {
+    let settings = identity_settings(&containers::render_platform()?)?;
+    let system = database::system().await?;
+    register_envs(&system).await?;
+    edit_disk_limits(&system, settings.nats.file_store_bytes / 2 + 1).await?;
+    let mut dev_connection = connect_identity(&system, &settings.database.username).await?;
+    let prod_connection = connect_identity(&system, &settings.database.username).await?;
+    let envelope = local_envelope()?;
+    let issuer = settings.issuer.as_str();
+    let authority = key_store::bootstrap(
+        &mut dev_connection,
+        issuer,
+        &envelope,
+        settings.nats.file_store_bytes,
+    )
+    .await?
+    .authority;
+    let org = ORG.parse()?;
+    let dev = "dev".parse()?;
+    let prod = "prod".parse()?;
+    let allocate = async |connection, env| {
+        key_store::ensure_env(
+            &authority,
+            connection,
+            &envelope,
+            (issuer, &org, env),
+            Some(1),
+            |_, _| async { Ok::<_, std::io::Error>(Vec::<u8>::new()) },
+            async |_, _| Ok(()),
+        )
+        .await
+    };
+    let (dev, prod) = tokio::join!(
+        allocate(dev_connection, &dev),
+        allocate(prod_connection, &prod)
+    );
+    let refusal = match (dev, prod) {
+        (Ok(Some(_)), Err(error)) | (Err(error), Ok(Some(_))) => error,
+        outcome => anyhow::bail!("expected one allocated account and one refusal, got {outcome:?}"),
+    };
+    assert!(refusal.is_limit_refused(), "{refusal:?}");
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires: docker, bin:helm"]
+async fn disk_shrink_waits_for_stream_capacity_to_be_released() -> Result<()> {
+    let mut platform = platform().await?;
+    let (_, initial) = platform.env("dev").await?;
+    let initial_disk = initial["nats"]["limits"]["disk_storage"]
+        .as_i64()
+        .context("signed storage limit")?;
+    let (_, user) = platform.env_user("dev").await?;
+    let js = jetstream::new(platform.connect(&user).await?);
+    let stream = js
+        .create_stream(jetstream::stream::Config {
+            name: "probe".into(),
+            subjects: vec![SUBJECT.into()],
+            max_bytes: initial_disk,
+            ..Default::default()
+        })
+        .await?;
+    let smaller = initial_disk / 2;
+    edit_disk_limits(&platform.system, smaller).await?;
+    let pending = key_store::accounts_to_refresh(&mut platform.db, &platform.issuer).await?;
+    assert!(pending.iter().any(|(org, env)| org == ORG && env == "dev"));
+
+    let refused = platform
+        .publish("dev", None)
+        .await
+        .expect_err("shrink under allocation must fail");
+    assert!(
+        refused
+            .downcast_ref::<nats::Error>()
+            .is_some_and(nats::Error::is_limit_refused),
+        "{refused:#}"
+    );
+    js.delete_stream(stream.cached_info().config.name.as_str())
+        .await?;
+    let (_, shrunk) = platform.publish("dev", None).await?;
+    assert_eq!(shrunk["nats"]["limits"]["disk_storage"], smaller);
     Ok(())
 }
 

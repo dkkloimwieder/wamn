@@ -2,27 +2,23 @@
 
 use std::error;
 
-use crate::nats::{self, Authority, Bootstrap, BootstrapKeys, Error, LimitsPerProject, User};
+use crate::nats::{self, Authority, Bootstrap, BootstrapKeys, Error, User};
 use nkeys::KeyPairType;
-use sqlx::{Connection as _, PgConnection};
+use sqlx::PgConnection;
 use wamn_envelope::encryption::Envelope;
 use wamn_registry::{EnvName, OrgId};
 
 use super::nats_store;
 
-/// Create or load the platform's keys in one transaction under the issuer lock.
+/// Create or load the platform's immutable keys before signing its credentials.
 pub async fn bootstrap(
     client: &mut PgConnection,
     issuer: &str,
     envelope: &Envelope,
-    max_projects: i64,
-    limits_per_project: LimitsPerProject,
+    file_store_bytes: i64,
 ) -> Result<Bootstrap, Error> {
-    limits_per_project.validate()?;
-    let mut tx = client.begin().await.map_err(nats_store::database_error)?;
-    nats_store::lock(&mut tx, issuer).await?;
     let root = nats_store::platform_key(
-        &mut tx,
+        client,
         envelope,
         issuer,
         "operator-root",
@@ -30,7 +26,7 @@ pub async fn bootstrap(
     )
     .await?;
     let signing = nats_store::platform_key(
-        &mut tx,
+        client,
         envelope,
         issuer,
         "operator-signing",
@@ -38,7 +34,7 @@ pub async fn bootstrap(
     )
     .await?;
     let system = nats_store::platform_key(
-        &mut tx,
+        client,
         envelope,
         issuer,
         "system-account",
@@ -46,7 +42,7 @@ pub async fn bootstrap(
     )
     .await?;
     let system_signing = nats_store::platform_key(
-        &mut tx,
+        client,
         envelope,
         issuer,
         "system-signing",
@@ -54,7 +50,7 @@ pub async fn bootstrap(
     )
     .await?;
     let platform = nats_store::platform_key(
-        &mut tx,
+        client,
         envelope,
         issuer,
         "platform-account",
@@ -62,7 +58,7 @@ pub async fn bootstrap(
     )
     .await?;
     let platform_signing = nats_store::platform_key(
-        &mut tx,
+        client,
         envelope,
         issuer,
         "platform-signing",
@@ -70,15 +66,13 @@ pub async fn bootstrap(
     )
     .await?;
     let runtime_operator = nats_store::platform_key(
-        &mut tx,
+        client,
         envelope,
         issuer,
         "runtime-operator",
         KeyPairType::User,
     )
     .await?;
-    tx.commit().await.map_err(nats_store::database_error)?;
-
     nats::bootstrap(
         BootstrapKeys {
             root,
@@ -89,55 +83,76 @@ pub async fn bootstrap(
             platform_signing,
             runtime_operator,
         },
-        max_projects,
-        limits_per_project,
+        file_store_bytes,
     )
 }
 
-/// Persist and publish the environment's current account JWT under its session lock.
-/// For an existing account, `lookup` returns the resolver's JWT or empty bytes.
-/// The dedicated database connection is consumed. Publication errors leave the
-/// committed revision available for a retry.
+/// List registered accounts with an unpublished revision or changed limits.
+pub async fn accounts_to_refresh(
+    client: &mut PgConnection,
+    issuer: &str,
+) -> Result<Vec<(String, String)>, Error> {
+    nats_store::accounts_to_refresh(client, issuer).await
+}
+
+/// Persist and publish the environment account under its session lock.
+///
+/// A project count from the apply or teardown request sets stream allocations.
+/// With no count, refresh the stored allocation if the account is still in use.
+/// The dedicated database connection is consumed. The system-account request
+/// returns NATS resolver and monitoring payloads.
 ///
 /// # Errors
 ///
-/// Returns an error if the lock, key storage, signing, or resolver operation fails,
-/// or if the account would exceed the installation's project limit.
-pub async fn ensure_env<B, E>(
+/// Returns an error on key, SQL or NATS failure, or if the limits conflict with
+/// current use or the installation's file store capacity.
+pub async fn ensure_env<B, E, F>(
     authority: &Authority,
     client: PgConnection,
     envelope: &Envelope,
     (issuer, org, env): (&str, &OrgId, &EnvName),
-    project_count: i32,
-    lookup: impl AsyncFnOnce(&str) -> Result<B, E>,
+    project_count: Option<i32>,
+    request: impl Fn(String, &'static [u8]) -> F + Sync,
     publish: impl AsyncFnOnce(&str, String) -> Result<(), E>,
-) -> Result<String, Error>
+) -> Result<Option<String>, Error>
 where
     B: AsRef<[u8]>,
+    F: Future<Output = Result<B, E>> + Send,
     E: error::Error + Send + Sync + 'static,
 {
-    let limits = authority.env_limits(project_count)?;
     nats_store::with_env_lock(client, issuer, (org, env), async |client| {
-        let key = nats_store::ensure_env(
+        let Some((key, limits)) = nats_store::ensure_env(
             client,
             envelope,
             issuer,
             (org, env),
             project_count,
-            authority.max_projects(),
-            async |subject, issued_at| {
-                let jwt = lookup(subject).await.map_err(|source| {
+            authority.file_store_bytes(),
+            async |subject, desired, committed| {
+                let lookup = nats::LOOKUP_SUBJECT.replacen('*', subject, 1);
+                let jwt = request(lookup, b"").await.map_err(|source| {
                     Error::new("look up NATS environment account claim", source)
                 })?;
-                nats::account_revision_to_replace(jwt.as_ref(), issued_at, &limits)
+                let observed = nats::account_revision(jwt.as_ref())?;
+                let current = observed.as_ref().map(nats::AccountRevision::limits);
+                if let Some(current) = current.or(committed)
+                    && current.exceeds(desired)
+                {
+                    nats::check_shrink(subject, current, desired, &request).await?;
+                }
+                Ok(observed)
             },
         )
-        .await?;
-        let (public_key, jwt) = authority.env_account(org, env, project_count, key, &limits)?;
+        .await?
+        else {
+            return Ok(None);
+        };
+        let (public_key, jwt) = authority.env_account(org, env, key, limits)?;
         publish(&public_key, jwt)
             .await
             .map_err(|source| Error::new("publish NATS environment account", source))?;
-        Ok(public_key)
+        nats_store::acknowledge(client, issuer, (org, env), limits.disk_storage).await?;
+        Ok(Some(public_key))
     })
     .await
 }
@@ -165,6 +180,7 @@ pub async fn retire_env<E: error::Error + Send + Sync + 'static>(
         publish(jwt)
             .await
             .map_err(|source| Error::new("retire NATS environment account", source))?;
+        nats_store::acknowledge(client, issuer, (org, env), 0).await?;
         Ok(Some(account))
     })
     .await

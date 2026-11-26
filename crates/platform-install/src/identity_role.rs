@@ -36,7 +36,21 @@ pub const IDENTITY_ISSUER_READ_COLUMNS: [(&str, &str, &[&str]); 9] = [
     ),
     ("registry", "org", &["id", "active"]),
     ("registry", "project", &["org", "id"]),
-    ("registry", "env", &["org", "env", "active"]),
+    (
+        "registry",
+        "env",
+        &[
+            "org",
+            "env",
+            "active",
+            "nats_connections",
+            "nats_consumers",
+            "nats_subscriptions",
+            "nats_payload_bytes",
+            "nats_streams_per_project",
+            "nats_disk_bytes_per_project",
+        ],
+    ),
     ("identity", "org_role", &["principal_id", "org", "role"]),
     (
         "identity",
@@ -176,7 +190,7 @@ pub fn grants_sql() -> String {
          GRANT SELECT, INSERT, UPDATE, DELETE ON \
            identity.session_key, identity.session_signing_state TO {role}; \
          GRANT SELECT, INSERT ON identity.nats_key TO {role}; \
-         GRANT UPDATE (project_count, issued_at) ON identity.nats_key TO {role}; \
+         GRANT UPDATE (project_count, issued_at, claim_limits, reserved_disk_bytes, published) ON identity.nats_key TO {role}; \
          GRANT EXECUTE ON FUNCTION identity.is_project_admin(uuid,text,text), identity.has_project_access(uuid,text,text,text) TO {role};",
     );
     for (schema, table, columns) in IDENTITY_ISSUER_READ_COLUMNS {

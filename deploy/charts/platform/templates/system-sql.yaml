@@ -54,8 +54,6 @@ spec:
             - /etc/wamn/system-sql/database.json
             - --platform-domain
             - {{ required "Set platformDomain to the platform email domain." .Values.platformDomain | quote }}
-            - --max-projects
-            - {{ .Values.global.maxProjects | quote }}
           volumeMounts:
             - {name: configuration, mountPath: /etc/wamn/system-sql, readOnly: true}
             - {name: database, mountPath: /etc/wamn/db, readOnly: true}

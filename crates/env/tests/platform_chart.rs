@@ -241,6 +241,63 @@ fn web_and_owner_invitation_policies_use_the_control_pod_port() -> anyhow::Resul
 }
 
 #[test]
+fn nats_file_store_and_identity_share_the_platform_byte_budget() -> anyhow::Result<()> {
+    let chart = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../deploy/charts/platform");
+    for provider in ["kind", "gcp"] {
+        let values = serde_yaml::from_slice(&std::fs::read(
+            chart.join(format!("values-{provider}.yaml")),
+        )?)?;
+        let entry = wamn_kubernetes::platform_env::entry(&chart, "platform", "wamn", values)?;
+        let objects = wamn_kubernetes::helm::template(&entry)?;
+        let config = |name: &str, key: &str| -> anyhow::Result<&str> {
+            objects
+                .iter()
+                .find(|object| object["kind"] == "ConfigMap" && object["metadata"]["name"] == name)
+                .and_then(|object| object["data"][key].as_str())
+                .ok_or_else(|| anyhow::anyhow!("{provider} must render {name}/{key}"))
+        };
+        let broker_bytes: u64 = config("wamn-nats-config", "nats.conf")?
+            .lines()
+            .find_map(|line| line.trim().strip_prefix("\"max_file_store\": "))
+            .ok_or_else(|| anyhow::anyhow!("{provider} must configure JetStream file storage"))?
+            .trim_end_matches(',')
+            .parse()?;
+        let identity: serde_json::Value =
+            serde_json::from_str(config("identity-settings", "settings.json")?)?;
+        assert_eq!(broker_bytes, 16 * 1024 * 1024 * 1024, "{provider}");
+        assert_eq!(
+            identity["nats"]["file_store_bytes"], broker_bytes,
+            "{provider}"
+        );
+
+        let statefulset = objects
+            .iter()
+            .find(|object| {
+                object["kind"] == "StatefulSet" && object["metadata"]["name"] == "wamn-nats"
+            })
+            .ok_or_else(|| anyhow::anyhow!("{provider} must render the broker"))?;
+        let volume = statefulset["spec"]["template"]["spec"]["containers"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .flat_map(|container| container["volumeMounts"].as_array().into_iter().flatten())
+            .find(|mount| mount["mountPath"] == "/data")
+            .ok_or_else(|| anyhow::anyhow!("{provider} must mount the file store"))?;
+        let claim = statefulset["spec"]["volumeClaimTemplates"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|claim| claim["metadata"]["name"] == volume["name"])
+            .ok_or_else(|| anyhow::anyhow!("{provider} must provide a file store claim"))?;
+        assert_eq!(
+            claim["spec"]["resources"]["requests"]["storage"], "20Gi",
+            "{provider}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn nats_and_the_collector_use_restricted_pod_contexts() -> anyhow::Result<()> {
     let chart = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../deploy/charts/platform");
     for provider in ["kind", "gcp"] {

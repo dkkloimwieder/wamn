@@ -7,7 +7,7 @@ use wamn_envelope::encryption::{Encrypted, Envelope};
 use wamn_registry::{EnvName, OrgId};
 use zeroize::Zeroizing;
 
-use crate::nats::{Account, Error, Key};
+use crate::nats::{Account, AccountRevision, EnvLimits, Error, Key, Limits, env_limits};
 
 #[derive(Clone, Copy, Debug, Default)]
 pub(super) struct Scope<'a> {
@@ -26,12 +26,15 @@ struct StoredEnv {
     public_key: String,
     issued_at: i64,
     project_count: i32,
+    claim_limits: sqlx::types::Json<Limits>,
+    reserved_disk_bytes: i64,
+    published: bool,
 }
 
 enum PreparedEnv {
     Existing {
         account: StoredEnv,
-        resolver_revision: Option<i64>,
+        resolver_revision: Option<AccountRevision>,
     },
     New {
         subject: String,
@@ -43,7 +46,7 @@ pub(super) fn database_error(source: sqlx::Error) -> Error {
     Error::new("access NATS key storage", source)
 }
 
-pub(super) async fn lock(tx: &mut Transaction<'_, Postgres>, scope: &str) -> Result<(), Error> {
+async fn lock(tx: &mut Transaction<'_, Postgres>, scope: &str) -> Result<(), Error> {
     sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 1376598821))")
         .bind(scope)
         .execute(&mut **tx)
@@ -102,43 +105,80 @@ pub(super) async fn with_env_lock<T>(
 }
 
 pub(super) async fn platform_key(
-    tx: &mut Transaction<'_, Postgres>,
-    envelope: &Envelope,
-    issuer: &str,
-    key_name: &str,
-    key_type: KeyPairType,
-) -> Result<Key, Error> {
-    ensure_key(tx, envelope, issuer, key_name, Scope::default(), key_type).await
-}
-
-async fn ensure_key(
     client: &mut PgConnection,
     envelope: &Envelope,
     issuer: &str,
     key_name: &str,
-    scope: Scope<'_>,
     key_type: KeyPairType,
 ) -> Result<Key, Error> {
+    let scope = Scope::default();
     if let Some(row) = read(client, issuer, key_name, scope).await? {
         return open(envelope, row).await;
     }
     let pair = KeyPair::new(key_type);
     let packed = seal(envelope, &pair).await?;
+    let mut tx = client.begin().await.map_err(database_error)?;
+    bind_actor(&mut tx).await?;
     let issued_at = sqlx::query_scalar(
         "INSERT INTO identity.nats_key
-            (issuer, kind, org, env, public_key, private_key_envelope)
-         VALUES ($1, $2, $3, $4, $5, $6) RETURNING issued_at",
+            (issuer, kind, public_key, private_key_envelope)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (issuer, kind, org, env) DO NOTHING RETURNING issued_at",
     )
     .bind(issuer)
     .bind(key_name)
-    .bind(scope.org)
-    .bind(scope.env)
     .bind(pair.public_key())
     .bind(packed)
-    .fetch_one(client)
+    .fetch_optional(&mut *tx)
     .await
     .map_err(database_error)?;
-    Ok(Key { pair, issued_at })
+    tx.commit().await.map_err(database_error)?;
+    if let Some(issued_at) = issued_at {
+        return Ok(Key { pair, issued_at });
+    }
+    let row = read(client, issuer, key_name, scope)
+        .await?
+        .ok_or_else(|| database_error(sqlx::Error::RowNotFound))?;
+    open(envelope, row).await
+}
+
+const ENV_LIMITS: &str = "nats_connections AS connections, nats_consumers AS consumers,
+    nats_subscriptions AS subscriptions, nats_payload_bytes AS payload_bytes,
+    nats_streams_per_project AS streams_per_project, nats_disk_bytes_per_project AS disk_bytes_per_project";
+
+pub(super) async fn accounts_to_refresh(
+    client: &mut PgConnection,
+    issuer: &str,
+) -> Result<Vec<(String, String)>, Error> {
+    #[derive(sqlx::FromRow)]
+    struct Candidate {
+        org: String,
+        env: String,
+        project_count: i32,
+        claim_limits: sqlx::types::Json<Limits>,
+        published: bool,
+        #[sqlx(flatten)]
+        desired: EnvLimits,
+    }
+
+    let rows = sqlx::query_as::<_, Candidate>(sqlx::AssertSqlSafe(format!(
+        "SELECT e.org, e.env, k.project_count, k.claim_limits, k.published, {ENV_LIMITS}
+         FROM registry.env e JOIN identity.nats_key k USING (org, env)
+         WHERE k.issuer = $1 AND k.kind = 'env' AND k.project_count > 0 AND e.active"
+    )))
+    .bind(issuer)
+    .fetch_all(client)
+    .await
+    .map_err(database_error)?;
+    Ok(rows
+        .into_iter()
+        .filter(|row| {
+            !row.published
+                || !env_limits(&row.desired, row.project_count)
+                    .is_ok_and(|limits| row.claim_limits.0 == limits)
+        })
+        .map(|row| (row.org, row.env))
+        .collect())
 }
 
 async fn read_env(
@@ -148,7 +188,8 @@ async fn read_env(
     env: &EnvName,
 ) -> Result<Option<StoredEnv>, Error> {
     sqlx::query_as(
-        "SELECT public_key, issued_at, project_count FROM identity.nats_key
+        "SELECT public_key, issued_at, project_count, claim_limits, reserved_disk_bytes, published
+         FROM identity.nats_key
          WHERE issuer = $1 AND kind = 'env' AND org = $2 AND env = $3",
     )
     .bind(issuer)
@@ -164,21 +205,63 @@ pub(super) async fn ensure_env(
     envelope: &Envelope,
     issuer: &str,
     (org, env): (&OrgId, &EnvName),
-    project_count: i32,
-    max_projects: i64,
-    revision_to_replace: impl AsyncFnOnce(&str, i64) -> Result<Option<i64>, Error>,
-) -> Result<Account, Error> {
+    project_count: Option<i32>,
+    file_store_bytes: i64,
+    observe: impl AsyncFnOnce(&str, Limits, Option<Limits>) -> Result<Option<AccountRevision>, Error>,
+) -> Result<Option<(Account, Limits)>, Error> {
     let scope = Scope {
         org: Some(org.as_str()),
         env: Some(env.as_str()),
     };
     let mut tx = client.begin().await.map_err(database_error)?;
     let existing = read_env(&mut tx, issuer, org, env).await?;
+    let Some(count) = project_count.or_else(|| {
+        existing
+            .as_ref()
+            .map(|account| account.project_count)
+            .filter(|count| *count > 0)
+    }) else {
+        tx.commit().await.map_err(database_error)?;
+        return Ok(None);
+    };
+    let desired: Option<EnvLimits> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT {ENV_LIMITS} FROM registry.env WHERE org = $1 AND env = $2 AND ($3 OR active)"
+    )))
+    .bind(org.as_str())
+    .bind(env.as_str())
+    .bind(project_count.is_some())
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(database_error)?;
+    let Some(desired) = desired else {
+        tx.commit().await.map_err(database_error)?;
+        return if project_count.is_some() {
+            Err(database_error(sqlx::Error::RowNotFound))
+        } else {
+            Ok(None)
+        };
+    };
+    let limits = env_limits(&desired, count)?;
+    if project_count.is_none()
+        && existing
+            .as_ref()
+            .is_some_and(|account| account.published && account.claim_limits.0 == limits)
+    {
+        tx.commit().await.map_err(database_error)?;
+        return Ok(None);
+    }
     let stored_signer = read(&mut tx, issuer, "env-signing", scope).await?;
     tx.commit().await.map_err(database_error)?;
 
     let prepared = if let Some(account) = existing {
-        let resolver_revision = revision_to_replace(&account.public_key, account.issued_at).await?;
+        let committed = account.claim_limits.0;
+        let previous = (account.project_count > 0
+            && (account.published || account.reserved_disk_bytes > committed.disk_storage))
+            .then_some(Limits {
+                disk_storage: account.reserved_disk_bytes,
+                ..committed
+            });
+        let resolver_revision = observe(&account.public_key, limits, previous).await?;
         PreparedEnv::Existing {
             account,
             resolver_revision,
@@ -210,9 +293,18 @@ pub(super) async fn ensure_env(
             std::io::Error::other("the stored account changed under its lock"),
         ));
     }
-    let current = expected.map_or(0, |account| account.project_count);
-    if project_count > current {
-        reserve_projects(&mut tx, issuer, project_count - current, max_projects).await?;
+    let reserved = expected.map_or(0, |account| account.reserved_disk_bytes);
+    let observed_disk = match &prepared {
+        PreparedEnv::Existing {
+            resolver_revision: Some(revision),
+            ..
+        } => revision.limits().disk_storage,
+        _ => 0,
+    };
+    // An unacknowledged decrease cannot free bytes for another environment.
+    let reservation = limits.disk_storage.max(reserved).max(observed_disk);
+    if reservation > reserved {
+        reserve_storage(&mut tx, reservation - reserved, file_store_bytes).await?;
     } else {
         bind_actor(&mut tx).await?;
     }
@@ -220,25 +312,51 @@ pub(super) async fn ensure_env(
     let (subject, issued_at) = match prepared {
         PreparedEnv::Existing {
             account,
-            resolver_revision: None,
-        } if project_count == current => (account.public_key, account.issued_at),
+            resolver_revision,
+        } if reservation == reserved
+            && account.project_count == count
+            && account.claim_limits.0 == limits
+            && resolver_revision.as_ref().is_none_or(|revision| {
+                revision.iat < account.issued_at
+                    || (revision.iat == account.issued_at && revision.limits() == limits)
+            }) =>
+        {
+            if account.published
+                && resolver_revision
+                    .as_ref()
+                    .is_none_or(|revision| revision.iat < account.issued_at)
+            {
+                sqlx::query(
+                    "UPDATE identity.nats_key SET published = false
+                     WHERE issuer = $1 AND kind = 'env' AND org = $2 AND env = $3",
+                )
+                .bind(issuer)
+                .bind(org.as_str())
+                .bind(env.as_str())
+                .execute(&mut *tx)
+                .await
+                .map_err(database_error)?;
+            }
+            (account.public_key, account.issued_at)
+        }
         PreparedEnv::Existing {
             account,
             resolver_revision,
         } => {
-            // Advance past both the committed and observed revisions.
             let issued_at = sqlx::query_scalar(
                 "UPDATE identity.nats_key
-                 SET issued_at = GREATEST(issued_at + 1, $5::bigint + 1, floor(EXTRACT(EPOCH FROM clock_timestamp()))::bigint),
-                     project_count = $4
+                 SET issued_at = GREATEST(issued_at + 1, $4::bigint + 1, floor(EXTRACT(EPOCH FROM clock_timestamp()))::bigint),
+                     project_count = $5, claim_limits = $6, reserved_disk_bytes = $7, published = false
                  WHERE issuer = $1 AND kind = 'env' AND org = $2 AND env = $3
                  RETURNING issued_at",
             )
             .bind(issuer)
             .bind(org.as_str())
             .bind(env.as_str())
-            .bind(project_count)
-            .bind(resolver_revision.unwrap_or(account.issued_at))
+            .bind(resolver_revision.map_or(account.issued_at, |revision| revision.iat))
+            .bind(count)
+            .bind(sqlx::types::Json(limits))
+            .bind(reservation)
             .fetch_one(&mut *tx)
             .await
             .map_err(database_error)?;
@@ -247,15 +365,18 @@ pub(super) async fn ensure_env(
         PreparedEnv::New { subject, packed } => {
             let issued_at = sqlx::query_scalar(
                 "INSERT INTO identity.nats_key
-                    (issuer, kind, org, env, public_key, private_key_envelope, project_count)
-                 VALUES ($1, 'env', $2, $3, $4, $5, $6) RETURNING issued_at",
+                    (issuer, kind, org, env, public_key, private_key_envelope, project_count,
+                     claim_limits, reserved_disk_bytes, published)
+                 VALUES ($1, 'env', $2, $3, $4, $5, $6, $7, $8, false) RETURNING issued_at",
             )
             .bind(issuer)
             .bind(org.as_str())
             .bind(env.as_str())
             .bind(&subject)
             .bind(packed)
-            .bind(project_count)
+            .bind(count)
+            .bind(sqlx::types::Json(limits))
+            .bind(reservation)
             .fetch_one(&mut *tx)
             .await
             .map_err(database_error)?;
@@ -278,33 +399,59 @@ pub(super) async fn ensure_env(
         .map_err(database_error)?;
     }
     tx.commit().await.map_err(database_error)?;
-    Ok(Account {
-        subject,
-        signer,
-        issued_at,
-    })
+    Ok(Some((
+        Account {
+            subject,
+            signer,
+            issued_at,
+        },
+        limits,
+    )))
 }
 
-async fn reserve_projects(
+async fn reserve_storage(
     tx: &mut Transaction<'_, Postgres>,
-    issuer: &str,
-    increase: i32,
-    max_projects: i64,
+    increase: i64,
+    file_store_bytes: i64,
 ) -> Result<(), Error> {
-    // The installation-wide lock covers only the aggregate SQL reservation.
-    lock(tx, &format!("{issuer} nats accounts")).await?;
-    let total: i64 = sqlx::query_scalar(
-        "SELECT COALESCE(sum(project_count), 0)
-         FROM identity.nats_key WHERE issuer = $1 AND kind = 'env'",
+    // All environments share the file store. This lock covers only SQL writes.
+    lock(tx, "wamn NATS file store").await?;
+    let available: bool = sqlx::query_scalar(
+        "SELECT COALESCE(sum(reserved_disk_bytes), 0) + $1::bigint <= $2::bigint
+         FROM identity.nats_key WHERE kind = 'env'",
     )
-    .bind(issuer)
+    .bind(increase)
+    .bind(file_store_bytes)
     .fetch_one(&mut **tx)
     .await
     .map_err(database_error)?;
-    if total + i64::from(increase) > max_projects {
-        return Err(Error::project_limit(max_projects));
+    if !available {
+        return Err(Error::limit_refused("NATS file store capacity exceeded"));
     }
     Ok(())
+}
+
+pub(super) async fn acknowledge(
+    client: &mut PgConnection,
+    issuer: &str,
+    (org, env): (&OrgId, &EnvName),
+    disk_bytes: i64,
+) -> Result<(), Error> {
+    let mut tx = client.begin().await.map_err(database_error)?;
+    bind_actor(&mut tx).await?;
+    sqlx::query(
+        "UPDATE identity.nats_key SET published = true, reserved_disk_bytes = $4
+         WHERE issuer = $1 AND kind = 'env' AND org = $2 AND env = $3
+           AND (NOT published OR reserved_disk_bytes <> $4)",
+    )
+    .bind(issuer)
+    .bind(org.as_str())
+    .bind(env.as_str())
+    .bind(disk_bytes)
+    .execute(&mut *tx)
+    .await
+    .map_err(database_error)?;
+    tx.commit().await.map_err(database_error)
 }
 
 pub(super) async fn retire_env(
@@ -319,7 +466,7 @@ pub(super) async fn retire_env(
         "UPDATE identity.nats_key
          SET issued_at = CASE WHEN project_count = 0 THEN issued_at ELSE
              GREATEST(issued_at + 1, floor(EXTRACT(EPOCH FROM clock_timestamp()))::bigint) END,
-             project_count = 0
+             published = published AND project_count = 0, project_count = 0
          WHERE issuer = $1 AND kind = 'env' AND org = $2 AND env = $3
          RETURNING public_key, issued_at",
     )

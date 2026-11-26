@@ -1,6 +1,6 @@
 //! Install or upgrade the control store using the platform SQL Job.
 
-use std::{fmt, io, num::NonZeroU32};
+use std::{fmt, io};
 
 use anyhow::Context as _;
 use sqlx::PgConnection as Client;
@@ -25,11 +25,9 @@ pub struct ProvisionSystemRequest {
     pub database: ConnectionConfig,
     /// The email domain of the platform principal rows.
     pub platform_domain: PlatformDomain,
-    /// The platform-wide project stream limit.
-    pub max_projects: NonZeroU32,
 }
 
-/// Install the control store and record the platform domain and stream limit.
+/// Install the control store and record the platform domain.
 pub async fn provision_system(request: &ProvisionSystemRequest) -> anyhow::Result<()> {
     anyhow::ensure!(
         request.database.username.as_str() == "postgres"
@@ -47,18 +45,16 @@ pub async fn provision_system(request: &ProvisionSystemRequest) -> anyhow::Resul
         &migration_input,
         &pooler_input,
         &request.platform_domain,
-        request.max_projects,
     )
     .await
 }
 
-/// Install the control store and Pooler authentication, then grant its surfaces and record its limits.
+/// Install the control store and Pooler authentication, then grant its surfaces and record the platform domain.
 pub async fn install_system(
     client: &mut Client,
     migration_input: &str,
     pooler_input: &str,
     platform_domain: &PlatformDomain,
-    max_projects: NonZeroU32,
 ) -> anyhow::Result<()> {
     initialize_system(
         client,
@@ -67,7 +63,7 @@ pub async fn install_system(
     )
     .await?;
     install_pooler_auth(pooler_input).await?;
-    finalize(client, platform_domain, max_projects).await
+    finalize(client, platform_domain).await
 }
 
 async fn prepare_inputs(
@@ -84,21 +80,13 @@ async fn prepare_inputs(
     Ok((migration, pooler))
 }
 
-async fn finalize(
-    client: &mut Client,
-    platform_domain: &PlatformDomain,
-    max_projects: NonZeroU32,
-) -> anyhow::Result<()> {
+async fn finalize(client: &mut Client, platform_domain: &PlatformDomain) -> anyhow::Result<()> {
     let mut transaction =
         wamn_postgres::provisioning_transaction::provisioning_transaction(client).await?;
     sqlx::raw_sql("SET LOCAL ROLE wamn_system")
         .execute(&mut *transaction)
         .await
         .context("assume the control owner to finalize system provisioning")?;
-    sqlx::query(wamn_postgres::platform_sql::PROJECT_STREAM_CAPACITY_LOCK_SQL)
-        .execute(&mut *transaction)
-        .await
-        .context("lock platform project stream capacity")?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(crate::identity_role::grants_sql()))
         .execute(&mut *transaction)
         .await
@@ -107,19 +95,11 @@ async fn finalize(
         .execute(&mut *transaction)
         .await
         .context("grant the apply surface")?;
-    let first_limit: Option<bool> =
-        sqlx::query_scalar(crate::platform_sql::UPDATE_PLATFORM_META_SQL)
-            .bind(platform_domain.as_str())
-            .bind(i64::from(max_projects.get()))
-            .fetch_optional(&mut *transaction)
-            .await
-            .context("record the platform domain and project stream limit")?;
-    if first_limit == Some(true) {
-        sqlx::raw_sql("ALTER TABLE registry.meta ALTER COLUMN max_projects SET NOT NULL")
-            .execute(&mut *transaction)
-            .await
-            .context("require the installed project stream limit")?;
-    }
+    sqlx::query(crate::platform_sql::UPDATE_PLATFORM_META_SQL)
+        .bind(platform_domain.as_str())
+        .execute(&mut *transaction)
+        .await
+        .context("record the platform domain")?;
     transaction.commit().await?;
     Ok(())
 }

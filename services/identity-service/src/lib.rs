@@ -246,20 +246,22 @@ impl IdentityService {
             .map_err(|_| {
                 IdentityServiceError::new("identity request pool configuration refused")
             })?;
-        Ok(Self {
-            inner: Arc::new(Inner {
-                issuer: config.issuer,
-                envelope,
-                connection: config.connection,
-                passwords,
-                nats,
-                kubernetes,
-                request_slots: Semaphore::new(8),
-                event_slots: Arc::new(Semaphore::new(authentication_event::PENDING_APPENDS)),
-                pool,
-                database: Mutex::new(database),
-            }),
-        })
+        let inner = Arc::new(Inner {
+            issuer: config.issuer,
+            envelope,
+            connection: config.connection,
+            passwords,
+            nats,
+            kubernetes,
+            request_slots: Semaphore::new(8),
+            event_slots: Arc::new(Semaphore::new(authentication_event::PENDING_APPENDS)),
+            pool,
+            database: Mutex::new(database),
+        });
+        if inner.nats.is_some() {
+            tokio::spawn(nats::refresh_accounts(Arc::downgrade(&inner)));
+        }
+        Ok(Self { inner })
     }
 
     async fn respond(

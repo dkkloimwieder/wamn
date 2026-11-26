@@ -3,7 +3,6 @@
 
 use std::fmt::Write as _;
 use std::io::Write as _;
-use std::num::NonZeroU32;
 use std::path::Path;
 use std::process::Command;
 
@@ -424,7 +423,6 @@ pub async fn system() -> Result<System> {
             .as_str(),
         postgres.admin_url(),
         &"example.invalid".parse()?,
-        NonZeroU32::new(8).context("a stream limit")?,
     )
     .await?;
     // Provisioning gives the Pooler login no password, because it authenticates

@@ -1,19 +1,20 @@
 //! NATS operator bootstrap and account-scoped signing in the identity authority.
 
 mod claims;
+mod monitor;
 
 use std::{error, fmt, time::SystemTime};
 
 use nkeys::KeyPair;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use wamn_registry::{EnvName, OrgId, name};
 use zeroize::Zeroizing;
 
-pub(crate) use claims::account_revision_to_replace;
+pub(crate) use claims::{AccountRevision, account_revision};
 pub use claims::{
-    ClientLimits, Permissions, ResponsePermission, SubjectPermission, credentials,
-    is_user_public_key,
+    Permissions, ResponsePermission, SubjectPermission, credentials, is_user_public_key,
 };
+pub(crate) use monitor::check_shrink;
 
 /// Context about a failed NATS identity operation.
 #[derive(Debug)]
@@ -37,19 +38,15 @@ impl Error {
         }
     }
 
-    /// Record a capacity refusal returned by the key store.
-    pub fn project_limit(max_projects: i64) -> Self {
-        Self::new(
-            "reserve NATS project capacity",
-            ProjectLimit { max_projects },
-        )
+    pub(crate) fn limit_refused(reason: &'static str) -> Self {
+        Self::new("apply NATS environment limits", LimitRefusal(reason))
     }
 
-    /// Whether the requested account would exceed the platform project limit.
-    pub fn is_project_limit(&self) -> bool {
+    /// Whether the environment limits conflict with current use or platform capacity.
+    pub fn is_limit_refused(&self) -> bool {
         self.source
             .as_ref()
-            .is_some_and(|source| source.is::<ProjectLimit>())
+            .is_some_and(|source| source.is::<LimitRefusal>())
     }
 
     /// Whether the client supplied an invalid NATS user public key.
@@ -93,17 +90,56 @@ pub struct Authority {
     operator_signing: KeyPair,
     platform: String,
     platform_signing: KeyPair,
-    max_projects: i64,
-    limits_per_project: LimitsPerProject,
+    file_store_bytes: i64,
 }
 
-/// Install-time environment account limits for one project.
-#[derive(Clone, Copy, Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct LimitsPerProject {
-    connections: i64,
-    subscriptions: i64,
-    payload: i64,
+/// Desired per-env limits read from the registry.
+#[derive(Debug, sqlx::FromRow)]
+pub(crate) struct EnvLimits {
+    pub connections: i64,
+    pub consumers: i64,
+    pub subscriptions: i64,
+    pub payload_bytes: i64,
+    pub streams_per_project: i64,
+    pub disk_bytes_per_project: i64,
+}
+
+/// The adjustable limits in a signed NATS account revision.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub(crate) struct Limits {
+    pub conn: i64,
+    pub consumer: i64,
+    pub subs: i64,
+    pub payload: i64,
+    pub streams: i64,
+    pub disk_storage: i64,
+}
+
+impl Limits {
+    pub(crate) fn exceeds(self, other: Self) -> bool {
+        self.conn > other.conn
+            || self.consumer > other.consumer
+            || self.subs > other.subs
+            || self.payload > other.payload
+            || self.streams > other.streams
+            || self.disk_storage > other.disk_storage
+    }
+}
+
+pub(crate) fn env_limits(limits: &EnvLimits, project_count: i32) -> Result<Limits, Error> {
+    let scale = |limit: i64| {
+        limit
+            .checked_mul(i64::from(project_count))
+            .ok_or_else(|| Error::limit_refused("project allocations exceed the NATS claim range"))
+    };
+    Ok(Limits {
+        conn: limits.connections,
+        consumer: limits.consumers,
+        subs: limits.subscriptions,
+        payload: limits.payload_bytes,
+        streams: scale(limits.streams_per_project)?,
+        disk_storage: scale(limits.disk_bytes_per_project)?,
+    })
 }
 
 impl fmt::Debug for Authority {
@@ -116,23 +152,25 @@ impl fmt::Debug for Authority {
 pub const UPDATE_SUBJECT: &str = "$SYS.REQ.CLAIMS.UPDATE";
 /// Subject pattern for reading account JWTs from the full resolver.
 pub const LOOKUP_SUBJECT: &str = "$SYS.REQ.ACCOUNT.*.CLAIMS.LOOKUP";
+/// Read an environment's current connection and subscription counts.
+pub const STATZ_SUBJECT: &str = "$SYS.REQ.ACCOUNT.*.STATZ";
+/// Read an environment's current streams and their usage.
+pub const JSZ_SUBJECT: &str = "$SYS.REQ.ACCOUNT.*.JSZ";
 /// Resolver endpoint for operator-signed account removal.
 pub const DELETE_SUBJECT: &str = "$SYS.REQ.CLAIMS.DELETE";
 /// Inbox prefix for the platform runtime operator.
 pub const RUNTIME_OPERATOR_INBOX: &str = "_INBOX_wasmcloud-operator";
 
 #[derive(Debug)]
-struct ProjectLimit {
-    max_projects: i64,
-}
+struct LimitRefusal(&'static str);
 
-impl std::fmt::Display for ProjectLimit {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "platform limit is {} NATS projects", self.max_projects)
+impl fmt::Display for LimitRefusal {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.0)
     }
 }
 
-impl std::error::Error for ProjectLimit {}
+impl error::Error for LimitRefusal {}
 
 pub struct Key {
     pub pair: KeyPair,
@@ -169,30 +207,13 @@ pub struct BootstrapKeys {
     pub runtime_operator: Key,
 }
 
-impl LimitsPerProject {
-    /// Refuse limits that cannot admit any workload.
-    pub fn validate(&self) -> Result<(), Error> {
-        let LimitsPerProject {
-            connections,
-            subscriptions,
-            payload,
-        } = self;
-        if *connections < 1 || *subscriptions < 1 || *payload < 1 {
-            return Err(Error::new(
-                "validate NATS limits per project",
-                std::io::Error::other("limits must be positive"),
-            ));
-        }
-        Ok(())
-    }
-}
-
 /// Sign the platform credentials with the keys loaded by the caller.
-pub fn bootstrap(
-    keys: BootstrapKeys,
-    max_projects: i64,
-    limits_per_project: LimitsPerProject,
-) -> Result<Bootstrap, Error> {
+pub fn bootstrap(keys: BootstrapKeys, file_store_bytes: i64) -> Result<Bootstrap, Error> {
+    if file_store_bytes <= 0 {
+        return Err(Error::limit_refused(
+            "the NATS file store size must be positive",
+        ));
+    }
     let BootstrapKeys {
         root,
         signing,
@@ -210,8 +231,7 @@ pub fn bootstrap(
         &system_id,
         "SYS",
         system.issued_at,
-        0,
-        &claims::UNLIMITED_CLIENT_LIMITS,
+        claims::PLATFORM_LIMITS,
         &[system_signing.pair.public_key()],
     )?;
     let platform_jwt = claims::account(
@@ -219,8 +239,7 @@ pub fn bootstrap(
         &platform_id,
         "PLATFORM",
         platform.issued_at,
-        0,
-        &claims::UNLIMITED_CLIENT_LIMITS,
+        claims::PLATFORM_LIMITS,
         &[platform_signing.pair.public_key()],
     )?;
     let operator_include = format!(
@@ -237,7 +256,13 @@ pub fn bootstrap(
         "wamn-identity-resolver",
         unix_seconds()?,
         &permissions(
-            [UPDATE_SUBJECT, DELETE_SUBJECT, LOOKUP_SUBJECT],
+            [
+                UPDATE_SUBJECT,
+                DELETE_SUBJECT,
+                LOOKUP_SUBJECT,
+                STATZ_SUBJECT,
+                JSZ_SUBJECT,
+            ],
             [format!("{system_inbox}.>")],
         ),
     )?;
@@ -267,50 +292,29 @@ pub fn bootstrap(
             operator_signing: signing.pair,
             platform: platform_id,
             platform_signing: platform_signing.pair,
-            max_projects,
-            limits_per_project,
+            file_store_bytes,
         },
     })
 }
 
 impl Authority {
-    /// The allowed total number of projects across environment accounts.
-    pub fn max_projects(&self) -> i64 {
-        self.max_projects
-    }
-
-    /// Calculate claim limits for the supplied project count.
-    pub fn env_limits(&self, project_count: i32) -> Result<ClientLimits, Error> {
-        let scale = |limit: i64| {
-            limit.checked_mul(i64::from(project_count)).ok_or_else(|| {
-                Error::new(
-                    "scale NATS environment limits",
-                    std::io::Error::other("limit exceeds the NATS claim range"),
-                )
-            })
-        };
-        Ok(ClientLimits {
-            conn: scale(self.limits_per_project.connections)?,
-            subs: scale(self.limits_per_project.subscriptions)?,
-            payload: scale(self.limits_per_project.payload)?,
-        })
+    pub(crate) fn file_store_bytes(&self) -> i64 {
+        self.file_store_bytes
     }
 
     /// Sign the current revision of an environment account.
-    pub fn env_account(
+    pub(crate) fn env_account(
         &self,
         org: &OrgId,
         env: &EnvName,
-        project_count: i32,
         key: Account,
-        limits: &ClientLimits,
+        limits: Limits,
     ) -> Result<(String, String), Error> {
         let jwt = claims::account(
             &self.operator_signing,
             &key.subject,
             &name::env_nats_account(org, env),
             key.issued_at,
-            project_count,
             limits,
             &[key.signer.public_key()],
         )?;

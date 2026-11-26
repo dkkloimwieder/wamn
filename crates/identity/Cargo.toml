@@ -31,7 +31,7 @@ zeroize.workspace = true
 
 [dev-dependencies]
 futures-util.workspace = true
-async-nats = { workspace = true, features = ["aws-lc-rs", "nkeys"] }
+async-nats = { workspace = true, features = ["aws-lc-rs", "jetstream", "nkeys"] }
 tempfile.workspace = true
 tokio = { workspace = true, features = ["macros", "rt", "time"] }
 wamn-key.workspace = true

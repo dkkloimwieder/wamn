@@ -616,47 +616,10 @@ async fn reserve(
     projects: &[EnvDocument],
     disposable: Option<bool>,
 ) -> anyhow::Result<Vec<InstanceSuffix>> {
-    let first = projects
-        .first()
-        .context("environment has no selected projects")?;
-    let project_names: Vec<_> = projects
-        .iter()
-        .map(|project| project.settings.project.as_str())
-        .collect();
+    ensure!(!projects.is_empty(), "environment has no selected projects");
     let mut reserved = Vec::with_capacity(projects.len());
     let mut client = system.client().await;
     let mut transaction = provision_project_env::provisioning_transaction(&mut client).await?;
-    sqlx::query(wamn_postgres::platform_sql::PROJECT_STREAM_CAPACITY_LOCK_SQL)
-        .execute(&mut *transaction)
-        .await
-        .context("lock platform project stream capacity")?;
-    let (max_projects, additional): (Option<i64>, i32) = sqlx::query_as(
-        "SELECT (SELECT max_projects FROM registry.meta), \
-                            count(*)::int \
-                     FROM unnest($3::text[]) AS selected(project) \
-                     WHERE NOT EXISTS (SELECT 1 FROM registry.project_env AS registered \
-                         WHERE registered.org = $1 AND registered.env = $2 \
-                         AND registered.project = selected.project AND registered.active)",
-    )
-    .bind(first.settings.org.as_str())
-    .bind(first.settings.env.as_str())
-    .bind(&project_names)
-    .fetch_one(&mut *transaction)
-    .await
-    .context("count project stream reservations")?;
-    let max_projects =
-        max_projects.context("the system SQL Job has not set the project stream limit")?;
-    if additional > 0 {
-        let available: bool = sqlx::query_scalar("SELECT registry.project_capacity_available($1)")
-            .bind(additional)
-            .fetch_one(&mut *transaction)
-            .await
-            .context("check platform project stream capacity")?;
-        ensure!(
-            available,
-            "project stream limit is {max_projects}, count would exceed it ({additional} new)"
-        );
-    }
     for project in projects {
         reserved.push(
             reserve_project(&mut transaction, project, disposable)

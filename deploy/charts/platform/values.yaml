@@ -6,8 +6,8 @@ registryEgress: []
 # Populated by wamn platform deploy from the Kubernetes API Service and endpoints.
 apiServer: []
 global:
-  # Each project can fill one 256 MiB stream on every broker pod.
-  maxProjects: 32
+  # JetStream file store per broker pod, in bytes.
+  natsFileStoreBytes: 17179869184
   nats:
     schedulerUrl: nats://wamn-nats.platform.svc.cluster.local:4222
   identityIssuer: https://identity.platform.svc.cluster.local
@@ -57,12 +57,11 @@ nats:
       enabled: true
       fileStore:
         maxSize:
-          $tplYaml: '{{ mul .Values.global.maxProjects 256 }}Mi'
+          $tplYaml: '{{ int64 .Values.global.natsFileStoreBytes | quote }}'
         pvc:
           storageClassName: standard
-          # Reserve 256 MiB per project plus 25% for metadata and filesystem overhead.
-          computedSize:
-            $tplYamlSpread: 'size: {{ mul .Values.global.maxProjects 320 }}Mi'
+          # Leave 4 GiB above the default store for filesystem overhead.
+          size: 20Gi
       memoryStore:
         enabled: true
         maxSize: 256MB
@@ -244,10 +243,6 @@ identity:
   resendFrom: ""
   inviteUrl: ""
   localMail: ""
-  natsLimitsPerProject:
-    connections: 64
-    subscriptions: 1024
-    payload: 1048576
   authNats:
     tlsSecret: wasmcloud-nats-tls
   resources:

@@ -183,8 +183,7 @@ async fn project_configuration_keeps_applied_env_timings() -> anyhow::Result<()>
 
 #[tokio::test]
 #[ignore = "requires: docker, bin:helm"]
-async fn project_deactivation_frees_capacity_and_readd_starts_a_new_generation()
--> anyhow::Result<()> {
+async fn readding_a_deactivated_project_starts_a_new_generation() -> anyhow::Result<()> {
     use wamn_env::{env::document::EnvDocument, registry::configuration};
     use wamn_identity::identity::{
         create_user, grant_project_env_membership, has_project_env_membership,
@@ -239,18 +238,12 @@ async fn project_deactivation_frees_capacity_and_readd_starts_a_new_generation()
     grant_project_env_membership(&mut tx, member.id(), org, project, env).await?;
     tx.commit().await?;
 
-    let available = || {
-        sqlx::query_scalar::<_, bool>(
-            "SELECT registry.project_capacity_available(max_projects::int) FROM registry.meta",
-        )
-    };
     let reader = || {
         sqlx::query(wamn_env::env_sql::select_event_reader_origin_sql())
             .bind(org.as_str())
             .bind(project.as_str())
             .bind(env.as_str())
     };
-    assert!(!available().fetch_one(&mut apply).await?);
     assert!(configuration::read(&mut apply, &triple).await?.is_some());
     assert!(reader().fetch_optional(&mut apply).await?.is_some());
     assert!(has_project_env_membership(&mut admin, member.id(), org, project, env).await?);
@@ -264,7 +257,6 @@ async fn project_deactivation_frees_capacity_and_readd_starts_a_new_generation()
     .fetch_one(&mut apply)
     .await?;
     assert!(!active);
-    assert!(available().fetch_one(&mut apply).await?);
     assert!(configuration::read(&mut apply, &triple).await?.is_none());
     assert!(reader().fetch_optional(&mut apply).await?.is_none());
     let revoked: bool = sqlx::query_scalar(
@@ -295,7 +287,6 @@ async fn project_deactivation_frees_capacity_and_readd_starts_a_new_generation()
     let reserved = deployment::record(&mut tx, &registration).await?;
     tx.commit().await?;
     assert_eq!(reserved, candidate);
-    assert!(!available().fetch_one(&mut apply).await?);
     assert!(configuration::read(&mut apply, &triple).await?.is_none());
     assert!(
         reader().fetch_optional(&mut apply).await?.is_none(),

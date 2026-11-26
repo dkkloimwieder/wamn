@@ -8,7 +8,6 @@ pub fn grant_control_policy_execute_sql(role: &str) -> String {
     )
 }
 
-/// Set the installation's domain and project stream limit.
-pub const UPDATE_PLATFORM_META_SQL: &str = "UPDATE registry.meta SET platform_domain = $1, max_projects = $2 \
-     WHERE (platform_domain, max_projects) IS DISTINCT FROM ($1, $2) \
-     RETURNING old.max_projects IS NULL";
+/// Record the installation's platform domain if it changed.
+pub const UPDATE_PLATFORM_META_SQL: &str = "UPDATE registry.meta SET platform_domain = $1 \
+     WHERE platform_domain IS DISTINCT FROM $1";

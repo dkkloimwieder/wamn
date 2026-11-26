@@ -120,16 +120,30 @@ For local OAuth encryption, the same Job generates a separate 32-byte key in `<o
 If the owner email belongs to another org, control refuses the invitation with HTTP 409.
 The command exits with `Error: Job <org>/wamn-org-invitation-<suffix> failed`. The invitation Job's log shows the HTTP 409.
 
-Set `global.maxProjects` to the project stream limit for the installation. Each project in an environment uses one slot.
-`wamn env apply` refuses new reservations if their total across all organizations and environments would exceed the limit.
-The system SQL Job records the limit in the system database on each platform deploy.
-Each NATS pod uses 256 MiB per project for streams and 64 MiB per project for storage overhead.
-The resolver has a separate claim when operator mode is enabled. [Platform chart](../../deploy/charts/platform/README.md)
+The platform chart sets one JetStream file store to 16 GiB on a 20 GiB volume. The chart value `global.natsFileStoreBytes` gives NATS and identity the same byte limit.
+The full resolver has a separate volume. [Platform chart](../../deploy/charts/platform/README.md)
 
-Set `identity.natsLimitsPerProject` to size the NATS accounts for environments.
-The defaults are 64 connections, 1,024 subscriptions per connection, and 1,048,576 bytes per message.
-Identity multiplies each value by the environment's project count in the account JWT. The NATS server also enforces its own maximum message size.
-Run `wamn env apply` for an environment after changing these values to publish its updated account JWT.
+The system database stores each environment's NATS limits in `registry.env`.
+The defaults are 64 connections, 2,000 consumers per stream, 10,000 subscriptions per connection, and 1 MiB per message.
+Each project adds room for two streams and 512 MiB of file storage to the environment's account.
+Identity refuses storage increases that would exceed the platform limit.
+
+Use the system database's administrative connection to update the `nats_*` columns.
+Bind the provisioning actor in the same transaction so that PostgreSQL can record the edit.
+
+```sql
+BEGIN;
+SET LOCAL ROLE wamn_system;
+INSERT INTO platform.tx_identity (principal_id, role, app, operation)
+SELECT id, '', '', 'wamn:provisioning'
+FROM identity.principal WHERE type = 'platform' AND subject = 'wamn:provisioning';
+UPDATE registry.env SET nats_connections = 96 WHERE org = 'acme' AND env = 'dev';
+COMMIT;
+```
+
+Identity scans active environments every 30 seconds and retries account revisions until NATS acknowledges them.
+Identity refuses to publish a decrease that conflicts with live use. The previous revision continues to apply until the new limits fit.
+A decrease in the payload limit requires no active connections or stored messages.
 
 The local collector uses debug export.
 

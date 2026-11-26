@@ -24,8 +24,6 @@ enum Command {
         database: PathBuf,
         #[arg(long)]
         platform_domain: wamn_registry::platform_domain::PlatformDomain,
-        #[arg(long)]
-        max_projects: std::num::NonZeroU32,
     },
     #[command(hide = true)]
     ProvisionOrg {
@@ -86,12 +84,10 @@ async fn main() -> anyhow::Result<()> {
         Command::ProvisionSystem {
             database,
             platform_domain,
-            max_projects,
         } => {
             let request = wamn_platform_install::provision_system::ProvisionSystemRequest {
                 database: wamn_postgres::read_connection_config(&database).await?,
                 platform_domain,
-                max_projects,
             };
             wamn_platform_install::provision_system::provision_system(&request).await
         }

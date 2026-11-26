@@ -9,8 +9,6 @@ gcp:
     web: wamn-dev-web
     otel: wamn-dev-otel
     state: wamn-dev-tofu-state
-global:
-  maxProjects: 32
 identity:
   oauthEncryption:
     provider: gcp

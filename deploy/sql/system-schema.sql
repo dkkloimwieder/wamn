@@ -123,8 +123,6 @@ CREATE TABLE registry.target (
 CREATE TABLE registry.meta (
     id              boolean PRIMARY KEY DEFAULT true CHECK (id),
     platform_domain text,
-    -- The system SQL Job sets the cap and makes it required after bootstrap.
-    max_projects    bigint CHECK (max_projects > 0),
     created_at timestamptz NOT NULL,
     created_by uuid NOT NULL,
     updated_at timestamptz NOT NULL,
@@ -511,7 +509,7 @@ CREATE TRIGGER wamn_record_history_stamp
     EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 
 -- Identity owns the NATS operator and account signing keys. Only the
--- identity issuer may open the envelopes or revise an environment's limits.
+-- identity issuer opens the envelopes and publishes account revisions.
 CREATE TABLE identity.nats_key (
     issuer text NOT NULL CHECK (btrim(issuer) <> ''),
     kind text NOT NULL CHECK (kind IN (
@@ -524,6 +522,10 @@ CREATE TABLE identity.nats_key (
     public_key text NOT NULL,
     private_key_envelope bytea NOT NULL,
     project_count integer CHECK (project_count >= 0),
+    -- Keep the staged claim and its byte reservation across publication failures.
+    claim_limits jsonb,
+    reserved_disk_bytes bigint CHECK (reserved_disk_bytes >= 0),
+    published boolean,
     issued_at bigint NOT NULL DEFAULT floor(EXTRACT(EPOCH FROM clock_timestamp()))::bigint,
     created_at timestamptz NOT NULL,
     created_by uuid NOT NULL,
@@ -533,7 +535,10 @@ CREATE TABLE identity.nats_key (
     CHECK (CASE WHEN kind IN ('env', 'env-signing')
         THEN org IS NOT NULL AND env IS NOT NULL
         ELSE org IS NULL AND env IS NULL END),
-    CHECK ((kind = 'env') = (project_count IS NOT NULL))
+    CHECK ((kind = 'env') = (project_count IS NOT NULL)
+       AND (kind = 'env') = (claim_limits IS NOT NULL)
+       AND (kind = 'env') = (reserved_disk_bytes IS NOT NULL)
+       AND (kind = 'env') = (published IS NOT NULL))
 );
 CREATE TRIGGER wamn_record_history_stamp
     BEFORE INSERT OR UPDATE ON identity.nats_key
@@ -544,7 +549,7 @@ DO $identity_issuer_grants$ BEGIN
     IF to_regrole('wamn_identity_issuer') IS NOT NULL THEN
         GRANT EXECUTE ON FUNCTION platform.prune_tx_identity() TO wamn_identity_issuer;
         GRANT SELECT, INSERT ON identity.nats_key TO wamn_identity_issuer;
-        GRANT UPDATE (project_count, issued_at) ON identity.nats_key TO wamn_identity_issuer;
+        GRANT UPDATE (project_count, issued_at, claim_limits, reserved_disk_bytes, published) ON identity.nats_key TO wamn_identity_issuer;
     END IF;
 END $identity_issuer_grants$;
 
@@ -600,6 +605,13 @@ CREATE TABLE registry.env (
     revocation_seconds int NOT NULL DEFAULT 60 CHECK (revocation_seconds BETWEEN 0 AND 3600),
     active boolean NOT NULL DEFAULT true,
     disposable boolean NOT NULL DEFAULT false,
+    -- The platform database owner sets an environment's NATS limits.
+    nats_connections bigint NOT NULL DEFAULT 64 CHECK (nats_connections > 0),
+    nats_consumers bigint NOT NULL DEFAULT 2000 CHECK (nats_consumers > 0),
+    nats_subscriptions bigint NOT NULL DEFAULT 10000 CHECK (nats_subscriptions > 0),
+    nats_payload_bytes bigint NOT NULL DEFAULT 1048576 CHECK (nats_payload_bytes BETWEEN 1 AND 1048576),
+    nats_streams_per_project bigint NOT NULL DEFAULT 2 CHECK (nats_streams_per_project > 0),
+    nats_disk_bytes_per_project bigint NOT NULL DEFAULT 536870912 CHECK (nats_disk_bytes_per_project > 0),
     created_at timestamptz NOT NULL,
     created_by uuid NOT NULL,
     updated_at timestamptz NOT NULL,
@@ -904,14 +916,6 @@ REVOKE ALL ON FUNCTION identity.require_active_project_env() FROM PUBLIC;
 CREATE TRIGGER project_env_membership_require_active
     AFTER INSERT OR UPDATE OF org, env, project ON identity.project_env_membership
     FOR EACH ROW EXECUTE FUNCTION identity.require_active_project_env();
-
--- Call under the project stream capacity lock when reserving projects.
-CREATE FUNCTION registry.project_capacity_available(requested int) RETURNS boolean
-LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
-    SELECT (SELECT count(*) FROM registry.project_env WHERE active) + requested <= max_projects
-    FROM registry.meta
-$$;
-REVOKE ALL ON FUNCTION registry.project_capacity_available(int) FROM PUBLIC;
 
 -- ---------------------------------------------------------------------------
 -- Event readers — the CDC capture registrations (D19 v3, wamn-l5i9.9). One row

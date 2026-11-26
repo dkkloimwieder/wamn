@@ -332,10 +332,11 @@ The `PLATFORM` account contains a user for the runtime operator and a separate s
 The scheduler user subscribes to `runtime.host.<pod-name>.>` and publishes its ready marker and heartbeat.
 It can publish and subscribe under its own key-based inbox prefix. It publishes operator replies to `_INBOX_wasmcloud-operator.>`.
 Each environment has its own account for project events and for the host group's data user.
-Identity multiplies the installation's per-project connection, subscription, and payload limits by the number of projects in the environment.
-NATS limits subscriptions per connection and also enforces the server's maximum message size.
-The account has no total data cap. JetStream allows one stream and 256 MiB of file storage per project.
-JetStream has zero memory storage and an unlimited consumer count.
+The system database stores the environment's limits. The defaults are 64 connections, 2,000 consumers per stream, and 10,000 subscriptions per connection.
+The account and server both default to a 1 MiB message limit. The account allows unlimited total data.
+Each project adds two stream slots and 512 MiB of file storage to the account. JetStream memory storage is zero for environment accounts.
+Identity reserves file storage across environments in a short SQL transaction.
+Identity publishes the signed account revision after commit and keeps the previous reservation until the resolver acknowledges a decrease.
 The account contains all the environment's project streams. Accounts exchange no imports or exports.
 
 The org worker generates the other environment user keys and stores their credentials in Secrets in the org namespace.
