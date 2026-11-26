@@ -620,6 +620,7 @@ From the restructure plan's open items (`docs/plan/wamn-restructure.md`) (F for 
   - Identity session keys: `crates/identity/src/identity/session_keys.rs` wraps new keys through KMS inside the startup and rotation transactions, and `session_exchange.rs::finish_session` can unwrap the signing key through KMS inside the login and renewal transactions.
   - Identity NATS: `crates/identity/src/identity/nats.rs` bootstrap and `nats_store.rs::ensure_env` call KMS, and ensure_env calls the NATS resolver, inside their transactions.
   - Host request transactions span guest execution: ingress reads and keyed writes, workflow operation nodes, the data-change handler and dynamic SQL streams keep a project transaction open while a guest can call bound HTTP (which can read a Secret) or the object store (`crates/plugin/src/operation.rs`, `operation_sql`). Fixing this one is a design decision, because it gives up one atomic outcome for SQL and the remote effect.
+- Guest pins in root checks (epic not set, owner ruling 2026-11-26). The root checks that lanes run do not build guests against their pin files, so a router change can land with a stale pin (E4.7, 33532cfc6). Add the pin check to the root checks.
 - The stock runtime-operator Service targets a port named `https` that its Deployment does not declare (`runtime-operator/templates/operator/service.yaml`) (epic not set, found in Epic 4, lane report, Not verified here). No caller uses that Service today.
 - X5 is in T1.
 
