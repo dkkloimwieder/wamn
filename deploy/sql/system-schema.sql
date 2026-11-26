@@ -918,8 +918,8 @@ CREATE FUNCTION identity.lock_password_principal(principal uuid) RETURNS boolean
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
 DECLARE eligible boolean;
 BEGIN
-    SELECT active AND type = 'user' INTO eligible
-    FROM identity.principal WHERE id = principal FOR UPDATE;
+    SELECT p.active AND p.type = 'user' INTO eligible
+    FROM identity.principal AS p WHERE p.id = $1 FOR UPDATE;
     RETURN COALESCE(eligible, false);
 END;
 $$;
