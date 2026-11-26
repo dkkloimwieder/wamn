@@ -43,6 +43,14 @@ spec:
   type: rw
   instances: 1
   deploymentStrategy: {type: Recreate}
+  template:
+    spec:
+      initContainers:
+        - name: bootstrap-controller
+          resources: {{- toYaml $values.resources | nindent 12 }}
+      containers:
+        - name: pgbouncer
+          resources: {{- toYaml $values.resources | nindent 12 }}
   pgbouncer:
     poolMode: session
     authQuery: {{ printf "SELECT * FROM wamn_pooler.lookup_login($1, 'wamn_%s')" $family | quote }}

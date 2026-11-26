@@ -3,8 +3,42 @@
 use serde_json::json;
 use std::path::Path;
 
+#[path = "support/pod_resources.rs"]
+mod pod_resources;
 #[path = "support/pod_security.rs"]
 mod pod_security;
+
+#[test]
+fn platform_and_infrastructure_pods_declare_resources() -> anyhow::Result<()> {
+    use wamn_kubernetes::{helm, platform_env::entry};
+
+    let charts = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../deploy/charts");
+    for provider in ["kind", "gcp"] {
+        let values = charts.join(format!("platform/values-{provider}.yaml"));
+        let values = std::fs::read(values)?;
+        let platform = helm::template(&entry(
+            &charts.join("platform"),
+            "platform",
+            "wamn",
+            serde_yaml::from_slice(&values)?,
+        )?)?;
+        pod_resources::assert_pod_resources(&platform);
+        for cluster in platform.iter().filter(|object| object["kind"] == "Cluster") {
+            pod_resources::assert_compute_resources(
+                &cluster["spec"]["resources"],
+                cluster["metadata"]["name"].as_str().expect("Cluster name"),
+            );
+        }
+        let infrastructure = helm::template(&entry(
+            &charts.join("infrastructure"),
+            "platform",
+            "wamn-infrastructure",
+            serde_yaml::from_slice(&values)?,
+        )?)?;
+        pod_resources::assert_pod_resources(&infrastructure);
+    }
+    Ok(())
+}
 
 #[test]
 fn platform_wamn_workloads_render_restricted_pods() -> anyhow::Result<()> {

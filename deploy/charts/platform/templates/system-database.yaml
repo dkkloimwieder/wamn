@@ -97,6 +97,8 @@ spec:
     requests:
       cpu: "200m"
       memory: "256Mi"
+    limits:
+      memory: "2Gi"
   storage:
     size: 10Gi
   managed:

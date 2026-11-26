@@ -3,10 +3,20 @@ cert-manager:
   enableCertificateOwnerRef: true
   crds:
     enabled: true
+  resources: &resources
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {memory: 2Gi}
+  cainjector:
+    resources: *resources
+  webhook:
+    resources: *resources
+  startupapicheck:
+    resources: *resources
 # Keep the webhook with cert-manager, outside the platform ingress boundary.
 trust-manager:
   enabled: true
   namespace: cert-manager
+  resources: *resources
   podSecurityContext:
     runAsNonRoot: true
     runAsUser: 65532
@@ -24,10 +34,15 @@ cloudnative-pg:
   image:
     tag: 1.30.2
   fullnameOverride: cnpg-controller-manager
+  resources: *resources
   config:
     clusterWide: true
 traefik:
   enabled: false
+  resources: *resources
+  deployment:
+    # Keep the container environment unchanged when setting its memory limit.
+    goMemLimitPercentage: 0
   ingressClass:
     enabled: true
     isDefaultClass: true

@@ -55,6 +55,7 @@ spec:
             capabilities:
               drop: [ALL]
           image: {{ .image | quote }}
+          resources: {{- toYaml $.Values.cdcReaderResources | nindent 12 }}
           command: [/usr/local/bin/wamn-cdc-reader]
           args: [--settings, /etc/wamn/cdc/settings.json]
           volumeMounts:

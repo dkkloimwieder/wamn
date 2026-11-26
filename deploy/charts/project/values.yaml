@@ -3,9 +3,15 @@ namespace: ""
 database: null
 publication: null
 cdcReader: null
+cdcReaderResources:
+  requests: {cpu: 100m, memory: 256Mi}
+  limits: {memory: 2Gi}
 operations: null
 cluster: null
 recovery: null
+backupSidecarResources:
+  requests: {cpu: 100m, memory: 256Mi}
+  limits: {memory: 2Gi}
 deleteData: false
 databaseConfig: null
 credentials: null

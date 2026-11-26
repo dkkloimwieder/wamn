@@ -6,6 +6,8 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+#[path = "support/pod_resources.rs"]
+mod pod_resources;
 #[path = "support/pod_security.rs"]
 mod pod_security;
 
@@ -109,8 +111,9 @@ fn the_control_route_uses_service_port_80_and_the_pod_uses_8080() -> anyhow::Res
 }
 
 #[test]
-fn control_and_capture_render_restricted_pods() -> anyhow::Result<()> {
+fn org_and_project_render_restricted_pods_with_resources() -> anyhow::Result<()> {
     use wamn_env::env::{chart_values, lifecycle};
+    use wamn_env::platform_env::database_values;
     use wamn_kubernetes::{helm, platform_env::entry};
     use wamn_postgres::database::{capture_configuration, connection_for};
     use wamn_registry::{Triple, name};
@@ -118,6 +121,7 @@ fn control_and_capture_render_restricted_pods() -> anyhow::Result<()> {
     let charts = repository_root().join("deploy/charts");
     let org_values = serde_json::from_str(include_str!("support/org-chart-values.json"))?;
     let org = helm::template(&entry(&charts.join("org"), "acme", "acme", org_values)?)?;
+    pod_resources::assert_pod_resources(&org);
     pod_security::assert_restricted_pods(
         org.iter().filter(|object| object["kind"] == "Deployment"),
     );
@@ -127,13 +131,28 @@ fn control_and_capture_render_restricted_pods() -> anyhow::Result<()> {
     let connection = connection_for(&triple, &instance);
     let cluster = name::project_cluster(&connection.database);
     let publication = name::cdc_object_name(&triple.org, &triple.project, &triple.env, &instance);
-    let mut project = chart_values::publication_values(
+    let mut project = database_values(
+        &connection,
+        1,
+        serde_json::json!({
+            "instances": 1, "storage": "2Gi", "cpu": "100m", "memory": "256Mi",
+            "backup": {"retention": "7d", "cadence": "0 0 0 * * *"}
+        }),
+        &serde_json::json!({
+            "image": "registry.example/postgres:test",
+            "backup": {
+                "endpoint": "https://storage.example", "bucket": "backup", "secret": "s3-login"
+            }
+        }),
+    )?;
+    project["publication"] = chart_values::publication_values(
         &triple,
         &instance,
         &cluster,
         &publication,
         &["app".parse()?],
-    );
+    )["publication"]
+        .take();
     chart_values::set_operation_values(
         &mut project,
         &triple,
@@ -141,7 +160,6 @@ fn control_and_capture_render_restricted_pods() -> anyhow::Result<()> {
         &connection.database,
         std::iter::empty(),
     )?;
-    project["namespace"] = serde_json::json!(triple.org);
     project["cdcReader"] = lifecycle::reader_values(
         &triple,
         &capture_configuration(connection)?,
@@ -150,6 +168,15 @@ fn control_and_capture_render_restricted_pods() -> anyhow::Result<()> {
         false,
     );
     let project = helm::template(&entry(&charts.join("project"), "acme", "fixture", project)?)?;
+    pod_resources::assert_pod_resources(&project);
+    let store = project
+        .iter()
+        .find(|object| object["kind"] == "ObjectStore")
+        .expect("a backup-enabled project must render an ObjectStore");
+    pod_resources::assert_compute_resources(
+        &store["spec"]["instanceSidecarConfiguration"]["resources"],
+        "backup sidecar",
+    );
     pod_security::assert_restricted_pods(
         project
             .iter()

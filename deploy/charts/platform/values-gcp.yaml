@@ -20,6 +20,7 @@ edge:
   neg: true
   trustedProxyHops: 2
 opentelemetry-collector:
+  useGOMEMLIMIT: true
   extraEnvs:
   - name: CLUSTER
     valueFrom: {configMapKeyRef: {name: wamn-collector-gcp, key: cluster}}
@@ -127,12 +128,8 @@ opentelemetry-collector:
   securityContext:
     readOnlyRootFilesystem: true
   resources:
-    requests:
-      cpu: 100m
-      memory: 256Mi
     limits:
       cpu: 500m
-      memory: 2Gi
   extraVolumes:
   - name: queue
     persistentVolumeClaim:

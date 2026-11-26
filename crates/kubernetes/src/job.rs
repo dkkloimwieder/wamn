@@ -40,6 +40,11 @@ pub fn container_security_context() -> Value {
     json!({"allowPrivilegeEscalation": false, "capabilities": {"drop": ["ALL"]}})
 }
 
+/// Provisional resource requests and memory limit for a wamn Job container.
+pub fn container_resources() -> Value {
+    json!({"requests":{"cpu":"100m","memory":"256Mi"},"limits":{"memory":"2Gi"}})
+}
+
 pub fn manifest(name: &str, image: &str, command: &[&str], arguments: &[&str]) -> Value {
     json!({"apiVersion":"batch/v1", "kind":"Job", "metadata":{"name":name},
         "spec":{"suspend":true, "backoffLimit":0, "activeDeadlineSeconds":INSTALL_DEADLINE.as_secs(),
@@ -47,7 +52,8 @@ pub fn manifest(name: &str, image: &str, command: &[&str], arguments: &[&str]) -
                 "spec":{"restartPolicy":"Never", "automountServiceAccountToken":false,
                 "securityContext":pod_security_context(),
                 "containers":[{"name":"operation", "image":image, "command":command, "args":arguments,
-                    "securityContext":container_security_context(), "env":[], "volumeMounts":[]}],
+                    "securityContext":container_security_context(), "resources":container_resources(),
+                    "env":[], "volumeMounts":[]}],
                 "volumes":[]}}}})
 }
 
@@ -520,7 +526,7 @@ mod tests {
     use super::manifest;
 
     #[test]
-    fn operation_job_sets_restricted_pod_and_container_contexts() {
+    fn operation_job_sets_pod_security_and_resources() {
         let job = manifest("op-example", "registry.example/control", &[], &[]);
         let pod = &job["spec"]["template"]["spec"];
         let context = &pod["securityContext"];
@@ -535,6 +541,10 @@ mod tests {
             let context = &container["securityContext"];
             assert_eq!(context["allowPrivilegeEscalation"], false);
             assert_eq!(context["capabilities"]["drop"], serde_json::json!(["ALL"]));
+            let resources = &container["resources"];
+            assert_eq!(resources["requests"]["cpu"], "100m");
+            assert_eq!(resources["requests"]["memory"], "256Mi");
+            assert_eq!(resources["limits"]["memory"], "2Gi");
         }
     }
 }

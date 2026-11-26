@@ -179,8 +179,7 @@ fn manifest(
         {"name":"configuration","mountPath":"/etc/wamn/control","readOnly":true},
         {"name":"work","mountPath":"/work"}
     ]);
-    container["resources"] =
-        json!({"requests":{"cpu":"100m","memory":"256Mi"},"limits":{"cpu":"2","memory":"2Gi"}});
+    container["resources"]["limits"]["cpu"] = "2".into();
     if matches!(operation, Operation::Recover) {
         wamn_kubernetes::worker_mounts::mount_broker_ca(&mut job);
         wamn_kubernetes::job::mount(
@@ -229,6 +228,25 @@ mod tests {
                 .unwrap_or_else(|| panic!("missing {path} volume"));
             assert!(volume["emptyDir"].is_object(), "{path} needs an emptyDir");
             assert_eq!(volume["emptyDir"]["medium"].as_str(), medium, "{path}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn project_operation_jobs_keep_their_cpu_limit() -> anyhow::Result<()> {
+        let triple = Triple::new("acme".parse()?, "dev".parse()?, "billing".parse()?);
+        let worker = Worker {
+            image: "registry.example/control".into(),
+            configuration: "control-settings".into(),
+            service_account: "worker".into(),
+        };
+        let job = manifest(Operation::Deploy, &triple, "billing-dev", &worker, false);
+        let containers = job["spec"]["template"]["spec"]["containers"]
+            .as_array()
+            .expect("project Job containers");
+        assert!(!containers.is_empty());
+        for container in containers {
+            assert_eq!(container["resources"]["limits"]["cpu"], "2");
         }
         Ok(())
     }

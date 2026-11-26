@@ -106,6 +106,9 @@ nats:
         value:
           - name: wait-for-operator
             image: nats:2.12.15-alpine@sha256:b270f5e2428354c0335612694d7dd2fb588148e567a5757fdff325ef9c9332e6
+            resources:
+              requests: {cpu: 100m, memory: 256Mi}
+              limits: {memory: 2Gi}
             securityContext:
               allowPrivilegeEscalation: false
               capabilities:
@@ -190,9 +193,17 @@ nats:
           memory: 64Mi
 plugin-barman-cloud:
   fullnameOverride: barman-cloud
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {memory: 2Gi}
 opentelemetry-collector:
   mode: deployment
   fullnameOverride: otel-collector
+  # Keep the kind collector's environment unchanged when setting its memory limit.
+  useGOMEMLIMIT: false
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {memory: 2Gi}
   image:
     repository: otel/opentelemetry-collector-contrib
     tag: 0.161.0@sha256:fd328de2552466ad78385e1b1289c3f2402b1c45f265b252aab1955b42845ac1
@@ -261,11 +272,17 @@ edge:
       memory: 128Mi
 systemSql:
   image: ""
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {memory: 2Gi}
 appChart: ""
 postgres:
   image: ghcr.io/cloudnative-pg/postgresql:18.6@sha256:899d3ed526b659d77935dde0e6bf2d69dbbf17d3d8c6486ca8cfd04bd3c18533
   pooler:
     maxClientConnections: 4096
+    resources:
+      requests: {cpu: 100m, memory: 256Mi}
+      limits: {memory: 2Gi}
     control:
       maxUserConnections: 8
       maxDbConnections: 50

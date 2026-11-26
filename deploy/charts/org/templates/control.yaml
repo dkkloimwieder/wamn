@@ -60,6 +60,7 @@ spec:
             capabilities:
               drop: [ALL]
           image: {{ .Values.control.image | quote }}
+          resources: {{- toYaml .Values.control.resources | nindent 12 }}
           args: [--settings, /etc/wamn/control/settings.json, platform]
           ports: [{name: http, containerPort: 8080}]
           env:

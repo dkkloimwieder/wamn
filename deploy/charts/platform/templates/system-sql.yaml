@@ -46,6 +46,7 @@ spec:
             capabilities:
               drop: [ALL]
           image: {{ .Values.systemSql.image | default (printf "%s/wamn-control:%s" .Values.registry .Chart.Version) | quote }}
+          resources: {{- toYaml .Values.systemSql.resources | nindent 12 }}
           imagePullPolicy: IfNotPresent
           args:
             - provision-system

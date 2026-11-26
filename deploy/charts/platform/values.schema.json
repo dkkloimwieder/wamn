@@ -320,6 +320,9 @@
       "properties": {
         "image": {
           "type": "string"
+        },
+        "resources": {
+          "$ref": "#/definitions/resources"
         }
       }
     },
@@ -342,6 +345,9 @@
             "maxClientConnections": {
               "type": "integer",
               "minimum": 1
+            },
+            "resources": {
+              "$ref": "#/definitions/resources"
             },
             "control": {
               "type": "object",

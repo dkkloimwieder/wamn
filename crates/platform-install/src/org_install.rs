@@ -262,6 +262,7 @@ fn org_job(account: &str, image: &str, args: &[&str]) -> Value {
                     "containers": [{
                         "name": account, "image": image, "args": args,
                         "securityContext": job::container_security_context(),
+                        "resources": job::container_resources(),
                     }],
                 },
             },
@@ -276,7 +277,7 @@ mod tests {
     use wamn_postgres::database::configuration;
 
     #[test]
-    fn org_jobs_use_the_wamn_job_security_contexts() -> anyhow::Result<()> {
+    fn org_jobs_use_the_wamn_job_security_contexts_and_resources() -> anyhow::Result<()> {
         let org = "acme".parse()?;
         let image = "registry.example/control";
         let database = configuration(
@@ -302,6 +303,7 @@ mod tests {
                     container["securityContext"],
                     job::container_security_context()
                 );
+                assert_eq!(container["resources"], job::container_resources());
             }
         }
         Ok(())

@@ -121,6 +121,8 @@ metadata:
   {{- end }}
 spec:
   retentionPolicy: {{ required "cluster.backup.retention is required" .retention | quote }}
+  instanceSidecarConfiguration:
+    resources: {{- toYaml $.Values.backupSidecarResources | nindent 6 }}
   configuration:
     destinationPath: {{ printf "s3://%s/wal/%s" (required "cluster.backup.bucket is required" .bucket) $name | quote }}
     endpointURL: {{ required "cluster.backup.endpoint is required" .endpoint | quote }}
