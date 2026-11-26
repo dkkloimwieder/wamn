@@ -4,7 +4,7 @@ This addendum serves the owner ruling of 2026-11-26 on Epic 4 question 1. It was
 
 The ruling, as decided: the table is in the system database, and identity writes it. Rows are immutable, with full retention. `event_type` and `outcome` are foreign keys to lookup tables. A row keeps the IP address and the attempted email, also for an unknown user. The table loads through the bootstrap SQL only.
 
-Summary of the proposal (I):
+Summary of the proposal before the rulings (I). The rulings below change it:
 
 - Table `identity.authentication_event` in `deploy/sql/system-schema.sql`, with lookups `identity.authentication_event_type` and `identity.authentication_event_outcome`. Outcome has `success boolean NOT NULL`.
 - 13 event types, from password sign-in to the two NATS credential exchanges (section 2). 39 outcomes (section 2).
@@ -13,6 +13,26 @@ Summary of the proposal (I):
 - Three partial indexes: failed sign-ins by email key, a principal timeline, an org timeline. If you name a read by IP, an IP index is added (section 5).
 - Grants: identity's issuer group gets INSERT only, with an RLS insert policy. No reader except the platform operator for now (section 6).
 - The tables stay out of the history installer and the pruning (section 7).
+
+## Rulings (owner, 2026-11-26)
+
+These rulings decide the six questions at the end. Where the inventory below differs, the rulings apply.
+
+1. Identity records only the first global, source or account rate-limit denial per bucket and window.
+2. A success row is written in the same transaction as the session, credential or password change that it records. A refusal is a bounded best-effort write. Revocation and replay protection never depend on the insert.
+3. Only platform operators read the table, for now.
+4. A row records `ip_address`, `ip_source` (`socket` or `forwarded`) and `peer_ip_address`.
+5. The two Kubernetes-to-NATS credential exchanges are included.
+6. Identity writes one row per request, at its final decision. The event types `session_token_issue`, `password_reset_token_issue` and `invitation_token_issue` go, and so does the `request_id` column. Delivery results are outcomes of the request row: `delivery_accepted`, `delivery_failed` and `delivery_cleanup_failed`.
+
+Columns:
+
+- `attempted_email` is `text`. Invalid UTF-8 is replaced, and the value is capped at 512 characters. `attempted_email_key` goes.
+- One `org` column holds the org that the request named. `requested_org` goes. The outcome says whether the org was verified.
+- The columns are `id`, `event_type`, `outcome`, `occurred_at`, `principal_id`, `attempted_email`, `ip_address`, `ip_source`, `peer_ip_address`, `org`, `failure_summary`, `login_id`, `session_jti` and `workload`. Otherwise they are as section 3 describes.
+- The replies, the dummy password work and the timing of every route stay as they are.
+
+The forwarded IP (E4.8): identity serves the password routes on a separate port. A network policy lets only the web proxy reach that port. Identity reads `x-forwarded-for` only on that port. On every other port it uses the socket IP and ignores `x-forwarded-for`, also for the source rate limit. A kind case checks that a host pod cannot reach the password port, and that an `x-forwarded-for` header sent to another identity port does not change the recorded or throttled IP.
 
 One fact needs your attention (F). Identity takes the client IP from the last `x-forwarded-for` header (`services/identity-service/src/lib.rs:243`). It accepts that header from any caller that its ingress policy admits. That policy admits the web proxy, host pods, control and workers (`deploy/charts/platform/templates/identity-network-policy.yaml:11`). So a host pod, which runs tenant code, can set the IP that a row records. Question 4 covers it.
 
