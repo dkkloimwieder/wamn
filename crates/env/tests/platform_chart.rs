@@ -183,7 +183,7 @@ fn colliding_coordinates_read_only_their_own_credentials() -> anyhow::Result<()>
     for index in 0..coordinates.len() {
         let (org, project, env) = coordinates[index];
         let entry = wamn_kubernetes::platform_env::entry(
-            &repository.join("deploy/charts/environment"),
+            &repository.join("deploy/charts/env"),
             org,
             &accounts[index],
             json!({
@@ -192,7 +192,7 @@ fn colliding_coordinates_read_only_their_own_credentials() -> anyhow::Result<()>
                 "drainBoundSeconds":60,
                 "identityIssuer":"https://identity.platform.svc.cluster.local",
                 "natsUrl":"nats://wamn-nats.platform.svc.cluster.local:4222",
-                "environmentNats":{
+                "envNats":{
                     "data":"data-nats", "native":"native-nats",
                     "workflow":{"secret":"workflow-nats", "inbox":"_INBOX_workflow"},
                     "ingress":{"secret":"ingress-nats", "inbox":"_INBOX_ingress"},

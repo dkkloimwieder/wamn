@@ -12,9 +12,7 @@ use wamn_registry::{AppName, EnvName, OrgId, ProjectId};
 #[serde(rename_all = "snake_case")]
 pub enum EventType {
     OrgCreate,
-    #[serde(rename = "environment_apply")]
     EnvApply,
-    #[serde(rename = "environment_delete")]
     EnvDelete,
     Deploy,
     Rollback,
@@ -56,7 +54,7 @@ pub struct Command {
     pub principal_id: PrincipalId,
     pub env: Option<EnvName>,
     pub project: Option<ProjectId>,
-    pub application: Option<AppName>,
+    pub app: Option<AppName>,
     pub package_digest: Option<Digest>,
     pub helm_revision: Option<i32>,
 }
@@ -116,7 +114,7 @@ pub async fn record(
     .bind(org.as_str())
     .bind(command.env.as_ref().map(EnvName::as_str))
     .bind(command.project.as_ref().map(ProjectId::as_str))
-    .bind(command.application.as_ref().map(AppName::as_str))
+    .bind(command.app.as_ref().map(AppName::as_str))
     .bind(command.package_digest.map(|digest| digest.to_string()))
     .bind(command.helm_revision)
     .bind(job.map(|(namespace, _)| namespace))

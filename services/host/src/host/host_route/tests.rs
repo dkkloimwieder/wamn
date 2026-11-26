@@ -34,8 +34,8 @@ async fn generated_app_client_live() -> anyhow::Result<()> {
     let config = Arc::new(AppConfig {
         org: "acme".parse()?,
         project: "billing".parse()?,
-        environment: "dev".parse()?,
-        application: "client-test".parse()?,
+        env: "dev".parse()?,
+        app: "client-test".parse()?,
         grant_cache_seconds: 60,
         components: vec![AppComponent {
             name: "purchase".into(),
@@ -65,7 +65,7 @@ async fn generated_app_client_live() -> anyhow::Result<()> {
             data_change: None,
         }],
     });
-    let key = wamn_registry::project_env_key(&config.org, &config.project, &config.environment);
+    let key = wamn_registry::project_env_key(&config.org, &config.project, &config.env);
     let admin_id = uuid::Uuid::new_v4();
     let member_id = uuid::Uuid::new_v4();
     let admin_token = PatToken::mint()?;

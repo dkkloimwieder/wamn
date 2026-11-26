@@ -39,7 +39,7 @@ use wamn_package::{
 use wamn_routes::{HostAttachment, HostRouteSet};
 
 /// The only serving-manifest format admitted by this revision.
-pub const SERVING_MANIFEST_FORMAT_VERSION: u32 = 11;
+pub const SERVING_MANIFEST_FORMAT_VERSION: u32 = 12;
 
 /// Stable refusal literal for a serving-manifest format this reader will not admit.
 pub const UNSUPPORTED_SERVING_MANIFEST_VERSION_REFUSAL: &str =
@@ -345,7 +345,7 @@ pub struct ServingComposedEntry {
     pub reference: String,
     pub route_digest: wamn_digest::Digest,
     /// The explicitly named application whose bytes compose the entry.
-    pub application: ServingEntryMember,
+    pub app: ServingEntryMember,
     pub members: BTreeSet<ServingEntryMember>,
 }
 
@@ -452,7 +452,7 @@ impl ServingManifest {
 
     /// The explicitly named application member of the composed entry.
     pub fn composing_member(&self) -> Option<&ServingComponent> {
-        let app = &self.composed_entry.as_ref()?.application;
+        let app = &self.composed_entry.as_ref()?.app;
         self.components.iter().find(|component| {
             component.package_id == app.package_id
                 && component.descriptor.component == app.component
@@ -555,9 +555,9 @@ impl ServingManifest {
         if document
             .get("composed-entry")
             .and_then(Value::as_object)
-            .is_some_and(|entry| !entry.contains_key("application"))
+            .is_some_and(|entry| !entry.contains_key("app"))
         {
-            return invalid("the composed entry is missing composed-entry.application");
+            return invalid("the composed entry is missing composed-entry.app");
         }
         let manifest = serde_json::from_value::<Self>(document.clone()).map_err(|error| {
             CatalogIdentityError::InvalidDefinition {
@@ -613,7 +613,7 @@ impl ServingManifest {
             if entry.members.is_empty() {
                 return invalid("a composed entry must name its application members");
             }
-            if !entry.members.contains(&entry.application) {
+            if !entry.members.contains(&entry.app) {
                 return invalid("the named application is outside the composed entry members");
             }
             let mut identities = BTreeSet::new();
@@ -1063,7 +1063,7 @@ mod tests {
             route_digest: (format!("sha256:{}", "f".repeat(64)))
                 .parse::<wamn_digest::Digest>()
                 .unwrap(),
-            application: ServingEntryMember {
+            app: ServingEntryMember {
                 package_id: "overlay".parse().unwrap(),
                 component: "transform".parse().unwrap(),
                 digest: COMPONENT_B.parse().unwrap(),
@@ -1136,7 +1136,7 @@ mod tests {
         }
         // Naming base changes the composing application.
         let entry = manifest.composed_entry.as_mut().unwrap();
-        entry.application = entry
+        entry.app = entry
             .members
             .iter()
             .find(|member| member.package_id == "base".parse().unwrap())
@@ -1218,7 +1218,7 @@ mod tests {
     fn composed_entry_requires_a_named_app_in_its_members() {
         let mut manifest = manifest();
         manifest.composed_entry = Some(entry_for(&manifest));
-        manifest.composed_entry.as_mut().unwrap().application.digest = COMPONENT_A.parse().unwrap();
+        manifest.composed_entry.as_mut().unwrap().app.digest = COMPONENT_A.parse().unwrap();
         assert!(matches!(
             ServingManifest::from_canonical_bytes(&manifest.canonical_bytes()),
             Err(CatalogIdentityError::InvalidDefinition { .. })
@@ -1226,20 +1226,20 @@ mod tests {
     }
 
     #[test]
-    fn format_eleven_requires_composed_entry_app() {
+    fn format_twelve_requires_composed_entry_app() {
         let mut manifest = manifest();
-        manifest.format_version = 11;
+        manifest.format_version = 12;
         manifest.composed_entry = Some(entry_for(&manifest));
         ServingManifest::from_canonical_bytes(&manifest.canonical_bytes())
-            .expect("format eleven with a named application is admitted");
+            .expect("format twelve with a named application is admitted");
         let mut document = serde_json::to_value(&manifest).unwrap();
         document["composed-entry"]
             .as_object_mut()
             .unwrap()
-            .remove("application");
+            .remove("app");
         let error =
             ServingManifest::from_canonical_bytes(&wamn_digest::canonical_json_bytes(&document))
-                .expect_err("composed-entry.application is required in format eleven");
+                .expect_err("composed-entry.app is required in format twelve");
         assert!(matches!(
             error,
             CatalogIdentityError::InvalidDefinition { .. }
@@ -1298,7 +1298,7 @@ mod tests {
     }
 
     #[test]
-    fn only_canonical_format_six_bytes_are_admitted() {
+    fn only_canonical_manifest_bytes_are_admitted() {
         let manifest = manifest();
         let bytes = manifest.canonical_bytes();
         assert_eq!(
@@ -1316,14 +1316,14 @@ mod tests {
 
     #[test]
     fn unsupported_formats_are_typed_refusals_not_compatibility_arms() {
-        for version in [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 13] {
+        for version in [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13] {
             let unsupported = serde_json::to_vec(&serde_json::json!({
                 "format-version": version,
                 "release": {}
             }))
             .unwrap();
             let error = ServingManifest::from_canonical_bytes(&unsupported)
-                .expect_err("only format eleven enters the decoder");
+                .expect_err("only format twelve enters the decoder");
             assert_eq!(
                 error,
                 CatalogIdentityError::UnsupportedServingManifestVersion {
@@ -1416,16 +1416,16 @@ mod tests {
         );
         signed.registered_operation = None;
         let manifest = build(signed).unwrap();
-        assert_eq!(manifest.format_version, 11);
+        assert_eq!(manifest.format_version, 12);
         let (decoded, _) =
             ServingManifest::from_canonical_bytes(&manifest.canonical_bytes()).unwrap();
         assert_eq!(decoded, manifest);
         let mut old = manifest;
-        old.format_version = 10;
+        old.format_version = 11;
         assert_eq!(
             ServingManifest::from_canonical_bytes(&old.canonical_bytes()).unwrap_err(),
             CatalogIdentityError::UnsupportedServingManifestVersion {
-                requested: "10".into()
+                requested: "11".into()
             }
         );
     }

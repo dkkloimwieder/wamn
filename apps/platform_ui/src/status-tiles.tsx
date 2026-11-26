@@ -1,8 +1,8 @@
 import { createMemo } from "solid-js";
 import { StatusTile, TileRow } from "@wfe/components";
-import { controlFields, type EnvironmentStatusResult } from "./control-client";
+import { controlFields, type EnvStatusResult } from "./control-client";
 
-export function EnvironmentTiles(props: { status?: EnvironmentStatusResult; error?: string }) {
+export function EnvironmentTiles(props: { status?: EnvStatusResult; error?: string }) {
   const complete = () => {
     const rollout = props.status?.rollout;
     return (

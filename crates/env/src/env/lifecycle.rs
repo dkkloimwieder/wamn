@@ -173,7 +173,7 @@ async fn configure_project(
         triple,
         &cluster,
         &connection.database,
-        document.applications.keys(),
+        document.apps.keys(),
     )?;
     values["publication"] =
         super::chart_values::publication_values(triple, instance, &cluster, &publication, &schemas)
@@ -236,7 +236,7 @@ async fn configure_project(
             let removed: Vec<_> = super::analyse::app_releases(platform, lock, triple)
                 .await?
                 .into_iter()
-                .filter(|(app, _)| !document.applications.contains_key(app))
+                .filter(|(app, _)| !document.apps.contains_key(app))
                 .collect();
             // Refuse before any uninstall, so no removed application stops alone.
             let mut unfinished = Vec::new();

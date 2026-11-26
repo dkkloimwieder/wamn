@@ -8,11 +8,11 @@ import { createForm } from "@wfe/form";
 import {
   control,
   controlFields,
-  environment,
+  envRoutes,
   member,
   project,
   projectAdmin,
-  type EnvironmentListResultEnvironments,
+  type EnvListResultEnvs,
   type MemberListResultMembers,
 } from "./control-client";
 import type { Outcome } from "@wamn/web-runtime";
@@ -20,7 +20,8 @@ import { MissingPage, Page, RecordLink } from "./page";
 import { GrantMembership } from "./membership";
 import { value } from "./outcome";
 import { ControlHome } from "./control-home";
-import { Environment } from "./environment";
+import { Environment } from "./env";
+import { envSegment } from "./address";
 import type { ScreenProps, ShellSection } from "./shell";
 
 function Projects(props: ScreenProps): JSX.Element {
@@ -70,7 +71,7 @@ function Projects(props: ScreenProps): JSX.Element {
         columns={[
           { id: "project", header: controlFields.current.projects.items.properties.project.title },
           ...(props.holds(project.list.route.operation)
-            ? [{ id: "state", header: controlFields.environment.state.title, accessorKey: "state" as const }]
+            ? [{ id: "state", header: controlFields.env.state.title, accessorKey: "state" as const }]
             : []),
           {
             id: "project_admin",
@@ -131,16 +132,16 @@ function CreateProject(props: ScreenProps): JSX.Element {
   );
 }
 
-export function Project(props: ScreenProps & { table?: "environments" | "members" }): JSX.Element {
+export function Project(props: ScreenProps & { table?: "envs" | "members" }): JSX.Element {
   const name = () => props.params.project!;
   const projectBase = () => `projects/${encodeURIComponent(name())}`;
-  const base = () => (props.params.env ? `${projectBase()}/${encodeURIComponent(props.params.env)}` : projectBase());
-  const environmentPage = createServerPage<EnvironmentListResultEnvironments>(async (input) => {
-    const result = value(await environment.list(props.transport, [{ project: name(), ...input }]));
-    return { ...result, rows: result.environments };
+  const base = () => (props.params.env ? `${projectBase()}/${envSegment(props.params.env)}` : projectBase());
+  const envPage = createServerPage<EnvListResultEnvs>(async (input) => {
+    const result = value(await envRoutes.list(props.transport, [{ project: name(), ...input }]));
+    return { ...result, rows: result.envs };
   });
   // The server keeps only the members of the selected environment.
-  const memberFilter = () => ({ project: name(), ...(props.params.env ? { environment: props.params.env } : {}) });
+  const memberFilter = () => ({ project: name(), ...(props.params.env ? { env: props.params.env } : {}) });
   const memberPage = createServerPage<MemberListResultMembers>(async (input) => {
     const result = value(await member.list(props.transport, [{ ...memberFilter(), ...input }]));
     return { ...result, rows: result.members };
@@ -166,13 +167,13 @@ export function Project(props: ScreenProps & { table?: "environments" | "members
       if (!found) return;
       setState(found.state);
     }
-    if (props.table === "environments") {
+    if (props.table === "envs") {
       // The table shows its own page error.
-      await environmentPage.refresh().catch(() => {});
+      await envPage.refresh().catch(() => {});
     } else if (props.table === "members") {
       // The environment lookup needs the complete set, even beyond page one.
       if (props.params.env) {
-        const listed = value(await environment.list(props.transport, [{ project: name() }])).environments;
+        const listed = value(await envRoutes.list(props.transport, [{ project: name() }])).envs;
         if (!active || current !== refreshGeneration) return;
         if (!listed.some((env) => env.name === props.params.env)) {
           setMissing(true);
@@ -183,7 +184,7 @@ export function Project(props: ScreenProps & { table?: "environments" | "members
       await memberPage.refresh().catch(() => {});
     } else {
       const [envs, people] = await Promise.all([
-        environment.list(props.transport, [{ project: name() }]),
+        envRoutes.list(props.transport, [{ project: name() }]),
         member.list(props.transport, [memberFilter()]),
       ]);
       if (!active || current !== refreshGeneration) return;
@@ -191,7 +192,7 @@ export function Project(props: ScreenProps & { table?: "environments" | "members
         setMissing(true);
         return;
       }
-      const listed = value(envs).environments;
+      const listed = value(envs).envs;
       if (props.params.env && !listed.some((env) => env.name === props.params.env)) {
         setMissing(true);
         return;
@@ -204,7 +205,7 @@ export function Project(props: ScreenProps & { table?: "environments" | "members
     () => [props.transport, props.params.project, props.params.env, props.params.principal, props.table],
     () => {
       let current = true;
-      environmentPage.reset();
+      envPage.reset();
       memberPage.reset();
       setMissing(false);
       setLoaded(false);
@@ -264,27 +265,27 @@ export function Project(props: ScreenProps & { table?: "environments" | "members
         >
           <Show when={state()}>
             <p>
-              {controlFields.environment.state.title}: {state()}
+              {controlFields.env.state.title}: {state()}
             </p>
           </Show>
         </Page>
       </Show>
-      <Show when={props.table === "environments"}>
+      <Show when={props.table === "envs"}>
         <div class="platform-table-screen">
           <Records
             refresh={refresh}
-            paging={environmentPage}
-            id="environments"
+            paging={envPage}
+            id="envs"
             title="Environments"
-            rows={environmentPage.rows()}
+            rows={envPage.rows()}
             rowKey={(env) => env.name}
             columns={[
-              { id: "environment", header: controlFields.grantMember.env.title },
-              { id: "state", header: controlFields.environment.state.title, accessorKey: "state" },
+              { id: "env", header: controlFields.grantMember.env.title },
+              { id: "state", header: controlFields.env.state.title, accessorKey: "state" },
             ]}
             cells={{
-              environment: (cell) => (
-                <RecordLink screen={props} path={`${base()}/${encodeURIComponent(cell.row.name)}`}>
+              env: (cell) => (
+                <RecordLink screen={props} path={`${base()}/${envSegment(cell.row.name)}`}>
                   {cell.row.name}
                 </RecordLink>
               ),
@@ -329,8 +330,8 @@ export function Project(props: ScreenProps & { table?: "environments" | "members
               },
               {
                 id: "memberships",
-                header: controlFields.member.environments.title,
-                accessorFn: (entry) => entry.environments.length,
+                header: controlFields.member.envs.title,
+                accessorFn: (entry) => entry.envs.length,
               },
             ]}
             formats={{ principal_id: "short-hash", org_admin: "boolean-symbol", project_admin: "boolean-symbol" }}
@@ -376,9 +377,9 @@ export function Project(props: ScreenProps & { table?: "environments" | "members
             <div class="platform-table-screen">
               <Records
                 refresh={refresh}
-                id="member-environments"
+                id="member-envs"
                 title={`Memberships for ${current().email}`}
-                rows={current().environments}
+                rows={current().envs}
                 rowKey={(env) => env}
                 create={
                   props.holds(member.grant.route.operation)
@@ -445,10 +446,10 @@ export const controlSections: readonly ShellSection[] = [
     routes: [
       { path: "", operation: control.mine.route.operation, component: ControlHome },
       {
-        path: "projects/:project/environments",
+        path: "projects/:project/envs",
         label: "Environments",
-        operation: environment.list.route.operation,
-        component: (props) => <Project {...props} table="environments" />,
+        operation: envRoutes.list.route.operation,
+        component: (props) => <Project {...props} table="envs" />,
         scroll: "content",
       },
       {
@@ -497,14 +498,14 @@ export const controlSections: readonly ShellSection[] = [
       {
         path: "projects/:project/:env/workloads",
         label: "Workloads",
-        operation: environment.status.route.operation,
+        operation: envRoutes.status.route.operation,
         component: (props) => <Environment {...props} table="workloads" />,
         scroll: "content",
       },
       {
         path: "projects/:project/:env/live-releases",
         label: "Live releases",
-        operation: environment.status.route.operation,
+        operation: envRoutes.status.route.operation,
         component: (props) => <Environment {...props} table="live-releases" />,
         scroll: "content",
       },
@@ -522,7 +523,7 @@ export const controlSections: readonly ShellSection[] = [
         component: (props) => (
           <GrantMembership
             {...props}
-            returnTo={`projects/${encodeURIComponent(props.params.project!)}/${encodeURIComponent(props.params.env!)}/members`}
+            returnTo={`projects/${encodeURIComponent(props.params.project!)}/${envSegment(props.params.env!)}/members`}
           />
         ),
       },
@@ -533,7 +534,7 @@ export const controlSections: readonly ShellSection[] = [
         component: (props) => (
           <GrantMembership
             {...props}
-            returnTo={`projects/${encodeURIComponent(props.params.project!)}/${encodeURIComponent(props.params.env!)}/members/${encodeURIComponent(props.params.principal!)}`}
+            returnTo={`projects/${encodeURIComponent(props.params.project!)}/${envSegment(props.params.env!)}/members/${encodeURIComponent(props.params.principal!)}`}
           />
         ),
       },
@@ -545,7 +546,7 @@ export const controlSections: readonly ShellSection[] = [
       },
       {
         path: "projects/:project/:env",
-        operation: environment.status.route.operation,
+        operation: envRoutes.status.route.operation,
         component: Environment,
       },
     ],

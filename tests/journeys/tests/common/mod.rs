@@ -263,7 +263,7 @@ impl Org {
     /// Write an environment file with one project and one application, and run `wamn env apply`.
     pub async fn apply(self, app: &str) -> anyhow::Result<Env> {
         let scratch = ScratchRoot::create()?;
-        let file = scratch.path().join("environment.yaml");
+        let file = scratch.path().join("env.yaml");
         // A JSON document is a YAML document.
         std::fs::write(
             &file,
@@ -273,7 +273,7 @@ impl Org {
                 "target": "cloud",
                 "revocation_seconds": 60,
                 "database": {"instances": 1, "storage": "1Gi", "cpu": "100m", "memory": "256Mi"},
-                "projects": [{"name": PROJECT, "applications": {app: {"label": LABEL}}}],
+                "projects": [{"name": PROJECT, "apps": {app: {"label": LABEL}}}],
             }))?,
         )?;
         let triple = Triple::new(self.name.clone(), ENV.parse()?, PROJECT.parse()?);
@@ -315,7 +315,7 @@ impl Env {
         command
             .arg("deploy")
             .arg(package)
-            .args(["--application", app, "--env"])
+            .args(["--app", app, "--env"])
             .arg(&self.file);
         run(command).await.map(drop)
     }

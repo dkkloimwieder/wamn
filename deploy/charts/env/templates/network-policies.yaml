@@ -1,6 +1,6 @@
 {{- if .Values.projects }}
 {{- $name := .Values.hostName }}
-{{- $namespace := include "environment.namespace" . }}
+{{- $namespace := include "env.namespace" . }}
 {{- $host := dict "wasmcloud.com/name" "hostgroup" "wasmcloud.com/hostgroup" $name }}
 ---
 apiVersion: networking.k8s.io/v1
@@ -16,7 +16,7 @@ spec:
             matchLabels: {kubernetes.io/metadata.name: hosts}
           podSelector:
             matchLabels: {app.kubernetes.io/name: wamn-edge}
-      ports: [{port: {{ include "environment.httpPort" . }}, protocol: TCP}]
+      ports: [{port: {{ include "env.httpPort" . }}, protocol: TCP}]
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy

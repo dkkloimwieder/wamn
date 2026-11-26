@@ -64,8 +64,7 @@ impl WorkloadRoutes {
                 .get(HTTP_ROUTES_CONFIG)
                 .ok_or_else(|| anyhow::anyhow!("application workload has no HTTP route table"))?,
         )?;
-        let project_env_key =
-            wamn_registry::project_env_key(&app.org, &app.project, &app.environment);
+        let project_env_key = wamn_registry::project_env_key(&app.org, &app.project, &app.env);
         Ok(Self {
             app,
             routes,

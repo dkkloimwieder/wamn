@@ -18,7 +18,7 @@ pub struct ConnectionListResult {
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct FileDeleteRequest {
-    pub application: String,
+    pub app: String,
     pub file_id: String,
     pub binding: String,
 }
@@ -33,7 +33,6 @@ pub struct FileDeleteResult {
 pub enum FileExposeRequestExposure {
     #[serde(rename = "private")]
     Private,
-    #[serde(rename = "application")]
     App,
     #[serde(rename = "public")]
     Public,
@@ -42,7 +41,7 @@ pub enum FileExposeRequestExposure {
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct FileExposeRequest {
-    pub application: String,
+    pub app: String,
     pub file_id: String,
     pub binding: String,
     pub exposure: FileExposeRequestExposure,
@@ -60,14 +59,14 @@ pub struct FileExposeResult {
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct FileGetRequest {
-    pub application: String,
+    pub app: String,
     pub file_id: String,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct FilePutRequest {
-    pub application: String,
+    pub app: String,
     pub binding: String,
     pub name: String,
     pub media_type: String,
@@ -76,7 +75,7 @@ pub struct FilePutRequest {
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NumberCounterSetRequest {
-    pub application: String,
+    pub app: String,
     pub sequence: String,
     pub counter: String,
     pub key: String,
@@ -164,7 +163,6 @@ pub struct RoleListResult {
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
-#[schemars(rename = "ApplicationUserListResultUser")]
 #[serde(deny_unknown_fields)]
 pub struct AppUserListResultUser {
     #[schemars(regex(
@@ -183,7 +181,6 @@ pub struct AppUserListResultUser {
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
-#[schemars(rename = "ApplicationUserListResult")]
 #[serde(deny_unknown_fields)]
 pub struct AppUserListResult {
     pub users: Vec<AppUserListResultUser>,
@@ -279,7 +276,6 @@ pub struct ApiServiceCreateResult {
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
-#[schemars(rename = "ApplicationDeployRequest")]
 #[serde(deny_unknown_fields)]
 pub struct AppDeployRequest {
     pub project: String,
@@ -287,36 +283,33 @@ pub struct AppDeployRequest {
     #[schemars(title = "Release digest")]
     pub release: String,
     #[schemars(title = "Application")]
-    pub application: String,
+    pub app: String,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
-#[schemars(rename = "ApplicationDeployResult")]
 #[serde(deny_unknown_fields)]
 pub struct AppDeployResult {
     pub job: String,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
-#[schemars(rename = "ApplicationRollbackRequest")]
 #[serde(deny_unknown_fields)]
 pub struct AppRollbackRequest {
     pub project: String,
     pub env: String,
     #[schemars(title = "Application")]
-    pub application: String,
+    pub app: String,
     #[schemars(title = "Revision")]
     pub revision: Option<std::num::NonZeroU32>,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
-#[schemars(rename = "ApplicationStopRequest")]
 #[serde(deny_unknown_fields)]
 pub struct AppStopRequest {
     pub project: String,
     pub env: String,
     #[schemars(title = "Application")]
-    pub application: String,
+    pub app: String,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
@@ -430,7 +423,6 @@ pub struct ControlMineResult {
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
-#[schemars(rename = "EnvironmentConfigureRequest")]
 #[serde(deny_unknown_fields)]
 pub struct EnvConfigureRequest {
     pub project: String,
@@ -439,11 +431,10 @@ pub struct EnvConfigureRequest {
     #[schemars(schema_with = "nullable::<bool>")]
     pub disposable: Option<bool>,
     #[schemars(schema_with = "nullable::<String>")]
-    pub application: Option<String>,
+    pub app: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
-#[schemars(rename = "EnvironmentDeleteRequest")]
 #[serde(deny_unknown_fields)]
 pub struct EnvDeleteRequest {
     pub project: String,
@@ -452,7 +443,6 @@ pub struct EnvDeleteRequest {
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
-#[schemars(rename = "EnvironmentListRequest")]
 #[serde(deny_unknown_fields)]
 pub struct EnvListRequest {
     pub project: String,
@@ -465,7 +455,6 @@ pub struct EnvListRequest {
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
-#[schemars(rename = "EnvironmentListResultEnvironmentState")]
 pub enum EnvListResultEnvState {
     #[serde(rename = "active")]
     Active,
@@ -474,7 +463,6 @@ pub enum EnvListResultEnvState {
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
-#[schemars(rename = "EnvironmentListResultEnvironment")]
 #[serde(deny_unknown_fields)]
 pub struct EnvListResultEnv {
     pub name: String,
@@ -483,10 +471,9 @@ pub struct EnvListResultEnv {
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
-#[schemars(rename = "EnvironmentListResult")]
 #[serde(deny_unknown_fields)]
 pub struct EnvListResult {
-    pub environments: Vec<EnvListResultEnv>,
+    pub envs: Vec<EnvListResultEnv>,
     #[schemars(schema_with = "nullable::<String>")]
     pub next_cursor: Option<String>,
     #[schemars(schema_with = "nullable::<i32>")]
@@ -494,7 +481,6 @@ pub struct EnvListResult {
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
-#[schemars(rename = "EnvironmentOperationStatusRequest")]
 #[serde(deny_unknown_fields)]
 pub struct EnvOperationStatusRequest {
     pub project: String,
@@ -503,7 +489,6 @@ pub struct EnvOperationStatusRequest {
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
-#[schemars(rename = "EnvironmentOperationStatusResult")]
 #[serde(deny_unknown_fields)]
 pub struct EnvOperationStatusResult {
     pub job: String,
@@ -514,7 +499,6 @@ pub struct EnvOperationStatusResult {
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
-#[schemars(rename = "EnvironmentStatusResultRollout")]
 #[serde(deny_unknown_fields)]
 pub struct EnvStatusResultRollout {
     pub replicas: i32,
@@ -524,7 +508,6 @@ pub struct EnvStatusResultRollout {
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
-#[schemars(rename = "EnvironmentStatusResultWorkloadCondition")]
 #[serde(deny_unknown_fields)]
 pub struct EnvStatusResultWorkloadCondition {
     #[schemars(title = "Condition")]
@@ -534,14 +517,13 @@ pub struct EnvStatusResultWorkloadCondition {
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
-#[schemars(rename = "EnvironmentStatusResultWorkload")]
 #[serde(deny_unknown_fields)]
 pub struct EnvStatusResultWorkload {
     #[schemars(title = "Workload")]
     pub name: String,
     #[schemars(schema_with = "nullable::<String>")]
     #[schemars(title = "Application")]
-    pub application: Option<String>,
+    pub app: Option<String>,
     #[schemars(title = "Package digest")]
     pub package_digest: String,
     #[schemars(range(min = 1))]
@@ -552,7 +534,6 @@ pub struct EnvStatusResultWorkload {
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
-#[schemars(rename = "EnvironmentStatusResult")]
 #[serde(deny_unknown_fields)]
 pub struct EnvStatusResult {
     #[schemars(title = "Host replicas")]
@@ -634,7 +615,7 @@ pub struct MemberListRequest {
     pub cursor: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(with = "String")]
-    pub environment: Option<String>,
+    pub env: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
@@ -654,7 +635,7 @@ pub struct MemberListResultMember {
     #[schemars(title = "Project admin")]
     pub project_admin: bool,
     #[schemars(title = "Memberships")]
-    pub environments: Vec<String>,
+    pub envs: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
@@ -768,7 +749,7 @@ pub struct SchemaDiffRequest {
     pub project: String,
     pub env: String,
     #[schemars(title = "Application")]
-    pub application: String,
+    pub app: String,
     #[schemars(title = "Release digest")]
     pub release: Option<String>,
 }

@@ -104,7 +104,7 @@ pub fn config(directory: &Path, digest: wamn_digest::Digest) -> EdgeConfig {
         target: TargetConfig {
             org: ORG.parse().unwrap(),
             project: PROJECT.parse().unwrap(),
-            environment: ENV.parse().unwrap(),
+            env: ENV.parse().unwrap(),
         },
         release: ReleaseConfig {
             dir: directory.to_owned(),

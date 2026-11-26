@@ -7,14 +7,14 @@ import {
 } from "@wfe/components/layout";
 import { FieldError } from "@wfe/components/fields";
 import {
-  environment,
+  envRoutes,
   member,
   user,
   type ControlMineResult,
-  type EnvironmentListResultEnvironments,
+  type EnvListResultEnvs,
 } from "./control-client";
 import type { Transport } from "@wamn/web-runtime";
-import type { Address } from "./address";
+import { envSegment, type Address } from "./address";
 import type { ScreenProps } from "./shell";
 import { value } from "./outcome";
 
@@ -36,37 +36,37 @@ export function ControlNavigation(props: {
   const env = () => (project() ? props.params.env : undefined);
   const principal = () => (path().startsWith(`${root()}/users/`) ? props.params.principal : undefined);
   const projectPath = () => `${root()}/projects/${encodeURIComponent(project()!)}`;
-  const environmentPath = () => `${projectPath()}/${encodeURIComponent(env()!)}`;
+  const envPath = () => `${projectPath()}/${envSegment(env()!)}`;
   const projects = createMemo(() =>
     props.mine.projects.filter((entry) => props.holds(member.list.route.operation, entry.project)),
   );
-  const [environments, setEnvironments] = createSignal<readonly EnvironmentListResultEnvironments[]>([]);
+  const [envs, setEnvs] = createSignal<readonly EnvListResultEnvs[]>([]);
   const [trouble, setTrouble] = createSignal<string>();
   const [projectsOpen, setProjectsOpen] = createSignal(true);
-  const [environmentsOpen, setEnvironmentsOpen] = createSignal(true);
+  const [envsOpen, setEnvsOpen] = createSignal(true);
   const [usersOpen, setUsersOpen] = createSignal(true);
   const projectNames = () => [
     ...new Set([...projects().map((entry) => entry.project), ...(project() ? [project()!] : [])]),
   ];
-  const environmentNames = () => [
-    ...new Set([...environments().map((entry) => entry.name), ...(env() ? [env()!] : [])]),
+  const envNames = () => [
+    ...new Set([...envs().map((entry) => entry.name), ...(env() ? [env()!] : [])]),
   ];
   const expanded = (open: boolean) => open && !props.navigation.compact();
   const projectsActive = () => path() === `${root()}/projects` || path() === `${root()}/create-project`;
   const userPath = () => `${root()}/users/${encodeURIComponent(principal()!)}`;
   const userSection = () => (path().startsWith(`${userPath()}/projects`) ? "projects" : "memberships");
   createEffect(project, (name) => {
-    setEnvironments([]);
+    setEnvs([]);
     setTrouble(undefined);
-    if (!name || !untrack(() => props.holds(environment.list.route.operation, name))) return;
+    if (!name || !untrack(() => props.holds(envRoutes.list.route.operation, name))) return;
     let active = true;
-    environment
+    envRoutes
       .list(
         untrack(() => props.transport),
         [{ project: name }],
       )
       .then((result) => {
-        if (active) setEnvironments(value(result).environments);
+        if (active) setEnvs(value(result).envs);
       })
       .catch((error: unknown) => {
         if (active) setTrouble(String(error));
@@ -75,18 +75,18 @@ export function ControlNavigation(props: {
       active = false;
     };
   });
-  const organization = (): SidebarContext => ({ id: root(), kind: "Organization", name: props.org });
+  const org = (): SidebarContext => ({ id: root(), kind: "Organization", name: props.org });
   const currentProject = (): SidebarContext => ({ id: projectPath(), kind: "Project", name: project()! });
   const current = (): SidebarContext =>
     env()
-      ? { id: environmentPath(), kind: "Environment", name: `${project()}/${env()}` }
+      ? { id: envPath(), kind: "Environment", name: `${project()}/${env()}` }
       : project()
         ? currentProject()
-        : organization();
+        : org();
   const choices = (): SidebarContext[] =>
     env()
-      ? environments().map((entry) => ({
-          id: `${projectPath()}/${encodeURIComponent(entry.name)}`,
+      ? envs().map((entry) => ({
+          id: `${projectPath()}/${envSegment(entry.name)}`,
           kind: "Environment",
           name: `${project()}/${entry.name}`,
         }))
@@ -126,7 +126,7 @@ export function ControlNavigation(props: {
       <SidebarContextSwitcher
         value={current()}
         options={choices()}
-        parent={env() ? currentProject() : project() ? organization() : undefined}
+        parent={env() ? currentProject() : project() ? org() : undefined}
         compact={props.navigation.compact()}
         onValueChange={(context) => navigate(context.id)}
       />
@@ -205,24 +205,24 @@ export function ControlNavigation(props: {
         <SidebarGroup
           label="Environments"
           compact={props.navigation.compact()}
-          open={environmentsOpen()}
-          onOpenChange={setEnvironmentsOpen}
-          onExpand={() => setEnvironmentsOpen(true)}
+          open={envsOpen()}
+          onOpenChange={setEnvsOpen}
+          onExpand={() => setEnvsOpen(true)}
           active={
-            path() === `${projectPath()}/environments` ||
-            (path() === environmentPath() && !expanded(environmentsOpen()))
+            path() === `${projectPath()}/envs` ||
+            (path() === envPath() && !expanded(envsOpen()))
           }
         >
           {(close) => (
             <>
-              <Link href={`${projectPath()}/environments`} label="All environments" close={close} active={false} />
-              <For each={environmentNames()}>
+              <Link href={`${projectPath()}/envs`} label="All environments" close={close} active={false} />
+              <For each={envNames()}>
                 {(name) => (
                   <Link
-                    href={`${projectPath()}/${encodeURIComponent(name)}`}
+                    href={`${projectPath()}/${envSegment(name)}`}
                     label={name}
                     close={close}
-                    active={expanded(environmentsOpen()) && path() === `${projectPath()}/${encodeURIComponent(name)}`}
+                    active={expanded(envsOpen()) && path() === `${projectPath()}/${envSegment(name)}`}
                   />
                 )}
               </For>
@@ -249,9 +249,9 @@ export function ControlNavigation(props: {
         >
           {([route, label]) => (
             <Link
-              href={`${environmentPath()}/${route}`}
+              href={`${envPath()}/${route}`}
               label={label}
-              active={path() === `${environmentPath()}/${route}` || path().startsWith(`${environmentPath()}/${route}/`)}
+              active={path() === `${envPath()}/${route}` || path().startsWith(`${envPath()}/${route}/`)}
             />
           )}
         </For>

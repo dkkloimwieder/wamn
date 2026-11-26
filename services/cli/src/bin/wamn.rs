@@ -164,10 +164,10 @@ mod tests {
                 "wamn",
                 "deploy",
                 "apps/orders",
-                "--application",
+                "--app",
                 "orders",
                 "--env",
-                "environment.k",
+                "env.yaml",
             ],
             vec![
                 "wamn",
@@ -175,7 +175,7 @@ mod tests {
                 "publish",
                 "apps/orders",
                 "--env",
-                "environment.k",
+                "env.yaml",
             ],
         ] {
             assert!(Cli::try_parse_from(&arguments).is_ok());
@@ -198,7 +198,7 @@ mod tests {
                 verb,
                 "orders",
                 "--env",
-                "environment.k",
+                "env.yaml",
                 "--release",
                 &digest,
             ])
@@ -212,15 +212,15 @@ mod tests {
             else {
                 panic!("schema input")
             };
-            assert_eq!(args.application, "orders".parse().unwrap());
-            assert_eq!(args.env, std::path::Path::new("environment.k"));
+            assert_eq!(args.app, "orders".parse().unwrap());
+            assert_eq!(args.env, std::path::Path::new("env.yaml"));
             assert_eq!(
                 args.release.as_ref(),
                 Some(&digest.parse::<wamn_digest::Digest>().unwrap())
             );
             assert!(Cli::try_parse_from(["wamn", "schema", verb, "orders"]).is_err());
             assert!(
-                Cli::try_parse_from(["wamn", "schema", verb, "orders", "--env", "environment.k"])
+                Cli::try_parse_from(["wamn", "schema", verb, "orders", "--env", "env.yaml"])
                     .is_ok()
             );
         }
@@ -236,14 +236,7 @@ mod platform_tests {
         for action in ["diff", "apply"] {
             assert!(
                 Cli::try_parse_from([
-                    "wamn",
-                    "platform",
-                    "schema",
-                    action,
-                    "--target",
-                    "system",
-                    "--env",
-                    "environment.k"
+                    "wamn", "platform", "schema", action, "--target", "system", "--env", "env.yaml"
                 ])
                 .is_err()
             );

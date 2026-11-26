@@ -63,7 +63,7 @@ pub(super) fn release_values(
         integration_repository,
         |authority| Ok(authority_port(authority)?),
     )?;
-    let selection = &document.applications[app];
+    let selection = &document.apps[app];
     let apps = std::collections::BTreeMap::from([(
         app.to_owned(),
         wamn_registry::AppDefinition {

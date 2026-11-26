@@ -11,7 +11,7 @@ import { cleanup, fireEvent, render, screen } from "@solidjs/testing-library";
 import { afterEach, beforeEach } from "vitest";
 
 import { member, user } from "../src/control-client";
-import { permission } from "../src/application-client";
+import { permission } from "../src/app-client";
 
 import { createSignal, flush, For } from "solid-js";
 
@@ -117,7 +117,7 @@ const ADMINISTRATION: ShellSection = {
     },
     {
       path: "administration/users",
-      operation: "wamn-control:user/list@0.9.0",
+      operation: "wamn-control:user/list@0.10.0",
       label: "users",
       component: () => <p>user</p>,
     },

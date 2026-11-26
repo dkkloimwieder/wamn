@@ -253,7 +253,7 @@ impl HostPlugin for WamnOperation {
         item: &mut WorkloadItem<'a>,
         interfaces: WitInterfaces<'_>,
     ) -> anyhow::Result<()> {
-        if let Some(app) = bind_app_config(&self.scopes, item).context("decode wamn.application")? {
+        if let Some(app) = bind_app_config(&self.scopes, item).context("decode wamn.app")? {
             let WorkloadItem::Component(component) = &*item else {
                 anyhow::bail!("operation authority requires a route component");
             };

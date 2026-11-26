@@ -216,7 +216,7 @@ async fn token(
 }
 
 common::journey! {
-    /// An application that the control route `application.stop` stops leaves the host, while
+    /// An application that the control route `app.stop` stops leaves the host, while
     /// the environment file still lists it: its Workload objects go, and the Host object
     /// counts fewer workloads.
     async fn app_stop_leaves_its_host() -> anyhow::Result<()> {
@@ -257,14 +257,14 @@ common::journey! {
         let triple = &env.triple;
         let started = control(
             org,
-            "application.stop",
-            json!({"project": triple.project, "env": triple.env, "application": SECOND}),
+            "app.stop",
+            json!({"project": triple.project, "env": triple.env, "app": SECOND}),
         )
         .await?;
         let job = started["job"]
             .as_str()
-            .with_context(|| format!("application.stop started no Job: {started}"))?;
-        let ended = until(HOST_DEADLINE, "the application.stop Job ends", || async {
+            .with_context(|| format!("app.stop started no Job: {started}"))?;
+        let ended = until(HOST_DEADLINE, "the app.stop Job ends", || async {
             let status = control(
                 org,
                 "operation.status",
@@ -277,7 +277,7 @@ common::journey! {
         .await?;
         ensure!(
             ended["state"] == "succeeded",
-            "the application.stop Job {job} failed: {}",
+            "the app.stop Job {job} failed: {}",
             ended["log"]
         );
         until(
@@ -341,7 +341,7 @@ common::journey! {
         );
 
         reapply(env, |file| {
-            file["projects"][0]["applications"] = json!({});
+            file["projects"][0]["apps"] = json!({});
         })
         .await?;
         until(
@@ -382,8 +382,8 @@ common::journey! {
             .iter()
             .filter_map(|workload| workload.data["spec"]["template"]["spec"]["components"].as_array())
             .flatten()
-            .find_map(|component| component["localResources"]["config"]["wamn.application"].as_str())
-            .context("the deployed workload has no wamn.application configuration")?;
+            .find_map(|component| component["localResources"]["config"]["wamn.app"].as_str())
+            .context("the deployed workload has no wamn.app configuration")?;
         let configuration: serde_json::Value = serde_json::from_str(configuration)?;
         assert_eq!(configuration["grant-cache-seconds"], REVOCATION_SECONDS);
         let org = &env.org;

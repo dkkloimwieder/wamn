@@ -3,7 +3,7 @@
  * The application administration routes through their generated client
  * (docs/plan/platform-ui.md §4.6).
  *
- * `generated_application_client_live` in `services/host/src/host/host_route/tests.rs`
+ * `generated_app_client_live` in `services/host/src/host/host_route/tests.rs`
  * serves the native application routes and supplies the endpoint, access
  * tokens and user IDs. This suite skips during regular UI test runs.
  */
@@ -11,7 +11,7 @@ import { describe, expect, test } from "vitest";
 
 import { createTransport } from "@wamn/web-runtime";
 import { recordTransport } from "./record-transport";
-import { permission, role, user, userRole } from "../src/application-client";
+import { permission, role, user, userRole } from "../src/app-client";
 
 // The package has no Node types, and the test reads only its environment.
 declare const process: { readonly env: { readonly [name: string]: string | undefined } };

@@ -306,7 +306,7 @@ impl HostPlugin for ConnectionHttp {
             .find(|component| component.name() == "ingress")
             .context("ingress missing")?;
         let app = wamn_engine::app::bound_app_config(&self.scopes, route.id())
-            .context("wamn.application missing")?;
+            .context("wamn.app missing")?;
         if app
             .components
             .iter()

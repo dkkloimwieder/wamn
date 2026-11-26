@@ -18,7 +18,7 @@ pub struct EnvDocument {
     pub revocation_seconds: u32,
     /// Application name to its selection and membership.
     #[serde(deserialize_with = "read_apps")]
-    pub applications: BTreeMap<wamn_registry::AppName, AppSelection>,
+    pub apps: BTreeMap<wamn_registry::AppName, AppSelection>,
 }
 
 pub use wamn_registry::configuration::{
@@ -27,7 +27,6 @@ pub use wamn_registry::configuration::{
 
 /// An application's deployment selection and declared membership.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[schemars(rename = "ApplicationSelection")]
 #[serde(deny_unknown_fields)]
 pub struct AppSelection {
     /// Desired release, read from the registry or supplied by the deploy request.
@@ -156,12 +155,12 @@ impl EnvDocument {
             self.revocation_seconds,
             &self.settings.integrations,
         )?;
-        require_apps(&self.applications, &self.settings.integrations)
+        require_apps(&self.apps, &self.settings.integrations)
     }
 
     /// Runtime membership excludes deployment selections.
     pub fn membership(&self) -> EnvApps {
-        self.applications
+        self.apps
             .iter()
             .map(|(name, app)| {
                 (

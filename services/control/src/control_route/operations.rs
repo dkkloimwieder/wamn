@@ -58,7 +58,7 @@ impl ControlRoutes<'_> {
                 .is_none()
         {
             return Err(Refusal::Declared {
-                code: "environment_not_found",
+                code: "env_not_found",
                 detail: json!({"field":"env"}),
             });
         }
@@ -77,10 +77,7 @@ impl ControlRoutes<'_> {
             return Err(anyhow::anyhow!("operation worker must share the org namespace").into());
         }
         let Some(operation) = operation else {
-            if request.application.is_some()
-                || request.release.is_some()
-                || request.revision.is_some()
-            {
+            if request.app.is_some() || request.release.is_some() || request.revision.is_some() {
                 return Err(invalid("value"));
             }
             let name = request.job.as_deref().ok_or_else(|| invalid("job"))?;
@@ -131,14 +128,14 @@ fn validate(operation: Operation, request: &Request) -> Result<(), Refusal> {
         | Operation::Stop
         | Operation::Apply
         | Operation::Diff
-            if request.application.is_none() =>
+            if request.app.is_none() =>
         {
-            return Err(invalid("application"));
+            return Err(invalid("app"));
         }
         Operation::Reset | Operation::Recover | Operation::Close
-            if request.application.is_some() || request.release.is_some() =>
+            if request.app.is_some() || request.release.is_some() =>
         {
-            return Err(invalid("application"));
+            return Err(invalid("app"));
         }
         _ => {}
     }

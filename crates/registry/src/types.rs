@@ -43,7 +43,7 @@ pub enum EnvStatus {
     /// Identity offers its audience and its host serves its routes.
     Active,
     /// Identity offers no audience and its host answers
-    /// `environment-inactive`. CDC, data and grants stay.
+    /// `env-inactive`. CDC, data and grants stay.
     Inactive,
 }
 

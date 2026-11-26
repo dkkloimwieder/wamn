@@ -2,7 +2,7 @@ import { createSignal, onCleanup, Show, untrack } from "solid-js";
 import { FieldError } from "@wfe/components/fields";
 import { createForm } from "@wfe/form";
 import { FormView, type FormDescription } from "@wfe/generator";
-import { controlFields, environment, member, project } from "./control-client";
+import { controlFields, envRoutes, member, project } from "./control-client";
 import { Page } from "./page";
 import { value } from "./outcome";
 import type { ScreenProps } from "./shell";
@@ -14,7 +14,7 @@ export function GrantMembership(props: ScreenProps & { returnTo: string }) {
     env: props.params.env ?? "",
   }));
   const [values, setValues] = createSignal(defaults);
-  const [projects, setProjects] = createSignal<readonly { name: string; environments: readonly string[] }[]>([]);
+  const [projects, setProjects] = createSignal<readonly { name: string; envs: readonly string[] }[]>([]);
   const [loaded, setLoaded] = createSignal(false);
   const [trouble, setTrouble] = createSignal<string>();
   let active = true;
@@ -30,7 +30,7 @@ export function GrantMembership(props: ScreenProps & { returnTo: string }) {
         .filter((name) => props.holds(member.grant.route.operation, name))
         .map(async (name) => ({
           name,
-          environments: value(await environment.list(props.transport, [{ project: name }])).environments.map(
+          envs: value(await envRoutes.list(props.transport, [{ project: name }])).envs.map(
             (env) => env.name,
           ),
         })),
@@ -95,7 +95,7 @@ export function GrantMembership(props: ScreenProps & { returnTo: string }) {
             choices: {
               project: () => projects().map((entry) => ({ value: entry.name, label: entry.name })),
               env: () =>
-                (projects().find((entry) => entry.name === form.values.project)?.environments ?? []).map((env) => ({
+                (projects().find((entry) => entry.name === form.values.project)?.envs ?? []).map((env) => ({
                   value: env,
                   label: env,
                 })),

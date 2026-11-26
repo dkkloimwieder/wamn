@@ -21,19 +21,19 @@ async fn two_envs_with_the_same_web_digest_share_one_completed_upload() {
     let registry = fixture_registry(&scratch, &server);
     let first: EnvDocument = serde_json::from_value(serde_json::json!({
         "org": "acme", "project": "web-fixture", "env": "dev", "target": "dev", "revocation_seconds":60,
-        "applications": {"fixture": {"label": "dev", "client": {"package": "web_fixture", "web": packed.digest}}}}))
+        "apps": {"fixture": {"label": "dev", "client": {"package": "web_fixture", "web": packed.digest}}}}))
     .unwrap();
     let mut second = first.clone();
     second.settings.env = "staging".parse().unwrap();
-    second.applications.get_mut("fixture").unwrap().label = "staging".into();
+    second.apps.get_mut("fixture").unwrap().label = "staging".into();
     let store = InMemory::new();
-    let web = &first.applications["fixture"].client.as_ref().unwrap().web;
+    let web = &first.apps["fixture"].client.as_ref().unwrap().web;
     let (_, _, written) =
         upload_web_to_store(&RegistryWebArtifacts(&registry), web, "prefix", &store)
             .await
             .unwrap();
     assert!(written);
-    let web = &second.applications["fixture"].client.as_ref().unwrap().web;
+    let web = &second.apps["fixture"].client.as_ref().unwrap().web;
     let (_, _, written) =
         upload_web_to_store(&RegistryWebArtifacts(&registry), web, "prefix", &store)
             .await

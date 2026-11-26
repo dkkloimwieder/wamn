@@ -303,8 +303,7 @@ impl HostPlugin for OperationHost {
     ) -> anyhow::Result<()> {
         let app = wamn_engine::app::bind_app_config(&self.scopes, item)?;
         if let Some(app) = &app {
-            let key =
-                wamn_registry::name::project_env_key(&app.org, &app.project, &app.environment);
+            let key = wamn_registry::name::project_env_key(&app.org, &app.project, &app.env);
             self.store.bind_host_project(&app.project, &key).await?;
             self.authorization.configure_app(app)?;
         }

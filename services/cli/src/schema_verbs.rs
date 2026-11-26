@@ -43,7 +43,7 @@ pub struct ResetArgs {
 #[derive(Debug, Args)]
 pub struct SchemaArgs {
     /// The declared application or source directory. Source diff needs current build output.
-    pub application: wamn_registry::AppName,
+    pub app: wamn_registry::AppName,
     /// The target environment file.
     #[arg(long)]
     pub env: PathBuf,
@@ -93,9 +93,9 @@ pub async fn run(command: SchemaCommand) -> anyhow::Result<()> {
         !apply || args.release.is_some(),
         "schema apply requires --release"
     );
-    let source = std::path::Path::new(args.application.as_str());
-    let (triple, app, release) = match file.app_project(&args.application) {
-        Ok(project) => (file.triple(project), args.application, args.release),
+    let source = std::path::Path::new(args.app.as_str());
+    let (triple, app, release) = match file.app_project(&args.app) {
+        Ok(project) => (file.triple(project), args.app, args.release),
         Err(error) if apply || !source.is_dir() => return Err(error),
         Err(_) => {
             ensure!(
@@ -112,7 +112,7 @@ pub async fn run(command: SchemaCommand) -> anyhow::Result<()> {
     host.run(
         if apply { "schema.apply" } else { "schema.diff" },
         &triple,
-        json!({"application":app,"release":release}),
+        json!({"app":app,"release":release}),
     )
     .await
 }
@@ -122,6 +122,6 @@ async fn publish(args: PublishArgs) -> anyhow::Result<()> {
     let app = file.only_app()?.clone();
     let document = file.into_app(&app)?;
     let (app, digest) = crate::operation_verbs::publish(&document, &args.package).await?;
-    println!("{}", json!({"application":app, "release":digest}));
+    println!("{}", json!({"app":app, "release":digest}));
     Ok(())
 }

@@ -3,22 +3,22 @@ import { FieldError } from "@wfe/components/fields";
 import { createForm } from "@wfe/form";
 import { FormView } from "@wfe/generator";
 import {
-  applicationFields,
+  appFields,
   permission,
   role,
   user,
   userRole,
   type PermissionListResult,
   type UserListResult,
-} from "./application-client";
+} from "./app-client";
 import { ConfirmAction } from "./confirm-action";
 import { MissingPage, Page, RecordLink } from "./page";
 import { Records } from "./records";
 import { value } from "./outcome";
 import type { ScreenProps } from "./shell";
-import { grantedOperations, rolePath } from "./application-roles";
+import { grantedOperations, rolePath } from "./app-roles";
 
-export const applicationUsersPath = "administration/users";
+export const appUsersPath = "administration/users";
 
 export function ApplicationUsers(props: ScreenProps) {
   const [users, setUsers] = createSignal<UserListResult["users"]>([]);
@@ -60,14 +60,14 @@ export function ApplicationUsers(props: ScreenProps) {
           rowKey={(entry) => entry.id}
           refresh={refresh}
           columns={[
-            { id: "name", header: applicationFields.user.display_name.title, size: 220 },
-            { id: "email", header: applicationFields.user.email.title, accessorKey: "email", size: 280 },
-            { id: "id", header: applicationFields.user.id.title, accessorKey: "id", size: 160 },
+            { id: "name", header: appFields.user.display_name.title, size: 220 },
+            { id: "email", header: appFields.user.email.title, accessorKey: "email", size: 280 },
+            { id: "id", header: appFields.user.id.title, accessorKey: "id", size: 160 },
           ]}
           formats={{ id: "short-hash" }}
           cells={{
             name: (cell) => (
-              <RecordLink screen={props} path={`${applicationUsersPath}/${encodeURIComponent(cell.row.id)}`}>
+              <RecordLink screen={props} path={`${appUsersPath}/${encodeURIComponent(cell.row.id)}`}>
                 {cell.row.display_name ?? cell.row.email}
               </RecordLink>
             ),
@@ -85,10 +85,10 @@ export function ApplicationUsers(props: ScreenProps) {
               refresh={refresh}
               create={{
                 label: "Grant role",
-                run: () => props.open(`${applicationUsersPath}/${encodeURIComponent(current().id)}/grant`),
+                run: () => props.open(`${appUsersPath}/${encodeURIComponent(current().id)}/grant`),
               }}
               columns={[
-                { id: "role", header: applicationFields.user.roles.title, accessorFn: (name) => name },
+                { id: "role", header: appFields.user.roles.title, accessorFn: (name) => name },
                 { id: "actions", header: "Actions", size: 80, sortable: false, filterable: false },
               ]}
               details={(cell) => (
@@ -101,7 +101,7 @@ export function ApplicationUsers(props: ScreenProps) {
                   columns={[
                     {
                       id: "operation",
-                      header: applicationFields.permissions.operations.items.properties.operation.title,
+                      header: appFields.permissions.operations.items.properties.operation.title,
                       accessorKey: "operation",
                     },
                   ]}
@@ -140,7 +140,7 @@ export function ApplicationUsers(props: ScreenProps) {
 
 export function GrantApplicationRole(props: ScreenProps) {
   const userId = untrack(() => props.params.principal!);
-  const returnTo = `${applicationUsersPath}/${encodeURIComponent(userId)}`;
+  const returnTo = `${appUsersPath}/${encodeURIComponent(userId)}`;
   const [choices, setChoices] = createSignal<string[]>([]);
   const [loaded, setLoaded] = createSignal(false);
   const [missing, setMissing] = createSignal(false);
@@ -190,7 +190,7 @@ export function GrantApplicationRole(props: ScreenProps) {
           <FormView
             description={{
               id: "grant-application-role",
-              fields: [{ field: "role", label: applicationFields.grantRole.role.title, control: "select" }],
+              fields: [{ field: "role", label: appFields.grantRole.role.title, control: "select" }],
               submit: { id: "grant", label: "Grant role" },
               actions: [{ id: "cancel", label: "Cancel", variant: "ghost" }],
             }}

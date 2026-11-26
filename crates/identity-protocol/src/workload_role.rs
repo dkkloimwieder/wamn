@@ -127,7 +127,7 @@ impl WorkloadRoleIdentityType {
     const fn as_str(self) -> &'static str {
         match self {
             Self::ProjectEnvKey => "project_env_key",
-            Self::ProjectEnv => "project-environment",
+            Self::ProjectEnv => "project-env",
             Self::Control => "control",
             Self::Org => "org",
         }

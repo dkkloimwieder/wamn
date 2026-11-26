@@ -210,9 +210,8 @@ impl HostPlugin for Workflow {
         let app = self
             .postgres
             .workflow_app(&route)
-            .context("ingress has no bound wamn.application")?;
-        let project_key =
-            wamn_registry::name::project_env_key(&app.org, &app.project, &app.environment);
+            .context("ingress has no bound wamn.app")?;
+        let project_key = wamn_registry::name::project_env_key(&app.org, &app.project, &app.env);
         let entry = workload.dispatch_target(item, ID).await?;
         self.workloads
             .write()

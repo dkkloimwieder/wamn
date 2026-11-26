@@ -17,7 +17,7 @@ pub async fn try_author_lock(
 ) -> Result<bool, sqlx::Error> {
     sqlx::query_scalar(wamn_postgres::ENV_TRANSACTION_LOCK_SQL)
         .bind(app.org.as_str())
-        .bind(app.environment.as_str())
+        .bind(app.env.as_str())
         .fetch_one(connection)
         .await
 }
@@ -82,8 +82,8 @@ pub async fn insert_version(
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
          ON CONFLICT (env, app, workflow_id, version) DO NOTHING",
     )
-    .bind(app.environment.as_str())
-    .bind(app.application.as_str())
+    .bind(app.env.as_str())
+    .bind(app.app.as_str())
     .bind(graph.graph_id.as_str())
     .bind(version)
     .bind(sqlx::types::Json(graph))
@@ -116,8 +116,8 @@ pub async fn path_taken(
            WHERE env = $1 AND app = $2 AND enabled
              AND path = $3 AND workflow_id <> $4)",
     )
-    .bind(app.environment.as_str())
-    .bind(app.application.as_str())
+    .bind(app.env.as_str())
+    .bind(app.app.as_str())
     .bind(path)
     .bind(id.as_str())
     .fetch_one(connection)
@@ -170,8 +170,8 @@ pub async fn load_version(
         "SELECT graph_json, graph_hash, execution_role, enabled FROM catalog.workflow
           WHERE env = $1 AND app = $2 AND workflow_id = $3 AND version = $4",
     )
-    .bind(app.environment.as_str())
-    .bind(app.application.as_str())
+    .bind(app.env.as_str())
+    .bind(app.app.as_str())
     .bind(id.as_str())
     .bind(version)
     .fetch_optional(connection)
@@ -190,8 +190,8 @@ pub async fn previously_had_consumer(
                   WHERE env = $1 AND app = $2 AND workflow_id = $3
                     AND trigger = 'data_change' AND enable_lsn IS NOT NULL)",
     )
-    .bind(app.environment.as_str())
-    .bind(app.application.as_str())
+    .bind(app.env.as_str())
+    .bind(app.app.as_str())
     .bind(id.as_str())
     .fetch_one(connection)
     .await
@@ -212,8 +212,8 @@ pub async fn enable_version(
           WHERE env = $1 AND app = $2 AND workflow_id = $3 AND enabled
           RETURNING trigger",
     )
-    .bind(app.environment.as_str())
-    .bind(app.application.as_str())
+    .bind(app.env.as_str())
+    .bind(app.app.as_str())
     .bind(id.as_str())
     .fetch_optional(&mut *connection)
     .await?;
@@ -221,8 +221,8 @@ pub async fn enable_version(
         "UPDATE catalog.workflow SET enabled = true, enable_lsn = $5::pg_lsn
           WHERE env = $1 AND app = $2 AND workflow_id = $3 AND version = $4",
     )
-    .bind(app.environment.as_str())
-    .bind(app.application.as_str())
+    .bind(app.env.as_str())
+    .bind(app.app.as_str())
     .bind(id.as_str())
     .bind(version)
     .bind(lsn)
@@ -243,8 +243,8 @@ pub async fn disable_version(
           WHERE env = $1 AND app = $2 AND workflow_id = $3 AND version = $4
           RETURNING trigger",
     )
-    .bind(app.environment.as_str())
-    .bind(app.application.as_str())
+    .bind(app.env.as_str())
+    .bind(app.app.as_str())
     .bind(id.as_str())
     .bind(version)
     .fetch_optional(connection)
@@ -262,8 +262,8 @@ pub async fn has_enabled_data_change(
           WHERE env = $1 AND app = $2 AND workflow_id = $3
             AND enabled AND trigger = 'data_change')",
     )
-    .bind(app.environment.as_str())
-    .bind(app.application.as_str())
+    .bind(app.env.as_str())
+    .bind(app.app.as_str())
     .bind(id.as_str())
     .fetch_one(connection)
     .await
@@ -277,8 +277,8 @@ pub async fn list(connection: &mut PgConnection, app: &AppConfig) -> Result<Valu
           FROM catalog.workflow w WHERE env = $1 AND app = $2
           ORDER BY workflow_id, version",
     )
-    .bind(app.environment.as_str())
-    .bind(app.application.as_str())
+    .bind(app.env.as_str())
+    .bind(app.app.as_str())
     .fetch_all(connection)
     .await?;
     Ok(Value::Array(rows))
@@ -293,8 +293,8 @@ pub async fn request_workflow_ids(
         "SELECT workflow_id FROM catalog.workflow
           WHERE env = $1 AND app = $2 AND enabled AND trigger = 'request'",
     )
-    .bind(app.environment.as_str())
-    .bind(app.application.as_str())
+    .bind(app.env.as_str())
+    .bind(app.app.as_str())
     .fetch_all(connection)
     .await
 }

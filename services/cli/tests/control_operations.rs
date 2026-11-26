@@ -65,11 +65,11 @@ fn exchange(listener: &TcpListener, status: u16, answer: Value) -> anyhow::Resul
 fn command(root: &Path, url: &str, arguments: &[&str]) -> anyhow::Result<Command> {
     // A declared application stays a published selection even when its name is a directory.
     std::fs::create_dir_all(root.join("a"))?;
-    let file = root.join("environment.yaml");
+    let file = root.join("env.yaml");
     let document: wamn_env::env::document::EnvFile = serde_json::from_value(json!({
         "org":"acme", "env":"dev", "target":"cloud", "revocation_seconds":60,
         "database":{"instances":1,"storage":"2Gi","cpu":"200m","memory":"256Mi"},
-        "projects":[{"name":"apps","applications":{"a":{ "label":"a"}}}]
+        "projects":[{"name":"apps","apps":{"a":{ "label":"a"}}}]
     }))?;
     std::fs::write(&file, document.to_yaml()?)?;
     let mut command = control_command(root, url);
@@ -135,13 +135,7 @@ fn route_denials_and_failed_jobs_exit_nonzero() -> anyhow::Result<()> {
     ] {
         let (output, _) = run(
             scratch.path(),
-            &[
-                "deploy",
-                "--application",
-                "a",
-                "--release",
-                &digest.to_string(),
-            ],
+            &["deploy", "--app", "a", "--release", &digest.to_string()],
             responses,
         )?;
         assert!(!output.status.success());

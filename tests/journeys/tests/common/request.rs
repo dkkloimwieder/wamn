@@ -58,7 +58,7 @@ impl<'a> OtherEnv<'a> {
     /// labelled `env`, and run `wamn env apply`. A label is unique in its org.
     pub async fn apply(org: &'a Org, env: &str, app: &str) -> anyhow::Result<Self> {
         let scratch = ScratchRoot::create()?;
-        let file = scratch.path().join("environment.yaml");
+        let file = scratch.path().join("env.yaml");
         std::fs::write(
             &file,
             serde_json::to_vec(&json!({
@@ -67,7 +67,7 @@ impl<'a> OtherEnv<'a> {
                 "target": "cloud",
                 "revocation_seconds": 60,
                 "database": {"instances": 1, "storage": "1Gi", "cpu": "100m", "memory": "256Mi"},
-                "projects": [{"name": PROJECT, "applications": {app: {"label": env}}}],
+                "projects": [{"name": PROJECT, "apps": {app: {"label": env}}}],
             }))?,
         )?;
         let env = Self {

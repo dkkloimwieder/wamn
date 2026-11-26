@@ -16,7 +16,6 @@ use super::plan::{default_drain_bound_seconds, default_readiness_budget_seconds}
 use super::{AppSelection, EnvDocument, Integration, Schema};
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
-#[schemars(rename = "EnvironmentFile")]
 #[serde(deny_unknown_fields)]
 pub struct EnvFile {
     #[schemars(with = "String")]
@@ -74,7 +73,7 @@ pub struct Project {
     #[serde(default)]
     pub schema: Schema,
     #[schemars(with = "BTreeMap<String, AppSelection>")]
-    pub applications: BTreeMap<AppName, AppSelection>,
+    pub apps: BTreeMap<AppName, AppSelection>,
 }
 
 impl EnvFile {
@@ -137,8 +136,8 @@ impl EnvFile {
                 project.name
             );
             wamn_platform_install::env::validate_project_env(&self.org, &project.name, &self.env)?;
-            super::plan::require_apps(&project.applications, &self.connections)?;
-            for name in project.applications.keys() {
+            super::plan::require_apps(&project.apps, &self.connections)?;
+            for name in project.apps.keys() {
                 ensure!(apps.insert(name), "duplicate application {name}");
             }
         }
@@ -153,17 +152,14 @@ impl EnvFile {
     pub fn app_project(&self, app: &AppName) -> anyhow::Result<&ProjectId> {
         self.projects
             .iter()
-            .find(|project| project.applications.contains_key(app))
+            .find(|project| project.apps.contains_key(app))
             .map(|project| &project.name)
             .with_context(|| format!("application {app} is not declared"))
     }
 
     /// Resolve a source-only command, which requires a single declared application.
     pub fn only_app(&self) -> anyhow::Result<&AppName> {
-        let mut apps = self
-            .projects
-            .iter()
-            .flat_map(|project| project.applications.keys());
+        let mut apps = self.projects.iter().flat_map(|project| project.apps.keys());
         let name = apps
             .next()
             .context("environment has no declared application")?;
@@ -207,7 +203,7 @@ impl EnvFile {
                 readiness_budget_seconds: self.readiness_budget_seconds,
                 drain_bound_seconds: self.drain_bound_seconds,
                 revocation_seconds: self.revocation_seconds,
-                applications: project.applications,
+                apps: project.apps,
             })
     }
 
@@ -224,7 +220,7 @@ impl EnvFile {
             readiness_budget_seconds: self.readiness_budget_seconds,
             drain_bound_seconds: self.drain_bound_seconds,
             revocation_seconds: self.revocation_seconds,
-            applications: project.applications,
+            apps: project.apps,
         }
     }
 }

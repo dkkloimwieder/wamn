@@ -116,7 +116,6 @@ enum Task {
     /// Run repository formatting, Clippy, and policy checks.
     RepoLint(tasks::RunArgs),
     /// Generate or check the authored environment JSON Schema.
-    #[command(name = "environment-schema")]
     EnvSchema {
         #[arg(long)]
         check: bool,

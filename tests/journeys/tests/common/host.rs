@@ -59,13 +59,13 @@ pub async fn reapply(env: &Env, edit: impl FnOnce(&mut Value)) -> anyhow::Result
 
 /// Declare `app` with `label` in the environment's one project.
 pub fn declare(file: &mut Value, app: &str, label: &str) {
-    file["projects"][0]["applications"][app] = json!({"label": label});
+    file["projects"][0]["apps"][app] = json!({"label": label});
 }
 
 /// The label that the environment file gives `app`.
 fn label(env: &Env, app: &str) -> anyhow::Result<String> {
     let file: Value = serde_json::from_slice(&std::fs::read(&env.file)?)?;
-    file["projects"][0]["applications"][app]["label"]
+    file["projects"][0]["apps"][app]["label"]
         .as_str()
         .map(str::to_owned)
         .with_context(|| format!("the environment file has no label for {app}"))
@@ -167,7 +167,7 @@ pub async fn host_object(
         .await?
         .items
         .into_iter()
-        .find(|host| host.data["environment"] == namespace && host.data["hostname"] == address))
+        .find(|host| host.data["env"] == namespace && host.data["hostname"] == address))
 }
 
 /// The workloads that a Host object reports. Its status leaves out a count of zero.
@@ -193,7 +193,7 @@ pub async fn app_objects(
                 .metadata
                 .annotations
                 .as_ref()
-                .and_then(|annotations| annotations.get("wamn.application"))
+                .and_then(|annotations| annotations.get("wamn.app"))
                 .is_some_and(|name| name == app)
         })
         .collect())

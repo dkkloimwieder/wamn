@@ -53,7 +53,7 @@ const UNSUPPORTED_POLICY_CODE: &str = "auth-policy-unsupported";
 /// 503, because the environment exists and serves again once it is active
 /// (docs/architecture/execution.md#routing-and-availability).
 const ENV_INACTIVE_STATUS: u16 = 503;
-const ENV_INACTIVE_CODE: &str = "environment-inactive";
+const ENV_INACTIVE_CODE: &str = "env-inactive";
 
 /// Host-owned record of an originating caller and its operation grants.
 ///
@@ -205,7 +205,7 @@ pub trait RouteAuthenticator: Send + Sync + std::fmt::Debug {
 ///
 /// The route plugin asks it once for each request, before the route's policy,
 /// so an anonymous route is refused too. An inactive environment answers
-/// `environment-inactive` with 503. A failed read answers
+/// `env-inactive` with 503. A failed read answers
 /// `authentication-unavailable`.
 #[async_trait::async_trait]
 pub trait EnvStatus: Send + Sync + std::fmt::Debug {
@@ -428,13 +428,13 @@ mod tests {
             ..caller.clone()
         };
         assert!(admin.permits("platform-fixture:widget/query@1.0.0"));
-        assert!(admin.permits("wamn-control:role/create@0.9.0"));
+        assert!(admin.permits("wamn-control:role/create@0.10.0"));
         // A stored row that names a host route admits no caller but admin.
         let stored = AuthenticatedCaller {
             permissions: Arc::new(HashSet::from(["wamn-control:role/create".to_string()])),
             ..caller.clone()
         };
-        assert!(!stored.permits("wamn-control:role/create@0.9.0"));
+        assert!(!stored.permits("wamn-control:role/create@0.10.0"));
         assert_eq!(
             wamn_package::sealed_operation_reference("platform-fixture:widget/get@1.0.0"),
             "platform-fixture:widget/get"

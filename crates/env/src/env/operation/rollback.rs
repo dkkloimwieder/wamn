@@ -71,7 +71,7 @@ pub(super) async fn app(
         .parse()?;
     let app = values["route"]["config"][APP_CONFIG]
         .as_str()
-        .context("rollback revision has no wamn.application configuration")?;
+        .context("rollback revision has no wamn.app configuration")?;
     Ok((digest, serde_json::from_str(app)?))
 }
 

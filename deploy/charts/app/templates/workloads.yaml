@@ -1,25 +1,25 @@
-{{- include "application.requireImageSet" . }}
+{{- include "app.requireImageSet" . }}
 {{- $config := required "route.config is required" .Values.route.config }}
 ---
 apiVersion: runtime.wasmcloud.dev/v1alpha1
 kind: WorkloadDeployment
 metadata:
   name: {{ (default .Release.Name .Values.name) }}-http
-  namespace: {{ include "application.namespace" . | quote }}
+  namespace: {{ include "app.namespace" . | quote }}
   annotations:
-    {{- include "application.annotations" . | nindent 4 }}
+    {{- include "app.annotations" . | nindent 4 }}
     wamn.package-digest: {{ .Values.release.manifestDigest | quote }}
     wamn.release-revision: {{ .Release.Revision | quote }}
 spec:
   replicas: 1
   template:
     annotations:
-      {{- include "application.annotations" . | nindent 6 }}
+      {{- include "app.annotations" . | nindent 6 }}
       wamn.project_env_key: {{ required "route.config.wamn.project_env_key is required" (index $config "wamn.project_env_key") | quote }}
     spec:
       hostSelector:
-        {{- include "application.hostSelector" . | nindent 8 }}
-      environment: {{ include "application.namespace" . | quote }}
+        {{- include "app.hostSelector" . | nindent 8 }}
+      environment: {{ include "app.namespace" . | quote }}
       kubernetes:
         service:
           name: {{ (default .Release.Name .Values.name) }}-http

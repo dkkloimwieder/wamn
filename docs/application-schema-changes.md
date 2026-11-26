@@ -18,4 +18,4 @@ Keep every applied migration file with its original name and contents. Give each
 
 If a new release fails to serve, WAMN attempts to restore the previous release on the migrated schema. If Helm returns success but the new workload never becomes Ready, WAMN rolls back and checks that the restored workload serves. Committed migrations stay installed. If the restored code cannot use that schema, publish and deploy a corrective migration with a higher number to move the schema forward.
 
-To pick earlier code explicitly, use `wamn rollback APP --revision N --env environment.yaml`. Without `--revision`, WAMN selects the newest earlier deploy. Choose a revision that works with the schema already installed.
+To pick earlier code explicitly, use `wamn rollback APP --revision N --env env.yaml`. Without `--revision`, WAMN selects the newest earlier deploy. Choose a revision that works with the schema already installed.

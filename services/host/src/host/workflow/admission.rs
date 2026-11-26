@@ -96,8 +96,8 @@ impl Workload {
         let run = PostgresRunStore::new(connection)
             .admit_run(
                 &RunAdmission {
-                    app: &self.app.application,
-                    env: &self.app.environment,
+                    app: &self.app.app,
+                    env: &self.app.env,
                     workflow_id: &definition.id,
                     workflow_version: definition.version,
                     graph_hash: &definition.hash,
@@ -214,14 +214,11 @@ impl Workflow {
                 tracing::warn!(%error, "read enabled data-change consumers");
                 Refusal::Unavailable
             })?;
-        let stream = wamn_event::stream_name(&app.org, &app.project, &app.environment);
+        let stream = wamn_event::stream_name(&app.org, &app.project, &app.env);
         Ok(workflows
             .into_iter()
             .map(|id| wit_run::DataChangeConsumer {
-                consumer: wamn_registry::resource_names::workflow_event_consumer(
-                    &app.application,
-                    &id,
-                ),
+                consumer: wamn_registry::resource_names::workflow_event_consumer(&app.app, &id),
                 workflow_id: id.into(),
                 stream: stream.clone(),
             })
@@ -241,17 +238,13 @@ impl Workflow {
         let SourceEvent::Cdc(envelope) = SourceEvent::decode(&message.body)
             .map_err(|_| invalid("invalid data-change envelope"))?;
         let headers: Vec<_> = message.message_ids.iter().map(String::as_str).collect();
-        let source_id = wamn_event::verified_source_event_id(
-            &app.project,
-            &app.environment,
-            &envelope,
-            &headers,
-        )
-        .ok_or_else(|| invalid("invalid Nats-Msg-Id"))?;
+        let source_id =
+            wamn_event::verified_source_event_id(&app.project, &app.env, &envelope, &headers)
+                .ok_or_else(|| invalid("invalid Nats-Msg-Id"))?;
         if wamn_event::subject(
             &app.org,
             &app.project,
-            &app.environment,
+            &app.env,
             &envelope.entity,
             envelope.op,
         ) != message.subject
@@ -299,15 +292,9 @@ impl Workflow {
         let app = &workload.app;
         let result = executor_write(&self.database, &app.project, async |connection| {
             let mut runs = PostgresRunStore::new(connection);
-            runs.reap_exhausted(&app.application, &app.environment, 0)
-                .await?;
+            runs.reap_exhausted(&app.app, &app.env, 0).await?;
             let turn = runs
-                .lease_next(
-                    &workload.runner,
-                    &app.application,
-                    &app.environment,
-                    LEASE_MS,
-                )
+                .lease_next(&workload.runner, &app.app, &app.env, LEASE_MS)
                 .await?;
             let outcome = match turn {
                 LeaseTurn::GrantRefused(error) => return Ok(Err(error)),

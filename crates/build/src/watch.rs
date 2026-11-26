@@ -836,7 +836,7 @@ mod tests {
                 fs::write(input, "source").expect("write source");
             }
             let outputs = [
-                "generated/components/application.wasm",
+                "generated/components/app.wasm",
                 "web/dist/index.html",
                 "web/node_modules/module/index.js",
             ];

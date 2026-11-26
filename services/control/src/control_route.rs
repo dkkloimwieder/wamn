@@ -28,7 +28,7 @@
 //! `project.create` writes a project of the org with no environment and no
 //! copied administrator grants (docs/architecture/execution.md#host-run-routes).
 //!
-//! The read-only `environment.status` route gets runtime status from Kubernetes. Optional
+//! The read-only `env.status` route gets runtime status from Kubernetes. Optional
 //! counts read the environment through its administration login and the
 //! control store through its existing connection. Count failures answer null.
 //!
@@ -114,7 +114,7 @@ impl From<IdentityError> for Refusal {
             Some(IdentityRefusal::Invalid(field)) => ("invalid_input", field),
             Some(IdentityRefusal::ProjectNotFound) => ("project_not_found", "project"),
             Some(IdentityRefusal::ProjectExists) => ("project_exists", "project"),
-            Some(IdentityRefusal::EnvNotFound) => ("environment_not_found", "env"),
+            Some(IdentityRefusal::EnvNotFound) => ("env_not_found", "env"),
             Some(IdentityRefusal::UserNotActive) => ("user_not_active", "principal_id"),
             Some(IdentityRefusal::UserNotFound) => ("user_not_found", "principal_id"),
             Some(IdentityRefusal::UserInAnotherOrg) => ("user_in_another_org", "principal_id"),
@@ -190,7 +190,7 @@ struct ProjectTarget {
 struct MemberListTarget {
     project: wamn_registry::ProjectId,
     #[serde(default)]
-    environment: Value,
+    env: Value,
 }
 
 impl ControlRoutes<'_> {
@@ -449,7 +449,7 @@ impl ControlRoutes<'_> {
                         .await?)
                     })
                     .await?;
-                Ok(page.answer("environments", envs, |row| json!([row.name])))
+                Ok(page.answer("envs", envs, |row| json!([row.name])))
             }
             HostHandler::EnvStatus => {
                 let request: EnvRequest = parse(payload)?;
@@ -462,7 +462,7 @@ impl ControlRoutes<'_> {
                     .any(|entry| entry.name == request.env)
                 {
                     return Err(Refusal::Declared {
-                        code: "environment_not_found",
+                        code: "env_not_found",
                         detail: json!({ "field": "env" }),
                     });
                 }
@@ -512,13 +512,13 @@ impl ControlRoutes<'_> {
                     Order::Principal,
                 )?;
                 let env = request
-                    .environment
+                    .env
                     .as_str()
                     .map(str::parse::<wamn_registry::EnvName>)
                     .transpose()
                     .map_err(|_| Refusal::Declared {
                         code: "invalid_input",
-                        detail: json!({"field":"environment"}),
+                        detail: json!({"field":"env"}),
                     })?;
                 let members = self
                     .read(caller, async |connection| {
@@ -632,7 +632,7 @@ impl ControlRoutes<'_> {
                 })
                 .map_err(anyhow::Error::from)?)
             }
-            HostHandler::EnvActivate | HostHandler::EnvInactivate => {
+            HostHandler::EnvActivate | HostHandler::EnvDeactivate => {
                 let request: EnvRequest = parse(payload)?;
                 let status = if attachment.route.handler == HostHandler::EnvActivate {
                     EnvStatus::Active
@@ -1016,24 +1016,24 @@ pub(crate) fn control_page(
     if fields.keys().any(|key| {
         !(matches!(key.as_str(), "limit" | "cursor")
             || key == "project" && project.is_some()
-            || key == "environment" && filtered)
+            || key == "env" && filtered)
     }) {
         return Err(Refusal::Delivery(DeliveryError::InvalidPayload));
     }
     let mut target =
         json!({"principal": caller.to_string().as_str(), "org": org, "project": project});
     if filtered {
-        let env = match fields.get("environment") {
+        let env = match fields.get("env") {
             None => Value::Null,
             Some(Value::String(env)) => json!(env),
             Some(_) => {
                 return Err(Refusal::Declared {
                     code: "invalid_input",
-                    detail: json!({ "field": "environment" }),
+                    detail: json!({ "field": "env" }),
                 });
             }
         };
-        target["environment"] = env;
+        target["env"] = env;
     }
     Ok(ListPage::new(
         &input,
@@ -1069,9 +1069,9 @@ fn incomplete(
     completed: &[String],
 ) -> Refusal {
     Refusal::Declared {
-        code: "application_write_incomplete",
+        code: "app_write_incomplete",
         detail: json!({
-            "environment": format!("{project}/{env}"),
+            "env": format!("{project}/{env}"),
             "completed": completed,
         }),
     }
@@ -1093,12 +1093,7 @@ mod tests {
         for (handler, order, project, wrapper) in [
             (HostHandler::ProjectList, Order::Project, None, "projects"),
             (HostHandler::UserList, Order::Principal, None, "users"),
-            (
-                HostHandler::EnvList,
-                Order::Env,
-                Some("widgets"),
-                "environments",
-            ),
+            (HostHandler::EnvList, Order::Env, Some("widgets"), "envs"),
             (
                 HostHandler::MemberList,
                 Order::Principal,
@@ -1217,13 +1212,15 @@ mod tests {
             )
         };
         let key = json!(["a@example.invalid", principal.to_string().as_str()]);
-        let cursor = page("{\"limit\":1,\"environment\":\"dev\"}")
-            .unwrap()
-            .answer("members", vec![key.clone(), key], Clone::clone)["next_cursor"]
+        let cursor = page("{\"limit\":1,\"env\":\"dev\"}").unwrap().answer(
+            "members",
+            vec![key.clone(), key],
+            Clone::clone,
+        )["next_cursor"]
             .clone();
-        assert!(page(&json!({"cursor": cursor, "environment": "dev"}).to_string()).is_ok());
+        assert!(page(&json!({"cursor": cursor, "env": "dev"}).to_string()).is_ok());
         for request in [
-            json!({"cursor": cursor, "environment": "prod"}),
+            json!({"cursor": cursor, "env": "prod"}),
             json!({"cursor": cursor}),
         ] {
             assert!(matches!(
@@ -1231,15 +1228,15 @@ mod tests {
                 Err(Refusal::Declared {code: "invalid_input", detail}) if ({ let observed = &(detail); observed["field"] == serde_json::json!("cursor") })
             ));
         }
-        for input in ["{\"environment\":null}", "{\"environment\":1}"] {
+        for input in ["{\"env\":null}", "{\"env\":1}"] {
             assert!(matches!(
                 page(input),
-                Err(Refusal::Declared {code: "invalid_input", detail}) if ({ let observed = &(detail); observed["field"] == serde_json::json!("environment") })
+                Err(Refusal::Declared {code: "invalid_input", detail}) if ({ let observed = &(detail); observed["field"] == serde_json::json!("env") })
             ));
         }
         assert!(matches!(
             control_page(
-                "{\"environment\":\"dev\"}",
+                "{\"env\":\"dev\"}",
                 attachment(HostHandler::EnvList),
                 &principal,
                 &"acme".parse().unwrap(),

@@ -135,21 +135,21 @@ async fn literal_control_http_wire() -> anyhow::Result<()> {
             "POST /wamn_control/project/create",
             r#"[{"request_id":"write-3","value":{"project":"delta"}}]"#,
             403,
-            r#"{"error":{"code":"permission-denied","operation":"wamn-control:project/create@0.9.0"}}"#,
+            r#"{"error":{"code":"permission-denied","operation":"wamn-control:project/create@0.10.0"}}"#,
         ),
         (
             2,
-            "GET /wamn_control/environment/list?project=%22alpha%22",
+            "GET /wamn_control/env/list?project=%22alpha%22",
             "",
             200,
-            r#"[{"value":{"environments":[{"name":"dev","state":"active"},{"name":"paused","state":"inactive"}],"next_cursor":null,"total":2}}]"#,
+            r#"[{"value":{"envs":[{"name":"dev","state":"active"},{"name":"paused","state":"inactive"}],"next_cursor":null,"total":2}}]"#,
         ),
         (
             2,
-            "GET /wamn_control/environment/list?project=%22beta%22",
+            "GET /wamn_control/env/list?project=%22beta%22",
             "",
             403,
-            r#"{"error":{"code":"permission-denied","operation":"wamn-control:environment/list@0.9.0"}}"#,
+            r#"{"error":{"code":"permission-denied","operation":"wamn-control:env/list@0.10.0"}}"#,
         ),
     ];
     for (actor, line, body, status, expected) in cases {

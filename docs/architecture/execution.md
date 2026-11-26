@@ -24,7 +24,7 @@ Component membership alone grants no permission to call an operation.
 An application host makes sure of the status of its environment for each request, before the auth policy of the route.
 It reads the `active` flag from `platform.env` through the compiled SQL login of its project. That login inherits `wamn_app`. No row means active.
 The host keeps the answer in its [auth memory](#auth-memory).
-While the flag is `false`, every route answers 503 with the code `environment-inactive`, and an anonymous route does too.
+While the flag is `false`, every route answers 503 with the code `env-inactive`, and an anonymous route does too.
 A failed read answers 503 `authentication-unavailable`.
 The control host and an edge box read no status.
 The [status routes](#host-run-routes) of the control host write the row.
@@ -91,10 +91,10 @@ The fixed route sets live in [`wamn-routes`](../../crates/routes/src/host_route.
 A serving manifest names the sets it serves in `host-routes`, and it leaves the member out when the list is empty.
 The native route table declares its package id `wamn_control`, its version and its route prefixes in [`host_route.rs`](../../crates/routes/src/host_route.rs).
 A host route derives its sealed operation id, its path and its attachment id from those constants, as generation does for a package operation.
-For example, `permission.mine` is `wamn-control:permission/mine@0.9.0`, at `/wamn_control/permission/mine`, with the attachment id `wamn-control-permission-mine-http`.
+For example, `permission.mine` is `wamn-control:permission/mine@0.10.0`, at `/wamn_control/permission/mine`, with the attachment id `wamn-control-permission-mine-http`.
 
 There are two sets.
-Release publish writes the set `application` into every application release.
+Release publish writes the set `app` into every application release.
 Its routes admit a PAT or a session and read the project environment database of the release.
 The control serving root serves only the set `control`, whose routes admit a browser session only.
 Native ingress serves the control routes directly. Control loads no HTTP guest.
@@ -115,47 +115,47 @@ Any other payload answers 400 `delivery-invalid-payload`.
 
 | Route | Answer |
 | --- | --- |
-| `wamn-control:permission/mine@0.9.0` | `admin`, and the stable references the caller holds. An `admin` holds every operation the release serves. |
-| `wamn-control:user/list@0.9.0` (application) | Lists active project users. Each entry in `users` has `id`, `email`, `display_name`, `roles` and `admin_covered`. `admin_covered` is true when the user holds `admin`. |
-| `wamn-control:role/list@0.9.0` | `roles`: every role of the project, `admin` included. |
-| `wamn-control:role/create@0.9.0` | Takes `role` and creates the empty authored role. Answers `created`. |
-| `wamn-control:role/delete@0.9.0` | Takes `role` and deletes the authored role with its assignments and permissions. Answers `deleted`. |
-| `wamn-control:permission/list@0.9.0` | Takes `role`. Answers `operations`: each operation the release serves and each stored row of the role, with `served`, `grantable`, `admin_only` and `selected`. |
-| `wamn-control:permission/grant@0.9.0` | Takes `role` and `operation`, and writes one permission row. Answers `rows_added`. |
-| `wamn-control:permission/revoke@0.9.0` | Takes `role` and `operation`, and removes that permission row. Answers an empty object. |
-| `wamn-control:user-role/grant@0.9.0` | Takes `user_id` of an application user and `role`, and gives the role. Answers `granted`. |
-| `wamn-control:user-role/revoke@0.9.0` | Takes `user_id` and `role`, and takes the role. Direct `admin` grants and revokes refuse. Administration comes from the system project or org role. Answers `revoked`. |
-| `wamn-control:number-counter/set@0.9.0` | Authority `Granted`. Takes `application`, `sequence`, `counter`, `key` and the `int64` `value`, and sets that counter. Answers `next_number`. Refusals: `invalid_input`, `sequence_not_found`, `counter_not_found`, `counter_assigned_per_key`, `number_live` and `idempotency_conflict`. |
+| `wamn-control:permission/mine@0.10.0` | `admin`, and the stable references the caller holds. An `admin` holds every operation the release serves. |
+| `wamn-control:user/list@0.10.0` (application) | Lists active project users. Each entry in `users` has `id`, `email`, `display_name`, `roles` and `admin_covered`. `admin_covered` is true when the user holds `admin`. |
+| `wamn-control:role/list@0.10.0` | `roles`: every role of the project, `admin` included. |
+| `wamn-control:role/create@0.10.0` | Takes `role` and creates the empty authored role. Answers `created`. |
+| `wamn-control:role/delete@0.10.0` | Takes `role` and deletes the authored role with its assignments and permissions. Answers `deleted`. |
+| `wamn-control:permission/list@0.10.0` | Takes `role`. Answers `operations`: each operation the release serves and each stored row of the role, with `served`, `grantable`, `admin_only` and `selected`. |
+| `wamn-control:permission/grant@0.10.0` | Takes `role` and `operation`, and writes one permission row. Answers `rows_added`. |
+| `wamn-control:permission/revoke@0.10.0` | Takes `role` and `operation`, and removes that permission row. Answers an empty object. |
+| `wamn-control:user-role/grant@0.10.0` | Takes `user_id` of an application user and `role`, and gives the role. Answers `granted`. |
+| `wamn-control:user-role/revoke@0.10.0` | Takes `user_id` and `role`, and takes the role. Direct `admin` grants and revokes refuse. Administration comes from the system project or org role. Answers `revoked`. |
+| `wamn-control:number-counter/set@0.10.0` | Authority `Granted`. Takes `app`, `sequence`, `counter`, `key` and the `int64` `value`, and sets that counter. Answers `next_number`. Refusals: `invalid_input`, `sequence_not_found`, `counter_not_found`, `counter_assigned_per_key`, `number_live` and `idempotency_conflict`. |
 | `workflow.author` | Application admin. Takes a format 0.3 `graph` and optional `execution_role`. Stores a disabled immutable version. |
 | `workflow.enable`, `workflow.disable` | Application admin. Take `workflow_id` and `version`. Change which version accepts new runs. |
 | `workflow.list` | Application admin. Lists workflow versions for the application. |
 | `workflow.run` | Application admin. Takes `workflow_id`, `run_as`, `input_json` and `idempotency_key`. Admits a durable run and returns `run_id`. |
-| `wamn-control:connection/authorize@0.9.0` | ProjectAdmin authority. Takes `project`, `env`, and `name`. Returns `authorization_url` for an authorization code connection. |
-| `wamn-control:control/mine@0.9.0` | `org_admin`, and projects reached by the current org or project grants. `project_admin` marks authority over the whole project. |
-| `wamn-control:user/list@0.9.0` | Each member has `principal_id`, `email`, `display_name`, the org membership `status`, the global `principal_status` and `org_admin`. Org admins and project admins in the org can read it. |
-| `wamn-control:user/create@0.9.0` | Takes `email` and `display_name`. Creates or reuses a user and activates its org membership without sending mail. Answers `principal_id` and `enrolled`. |
-| `wamn-control:user/invite@0.9.0` | Takes `email`, `display_name` and the optional `org_admin`, `project_admins` and `memberships` (`project`, `env`). Answers `principal_id`, `enrolled` and `invited`. |
-| `wamn-control:user/disable@0.9.0` | Takes `principal_id` and disables the principal. Answers `principal_id` and `status: disabled`. Refuses with `user_in_another_org` if another org has an active membership for the user. |
-| `wamn-control:user/activate@0.9.0` | Takes `principal_id` and makes the org membership active. It restores no access. |
-| `wamn-control:user/deactivate@0.9.0` | Takes `principal_id`, removes the member's environment memberships, project roles and org roles in the org, then makes the membership inactive. |
-| `wamn-control:project/list@0.9.0` | `projects`: projects of the org as `{name, state}`. |
-| `wamn-control:org-admin/grant@0.9.0` | Takes `principal_id` of an active member and writes only the explicit `org-admin` grant. Authorization derives access below it. |
-| `wamn-control:org-admin/revoke@0.9.0` | Takes `principal_id` and removes only `org-admin`. Other explicit grants stay. |
-| `wamn-control:environment/list@0.9.0` | Takes `project`. Answers `environments`: environments of the project as `{name, state}`. |
-| `wamn-control:environment/status@0.9.0` | Answers the shared host rollout, workload conditions, package digests, and revisions for one project of an environment. Adds nullable counts `users_with_role`, `roles`, and `memberships`. |
-| `wamn-control:connection/test@0.9.0` | Requires project-admin authority. Takes `project`, `env`, integration `name`, candidate `parameters`, optional `credential`, and optional `version`. Answers `{ok: true}` or `{ok: false, error}`. Writes nothing and stops after ten seconds. |
-| `wamn-control:project/create@0.9.0` | Creates a project with no environment. An invalid project name returns `invalid_input` with `detail.field` set to `project`. |
-| `wamn-control:member/list@0.9.0` | Takes `project` and an optional `environment`. Answers `members`: each user with a membership or `project-admin` in the project, with `principal_id`, `email`, `display_name`, `org_admin`, `project_admin` and `environments`. |
-| `wamn-control:member/grant@0.9.0` | Takes `project`, `env` and `principal_id` of an active member, and writes the membership of that environment. |
-| `wamn-control:member/revoke@0.9.0` | Takes `project`, `env` and `principal_id`, and removes the membership of that environment. It refuses while org or project administration covers the membership. |
-| `wamn-control:project-admin/grant@0.9.0` | Takes `project` and `principal_id` of an active member, and writes only the explicit `project-admin` grant. |
-| `wamn-control:project-admin/revoke@0.9.0` | Takes `project` and `principal_id`, and removes `project-admin` in the project. It refuses while the user holds `org-admin`. Memberships stay. |
-| `wamn-control:environment/activate@0.9.0` | Takes `project` and `env`, and makes the environment active. Answers `project`, `env` and `status`. |
-| `wamn-control:environment/inactivate@0.9.0` | Takes `project` and `env`, and makes the environment inactive. Answers `project`, `env` and `status`. |
-| `wamn-control:project/activate@0.9.0` | Takes `project`, and makes every environment of the project active. Answers `project` and `status`. |
-| `wamn-control:project/inactivate@0.9.0` | Takes `project`, and makes every environment of the project inactive. Answers `project` and `status`. |
+| `wamn-control:connection/authorize@0.10.0` | ProjectAdmin authority. Takes `project`, `env`, and `name`. Returns `authorization_url` for an authorization code connection. |
+| `wamn-control:control/mine@0.10.0` | `org_admin`, and projects reached by the current org or project grants. `project_admin` marks authority over the whole project. |
+| `wamn-control:user/list@0.10.0` | Each member has `principal_id`, `email`, `display_name`, the org membership `status`, the global `principal_status` and `org_admin`. Org admins and project admins in the org can read it. |
+| `wamn-control:user/create@0.10.0` | Takes `email` and `display_name`. Creates or reuses a user and activates its org membership without sending mail. Answers `principal_id` and `enrolled`. |
+| `wamn-control:user/invite@0.10.0` | Takes `email`, `display_name` and the optional `org_admin`, `project_admins` and `memberships` (`project`, `env`). Answers `principal_id`, `enrolled` and `invited`. |
+| `wamn-control:user/disable@0.10.0` | Takes `principal_id` and disables the principal. Answers `principal_id` and `status: disabled`. Refuses with `user_in_another_org` if another org has an active membership for the user. |
+| `wamn-control:user/activate@0.10.0` | Takes `principal_id` and makes the org membership active. It restores no access. |
+| `wamn-control:user/deactivate@0.10.0` | Takes `principal_id`, removes the member's environment memberships, project roles and org roles in the org, then makes the membership inactive. |
+| `wamn-control:project/list@0.10.0` | `projects`: projects of the org as `{name, state}`. |
+| `wamn-control:org-admin/grant@0.10.0` | Takes `principal_id` of an active member and writes only the explicit `org-admin` grant. Authorization derives access below it. |
+| `wamn-control:org-admin/revoke@0.10.0` | Takes `principal_id` and removes only `org-admin`. Other explicit grants stay. |
+| `wamn-control:env/list@0.10.0` | Takes `project`. Answers `envs`: environments of the project as `{name, state}`. |
+| `wamn-control:env/status@0.10.0` | Answers the shared host rollout, workload conditions, package digests, and revisions for one project of an environment. Adds nullable counts `users_with_role`, `roles`, and `memberships`. |
+| `wamn-control:connection/test@0.10.0` | Requires project-admin authority. Takes `project`, `env`, integration `name`, candidate `parameters`, optional `credential`, and optional `version`. Answers `{ok: true}` or `{ok: false, error}`. Writes nothing and stops after ten seconds. |
+| `wamn-control:project/create@0.10.0` | Creates a project with no environment. An invalid project name returns `invalid_input` with `detail.field` set to `project`. |
+| `wamn-control:member/list@0.10.0` | Takes `project` and an optional `env`. Answers `members`: each user with a membership or `project-admin` in the project, with `principal_id`, `email`, `display_name`, `org_admin`, `project_admin` and `envs`. |
+| `wamn-control:member/grant@0.10.0` | Takes `project`, `env` and `principal_id` of an active member, and writes the membership of that environment. |
+| `wamn-control:member/revoke@0.10.0` | Takes `project`, `env` and `principal_id`, and removes the membership of that environment. It refuses while org or project administration covers the membership. |
+| `wamn-control:project-admin/grant@0.10.0` | Takes `project` and `principal_id` of an active member, and writes only the explicit `project-admin` grant. |
+| `wamn-control:project-admin/revoke@0.10.0` | Takes `project` and `principal_id`, and removes `project-admin` in the project. It refuses while the user holds `org-admin`. Memberships stay. |
+| `wamn-control:env/activate@0.10.0` | Takes `project` and `env`, and makes the environment active. Answers `project`, `env` and `status`. |
+| `wamn-control:env/deactivate@0.10.0` | Takes `project` and `env`, and makes the environment inactive. Answers `project`, `env` and `status`. |
+| `wamn-control:project/activate@0.10.0` | Takes `project`, and makes every environment of the project active. Answers `project` and `status`. |
+| `wamn-control:project/inactivate@0.10.0` | Takes `project`, and makes every environment of the project inactive. Answers `project` and `status`. |
 
-`environment.status` also answers three nullable `int32` members.
+`env.status` also answers three nullable `int32` members.
 `users_with_role` counts human users with at least one role, once per user.
 `roles` counts all roles in the environment.
 `memberships` counts explicit rows in `identity.project_env_membership` for the selected project and environment on the control connection.
@@ -179,14 +179,14 @@ An application refusal is a declared error of its route, with `field` in its det
 The [application route contracts](../../crates/catalog/src/host_route/contracts) define the request and result schemas.
 The administration screens in the [platform UI](../../apps/platform_ui/README.md) call these routes through the TypeScript client and write no database directly.
 The role screen reads operations from `permission.list`, and the user screen reads roles from `user.list` and permissions from `permission.list`.
-The control lists `project.list`, `user.list`, `environment.list`, `member.list`, and `control.mine` accept optional `limit` and `cursor` members.
+The control lists `project.list`, `user.list`, `env.list`, `member.list`, and `control.mine` accept optional `limit` and `cursor` members.
 Either member starts paging. `limit` accepts integers from 1 through 100 and defaults to 100 in paging mode.
 Explicit nulls refuse. A request with neither member returns every row.
 Each answer adds nullable `next_cursor` and `total` members. `control.mine` repeats `org_admin` on every page.
 `total` is the full count only when a first page exhausts the set, or a whole-result request reads everything.
 Later pages return null totals, even on the last page. No list runs a count query.
-`member.list` also accepts an optional `environment` member. With it, the answer keeps only the users with a membership in that environment of the project, and each row's `environments` names only that environment.
-The query applies the filter before the keyset and the limit. An unknown environment returns an empty list. An explicit null or a blank name refuses with `invalid_input`, `detail.field` `environment`.
+`member.list` also accepts an optional `env` member. With it, the answer keeps only the users with a membership in that environment of the project, and each row's `envs` names only that environment.
+The query applies the filter before the keyset and the limit. An unknown environment returns an empty list. An explicit null or a blank name refuses with `invalid_input`, `detail.field` `env`.
 
 A cursor is an opaque token for the next page. Each query resumes after its last key and reads at most `limit + 1` rows.
 Projects sort by project identifier. Environments sort by environment name within the project.
@@ -194,7 +194,7 @@ Users and members sort by email, then principal UUID. SQL comparisons use the sa
 Cursors encode canonical compact JSON as unpadded base64url and bind the operation, authenticated principal, org, applicable project, the `member.list` environment or its absence, and order.
 Malformed or mismatched cursors return `invalid_input` with `detail.field` set to `cursor`. Bad limits name `limit` in that field.
 Every page repeats authorization. Pages reflect current data, so an email change can move a user between pages.
-The contracts retain version 0.9.0. `environment.status` retains its whole-result contract.
+The native HTTP contract is version 0.10.0. `env.status` returns the whole result.
 
 `control.mine` reads `wamn_system` through the `control` login of the org.
 
@@ -204,13 +204,13 @@ A write runs in one transaction on a second `control` login, which holds one wri
 The transaction inserts the caller and sealed operation id into `platform.tx_identity`, then checks the role again.
 Membership and administration writes use [`wamn_identity::identity::org`](../../crates/identity/src/identity/org.rs).
 [`wamn_env::env_org`](../../crates/env/src/env_org.rs) owns project creation, environment enumeration, and environment status writes.
-A refusal is a declared error of its route, with the input member it names in `field`: `invalid_input`, `project_not_found`, `environment_not_found`, `user_not_active`, `user_not_found`, `admin_covered` or `user_refused`.
+A refusal is a declared error of its route, with the input member it names in `field`: `invalid_input`, `project_not_found`, `env_not_found`, `user_not_active`, `user_not_found`, `admin_covered` or `user_refused`.
 A write that changes administrative authority or membership also changes the application rows of each environment it covers, one transaction per environment, with the project's administration login.
 Native control reads a public connection file per `<env>--<project>` at each write. The login directory holds `tls.crt`, `tls.key`, and the server's `ca.crt`.
 Every authority mutation commits its system rows before application projection.
 Projection locks `identity.org_membership` for the principal and org, then reads current authority.
 It commits the application write before releasing that system lock.
-If an environment fails, the route answers `application_write_incomplete` with that environment and the environments that completed.
+If an environment fails, the route answers `app_write_incomplete` with that environment and the environments that completed.
 The system mutation remains committed.
 Control's maintenance loop also reconciles each recorded project environment from current system authority.
 The provisional period is 60 seconds. An unavailable database does not stop the other copies.
@@ -223,7 +223,7 @@ Control calls identity over HTTPS with a projected service account token for the
 `user.invite` also writes the requested grants. Control calls `POST /invitations` only when the user has no password.
 Control checks contact details before it calls identity. It answers `user_refused` when identity refuses the user.
 `user.disable` calls `POST /users/disable`. It makes no writes to project databases.
-The control set also serves `application.deploy`, `application.rollback`, `application.stop`, `schema.diff`, `schema.apply`, `schema.reset`, and `operation.status`.
+The control set also serves `app.deploy`, `app.rollback`, `app.stop`, `schema.diff`, `schema.apply`, `schema.reset`, and `operation.status`.
 Each route requires `ProjectAdmin` authority for `project` in the host's organization.
 The request names `project` and `env`.
 The server builds the command and credential references after it repeats authorization and resolves the target.
@@ -354,7 +354,7 @@ The host prepares releases independently and starts each ready queue immediately
 Each resident release runs file orphan collection. Unloading stops its collector, and host shutdown cancels and joins every collector.
 A release stays resident while selected, while an unfinished run pins it, or while a workload or invocation retains it.
 Native dispatch reuses compiled component bytes. Each call gets a fresh store for guest memory and resources.
-The [application chart](../../deploy/charts/application/templates/workloads.yaml) sets `poolSize: 0` for `ingress` and omits `poolSize` for application components. Both settings use fresh stores.
+The [application chart](../../deploy/charts/app/templates/workloads.yaml) sets `poolSize: 0` for `ingress` and omits `poolSize` for application components. Both settings use fresh stores.
 
 An application is one composed component, and it loads as its own native workload.
 Publication records the separate route component in the release's entry record.
@@ -472,7 +472,7 @@ A host queue lease, reap, renew, or complete transaction binds the `wamn:executo
 An absent operation stores NULL. Each transaction has its own identity row.
 The [record history log](data-access.md#history-tables-and-the-log-trigger) records the operation in each entry.
 
-The same row stores the operation's application name from `environment.yaml` in `application`.
+The same row stores the operation's application name from `env.yaml` in `app`.
 A base operation uses the map application that holds its declaring package.
 A component outside the composed entry uses the same map.
 The `number_counter.set` route binds the requested application after it finds the name in that map.
@@ -489,9 +489,9 @@ The accessors in `wamn_authority` read only its caller row. A guest cannot repla
 
 ## Application data change delivery
 
-Deploy resolves handler declarations from the verified package manifests. It adds their owner packages, entities, operations, and roles to `wamn.application`. Deploy refuses two handlers for the same owner package, model, and operation in an application.
+Deploy resolves handler declarations from the verified package manifests. It adds their owner packages, entities, operations, and roles to `wamn.app`. Deploy refuses two handlers for the same owner package, model, and operation in an application.
 
-The workload uses the `ingress` NATS binding for Data change subscriptions. Deploy adds one durable subscription per entity and operation, with the queue group `<application>-<entity>-<op>`. The stock plugin sends messages to `ingress`. It matches the event's package, entity, and operation before it asks the host to call the handler.
+The workload uses the `ingress` NATS binding for Data change subscriptions. Deploy adds one durable subscription per entity and operation, with the queue group `<app>-<entity>-<op>`. The stock plugin sends messages to `ingress`. It matches the event's package, entity, and operation before it asks the host to call the handler.
 
 Only the workload's `ingress` can call `dispatch-data-change`. The host reads the declared role's grants and supplies the same SQL and connection scope it uses for workflow nodes. A successful call acknowledges the message after any host transaction commits. An error leaves the message for redelivery. Delivery is at least once and creates no workflow run row.
 
@@ -503,7 +503,7 @@ A workflow is an authored graph that belongs to one application.
 Its entry is Request, Schedule or Data change.
 The workflow service reads format 0.3 graphs and calls each sibling and export named in the graph through `wamn:workflow/node.call`.
 Its labeled JetStream import selects the `workflow` NATS binding.
-The host checks that pair against `wamn.application` on the `ingress` sibling and dispatches to that component.
+The host checks that pair against `wamn.app` on the `ingress` sibling and dispatches to that component.
 The same lookup applies to palette nodes.
 Each entry passes the stored input unchanged, including when an admin runs the workflow.
 Retryable and rate-limited node errors get three attempts by default.
@@ -511,8 +511,8 @@ The host creates an authority handle for each Request or run.
 The handle specifies who executes, their role, and the lease for a durable run.
 
 Format 0.2 gives each node one purpose: entry, call or response.
-A Request path is relative to `/api/<application>/flow`. The host accepts POST with JSON and authenticates the bearer token.
-It checks `wamn-workflow:<application>/<workflow_id>`, also listed by `permission.list` and `permission.mine`.
+A Request path is relative to `/api/<app>/flow`. The host accepts POST with JSON and authenticates the bearer token.
+It checks `wamn-workflow:<app>/<workflow_id>`, also listed by `permission.list` and `permission.mine`.
 Each path that ends reaches a Response node.
 If a reachable call can write, the host admits a leased run before dispatch. Other Request calls run inline.
 
@@ -655,7 +655,7 @@ Control creates or reuses the service, grants its roles, and issues its PAT in o
 
 Host authentication keeps positive project facts in its local Moka cache.
 A key includes its project environment, so one project's results cannot authorize another.
-Deploy reads the applied `revocation_seconds` from the registry and writes it into the workload's `wamn.application` configuration.
+Deploy reads the applied `revocation_seconds` from the registry and writes it into the workload's `wamn.app` configuration.
 The value sets the project cache lifetime and ranges from 0 to 3600 seconds. Zero disables caching.
 
 The host verifies every session token. A positive subject lookup maps the issuer and subject to the active user UUID.
@@ -723,7 +723,7 @@ The host does not rebuild release or workflow authority from SQL on an effect ca
 
 An exclusive connection acquires a resource lease, a lock held by its host, before its first call.
 Each project has a dedicated system database session for its cloud leases.
-The host reads connection configuration from that project's mounted directory under `/etc/wamn/environment`.
+The host resolves connection configuration for that project through connection memory.
 The session opens on the first exclusive cloud call.
 Its key is `hashtextextended('resource:' || target_id || ':' || resource_key, 0)`.
 Local targets use an in-process map with the same resource string.
@@ -1180,7 +1180,7 @@ Audience selection opens a single audience automatically only when the first res
 [TableView](../../web/wfe/packages/generator/src/TableView.tsx) passes these bindings to the wfe table.
 
 Each column shows one fact. Growing lists appear as counts in parent rows.
-[Environment tables](../../apps/platform_ui/src/environment.tsx) expand read-only reference tables through `rowDetails`, without new routes.
+[Environment tables](../../apps/platform_ui/src/env.tsx) expand read-only reference tables through `rowDetails`, without new routes.
 Tables with actions retain their own screens.
 Data entry uses a separate form screen. [Create project](../../apps/platform_ui/src/projects.tsx) and [Grant membership](../../apps/platform_ui/src/membership.tsx) use `FormView`.
 Successful submission and Cancel return to the owning table. A refusal leaves the form open with its error.
@@ -1259,7 +1259,7 @@ Labels come from a `label` member on operations and fields in `wamn.k`, optional
 
 Generated operation components remain the primitive UI. Composite screens may be hand-authored over those generated operations; they do not bypass the operation contracts.
 
-No new route. `wamn-control:environment/status@0.9.0` gains three additive answer members: `users_with_role`, `roles`, `memberships` (nullable `int32`). A failed count read returns null without failing status. Additive members do not bump 0.9.0.
+`wamn-control:env/status@0.10.0` returns `users_with_role`, `roles`, and `memberships` as nullable `int32` values. A failed count read returns null without failing the status request.
 
 ## Process lifecycle
 

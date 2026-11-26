@@ -3,12 +3,12 @@
 # named in services/edge/src/config.rs.
 
 [target]
-# The environment coordinate of the box. The project_env_key is <org>--<project>--<environment>.
+# The environment coordinate of the box. The project_env_key is <org>--<project>--<env>.
 # The variables of org and project are WAMN_ORG and WAMN_PROJECT. The
 # environment has no variable.
 org = "org-a"
 project = "plant"
-environment = "edge"
+env = "edge"
 
 [release]
 # The release bundle directory, and the pinned digest of its edge-release.json.

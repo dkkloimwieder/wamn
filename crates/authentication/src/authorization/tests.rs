@@ -40,13 +40,13 @@ async fn user_operation_permissions_reuse_only_the_callable_http_authority() {
     let app = wamn_app::app_config::AppConfig {
         org: "org".parse().unwrap(),
         project: (*DEFAULT_PROJECT).clone(),
-        environment: "a".parse().unwrap(),
-        application: "app".parse().unwrap(),
+        env: "a".parse().unwrap(),
+        app: "app".parse().unwrap(),
         grant_cache_seconds: 1,
         components: Vec::new(),
     };
     authorization.configure_app(&app).unwrap();
-    let project_env_key = wamn_registry::project_env_key(&app.org, &app.project, &app.environment);
+    let project_env_key = wamn_registry::project_env_key(&app.org, &app.project, &app.env);
     let principal_id = "00000000-0000-0000-0000-000000000019"
         .parse()
         .expect("user UUID");

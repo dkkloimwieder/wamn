@@ -84,7 +84,7 @@ impl ObjectStorage {
                     == &wamn_registry::name::project_env_key(
                         &release.org,
                         &release.project,
-                        &release.environment
+                        &release.env
                     ),
                 "file connection target mismatch"
             );
@@ -116,7 +116,7 @@ impl ObjectStorage {
                 container,
                 client.signer.clone(),
                 bound.cdn_host,
-                &release.environment,
+                &release.env,
                 deadline,
             ))
         };

@@ -57,8 +57,8 @@ impl EnvDocument {
             readiness_budget_seconds: self.readiness_budget_seconds,
             drain_bound_seconds: self.drain_bound_seconds,
             revocation_seconds: self.revocation_seconds,
-            applications: self
-                .applications
+            apps: self
+                .apps
                 .iter()
                 .map(|(name, app)| {
                     (
@@ -80,8 +80,8 @@ impl EnvDocument {
             readiness_budget_seconds: configuration.readiness_budget_seconds,
             drain_bound_seconds: configuration.drain_bound_seconds,
             revocation_seconds: configuration.revocation_seconds,
-            applications: configuration
-                .applications
+            apps: configuration
+                .apps
                 .into_iter()
                 .map(|(name, app)| {
                     (
@@ -155,7 +155,7 @@ mod tests {
     fn configuration() -> Value {
         json!({"org":"acme","project":"wms","env":"prod","target":"cloud",
             "revocation_seconds":60,"schema":{"mode":"reset"},
-            "applications":{"wms":{"label":"wms",
+            "apps":{"wms":{"label":"wms",
                 "connections":{"erp":"shared-erp"},
                 "client":{"package":"wamn_wms","web":format!("sha256:{:064x}",1)}}},
             "integrations":{"shared-erp":{"version":1}}})

@@ -1,11 +1,11 @@
 import { createSignal, onCleanup } from "solid-js";
 import type { Config } from "./config";
 
-export type Type = "application" | "control";
+export type Type = "app" | "control";
 
 /** An audience belongs to this deployment's org. */
 export function audienceType(aud: string, config: Config): Type | undefined {
-  if (aud.startsWith(`urn:wamn:project-env:${config.org}:`)) return "application";
+  if (aud.startsWith(`urn:wamn:project-env:${config.org}:`)) return "app";
   return aud === `urn:wamn:org:${config.org}` ? "control" : undefined;
 }
 
@@ -24,6 +24,11 @@ export function createAddress() {
 }
 
 export type Address = ReturnType<typeof createAddress>;
+
+/** Keep the env named "envs" distinct from the project list at /envs. */
+export function envSegment(name: string): string {
+  return name === "envs" ? "%65nvs" : encodeURIComponent(name);
+}
 
 export function matchPath(pattern: string, path: string): Record<string, string> | undefined {
   const expected = pattern.split("/");

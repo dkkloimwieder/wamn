@@ -11,6 +11,8 @@ use serde_json::Value;
 use super::{POD_REGISTRY, pod_registry_reference};
 use crate::platform_registry::require_image_digest;
 
+const PRE_RENAME_CHART_VERSION: &str = "0.1.143";
+
 /// A prepared platform chart validated before provider setup.
 #[derive(Debug)]
 pub struct SelectedChart {
@@ -105,20 +107,19 @@ pub fn select(chart: &Path) -> anyhow::Result<SelectedChart> {
             .with_context(|| format!("resolve selected chart {}", chart.display()))?
     };
     let metadata = read_yaml(&directory.join("Chart.yaml"))?;
-    let version = metadata["version"]
-        .as_str()
-        .filter(|version| !version.trim().is_empty())
-        .context("selected chart has no version")?
-        .to_owned();
-    for name in [
-        "infra",
-        "platform",
-        "org",
-        "environment",
-        "project",
-        "application",
+    let version = require_chart_version(&metadata, "app")?.to_owned();
+    let platform = directory.join("platform");
+    for name in ["infra", "org"] {
+        require_file(&platform.join(name).join("Chart.yaml"))?;
+    }
+    for (leaf, name) in [
+        ("app", "app"),
+        ("env", "wamn-env"),
+        ("platform", "wamn-platform"),
+        ("project", "wamn-project"),
     ] {
-        require_file(&directory.join("platform").join(name).join("Chart.yaml"))?;
+        let metadata = read_yaml(&platform.join(leaf).join("Chart.yaml"))?;
+        require_chart_version(&metadata, name)?;
     }
     let values = read_yaml(&directory.join("values.yaml"))?;
     let host = values["platform"]["host"]["image"]
@@ -151,6 +152,19 @@ pub fn select(chart: &Path) -> anyhow::Result<SelectedChart> {
         values,
         host,
     })
+}
+
+fn require_chart_version<'a>(metadata: &'a Value, name: &str) -> anyhow::Result<&'a str> {
+    ensure!(metadata["name"] == name, "expected chart {name}");
+    let version = metadata["version"]
+        .as_str()
+        .filter(|version| !version.trim().is_empty())
+        .with_context(|| format!("chart {name} has no version"))?;
+    ensure!(
+        version != PRE_RENAME_CHART_VERSION,
+        "unsupported chart {name} version {version}"
+    );
+    Ok(version)
 }
 
 fn read_yaml(file: &Path) -> anyhow::Result<Value> {
@@ -200,7 +214,7 @@ pub fn prepare_payload(repository: &Path, chart: &Path) -> anyhow::Result<()> {
     std::fs::create_dir_all(&platform)?;
     // Helm stores every chart file in the release record, including unrendered assets.
     // Install the stamped application chart from this leaf to keep the bundle out of that record.
-    let app = platform.join("application");
+    let app = platform.join("app");
     std::fs::create_dir(&app)?;
     for name in ["Chart.yaml", "values.yaml"] {
         std::fs::copy(chart.join(name), app.join(name))?;
@@ -210,7 +224,7 @@ pub fn prepare_payload(repository: &Path, chart: &Path) -> anyhow::Result<()> {
         ("infra", "deploy/charts/infrastructure"),
         ("platform", "deploy/charts/platform"),
         ("org", "deploy/charts/org"),
-        ("environment", "deploy/charts/environment"),
+        ("env", "deploy/charts/env"),
         ("project", "deploy/charts/project"),
     ] {
         copy_package_output(&repository.join(source), &platform.join(name))?;
@@ -300,6 +314,17 @@ mod tests {
         }
         assert!(selected.image("runner").is_err());
         assert!(selected.image("unknown").is_err());
+    }
+
+    #[test]
+    fn selection_refuses_the_previous_env_chart_version() {
+        let chart = prepared_chart();
+        select(&chart.0).unwrap();
+        let path = chart.0.join("platform/env/Chart.yaml");
+        let mut metadata = read_yaml(&path).unwrap();
+        metadata["version"] = "0.1.143".into();
+        std::fs::write(&path, serde_yaml::to_string(&metadata).unwrap()).unwrap();
+        assert!(select(&chart.0).is_err());
     }
 
     #[test]

@@ -28,7 +28,7 @@ pub struct EnvConfiguration {
     pub readiness_budget_seconds: i32,
     pub drain_bound_seconds: i32,
     pub revocation_seconds: u32,
-    pub applications: BTreeMap<crate::AppName, AppConfiguration>,
+    pub apps: BTreeMap<crate::AppName, AppConfiguration>,
 }
 
 /// Configuration shared by all releases of an application.

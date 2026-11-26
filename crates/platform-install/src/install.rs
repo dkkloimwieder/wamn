@@ -20,7 +20,7 @@ pub async fn install(
         install_infrastructure(installer, charts, values).await?;
     }
     if let Some(registry_egress) = registry_egress {
-        let mut overrides = json!({"applicationChart": app_chart});
+        let mut overrides = json!({"appChart": app_chart});
         overrides["registryEgress"] = registry_egress;
         install_platform(installer, charts, values, &overrides).await?;
     }

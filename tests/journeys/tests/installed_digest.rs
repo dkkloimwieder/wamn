@@ -62,7 +62,7 @@ common::journey! {
 
         let mut deploy = env.org.command();
         deploy
-            .args(["deploy", "--release", &a, "--application", PACKAGE, "--env"])
+            .args(["deploy", "--release", &a, "--app", PACKAGE, "--env"])
             .arg(&env.file);
         run(deploy).await?;
 

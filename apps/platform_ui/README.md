@@ -25,12 +25,12 @@ No data entry action opens a modal.
 
 Records supplies wfe pagination for every table, with 25 rows per page and the total returned row count.
 The application selects each page from the returned rows and limits the current page when rows disappear.
-The APIs `project.list`, `user.list`, `environment.list`, `member.list`, `control.mine`, and `environment.status` return complete arrays without server pagination.
-Workloads, conditions, and live releases come from `environment.status`.
+The APIs `project.list`, `user.list`, `env.list`, `member.list`, `control.mine`, and `env.status` return complete arrays without server pagination.
+Workloads, conditions, and live releases come from `env.status`.
 Membership tables use the same pagination.
 Refresh requests fresh data from each table’s owning API, including `control.mine` for project administrators.
 
-The environment home uses one `environment.status` read for Host replicas, Users with a role, Roles, Memberships, and Workloads tiles.
+The environment home uses one `env.status` read for Host replicas, Users with a role, Roles, Memberships, and Workloads tiles.
 Host replicas shows the ready and total counts. It warns until the updated, ready, and available counts match the total.
 Workloads shows ready and not-ready counts. A workload is ready when its `Ready` condition is `True`.
 Missing counts show Unknown. Tiles remain read-only, and the left pane supplies navigation.
@@ -60,7 +60,7 @@ Each column shows one fact. Parent tables show counts for growing lists.
 Record links use native anchors with the wfe accent color.
 
 Project, User, Environment, and membership records place normal-sized actions beside the title in one shared group.
-The visible lifecycle verbs are Activate and Inactivate. API identifiers retain their existing names.
+Use Activate and Deactivate for environments. The project action still reads Inactivate.
 State cells contain only the value. Pods cells contain only the count.
 
 Sign-in, invitation, recovery, reset, and no-access pages use standalone wfe EntryPanel pages with distinct titles.

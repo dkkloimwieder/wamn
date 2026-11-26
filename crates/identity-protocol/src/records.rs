@@ -55,7 +55,7 @@ pub struct ProjectMember {
     /// Whether the user holds `project-admin` in the project.
     pub project_admin: bool,
     /// The environments of the project where the user is a member.
-    pub environments: Vec<wamn_registry::EnvName>,
+    pub envs: Vec<wamn_registry::EnvName>,
 }
 
 /// A project and its current state.

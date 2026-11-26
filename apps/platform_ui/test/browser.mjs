@@ -166,7 +166,7 @@ function statusTarget(request) {
 function statusRead(page, project, env) {
   return page
     .waitForResponse((response) => {
-      if (!new URL(response.url()).pathname.endsWith("/api/wamn_control/environment/status")) return false;
+      if (!new URL(response.url()).pathname.endsWith("/api/wamn_control/env/status")) return false;
       const input = statusTarget(response.request());
       return input.project === project && input.env === env;
     })
@@ -362,12 +362,12 @@ try {
   console.log("project-created");
   assert.equal((await messages.next()).value, "environment-ready");
   const reloadEnvironments = page.waitForResponse((response) =>
-    new URL(response.url()).pathname.endsWith("/api/wamn_control/environment/list"),
+    new URL(response.url()).pathname.endsWith("/api/wamn_control/env/list"),
   );
   await page.getByRole("button", { name: "Refresh results", exact: true }).click();
   assert.equal((await reloadEnvironments).status(), 200);
   await environments.getByRole("link", { name: fixture.env, exact: true }).waitFor();
-  await capture(page, "project-environments");
+  await capture(page, "project-envs");
 
   const userAddress = `${base}${controlPath}/users/${fixture.principalId}`;
   await visit(page, userAddress);
@@ -515,7 +515,7 @@ try {
   await page.getByRole("button", { name: "Inactivate project", exact: true }).waitFor();
   const splashReads = [];
   const recordSplashRead = (request) => {
-    if (new URL(request.url()).pathname.endsWith("/api/wamn_control/environment/status"))
+    if (new URL(request.url()).pathname.endsWith("/api/wamn_control/env/status"))
       splashReads.push(statusTarget(request));
   };
   page.on("request", recordSplashRead);
@@ -538,10 +538,10 @@ try {
   await assertTiles(page, observedRelease);
   assert.equal(await page.getByRole("table").count(), 0);
   assert.deepEqual(splashReads, [{ project: fixture.releaseProject, env: fixture.releaseEnv }]);
-  await capture(page, "environment");
+  await capture(page, "env");
   await capture(page, "environment-splash");
   const environmentAddress = page.url();
-  const environmentPathname = new URL(environmentAddress).pathname;
+  const envPathname = new URL(environmentAddress).pathname;
   splashReads.length = 0;
   const controlRelease = statusRead(page, fixture.releaseProject, fixture.releaseEnv);
   const controlEmpty = statusRead(page, fixture.project, fixture.env);
@@ -553,12 +553,12 @@ try {
   ]) {
     const section = page.getByRole("region", { name: project, exact: true });
     await section.getByRole("heading", { name: project, exact: true, level: 2 }).waitFor();
-    const environment = section.getByRole("region", { name: env, exact: true });
+    const envView = section.getByRole("region", { name: env, exact: true });
     assert.equal(
-      await environment.getByRole("link", { name: env, exact: true }).getAttribute("href"),
+      await envView.getByRole("link", { name: env, exact: true }).getAttribute("href"),
       `${controlPath}/projects/${project}/${env}`,
     );
-    await assertTiles(environment, status);
+    await assertTiles(envView, status);
     assert.equal(splashReads.filter((input) => input.project === project && input.env === env).length, 1);
   }
   assert.equal(splashReads.length, 2);
@@ -581,7 +581,7 @@ try {
       .click();
     const table = page.getByRole("table", { name: label, exact: true });
     await table.waitFor();
-    assert.equal(new URL(page.url()).pathname, `${environmentPathname}/${path}`);
+    assert.equal(new URL(page.url()).pathname, `${envPathname}/${path}`);
     assert.equal(await page.getByRole("table").count(), 1);
     assert.equal(
       await page.getByRole("navigation", { name: "Platform location" }).locator('[aria-current="page"]').textContent(),
@@ -591,7 +591,7 @@ try {
     if (path === "workloads") {
       await table.locator("[data-subtable-toggle]").first().click();
       await page.getByRole("table", { name: /^Conditions for / }).waitFor();
-      assert.equal(new URL(page.url()).pathname, `${environmentPathname}/${path}`);
+      assert.equal(new URL(page.url()).pathname, `${envPathname}/${path}`);
       assert.ok((await page.locator("table table").count()) > 0);
       await capture(page, "workload-conditions");
     }
@@ -633,15 +633,15 @@ try {
     .getByRole("button", { name: `Change context: Environment ${fixture.project}/${fixture.env}`, exact: true })
     .waitFor();
   await visit(page, environmentAddress);
-  await page.getByRole("button", { name: "Inactivate environment", exact: true }).click();
+  await page.getByRole("button", { name: "Deactivate environment", exact: true }).click();
   await page.getByText("State: inactive", { exact: true }).waitFor();
-  assert.equal(await page.getByRole("button", { name: "Inactivate environment", exact: true }).count(), 0);
+  assert.equal(await page.getByRole("button", { name: "Deactivate environment", exact: true }).count(), 0);
   await visit(page);
   await page.getByRole("button", { name: "Activate environment", exact: true }).click();
   await page.getByText("State: active", { exact: true }).waitFor();
   assert.equal(await page.getByRole("button", { name: "Activate environment", exact: true }).count(), 0);
   await visit(page);
-  await page.getByRole("button", { name: "Inactivate environment", exact: true }).waitFor();
+  await page.getByRole("button", { name: "Deactivate environment", exact: true }).waitFor();
   assert.deepEqual(errors, []);
   console.log("PASS: Environment navigation, local runtime status, single activate/inactivate action and reload state");
   console.log(
@@ -649,23 +649,23 @@ try {
   );
   const receiving = await browser.newPage({ viewport });
   await signIn(receiving, required("WAMN_BROWSER_EMAIL"));
-  const environment = receiving
+  const envView = receiving
     .getByRole("table", { name: "Audiences", exact: true })
     .getByRole("row")
     .filter({ has: receiving.getByRole("cell", { name: org, exact: true }) })
     .filter({ has: receiving.getByRole("cell", { name: fixture.releaseProject, exact: true }) })
     .getByRole("link", { name: fixture.releaseEnv, exact: true });
-  await environment.waitFor();
-  const environmentPath = await environment.getAttribute("href");
+  await envView.waitFor();
+  const envPath = await envView.getAttribute("href");
   assert.ok(
-    environmentPath.startsWith(`/urn:wamn:project-env:${org}:${fixture.releaseProject}:${fixture.releaseEnv}:`),
+    envPath.startsWith(`/urn:wamn:project-env:${org}:${fixture.releaseProject}:${fixture.releaseEnv}:`),
   );
-  await environment.click();
+  await envView.click();
   await receiving.getByRole("button", { name: "User menu", exact: true }).click();
   await receiving.getByRole("menuitem", { name: "Sign out", exact: true }).waitFor();
   await receiving.keyboard.press("Escape");
   await receiving.getByRole("table", { name: "Roles", exact: true }).waitFor();
-  assert.equal(new URL(receiving.url()).pathname, `${environmentPath}/administration/roles`);
+  assert.equal(new URL(receiving.url()).pathname, `${envPath}/administration/roles`);
   await receiving.getByRole("button", { name: "Create role", exact: true }).click();
   await receiving.getByRole("textbox", { name: "Role", exact: true }).fill("browser-clerk");
   await receiving.getByRole("button", { name: "Create role", exact: true }).click();
@@ -773,7 +773,7 @@ try {
       "no-access",
       "create-project",
       "invite-user",
-      "project-environments",
+      "project-envs",
       "project-members",
       "project-grant-membership",
       "member-memberships",
@@ -784,7 +784,7 @@ try {
       "control-layout",
       "projects",
       "project",
-      "environment",
+      "env",
       "environment-splash",
       "control-splash",
       "environment-workloads",

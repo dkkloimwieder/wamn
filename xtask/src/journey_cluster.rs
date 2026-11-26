@@ -140,7 +140,7 @@ pub async fn run(root: &Path, args: Args) -> anyhow::Result<()> {
         .get_opt("wamn-org-inputs")
         .await?
         .and_then(|map| map.data)
-        .and_then(|mut data| data.remove("applicationChart"));
+        .and_then(|mut data| data.remove("appChart"));
     let collector_mount = Api::<Deployment>::namespaced(client.clone(), PLATFORM)
         .get_opt("otel-collector")
         .await?

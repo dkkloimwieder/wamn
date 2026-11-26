@@ -2,10 +2,10 @@
 //! each key.
 //!
 //! `wamn-edge --config <path>` or `WAMN_EDGE_CONFIG` names the file. Each key
-//! but `target.environment` has one variable ([`OVERRIDES`]), which replaces
+//! but `target.env` has one variable ([`OVERRIDES`]), which replaces
 //! the file's value or supplies a key that the file leaves out. The `[target]`
 //! keys `org` and `project` take the variables of the cloud host, `WAMN_ORG`
-//! and `WAMN_PROJECT`. `target.environment` comes only from the file. Every
+//! and `WAMN_PROJECT`. `target.env` comes only from the file. Every
 //! other key has a `WAMN_EDGE_*` variable. An unknown key is refused.
 //! `services/edge/edge.example.toml` shows every key.
 
@@ -114,7 +114,7 @@ pub struct EdgeConfig {
 pub struct TargetConfig {
     pub org: wamn_registry::OrgId,
     pub project: wamn_registry::ProjectId,
-    pub environment: wamn_registry::EnvName,
+    pub env: wamn_registry::EnvName,
 }
 
 impl TargetConfig {
@@ -122,8 +122,8 @@ impl TargetConfig {
     /// from the coordinate.
     pub fn release_target(&self) -> ReleaseTarget {
         ReleaseTarget::new(
-            project_env_key(&self.org, &self.project, &self.environment),
-            self.environment.clone(),
+            project_env_key(&self.org, &self.project, &self.env),
+            self.env.clone(),
         )
     }
 }
@@ -307,7 +307,7 @@ mod tests {
 
         let digest = wamn_digest::bytes_sha256(b"bundle").to_string();
         let from_variables = parse(
-            "[target]\nenvironment = \"edge\"",
+            "[target]\nenv = \"edge\"",
             &[
                 ("WAMN_ORG", "org-a"),
                 ("WAMN_PROJECT", "plant"),

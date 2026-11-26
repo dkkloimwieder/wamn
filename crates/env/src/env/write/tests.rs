@@ -31,11 +31,7 @@ fn workload_images_keep_each_repository_and_digest() -> anyhow::Result<()> {
     let scratch = ScratchRoot::create()?;
     let repository = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let chart = scratch.path().join("chart");
-    release_chart::stamp(
-        &repository.join("deploy/charts/application"),
-        &image_set,
-        &chart,
-    )?;
+    release_chart::stamp(&repository.join("deploy/charts/app"), &image_set, &chart)?;
     let defaults = chart.join("values.yaml");
     let mut values: serde_json::Value = serde_yaml::from_slice(&std::fs::read(&defaults)?)?;
     for name in ["ctl", "control", "identity", "edge"] {
@@ -47,9 +43,9 @@ fn workload_images_keep_each_repository_and_digest() -> anyhow::Result<()> {
 
     let document = EnvDocument::from_json(
         br#"{"org":"acme","project":"inventory","env":"dev","target":"cloud",
-             "revocation_seconds":30,"applications":{"shop":{"label":"shop"}}}"#,
+             "revocation_seconds":30,"apps":{"shop":{"label":"shop"}}}"#,
     )?;
-    let app = document.applications.first_key_value().unwrap().0;
+    let app = document.apps.first_key_value().unwrap().0;
     let manifest: PackageManifest = serde_json::from_value(json!({
         "package": {"id": "inventory", "version": "1.0.0"},
         "required_platform_policy_contract": {"id": "inventory", "state": "satisfied"},

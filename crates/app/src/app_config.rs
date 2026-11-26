@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 /// The route component's application configuration key.
-pub const APP_CONFIG: &str = "wamn.application";
+pub const APP_CONFIG: &str = "wamn.app";
 
 /// Deploy facts shared by an application's host plugins.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -13,8 +13,8 @@ pub const APP_CONFIG: &str = "wamn.application";
 pub struct AppConfig {
     pub org: wamn_registry::OrgId,
     pub project: wamn_registry::ProjectId,
-    pub environment: wamn_registry::EnvName,
-    pub application: wamn_registry::AppName,
+    pub env: wamn_registry::EnvName,
+    pub app: wamn_registry::AppName,
     /// One positive grant cache lifetime for the project, in seconds.
     pub grant_cache_seconds: u32,
     pub components: Vec<AppComponent>,
@@ -139,23 +139,18 @@ pub fn check_authored_workflow<'a>(
     graph: &'a wamn_workflow_graph::WorkflowGraph,
     role: Option<&str>,
 ) -> Result<wamn_workflow_graph::authoring::Checked<'a>, wamn_workflow_graph::GraphError> {
-    wamn_workflow_graph::authoring::check(
-        graph,
-        app.application.as_str(),
-        role,
-        |sibling, export| {
-            let (component, operation) = workflow_call(app, sibling, export)?;
-            let palette = component.package.as_str() == wamn_package::PALETTE_PACKAGE_ID;
-            Some(match operation.type_ {
-                Some(AppOperationType::Write | AppOperationType::Delete) => true,
-                type_ if !palette => type_.is_none(),
-                _ => !matches!(
-                    component.name.as_str(),
-                    "wamn_palette-jsonata" | "wamn_palette-transform" | "wamn_palette-label-render"
-                ),
-            })
-        },
-    )
+    wamn_workflow_graph::authoring::check(graph, app.app.as_str(), role, |sibling, export| {
+        let (component, operation) = workflow_call(app, sibling, export)?;
+        let palette = component.package.as_str() == wamn_package::PALETTE_PACKAGE_ID;
+        Some(match operation.type_ {
+            Some(AppOperationType::Write | AppOperationType::Delete) => true,
+            type_ if !palette => type_.is_none(),
+            _ => !matches!(
+                component.name.as_str(),
+                "wamn_palette-jsonata" | "wamn_palette-transform" | "wamn_palette-label-render"
+            ),
+        })
+    })
 }
 
 /// Verify that every call in an enabled graph is available in the candidate workload.
@@ -189,8 +184,8 @@ mod tests {
         AppConfig {
             org: "acme".parse().unwrap(),
             project: "shop".parse().unwrap(),
-            environment: "dev".parse().unwrap(),
-            application: "app".parse().unwrap(),
+            env: "dev".parse().unwrap(),
+            app: "app".parse().unwrap(),
             grant_cache_seconds: 60,
             components: exports
                 .iter()

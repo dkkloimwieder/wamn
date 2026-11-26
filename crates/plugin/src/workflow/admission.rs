@@ -80,8 +80,8 @@ pub async fn schedules(
                   WHERE env = $1 AND app = $2 AND enabled AND trigger = 'schedule'
                   ORDER BY workflow_id FOR SHARE",
     )
-    .bind(app.environment.as_str())
-    .bind(app.application.as_str())
+    .bind(app.env.as_str())
+    .bind(app.app.as_str())
     .fetch_all(connection)
     .await
     .map_err(|error| postgres_error("read enabled schedules", &error))
@@ -98,8 +98,8 @@ pub async fn consumer_workflows(
                   WHERE env = $1 AND app = $2 AND enabled AND trigger = 'data_change'
                   ORDER BY workflow_id",
     )
-    .bind(app.environment.as_str())
-    .bind(app.application.as_str())
+    .bind(app.env.as_str())
+    .bind(app.app.as_str())
     .try_map(|row| workflow_id(&row))
     .fetch_all(connection)
     .await
@@ -145,8 +145,8 @@ pub async fn data_change(
                     AND entity = $5 AND $6 = ANY(ops) AND enable_lsn <= $7::text::pg_lsn
                     FOR SHARE",
     )
-    .bind(app.environment.as_str())
-    .bind(app.application.as_str())
+    .bind(app.env.as_str())
+    .bind(app.app.as_str())
     .bind(id)
     .bind(envelope.package_id.as_str())
     .bind(&envelope.entity)
@@ -172,8 +172,8 @@ pub async fn leased_graph(
                   WHERE env = $1 AND app = $2 AND workflow_id = $3
                     AND version = $4 AND graph_hash = $5",
     )
-    .bind(app.environment.as_str())
-    .bind(app.application.as_str())
+    .bind(app.env.as_str())
+    .bind(app.app.as_str())
     .bind(graph_id.as_str())
     .bind(graph_version)
     .bind(hash.to_string())
@@ -193,8 +193,8 @@ pub async fn request_workflow(
                    FROM catalog.workflow WHERE env = $1 AND app = $2
                     AND enabled AND trigger = 'request' AND path = $3 FOR SHARE",
     )
-    .bind(app.environment.as_str())
-    .bind(app.application.as_str())
+    .bind(app.env.as_str())
+    .bind(app.app.as_str())
     .bind(path)
     .fetch_optional(connection)
     .await
@@ -215,8 +215,8 @@ pub async fn run_now_workflow(
                    FROM catalog.workflow WHERE env = $1 AND app = $2
                     AND enabled AND workflow_id = $3 FOR SHARE",
     )
-    .bind(app.environment.as_str())
-    .bind(app.application.as_str())
+    .bind(app.env.as_str())
+    .bind(app.app.as_str())
     .bind(id)
     .fetch_optional(connection)
     .await

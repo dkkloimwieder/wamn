@@ -50,7 +50,7 @@ impl Execution {
             api.namespace == self.org,
             "platform worker must share the org namespace"
         );
-        let env = operation.as_str().starts_with("environment.");
+        let env = operation.as_str().starts_with("env.");
         let input: Value = serde_json::from_str(payload)?;
         let coordinate = if env {
             wamn_env::env_names::project_env_resource_name(
@@ -67,7 +67,7 @@ impl Execution {
         } else {
             format!("{}/platform", self.org)
         };
-        let worker_type = if env { "environment" } else { "platform" };
+        let worker_type = if env { "env" } else { "platform" };
         if operation.as_str().ends_with("operation_status") {
             #[derive(Deserialize)]
             #[serde(deny_unknown_fields)]
@@ -249,7 +249,7 @@ impl Execution {
             project: wamn_registry::ProjectId,
             env: wamn_registry::EnvName,
             document: Option<Value>,
-            application: Option<wamn_registry::AppName>,
+            app: Option<wamn_registry::AppName>,
             disposable: Option<bool>,
             #[serde(default)]
             data: bool,
@@ -258,7 +258,7 @@ impl Execution {
             return self.operation_job(operation, payload, command).await;
         }
         let input: Input = serde_json::from_str(payload)?;
-        let payload = json!({"type":"environment","operation":operation,"project":input.project,"env":input.env,"document":input.document,"application":input.application,"disposable":input.disposable,"data":input.data});
+        let payload = json!({"type":"env","operation":operation,"project":input.project,"env":input.env,"document":input.document,"app":input.app,"disposable":input.disposable,"data":input.data});
         self.operation_job(operation, &payload.to_string(), command)
             .await
     }

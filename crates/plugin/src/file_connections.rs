@@ -16,7 +16,7 @@ impl fmt::Debug for RegistryFileConnections {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("RegistryFileConnections")
             .field("project", &self.release.project)
-            .field("environment", &self.release.environment)
+            .field("env", &self.release.env)
             .finish_non_exhaustive()
     }
 }
@@ -69,8 +69,8 @@ impl RegistryFileConnections {
         binding: Option<&wamn_package::canonical_name::CanonicalName>,
         pinned: Option<&str>,
     ) -> Result<FileConnection, FileError> {
-        if app != &self.release.application {
-            return Err(refused(FileRefusal::BindingRefused, "application"));
+        if app != &self.release.app {
+            return Err(refused(FileRefusal::BindingRefused, "app"));
         }
         let (id, read_only) = match binding {
             None => (

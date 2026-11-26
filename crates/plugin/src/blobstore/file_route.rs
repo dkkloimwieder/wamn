@@ -3,9 +3,9 @@
 //! Uploads finish staging before the metadata transaction. File reads use
 //! the active connection generation. No guest receives a body.
 //!
-//! POST `/api/<application>/files?binding=<alias>&name=<filename>` sends the raw
+//! POST `/api/<app>/files?binding=<alias>&name=<filename>` sends the raw
 //! request body. Its Content-Type supplies the media type. GET
-//! `/api/<application>/files/<id>` streams the stored bytes after session admission.
+//! `/api/<app>/files/<id>` streams the stored bytes after session admission.
 
 use bytes::Bytes;
 use futures_util::TryStreamExt as _;
@@ -52,7 +52,7 @@ pub struct FileRoutes {
 impl fmt::Debug for FileRoutes {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("FileRoutes")
-            .field("application", &self.release.application)
+            .field("app", &self.release.app)
             .field("project", &self.project)
             .finish_non_exhaustive()
     }
@@ -85,8 +85,8 @@ impl FileRoutes {
         write: bool,
         deadline: tokio::time::Instant,
     ) -> Result<(FileConnection, StoredFiles), FileError> {
-        if app != &self.release.application {
-            return Err(refused(FileRefusal::BindingRefused, "application"));
+        if app != &self.release.app {
+            return Err(refused(FileRefusal::BindingRefused, "app"));
         }
         if binding.is_some_and(|alias| !declares_store(&self.release, alias)) {
             return Err(refused(FileRefusal::BindingRefused, "binding"));
@@ -115,7 +115,7 @@ impl FileRoutes {
         id: Uuid,
         action: &str,
     ) -> Result<FileRecord, FileError> {
-        if app != &self.release.application {
+        if app != &self.release.app {
             return Err(refused(FileRefusal::NotFound, "file_id"));
         }
         file_catalog::record(
@@ -216,11 +216,11 @@ impl FileRoutes {
         let principal = principal(caller, "delete")?;
         let _lock = file_catalog::lock(&self.database, &self.project, request.file_id).await?;
         let row = self
-            .record(&principal, &request.application, request.file_id, "delete")
+            .record(&principal, &request.app, request.file_id, "delete")
             .await?;
         let (connection, store) = self
             .store(
-                &request.application,
+                &request.app,
                 Some(&request.binding),
                 Some(row.connection_id.as_str()),
                 true,
@@ -232,7 +232,7 @@ impl FileRoutes {
             &self.project,
             &principal,
             &file_operation("delete"),
-            &request.application,
+            &request.app,
             request.file_id,
         )
         .await?;
@@ -257,11 +257,11 @@ impl FileRoutes {
         let principal = principal(caller, "expose")?;
         let _lock = file_catalog::lock(&self.database, &self.project, request.file_id).await?;
         let row = self
-            .record(&principal, &request.application, request.file_id, "expose")
+            .record(&principal, &request.app, request.file_id, "expose")
             .await?;
         let (connection, store) = self
             .store(
-                &request.application,
+                &request.app,
                 Some(&request.binding),
                 Some(row.connection_id.as_str()),
                 true,
@@ -292,7 +292,7 @@ impl FileRoutes {
             &principal,
             &file_operation("expose"),
             FileExposure {
-                app: &request.application,
+                app: &request.app,
                 id: request.file_id,
                 exposure: request.exposure,
                 url: url.as_deref(),
@@ -319,7 +319,7 @@ impl FileRoutes {
         deadline: tokio::time::Instant,
     ) -> Result<String, FileError> {
         let lifetime = signed_lifetime(lifetime)?;
-        let app = &self.release.application;
+        let app = &self.release.app;
         let row = self.record(principal, app, id, "get").await?;
         let (_, store) = self
             .store(app, None, Some(&row.connection_id), false, deadline)
@@ -342,7 +342,7 @@ impl FileRoutes {
                 let request: FileRequest = decode(payload)?;
                 let principal = principal(caller, "get")?;
                 let row = self
-                    .record(&principal, &request.application, request.file_id, "get")
+                    .record(&principal, &request.app, request.file_id, "get")
                     .await?;
                 require_exposure(row.exposure)?;
                 Ok(json!({"file_id": row.id, "exposure": row.exposure, "url": row.url}))
@@ -429,7 +429,7 @@ impl FileRoutes {
         let target = wamn_registry::name::project_env_key(
             &self.release.org,
             &self.release.project,
-            &self.release.environment,
+            &self.release.env,
         );
         let caller = match routing
             .authenticate_policy(
@@ -563,7 +563,7 @@ impl FileRoutes {
                 &wamn_registry::name::project_env_key(
                     &self.release.org,
                     &self.release.project,
-                    &self.release.environment,
+                    &self.release.env,
                 ),
                 &id,
                 RoutePolicy {
@@ -683,8 +683,8 @@ fn require_binding(
     connection: &FileConnection,
     write: bool,
 ) -> Result<(), FileError> {
-    if app != &release.application {
-        return Err(refused(FileRefusal::BindingRefused, "application"));
+    if app != &release.app {
+        return Err(refused(FileRefusal::BindingRefused, "app"));
     }
     if binding.is_some_and(|alias| !declares_store(release, alias))
         || connection.generation <= 0
@@ -828,14 +828,11 @@ mod tests {
     #[test]
     fn file_inputs_refuse_missing_security_fields_and_unknown_members() {
         let id = Uuid::new_v4();
-        assert!(
-            decode::<FileRequest>(&json!({"application":"orders","file_id":id}).to_string())
-                .is_ok()
-        );
+        assert!(decode::<FileRequest>(&json!({"app":"orders","file_id":id}).to_string()).is_ok());
         for payload in [
             json!({"file_id":id}),
-            json!({"application":"orders"}),
-            json!({"application":"orders","file_id":id,"signed":true}),
+            json!({"app":"orders"}),
+            json!({"app":"orders","file_id":id,"signed":true}),
         ] {
             assert_eq!(
                 decode::<FileRequest>(&payload.to_string())
@@ -845,15 +842,14 @@ mod tests {
             );
         }
         for payload in [
-            json!({"application":"orders","file_id":id,"binding":"documents"}),
-            json!({"application":"orders","file_id":id,"binding":"documents","exposure":"unknown"}),
-            json!({"application":"orders","file_id":id,"binding":"documents","exposure":"public","url":"https://attacker.test"}),
+            json!({"app":"orders","file_id":id,"binding":"documents"}),
+            json!({"app":"orders","file_id":id,"binding":"documents","exposure":"unknown"}),
+            json!({"app":"orders","file_id":id,"binding":"documents","exposure":"public","url":"https://attacker.test"}),
         ] {
             assert!(decode::<ExposeRequest>(&payload.to_string()).is_err());
         }
         assert!(
-            decode::<DeleteRequest>(&json!({"application":"orders","file_id":id}).to_string())
-                .is_err()
+            decode::<DeleteRequest>(&json!({"app":"orders","file_id":id}).to_string()).is_err()
         );
     }
     #[test]

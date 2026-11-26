@@ -37,7 +37,7 @@ impl HostRouteDelivery {
         config: Arc<AppConfig>,
     ) -> Self {
         let project_env_key =
-            wamn_registry::project_env_key(&config.org, &config.project, &config.environment);
+            wamn_registry::project_env_key(&config.org, &config.project, &config.env);
         Self {
             postgres,
             authorization,

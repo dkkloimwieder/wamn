@@ -130,7 +130,7 @@ impl Workflow {
                         caller,
                         position: GraphPosition {
                             graph_hash: authority.hash,
-                            app: workload.app.application.clone(),
+                            app: workload.app.app.clone(),
                             graph_id: authority.workflow_id.clone(),
                             graph_version: authority.version,
                             node_id,

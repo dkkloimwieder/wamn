@@ -49,13 +49,13 @@ pub struct PackageDiff {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Diff {
-    pub application: wamn_registry::AppName,
+    pub app: wamn_registry::AppName,
     pub release: Option<wamn_digest::Digest>,
     pub mode: SchemaMode,
     pub disposable: Option<bool>,
     pub packages: BTreeMap<wamn_package::PackageName, PackageDiff>,
     pub reset_sources: BTreeMap<wamn_package::PackageName, SchemaSource>,
-    pub affected_applications: BTreeSet<wamn_registry::AppName>,
+    pub affected_apps: BTreeSet<wamn_registry::AppName>,
     pub missing_reset_sources: BTreeSet<wamn_package::PackageName>,
     pub unknowns: Vec<String>,
 }
@@ -174,9 +174,9 @@ pub async fn plan(
             },
         );
     }
-    let affected_apps = document.applications.keys().cloned().collect();
+    let affected_apps = document.apps.keys().cloned().collect();
     let missing_reset_sources = document
-        .applications
+        .apps
         .values()
         .filter(|selection| selection.current != DeclaredRelease::None)
         .flat_map(|selection| &selection.packages)
@@ -184,13 +184,13 @@ pub async fn plan(
         .cloned()
         .collect();
     Ok(Diff {
-        application: app.clone(),
+        app: app.clone(),
         release,
         mode: document.schema_mode(state.disposable),
         disposable: state.disposable,
         packages,
         reset_sources,
-        affected_applications: affected_apps,
+        affected_apps,
         missing_reset_sources,
         unknowns: state.unknowns.clone(),
     })

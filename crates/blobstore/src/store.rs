@@ -419,8 +419,8 @@ pub(crate) mod test_binding {
         let app = Arc::new(wamn_app::app_config::AppConfig {
             org: "acme".parse().unwrap(),
             project: "project-a".parse().unwrap(),
-            environment: "dev".parse().unwrap(),
-            application: "app".parse().unwrap(),
+            env: "dev".parse().unwrap(),
+            app: "app".parse().unwrap(),
             grant_cache_seconds: 3600,
             components: Vec::new(),
         });

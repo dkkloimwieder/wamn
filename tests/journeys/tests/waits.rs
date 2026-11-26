@@ -349,7 +349,7 @@ impl Watches {
             .filter(|object| {
                 object
                     .annotations()
-                    .get("wamn.application")
+                    .get("wamn.app")
                     .is_some_and(|name| name == APP)
             })
             .peekable();

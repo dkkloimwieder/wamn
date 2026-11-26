@@ -271,7 +271,7 @@ describe("User decisions", () => {
       fetch: async (url, init) => {
         const path = new URL(String(url), "http://localhost").pathname;
         if (path.endsWith("/project/list")) return completed({ projects: [{ name: "widgets", state: "active" }] });
-        if (path.endsWith("/environment/list")) return completed({ environments: [{ name: "dev", state: "active" }] });
+        if (path.endsWith("/env/list")) return completed({ envs: [{ name: "dev", state: "active" }] });
         const [request] = JSON.parse(String(init?.body));
         writes.push(request.value);
         return completed({ ...request.value, member: true }, request.request_id);
@@ -307,7 +307,7 @@ describe("User decisions", () => {
   it("views all four access writes to the addressed user and reads each project", async () => {
     const calls: string[] = [];
     const writes: { path: string; value: unknown }[] = [];
-    let environments: string[] = [];
+    let envs: string[] = [];
     let projectAdmin = false;
     const transportFetch: typeof globalThis.fetch = async (url, init) => {
       const path = String(url);
@@ -321,22 +321,22 @@ describe("User decisions", () => {
             { name: "gadgets", state: "active" },
           ],
         });
-      if (path.includes("/environment/list")) return completed({ environments: [{ name: "dev", state: "active" }] });
+      if (path.includes("/env/list")) return completed({ envs: [{ name: "dev", state: "active" }] });
       if (path.includes("/member/list"))
         return completed({
           members: [
-            { ...person, environments, project_admin: projectAdmin },
-            { ...person, principal_id: otherId, environments: ["other-env"], project_admin: true },
+            { ...person, envs, project_admin: projectAdmin },
+            { ...person, principal_id: otherId, envs: ["other-env"], project_admin: true },
           ],
         });
       const [request] = JSON.parse(String(init?.body));
       writes.push({ path, value: request.value });
-      if (path.endsWith("/member/grant")) environments = ["dev"];
-      if (path.endsWith("/member/revoke")) environments = [];
+      if (path.endsWith("/member/grant")) envs = ["dev"];
+      if (path.endsWith("/member/revoke")) envs = [];
       if (path.endsWith("/project_admin/grant")) projectAdmin = true;
       if (path.endsWith("/project_admin/revoke")) projectAdmin = false;
       return completed(
-        { ...request.value, member: environments.length > 0, project_admin: projectAdmin },
+        { ...request.value, member: envs.length > 0, project_admin: projectAdmin },
         request.request_id,
       );
     };

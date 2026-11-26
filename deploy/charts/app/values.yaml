@@ -14,12 +14,12 @@ platform:
 release:
   # `sha256:<hex>` of the release manifest.
   manifestDigest: ""
-# `org/project/env`.
-environment: ""
+# `org/env/project`.
+env: ""
 # Public host derived by the release planner from the application's label.
 routeHost: ""
 # Exactly one application name to its package membership.
-applications: {}
+apps: {}
 # Derived host to the declared client package ID.
 webClients: {}
 # Host to pinned web artifact digest.

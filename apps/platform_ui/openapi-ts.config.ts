@@ -3,7 +3,7 @@ import { defineConfig } from "@hey-api/openapi-ts";
 import { wamn } from "./package.json";
 
 const documents = new Map([
-  ["wamn_control", "application.openapi.json"],
+  ["wamn_control", "app.openapi.json"],
   ["wamn_control_org", "control.openapi.json"],
 ]);
 

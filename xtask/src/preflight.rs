@@ -64,7 +64,7 @@ database:
   memory: 256Mi
 projects:
   - name: receiving
-    applications:
+    apps:
       wamn_receiving:
         label: receiving
 ";
@@ -210,7 +210,7 @@ async fn render(
     let chart_reference = std::fs::read_to_string(chart.directory().join("chart.ref"))
         .context("read chart.ref of the bundle")?;
     let resolved = json!({
-        "applicationChart": chart_reference.trim(),
+        "appChart": chart_reference.trim(),
         "registryEgress": platform_install::registry_egress(&platform_file)?,
     });
     let resolved_file = write_json(directory, "platform-resolved.json", &resolved)?;
@@ -290,7 +290,7 @@ async fn render(
     });
 
     // wamn env apply: the environment host and the project release.
-    let env_file = directory.join("environment.yaml");
+    let env_file = directory.join("env.yaml");
     std::fs::write(&env_file, ENV)?;
     let file = EnvFile::compile(&env_file)?;
     let sizing = serde_json::to_value(&file.database)?;
@@ -333,13 +333,13 @@ async fn render(
         &inbox,
         &inbox,
     );
-    let host_file = write_json(directory, "environment-values.json", &host_values)?;
+    let host_file = write_json(directory, "env-values.json", &host_values)?;
     rendered.push(
         template(
             directory,
-            "environment",
+            "env",
             &name::env_host_name(org_id, env),
-            &charts.join("environment"),
+            &charts.join("env"),
             &helm_namespace,
             &[&host_file],
             false,
@@ -358,7 +358,7 @@ async fn render(
         &triple,
         &cluster,
         &connection.database,
-        document.applications.keys(),
+        document.apps.keys(),
     )?;
     project_values["publication"] = wamn_env::env::chart_values::publication_values(
         &triple,
@@ -398,13 +398,13 @@ async fn render(
     let manifest = app_manifest(root).await?;
     let package = manifest.package.id.clone();
     let app = document
-        .applications
+        .apps
         .keys()
         .next()
         .context("the project has one application")?
         .clone();
     let selection = document
-        .applications
+        .apps
         .get_mut(&app)
         .context("the application is declared")?;
     let digest = crate::helm_size::package_digest(&package);
@@ -437,14 +437,14 @@ async fn render(
         wamn_http::wasm_authority::wasm_authority_port,
     )?;
     operation::use_pod_registry(&chart, &mut app_values)?;
-    let app_file = directory.join("application-values.yaml");
+    let app_file = directory.join("app-values.yaml");
     std::fs::write(&app_file, serde_yaml::to_string(&app_values)?)?;
     rendered.push(
         template(
             directory,
-            "application",
+            "app",
             &wamn_env::release_chart::release_name(org_id, project, env, &app)?,
-            &charts.join("application"),
+            &charts.join("app"),
             &helm_namespace,
             &[&app_file],
             false,

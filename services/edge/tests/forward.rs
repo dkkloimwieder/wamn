@@ -260,7 +260,7 @@ fn configuration(
 [target]
 org = "{ORG}"
 project = "{PROJECT}"
-environment = "{ENV}"
+env = "{ENV}"
 
 [release]
 dir = "{dir}"

@@ -26,7 +26,7 @@ function mount(path: string, orgAdmin = true, projects = ["widgets", "gadgets"])
       email: "alex@example.invalid",
       org_admin: false,
       project_admin: false,
-      environments: ["dev", "prod"],
+      envs: ["dev", "prod"],
     },
     {
       principal_id: "sam",
@@ -34,16 +34,16 @@ function mount(path: string, orgAdmin = true, projects = ["widgets", "gadgets"])
       email: "sam@example.invalid",
       org_admin: false,
       project_admin: true,
-      environments: ["prod"],
+      envs: ["prod"],
     },
   ];
   // As the server does, an environment keeps its members and only its name.
   const environmentMembers = (encoded: string | null) => {
     if (encoded === null) return members;
-    const environment: string = JSON.parse(encoded);
+    const env: string = JSON.parse(encoded);
     return members
-      .filter((entry) => entry.environments.includes(environment))
-      .map((entry) => ({ ...entry, environments: [environment] }));
+      .filter((entry) => entry.envs.includes(env))
+      .map((entry) => ({ ...entry, envs: [env] }));
   };
   const fetch: typeof globalThis.fetch = async (url, init) => {
     const route = new URL(String(url), "http://localhost").pathname;
@@ -54,25 +54,25 @@ function mount(path: string, orgAdmin = true, projects = ["widgets", "gadgets"])
       if (route.endsWith("/member/revoke"))
         members = members.map((entry) =>
           entry.principal_id === body.value.principal_id
-            ? { ...entry, environments: entry.environments.filter((env) => env !== body.value.env) }
+            ? { ...entry, envs: entry.envs.filter((env) => env !== body.value.env) }
             : entry,
         );
       return new Response(JSON.stringify([{ request_id: body.request_id, value: {} }]));
     }
     const value = route.endsWith("/project/list")
       ? { projects: projects.map((name) => ({ name, state: "active" })) }
-      : route.endsWith("/environment/list")
+      : route.endsWith("/env/list")
         ? {
-            environments: [
+            envs: [
               { name: "dev", state: "active" },
               { name: "prod", state: "active" },
             ],
           }
         : route.endsWith("/member/list")
-          ? { members: environmentMembers(new URL(String(url), "http://localhost").searchParams.get("environment")) }
+          ? { members: environmentMembers(new URL(String(url), "http://localhost").searchParams.get("env")) }
           : route.endsWith("/user/list")
             ? { users: members.map((entry) => ({ ...entry, status: "active" })) }
-            : route.endsWith("/environment/status")
+            : route.endsWith("/env/status")
               ? {
                   workloads: [],
                   rollout: { replicas: 0, updated_replicas: 0, ready_replicas: 0, available_replicas: 0 },
@@ -104,7 +104,7 @@ function mountNavigation(path: string) {
     .find((params) => params !== undefined)!;
   const transport = createTransport({
     baseUrl: "http://localhost",
-    fetch: async () => new Response(JSON.stringify([{ value: { environments: [{ name: "dev", state: "active" }] } }])),
+    fetch: async () => new Response(JSON.stringify([{ value: { envs: [{ name: "dev", state: "active" }] } }])),
   });
   const [compact, setCompact] = createSignal(false);
   render(() => (
@@ -159,7 +159,7 @@ describe("control hierarchy navigation", () => {
     ["users/alex/memberships", "Organization acme", "Memberships"],
     ["users/alex/memberships/grant", "Organization acme", "Memberships"],
     ["projects/widgets", "Project widgets", "widgets"],
-    ["projects/widgets/environments", "Project widgets", "Environments"],
+    ["projects/widgets/envs", "Project widgets", "Environments"],
     ["projects/widgets/members", "Project widgets", "Members"],
     ["projects/widgets/members/grant", "Project widgets", "Members"],
     ["projects/widgets/members/alex", "Project widgets", "Members"],
@@ -268,7 +268,7 @@ describe("control hierarchy navigation", () => {
   });
 
   it.each([
-    ["projects/widgets/environments", "Project widgets"],
+    ["projects/widgets/envs", "Project widgets"],
     ["projects/widgets/members/grant", "Project widgets"],
     ["projects/widgets/dev/members/alex", "Environment widgets/dev"],
     ["users/alex/projects/widgets", "Organization acme"],

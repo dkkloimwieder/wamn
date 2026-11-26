@@ -63,7 +63,7 @@ impl ControlHost {
     ) -> anyhow::Result<()> {
         value["project"] = triple.project.as_str().into();
         value["env"] = serde_json::json!(&triple.env);
-        self.run_value(operation, value, "environment.operation_status")
+        self.run_value(operation, value, "env.operation_status")
             .await
     }
 

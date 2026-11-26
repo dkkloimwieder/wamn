@@ -16,7 +16,7 @@ pub struct Request {
     pub project: wamn_registry::ProjectId,
     pub env: wamn_registry::EnvName,
     #[serde(default)]
-    pub application: Option<wamn_registry::AppName>,
+    pub app: Option<wamn_registry::AppName>,
     #[serde(default)]
     pub release: Option<wamn_digest::Digest>,
     #[serde(default)]
@@ -40,9 +40,9 @@ pub enum Operation {
 impl Operation {
     pub fn parse(operation: &str) -> Option<Self> {
         Some(match operation {
-            "application.deploy" => Self::Deploy,
-            "application.rollback" => Self::Rollback,
-            "application.stop" => Self::Stop,
+            "app.deploy" => Self::Deploy,
+            "app.rollback" => Self::Rollback,
+            "app.stop" => Self::Stop,
             "schema.diff" => Self::Diff,
             "schema.apply" => Self::Apply,
             "schema.reset" => Self::Reset,
@@ -126,7 +126,7 @@ pub async fn execute(
             operation::reset(&platform, &document).await
         }
         _ => {
-            let app = request.application.context("application is required")?;
+            let app = request.app.context("application is required")?;
             let document = EnvDocument::read(&platform, &triple).await?;
             let integration_base;
             let component_base;
@@ -170,13 +170,12 @@ pub enum Task {
         operation: Operation,
         request: Request,
     },
-    #[serde(rename = "environment")]
     Env {
         operation: String,
         project: wamn_registry::ProjectId,
         env: wamn_registry::EnvName,
         document: Option<Value>,
-        application: Option<wamn_registry::AppName>,
+        app: Option<wamn_registry::AppName>,
         disposable: Option<bool>,
         #[serde(default)]
         data: bool,
@@ -220,17 +219,17 @@ pub async fn execute_task(
             project,
             env,
             document,
-            application: app,
+            app,
             disposable,
             data,
         } => {
             let triple = wamn_registry::Triple::new(org.clone(), env, project);
-            if operation == "environment.delete" {
+            if operation == "env.delete" {
                 let messages = super::delete::delete(&mut platform, &triple, data).await?;
                 return Ok(json!({"messages":messages}));
             }
             ensure!(
-                operation == "environment.configure",
+                operation == "env.configure",
                 "unknown environment lifecycle operation"
             );
             let document: EnvFile =

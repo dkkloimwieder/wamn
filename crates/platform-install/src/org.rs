@@ -86,15 +86,15 @@ pub fn org_values(
     api_server: &[Value],
 ) -> anyhow::Result<Value> {
     let image = field(inputs, "controlImage")?;
-    let app_chart = field(inputs, "applicationChart")?;
+    let app_chart = field(inputs, "appChart")?;
     let (_, digest) = app_chart
         .strip_prefix("oci://")
         .and_then(|reference| reference.rsplit_once('@'))
         .filter(|(repository, _)| !repository.is_empty())
-        .context("pin applicationChart in the platform release to an OCI chart digest")?;
+        .context("pin appChart in the platform release to an OCI chart digest")?;
     digest
         .parse::<wamn_digest::Digest>()
-        .context("invalid applicationChart digest in the platform release")?;
+        .context("invalid appChart digest in the platform release")?;
     let registry = field(inputs, "registry")?;
     let registry_egress: Value = serde_json::from_str(field(inputs, "registryEgress")?)
         .context("decode registryEgress from wamn-org-inputs")?;

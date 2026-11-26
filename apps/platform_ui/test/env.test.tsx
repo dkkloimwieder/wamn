@@ -1,9 +1,9 @@
 import { fireEvent, render, screen, waitFor, within } from "@solidjs/testing-library";
 import { describe, expect, it } from "vitest";
 import { createTransport } from "@wamn/web-runtime";
-import applicationOpenApi from "../../target/wamn/platform_ui/application.openapi.json";
+import appOpenApi from "../../target/wamn/platform_ui/app.openapi.json";
 import controlOpenApi from "../../target/wamn/platform_ui/control.openapi.json";
-import { Environment } from "../src/environment";
+import { Environment } from "../src/env";
 import { controlHolds, Shell } from "../src/shell";
 import { controlSections, Project } from "../src/projects";
 import { CONTROL, identity, input } from "./fixtures";
@@ -15,20 +15,20 @@ function fixture(initial: "active" | "inactive" = "active", digest: string | nul
   const fetch: typeof globalThis.fetch = async (url, init) => {
     const path = String(url);
     calls.push(path);
-    if (path.endsWith("/environment/activate") || path.endsWith("/environment/inactivate")) {
+    if (path.endsWith("/env/activate") || path.endsWith("/env/deactivate")) {
       const body = JSON.parse(String(init?.body));
       writes.push(body[0].value);
       if (refuse) return new Response("write failed", { status: 503 });
-      state = path.endsWith("/environment/activate") ? "active" : "inactive";
+      state = path.endsWith("/env/activate") ? "active" : "inactive";
       return new Response(
         JSON.stringify([{ request_id: body[0].request_id, value: { project: "widgets", env: "dev", status: state } }]),
       );
     }
     const value = path.includes("/member/list")
       ? { members: [] }
-      : path.includes("/environment/list")
-        ? { environments: [{ name: "dev", state }] }
-        : path.includes("/environment/status")
+      : path.includes("/env/list")
+        ? { envs: [{ name: "dev", state }] }
+        : path.includes("/env/status")
           ? {
               users_with_role: 3,
               roles: 4,
@@ -38,14 +38,14 @@ function fixture(initial: "active" | "inactive" = "active", digest: string | nul
                 ? [
                     {
                       name: "http",
-                      application: "orders",
+                      app: "orders",
                       package_digest: digest,
                       revision: 2,
                       conditions: [{ type: "Ready", status: "True" }],
                     },
                     {
                       name: "worker",
-                      application: "receiving",
+                      app: "receiving",
                       package_digest: "sha256:other",
                       revision: 1,
                       conditions: [],
@@ -78,7 +78,7 @@ describe("Environment", () => {
     let opened = "";
     render(() => (
       <Project
-        table="environments"
+        table="envs"
         transport={data.transport}
         holds={controlHolds({ org_admin: false, projects: [{ project: "widgets", project_admin: true }] })}
         params={{ project: "widgets" }}
@@ -99,7 +99,7 @@ describe("Environment", () => {
     await waitFor(() =>
       expect(Number(screen.getByRole("group", { name: "Workloads" }).textContent?.match(/\d+/)?.[0])).toBe(1),
     );
-    expect(data.calls.filter((path) => path.includes("/environment/status"))).toHaveLength(1);
+    expect(data.calls.filter((path) => path.includes("/env/status"))).toHaveLength(1);
     expect(Number(screen.getByRole("group", { name: "Roles" }).textContent?.match(/\d+/)?.[0])).toBe(4);
   });
 
@@ -156,10 +156,10 @@ describe("Environment", () => {
     ));
     await screen.findByRole("table");
     expect(screen.getAllByRole("table")).toHaveLength(1);
-    const reads = data.calls.filter((call) => call.includes("/environment/status")).length;
+    const reads = data.calls.filter((call) => call.includes("/env/status")).length;
     fireEvent.click(screen.getByRole("button", { name: "Refresh results" }));
     await waitFor(() =>
-      expect(data.calls.filter((call) => call.includes("/environment/status"))).toHaveLength(reads + 1),
+      expect(data.calls.filter((call) => call.includes("/env/status"))).toHaveLength(reads + 1),
     );
   });
 
@@ -205,9 +205,9 @@ describe("Environment", () => {
         sections={[]}
         controlSections={controlSections}
         fetch={(url, init) => {
-          if (String(url).includes("/environment/status"))
+          if (String(url).includes("/env/status"))
             return Promise.resolve(
-              new Response(JSON.stringify([{ error: { code: "environment_not_found", detail: { field: "env" } } }])),
+              new Response(JSON.stringify([{ error: { code: "env_not_found", detail: { field: "env" } } }])),
             );
           return String(url).includes("/api/wamn_control/") && !String(url).endsWith("/control/mine")
             ? data.fetch(url, init)
@@ -223,8 +223,8 @@ describe("Environment", () => {
     async (initial) => {
       const data = fixture(initial);
       mount(data);
-      const action = initial === "active" ? "Inactivate environment" : "Activate environment";
-      const opposite = initial === "active" ? "Activate environment" : "Inactivate environment";
+      const action = initial === "active" ? "Deactivate environment" : "Activate environment";
+      const opposite = initial === "active" ? "Activate environment" : "Deactivate environment";
       fireEvent.click(await screen.findByRole("button", { name: action }));
       await screen.findByRole("button", { name: opposite });
       expect(screen.queryByRole("button", { name: action })).toBeNull();
@@ -234,14 +234,14 @@ describe("Environment", () => {
         expect(observed).toHaveProperty(["0", "project"], "widgets");
         expect(observed).toHaveProperty(["0", "env"], "dev");
       }
-      expect(data.calls.filter((path) => path.includes("/environment/list"))).toHaveLength(2);
+      expect(data.calls.filter((path) => path.includes("/env/list"))).toHaveLength(2);
     },
   );
 
   it("keeps the current action and reports an unsuccessful write", async () => {
     const data = fixture("active", "sha256:release", true);
     mount(data);
-    fireEvent.click(await screen.findByRole("button", { name: "Inactivate environment" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Deactivate environment" }));
     await screen.findByRole("alert");
     expect(screen.queryByRole("button", { name: "Activate environment" })).toBeNull();
     expect(
@@ -288,7 +288,7 @@ describe("Environment", () => {
   );
 });
 
-const paths = { ...applicationOpenApi.paths, ...controlOpenApi.paths };
+const paths = { ...appOpenApi.paths, ...controlOpenApi.paths };
 const statusParameters = paths["/wamn_control/operation/status"].get.parameters
   .filter((parameter) => parameter.in === "query")
   .map((parameter) => parameter.name)
@@ -303,7 +303,7 @@ function operationsFixture(options: { refuse?: boolean; states?: string[]; proje
   const states = [...(options.states ?? ["succeeded"])];
   const fetch: typeof globalThis.fetch = async (url, init) => {
     const address = new URL(String(url), "http://localhost");
-    if (/\/(application|schema)\//.test(address.pathname)) {
+    if (/\/(app|schema)\//.test(address.pathname)) {
       const body = JSON.parse(String(init?.body));
       writes.push({ route: address.pathname, body });
       return new Response(
@@ -342,8 +342,8 @@ function operationsFixture(options: { refuse?: boolean; states?: string[]; proje
 async function openOperation(action: string, withTarget = true) {
   fireEvent.click(await screen.findByRole("button", { name: new RegExp(`^${action}\\b`, "i") }));
   await screen.findByRole("button", { name: /^Start / });
-  const application = screen.queryByRole("textbox", { name: "Application" });
-  if (application) input(application, "receiving");
+  const app = screen.queryByRole("textbox", { name: "Application" });
+  if (app) input(app, "receiving");
   const release = screen.queryByRole("textbox", { name: /Release digest/ });
   if (release && withTarget) input(release, releaseDigest);
   const revision = screen.queryByRole("textbox", { name: /Revision/ });
@@ -353,7 +353,7 @@ async function openOperation(action: string, withTarget = true) {
 
 describe("environment operation controls", () => {
   for (const [path, operation] of Object.entries(paths)) {
-    const [, family, action] = /^\/wamn_control\/(application|schema)\/([^/]+)$/.exec(path) ?? [];
+    const [, family, action] = /^\/wamn_control\/(app|schema)\/([^/]+)$/.exec(path) ?? [];
     if (!family || !action) continue;
     if (!("post" in operation)) throw new Error(`Missing POST contract for ${path}`);
     const { properties } = operation.post.requestBody.content["application/json"].schema.items;
@@ -373,7 +373,7 @@ describe("environment operation controls", () => {
             expect(observed).toHaveProperty(["length"], 0);
           }
           const scope = dialog.getByText((text) => text.includes("widgets") && text.includes("dev"));
-          if (fields.includes("application")) expect(scope.textContent).toContain("receiving");
+          if (fields.includes("app")) expect(scope.textContent).toContain("receiving");
           fireEvent.click(dialog.getByRole("button", { name: /^Confirm / }));
         }
         await waitFor(() => expect(screen.getByRole("status").textContent).toContain(data.statuses.at(-1)!.state!));
@@ -384,7 +384,7 @@ describe("environment operation controls", () => {
         const expectedValues: Record<string, unknown> = {
           project: "widgets",
           env: "dev",
-          application: "receiving",
+          app: "receiving",
           release: withTarget ? releaseDigest : null,
           revision: withTarget ? 2 : null,
         };

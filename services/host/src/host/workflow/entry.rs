@@ -59,8 +59,7 @@ impl Workflow {
             let Some(definition) = definition else {
                 return Ok(Ok(None));
             };
-            let permission =
-                wamn_routes::workflow_permission(&app.application, definition.id.as_str());
+            let permission = wamn_routes::workflow_permission(&app.app, definition.id.as_str());
             if !request.caller.permits(&permission) {
                 return Ok(Err(Refusal::PermissionDenied));
             }

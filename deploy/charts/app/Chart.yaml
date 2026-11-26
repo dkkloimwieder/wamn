@@ -1,6 +1,6 @@
 apiVersion: v2
-name: application
+name: app
 description: One application release on the shared environment host (docs/architecture/naming.md#environment-names).
 type: application
-version: 0.1.143
-appVersion: "0.1.143"
+version: 0.1.144
+appVersion: "0.1.144"

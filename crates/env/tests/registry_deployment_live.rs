@@ -147,7 +147,7 @@ async fn project_configuration_keeps_applied_env_timings() -> anyhow::Result<()>
     let document = EnvDocument::from_json(
         br#"{"org":"acme","project":"inventory","env":"dev","target":"cloud",
              "readiness_budget_seconds":123,"drain_bound_seconds":234,"revocation_seconds":45,
-             "applications":{}}"#,
+             "apps":{}}"#,
     )?;
     let triple = document.triple();
     let mut transaction = provisioning_transaction(&mut client).await?;

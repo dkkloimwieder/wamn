@@ -18,10 +18,10 @@ pub fn validate_context(
             == Some(&wamn_registry::name::project_env_key(
                 &context.release.org,
                 &context.release.project,
-                &context.release.environment
+                &context.release.env
             ))
             && identity.project.as_ref() == Some(context.connections.project())
-            && identity.app.as_ref() == Some(&context.release.application),
+            && identity.app.as_ref() == Some(&context.release.app),
         "invocation application authority mismatch"
     );
     Ok(())

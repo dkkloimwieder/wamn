@@ -17,8 +17,8 @@ wamn workflow enable --host-url "$APPLICATION_URL" --workflow-id orders --versio
 wamn workflow list --host-url "$APPLICATION_URL"
 ```
 
-The host resolves each call by sibling name and export key in the live workload’s `wamn.application`.
-For a Request, grant `wamn-workflow:<application>/<workflow_id>` to each role that can call it.
+The host resolves each call by sibling name and export key in the live workload’s `wamn.app`.
+For a Request, grant `wamn-workflow:<app>/<workflow_id>` to each role that can call it.
 The host returns the Response status and body. It waits up to 30 seconds.
 Use `workflow disable` with the same flags as `workflow enable` to stop new admissions.
 For Data change, enable creates the workflow's pull consumer. Disable removes it after the database commits.

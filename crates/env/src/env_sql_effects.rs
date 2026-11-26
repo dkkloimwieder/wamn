@@ -428,8 +428,8 @@ async fn check_workflows(project: &mut sqlx::PgConnection, app: &AppConfig) -> a
         "SELECT workflow_id, graph_json FROM catalog.workflow
          WHERE env=$1 AND app=$2 AND enabled ORDER BY workflow_id",
     )
-    .bind(app.environment.as_str())
-    .bind(app.application.as_str())
+    .bind(app.env.as_str())
+    .bind(app.app.as_str())
     .fetch_all(project)
     .await?;
     for (name, value) in graphs {

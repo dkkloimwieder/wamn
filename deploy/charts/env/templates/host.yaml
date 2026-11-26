@@ -1,5 +1,5 @@
 {{- if .Values.projects }}
-{{- $org := include "environment.namespace" . }}
+{{- $org := include "env.namespace" . }}
 {{- $env := required "Set env." .Values.env }}
 {{- $name := required "Set hostName." .Values.hostName }}
 {{- $nats := required "Set natsUrl." .Values.natsUrl }}
@@ -47,7 +47,7 @@
 {{- $volumes = append $volumes (dict "name" "project-database" "projected" (dict "defaultMode" 256 "sources" $sources)) }}
 {{- $mounts = append $mounts (dict "name" "project-database" "mountPath" "/etc/wamn/db" "readOnly" true) }}
 
-{{- $broker := required "Set environmentNats." .Values.environmentNats }}
+{{- $broker := required "Set envNats." .Values.envNats }}
 {{- $ca := "/etc/wamn/nats-ca/ca.crt" }}
 {{- $volumes = append $volumes (dict "name" "nats-ca" "configMap" (dict "name" "nats-ca")) }}
 {{- $mounts = append $mounts (dict "name" "nats-ca" "mountPath" (dir $ca) "readOnly" true) }}
@@ -97,7 +97,7 @@ data:
     "image" (dict "repository" (trimSuffix $tag $image) "tag" (trimPrefix ":" $tag))
     "schedulerNatsUrl" $nats
     "dataNatsUrl" $nats
-    "http" (dict "enabled" true "port" (include "environment.httpPort" . | int))
+    "http" (dict "enabled" true "port" (include "env.httpPort" . | int))
     "ociCaPaths" .Values.ociCaPaths
     "env" (list
         (dict "name" "DOCKER_CONFIG" "value" "/etc/wamn/registry")

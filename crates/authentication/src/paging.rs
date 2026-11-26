@@ -15,7 +15,6 @@ pub enum Order {
     /// Project identifier ascending.
     Project,
     /// Environment name ascending.
-    #[serde(rename = "Environment")]
     Env,
     /// Email ascending, then principal UUID ascending.
     Principal,
@@ -93,7 +92,7 @@ impl ListPage {
             None => paged.then_some(100),
         };
         let expected = Cursor {
-            v: 1,
+            v: 2,
             operation: operation.into(),
             binding,
             order,
@@ -111,7 +110,7 @@ impl ListPage {
                     .map_err(|_| invalid("cursor"))?;
                 let decoded: Cursor =
                     serde_json::from_slice(&bytes).map_err(|_| invalid("cursor"))?;
-                if decoded.v != 1
+                if decoded.v != expected.v
                     || decoded.operation != expected.operation
                     || decoded.binding != expected.binding
                     || decoded.order != order
@@ -161,7 +160,7 @@ impl ListPage {
         }
         let next_cursor = if more {
             let cursor = Cursor {
-                v: 1,
+                v: self.cursor.v,
                 operation: self.cursor.operation.clone(),
                 binding: self.cursor.binding.clone(),
                 order: self.cursor.order,

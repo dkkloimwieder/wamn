@@ -23,7 +23,7 @@ fn control_lists_first_next_last_and_legacy() {
             vec![json!(["a"]), json!(["b"]), json!(["c"])],
         ),
         (
-            "environment.list",
+            "env.list",
             Order::Env,
             vec![json!(["a"]), json!(["b"]), json!(["c"])],
         ),
@@ -132,10 +132,10 @@ fn refuses_bad_limits_and_cursors() {
     let original: Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(bytes, canonical_json_bytes(&original));
     for (field, value) in [
-        ("v", json!(2)),
+        ("v", json!(1)),
         ("operation", json!("control.mine")),
         ("binding", json!({})),
-        ("order", json!("Environment")),
+        ("order", json!("Env")),
         ("key", json!([1])),
         ("key", json!([])),
         ("extra", json!(true)),

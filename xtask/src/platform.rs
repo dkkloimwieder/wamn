@@ -41,7 +41,7 @@ pub(crate) fn write_ui_openapi(root: &Path) -> anyhow::Result<()> {
     let output = root.join("apps/target/wamn/platform_ui");
     std::fs::create_dir_all(&output)?;
     for (file, set) in [
-        ("application.openapi.json", HostRouteSet::App),
+        ("app.openapi.json", HostRouteSet::App),
         ("control.openapi.json", HostRouteSet::Control),
     ] {
         let mut document = tempfile::NamedTempFile::new_in(&output)?;
@@ -59,7 +59,7 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
         "chart output {} exists",
         args.out.display()
     );
-    let chart = root.join("deploy/charts/application");
+    let chart = root.join("deploy/charts/app");
     let version = release_chart::chart_version(&chart)?;
     let ui = if let Some(file) = args.cluster.as_deref() {
         let values: Value = serde_yaml::from_slice(&std::fs::read(file)?)?;
@@ -393,7 +393,7 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
         ],
     )
     .await?;
-    let archive = args.out.join(format!("application-{version}.tgz"));
+    let archive = args.out.join(format!("app-{version}.tgz"));
     let destination = format!("oci://{}/wamn/charts", args.registry);
     let archive = archive.to_str().context("chart archive")?;
     let mut push = vec!["push", archive, destination.as_str()];
@@ -405,7 +405,7 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
         push.extend(["--registry-config", configuration]);
     }
     process::run(&root, "helm", &push).await?;
-    let repository = format!("{}/wamn/charts/application", args.registry);
+    let repository = format!("{}/wamn/charts/app", args.registry);
     let digest = inspect(&root, &format!("{repository}:{version}")).await?;
     let reference = format!("oci://{repository}@{digest}");
     let reference_file = args.out.join("chart.ref");

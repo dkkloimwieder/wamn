@@ -99,14 +99,10 @@ pub(crate) async fn sources(
 
 fn selected_app(document: &EnvDocument) -> anyhow::Result<&wamn_registry::AppName> {
     ensure!(
-        document.applications.len() == 1,
+        document.apps.len() == 1,
         "select one application before publishing source"
     );
-    Ok(document
-        .applications
-        .keys()
-        .next()
-        .expect("one application"))
+    Ok(document.apps.keys().next().expect("one application"))
 }
 
 /// The coordinate and authored base dependencies used to order a source closure.

@@ -1,4 +1,4 @@
-//! `environment.status` of the control serving root
+//! `env.status` of the control serving root
 //! (docs/architecture/execution.md#host-run-routes).
 //!
 //! Shared host rollout and project-owned workload conditions come from Kubernetes.
@@ -52,7 +52,7 @@ pub(crate) async fn read(
             .as_ref()
             .and_then(|spec| spec.template.metadata.as_ref())
             .and_then(|meta| meta.annotations.as_ref())
-            .and_then(|values| values.get("wamn.environment"))
+            .and_then(|values| values.get("wamn.env"))
             .map(String::as_str);
         let rollout = deployment
             .status
@@ -128,19 +128,16 @@ mod tests {
         let app = AppConfig {
             org: "test-org".parse().unwrap(),
             project: "billing".parse().unwrap(),
-            environment: "dev".parse().unwrap(),
-            application: "billing".parse().unwrap(),
+            env: "dev".parse().unwrap(),
+            app: "billing".parse().unwrap(),
             grant_cache_seconds: 1,
             components: Vec::new(),
         };
-        let coordinate = wamn_registry::name::host_status(&app.org, &app.project, &app.environment);
-        let annotations = [("wamn.environment".to_owned(), coordinate)].into();
-        let other_coordinate = wamn_registry::name::host_status(
-            &app.org,
-            &"other-project".parse().unwrap(),
-            &app.environment,
-        );
-        let other_annotations = [("wamn.environment".to_owned(), other_coordinate)].into();
+        let coordinate = wamn_registry::name::host_status(&app.org, &app.project, &app.env);
+        let annotations = [("wamn.env".to_owned(), coordinate)].into();
+        let other_coordinate =
+            wamn_registry::name::host_status(&app.org, &"other-project".parse().unwrap(), &app.env);
+        let other_annotations = [("wamn.env".to_owned(), other_coordinate)].into();
         let mut data = json!({"spec":{"template":{"spec":{"components":[
             {"localResources":{"config":{(APP_CONFIG):serde_json::to_string(&app).unwrap()}}}
         ]}}}});
@@ -148,7 +145,7 @@ mod tests {
             apps_for_delete(
                 &app.org,
                 &app.project,
-                &app.environment,
+                &app.env,
                 [
                     Workload {
                         name: Some("other-project"),

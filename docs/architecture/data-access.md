@@ -552,7 +552,7 @@ For example, `B{seq:batch,per=batch_id,width=4}-{seq:line,reset=batch,width=3}` 
 The generated guest accessors call `wamn_postgres_statements::next_number` or `peek_number` with the existing operation transaction.
 These library functions run SQL through that transaction. They have no host numbering import.
 The SQL resolves the sequence through `wamn_authority.current_app()` and the sequence name.
-The host stores the application's name from `environment.yaml` in `platform.tx_identity.app`.
+The host stores the application's name from `env.yaml` in `platform.tx_identity.app`.
 The identity function reads that protected row for the open transaction.
 The functions read the stored pattern, so an edited pattern still applies.
 
@@ -589,14 +589,14 @@ They are `SECURITY DEFINER`, and each takes a sequence id.
 The guest resolves that id with SQL using the host-bound application identity.
 
 Env apply creates the `platform.number_sequence` row of each sequence that a package declares.
-The row belongs to the application that the `applications` map of `environment.yaml` names for the package.
+The row belongs to the application that the `apps` map of `env.yaml` names for the package.
 Two packages of one application that declare one sequence with one default pattern share one row.
 A row that exists keeps its pattern, so an edited pattern survives every apply.
 Two packages of one application can declare one sequence name only with one default pattern.
 If the patterns differ, env apply refuses before it writes anything, and the refusal names the application, the sequence, and the two packages.
-The `applications` map of `environment.yaml` decides which packages form one application.
+The `apps` map of `env.yaml` decides which packages form one application.
 The test reads only the package declarations, so a row with an edited pattern does not refuse.
-`wamn dev --config environment.yaml` deploys through the same control routes.
+`wamn dev --config env.yaml` deploys through the same control routes.
 Environment apply creates the number sequence rows.
 
 ### Setting a counter
@@ -604,7 +604,7 @@ Environment apply creates the number sequence rows.
 The application host route `number_counter.set` sets the next value of one counter.
 A holder of `admin` can call it, and so can a role that holds the operation as a permission row.
 The request names the application, the sequence, the counter, the key, and the value, and it carries a request id.
-The application must be a name in the `applications` map, and the route answers `invalid_input` for another name.
+The application must be a name in the `apps` map, and the route answers `invalid_input` for another name.
 The value is 1 or more.
 The route runs in one operation transaction under the caller, claims the request id in the write log, and writes through `platform.set_counter` under the row lock.
 A retry of a committed set answers the stored `next_number`.
@@ -987,7 +987,7 @@ Connection disablement preserves these references. A foreign key refuses deletio
 Application roles read file metadata but cannot insert, update, or delete it.
 File rows use the standard stamps and unlimited history.
 
-The package declares its store binding. `environment.yaml` binds that declaration to an immutable connection name.
+The package declares its store binding. `env.yaml` binds that declaration to an immutable connection name.
 
 The registry owns application bindings. Release hosts receive no binding map in their target.
 Calls that name a binding require its registry row for the org, project, environment, application, and alias.
@@ -998,8 +998,8 @@ C4 covers GCS and S3. C10 owns disk stores and eviction.
 Each mutation requires a write binding. Native host code transfers bytes, and guest operations carry only `file_id`.
 No file byte transfer changes WIT.
 
-Uploads stream to `<environment>/_wamn_files/staging/<uuid>` under the binding prefix.
-The host commits metadata, copies staging to `<environment>/_wamn_files/live/<uuid>`, and deletes staging.
+Uploads stream to `<env>/_wamn_files/staging/<uuid>` under the binding prefix.
+The host commits metadata, copies staging to `<env>/_wamn_files/live/<uuid>`, and deletes staging.
 Reads repair a missing live object from staging.
 The host collector reconciles staged objects before applying the one-day age rule to live objects.
 It reads exact file keys through its application login and promotes staged bytes when their metadata row exists.
@@ -1015,7 +1015,7 @@ The release chart sets `--files-addr=0.0.0.0:8082` and exposes it through the `<
 Outside the chart, `--files-addr` or `WAMN_FILES_ADDR` enables this listener.
 A control host refuses this configuration.
 
-The edge sends `/api/<application>/files` and its child paths to this Service before the general `/api/` route.
+The edge sends `/api/<app>/files` and its child paths to this Service before the general `/api/` route.
 It keeps the full path and streams uploads without request buffering.
 The Rust web front streams upload bodies to the file service.
 The storage layer still refuses sizes outside the metadata integer range.
@@ -1040,7 +1040,7 @@ S3 reads its credential through `wamn_kubernetes::Store`. Kubernetes Secrets hol
 Reads and deletes use the bucket and prefix of the recorded generation.
 
 Public exposure requires the optional `cdn_host` store parameter, without a descriptor version change.
-The host copies bytes to `<environment>/public/_wamn_files/live/<uuid>` under the binding prefix and stores `url`.
+The host copies bytes to `<env>/public/_wamn_files/live/<uuid>` under the binding prefix and stores `url`.
 Public copies carry `Cache-Control: max-age=3600`.
 Unexpose deletes the origin object at once and clears the URL, without a cache purge.
 Expose and unexpose are idempotent.
@@ -1052,7 +1052,7 @@ The full schema files own the platform schemas and build fresh installations.
 
 - `file` is the only file table. An image is a file with an image media type; `width` and `height` are nullable. `connection_id` names the store. Each row pins its application and the connection generation that stored its bytes. Reads and deletes use that generation's bucket and prefix. The application links `file_id` from its own table (which record, which purpose). No generic attachment-by-(table, id) table.
 
-- Storing is two short calls: `file.put(binding, bytes)` streams the bytes to the store the binding names, inserts the row in its own commit and returns `file_id`; the application operation then carries `file_id` like any reference. No transaction waits on the store. A store is a connection with a store integration (`s3` or `gcs`), declared by the package and bound by name in `environment.yaml` with `mode = write`.
+- Storing is two short calls: `file.put(binding, bytes)` streams the bytes to the store the binding names, inserts the row in its own commit and returns `file_id`; the application operation then carries `file_id` like any reference. No transaction waits on the store. A store is a connection with a store integration (`s3` or `gcs`), declared by the package and bound by name in `env.yaml` with `mode = write`.
 
 - `exposure` is per file: `app` (default; the session holds `file.get` on the owning application, at `/api/<app>/files/<id>`), `private` (only an operation that returns a short-lived signed url; so the roles holding that operation), `public` (anyone with the link, no login). `url` is stored only for `public`, so old links survive a CDN change. Another application never serves the row.
 

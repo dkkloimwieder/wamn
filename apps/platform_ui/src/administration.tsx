@@ -1,4 +1,4 @@
-import { permission, role, user, userRole } from "./application-client";
+import { permission, role, user, userRole } from "./app-client";
 import { screen, type ShellSection } from "./shell";
 
 export const administrationSections: readonly ShellSection[] = [
@@ -10,7 +10,7 @@ export const administrationSections: readonly ShellSection[] = [
         label: "Roles",
         operation: role.list.route.operation,
         component: screen(
-          () => import("./application-roles"),
+          () => import("./app-roles"),
           (module) => module.ApplicationRoles,
         ),
         scroll: "content",
@@ -22,7 +22,7 @@ export const administrationSections: readonly ShellSection[] = [
         label: "Create role",
         operation: role.create.route.operation,
         component: screen(
-          () => import("./application-roles"),
+          () => import("./app-roles"),
           (module) => module.CreateRole,
         ),
       },
@@ -30,7 +30,7 @@ export const administrationSections: readonly ShellSection[] = [
         path: "administration/roles/:role",
         operation: permission.list.route.operation,
         component: screen(
-          () => import("./application-roles"),
+          () => import("./app-roles"),
           (module) => module.RolePermissions,
         ),
         scroll: "content",
@@ -40,7 +40,7 @@ export const administrationSections: readonly ShellSection[] = [
         label: "Permissions",
         operation: permission.list.route.operation,
         component: screen(
-          () => import("./application-roles"),
+          () => import("./app-roles"),
           (module) => module.RolePermissions,
         ),
         scroll: "content",
@@ -74,7 +74,7 @@ export const administrationSections: readonly ShellSection[] = [
         label: "Users",
         operation: user.list.route.operation,
         component: screen(
-          () => import("./application-users"),
+          () => import("./app-users"),
           (module) => module.ApplicationUsers,
         ),
         scroll: "content",
@@ -85,7 +85,7 @@ export const administrationSections: readonly ShellSection[] = [
         path: "administration/users/:principal",
         operation: user.list.route.operation,
         component: screen(
-          () => import("./application-users"),
+          () => import("./app-users"),
           (module) => module.ApplicationUsers,
         ),
         scroll: "content",
@@ -95,7 +95,7 @@ export const administrationSections: readonly ShellSection[] = [
         label: "Grant role",
         operation: userRole.grant.route.operation,
         component: screen(
-          () => import("./application-users"),
+          () => import("./app-users"),
           (module) => module.GrantApplicationRole,
         ),
       },
@@ -109,7 +109,7 @@ export const administrationSections: readonly ShellSection[] = [
         label: "Permissions overview",
         operation: permission.list.route.operation,
         component: screen(
-          () => import("./application-roles"),
+          () => import("./app-roles"),
           (module) => module.PermissionsOverview,
         ),
         scroll: "content",

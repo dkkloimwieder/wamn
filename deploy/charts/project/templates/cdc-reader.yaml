@@ -19,7 +19,7 @@ metadata:
   name: {{ .name }}
   namespace: {{ include "project.namespace" $ | quote }}
   annotations:
-    wamn.environment: {{ .coordinate | quote }}
+    wamn.env: {{ .coordinate | quote }}
 spec:
   replicas: {{ ternary 0 1 (.pause | default false) }}
   strategy:

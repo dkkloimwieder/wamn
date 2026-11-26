@@ -314,7 +314,7 @@
         }
       }
     },
-    "applicationChart": {
+    "appChart": {
       "type": "string"
     },
     "postgres": {

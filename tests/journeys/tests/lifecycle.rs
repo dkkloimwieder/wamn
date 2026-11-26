@@ -436,13 +436,12 @@ fn component_digests(workload: &DynamicObject) -> anyhow::Result<BTreeMap<String
     let config = workload.data["spec"]["template"]["spec"]["components"]
         .as_array()
         .and_then(|components| {
-            components.iter().find_map(|component| {
-                component["localResources"]["config"]["wamn.application"].as_str()
-            })
+            components
+                .iter()
+                .find_map(|component| component["localResources"]["config"]["wamn.app"].as_str())
         })
-        .context("the WorkloadDeployment has no wamn.application configuration")?;
-    let config: Config =
-        serde_json::from_str(config).context("decode wamn.application configuration")?;
+        .context("the WorkloadDeployment has no wamn.app configuration")?;
+    let config: Config = serde_json::from_str(config).context("decode wamn.app configuration")?;
     ensure!(
         !config.components.is_empty(),
         "the WorkloadDeployment has no application components"

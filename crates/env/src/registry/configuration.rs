@@ -71,7 +71,7 @@ pub async fn read(
                 source: Box::new(source),
             }
         })?,
-        applications: BTreeMap::new(),
+        apps: BTreeMap::new(),
     };
     for row in rows {
         match row.try_get::<Option<i32>, _>("record_type")? {
@@ -93,7 +93,7 @@ pub async fn read(
                         })
                     })
                     .transpose()?;
-                configuration.applications.insert(
+                configuration.apps.insert(
                     wamn_postgres::decode_text(row.try_get("name")?, "name")?,
                     AppConfiguration {
                         label: row.try_get("value")?,
@@ -105,7 +105,7 @@ pub async fn read(
             Some(2) => {
                 let app: AppName = wamn_postgres::decode_text(row.try_get("name")?, "name")?;
                 configuration
-                    .applications
+                    .apps
                     .get_mut(&app)
                     .expect("connection references a stored application")
                     .connections
@@ -173,7 +173,7 @@ pub async fn write(
         .execute(&mut *transaction)
         .await?;
     }
-    let apps: Vec<_> = c.applications.keys().map(AppName::as_str).collect();
+    let apps: Vec<_> = c.apps.keys().map(AppName::as_str).collect();
     sqlx::query(
         "DELETE FROM registry.env_app WHERE org=$1 AND env=$2 AND project=$3 AND NOT(app=ANY($4))",
     )
@@ -189,7 +189,7 @@ pub async fn write(
         .bind(c.settings.project.as_str())
         .execute(&mut *transaction)
         .await?;
-    for (name, app) in &c.applications {
+    for (name, app) in &c.apps {
         sqlx::query(
             "INSERT INTO registry.env_app \
              (org,env,project,app,label,client_package,client_web) \

@@ -240,7 +240,7 @@ GRANT SELECT ON platform.permission TO wamn_app;
 -- Environment — the active flag of this environment, mirrored from
 -- registry.env.active in the system database (docs/plan/platform-ui.md
 -- §5.4, owner rulings of 2026-10-02 on wamn-zua8.2). The host reads it as
--- wamn_app on each request and answers environment-inactive while it is
+-- wamn_app on each request and answers env-inactive while it is
 -- inactive. No row means active: the first status route of the control host
 -- writes the row through the administration login.
 -- ---------------------------------------------------------------------------

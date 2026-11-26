@@ -33,11 +33,8 @@ impl Broker {
         let context = self.client.get_or_try_init(|| self.connect(app)).await?;
         Ok(Consumer {
             context: Arc::clone(context),
-            stream: wamn_event::stream_name(&app.org, &app.project, &app.environment),
-            name: wamn_registry::resource_names::workflow_event_consumer(
-                &app.application,
-                workflow_id,
-            ),
+            stream: wamn_event::stream_name(&app.org, &app.project, &app.env),
+            name: wamn_registry::resource_names::workflow_event_consumer(&app.app, workflow_id),
         })
     }
 
@@ -65,12 +62,7 @@ impl Broker {
             wamn_broker::nats::InitialConnect::Once,
         )
         .await
-        .with_context(|| {
-            format!(
-                "connect to the workflow broker for {}/{}",
-                app.org, app.environment
-            )
-        })?;
+        .with_context(|| format!("connect to the workflow broker for {}/{}", app.org, app.env))?;
         Ok(Arc::new(jetstream::new(client)))
     }
 }

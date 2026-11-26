@@ -127,8 +127,8 @@ impl HostHandler for PlatformHttp {
             .and_then(|interface| interface.config.get("host"))
             && let Some(app) = self.routing.app_config(component_id)
         {
-            let files_prefix = format!("/api/{}/files", app.application);
-            let flow_prefix = wamn_routes::workflow_http_prefix(&app.application);
+            let files_prefix = format!("/api/{}/files", app.app);
+            let flow_prefix = wamn_routes::workflow_http_prefix(&app.app);
             self.files.register(workload.id(), app);
             self.bind(workload.id(), host, &files_prefix, flow_prefix)
                 .await?;

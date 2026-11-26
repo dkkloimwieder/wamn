@@ -128,13 +128,10 @@ fn stamp_chart(root: &Path, out: &Path) -> Result<std::path::PathBuf> {
         ingress: format!("registry.example.com/wamn/ingress@sha256:{zero}"),
         workflow: format!("registry.example.com/wamn/workflow@sha256:{zero}"),
     };
-    let stamped = wamn_platform_install::release_chart::stamp(
-        &root.join("deploy/charts/application"),
-        &set,
-        out,
-    )?;
+    let stamped =
+        wamn_platform_install::release_chart::stamp(&root.join("deploy/charts/app"), &set, out)?;
     wamn_platform_install::release_chart::bundle::prepare_payload(root, &stamped)?;
-    Ok(stamped.join("platform/application"))
+    Ok(stamped.join("platform/app"))
 }
 
 /// The environment that deploys package `id` as one application.
@@ -142,7 +139,7 @@ fn env(id: &PackageName) -> Result<EnvDocument> {
     let document = serde_json::json!({
         "org": ORG, "project": "wms", "env": "dev", "target": "cloud",
         "revocation_seconds": 60,
-        "applications": {id.as_str(): {
+        "apps": {id.as_str(): {
             "label": "app",
             "client": {"package": id, "web": format!("sha256:{}", "0".repeat(64))},
         }},
@@ -177,7 +174,7 @@ async fn record_bytes(
     }
     let document = env(id)?;
     let (app, _) = document
-        .applications
+        .apps
         .first_key_value()
         .context("the environment has one application")?;
     let settings = &document.settings;
@@ -193,7 +190,7 @@ async fn record_bytes(
         &component_base,
         wamn_http::wasm_authority::wasm_authority_port,
     )?;
-    let path = directory.join("application.yaml");
+    let path = directory.join("app.yaml");
     std::fs::write(&path, serde_yaml::to_string(&values)?)?;
     let release = wamn_env::release_chart::release_name(
         &settings.org,

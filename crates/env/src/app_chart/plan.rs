@@ -18,7 +18,7 @@ const WORKFLOW_BINDING: &str = "workflow";
 /// The Helm release name of an application: `r-<slug>-<hash>`.
 ///
 /// The slug is the env name cut to 24 characters. The hash is the first 20 hex
-/// characters of SHA-256 over `org/env/project/application`. The name is at most
+/// characters of SHA-256 over `org/env/project/app`. The name is at most
 /// 47 characters, inside Helm's bound of 53.
 pub fn release_name(
     org: &wamn_registry::OrgId,
@@ -293,8 +293,8 @@ pub fn roles(
     let app = AppConfig {
         org: org.clone(),
         project: project.clone(),
-        environment: env.clone(),
-        application: app.clone(),
+        env: env.clone(),
+        app: app.clone(),
         grant_cache_seconds,
         components,
     };
@@ -305,7 +305,7 @@ pub fn roles(
             wamn_registry::project_env_key(org, project, env).to_string(),
         ),
         ("wamn.project", project.to_string()),
-        ("wamn.environment", env.to_string()),
+        ("wamn.env", env.to_string()),
     ] {
         config.insert(key.into(), value.into());
     }
@@ -456,7 +456,7 @@ pub fn values(input: &ValuesInput<'_>) -> anyhow::Result<Value> {
         "release".into(),
         mapping([("manifestDigest", input.manifest_digest.to_string())]),
     );
-    values.insert("environment".into(), env.into());
+    values.insert("env".into(), env.into());
     values.insert(
         "webClients".into(),
         serde_yaml::to_value(
@@ -482,7 +482,7 @@ pub fn values(input: &ValuesInput<'_>) -> anyhow::Result<Value> {
     values.insert("namespace".into(), input.org.as_str().into());
     values.insert("project".into(), input.project.to_string().into());
     values.insert(
-        "applications".into(),
+        "apps".into(),
         serde_yaml::to_value(&input.apps).context("render the applications")?,
     );
     values.insert(

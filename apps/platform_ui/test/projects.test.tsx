@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from "@solidjs/testing-library";
 import { flush } from "solid-js";
 import { describe, expect, it } from "vitest";
-import { control, environment, member, project, projectAdmin, user } from "../src/control-client";
+import { control, envRoutes, member, project, projectAdmin, user } from "../src/control-client";
 import { createTransport } from "@wamn/web-runtime";
 import { controlHolds, Shell } from "../src/shell";
 import { GrantMembership } from "../src/membership";
@@ -17,8 +17,8 @@ const projectAdminOnly = controlHolds({
   ],
 });
 const projectOperations = [
-  environment.list.route.operation,
-  environment.status.route.operation,
+  envRoutes.list.route.operation,
+  envRoutes.status.route.operation,
   member.list.route.operation,
   member.grant.route.operation,
   member.revoke.route.operation,
@@ -31,8 +31,8 @@ const orgOperations = [
   project.create.route.operation,
   project.activate.route.operation,
   project.inactivate.route.operation,
-  environment.activate.route.operation,
-  environment.inactivate.route.operation,
+  envRoutes.activate.route.operation,
+  envRoutes.deactivate.route.operation,
 ];
 
 describe("control holds", () => {
@@ -65,7 +65,7 @@ describe("control holds", () => {
 });
 
 describe("Projects and Project", () => {
-  it.each(["environments", "members"] as const)("requests %s by project and cursor", async (table) => {
+  it.each(["envs", "members"] as const)("requests %s by project and cursor", async (table) => {
     const requests: unknown[] = [];
     const transport = createTransport({
       baseUrl: "",
@@ -81,7 +81,7 @@ describe("Projects and Project", () => {
         requests.push(input);
         const label = input.cursor ? "Second" : "First";
         const rows =
-          table === "environments"
+          table === "envs"
             ? [{ name: label, state: "active" }]
             : [
                 {
@@ -90,7 +90,7 @@ describe("Projects and Project", () => {
                   display_name: label,
                   org_admin: false,
                   project_admin: false,
-                  environments: [],
+                  envs: [],
                 },
               ];
         return new Response(
@@ -130,8 +130,8 @@ describe("Projects and Project", () => {
       baseUrl: "",
       fetch: async (url) => {
         const address = new URL(String(url), "http://fixture");
-        if (address.pathname.endsWith("/environment/list"))
-          return new Response(JSON.stringify([{ value: { environments: [{ name: "dev", state: "active" }] } }]));
+        if (address.pathname.endsWith("/env/list"))
+          return new Response(JSON.stringify([{ value: { envs: [{ name: "dev", state: "active" }] } }]));
         if (address.pathname.endsWith("/project/list"))
           return new Response(JSON.stringify([{ value: { projects: [{ name: "widgets", state: "active" }] } }]));
         requests.push(Object.fromEntries([...address.searchParams].map(([name, value]) => [name, JSON.parse(value)])));
@@ -142,7 +142,7 @@ describe("Projects and Project", () => {
           display_name: name,
           org_admin: false,
           project_admin: false,
-          environments: index === 0 ? ["dev", "prod"] : [],
+          envs: index === 0 ? ["dev", "prod"] : [],
         }));
         return new Response(JSON.stringify([{ value: { members, next_cursor: null, total: 2 } }]));
       },
@@ -167,7 +167,7 @@ describe("Projects and Project", () => {
       const observed = requests;
       expect(observed).toHaveProperty(["length"], 1);
       expect(observed).toHaveProperty(["0", "project"], "widgets");
-      expect(observed).toHaveProperty(["0", "environment"], "dev");
+      expect(observed).toHaveProperty(["0", "env"], "dev");
       expect(observed).toHaveProperty(["0", "limit"], 25);
     }
   });
@@ -305,8 +305,8 @@ describe("Projects and Project", () => {
       baseUrl: "/api",
       fetch: async (url, init) => {
         if (init?.method === "POST") writes.push(init);
-        const value = String(url).includes("/environment/list")
-          ? { environments: [{ name: "dev", state: "active" }] }
+        const value = String(url).includes("/env/list")
+          ? { envs: [{ name: "dev", state: "active" }] }
           : String(url).includes("/project/list")
             ? { projects: [{ name: "widgets", state: "active" }] }
             : { members: [] };
@@ -339,8 +339,8 @@ describe("Projects and Project", () => {
       fetch: async (url) => {
         const path = new URL(String(url), "http://localhost").pathname;
         calls.push(path);
-        const value = path.endsWith("/environment/list")
-          ? { environments: [{ name: "dev", state: "inactive" }] }
+        const value = path.endsWith("/env/list")
+          ? { envs: [{ name: "dev", state: "inactive" }] }
           : path.endsWith("/project/list")
             ? { projects: [{ name: "widgets", state: "inactive" }] }
             : {
@@ -351,7 +351,7 @@ describe("Projects and Project", () => {
                     email: "alex@example.invalid",
                     org_admin: true,
                     project_admin: true,
-                    environments: ["dev"],
+                    envs: ["dev"],
                   },
                 ],
               };
@@ -436,8 +436,8 @@ describe("Project member", () => {
       });
       const fetch: typeof globalThis.fetch = async (url, init) => {
         const path = new URL(String(url), "http://localhost").pathname;
-        if (path.endsWith("/environment/list"))
-          return new Response(JSON.stringify([{ value: { environments: [{ name: "dev", state: "active" }] } }]));
+        if (path.endsWith("/env/list"))
+          return new Response(JSON.stringify([{ value: { envs: [{ name: "dev", state: "active" }] } }]));
         if (path.endsWith("/member/list"))
           return new Response(
             JSON.stringify([
@@ -452,7 +452,7 @@ describe("Project member", () => {
                           email: "alex@example.invalid",
                           org_admin: false,
                           project_admin: action === "Revoke project admin",
-                          environments: action === "Revoke membership" ? ["dev"] : [],
+                          envs: action === "Revoke membership" ? ["dev"] : [],
                         },
                       ],
                 },
@@ -489,7 +489,7 @@ describe("Project member", () => {
 
   it("lets a project admin open a member and grant or revoke one membership per command", async () => {
     const principalId = "12345678-1234-4000-8000-000000000001";
-    let environments = ["dev"];
+    let envs = ["dev"];
     const writes: unknown[] = [];
     const session = identity(true, undefined, {
       org_admin: false,
@@ -497,8 +497,8 @@ describe("Project member", () => {
     });
     const fetch: typeof globalThis.fetch = async (url, init) => {
       const path = new URL(String(url), "http://localhost").pathname;
-      if (path.endsWith("/environment/list"))
-        return new Response(JSON.stringify([{ value: { environments: [{ name: "dev", state: "active" }] } }]));
+      if (path.endsWith("/env/list"))
+        return new Response(JSON.stringify([{ value: { envs: [{ name: "dev", state: "active" }] } }]));
       if (path.endsWith("/member/list"))
         return new Response(
           JSON.stringify([
@@ -511,7 +511,7 @@ describe("Project member", () => {
                     email: "alex@example.invalid",
                     org_admin: false,
                     project_admin: false,
-                    environments,
+                    envs,
                   },
                 ],
               },
@@ -521,10 +521,10 @@ describe("Project member", () => {
       if (path.endsWith("/member/grant") || path.endsWith("/member/revoke")) {
         const [request] = JSON.parse(String(init?.body));
         writes.push({ path, value: request.value });
-        environments = path.endsWith("/grant") ? ["dev"] : [];
+        envs = path.endsWith("/grant") ? ["dev"] : [];
         return new Response(
           JSON.stringify([
-            { request_id: request.request_id, value: { ...request.value, member: environments.length > 0 } },
+            { request_id: request.request_id, value: { ...request.value, member: envs.length > 0 } },
           ]),
         );
       }
@@ -597,8 +597,8 @@ describe("project state action", () => {
           }
           const value = path.includes("/project/list")
             ? { projects: [{ name: "widgets", state }] }
-            : path.includes("/environment/list")
-              ? { environments: [] }
+            : path.includes("/env/list")
+              ? { envs: [] }
               : { members: [] };
           return new Response(JSON.stringify([{ value }]));
         },
@@ -641,8 +641,8 @@ describe("project state action", () => {
           ? { project: "widgets", status: "active" }
           : path.includes("/project/list")
             ? { projects: [{ name: "widgets", state: "inactive" }] }
-            : path.includes("/environment/list")
-              ? { environments: [] }
+            : path.includes("/env/list")
+              ? { envs: [] }
               : { members: [] };
         return new Response(
           JSON.stringify([{ ...(body?.[0]?.request_id ? { request_id: body[0].request_id } : {}), value }]),

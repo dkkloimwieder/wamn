@@ -5,12 +5,12 @@ import { Button, FieldError } from "@wfe/components/fields";
 import { createForm } from "@wfe/form";
 import { FormView, type FormDescription } from "@wfe/generator";
 import {
-  application,
+  appRoutes,
   controlFields,
-  environment,
+  envRoutes,
   operation,
   schema,
-  type EnvironmentStatusResult,
+  type EnvStatusResult,
   type OperationStatusResult,
 } from "./control-client";
 import { MissingPage, Page } from "./page";
@@ -23,11 +23,11 @@ import type { ScreenProps } from "./shell";
 const workloadFields = controlFields.status.workloads.items.properties;
 
 const operationActions = {
-  deploy: { label: "Deploy release", route: application.deploy.route, effect: "" },
-  stop: { label: "Stop application", route: application.stop.route, effect: "" },
+  deploy: { label: "Deploy release", route: appRoutes.deploy.route, effect: "" },
+  stop: { label: "Stop application", route: appRoutes.stop.route, effect: "" },
   rollback: {
     label: "Rollback application",
-    route: application.rollback.route,
+    route: appRoutes.rollback.route,
     effect: "Replace the running application code with the selected or previous release. SQL is not reversed.",
   },
   diff: { label: "Diff schema", route: schema.diff.route, effect: "" },
@@ -89,13 +89,13 @@ function OperationControls(props: ScreenProps) {
         <Show when={action()} keyed>
           {(selected) => {
             const entry = operationActions[selected];
-            const defaults = { application: "", release: "", revision: "" };
+            const defaults = { app: "", release: "", revision: "" };
             const [values, setValues] = createSignal(defaults);
             const [confirmation, setConfirmation] = createSignal<typeof defaults>();
-            const needsApplication = selected !== "reset";
+            const needsApp = selected !== "reset";
             const needsRevision = selected === "rollback";
             const needsRelease = selected !== "stop" && selected !== "reset" && !needsRevision;
-            const applicationField = needsApplication ? controlFields[selected].application : undefined;
+            const appField = needsApp ? controlFields[selected].app : undefined;
             const revisionField = needsRevision ? controlFields[selected].revision : undefined;
             const releaseField = needsRelease ? controlFields[selected].release : undefined;
             const requiresRelease = selected === "deploy" || selected === "apply";
@@ -109,32 +109,32 @@ function OperationControls(props: ScreenProps) {
               const options = { signal: controller.signal };
               const target = {
                 ...config,
-                application: snapshot.application.trim(),
+                app: snapshot.app.trim(),
                 release: snapshot.release.trim() || null,
               };
               try {
                 const result = value(
                   await (selected === "deploy"
-                    ? application.deploy(
+                    ? appRoutes.deploy(
                         props.transport,
                         [{ request_id: requestId, value: { ...target, release: snapshot.release.trim() } }],
                         options,
                       )
                     : selected === "stop"
-                      ? application.stop(
+                      ? appRoutes.stop(
                           props.transport,
-                          [{ request_id: requestId, value: { ...config, application: target.application } }],
+                          [{ request_id: requestId, value: { ...config, app: target.app } }],
                           options,
                         )
                       : selected === "rollback"
-                        ? application.rollback(
+                        ? appRoutes.rollback(
                             props.transport,
                             [
                               {
                                 request_id: requestId,
                                 value: {
                                   ...config,
-                                  application: target.application,
+                                  app: target.app,
                                   revision: snapshot.revision.trim() ? Number(snapshot.revision) : null,
                                 },
                               },
@@ -166,7 +166,7 @@ function OperationControls(props: ScreenProps) {
               defaults: () => defaults,
               onValuesChange: setValues,
               validate: (snapshot) => {
-                if (needsApplication && !snapshot.application.trim()) return { form: "Enter an application." };
+                if (needsApp && !snapshot.app.trim()) return { form: "Enter an application." };
                 if (requiresRelease && !snapshot.release.trim()) return { form: "Enter a release digest." };
                 const revision = snapshot.revision.trim();
                 if (
@@ -192,11 +192,11 @@ function OperationControls(props: ScreenProps) {
                 <FormView
                   description={
                     {
-                      id: "environment-operation",
+                      id: "env-operation",
                       title: entry.label,
                       fields: [
-                        ...(applicationField
-                          ? [{ field: "application", label: applicationField.title, control: "text" } as const]
+                        ...(appField
+                          ? [{ field: "app", label: appField.title, control: "text" } as const]
                           : []),
                         ...(releaseField
                           ? [
@@ -234,7 +234,7 @@ function OperationControls(props: ScreenProps) {
                       <AlertDialog.Title>Confirm {entry.label.toLowerCase()}?</AlertDialog.Title>
                       <AlertDialog.Description>
                         Project: {config.project}; environment: {config.env}; application:{" "}
-                        {needsApplication ? confirmation()?.application : "all applications"}.
+                        {needsApp ? confirmation()?.app : "all applications"}.
                         {needsRelease && ` Release: ${confirmation()?.release || "configured release"}. `}
                         {needsRevision && ` Revision: ${confirmation()?.revision || "previous revision"}. `}
                         {entry.effect}
@@ -279,7 +279,7 @@ export function Environment(
 ): JSX.Element {
   const config = untrack(() => ({ project: props.params.project!, env: props.params.env! }));
   const [state, setState] = createSignal<"active" | "inactive">();
-  const [status, setStatus] = createSignal<EnvironmentStatusResult>();
+  const [status, setStatus] = createSignal<EnvStatusResult>();
   const [trouble, setTrouble] = createSignal<string>();
   const [missing, setMissing] = createSignal(false);
   const [pending, setPending] = createSignal(false);
@@ -289,14 +289,14 @@ export function Environment(
   });
   const refresh = async () => {
     const [listed, observed] = await Promise.all([
-      environment.list(props.transport, [{ project: config.project }]),
-      environment.status(props.transport, [config]),
+      envRoutes.list(props.transport, [{ project: config.project }]),
+      envRoutes.status(props.transport, [config]),
     ]);
-    if (observed.status === "refused" && observed.code === "environment_not_found") {
+    if (observed.status === "refused" && observed.code === "env_not_found") {
       if (active) setMissing(true);
       return;
     }
-    const entry = value(listed).environments.find((entry) => entry.name === config.env);
+    const entry = value(listed).envs.find((entry) => entry.name === config.env);
     if (active) setMissing(!entry);
     if (!entry) return;
     if (active) setState(entry.state);
@@ -313,7 +313,7 @@ export function Environment(
     setTrouble(undefined);
     try {
       value(
-        await (state() === "active" ? environment.inactivate : environment.activate)(props.transport, [
+        await (state() === "active" ? envRoutes.deactivate : envRoutes.activate)(props.transport, [
           { request_id: crypto.randomUUID(), value: config },
         ]),
       );
@@ -335,19 +335,19 @@ export function Environment(
               when={
                 state() &&
                 props.holds(
-                  state() === "active" ? environment.inactivate.route.operation : environment.activate.route.operation,
+                  state() === "active" ? envRoutes.deactivate.route.operation : envRoutes.activate.route.operation,
                 )
               }
             >
               <Button disabled={pending()} onClick={() => void toggle()}>
-                {state() === "active" ? "Inactivate environment" : "Activate environment"}
+                {state() === "active" ? "Deactivate environment" : "Activate environment"}
               </Button>
             </Show>
           }
         >
           <Show when={state()}>
             <p>
-              {controlFields.environment.state.title}: {state()}
+              {controlFields.env.state.title}: {state()}
             </p>
           </Show>
           <EnvironmentTiles status={status()} />
@@ -400,7 +400,7 @@ export function Environment(
             rows={status()?.workloads ?? []}
             rowKey={(entry) => entry.name}
             columns={[
-              { id: "application", header: workloadFields.application.title, accessorKey: "application" },
+              { id: "app", header: workloadFields.app.title, accessorKey: "app" },
               {
                 id: "package_digest",
                 header: workloadFields.package_digest.title,

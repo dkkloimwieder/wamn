@@ -64,7 +64,7 @@ struct PermissionRequest {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct CounterSetRequest {
-    application: wamn_registry::AppName,
+    app: wamn_registry::AppName,
     sequence: String,
     counter: String,
     key: String,
@@ -307,10 +307,10 @@ impl AppRoutes<'_> {
         request_id: Option<&str>,
         request: CounterSetRequest,
     ) -> Result<Value, Refusal> {
-        require_counter_app(&self.config.application, &request.application)
+        require_counter_app(&self.config.app, &request.app)
             .map_err(|refusal| counter_set_refusal(&refusal))?;
         let set = CounterSet {
-            application: request.application,
+            app: request.app,
             sequence: request.sequence,
             counter: request.counter,
             key: request.key,
@@ -405,8 +405,6 @@ fn require_counter_app(
     if served == app {
         Ok(())
     } else {
-        Err(CounterSetRefusal::InvalidInput {
-            field: "application",
-        })
+        Err(CounterSetRefusal::InvalidInput { field: "app" })
     }
 }

@@ -1,4 +1,4 @@
-//! Digest and closed-shape tests for serving-manifest format 11.
+//! Digest and closed-shape tests for serving-manifest format 12.
 
 use std::collections::{BTreeMap, BTreeSet};
 

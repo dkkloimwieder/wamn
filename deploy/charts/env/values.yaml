@@ -13,7 +13,7 @@ insecureRegistry: false
 registryTokenMetadata: false
 ociCaPaths: []
 oauthEncryption: null
-environmentNats: null
+envNats: null
 
 global:
   tls:

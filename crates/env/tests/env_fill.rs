@@ -14,7 +14,7 @@ fn seed_org_project_env_sql() -> String {
         "INSERT INTO platform.tx_identity(principal_id,role,app,operation) VALUES('{actor}','','fixture','wamn:provisioning'); \
          INSERT INTO registry.org(id) VALUES ('fill'); \
          INSERT INTO registry.project(org,id) VALUES ('fill','fixture'); \
-         WITH parent_environment AS (INSERT INTO registry.env (org,env) VALUES ('fill','dev')) \
+         WITH parent_env AS (INSERT INTO registry.env (org,env) VALUES ('fill','dev')) \
          INSERT INTO registry.project_env (org,project,env,secret_name,instance_suffix) VALUES ('fill','fixture','dev','s1','aaaaaaa1');"
     )
 }

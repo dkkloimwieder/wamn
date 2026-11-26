@@ -36,7 +36,7 @@ pub fn env_schema(root: &Path, check: bool) -> anyhow::Result<()> {
             .with_context(|| format!("read environment schema {}", path.display()))?;
         anyhow::ensure!(
             committed == generated,
-            "environment schema is stale. Run cargo xtask environment-schema"
+            "environment schema is stale. Run cargo xtask env-schema"
         );
     } else {
         std::fs::write(&path, generated)

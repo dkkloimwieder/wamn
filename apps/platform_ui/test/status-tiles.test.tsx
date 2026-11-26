@@ -1,12 +1,12 @@
 import { cleanup, render, screen, waitFor, within } from "@solidjs/testing-library";
 import { describe, expect, it } from "vitest";
-import type { EnvironmentStatusResult } from "../src/control-client";
+import type { EnvStatusResult } from "../src/control-client";
 import { createTransport } from "@wamn/web-runtime";
 import { EnvironmentTiles } from "../src/status-tiles";
 import { ControlHome } from "../src/control-home";
 import { CONTROL } from "./fixtures";
 
-const status: EnvironmentStatusResult = {
+const status: EnvStatusResult = {
   rollout: { replicas: 2, updated_replicas: 2, ready_replicas: 2, available_replicas: 2 },
   users_with_role: 3,
   roles: 4,
@@ -14,7 +14,7 @@ const status: EnvironmentStatusResult = {
   workloads: [
     {
       name: "http",
-      application: "orders",
+      app: "orders",
       package_digest: "sha256:release",
       revision: 2,
       conditions: [{ type: "Ready", status: "True" }],
@@ -84,7 +84,7 @@ describe("Control splash", () => {
     async (orgAdmin) => {
       const calls: string[] = [];
       const opened: string[] = [];
-      const environments = new Map([
+      const envs = new Map([
         ["widgets", ["dev", "prod"]],
         ["gadgets", ["dev"]],
       ]);
@@ -100,17 +100,17 @@ describe("Control splash", () => {
               JSON.stringify([
                 {
                   value: {
-                    projects: [...environments.keys()].map((name) => ({ name, state: "active" })),
+                    projects: [...envs.keys()].map((name) => ({ name, state: "active" })),
                   },
                 },
               ]),
             );
-          if (path.endsWith("/environment/list"))
+          if (path.endsWith("/env/list"))
             return new Response(
               JSON.stringify([
                 {
                   value: {
-                    environments: (environments.get(input.project) ?? []).map((name) => ({
+                    envs: (envs.get(input.project) ?? []).map((name) => ({
                       name,
                       state: "active",
                     })),
@@ -167,9 +167,9 @@ describe("Control splash", () => {
         expect(observed).toHaveProperty(["length"], 1);
         expect(observed).toHaveProperty(["0"], "projects/widgets/dev");
       }
-      expect(calls.filter((call) => call.includes("/environment/status:")).sort()).toEqual(
-        [...environments]
-          .flatMap(([project, names]) => names.map((name) => `/api/wamn_control/environment/status:${project}/${name}`))
+      expect(calls.filter((call) => call.includes("/env/status:")).sort()).toEqual(
+        [...envs]
+          .flatMap(([project, names]) => names.map((name) => `/api/wamn_control/env/status:${project}/${name}`))
           .sort(),
       );
       expect(calls.filter((call) => call.includes("/project/list:"))).toHaveLength(orgAdmin ? 1 : 0);

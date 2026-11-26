@@ -536,7 +536,7 @@ pub async fn project_envs_page(
 
 /// Every user with a membership or a project role in the project, with the
 /// administrative grants that cover the project. An environment `$8` keeps
-/// only its members and only its name in `environments`.
+/// only its members and only its name in `envs`.
 const PROJECT_MEMBERS_SQL: &str = crate::identity_sql::PROJECT_MEMBERS_SQL;
 
 /// The users of one project of `org`, by email.
@@ -582,7 +582,7 @@ pub async fn project_members_page(
                 display_name: row.try_get(2).map_err(|error| database_error(&error))?,
                 org_admin: row.try_get(3).map_err(|error| database_error(&error))?,
                 project_admin: row.try_get(4).map_err(|error| database_error(&error))?,
-                environments: row
+                envs: row
                     .try_get::<Vec<String>, _>(5)
                     .and_then(|names| {
                         names

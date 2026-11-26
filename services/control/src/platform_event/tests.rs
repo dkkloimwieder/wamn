@@ -31,12 +31,8 @@ async fn a_platform_command_keeps_two_immutable_events() -> anyhow::Result<()> {
     let mut control = wamn_postgres::connect(login_url(CONTROL_SECRET)?.as_str()).await?;
     let mut worker = wamn_postgres::connect(login_url(APPLY_SECRET)?.as_str()).await?;
     let actor = PlatformComponent::Provisioning.principal_id();
-    let command = command(
-        "environment.configure",
-        actor,
-        r#"{"env":"dev","project":"stock"}"#,
-    )
-    .expect("environment configure is journaled");
+    let command = command("env.configure", actor, r#"{"env":"dev","project":"stock"}"#)
+        .expect("environment configure is journaled");
     let job = ("worker-namespace", "op-fixture");
     record(&mut control, &org, &command, Outcome::Started, None).await?;
     record(

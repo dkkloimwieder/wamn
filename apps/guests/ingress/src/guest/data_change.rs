@@ -52,9 +52,9 @@ impl Guest for Component {
         else {
             return Ok(());
         };
-        let config = bindings::wasi::config::store::get("wamn.application")
-            .map_err(|error| format!("read wamn.application: {error:?}"))?
-            .ok_or_else(|| "ingress has no wamn.application".to_owned())?;
+        let config = bindings::wasi::config::store::get("wamn.app")
+            .map_err(|error| format!("read wamn.app: {error:?}"))?
+            .ok_or_else(|| "ingress has no wamn.app".to_owned())?;
         let app: App = serde_json::from_str(&config).map_err(|error| error.to_string())?;
         for sibling in app.components {
             if sibling.data_change.is_some_and(|handler| {

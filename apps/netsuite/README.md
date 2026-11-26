@@ -221,7 +221,7 @@ Put a query with a final `ORDER BY id` clause in `/private/netsuite/query.sql`.
 
 ```sh
 cargo xtask netsuite-live /private/netsuite/credentials.json wms dev \
-  'https://<application-host>' 42 /private/netsuite/query.sql
+  'https://<app-host>' 42 /private/netsuite/query.sql
 ```
 
 `wamn workflow run` admits a workflow through the host and prints its run ID.
@@ -231,14 +231,14 @@ Read the result of a run from `wamn_run.run` in the project database.
 
 ## Kind fixture
 
-The ignored `environment_apply_kind` target first applies a release with `wamn_integration`, `rest_connector` and `rest_consumer_fixture`.
+The ignored `env_apply_kind` target first applies a release with `wamn_integration`, `rest_connector` and `rest_consumer_fixture`.
 It then applies a second release that replaces `rest_connector` with `netsuite`.
 The NetSuite release binds one environment connection to the HTTP fixture, which acts as the SuiteTalk authority.
 The fixture verifies an ES256 client assertion before it returns a bearer token.
 The assertion carries the certificate ID, token audience, comma-separated scopes, and a five-minute lifetime.
 The case does not call a RESTlet. The fixture unit tests cover the RESTlet echo route.
 
-The test needs the platform images and stamped chart described in `environment_apply_kind.rs`.
+The test needs the platform images and stamped chart described in `env_apply_kind.rs`.
 Build `edge_device`, `wamn_integration`, `rest_consumer_fixture`, `rest_connector` and `netsuite`, plus the debug CLI and CDC reader, before the run.
 The fixture image builds the named `http-fixture` binary in `test-support/infrastructure` from the repository root.
 

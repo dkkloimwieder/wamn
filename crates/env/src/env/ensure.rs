@@ -218,7 +218,7 @@ pub fn host_values(
         "insecureRegistry":insecure_registry,
         "ociCaPaths":oci_ca_paths,
         "oauthEncryption":oauth_encryption,
-        "environmentNats":{
+        "envNats":{
             "data":name::env_nats_secret(org,env,"data"),
             "native":name::env_nats_secret(org,env,"workflow-native"),
             "workflow":{"secret":name::env_nats_secret(org,env,"workflow"), "inbox":workflow_inbox},

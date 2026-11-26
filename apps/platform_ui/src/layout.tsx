@@ -21,12 +21,12 @@ export default function Layout(props: {
   signOut: () => Promise<void>;
   routes: readonly ShellSection[];
 }): JSX.Element {
-  const application = () => {
+  const app = () => {
     const parts = props.aud.split(":");
     return parts[2] === "project-env" ? { org: parts[3]!, project: parts[4]!, env: parts[5]! } : undefined;
   };
   const projectPath = () => {
-    const config = application()!;
+    const config = app()!;
     return `/urn:wamn:org:${config.org}/projects/${encodeURIComponent(config.project)}`;
   };
   const follow = (path: string, close?: () => void) => (event: MouseEvent) => {
@@ -98,12 +98,12 @@ export default function Layout(props: {
       />
     );
   }
-  const roleName = () => (application() ? selected()?.params.role : undefined);
+  const roleName = () => (app() ? selected()?.params.role : undefined);
   const rolePath = () => `/${props.aud}/administration/roles/${encodeURIComponent(roleName()!)}`;
   const scroll = () => selected()?.route.scroll ?? "main";
   const breadcrumbs = () => {
     const root = `/${props.aud}`;
-    const config = application();
+    const config = app();
     const entries = config
       ? [
           { label: config.org, href: `/urn:wamn:org:${config.org}/projects` },
@@ -213,7 +213,7 @@ export default function Layout(props: {
                     }
                     fallback={
                       <div class="ui-dashboard-menu">
-                        <Show when={application()}>
+                        <Show when={app()}>
                           {(config) => (
                             <SidebarContextSwitcher
                               value={

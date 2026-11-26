@@ -1,4 +1,4 @@
-//! Renders `deploy/charts/application` with `helm template` and tests what an
+//! Renders `deploy/charts/app` with `helm template` and tests what an
 //! environment's Helm release holds
 //! (docs/architecture/overview.md#environment-lifecycle).
 //!
@@ -43,7 +43,7 @@ fn an_unstamped_chart_does_not_render() {
     let chart = scratch.0.join("chart");
     let status = Command::new("cp")
         .args(["-r"])
-        .arg(repository_root().join("deploy/charts/application"))
+        .arg(repository_root().join("deploy/charts/app"))
         .arg(&chart)
         .status()
         .expect("copy the chart");
@@ -57,7 +57,7 @@ fn an_unstamped_chart_does_not_render() {
 #[test]
 fn the_egress_policy_opens_each_declared_port() {
     let scratch = Scratch::new("egress");
-    let chart = repository_root().join("deploy/charts/application");
+    let chart = repository_root().join("deploy/charts/app");
     let digest = format!("sha256:{}", "a".repeat(64));
     let sibling = || {
         serde_json::json!({
@@ -86,9 +86,9 @@ fn the_egress_policy_opens_each_declared_port() {
                 "workflow": {"image": format!("registry.example/workflow@{digest}")},
             },
             "release": {"manifestDigest": digest},
-            "environment": "acme/shop/dev",
+            "env": "acme/shop/dev",
             "routeHost": "app.example.com",
-            "applications": {"app": {}},
+            "apps": {"app": {}},
             "route": {"config": {"wamn.project_env_key": "key"}},
             "components": components,
             "connectionPorts": connection_ports,

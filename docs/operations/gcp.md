@@ -56,9 +56,9 @@ The owner supplies these external cloud inputs.
 
    ```bash
    NUMBER=$(gcloud projects describe wamn-dev --format 'value(projectNumber)')
-   ORG=<organization>
+   ORG=<org>
    PROJECT=<project>
-   ENV=<environment>
+   ENV=<env>
    COORDINATE=<project-coordinate>
    POOL="principal://iam.googleapis.com/projects/$NUMBER/locations/global/workloadIdentityPools/wamn-dev.svc.id.goog/subject/ns"
    ```

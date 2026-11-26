@@ -12,7 +12,7 @@ const member = {
   email: "alex@example.invalid",
   org_admin: false,
   project_admin: false,
-  environments: ["dev"],
+  envs: ["dev"],
 };
 function mount(path: string, missing = false) {
   const session = identity(true);
@@ -26,9 +26,9 @@ function mount(path: string, missing = false) {
         ? { users: missing ? [] : [{ ...member, status: "active" }] }
         : route.endsWith("/member/list")
           ? { members: missing ? [] : [member] }
-          : route.endsWith("/environment/list")
-            ? { environments: missing ? [] : [{ name: "dev", state: "active" }] }
-            : route.endsWith("/environment/status")
+          : route.endsWith("/env/list")
+            ? { envs: missing ? [] : [{ name: "dev", state: "active" }] }
+            : route.endsWith("/env/status")
               ? {
                   workloads: [],
                   rollout: { replicas: 0, updated_replicas: 0, ready_replicas: 0, available_replicas: 0 },
@@ -53,7 +53,7 @@ describe("uniform record screens", () => {
   it.each([
     ["projects", "Projects", "/project/list"],
     ["users", "Users", "/user/list"],
-    ["projects/widgets/environments", "Environments", "/environment/list"],
+    ["projects/widgets/envs", "Environments", "/env/list"],
     ["projects/widgets/members", "Members", "/member/list"],
     [`projects/widgets/members/${principal}`, "Memberships for alex@example.invalid", "/member/list"],
     [`users/${principal}/projects`, "Project access", "/member/list"],

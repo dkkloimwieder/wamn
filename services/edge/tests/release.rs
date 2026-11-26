@@ -138,7 +138,7 @@ fn target() -> ReleaseTarget {
     TargetConfig {
         org: "t1".parse().unwrap(),
         project: PACKAGE.parse().unwrap(),
-        environment: "edge".parse().unwrap(),
+        env: "edge".parse().unwrap(),
     }
     .release_target()
 }

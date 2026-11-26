@@ -228,12 +228,12 @@ POST requests put those members under `value`.
 GET requests use the existing read query parameters.
 POST requests also supply `request_id` in the existing request envelope.
 
-`POST /wamn_control/application/deploy` takes `application` and a published `release` digest.
+`POST /wamn_control/app/deploy` takes `app` and a published `release` digest.
 The worker checks enabled workflows, applies the package SQL, then upgrades the application chart.
-`POST /wamn_control/application/rollback` takes `application` and an optional `revision`.
+`POST /wamn_control/app/rollback` takes `app` and an optional `revision`.
 It checks enabled workflows against the target and restores the chart content.
 
-`POST /wamn_control/schema/diff` requires `application` and accepts an optional `release` digest.
+`POST /wamn_control/schema/diff` requires `app` and accepts an optional `release` digest.
 `POST /wamn_control/schema/apply` requires both.
 `POST /wamn_control/schema/reset` resets the selected project in a disposable environment.
 These routes expose no system SQL operation.
@@ -295,7 +295,7 @@ The shared environment owns its target, readiness budget, drain bound, grant cac
 The top package pins its base packages by OCI digest.
 Helm records the release history. A WorkloadDeployment exposes the applied package digest and Helm revision.
 
-Use one `environment.yaml` file for each environment. Each application name must be unique in the file.
+Use one `env.yaml` file for each environment. Each application name must be unique in the file.
 The [environment schema](../../crates/env/env.schema.json) describes the YAML fields.
 Set each application's `label` to a value unique within the org, across all its environments and projects.
 Use 1 to 21 lowercase letters, digits, and single hyphens between letters or digits.
@@ -311,7 +311,7 @@ The optional `drain_bound_seconds` field sets how long the host can drain before
 It defaults to 300 seconds.
 Both fields accept positive integers.
 
-Save this kind example as `environment.yaml` in the repository root.
+Save this kind example as `env.yaml` in the repository root.
 The platform registers the target named `cloud` on kind too.
 
 ```yaml
@@ -326,7 +326,7 @@ database:
   memory: 256Mi
 projects:
   - name: receiving
-    applications:
+    apps:
       wamn_receiving:
         label: receiving
 ```
@@ -338,10 +338,10 @@ Org release records go in `wamn-helm-<org>`. The charts use an explicit org name
 Use this layout for new installs. Existing Helm records and their resource ownership stay in place.
 The kstatus watcher retains `list` and `watch` on the non-Secret kinds that environment and application charts render.
 
-`wamn env apply environment.yaml` holds one environment lock.
+`wamn env apply env.yaml` holds one environment lock.
 The worker reserves the selected projects, asks identity to publish the environment account, and writes the host and admin credential Secrets.
 It upgrades one project chart per project and runs that project's SQL in file order.
-If the file no longer lists an application of a project, the worker stops that application. When one of these applications has unfinished runs, the worker refuses before it stops any of them, and names each unfinished run. Otherwise it prints `stopping <application> (release <name>)` and uninstalls each release. The project database and its data stay.
+If the file no longer lists an application of a project, the worker stops that application. When one of these applications has unfinished runs, the worker refuses before it stops any of them, and names each unfinished run. Otherwise it prints `stopping <app> (release <name>)` and uninstalls each release. The project database and its data stay.
 After the last project succeeds, the worker stages the three timing settings in the registry and upgrades the environment chart with `--wait=watcher`, using the stored drain bound.
 The worker commits the settings and, on a full apply, removes unused connection pins after Helm succeeds.
 A failed apply keeps the previous environment timing settings. If a project fails, the worker stops and names it. Fix the error and run the command again to continue.
@@ -373,21 +373,21 @@ Type the same `ORG/ENV/PROJECT` at the terminal prompt, or pass `--confirm ORG/E
 See [Recover after a plain delete](backup-and-recovery.md#recover-after-a-plain-delete) for cleanup when the Cluster is already gone.
 Delete stops the reader before it removes the stream, then removes the replication slot and publication.
 Delete removes the project’s CDC and recovery credential Secrets. For the last project it also removes the host group, the shared credentials, and the environment account.
-These lifecycle requests return Jobs. The CLI polls `environment.operation_status`.
+These lifecycle requests return Jobs. The CLI polls `env.operation_status`.
 Use `wamn revoke-pat --project PROJECT --env ENV --prefix PREFIX` from an org admin session.
 Other lifecycle operations take the coordinate and read the registry.
 Helm history records the applied release. The top package's deploy section pins its dependency closure.
 The configuration export contains no code selection.
-Run `wamn env apply environment.yaml` before deploying the application.
+Run `wamn env apply env.yaml` before deploying the application.
 Use the source directory or set `RELEASE_DIGEST` to the full digest of a published release.
 
 ```bash
-wamn deploy apps/wamn_receiving --application wamn_receiving --env environment.yaml
-wamn deploy --release "$RELEASE_DIGEST" --application wamn_receiving --env environment.yaml
-wamn rollback wamn_receiving --env environment.yaml
-wamn rollback wamn_receiving --revision 3 --env environment.yaml
-wamn status --env environment.yaml
-wamn status wamn_receiving --env environment.yaml
+wamn deploy apps/wamn_receiving --app wamn_receiving --env env.yaml
+wamn deploy --release "$RELEASE_DIGEST" --app wamn_receiving --env env.yaml
+wamn rollback wamn_receiving --env env.yaml
+wamn rollback wamn_receiving --revision 3 --env env.yaml
+wamn status --env env.yaml
+wamn status wamn_receiving --env env.yaml
 ```
 
 Status reports each project in the file. An application name selects its project.
@@ -428,9 +428,9 @@ To use the reset example, pass `--disposable` the first time you apply the envir
 ```bash
 wamn build apps/wamn_receiving
 PACKAGE_DIGEST=$(wamn publish apps/target/wamn/wamn_receiving)
-wamn schema diff wamn_receiving --env environment.yaml
-wamn schema apply wamn_receiving --env environment.yaml --release "$PACKAGE_DIGEST"
-wamn schema reset --project receiving --env environment.yaml
+wamn schema diff wamn_receiving --env env.yaml
+wamn schema apply wamn_receiving --env env.yaml --release "$PACKAGE_DIGEST"
+wamn schema reset --project receiving --env env.yaml
 ```
 
 Schema diff uses the live package digest unless you supply `--release`.
@@ -649,7 +649,7 @@ The same immutable web artifact can serve more than one environment.
 Deploy a published release through control:
 
 ```bash
-wamn deploy --env environment.yaml --application wamn_receiving --release "$RELEASE_DIGEST"
+wamn deploy --env env.yaml --app wamn_receiving --release "$RELEASE_DIGEST"
 ```
 
 The operation worker holds the environment lock through SQL and the application rollout.
@@ -697,7 +697,7 @@ Edge deployment remains outside the local platform milestone.
 
 Release hosts expose workload HTTP on port 80, probes on port 8081, and native file transfers on port 8082.
 The `<release>-files` Service selects the shared environment host and maps port 80 to the named `files` port.
-The edge sends `/api/<application>/files` and its child paths there before the general `/api/` route.
+The edge sends `/api/<app>/files` and its child paths there before the general `/api/` route.
 File and workflow requests keep the full path. Other API requests lose the `/api` prefix.
 
 The Rust edge reads the live release and serves its bucket files.
@@ -895,8 +895,8 @@ Supply the environment document with `--env`.
 Control selects its installed chart and pinned worker image and runs a bounded Job in the org namespace.
 
 ```bash
-wamn platform schema diff --target project --env environment.yaml
-wamn platform schema apply --target project --env environment.yaml
+wamn platform schema diff --target project --env env.yaml
+wamn platform schema apply --target project --env env.yaml
 ```
 
 Both commands run the installed immutable `control` image.
@@ -922,12 +922,12 @@ The operation runs no environment provisioning or application activation.
 Fresh environment provisioning installs the catalog and project substrate, then runs every embedded project migration.
 Repeated provisioning runs no pending migration.
 If execution stops, the error reports completed and remaining files.
-Resume with `wamn platform schema apply --target project --env environment.yaml` with the same installed worker image.
+Resume with `wamn platform schema apply --target project --env env.yaml` with the same installed worker image.
 Application package migrations keep their own streams.
 
 ## Rollback and maintenance
 
-Use `wamn rollback APP --revision N --env environment.yaml` to restore the content of revision N.
+Use `wamn rollback APP --revision N --env env.yaml` to restore the content of revision N.
 Without `--revision`, the worker finds the newest earlier deploy. It skips revisions that record a rollback.
 If no older deploy exists, the command reports the current content revision and refuses.
 The worker reads the target package digest from Helm, checks enabled workflows, and runs `helm rollback --wait=watcher` under the lifecycle lock.

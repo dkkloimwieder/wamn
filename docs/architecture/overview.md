@@ -89,9 +89,9 @@ Each library has one concern. Directory names follow crate names without the `wa
 | `deploy/charts/infrastructure` | Cluster infrastructure chart |
 | `deploy/charts/platform` | Shared identity, edge, NATS, system PostgreSQL, and operators |
 | `deploy/charts/org` | Org resources |
-| `deploy/charts/environment` | Shared host group for each environment |
+| `deploy/charts/env` | Shared host group for each environment |
 | `deploy/charts/project` | Project PostgreSQL Cluster, backups, accounts, certificates, and change capture |
-| `deploy/charts/application` | Application release and web selection |
+| `deploy/charts/app` | Application release and web selection |
 | `deploy/sql` | Platform schemas and shared SQL definitions |
 | `deploy/gcp` | Google Cloud deployment inputs |
 | `deploy/kind` | Local cluster deployment inputs |

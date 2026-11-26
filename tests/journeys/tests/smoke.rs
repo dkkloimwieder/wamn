@@ -24,7 +24,7 @@ common::journey! {
         let org = &env.org;
         let outputs = &org.cluster.outputs;
         let file: Value = serde_json::from_slice(&std::fs::read(&env.file)?)?;
-        let label = file["projects"][0]["applications"][APP]["label"]
+        let label = file["projects"][0]["apps"][APP]["label"]
             .as_str()
             .context("the environment file has no application label")?;
         let app =

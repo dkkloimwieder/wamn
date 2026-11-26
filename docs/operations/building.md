@@ -30,9 +30,9 @@ These files own each schema.
 
 ## Platform version
 
-The platform version lives in `deploy/charts/application/Chart.yaml`.
+The platform version lives in `deploy/charts/app/Chart.yaml`.
 The published application chart archive includes the platform charts.
-Application releases install the stamped chart at `platform/application` inside that archive.
+Application releases install the stamped chart at `platform/app` inside that archive.
 This keeps the platform files out of the Helm release record.
 Helm stores each release record in one Secret.
 A Secret holds at most 1 MiB (1048576 bytes).
@@ -224,8 +224,8 @@ Set `WAMN_KCL` to use another binary of the pinned version.
 `wamn_codegen::kcl::binary` selects that override first, then the pinned installation, then `kcl` on `PATH`.
 The compiler runs KCL and never installs tools.
 The environment JSON Schema lives in `crates/env/env.schema.json`.
-Run `cargo xtask environment-schema` after editing the Rust types.
-Run `cargo xtask environment-schema --check` to check the committed schema.
+Run `cargo xtask env-schema` after editing the Rust types.
+Run `cargo xtask env-schema --check` to check the committed schema.
 The catalog owns the authored model in `crates/catalog/src/manifest.rs`. The code generator checks document rules once and derives inherited model fields once. Catalog readers decode compiled facts without repeating document checks.
 
 The schema module that `wamn.k` imports as `manifest` is [`crates/codegen/kcl/manifest`](../../crates/codegen/kcl/manifest/manifest.k).
@@ -409,7 +409,7 @@ That stage compiles every native package except `wamn-edge`, so the first image 
 They share the Cargo registry and Git caches with every checkout.
 The cache mounts are not in the image. The stage copies each binary out of the target cache to `/native-output`, and the image copies it from there.
 
-To bump the platform version, change `version` and `appVersion` in `deploy/charts/application/Chart.yaml` to the same new value.
+To bump the platform version, change `version` and `appVersion` in `deploy/charts/app/Chart.yaml` to the same new value.
 No other file holds the version.
 A version change runs the same BuildKit build with new output tags. BuildKit reuses unchanged layers.
 

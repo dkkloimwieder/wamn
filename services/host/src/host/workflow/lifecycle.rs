@@ -156,7 +156,7 @@ async fn change(
     // Keep the same key through commit and broker settlement so another host
     // cannot enable a replacement while this host deletes its predecessor.
     let outcome = async {
-        require_lock(advisory_lock::try_env_lock(connection, &app.org, &app.environment).await?)?;
+        require_lock(advisory_lock::try_env_lock(connection, &app.org, &app.env).await?)?;
         match handler {
             HostHandler::WorkflowEnable => enable(connection, broker, workload, &version).await,
             HostHandler::WorkflowDisable => disable(connection, broker, workload, &version).await,
@@ -290,7 +290,7 @@ async fn enable(
                 wamn_registry::name::event_subject(
                     &app.org,
                     &app.project,
-                    &app.environment,
+                    &app.env,
                     &format!("{entity}.{}", op.as_str()),
                 )
             })
@@ -371,6 +371,6 @@ pub(in crate::host) async fn permissions(
     let ids = workflow::request_workflow_ids(connection, app).await?;
     Ok(ids
         .iter()
-        .map(|id| wamn_routes::workflow_permission(&app.application, id))
+        .map(|id| wamn_routes::workflow_permission(&app.app, id))
         .collect())
 }

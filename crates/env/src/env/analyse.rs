@@ -34,25 +34,18 @@ pub fn select_app(
     let name = if let Some(name) = app {
         name
     } else {
-        ensure!(
-            document.applications.len() == 1,
-            "name the application to analyse"
-        );
-        document
-            .applications
-            .keys()
-            .next()
-            .expect("one application")
+        ensure!(document.apps.len() == 1, "name the application to analyse");
+        document.apps.keys().next().expect("one application")
     };
     let selection = document
-        .applications
+        .apps
         .get(name)
         .with_context(|| format!("application {name} is not declared"))?;
     Ok(EnvDocument {
         readiness_budget_seconds: document.readiness_budget_seconds,
         drain_bound_seconds: document.drain_bound_seconds,
         revocation_seconds: document.revocation_seconds,
-        applications: BTreeMap::from([(name.to_owned(), selection.clone())]),
+        apps: BTreeMap::from([(name.to_owned(), selection.clone())]),
         settings: wamn_registry::configuration::EnvSettings {
             org: document.settings.org.clone(),
             project: document.settings.project.clone(),

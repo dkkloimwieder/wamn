@@ -21,7 +21,7 @@ pub async fn prepare_host_upgrade<'a>(
     let directory = tempfile::tempdir()?;
     let path = directory.path().join("values.yaml");
     std::fs::write(&path, serde_json::to_vec(values)?)?;
-    let chart = chart.join("platform/environment");
+    let chart = chart.join("platform/env");
     let namespace = helm::org_release_namespace(&target.namespace);
     helm::recover_pending(target, &namespace, &name, Wait::Watcher).await?;
     Ok(Box::pin(async move {
@@ -51,7 +51,7 @@ pub async fn apply_app(
     readiness: Duration,
 ) -> anyhow::Result<()> {
     let directory = tempfile::tempdir()?;
-    let path = directory.path().join("application.yaml");
+    let path = directory.path().join("app.yaml");
     std::fs::write(&path, serde_yaml::to_string(values)?)?;
     let namespace = helm::org_release_namespace(&target.namespace);
     timeout_at(deadline, async {
@@ -62,7 +62,7 @@ pub async fn apply_app(
         helm::upgrade(
             target,
             &namespace,
-            &chart.join("platform/application"),
+            &chart.join("platform/app"),
             name,
             &[&path],
             wait,

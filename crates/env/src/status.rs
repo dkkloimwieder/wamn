@@ -51,9 +51,9 @@ fn project_workloads<'a>(
     workloads: impl IntoIterator<Item = Workload<'a>>,
 ) -> impl Iterator<Item = Workload<'a>> {
     let coordinate = name::host_status(org, project, env);
-    workloads.into_iter().filter(move |workload| {
-        workload.annotation("wamn.environment") == Some(coordinate.as_str())
-    })
+    workloads
+        .into_iter()
+        .filter(move |workload| workload.annotation("wamn.env") == Some(coordinate.as_str()))
 }
 
 /// Report the shared host rollout and workloads for one project environment.
@@ -92,7 +92,7 @@ pub fn runtime_status<'a>(
                 .collect::<Vec<_>>();
             Ok(EnvStatusResultWorkload {
                 name: name.to_owned(),
-                application: workload.annotation("wamn.application").map(str::to_owned),
+                app: workload.annotation("wamn.app").map(str::to_owned),
                 package_digest: release.package_digest.to_string(),
                 revision: release.revision,
                 conditions,
@@ -143,10 +143,10 @@ pub fn apps<'a>(
             let config = components
                 .iter()
                 .find_map(|component| component["localResources"]["config"][APP_CONFIG].as_str())
-                .context("application workload has no wamn.application")?;
+                .context("application workload has no wamn.app")?;
             let app: AppConfig = serde_json::from_str(config)?;
             anyhow::ensure!(
-                &app.org == org && &app.project == project && &app.environment == env,
+                &app.org == org && &app.project == project && &app.env == env,
                 "application workload coordinate mismatch"
             );
             Ok(app)
@@ -216,7 +216,7 @@ pub async fn status_with_counts(
     memberships: impl Future<Output = anyhow::Result<i32>>,
 ) -> EnvStatusResult {
     let (app, memberships) = tokio::join!(
-        optional_status_count(project, env, "application", app),
+        optional_status_count(project, env, "app", app),
         optional_status_count(project, env, "memberships", memberships),
     );
     status.users_with_role = app.map(|counts| counts.0);

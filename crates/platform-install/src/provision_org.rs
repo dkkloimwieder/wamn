@@ -64,7 +64,7 @@ pub async fn provision_org(
         principal_id: PlatformComponent::Provisioning.principal_id(),
         env: None,
         project: None,
-        application: None,
+        app: None,
         package_digest: None,
         helm_revision: None,
     };

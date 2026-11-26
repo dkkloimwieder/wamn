@@ -88,7 +88,7 @@ mod tests {
     fn parse_registered_operation() {
         for (input, accepted) in [
             ("orders:receipt/get@1.0.0", true),
-            ("wamn-control:user/list@0.9.0", true),
+            ("wamn-control:user/list@0.10.0", true),
             ("wamn-fixture:widget-maker/get@1.0.0-dev.habc", true),
             ("", false),
             ("wamn:receipt/get@1.0.0", false),

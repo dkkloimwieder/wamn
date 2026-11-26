@@ -1,6 +1,6 @@
 # Receiving change walkthrough
 
-This walkthrough uses an installed `kind` platform. Follow the [development loop](../../docs/operations/development-loop.md) to prepare publication credentials, the build database, and `environment.k`.
+This walkthrough uses an installed `kind` platform. Follow the [development loop](../../docs/operations/development-loop.md) to prepare publication credentials, the build database, and `env.yaml`.
 Name the document's selected application `wamn_receiving`. Use the platform's identity service for browser sign-in.
 
 ## Prepare a release
@@ -8,9 +8,9 @@ Name the document's selected application `wamn_receiving`. Use the platform's id
 From the repository root, publish and apply the initial schema. The publish command prints the release digest.
 
 ```bash
-"$CARGO_TARGET_DIR/debug/wamn" schema publish apps/wamn_receiving --env environment.k
-"$CARGO_TARGET_DIR/debug/wamn" schema apply wamn_receiving --release <published-digest> --env environment.k
-"$CARGO_TARGET_DIR/debug/wamn" dev --config environment.k --overlay-root apps/wamn_receiving --watch
+"$CARGO_TARGET_DIR/debug/wamn" schema publish apps/wamn_receiving --env env.yaml
+"$CARGO_TARGET_DIR/debug/wamn" schema apply wamn_receiving --release <published-digest> --env env.yaml
+"$CARGO_TARGET_DIR/debug/wamn" dev --config env.yaml --overlay-root apps/wamn_receiving --watch
 ```
 
 The watcher builds immutable prerelease packages, publishes them, and requests deployment through control.

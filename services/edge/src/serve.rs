@@ -157,7 +157,7 @@ fn edge_engine(release: &EdgeRelease, db: &Path) -> anyhow::Result<wash_runtime:
     let core_instances = requests * (ingress + app) + app;
     tracing::info!(
         ingress,
-        application = app,
+        app = app,
         core_instances,
         "the edge sizes its pool"
     );

@@ -52,7 +52,7 @@ pub(super) async fn analyse(
     let mut selected = BTreeMap::new();
     // Only referenced integrations of the selected package closure need connections.
     let apps: Vec<_> = document
-        .applications
+        .apps
         .iter()
         .filter(|(_, definition)| {
             definition.current != super::document::DeclaredRelease::None
@@ -64,7 +64,7 @@ pub(super) async fn analyse(
     let env_target = system.env_target(&document.triple()).await?;
     if matches!(&env_target, Some(None)) {
         return Err(refuse(
-            "environment_target_missing",
+            "env_target_missing",
             format!(
                 "environment {}/{} has no target",
                 document.settings.org, document.settings.env

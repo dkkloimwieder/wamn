@@ -277,7 +277,7 @@ Do not use these exceptions for diagnostic wording.
 - Frozen serialized variants, refusal codes, media types, SQLSTATEs, token prefixes and protocol identifiers remain literal comparisons. Their owners include [SQL values](../../crates/scalar/src/lib.rs) and [identity protocols](../../crates/identity-protocol/src).
 - [HTML escaping](../../services/control/src/control_route/oauth_callback.rs): `&lt;script&gt;&quot;&amp;&#39;` encodes the supplied attack text. The unescaped text stays absent.
 - [Manifest loading](../../services/edge/src/release_manifest.rs), `an_unsupported_format_refuses_with_the_frozen_literal`: the loader keeps the serialized refusal literal.
-- [The log viewer](../../apps/platform_ui/test/environment.test.tsx) displays the supplied log bytes unchanged. The assertions read them from the recorded response.
+- [The log viewer](../../apps/platform_ui/test/env.test.tsx) displays the supplied log bytes unchanged. The assertions read them from the recorded response.
 - [Descriptor limit observation](../../services/host/tests/native_descriptor_limits.rs): `Max open files` identifies the Linux process limit record. The test parses its two numeric values while the real host runs.
 
 Accessible control names select the action under test. They do not assert diagnostic wording, classes or geometry.
@@ -498,7 +498,7 @@ the database configuration locally.
 pnpm --filter @wamn/platform-ui run generate:clients
 pnpm run wfe:build
 cargo test --locked --lib -p wamn-control generated_org_client_live -- --ignored --nocapture
-cargo test --locked --bin wamn-host -p wamn-host generated_application_client_live -- --ignored --nocapture
+cargo test --locked --bin wamn-host -p wamn-host generated_app_client_live -- --ignored --nocapture
 ```
 
 ### Platform sign-in and application screens

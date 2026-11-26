@@ -20,7 +20,7 @@ pub struct DeployArgs {
     pub release: Option<wamn_digest::Digest>,
     /// The application to deploy.
     #[arg(long)]
-    pub application: wamn_registry::AppName,
+    pub app: wamn_registry::AppName,
     /// The target environment file.
     #[arg(long)]
     pub env: PathBuf,
@@ -30,7 +30,7 @@ pub struct DeployArgs {
 
 #[derive(Debug, Args)]
 pub struct RollbackArgs {
-    pub application: wamn_registry::AppName,
+    pub app: wamn_registry::AppName,
     /// Restore the content of this Helm revision.
     #[arg(long)]
     pub revision: Option<std::num::NonZeroU32>,
@@ -42,7 +42,7 @@ pub struct RollbackArgs {
 #[derive(Debug, Args)]
 pub struct StatusArgs {
     /// Restrict status to this application's project.
-    pub application: Option<wamn_registry::AppName>,
+    pub app: Option<wamn_registry::AppName>,
     /// The target environment file.
     #[arg(long)]
     pub env: PathBuf,
@@ -55,13 +55,11 @@ pub async fn deploy(args: DeployArgs) -> anyhow::Result<()> {
     );
     let host = ControlHost::from_env()?;
     let file = EnvFile::compile(&args.env)?;
-    let triple = file.triple(file.app_project(&args.application)?);
+    let triple = file.triple(file.app_project(&args.app)?);
     let digest = match args.package {
         Some(package) => {
-            let document = env::analyse::select_app(
-                &file.into_project(&triple.project)?,
-                Some(&args.application),
-            )?;
+            let document =
+                env::analyse::select_app(&file.into_project(&triple.project)?, Some(&args.app))?;
             let describe = args.describe.mode(false)?;
             let published = wamn_build::source_deploy::publish_from_env(
                 &SourceBuilder {
@@ -79,28 +77,28 @@ pub async fn deploy(args: DeployArgs) -> anyhow::Result<()> {
             .context("select a source package or --release")?,
     };
     host.run(
-        "application.deploy",
+        "app.deploy",
         &triple,
-        json!({"release":digest,"application":args.application}),
+        json!({"release":digest,"app":args.app}),
     )
     .await
 }
 
 pub async fn rollback(args: RollbackArgs) -> anyhow::Result<()> {
     let document = EnvFile::compile(&args.env)?;
-    let triple = document.triple(document.app_project(&args.application)?);
+    let triple = document.triple(document.app_project(&args.app)?);
     ControlHost::from_env()?
         .run(
-            "application.rollback",
+            "app.rollback",
             &triple,
-            json!({"application":args.application,"revision":args.revision}),
+            json!({"app":args.app,"revision":args.revision}),
         )
         .await
 }
 
 pub async fn status(args: StatusArgs) -> anyhow::Result<()> {
     let document = EnvFile::compile(&args.env)?;
-    let projects: Vec<_> = match args.application {
+    let projects: Vec<_> = match args.app {
         Some(app) => vec![document.app_project(&app)?],
         None => document
             .projects
@@ -113,7 +111,7 @@ pub async fn status(args: StatusArgs) -> anyhow::Result<()> {
     let mut failed = false;
     for project in projects {
         let selection = json!({"project":project,"env":document.env});
-        match host.call("environment.status", &selection).await {
+        match host.call("env.status", &selection).await {
             Ok(status) => statuses.push(json!({"project":project,"status":status})),
             Err(error) => {
                 failed = true;

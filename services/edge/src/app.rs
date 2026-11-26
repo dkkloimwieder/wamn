@@ -40,7 +40,7 @@ impl EdgeApp {
         let app = load_native_app(
             engine,
             NativeWorkloadSpec {
-                id: next_scope("wamn-edge-application").into(),
+                id: next_scope("wamn-edge-app").into(),
                 namespace: target.project_env_key.to_string(),
                 name: target.env.to_string(),
                 components: release.native_components(),

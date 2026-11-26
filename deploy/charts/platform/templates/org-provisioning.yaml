@@ -15,7 +15,7 @@ metadata:
 data:
   base: {{ required "Set platformDomain for org control routes." .Values.platformDomain | quote }}
   controlImage: {{ $sql.image | default (printf "%s/wamn-control:%s" .Values.registry .Chart.Version) | quote }}
-  applicationChart: {{ .Values.applicationChart | quote }}
+  appChart: {{ .Values.appChart | quote }}
   provider: {{ .Values.provider | quote }}
   registry: {{ .Values.registry | quote }}
   registryEgress: {{ .Values.registryEgress | toJson | quote }}

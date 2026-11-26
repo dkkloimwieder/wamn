@@ -161,7 +161,7 @@ If the Cluster is already gone, the command cannot find its ObjectStore, so dele
 4. Apply the environment file. This creates a new generation with a new database, Cluster, archive prefix, login Secrets, and CDC slot.
 
    ```bash
-   wamn env apply environment.yaml
+   wamn env apply env.yaml
    ```
 
 5. Load the dump into the new project database with `pg_restore`.

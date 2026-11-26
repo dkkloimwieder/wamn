@@ -127,7 +127,7 @@ impl Authorization {
 
     /// Register the cache lifetime for the application workload.
     pub fn configure_app(&self, app: &AppConfig) -> anyhow::Result<()> {
-        let key = wamn_registry::name::project_env_key(&app.org, &app.project, &app.environment);
+        let key = wamn_registry::name::project_env_key(&app.org, &app.project, &app.env);
         self.lifetimes
             .write()
             .expect("authorization lifetimes lock poisoned")
@@ -343,15 +343,14 @@ impl ConnectionCache for Authorization {
             .values()
             .filter_map(Weak::upgrade)
             .find(|app| {
-                &wamn_registry::name::project_env_key(&app.org, &app.project, &app.environment)
-                    == project
+                &wamn_registry::name::project_env_key(&app.org, &app.project, &app.env) == project
             })
             .context("project is not configured")?;
         self.facts(app)
     }
     fn facts(self: Arc<Self>, app: Arc<AppConfig>) -> anyhow::Result<Arc<ConnectionFacts>> {
         self.configure_app(&app)?;
-        let key = wamn_registry::name::project_env_key(&app.org, &app.project, &app.environment);
+        let key = wamn_registry::name::project_env_key(&app.org, &app.project, &app.env);
         Ok(Arc::new(
             ConnectionFacts::new(
                 Arc::default(),
@@ -362,7 +361,7 @@ impl ConnectionCache for Authorization {
                 &self.postgres,
                 &key,
                 &app.project,
-                &app.environment,
+                &app.env,
             )
             .with_oauth_encryption(self.envelope.as_ref().map(Arc::clone))
             .with_cache(self, app),

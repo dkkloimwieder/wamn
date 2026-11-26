@@ -4,7 +4,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { audienceType } from "../src/address.js";
+import { audienceType, envSegment, matchPath } from "../src/address.js";
 import { CONFIG_PATH, readConfig } from "../src/index.js";
 
 function answering(status: number, body: string): typeof fetch {
@@ -41,9 +41,19 @@ describe("audiences of the org-only platform config", () => {
   it("accepts projects in its org and refuses another org", () => {
     const config = { org: "acme" };
     expect(audienceType("urn:wamn:org:acme", config)).toBe("control");
-    expect(audienceType("urn:wamn:project-env:acme:receiving:dev:suffix", config)).toBe("application");
-    expect(audienceType("urn:wamn:project-env:acme:wms:dev:suffix", config)).toBe("application");
+    expect(audienceType("urn:wamn:project-env:acme:receiving:dev:suffix", config)).toBe("app");
+    expect(audienceType("urn:wamn:project-env:acme:wms:dev:suffix", config)).toBe("app");
     expect(audienceType("urn:wamn:project-env:other:wms:dev:suffix", config)).toBeUndefined();
     expect(audienceType("urn:wamn:org:other", config)).toBeUndefined();
   });
+});
+
+it("keeps an environment named envs distinct from the project's list", () => {
+  const list = "projects/:project/envs";
+  const env = "projects/:project/:env";
+  const url = new URL(`https://example.test/projects/shop/${envSegment("envs")}`);
+  const path = url.pathname.slice(1);
+  expect(matchPath(list, "projects/shop/envs")).toEqual({ project: "shop" });
+  expect(matchPath(list, path)).toBeUndefined();
+  expect(matchPath(env, path)).toEqual({ project: "shop", env: "envs" });
 });

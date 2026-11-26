@@ -192,7 +192,7 @@ pub async fn app(
         &triple,
         async |system| {
             ensure!(
-                document.applications.contains_key(name),
+                document.apps.contains_key(name),
                 "application {name} is not declared"
             );
             let connection = system.connection(&triple).await?;
@@ -224,7 +224,7 @@ pub async fn app(
                         recover_release(platform, &document, &release).await?;
                     let packages = Packages::open(platform, digest).await?;
                     let selection = document
-                        .applications
+                        .apps
                         .get_mut(name)
                         .expect("declared application");
                     selection.current = DeclaredRelease::Digest(digest);
@@ -365,7 +365,7 @@ pub fn use_pod_registry(
 fn app_config(values: &serde_yaml::Value) -> anyhow::Result<AppConfig> {
     let text = values["route"]["config"][APP_CONFIG]
         .as_str()
-        .context("release has no wamn.application configuration")?;
+        .context("release has no wamn.app configuration")?;
     Ok(serde_json::from_str(text)?)
 }
 

@@ -83,7 +83,7 @@ async fn require_ownership(target: &Target, triple: &Triple, database: &str) -> 
             object
                 .metadata
                 .annotations
-                .and_then(|mut values| values.remove("wamn.environment"))
+                .and_then(|mut values| values.remove("wamn.env"))
                 .as_deref()
                 == Some(coordinate.as_str()),
             "refused: Deployment {reader} does not belong to {triple}"
@@ -419,9 +419,9 @@ async fn apps(target: &Target, triple: &Triple) -> anyhow::Result<Vec<AppName>> 
                 .and_then(|values| values.get(key))
                 .map(String::as_str)
         };
-        if annotation("wamn.environment") == Some(coordinate.as_str()) {
+        if annotation("wamn.env") == Some(coordinate.as_str()) {
             apps.push(
-                annotation("wamn.application")
+                annotation("wamn.app")
                     .context("workload has no application annotation")?
                     .parse()?,
             );

@@ -99,7 +99,7 @@ describe.skipIf(baseUrl === undefined)("the generated control org client", () =>
         expect(observed).toHaveProperty(["value", "members", String(index), "project_admin"], row["project_admin"]),
       );
       rows.forEach((row, index) =>
-        expect(observed).toHaveProperty(["value", "members", String(index), "environments"], row["environments"]),
+        expect(observed).toHaveProperty(["value", "members", String(index), "envs"], row["envs"]),
       );
       for (const [wireName, member] of [
         ["total", "total"],
@@ -183,7 +183,7 @@ describe.skipIf(baseUrl === undefined)("the generated control org client", () =>
         { request_id: requestId(), value: { project: "billing", env: "prod", principal_id: annId } },
       ]);
       expect(observed).toHaveProperty(["status"], "refused");
-      expect(observed).toHaveProperty(["code"], "environment_not_found");
+      expect(observed).toHaveProperty(["code"], "env_not_found");
       expect(observed).toHaveProperty(["detail", "detail", "field"], "env");
     }
     {

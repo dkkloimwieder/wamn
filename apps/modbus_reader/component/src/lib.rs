@@ -16,7 +16,7 @@ wit_bindgen::generate!({
         "../../target/wamn/modbus_reader/wit",
         "wit/authored.wit",
     ],
-    world: "wamn:modbus-example/application",
+    world: "wamn:modbus-example/app",
     generate_all,
     async: [
         "export:modbus-reader:register/read@0.1.1#run",

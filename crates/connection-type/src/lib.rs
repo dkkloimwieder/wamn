@@ -64,7 +64,7 @@ impl ComponentConnectionRequirement {
 }
 
 /// Shape version for portable connection-type descriptors.
-pub const CONNECTION_DESCRIPTOR_VERSION: &str = "1";
+pub const CONNECTION_DESCRIPTOR_VERSION: &str = "2";
 
 /// A field whose ownership is fixed by a connection-type descriptor.
 #[derive(
@@ -95,7 +95,6 @@ pub enum ConnectionField {
 #[serde(rename_all = "kebab-case")]
 pub enum ConnectionFieldOwner {
     Author,
-    #[serde(rename = "environment")]
     Env,
     System,
 }
@@ -128,7 +127,6 @@ pub enum ConnectionAuthorityModel {
 )]
 #[serde(rename_all = "kebab-case")]
 pub enum CredentialInjection {
-    #[serde(rename = "environment-selected-http-header")]
     EnvSelectedHttpHeader,
     /// The host signs the request itself. Unlike a header injection, no
     /// credential-shaped value ever exists in a structure the guest composes,
@@ -436,12 +434,25 @@ pub fn parse_org_credential_handle(handle: &str) -> Result<(wamn_registry::OrgId
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ConnectionTypeDescriptor {
+    #[serde(deserialize_with = "read_descriptor_version")]
     pub descriptor_version: String,
     pub requirement_type: String,
     pub contract: String,
     pub authority_model: ConnectionAuthorityModel,
     pub field_ownership: Vec<ConnectionFieldOwnership>,
     pub credential_injection: CredentialInjection,
+}
+
+fn read_descriptor_version<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<String, D::Error> {
+    let version = String::deserialize(deserializer)?;
+    if version != CONNECTION_DESCRIPTOR_VERSION {
+        return Err(serde::de::Error::custom(format_args!(
+            "unsupported connection descriptor version {version}"
+        )));
+    }
+    Ok(version)
 }
 
 impl ConnectionTypeDescriptor {
@@ -731,6 +742,18 @@ mod tests {
             let name = serde_json::to_value(field).unwrap();
             assert!(fields.iter().any(|entry| entry["field"] == name));
         }
+    }
+
+    #[test]
+    fn the_descriptor_reader_refuses_the_previous_version() {
+        let descriptor = RequirementType::Http.descriptor();
+        let mut document = serde_json::to_value(&descriptor).unwrap();
+        assert_eq!(
+            ConnectionTypeDescriptor::deserialize(&document).unwrap(),
+            descriptor
+        );
+        document["descriptor-version"] = "1".into();
+        assert!(serde_json::from_value::<ConnectionTypeDescriptor>(document).is_err());
     }
     #[test]
     fn blobstore_cdn_host_is_optional_and_accepts_only_an_http_origin() {

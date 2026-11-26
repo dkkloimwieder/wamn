@@ -1,11 +1,11 @@
 import { createContext, createSignal, lazy, onCleanup, Show, Loading, useContext, type Component } from "solid-js";
 import type { JSX } from "@solidjs/web";
 import { DashboardPanel, type DashboardShellProps } from "@wfe/components/layout";
-import { permission } from "./application-client";
+import { permission } from "./app-client";
 import {
-  application,
+  appRoutes,
   control,
-  environment,
+  envRoutes,
   member,
   operation,
   orgAdmin,
@@ -134,15 +134,15 @@ function applicationView(saved: SavedView, sections: readonly ShellSection[]): V
 
 export function controlHolds(mine: Pick<ControlMineResult, "org_admin" | "projects">): Holds {
   const projectOperations = new Set([
-    application.deploy.route.operation,
-    application.stop.route.operation,
-    application.rollback.route.operation,
+    appRoutes.deploy.route.operation,
+    appRoutes.stop.route.operation,
+    appRoutes.rollback.route.operation,
     schema.diff.route.operation,
     schema.apply.route.operation,
     schema.reset.route.operation,
     operation.status.route.operation,
-    environment.list.route.operation,
-    environment.status.route.operation,
+    envRoutes.list.route.operation,
+    envRoutes.status.route.operation,
     member.list.route.operation,
     member.grant.route.operation,
     member.revoke.route.operation,
@@ -160,8 +160,8 @@ export function controlHolds(mine: Pick<ControlMineResult, "org_admin" | "projec
     project.create.route.operation,
     project.activate.route.operation,
     project.inactivate.route.operation,
-    environment.activate.route.operation,
-    environment.inactivate.route.operation,
+    envRoutes.activate.route.operation,
+    envRoutes.deactivate.route.operation,
   ]);
   return (operation, config) => {
     if (operation === control.mine.route.operation)
@@ -239,11 +239,11 @@ export function Shell(props: ShellProps): JSX.Element {
 function saved(aud: string) {
   const match = /^urn:wamn:project-env:[^:]+:([^:]+):([^:]+):[^:]+$/.exec(aud);
   if (!match) return undefined;
-  const application = match[1]!;
-  const environment = match[2]!;
+  const app = match[1]!;
+  const env = match[2]!;
   return {
-    user: savedUser(application, environment),
-    view: savedView(application, environment),
+    user: savedUser(app, env),
+    view: savedView(app, env),
     /** Delete the user's saved rows and outbox. */
     clear: (userId: string) => Promise.all([]),
   };
@@ -257,7 +257,7 @@ function Session(
   const [trouble, setTrouble] = createSignal<string>();
   // The last signed-in user, shown while the first renewal cannot reach the identity service.
   const [offlineUser, setOfflineUser] = createSignal<string>();
-  const store = props.type === "application" ? saved(props.aud) : undefined;
+  const store = props.type === "app" ? saved(props.aud) : undefined;
   const userId = () => {
     const current = state();
     return current?.status === "signedIn" ? current.userId : offlineUser();

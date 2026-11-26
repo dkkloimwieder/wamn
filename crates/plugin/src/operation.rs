@@ -94,10 +94,10 @@ impl OperationHost {
             project_env_key: Some(wamn_registry::name::project_env_key(
                 &config.org,
                 &config.project,
-                &config.environment,
+                &config.env,
             )),
             project: Some(config.project.clone()),
-            app: Some(config.application.clone()),
+            app: Some(config.app.clone()),
             ..SessionIdentity::default()
         };
         let operations = config

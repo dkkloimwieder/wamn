@@ -1,9 +1,9 @@
 //! Streaming storage for native file routes.
 //!
 //! The native caller authorizes the application binding before opening this store.
-//! Upload to `<environment>/_wamn_files/staging/<id>`, commit metadata, then call `finish`.
+//! Upload to `<env>/_wamn_files/staging/<id>`, commit metadata, then call `finish`.
 //! The collector repairs committed staging and removes aged staging with no metadata row.
-//! Public copies use `<environment>/public/_wamn_files/live/<id>` beneath the binding prefix.
+//! Public copies use `<env>/public/_wamn_files/live/<id>` beneath the binding prefix.
 
 use std::{
     error::Error,

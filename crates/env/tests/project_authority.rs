@@ -6,7 +6,7 @@
 //!
 //! One test per adjudicated class (docs/architecture/data-access.md#actors):
 //! - `users` / `role` / `user_role` / `permission` are the rows the trust
-//!   chain reads as authorization INPUT, `environment` is the status the host
+//!   chain reads as authorization INPUT, `env` is the status the host
 //!   admits a request by, and the platform configuration tables are the rows
 //!   the platform writes for the application. An App generation may inherit
 //!   their stable `wamn_app` reads and nothing more, so a project or an

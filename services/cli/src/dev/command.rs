@@ -83,7 +83,7 @@ impl Deploy for ControlDeployment {
         crate::app_verbs::deploy(crate::app_verbs::DeployArgs {
             package: None,
             release: Some(release),
-            application: app,
+            app,
             env: configuration.to_owned(),
             describe: RefreshDescribeArgs::default(),
         })

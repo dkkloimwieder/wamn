@@ -6,10 +6,10 @@ pub(crate) use wamn_platform_install::platform_event::{Command, Outcome, record}
 
 fn event_type(operation: &str) -> Option<EventType> {
     Some(match operation {
-        "environment.configure" => EventType::EnvApply,
-        "environment.delete" => EventType::EnvDelete,
-        "application.deploy" => EventType::Deploy,
-        "application.rollback" => EventType::Rollback,
+        "env.configure" => EventType::EnvApply,
+        "env.delete" => EventType::EnvDelete,
+        "app.deploy" => EventType::Deploy,
+        "app.rollback" => EventType::Rollback,
         "schema.apply" | "platform.schema" => EventType::SchemaApply,
         "schema.reset" => EventType::SchemaReset,
         "capture_gap.recover" | "capture_gap.close" => EventType::CaptureGapRepair,
@@ -40,9 +40,7 @@ pub(crate) fn command(
         principal_id,
         env: input["env"].as_str().and_then(|env| env.parse().ok()),
         project: project.and_then(|project| project.parse().ok()),
-        application: input["application"]
-            .as_str()
-            .and_then(|app| app.parse().ok()),
+        app: input["app"].as_str().and_then(|app| app.parse().ok()),
         package_digest: input["release"]
             .as_str()
             .and_then(|digest| digest.parse().ok()),

@@ -8,13 +8,13 @@ import { emailError } from "./email";
 import { createForm } from "@wfe/form";
 import {
   controlFields,
-  environment,
+  envRoutes,
   member,
   orgAdmin,
   project,
   projectAdmin,
   user,
-  type EnvironmentListResultEnvironments,
+  type EnvListResultEnvs,
   type MemberListResultMembers,
   type ProjectListResultProjects,
   type UserListResultUsers,
@@ -22,6 +22,7 @@ import {
 import type { Outcome } from "@wamn/web-runtime";
 import { MissingPage, Page, RecordLink } from "./page";
 import { GrantMembership } from "./membership";
+import { envSegment } from "./address";
 import { value } from "./outcome";
 import type { ScreenProps, ShellSection } from "./shell";
 
@@ -140,7 +141,7 @@ export function InviteUser(props: ScreenProps): JSX.Element {
 interface ProjectAccess {
   readonly project: string;
   readonly state: ProjectListResultProjects["state"];
-  readonly environments: readonly EnvironmentListResultEnvironments[];
+  readonly envs: readonly EnvListResultEnvs[];
   readonly member?: MemberListResultMembers;
 }
 
@@ -162,14 +163,14 @@ export function User(props: ScreenProps & { table?: "projects" | "memberships" }
       listed
         .filter((entry) => !props.params.project || entry.name === props.params.project)
         .map(async ({ name, state }) => {
-          const [members, environments] = await Promise.all([
+          const [members, listedEnvs] = await Promise.all([
             member.list(props.transport, [{ project: name }]),
-            environment.list(props.transport, [{ project: name }]),
+            envRoutes.list(props.transport, [{ project: name }]),
           ]);
           return {
             project: name,
             state,
-            environments: value(environments).environments,
+            envs: value(listedEnvs).envs,
             member: value(members).members.find((entry) => entry.principal_id === principalId()),
           };
         }),
@@ -314,7 +315,7 @@ export function User(props: ScreenProps & { table?: "projects" | "memberships" }
                       header: controlFields.current.projects.items.properties.project.title,
                       accessorKey: "project",
                     },
-                    { id: "state", header: controlFields.environment.state.title, accessorKey: "state" },
+                    { id: "state", header: controlFields.env.state.title, accessorKey: "state" },
                     {
                       id: "display_name",
                       header: controlFields.member.display_name.title,
@@ -346,8 +347,8 @@ export function User(props: ScreenProps & { table?: "projects" | "memberships" }
                     },
                     {
                       id: "memberships",
-                      header: controlFields.member.environments.title,
-                      accessorFn: (entry) => entry.member?.environments.length ?? 0,
+                      header: controlFields.member.envs.title,
+                      accessorFn: (entry) => entry.member?.envs.length ?? 0,
                     },
                   ]}
                   formats={{ principal_id: "short-hash", org_admin: "boolean-symbol", project_admin: "boolean-symbol" }}
@@ -401,7 +402,7 @@ export function User(props: ScreenProps & { table?: "projects" | "memberships" }
               <div class="platform-table-screen">
                 <Records
                   refresh={refresh}
-                  id="user-environments"
+                  id="user-envs"
                   title="Memberships"
                   create={
                     props.holds(member.grant.route.operation, props.params.project)
@@ -409,17 +410,17 @@ export function User(props: ScreenProps & { table?: "projects" | "memberships" }
                       : undefined
                   }
                   rows={projects().flatMap((entry) =>
-                    (entry.member?.environments ?? []).map((name) => ({
+                    (entry.member?.envs ?? []).map((name) => ({
                       project: entry.project,
                       name,
-                      state: entry.environments.find((env) => env.name === name)?.state,
+                      state: entry.envs.find((env) => env.name === name)?.state,
                     })),
                   )}
                   rowKey={(env) => JSON.stringify([env.project, env.name])}
                   columns={[
                     { id: "project", header: controlFields.current.projects.items.properties.project.title },
                     { id: "env", header: controlFields.grantMember.env.title },
-                    { id: "state", header: controlFields.environment.state.title, accessorKey: "state" },
+                    { id: "state", header: controlFields.env.state.title, accessorKey: "state" },
                     { id: "revoke", header: "Action", size: 80, sortable: false, filterable: false },
                   ]}
                   cells={{
@@ -431,7 +432,7 @@ export function User(props: ScreenProps & { table?: "projects" | "memberships" }
                     env: (cell) => (
                       <RecordLink
                         screen={props}
-                        path={`projects/${encodeURIComponent(cell.row.project)}/${encodeURIComponent(cell.row.name)}`}
+                        path={`projects/${encodeURIComponent(cell.row.project)}/${envSegment(cell.row.name)}`}
                       >
                         {cell.row.name}
                       </RecordLink>

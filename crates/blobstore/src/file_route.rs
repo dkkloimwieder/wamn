@@ -14,7 +14,6 @@ use crate::files::{FileStorageError, FileStorageErrorType};
 #[serde(rename_all = "lowercase")]
 pub enum Exposure {
     Private,
-    #[serde(rename = "application")]
     App,
     Public,
 }
@@ -23,7 +22,7 @@ impl Exposure {
     pub fn literal(self) -> &'static str {
         match self {
             Self::Private => "private",
-            Self::App => "application",
+            Self::App => "app",
             Self::Public => "public",
         }
     }
@@ -146,20 +145,20 @@ pub struct FileConnection {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FileRequest {
-    pub application: wamn_registry::AppName,
+    pub app: wamn_registry::AppName,
     pub file_id: Uuid,
 }
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DeleteRequest {
-    pub application: wamn_registry::AppName,
+    pub app: wamn_registry::AppName,
     pub file_id: Uuid,
     pub binding: wamn_package::canonical_name::CanonicalName,
 }
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ExposeRequest {
-    pub application: wamn_registry::AppName,
+    pub app: wamn_registry::AppName,
     pub file_id: Uuid,
     pub binding: wamn_package::canonical_name::CanonicalName,
     pub exposure: Exposure,

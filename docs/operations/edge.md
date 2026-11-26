@@ -11,11 +11,11 @@ wamn-edge --config <path>
 ```
 
 Without `--config`, `WAMN_EDGE_CONFIG` names the file. [`edge.example.toml`](../../services/edge/edge.example.toml) shows every key.
-The `[target]` keys name the org, the project and the environment of the box.
+The `[target]` keys `org`, `project`, and `env` name the environment of the box.
 The device also accepts `WAMN_ORG` and `WAMN_PROJECT` for these two keys.
 The environment has no variable. The edge reads it only from the file.
 The release names no environment key.
-The edge derives `project_env_key` as `<org>--<environment>--<project>` from that coordinate.
+The edge derives `project_env_key` as `<org>--<env>--<project>` from that coordinate.
 
 ## Read the status of a running edge
 

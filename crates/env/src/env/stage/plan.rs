@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use wamn_component_policy::PackageManifest;
 
 /// The sequence defaults of `packages`, each under the application that
-/// holds the declaring package in `environment.k`.
+/// holds the declaring package in `env.yaml`.
 pub fn sequence_defaults<'a>(
     apps: &wamn_registry::EnvApps,
     packages: impl IntoIterator<Item = &'a PackageManifest>,

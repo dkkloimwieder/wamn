@@ -4,10 +4,10 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: {{ (default .Release.Name .Values.name) }}
-  namespace: {{ include "application.namespace" . | quote }}
-  {{- if .Values.applications }}
+  namespace: {{ include "app.namespace" . | quote }}
+  {{- if .Values.apps }}
   annotations:
-    {{- include "application.annotations" . | nindent 4 }}
+    {{- include "app.annotations" . | nindent 4 }}
   {{- end }}
 data:
   release.json: {{ dict "host" $host "digest" .Values.release.manifestDigest "clients" .Values.webClients "webs" .Values.webDigests "platformUi" nil "org" .Values.org "project" .Values.project | toJson | quote }}
@@ -16,13 +16,13 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: {{ (default .Release.Name .Values.name) }}-route
-  namespace: {{ include "application.namespace" . | quote }}
+  namespace: {{ include "app.namespace" . | quote }}
   labels:
     wamn.route: "true"
-  {{- if .Values.applications }}
+  {{- if .Values.apps }}
   annotations:
-    {{- include "application.annotations" . | nindent 4 }}
+    {{- include "app.annotations" . | nindent 4 }}
   {{- end }}
 data:
-  route.json: {{ dict "host" $host "release" (default .Release.Name .Values.name) "api" (printf "http://%s-http.%s.svc.cluster.local" (default .Release.Name .Values.name) (include "application.namespace" .)) | toJson | quote }}
+  route.json: {{ dict "host" $host "release" (default .Release.Name .Values.name) "api" (printf "http://%s-http.%s.svc.cluster.local" (default .Release.Name .Values.name) (include "app.namespace" .)) | toJson | quote }}
 {{- end }}

@@ -16,12 +16,9 @@ impl ReleaseContext {
         connections: Arc<crate::connection_facts::ConnectionFacts>,
     ) -> anyhow::Result<Self> {
         anyhow::ensure!(
-            &wamn_registry::name::project_env_key(
-                &release.org,
-                &release.project,
-                &release.environment
-            ) == connections.project_env_key()
-                && &release.environment == connections.env(),
+            &wamn_registry::name::project_env_key(&release.org, &release.project, &release.env)
+                == connections.project_env_key()
+                && &release.env == connections.env(),
             "connection release target mismatch"
         );
         Ok(Self {

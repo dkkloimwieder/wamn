@@ -14,7 +14,7 @@ pub enum Command {
 pub struct Apply {
     pub file: PathBuf,
     #[arg(long)]
-    pub application: Option<wamn_registry::AppName>,
+    pub app: Option<wamn_registry::AppName>,
     #[arg(long)]
     pub disposable: bool,
 }
@@ -52,15 +52,15 @@ pub async fn run(command: Command) -> anyhow::Result<()> {
     let (operation, triple, value) = match command {
         Command::Apply(args) => {
             let document = wamn_env::env::document::EnvFile::compile(&args.file)?;
-            let project = match &args.application {
+            let project = match &args.app {
                 Some(app) => document.app_project(app)?,
                 None => &document.projects[0].name,
             };
             let triple = document.triple(project);
             (
-                "environment.configure",
+                "env.configure",
                 triple,
-                json!({"document":document,"disposable":args.disposable.then_some(true),"application":args.application}),
+                json!({"document":document,"disposable":args.disposable.then_some(true),"app":args.app}),
             )
         }
         Command::Delete(args) => {
@@ -83,7 +83,7 @@ pub async fn run(command: Command) -> anyhow::Result<()> {
                     "environment confirmation differs"
                 );
             }
-            ("environment.delete", triple, json!({"data":args.data}))
+            ("env.delete", triple, json!({"data":args.data}))
         }
     };
     ControlHost::from_env()?

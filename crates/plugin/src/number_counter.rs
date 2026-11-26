@@ -6,7 +6,7 @@
 //! engine write log records it by its request id and the counter row's
 //! `updated_by` names the caller. The set resolves the sequence by the
 //! application that the host route validated against the release and the
-//! sequence name, never by the `app.application` identity, and passes its id to
+//! sequence name, never by the `app.app` identity, and passes its id to
 //! `platform.set_counter`. That function writes the value under the counter
 //! row's lock, so a set waits for a concurrent next number and a next number
 //! waits for the set.
@@ -29,7 +29,7 @@ use wamn_app::session_identity::SessionIdentity;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct CounterSet {
     /// The declared application that owns the sequence.
-    pub application: wamn_registry::AppName,
+    pub app: wamn_registry::AppName,
     /// The sequence name.
     pub sequence: String,
     /// The counter name in the sequence's pattern.
@@ -128,7 +128,7 @@ fn failed(
     }
 }
 
-/// Set one counter of a sequence of `set.application` for the caller
+/// Set one counter of a sequence of `set.app` for the caller
 /// `caller`, in one operation transaction of the guest authority of
 /// `project_env_key` in `project`, logged in the write log under `operation` and
 /// `request_id`. Returns the value the counter renders next. A retry of a
@@ -170,7 +170,7 @@ pub async fn set_number_counter(
         project: Some(project.to_owned()),
         user_id: Some(*caller.principal_id()),
         operation: Some(operation.clone().into()),
-        app: Some(set.application.clone()),
+        app: Some(set.app.clone()),
         ..SessionIdentity::default()
     };
     let invocation = AuthorizedInvocation::enter(
@@ -289,7 +289,7 @@ async fn set_counter(
     };
     let Some((sequence, pattern)) = transaction
         .session
-        .counter_sequence(&set.application, &set.sequence)
+        .counter_sequence(&set.app, &set.sequence)
         .await
         .map_err(failed)?
     else {
