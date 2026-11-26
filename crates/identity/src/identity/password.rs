@@ -111,19 +111,6 @@ async fn issue_token(
     purpose: &str,
     expected_email: Option<&str>,
 ) -> Result<Invitation, PasswordError> {
-    let (tx, token) =
-        prepare_email_token(client, actor, principal, purpose, expected_email).await?;
-    tx.commit().await.map_err(|source| database(&source))?;
-    Ok(token)
-}
-
-pub(crate) async fn prepare_email_token<'connection>(
-    client: &'connection mut Client,
-    actor: &PrincipalId,
-    principal: &PrincipalId,
-    purpose: &str,
-    expected_email: Option<&str>,
-) -> Result<(sqlx::Transaction<'connection, sqlx::Postgres>, Invitation), PasswordError> {
     let lifetime: i64 = if purpose == INVITATION_PURPOSE {
         86400
     } else {
@@ -160,7 +147,8 @@ pub(crate) async fn prepare_email_token<'connection>(
         }
     }
     let expires_at: String = sqlx::query("INSERT INTO identity.password_token (token_hash, principal_id, purpose, expires_at) VALUES ($1, $2, $3, clock_timestamp() + $4::bigint * interval '1 second') RETURNING to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI')").bind(hash.to_string()).bind(Uuid::from(*principal)).bind(purpose).bind(lifetime).fetch_one(&mut *tx).await.map_err(|source| database(&source))?.get(0);
-    Ok((tx, Invitation::new(secret, expires_at)))
+    tx.commit().await.map_err(|source| database(&source))?;
+    Ok(Invitation::new(secret, expires_at))
 }
 /// Return the cause when the token cannot establish this principal's password.
 async fn usable_token(

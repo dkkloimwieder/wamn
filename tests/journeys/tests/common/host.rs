@@ -14,7 +14,7 @@ use serde_json::{Value, json};
 use tokio::time::Instant;
 use wamn_http_client::HttpClient;
 
-use super::{Env, Org, PLATFORM, PortForward, identity_pods, run};
+use super::{Env, Org, PLATFORM, PortForward, identity_pods, identity_port, run};
 
 /// The fixture application that every host journey deploys.
 pub const FIXTURE: &str = "platform_fixture";
@@ -309,17 +309,26 @@ pub async fn identity_post(
 ) -> anyhow::Result<(hyper::StatusCode, String)> {
     let (service, pods) = identity_pods(client).await?;
     let pod = pods
-        .into_iter()
-        .find(ready)
-        .and_then(|pod| pod.metadata.name)
+        .iter()
+        .find(|pod| ready(pod))
         .context("no identity pod is ready")?;
+    let port = identity_port(
+        pod,
+        if path.starts_with("/password/") {
+            "password"
+        } else {
+            "https"
+        },
+    )?;
+    let pod_name = pod.metadata.name.as_deref().context("identity pod name")?;
     let ca = Api::<ConfigMap>::namespaced(client.clone(), "hosts")
         .get("identity-ca")
         .await?
         .data
         .and_then(|mut data| data.remove("ca.crt"))
         .context("the identity CA has no ca.crt")?;
-    let forward = PortForward::start(Api::namespaced(client.clone(), PLATFORM), &pod, 8443).await?;
+    let forward =
+        PortForward::start(Api::namespaced(client.clone(), PLATFORM), pod_name, port).await?;
     // The serving certificate names the Service address.
     let host = format!(
         "{}.{PLATFORM}.svc.cluster.local",

@@ -20,7 +20,7 @@ use wamn_identity_protocol::wire::{PrincipalRequest, UserRequest, UserResponse};
 use wamn_registry::{OrgId, name};
 
 use crate::{
-    Inner, authentication_event, connect_database,
+    Database, Inner, authentication_event, connect_database,
     mail::Mailer,
     nats,
     password::{admission_reply, refusal, throttled},
@@ -195,7 +195,7 @@ async fn handle(
             return response(StatusCode::NOT_FOUND, "text/plain", b"not found\n".to_vec());
         };
         return invite(
-            &mut db.client,
+            db,
             &state.mail,
             &org,
             request.principal_id,
@@ -272,14 +272,20 @@ async fn disable(
 }
 
 async fn invite(
-    client: &mut Client,
+    mut database: Database,
     mail: &Mailer,
     org: &OrgId,
     principal: PrincipalId,
     event: &mut Event,
 ) -> Response<Full<Bytes>> {
-    let mut store = Issuer(client);
-    let invitation = match password_requests::invite(&mut store, org, &principal, event).await {
+    let invitation = match password_requests::invite(
+        &mut Issuer(&mut database.client),
+        org,
+        &principal,
+        event,
+    )
+    .await
+    {
         Ok(invitation) => invitation,
         Err(DeliveryFailure::UnknownPrincipal) => {
             tracing::info!(principal = %principal, cause = %RefusalCause::NoSuchAccount, "password request refused");
@@ -300,7 +306,7 @@ async fn invite(
         )
         .await
         .is_ok();
-    if invitation.finish(accepted, event).await {
+    if authentication_event::finish_delivery(database, invitation.token, accepted, event).await {
         response(
             StatusCode::CREATED,
             "application/json",
@@ -393,7 +399,7 @@ mod tests {
             .unwrap();
         let mail = Mailer::Local(tokio::sync::Mutex::new(tokio::fs::File::from_std(full)));
         let reply = invite(
-            &mut issuer.client,
+            issuer,
             &mail,
             &"demo".parse().unwrap(),
             principal,

@@ -1,19 +1,16 @@
 //! Password request admission and email credential delivery.
 
-use std::{borrow::Cow, fmt, net::IpAddr, time::Duration};
+use std::{borrow::Cow, net::IpAddr, time::Duration};
 
-use sqlx::{Postgres, Transaction};
 use wamn_identity_protocol::{PlatformComponent, PrincipalId};
 use wamn_registry::OrgId;
 
-use crate::authentication_event::{Event, Outcome, commit_success};
+use crate::authentication_event::{Event, Outcome};
 use crate::identity::{
     issuer::{Admission, Issuer},
-    password::prepare_email_token,
+    password::{issue_invitation, issue_reset},
 };
-use crate::password::{
-    INVITATION_PURPOSE, Invitation, Password, PasswordError, PasswordWork, RESET_PURPOSE,
-};
+use crate::password::{Invitation, Password, PasswordError, PasswordWork};
 use wamn_authentication::identity_error::IdentityError;
 
 /// One request against the issuer's fixed-window counters.
@@ -82,100 +79,94 @@ pub enum DeliveryFailure<'a> {
     },
 }
 
-/// An email credential whose issuance and successful delivery decision commit together.
-pub struct PendingDelivery<'connection, 'email> {
-    tx: Transaction<'connection, Postgres>,
-    pub email: Cow<'email, str>,
+/// A committed invitation and the address authorized to receive it.
+#[derive(Debug)]
+pub struct AddressedInvitation {
+    pub email: String,
     pub token: Invitation,
 }
 
-impl fmt::Debug for PendingDelivery<'_, '_> {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("PendingDelivery")
-            .finish_non_exhaustive()
-    }
-}
-
-impl PendingDelivery<'_, '_> {
-    /// Commit accepted delivery with its event, or consume the refused credential before auditing.
-    pub async fn finish(mut self, accepted: bool, event: &mut Event) -> bool {
-        if accepted {
-            return commit_success(self.tx, Some(event), Outcome::DeliveryAccepted, None)
-                .await
-                .is_ok();
-        }
-        let digest = wamn_digest::bytes_sha256(self.token.secret().as_bytes());
-        let consumed = sqlx::query(
-            "UPDATE identity.password_token SET consumed_at = clock_timestamp()
-             WHERE token_hash = $1 AND consumed_at IS NULL",
-        )
-        .bind(digest.to_string())
-        .execute(&mut *self.tx)
-        .await
-        .is_ok()
-            && self.tx.commit().await.is_ok();
-        event.outcome = Some(if consumed {
-            Outcome::DeliveryFailed
-        } else {
-            Outcome::DeliveryCleanupFailed
-        });
-        false
-    }
-}
-
-/// Prepare an invitation for an active member of the organization.
-pub async fn invite<'connection>(
-    store: &'connection mut Issuer<'_>,
+/// Issue an invitation for an active member of the organization.
+pub async fn invite(
+    store: &mut Issuer<'_>,
     org: &OrgId,
     principal: &PrincipalId,
     event: &mut Event,
-) -> Result<PendingDelivery<'connection, 'static>, DeliveryFailure<'static>> {
+) -> Result<AddressedInvitation, DeliveryFailure<'static>> {
     let email = store
         .invitation_email(org, principal, event)
         .await
         .map_err(|_| DeliveryFailure::Unavailable)?
         .ok_or(DeliveryFailure::UnknownPrincipal)?;
-    prepare(store, principal, Cow::Owned(email), None).await
+    let actor = PlatformComponent::IdentityService.principal_id();
+    match issue_invitation(store.0, &actor, principal).await {
+        Ok(token) => Ok(AddressedInvitation { email, token }),
+        Err(error) => Err(DeliveryFailure::Refused {
+            error,
+            email: Cow::Owned(email),
+        }),
+    }
 }
 
-/// Prepare a recovery credential for an active account.
-pub async fn recover<'connection, 'email>(
-    store: &'connection mut Issuer<'_>,
+/// Issue a recovery credential for an active account.
+pub async fn recover<'email>(
+    store: &mut Issuer<'_>,
     email: &'email str,
     event: &mut Event,
-) -> Result<PendingDelivery<'connection, 'email>, DeliveryFailure<'email>> {
+) -> Result<Invitation, DeliveryFailure<'email>> {
     let principal = store
         .recovery_principal(email, event)
         .await
         .map_err(|_| DeliveryFailure::Unavailable)?
         .ok_or(DeliveryFailure::UnknownPrincipal)?;
-    prepare(store, &principal, Cow::Borrowed(email), Some(email)).await
+    let actor = PlatformComponent::IdentityService.principal_id();
+    issue_reset(store.0, &actor, &principal, email)
+        .await
+        .map_err(|error| DeliveryFailure::Refused {
+            error,
+            email: Cow::Borrowed(email),
+        })
 }
 
-async fn prepare<'connection, 'email>(
-    store: &'connection mut Issuer<'_>,
-    principal: &PrincipalId,
-    email: Cow<'email, str>,
-    expected_email: Option<&str>,
-) -> Result<PendingDelivery<'connection, 'email>, DeliveryFailure<'email>> {
-    let purpose = if expected_email.is_some() {
-        RESET_PURPOSE
+/// Persistence of the terminal delivery decision failed.
+#[derive(Debug)]
+pub struct DeliveryAppendFailure {
+    pub cleanup_failed: bool,
+}
+
+/// Record the result of a completed mail send. Invalidate the token if the
+/// send or the append fails. The issuer commits each write independently.
+pub async fn deliver(
+    store: &mut Issuer<'_>,
+    token: &Invitation,
+    accepted: bool,
+    event: &mut Event,
+) -> Result<Outcome, DeliveryAppendFailure> {
+    let write_timeout = Duration::from_secs(1);
+    let outcome = if accepted {
+        Outcome::DeliveryAccepted
+    } else if matches!(
+        tokio::time::timeout(write_timeout, store.consume_email_token(token)).await,
+        Ok(Ok(()))
+    ) {
+        Outcome::DeliveryFailed
     } else {
-        INVITATION_PURPOSE
+        Outcome::DeliveryCleanupFailed
     };
-    match prepare_email_token(
-        store.0,
-        &PlatformComponent::IdentityService.principal_id(),
-        principal,
-        purpose,
-        expected_email,
-    )
-    .await
-    {
-        Ok((tx, token)) => Ok(PendingDelivery { tx, email, token }),
-        Err(error) => Err(DeliveryFailure::Refused { error, email }),
+    // This request owns its append. The reply path cannot retry an uncertain commit.
+    event.outcome = None;
+    if matches!(
+        tokio::time::timeout(write_timeout, event.append_standalone(store.0, outcome)).await,
+        Ok(Ok(()))
+    ) {
+        return Ok(outcome);
     }
+    let cleanup_failed = outcome != Outcome::DeliveryFailed
+        && !matches!(
+            tokio::time::timeout(write_timeout, store.consume_email_token(token)).await,
+            Ok(Ok(()))
+        );
+    Err(DeliveryAppendFailure { cleanup_failed })
 }
 
 /// Replace the password for the active account at the normalized address.

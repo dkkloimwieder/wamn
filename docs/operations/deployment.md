@@ -750,7 +750,7 @@ The control Service selects that Deployment.
 Local platform deployment installs control without a UI upload. GCP integration for public control access remains unfinished.
 
 The org chart writes the control host and Service address to a route ConfigMap.
-The edge forwards `/api/` to the control Service and `/password/` to identity.
+The edge forwards `/api/` to the control Service and `/password/` to the identity password listener.
 The Rust web front serves platform UI files and generates its org configuration.
 Every other page reaches that prefix's `index.html`, including `/`, `/invite`, `/recover`, `/reset`, and control or project-environment audience paths.
 
@@ -769,7 +769,8 @@ It makes sure of the identity certificate, as it does in kind.
 ## Identity password configuration
 
 `wamn-identity serve --settings <path> --password-port <port>` reads one JSON file. The chart renders the issuer, public database connection, envelope provider, and mail mode into that file.
-The chart gives the web proxy access to the password port. Identity accepts a forwarded client IP on that port and uses the socket IP on the issuer port.
+The chart gives the web proxy access to the password port. Configure it with `identity.passwordPort`, which defaults to 8444.
+Identity accepts a forwarded client IP on that port. The general listener on 8443 uses the socket IP and returns 404 for password requests.
 The pod mounts the database credentials, TLS keys, local wrapping key, and Resend token as files.
 When `identity.authNats.tlsSecret` is set, the chart adds `global.nats.schedulerUrl`, the CA path, and the NATS limits to identity settings.
 Identity mounts `ca.crt` from that Secret.

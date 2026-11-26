@@ -955,6 +955,7 @@ The identity chart runs two replicas. Each replica limits password requests to e
 Password requests use `wamn_postgres::pool` with eight connections. SQLx flushes pending rollbacks before returning a connection to the pool.
 Rotation retains its dedicated database connection and issuer advisory lock.
 The web proxy sends password requests to a dedicated HTTPS listener. Its NetworkPolicy allows only the web proxy to reach that listener.
+The issuer listener returns 404 for password routes.
 Database counters enforce 60-second windows across replicas: 120 requests globally, 20 per source address, and five per account.
 Enrollment uses the principal ID for its account counter. Login uses a digest of the normalized email.
 The web proxy sends the client address in `X-Forwarded-For`. Identity uses the last address in that header on the dedicated listener and falls back to the TLS peer address if the header is absent.
@@ -974,8 +975,10 @@ User management shares the password request limits and uses the TLS peer address
 The service sends the one-time secret through Resend to that principal's stored email.
 A successful provider response means accepted for delivery, not confirmed inbox delivery.
 The service makes no automatic send retry and reports failed or uncertain sends as unavailable.
-If the mail provider accepts an invitation or recovery message, identity commits the credential and its event together.
-If delivery fails, identity tries to consume the new credential before it appends the refusal.
+Identity commits the invitation or recovery credential before sending mail.
+It appends the delivery result in a separate transaction.
+If the mail send fails, identity tries to consume the credential before it appends the result.
+If the append fails, identity tries to consume any credential that is still valid.
 
 `POST /users` accepts `email` and `display_name`.
 It creates the user of the email as `wamn:provisioning`, or reuses the user that has it, and answers 200 with `principal_id` and `enrolled`.

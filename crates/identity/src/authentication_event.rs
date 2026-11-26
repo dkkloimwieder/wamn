@@ -2,7 +2,7 @@
 
 use std::{fmt, net::IpAddr};
 
-use sqlx::PgConnection;
+use sqlx::{Connection as _, PgConnection};
 use uuid::Uuid;
 use wamn_identity_protocol::PrincipalId;
 use wamn_registry::OrgId;
@@ -213,6 +213,13 @@ impl Event {
         );
     }
 
+    /// Transfer the evidence to a writer that owns the request's only append.
+    pub fn take_for_append(&mut self) -> Self {
+        let mut handled = Self::new(self.event_type, self.address);
+        handled.outcome = None;
+        std::mem::replace(self, handled)
+    }
+
     /// Append without returning a generated value. The caller owns the transaction.
     pub async fn append(
         &self,
@@ -220,6 +227,20 @@ impl Event {
         outcome: Outcome,
     ) -> Result<(), sqlx::Error> {
         self.append_with_session(connection, outcome, None).await
+    }
+
+    /// Append in a separate transaction with a database statement deadline.
+    pub async fn append_standalone(
+        &self,
+        connection: &mut PgConnection,
+        outcome: Outcome,
+    ) -> Result<(), sqlx::Error> {
+        let mut tx = connection.begin().await?;
+        sqlx::raw_sql("SET LOCAL statement_timeout = '750ms'")
+            .execute(&mut *tx)
+            .await?;
+        self.append(&mut tx, outcome).await?;
+        tx.commit().await
     }
 
     pub(crate) async fn append_with_session(

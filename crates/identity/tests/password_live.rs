@@ -41,6 +41,98 @@ async fn new_user(client: &mut Client, name: &str) -> Principal {
 
 #[tokio::test]
 #[ignore = "requires: docker"]
+async fn email_delivery_records_acceptance_and_consumes_failed_credentials() {
+    use wamn_identity::authentication_event::{ClientAddress, Event, EventType, Outcome};
+    use wamn_identity::{identity::issuer::Issuer, password_requests};
+
+    let postgres = wamn_test_infrastructure::containers::start_postgres()
+        .await
+        .unwrap();
+    let database = common::system(&postgres).await;
+    let mut owner = connect(database.as_str()).await;
+    let mut admin = wamn_postgres::connect(database.as_str()).await.unwrap();
+    sqlx::raw_sql(sqlx::AssertSqlSafe(
+        wamn_platform_install::identity_role::grant_identity_issuer_surface_sql(),
+    ))
+    .execute(&mut admin)
+    .await
+    .unwrap();
+    let mut issuer = wamn_postgres::connect(database.as_str()).await.unwrap();
+    sqlx::raw_sql("SET ROLE wamn_identity_issuer")
+        .execute(&mut issuer)
+        .await
+        .unwrap();
+    let address = ClientAddress::Socket("192.0.2.14".parse().unwrap());
+
+    for (name, accepted, expected) in [
+        ("delivery-accepted", true, Some(Outcome::DeliveryAccepted)),
+        ("delivery-failed", false, Some(Outcome::DeliveryFailed)),
+        ("append-refused", true, None),
+    ] {
+        let user = new_user(&mut owner, name).await;
+        let principal = *user.id();
+        let token = issue_invitation(
+            &mut issuer,
+            &PlatformComponent::IdentityService.principal_id(),
+            &principal,
+        )
+        .await
+        .unwrap();
+        let hash = wamn_digest::bytes_sha256(token.secret().as_bytes()).to_string();
+        let token_consumed = |hash: &str| {
+            sqlx::query_scalar::<_, bool>(
+                "SELECT consumed_at IS NOT NULL FROM identity.password_token WHERE token_hash = $1",
+            )
+            .bind(hash.to_owned())
+        };
+        // The connection that observes the token is independent of the sender.
+        assert!(!token_consumed(&hash).fetch_one(&mut owner).await.unwrap());
+
+        if expected.is_none() {
+            sqlx::raw_sql(
+                "ALTER POLICY issuer_append ON identity.authentication_event WITH CHECK (false)",
+            )
+            .execute(&mut owner)
+            .await
+            .unwrap();
+        }
+        let mut event = Event::new(EventType::InvitationRequest, address);
+        event.principal_id = Some(principal);
+        let result =
+            password_requests::deliver(&mut Issuer(&mut issuer), &token, accepted, &mut event)
+                .await;
+        if let Some(expected) = expected {
+            assert_eq!(result.unwrap(), expected);
+        } else {
+            assert!(!result.unwrap_err().cleanup_failed);
+        }
+        let outcomes: Vec<String> = sqlx::query_scalar(
+            "SELECT outcome FROM identity.authentication_event
+             WHERE event_type = 'invitation_request' AND principal_id = $1",
+        )
+        .bind(sqlx::types::Uuid::from(principal))
+        .fetch_all(&mut owner)
+        .await
+        .unwrap();
+        assert_eq!(outcomes, expected.map(Outcome::code).as_slice());
+        let consumed = token_consumed(&hash).fetch_one(&mut owner).await.unwrap();
+        assert_eq!(consumed, expected != Some(Outcome::DeliveryAccepted));
+        if !consumed {
+            enroll_password(
+                &mut issuer,
+                &password_work(),
+                &principal,
+                token.secret(),
+                password(),
+            )
+            .await
+            .unwrap();
+        }
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires: docker"]
 async fn enrollment_preserves_identity_and_pat_and_consumes_all_invitations() {
     let postgres = wamn_test_infrastructure::containers::start_postgres()
         .await

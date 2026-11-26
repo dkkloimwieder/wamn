@@ -10,7 +10,8 @@ use anyhow::{Context as _, ensure};
 use common::host::{FIXTURE, fixture, ready, ready_host_pod};
 use common::request::{self, OtherEnv, until};
 use common::{
-    App, Cluster, Org, PLATFORM, active_project_cluster, exec, identity_pods, probe_image, run_job,
+    App, Cluster, Org, PLATFORM, active_project_cluster, exec, identity_pods, identity_port,
+    probe_image, run_job,
 };
 use k8s_openapi::api::core::v1::{Container, Pod, PodSpec, PodTemplateSpec, Service};
 use k8s_openapi::api::discovery::v1::EndpointSlice;
@@ -56,12 +57,25 @@ done
 exit 0
 "#;
 
-const PASSWORD_REQUEST: &str = r#"
+const IDENTITY_POST: &str = r#"
 set -o pipefail
-printf 'POST /password/recover HTTP/1.1\r\nHost: %s\r\nX-Forwarded-For: %s\r\nContent-Type: application/json\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}' "$2" "$3" |
+{
+    printf 'POST %s HTTP/1.1\r\nHost: %s\r\nX-Forwarded-For: %s\r\n' "$3" "$2" "$4"
+    if (( $# == 5 )); then
+        printf 'Authorization: Bearer %s\r\n' "$(cat "$5")"
+    fi
+    printf 'Content-Type: application/json\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}'
+} |
     timeout 10s openssl s_client -connect "$1" -servername "$2" -verify_hostname "$2" \
         -CAfile /etc/identity-ca/ca.crt -verify_return_error -quiet -ignore_unexpected_eof
 "#;
+
+async fn ready_identity(client: &kube::Client) -> anyhow::Result<(Pod, String)> {
+    let (service, pods) = identity_pods(client).await?;
+    let pod = pods.into_iter().find(ready).context("ready identity pod")?;
+    let name = service.metadata.name.context("identity Service name")?;
+    Ok((pod, format!("{name}.{PLATFORM}.svc.cluster.local")))
+}
 
 common::journey! {
     async fn envs_in_one_org_are_isolated() -> anyhow::Result<()> {
@@ -90,24 +104,12 @@ common::journey! {
         let cluster = &org.cluster;
         let client = &cluster.client;
         let host = ready_host_pod(&env, OBSERVE_DEADLINE).await?;
-        let host_ip = pod_ip(&host)?;
         let host_name = host.metadata.name.context("host pod name")?;
         let hosts = Api::namespaced(client.clone(), org.name.as_str());
-        let (service, pods) = identity_pods(client).await?;
-        let identity = pods.iter().find(|pod| ready(pod)).context("ready identity pod")?;
-        let identity_ip = pod_ip(identity)?;
-        let identity_host = format!("{}.{PLATFORM}.svc.cluster.local",
-            service.metadata.name.context("identity Service name")?);
-        let ports = identity.spec.as_ref().context("identity pod spec")?.containers
-            .iter().flat_map(|container| container.ports.iter().flatten());
-        let port = |name| -> anyhow::Result<u16> {
-            let port = ports.clone()
-                .find(|port| port.name.as_deref() == Some(name))
-                .with_context(|| format!("identity pod port {name}"))?;
-            Ok(u16::try_from(port.container_port)?)
-        };
-        let password = SocketAddr::new(identity_ip, port("password")?);
-        let general = SocketAddr::new(identity_ip, port("https")?);
+        let (identity, identity_host) = ready_identity(client).await?;
+        let identity_ip = pod_ip(&identity)?;
+        let password = SocketAddr::new(identity_ip, identity_port(&identity, "password")?);
+        let general = SocketAddr::new(identity_ip, identity_port(&identity, "https")?);
 
         let web_host = format!("{}.{}", org.name, cluster.outputs.base_domain);
         let reply = HttpClient::builder()
@@ -130,17 +132,24 @@ common::journey! {
         ensure!(matches!(result, "timeout" | "refused"),
             "host probe of identity's password listener at {password}: {result}");
 
+        // Only admitted control requests reach the general listener's source counter.
+        let control = hosts.list(&ListParams::default().labels("app.kubernetes.io/component=wamn-control"))
+            .await?.items.into_iter().find(ready).context("ready control pod")?;
+        let control_ip = pod_ip(&control)?;
+        let control_name = control.metadata.name.context("control pod name")?;
         let forwarded = Ipv6Addr::from(
             0x2001_0db8_0000_0000_0000_0000_0000_0000u128 | (uuid::Uuid::new_v4().as_u128() >> 64),
         );
-        let reply = exec(&hosts, &host_name, &AttachParams::default(), [
-            "bash", "-ec", PASSWORD_REQUEST, "probe",
-            &general.to_string(), &identity_host, &forwarded.to_string(),
+        let reply = exec(&hosts, &control_name, &AttachParams::default(), [
+            "bash", "-ec", IDENTITY_POST, "probe",
+            &general.to_string(), &identity_host, "/invitations", &forwarded.to_string(),
+            "/var/run/secrets/wamn-identity/token",
         ]).await?;
         ensure!(reply.lines().next().and_then(|line| line.split_whitespace().nth(1)) == Some("400"),
-            "identity did not process the host request on the general listener: {reply}");
+            "identity did not process control's invitation request: {reply}");
+
         let mut system = cluster.observe_system().await?;
-        let socket_bucket = format!("source:{host_ip}");
+        let socket_bucket = format!("source:{control_ip}");
         let recorded: Vec<String> = sqlx::query_scalar(
             "SELECT bucket FROM identity.password_attempt WHERE bucket IN ($1, $2)",
         )
@@ -149,6 +158,47 @@ common::journey! {
         .fetch_all(&mut system.connection)
         .await?;
         ensure!(recorded == [socket_bucket], "identity recorded source buckets {recorded:?}");
+        let event = timeout(Duration::from_secs(5), async {
+            loop {
+                let event = sqlx::query_as::<_, (String, String, Option<String>)>(
+                    "SELECT host(ip_address), ip_source, host(peer_ip_address)
+                     FROM identity.authentication_event
+                     WHERE event_type = 'invitation_request' AND outcome = 'request_invalid'
+                       AND org = $1 AND workload = $2",
+                )
+                .bind(org.name.as_str())
+                .bind(name::control_service_account(&org.name))
+                .fetch_optional(&mut system.connection)
+                .await?;
+                if let Some(event) = event {
+                    break anyhow::Ok(event);
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        }).await.context("identity did not record control's malformed invitation request")??;
+        ensure!(event == (control_ip.to_string(), "socket".into(), None),
+            "identity recorded unexpected invitation address provenance: {event:?}");
+        Ok(())
+    }
+}
+
+common::journey! {
+    async fn host_password_sign_in_on_identity_general_port_returns_404() -> anyhow::Result<()> {
+        let env = timeout(APPLY_DEADLINE, async {
+            Org::create().await?.apply(FIXTURE).await
+        }).await.context("apply an org environment for the identity probe")??;
+        let client = &env.org.cluster.client;
+        let host = ready_host_pod(&env, OBSERVE_DEADLINE).await?;
+        let host_name = host.metadata.name.context("host pod name")?;
+        let hosts = Api::namespaced(client.clone(), env.org.name.as_str());
+        let (identity, identity_host) = ready_identity(client).await?;
+        let general = SocketAddr::new(pod_ip(&identity)?, identity_port(&identity, "https")?);
+        let reply = exec(&hosts, &host_name, &AttachParams::default(), [
+            "bash", "-ec", IDENTITY_POST, "probe",
+            &general.to_string(), &identity_host, "/password/session", "192.0.2.42",
+        ]).await?;
+        ensure!(reply.lines().next().and_then(|line| line.split_whitespace().nth(1)) == Some("404"),
+            "identity's general listener answered the host password sign-in: {reply}");
         Ok(())
     }
 }

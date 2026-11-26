@@ -217,6 +217,25 @@ impl Issuer<'_> {
         Ok(email)
     }
 
+    pub(crate) async fn consume_email_token(
+        &mut self,
+        token: &crate::password::Invitation,
+    ) -> Result<(), sqlx::Error> {
+        let digest = wamn_digest::bytes_sha256(token.secret().as_bytes());
+        let mut tx = begin_user_write(self.0).await?;
+        sqlx::raw_sql("SET LOCAL statement_timeout = '750ms'")
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query(
+            "UPDATE identity.password_token SET consumed_at = clock_timestamp()
+             WHERE token_hash = $1 AND consumed_at IS NULL",
+        )
+        .bind(digest.to_string())
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await
+    }
+
     pub async fn enroll(
         &mut self,
         work: &PasswordWork,

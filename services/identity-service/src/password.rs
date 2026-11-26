@@ -297,14 +297,15 @@ async fn handle(
                 return response(StatusCode::OK, "application/json", serde_json::to_vec(&serde_json::json!({"status":"password_reset", "notification": if notified { "accepted_for_delivery" } else { "unavailable" }})).expect("fixed response"));
             }
             let completed = password_requests::pad_recovery(async {
-                match password_requests::recover(&mut store, &email, event).await {
-                    Ok(pending) => {
+                match password_requests::recover(&mut Issuer(&mut database), &email, event).await {
+                    Ok(token) => {
                         let accepted = state
                             .mail
-                            .reset(&email, pending.token.secret(), pending.token.expires_at())
+                            .reset(&email, token.secret(), token.expires_at())
                             .await
                             .is_ok();
-                        pending.finish(accepted, event).await;
+                        authentication_event::finish_delivery(database, token, accepted, event)
+                            .await;
                     }
                     Err(error) => {
                         let _ = delivery_failure(&error, &email, event);
@@ -541,6 +542,38 @@ pub(crate) mod tests {
         );
     }
 
+    async fn control_token_review(service: &mut IdentityService) -> tokio::task::JoinHandle<()> {
+        let review_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let review_endpoint = format!("http://{}", review_listener.local_addr().unwrap());
+        let state = Arc::get_mut(&mut service.inner).unwrap();
+        let mut config = kube::Config::new(review_endpoint.parse().unwrap());
+        config.default_namespace = "platform".into();
+        config.auth_info.token = Some("fixture-reviewer".into());
+        state.kubernetes =
+            Some(wamn_kubernetes::client::KubernetesApi::from_config(config).unwrap());
+        tokio::spawn(async move {
+            while let Ok((tcp, _)) = review_listener.accept().await {
+                let handler = service_fn(|_: Request<Incoming>| async {
+                    let status = json!({"status": {
+                        "authenticated": true,
+                        "audiences": [wamn_identity_client::TOKEN_AUDIENCE],
+                        "user": {"username": "system:serviceaccount:demo:wamn-control-demo"},
+                    }});
+                    Ok::<_, Infallible>(response(
+                        StatusCode::CREATED,
+                        "application/json",
+                        status.to_string().into_bytes(),
+                    ))
+                });
+                hyper::server::conn::http1::Builder::new()
+                    .keep_alive(false)
+                    .serve_connection(TokioIo::new(tcp), handler)
+                    .await
+                    .unwrap();
+            }
+        })
+    }
+
     #[tokio::test]
     #[ignore = "requires: docker"]
     async fn general_listener_throttles_and_records_the_socket_ip() {
@@ -557,7 +590,7 @@ pub(crate) mod tests {
             .unwrap()
             .write_all(&[42; 32])
             .unwrap();
-        let service = IdentityService::connect(
+        let mut service = IdentityService::connect(
             IdentityConfig::new(issuer, url.as_str())
                 .unwrap()
                 .with_local_mail(scratch.path().join("outbox.jsonl")),
@@ -565,6 +598,7 @@ pub(crate) mod tests {
         )
         .await
         .unwrap();
+        let review_task = control_token_review(&mut service).await;
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let server = tokio::spawn(async move {
@@ -588,10 +622,11 @@ pub(crate) mod tests {
             .timeout(Duration::from_secs(5))
             .build()
             .unwrap();
-        let endpoint = format!("http://{address}/password/recover");
+        let endpoint = format!("http://{address}/invitations");
         for _ in 0..20 {
             let reply = client
                 .post(&endpoint)
+                .bearer_auth("fixture-token")
                 .json(&json!({}))
                 .send()
                 .await
@@ -602,6 +637,7 @@ pub(crate) mod tests {
         let forwarded = "192.0.2.7";
         let reply = client
             .post(&endpoint)
+            .bearer_auth("fixture-token")
             .header("x-forwarded-for", forwarded)
             .json(&json!({}))
             .send()
@@ -620,7 +656,7 @@ pub(crate) mod tests {
                 let event = sqlx::query_as::<_, (String, String, Option<String>)>(
                     "SELECT host(ip_address), ip_source, host(peer_ip_address)
                      FROM identity.authentication_event
-                     WHERE event_type = 'password_recovery_request' AND outcome = 'source_rate_limited'",
+                     WHERE event_type = 'invitation_request' AND outcome = 'source_rate_limited'",
                 )
                 .fetch_optional(&mut admin.client)
                 .await
@@ -630,9 +666,12 @@ pub(crate) mod tests {
                 }
                 tokio::time::sleep(Duration::from_millis(20)).await;
             }
-        }).await.unwrap();
+        })
+        .await
+        .unwrap();
         assert_eq!(recorded, (address.ip().to_string(), "socket".into(), None));
         server.abort();
+        review_task.abort();
     }
 
     /// Create the issuer login as CNPG would, with the identity issuer surface.
@@ -743,35 +782,7 @@ pub(crate) mod tests {
         )
         .await
         .unwrap();
-        let review_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let review_endpoint = format!("http://{}", review_listener.local_addr().unwrap());
-        let state = Arc::get_mut(&mut service.inner).unwrap();
-        let mut config = kube::Config::new(review_endpoint.parse().unwrap());
-        config.default_namespace = "platform".into();
-        config.auth_info.token = Some("fixture-reviewer".into());
-        state.kubernetes =
-            Some(wamn_kubernetes::client::KubernetesApi::from_config(config).unwrap());
-        let review_task = tokio::spawn(async move {
-            while let Ok((tcp, _)) = review_listener.accept().await {
-                let handler = service_fn(|_: Request<Incoming>| async {
-                    let status = json!({"status": {
-                        "authenticated": true,
-                        "audiences": [wamn_identity_client::TOKEN_AUDIENCE],
-                        "user": {"username": "system:serviceaccount:demo:wamn-control-demo"},
-                    }});
-                    Ok::<_, Infallible>(response(
-                        StatusCode::CREATED,
-                        "application/json",
-                        status.to_string().into_bytes(),
-                    ))
-                });
-                hyper::server::conn::http1::Builder::new()
-                    .keep_alive(false)
-                    .serve_connection(TokioIo::new(tcp), handler)
-                    .await
-                    .unwrap();
-            }
-        });
+        let review_task = control_token_review(&mut service).await;
         // Each delivered mail is the next line of the local mail file.
         let mut delivered = 0;
         let mut next_mail = || {

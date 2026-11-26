@@ -909,6 +909,20 @@ pub(crate) async fn identity_pods(client: &kube::Client) -> anyhow::Result<(Serv
     Ok((service, pods))
 }
 
+/// Use the pod's named identity port so chart overrides reach direct callers.
+pub(crate) fn identity_port(pod: &Pod, name: &str) -> anyhow::Result<u16> {
+    let port = pod
+        .spec
+        .as_ref()
+        .context("identity pod spec")?
+        .containers
+        .iter()
+        .flat_map(|container| container.ports.iter().flatten())
+        .find(|port| port.name.as_deref() == Some(name))
+        .with_context(|| format!("identity pod has no {name} port"))?;
+    Ok(u16::try_from(port.container_port)?)
+}
+
 /// Read the owner's invitation from the identity pods' local outbox.
 async fn invitation(client: &kube::Client, email: &str) -> anyhow::Result<(PrincipalId, String)> {
     let api = Api::<Pod>::namespaced(client.clone(), PLATFORM);
@@ -959,26 +973,19 @@ async fn session(
 ) -> anyhow::Result<String> {
     let (service, pods) = identity_pods(client).await?;
     let pod = pods
-        .into_iter()
-        .find(|pod| {
-            pod.status
-                .as_ref()
-                .and_then(|status| status.conditions.as_ref())
-                .is_some_and(|conditions| {
-                    conditions
-                        .iter()
-                        .any(|condition| condition.type_ == "Ready" && condition.status == "True")
-                })
-        })
-        .and_then(|pod| pod.metadata.name)
+        .iter()
+        .find(|pod| host::ready(pod))
         .context("no identity pod is ready")?;
+    let port = identity_port(pod, "password")?;
+    let pod_name = pod.metadata.name.as_deref().context("identity pod name")?;
     let ca = Api::<ConfigMap>::namespaced(client.clone(), "hosts")
         .get("identity-ca")
         .await?
         .data
         .and_then(|mut data| data.remove("ca.crt"))
         .context("the identity CA has no ca.crt")?;
-    let forward = PortForward::start(Api::namespaced(client.clone(), PLATFORM), &pod, 8443).await?;
+    let forward =
+        PortForward::start(Api::namespaced(client.clone(), PLATFORM), pod_name, port).await?;
     // The serving certificate names the Service address.
     let host = format!(
         "{}.{PLATFORM}.svc.cluster.local",

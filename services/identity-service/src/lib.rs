@@ -141,6 +141,12 @@ pub(crate) struct Database {
     pub(crate) client: Client,
 }
 
+impl AsMut<Client> for Database {
+    fn as_mut(&mut self) -> &mut Client {
+        &mut self.client
+    }
+}
+
 impl fmt::Debug for Database {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
@@ -263,7 +269,7 @@ impl IdentityService {
         listener: Listener,
     ) -> Result<Response<Full<Bytes>>, Infallible> {
         let post = request.method() == Method::POST && request.uri().query().is_none();
-        let event_type = post
+        let event_type = (listener == Listener::Password && post)
             .then(|| authentication_event::password_event(request.uri().path()))
             .flatten();
         let Some((address, ip_source)) = client_address(listener, request.headers(), peer) else {

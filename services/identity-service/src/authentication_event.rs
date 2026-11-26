@@ -3,8 +3,11 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use sqlx::{Connection as _, PgConnection};
+use sqlx::PgConnection;
 use wamn_identity::authentication_event::{Event, EventType, Outcome};
+use wamn_identity::identity::issuer::Issuer;
+use wamn_identity::password::Invitation;
+use wamn_identity::password_requests;
 use wamn_identity_protocol::nats::{SIGN_HOST_USER_PATH, SIGN_USER_PATH};
 
 use crate::Inner;
@@ -42,10 +45,10 @@ pub(super) async fn append(
 ) -> bool {
     let result = tokio::time::timeout(APPEND_TIMEOUT, async {
         if let Some(connection) = connection {
-            return write(connection, event, outcome).await;
+            return event.append_standalone(connection, outcome).await;
         }
         let mut connection = inner.pool.acquire().await?;
-        write(&mut connection, event, outcome).await
+        event.append_standalone(&mut connection, outcome).await
     })
     .await;
     if matches!(result, Ok(Ok(()))) {
@@ -58,17 +61,30 @@ pub(super) async fn append(
     false
 }
 
-async fn write(
-    connection: &mut PgConnection,
-    event: &Event,
-    outcome: Outcome,
-) -> Result<(), sqlx::Error> {
-    let mut tx = connection.begin().await?;
-    sqlx::raw_sql("SET LOCAL statement_timeout = '750ms'")
-        .execute(&mut *tx)
-        .await?;
-    event.append(&mut tx, outcome).await?;
-    tx.commit().await
+pub(super) async fn finish_delivery(
+    mut connection: impl AsMut<PgConnection> + Send + 'static,
+    token: Invitation,
+    accepted: bool,
+    event: &mut Event,
+) -> bool {
+    let mut event = event.take_for_append();
+    // Once mail returns, complete the bounded writes even if the request deadline elapses.
+    tokio::spawn(async move {
+        let mut issuer = Issuer(connection.as_mut());
+        match password_requests::deliver(&mut issuer, &token, accepted, &mut event).await {
+            Ok(outcome) => outcome == Outcome::DeliveryAccepted,
+            Err(failure) => {
+                tracing::warn!(
+                    event_type = event.event_type.code(),
+                    cleanup_failed = failure.cleanup_failed,
+                    "authentication delivery event append failed"
+                );
+                false
+            }
+        }
+    })
+    .await
+    .unwrap_or(false)
 }
 
 /// Keep best-effort appends off the request's reply path and bound concurrent work.
