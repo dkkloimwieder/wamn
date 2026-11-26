@@ -200,12 +200,12 @@ pub fn prepare_payload(repository: &Path, chart: &Path) -> anyhow::Result<()> {
     std::fs::create_dir_all(&platform)?;
     // Helm stores every chart file in the release record, including unrendered assets.
     // Install the stamped application chart from this leaf to keep the bundle out of that record.
-    let application = platform.join("application");
-    std::fs::create_dir(&application)?;
+    let app = platform.join("application");
+    std::fs::create_dir(&app)?;
     for name in ["Chart.yaml", "values.yaml"] {
-        std::fs::copy(chart.join(name), application.join(name))?;
+        std::fs::copy(chart.join(name), app.join(name))?;
     }
-    copy_package_output(&chart.join("templates"), &application.join("templates"))?;
+    copy_package_output(&chart.join("templates"), &app.join("templates"))?;
     for (name, source) in [
         ("infra", "deploy/charts/infrastructure"),
         ("platform", "deploy/charts/platform"),

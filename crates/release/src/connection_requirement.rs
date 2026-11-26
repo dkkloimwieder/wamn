@@ -37,7 +37,7 @@ pub fn palette_connections<'a>(
 #[cfg(test)]
 mod palette_tests {
     #[test]
-    fn configured_connections_keep_each_application_declaration_owner() {
+    fn configured_connections_keep_each_app_declaration_owner() {
         let packages: Vec<wamn_component_policy::PackageManifest> = ["orders", "shipping"]
             .into_iter()
             .map(|id| {

@@ -19,18 +19,18 @@ pub fn diagnostics(root: &Path) -> Vec<String> {
     version_identity::report_problems(root, &mut problems);
     dependency_identity::report_problems(root, &mut problems);
     platform_import_registry::report_problems(root, &mut problems);
-    if let Err(error) = environment_schema(root, true) {
+    if let Err(error) = env_schema(root, true) {
         problems.push(format!("{error:#}"));
     }
     problems.0
 }
 
 /// Generate the environment schema or verify that the tracked copy is current.
-pub fn environment_schema(root: &Path, check: bool) -> anyhow::Result<()> {
+pub fn env_schema(root: &Path, check: bool) -> anyhow::Result<()> {
     use anyhow::Context as _;
 
-    let path = root.join("crates/environment/environment.schema.json");
-    let generated = wamn_environment::environment::document::schema_json()?;
+    let path = root.join("crates/env/env.schema.json");
+    let generated = wamn_env::env::document::schema_json()?;
     if check {
         let committed = std::fs::read_to_string(&path)
             .with_context(|| format!("read environment schema {}", path.display()))?;

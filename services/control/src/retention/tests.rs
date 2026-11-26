@@ -1,7 +1,7 @@
 use std::cell::Cell;
 
 use anyhow::Context as _;
-use wamn_authentication::administration::ApplicationTarget;
+use wamn_authentication::administration::AppTarget;
 use wamn_identity::identity::{create_user, org};
 use wamn_platform_install::provision_org::{CONTROL_SECRET, create_org_logins};
 use wamn_platform_install::provision_system::SYSTEM_DATABASE;
@@ -61,11 +61,11 @@ async fn maintenance_copies_current_authority_past_an_unreachable_database() -> 
     .execute(&mut target)
     .await?;
     let issuer = "https://identity.example.invalid";
-    wamn_environment::environment_fill::fill(
+    wamn_env::env_fill::fill(
         &mut authority,
         &mut target,
         issuer,
-        ApplicationTarget {
+        AppTarget {
             org: &org,
             project: &project,
             env: &prod,

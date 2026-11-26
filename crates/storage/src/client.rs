@@ -74,10 +74,10 @@ fn build_s3_store(
         .with_client_options(
             ClientOptions::new()
                 .with_allow_http(endpoint.starts_with("http://"))
-                .with_timeout(wamn_application::MAX_HOST_CALL_DURATION),
+                .with_timeout(wamn_app::MAX_HOST_CALL_DURATION),
         )
         .with_retry(RetryConfig {
-            retry_timeout: wamn_application::MAX_HOST_CALL_DURATION,
+            retry_timeout: wamn_app::MAX_HOST_CALL_DURATION,
             ..Default::default()
         })
         .build()?;
@@ -92,11 +92,9 @@ fn build_gcs_store(container: &str) -> anyhow::Result<Arc<object_store::gcp::Goo
         .with_credentials(credentials)
         .with_signing_credentials(signing_credentials)
         .with_bucket_name(container)
-        .with_client_options(
-            ClientOptions::new().with_timeout(wamn_application::MAX_HOST_CALL_DURATION),
-        )
+        .with_client_options(ClientOptions::new().with_timeout(wamn_app::MAX_HOST_CALL_DURATION))
         .with_retry(RetryConfig {
-            retry_timeout: wamn_application::MAX_HOST_CALL_DURATION,
+            retry_timeout: wamn_app::MAX_HOST_CALL_DURATION,
             ..Default::default()
         })
         .build()?;

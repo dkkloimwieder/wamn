@@ -8,13 +8,13 @@ mod common;
 use std::time::Duration;
 
 use anyhow::{Context as _, ensure};
-use common::Application;
+use common::App;
 use common::request;
 use serde_json::{Value, json};
 use tokio::time::Instant;
 use wamn_test_infrastructure::scratch::ScratchRoot;
 
-const APPLICATION: &str = "platform_fixture";
+const APP: &str = "platform_fixture";
 const SIBLING: &str = "platform_fixture-fixture";
 const LIST: &str = "platform-fixture:widget/list@2.1.1";
 const ISSUE: &str = "platform-fixture:number/issue@2.1.1";
@@ -40,7 +40,7 @@ fn issue(key: &str) -> Value {
 }
 
 struct Workflows<'a> {
-    application: &'a Application,
+    app: &'a App,
     scratch: ScratchRoot,
 }
 
@@ -48,11 +48,11 @@ impl Workflows<'_> {
     /// Run one `wamn workflow` verb on the application host with the owner session: an
     /// API service cannot hold the admin role that workflow administration needs.
     async fn wamn(&self, args: &[&str]) -> anyhow::Result<String> {
-        let mut command = self.application.environment.org.command();
-        command.arg("workflow").args(args).args([
-            "--host-url",
-            &format!("http://{}", self.application.routes.host),
-        ]);
+        let mut command = self.app.env.org.command();
+        command
+            .arg("workflow")
+            .args(args)
+            .args(["--host-url", &format!("http://{}", self.app.routes.host)]);
         request::output(command).await
     }
 
@@ -79,12 +79,12 @@ impl Workflows<'_> {
     /// POST a body to a Request workflow's path with the owner session, which holds the
     /// workflow's permission.
     async fn request(&self, path: &str, body: &Value) -> anyhow::Result<(u16, Value)> {
-        let routes = &self.application.routes;
+        let routes = &self.app.routes;
         let response = routes
             .client
-            .post(format!("{}/{APPLICATION}/flow{path}", routes.endpoint))
+            .post(format!("{}/{APP}/flow{path}", routes.endpoint))
             .header("Host", &routes.host)
-            .bearer_auth(&self.application.environment.org.token)
+            .bearer_auth(&self.app.env.org.token)
             .json(body)
             .send()
             .await?;
@@ -106,9 +106,9 @@ common::journey! {
     /// W1 to W5: a Request graph that reads runs inline, one that writes runs durably, Run
     /// now admits a run, a minute Schedule admits a run, and a Data change admits a run.
     async fn each_trigger_runs_its_workflow() -> anyhow::Result<()> {
-        let application = Application::prepare(&request::fixture(APPLICATION)).await?;
+        let app = App::prepare(&request::fixture(APP)).await?;
         let workflows = Workflows {
-            application: &application,
+            app: &app,
             scratch: ScratchRoot::create()?,
         };
         // The Schedule and Data change entries give an entry output that no operation
@@ -125,7 +125,7 @@ common::journey! {
             )
             .await?;
         let change =
-            json!({"data-change": {"package": APPLICATION, "entity": "counter", "ops": ["insert"]}});
+            json!({"data-change": {"package": APP, "entity": "counter", "ops": ["insert"]}});
         workflows
             .enable(&graph("change", &change, ISSUE, false), Some("admin"))
             .await?;
@@ -151,7 +151,7 @@ common::journey! {
                 None,
             )
             .await?;
-        let mut database = application.environment.observe().await?;
+        let mut database = app.env.observe().await?;
 
         let (status, body) = workflows.request("/inline", &json!([{}])).await?;
         ensure!(
@@ -217,7 +217,7 @@ common::journey! {
         );
 
         let key = format!("w5-{}", uuid::Uuid::new_v4().simple());
-        application
+        app
             .routes
             .post(
                 "/counter/create",

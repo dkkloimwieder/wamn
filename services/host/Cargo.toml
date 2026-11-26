@@ -6,7 +6,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-wamn-application.workspace = true
+wamn-app.workspace = true
 wamn-package.workspace = true
 wamn-routes.workspace = true
 wamn-workflow-graph.workspace = true

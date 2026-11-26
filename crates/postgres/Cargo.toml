@@ -6,7 +6,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-wamn-application.workspace = true
+wamn-app.workspace = true
 wamn-digest.workspace = true
 wamn-package.workspace = true
 tracing.workspace = true

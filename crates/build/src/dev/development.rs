@@ -2,8 +2,8 @@
 
 use std::collections::BTreeSet;
 use std::path::Path;
-use wamn_environment::environment::document::EnvironmentFile;
-use wamn_registry::ApplicationName;
+use wamn_env::env::document::EnvFile;
+use wamn_registry::AppName;
 use wamn_release::release_package::RegistryPackagePublisher;
 
 use super::{Deploy, WatchInputs};
@@ -18,7 +18,7 @@ pub struct Development<'a> {
     build: &'a SourceBuilder<'a>,
     configuration: &'a Path,
     root: &'a Path,
-    first: (ApplicationName, Vec<PreparedSource>),
+    first: (AppName, Vec<PreparedSource>),
 }
 
 impl<'a> Development<'a> {
@@ -61,7 +61,7 @@ impl<'a> Development<'a> {
         let mut first = Some(first);
         super::run(source, shutdown, async |source| {
             let result = async {
-                let (application, sources) = if let Some(pass) = first.take() {
+                let (app, sources) = if let Some(pass) = first.take() {
                     pass
                 } else {
                     let pass = prepare(configuration, root).await?;
@@ -72,10 +72,9 @@ impl<'a> Development<'a> {
                     }
                     pass
                 };
-                let (application, digest) =
-                    source_deploy::publish_development(build, publisher, application, sources)
-                        .await?;
-                deployer.deploy(configuration, application, digest).await
+                let (app, digest) =
+                    source_deploy::publish_development(build, publisher, app, sources).await?;
+                deployer.deploy(configuration, app, digest).await
             }
             .await;
             if watching && let Err(error) = &result {
@@ -90,10 +89,10 @@ impl<'a> Development<'a> {
 async fn prepare(
     configuration: &Path,
     root: &Path,
-) -> anyhow::Result<(ApplicationName, Vec<PreparedSource>)> {
-    let document = EnvironmentFile::compile(configuration)?;
-    let application = document.only_application()?.clone();
-    let project = document.into_application(&application)?;
+) -> anyhow::Result<(AppName, Vec<PreparedSource>)> {
+    let document = EnvFile::compile(configuration)?;
+    let app = document.only_app()?.clone();
+    let project = document.into_app(&app)?;
     source_deploy::sources(&project, root).await
 }
 

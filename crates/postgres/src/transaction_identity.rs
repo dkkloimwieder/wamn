@@ -6,12 +6,12 @@ use postgres_protocol::escape;
 use postgres_protocol::escape::escape_literal;
 use sqlx::{PgConnection, Row as _};
 use tracing::Instrument as _;
-use wamn_application::database::SqlError;
-use wamn_application::session_identity::{SessionIdentity, validate_sql_identity};
+use wamn_app::database::SqlError;
+use wamn_app::session_identity::{SessionIdentity, validate_sql_identity};
 use wamn_identity_protocol::AuthorityClass;
 use wamn_package::canonical_name::CanonicalName;
 use wamn_principal::PrincipalId;
-use wamn_registry::ApplicationName;
+use wamn_registry::AppName;
 
 use crate::map_pg_error;
 
@@ -20,11 +20,11 @@ pub async fn bind_transaction_identity(
     connection: &mut PgConnection,
     principal: &PrincipalId,
     role: &str,
-    application: &str,
+    app: &str,
     operation: Option<&str>,
     runner: Option<&str>,
 ) -> Result<(), sqlx::Error> {
-    let statement = transaction_identity_sql(principal, role, application, operation, runner);
+    let statement = transaction_identity_sql(principal, role, app, operation, runner);
     sqlx::raw_sql(sqlx::AssertSqlSafe(statement))
         .execute(connection)
         .await?;
@@ -35,17 +35,17 @@ pub async fn bind_transaction_identity(
 pub fn transaction_identity_sql(
     principal: &PrincipalId,
     role: &str,
-    application: &str,
+    app: &str,
     operation: Option<&str>,
     runner: Option<&str>,
 ) -> String {
     let role = escape_literal(role);
-    let application = escape_literal(application);
+    let app = escape_literal(app);
     let operation = operation.map(escape_literal);
     let runner = runner.map(escape_literal);
     format!(
         "INSERT INTO platform.tx_identity (principal_id, role, app, operation, runner) \
-         VALUES ('{principal}'::uuid, {role}, {application}, {}, {})",
+         VALUES ('{principal}'::uuid, {role}, {app}, {}, {})",
         operation.as_deref().unwrap_or("NULL"),
         runner.as_deref().unwrap_or("NULL"),
     )
@@ -95,7 +95,7 @@ pub struct TransactionIdentity<'a> {
     pub role: Option<&'a str>,
     pub principal: Option<&'a PrincipalId>,
     pub operation: Option<&'a CanonicalName>,
-    pub application: Option<&'a ApplicationName>,
+    pub app: Option<&'a AppName>,
 }
 
 impl<'a> From<&'a SessionIdentity> for TransactionIdentity<'a> {
@@ -106,7 +106,7 @@ impl<'a> From<&'a SessionIdentity> for TransactionIdentity<'a> {
             role: identity.role.as_deref(),
             principal: identity.user_id.as_ref(),
             operation: identity.operation.as_ref(),
-            application: identity.application.as_ref(),
+            app: identity.app.as_ref(),
         }
     }
 }
@@ -124,7 +124,7 @@ pub fn prepare_identity(
         role,
         principal,
         operation,
-        application,
+        app,
     } = *identity;
     // The project selected this connection credential. Refuse malformed values
     // before opening its transaction.
@@ -144,7 +144,7 @@ pub fn prepare_identity(
     let bind = transaction_identity_sql(
         principal,
         role.unwrap_or_default(),
-        application.map_or("", ApplicationName::as_str),
+        app.map_or("", AppName::as_str),
         operation.map(CanonicalName::as_str),
         runner,
     );

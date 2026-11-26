@@ -4,7 +4,7 @@
 //! identify existing host invocations; a trace supplies no authorization.
 
 use tracing::{Instrument as _, instrument::WithSubscriber as _};
-use wamn_application::ingress::{AuthenticatedCaller, CredentialType, Header};
+use wamn_app::ingress::{AuthenticatedCaller, CredentialType, Header};
 use wash_runtime::engine::ctx::ActiveCtx;
 
 /// Capture incoming HTTP trace fields at the authentication import boundary.
@@ -38,7 +38,7 @@ pub fn request_trace(headers: &[Header]) -> InvocationTrace {
 pub struct InvocationSite<'a> {
     pub project_env_key: &'a wamn_registry::ProjectEnvKey,
     pub project: &'a wamn_registry::ProjectId,
-    pub environment: &'a wamn_registry::EnvName,
+    pub env: &'a wamn_registry::EnvName,
     pub graph_id: &'a str,
     pub graph_version: u32,
     pub node_id: &'a str,
@@ -59,7 +59,7 @@ pub fn invocation_span(
         "wamn.component.invoke",
         wamn.project_env_key = %site.project_env_key,
         wamn.project = %site.project,
-        wamn.environment = %site.environment,
+        wamn.env = %site.env,
         wamn.graph_id = %site.graph_id,
         wamn.graph_version = site.graph_version,
         wamn.component_digest = %site.component_digest,

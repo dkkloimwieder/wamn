@@ -1,6 +1,6 @@
 //! Protected edge routes refuse requests pending the edge identity design.
 
-use wamn_application::ingress::{
+use wamn_app::ingress::{
     AuthRejection, AuthenticatedCaller, AuthenticationRequest, RouteAuthenticator,
     signature_unauthorized, unauthorized,
 };

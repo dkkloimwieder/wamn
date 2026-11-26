@@ -13,13 +13,13 @@ use wamn_build::{
 const ROLLBACK_FIXTURE: &str = "platform_fixture";
 
 /// The application roots: each directory under `apps/` with a `wamn.k`.
-pub(super) fn applications(root: &Path) -> Result<Vec<PathBuf>> {
-    let mut applications = std::fs::read_dir(root.join("apps"))?
+pub(super) fn apps(root: &Path) -> Result<Vec<PathBuf>> {
+    let mut apps = std::fs::read_dir(root.join("apps"))?
         .map(|entry| entry.map(|entry| entry.path()))
         .collect::<std::io::Result<Vec<_>>>()?;
-    applications.retain(|path| path.join("wamn.k").is_file());
-    applications.sort_unstable();
-    Ok(applications)
+    apps.retain(|path| path.join("wamn.k").is_file());
+    apps.sort_unstable();
+    Ok(apps)
 }
 
 pub(super) async fn run(root: &Path) -> Result<()> {
@@ -27,7 +27,7 @@ pub(super) async fn run(root: &Path) -> Result<()> {
         .context("set DATABASE_URL to build the rollback fixtures with PostgreSQL")?;
     let describe = DescribeMode::from_options(Some(&database_url), true, false)?;
     let mut pending = VecDeque::new();
-    for path in applications(root)? {
+    for path in apps(root)? {
         let source = wamn_build::prepare_source(&path)
             .await
             .with_context(|| format!("read application {}", path.display()))?;

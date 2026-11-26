@@ -233,7 +233,7 @@ impl Drop for PendingRead<'_> {
 struct ProjectReader {
     database: std::sync::Weak<wamn_postgres::WamnPostgres>,
     project: wamn_registry::ProjectId,
-    environment: wamn_registry::EnvName,
+    env: wamn_registry::EnvName,
 }
 
 /// Connection credentials selected through the project platform pool.
@@ -276,12 +276,12 @@ impl ConnectionCredentials {
         mut self,
         database: std::sync::Weak<wamn_postgres::WamnPostgres>,
         project: &wamn_registry::ProjectId,
-        environment: &wamn_registry::EnvName,
+        env: &wamn_registry::EnvName,
     ) -> Self {
         self.project = Some(ProjectReader {
             database,
             project: project.to_owned(),
-            environment: environment.to_owned(),
+            env: env.to_owned(),
         });
         self
     }
@@ -289,14 +289,14 @@ impl ConnectionCredentials {
     pub(crate) fn project_connections(
         &self,
         project: &wamn_registry::ProjectId,
-        environment: &wamn_registry::EnvName,
+        env: &wamn_registry::EnvName,
     ) -> anyhow::Result<Arc<wamn_postgres::WamnPostgres>> {
         let target = self
             .project
             .as_ref()
             .context("project database unavailable")?;
         anyhow::ensure!(
-            &target.project == project && &target.environment == environment,
+            &target.project == project && &target.env == env,
             "connection project mismatch"
         );
         target
@@ -351,10 +351,10 @@ impl ConnectionCredentials {
     pub async fn connection_fact(
         &self,
         project: &wamn_registry::ProjectId,
-        environment: &wamn_registry::EnvName,
+        env: &wamn_registry::EnvName,
         id: &uuid::Uuid,
     ) -> anyhow::Result<Option<crate::connection_memory::ConnectionFact>> {
-        let database = self.project_connections(project, environment)?;
+        let database = self.project_connections(project, env)?;
         let row = crate::project_connections::connection_fact(&database, project, id).await?;
         Ok(row.map(|row| crate::connection_memory::ConnectionFact {
             active_generation: row.active_generation,
@@ -375,11 +375,11 @@ impl ConnectionCredentials {
     pub async fn connection_generation(
         &self,
         project: &wamn_registry::ProjectId,
-        environment: &wamn_registry::EnvName,
+        env: &wamn_registry::EnvName,
         id: &uuid::Uuid,
         generation: i64,
     ) -> anyhow::Result<Option<ConnectionGeneration>> {
-        let database = self.project_connections(project, environment)?;
+        let database = self.project_connections(project, env)?;
         crate::project_connections::connection_generation(&database, project, id, generation).await
     }
 
@@ -388,7 +388,7 @@ impl ConnectionCredentials {
         &self,
         key: &ProjectEnvKey,
         project: &wamn_registry::ProjectId,
-        environment: &wamn_registry::EnvName,
+        env: &wamn_registry::EnvName,
         credential: Uuid,
         rejected: Option<&Arc<Secret>>,
     ) -> anyhow::Result<Arc<Secret>> {
@@ -398,7 +398,7 @@ impl ConnectionCredentials {
             .context("credential reader unavailable")?;
         reader
             .read((key.to_owned(), credential), rejected, async {
-                let database = self.project_connections(project, environment)?;
+                let database = self.project_connections(project, env)?;
                 let reference = crate::project_connections::credential_reference(
                     &database,
                     project,
@@ -406,7 +406,7 @@ impl ConnectionCredentials {
                 )
                 .await?;
                 let reference = reference.context("credential unavailable")?;
-                let name = wamn_registry::credential_secret_name(self.org()?, project, environment);
+                let name = wamn_registry::credential_secret_name(self.org()?, project, env);
                 anyhow::ensure!(
                     reference.reference == name,
                     "credential Secret does not match project"
@@ -421,10 +421,10 @@ impl ConnectionCredentials {
     pub async fn env_connections(
         &self,
         project: &wamn_registry::ProjectId,
-        environment: &wamn_registry::EnvName,
+        env: &wamn_registry::EnvName,
     ) -> anyhow::Result<std::collections::BTreeMap<String, uuid::Uuid>> {
-        let database = self.project_connections(project, environment)?;
-        crate::project_connections::environment_connections(&database, project).await
+        let database = self.project_connections(project, env)?;
+        crate::project_connections::env_connections(&database, project).await
     }
 }
 

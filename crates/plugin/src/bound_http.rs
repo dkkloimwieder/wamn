@@ -5,7 +5,7 @@ use std::sync::{Arc, RwLock};
 
 use anyhow::Context as _;
 use tracing::Instrument as _;
-use wamn_application::InvocationLifetime;
+use wamn_app::InvocationLifetime;
 use wamn_authority::EffectOutcome;
 use wamn_authority::connection::ConnectionError;
 use wamn_authority::connection_authority::HostPolicy;
@@ -46,9 +46,9 @@ use bindings::wamn::connection::http::{self, Header, Request, Response};
 pub const CONNECTION_HTTP_ID: &str = "wamn-connection-http";
 
 #[derive(Debug)]
-struct ApplicationBinding {
+struct AppBinding {
     workload: String,
-    application: Arc<wamn_application::application_config::ApplicationConfig>,
+    app: Arc<wamn_app::app_config::AppConfig>,
 }
 
 /// HTTP host plugin. Only importing components receive its linker entries.
@@ -57,7 +57,7 @@ pub struct ConnectionHttp {
     scopes: Arc<InvocationScopes>,
     transport: Arc<dyn BoundHttp>,
     host_policy: &'static dyn HostPolicy,
-    applications: Arc<RwLock<HashMap<String, ApplicationBinding>>>,
+    apps: Arc<RwLock<HashMap<String, AppBinding>>>,
     component: Option<String>,
 }
 impl ConnectionHttp {
@@ -70,7 +70,7 @@ impl ConnectionHttp {
             scopes,
             transport,
             host_policy,
-            applications: Arc::default(),
+            apps: Arc::default(),
             component: None,
         }
     }
@@ -88,16 +88,16 @@ impl ConnectionHttp {
             .parse()
             .map_err(|_| ConnectionError::Incompatible)?;
         let binding = {
-            let applications = self
-                .applications
+            let apps = self
+                .apps
                 .read()
                 .expect("HTTP application bindings poisoned");
-            let application = self
+            let app = self
                 .component
                 .as_ref()
-                .and_then(|id| applications.get(id))
+                .and_then(|id| apps.get(id))
                 .ok_or(ConnectionError::Unbound)?;
-            if application.application != context.release {
+            if app.app != context.release {
                 return Err(ConnectionError::AttestationInvalid);
             }
             invocation
@@ -287,7 +287,7 @@ impl HostPlugin for ConnectionHttp {
             scopes: Arc::clone(&self.scopes),
             transport: Arc::clone(&self.transport),
             host_policy: self.host_policy,
-            applications: Arc::clone(&self.applications),
+            apps: Arc::clone(&self.apps),
             component: Some(component.id().to_owned()),
         });
         item.add_plugin(CONNECTION_HTTP_ID, bound);
@@ -305,29 +305,28 @@ impl HostPlugin for ConnectionHttp {
             .values()
             .find(|component| component.name() == "ingress")
             .context("ingress missing")?;
-        let application =
-            wamn_engine::application::bound_application_config(&self.scopes, route.id())
-                .context("wamn.application missing")?;
-        if application
+        let app = wamn_engine::app::bound_app_config(&self.scopes, route.id())
+            .context("wamn.application missing")?;
+        if app
             .components
             .iter()
             .any(|component| !component.connections.is_empty())
         {
-            self.applications
+            self.apps
                 .write()
                 .expect("HTTP application bindings poisoned")
                 .insert(
                     component_id.to_owned(),
-                    ApplicationBinding {
+                    AppBinding {
                         workload: workload.id().to_owned(),
-                        application,
+                        app,
                     },
                 );
         }
         Ok(())
     }
     async fn on_workload_unbind(&self, workload: &str, _: WitInterfaces<'_>) -> anyhow::Result<()> {
-        self.applications
+        self.apps
             .write()
             .expect("HTTP application bindings poisoned")
             .retain(|_, binding| binding.workload != workload);

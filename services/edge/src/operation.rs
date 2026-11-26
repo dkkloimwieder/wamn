@@ -1,6 +1,6 @@
 //! HTTP and device calls use one operation boundary over the edge's durable store.
 
-use crate::application::EdgeApplication;
+use crate::app::EdgeApp;
 use crate::native_operation::{OperationCall, OperationClosure, invoke_operation, node_types};
 use crate::policy::EdgeFacts;
 use crate::release::EdgeRelease;
@@ -8,8 +8,8 @@ use crate::store::{Claim, EdgeStore};
 use anyhow::Context as _;
 use std::collections::HashSet;
 use std::sync::Arc;
-use wamn_application::ingress::AuthenticatedCaller;
-use wamn_application::native_routes::{authorize_registered_operation, bounded_node_deadline_ms};
+use wamn_app::ingress::AuthenticatedCaller;
+use wamn_app::native_routes::{authorize_registered_operation, bounded_node_deadline_ms};
 use wamn_engine::entry_operation::operation::{self, Begun, Refusal};
 use wamn_engine::entry_operation::postgres_types::PgError;
 use wamn_package::canonical_name::CanonicalName;
@@ -24,7 +24,7 @@ pub const EDGE_OPERATION_ID: &str = "wamn-edge-operation";
 #[derive(Debug)]
 pub struct EdgeOperation {
     release: Arc<EdgeRelease>,
-    application: Arc<EdgeApplication>,
+    app: Arc<EdgeApp>,
     store: EdgeStore,
     org: wamn_registry::OrgId,
     scopes: Arc<wamn_engine::invocation_scope::InvocationScopes>,
@@ -46,14 +46,14 @@ struct Open {
 impl EdgeOperation {
     pub fn new(
         release: Arc<EdgeRelease>,
-        application: Arc<EdgeApplication>,
+        app: Arc<EdgeApp>,
         store: EdgeStore,
         org: wamn_registry::OrgId,
         scopes: Arc<wamn_engine::invocation_scope::InvocationScopes>,
     ) -> Self {
         Self {
             release,
-            application,
+            app,
             store,
             org,
             scopes,
@@ -135,7 +135,7 @@ impl EdgeOperation {
             .find(|component| component.operations.contains_key(&authorized.operation))
             .context("operation is outside the release")?;
         invoke_operation(
-            &self.application,
+            &self.app,
             OperationCall {
                 closure: OperationClosure::Released(components),
                 component,

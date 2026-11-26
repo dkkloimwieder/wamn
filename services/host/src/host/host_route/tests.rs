@@ -4,9 +4,7 @@ use std::sync::Arc;
 
 use anyhow::Context as _;
 use tokio::process::Command;
-use wamn_application::application_config::{
-    ApplicationComponent, ApplicationOperation, ApplicationOperationType,
-};
+use wamn_app::app_config::{AppComponent, AppOperation, AppOperationType};
 use wamn_authentication::administration::{
     GrantAuthority, GrantChange, create_role, mutate_grant, project_administration,
 };
@@ -20,7 +18,7 @@ use wamn_postgres::{ClassCredentials, ProjectConfig, StaticCredentialProvider, W
 use wash_runtime::host::http::{DynamicRouter, HostHandler, Ingress, IngressRoute, ServiceHttpJob};
 use wash_runtime::plugin::HostPlugin;
 
-use super::{ApplicationConfig, Authorization, HostRouteDelivery, OperationHost, Workflow};
+use super::{AppConfig, Authorization, HostRouteDelivery, OperationHost, Workflow};
 
 const READ: &str = "session-test:purchase/read";
 const WRITE: &str = "session-test:purchase/write";
@@ -28,32 +26,32 @@ const WORKLOAD: &str = "client-test";
 
 #[tokio::test]
 #[ignore = "requires: docker, bin:helm, input:web-install, bin:pnpm"]
-async fn generated_application_client_live() -> anyhow::Result<()> {
+async fn generated_app_client_live() -> anyhow::Result<()> {
     wash_runtime::init_crypto();
     let database = wamn_test_infrastructure::database::project().await?;
     let login = database.login_url(WorkloadRoleFamily::Platform.login_name())?;
     let mut connection = wamn_postgres::connect(login.as_str()).await?;
-    let config = Arc::new(ApplicationConfig {
+    let config = Arc::new(AppConfig {
         org: "acme".parse()?,
         project: "billing".parse()?,
         environment: "dev".parse()?,
         application: "client-test".parse()?,
         grant_cache_seconds: 60,
-        components: vec![ApplicationComponent {
+        components: vec![AppComponent {
             name: "purchase".into(),
             package: "session_test".parse()?,
             digest: wamn_digest::bytes_sha256(b"client test"),
             connections: Vec::new(),
             schema: None,
             operations: [
-                (READ, ApplicationOperationType::Read),
-                (WRITE, ApplicationOperationType::Write),
+                (READ, AppOperationType::Read),
+                (WRITE, AppOperationType::Write),
             ]
             .into_iter()
             .map(|(reference, type_)| {
                 Ok((
                     format!("{reference}@1.0.0").parse()?,
-                    ApplicationOperation {
+                    AppOperation {
                         component: "purchase".into(),
                         public: true,
                         host_transaction: true,
@@ -154,7 +152,7 @@ async fn generated_application_client_live() -> anyhow::Result<()> {
         ),
     )));
     let authorization = Arc::new(Authorization::new(Arc::clone(&pools)));
-    authorization.configure_application(&config)?;
+    authorization.configure_app(&config)?;
     let postgres = Arc::new(OperationHost::new(
         Arc::clone(&pools),
         Arc::clone(&authorization),

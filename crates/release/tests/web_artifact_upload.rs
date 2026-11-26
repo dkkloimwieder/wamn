@@ -9,11 +9,11 @@ use wamn_test_infrastructure::publish::{Server, artifact_fixture, fixture_regist
 use wamn_test_infrastructure::scratch::ScratchRoot;
 
 #[tokio::test]
-async fn missing_corrupt_and_application_artifacts_write_nothing() {
+async fn missing_corrupt_and_app_artifacts_write_nothing() {
     let scratch = ScratchRoot::create().unwrap();
     artifact_fixture(scratch.path(), false);
     let packed = pack(&scratch.path().join("dist"), &"1.2.3".parse().unwrap()).unwrap();
-    let application = pack_web_artifact(scratch.path()).unwrap();
+    let app = pack_web_artifact(scratch.path()).unwrap();
     for (responses, digest) in [
         (vec![(404, Vec::new())], &packed.digest),
         (
@@ -26,7 +26,7 @@ async fn missing_corrupt_and_application_artifacts_write_nothing() {
             vec![(200, packed.manifest.clone()), (200, b"corrupt".to_vec())],
             &packed.digest,
         ),
-        (vec![(200, application.manifest)], &application.digest),
+        (vec![(200, app.manifest)], &app.digest),
     ] {
         let server = Server::start(responses).await;
         let store = InMemory::new();

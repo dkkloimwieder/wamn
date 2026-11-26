@@ -15,7 +15,7 @@ serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 tokio = { workspace = true, features = ["rt", "time"] }
 tracing.workspace = true
-wamn-application.workspace = true
+wamn-app.workspace = true
 wamn-connection-type.workspace = true
 wamn-gcp-metadata.workspace = true
 wamn-registry.workspace = true

@@ -8,10 +8,10 @@ use std::time::Duration;
 
 use anyhow::{Context as _, ensure};
 use common::host::{
-    FIXTURE, Forward, application_get, application_objects, control, declare, fixture, host_object,
-    identity_post, member, ready_host_pod, reapply, until, workload_count,
+    FIXTURE, Forward, app_get, app_objects, control, declare, fixture, host_object, identity_post,
+    member, ready_host_pod, reapply, until, workload_count,
 };
-use common::{Application, Org};
+use common::{App, Org};
 use k8s_openapi::api::authentication::v1::{BoundObjectReference, TokenRequest, TokenRequestSpec};
 use k8s_openapi::api::core::v1::{ConfigMap, ServiceAccount};
 use k8s_openapi::jiff::SignedDuration;
@@ -36,8 +36,8 @@ common::journey! {
     /// The host pod becomes Ready through the startup and readiness probes that its pod spec
     /// declares, within the time those probes allow, and then serves a call through web.
     async fn the_host_pod_becomes_ready_through_its_probes() -> anyhow::Result<()> {
-        let application = Application::prepare(&fixture()).await?;
-        let pods = common::host::host_pods(&application.environment).await?;
+        let app = App::prepare(&fixture()).await?;
+        let pods = common::host::host_pods(&app.env).await?;
         let pod = pods.first().context("the environment has no host pod")?;
         let container = pod
             .spec
@@ -57,7 +57,7 @@ common::journey! {
         let allowed = startup + readiness;
 
         let pod = ready_host_pod(
-            &application.environment,
+            &app.env,
             Duration::from_secs(allowed.unsigned_abs()),
         )
         .await?;
@@ -87,7 +87,7 @@ common::journey! {
         );
 
         let id = uuid::Uuid::now_v7().to_string();
-        application
+        app
             .routes
             .create("probe-call", "probe-call", &id, "standard")
             .await?;
@@ -99,13 +99,13 @@ common::journey! {
     /// Identity signs a NATS user for a token bound to the host pod. The NATS server refuses
     /// that user's publish outside its subjects, and identity refuses another account's token.
     async fn the_host_nats_user_is_refused_outside_its_subjects() -> anyhow::Result<()> {
-        let environment = Org::create().await?.apply(FIXTURE).await?;
-        let client = &environment.org.cluster.client;
-        let triple = &environment.triple;
+        let env = Org::create().await?.apply(FIXTURE).await?;
+        let client = &env.org.cluster.client;
+        let triple = &env.triple;
         let namespace = triple.org.as_str();
-        let pod = ready_host_pod(&environment, HOST_DEADLINE).await?;
+        let pod = ready_host_pod(&env, HOST_DEADLINE).await?;
         let accounts = Api::<ServiceAccount>::namespaced(client.clone(), namespace);
-        let host_account = wamn_registry::name::environment_service_account(&triple.org, &triple.env);
+        let host_account = wamn_registry::name::env_service_account(&triple.org, &triple.env);
         let bound = token(
             &accounts,
             &host_account,
@@ -219,15 +219,15 @@ common::journey! {
     /// An application that the control route `application.stop` stops leaves the host, while
     /// the environment file still lists it: its Workload objects go, and the Host object
     /// counts fewer workloads.
-    async fn application_stop_leaves_its_host() -> anyhow::Result<()> {
-        let environment = Org::create().await?.apply(FIXTURE).await?;
-        reapply(&environment, |file| declare(file, SECOND, "second")).await?;
-        environment.deploy(&fixture(), FIXTURE).await?;
-        environment.deploy(&fixture(), SECOND).await?;
-        let client = &environment.org.cluster.client;
-        let pod = ready_host_pod(&environment, HOST_DEADLINE).await?;
+    async fn app_stop_leaves_its_host() -> anyhow::Result<()> {
+        let env = Org::create().await?.apply(FIXTURE).await?;
+        reapply(&env, |file| declare(file, SECOND, "second")).await?;
+        env.deploy(&fixture(), FIXTURE).await?;
+        env.deploy(&fixture(), SECOND).await?;
+        let client = &env.org.cluster.client;
+        let pod = ready_host_pod(&env, HOST_DEADLINE).await?;
 
-        let removed: Vec<String> = application_objects(&environment, "Workload", "workloads", SECOND)
+        let removed: Vec<String> = app_objects(&env, "Workload", "workloads", SECOND)
             .await?
             .into_iter()
             .filter_map(|workload| workload.metadata.name)
@@ -235,7 +235,7 @@ common::journey! {
         ensure!(!removed.is_empty(), "{SECOND} has no Workload objects");
         let workloads = common::host::runtime(
             client,
-            environment.triple.org.as_str(),
+            env.triple.org.as_str(),
             "Workload",
             "workloads",
         );
@@ -253,8 +253,8 @@ common::journey! {
         )
         .await?;
 
-        let org = &environment.org;
-        let triple = &environment.triple;
+        let org = &env.org;
+        let triple = &env.triple;
         let started = control(
             org,
             "application.stop",
@@ -315,11 +315,11 @@ common::journey! {
 common::journey! {
     /// `wamn env apply` with a file that no longer lists an application uninstalls its
     /// release, and the rows that the application wrote stay in the project database.
-    async fn env_apply_stops_an_unlisted_application_and_keeps_its_data() -> anyhow::Result<()> {
-        let application = Application::prepare(&fixture()).await?;
-        let environment = &application.environment;
+    async fn env_apply_stops_an_unlisted_app_and_keeps_its_data() -> anyhow::Result<()> {
+        let app = App::prepare(&fixture()).await?;
+        let env = &app.env;
         let id = uuid::Uuid::now_v7().to_string();
-        let created = application
+        let created = app
             .routes
             .create("kept", "kept", &id, "standard")
             .await?;
@@ -328,8 +328,8 @@ common::journey! {
             "the create commits: {created}"
         );
         let deployments = || {
-            application_objects(
-                environment,
+            app_objects(
+                env,
                 "WorkloadDeployment",
                 "workloaddeployments",
                 FIXTURE,
@@ -340,7 +340,7 @@ common::journey! {
             "{FIXTURE} has no WorkloadDeployment"
         );
 
-        reapply(environment, |file| {
+        reapply(env, |file| {
             file["projects"][0]["applications"] = json!({});
         })
         .await?;
@@ -350,7 +350,7 @@ common::journey! {
             || async { Ok(deployments().await?.is_empty().then_some(())) },
         )
         .await?;
-        let mut database = environment.observe().await?;
+        let mut database = env.observe().await?;
         let kept: bool =
             sqlx::query_scalar("SELECT EXISTS (SELECT FROM inventory.widget WHERE id = $1::uuid)")
                 .bind(&id)
@@ -365,14 +365,14 @@ common::journey! {
     /// A project admin grant reaches the host at once, because the host caches only positive
     /// grants. A revoke reaches it within `revocation_seconds`.
     async fn a_revoked_grant_is_refused_within_the_revocation_lifetime() -> anyhow::Result<()> {
-        let environment = Org::create().await?.apply(FIXTURE).await?;
-        reapply(&environment, |file| {
+        let env = Org::create().await?.apply(FIXTURE).await?;
+        reapply(&env, |file| {
             file["revocation_seconds"] = REVOCATION_SECONDS.into();
         })
         .await?;
-        environment.deploy(&fixture(), FIXTURE).await?;
-        let workloads = application_objects(
-            &environment,
+        env.deploy(&fixture(), FIXTURE).await?;
+        let workloads = app_objects(
+            &env,
             "WorkloadDeployment",
             "workloaddeployments",
             FIXTURE,
@@ -386,10 +386,10 @@ common::journey! {
             .context("the deployed workload has no wamn.application configuration")?;
         let configuration: serde_json::Value = serde_json::from_str(configuration)?;
         assert_eq!(configuration["grant-cache-seconds"], REVOCATION_SECONDS);
-        let org = &environment.org;
+        let org = &env.org;
         let (principal, token) = member(org, &format!("member-{}@example.com", org.name)).await?;
-        let call = || application_get(&environment, FIXTURE, "role.list", &token);
-        let grant = || json!({"project": environment.triple.project, "principal_id": principal});
+        let call = || app_get(&env, FIXTURE, "role.list", &token);
+        let grant = || json!({"project": env.triple.project, "principal_id": principal});
 
         // A member with no grant is no principal of the application yet, so either refusal holds.
         let refused = |status| {

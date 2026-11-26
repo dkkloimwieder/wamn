@@ -85,13 +85,13 @@ pub(crate) async fn credential_reference(
         .await
 }
 
-pub(crate) async fn environment_connections(
+pub(crate) async fn env_connections(
     pools: &WamnPostgres,
     project: &ProjectId,
 ) -> anyhow::Result<BTreeMap<String, Uuid>> {
     ProjectDatabase { pools, project }
         .read("read environment connections", async |store| {
-            store.environment().await
+            store.env().await
         })
         .await
 }

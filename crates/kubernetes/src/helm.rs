@@ -13,7 +13,7 @@ use std::{
 use tokio::time::{Instant, timeout_at};
 
 use crate::Target;
-use plan::{Recovery, application_recovery_revision, recovery};
+use plan::{Recovery, app_recovery_revision, recovery};
 
 /// The Helm storage namespace for releases owned by an org.
 pub fn org_release_namespace(org_namespace: &str) -> Cow<'_, str> {
@@ -361,7 +361,7 @@ pub async fn upgrade(
         let manifest = candidate["manifest"]
             .as_str()
             .context("upgraded Helm release has no manifest")?;
-        wait_application(
+        wait_app(
             target,
             name,
             manifest.as_bytes(),
@@ -423,7 +423,7 @@ fn helm_rolled_back(history: &[Value], previous: u32) -> bool {
             .any(|row| row["revision"].as_u64() == Some(failed) && row["status"] == "failed")
 }
 
-async fn wait_application(
+async fn wait_app(
     target: &Target,
     release: &str,
     manifest: &[u8],
@@ -431,7 +431,7 @@ async fn wait_application(
 ) -> anyhow::Result<()> {
     timeout_at(
         deadline,
-        crate::deployment_components::wait_application_ready(target, manifest),
+        crate::deployment_components::wait_app_ready(target, manifest),
     )
     .await
     .with_context(|| {
@@ -504,8 +504,8 @@ pub async fn recover_pending(
     name: &str,
     wait: Wait,
 ) -> anyhow::Result<()> {
-    let application = matches!(wait, Wait::WatcherUntil { .. });
-    let filters: &[_] = if application {
+    let app = matches!(wait, Wait::WatcherUntil { .. });
+    let filters: &[_] = if app {
         &["--pending", "--failed", "--deployed"]
     } else {
         &["--pending"]
@@ -514,12 +514,12 @@ pub async fn recover_pending(
         return Ok(());
     };
     let status = entry["status"].as_str().unwrap_or_default();
-    match recovery(status, application) {
+    match recovery(status, app) {
         Some(Recovery::Uninstall) => return uninstall(target, namespace, name, wait).await,
-        Some(Recovery::Rollback) if !application => {
+        Some(Recovery::Rollback) if !app => {
             return rollback(target, namespace, name, None, wait).await;
         }
-        None if !application || status != "deployed" => return Ok(()),
+        None if !app || status != "deployed" => return Ok(()),
         _ => {}
     }
 
@@ -530,12 +530,12 @@ pub async fn recover_pending(
             .with_context(|| {
                 format!("Helm release manifest for revision {interrupted} is absent")
             })?;
-        if crate::deployment_components::application_serves(target, &manifest).await? {
+        if crate::deployment_components::app_serves(target, &manifest).await? {
             return Ok(());
         }
     }
     let history = release_history(target, namespace, name).await?;
-    match application_recovery_revision(&history, interrupted)
+    match app_recovery_revision(&history, interrupted)
         .with_context(|| format!("recover Helm release {namespace}/{name}"))?
     {
         Some(revision) => rollback(target, namespace, name, Some(revision), wait).await,
@@ -572,7 +572,7 @@ pub(crate) async fn rollback(
         mutation_output(target, namespace, name, "rollback", &arguments, wait).await?;
     stdout(output, operation)?;
     if let Some((readiness, manifest)) = readiness {
-        wait_application(
+        wait_app(
             target,
             name,
             &manifest,
@@ -657,7 +657,7 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn application_upgrade_requests_rollback_with_the_watcher() {
+    fn app_upgrade_requests_rollback_with_the_watcher() {
         let wait = Wait::WatcherUntil {
             deadline: Instant::now() + Duration::from_secs(120),
             readiness: Duration::from_secs(120),
@@ -682,7 +682,7 @@ mod tests {
     }
 
     #[test]
-    fn application_upgrade_reserves_rollback_time_and_requires_a_minimum_budget() {
+    fn app_upgrade_reserves_rollback_time_and_requires_a_minimum_budget() {
         let now = Instant::now();
         let timeout = |operation, remaining| {
             let wait = Wait::WatcherUntil {
@@ -710,7 +710,7 @@ mod tests {
     }
 
     #[test]
-    fn application_recovery_restores_the_last_success_after_an_interrupted_rollback() {
+    fn app_recovery_restores_the_last_success_after_an_interrupted_rollback() {
         let history = [
             json!({"revision":1,"status":"superseded","description":"Install complete"}),
             json!({"revision":2,"status":"superseded","description":"Upgrade complete"}),
@@ -718,28 +718,28 @@ mod tests {
             json!({"revision":4,"status":"failed","description":"Rollback \"app\" failed: update"}),
             json!({"revision":5,"status":"pending-rollback","description":"Rollback to 2"}),
         ];
-        assert_eq!(application_recovery_revision(&history, 5).unwrap(), Some(2));
+        assert_eq!(app_recovery_revision(&history, 5).unwrap(), Some(2));
     }
 
     #[test]
-    fn application_recovery_uninstalls_a_failed_first_install() {
+    fn app_recovery_uninstalls_a_failed_first_install() {
         let first = json!({"revision":1,"status":"failed"});
-        assert_eq!(application_recovery_revision(&[first], 1).unwrap(), None);
+        assert_eq!(app_recovery_revision(&[first], 1).unwrap(), None);
         let later = json!({"revision":2,"status":"failed"});
-        assert!(application_recovery_revision(&[later], 2).is_err());
+        assert!(app_recovery_revision(&[later], 2).is_err());
     }
 
     #[test]
-    fn application_recovery_excludes_the_deployed_revision_that_does_not_serve() {
+    fn app_recovery_excludes_the_deployed_revision_that_does_not_serve() {
         let history = [
             json!({"revision":1,"status":"superseded","description":"Install complete"}),
             json!({"revision":2,"status":"superseded","description":"Rollback to 1"}),
             json!({"revision":3,"status":"failed","description":"Upgrade failed"}),
             json!({"revision":4,"status":"deployed","description":"Upgrade complete"}),
         ];
-        assert_eq!(application_recovery_revision(&history, 4).unwrap(), Some(2));
+        assert_eq!(app_recovery_revision(&history, 4).unwrap(), Some(2));
 
         let first = json!({"revision":1,"status":"deployed","description":"Install complete"});
-        assert_eq!(application_recovery_revision(&[first], 1).unwrap(), None);
+        assert_eq!(app_recovery_revision(&[first], 1).unwrap(), None);
     }
 }

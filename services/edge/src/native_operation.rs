@@ -11,14 +11,14 @@ use std::time::Duration;
 use anyhow::Context as _;
 use wamn_component_policy::AdmittedComponent;
 
-use crate::application::EdgeApplication;
+use crate::app::EdgeApp;
 use crate::policy::EdgeFacts;
 
 pub mod native_call;
 pub mod native_workload;
 
 use native_call::{NativeInput, NativeInvocation, NativeOutcome, invoke_raw};
-pub use native_workload::NativeApplication;
+pub use native_workload::NativeApp;
 
 pub use wamn_engine::operation::{ambient_cli, json, next_scope, node_types};
 
@@ -28,7 +28,7 @@ pub enum OperationClosure<'a> {
     /// The carried release, loaded once from its complete component list.
     Released(&'a [AdmittedComponent]),
     /// A candidate application that the caller loaded and unbinds.
-    Candidate(&'a Arc<NativeApplication>),
+    Candidate(&'a Arc<NativeApp>),
 }
 
 impl fmt::Debug for OperationClosure<'_> {
@@ -71,16 +71,16 @@ impl fmt::Debug for OperationCall<'_> {
 /// component returned. The caller lowers the result for its own entry.
 ///
 pub async fn invoke_operation(
-    host: &EdgeApplication,
+    host: &EdgeApp,
     call: OperationCall<'_>,
 ) -> anyhow::Result<Result<node_types::Emission, node_types::NodeError>> {
     let deadline = tokio::time::Instant::now()
-        + Duration::from_millis(call.deadline_ms).min(wamn_application::MAX_HOST_CALL_DURATION);
-    let application = match call.closure {
-        OperationClosure::Released(components) => host.released_application(components)?,
-        OperationClosure::Candidate(application) => application,
+        + Duration::from_millis(call.deadline_ms).min(wamn_app::MAX_HOST_CALL_DURATION);
+    let app = match call.closure {
+        OperationClosure::Released(components) => host.released_app(components)?,
+        OperationClosure::Candidate(app) => app,
     };
-    tokio::time::timeout_at(deadline, call_export(application, call))
+    tokio::time::timeout_at(deadline, call_export(app, call))
         .await
         .context("native operation deadline elapsed")??
         .into_json()
@@ -88,16 +88,16 @@ pub async fn invoke_operation(
 
 /// Run one export under the call's deadline with the call's JSON as input.
 async fn call_export(
-    application: &Arc<NativeApplication>,
+    app: &Arc<NativeApp>,
     call: OperationCall<'_>,
 ) -> anyhow::Result<NativeOutcome> {
     let deadline = tokio::time::Instant::now() + Duration::from_millis(call.deadline_ms);
     tokio::time::timeout_at(deadline, async {
-        let id = application
+        let id = app
             .workload
             .component_id(call.component)
             .context("native-node-component-fact-missing")?;
-        let target = application.dispatch_target(id)?;
+        let target = app.dispatch_target(id)?;
         let json = serde_json::to_string(call.input).context("encode node input")?;
         invoke_raw(
             target,
@@ -107,7 +107,7 @@ async fn call_export(
                 input: NativeInput::Encoded(json),
                 deadline,
                 facts: call.facts,
-                application: Arc::clone(application),
+                app: Arc::clone(app),
             },
         )
         .await

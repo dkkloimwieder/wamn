@@ -11,7 +11,7 @@ pub type Object = sqlx::pool::PoolConnection<sqlx::Postgres>;
 use wamn_identity_protocol::AuthorityClass;
 use wamn_registry::DEFAULT_PROJECT;
 
-use wamn_application::MAX_HOST_CALL_DURATION;
+use wamn_app::MAX_HOST_CALL_DURATION;
 
 const DEFAULT_GUEST_POOL_MAX_SIZE: usize = 14;
 const DEFAULT_PLATFORM_POOL_MAX_SIZE: usize = 2;

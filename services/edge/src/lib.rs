@@ -17,7 +17,7 @@
 //!   refused samples while the edge is stopped.
 //! - [`status`]: the status socket of a running edge, and its reader.
 //! - [`authenticator`], [`operation`], [`policy`] and
-//!   [`application`]: the edge side of the engine's route and operation
+//!   [`app`]: the edge side of the engine's route and operation
 //!   traits.
 //! - [`store`]: the SQLx SQLite owner of claims and samples.
 //!
@@ -37,7 +37,7 @@
 //! wash-runtime and pins that list. If its size costs the Pi too much, the
 //! answer is a wash-runtime fork with those features off.
 
-pub mod application;
+pub mod app;
 pub mod authenticator;
 pub mod config;
 pub mod device;

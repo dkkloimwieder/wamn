@@ -7,7 +7,7 @@ use std::time::{Duration, Instant, SystemTime};
 use super::{HeldOperationGrants, ProjectPat, held_grants};
 use anyhow::Context as _;
 use moka::sync::Cache;
-use wamn_application::application_config::ApplicationConfig;
+use wamn_app::app_config::AppConfig;
 use wamn_authority::auth_cache::PrincipalGrants;
 use wamn_connection::connection_credentials::{ConnectionCredentials, CredentialReader};
 use wamn_connection::connection_facts::{ConnectionAnswer, ConnectionCache, ConnectionFacts};
@@ -18,13 +18,12 @@ use wamn_registry::{ProjectEnvKey, ProjectId};
 use wamn_postgres::WamnPostgres;
 
 use super::project_reads::{
-    read_environment_inactive, read_guest_grants, read_platform_grants, read_project_pat,
-    resolve_subject,
+    read_env_inactive, read_guest_grants, read_platform_grants, read_project_pat, resolve_subject,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 enum Fact {
-    Environment,
+    Env,
     Grants(PrincipalId),
     Subject([u8; 32]),
     Pat([u8; 32]),
@@ -33,14 +32,14 @@ enum Fact {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct Key {
-    project_environment: ProjectEnvKey,
+    project_env: ProjectEnvKey,
     lifetime: Duration,
     fact: Fact,
 }
 
 #[derive(Debug, Clone)]
 enum Answer {
-    ActiveEnvironment,
+    ActiveEnv,
     Grants(PrincipalGrants),
     Subject(PrincipalId),
     Pat(Arc<ProjectPat>),
@@ -62,7 +61,7 @@ impl moka::Expiry<Key, Answer> for Expiry {
 pub struct Authorization {
     postgres: Arc<WamnPostgres>,
     envelope: Option<Arc<wamn_envelope::encryption::Envelope>>,
-    applications: RwLock<HashMap<String, Weak<ApplicationConfig>>>,
+    apps: RwLock<HashMap<String, Weak<AppConfig>>>,
     lifetimes: RwLock<HashMap<ProjectEnvKey, (ProjectId, Duration)>>,
     answers: Cache<Key, Answer>,
     credentials: Option<Arc<CredentialReader>>,
@@ -83,7 +82,7 @@ impl Authorization {
             postgres,
             envelope: None,
             lifetimes: RwLock::default(),
-            applications: RwLock::default(),
+            apps: RwLock::default(),
             credentials: None,
             answers: Cache::builder()
                 .max_capacity(MAX_AUTHORIZATION_ENTRIES)
@@ -120,45 +119,41 @@ impl Authorization {
             "project admission coordinates disagree"
         );
         Ok(Key {
-            project_environment: key.clone(),
+            project_env: key.clone(),
             lifetime: *lifetime,
             fact,
         })
     }
 
     /// Register the cache lifetime for the application workload.
-    pub fn configure_application(&self, application: &ApplicationConfig) -> anyhow::Result<()> {
-        let key = wamn_registry::name::project_env_key(
-            &application.org,
-            &application.project,
-            &application.environment,
-        );
+    pub fn configure_app(&self, app: &AppConfig) -> anyhow::Result<()> {
+        let key = wamn_registry::name::project_env_key(&app.org, &app.project, &app.environment);
         self.lifetimes
             .write()
             .expect("authorization lifetimes lock poisoned")
             .insert(
                 key,
                 (
-                    application.project.clone(),
-                    Duration::from_secs(u64::from(application.grant_cache_seconds)),
+                    app.project.clone(),
+                    Duration::from_secs(u64::from(app.grant_cache_seconds)),
                 ),
             );
         Ok(())
     }
 
-    pub async fn environment_inactive(
+    pub async fn env_inactive(
         &self,
         project: &ProjectId,
         project_key: &ProjectEnvKey,
     ) -> anyhow::Result<bool> {
-        let key = self.key(project, project_key, Fact::Environment)?;
-        if matches!(self.answers.get(&key), Some(Answer::ActiveEnvironment)) {
+        let key = self.key(project, project_key, Fact::Env)?;
+        if matches!(self.answers.get(&key), Some(Answer::ActiveEnv)) {
             return Ok(false);
         }
-        let inactive = read_environment_inactive(&self.postgres, project, project_key).await?;
+        let inactive = read_env_inactive(&self.postgres, project, project_key).await?;
         // Positive means admitted: an inactive environment is read again next time.
         if !inactive {
-            self.answers.insert(key, Answer::ActiveEnvironment);
+            self.answers.insert(key, Answer::ActiveEnv);
         }
         Ok(inactive)
     }
@@ -267,18 +262,11 @@ impl Authorization {
 }
 
 impl ConnectionCache for Authorization {
-    fn bind_application(
-        &self,
-        workload: &str,
-        application: &Arc<ApplicationConfig>,
-    ) -> anyhow::Result<()> {
-        self.configure_application(application)?;
-        let mut applications = self
-            .applications
-            .write()
-            .expect("application facts lock poisoned");
-        applications.retain(|_, application| application.strong_count() != 0);
-        applications.insert(workload.to_owned(), Arc::downgrade(application));
+    fn bind_app(&self, workload: &str, app: &Arc<AppConfig>) -> anyhow::Result<()> {
+        self.configure_app(app)?;
+        let mut apps = self.apps.write().expect("application facts lock poisoned");
+        apps.retain(|_, app| app.strong_count() != 0);
+        apps.insert(workload.to_owned(), Arc::downgrade(app));
         Ok(())
     }
 
@@ -327,15 +315,14 @@ impl ConnectionCache for Authorization {
         id: &uuid::Uuid,
     ) -> anyhow::Result<Arc<ConnectionFacts>> {
         let id = id.to_string();
-        let application = self
-            .applications
+        let app = self
+            .apps
             .read()
             .expect("application facts lock poisoned")
             .get(workload)
             .and_then(Weak::upgrade)
             .context("integration workload is not configured")?;
-        application
-            .components
+        app.components
             .iter()
             .flat_map(|component| &component.connections)
             .find(|binding| {
@@ -343,14 +330,14 @@ impl ConnectionCache for Authorization {
                     && binding.runtime_type == wamn_connection_type::RuntimeType::Wasm
             })
             .context("integration connection undeclared")?;
-        self.facts(application)
+        self.facts(app)
     }
     fn project_facts(
         self: Arc<Self>,
         project: &ProjectEnvKey,
     ) -> anyhow::Result<Arc<ConnectionFacts>> {
-        let application = self
-            .applications
+        let app = self
+            .apps
             .read()
             .expect("application facts lock poisoned")
             .values()
@@ -360,32 +347,25 @@ impl ConnectionCache for Authorization {
                     == project
             })
             .context("project is not configured")?;
-        self.facts(application)
+        self.facts(app)
     }
-    fn facts(
-        self: Arc<Self>,
-        application: Arc<ApplicationConfig>,
-    ) -> anyhow::Result<Arc<ConnectionFacts>> {
-        self.configure_application(&application)?;
-        let key = wamn_registry::name::project_env_key(
-            &application.org,
-            &application.project,
-            &application.environment,
-        );
+    fn facts(self: Arc<Self>, app: Arc<AppConfig>) -> anyhow::Result<Arc<ConnectionFacts>> {
+        self.configure_app(&app)?;
+        let key = wamn_registry::name::project_env_key(&app.org, &app.project, &app.environment);
         Ok(Arc::new(
             ConnectionFacts::new(
                 Arc::default(),
                 Arc::new(ConnectionCredentials::for_org(
-                    &application.org,
+                    &app.org,
                     self.credentials.as_ref().map(Arc::clone),
                 )),
                 &self.postgres,
                 &key,
-                &application.project,
-                &application.environment,
+                &app.project,
+                &app.environment,
             )
             .with_oauth_encryption(self.envelope.as_ref().map(Arc::clone))
-            .with_cache(self, application),
+            .with_cache(self, app),
         ))
     }
 }

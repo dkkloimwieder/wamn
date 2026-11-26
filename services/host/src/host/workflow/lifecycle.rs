@@ -5,9 +5,9 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use sqlx::PgConnection;
 use std::sync::Arc;
-use wamn_application::application_config::{ApplicationConfig, check_authored_workflow};
-use wamn_application::ingress::AuthenticatedCaller;
-use wamn_application::native_routes::DeliveryError;
+use wamn_app::app_config::{AppConfig, check_authored_workflow};
+use wamn_app::ingress::AuthenticatedCaller;
+use wamn_app::native_routes::DeliveryError;
 use wamn_identity_protocol::PrincipalId;
 use wamn_package::canonical_name::CanonicalName;
 use wamn_plugin::operation_sql::{administration_transaction, begin_administration};
@@ -57,7 +57,7 @@ impl Workflow {
         let state = self
             .workload(workload)
             .map_err(|error| entry_refusal(&error))?;
-        let app = &state.application;
+        let app = &state.app;
         if attachment.route.handler == HostHandler::WorkflowRun {
             let run: RunRequest = parse(payload)?;
             let id = self
@@ -150,15 +150,13 @@ async fn change(
     handler: HostHandler,
     version: Version,
 ) -> Result<Value, Refusal> {
-    let app = &workload.application;
+    let app = &workload.app;
     let mut session = begin_administration(pools, &app.project, principal, operation).await?;
     let connection = session.connection();
     // Keep the same key through commit and broker settlement so another host
     // cannot enable a replacement while this host deletes its predecessor.
     let outcome = async {
-        require_lock(
-            advisory_lock::try_environment_lock(connection, &app.org, &app.environment).await?,
-        )?;
+        require_lock(advisory_lock::try_env_lock(connection, &app.org, &app.environment).await?)?;
         match handler {
             HostHandler::WorkflowEnable => enable(connection, broker, workload, &version).await,
             HostHandler::WorkflowDisable => disable(connection, broker, workload, &version).await,
@@ -193,7 +191,7 @@ async fn change(
 
 async fn author(
     connection: &mut PgConnection,
-    app: &ApplicationConfig,
+    app: &AppConfig,
     caller: &AuthenticatedCaller,
     request: Author,
 ) -> Result<Value, Refusal> {
@@ -225,7 +223,7 @@ async fn author(
 
 async fn check_path(
     connection: &mut PgConnection,
-    app: &ApplicationConfig,
+    app: &AppConfig,
     id: &CanonicalName,
     path: &str,
 ) -> Result<(), Refusal> {
@@ -245,7 +243,7 @@ async fn enable(
     workload: &Workload,
     version: &Version,
 ) -> Result<ConsumerChange, Refusal> {
-    let app = &workload.application;
+    let app = &workload.app;
     let row = workflow::load_version(connection, app, &version.workflow_id, version.version)
         .await?
         .ok_or_else(unknown_version)?;
@@ -318,7 +316,7 @@ async fn disable(
     workload: &Workload,
     version: &Version,
 ) -> Result<ConsumerChange, Refusal> {
-    let app = &workload.application;
+    let app = &workload.app;
     let trigger = workflow::disable_version(connection, app, &version.workflow_id, version.version)
         .await?
         .ok_or_else(unknown_version)?;
@@ -368,7 +366,7 @@ fn entry_refusal(error: &super::Refusal) -> Refusal {
 /// Return the grant references of the enabled Request workflows of this application.
 pub(in crate::host) async fn permissions(
     connection: &mut PgConnection,
-    app: &ApplicationConfig,
+    app: &AppConfig,
 ) -> Result<Vec<String>, sqlx::Error> {
     let ids = workflow::request_workflow_ids(connection, app).await?;
     Ok(ids

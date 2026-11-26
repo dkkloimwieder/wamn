@@ -1,6 +1,6 @@
 //! Dispatch application operations through the workload's resolved component targets.
 
-use crate::application::bind_application_config;
+use crate::app::bind_app_config;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock, RwLock};
@@ -9,9 +9,9 @@ use std::time::Duration;
 use anyhow::Context as _;
 use tokio::sync::oneshot;
 use tokio::time::Instant;
-use wamn_application::application_config::ApplicationConfig;
-use wamn_application::native_routes::bounded_node_deadline_ms;
-use wamn_application::result_signing::ResultSigningError;
+use wamn_app::app_config::AppConfig;
+use wamn_app::native_routes::bounded_node_deadline_ms;
+use wamn_app::result_signing::ResultSigningError;
 use wamn_package::canonical_name::CanonicalName;
 use wash_runtime::engine::ctx::SharedCtx;
 use wash_runtime::engine::dispatch::{DispatchTarget, GuestCall, GuestCallFuture};
@@ -54,7 +54,7 @@ pub struct WamnOperation {
 struct Binding {
     workload: String,
     ingress: bool,
-    application: Arc<ApplicationConfig>,
+    app: Arc<AppConfig>,
     targets: OnceLock<BTreeMap<String, ComponentTarget>>,
 }
 
@@ -93,7 +93,7 @@ impl WamnOperation {
     ) -> anyhow::Result<Result<node_types::Emission, node_types::NodeError>> {
         let binding = self.binding(component)?;
         let serving = binding
-            .application
+            .app
             .components
             .iter()
             .find_map(|component| component.operations.get(&operation))
@@ -253,9 +253,7 @@ impl HostPlugin for WamnOperation {
         item: &mut WorkloadItem<'a>,
         interfaces: WitInterfaces<'_>,
     ) -> anyhow::Result<()> {
-        if let Some(application) =
-            bind_application_config(&self.scopes, item).context("decode wamn.application")?
-        {
+        if let Some(app) = bind_app_config(&self.scopes, item).context("decode wamn.application")? {
             let WorkloadItem::Component(component) = &*item else {
                 anyhow::bail!("operation authority requires a route component");
             };
@@ -267,7 +265,7 @@ impl HostPlugin for WamnOperation {
                     Arc::new(Binding {
                         workload: component.workload_id().to_owned(),
                         ingress: component.name() == "ingress",
-                        application,
+                        app,
                         targets: OnceLock::new(),
                     }),
                 );
@@ -293,7 +291,7 @@ impl HostPlugin for WamnOperation {
         let components = workload.components();
         let components = components.read().await;
         let ids = binding
-            .application
+            .app
             .components
             .iter()
             .map(|component| {

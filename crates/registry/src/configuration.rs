@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 /// Settings shared by applied configuration and deploy input.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct EnvironmentSettings {
+pub struct EnvSettings {
     pub org: crate::OrgId,
     pub project: crate::ProjectId,
     pub env: crate::EnvName,
@@ -22,19 +22,19 @@ pub struct EnvironmentSettings {
 /// Applied project configuration with its shared environment settings.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct EnvironmentConfiguration {
+pub struct EnvConfiguration {
     #[serde(flatten)]
-    pub settings: EnvironmentSettings,
+    pub settings: EnvSettings,
     pub readiness_budget_seconds: i32,
     pub drain_bound_seconds: i32,
     pub revocation_seconds: u32,
-    pub applications: BTreeMap<crate::ApplicationName, ApplicationConfiguration>,
+    pub applications: BTreeMap<crate::AppName, AppConfiguration>,
 }
 
 /// Configuration shared by all releases of an application.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct ApplicationConfiguration {
+pub struct AppConfiguration {
     pub label: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub client: Option<Client>,

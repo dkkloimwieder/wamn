@@ -69,8 +69,8 @@ impl PostgresRunStore<'_> {
         let connection = &mut *self.connection;
         let input = sqlx::types::Json(run.input);
         let inserted = sqlx::query_as(ADMIT_SQL)
-            .bind(run.application.as_str())
-            .bind(run.environment.as_str())
+            .bind(run.app.as_str())
+            .bind(run.env.as_str())
             .bind(run.workflow_id.as_str())
             .bind(run.workflow_version)
             .bind(run.graph_hash.to_string())
@@ -93,8 +93,8 @@ impl PostgresRunStore<'_> {
             return Ok(RunAdmitted::Leased { run_id, generation });
         }
         let existing = sqlx::query_scalar(EXISTING_SQL)
-            .bind(run.application.as_str())
-            .bind(run.environment.as_str())
+            .bind(run.app.as_str())
+            .bind(run.env.as_str())
             .bind(run.workflow_id.as_str())
             .bind(run.workflow_version)
             .bind(run.trigger.as_sql())
@@ -262,16 +262,16 @@ impl PostgresRunStore<'_> {
     pub async fn lease_next(
         &mut self,
         runner: &str,
-        application: &wamn_registry::ApplicationName,
-        environment: &wamn_registry::EnvName,
+        app: &wamn_registry::AppName,
+        env: &wamn_registry::EnvName,
         lease_ttl_ms: i64,
     ) -> Result<LeaseTurn, ProductionLeaseError> {
         let connection = &mut *self.connection;
         validate_duration(lease_ttl_ms)?;
         let select_sql = select_production_lease_sql();
         let Some(row) = sqlx::query(select_sql)
-            .bind(application.as_str())
-            .bind(environment.as_str())
+            .bind(app.as_str())
+            .bind(env.as_str())
             .fetch_optional(&mut *connection)
             .await
             .map_err(|error| postgres_error("select production lease", &error))?
@@ -353,8 +353,8 @@ impl PostgresRunStore<'_> {
     /// Fail and dequeue one expired run whose retry budget is spent.
     pub async fn reap_exhausted(
         &mut self,
-        application: &wamn_registry::ApplicationName,
-        environment: &wamn_registry::EnvName,
+        app: &wamn_registry::AppName,
+        env: &wamn_registry::EnvName,
         grace_ms: i64,
     ) -> Result<ProductionReapResult, ProductionLeaseError> {
         let connection = &mut *self.connection;
@@ -364,8 +364,8 @@ impl PostgresRunStore<'_> {
         let select_sql = select_exhausted_production_sql();
         let Some(row) = sqlx::query(sqlx::AssertSqlSafe(select_sql))
             .bind(grace_ms)
-            .bind(application.as_str())
-            .bind(environment.as_str())
+            .bind(app.as_str())
+            .bind(env.as_str())
             .fetch_optional(&mut *connection)
             .await
             .map_err(|error| postgres_error("select exhausted run", &error))?

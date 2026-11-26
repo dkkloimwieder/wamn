@@ -77,13 +77,13 @@ impl Deploy for ControlDeployment {
     async fn deploy(
         &self,
         configuration: &Path,
-        application: wamn_registry::ApplicationName,
+        app: wamn_registry::AppName,
         release: wamn_digest::Digest,
     ) -> anyhow::Result<()> {
-        crate::application_verbs::deploy(crate::application_verbs::DeployArgs {
+        crate::app_verbs::deploy(crate::app_verbs::DeployArgs {
             package: None,
             release: Some(release),
-            application,
+            application: app,
             env: configuration.to_owned(),
             describe: RefreshDescribeArgs::default(),
         })

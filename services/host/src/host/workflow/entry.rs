@@ -9,8 +9,8 @@ use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 use tokio::sync::oneshot;
 use tokio::time::Instant;
-use wamn_application::application_config::check_authored_workflow;
-use wamn_application::ingress::AuthenticatedCaller;
+use wamn_app::app_config::check_authored_workflow;
+use wamn_app::ingress::AuthenticatedCaller;
 use wamn_identity_protocol::{PrincipalId, workflow_user_id};
 use wamn_plugin::admission::RunTrigger;
 use wamn_plugin::operation_sql::executor_write;
@@ -53,7 +53,7 @@ impl Workflow {
         request: RequestCall<'_>,
     ) -> Result<Option<entry::Response>, Refusal> {
         let workload = self.workload(request.workload)?;
-        let app = &workload.application;
+        let app = &workload.app;
         let prepare = executor_write(&self.database, &app.project, async |connection| {
             let definition = stored::request_workflow(connection, app, request.path).await?;
             let Some(definition) = definition else {
@@ -184,7 +184,7 @@ impl Workflow {
             return Err(Refusal::PermissionDenied);
         }
         let workload = self.workload(request.workload)?;
-        let app = &workload.application;
+        let app = &workload.app;
         let admitted = executor_write(&self.database, &app.project, async |connection| {
             let definition = stored::run_now_workflow(connection, app, request.workflow_id).await?;
             let Some(definition) = definition else {

@@ -5,7 +5,7 @@ use serde_json::json;
 
 /// The application host and the caller's session.
 #[derive(Debug, Args)]
-pub struct EnvironmentArgs {
+pub struct EnvArgs {
     /// Base URL of the application host.
     #[arg(long, env = "WAMN_CONTROL_URL", hide_env_values = true)]
     pub host_url: String,
@@ -18,7 +18,7 @@ pub struct EnvironmentArgs {
 #[derive(Debug, Args)]
 pub struct UserRoleArgs {
     #[command(flatten)]
-    pub environment: EnvironmentArgs,
+    pub env: EnvArgs,
     /// The user principal UUID.
     #[arg(long)]
     pub user_id: wamn_identity_protocol::PrincipalId,
@@ -31,7 +31,7 @@ pub struct UserRoleArgs {
 #[derive(Debug, Args)]
 pub struct RoleArgs {
     #[command(flatten)]
-    pub environment: EnvironmentArgs,
+    pub env: EnvArgs,
     #[arg(long)]
     pub role: String,
 }
@@ -40,7 +40,7 @@ pub struct RoleArgs {
 #[derive(Debug, Args)]
 pub struct PermissionArgs {
     #[command(flatten)]
-    pub environment: EnvironmentArgs,
+    pub env: EnvArgs,
     #[arg(long)]
     pub role: String,
     #[arg(long)]
@@ -49,8 +49,8 @@ pub struct PermissionArgs {
 
 pub async fn grant(args: UserRoleArgs) -> anyhow::Result<()> {
     crate::component_verbs::call(
-        &args.environment.host_url,
-        &args.environment.token,
+        &args.env.host_url,
+        &args.env.token,
         "user_role.grant",
         &json!({"user_id": args.user_id, "role": args.role}),
     )
@@ -59,8 +59,8 @@ pub async fn grant(args: UserRoleArgs) -> anyhow::Result<()> {
 
 pub async fn revoke(args: UserRoleArgs) -> anyhow::Result<()> {
     crate::component_verbs::call(
-        &args.environment.host_url,
-        &args.environment.token,
+        &args.env.host_url,
+        &args.env.token,
         "user_role.revoke",
         &json!({"user_id": args.user_id, "role": args.role}),
     )
@@ -69,8 +69,8 @@ pub async fn revoke(args: UserRoleArgs) -> anyhow::Result<()> {
 
 pub async fn create_role(args: RoleArgs) -> anyhow::Result<()> {
     crate::component_verbs::call(
-        &args.environment.host_url,
-        &args.environment.token,
+        &args.env.host_url,
+        &args.env.token,
         "role.create",
         &json!({"role": args.role}),
     )
@@ -79,8 +79,8 @@ pub async fn create_role(args: RoleArgs) -> anyhow::Result<()> {
 
 pub async fn delete_role(args: RoleArgs) -> anyhow::Result<()> {
     crate::component_verbs::call(
-        &args.environment.host_url,
-        &args.environment.token,
+        &args.env.host_url,
+        &args.env.token,
         "role.delete",
         &json!({"role": args.role}),
     )
@@ -89,8 +89,8 @@ pub async fn delete_role(args: RoleArgs) -> anyhow::Result<()> {
 
 pub async fn grant_permission(args: PermissionArgs) -> anyhow::Result<()> {
     crate::component_verbs::call(
-        &args.environment.host_url,
-        &args.environment.token,
+        &args.env.host_url,
+        &args.env.token,
         "permission.grant",
         &json!({"role": args.role, "operation": args.operation}),
     )
@@ -99,8 +99,8 @@ pub async fn grant_permission(args: PermissionArgs) -> anyhow::Result<()> {
 
 pub async fn revoke_permission(args: PermissionArgs) -> anyhow::Result<()> {
     crate::component_verbs::call(
-        &args.environment.host_url,
-        &args.environment.token,
+        &args.env.host_url,
+        &args.env.token,
         "permission.revoke",
         &json!({"role": args.role, "operation": args.operation}),
     )

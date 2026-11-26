@@ -14,7 +14,7 @@ fn projection_relation(group: &str) -> Result<&'static str, ConnectionError> {
 }
 
 /// Refuse deleting a row that this environment database still references.
-pub(super) async fn refuse_environment_references(
+pub(super) async fn refuse_env_references(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     group: &str,
     id: &str,

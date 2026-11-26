@@ -6,7 +6,7 @@ use wamn_identity_protocol::PrincipalId;
 use wamn_registry::{EnvName, OrgId, ProjectId, Triple, instance_suffix::InstanceSuffix};
 
 // Every project deployment affected by an environment lifecycle change.
-const ENVIRONMENT_PROJECTS: &str = "SELECT project,env FROM registry.project_env WHERE org=$1 AND env=ANY($2) ORDER BY env,project";
+const PROJECT_ENVS: &str = "SELECT project,env FROM registry.project_env WHERE org=$1 AND env=ANY($2) ORDER BY env,project";
 
 /// Read the platform domain as stored, including an unset value.
 ///
@@ -15,7 +15,7 @@ const ENVIRONMENT_PROJECTS: &str = "SELECT project,env FROM registry.project_env
 pub(crate) async fn platform_domain(
     connection: &mut PgConnection,
 ) -> Result<Option<String>, sqlx::Error> {
-    sqlx::query_scalar(wamn_identity::identity::application::service::PLATFORM_DOMAIN_SQL)
+    sqlx::query_scalar(wamn_identity::identity::app::service::PLATFORM_DOMAIN_SQL)
         .fetch_one(connection)
         .await
 }
@@ -24,13 +24,13 @@ pub(crate) async fn platform_domain(
 ///
 /// # Errors
 /// Returns an error if the query fails or a coordinate is invalid.
-pub(crate) async fn environment_projects(
+pub(crate) async fn project_envs(
     connection: &mut PgConnection,
     org: &OrgId,
     envs: &[EnvName],
 ) -> Result<Vec<(ProjectId, EnvName)>, sqlx::Error> {
     let names: Vec<_> = envs.iter().map(EnvName::as_str).collect();
-    sqlx::query_as::<_, (String, String)>(ENVIRONMENT_PROJECTS)
+    sqlx::query_as::<_, (String, String)>(PROJECT_ENVS)
         .bind(org.as_str())
         .bind(names)
         .fetch_all(connection)
@@ -94,9 +94,7 @@ pub(crate) async fn membership_count(
 ///
 /// # Errors
 /// Returns an error if either count cannot be read.
-pub(crate) async fn application_counts(
-    connection: &mut PgConnection,
-) -> Result<(i32, i32), sqlx::Error> {
+pub(crate) async fn app_counts(connection: &mut PgConnection) -> Result<(i32, i32), sqlx::Error> {
     sqlx::query_as(
         "SELECT \
          (SELECT count(*)::int4 FROM platform.\"user\" u \

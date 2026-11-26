@@ -7,7 +7,7 @@ use wamn_identity_protocol::wire::PatResponse;
 use wamn_registry::{ProjectEnvKey, platform_domain::PlatformDomain};
 use wamn_role::RoleName;
 
-use crate::identity::application::service;
+use crate::identity::app::service;
 use crate::service::ServiceError;
 use wamn_authentication::administration::{self, GrantAuthority, GrantChange};
 

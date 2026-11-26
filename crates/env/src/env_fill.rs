@@ -1,0 +1,48 @@
+//! Project membership projection under system authority.
+
+use sqlx::Connection as _;
+use std::collections::BTreeSet;
+use wamn_authentication::administration::AppTarget;
+use wamn_identity::identity::app;
+
+/// Reconcile member rows in one project environment from current system authority.
+pub async fn fill(
+    system: &mut sqlx::PgConnection,
+    project: &mut sqlx::PgConnection,
+    issuer: &str,
+    target: AppTarget<'_>,
+) -> anyhow::Result<()> {
+    let mut system = system.begin().await?;
+    wamn_identity::identity::org::lock_org_memberships(&mut system, target.org).await?;
+    let mut project = project.begin().await?;
+    wamn_postgres::bind_platform_principal(
+        &mut project,
+        wamn_principal::PlatformComponent::Provisioning,
+    )
+    .await?;
+    let mut principals = BTreeSet::new();
+    principals.extend(
+        sqlx::query_scalar::<_, uuid::Uuid>(
+            "SELECT id FROM identity.principal WHERE identity.has_project_access(id,$1,$2,$3)",
+        )
+        .bind(target.org.as_str())
+        .bind(target.env.as_str())
+        .bind(target.project.as_str())
+        .fetch_all(&mut *system)
+        .await?,
+    );
+    principals.extend(
+        sqlx::query_scalar::<_, uuid::Uuid>(
+            "SELECT id FROM platform.\"user\" WHERE type='user' AND active",
+        )
+        .fetch_all(&mut *project)
+        .await?,
+    );
+    for id in principals {
+        let id = wamn_identity_protocol::PrincipalId::from(id);
+        app::project_authority(&mut system, &mut project, target, &id, issuer).await?;
+    }
+    project.commit().await?;
+    system.commit().await?;
+    Ok(())
+}

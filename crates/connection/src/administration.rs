@@ -175,7 +175,7 @@ pub async fn execute(
     credentials: &dyn WriteCredentials,
     authority_port: fn(&str) -> Result<u16, ConnectionError>,
     request: Request<'_>,
-    applications: &[wamn_application::application_config::ApplicationConfig],
+    apps: &[wamn_app::app_config::AppConfig],
 ) -> Result<Value, ConnectionError> {
     let Request {
         caller,
@@ -191,7 +191,7 @@ pub async fn execute(
             .connection_id(request["name"].as_str(), Lookup::Read)
             .await?;
         if let Some(id) = id {
-            references::refuse_application_references(applications, &id.to_string())?;
+            references::refuse_app_references(apps, &id.to_string())?;
         }
     }
     let credential = request
@@ -476,7 +476,7 @@ pub async fn configure(
                     .await?
                     .ok_or_else(|| refuse("not_found", "name"))?;
                 database
-                    .refuse_environment_references("external_system", &id.to_string())
+                    .refuse_env_references("external_system", &id.to_string())
                     .await?;
                 database.delete_external_system(id).await?;
                 Ok(json!({"name":name}))
@@ -533,7 +533,7 @@ pub async fn configure(
         }
         "connection.delete" => {
             database
-                .refuse_environment_references("connection", &id.to_string())
+                .refuse_env_references("connection", &id.to_string())
                 .await?;
             let credentials = database.delete_connection(id).await?;
             Ok(

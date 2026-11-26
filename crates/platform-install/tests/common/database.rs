@@ -26,7 +26,7 @@ pub async fn system(url: &str) {
     );
     for batch in [
         SYSTEM_ROLE_SQL,
-        wamn_environment::project_setup::ensure_project_roles_sql(),
+        wamn_env::project_setup::ensure_project_roles_sql(),
         &owner,
         "SET ROLE wamn_system",
         wamn_platform_install::SYSTEM_SCHEMA_SQL,
@@ -51,11 +51,11 @@ pub fn login_sql(
     format!(
         "{} DO $$ BEGIN IF NOT EXISTS(SELECT FROM pg_roles WHERE rolname={}) THEN CREATE ROLE {login} LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS; END IF; END $$; \
          ALTER ROLE {login} PASSWORD {}; GRANT {} TO {login} WITH ADMIN FALSE, INHERIT TRUE, SET FALSE; {}",
-        wamn_environment::project_setup::ensure_workload_acl_role_sql(family),
+        wamn_env::project_setup::ensure_workload_acl_role_sql(family),
         escape_literal(role.as_str()),
         escape_literal(password),
         escape_identifier(family.acl_role()),
-        wamn_environment::project_setup::grant_workload_login_sql(family, database, role)
+        wamn_env::project_setup::grant_workload_login_sql(family, database, role)
     )
 }
 
@@ -68,7 +68,7 @@ pub async fn platform_migration_input(input: &str, scope: MigrationDatabase) -> 
     let mut admin = wamn_postgres::connect(input).await.unwrap();
     let roles = match scope {
         MigrationDatabase::System => SYSTEM_ROLE_SQL,
-        MigrationDatabase::Project => wamn_environment::project_setup::ensure_project_roles_sql(),
+        MigrationDatabase::Project => wamn_env::project_setup::ensure_project_roles_sql(),
     };
     sqlx::raw_sql(sqlx::AssertSqlSafe(roles))
         .execute(&mut admin)

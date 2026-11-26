@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use wamn_application::database::{Claim, CommitFailure, DatabaseTarget};
+use wamn_app::database::{Claim, CommitFailure, DatabaseTarget};
 use wamn_package::canonical_name::CanonicalName;
 
 use super::operation_sql::Transaction;
@@ -100,7 +100,7 @@ impl OperationHost {
         let project = scope_registry::project_for(&self.scopes, scope);
         let target = DatabaseTarget {
             project: &project,
-            environment: identity
+            env: identity
                 .project_env_key
                 .as_ref()
                 .expect("required SQL identity"),

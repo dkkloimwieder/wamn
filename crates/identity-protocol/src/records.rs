@@ -34,7 +34,7 @@ pub struct OrgUser {
 
 /// An environment and its registry state.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
-pub struct EnvironmentSummary {
+pub struct EnvSummary {
     /// The environment name.
     pub name: wamn_registry::EnvName,
     /// The status represented by `registry.env.active`.

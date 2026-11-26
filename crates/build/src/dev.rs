@@ -7,7 +7,7 @@ pub mod edge_bundle;
 use std::path::{Path, PathBuf};
 
 use wamn_digest::Digest;
-use wamn_registry::ApplicationName;
+use wamn_registry::AppName;
 
 #[cfg(target_os = "linux")]
 use crate::watch::FilesystemInvalidationSource;
@@ -32,7 +32,7 @@ pub trait Deploy: Sync {
     fn deploy(
         &self,
         configuration: &Path,
-        application: ApplicationName,
+        app: AppName,
         release: Digest,
     ) -> impl Future<Output = anyhow::Result<()>> + Send;
 }

@@ -41,7 +41,7 @@ These outcomes require stated recovery assumptions and do not promise immediate 
 The Receiving tests observe stamps and the log through real routes and commands:
 
 - The [request path journey](../../tests/journeys/tests/request_path.rs) checks that each caller's identity reaches the row and history stamps.
-- The [application route journey](../../tests/journeys/tests/application_routes_kind.rs) checks that overlay inserts inherit actor stamps and that a role without the list permission cannot read the feed.
+- The [application route journey](../../tests/journeys/tests/app_routes_kind.rs) checks that overlay inserts inherit actor stamps and that a role without the list permission cannot read the feed.
 - The [data access test](../../tests/receiving-tests/receiving_data_access.rs) installs the declared triggers with its own SQL and tests insert, update, and no-op stamps.
 - In the same test, an Acme overlay update logs a changed-column diff that folds to the effective base and overlay row. The Receiving history read returns only its base columns. An idempotent receipt replay appends no entry.
 

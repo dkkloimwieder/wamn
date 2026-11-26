@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use anyhow::{Context as _, bail, ensure};
 use serde_json::{Value, json};
-use wamn_environment::environment::document::EnvironmentDocument;
+use wamn_env::env::document::EnvDocument;
 
 // The Job deadline is fifteen minutes. Allow time for scheduling and status delivery.
 const POLL_LIMIT: Duration = Duration::from_mins(16);
@@ -55,7 +55,7 @@ impl ControlHost {
             .await
     }
 
-    pub(crate) async fn environment(
+    pub(crate) async fn env(
         &self,
         operation: &str,
         triple: &wamn_registry::Triple,
@@ -118,9 +118,9 @@ impl ControlHost {
 
 /// Publish source with registry credentials and committed describe evidence.
 pub(crate) async fn publish(
-    document: &EnvironmentDocument,
+    document: &EnvDocument,
     package: &Path,
-) -> anyhow::Result<(wamn_registry::ApplicationName, wamn_digest::Digest)> {
+) -> anyhow::Result<(wamn_registry::AppName, wamn_digest::Digest)> {
     wamn_build::source_deploy::publish_from_env(
         &wamn_build::source_build::SourceBuilder {
             describe: Ok(wamn_build::DescribeMode::Cached),
@@ -141,6 +141,6 @@ pub(crate) fn parse_coordinate(value: &str) -> anyhow::Result<wamn_registry::Tri
     let org = org.parse()?;
     let project = project.parse()?;
     let env = env.parse()?;
-    wamn_environment::name::validate_project_env(&org, &project, &env)?;
+    wamn_env::name::validate_project_env(&org, &project, &env)?;
     Ok(wamn_registry::Triple::new(org, env, project))
 }

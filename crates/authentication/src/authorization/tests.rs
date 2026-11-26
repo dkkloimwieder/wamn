@@ -37,7 +37,7 @@ async fn user_operation_permissions_reuse_only_the_callable_http_authority() {
     let provider = Arc::new(RecordingProvider::default());
     let pools = Arc::new(WamnPostgres::with_provider(Arc::clone(&provider) as _));
     let authorization = Authorization::new(pools);
-    let application = wamn_application::application_config::ApplicationConfig {
+    let app = wamn_app::app_config::AppConfig {
         org: "org".parse().unwrap(),
         project: (*DEFAULT_PROJECT).clone(),
         environment: "a".parse().unwrap(),
@@ -45,12 +45,8 @@ async fn user_operation_permissions_reuse_only_the_callable_http_authority() {
         grant_cache_seconds: 1,
         components: Vec::new(),
     };
-    authorization.configure_application(&application).unwrap();
-    let project_env_key = wamn_registry::project_env_key(
-        &application.org,
-        &application.project,
-        &application.environment,
-    );
+    authorization.configure_app(&app).unwrap();
+    let project_env_key = wamn_registry::project_env_key(&app.org, &app.project, &app.environment);
     let principal_id = "00000000-0000-0000-0000-000000000019"
         .parse()
         .expect("user UUID");

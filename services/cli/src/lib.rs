@@ -1,6 +1,6 @@
 //! Local builds and clients of authenticated control routes.
 
-pub mod application_verbs;
+pub mod app_verbs;
 pub mod artifact_verbs;
 pub mod build_verbs;
 pub mod component_verbs;
@@ -18,4 +18,4 @@ pub mod schema_verbs;
 pub mod web;
 pub mod workflow_verbs;
 
-pub mod environment_requests;
+pub mod env_requests;

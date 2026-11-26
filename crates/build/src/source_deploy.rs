@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use wamn_codegen::fingerprint;
 use wamn_component_policy::PackageManifest;
-use wamn_environment::environment::document::EnvironmentDocument;
+use wamn_env::env::document::EnvDocument;
 use wamn_package::PackageName;
 use wamn_package::manifest::BaseDependencyRequirement;
 use wamn_package::manifest::PackageIdentity;
@@ -20,11 +20,11 @@ use crate::{BuildMode, PreparedSource, default_output_root, package_output, prep
 pub async fn publish_from_env(
     build: &SourceBuilder<'_>,
     publisher: &RegistryPackagePublisher<'_>,
-    document: &EnvironmentDocument,
+    document: &EnvDocument,
     root: &Path,
-) -> anyhow::Result<(wamn_registry::ApplicationName, wamn_digest::Digest)> {
-    let (application, sources) = sources(document, root).await?;
-    build_and_publish(build, publisher, application, sources, BuildMode::Published).await
+) -> anyhow::Result<(wamn_registry::AppName, wamn_digest::Digest)> {
+    let (app, sources) = sources(document, root).await?;
+    build_and_publish(build, publisher, app, sources, BuildMode::Published).await
 }
 
 /// Build and publish the source documents already compiled for this dev pass.
@@ -32,32 +32,25 @@ pub async fn publish_from_env(
 pub(crate) async fn publish_development(
     build: &SourceBuilder<'_>,
     publisher: &RegistryPackagePublisher<'_>,
-    application: wamn_registry::ApplicationName,
+    app: wamn_registry::AppName,
     sources: Vec<PreparedSource>,
-) -> anyhow::Result<(wamn_registry::ApplicationName, wamn_digest::Digest)> {
-    build_and_publish(
-        build,
-        publisher,
-        application,
-        sources,
-        BuildMode::Development,
-    )
-    .await
+) -> anyhow::Result<(wamn_registry::AppName, wamn_digest::Digest)> {
+    build_and_publish(build, publisher, app, sources, BuildMode::Development).await
 }
 
 async fn build_and_publish(
     build: &SourceBuilder<'_>,
     publisher: &RegistryPackagePublisher<'_>,
-    application: wamn_registry::ApplicationName,
+    app: wamn_registry::AppName,
     sources: Vec<PreparedSource>,
     mode: BuildMode,
-) -> anyhow::Result<(wamn_registry::ApplicationName, wamn_digest::Digest)> {
+) -> anyhow::Result<(wamn_registry::AppName, wamn_digest::Digest)> {
     let mut roots = Vec::with_capacity(sources.len());
     for source in sources {
         roots.push(build.build(&source, mode).await?);
     }
     let digest = publisher.publish(roots).await?;
-    Ok((application, digest))
+    Ok((app, digest))
 }
 
 /// Publish the selected package's existing build output without rebuilding.
@@ -88,25 +81,23 @@ pub async fn publish_built_from_env(
 
 /// Resolve and compile the source closure in dependency order.
 pub(crate) async fn sources(
-    document: &EnvironmentDocument,
+    document: &EnvDocument,
     root: &Path,
-) -> anyhow::Result<(wamn_registry::ApplicationName, Vec<PreparedSource>)> {
+) -> anyhow::Result<(wamn_registry::AppName, Vec<PreparedSource>)> {
     let root = root
         .canonicalize()
         .context("resolve selected package root")?;
-    let application = selected_application(document)?.clone();
+    let app = selected_app(document)?.clone();
     let sources = ordered_sources(
         prepare_source(&root).await?,
         |root| async move { prepare_source(&root).await },
         |id| wamn_codegen::source_root(&package_output(&default_output_root(&root), id)),
     )
     .await?;
-    Ok((application, sources))
+    Ok((app, sources))
 }
 
-fn selected_application(
-    document: &EnvironmentDocument,
-) -> anyhow::Result<&wamn_registry::ApplicationName> {
+fn selected_app(document: &EnvDocument) -> anyhow::Result<&wamn_registry::AppName> {
     ensure!(
         document.applications.len() == 1,
         "select one application before publishing source"

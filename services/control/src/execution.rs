@@ -25,7 +25,7 @@ impl Execution {
     ) -> anyhow::Result<Value> {
         match operation.as_str() {
             "environment.configure" | "environment.delete" | "environment.operation_status" => {
-                self.environment(operation, payload, command).await
+                self.env(operation, payload, command).await
             }
             "api_service.create"
             | "service_principal.create"

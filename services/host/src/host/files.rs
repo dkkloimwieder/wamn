@@ -6,8 +6,8 @@ use std::time::Duration;
 
 use anyhow::Context as _;
 use serde_json::Value;
-use wamn_application::application_config::ApplicationConfig;
-use wamn_application::result_signing::{ResultSigner, ResultSigning, ResultSigningError};
+use wamn_app::app_config::AppConfig;
+use wamn_app::result_signing::{ResultSigner, ResultSigning, ResultSigningError};
 use wamn_authentication::authorization::Authorization;
 use wamn_blobstore::client::ObjectStorage;
 use wamn_connection::connection_facts::ConnectionCache;
@@ -20,11 +20,11 @@ use wamn_postgres::WamnPostgres;
 
 pub(super) struct Routes {
     pub(super) files: FileRoutes,
-    pub(super) application: super::host_route::HostRouteDelivery,
+    pub(super) app: super::host_route::HostRouteDelivery,
 }
 
-struct ApplicationFiles {
-    application: Arc<ApplicationConfig>,
+struct AppFiles {
+    app: Arc<AppConfig>,
     routes: tokio::sync::OnceCell<Arc<Routes>>,
 }
 
@@ -33,7 +33,7 @@ pub(super) struct Files {
     database: Arc<WamnPostgres>,
     storage: Arc<ObjectStorage>,
     authorization: Arc<Authorization>,
-    applications: RwLock<HashMap<String, Arc<ApplicationFiles>>>,
+    apps: RwLock<HashMap<String, Arc<AppFiles>>>,
 }
 
 impl std::fmt::Debug for Files {
@@ -54,25 +54,25 @@ impl Files {
             database,
             storage,
             authorization,
-            applications: RwLock::default(),
+            apps: RwLock::default(),
         }
     }
 
-    pub(super) fn register(&self, workload: &str, application: Arc<ApplicationConfig>) {
-        self.applications
+    pub(super) fn register(&self, workload: &str, app: Arc<AppConfig>) {
+        self.apps
             .write()
             .expect("file applications lock poisoned")
             .insert(
                 workload.to_owned(),
-                Arc::new(ApplicationFiles {
-                    application,
+                Arc::new(AppFiles {
+                    app,
                     routes: tokio::sync::OnceCell::new(),
                 }),
             );
     }
 
     pub(super) fn unregister(&self, workload: &str) {
-        self.applications
+        self.apps
             .write()
             .expect("file applications lock poisoned")
             .remove(workload);
@@ -80,7 +80,7 @@ impl Files {
 
     pub(super) async fn routes(&self, workload: &str) -> anyhow::Result<Arc<Routes>> {
         let state = self
-            .applications
+            .apps
             .read()
             .expect("file applications lock poisoned")
             .get(workload)
@@ -93,20 +93,17 @@ impl Files {
                     .postgres
                     .upgrade()
                     .context("file database was unloaded")?;
-                let application = &state.application;
-                let facts = Arc::clone(&self.authorization).facts(Arc::clone(application))?;
-                let context = Arc::new(ReleaseContext::new(
-                    Arc::clone(application),
-                    Arc::clone(&facts),
-                )?);
+                let app = &state.app;
+                let facts = Arc::clone(&self.authorization).facts(Arc::clone(app))?;
+                let context = Arc::new(ReleaseContext::new(Arc::clone(app), Arc::clone(&facts))?);
                 let connections = Arc::new(RegistryFileConnections {
-                    release: Arc::clone(application),
+                    release: Arc::clone(app),
                     facts,
                 });
-                let application_routes = super::host_route::HostRouteDelivery::new(
+                let app_routes = super::host_route::HostRouteDelivery::new(
                     postgres,
                     Arc::clone(&self.authorization),
-                    Arc::clone(application),
+                    Arc::clone(app),
                 );
                 Ok(Arc::new(Routes {
                     files: FileRoutes::new(
@@ -114,9 +111,9 @@ impl Files {
                         Arc::clone(&self.database),
                         Arc::clone(&self.storage),
                         connections,
-                        application.project.clone(),
+                        app.project.clone(),
                     ),
-                    application: application_routes,
+                    app: app_routes,
                 }))
             })
             .await

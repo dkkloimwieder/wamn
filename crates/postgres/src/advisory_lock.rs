@@ -7,12 +7,12 @@ use wamn_registry::{EnvName, OrgId};
 ///
 /// # Errors
 /// Returns an error if the database cannot attempt the lock.
-pub async fn try_environment_lock(
+pub async fn try_env_lock(
     connection: &mut PgConnection,
     org: &OrgId,
     env: &EnvName,
 ) -> Result<bool, sqlx::Error> {
-    sqlx::query_scalar(crate::ENVIRONMENT_LOCK_SQL)
+    sqlx::query_scalar(crate::ENV_LOCK_SQL)
         .bind(org.as_str())
         .bind(env.as_str())
         .fetch_one(connection)

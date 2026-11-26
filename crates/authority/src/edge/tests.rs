@@ -1,8 +1,8 @@
 use std::collections::HashSet;
 use std::time::Duration;
 
-use wamn_application::ingress::CredentialType;
-use wamn_application::native_routes::{OperationRefusal, OperationRefusalType};
+use wamn_app::ingress::CredentialType;
+use wamn_app::native_routes::{OperationRefusal, OperationRefusalType};
 use wamn_component_policy::{AdmittedComponentOperation, ComponentPackageCoordinate};
 use wamn_digest::{bytes_sha256, canonical_json_sha256};
 

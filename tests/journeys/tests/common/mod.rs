@@ -261,7 +261,7 @@ impl Org {
     }
 
     /// Write an environment file with one project and one application, and run `wamn env apply`.
-    pub async fn apply(self, application: &str) -> anyhow::Result<Environment> {
+    pub async fn apply(self, app: &str) -> anyhow::Result<Env> {
         let scratch = ScratchRoot::create()?;
         let file = scratch.path().join("environment.yaml");
         // A JSON document is a YAML document.
@@ -273,34 +273,34 @@ impl Org {
                 "target": "cloud",
                 "revocation_seconds": 60,
                 "database": {"instances": 1, "storage": "1Gi", "cpu": "100m", "memory": "256Mi"},
-                "projects": [{"name": PROJECT, "applications": {application: {"label": LABEL}}}],
+                "projects": [{"name": PROJECT, "applications": {app: {"label": LABEL}}}],
             }))?,
         )?;
         let triple = Triple::new(self.name.clone(), ENV.parse()?, PROJECT.parse()?);
-        failure::environment(&triple);
+        failure::env(&triple);
         // The guard exists first, so a failed apply is also deleted.
-        let environment = Environment {
+        let env = Env {
             org: self,
             file,
             triple,
             scratch,
         };
-        let mut command = environment.org.command();
-        command.args(["env", "apply"]).arg(&environment.file);
+        let mut command = env.org.command();
+        command.args(["env", "apply"]).arg(&env.file);
         run(command).await?;
-        Ok(environment)
+        Ok(env)
     }
 }
 
 /// One applied environment. Runs a plain `wamn env delete` after failure capture, if enabled.
-pub struct Environment {
+pub struct Env {
     pub org: Org,
     pub file: PathBuf,
     pub triple: Triple,
     scratch: ScratchRoot,
 }
 
-impl Environment {
+impl Env {
     /// Admit the observer login to the project database, and connect with it.
     ///
     /// Each `wamn env apply` and `wamn deploy` upgrades the project chart, which puts its
@@ -310,47 +310,46 @@ impl Environment {
     }
 
     /// Run `wamn deploy` for the application's source package.
-    pub async fn deploy(&self, package: &Path, application: &str) -> anyhow::Result<()> {
+    pub async fn deploy(&self, package: &Path, app: &str) -> anyhow::Result<()> {
         let mut command = self.org.command();
         command
             .arg("deploy")
             .arg(package)
-            .args(["--application", application, "--env"])
+            .args(["--application", app, "--env"])
             .arg(&self.file);
         run(command).await.map(drop)
     }
 }
 
-impl Drop for Environment {
+impl Drop for Env {
     fn drop(&mut self) {
-        failure::delete_environment(&self.org, &self.triple);
+        failure::delete_env(&self.org, &self.triple);
     }
 }
 
 /// A deployed fixture application and routes that an admin API service calls.
-pub struct Application {
+pub struct App {
     pub routes: Routes,
     caller: PrincipalId,
-    pub environment: Environment,
+    pub env: Env,
 }
 
-impl Application {
+impl App {
     /// Create an org and environment, and deploy the source package at `source`.
     pub async fn prepare(source: &Path) -> anyhow::Result<Self> {
         let name = source
             .file_name()
             .and_then(|name| name.to_str())
             .context("fixture directory name")?;
-        let environment = Org::create().await?.apply(name).await?;
-        environment.deploy(source, name).await?;
-        let org = &environment.org;
+        let env = Org::create().await?.apply(name).await?;
+        env.deploy(source, name).await?;
+        let org = &env.org;
         let outputs = &org.cluster.outputs;
-        let host =
-            wamn_registry::name::application_host(LABEL, &org.name, &outputs.base_domain.parse()?);
+        let host = wamn_registry::name::app_host(LABEL, &org.name, &outputs.base_domain.parse()?);
         // The fixture routes accept a PAT only, and an API service cannot hold `admin`.
-        caller_role(&environment, source, name, &host).await?;
-        let secret = environment.scratch.path().join("caller.json");
-        let triple = &environment.triple;
+        caller_role(&env, source, name, &host).await?;
+        let secret = env.scratch.path().join("caller.json");
+        let triple = &env.triple;
         let mut command = org.command();
         command
             .args(["create-api-service", "--project", triple.project.as_str()])
@@ -380,7 +379,7 @@ impl Application {
         Ok(Self {
             routes,
             caller,
-            environment,
+            env,
         })
     }
 
@@ -392,19 +391,14 @@ impl Application {
 
 /// Create the API caller's role on the application host, and grant it each operation that
 /// the fixture's build output serves, its bases' operations included.
-async fn caller_role(
-    environment: &Environment,
-    source: &Path,
-    application: &str,
-    host: &str,
-) -> anyhow::Result<()> {
+async fn caller_role(env: &Env, source: &Path, app: &str, host: &str) -> anyhow::Result<()> {
     // `wamn deploy` builds the package into `<workspace>/target/wamn/<package>`.
     let manifest = std::fs::read(
         source
             .parent()
             .context("fixture workspace")?
             .join("target/wamn")
-            .join(application)
+            .join(app)
             .join("wamn.json"),
     )?;
     let owners = wamn_package::manifest::OperationOwners::from_slice(&manifest)?;
@@ -431,13 +425,13 @@ async fn caller_role(
         }
     }
     let host_url = format!("http://{host}");
-    let mut command = environment.org.command();
+    let mut command = env.org.command();
     command
         .args(["create-role", "--host-url", &host_url])
         .args(["--role", CALLER_ROLE]);
     run(command).await?;
     for operation in &operations {
-        let mut command = environment.org.command();
+        let mut command = env.org.command();
         command
             .args(["grant-permission", "--host-url", &host_url])
             .args(["--role", CALLER_ROLE, "--operation", operation]);
@@ -457,11 +451,10 @@ fn postgres_clusters(client: &kube::Client, namespace: &str) -> Api<DynamicObjec
 /// Resolve the active project Cluster from the registry generation (C2, C3, C6).
 pub async fn active_project_cluster(cluster: &Cluster, triple: &Triple) -> anyhow::Result<String> {
     let mut system = cluster.observe_system().await?;
-    let instance =
-        wamn_environment::registry::deployment::instance_suffix(&mut system.connection, triple)
-            .await
-            .with_context(|| format!("read the active deployment for {triple}"))?
-            .with_context(|| format!("{triple} has no active deployment"))?;
+    let instance = wamn_env::registry::deployment::instance_suffix(&mut system.connection, triple)
+        .await
+        .with_context(|| format!("read the active deployment for {triple}"))?
+        .with_context(|| format!("{triple} has no active deployment"))?;
     let database =
         name::project_env_database_name(&triple.org, &triple.project, &triple.env, &instance);
     Ok(name::project_cluster(&database))

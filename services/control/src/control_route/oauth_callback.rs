@@ -17,11 +17,11 @@ pub async fn response(
         return page(405, "OAuth callback requires GET");
     }
     let query = request.uri().query().unwrap_or_default();
-    let (project, environment) = match callback_target(query) {
+    let (project, env) = match callback_target(query) {
         Ok(target) => target,
         Err(error) => return page(400, &error.reason),
     };
-    let Ok(login) = logins.options(&project, &environment).await else {
+    let Ok(login) = logins.options(&project, &env).await else {
         return page(503, "callback database unavailable");
     };
     let Ok(mut database) = wamn_postgres::connect(login).await else {

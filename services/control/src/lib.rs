@@ -2,7 +2,7 @@
 
 mod control_route;
 mod control_sql;
-pub mod environment_status;
+pub mod env_status;
 mod execution;
 pub mod first_owner;
 mod host_route;
@@ -24,7 +24,7 @@ pub use host_route::{HostRouteDelivery, HostRouteHandlers};
 use serde::Deserialize;
 use serde_json::json;
 use wamn_authentication::route_authentication::ControlRouteAuthenticator;
-use wamn_environment::environment::Platform;
+use wamn_env::env::Platform;
 use wamn_identity_client::users::UserClient;
 pub use writer::Writer;
 

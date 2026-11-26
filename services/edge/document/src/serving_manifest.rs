@@ -452,11 +452,11 @@ impl ServingManifest {
 
     /// The explicitly named application member of the composed entry.
     pub fn composing_member(&self) -> Option<&ServingComponent> {
-        let application = &self.composed_entry.as_ref()?.application;
+        let app = &self.composed_entry.as_ref()?.application;
         self.components.iter().find(|component| {
-            component.package_id == application.package_id
-                && component.descriptor.component == application.component
-                && component.descriptor.component_digest == application.digest
+            component.package_id == app.package_id
+                && component.descriptor.component == app.component
+                && component.descriptor.component_digest == app.digest
         })
     }
 
@@ -465,7 +465,7 @@ impl ServingManifest {
     /// entry, and `component`'s own package otherwise. One application is one
     /// composed workload, so a base operation reached through the entry runs
     /// as the composing application.
-    pub fn composing_application<'a>(
+    pub fn composing_app<'a>(
         &'a self,
         component: &'a ServingComponent,
     ) -> &'a wamn_package::PackageName {
@@ -1113,11 +1113,11 @@ mod tests {
     }
 
     #[test]
-    fn a_base_operation_reached_through_the_composed_entry_runs_as_the_composing_application() {
+    fn a_base_operation_reached_through_the_composed_entry_runs_as_the_composing_app() {
         let mut manifest = manifest();
         // Without an entry, each component is its own application.
         assert_eq!(
-            manifest.composing_application(&component_of(&manifest, &"base".parse().unwrap())),
+            manifest.composing_app(&component_of(&manifest, &"base".parse().unwrap())),
             &"base".parse().unwrap()
         );
         manifest.composed_entry = Some(entry_for(&manifest));
@@ -1129,8 +1129,7 @@ mod tests {
         );
         for package_id in ["base", "overlay"] {
             assert_eq!(
-                manifest
-                    .composing_application(&component_of(&manifest, &package_id.parse().unwrap())),
+                manifest.composing_app(&component_of(&manifest, &package_id.parse().unwrap())),
                 &"overlay".parse().unwrap(),
                 "{package_id} runs as the composing application"
             );
@@ -1155,11 +1154,11 @@ mod tests {
             .members
             .retain(|member| member.package_id == "base".parse().unwrap());
         assert_eq!(
-            manifest.composing_application(&component_of(&manifest, &"overlay".parse().unwrap())),
+            manifest.composing_app(&component_of(&manifest, &"overlay".parse().unwrap())),
             &"overlay".parse().unwrap()
         );
         assert_eq!(
-            manifest.composing_application(&component_of(&manifest, &"base".parse().unwrap())),
+            manifest.composing_app(&component_of(&manifest, &"base".parse().unwrap())),
             &"base".parse().unwrap()
         );
     }
@@ -1216,7 +1215,7 @@ mod tests {
     }
 
     #[test]
-    fn composed_entry_requires_a_named_application_in_its_members() {
+    fn composed_entry_requires_a_named_app_in_its_members() {
         let mut manifest = manifest();
         manifest.composed_entry = Some(entry_for(&manifest));
         manifest.composed_entry.as_mut().unwrap().application.digest = COMPONENT_A.parse().unwrap();
@@ -1227,7 +1226,7 @@ mod tests {
     }
 
     #[test]
-    fn format_eleven_requires_composed_entry_application() {
+    fn format_eleven_requires_composed_entry_app() {
         let mut manifest = manifest();
         manifest.format_version = 11;
         manifest.composed_entry = Some(entry_for(&manifest));
@@ -1248,7 +1247,7 @@ mod tests {
     }
 
     #[test]
-    fn runtime_schema_is_pinned_and_consistent_within_an_application() {
+    fn runtime_schema_is_pinned_and_consistent_within_an_app() {
         let original = manifest();
         let mut pinned = original.clone();
         pinned.components = pinned

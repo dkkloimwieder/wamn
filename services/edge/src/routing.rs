@@ -1,6 +1,6 @@
 //! The edge's manifest-based route policy, retained until the edge design.
 use crate::release::EdgeRelease;
-use wamn_application::ingress::{RoutePolicy, RouteProvider};
+use wamn_app::ingress::{RoutePolicy, RouteProvider};
 use wamn_package::AttachmentType;
 
 impl RouteProvider for EdgeRelease {

@@ -18,7 +18,7 @@ use wamn_release::publish_release::{
 use wamn_release::release_source::{read_package_attachments, read_package_manifests};
 
 const PROJECT_ENV_KEY: &str = "effective-release-poc--dev--fixture";
-const ENVIRONMENT: &str = "dev";
+const ENV: &str = "dev";
 const BASE_WASM_ENV: &str = "WAMN_EFFECTIVE_RELEASE_BASE_COMPONENT_WASM";
 const OVERLAY_WASM_ENV: &str = "WAMN_EFFECTIVE_RELEASE_OVERLAY_COMPONENT_WASM";
 /// The fixture version, read from the compiled manifest that authors it. The
@@ -170,10 +170,10 @@ fn base_and_overlay_project_admitted_routes() {
     let request = PublishReleaseManifest {
         org: &"effective-release-poc".parse().expect("fixed identifier"),
         project: &"fixture".parse().expect("fixed identifier"),
-        environment: &ENVIRONMENT.parse().unwrap(),
+        env: &ENV.parse().unwrap(),
         packages: &packages,
         attachments: &attachments,
-        environment_is_disposable: false,
+        env_is_disposable: false,
     };
 
     let first =

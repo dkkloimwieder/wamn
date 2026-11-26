@@ -172,7 +172,7 @@ The content revision stays the same after a rollback restores that revision's sa
 An application route runs under the administration credential, in a host-owned READ COMMITTED transaction that binds the caller and the sealed operation id.
 A host-run write stamps that sealed operation id in its history entries.
 A role or permission write first takes the project lock that `wamn` and release reconciliation take.
-The writes are the functions of [`wamn_environment::application`](../../crates/environment/src/application.rs), which the role verbs of `wamn` also call.
+The writes are the functions of [`wamn_authentication::administration`](../../crates/authentication/src/administration.rs), which the role verbs of `wamn` also call.
 `user_role.grant` and `user_role.revoke` refuse direct changes to `admin`. Control projects that role from org and project grants.
 `permission.grant` writes one permission row. A row the serving release does not serve grants nothing.
 An application refusal is a declared error of its route, with `field` in its detail: `admin_fixed`, `invalid_input`, `role_not_found`, `operation_not_served`, `operation_not_grantable`, `permission_not_held`, `user_not_found` or `admin_covered`.
@@ -203,7 +203,7 @@ A project route needs that row, or a current `project-admin` row of the caller i
 A write runs in one transaction on a second `control` login, which holds one write at a time.
 The transaction inserts the caller and sealed operation id into `platform.tx_identity`, then checks the role again.
 Membership and administration writes use [`wamn_identity::identity::org`](../../crates/identity/src/identity/org.rs).
-[`wamn_environment::environment_org`](../../crates/environment/src/environment_org.rs) owns project creation, environment enumeration, and environment status writes.
+[`wamn_env::env_org`](../../crates/env/src/env_org.rs) owns project creation, environment enumeration, and environment status writes.
 A refusal is a declared error of its route, with the input member it names in `field`: `invalid_input`, `project_not_found`, `environment_not_found`, `user_not_active`, `user_not_found`, `admin_covered` or `user_refused`.
 A write that changes administrative authority or membership also changes the application rows of each environment it covers, one transaction per environment, with the project's administration login.
 Native control reads a public connection file per `<env>--<project>` at each write. The login directory holds `tls.crt`, `tls.key`, and the server's `ca.crt`.
@@ -288,7 +288,7 @@ The entry bounds a page by the declared contract maximum, usually 100, and by th
 The generated typed export validates the remaining input.
 The memory of a read is bounded by the statement's declared limit and the platform ceiling.
 The test `a_read_page_maximum_stops_at_the_platform_ceiling` in [`http_routes`](../../services/edge/document/src/http_routes.rs) shows the ceiling.
-The test `a_read_above_its_declared_maximum_is_refused` in [`application_routes_kind`](../../tests/journeys/tests/application_routes_kind.rs) shows the refusal.
+The test `a_read_above_its_declared_maximum_is_refused` in [`app_routes_kind`](../../tests/journeys/tests/app_routes_kind.rs) shows the refusal.
 The route component invokes the application through the host converter.
 The typed query returns its page. The host retains the read's WAL position for a list ETag.
 Platform endpoints use native handlers. Workflows and edge calls use the shared operation entry.

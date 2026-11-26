@@ -3,7 +3,7 @@
 use std::fmt;
 use std::sync::Arc;
 
-use wamn_application::InvocationLifetime;
+use wamn_app::InvocationLifetime;
 use wamn_authority::connection::ConnectionError;
 use wamn_authority::connection_authority::HostPolicy;
 use wamn_identity_protocol::PrincipalId;

@@ -29,7 +29,7 @@ impl Broker {
         workload: &Workload,
         workflow_id: &CanonicalName,
     ) -> anyhow::Result<Consumer> {
-        let app = &workload.application;
+        let app = &workload.app;
         let context = self.client.get_or_try_init(|| self.connect(app)).await?;
         Ok(Consumer {
             context: Arc::clone(context),
@@ -43,7 +43,7 @@ impl Broker {
 
     async fn connect(
         &self,
-        app: &wamn_application::application_config::ApplicationConfig,
+        app: &wamn_app::app_config::AppConfig,
     ) -> anyhow::Result<Arc<jetstream::Context>> {
         let options = wamn_broker::nats::credentials_options(
             async_nats::ConnectOptions::new().ignore_discovered_servers(),

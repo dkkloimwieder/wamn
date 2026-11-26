@@ -1,7 +1,7 @@
 //! Host-attested connection invocations and application authorization.
 
 use std::sync::Arc;
-use wamn_application::application_config::{ApplicationConfig, ApplicationConnection};
+use wamn_app::app_config::{AppConfig, AppConnection};
 use wamn_authority::effect_span::{EffectGraph, EffectSource};
 
 /// Host-attested identity of one component invocation.
@@ -24,10 +24,10 @@ impl ConnectionInvocation {
     /// Resolve a host connection declared by the executing component.
     pub fn connection<'a>(
         &self,
-        application: &'a ApplicationConfig,
+        app: &'a AppConfig,
         alias: &wamn_package::canonical_name::CanonicalName,
-    ) -> Option<&'a ApplicationConnection> {
-        let component = application.components.iter().find(|component| {
+    ) -> Option<&'a AppConnection> {
+        let component = app.components.iter().find(|component| {
             component.package == self.package_id
                 && component.digest == self.component_digest
                 && component.name == self.component.as_str()
@@ -41,16 +41,16 @@ impl ConnectionInvocation {
             }
             _ => return None,
         }
-        wamn_application::application_config::binding(application, &component.name, alias.as_str())
+        wamn_app::app_config::binding(app, &component.name, alias.as_str())
     }
 
     /// Build call authority from the configured operation and its exact sibling.
     pub fn for_operation(
-        application: &ApplicationConfig,
+        app: &AppConfig,
         operation: &wamn_package::canonical_name::CanonicalName,
     ) -> anyhow::Result<Self> {
         use anyhow::Context as _;
-        let (component, policy) = application
+        let (component, policy) = app
             .components
             .iter()
             .find_map(|component| {
@@ -129,7 +129,7 @@ pub struct GraphPosition {
     /// The immutable graph hash frozen on the run.
     pub graph_hash: wamn_digest::Digest,
     /// The application that owns the graph.
-    pub application: wamn_registry::ApplicationName,
+    pub app: wamn_registry::AppName,
     pub graph_id: wamn_package::canonical_name::CanonicalName,
     pub graph_version: u32,
     pub node_id: wamn_package::canonical_name::CanonicalName,

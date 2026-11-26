@@ -3,7 +3,7 @@
 use anyhow::{Context as _, ensure};
 use serde::Deserialize;
 use serde_json::{Value, json};
-use wamn_environment::environment::worker::{self, Task};
+use wamn_env::env::worker::{self, Task};
 use wamn_kubernetes::client::KubernetesApi;
 use wamn_kubernetes::helm::UpgradeRolledBack;
 
@@ -50,10 +50,10 @@ impl Execution {
             api.namespace == self.org,
             "platform worker must share the org namespace"
         );
-        let environment = operation.as_str().starts_with("environment.");
+        let env = operation.as_str().starts_with("environment.");
         let input: Value = serde_json::from_str(payload)?;
-        let coordinate = if environment {
-            wamn_environment::environment_names::environment_resource_name(
+        let coordinate = if env {
+            wamn_env::env_names::project_env_resource_name(
                 &self.org,
                 &input["project"]
                     .as_str()
@@ -67,11 +67,7 @@ impl Execution {
         } else {
             format!("{}/platform", self.org)
         };
-        let worker_type = if environment {
-            "environment"
-        } else {
-            "platform"
-        };
+        let worker_type = if env { "environment" } else { "platform" };
         if operation.as_str().ends_with("operation_status") {
             #[derive(Deserialize)]
             #[serde(deny_unknown_fields)]
@@ -115,7 +111,7 @@ impl Execution {
             {"name":"configuration","mountPath":"/etc/wamn/control","readOnly":true},
             {"name":"work","mountPath":"/work"}
         ]);
-        if environment {
+        if env {
             wamn_kubernetes::worker_mounts::mount_broker_ca(&mut job);
             wamn_kubernetes::worker_mounts::mount_identity_worker_token(
                 &mut job,
@@ -241,7 +237,7 @@ fn worker_outcome_records_a_restored_upgrade_as_rolled_back() {
 }
 
 impl Execution {
-    pub(crate) async fn environment(
+    pub(crate) async fn env(
         &self,
         operation: &wamn_package::canonical_name::CanonicalName,
         payload: &str,
@@ -253,7 +249,7 @@ impl Execution {
             project: wamn_registry::ProjectId,
             env: wamn_registry::EnvName,
             document: Option<Value>,
-            application: Option<wamn_registry::ApplicationName>,
+            application: Option<wamn_registry::AppName>,
             disposable: Option<bool>,
             #[serde(default)]
             data: bool,

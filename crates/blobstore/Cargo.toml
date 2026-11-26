@@ -16,7 +16,7 @@ tokio = { workspace = true, features = ["io-util", "time"] }
 tracing.workspace = true
 url.workspace = true
 uuid.workspace = true
-wamn-application.workspace = true
+wamn-app.workspace = true
 wamn-connection.workspace = true
 wamn-connection-type.workspace = true
 wamn-digest.workspace = true

@@ -39,9 +39,9 @@ pub fn source_stream_config(
 }
 
 /// Declare one application source consumer, shared by its serving hosts.
-pub fn application_consumer(
+pub fn app_consumer(
     target: &Triple,
-    application: &wamn_registry::ApplicationName,
+    app: &wamn_registry::AppName,
     package: &wamn_package::PackageName,
     entity: &str,
 ) -> anyhow::Result<pull::Config> {
@@ -56,14 +56,13 @@ pub fn application_consumer(
         .all(wamn_event::valid_subject_token),
         "event coordinates and source must be nonempty broker tokens"
     );
-    let durable =
-        wamn_registry::resource_names::application_event_consumer(application, package, entity);
+    let durable = wamn_registry::resource_names::app_event_consumer(app, package, entity);
     let filter = wamn_event::entity_filter(&target.org, &target.project, &target.env, entity);
-    Ok(application_consumer_config(&durable, &filter))
+    Ok(app_consumer_config(&durable, &filter))
 }
 
 /// The native application's delivery policy, used for declaration and validation.
-pub(crate) fn application_consumer_config(durable: &str, filter: &str) -> pull::Config {
+pub(crate) fn app_consumer_config(durable: &str, filter: &str) -> pull::Config {
     pull::Config {
         max_deliver: -1,
         max_waiting: 64,
@@ -237,13 +236,13 @@ mod tests {
     use async_nats::jetstream::stream::{DiscardPolicy, Republish, Source, SubjectTransform};
 
     #[test]
-    fn application_consumers_accept_application_names_and_refuse_invalid_source_tokens() {
+    fn app_consumers_accept_app_names_and_refuse_invalid_source_tokens() {
         let target = Triple::new(
             "acme".parse().unwrap(),
             "dev".parse().unwrap(),
             "widgets".parse().unwrap(),
         );
-        let config = application_consumer(
+        let config = app_consumer(
             &target,
             &"sales.eu".parse().unwrap(),
             &"orders".parse().unwrap(),
@@ -261,7 +260,7 @@ mod tests {
         .unwrap();
         assert_ne!(
             config.durable_name,
-            application_consumer(
+            app_consumer(
                 &target,
                 &"sales_eu".parse().unwrap(),
                 &"orders".parse().unwrap(),
@@ -272,7 +271,7 @@ mod tests {
         );
         for invalid in ["", "orders.eu", "*", "bad name"] {
             assert!(
-                application_consumer(
+                app_consumer(
                     &target,
                     &"sales.eu".parse().unwrap(),
                     &"orders".parse().unwrap(),

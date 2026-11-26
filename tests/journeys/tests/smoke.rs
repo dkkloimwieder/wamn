@@ -9,32 +9,32 @@ use common::Org;
 use serde_json::Value;
 use wamn_http_client::HttpClient;
 
-const APPLICATION: &str = "wamn_receiving";
+const APP: &str = "wamn_receiving";
 
 common::journey! {
     /// An owner deploys one application, and web answers 401 without a token and 200 with
     /// the owner token, for one application call and one control call.
-    async fn the_owner_reaches_an_application_and_control_through_web() -> anyhow::Result<()> {
+    async fn the_owner_reaches_an_app_and_control_through_web() -> anyhow::Result<()> {
         let source = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../apps")
-            .join(APPLICATION);
-        let environment = Org::create().await?.apply(APPLICATION).await?;
-        environment.deploy(&source, APPLICATION).await?;
+            .join(APP);
+        let env = Org::create().await?.apply(APP).await?;
+        env.deploy(&source, APP).await?;
 
-        let org = &environment.org;
+        let org = &env.org;
         let outputs = &org.cluster.outputs;
-        let file: Value = serde_json::from_slice(&std::fs::read(&environment.file)?)?;
-        let label = file["projects"][0]["applications"][APPLICATION]["label"]
+        let file: Value = serde_json::from_slice(&std::fs::read(&env.file)?)?;
+        let label = file["projects"][0]["applications"][APP]["label"]
             .as_str()
             .context("the environment file has no application label")?;
-        let application =
-            wamn_registry::name::application_host(label, &org.name, &outputs.base_domain.parse()?);
+        let app =
+            wamn_registry::name::app_host(label, &org.name, &outputs.base_domain.parse()?);
         let control = format!("{}.{}", org.name, outputs.base_domain);
         let client = HttpClient::builder()
             .timeout(std::time::Duration::from_secs(60))
             .build()?;
         for (host, path) in [
-            (application.as_str(), "/api/location/list"),
+            (app.as_str(), "/api/location/list"),
             (control.as_str(), "/wamn_control/control/mine"),
         ] {
             let url = format!("http://{}{path}", outputs.web_address);

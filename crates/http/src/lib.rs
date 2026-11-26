@@ -109,7 +109,7 @@ async fn oauth2_token(
             reader: facts.reader(),
             principal,
             project: facts.project(),
-            environment: facts.environment(),
+            env: facts.env(),
             connection: key.0,
             generation: key.1,
             authorization_code: auth_type == "oauth2_authorization_code",

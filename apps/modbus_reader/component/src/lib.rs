@@ -26,9 +26,9 @@ wit_bindgen::generate!({
 use exports::modbus_reader::register::read as contract;
 use registers::{self as read_registers, Error};
 
-struct Application;
+struct App;
 #[cfg(target_arch = "wasm32")]
-export!(Application);
+export!(App);
 
 mod operation {
     use super::contract;
@@ -72,7 +72,7 @@ fn invalid(message: &str) -> NodeError {
     })
 }
 
-impl contract::Guest for Application {
+impl contract::Guest for App {
     async fn run(
         context: NodeContext,
         input: Vec<contract::ReadItem>,

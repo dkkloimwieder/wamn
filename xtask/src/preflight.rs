@@ -28,10 +28,10 @@ use kube::api::{Api, DeleteParams, DynamicObject, ListParams, Patch, PatchParams
 use kube::core::GroupVersionKind;
 use kube::discovery::{ApiCapabilities, ApiResource, Scope};
 use serde_json::{Value, json};
-use wamn_environment::environment::document::EnvironmentFile;
-use wamn_environment::environment::{ensure as host, lifecycle, operation};
-use wamn_environment::platform_environment;
-use wamn_environment::provision_project_env::workload;
+use wamn_env::env::document::EnvFile;
+use wamn_env::env::{ensure as host, lifecycle, operation};
+use wamn_env::platform_env;
+use wamn_env::provision_project_env::workload;
 use wamn_kubernetes::org_resources;
 use wamn_platform_install::release_chart::POD_REGISTRY;
 use wamn_platform_install::release_chart::bundle;
@@ -51,9 +51,9 @@ const DEADLINE: Duration = Duration::from_secs(120);
 const RUN_DEADLINE: Duration = Duration::from_secs(300);
 const ORG: &str = "local";
 const OWNER: &str = "owner@example.com";
-const APPLICATION: &str = "apps/wamn_receiving";
+const APP: &str = "apps/wamn_receiving";
 /// The kind example of docs/operations/deployment.md.
-const ENVIRONMENT: &str = "org: local
+const ENV: &str = "org: local
 env: dev
 target: cloud
 revocation_seconds: 60
@@ -290,9 +290,9 @@ async fn render(
     });
 
     // wamn env apply: the environment host and the project release.
-    let environment_file = directory.join("environment.yaml");
-    std::fs::write(&environment_file, ENVIRONMENT)?;
-    let file = EnvironmentFile::compile(&environment_file)?;
+    let env_file = directory.join("environment.yaml");
+    std::fs::write(&env_file, ENV)?;
+    let file = EnvFile::compile(&env_file)?;
     let sizing = serde_json::to_value(&file.database)?;
     let mut document = file
         .into_projects()
@@ -338,7 +338,7 @@ async fn render(
         template(
             directory,
             "environment",
-            &name::environment_host_name(org_id, env),
+            &name::env_host_name(org_id, env),
             &charts.join("environment"),
             &helm_namespace,
             &[&host_file],
@@ -352,23 +352,22 @@ async fn render(
     let cluster = name::project_cluster(&connection.database);
     let publication = name::cdc_object_name(org_id, project, env, &instance);
     let mut project_values =
-        platform_environment::database_values(&connection, 1, sizing, &org_values["postgres"])?;
-    wamn_environment::environment::chart_values::set_operation_values(
+        platform_env::database_values(&connection, 1, sizing, &org_values["postgres"])?;
+    wamn_env::env::chart_values::set_operation_values(
         &mut project_values,
         &triple,
         &cluster,
         &connection.database,
         document.applications.keys(),
     )?;
-    project_values["publication"] =
-        wamn_environment::environment::chart_values::publication_values(
-            &triple,
-            &instance,
-            &cluster,
-            &publication,
-            &[],
-        )["publication"]
-            .take();
+    project_values["publication"] = wamn_env::env::chart_values::publication_values(
+        &triple,
+        &instance,
+        &cluster,
+        &publication,
+        &[],
+    )["publication"]
+        .take();
     project_values["databaseConfig"] =
         workload::configuration_values(&triple, &instance, &connections)?;
     project_values["cdcReader"] = lifecycle::reader_values(
@@ -379,7 +378,7 @@ async fn render(
         registry_token_metadata,
     );
     project_values["cdcReader"]["pause"] = false.into();
-    let project_release = name::environment_resource_name(org_id, project, env);
+    let project_release = name::project_env_resource_name(org_id, project, env);
     let project_file = write_json(directory, "project-values.json", &project_values)?;
     rendered.push(
         template(
@@ -396,9 +395,9 @@ async fn render(
     );
 
     // wamn deploy: the application release values, as operation.rs renders them.
-    let manifest = application_manifest(root).await?;
+    let manifest = app_manifest(root).await?;
     let package = manifest.package.id.clone();
-    let application = document
+    let app = document
         .applications
         .keys()
         .next()
@@ -406,10 +405,10 @@ async fn render(
         .clone();
     let selection = document
         .applications
-        .get_mut(&application)
+        .get_mut(&app)
         .context("the application is declared")?;
     let digest = crate::helm_size::package_digest(&package);
-    selection.current = wamn_environment::environment::document::DeclaredRelease::Digest(digest);
+    selection.current = wamn_env::env::document::DeclaredRelease::Digest(digest);
     selection.packages = BTreeSet::from([package.clone()]);
     let schemas: Vec<wamn_package::canonical_name::CanonicalName> = manifest
         .models
@@ -426,10 +425,10 @@ async fn render(
         .as_str()
         .context("org inputs have no base")?
         .parse()?;
-    let mut application_values = wamn_environment::environment::write::release_values(
+    let mut app_values = wamn_env::env::write::release_values(
         &document,
         &platform_domain,
-        &application,
+        &app,
         &manifests,
         &digest,
         &[],
@@ -437,20 +436,17 @@ async fn render(
         &component_base,
         wamn_http::wasm_authority::wasm_authority_port,
     )?;
-    operation::use_pod_registry(&chart, &mut application_values)?;
-    let application_file = directory.join("application-values.yaml");
-    std::fs::write(
-        &application_file,
-        serde_yaml::to_string(&application_values)?,
-    )?;
+    operation::use_pod_registry(&chart, &mut app_values)?;
+    let app_file = directory.join("application-values.yaml");
+    std::fs::write(&app_file, serde_yaml::to_string(&app_values)?)?;
     rendered.push(
         template(
             directory,
             "application",
-            &wamn_environment::release_chart::release_name(org_id, project, env, &application)?,
+            &wamn_env::release_chart::release_name(org_id, project, env, &app)?,
             &charts.join("application"),
             &helm_namespace,
-            &[&application_file],
+            &[&app_file],
             false,
             tally,
         )
@@ -458,15 +454,14 @@ async fn render(
     );
 
     // After deploy, the project release gains the publication schemas (operation.rs, --reuse-values).
-    project_values["publication"] =
-        wamn_environment::environment::chart_values::publication_values(
-            &triple,
-            &instance,
-            &cluster,
-            &publication,
-            &schemas,
-        )["publication"]
-            .take();
+    project_values["publication"] = wamn_env::env::chart_values::publication_values(
+        &triple,
+        &instance,
+        &cluster,
+        &publication,
+        &schemas,
+    )["publication"]
+        .take();
     let deployed_file = write_json(directory, "project-deployed-values.json", &project_values)?;
     rendered.push(
         template(
@@ -528,13 +523,11 @@ fn org_create_objects(
 }
 
 /// The published manifest of the deployed application, with placeholder digests.
-async fn application_manifest(
-    root: &Path,
-) -> anyhow::Result<wamn_component_policy::PackageManifest> {
-    let source = wamn_build::prepare_source(&root.join(APPLICATION)).await?;
+async fn app_manifest(root: &Path) -> anyhow::Result<wamn_component_policy::PackageManifest> {
+    let source = wamn_build::prepare_source(&root.join(APP)).await?;
     ensure!(
         source.bases().is_empty(),
-        "{APPLICATION} has base packages, which preflight does not build"
+        "{APP} has base packages, which preflight does not build"
     );
     let output_root = wamn_build::default_output_root(source.root());
     let request = wamn_build::BuildRequest::new(
@@ -544,7 +537,7 @@ async fn application_manifest(
     );
     wamn_build::build_prepared(&request, &source, wamn_build::BuildMode::Published)
         .await
-        .with_context(|| format!("build {APPLICATION}"))?;
+        .with_context(|| format!("build {APP}"))?;
     crate::helm_size::published_manifest(&wamn_build::package_output(
         &output_root,
         &source.package().id,
@@ -866,7 +859,7 @@ fn wamn_image(reference: &str) -> bool {
 }
 
 /// Expand `$(NAME)` from the container environment as Kubernetes does; `$$` is `$`.
-fn expand(text: &str, environment: &BTreeMap<&str, &str>) -> String {
+fn expand(text: &str, env: &BTreeMap<&str, &str>) -> String {
     let mut expanded = String::with_capacity(text.len());
     let mut rest = text;
     while let Some(index) = rest.find('$') {
@@ -877,7 +870,7 @@ fn expand(text: &str, environment: &BTreeMap<&str, &str>) -> String {
             rest = after;
         } else if let Some(after) = rest.strip_prefix("$(")
             && let Some(end) = after.find(')')
-            && let Some(value) = environment.get(&after[..end])
+            && let Some(value) = env.get(&after[..end])
         {
             expanded.push_str(value);
             rest = &after[end + 1..];

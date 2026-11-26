@@ -112,7 +112,7 @@ pub struct Request<'a> {
     /// The host-attested executing principal of this call.
     pub principal: wamn_identity_protocol::PrincipalId,
     pub project: &'a wamn_registry::ProjectId,
-    pub environment: &'a wamn_registry::EnvName,
+    pub env: &'a wamn_registry::EnvName,
     pub connection: uuid::Uuid,
     pub generation: i64,
     pub authorization_code: bool,
@@ -174,7 +174,7 @@ where
     let result = async {
         let database = request
             .reader
-            .project_connections(request.project, request.environment)?;
+            .project_connections(request.project, request.env)?;
         crate::project_connections::oauth_token(
             &database,
             request.project,

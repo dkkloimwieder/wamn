@@ -33,7 +33,7 @@ pub const ORG: &str = "org-a";
 pub const PRINCIPAL: &str = "0b5c7f3e-9a41-4d2e-8f6a-1c2d3e4f5a6b";
 /// The project and environment of the release.
 pub const PROJECT: &str = "plant";
-pub const ENVIRONMENT: &str = "edge";
+pub const ENV: &str = "edge";
 
 /// Copy the bundle into a directory named for the test and
 /// return the directory with the bundle digest. The directory lies under the
@@ -81,7 +81,7 @@ fn build_bundle() -> PathBuf {
         &EdgeTarget {
             org: &ORG.parse().unwrap(),
             project: &PROJECT.parse().unwrap(),
-            environment: &ENVIRONMENT.parse().unwrap(),
+            env: &ENV.parse().unwrap(),
         },
         &out,
     )
@@ -104,7 +104,7 @@ pub fn config(directory: &Path, digest: wamn_digest::Digest) -> EdgeConfig {
         target: TargetConfig {
             org: ORG.parse().unwrap(),
             project: PROJECT.parse().unwrap(),
-            environment: ENVIRONMENT.parse().unwrap(),
+            environment: ENV.parse().unwrap(),
         },
         release: ReleaseConfig {
             dir: directory.to_owned(),

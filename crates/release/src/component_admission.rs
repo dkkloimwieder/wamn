@@ -218,7 +218,7 @@ pub(crate) fn admit(
     admitted_platform_packages: BTreeSet<String>,
     base_digests: BTreeSet<wamn_digest::Digest>,
 ) -> anyhow::Result<(ComponentDescriptor, Vec<ComponentConnectionRequirement>)> {
-    wamn_component_policy::validate_application_member(component_bytes)
+    wamn_component_policy::validate_app_member(component_bytes)
         .context("refuse application-owned entry authority")?;
     let mut admitted = engine.validate(
         component_bytes,

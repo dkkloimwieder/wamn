@@ -14,7 +14,7 @@ use serde_json::{Value, json};
 use tokio::time::Instant;
 use wamn_http_client::HttpClient;
 
-use super::{Environment, Org, PLATFORM, PortForward, identity_pods, run};
+use super::{Env, Org, PLATFORM, PortForward, identity_pods, run};
 
 /// The fixture application that every host journey deploys.
 pub const FIXTURE: &str = "platform_fixture";
@@ -47,31 +47,28 @@ where
 }
 
 /// Change the environment file with `edit`, and run `wamn env apply` on it.
-pub async fn reapply(
-    environment: &Environment,
-    edit: impl FnOnce(&mut Value),
-) -> anyhow::Result<()> {
-    let mut file: Value = serde_json::from_slice(&std::fs::read(&environment.file)?)?;
+pub async fn reapply(env: &Env, edit: impl FnOnce(&mut Value)) -> anyhow::Result<()> {
+    let mut file: Value = serde_json::from_slice(&std::fs::read(&env.file)?)?;
     edit(&mut file);
     // A JSON document is a YAML document.
-    std::fs::write(&environment.file, serde_json::to_vec(&file)?)?;
-    let mut command = environment.org.command();
-    command.args(["env", "apply"]).arg(&environment.file);
+    std::fs::write(&env.file, serde_json::to_vec(&file)?)?;
+    let mut command = env.org.command();
+    command.args(["env", "apply"]).arg(&env.file);
     run(command).await.map(drop)
 }
 
-/// Declare `application` with `label` in the environment's one project.
-pub fn declare(file: &mut Value, application: &str, label: &str) {
-    file["projects"][0]["applications"][application] = json!({"label": label});
+/// Declare `app` with `label` in the environment's one project.
+pub fn declare(file: &mut Value, app: &str, label: &str) {
+    file["projects"][0]["applications"][app] = json!({"label": label});
 }
 
-/// The label that the environment file gives `application`.
-fn label(environment: &Environment, application: &str) -> anyhow::Result<String> {
-    let file: Value = serde_json::from_slice(&std::fs::read(&environment.file)?)?;
-    file["projects"][0]["applications"][application]["label"]
+/// The label that the environment file gives `app`.
+fn label(env: &Env, app: &str) -> anyhow::Result<String> {
+    let file: Value = serde_json::from_slice(&std::fs::read(&env.file)?)?;
+    file["projects"][0]["applications"][app]["label"]
         .as_str()
         .map(str::to_owned)
-        .with_context(|| format!("the environment file has no label for {application}"))
+        .with_context(|| format!("the environment file has no label for {app}"))
 }
 
 /// A stock wasmCloud runtime resource, such as `Host` or `Workload`.
@@ -110,13 +107,14 @@ pub fn ready(pod: &Pod) -> bool {
 }
 
 /// The pods of the environment's host Deployment that are not being deleted.
-pub async fn host_pods(environment: &Environment) -> anyhow::Result<Vec<Pod>> {
-    let client = &environment.org.cluster.client;
-    let triple = &environment.triple;
+pub async fn host_pods(env: &Env) -> anyhow::Result<Vec<Pod>> {
+    let client = &env.org.cluster.client;
+    let triple = &env.triple;
     let namespace = triple.org.as_str();
-    let name = wamn_registry::name::host_deployment_name(
-        &wamn_registry::name::environment_host_name(&triple.org, &triple.env),
-    );
+    let name = wamn_registry::name::host_deployment_name(&wamn_registry::name::env_host_name(
+        &triple.org,
+        &triple.env,
+    ));
     let selector = Api::<Deployment>::namespaced(client.clone(), namespace)
         .get(&name)
         .await?
@@ -137,9 +135,9 @@ pub async fn host_pods(environment: &Environment) -> anyhow::Result<Vec<Pod>> {
 }
 
 /// Wait until the environment has one host pod and it is Ready.
-pub async fn ready_host_pod(environment: &Environment, deadline: Duration) -> anyhow::Result<Pod> {
+pub async fn ready_host_pod(env: &Env, deadline: Duration) -> anyhow::Result<Pod> {
     until(deadline, "one Ready host pod", || async {
-        let pods = host_pods(environment).await?;
+        let pods = host_pods(env).await?;
         Ok(match <[_; 1]>::try_from(pods) {
             Ok([pod]) if ready(&pod) => Some(pod),
             _ => None,
@@ -177,30 +175,28 @@ pub fn workload_count(host: &DynamicObject) -> u64 {
     host.data["status"]["workloadCount"].as_u64().unwrap_or(0)
 }
 
-/// The stock runtime objects of `kind` that the release of `application` owns.
-pub async fn application_objects(
-    environment: &Environment,
+/// The stock runtime objects of `kind` that the release of `app` owns.
+pub async fn app_objects(
+    env: &Env,
     kind: &str,
     plural: &str,
-    application: &str,
+    app: &str,
 ) -> anyhow::Result<Vec<DynamicObject>> {
-    let client = &environment.org.cluster.client;
-    Ok(
-        runtime(client, environment.triple.org.as_str(), kind, plural)
-            .list(&ListParams::default())
-            .await?
-            .items
-            .into_iter()
-            .filter(|object| {
-                object
-                    .metadata
-                    .annotations
-                    .as_ref()
-                    .and_then(|annotations| annotations.get("wamn.application"))
-                    .is_some_and(|name| name == application)
-            })
-            .collect(),
-    )
+    let client = &env.org.cluster.client;
+    Ok(runtime(client, env.triple.org.as_str(), kind, plural)
+        .list(&ListParams::default())
+        .await?
+        .items
+        .into_iter()
+        .filter(|object| {
+            object
+                .metadata
+                .annotations
+                .as_ref()
+                .and_then(|annotations| annotations.get("wamn.application"))
+                .is_some_and(|name| name == app)
+        })
+        .collect())
 }
 
 /// Call the control route `operation` with the owner session, and return its value.
@@ -248,27 +244,24 @@ pub async fn control(org: &Org, operation: &str, value: Value) -> anyhow::Result
         .with_context(|| format!("{operation} refused: {text}"))
 }
 
-/// Read the application route `operation` of `application` with `token`, and return the status.
-pub async fn application_get(
-    environment: &Environment,
-    application: &str,
+/// Read the application route `operation` of `app` with `token`, and return the status.
+pub async fn app_get(
+    env: &Env,
+    app: &str,
     operation: &str,
     token: &str,
 ) -> anyhow::Result<hyper::StatusCode> {
-    let (_, attachment) = wamn_routes::HostRouteSet::Application
+    let (_, attachment) = wamn_routes::HostRouteSet::App
         .attachments()
         .find(|(_, attachment)| attachment.route.operation == operation)
         .with_context(|| format!("no application route {operation}"))?;
     let path = attachment.definition["route"]["path"]
         .as_str()
         .context("application route path")?;
-    let org = &environment.org;
+    let org = &env.org;
     let outputs = &org.cluster.outputs;
-    let host = wamn_registry::name::application_host(
-        &label(environment, application)?,
-        &org.name,
-        &outputs.base_domain.parse()?,
-    );
+    let host =
+        wamn_registry::name::app_host(&label(env, app)?, &org.name, &outputs.base_domain.parse()?);
     Ok(web()?
         .get(format!("http://{}/api{path}", outputs.web_address))
         .header("Host", host)

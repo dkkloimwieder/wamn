@@ -10,23 +10,23 @@ use wamn_routes::HostHandler;
 use wamn_routes::HostRouteSet;
 
 use serde_json::{Value, json};
-use wamn_application::application_config::ApplicationConfig;
-use wamn_application::ingress::AuthenticatedCaller;
-use wamn_application::native_routes::{
+use wamn_app::app_config::AppConfig;
+use wamn_app::ingress::AuthenticatedCaller;
+use wamn_app::native_routes::{
     DeliveryError, DeliveryOutcome, DeliveryReport, DeliveryRequest, Source,
     resolve_authorized_host_route,
 };
 use wamn_authentication::authorization::Authorization;
 use wamn_plugin::OperationHost;
 
-use super::application_route::ApplicationRoutes;
+use super::app_route::AppRoutes;
 use super::route_refusal::Refusal;
 use super::workflow::{self, Workflow};
 
 pub(super) struct HostRouteDelivery {
     postgres: Arc<OperationHost>,
     authorization: Arc<Authorization>,
-    config: Arc<ApplicationConfig>,
+    config: Arc<AppConfig>,
     project_env_key: wamn_registry::ProjectEnvKey,
 }
 
@@ -34,7 +34,7 @@ impl HostRouteDelivery {
     pub(super) fn new(
         postgres: Arc<OperationHost>,
         authorization: Arc<Authorization>,
-        config: Arc<ApplicationConfig>,
+        config: Arc<AppConfig>,
     ) -> Self {
         let project_env_key =
             wamn_registry::project_env_key(&config.org, &config.project, &config.environment);
@@ -95,7 +95,7 @@ impl HostRouteDelivery {
                     .await
             }
             _ => {
-                ApplicationRoutes {
+                AppRoutes {
                     postgres: &self.postgres,
                     pools: &workflow.database,
                     project: &self.config.project,
@@ -110,7 +110,7 @@ impl HostRouteDelivery {
 }
 
 /// Public component operations and the Application host route contract.
-fn served_references(config: &ApplicationConfig) -> BTreeSet<String> {
+fn served_references(config: &AppConfig) -> BTreeSet<String> {
     let registered = config
         .components
         .iter()
@@ -119,7 +119,7 @@ fn served_references(config: &ApplicationConfig) -> BTreeSet<String> {
         .map(|(operation, _)| {
             wamn_package::sealed_operation_reference(operation.as_str()).to_owned()
         });
-    let host = HostRouteSet::Application
+    let host = HostRouteSet::App
         .attachments()
         .map(|(_, attachment)| attachment.reference.clone());
     registered.chain(host).collect()
@@ -168,7 +168,7 @@ impl HostRouteDelivery {
     ) -> DeliveryReport {
         let resolved = match &request.source {
             Source::Attachment(id) => {
-                resolve_authorized_host_route(HostRouteSet::Application, id, caller.as_ref())
+                resolve_authorized_host_route(HostRouteSet::App, id, caller.as_ref())
             }
             Source::Registration(_) => None,
         };
@@ -257,13 +257,9 @@ impl HostRouteDelivery {
             );
             response
         };
-        let Some((id, attachment)) =
-            HostRouteSet::Application
-                .attachments()
-                .find(|(_, attachment)| {
-                    attachment.definition["route"]["path"].as_str() == Some(request.uri().path())
-                })
-        else {
+        let Some((id, attachment)) = HostRouteSet::App.attachments().find(|(_, attachment)| {
+            attachment.definition["route"]["path"].as_str() == Some(request.uri().path())
+        }) else {
             return answer(404, json!({"error":{"code":"route-not-found"}}));
         };
         if attachment.route.type_.http_method() != request.method().as_str() {
@@ -273,13 +269,10 @@ impl HostRouteDelivery {
             .headers()
             .iter()
             .filter_map(|(name, value)| {
-                value
-                    .to_str()
-                    .ok()
-                    .map(|value| wamn_application::ingress::Header {
-                        name: name.to_string(),
-                        value: value.to_owned(),
-                    })
+                value.to_str().ok().map(|value| wamn_app::ingress::Header {
+                    name: name.to_string(),
+                    value: value.to_owned(),
+                })
             })
             .collect::<Vec<_>>();
         let query = request.uri().query().unwrap_or_default().to_owned();
@@ -304,7 +297,7 @@ impl HostRouteDelivery {
             .authenticate_policy(
                 &self.project_env_key,
                 id,
-                wamn_application::ingress::RoutePolicy {
+                wamn_app::ingress::RoutePolicy {
                     policy: &attachment.auth_policy,
                 },
                 &headers,

@@ -3,7 +3,7 @@
 use futures_util::TryStreamExt as _;
 use tokio::sync::{mpsc, oneshot};
 use tracing::Instrument as _;
-use wamn_application::database::{SqlError, SqlRows, SqlValue};
+use wamn_app::database::{SqlError, SqlRows, SqlValue};
 
 use super::transaction::{SharedTxnState, restore_connection};
 use super::values::{PgParam, columns_of, decode_row};

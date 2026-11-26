@@ -51,11 +51,11 @@ pub use registry::decode_text;
 
 /// Environment exclusion key shared by lifecycle operations and CDC publication.
 /// Acquire this key before an application key or a database mutation lock.
-pub const ENVIRONMENT_LOCK_SQL: &str =
+pub const ENV_LOCK_SQL: &str =
     "SELECT pg_try_advisory_lock(hashtextextended('wamn-env/' || $1 || '/' || $2, 0))";
 
 /// Transaction-scoped exclusion for integration mutations. Params: org, environment.
-pub const ENVIRONMENT_TRANSACTION_LOCK_SQL: &str =
+pub const ENV_TRANSACTION_LOCK_SQL: &str =
     "SELECT pg_try_advisory_xact_lock(hashtextextended('wamn-env/' || $1 || '/' || $2, 0))";
 
 /// Migration history table in the registry schema.

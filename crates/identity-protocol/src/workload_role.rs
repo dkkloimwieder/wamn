@@ -117,7 +117,7 @@ impl WorkloadRoleFamily {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WorkloadRoleIdentityType {
     ProjectEnvKey,
-    ProjectEnvironment,
+    ProjectEnv,
     Control,
     /// One org on the control database.
     Org,
@@ -127,7 +127,7 @@ impl WorkloadRoleIdentityType {
     const fn as_str(self) -> &'static str {
         match self {
             Self::ProjectEnvKey => "project_env_key",
-            Self::ProjectEnvironment => "project-environment",
+            Self::ProjectEnv => "project-environment",
             Self::Control => "control",
             Self::Org => "org",
         }
@@ -141,16 +141,16 @@ pub enum WorkloadRoleIdentity<'a> {
         project_env_key: &'a wamn_registry::ProjectEnvKey,
         database: &'a str,
     },
-    ProjectEnvironment {
+    ProjectEnv {
         org: &'a wamn_registry::OrgId,
         project: &'a wamn_registry::ProjectId,
-        environment: &'a wamn_registry::EnvName,
+        env: &'a wamn_registry::EnvName,
         database: &'a str,
     },
     Control {
         org: &'a wamn_registry::OrgId,
         project: &'a wamn_registry::ProjectId,
-        environment: &'a wamn_registry::EnvName,
+        env: &'a wamn_registry::EnvName,
         database: &'a str,
     },
     Org {
@@ -164,7 +164,7 @@ impl<'a> WorkloadRoleIdentity<'a> {
     pub const fn database(self) -> &'a str {
         match self {
             Self::ProjectEnvKey { database, .. }
-            | Self::ProjectEnvironment { database, .. }
+            | Self::ProjectEnv { database, .. }
             | Self::Control { database, .. }
             | Self::Org { database, .. } => database,
         }
@@ -173,7 +173,7 @@ impl<'a> WorkloadRoleIdentity<'a> {
     const fn identity_type(self) -> WorkloadRoleIdentityType {
         match self {
             Self::ProjectEnvKey { .. } => WorkloadRoleIdentityType::ProjectEnvKey,
-            Self::ProjectEnvironment { .. } => WorkloadRoleIdentityType::ProjectEnvironment,
+            Self::ProjectEnv { .. } => WorkloadRoleIdentityType::ProjectEnv,
             Self::Control { .. } => WorkloadRoleIdentityType::Control,
             Self::Org { .. } => WorkloadRoleIdentityType::Org,
         }

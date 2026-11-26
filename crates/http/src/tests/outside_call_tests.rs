@@ -74,7 +74,7 @@ async fn a_local_target_call_reaches_a_private_server_with_its_credential() {
     });
 
     let transport = HttpTransport::new().unwrap();
-    let execution: Arc<dyn wamn_application::InvocationLifetime> =
+    let execution: Arc<dyn wamn_app::InvocationLifetime> =
         Arc::new(wamn_engine::invocation_scope::InvocationExecution::new(
             tokio::time::Instant::now() + std::time::Duration::from_secs(10),
         ));

@@ -24,8 +24,8 @@ use wasmtime_wasi_http::WasiBody;
 
 use serde_json::{Value, json};
 use uuid::Uuid;
-use wamn_application::application_config::ApplicationConfig;
-use wamn_application::ingress::{AuthenticatedCaller, CredentialType, Header, RoutePolicy};
+use wamn_app::app_config::AppConfig;
+use wamn_app::ingress::{AuthenticatedCaller, CredentialType, Header, RoutePolicy};
 use wamn_blobstore::client::ObjectStorage;
 use wamn_blobstore::file_route::{
     DeleteRequest, ExposeRequest, Exposure, FileConnection, FileError, FileExposure, FileInsert,
@@ -42,7 +42,7 @@ use crate::file_connections::RegistryFileConnections;
 
 /// File handlers of one released application environment.
 pub struct FileRoutes {
-    pub(crate) release: Arc<ApplicationConfig>,
+    pub(crate) release: Arc<AppConfig>,
     pub(crate) context: Arc<wamn_connection::invocation::ReleaseContext>,
     pub(crate) database: Arc<WamnPostgres>,
     pub(crate) storage: Arc<ObjectStorage>,
@@ -79,30 +79,20 @@ impl FileRoutes {
 
     async fn store(
         &self,
-        application: &wamn_registry::ApplicationName,
+        app: &wamn_registry::AppName,
         binding: Option<&wamn_package::canonical_name::CanonicalName>,
         pinned: Option<&str>,
         write: bool,
         deadline: tokio::time::Instant,
     ) -> Result<(FileConnection, StoredFiles), FileError> {
-        if application != &self.release.application {
+        if app != &self.release.application {
             return Err(refused(FileRefusal::BindingRefused, "application"));
         }
         if binding.is_some_and(|alias| !declares_store(&self.release, alias)) {
             return Err(refused(FileRefusal::BindingRefused, "binding"));
         }
-        let connection = self
-            .connections
-            .lookup(application, binding, pinned)
-            .await?;
-        require_binding(
-            &self.release,
-            application,
-            binding,
-            pinned,
-            &connection,
-            write,
-        )?;
+        let connection = self.connections.lookup(app, binding, pinned).await?;
+        require_binding(&self.release, app, binding, pinned, &connection, write)?;
         let store = self
             .storage
             .open_files(
@@ -121,11 +111,11 @@ impl FileRoutes {
     async fn record(
         &self,
         principal: &PrincipalId,
-        application: &wamn_registry::ApplicationName,
+        app: &wamn_registry::AppName,
         id: Uuid,
         action: &str,
     ) -> Result<FileRecord, FileError> {
-        if application != &self.release.application {
+        if app != &self.release.application {
             return Err(refused(FileRefusal::NotFound, "file_id"));
         }
         file_catalog::record(
@@ -133,7 +123,7 @@ impl FileRoutes {
             &self.project,
             principal,
             &file_operation(action),
-            application,
+            app,
             id,
         )
         .await
@@ -143,20 +133,18 @@ impl FileRoutes {
     pub async fn put(
         &self,
         caller: &AuthenticatedCaller,
-        application: &wamn_registry::ApplicationName,
+        app: &wamn_registry::AppName,
         binding: &wamn_package::canonical_name::CanonicalName,
         name: &str,
         media_type: &str,
         mut body: impl AsyncRead + Unpin + Send,
     ) -> Result<Uuid, FileError> {
-        let deadline = tokio::time::Instant::now() + wamn_application::MAX_HOST_CALL_DURATION;
+        let deadline = tokio::time::Instant::now() + wamn_app::MAX_HOST_CALL_DURATION;
         let principal = principal(caller, "put")?;
         if name.is_empty() || name.contains(['\0', '\r', '\n']) || !valid_media_type(media_type) {
             return Err(refused(FileRefusal::InvalidInput, "metadata"));
         }
-        let (connection, store) = self
-            .store(application, Some(binding), None, true, deadline)
-            .await?;
+        let (connection, store) = self.store(app, Some(binding), None, true, deadline).await?;
         let id = Uuid::new_v4();
         let staged = store.stage(id, &mut body).await?;
         let size = i64::try_from(staged.size).map_err(|error| failed("size", error))?;
@@ -167,7 +155,7 @@ impl FileRoutes {
             &file_operation("put"),
             FileInsert {
                 id,
-                application,
+                app,
                 connection_id: &connection.id,
                 name,
                 media_type,
@@ -188,24 +176,18 @@ impl FileRoutes {
     async fn get(
         &self,
         caller: &AuthenticatedCaller,
-        application: &wamn_registry::ApplicationName,
+        app: &wamn_registry::AppName,
         id: Uuid,
     ) -> Result<hyper::Response<WasiBody>, FileError> {
-        let deadline = tokio::time::Instant::now() + wamn_application::MAX_HOST_CALL_DURATION;
+        let deadline = tokio::time::Instant::now() + wamn_app::MAX_HOST_CALL_DURATION;
         let principal = principal(caller, "get")?;
         if caller.credential_type() != CredentialType::Session {
             return Err(refused(FileRefusal::PermissionDenied, "session"));
         }
-        let row = self.record(&principal, application, id, "get").await?;
+        let row = self.record(&principal, app, id, "get").await?;
         require_exposure(row.exposure)?;
         let (_, store) = self
-            .store(
-                application,
-                None,
-                Some(row.connection_id.as_str()),
-                false,
-                deadline,
-            )
+            .store(app, None, Some(row.connection_id.as_str()), false, deadline)
             .await?;
         let body = store
             .get(&row.blob_key)
@@ -230,7 +212,7 @@ impl FileRoutes {
         caller: &AuthenticatedCaller,
         request: DeleteRequest,
     ) -> Result<Value, FileError> {
-        let deadline = tokio::time::Instant::now() + wamn_application::MAX_HOST_CALL_DURATION;
+        let deadline = tokio::time::Instant::now() + wamn_app::MAX_HOST_CALL_DURATION;
         let principal = principal(caller, "delete")?;
         let _lock = file_catalog::lock(&self.database, &self.project, request.file_id).await?;
         let row = self
@@ -271,7 +253,7 @@ impl FileRoutes {
         caller: &AuthenticatedCaller,
         request: ExposeRequest,
     ) -> Result<Value, FileError> {
-        let deadline = tokio::time::Instant::now() + wamn_application::MAX_HOST_CALL_DURATION;
+        let deadline = tokio::time::Instant::now() + wamn_app::MAX_HOST_CALL_DURATION;
         let principal = principal(caller, "expose")?;
         let _lock = file_catalog::lock(&self.database, &self.project, request.file_id).await?;
         let row = self
@@ -310,7 +292,7 @@ impl FileRoutes {
             &principal,
             &file_operation("expose"),
             FileExposure {
-                application: &request.application,
+                app: &request.application,
                 id: request.file_id,
                 exposure: request.exposure,
                 url: url.as_deref(),
@@ -337,10 +319,10 @@ impl FileRoutes {
         deadline: tokio::time::Instant,
     ) -> Result<String, FileError> {
         let lifetime = signed_lifetime(lifetime)?;
-        let application = &self.release.application;
-        let row = self.record(principal, application, id, "get").await?;
+        let app = &self.release.application;
+        let row = self.record(principal, app, id, "get").await?;
         let (_, store) = self
-            .store(application, None, Some(&row.connection_id), false, deadline)
+            .store(app, None, Some(&row.connection_id), false, deadline)
             .await?;
         store
             .signed_url(&row.blob_key, lifetime)
@@ -390,7 +372,7 @@ impl FileRoutes {
         routing: &IngressRouting,
         request: hyper::Request<WasiBody>,
     ) -> std::ops::ControlFlow<hyper::Response<WasiBody>, hyper::Request<WasiBody>> {
-        let Some((id, attachment)) = wamn_routes::HostRouteSet::Application
+        let Some((id, attachment)) = wamn_routes::HostRouteSet::App
             .attachments()
             .filter(|(_, attachment)| {
                 matches!(
@@ -475,8 +457,8 @@ impl FileRoutes {
                 ));
             }
         };
-        let authorized = wamn_application::native_routes::resolve_authorized_host_route(
-            wamn_routes::HostRouteSet::Application,
+        let authorized = wamn_app::native_routes::resolve_authorized_host_route(
+            wamn_routes::HostRouteSet::App,
             id,
             Some(&caller),
         );
@@ -585,7 +567,7 @@ impl FileRoutes {
                 ),
                 &id,
                 RoutePolicy {
-                    policy: &wamn_routes::HostRouteSet::Application
+                    policy: &wamn_routes::HostRouteSet::App
                         .attachment(&id)
                         .expect("file attachment")
                         .auth_policy,
@@ -602,8 +584,8 @@ impl FileRoutes {
         principal(&caller, action)?;
         let response = match route {
             NativeRoute::Invalid => Err(refused(FileRefusal::InvalidInput, "path")),
-            NativeRoute::Get { application, id } => self.get(&caller, &application, id).await,
-            NativeRoute::Upload { application } => {
+            NativeRoute::Get { app, id } => self.get(&caller, &app, id).await,
+            NativeRoute::Upload { app } => {
                 let query = request
                     .uri()
                     .query()
@@ -628,7 +610,7 @@ impl FileRoutes {
                 let id = self
                     .put(
                         &caller,
-                        &application,
+                        &app,
                         &query.binding,
                         &query.name,
                         &media_type,
@@ -685,27 +667,23 @@ fn principal(caller: &AuthenticatedCaller, action: &str) -> Result<PrincipalId, 
     Ok(*caller.principal_id())
 }
 
-fn declares_store(
-    application: &ApplicationConfig,
-    alias: &wamn_package::canonical_name::CanonicalName,
-) -> bool {
-    application.components.iter().any(|component| {
-        wamn_application::application_config::binding(application, &component.name, alias.as_str())
-            .is_some_and(|binding| {
-                binding.interface == "wasmcloud:blobstore" && binding.selector.name() == Some(alias)
-            })
+fn declares_store(app: &AppConfig, alias: &wamn_package::canonical_name::CanonicalName) -> bool {
+    app.components.iter().any(|component| {
+        wamn_app::app_config::binding(app, &component.name, alias.as_str()).is_some_and(|binding| {
+            binding.interface == "wasmcloud:blobstore" && binding.selector.name() == Some(alias)
+        })
     })
 }
 
 fn require_binding(
-    release: &ApplicationConfig,
-    application: &wamn_registry::ApplicationName,
+    release: &AppConfig,
+    app: &wamn_registry::AppName,
     binding: Option<&wamn_package::canonical_name::CanonicalName>,
     pinned: Option<&str>,
     connection: &FileConnection,
     write: bool,
 ) -> Result<(), FileError> {
-    if application != &release.application {
+    if app != &release.application {
         return Err(refused(FileRefusal::BindingRefused, "application"));
     }
     if binding.is_some_and(|alias| !declares_store(release, alias))
@@ -740,23 +718,23 @@ fn signed_lifetime(requested: Duration) -> Result<Duration, FileError> {
 enum NativeRoute {
     Invalid,
     Upload {
-        application: wamn_registry::ApplicationName,
+        app: wamn_registry::AppName,
     },
     Get {
-        application: wamn_registry::ApplicationName,
+        app: wamn_registry::AppName,
         id: Uuid,
     },
 }
 fn native_route(path: &str) -> Option<NativeRoute> {
     let parts: Vec<_> = path.split('/').collect();
     match parts.as_slice() {
-        ["", "api", application, "files"] => Some(match application.parse() {
-            Ok(application) => NativeRoute::Upload { application },
+        ["", "api", app, "files"] => Some(match app.parse() {
+            Ok(app) => NativeRoute::Upload { app },
             Err(_) => NativeRoute::Invalid,
         }),
-        ["", "api", application, "files", id] => Some(NativeRoute::Get {
-            application: match application.parse() {
-                Ok(application) => application,
+        ["", "api", app, "files", id] => Some(NativeRoute::Get {
+            app: match app.parse() {
+                Ok(app) => app,
                 Err(_) => return Some(NativeRoute::Invalid),
             },
             id: match id.parse() {
@@ -880,7 +858,7 @@ mod tests {
     }
     #[test]
     fn every_file_operation_requires_a_grant() {
-        for (_, attachment) in HostRouteSet::Application.attachments() {
+        for (_, attachment) in HostRouteSet::App.attachments() {
             let Some(action) = attachment.reference.strip_prefix("wamn-control:file/") else {
                 continue;
             };
@@ -906,7 +884,7 @@ mod tests {
             require_exposure(Exposure::Private).unwrap_err().refusal,
             Some(FileRefusal::Private)
         );
-        for exposure in [Exposure::Application, Exposure::Public] {
+        for exposure in [Exposure::App, Exposure::Public] {
             assert!(require_exposure(exposure).is_ok());
         }
         assert!(serde_json::from_str::<Exposure>("\"Private\"").is_err());

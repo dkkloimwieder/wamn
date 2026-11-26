@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use wamn_application::database::DatabaseTarget;
+use wamn_app::database::DatabaseTarget;
 use wamn_package::canonical_name::CanonicalName;
 use wamn_postgres::WamnPostgres;
 use wamn_registry::{ProjectEnvKey, ProjectId};
@@ -10,7 +10,7 @@ use wamn_registry::{ProjectEnvKey, ProjectId};
 use super::types::into_guest_error;
 use super::{OperationHost, PgError, operation_sql};
 
-pub use wamn_application::database::Claim;
+pub use wamn_app::database::Claim;
 
 /// The complete success body of a generated delete, before request correlation.
 pub const DELETED_RESULT: &str = r#"{"value":{"outcome":"deleted"}}"#;
@@ -38,7 +38,7 @@ impl WriteLogStore {
     fn target(&self) -> DatabaseTarget<'_> {
         DatabaseTarget {
             project: &self.project,
-            environment: &self.project_env_key,
+            env: &self.project_env_key,
         }
     }
 

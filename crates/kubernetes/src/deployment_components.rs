@@ -16,7 +16,7 @@ use serde::Deserialize as _;
 use serde_json::Value;
 use std::{collections::BTreeMap, time::Duration};
 use tokio::time::{Instant, timeout_at};
-use wamn_registry::{ApplicationName, Triple, name};
+use wamn_registry::{AppName, Triple, name};
 
 use crate::client::{
     APPLY_MANAGER, KubernetesApi, delete_named, ready, resource, wait_named, workloads,
@@ -245,20 +245,20 @@ async fn delete_database_certificate_secrets(
     Ok(())
 }
 
-pub(crate) async fn wait_application_ready(target: &Target, manifest: &[u8]) -> anyhow::Result<()> {
-    let expected = application_workloads(target, manifest)?;
+pub(crate) async fn wait_app_ready(target: &Target, manifest: &[u8]) -> anyhow::Result<()> {
+    let expected = app_workloads(target, manifest)?;
     while !workloads_serve(target, &expected).await? {
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
     Ok(())
 }
 
-pub(crate) async fn application_serves(target: &Target, manifest: &[u8]) -> anyhow::Result<bool> {
-    let expected = application_workloads(target, manifest)?;
+pub(crate) async fn app_serves(target: &Target, manifest: &[u8]) -> anyhow::Result<bool> {
+    let expected = app_workloads(target, manifest)?;
     workloads_serve(target, &expected).await
 }
 
-fn application_workloads(target: &Target, manifest: &[u8]) -> anyhow::Result<Vec<Value>> {
+fn app_workloads(target: &Target, manifest: &[u8]) -> anyhow::Result<Vec<Value>> {
     let mut expected = Vec::new();
     for document in serde_yaml::Deserializer::from_slice(manifest) {
         let document = Value::deserialize(document).context("read Helm release manifest")?;
@@ -408,8 +408,8 @@ async fn postgres_settings(target: &Target) -> anyhow::Result<serde_json::Value>
     serde_json::from_str(postgres).context("decode installation PostgreSQL settings")
 }
 
-async fn applications(target: &Target, triple: &Triple) -> anyhow::Result<Vec<ApplicationName>> {
-    let mut applications = Vec::new();
+async fn apps(target: &Target, triple: &Triple) -> anyhow::Result<Vec<AppName>> {
+    let mut apps = Vec::new();
     let coordinate = triple.to_string();
     let workloads = workloads(target.client.client(), triple.org.as_str());
     for item in workloads.list(&ListParams::default()).await?.items {
@@ -420,14 +420,14 @@ async fn applications(target: &Target, triple: &Triple) -> anyhow::Result<Vec<Ap
                 .map(String::as_str)
         };
         if annotation("wamn.environment") == Some(coordinate.as_str()) {
-            applications.push(
+            apps.push(
                 annotation("wamn.application")
                     .context("workload has no application annotation")?
                     .parse()?,
             );
         }
     }
-    Ok(applications)
+    Ok(apps)
 }
 
 /// List the host Pods for the specified host group.
@@ -440,14 +440,14 @@ async fn host_pods(target: &Target, release_name: &str) -> anyhow::Result<Value>
 
 async fn workload_annotations(
     triple: &Triple,
-    application: &ApplicationName,
+    app: &AppName,
 ) -> anyhow::Result<Option<BTreeMap<String, String>>> {
     let api = KubernetesApi::in_cluster()?;
-    let release = wamn_registry::resource_names::application_release_name(
+    let release = wamn_registry::resource_names::app_release_name(
         &triple.org,
         &triple.project,
         &triple.env,
-        application,
+        app,
     );
     let workloads = crate::client::workloads(api.client(), triple.org.as_str());
     let workload = tokio::time::timeout(
@@ -656,13 +656,13 @@ impl Target {
     pub async fn workload_annotations(
         &self,
         triple: &Triple,
-        application: &ApplicationName,
+        app: &AppName,
     ) -> anyhow::Result<Option<BTreeMap<String, String>>> {
-        workload_annotations(triple, application).await
+        workload_annotations(triple, app).await
     }
 
-    pub async fn applications(&self, triple: &Triple) -> anyhow::Result<Vec<ApplicationName>> {
-        applications(self, triple).await
+    pub async fn apps(&self, triple: &Triple) -> anyhow::Result<Vec<AppName>> {
+        apps(self, triple).await
     }
 
     pub async fn current_job(&self) -> anyhow::Result<Value> {

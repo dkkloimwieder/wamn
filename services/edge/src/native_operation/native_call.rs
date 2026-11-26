@@ -17,7 +17,7 @@ use wash_runtime::wasmtime::component::{Accessor, Instance, Val};
 
 use crate::policy::EdgeFacts;
 
-use super::native_workload::NativeApplication;
+use super::native_workload::NativeApp;
 use super::node_types;
 
 /// The request authority and absolute deadline carried into one native node call.
@@ -28,7 +28,7 @@ pub struct NativeInvocation {
     pub deadline: Instant,
     /// The facts of this call that only the policy reads.
     pub facts: EdgeFacts,
-    pub application: Arc<NativeApplication>,
+    pub app: Arc<NativeApp>,
 }
 
 /// JSON exists only at dynamic routing. Nested known calls retain WIT values.
@@ -137,7 +137,7 @@ impl GuestCall for NativeCall {
                 let native_id =
                     accessor.with(|mut access| Arc::clone(&access.get().active_ctx.component_id));
                 let warm = request
-                    .application
+                    .app
                     .workload
                     .warm_instance_policy(&native_id)
                     .await?
@@ -152,7 +152,7 @@ impl GuestCall for NativeCall {
                     execution: &execution,
                 };
                 request
-                    .application
+                    .app
                     .policy
                     .activate(&active_scope.component_id, &request)?;
                 accessor.with(|mut access| {
@@ -254,11 +254,11 @@ pub async fn invoke_raw(
 ) -> anyhow::Result<NativeOutcome> {
     let deadline = request
         .deadline
-        .min(Instant::now() + wamn_application::MAX_HOST_CALL_DURATION);
+        .min(Instant::now() + wamn_app::MAX_HOST_CALL_DURATION);
     request.deadline = deadline;
     anyhow::ensure!(Instant::now() < deadline, "native-node-deadline-exceeded");
     request
-        .application
+        .app
         .workload
         .target_component(target)
         .context("dispatch target is outside the application")?;

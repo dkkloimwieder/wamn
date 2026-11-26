@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use anyhow::{Context as _, bail, ensure};
 use common::request::until;
-use common::{Environment, Org, PortForward, exec, scale_deployment, secret_key};
+use common::{Env, Org, PortForward, exec, scale_deployment, secret_key};
 use k8s_openapi::api::batch::v1::Job;
 use k8s_openapi::api::core::v1::Pod;
 use kube::Api;
@@ -43,8 +43,8 @@ const RESUME_DEADLINE: Duration = Duration::from_secs(10);
 common::journey! {
     /// C7. The next client waits at each per-login limit and proceeds when one session closes.
     async fn each_login_queues_at_its_connection_limit() -> anyhow::Result<()> {
-        let environment = provision().await?;
-        let org = &environment.org;
+        let env = provision().await?;
+        let org = &env.org;
         let mut control = RestoreControl {
             org,
             name: wamn_registry::name::control_resource(&org.name),
@@ -74,8 +74,8 @@ common::journey! {
 common::journey! {
     /// C8. Each Pooler admits the matching provisioned org login through its auth query.
     async fn each_pooler_admits_its_provisioned_login() -> anyhow::Result<()> {
-        let environment = provision().await?;
-        let org = &environment.org;
+        let env = provision().await?;
+        let org = &env.org;
         let pods = platform_pods(org);
         for family in [CONTROL, APPLY] {
             let pod = ready_pooler(&pods, family).await?;
@@ -102,8 +102,8 @@ common::journey! {
 common::journey! {
     /// C9. The local admin console reports the live query and apply login wait settings.
     async fn each_pooler_reports_its_wait_settings() -> anyhow::Result<()> {
-        let environment = provision().await?;
-        let pods = platform_pods(&environment.org);
+        let env = provision().await?;
+        let pods = platform_pods(&env.org);
         for (family, query_wait) in [(CONTROL, 120), (APPLY, 900)] {
             let pod = ready_pooler(&pods, family).await?;
             // CloudNativePG configures peer authentication on this local console.
@@ -142,7 +142,7 @@ common::journey! {
     }
 }
 
-async fn provision() -> anyhow::Result<Environment> {
+async fn provision() -> anyhow::Result<Env> {
     timeout(PROVISION_DEADLINE, async {
         Org::create().await?.apply(common::host::FIXTURE).await
     })

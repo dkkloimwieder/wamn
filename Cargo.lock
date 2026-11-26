@@ -6188,7 +6188,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "wamn-application"
+name = "wamn-app"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -6227,7 +6227,7 @@ dependencies = [
  "tracing",
  "url",
  "uuid",
- "wamn-application",
+ "wamn-app",
  "wamn-authority",
  "wamn-connection",
  "wamn-connection-type",
@@ -6257,7 +6257,7 @@ dependencies = [
  "tracing-opentelemetry",
  "tracing-subscriber",
  "url",
- "wamn-application",
+ "wamn-app",
  "wamn-component-policy",
  "wamn-connection-type",
  "wamn-digest",
@@ -6282,7 +6282,7 @@ dependencies = [
  "tracing",
  "url",
  "uuid",
- "wamn-application",
+ "wamn-app",
  "wamn-authentication",
  "wamn-connection",
  "wamn-connection-type",
@@ -6335,7 +6335,7 @@ dependencies = [
  "wamn-digest",
  "wamn-edge-document",
  "wamn-engine",
- "wamn-environment",
+ "wamn-env",
  "wamn-identity-protocol",
  "wamn-package",
  "wamn-registry",
@@ -6389,7 +6389,7 @@ dependencies = [
  "wamn-build",
  "wamn-digest",
  "wamn-engine",
- "wamn-environment",
+ "wamn-env",
  "wamn-http-client",
  "wamn-identity",
  "wamn-identity-protocol",
@@ -6473,7 +6473,7 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
- "wamn-application",
+ "wamn-app",
  "wamn-authority",
  "wamn-connection-type",
  "wamn-digest",
@@ -6519,13 +6519,13 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "uuid",
- "wamn-application",
+ "wamn-app",
  "wamn-authentication",
  "wamn-broker",
  "wamn-connection",
  "wamn-digest",
+ "wamn-env",
  "wamn-envelope",
- "wamn-environment",
  "wamn-http",
  "wamn-http-client",
  "wamn-identity",
@@ -6579,7 +6579,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
- "wamn-application",
+ "wamn-app",
  "wamn-authority",
  "wamn-build",
  "wamn-component-policy",
@@ -6624,7 +6624,7 @@ dependencies = [
  "tracing",
  "tracing-opentelemetry",
  "url",
- "wamn-application",
+ "wamn-app",
  "wamn-component-policy",
  "wamn-digest",
  "wamn-package",
@@ -6641,18 +6641,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "wamn-envelope"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "ring",
- "serde",
- "tokio",
- "zeroize",
-]
-
-[[package]]
-name = "wamn-environment"
+name = "wamn-env"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -6672,7 +6661,7 @@ dependencies = [
  "tracing",
  "url",
  "uuid",
- "wamn-application",
+ "wamn-app",
  "wamn-authentication",
  "wamn-authority",
  "wamn-component-policy",
@@ -6698,6 +6687,17 @@ dependencies = [
  "wamn-test-infrastructure",
  "wamn-workflow-graph",
  "wit-parser 0.254.2",
+ "zeroize",
+]
+
+[[package]]
+name = "wamn-envelope"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "ring",
+ "serde",
+ "tokio",
  "zeroize",
 ]
 
@@ -6797,7 +6797,7 @@ dependencies = [
  "tracing-opentelemetry",
  "tracing-subscriber",
  "uuid",
- "wamn-application",
+ "wamn-app",
  "wamn-authentication",
  "wamn-blobstore",
  "wamn-broker",
@@ -6858,7 +6858,7 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "uuid",
- "wamn-application",
+ "wamn-app",
  "wamn-authentication",
  "wamn-authority",
  "wamn-connection",
@@ -7021,7 +7021,7 @@ dependencies = [
  "tokio-rustls",
  "url",
  "uuid",
- "wamn-environment",
+ "wamn-env",
  "wamn-http-client",
  "wamn-identity-client",
  "wamn-identity-protocol",
@@ -7155,7 +7155,7 @@ dependencies = [
  "tokio",
  "url",
  "wamn-digest",
- "wamn-environment",
+ "wamn-env",
  "wamn-identity-protocol",
  "wamn-kubernetes",
  "wamn-oci",
@@ -7188,7 +7188,7 @@ dependencies = [
  "tracing",
  "url",
  "uuid",
- "wamn-application",
+ "wamn-app",
  "wamn-authentication",
  "wamn-authority",
  "wamn-blobstore",
@@ -7222,7 +7222,7 @@ dependencies = [
  "tokio",
  "tracing",
  "url",
- "wamn-application",
+ "wamn-app",
  "wamn-digest",
  "wamn-identity-protocol",
  "wamn-package",
@@ -7252,7 +7252,7 @@ dependencies = [
  "url",
  "uuid",
  "wamn-component-policy",
- "wamn-environment",
+ "wamn-env",
  "wamn-package",
  "wamn-postgres",
  "wamn-record-history",
@@ -7370,7 +7370,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "tracing",
- "wamn-application",
+ "wamn-app",
  "wamn-connection-type",
  "wamn-gcp-metadata",
  "wamn-registry",
@@ -7403,7 +7403,7 @@ dependencies = [
  "wamn-codegen",
  "wamn-component-policy",
  "wamn-digest",
- "wamn-environment",
+ "wamn-env",
  "wamn-identity-protocol",
  "wamn-kubernetes",
  "wamn-package",
@@ -8911,7 +8911,7 @@ dependencies = [
  "wamn-component-policy",
  "wamn-digest",
  "wamn-engine",
- "wamn-environment",
+ "wamn-env",
  "wamn-http",
  "wamn-http-client",
  "wamn-kubernetes",

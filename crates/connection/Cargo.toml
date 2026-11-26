@@ -7,7 +7,7 @@ license.workspace = true
 
 [dependencies]
 wamn-kubernetes.workspace = true
-wamn-application.workspace = true
+wamn-app.workspace = true
 wamn-package.workspace = true
 wamn-connection-type.workspace = true
 wamn-envelope.workspace = true

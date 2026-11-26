@@ -36,7 +36,7 @@ use wash_runtime::types::{
 };
 use wash_runtime::wit::{WitInterface, WitWorld};
 
-use crate::application::EdgeApplication;
+use crate::app::EdgeApp;
 use crate::authenticator::EdgeAuthenticator;
 use crate::config::EdgeConfig;
 use crate::device::{self, DeviceLoop};
@@ -144,9 +144,9 @@ const COMPILE_CACHE_DIR: &str = "compile-cache";
 fn edge_engine(release: &EdgeRelease, db: &Path) -> anyhow::Result<wash_runtime::engine::Engine> {
     let ingress = core_instances_of_component(release.ingress())
         .context("count the core modules of the route guest")?;
-    let mut application = 0;
+    let mut app = 0;
     for component in release.native_components() {
-        application += core_instances_of_component(&component.bytes).with_context(|| {
+        app += core_instances_of_component(&component.bytes).with_context(|| {
             format!(
                 "count the core modules of {}",
                 component.fact.component_digest
@@ -154,10 +154,10 @@ fn edge_engine(release: &EdgeRelease, db: &Path) -> anyhow::Result<wash_runtime:
         })?;
     }
     let requests = u32::try_from(EDGE_POOL_SIZE.get())?;
-    let core_instances = requests * (ingress + application) + application;
+    let core_instances = requests * (ingress + app) + app;
     tracing::info!(
         ingress,
-        application,
+        application = app,
         core_instances,
         "the edge sizes its pool"
     );
@@ -203,17 +203,17 @@ pub async fn serve(config: EdgeConfig) -> anyhow::Result<EdgeHost> {
     let started_at = Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true);
     let status_socket = status::socket_path(&config.store.db)?;
     let status_listener = status::bind(&status_socket)?;
-    let application = EdgeApplication::load(Arc::clone(&engine), &release)
+    let app = EdgeApp::load(Arc::clone(&engine), &release)
         .await
         .context("load the release application")?;
 
-    let application = Arc::new(application);
+    let app = Arc::new(app);
     let scopes = Arc::new(wamn_engine::invocation_scope::InvocationScopes::default());
     let routing =
         IngressRouting::new(Arc::clone(&scopes)).with_authenticator(Arc::new(EdgeAuthenticator));
     let operation = Arc::new(EdgeOperation::new(
         Arc::clone(&release),
-        application,
+        app,
         store,
         config.target.org.clone(),
         Arc::clone(&scopes),
@@ -392,7 +392,7 @@ fn ingress_workload(release: &EdgeRelease, route_host: &str) -> WorkloadStartReq
     WorkloadStartRequest {
         workload_id: INGRESS_WORKLOAD.to_owned(),
         workload: Workload {
-            namespace: release.release().target().environment.to_string(),
+            namespace: release.release().target().env.to_string(),
             name: INGRESS_WORKLOAD.to_owned(),
             annotations: HashMap::new(),
             service: None,

@@ -48,7 +48,7 @@ pub(crate) async fn install_platform(
 }
 
 /// Resolve the published application chart reference used by the platform.
-pub fn application_chart_reference(
+pub fn app_chart_reference(
     chart_reference: &Path,
     chart_directory: &Path,
 ) -> anyhow::Result<String> {

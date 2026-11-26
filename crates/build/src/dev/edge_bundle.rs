@@ -26,12 +26,12 @@ use wamn_release::release_source::LocalReleaseFiles;
 pub struct EdgeTarget<'a> {
     pub org: &'a wamn_registry::OrgId,
     pub project: &'a wamn_registry::ProjectId,
-    pub environment: &'a wamn_registry::EnvName,
+    pub env: &'a wamn_registry::EnvName,
 }
 
 impl EdgeTarget<'_> {
     fn project_env_key(&self) -> wamn_registry::ProjectEnvKey {
-        project_env_key(self.org, self.project, self.environment)
+        project_env_key(self.org, self.project, self.env)
     }
 }
 
@@ -60,7 +60,7 @@ pub fn write_package(
     let request = PublishReleaseRequest {
         org: target.org.to_owned(),
         project: target.project.to_owned(),
-        environment: target.environment.to_owned(),
+        env: target.env.to_owned(),
         packages: vec![PackageCoordinate::new(
             admission.package_id().clone(),
             admission.package_version().clone(),

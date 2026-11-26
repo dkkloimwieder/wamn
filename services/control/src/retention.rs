@@ -4,7 +4,7 @@ use sqlx::Connection as _;
 use sqlx::postgres::PgConnectOptions;
 use std::time::Duration;
 use tokio::time::{Instant, timeout, timeout_at};
-use wamn_authentication::administration::ApplicationTarget;
+use wamn_authentication::administration::AppTarget;
 use wamn_registry::{OrgId, Triple, instance_suffix::InstanceSuffix};
 
 #[cfg(test)]
@@ -50,11 +50,11 @@ where
             }
             timeout(DATABASE_TIMEOUT, async {
                 let mut system = system.acquire().await?;
-                wamn_environment::environment_fill::fill(
+                wamn_env::env_fill::fill(
                     &mut system,
                     &mut project,
                     issuer,
-                    ApplicationTarget {
+                    AppTarget {
                         org: &triple.org,
                         project: &triple.project,
                         env: &triple.env,

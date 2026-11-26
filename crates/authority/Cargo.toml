@@ -8,7 +8,7 @@ license.workspace = true
 [dependencies]
 anyhow.workspace = true
 http.workspace = true
-wamn-application.workspace = true
+wamn-app.workspace = true
 wamn-component-policy.workspace = true
 wamn-package.workspace = true
 wamn-connection-type.workspace = true

@@ -1,8 +1,8 @@
 //! Operation identity and transaction authority stored in invocation scopes.
 
 use crate::{OperationTransaction, PgError};
-use wamn_application::session_identity::SessionIdentity;
-pub use wamn_application::session_identity::{valid_runner, valid_schema};
+use wamn_app::session_identity::SessionIdentity;
+pub use wamn_app::session_identity::{valid_runner, valid_schema};
 use wamn_connection::connection::ConnectionInvocation;
 use wamn_connection::invocation::ReleaseContext;
 use wamn_engine::invocation_scope::InvocationScopes;
@@ -21,7 +21,7 @@ pub fn validate_context(
                 &context.release.environment
             ))
             && identity.project.as_ref() == Some(context.connections.project())
-            && identity.application.as_ref() == Some(&context.release.application),
+            && identity.app.as_ref() == Some(&context.release.application),
         "invocation application authority mismatch"
     );
     Ok(())
@@ -37,7 +37,7 @@ pub struct Authority {
     pub(crate) read: bool,
 }
 
-impl wamn_application::invocation_authority::InvocationAuthority for Authority {}
+impl wamn_app::invocation_authority::InvocationAuthority for Authority {}
 
 /// Register the project_env_key identity for a component id from workload bind.
 pub(crate) fn set_project_env_key(

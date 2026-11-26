@@ -3,8 +3,8 @@
 mod sql;
 
 pub use sql::{
-    ProjectAuthority, application_users, project_administration, read_project_authority,
-    require_platform_rows, role_names, write_environment_status,
+    ProjectAuthority, app_users, project_administration, read_project_authority,
+    require_platform_rows, role_names, write_env_status,
 };
 
 use std::fmt;
@@ -121,7 +121,7 @@ pub struct PermissionGrantOutcome {
 
 /// One application user with the roles it holds.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ApplicationUserRow {
+pub struct AppUserRow {
     pub id: PrincipalId,
     pub email: String,
     pub display_name: Option<String>,
@@ -130,7 +130,7 @@ pub struct ApplicationUserRow {
 
 /// The explicit environment of one authority projection.
 #[derive(Debug, Clone, Copy)]
-pub struct ApplicationTarget<'a> {
+pub struct AppTarget<'a> {
     pub org: &'a wamn_registry::OrgId,
     pub project: &'a wamn_registry::ProjectId,
     pub env: &'a wamn_registry::EnvName,
@@ -391,7 +391,7 @@ impl From<GrantError> for AdministrationError {
 
 /// The user an application row names.
 #[derive(Debug, Clone, Copy)]
-pub struct ApplicationUser<'a> {
+pub struct AppUser<'a> {
     pub principal_id: &'a PrincipalId,
     pub email: &'a str,
     pub display_name: &'a str,

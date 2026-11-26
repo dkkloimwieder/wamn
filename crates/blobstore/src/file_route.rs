@@ -5,7 +5,7 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
-use wamn_registry::ApplicationName;
+use wamn_registry::AppName;
 
 use crate::files::{FileStorageError, FileStorageErrorType};
 
@@ -14,7 +14,8 @@ use crate::files::{FileStorageError, FileStorageErrorType};
 #[serde(rename_all = "lowercase")]
 pub enum Exposure {
     Private,
-    Application,
+    #[serde(rename = "application")]
+    App,
     Public,
 }
 
@@ -22,7 +23,7 @@ impl Exposure {
     pub fn literal(self) -> &'static str {
         match self {
             Self::Private => "private",
-            Self::Application => "application",
+            Self::App => "application",
             Self::Public => "public",
         }
     }
@@ -145,20 +146,20 @@ pub struct FileConnection {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FileRequest {
-    pub application: wamn_registry::ApplicationName,
+    pub application: wamn_registry::AppName,
     pub file_id: Uuid,
 }
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DeleteRequest {
-    pub application: wamn_registry::ApplicationName,
+    pub application: wamn_registry::AppName,
     pub file_id: Uuid,
     pub binding: wamn_package::canonical_name::CanonicalName,
 }
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ExposeRequest {
-    pub application: wamn_registry::ApplicationName,
+    pub application: wamn_registry::AppName,
     pub file_id: Uuid,
     pub binding: wamn_package::canonical_name::CanonicalName,
     pub exposure: Exposure,
@@ -182,7 +183,7 @@ pub fn valid_media_type(value: &str) -> bool {
 #[derive(Debug)]
 pub struct FileInsert<'a> {
     pub id: Uuid,
-    pub application: &'a ApplicationName,
+    pub app: &'a AppName,
     pub connection_id: &'a str,
     pub name: &'a str,
     pub media_type: &'a str,
@@ -194,7 +195,7 @@ pub struct FileInsert<'a> {
 /// Exposure and URL to write for one file.
 #[derive(Debug)]
 pub struct FileExposure<'a> {
-    pub application: &'a ApplicationName,
+    pub app: &'a AppName,
     pub id: Uuid,
     pub exposure: Exposure,
     pub url: Option<&'a str>,

@@ -136,7 +136,7 @@ async fn unbind_all<'a>(
 
 /// One release or candidate lifetime, retained by every native call it owns.
 #[derive(Debug)]
-pub struct NativeApplication {
+pub struct NativeApp {
     // Cleanup runs before the workload fields drop. The policy contains only
     // synchronous WAMN registries; native workload teardown owns warm stores.
     _cleanup: NativePolicyCleanup,
@@ -145,7 +145,7 @@ pub struct NativeApplication {
     dispatch_targets: BTreeMap<String, DispatchTarget>,
 }
 
-impl NativeApplication {
+impl NativeApp {
     /// The component's prepared links and native pool, retained for this application.
     pub fn dispatch_target(&self, component_id: &str) -> anyhow::Result<&DispatchTarget> {
         self.dispatch_targets
@@ -171,14 +171,14 @@ impl Drop for NativePolicyCleanup {
     clippy::implicit_hasher,
     reason = "wash-runtime takes the plugin map with the default hasher"
 )]
-pub async fn load_native_application(
+pub async fn load_native_app(
     engine: Arc<Engine>,
     spec: NativeWorkloadSpec,
     policy: Arc<EdgePolicy>,
     plugins: &HashMap<&'static str, Arc<dyn HostPlugin>>,
     plugin_bindings: &PluginBindings,
     meters: &Meters,
-) -> anyhow::Result<Arc<NativeApplication>> {
+) -> anyhow::Result<Arc<NativeApp>> {
     let cleanup = NativePolicyCleanup(Arc::clone(&policy));
     let workload =
         Arc::new(load_native_workload(engine, spec, plugins, plugin_bindings, meters).await?);
@@ -196,7 +196,7 @@ pub async fn load_native_application(
         };
         dispatch_targets.insert(id.to_owned(), target);
     }
-    Ok(Arc::new(NativeApplication {
+    Ok(Arc::new(NativeApp {
         _cleanup: cleanup,
         workload,
         policy,
@@ -336,7 +336,7 @@ pub(super) async fn load_native_workload(
 )]
 async fn load_component_workload(
     engine: &Arc<Engine>,
-    application_id: &str,
+    app_id: &str,
     namespace: &str,
     name: &str,
     component: Component,
@@ -349,7 +349,7 @@ async fn load_component_workload(
     // The component name is a fixed-length fact or entry digest, so no
     // workload id is a prefix of another. Plugins clear their state by
     // workload id prefix.
-    let id = format!("{application_id}/{}", component.name);
+    let id = format!("{app_id}/{}", component.name);
     let workload = Workload {
         namespace: namespace.to_owned(),
         name: name.to_owned(),

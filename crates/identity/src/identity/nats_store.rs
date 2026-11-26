@@ -75,7 +75,7 @@ async fn ensure_key(
     Ok(Key { pair, issued_at })
 }
 
-pub(super) async fn ensure_environment(
+pub(super) async fn ensure_env(
     client: &mut PgConnection,
     envelope: &Envelope,
     issuer: &str,
@@ -178,7 +178,7 @@ pub(super) async fn ensure_environment(
     })
 }
 
-pub(super) async fn retire_environment(
+pub(super) async fn retire_env(
     client: &mut PgConnection,
     issuer: &str,
     org: &OrgId,
@@ -204,7 +204,7 @@ pub(super) async fn retire_environment(
     Ok(row)
 }
 
-pub(super) async fn environment_signer(
+pub(super) async fn env_signer(
     client: &mut PgConnection,
     envelope: &Envelope,
     issuer: &str,

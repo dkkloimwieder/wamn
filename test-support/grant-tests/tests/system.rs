@@ -173,7 +173,7 @@ const HOME_PRINCIPAL: &str = "00000000-0000-4000-8000-00000000000a";
 const OTHER_PRINCIPAL: &str = "00000000-0000-4000-8000-00000000000b";
 /// The project and environment of the seed rows of each org.
 const PROJECT: &str = "billing";
-const ENVIRONMENT: &str = "dev";
+const ENV: &str = "dev";
 
 /// One org of the cross-org test.
 struct Org<'a> {
@@ -247,7 +247,7 @@ fn seeds(org: &Org<'_>) -> Vec<Seed> {
     let email = format!("owner@{name}.example");
     let issuer = format!("https://{name}.example");
     let label = format!("{name}-web");
-    let target = [("org", name), ("project", PROJECT), ("env", ENVIRONMENT)];
+    let target = [("org", name), ("project", PROJECT), ("env", ENV)];
     let at_target = |columns: &[(&'static str, &'static str)]| [&target[..], columns].concat();
     vec![
         Seed::new("registry.org", &[("id", name)]),
@@ -287,12 +287,12 @@ fn seeds(org: &Org<'_>) -> Vec<Seed> {
                 ("role", "project-admin"),
             ],
         ),
-        Seed::new("registry.env", &[("org", name), ("env", ENVIRONMENT)]),
+        Seed::new("registry.env", &[("org", name), ("env", ENV)]),
         Seed::new(
             "provisioning.platform_event",
             &[
                 ("org", name),
-                ("env", ENVIRONMENT),
+                ("env", ENV),
                 ("project", PROJECT),
                 ("command_id", principal),
                 ("principal_id", principal),
@@ -312,7 +312,7 @@ fn seeds(org: &Org<'_>) -> Vec<Seed> {
             "registry.env_integration",
             &[
                 ("org", name),
-                ("env", ENVIRONMENT),
+                ("env", ENV),
                 ("name", "erp"),
                 ("version", "1"),
             ],
@@ -511,7 +511,7 @@ enum Refusal {
 fn org_call(function: &str, org: &Org<'_>) -> Option<(String, Refusal)> {
     let name = escape_literal(org.name);
     let principal = escape_literal(&org.principal.to_string());
-    let (project, environment) = (escape_literal(PROJECT), escape_literal(ENVIRONMENT));
+    let (project, env) = (escape_literal(PROJECT), escape_literal(ENV));
     Some(match function {
         "registry.configure_integration_type(text,text,jsonb)" => (
             format!(
@@ -532,9 +532,7 @@ fn org_call(function: &str, org: &Org<'_>) -> Option<(String, Refusal)> {
             Refusal::False,
         ),
         "identity.has_project_access(uuid,text,text,text)" => (
-            format!(
-                "SELECT identity.has_project_access({principal}, {name}, {environment}, {project})"
-            ),
+            format!("SELECT identity.has_project_access({principal}, {name}, {env}, {project})"),
             Refusal::False,
         ),
         _ => return None,

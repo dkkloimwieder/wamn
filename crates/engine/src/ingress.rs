@@ -4,10 +4,10 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use serde_json::Value;
-use wamn_application::application_config::ApplicationConfig;
-use wamn_application::ingress::{
-    self, AuthRejection, AuthenticatedCaller, EnvironmentStatus, Header, RouteAuthenticator,
-    RoutePolicy, RouteProvider, authentication_unavailable,
+use wamn_app::app_config::AppConfig;
+use wamn_app::ingress::{
+    self, AuthRejection, AuthenticatedCaller, EnvStatus, Header, RouteAuthenticator, RoutePolicy,
+    RouteProvider, authentication_unavailable,
 };
 use wash_runtime::engine::ctx::{ActiveCtx, SharedCtx, extract_active_ctx};
 use wash_runtime::engine::workload::WorkloadItem;
@@ -23,7 +23,7 @@ pub const INGRESS_ID: &str = "wamn-ingress";
 pub struct IngressRouting {
     scopes: Arc<crate::invocation_scope::InvocationScopes>,
     authenticator: Option<Arc<dyn RouteAuthenticator>>,
-    environment: Option<Arc<dyn EnvironmentStatus>>,
+    env: Option<Arc<dyn EnvStatus>>,
 }
 impl std::fmt::Debug for IngressRouting {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -35,18 +35,18 @@ impl IngressRouting {
         Self {
             scopes,
             authenticator: None,
-            environment: None,
+            env: None,
         }
     }
     /// Read the application facts retained for the bound ingress component.
-    pub fn application_config(&self, component_id: &str) -> Option<Arc<ApplicationConfig>> {
-        crate::application::bound_application_config(&self.scopes, component_id)
+    pub fn app_config(&self, component_id: &str) -> Option<Arc<AppConfig>> {
+        crate::app::bound_app_config(&self.scopes, component_id)
     }
 
     /// Refuse every route while the host's environment is inactive.
     #[must_use]
-    pub fn with_environment_status(mut self, environment: Arc<dyn EnvironmentStatus>) -> Self {
-        self.environment = Some(environment);
+    pub fn with_env_status(mut self, env: Arc<dyn EnvStatus>) -> Self {
+        self.env = Some(env);
         self
     }
 
@@ -67,7 +67,7 @@ impl IngressRouting {
         body: &[u8],
     ) -> Result<Option<AuthenticatedCaller>, AuthRejection> {
         ingress::authenticate_policy(
-            self.environment.as_deref(),
+            self.env.as_deref(),
             self.authenticator.as_deref(),
             target,
             attachment_id,
@@ -125,12 +125,8 @@ impl HostPlugin for IngressRouting {
         if !interfaces.contains("wamn", "ingress", &["routing"]) {
             return Ok(());
         }
-        if let Some(application) = crate::application::bind_application_config(&self.scopes, item)?
-        {
-            let routes = crate::application::WorkloadRoutes::read(
-                &item.local_resources().config,
-                application,
-            )?;
+        if let Some(app) = crate::app::bind_app_config(&self.scopes, item)? {
+            let routes = crate::app::WorkloadRoutes::read(&item.local_resources().config, app)?;
             self.scopes.bind_routes(item.id(), Arc::new(routes));
         }
         add_to_linker(item.linker()?)?;

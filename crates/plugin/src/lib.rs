@@ -63,7 +63,7 @@ mod bindings {
         imports: { default: async | trappable | tracing },
         with: {
             "wamn:postgres/statements.transaction": super::PgStatementTransaction,
-            "wamn:ingress/routing.authenticated-caller": wamn_application::ingress::AuthenticatedCaller,
+            "wamn:ingress/routing.authenticated-caller": wamn_app::ingress::AuthenticatedCaller,
             // The engine owns the operation binding and the types its refusal names.
             "wamn:postgres/types": wamn_engine::entry_operation::postgres_types,
             "wamn:operation/operation": wamn_engine::entry_operation::operation,
@@ -91,7 +91,7 @@ mod bindings {
         },
         with: {
             "wamn:postgres/statements.transaction": super::PgStatementTransaction,
-            "wamn:ingress/routing.authenticated-caller": wamn_application::ingress::AuthenticatedCaller,
+            "wamn:ingress/routing.authenticated-caller": wamn_app::ingress::AuthenticatedCaller,
             // The engine owns the operation binding and the types its refusal names.
             "wamn:postgres/types": wamn_engine::entry_operation::postgres_types,
             "wamn:operation/operation": wamn_engine::entry_operation::operation,
@@ -301,24 +301,19 @@ impl HostPlugin for OperationHost {
         item: &mut WorkloadItem<'a>,
         interfaces: WitInterfaces<'_>,
     ) -> anyhow::Result<()> {
-        let application = wamn_engine::application::bind_application_config(&self.scopes, item)?;
-        if let Some(application) = &application {
-            let key = wamn_registry::name::project_env_key(
-                &application.org,
-                &application.project,
-                &application.environment,
-            );
-            self.store
-                .bind_host_project(&application.project, &key)
-                .await?;
-            self.authorization.configure_application(application)?;
+        let app = wamn_engine::app::bind_app_config(&self.scopes, item)?;
+        if let Some(app) = &app {
+            let key =
+                wamn_registry::name::project_env_key(&app.org, &app.project, &app.environment);
+            self.store.bind_host_project(&app.project, &key).await?;
+            self.authorization.configure_app(app)?;
         }
         if interfaces.contains("wamn", "operation", &["operation"]) {
             let WorkloadItem::Component(component) = item else {
                 anyhow::bail!("operation authority requires an entry component");
             };
-            if let Some(application) = application {
-                self.bind_entry_instance(component.workload_id(), component.id(), application)?;
+            if let Some(app) = app {
+                self.bind_entry_instance(component.workload_id(), component.id(), app)?;
             }
             // A control root links the interface without operation authority.
             // Calls on an unbound instance refuse before accessing SQL or identity.

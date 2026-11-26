@@ -17,7 +17,7 @@ use wamn_package::canonical_name::CanonicalName;
 
 use anyhow::Context as _;
 use tokio::time::Instant;
-use wamn_application::application_config::ApplicationConfig;
+use wamn_app::app_config::AppConfig;
 use wamn_engine::operation::WamnOperation;
 use wamn_event::Causation;
 use wamn_identity_protocol::PrincipalId;
@@ -58,7 +58,7 @@ pub(super) struct Workflow {
 struct Workload {
     service: Box<str>,
     route: Box<str>,
-    application: Arc<ApplicationConfig>,
+    app: Arc<AppConfig>,
     project_key: wamn_registry::ProjectEnvKey,
     entry: DispatchTarget,
     runner: String,
@@ -207,15 +207,12 @@ impl HostPlugin for Workflow {
                 .map(|(route, _)| Box::from(route.as_ref()))
                 .context("workflow workload has no ingress sibling")?
         };
-        let application = self
+        let app = self
             .postgres
-            .workflow_application(&route)
+            .workflow_app(&route)
             .context("ingress has no bound wamn.application")?;
-        let project_key = wamn_registry::name::project_env_key(
-            &application.org,
-            &application.project,
-            &application.environment,
-        );
+        let project_key =
+            wamn_registry::name::project_env_key(&app.org, &app.project, &app.environment);
         let entry = workload.dispatch_target(item, ID).await?;
         self.workloads
             .write()
@@ -225,7 +222,7 @@ impl HostPlugin for Workflow {
                 Arc::new(Workload {
                     service: item.into(),
                     route,
-                    application,
+                    app,
                     project_key,
                     entry,
                     runner: uuid::Uuid::new_v4().to_string(),

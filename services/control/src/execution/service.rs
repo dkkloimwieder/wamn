@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 use sqlx::Connection as _;
 use std::time::Duration;
 use wamn_identity::api_service;
-use wamn_identity::identity::application::service;
+use wamn_identity::identity::app::service;
 use wamn_identity_protocol::{PrincipalId, pat_prefix::PatPrefix};
 use wamn_package::canonical_name::CanonicalName;
 use wamn_registry::{EnvName, ProjectId, Triple};
@@ -32,14 +32,13 @@ impl Execution {
         input.remove("project");
         input.remove("env");
         let input = Value::Object(input);
-        wamn_environment::name::validate_project_env(&self.org, &target.project, &target.env)?;
+        wamn_env::name::validate_project_env(&self.org, &target.project, &target.env)?;
         let mut system =
             wamn_identity::identity::transaction::read_pool(&self.control, caller).await?;
         let triple = Triple::new(self.org.clone(), target.env, target.project);
-        let instance =
-            wamn_environment::registry::deployment::instance_suffix(&mut system, &triple)
-                .await?
-                .context("the project deployment does not exist")?;
+        let instance = wamn_env::registry::deployment::instance_suffix(&mut system, &triple)
+            .await?
+            .context("the project deployment does not exist")?;
         let domain = if matches!(
             operation.as_str(),
             "api_service.create" | "service_principal.create"

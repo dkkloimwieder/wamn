@@ -6,7 +6,7 @@ pub mod helm;
 pub mod job;
 pub mod kubernetes;
 pub mod org_resources;
-pub mod platform_environment;
+pub mod platform_env;
 pub mod web_release;
 pub mod worker_mounts;
 pub mod kubernetes_api {

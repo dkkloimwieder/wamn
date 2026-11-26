@@ -16,7 +16,7 @@ use chrono::{SecondsFormat, Utc};
 use serde_json::json;
 use tokio::sync::{mpsc, watch};
 use tokio::task::JoinHandle;
-use wamn_application::ingress::{AuthenticatedCaller, CredentialType};
+use wamn_app::ingress::{AuthenticatedCaller, CredentialType};
 
 use crate::config::DeviceConfig;
 use crate::operation::EdgeOperation;
@@ -94,7 +94,7 @@ pub fn start(
         .iter()
         .find_map(|component| component.operations.get(&operation))
         .context("device operation is missing")?;
-    wamn_application::native_routes::authorize_released_operation(Some(&caller), fact)?;
+    wamn_app::native_routes::authorize_released_operation(Some(&caller), fact)?;
     anyhow::ensure!(
         !route.type_.is_read(),
         "{} is a {:?} route; the device loop calls a route that changes records",

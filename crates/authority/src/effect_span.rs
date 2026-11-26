@@ -135,14 +135,14 @@ pub struct EffectGraph<'a> {
 #[derive(Clone, Copy, Debug)]
 pub enum EffectSource<'a> {
     Package(&'a wamn_package::PackageName),
-    Application(&'a wamn_registry::ApplicationName),
+    App(&'a wamn_registry::AppName),
 }
 
 impl<'a> EffectSource<'a> {
     fn as_str(self) -> &'a str {
         match self {
             Self::Package(name) => name.as_str(),
-            Self::Application(name) => name.as_str(),
+            Self::App(name) => name.as_str(),
         }
     }
 }

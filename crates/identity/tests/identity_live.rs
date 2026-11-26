@@ -128,7 +128,7 @@ async fn platform_identity_round_trip_on_postgres() {
         "the principal and both roles stamp wamn:provisioning"
     );
 
-    project_environment_membership_round_trip(&mut client, &user).await;
+    project_env_membership_round_trip(&mut client, &user).await;
     project_delete_removes_its_roles_and_memberships(&mut client, &user).await;
 
     let disabled = disable_principal(&mut client, user.id())
@@ -244,10 +244,7 @@ async fn project_delete_removes_its_roles_and_memberships(
     assert_eq!(rows(client, &"widgets".parse().unwrap()).await, widgets);
 }
 
-async fn project_environment_membership_round_trip(
-    client: &mut sqlx::PgConnection,
-    user: &Principal,
-) {
+async fn project_env_membership_round_trip(client: &mut sqlx::PgConnection, user: &Principal) {
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         ("INSERT INTO registry.org (id) \
              VALUES ('other'); \

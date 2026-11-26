@@ -3,8 +3,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use wamn_application::database::SqlError;
-use wamn_application::result_signing::ResultSigner;
+use wamn_app::database::SqlError;
+use wamn_app::result_signing::ResultSigner;
 use wamn_authentication::authorization::Authorization;
 use wamn_connection::connection_facts::ConnectionCache;
 use wamn_postgres::WamnPostgres;
@@ -80,9 +80,9 @@ impl OperationHost {
         project_env_key: &wamn_registry::ProjectEnvKey,
         principal_id: &wamn_identity_protocol::PrincipalId,
         role: &str,
-    ) -> anyhow::Result<Option<wamn_application::ingress::AuthenticatedCaller>> {
+    ) -> anyhow::Result<Option<wamn_app::ingress::AuthenticatedCaller>> {
         if *principal_id == wamn_identity_protocol::workflow_user_id() {
-            use wamn_application::ingress::{AuthenticatedCaller, CredentialType};
+            use wamn_app::ingress::{AuthenticatedCaller, CredentialType};
             let permissions = self
                 .authorization
                 .workflow_role_permissions(project, principal_id, role)

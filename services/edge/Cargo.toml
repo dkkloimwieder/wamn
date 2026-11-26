@@ -11,7 +11,7 @@ path = "src/main.rs"
 test = false
 
 [dependencies]
-wamn-application.workspace = true
+wamn-app.workspace = true
 wamn-authority.workspace = true
 wamn-edge-document.workspace = true
 wamn-component-policy.workspace = true

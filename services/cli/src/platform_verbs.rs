@@ -6,7 +6,7 @@ use anyhow::Context as _;
 use clap::{Args, Subcommand, ValueEnum};
 use wamn_kubernetes::Target;
 use wamn_platform_install::{
-    platform_install::{application_chart_reference, registry_egress},
+    platform_install::{app_chart_reference, registry_egress},
     release_chart::bundle,
 };
 
@@ -76,7 +76,7 @@ pub async fn run_product(command: ProductPlatformCommand) -> anyhow::Result<()> 
     let target = match args.target {
         PlatformSchemaTarget::Project => "project",
     };
-    let document = wamn_environment::environment::document::EnvironmentFile::compile(&args.env)?;
+    let document = wamn_env::env::document::EnvFile::compile(&args.env)?;
     let projects: Vec<_> = document
         .projects
         .into_iter()
@@ -105,14 +105,14 @@ async fn deploy(args: &DeployArgs) -> anyhow::Result<()> {
     let platform = !matches!(args.only, Some(DeployChart::Infrastructure));
     let registry_egress = platform.then(|| registry_egress(&values)).transpose()?;
     let chart = bundle::select(&args.chart)?;
-    let application_chart = application_chart_reference(&args.chart, chart.directory())?;
+    let app_chart = app_chart_reference(&args.chart, chart.directory())?;
     let target = Target::developer("platform").await?;
     wamn_platform_install::install::install(
         &target,
         &chart.directory().join("platform"),
         &values,
         infrastructure,
-        &application_chart,
+        &app_chart,
         registry_egress,
     )
     .await

@@ -15,7 +15,8 @@ pub enum Order {
     /// Project identifier ascending.
     Project,
     /// Environment name ascending.
-    Environment,
+    #[serde(rename = "Environment")]
+    Env,
     /// Email ascending, then principal UUID ascending.
     Principal,
 }
@@ -50,7 +51,7 @@ fn parse_key(order: Order, key: &Value) -> Result<Option<PrincipalId>, IdentityE
     let key = key.as_array().ok_or_else(|| invalid("cursor"))?;
     let text = |value: &Value| value.as_str().is_some_and(|text| !text.contains('\0'));
     let valid = match (order, key.as_slice()) {
-        (Order::Project | Order::Environment, [name]) => text(name),
+        (Order::Project | Order::Env, [name]) => text(name),
         (Order::Principal, [email, id]) if text(email) => {
             return id
                 .as_str()

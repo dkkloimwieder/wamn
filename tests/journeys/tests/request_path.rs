@@ -4,8 +4,8 @@
 mod common;
 
 use anyhow::{Context as _, ensure};
-use common::request::{self, OtherEnvironment, wamn};
-use common::{Application, Org};
+use common::request::{self, OtherEnv, wamn};
+use common::{App, Org};
 use k8s_openapi::api::authorization::v1::{
     ResourceAttributes, SubjectAccessReview, SubjectAccessReviewSpec,
 };
@@ -22,10 +22,10 @@ common::journey! {
     /// `connection copy` from A into B copies A's parameters and keeps B's credential, and
     /// B's host ServiceAccount may get its own credential Secret but not A's. The outside
     /// call with the credential is a service test (Epic 15 ruling Q-B).
-    async fn another_environments_credential_is_refused() -> anyhow::Result<()> {
+    async fn another_envs_credential_is_refused() -> anyhow::Result<()> {
         let org = Org::create().await?;
-        let a = OtherEnvironment::apply(&org, "alpha", "platform_fixture").await?;
-        let b = OtherEnvironment::apply(&org, "beta", "platform_fixture").await?;
+        let a = OtherEnv::apply(&org, "alpha", "platform_fixture").await?;
+        let b = OtherEnv::apply(&org, "beta", "platform_fixture").await?;
         let scratch = ScratchRoot::create()?;
         let file = |name: String, contents: String| -> anyhow::Result<String> {
             let path = scratch.path().join(name);
@@ -36,8 +36,8 @@ common::journey! {
             |triple: &Triple| json!({"project": triple.project, "env": triple.env, "name": CONNECTION});
 
         let mut hints = Vec::new();
-        for (environment, header) in [(&a, "X-Alpha-Key"), (&b, "X-Beta-Key")] {
-            let mut request = target(&environment.triple);
+        for (env, header) in [(&a, "X-Alpha-Key"), (&b, "X-Beta-Key")] {
+            let mut request = target(&env.triple);
             request["integration_type"] = json!("http");
             request["auth_type"] = json!("api_key");
             request["parameters"] = json!({
@@ -45,7 +45,7 @@ common::journey! {
                 "tls-verification": "verify-authority",
                 "auth": {"in": "header", "name": header},
             });
-            let env = environment.triple.env.as_str();
+            let env = env.triple.env.as_str();
             let credential =
                 json!({"key": format!("{env}-{}", uuid::Uuid::new_v4().simple())}).to_string();
             // The product hint is the last four characters of the credential value.
@@ -99,7 +99,7 @@ common::journey! {
         );
 
         let client = &org.cluster.client;
-        let account = name::environment_service_account(&org.name, &b.triple.env);
+        let account = name::env_service_account(&org.name, &b.triple.env);
         for (owner, allowed) in [(&a.triple, false), (&b.triple, true)] {
             let secret = name::credential_secret_name(&org.name, &owner.project, &owner.env);
             let review = Api::<SubjectAccessReview>::all(client.clone())
@@ -138,13 +138,13 @@ common::journey! {
     /// their own caller: the actor stamps, and the history operation and changer. And
     /// `number.issue` advances only this application's counters.
     async fn each_session_carries_its_own_identity() -> anyhow::Result<()> {
-        let application = Application::prepare(&request::fixture("platform_fixture")).await?;
-        let client = &application.environment.org.cluster.client;
-        let environment = &application.environment;
+        let app = App::prepare(&request::fixture("platform_fixture")).await?;
+        let client = &app.env.org.cluster.client;
+        let env = &app.env;
 
-        let old = request::delete_host(client, environment, Some(0)).await?;
-        request::wait_host_restarted(client, environment, &old).await?;
-        let (status, answer) = request::read(&application.routes, "/widget/list", &json!({})).await?;
+        let old = request::delete_host(client, env, Some(0)).await?;
+        request::wait_host_restarted(client, env, &old).await?;
+        let (status, answer) = request::read(&app.routes, "/widget/list", &json!({})).await?;
         ensure!(
             status == 200,
             "the first read after a restart answers {status}: {answer}"
@@ -152,9 +152,9 @@ common::journey! {
 
         // `widget.code` is unique and takes two values, so the concurrent writes create
         // counters, which keep a history, and numbered labels, which carry actor stamps.
-        let (second, other) = request::caller(&application, "second").await?;
+        let (second, other) = request::caller(&app, "second").await?;
         let callers = [
-            (application.caller().to_string(), &application.routes),
+            (app.caller().to_string(), &app.routes),
             (second.to_string(), &other),
         ];
         let calls = callers.iter().flat_map(|(caller, routes)| {
@@ -184,7 +184,7 @@ common::journey! {
         });
         let written = futures_util::future::try_join_all(calls).await?;
 
-        let mut database = environment.observe().await?;
+        let mut database = env.observe().await?;
         for (path, id, caller) in &written {
             if *path == "/counter/create" {
                 let (operation, changed_by): (String, String) = sqlx::query_as(
@@ -219,7 +219,7 @@ common::journey! {
         let before: Vec<(String, String, String, String, i64)> = sqlx::query_as(counters)
             .fetch_all(&mut database.connection)
             .await?;
-        application
+        app
             .routes
             .post(
                 "/number/issue",

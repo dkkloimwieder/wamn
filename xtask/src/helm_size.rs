@@ -9,7 +9,7 @@ use anyhow::{Context as _, Result, bail, ensure};
 use base64::Engine as _;
 use wamn_component_policy::PackageManifest;
 use wamn_digest::{Digest, bytes_sha256};
-use wamn_environment::environment::document::EnvironmentDocument;
+use wamn_env::env::document::EnvDocument;
 use wamn_package::PackageName;
 use wamn_package::manifest::deploy::PublishedComponent;
 
@@ -23,7 +23,7 @@ const ORG: &str = "acme";
 /// placeholder of the same length.
 pub(super) async fn run(root: &Path) -> Result<()> {
     let mut packages = BTreeMap::new();
-    for path in crate::prepare_tests::applications(root)? {
+    for path in crate::prepare_tests::apps(root)? {
         let source = wamn_build::prepare_source(&path)
             .await
             .with_context(|| format!("read application {}", path.display()))?;
@@ -138,7 +138,7 @@ fn stamp_chart(root: &Path, out: &Path) -> Result<std::path::PathBuf> {
 }
 
 /// The environment that deploys package `id` as one application.
-fn environment(id: &PackageName) -> Result<EnvironmentDocument> {
+fn env(id: &PackageName) -> Result<EnvDocument> {
     let document = serde_json::json!({
         "org": ORG, "project": "wms", "env": "dev", "target": "cloud",
         "revocation_seconds": 60,
@@ -147,7 +147,7 @@ fn environment(id: &PackageName) -> Result<EnvironmentDocument> {
             "client": {"package": id, "web": format!("sha256:{}", "0".repeat(64))},
         }},
     });
-    EnvironmentDocument::from_json(&serde_json::to_vec(&document)?)
+    EnvDocument::from_json(&serde_json::to_vec(&document)?)
 }
 
 /// Render the release of package `id` and its bases, and return the size of
@@ -175,17 +175,17 @@ async fn record_bytes(
         );
         manifests.insert(id.clone(), manifest.clone());
     }
-    let document = environment(id)?;
-    let (application, _) = document
+    let document = env(id)?;
+    let (app, _) = document
         .applications
         .first_key_value()
         .context("the environment has one application")?;
     let settings = &document.settings;
     let (_, component_base) = wamn_registry::org_artifact_bases("registry.example.com");
-    let values = wamn_environment::environment::write::release_values(
+    let values = wamn_env::env::write::release_values(
         &document,
         &"wamn.example.com".parse()?,
-        application,
+        app,
         &manifests,
         &package_digest(id),
         &[],
@@ -195,11 +195,11 @@ async fn record_bytes(
     )?;
     let path = directory.join("application.yaml");
     std::fs::write(&path, serde_yaml::to_string(&values)?)?;
-    let release = wamn_environment::release_chart::release_name(
+    let release = wamn_env::release_chart::release_name(
         &settings.org,
         &settings.project,
         &settings.env,
-        application,
+        app,
     )?;
     let namespace = wamn_kubernetes::helm::org_release_namespace(ORG);
     let rendered = wamn_kubernetes::helm::run(&[

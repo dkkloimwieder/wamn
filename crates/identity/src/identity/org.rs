@@ -5,11 +5,11 @@
 //! and the control routes call these functions,
 //! inside the caller's transaction and under the caller's bound actor.
 //! These functions write system rows only. The application rows of the same
-//! grants are the functions of [`crate::identity::application`].
+//! grants are the functions of [`crate::identity::app`].
 
 use sqlx::Row as _;
 use sqlx::types::Uuid;
-use wamn_identity_protocol::records::{EnvironmentSummary, MemberGrants, OrgUser, ProjectMember};
+use wamn_identity_protocol::records::{EnvSummary, MemberGrants, OrgUser, ProjectMember};
 
 use super::control;
 use crate::control_admission::{ORG_ADMIN_ROLE, PROJECT_ADMIN_ROLE};
@@ -129,7 +129,7 @@ pub async fn grant_member(
     if !found {
         return Err(IdentityError::refused(
             IdentityErrorType::NotFound,
-            IdentityRefusal::EnvironmentNotFound,
+            IdentityRefusal::EnvNotFound,
             format!("environment {project}/{env} is not an environment of org {org}"),
         ));
     }
@@ -497,7 +497,7 @@ pub async fn project_envs(
     client: &mut sqlx::PgConnection,
     org: &wamn_registry::OrgId,
     project: &wamn_registry::ProjectId,
-) -> Result<Vec<EnvironmentSummary>, IdentityError> {
+) -> Result<Vec<EnvSummary>, IdentityError> {
     project_envs_page(client, org, project, None, None).await
 }
 
@@ -508,7 +508,7 @@ pub async fn project_envs_page(
     project: &wamn_registry::ProjectId,
     after: Option<&str>,
     limit: Option<i64>,
-) -> Result<Vec<EnvironmentSummary>, IdentityError> {
+) -> Result<Vec<EnvSummary>, IdentityError> {
     sqlx::query(PROJECT_ENVS_SQL)
         .bind(org.as_str())
         .bind(project.as_str())
@@ -519,7 +519,7 @@ pub async fn project_envs_page(
         .map_err(|error| database_error(&error))?
         .iter()
         .map(|row| {
-            Ok(EnvironmentSummary {
+            Ok(EnvSummary {
                 name: row
                     .try_get::<String, _>(0)
                     .and_then(|value| wamn_postgres::decode_text(value, 0))
@@ -554,7 +554,7 @@ pub async fn project_members_page(
     client: &mut sqlx::PgConnection,
     org: &wamn_registry::OrgId,
     project: &wamn_registry::ProjectId,
-    environment: Option<&wamn_registry::EnvName>,
+    env: Option<&wamn_registry::EnvName>,
     after: Option<&str>,
     after_id: Option<&PrincipalId>,
     limit: Option<i64>,
@@ -567,7 +567,7 @@ pub async fn project_members_page(
         .bind(after)
         .bind(after_id.copied().map(Uuid::from))
         .bind(limit)
-        .bind(environment.map(wamn_registry::EnvName::as_str))
+        .bind(env.map(wamn_registry::EnvName::as_str))
         .fetch_all(&mut *client)
         .await
         .map_err(|error| database_error(&error))?

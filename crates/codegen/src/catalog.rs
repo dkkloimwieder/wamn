@@ -499,8 +499,8 @@ fn ir_error(schema: &str, object: &str, error: &IrError) -> PostgresIntrospectio
     refusal(type_, Some(schema), Some(object), error.to_string())
 }
 
-fn configured_schemas(application_schemas: &[&str]) -> Vec<String> {
-    application_schemas
+fn configured_schemas(app_schemas: &[&str]) -> Vec<String> {
+    app_schemas
         .iter()
         .copied()
         .map(str::to_owned)
@@ -536,9 +536,9 @@ async fn validate_schemas(
 /// Read the catalog's views without imposing table or synchronization policy.
 pub async fn read_views(
     client: &Client,
-    application_schemas: &[&str],
+    app_schemas: &[&str],
 ) -> Result<Vec<View>, PostgresIntrospectionError> {
-    load_views(client, &configured_schemas(application_schemas), &[]).await
+    load_views(client, &configured_schemas(app_schemas), &[]).await
 }
 
 async fn load_views(
@@ -1546,9 +1546,9 @@ fn map_indexes(
 /// Read explicitly configured application schemas from PostgreSQL 18.
 pub async fn read_catalog(
     client: &Client,
-    application_schemas: &[&str],
+    app_schemas: &[&str],
 ) -> Result<CatalogIr, PostgresIntrospectionError> {
-    read_catalog_excluding_relations(client, application_schemas, &[]).await
+    read_catalog_excluding_relations(client, app_schemas, &[]).await
 }
 
 /// Read configured application schemas while omitting explicitly named
@@ -1557,10 +1557,10 @@ pub async fn read_catalog(
 /// The reader skips history tables and the host-owned relations that the caller names.
 pub async fn read_catalog_excluding_relations(
     client: &Client,
-    application_schemas: &[&str],
+    app_schemas: &[&str],
     excluded_relations: &[(&str, &str)],
 ) -> Result<CatalogIr, PostgresIntrospectionError> {
-    let schemas = configured_schemas(application_schemas);
+    let schemas = configured_schemas(app_schemas);
     if schemas.is_empty() {
         return Ok(CatalogIr::new(Vec::new()));
     }

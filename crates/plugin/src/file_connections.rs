@@ -3,13 +3,13 @@
 use std::{fmt, sync::Arc};
 
 use uuid::Uuid;
-use wamn_application::application_config::ApplicationConfig;
+use wamn_app::app_config::AppConfig;
 use wamn_blobstore::file_route::{FileConnection, FileError, FileRefusal, failed, refused};
 
 /// Login-targeted registry lookup of active store generations.
 /// Existing files use their connection identity without a binding.
 pub struct RegistryFileConnections {
-    pub release: Arc<ApplicationConfig>,
+    pub release: Arc<AppConfig>,
     pub facts: Arc<wamn_connection::connection_facts::ConnectionFacts>,
 }
 impl fmt::Debug for RegistryFileConnections {
@@ -65,11 +65,11 @@ impl RegistryFileConnections {
     /// Resolve an application's binding or an existing file's active generation.
     pub(crate) async fn lookup(
         &self,
-        application: &wamn_registry::ApplicationName,
+        app: &wamn_registry::AppName,
         binding: Option<&wamn_package::canonical_name::CanonicalName>,
         pinned: Option<&str>,
     ) -> Result<FileConnection, FileError> {
-        if application != &self.release.application {
+        if app != &self.release.application {
             return Err(refused(FileRefusal::BindingRefused, "application"));
         }
         let (id, read_only) = match binding {
@@ -85,16 +85,12 @@ impl RegistryFileConnections {
                     .components
                     .iter()
                     .find_map(|component| {
-                        wamn_application::application_config::binding(
-                            &self.release,
-                            &component.name,
-                            name.as_str(),
-                        )
-                        .filter(|binding| {
-                            binding.interface == "wasmcloud:blobstore"
-                                && pinned.is_none_or(|id| id == binding.connection_id)
-                        })
-                        .map(|binding| (binding, &component.package))
+                        wamn_app::app_config::binding(&self.release, &component.name, name.as_str())
+                            .filter(|binding| {
+                                binding.interface == "wasmcloud:blobstore"
+                                    && pinned.is_none_or(|id| id == binding.connection_id)
+                            })
+                            .map(|binding| (binding, &component.package))
                     })
                     .ok_or_else(|| refused(FileRefusal::BindingRefused, "binding"))?;
                 (

@@ -8,7 +8,7 @@ use wamn_blobstore::file_route::{
 };
 use wamn_identity_protocol::{AuthorityClass, PrincipalId};
 use wamn_package::canonical_name::CanonicalName;
-use wamn_registry::{ApplicationName, ProjectId};
+use wamn_registry::{AppName, ProjectId};
 
 use wamn_postgres::WamnPostgres;
 
@@ -47,7 +47,7 @@ pub(crate) async fn record(
     project: &ProjectId,
     principal: &PrincipalId,
     operation: &CanonicalName,
-    application: &wamn_registry::ApplicationName,
+    app: &wamn_registry::AppName,
     id: Uuid,
 ) -> Result<FileRecord, FileError> {
     let sql =
@@ -55,7 +55,7 @@ pub(crate) async fn record(
     administration_transaction(postgres, project, principal, operation, async |client| {
         let row = sqlx::query(sqlx::AssertSqlSafe(sql))
             .bind(id.to_string())
-            .bind(application.as_str())
+            .bind(app.as_str())
             .fetch_optional(client)
             .await
             .map_err(file_sql_error)?
@@ -78,7 +78,7 @@ pub(crate) async fn insert(
             "INSERT INTO platform.file (id, app, connection_id, name, media_type, size, sha256, blob_key, exposure) VALUES ($1::text::uuid,$2,$3::text::uuid,$4,$5,$6,$7,$8,'app')",
         )
         .bind(file.id.to_string())
-        .bind(file.application.as_str())
+        .bind(file.app.as_str())
         .bind(file.connection_id)
         .bind(file.name)
         .bind(file.media_type)
@@ -99,14 +99,14 @@ pub(crate) async fn delete(
     project: &ProjectId,
     principal: &PrincipalId,
     operation: &CanonicalName,
-    application: &ApplicationName,
+    app: &AppName,
     id: Uuid,
 ) -> Result<(), FileError> {
     administration_transaction(postgres, project, principal, operation, async |client| {
         let deleted =
             sqlx::query("DELETE FROM platform.file WHERE id = $1::text::uuid AND app = $2")
                 .bind(id.to_string())
-                .bind(application.as_str())
+                .bind(app.as_str())
                 .execute(client)
                 .await
                 .map_err(file_sql_error)?;
@@ -129,9 +129,9 @@ pub(crate) async fn set_exposure(
     administration_transaction(postgres, project, principal, operation, async |client| {
         sqlx::query("UPDATE platform.file SET exposure = $3, url = $4 WHERE id = $1::text::uuid AND app = $2 AND (exposure IS DISTINCT FROM $3 OR url IS DISTINCT FROM $4)")
             .bind(file.id.to_string())
-            .bind(file.application.as_str())
+            .bind(file.app.as_str())
             .bind(match file.exposure {
-                Exposure::Application => "app",
+                Exposure::App => "app",
                 other => other.literal(),
             })
             .bind(file.url)
@@ -167,7 +167,7 @@ fn decode_record(row: &sqlx::postgres::PgRow) -> Result<FileRecord, FileError> {
         size: row.try_get(3).map_err(file_sql_error)?,
         exposure: match exposure.as_str() {
             "private" => Exposure::Private,
-            "app" => Exposure::Application,
+            "app" => Exposure::App,
             "public" => Exposure::Public,
             _ => return Err(failed("exposure", anyhow::anyhow!("invalid file exposure"))),
         },

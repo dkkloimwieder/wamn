@@ -27,7 +27,7 @@ pub(super) async fn authenticate(
     else {
         return Ok(None);
     };
-    Ok(workload_identity::organization(
+    Ok(workload_identity::org(
         account.namespace,
         &account.name,
         role,

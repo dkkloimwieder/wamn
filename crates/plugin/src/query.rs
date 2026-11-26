@@ -6,7 +6,7 @@ use std::task::{Context, Poll};
 
 use futures_util::stream::BoxStream;
 use tracing::Instrument as _;
-use wamn_application::database::{DatabaseTarget, SqlError, SqlRows, SqlValue as DatabaseValue};
+use wamn_app::database::{DatabaseTarget, SqlError, SqlRows, SqlValue as DatabaseValue};
 use wash_runtime::engine::ctx::SharedCtx;
 use wash_runtime::wasmtime::StoreContextMut;
 use wash_runtime::wasmtime::component::{
@@ -55,7 +55,7 @@ pub(super) async fn dynamic_query<T: 'static + Send>(
                 let identity = scope_registry::require_sql_identity(&plugin.scopes, &component)?;
                 let target = DatabaseTarget {
                     project: &project,
-                    environment: identity
+                    env: identity
                         .project_env_key
                         .as_ref()
                         .expect("required SQL identity"),

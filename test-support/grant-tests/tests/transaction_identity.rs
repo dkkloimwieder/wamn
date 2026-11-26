@@ -22,18 +22,18 @@ async fn current(connection: &mut sqlx::PgConnection) -> anyhow::Result<Identity
 async fn a_bound_identity_holds_for_its_own_transaction_only() -> anyhow::Result<()> {
     let project = database::project().await?;
     let login = WorkloadRoleFamily::App.login_name();
-    let mut app = wamn_postgres::connect(project.login_url(login)?.as_str()).await?;
+    let mut connection = wamn_postgres::connect(project.login_url(login)?.as_str()).await?;
     let principal = PlatformComponent::Executor.principal_id();
-    for (application, operation) in [
+    for (app, operation) in [
         ("orders", "orders:order/place@1.0.0"),
         ("billing", "billing:invoice/send@1.0.0"),
     ] {
-        let mut transaction = app.begin().await?;
+        let mut transaction = connection.begin().await?;
         wamn_postgres::bind_transaction_identity(
             &mut transaction,
             &principal,
             "viewer",
-            application,
+            app,
             Some(operation),
             None,
         )
@@ -42,14 +42,14 @@ async fn a_bound_identity_holds_for_its_own_transaction_only() -> anyhow::Result
             current(&mut transaction).await?,
             Some((
                 principal.to_string(),
-                application.to_owned(),
+                app.to_owned(),
                 Some(operation.to_owned())
             ))
         );
         transaction.commit().await?;
         // The next transaction on the same connection carries no identity.
-        let mut next = app.begin().await?;
-        assert_eq!(current(&mut next).await?, None, "{application}");
+        let mut next = connection.begin().await?;
+        assert_eq!(current(&mut next).await?, None, "{app}");
         next.rollback().await?;
     }
     Ok(())

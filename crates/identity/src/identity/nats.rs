@@ -96,7 +96,7 @@ pub async fn bootstrap(
 
 /// Persist the environment key and issue its current account JWT.
 /// For an existing account, `lookup` returns the resolver's JWT or empty bytes.
-pub async fn ensure_environment<B, E>(
+pub async fn ensure_env<B, E>(
     authority: &Authority,
     client: &mut PgConnection,
     envelope: &Envelope,
@@ -109,8 +109,8 @@ where
     B: AsRef<[u8]>,
     E: error::Error + Send + Sync + 'static,
 {
-    let limits = authority.environment_limits(project_count)?;
-    let key = nats_store::ensure_environment(
+    let limits = authority.env_limits(project_count)?;
+    let key = nats_store::ensure_env(
         client,
         envelope,
         issuer,
@@ -125,20 +125,18 @@ where
         },
     )
     .await?;
-    authority.environment_account(org, env, project_count, key, &limits)
+    authority.env_account(org, env, project_count, key, &limits)
 }
 
 /// Advance the account revision and sign a full-resolver delete request.
-pub async fn retire_environment(
+pub async fn retire_env(
     authority: &Authority,
     client: &mut PgConnection,
     issuer: &str,
     org: &OrgId,
     env: &EnvName,
 ) -> Result<Option<(String, String)>, Error> {
-    let Some((account, issued_at)) =
-        nats_store::retire_environment(client, issuer, org, env).await?
-    else {
+    let Some((account, issued_at)) = nats_store::retire_env(client, issuer, org, env).await? else {
         return Ok(None);
     };
     let jwt = authority.retired_account(&account, issued_at)?;
@@ -146,7 +144,7 @@ pub async fn retire_environment(
 }
 
 /// Issue a scoped JWT in an existing environment account.
-pub async fn environment_user(
+pub async fn env_user(
     client: &mut PgConnection,
     envelope: &Envelope,
     issuer: &str,
@@ -154,7 +152,7 @@ pub async fn environment_user(
     env: &EnvName,
     user: &User<'_>,
 ) -> Result<Option<String>, Error> {
-    nats_store::environment_signer(client, envelope, issuer, org, env)
+    nats_store::env_signer(client, envelope, issuer, org, env)
         .await?
         .map(|key| nats::sign_user(&key.signer, &key.subject, user))
         .transpose()

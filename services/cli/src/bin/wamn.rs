@@ -21,8 +21,8 @@ struct Cli {
 #[derive(Debug, Subcommand)]
 enum Command {
     #[command(subcommand)]
-    Env(wamn_cli::environment_requests::Command),
-    RevokePat(wamn_cli::environment_requests::RevokePat),
+    Env(wamn_cli::env_requests::Command),
+    RevokePat(wamn_cli::env_requests::RevokePat),
     RecoverCaptureGap(wamn_cli::provisioning_verbs::RecoverCaptureGapArgs),
     CloseCaptureGap(wamn_cli::provisioning_verbs::CloseCaptureGapArgs),
     GrantProjectEnvMembership(wamn_cli::identity_verbs::ProjectEnvMembershipArgs),
@@ -45,11 +45,11 @@ enum Command {
     #[command(subcommand)]
     Workflow(wamn_cli::workflow_verbs::WorkflowCommand),
     /// Build source or select published bytes, then deploy one application release.
-    Deploy(wamn_cli::application_verbs::DeployArgs),
+    Deploy(wamn_cli::app_verbs::DeployArgs),
     /// Restore an earlier application's content revision without reversing SQL.
-    Rollback(wamn_cli::application_verbs::RollbackArgs),
+    Rollback(wamn_cli::app_verbs::RollbackArgs),
     /// Show authored selections and observed application state.
-    Status(wamn_cli::application_verbs::StatusArgs),
+    Status(wamn_cli::app_verbs::StatusArgs),
     /// Inspect or apply application SQL independently of serving code.
     #[command(subcommand)]
     Schema(wamn_cli::schema_verbs::SchemaCommand),
@@ -104,8 +104,8 @@ async fn main() -> anyhow::Result<()> {
             .init();
     }
     match Cli::parse().command {
-        Command::Env(command) => wamn_cli::environment_requests::run(command).await,
-        Command::RevokePat(args) => wamn_cli::environment_requests::revoke_pat(args).await,
+        Command::Env(command) => wamn_cli::env_requests::run(command).await,
+        Command::RevokePat(args) => wamn_cli::env_requests::revoke_pat(args).await,
         Command::RecoverCaptureGap(args) => {
             wamn_cli::provisioning_verbs::recover_capture_gap(args).await
         }
@@ -127,9 +127,9 @@ async fn main() -> anyhow::Result<()> {
         Command::ExternalSystem(args) => wamn_cli::component_verbs::external_system(args).await,
         Command::IntegrationType(args) => wamn_cli::component_verbs::integration_type(args).await,
         Command::Workflow(command) => wamn_cli::workflow_verbs::run(command).await,
-        Command::Deploy(args) => wamn_cli::application_verbs::deploy(args).await,
-        Command::Rollback(args) => wamn_cli::application_verbs::rollback(args).await,
-        Command::Status(args) => wamn_cli::application_verbs::status(args).await,
+        Command::Deploy(args) => wamn_cli::app_verbs::deploy(args).await,
+        Command::Rollback(args) => wamn_cli::app_verbs::rollback(args).await,
+        Command::Status(args) => wamn_cli::app_verbs::status(args).await,
         Command::Schema(command) => wamn_cli::schema_verbs::run(command).await,
         Command::Platform(command) => wamn_cli::platform_verbs::run_product(command).await,
         Command::Org(OrgCommand::Create { org, owner }) => {
@@ -232,7 +232,7 @@ mod platform_tests {
     use super::*;
 
     #[test]
-    fn platform_schema_refuses_a_system_environment() {
+    fn platform_schema_refuses_a_system_env() {
         for action in ["diff", "apply"] {
             assert!(
                 Cli::try_parse_from([

@@ -78,8 +78,9 @@ pub struct ProjectRequest {
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[schemars(rename = "EnvironmentRequest")]
 #[serde(deny_unknown_fields)]
-pub struct EnvironmentRequest {
+pub struct EnvRequest {
     #[schemars(with = "String")]
     pub project: ProjectId,
     #[schemars(with = "String")]
@@ -102,8 +103,9 @@ pub struct ProjectStatus {
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
+#[schemars(rename = "EnvironmentStatus")]
 #[serde(deny_unknown_fields)]
-pub struct EnvironmentStatus {
+pub struct EnvStatus {
     #[schemars(with = "String")]
     pub project: ProjectId,
     #[schemars(with = "String")]

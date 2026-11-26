@@ -23,10 +23,10 @@
 //! `wasi:sockets@…`) collapses to the same package and is caught by the one
 //! rule.
 
-mod application_member;
+mod app_member;
 mod component_facts;
 
-pub use application_member::validate_application_member;
+pub use app_member::validate_app_member;
 mod signed_file_read;
 
 pub use component_facts::{
@@ -303,14 +303,14 @@ pub const AMBIENT_CLI_INTERFACES: [&str; 10] = [
 
 /// Interfaces an application component may not import, whatever its grant,
 /// matched on the import's interface instance type at every version.
-pub const APPLICATION_DENIED_INTERFACES: [&str; 1] = ["wamn:integration/bound"];
+pub const APP_DENIED_INTERFACES: [&str; 1] = ["wamn:integration/bound"];
 
 /// Whether an application component may not import this interface instance type.
-fn is_denied_to_applications(import_name: &str) -> bool {
+fn is_denied_to_apps(import_name: &str) -> bool {
     let interface = import_name
         .rsplit_once('@')
         .map_or(import_name, |(interface, _)| interface);
-    APPLICATION_DENIED_INTERFACES.contains(&interface)
+    APP_DENIED_INTERFACES.contains(&interface)
 }
 
 /// The registry row for one full import name, matched on package AND version.
@@ -414,7 +414,7 @@ impl std::error::Error for ProjectImportError {}
 /// [`PLATFORM_IMPORT_REGISTRY`]. An import is accepted when it matches a registry
 /// row on package AND version, and — if that row is [`Posture::Effect`] — when
 /// its package is also in the grant. Ambient rows need no grant. An interface
-/// in [`APPLICATION_DENIED_INTERFACES`] is refused even with its grant.
+/// in [`APP_DENIED_INTERFACES`] is refused even with its grant.
 pub fn analyze_project(
     imports: &ComponentImports,
     admitted_platform_packages: &BTreeSet<String>,
@@ -447,7 +447,7 @@ pub fn analyze_project(
     let denied: Vec<_> = imports
         .iter()
         .filter(|name| match import_posture(name) {
-            _ if is_denied_to_applications(name) => true,
+            _ if is_denied_to_apps(name) => true,
             None => true,
             Some(Posture::Ambient) => false,
             Some(Posture::Effect) => !admitted_platform_packages.contains(import_pkg(name)),
@@ -836,7 +836,7 @@ mod tests {
 
     /// Applications may import dynamic queries with the Postgres grant.
     #[test]
-    fn an_application_component_may_import_client_with_a_postgres_grant() {
+    fn an_app_component_may_import_client_with_a_postgres_grant() {
         let granted = BTreeSet::from(["wamn:postgres".to_string()]);
         for client in [
             instance_type("wamn:postgres/client@0.1.0", None),

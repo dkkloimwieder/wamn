@@ -70,7 +70,7 @@ impl<'a> ConnectionStore<'a> {
         .map(|(reference, version)| CredentialReference { reference, version }))
     }
 
-    pub(super) async fn environment(&mut self) -> Result<BTreeMap<String, Uuid>, sqlx::Error> {
+    pub(super) async fn env(&mut self) -> Result<BTreeMap<String, Uuid>, sqlx::Error> {
         Ok(sqlx::query_as::<_, (String, Uuid)>(
             "SELECT name,id FROM platform.connection ORDER BY name",
         )

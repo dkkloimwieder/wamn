@@ -16,7 +16,7 @@ Package names use `[a-z][a-z0-9]*(_[a-z0-9]+)*`. The name `wamn` is reserved.
 WIT operation exports replace them with hyphens.
 
 Application names are nonempty SQL text. They have no character-class rule.
-`wamn_catalog::ApplicationName` refuses empty text and NUL bytes. It preserves all other text.
+`wamn_registry::AppName` refuses empty text and NUL bytes. It preserves all other text.
 
 Captured database events name their package in the `package_id` JSON field.
 Run records and trace fields also keep their published wire spelling.

@@ -10,7 +10,7 @@ platform:
   workflow:
     image: ""
 
-# Install values. `wamn_environment::environment::write::release_values` writes them.
+# Install values. `wamn_env::env::write::release_values` writes them.
 release:
   # `sha256:<hex>` of the release manifest.
   manifestDigest: ""

@@ -13,14 +13,14 @@ pub async fn install(
     charts: &Path,
     values: &Path,
     infrastructure: bool,
-    application_chart: &str,
+    app_chart: &str,
     registry_egress: Option<Value>,
 ) -> anyhow::Result<()> {
     if infrastructure {
         install_infrastructure(installer, charts, values).await?;
     }
     if let Some(registry_egress) = registry_egress {
-        let mut overrides = json!({"applicationChart": application_chart});
+        let mut overrides = json!({"applicationChart": app_chart});
         overrides["registryEgress"] = registry_egress;
         install_platform(installer, charts, values, &overrides).await?;
     }

@@ -416,7 +416,7 @@ pub(crate) mod test_binding {
         prefix: &str,
         active: bool,
     ) -> BoundContainer {
-        let application = Arc::new(wamn_application::application_config::ApplicationConfig {
+        let app = Arc::new(wamn_app::app_config::AppConfig {
             org: "acme".parse().unwrap(),
             project: "project-a".parse().unwrap(),
             environment: "dev".parse().unwrap(),
@@ -431,7 +431,7 @@ pub(crate) mod test_binding {
         let cache = Arc::new(wamn_authentication::authorization::Authorization::new(
             postgres,
         ));
-        let facts = Arc::clone(&cache).facts(application).unwrap();
+        let facts = Arc::clone(&cache).facts(app).unwrap();
         let id = uuid::Uuid::new_v4();
         if active {
             cache.insert(

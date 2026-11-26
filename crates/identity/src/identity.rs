@@ -22,7 +22,7 @@ use wamn_role::RoleName;
 
 use wamn_authentication::identity_error::database_error;
 
-pub mod application;
+pub mod app;
 pub mod control;
 pub mod issuer;
 pub mod nats;

@@ -335,12 +335,12 @@ impl<'a, 'session> Administration<'a, 'session> {
         Ok(())
     }
 
-    pub async fn refuse_environment_references(
+    pub async fn refuse_env_references(
         &mut self,
         group: &str,
         id: &str,
     ) -> Result<(), ConnectionError> {
-        super::references::refuse_environment_references(self.project, group, id).await
+        super::references::refuse_env_references(self.project, group, id).await
     }
 
     pub(crate) async fn connection_ids(&mut self) -> Result<Vec<Uuid>, ConnectionError> {

@@ -5,11 +5,11 @@ use crate::connection_credentials::WriteCredentials;
 use serde_json::Value;
 
 /// A deployed workload retains authority for every connection in its config.
-pub fn refuse_application_references(
-    applications: &[wamn_application::application_config::ApplicationConfig],
+pub fn refuse_app_references(
+    apps: &[wamn_app::app_config::AppConfig],
     id: &str,
 ) -> Result<(), ConnectionError> {
-    if applications
+    if apps
         .iter()
         .flat_map(|app| &app.components)
         .flat_map(|component| &component.connections)

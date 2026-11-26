@@ -108,8 +108,8 @@ async fn platform() -> Result<Platform> {
 
 impl Platform {
     /// Ensure the environment account for one project and publish it to the resolver.
-    async fn environment(&mut self, env: &str) -> Result<(String, Value)> {
-        let (account, jwt) = key_store::ensure_environment(
+    async fn env(&mut self, env: &str) -> Result<(String, Value)> {
+        let (account, jwt) = key_store::ensure_env(
             &self.bootstrap.authority,
             &mut self.db,
             &self.envelope,
@@ -133,12 +133,12 @@ impl Platform {
     }
 
     /// Sign a user with every subject in an environment account.
-    async fn environment_user(&mut self, env: &str) -> Result<(Value, String)> {
+    async fn env_user(&mut self, env: &str) -> Result<(Value, String)> {
         let key = KeyPair::new_user();
         let public_key = key.public_key();
         let org: OrgId = ORG.parse()?;
         let env: EnvName = env.parse()?;
-        let jwt = key_store::environment_user(
+        let jwt = key_store::env_user(
             &mut self.db,
             &self.envelope,
             &self.issuer,
@@ -299,21 +299,21 @@ async fn next_error(errors: &mut mpsc::UnboundedReceiver<String>) -> Result<Stri
 
 #[tokio::test]
 #[ignore = "requires: docker, bin:helm"]
-async fn each_environment_has_one_account_and_no_traffic_crosses_accounts() -> Result<()> {
+async fn each_env_has_one_account_and_no_traffic_crosses_accounts() -> Result<()> {
     let mut platform = platform().await?;
-    let (dev, _) = platform.environment("dev").await?;
-    let (prod, _) = platform.environment("prod").await?;
+    let (dev, _) = platform.env("dev").await?;
+    let (prod, _) = platform.env("prod").await?;
     assert_ne!(dev, prod, "two environments share one account");
-    let (again, _) = platform.environment("dev").await?;
+    let (again, _) = platform.env("dev").await?;
     assert_eq!(
         again, dev,
         "ensuring an environment again moved its account"
     );
 
-    let (sender_claims, sender) = platform.environment_user("dev").await?;
+    let (sender_claims, sender) = platform.env_user("dev").await?;
     assert_eq!(sender_claims["nats"]["issuer_account"], dev.as_str());
-    let (_, peer) = platform.environment_user("dev").await?;
-    let (outsider_claims, outsider) = platform.environment_user("prod").await?;
+    let (_, peer) = platform.env_user("dev").await?;
+    let (outsider_claims, outsider) = platform.env_user("prod").await?;
     assert_eq!(outsider_claims["nats"]["issuer_account"], prod.as_str());
     let sender = platform.connect(&sender).await?;
     let peer = platform.connect(&peer).await?;
@@ -394,15 +394,15 @@ async fn runtime_operator_user_holds_only_its_signed_subjects() -> Result<()> {
 
 #[tokio::test]
 #[ignore = "requires: docker, bin:helm"]
-async fn environment_account_limits_refuse_the_next_connection_and_subscription() -> Result<()> {
+async fn env_account_limits_refuse_the_next_connection_and_subscription() -> Result<()> {
     let mut platform = platform().await?;
-    let (_, account) = platform.environment("dev").await?;
+    let (_, account) = platform.env("dev").await?;
     let limit = |name: &str| {
         account["nats"]["limits"][name]
             .as_u64()
             .with_context(|| format!("a signed {name} limit"))
     };
-    let (_, user) = platform.environment_user("dev").await?;
+    let (_, user) = platform.env_user("dev").await?;
 
     let (client, mut errors) = platform.connect_watched(&user).await?;
     let mut subscriptions = Vec::new();

@@ -19,7 +19,7 @@ tokio = { workspace = true, features = ["macros", "process", "sync"] }
 wamn-codegen.workspace = true
 wamn-digest.workspace = true
 wamn-edge-document.workspace = true
-wamn-environment.workspace = true
+wamn-env.workspace = true
 wamn-identity-protocol.workspace = true
 wamn-registry.workspace = true
 wamn-release.workspace = true

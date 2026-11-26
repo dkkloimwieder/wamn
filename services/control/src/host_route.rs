@@ -14,8 +14,8 @@ use wamn_routes::HostRouteSet;
 use wamn_routes::host_wire::{ControlMineResult, ControlMineResultProject};
 
 use serde_json::{Value, json};
-use wamn_application::ingress::AuthenticatedCaller;
-use wamn_application::native_routes::{
+use wamn_app::ingress::AuthenticatedCaller;
+use wamn_app::native_routes::{
     DeliveryError, DeliveryOutcome, DeliveryReport, DeliveryRequest, Source,
     resolve_authorized_host_route,
 };
@@ -361,13 +361,10 @@ impl HostRouteDelivery {
             .headers()
             .iter()
             .filter_map(|(name, value)| {
-                value
-                    .to_str()
-                    .ok()
-                    .map(|value| wamn_application::ingress::Header {
-                        name: name.to_string(),
-                        value: value.to_owned(),
-                    })
+                value.to_str().ok().map(|value| wamn_app::ingress::Header {
+                    name: name.to_string(),
+                    value: value.to_owned(),
+                })
             })
             .collect::<Vec<_>>();
         let query = request.uri().query().unwrap_or_default().to_owned();
@@ -386,7 +383,7 @@ impl HostRouteDelivery {
         };
         let authentication = match &self.control_authenticator {
             Some(authenticator) => authenticator.authenticate_control(id, &headers).await,
-            None => Err(wamn_application::ingress::authentication_unavailable()),
+            None => Err(wamn_app::ingress::authentication_unavailable()),
         };
         let caller = match authentication {
             Ok(caller) => Some(caller),

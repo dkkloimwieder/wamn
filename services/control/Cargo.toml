@@ -7,7 +7,7 @@ license.workspace = true
 
 [dependencies]
 wamn-release.workspace = true
-wamn-application.workspace = true
+wamn-app.workspace = true
 kube = { workspace = true }
 k8s-openapi = { workspace = true }
 wamn-routes.workspace = true
@@ -30,7 +30,7 @@ tracing-subscriber = { workspace = true, features = ["env-filter"] }
 url.workspace = true
 zeroize.workspace = true
 wamn-broker.workspace = true
-wamn-environment = { workspace = true }
+wamn-env = { workspace = true }
 wamn-platform-install.workspace = true
 wamn-http-client = { workspace = true, features = ["tls12"] }
 wamn-storage.workspace = true

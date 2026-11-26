@@ -296,7 +296,7 @@ The top package pins its base packages by OCI digest.
 Helm records the release history. A WorkloadDeployment exposes the applied package digest and Helm revision.
 
 Use one `environment.yaml` file for each environment. Each application name must be unique in the file.
-The [environment schema](../../crates/environment/environment.schema.json) describes the YAML fields.
+The [environment schema](../../crates/env/env.schema.json) describes the YAML fields.
 Set each application's `label` to a value unique within the org, across all its environments and projects.
 Use 1 to 21 lowercase letters, digits, and single hyphens between letters or digits.
 Deploy uses `<label>--<org>.<base>` as the host name.

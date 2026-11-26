@@ -14,18 +14,15 @@ pub struct ReleaseTarget {
     /// The composed `org--env--project` key of the project environment.
     pub project_env_key: wamn_registry::ProjectEnvKey,
     /// The short environment name, such as `dev`.
-    pub environment: wamn_registry::EnvName,
+    pub env: wamn_registry::EnvName,
 }
 
 impl ReleaseTarget {
     /// A target of one project and environment.
-    pub fn new(
-        project_env_key: wamn_registry::ProjectEnvKey,
-        environment: wamn_registry::EnvName,
-    ) -> Self {
+    pub fn new(project_env_key: wamn_registry::ProjectEnvKey, env: wamn_registry::EnvName) -> Self {
         Self {
             project_env_key,
-            environment,
+            env,
         }
     }
 }

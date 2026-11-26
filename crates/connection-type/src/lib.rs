@@ -95,7 +95,8 @@ pub enum ConnectionField {
 #[serde(rename_all = "kebab-case")]
 pub enum ConnectionFieldOwner {
     Author,
-    Environment,
+    #[serde(rename = "environment")]
+    Env,
     System,
 }
 
@@ -127,7 +128,8 @@ pub enum ConnectionAuthorityModel {
 )]
 #[serde(rename_all = "kebab-case")]
 pub enum CredentialInjection {
-    EnvironmentSelectedHttpHeader,
+    #[serde(rename = "environment-selected-http-header")]
+    EnvSelectedHttpHeader,
     /// The host signs the request itself. Unlike a header injection, no
     /// credential-shaped value ever exists in a structure the guest composes,
     /// names or observes — the signature is computed host-side over a request
@@ -446,7 +448,7 @@ impl ConnectionTypeDescriptor {
     /// The minimum portable HTTP connection descriptor.
     pub fn http_v1() -> Self {
         let author = ConnectionFieldOwner::Author;
-        let environment = ConnectionFieldOwner::Environment;
+        let env = ConnectionFieldOwner::Env;
         Self {
             descriptor_version: CONNECTION_DESCRIPTOR_VERSION.to_owned(),
             requirement_type: "http".to_owned(),
@@ -457,13 +459,13 @@ impl ConnectionTypeDescriptor {
                 ownership(ConnectionField::RelativeTarget, author),
                 ownership(ConnectionField::Headers, author),
                 ownership(ConnectionField::Body, author),
-                ownership(ConnectionField::Authority, environment),
-                ownership(ConnectionField::Tls, environment),
-                ownership(ConnectionField::Redirect, environment),
-                ownership(ConnectionField::Proxy, environment),
-                ownership(ConnectionField::Credential, environment),
+                ownership(ConnectionField::Authority, env),
+                ownership(ConnectionField::Tls, env),
+                ownership(ConnectionField::Redirect, env),
+                ownership(ConnectionField::Proxy, env),
+                ownership(ConnectionField::Credential, env),
             ],
-            credential_injection: CredentialInjection::EnvironmentSelectedHttpHeader,
+            credential_injection: CredentialInjection::EnvSelectedHttpHeader,
         }
     }
 
@@ -476,7 +478,7 @@ impl ConnectionTypeDescriptor {
     /// confinement: an author can name an object, and cannot name a container.
     pub fn blobstore_v1() -> Self {
         let author = ConnectionFieldOwner::Author;
-        let environment = ConnectionFieldOwner::Environment;
+        let env = ConnectionFieldOwner::Env;
         Self {
             descriptor_version: CONNECTION_DESCRIPTOR_VERSION.to_owned(),
             requirement_type: "blobstore".to_owned(),
@@ -485,10 +487,10 @@ impl ConnectionTypeDescriptor {
             field_ownership: vec![
                 ownership(ConnectionField::RelativeTarget, author),
                 ownership(ConnectionField::Body, author),
-                ownership(ConnectionField::Authority, environment),
-                ownership(ConnectionField::Bucket, environment),
-                ownership(ConnectionField::Prefix, environment),
-                ownership(ConnectionField::Credential, environment),
+                ownership(ConnectionField::Authority, env),
+                ownership(ConnectionField::Bucket, env),
+                ownership(ConnectionField::Prefix, env),
+                ownership(ConnectionField::Credential, env),
             ],
             credential_injection: CredentialInjection::HostSignedRequest,
         }
@@ -679,7 +681,7 @@ mod tests {
         ] {
             assert_eq!(
                 owner_of(walled),
-                ConnectionFieldOwner::Environment,
+                ConnectionFieldOwner::Env,
                 "{walled:?} is authority; author ownership would breach the confinement"
             );
         }
@@ -696,7 +698,7 @@ mod tests {
         );
         assert_eq!(
             ConnectionTypeDescriptor::http_v1().credential_injection,
-            CredentialInjection::EnvironmentSelectedHttpHeader
+            CredentialInjection::EnvSelectedHttpHeader
         );
     }
 

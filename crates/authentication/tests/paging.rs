@@ -24,7 +24,7 @@ fn control_lists_first_next_last_and_legacy() {
         ),
         (
             "environment.list",
-            Order::Environment,
+            Order::Env,
             vec![json!(["a"]), json!(["b"]), json!(["c"])],
         ),
         (

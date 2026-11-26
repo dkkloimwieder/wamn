@@ -6,7 +6,7 @@ use super::{Component, bindings};
 use bindings::exports::wasmcloud::nats::jetstream_handler::{Guest, MessageHandle};
 
 #[derive(Deserialize)]
-struct Application {
+struct App {
     components: Vec<Sibling>,
 }
 
@@ -55,9 +55,8 @@ impl Guest for Component {
         let config = bindings::wasi::config::store::get("wamn.application")
             .map_err(|error| format!("read wamn.application: {error:?}"))?
             .ok_or_else(|| "ingress has no wamn.application".to_owned())?;
-        let application: Application =
-            serde_json::from_str(&config).map_err(|error| error.to_string())?;
-        for sibling in application.components {
+        let app: App = serde_json::from_str(&config).map_err(|error| error.to_string())?;
+        for sibling in app.components {
             if sibling.data_change.is_some_and(|handler| {
                 handler.models.iter().any(|model| {
                     model.owner_package == package_id

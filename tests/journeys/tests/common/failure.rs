@@ -84,12 +84,10 @@ pub(super) fn org(org: &OrgId) {
     });
 }
 
-pub(super) fn environment(triple: &Triple) {
+pub(super) fn env(triple: &Triple) {
     let _ = CAPTURE.try_with(|capture| {
         let mut capture = capture.borrow_mut();
-        capture
-            .envs
-            .insert(name::environment_key(&triple.org, &triple.env));
+        capture.envs.insert(name::env_key(&triple.org, &triple.env));
         capture
             .project_stems
             .insert(name::project_env_namespace_stem(
@@ -100,7 +98,7 @@ pub(super) fn environment(triple: &Triple) {
     });
 }
 
-pub(super) fn delete_environment(org: &Org, triple: &Triple) {
+pub(super) fn delete_env(org: &Org, triple: &Triple) {
     let mut command = org.command();
     let coordinate = triple.to_string();
     command.args(["env", "delete", &coordinate]);

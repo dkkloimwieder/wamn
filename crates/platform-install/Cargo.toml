@@ -27,7 +27,7 @@ wamn-principal.workspace = true
 wamn-registry.workspace = true
 
 [dev-dependencies]
-wamn-environment.workspace = true
+wamn-env.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 wamn-identity-protocol.workspace = true
 wamn-test-infrastructure.workspace = true

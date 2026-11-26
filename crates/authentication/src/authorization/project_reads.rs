@@ -6,7 +6,7 @@ use super::{ProjectPat, SessionIdentityError, SessionIdentityErrorType};
 use anyhow::Context as _;
 use sqlx::Row as _;
 use tracing::Instrument as _;
-use wamn_application::database::SqlError;
+use wamn_app::database::SqlError;
 use wamn_authority::auth_cache::PrincipalGrants;
 use wamn_identity_protocol::secret::PatToken;
 use wamn_identity_protocol::{AuthorityClass, PrincipalId};
@@ -15,7 +15,7 @@ use wamn_postgres::WamnPostgres;
 
 /// The status row of the environment, which `wamn_app` reads under its
 /// database boundary.
-const ENVIRONMENT_INACTIVE_SQL: &str = "SELECT NOT active FROM platform.env";
+const ENV_INACTIVE_SQL: &str = "SELECT NOT active FROM platform.env";
 
 /// The user row of one principal, each role it holds and each permission
 /// of that role, in one read. No row means no user row. A role without
@@ -59,8 +59,8 @@ async fn principal_grants(
 }
 
 /// An absent environment row remains active.
-async fn environment_inactive(connection: &mut sqlx::PgConnection) -> Result<bool, sqlx::Error> {
-    Ok(sqlx::query_scalar(ENVIRONMENT_INACTIVE_SQL)
+async fn env_inactive(connection: &mut sqlx::PgConnection) -> Result<bool, sqlx::Error> {
+    Ok(sqlx::query_scalar(ENV_INACTIVE_SQL)
         .fetch_optional(connection)
         .await?
         .unwrap_or(false))
@@ -212,7 +212,7 @@ async fn read_principal_grants(
 /// (docs/architecture/execution.md#routing-and-availability). No row means
 /// active. The host keeps the answer in its [auth
 /// memory](wamn_authority::auth_cache).
-pub(super) async fn read_environment_inactive(
+pub(super) async fn read_env_inactive(
     postgres: &WamnPostgres,
     project: &wamn_registry::ProjectId,
     project_env_key: &wamn_registry::ProjectEnvKey,
@@ -221,7 +221,7 @@ pub(super) async fn read_environment_inactive(
         .checkout_guest(project, project_env_key)
         .await
         .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-    let inactive = match environment_inactive(&mut connection).await {
+    let inactive = match env_inactive(&mut connection).await {
         Ok(inactive) => inactive,
         Err(error) => {
             postgres.destroy(connection);

@@ -2,7 +2,7 @@
 
 No test target installs the platform or applies an environment on a kind cluster.
 [Platform and environment apply on kind](running-tests.md#platform-and-environment-apply-on-kind) gives the current state and the manual procedure.
-The one cluster target, `wamn-journey-tests --test application_routes_kind`, runs against an installed platform.
+The one cluster target, `wamn-journey-tests --test app_routes_kind`, runs against an installed platform.
 [Development on kind](running-tests.md#development-on-kind) gives its inputs and command.
 Epic 14 brings the journey tests on kind.
 

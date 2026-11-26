@@ -2,7 +2,7 @@
 
 use crate::run_store::ProductionLeaseError;
 use sqlx::{PgConnection, Row as _, postgres::PgRow};
-use wamn_application::application_config::ApplicationConfig;
+use wamn_app::app_config::AppConfig;
 use wamn_digest::Digest;
 use wamn_event::Envelope;
 use wamn_package::canonical_name::CanonicalName;
@@ -71,7 +71,7 @@ impl ScheduledWorkflow {
 /// Read and lock the enabled schedule candidates in workflow order.
 pub async fn schedules(
     connection: &mut PgConnection,
-    app: &ApplicationConfig,
+    app: &AppConfig,
 ) -> Result<Vec<ScheduledWorkflow>, ProductionLeaseError> {
     sqlx::query(
         "SELECT workflow_id, version, graph_json::text AS graph, graph_hash,
@@ -91,7 +91,7 @@ pub async fn schedules(
 /// Read the workflow ids with enabled data-change versions.
 pub async fn consumer_workflows(
     connection: &mut PgConnection,
-    app: &ApplicationConfig,
+    app: &AppConfig,
 ) -> Result<Vec<CanonicalName>, sqlx::Error> {
     sqlx::query(
         "SELECT workflow_id FROM catalog.workflow
@@ -133,7 +133,7 @@ impl DataChangeWorkflow {
 /// Select an enabled data-change version sharing the event's source and WAL range.
 pub async fn data_change(
     connection: &mut PgConnection,
-    app: &ApplicationConfig,
+    app: &AppConfig,
     id: &str,
     envelope: &Envelope,
 ) -> Result<Option<DataChangeWorkflow>, ProductionLeaseError> {
@@ -162,7 +162,7 @@ pub async fn data_change(
 /// Read the exact graph recorded on the leased run.
 pub async fn leased_graph(
     connection: &mut PgConnection,
-    app: &ApplicationConfig,
+    app: &AppConfig,
     graph_id: &CanonicalName,
     graph_version: i32,
     hash: &Digest,
@@ -185,7 +185,7 @@ pub async fn leased_graph(
 /// Read and lock the enabled workflow attached to a request path.
 pub async fn request_workflow(
     connection: &mut PgConnection,
-    app: &ApplicationConfig,
+    app: &AppConfig,
     path: &str,
 ) -> Result<Option<Definition>, ProductionLeaseError> {
     sqlx::query(
@@ -207,7 +207,7 @@ pub async fn request_workflow(
 /// Read and lock the enabled workflow selected by an administrator.
 pub async fn run_now_workflow(
     connection: &mut PgConnection,
-    app: &ApplicationConfig,
+    app: &AppConfig,
     id: &str,
 ) -> Result<Option<Definition>, ProductionLeaseError> {
     sqlx::query(

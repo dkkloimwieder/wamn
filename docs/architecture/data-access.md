@@ -374,7 +374,7 @@ A new id comes from its insert's `RETURNING`, and nothing mints an id before the
 No application table implements or references the claim. The stored result names the rows that the work wrote, for example the `transaction_ids` of a WMS command.
 The result row stays stored, so each retry returns the original success answer in full.
 Record history pruning deletes claims older than 30 days, using `created_at`.
-Its expiry statement lives in `crates/environment/src/audit_retention.rs` and runs from `crates/environment/src/prune_record_history.rs`.
+Its expiry statement lives in `crates/env/src/audit_retention.rs` and runs from `crates/env/src/prune_record_history.rs`.
 This retention period exceeds the longest call by a wide margin.
 A result can finish late within that period without a separate claim identifier.
 The write log provides idempotency protection, which prevents repeated work for the same key.
@@ -838,7 +838,7 @@ A declared `"P<n>D"` retention is a minimum keep window.
 It promises nothing about removal time, backups, holds, or erasure.
 The retention task removes an expired entry on its next daily run, so its schedule sets the retention precision.
 
-The [`record retention owner`](../../crates/environment/src/prune_record_history.rs) runs the task.
+The [`record retention owner`](../../crates/env/src/prune_record_history.rs) runs the task.
 It uses the project-specific audit retention login. Its shared role is `wamn_audit_retention`.
 It refuses any login that is not an audit retention login for the derived environment project in the connected database.
 The family is not a `wamn_platform` member, because no reader needs the edge.
@@ -911,12 +911,12 @@ The `user_platform_principal_check` constraint pins each name and id pair, and i
 `wamn_app` has only `SELECT` on `platform."user"`.
 The database is the org boundary, so `platform."user"` has no `project_id`, no row policy, and no project key index. Its key is `id`, and `email` is unique in the database.
 
-The [platform principal owner](../../crates/environment/src/environment_fill.rs) renders the platform rows of a project database.
+The [platform principal owner](../../crates/env/src/env_fill.rs) renders the platform rows of a project database.
 It refuses a platform domain that is not a valid domain name.
 Its SQL binds `wamn:provisioning` first, so the `wamn:provisioning` row stamps itself.
 The development environment, the verification world, and the Rust identity journey apply that SQL.
 
-The [platform configuration writer](../../crates/environment/src/configuration.rs) writes the platform configuration rows of one environment.
+The [platform configuration writer](../../crates/env/src/configuration.rs) writes the platform configuration rows of one environment.
 The writer runs on the environment's `wamn_administration` login, in one transaction that binds the caller and the operation, so each row write appends its history entry.
 The writer keeps a row that already holds the given values, and it removes no row.
 

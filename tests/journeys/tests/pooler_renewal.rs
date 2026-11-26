@@ -41,12 +41,12 @@ type Fingerprint = [u8; 32];
 
 common::journey! {
     async fn the_control_pooler_serves_its_renewed_certificate() -> anyhow::Result<()> {
-        let environment = timeout(SETUP, async {
+        let env = timeout(SETUP, async {
             Org::create().await?.apply(host::FIXTURE).await
         })
         .await
         .context("create the renewal test environment")??;
-        let client = &environment.org.cluster.client;
+        let client = &env.org.cluster.client;
         let pods = Api::namespaced(client.clone(), PLATFORM);
         let (selector, tls, old_secret) = timeout(API, async {
             let service = Api::<Service>::namespaced(client.clone(), PLATFORM)

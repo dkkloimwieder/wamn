@@ -7,7 +7,7 @@ use sqlx::postgres::PgRow as Row;
 use std::fmt::Write as _;
 
 use std::sync::Arc;
-use wamn_application::database::{Claim, DatabaseTarget, SqlError, SqlValue};
+use wamn_app::database::{Claim, DatabaseTarget, SqlError, SqlValue};
 
 use wamn_postgres::WamnPostgres;
 
@@ -155,7 +155,7 @@ fn opaque_claim(claim: Option<Claim>) -> Result<Claim, SqlError> {
 const CLAIM_CLOCK_SKEW: std::time::Duration = std::time::Duration::from_secs(5);
 
 fn unfinished(age_seconds: f64) -> Claim {
-    if age_seconds > (wamn_application::MAX_HOST_CALL_DURATION + CLAIM_CLOCK_SKEW).as_secs_f64() {
+    if age_seconds > (wamn_app::MAX_HOST_CALL_DURATION + CLAIM_CLOCK_SKEW).as_secs_f64() {
         Claim::OutcomeUnknown
     } else {
         Claim::InProgress
@@ -339,7 +339,7 @@ impl WriteLog<'_> {
     ) -> Result<Vec<Row>, SqlError> {
         let (mut connection, _pool) = self
             .postgres
-            .checkout_guest(self.target.project, self.target.environment)
+            .checkout_guest(self.target.project, self.target.env)
             .await
             .map_err(checkout_pg_error)?;
         let mut query = sqlx::query(sql);

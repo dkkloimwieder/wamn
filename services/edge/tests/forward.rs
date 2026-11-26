@@ -29,7 +29,7 @@ use tokio::sync::Notify;
 use tokio_rustls::TlsAcceptor;
 use wamn_edge::{refusals, status};
 
-use support::{ATTACHMENT, ENVIRONMENT, HOST, ORG, PRINCIPAL, PROJECT, ROLE, bundle};
+use support::{ATTACHMENT, ENV, HOST, ORG, PRINCIPAL, PROJECT, ROLE, bundle};
 
 const TOKEN: &str = "wamn_pat_edge_forward_test";
 /// A PAT that the platform does not accept.
@@ -260,7 +260,7 @@ fn configuration(
 [target]
 org = "{ORG}"
 project = "{PROJECT}"
-environment = "{ENVIRONMENT}"
+environment = "{ENV}"
 
 [release]
 dir = "{dir}"

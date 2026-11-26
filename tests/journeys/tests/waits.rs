@@ -8,7 +8,7 @@ mod common;
 use std::time::Duration;
 
 use anyhow::{Context as _, ensure};
-use common::{Environment, Org, active_project_cluster, host, request};
+use common::{Env, Org, active_project_cluster, host, request};
 use futures_util::TryStreamExt as _;
 use k8s_openapi::api::{
     apps::v1::{Deployment, ReplicaSet},
@@ -23,13 +23,13 @@ use tokio::task::JoinHandle;
 use tokio::time::{Instant, timeout};
 use wamn_registry::name;
 
-const APPLICATION: &str = "client_acme_receiving";
+const APP: &str = "client_acme_receiving";
 const COMMAND: Duration = Duration::from_mins(20);
 const OBSERVE: Duration = Duration::from_secs(30);
 
 common::journey! {
     async fn commands_wait_for_their_resources() -> anyhow::Result<()> {
-        let source = request::fixture(APPLICATION);
+        let source = request::fixture(APP);
         ensure!(source.is_dir(), "missing fixture {}", source.display());
         let org = timeout(COMMAND, Org::create())
             .await
@@ -41,20 +41,20 @@ common::journey! {
             .await
             .context("start the rollout watches")??;
 
-        let environment = timeout(COMMAND, org.apply(APPLICATION))
+        let env = timeout(COMMAND, org.apply(APP))
             .await
             .context("initial env apply")??;
-        watches.check(&environment, Stage::Apply).await?;
+        watches.check(&env, Stage::Apply).await?;
 
-        timeout(COMMAND, environment.deploy(&source, APPLICATION))
+        timeout(COMMAND, env.deploy(&source, APP))
             .await
             .context("deploy the capture fixture")??;
-        watches.check(&environment, Stage::Deploy).await?;
+        watches.check(&env, Stage::Deploy).await?;
 
-        timeout(COMMAND, host::reapply(&environment, |_| {}))
+        timeout(COMMAND, host::reapply(&env, |_| {}))
             .await
             .context("reapply the environment")??;
-        watches.check(&environment, Stage::Reapply).await
+        watches.check(&env, Stage::Reapply).await
     }
 }
 
@@ -221,9 +221,9 @@ impl Watches {
         })
     }
 
-    async fn check(&mut self, environment: &Environment, stage: Stage) -> anyhow::Result<()> {
+    async fn check(&mut self, env: &Env, stage: Stage) -> anyhow::Result<()> {
         let returned = Instant::now();
-        timeout(OBSERVE, self.check_project(environment, stage, returned))
+        timeout(OBSERVE, self.check_project(env, stage, returned))
             .await
             .with_context(|| format!("{stage:?} end-state reads"))?
             .with_context(|| format!("{stage:?} rollout"))
@@ -231,7 +231,7 @@ impl Watches {
 
     async fn check_project(
         &mut self,
-        environment: &Environment,
+        env: &Env,
         stage: Stage,
         returned: Instant,
     ) -> anyhow::Result<()> {
@@ -246,16 +246,15 @@ impl Watches {
         ] {
             watch.drain()?;
         }
-        let org = &environment.org;
-        let triple = &environment.triple;
+        let org = &env.org;
+        let triple = &env.triple;
         let cluster_name = active_project_cluster(&org.cluster, triple).await?;
         let cluster = self.clusters.get(&cluster_name).await?;
         let database_name = cluster.data["spec"]["bootstrap"]["initdb"]["database"]
             .as_str()
             .context("the project Cluster does not name its database")?;
         let ca_name = name::project_server_ca_copy(&cluster_name);
-        let host_name =
-            name::host_deployment_name(&name::environment_host_name(&triple.org, &triple.env));
+        let host_name = name::host_deployment_name(&name::env_host_name(&triple.org, &triple.env));
         let (database, ca, host) = tokio::try_join!(
             self.databases.get(database_name),
             self.maps.get(&ca_name),
@@ -344,21 +343,18 @@ impl Watches {
 
     async fn check_workloads(&self, returned: Instant, fresh: bool) -> anyhow::Result<()> {
         let workloads = self.workloads.api.list(&ListParams::default()).await?;
-        let mut application = workloads
+        let mut app = workloads
             .items
             .iter()
             .filter(|object| {
                 object
                     .annotations()
                     .get("wamn.application")
-                    .is_some_and(|name| name == APPLICATION)
+                    .is_some_and(|name| name == APP)
             })
             .peekable();
-        ensure!(
-            application.peek().is_some(),
-            "{APPLICATION} has no WorkloadDeployment"
-        );
-        for workload in application {
+        ensure!(app.peek().is_some(), "{APP} has no WorkloadDeployment");
+        for workload in app {
             let current = current_replica_set(workload).with_context(|| {
                 format!("{} has no current WorkloadReplicaSet", workload.name_any())
             })?;

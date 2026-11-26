@@ -12,7 +12,7 @@ use crate::native_operation::native_call::NativeInvocation;
 use crate::native_operation::native_workload::native_component_name;
 use anyhow::Context as _;
 use tokio::time::Instant;
-use wamn_application::ingress::AuthenticatedCaller;
+use wamn_app::ingress::AuthenticatedCaller;
 use wamn_authority::edge::EdgeAuthority;
 use wamn_component_policy::AdmittedComponent;
 use wash_runtime::engine::workload::WorkloadItem;

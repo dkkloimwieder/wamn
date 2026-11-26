@@ -229,7 +229,7 @@ mod tests {
     use wac_graph::types::{Package, Types};
 
     use super::{HTTP_HANDLER, compose};
-    use wamn_component_policy::validate_application_member;
+    use wamn_component_policy::validate_app_member;
 
     const HOST_LOG: &str =
         r#"(import "test:host/log@1.0.0" (instance (export "log" (func (param "x" u32)))))"#;
@@ -326,7 +326,7 @@ mod tests {
     }
 
     #[test]
-    fn application_members_cannot_import_operation_authority_or_export_http() {
+    fn app_members_cannot_import_operation_authority_or_export_http() {
         let imports = [
             r#"(import "wamn:operation/operation@0.1.0" (instance))"#,
             r#"(import "entry" (implements "wamn:operation/operation@0.1.0") (instance))"#,
@@ -336,7 +336,7 @@ mod tests {
         ];
         for import in imports {
             let member = component(import, "test:base/op@1.0.0");
-            assert!(validate_application_member(&member).is_err());
+            assert!(validate_app_member(&member).is_err());
             let wrapped = compose(
                 component(
                     &operation_import("test:base/op@1.0.0"),
@@ -345,7 +345,7 @@ mod tests {
                 vec![member],
             )
             .expect("the ordinary composer can wrap the forbidden member");
-            assert!(validate_application_member(&wrapped).is_err());
+            assert!(validate_app_member(&wrapped).is_err());
         }
         for interface in [
             "wamn:postgres/statements@0.4.0",
@@ -353,16 +353,15 @@ mod tests {
             "other:operation/operation@0.1.0",
         ] {
             let member = component(&operation_import(interface), "test:base/op@1.0.0");
-            validate_application_member(&member)
-                .expect("a different package is not entry authority");
+            validate_app_member(&member).expect("a different package is not entry authority");
         }
         let member = component("", HTTP_HANDLER);
-        assert!(validate_application_member(&member).is_err());
+        assert!(validate_app_member(&member).is_err());
         let hidden = wat::parse_str(format!(
             r#"(component (component (instance $handler)
                 (export "{HTTP_HANDLER}" (instance $handler))))"#
         ))
         .expect("encode a hidden nested handler");
-        assert!(validate_application_member(&hidden).is_err());
+        assert!(validate_app_member(&hidden).is_err());
     }
 }

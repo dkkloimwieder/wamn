@@ -18,7 +18,7 @@ async fn a_fresh_install_keeps_control_plane_tables_out() {
     postgres.create_system_role().await.unwrap();
     let database = postgres.create_project_database("project").await.unwrap();
     let mut client = connect(database.as_str()).await;
-    wamn_environment::platform_migrations::install_project(&mut client)
+    wamn_env::platform_migrations::install_project(&mut client)
         .await
         .unwrap();
     let system_relations: Vec<String> = sqlx::query_scalar(
@@ -38,7 +38,7 @@ async fn a_fresh_install_keeps_control_plane_tables_out() {
 /// Effective PostgreSQL privilege tests include inherited roles and PUBLIC.
 #[tokio::test]
 #[ignore = "requires: docker"]
-async fn credentials_are_inaccessible_to_application_roles() {
+async fn credentials_are_inaccessible_to_app_roles() {
     let postgres = wamn_test_infrastructure::containers::start_postgres()
         .await
         .unwrap();

@@ -3,7 +3,7 @@
 mod apply;
 pub mod database_files;
 pub mod deployment;
-pub mod environment;
+pub mod env;
 pub mod identity_role;
 pub mod install;
 mod migration_history;

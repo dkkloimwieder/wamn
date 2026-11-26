@@ -15,7 +15,7 @@ sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "chrono", "u
 wamn-postgres.workspace = true
 wamn-scalar.workspace = true
 wamn-workflow-graph.workspace = true
-wamn-application.workspace = true
+wamn-app.workspace = true
 wamn-package.workspace = true
 wamn-number-pattern.workspace = true
 serde = { workspace = true, features = ["derive"] }

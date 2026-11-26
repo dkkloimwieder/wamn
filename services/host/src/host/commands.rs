@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context as _;
-use wamn_application::workload::{WorkloadAdmission, WorkloadClass, validate_workload_images};
+use wamn_app::workload::{WorkloadAdmission, WorkloadClass, validate_workload_images};
 use wash_runtime::host::{Host, HostApi as _};
 use wash_runtime::washlet::{HostCommandHandler, HostControlDefaults, types::v2};
 

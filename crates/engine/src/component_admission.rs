@@ -291,7 +291,7 @@ pub fn validate_component_admission(
             !request.base_digests.contains(digest)
                 && exports.iter().any(|export| {
                     export.contains(':')
-                        && is_application_operation_import(export)
+                        && is_app_operation_import(export)
                         && !declared_exports.contains(export.as_str())
                 })
         })
@@ -310,7 +310,7 @@ pub fn validate_component_admission(
     // remains an import.
     let byte_dependency_imports = imports
         .iter()
-        .filter(|name| is_application_operation_import(name))
+        .filter(|name| is_app_operation_import(name))
         .cloned()
         .collect::<BTreeSet<_>>();
     if !byte_dependency_imports.is_empty() {
@@ -428,7 +428,7 @@ fn owned_operation_value(ty: &wash_runtime::wasmtime::component::Type) -> bool {
 /// closed by ABSENCE and names them -- the raw-socket screen's contract.
 /// Classifying them as application dependencies would refuse them one step
 /// earlier, as a dependency mismatch, and lose that name.
-fn is_application_operation_import(name: &str) -> bool {
+fn is_app_operation_import(name: &str) -> bool {
     let platform_family = wamn_component_policy::import_pkg(name)
         .split_once(':')
         .is_some_and(|(namespace, _)| matches!(namespace, "wasi" | "wamn"));
@@ -587,17 +587,17 @@ mod tests {
             "wasi:sockets/tcp@0.2.3",
         ] {
             assert!(
-                !super::is_application_operation_import(platform),
+                !super::is_app_operation_import(platform),
                 "{platform} is a platform import"
             );
         }
-        for application in [
+        for app in [
             "example:orders/record@1.0.0",
             "platform-fixture:widget/record-batch@1.0.0",
         ] {
             assert!(
-                super::is_application_operation_import(application),
-                "{application} is an application call"
+                super::is_app_operation_import(app),
+                "{app} is an application call"
             );
         }
     }
@@ -772,7 +772,7 @@ mod tests {
     }
 
     #[test]
-    fn application_byte_admission_grants_modbus_but_refuses_private_binding() {
+    fn app_byte_admission_grants_modbus_but_refuses_private_binding() {
         let engine = crate::build_engine(&[]).expect("engine");
         let bytes = component_bytes("import wamn:modbus/read@1.0.0;");
         let mut granted = request();
@@ -1096,7 +1096,7 @@ mod tests {
 
     /// Applications may import dynamic queries with the Postgres grant.
     #[test]
-    fn an_application_component_importing_client_is_admitted() {
+    fn an_app_component_importing_client_is_admitted() {
         let engine = crate::build_engine(&[]).expect("engine builds");
         let bytes = component_bytes(
             "import wamn:postgres/statements@0.4.0; import wamn:postgres/client@0.4.0;",
@@ -1174,7 +1174,7 @@ mod tests {
     }
 
     #[test]
-    fn an_unpinned_base_and_an_application_import_refuse() {
+    fn an_unpinned_base_and_an_app_import_refuse() {
         let engine = crate::build_engine(&[]).expect("engine builds");
         let base = base_bytes();
 

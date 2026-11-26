@@ -1,17 +1,17 @@
 use anyhow::ensure;
 use serde_json::Value;
 
-pub(super) fn recovery(status: &str, application: bool) -> Option<Recovery> {
+pub(super) fn recovery(status: &str, app: bool) -> Option<Recovery> {
     match status {
         "pending-install" => Some(Recovery::Uninstall),
         "pending-upgrade" | "pending-rollback" => Some(Recovery::Rollback),
-        "failed" if application => Some(Recovery::Rollback),
+        "failed" if app => Some(Recovery::Rollback),
         _ => None,
     }
 }
 
 /// Select the newest successful revision before the one being recovered.
-pub(super) fn application_recovery_revision(
+pub(super) fn app_recovery_revision(
     history: &[Value],
     interrupted: u32,
 ) -> anyhow::Result<Option<u32>> {

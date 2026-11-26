@@ -34,7 +34,7 @@ impl ProjectLogins {
         env: &EnvName,
     ) -> anyhow::Result<PgConnectOptions> {
         let triple = Triple::new(self.org.clone(), env.clone(), project.clone());
-        let instance = wamn_environment::registry::deployment::instance_suffix(
+        let instance = wamn_env::registry::deployment::instance_suffix(
             &mut *self.control.acquire().await?,
             &triple,
         )

@@ -274,14 +274,14 @@ pub fn callback_target(
         .next()
         .and_then(|v| v.parse().ok())
         .ok_or_else(|| refused("invalid state project"))?;
-    let environment = parts
+    let env = parts
         .next()
         .and_then(|v| v.parse().ok())
         .ok_or_else(|| refused("invalid state environment"))?;
     if parts.next().is_none_or(str::is_empty) || parts.next().is_some() {
         return Err(refused("invalid state"));
     }
-    Ok((project, environment))
+    Ok((project, env))
 }
 
 struct Callback {

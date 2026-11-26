@@ -20,7 +20,7 @@ pub struct Checked<'a> {
 /// Returns a graph refusal when a trigger or call violates the authoring rules.
 pub fn check<'a>(
     graph: &'a WorkflowGraph,
-    application: &str,
+    app: &str,
     role: Option<&str>,
     export_can_write: impl Fn(&CanonicalName, &CanonicalName) -> Option<bool>,
 ) -> Result<Checked<'a>, GraphError> {
@@ -37,7 +37,7 @@ pub fn check<'a>(
     }
     match entry {
         GraphTrigger::Request { path } => {
-            if !valid_segment(application)
+            if !valid_segment(app)
                 || !valid_segment(graph.graph_id.as_str())
                 || !valid_exact_path(path)
             {

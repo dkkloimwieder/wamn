@@ -33,10 +33,10 @@ impl std::ops::Deref for Generation {
 
 /// Access to the host's single project-lifetime cache.
 pub trait ConnectionCache: std::fmt::Debug + Send + Sync {
-    fn bind_application(
+    fn bind_app(
         &self,
         workload: &str,
-        application: &Arc<wamn_application::application_config::ApplicationConfig>,
+        app: &Arc<wamn_app::app_config::AppConfig>,
     ) -> anyhow::Result<()>;
     fn get(
         &self,
@@ -61,7 +61,7 @@ pub trait ConnectionCache: std::fmt::Debug + Send + Sync {
     ) -> anyhow::Result<Arc<ConnectionFacts>>;
     fn facts(
         self: Arc<Self>,
-        application: Arc<wamn_application::application_config::ApplicationConfig>,
+        app: Arc<wamn_app::app_config::AppConfig>,
     ) -> anyhow::Result<Arc<ConnectionFacts>>;
 }
 
@@ -73,9 +73,9 @@ pub struct ConnectionFacts {
     reader: ConnectionCredentials,
     project_env_key: wamn_registry::ProjectEnvKey,
     project: wamn_registry::ProjectId,
-    environment: wamn_registry::EnvName,
+    env: wamn_registry::EnvName,
     cache: Option<Arc<dyn ConnectionCache>>,
-    application: Option<Arc<wamn_application::application_config::ApplicationConfig>>,
+    app: Option<Arc<wamn_app::app_config::AppConfig>>,
 }
 
 impl ConnectionFacts {
@@ -85,31 +85,27 @@ impl ConnectionFacts {
         database: &Arc<WamnPostgres>,
         project_env_key: &wamn_registry::ProjectEnvKey,
         project: &wamn_registry::ProjectId,
-        environment: &wamn_registry::EnvName,
+        env: &wamn_registry::EnvName,
     ) -> Self {
         let database = Arc::downgrade(database);
         Self {
             oauth_encryption: None,
             memory,
-            reader: Arc::unwrap_or_clone(reader).with_project_database(
-                database,
-                project,
-                environment,
-            ),
+            reader: Arc::unwrap_or_clone(reader).with_project_database(database, project, env),
             project_env_key: project_env_key.to_owned(),
             project: project.to_owned(),
-            environment: environment.to_owned(),
+            env: env.to_owned(),
             cache: None,
-            application: None,
+            app: None,
         }
     }
     pub fn with_cache(
         mut self,
         cache: Arc<dyn ConnectionCache>,
-        application: Arc<wamn_application::application_config::ApplicationConfig>,
+        app: Arc<wamn_app::app_config::AppConfig>,
     ) -> Self {
         self.cache = Some(cache);
-        self.application = Some(application);
+        self.app = Some(app);
         self
     }
     pub fn with_oauth_encryption(
@@ -125,8 +121,8 @@ impl ConnectionFacts {
     pub fn oauth_tokens(&self) -> Arc<crate::oauth_token::Cache> {
         Arc::clone(&self.memory.oauth_tokens)
     }
-    pub fn environment(&self) -> &wamn_registry::EnvName {
-        &self.environment
+    pub fn env(&self) -> &wamn_registry::EnvName {
+        &self.env
     }
     pub fn project(&self) -> &wamn_registry::ProjectId {
         &self.project
@@ -152,14 +148,14 @@ impl ConnectionFacts {
         }
         let Some(fact) = self
             .reader
-            .connection_fact(&self.project, &self.environment, id)
+            .connection_fact(&self.project, &self.env, id)
             .await?
         else {
             return Ok(None);
         };
         let generation = self
             .reader
-            .connection_generation(&self.project, &self.environment, id, fact.active_generation)
+            .connection_generation(&self.project, &self.env, id, fact.active_generation)
             .await?
             .context("connection generation unavailable")?;
         self.memory
@@ -192,7 +188,7 @@ impl ConnectionFacts {
         Ok(EnvConnections {
             connections: self
                 .reader
-                .env_connections(&self.project, &self.environment)
+                .env_connections(&self.project, &self.env)
                 .await?,
         })
     }
@@ -203,14 +199,14 @@ impl ConnectionFacts {
             }
             _ => Arc::new(
                 self.reader
-                    .connection_generation(&self.project, &self.environment, id, generation)
+                    .connection_generation(&self.project, &self.env, id, generation)
                     .await?
                     .context("connection generation unavailable")?,
             ),
         };
         let connection_id = id.to_string();
         let runtime_type = self
-            .application
+            .app
             .as_ref()
             .and_then(|app| {
                 app.components
@@ -235,7 +231,7 @@ impl ConnectionFacts {
             .credential_secret(
                 &self.project_env_key,
                 &self.project,
-                &self.environment,
+                &self.env,
                 id,
                 rejected,
             )

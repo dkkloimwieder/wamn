@@ -986,7 +986,7 @@ fn package_relations(
     manifest: &PackageManifest,
     subject: &str,
 ) -> Result<PackageRelations, GenerateError> {
-    let schemas = crate::materialize::application_schemas(manifest)?;
+    let schemas = crate::materialize::app_schemas(manifest)?;
     let mut owners = BTreeMap::<String, String>::new();
     let mut relation_fields = BTreeMap::<String, BTreeSet<String>>::new();
     let schema_set = schemas

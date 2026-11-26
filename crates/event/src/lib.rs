@@ -124,15 +124,10 @@ pub fn subject_token(raw: &str) -> &str {
 pub fn entity_filter(
     org: &wamn_registry::OrgId,
     project: &wamn_registry::ProjectId,
-    environment: &wamn_registry::EnvName,
+    env: &wamn_registry::EnvName,
     entity: &str,
 ) -> String {
-    wamn_registry::name::event_subject(
-        org,
-        project,
-        environment,
-        &format!("{}.>", subject_token(entity)),
-    )
+    wamn_registry::name::event_subject(org, project, env, &format!("{}.>", subject_token(entity)))
 }
 
 #[cfg(test)]
@@ -366,11 +361,11 @@ impl VerifiedSourceEventId {
 /// Accept exactly one `Nats-Msg-Id` matching the envelope's source coordinate.
 pub fn verified_source_event_id(
     project: &wamn_registry::ProjectId,
-    environment: &wamn_registry::EnvName,
+    env: &wamn_registry::EnvName,
     envelope: &Envelope,
     message_ids: &[&str],
 ) -> Option<VerifiedSourceEventId> {
-    let expected = msg_id(project, environment, &envelope.identity);
+    let expected = msg_id(project, env, &envelope.identity);
     match message_ids {
         [actual] if *actual == expected => Some(VerifiedSourceEventId(expected)),
         _ => None,

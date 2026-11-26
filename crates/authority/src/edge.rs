@@ -5,8 +5,8 @@ use std::sync::{Arc, RwLock};
 use std::time::Instant;
 
 use anyhow::Context as _;
-use wamn_application::ingress::AuthenticatedCaller;
-use wamn_application::native_routes::authorize_released_operation;
+use wamn_app::ingress::AuthenticatedCaller;
+use wamn_app::native_routes::authorize_released_operation;
 use wamn_component_policy::AdmittedComponent;
 
 /// Admitted components indexed by their current runtime identifier.

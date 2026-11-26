@@ -28,7 +28,7 @@ ring = { workspace = true }
 rcgen = { workspace = true }
 rustls = { workspace = true, features = ["aws_lc_rs", "std", "tls12"] }
 wamn-registry = { workspace = true }
-wamn-environment = { workspace = true }
+wamn-env = { workspace = true }
 wamn-platform-install = { workspace = true }
 postgres-protocol = { workspace = true }
 serde = { workspace = true, features = ["derive"] }

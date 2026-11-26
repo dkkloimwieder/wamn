@@ -46,8 +46,7 @@ pub fn validate_inputs(
             "event filter must belong to its declared environment"
         );
         if config.max_deliver == -1 {
-            let expected =
-                crate::events::application_consumer_config(durable, &config.filter_subject);
+            let expected = crate::events::app_consumer_config(durable, &config.filter_subject);
             ensure!(
                 config == &expected,
                 "application consumer differs from its declaration"

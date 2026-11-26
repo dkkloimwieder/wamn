@@ -17,7 +17,7 @@ use wamn_identity_protocol::PrincipalId;
 use wamn_registry::{EnvName, Triple, name};
 use wamn_test_infrastructure::scratch::ScratchRoot;
 
-use super::{Application, CALLER_ROLE, Environment, Org, PROJECT, Routes, failure, run};
+use super::{App, CALLER_ROLE, Env, Org, PROJECT, Routes, failure, run};
 
 /// How long a host pod takes to start again, and its workloads to be placed.
 pub const RESTART_DEADLINE: Duration = Duration::from_secs(300);
@@ -39,24 +39,24 @@ where
 }
 
 /// The path of a fixture application's source package.
-pub fn fixture(application: &str) -> std::path::PathBuf {
+pub fn fixture(app: &str) -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../apps")
-        .join(application)
+        .join(app)
 }
 
 /// One more environment of an org. Runs `wamn env delete` after failure capture, if enabled.
-pub struct OtherEnvironment<'a> {
+pub struct OtherEnv<'a> {
     org: &'a Org,
     pub triple: Triple,
     pub file: std::path::PathBuf,
     _scratch: ScratchRoot,
 }
 
-impl<'a> OtherEnvironment<'a> {
+impl<'a> OtherEnv<'a> {
     /// Write an environment file for `env` with the harness project and an application
     /// labelled `env`, and run `wamn env apply`. A label is unique in its org.
-    pub async fn apply(org: &'a Org, env: &str, application: &str) -> anyhow::Result<Self> {
+    pub async fn apply(org: &'a Org, env: &str, app: &str) -> anyhow::Result<Self> {
         let scratch = ScratchRoot::create()?;
         let file = scratch.path().join("environment.yaml");
         std::fs::write(
@@ -67,26 +67,26 @@ impl<'a> OtherEnvironment<'a> {
                 "target": "cloud",
                 "revocation_seconds": 60,
                 "database": {"instances": 1, "storage": "1Gi", "cpu": "100m", "memory": "256Mi"},
-                "projects": [{"name": PROJECT, "applications": {application: {"label": env}}}],
+                "projects": [{"name": PROJECT, "applications": {app: {"label": env}}}],
             }))?,
         )?;
-        let environment = Self {
+        let env = Self {
             org,
             triple: Triple::new(org.name.clone(), env.parse()?, PROJECT.parse()?),
             file,
             _scratch: scratch,
         };
-        failure::environment(&environment.triple);
+        failure::env(&env.triple);
         let mut command = org.command();
-        command.args(["env", "apply"]).arg(&environment.file);
+        command.args(["env", "apply"]).arg(&env.file);
         run(command).await?;
-        Ok(environment)
+        Ok(env)
     }
 }
 
-impl Drop for OtherEnvironment<'_> {
+impl Drop for OtherEnv<'_> {
     fn drop(&mut self) {
-        failure::delete_environment(self.org, &self.triple);
+        failure::delete_env(self.org, &self.triple);
     }
 }
 
@@ -104,15 +104,12 @@ pub async fn wamn(org: &Org, args: &[&str]) -> anyhow::Result<String> {
 
 /// Create one more API service of the application's environment with the harness's
 /// route caller role, and return its principal and routes that carry its token.
-pub async fn caller(
-    application: &Application,
-    name: &str,
-) -> anyhow::Result<(PrincipalId, Routes)> {
-    let environment = &application.environment;
+pub async fn caller(app: &App, name: &str) -> anyhow::Result<(PrincipalId, Routes)> {
+    let env = &app.env;
     let scratch = ScratchRoot::create()?;
     let secret = scratch.path().join("caller.json");
-    let triple = &environment.triple;
-    let mut command = environment.org.command();
+    let triple = &env.triple;
+    let mut command = env.org.command();
     command
         .args(["create-api-service", "--project", triple.project.as_str()])
         .args(["--env", triple.env.as_str(), "--name", name])
@@ -129,7 +126,7 @@ pub async fn caller(
         .as_str()
         .context("the API service secret has no principal")?
         .parse()?;
-    let routes = &application.routes;
+    let routes = &app.routes;
     Ok((
         principal,
         Routes {
@@ -164,12 +161,9 @@ pub async fn read(routes: &Routes, path: &str, input: &Value) -> anyhow::Result<
 }
 
 /// The host pods of one org environment, selected by its host group Deployment.
-pub async fn host_pods(
-    client: &kube::Client,
-    environment: &Environment,
-) -> anyhow::Result<Vec<Pod>> {
-    let org = &environment.triple.org;
-    host_pods_of(client, org, &environment.triple.env).await
+pub async fn host_pods(client: &kube::Client, env: &Env) -> anyhow::Result<Vec<Pod>> {
+    let org = &env.triple.org;
+    host_pods_of(client, org, &env.triple.env).await
 }
 
 async fn host_pods_of(
@@ -177,7 +171,7 @@ async fn host_pods_of(
     org: &wamn_registry::OrgId,
     env: &EnvName,
 ) -> anyhow::Result<Vec<Pod>> {
-    let deployment = name::host_deployment_name(&name::environment_host_name(org, env));
+    let deployment = name::host_deployment_name(&name::env_host_name(org, env));
     let selector = Api::<Deployment>::namespaced(client.clone(), org.as_str())
         .get(&deployment)
         .await?
@@ -211,10 +205,10 @@ fn ready(pod: &Pod) -> bool {
 /// kills it without a drain.
 pub async fn delete_host(
     client: &kube::Client,
-    environment: &Environment,
+    env: &Env,
     grace: Option<u32>,
 ) -> anyhow::Result<String> {
-    let [pod] = <[_; 1]>::try_from(host_pods(client, environment).await?)
+    let [pod] = <[_; 1]>::try_from(host_pods(client, env).await?)
         .map_err(|found| anyhow::anyhow!("{} host pods, not one", found.len()))?;
     let uid = pod.metadata.uid.context("host pod UID")?;
     let name = pod.metadata.name.context("host pod name")?;
@@ -222,7 +216,7 @@ pub async fn delete_host(
         grace_period_seconds: grace,
         ..DeleteParams::default()
     };
-    Api::<Pod>::namespaced(client.clone(), environment.triple.org.as_str())
+    Api::<Pod>::namespaced(client.clone(), env.triple.org.as_str())
         .delete(&name, &params)
         .await?;
     Ok(uid)
@@ -232,11 +226,11 @@ pub async fn delete_host(
 /// org namespace reports Ready after that pod started.
 pub async fn wait_host_restarted(
     client: &kube::Client,
-    environment: &Environment,
+    env: &Env,
     old: &str,
 ) -> anyhow::Result<()> {
     let started = until(RESTART_DEADLINE, "a new host pod is Ready", || async {
-        Ok(host_pods(client, environment)
+        Ok(host_pods(client, env)
             .await?
             .into_iter()
             .find(|pod| pod.metadata.uid.as_deref() != Some(old) && ready(pod))
@@ -247,11 +241,8 @@ pub async fn wait_host_restarted(
         &GroupVersionKind::gvk("runtime.wasmcloud.dev", "v1alpha1", "WorkloadDeployment"),
         "workloaddeployments",
     );
-    let deployments = Api::<DynamicObject>::namespaced_with(
-        client.clone(),
-        environment.triple.org.as_str(),
-        &resource,
-    );
+    let deployments =
+        Api::<DynamicObject>::namespaced_with(client.clone(), env.triple.org.as_str(), &resource);
     until(
         RESTART_DEADLINE,
         "every WorkloadDeployment is Ready on the new host",

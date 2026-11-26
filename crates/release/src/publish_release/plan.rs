@@ -46,7 +46,7 @@ pub(super) fn validate_request(
 }
 
 /// Derive the one schema that an application's SQL resolves against.
-pub(crate) fn application_runtime_schema(
+pub(crate) fn app_runtime_schema(
     manifest: &wamn_component_policy::PackageManifest,
     manifests: &BTreeMap<wamn_package::PackageName, wamn_component_policy::PackageManifest>,
     components: &BTreeSet<ServingComponent>,
@@ -149,7 +149,7 @@ pub fn deploy_runtime_schema(
 
 /// Resolve the declared dependency permissions of an integration application.
 /// Publication resolves them against the released package manifests.
-pub fn application_dependency_permissions(
+pub fn app_dependency_permissions(
     manifest: &wamn_component_policy::PackageManifest,
     manifests: &BTreeMap<&wamn_package::PackageName, &wamn_component_policy::PackageManifest>,
 ) -> anyhow::Result<BTreeSet<String>> {
@@ -216,10 +216,9 @@ pub(super) fn pin_runtime_schemas(
                             .flat_map(|component| component.descriptor.operations.keys()),
                     )
             }) {
-                application_dependency_permissions(manifest, &dependency_manifests)?;
+                app_dependency_permissions(manifest, &dependency_manifests)?;
             }
-            application_runtime_schema(manifest, manifests, &components)
-                .map(|schema| (id.clone(), schema))
+            app_runtime_schema(manifest, manifests, &components).map(|schema| (id.clone(), schema))
         })
         .collect::<anyhow::Result<BTreeMap<_, _>>>()
         .map_err(|error| {
@@ -262,7 +261,7 @@ pub(super) fn project_routes(
     package_manifests: &BTreeMap<wamn_package::PackageName, wamn_component_policy::PackageManifest>,
     components: &mut BTreeSet<ServingComponent>,
 ) -> Result<BTreeSet<ServingRoute>, PublishManifestError> {
-    let rule = DependencyDigestRule::for_environment(request.environment_is_disposable);
+    let rule = DependencyDigestRule::for_env(request.env_is_disposable);
     let mut routes = BTreeSet::new();
     for (attachment_id, attachment) in request.attachments {
         let AttachmentTarget::Route {

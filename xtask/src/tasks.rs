@@ -346,7 +346,7 @@ pub fn collector(root: &Path, output: &Path) -> anyhow::Result<()> {
     std::fs::create_dir_all(&directory)?;
     let chart = root.join("deploy/charts/platform");
     let values: Value = serde_yaml::from_slice(&std::fs::read(chart.join("values-gcp.yaml"))?)?;
-    let entry = wamn_kubernetes::platform_environment::entry(&chart, "platform", "wamn", values)?;
+    let entry = wamn_kubernetes::platform_env::entry(&chart, "platform", "wamn", values)?;
     let documents = wamn_kubernetes::helm::template(&entry)?;
     let config = documents
         .iter()

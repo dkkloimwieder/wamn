@@ -96,8 +96,8 @@ impl Workload {
         let run = PostgresRunStore::new(connection)
             .admit_run(
                 &RunAdmission {
-                    application: &self.application.application,
-                    environment: &self.application.environment,
+                    app: &self.app.application,
+                    env: &self.app.environment,
                     workflow_id: &definition.id,
                     workflow_version: definition.version,
                     graph_hash: &definition.hash,
@@ -155,7 +155,7 @@ impl Workflow {
     ) -> Result<Vec<wit_run::LeasedRun>, Refusal> {
         let key = due.to_rfc3339_opts(SecondsFormat::Secs, true);
         let input = serde_json::json!({ "due": &key });
-        let app = &workload.application;
+        let app = &workload.app;
         let admitted = executor_write(&self.database, &app.project, async |connection| {
             let rows = stored::schedules(connection, app).await?;
             let mut admitted = Vec::new();
@@ -203,7 +203,7 @@ impl Workflow {
         &self,
         workload: &Workload,
     ) -> Result<Vec<wit_run::DataChangeConsumer>, Refusal> {
-        let app = &workload.application;
+        let app = &workload.app;
         let workflows = self
             .database
             .executor_read(&app.project, async |connection| {
@@ -233,7 +233,7 @@ impl Workflow {
         workload: &Workload,
         message: wit_run::DataChange,
     ) -> Result<Option<wit_run::LeasedRun>, Refusal> {
-        let app = &workload.application;
+        let app = &workload.app;
         let invalid = |message: &str| Refusal::InvalidInput(message.into());
         if message.stream_sequence == 0 {
             return Err(invalid("invalid stream sequence"));
@@ -296,7 +296,7 @@ impl Workflow {
     }
 
     async fn take(&self, workload: &Workload) -> Result<Option<wit_run::LeasedRun>, Refusal> {
-        let app = &workload.application;
+        let app = &workload.app;
         let result = executor_write(&self.database, &app.project, async |connection| {
             let mut runs = PostgresRunStore::new(connection);
             runs.reap_exhausted(&app.application, &app.environment, 0)
@@ -457,7 +457,7 @@ impl<T: Send + 'static> wit_run::HostWithStore<T> for SharedCtx {
             let (plugin, workload, authority, generation) = lease(service, &handle)?;
             let outcome = executor_write(
                 &plugin.database,
-                &workload.application.project,
+                &workload.app.project,
                 async |connection| {
                     PostgresRunStore::new(connection)
                         .renew(&authority.delivery, &workload.runner, generation, LEASE_MS)
@@ -495,7 +495,7 @@ impl<T: Send + 'static> wit_run::HostWithStore<T> for SharedCtx {
                 .map_err(|_| Refusal::InvalidInput("invalid checkpoint JSON".into()))?;
             let stored = executor_write(
                 &plugin.database,
-                &workload.application.project,
+                &workload.app.project,
                 async |connection| {
                     PostgresRunStore::new(connection)
                         .checkpoint(&authority.delivery, &workload.runner, generation, &state)
@@ -526,7 +526,7 @@ impl<T: Send + 'static> wit_run::HostWithStore<T> for SharedCtx {
                 .map_err(|_| Refusal::InvalidInput("invalid result JSON".into()))?;
             let finished = executor_write(
                 &plugin.database,
-                &workload.application.project,
+                &workload.app.project,
                 async |connection| {
                     PostgresRunStore::new(connection)
                         .complete(&authority.delivery, &workload.runner, generation, &outcome)

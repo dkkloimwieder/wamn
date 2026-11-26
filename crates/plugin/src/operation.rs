@@ -7,13 +7,11 @@ use wamn_package::registered_operation::RegisteredOperation;
 
 use crate::invocation::{AuthorizedInvocation, InvocationRequest};
 use anyhow::Context as _;
-use wamn_application::application_config::{
-    ApplicationComponent, ApplicationConfig, ApplicationOperation, ApplicationOperationType,
-};
-use wamn_application::ingress::AuthenticatedCaller;
-use wamn_application::native_routes::{DeliveryClass, OPERATION_METRICS_ID, OperationRefusal};
-use wamn_application::result_signing::ResultSigning;
-use wamn_application::session_identity::SessionIdentity;
+use wamn_app::app_config::{AppComponent, AppConfig, AppOperation, AppOperationType};
+use wamn_app::ingress::AuthenticatedCaller;
+use wamn_app::native_routes::{DeliveryClass, OPERATION_METRICS_ID, OperationRefusal};
+use wamn_app::result_signing::ResultSigning;
+use wamn_app::session_identity::SessionIdentity;
 use wamn_connection::connection::{ConnectionInvocation, InvocationEntry};
 use wamn_engine::entry_operation::operation::{self as wit, Begun, Refusal};
 use wamn_engine::operation::WamnOperation;
@@ -61,7 +59,7 @@ impl OperationMetrics {
 pub(super) struct OperationWorkload {
     pub(super) workload: Box<str>,
     identity: SessionIdentity,
-    application: Arc<ApplicationConfig>,
+    app: Arc<AppConfig>,
     context: Option<Arc<wamn_connection::invocation::ReleaseContext>>,
     operations: BTreeMap<CanonicalName, (usize, Option<RegisteredOperation>)>,
 }
@@ -71,10 +69,10 @@ impl OperationHost {
         &self,
         workload: &str,
         component: &str,
-        config: Arc<ApplicationConfig>,
+        config: Arc<AppConfig>,
     ) -> anyhow::Result<()> {
         if let Some(cache) = &self.connection_cache {
-            cache.bind_application(workload, &config)?;
+            cache.bind_app(workload, &config)?;
         }
         let context = if config
             .components
@@ -99,7 +97,7 @@ impl OperationHost {
                 &config.environment,
             )),
             project: Some(config.project.clone()),
-            application: Some(config.application.clone()),
+            app: Some(config.application.clone()),
             ..SessionIdentity::default()
         };
         let operations = config
@@ -124,7 +122,7 @@ impl OperationHost {
                 Arc::new(OperationWorkload {
                     workload: workload.into(),
                     identity,
-                    application: config,
+                    app: config,
                     context,
                     operations,
                 }),
@@ -383,7 +381,7 @@ impl<T: 'static + Send> wit::HostWithStore<T> for PostgresOperation {
                 caller: current.authority.caller.as_ref(),
                 reads: signing
                     .workload
-                    .application
+                    .app
                     .components
                     .iter()
                     .find_map(|component| component.operations.get(&current.operation))
@@ -661,9 +659,9 @@ async fn begin(
         .operations
         .get(&operation)
         .ok_or(Refusal::UnknownOperation)?;
-    let component = &facts.application.components[*component_index];
+    let component = &facts.app.components[*component_index];
     let policy = &component.operations[&operation];
-    let read = policy.type_ == Some(ApplicationOperationType::Read);
+    let read = policy.type_ == Some(AppOperationType::Read);
     if read && !authorize_only {
         return Err(Refusal::ReadsClaimNothing);
     }
@@ -705,8 +703,7 @@ async fn begin(
             }),
             invocation: Some(
                 wamn_connection::connection::ConnectionInvocation::for_operation(
-                    &facts.application,
-                    &operation,
+                    &facts.app, &operation,
                 )
                 .map_err(|error| binding_error(OperationErrorType::Identity, workload, error))?,
             ),
@@ -734,7 +731,7 @@ async fn begin(
             .is_some_and(|result| !result.fields.is_empty())
             .then(|| SigningAuthority {
                 workload: Arc::clone(&facts),
-                deadline: tokio::time::Instant::now() + wamn_application::MAX_HOST_CALL_DURATION,
+                deadline: tokio::time::Instant::now() + wamn_app::MAX_HOST_CALL_DURATION,
             }),
     };
     if authorize_only {
@@ -755,7 +752,7 @@ async fn begin(
     let claim = claim_operation(
         &open,
         policy.host_transaction,
-        policy.type_ == Some(ApplicationOperationType::Delete),
+        policy.type_ == Some(AppOperationType::Delete),
         request,
     )
     .await?;
@@ -839,7 +836,7 @@ impl OperationHost {
         self: &Arc<Self>,
         authority: &Arc<AuthorizedInvocation>,
         operation: &CanonicalName,
-        policy: &ApplicationOperation,
+        policy: &AppOperation,
         input: &serde_json::Value,
         mut invoke: impl FnMut(&str, String) -> Fut + Send,
     ) -> anyhow::Result<NodeOutcome>
@@ -915,7 +912,7 @@ impl OperationHost {
             let claim = claim_operation(
                 &open,
                 policy.host_transaction,
-                policy.type_ == Some(ApplicationOperationType::Delete),
+                policy.type_ == Some(AppOperationType::Delete),
                 hash.to_string().into_bytes(),
             )
             .await
@@ -1062,8 +1059,8 @@ struct SiblingAuthority<'a> {
 }
 
 impl OperationWorkload {
-    fn component(&self, sibling: &str) -> anyhow::Result<&ApplicationComponent> {
-        self.application
+    fn component(&self, sibling: &str) -> anyhow::Result<&AppComponent> {
+        self.app
             .components
             .iter()
             .find(|component| component.name == sibling)
@@ -1074,7 +1071,7 @@ impl OperationWorkload {
         &self,
         postgres: &OperationHost,
         ingress: &str,
-        component: &ApplicationComponent,
+        component: &AppComponent,
         request: SiblingAuthority<'_>,
     ) -> anyhow::Result<Arc<AuthorizedInvocation>> {
         let identity = SessionIdentity {
@@ -1119,12 +1116,12 @@ pub struct WorkflowNode<'a> {
 
 impl OperationHost {
     /// Share the application document already read from the route sibling.
-    pub fn workflow_application(&self, route: &str) -> Option<Arc<ApplicationConfig>> {
+    pub fn workflow_app(&self, route: &str) -> Option<Arc<AppConfig>> {
         self.operation_workloads
             .read()
             .expect("operation workloads lock poisoned")
             .get(route)
-            .map(|workload| Arc::clone(&workload.application))
+            .map(|workload| Arc::clone(&workload.app))
     }
 
     fn sibling_workload(&self, ingress: &str) -> anyhow::Result<Arc<OperationWorkload>> {
@@ -1166,7 +1163,7 @@ impl OperationHost {
             .map_err(authorization)?;
         let caller = self
             .workflow_node_caller(
-                &facts.application.project,
+                &facts.app.project,
                 project_key,
                 &wamn_identity_protocol::workflow_user_id(),
                 handler.role.as_str(),
@@ -1268,12 +1265,12 @@ impl OperationHost {
                 operation: Some(node.operation),
                 grant: grant.as_ref(),
                 causation: node.causation,
-                read: operation.type_ == Some(ApplicationOperationType::Read),
+                read: operation.type_ == Some(AppOperationType::Read),
             },
         )?;
         let mut outcome = if matches!(
             operation.type_,
-            Some(ApplicationOperationType::Write | ApplicationOperationType::Delete)
+            Some(AppOperationType::Write | AppOperationType::Delete)
         ) {
             let input = match serde_json::from_str(&input) {
                 Ok(input) => input,
@@ -1290,8 +1287,7 @@ impl OperationHost {
             let transaction = self
                 .sibling_transaction(
                     &authority,
-                    operation.host_transaction
-                        || operation.type_ == Some(ApplicationOperationType::Read),
+                    operation.host_transaction || operation.type_ == Some(AppOperationType::Read),
                 )
                 .await?;
             let outcome = invoke(authority.id(), input).await?;

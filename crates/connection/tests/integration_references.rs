@@ -31,7 +31,7 @@ async fn refusal(relation: &str, expected: &str) {
     let mut system = wamn_postgres::connect(postgres.admin_url()).await.unwrap();
     let mut database = Administration::new(&mut tx, &mut system, None, None);
     let error = database
-        .refuse_environment_references(group, "00000000-0000-0000-0000-000000000001")
+        .refuse_env_references(group, "00000000-0000-0000-0000-000000000001")
         .await
         .unwrap_err();
     assert_eq!(error.code, "referenced");

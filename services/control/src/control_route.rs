@@ -34,14 +34,14 @@
 //!
 use sqlx::Connection as _;
 use sqlx::PgConnection as Client;
-use wamn_registry::EnvironmentStatus;
+use wamn_registry::EnvStatus;
 use wamn_routes::HostAttachment;
 use wamn_routes::HostHandler;
 use wamn_routes::HostRouteAuthority;
 use wamn_routes::host_wire::{
-    EnvironmentRequest, MemberGrantRequest, MemberGrantResult, OrgAdminGrantRequest,
-    OrgAdminGrantResult, ProjectAdminGrantRequest, ProjectAdminGrantResult, ProjectCreateRequest,
-    ProjectCreated, ProjectRequest, ProjectStatus, UserActivateResult,
+    EnvRequest, MemberGrantRequest, MemberGrantResult, OrgAdminGrantRequest, OrgAdminGrantResult,
+    ProjectAdminGrantRequest, ProjectAdminGrantResult, ProjectCreateRequest, ProjectCreated,
+    ProjectRequest, ProjectStatus, UserActivateResult,
 };
 mod connection_test;
 mod integration;
@@ -54,18 +54,14 @@ pub(crate) mod users;
 use anyhow::Context as _;
 use serde::Deserialize;
 use serde_json::{Value, json};
-use wamn_application::native_routes::{DeliveryError, PermissionDenial};
-use wamn_authentication::administration::{
-    ApplicationTarget, require_platform_rows, write_environment_status,
-};
+use wamn_app::native_routes::{DeliveryError, PermissionDenial};
+use wamn_authentication::administration::{AppTarget, require_platform_rows, write_env_status};
 use wamn_authentication::identity_error::{IdentityError, IdentityRefusal};
 use wamn_authentication::paging::{ListPage, Order};
-use wamn_environment::environment_org::{
-    create_project, org_environments, set_environment_status, status_environments,
-};
-use wamn_environment::status;
+use wamn_env::env_org::{create_project, org_project_envs, set_env_status, status_envs};
+use wamn_env::status;
 use wamn_identity::control_admission::{self, AdminAdmission};
-use wamn_identity::identity::application::project_authority;
+use wamn_identity::identity::app::project_authority;
 use wamn_identity::identity::control::{
     control_projects_page, is_org_admin, is_project_admin, org_projects_page,
 };
@@ -118,7 +114,7 @@ impl From<IdentityError> for Refusal {
             Some(IdentityRefusal::Invalid(field)) => ("invalid_input", field),
             Some(IdentityRefusal::ProjectNotFound) => ("project_not_found", "project"),
             Some(IdentityRefusal::ProjectExists) => ("project_exists", "project"),
-            Some(IdentityRefusal::EnvironmentNotFound) => ("environment_not_found", "env"),
+            Some(IdentityRefusal::EnvNotFound) => ("environment_not_found", "env"),
             Some(IdentityRefusal::UserNotActive) => ("user_not_active", "principal_id"),
             Some(IdentityRefusal::UserNotFound) => ("user_not_found", "principal_id"),
             Some(IdentityRefusal::UserInAnotherOrg) => ("user_in_another_org", "principal_id"),
@@ -392,8 +388,8 @@ impl ControlRoutes<'_> {
                 let mut transaction = self.begin(&mut writer, attachment, caller).await?;
                 deactivate_org_membership(&mut transaction, &principal, self.org).await?;
                 transaction.commit().await?;
-                let environments = self.environments(caller, None).await?;
-                self.write_applications(&mut writer, attachment, caller, &principal, &environments)
+                let project_envs = self.project_envs(caller, None).await?;
+                self.write_apps(&mut writer, attachment, caller, &principal, &project_envs)
                     .await?;
                 Ok(serde_json::to_value(UserActivateResult {
                     principal_id: principal.to_string(),
@@ -407,8 +403,8 @@ impl ControlRoutes<'_> {
                 let mut transaction = self.begin(&mut writer, attachment, caller).await?;
                 grant_org_admin(&mut transaction, &principal, self.org).await?;
                 transaction.commit().await?;
-                let environments = self.environments(caller, None).await?;
-                self.write_applications(&mut writer, attachment, caller, &principal, &environments)
+                let project_envs = self.project_envs(caller, None).await?;
+                self.write_apps(&mut writer, attachment, caller, &principal, &project_envs)
                     .await?;
                 Ok(serde_json::to_value(OrgAdminGrantResult {
                     principal_id: principal.to_string(),
@@ -422,8 +418,8 @@ impl ControlRoutes<'_> {
                 let mut transaction = self.begin(&mut writer, attachment, caller).await?;
                 revoke_org_admin(&mut transaction, &principal, self.org).await?;
                 transaction.commit().await?;
-                let environments = self.environments(caller, None).await?;
-                self.write_applications(&mut writer, attachment, caller, &principal, &environments)
+                let project_envs = self.project_envs(caller, None).await?;
+                self.write_apps(&mut writer, attachment, caller, &principal, &project_envs)
                     .await?;
                 Ok(serde_json::to_value(OrgAdminGrantResult {
                     principal_id: principal.to_string(),
@@ -431,7 +427,7 @@ impl ControlRoutes<'_> {
                 })
                 .map_err(anyhow::Error::from)?)
             }
-            HostHandler::EnvironmentList => {
+            HostHandler::EnvList => {
                 let request: ProjectTarget = parse(payload)?;
                 let page = control_page(
                     payload,
@@ -439,9 +435,9 @@ impl ControlRoutes<'_> {
                     caller,
                     self.org,
                     Some(&request.project),
-                    Order::Environment,
+                    Order::Env,
                 )?;
-                let environments = self
+                let envs = self
                     .read(caller, async |connection| {
                         Ok(project_envs_page(
                             connection,
@@ -453,10 +449,10 @@ impl ControlRoutes<'_> {
                         .await?)
                     })
                     .await?;
-                Ok(page.answer("environments", environments, |row| json!([row.name])))
+                Ok(page.answer("environments", envs, |row| json!([row.name])))
             }
-            HostHandler::EnvironmentStatus => {
-                let request: EnvironmentRequest = parse(payload)?;
+            HostHandler::EnvStatus => {
+                let request: EnvRequest = parse(payload)?;
                 if !self
                     .read(caller, async |connection| {
                         Ok(project_envs(connection, self.org, &request.project).await?)
@@ -471,16 +467,15 @@ impl ControlRoutes<'_> {
                     });
                 }
                 let status =
-                    crate::environment_status::read(self.org, &request.project, &request.env)
-                        .await?;
-                let application = async {
+                    crate::env_status::read(self.org, &request.project, &request.env).await?;
+                let app = async {
                     let login = self
                         .login(&request.project, &request.env)
                         .await
                         .map_err(|_| {
                             anyhow::anyhow!("no administration login for status counts")
                         })?;
-                    application_counts(login, caller).await
+                    app_counts(login, caller).await
                 };
                 let memberships = async {
                     let mut transaction =
@@ -500,7 +495,7 @@ impl ControlRoutes<'_> {
                     status,
                     &request.project,
                     &request.env,
-                    application,
+                    app,
                     memberships,
                 ))
                 .await;
@@ -516,7 +511,7 @@ impl ControlRoutes<'_> {
                     Some(&request.project),
                     Order::Principal,
                 )?;
-                let environment = request
+                let env = request
                     .environment
                     .as_str()
                     .map(str::parse::<wamn_registry::EnvName>)
@@ -531,7 +526,7 @@ impl ControlRoutes<'_> {
                             connection,
                             self.org,
                             &request.project,
-                            environment.as_ref(),
+                            env.as_ref(),
                             page.after(0),
                             page.after_principal(),
                             page.read_limit(),
@@ -559,8 +554,8 @@ impl ControlRoutes<'_> {
                 )
                 .await?;
                 transaction.commit().await?;
-                let environment = [(request.project.clone(), request.env.clone())];
-                self.write_applications(&mut writer, attachment, caller, &principal, &environment)
+                let project_envs = [(request.project.clone(), request.env.clone())];
+                self.write_apps(&mut writer, attachment, caller, &principal, &project_envs)
                     .await?;
                 Ok(serde_json::to_value(MemberGrantResult {
                     principal_id: principal.to_string(),
@@ -586,8 +581,8 @@ impl ControlRoutes<'_> {
                 )
                 .await?;
                 transaction.commit().await?;
-                let environment = [(request.project.clone(), request.env.clone())];
-                self.write_applications(&mut writer, attachment, caller, &principal, &environment)
+                let project_envs = [(request.project.clone(), request.env.clone())];
+                self.write_apps(&mut writer, attachment, caller, &principal, &project_envs)
                     .await?;
                 Ok(serde_json::to_value(MemberGrantResult {
                     principal_id: principal.to_string(),
@@ -607,8 +602,8 @@ impl ControlRoutes<'_> {
                 grant_project_admin(&mut transaction, &principal, self.org, &request.project)
                     .await?;
                 transaction.commit().await?;
-                let environments = self.environments(caller, Some(&request.project)).await?;
-                self.write_applications(&mut writer, attachment, caller, &principal, &environments)
+                let project_envs = self.project_envs(caller, Some(&request.project)).await?;
+                self.write_apps(&mut writer, attachment, caller, &principal, &project_envs)
                     .await?;
                 Ok(serde_json::to_value(ProjectAdminGrantResult {
                     principal_id: principal.to_string(),
@@ -627,8 +622,8 @@ impl ControlRoutes<'_> {
                 revoke_project_admin(&mut transaction, &principal, self.org, &request.project)
                     .await?;
                 transaction.commit().await?;
-                let environments = self.environments(caller, Some(&request.project)).await?;
-                self.write_applications(&mut writer, attachment, caller, &principal, &environments)
+                let project_envs = self.project_envs(caller, Some(&request.project)).await?;
+                self.write_apps(&mut writer, attachment, caller, &principal, &project_envs)
                     .await?;
                 Ok(serde_json::to_value(ProjectAdminGrantResult {
                     principal_id: principal.to_string(),
@@ -637,12 +632,12 @@ impl ControlRoutes<'_> {
                 })
                 .map_err(anyhow::Error::from)?)
             }
-            HostHandler::EnvironmentActivate | HostHandler::EnvironmentInactivate => {
-                let request: EnvironmentRequest = parse(payload)?;
-                let status = if attachment.route.handler == HostHandler::EnvironmentActivate {
-                    EnvironmentStatus::Active
+            HostHandler::EnvActivate | HostHandler::EnvInactivate => {
+                let request: EnvRequest = parse(payload)?;
+                let status = if attachment.route.handler == HostHandler::EnvActivate {
+                    EnvStatus::Active
                 } else {
-                    EnvironmentStatus::Inactive
+                    EnvStatus::Inactive
                 };
                 self.set_status(
                     attachment,
@@ -652,21 +647,19 @@ impl ControlRoutes<'_> {
                     status,
                 )
                 .await?;
-                Ok(
-                    serde_json::to_value(wamn_routes::host_wire::EnvironmentStatus {
-                        project: request.project,
-                        env: request.env,
-                        status: status.as_str(),
-                    })
-                    .map_err(anyhow::Error::from)?,
-                )
+                Ok(serde_json::to_value(wamn_routes::host_wire::EnvStatus {
+                    project: request.project,
+                    env: request.env,
+                    status: status.as_str(),
+                })
+                .map_err(anyhow::Error::from)?)
             }
             HostHandler::ProjectActivate | HostHandler::ProjectInactivate => {
                 let request: ProjectRequest = parse(payload)?;
                 let status = if attachment.route.handler == HostHandler::ProjectActivate {
-                    EnvironmentStatus::Active
+                    EnvStatus::Active
                 } else {
-                    EnvironmentStatus::Inactive
+                    EnvStatus::Inactive
                 };
                 self.set_status(attachment, caller, &request.project, None, status)
                     .await?;
@@ -709,21 +702,21 @@ impl ControlRoutes<'_> {
         caller: &PrincipalId,
         project: &wamn_registry::ProjectId,
         env: Option<&wamn_registry::EnvName>,
-        status: EnvironmentStatus,
+        status: EnvStatus,
     ) -> Result<(), Refusal> {
         let mut writer = self.writer.lock().await?;
         let mut transaction = self.begin(&mut writer, attachment, caller).await?;
-        let envs = status_environments(&mut transaction, self.org, project, env).await?;
-        let environments =
-            crate::control_sql::environment_projects(&mut transaction, self.org, &envs).await?;
+        let envs = status_envs(&mut transaction, self.org, project, env).await?;
+        let project_envs =
+            crate::control_sql::project_envs(&mut transaction, self.org, &envs).await?;
         status::change_status(
             status,
             move || async move {
-                set_environment_status(&mut transaction, self.org, project, &envs, status).await?;
+                set_env_status(&mut transaction, self.org, project, &envs, status).await?;
                 transaction.commit().await?;
                 Ok(())
             },
-            || self.write_statuses(attachment, caller, &environments, status),
+            || self.write_statuses(attachment, caller, &project_envs, status),
         )
         .await
     }
@@ -735,12 +728,12 @@ impl ControlRoutes<'_> {
         &self,
         attachment: &HostAttachment,
         caller: &PrincipalId,
-        environments: &[(wamn_registry::ProjectId, wamn_registry::EnvName)],
-        status: EnvironmentStatus,
+        project_envs: &[(wamn_registry::ProjectId, wamn_registry::EnvName)],
+        status: EnvStatus,
     ) -> Result<(), Refusal> {
-        let logins = self.logins(environments).await?;
+        let logins = self.logins(project_envs).await?;
         let mut completed: Vec<String> = Vec::new();
-        for ((project, env), login) in environments.iter().zip(logins) {
+        for ((project, env), login) in project_envs.iter().zip(logins) {
             match write_status(login, attachment, caller, status).await {
                 Ok(()) => {}
                 Err(error) => {
@@ -777,10 +770,10 @@ impl ControlRoutes<'_> {
     /// Read each environment's administration login before the first write.
     async fn logins(
         &self,
-        environments: &[(wamn_registry::ProjectId, wamn_registry::EnvName)],
+        project_envs: &[(wamn_registry::ProjectId, wamn_registry::EnvName)],
     ) -> Result<Vec<ConnectionInput<'static>>, Refusal> {
-        let mut logins = Vec::with_capacity(environments.len());
-        for (project, env) in environments {
+        let mut logins = Vec::with_capacity(project_envs.len());
+        for (project, env) in project_envs {
             logins.push(self.login(project, env).await?);
         }
         Ok(logins)
@@ -805,27 +798,27 @@ impl ControlRoutes<'_> {
     }
 
     /// Every current environment of the selected target.
-    async fn environments(
+    async fn project_envs(
         &self,
         caller: &PrincipalId,
         project: Option<&wamn_registry::ProjectId>,
     ) -> Result<Vec<(wamn_registry::ProjectId, wamn_registry::EnvName)>, Refusal> {
         self.read(caller, async |connection| {
-            Ok(org_environments(connection, self.org, project).await?)
+            Ok(org_project_envs(connection, self.org, project).await?)
         })
         .await
     }
 
     /// Project current authority while holding the user's system membership lock.
-    async fn write_applications(
+    async fn write_apps(
         &self,
         writer: &mut Client,
         attachment: &HostAttachment,
         caller: &PrincipalId,
         principal: &PrincipalId,
-        environments: &[(wamn_registry::ProjectId, wamn_registry::EnvName)],
+        project_envs: &[(wamn_registry::ProjectId, wamn_registry::EnvName)],
     ) -> Result<(), Refusal> {
-        let logins = self.logins(environments).await?;
+        let logins = self.logins(project_envs).await?;
         let mut system = writer.begin().await?;
         wamn_postgres::bind_transaction_identity(
             &mut system,
@@ -838,13 +831,13 @@ impl ControlRoutes<'_> {
         .await?;
         wamn_identity::identity::org::lock_membership(&mut system, principal, self.org).await?;
         let mut completed = Vec::new();
-        for ((project, env), login) in environments.iter().zip(logins) {
-            let target = ApplicationTarget {
+        for ((project, env), login) in project_envs.iter().zip(logins) {
+            let target = AppTarget {
                 org: self.org,
                 project,
                 env,
             };
-            match write_application(
+            match write_app(
                 &mut system,
                 login,
                 target,
@@ -926,24 +919,24 @@ impl ControlRoutes<'_> {
     }
 }
 
-async fn application_counts(
+async fn app_counts(
     login: ConnectionInput<'_>,
     caller: &PrincipalId,
 ) -> anyhow::Result<(i32, i32)> {
     let mut client = wamn_postgres::connect(login).await?;
     let mut transaction =
         wamn_identity::identity::transaction::read_connection(&mut client, caller).await?;
-    let counts = crate::control_sql::application_counts(&mut transaction).await?;
+    let counts = crate::control_sql::app_counts(&mut transaction).await?;
     transaction.commit().await?;
     Ok(counts)
 }
 
 /// One environment's application write, in its own transaction on its
 /// administration login.
-async fn write_application(
+async fn write_app(
     system: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     login: ConnectionInput<'_>,
-    target: ApplicationTarget<'_>,
+    target: AppTarget<'_>,
     attachment: &HostAttachment,
     caller: &PrincipalId,
     principal: &PrincipalId,
@@ -978,7 +971,7 @@ async fn write_status(
     login: ConnectionInput<'_>,
     attachment: &HostAttachment,
     caller: &PrincipalId,
-    status: EnvironmentStatus,
+    status: EnvStatus,
 ) -> anyhow::Result<()> {
     let mut client = wamn_postgres::connect(login)
         .await
@@ -996,7 +989,7 @@ async fn write_status(
         )
         .await?;
         require_platform_rows(&mut transaction).await?;
-        write_environment_status(&mut transaction, status).await?;
+        write_env_status(&mut transaction, status).await?;
         transaction.commit().await?;
         anyhow::Ok(())
     }
@@ -1030,9 +1023,9 @@ pub(crate) fn control_page(
     let mut target =
         json!({"principal": caller.to_string().as_str(), "org": org, "project": project});
     if filtered {
-        let environment = match fields.get("environment") {
+        let env = match fields.get("environment") {
             None => Value::Null,
-            Some(Value::String(environment)) => json!(environment),
+            Some(Value::String(env)) => json!(env),
             Some(_) => {
                 return Err(Refusal::Declared {
                     code: "invalid_input",
@@ -1040,7 +1033,7 @@ pub(crate) fn control_page(
                 });
             }
         };
-        target["environment"] = environment;
+        target["environment"] = env;
     }
     Ok(ListPage::new(
         &input,
@@ -1101,8 +1094,8 @@ mod tests {
             (HostHandler::ProjectList, Order::Project, None, "projects"),
             (HostHandler::UserList, Order::Principal, None, "users"),
             (
-                HostHandler::EnvironmentList,
-                Order::Environment,
+                HostHandler::EnvList,
+                Order::Env,
                 Some("widgets"),
                 "environments",
             ),
@@ -1203,7 +1196,7 @@ mod tests {
     }
 
     #[test]
-    fn member_list_cursor_binds_the_environment() {
+    fn member_list_cursor_binds_the_env() {
         let principal: PrincipalId = "00000000-0000-0000-0000-000000000001".parse().unwrap();
         let attachment = |handler| {
             wamn_routes::HostRouteSet::Control
@@ -1247,11 +1240,11 @@ mod tests {
         assert!(matches!(
             control_page(
                 "{\"environment\":\"dev\"}",
-                attachment(HostHandler::EnvironmentList),
+                attachment(HostHandler::EnvList),
                 &principal,
                 &"acme".parse().unwrap(),
                 Some(&"widgets".parse().unwrap()),
-                Order::Environment,
+                Order::Env,
             ),
             Err(Refusal::Delivery(DeliveryError::InvalidPayload))
         ));

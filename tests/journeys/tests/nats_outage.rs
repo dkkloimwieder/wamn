@@ -12,10 +12,10 @@ use std::time::Duration;
 
 use anyhow::Context as _;
 use common::host::{
-    FIXTURE, application_objects, condition, declare, fixture, host_object, ready, ready_host_pod,
-    reapply, until,
+    FIXTURE, app_objects, condition, declare, fixture, host_object, ready, ready_host_pod, reapply,
+    until,
 };
-use common::{Application, PortForward, Routes};
+use common::{App, PortForward, Routes};
 use k8s_openapi::api::apps::v1::StatefulSet;
 use k8s_openapi::api::core::v1::Pod;
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::Time;
@@ -50,10 +50,10 @@ common::journey! {
     /// The stock operator places the first application again before the edge call.
     /// The web edge serves a call and the second `WorkloadDeployment` is Ready.
     async fn the_host_serves_through_a_nats_outage_and_recovers() -> anyhow::Result<()> {
-        let application = Application::prepare(&fixture()).await?;
-        let environment = &application.environment;
-        let client = &environment.org.cluster.client;
-        let pod = ready_host_pod(environment, HOST_DEADLINE).await?;
+        let app = App::prepare(&fixture()).await?;
+        let env = &app.env;
+        let client = &env.org.cluster.client;
+        let pod = ready_host_pod(env, HOST_DEADLINE).await?;
         let pod = &pod;
         let reporting = || async move {
             let host = host_object(client, pod).await?;
@@ -85,7 +85,7 @@ common::journey! {
             u16::try_from(port.container_port).context("invalid host HTTP port")?,
         )
         .await?;
-        let edge = &application.routes;
+        let edge = &app.routes;
         let direct = Routes {
             endpoint: format!("http://{}", forward.address),
             host: edge.host.clone(),
@@ -172,7 +172,7 @@ common::journey! {
             "the first application's workloads are Ready after NATS returns",
             || async {
                 let workloads =
-                    application_objects(environment, "Workload", "workloads", FIXTURE).await?;
+                    app_objects(env, "Workload", "workloads", FIXTURE).await?;
                 Ok((!workloads.is_empty()
                     && workloads
                         .iter()
@@ -203,14 +203,14 @@ common::journey! {
             .context("waiting for the web edge recovery call to complete")??;
         drop(restore);
 
-        reapply(environment, |file| declare(file, SECOND, "second")).await?;
-        environment.deploy(&fixture(), SECOND).await?;
+        reapply(env, |file| declare(file, SECOND, "second")).await?;
+        env.deploy(&fixture(), SECOND).await?;
         until(
             HOST_DEADLINE,
             "the WorkloadDeployment applied after the outage is Ready",
             || async {
-                let deployments = application_objects(
-                    environment,
+                let deployments = app_objects(
+                    env,
                     "WorkloadDeployment",
                     "workloaddeployments",
                     SECOND,

@@ -22,7 +22,7 @@ use wash_runtime::plugin;
 use wash_runtime::sockets::policy::EgressMode;
 use wash_runtime::washlet::AttachedHostControl;
 
-mod application_route;
+mod app_route;
 mod commands;
 mod files;
 mod host_route;
@@ -31,9 +31,7 @@ mod route_refusal;
 mod workflow;
 
 use wamn_authentication::authorization::Authorization;
-use wamn_authentication::route_authentication::{
-    EnvironmentStatusReader, PlatformRouteAuthenticator,
-};
+use wamn_authentication::route_authentication::{EnvStatusReader, PlatformRouteAuthenticator};
 use wamn_engine::engine::{DEFAULT_CORE_INSTANCES, build_engine_with_host_memory};
 use wamn_engine::ingress::IngressRouting;
 use wamn_identity_client::nats::sign_host_user;
@@ -565,7 +563,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         Arc::clone(&authorization),
     ));
     postgres.set_result_signer(
-        &(Arc::clone(&files) as Arc<dyn wamn_application::result_signing::ResultSigner>),
+        &(Arc::clone(&files) as Arc<dyn wamn_app::result_signing::ResultSigner>),
     );
     let logging = Arc::new(plugin::wasi_logging::TracingLogger::default());
     let verifier = settings
@@ -593,9 +591,9 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     };
     let ingress_routing = IngressRouting::new(Arc::clone(&postgres.scopes))
         .with_authenticator(authentication as Arc<_>);
-    let status: Arc<dyn wamn_application::ingress::EnvironmentStatus> =
-        Arc::new(EnvironmentStatusReader::new(Arc::clone(&authorization)));
-    let ingress_routing = Arc::new(ingress_routing.with_environment_status(status));
+    let status: Arc<dyn wamn_app::ingress::EnvStatus> =
+        Arc::new(EnvStatusReader::new(Arc::clone(&authorization)));
+    let ingress_routing = Arc::new(ingress_routing.with_env_status(status));
     let operations = Arc::new(wamn_engine::operation::WamnOperation::new(
         Arc::clone(&postgres) as Arc<dyn plugin::HostPlugin>,
         Arc::clone(&postgres.scopes),

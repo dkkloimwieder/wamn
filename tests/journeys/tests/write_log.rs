@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use anyhow::{Context as _, ensure};
 use common::request::{self, until};
-use common::{Application, Observed};
+use common::{App, Observed};
 use serde_json::{Value, json};
 use tokio::time::Instant;
 
@@ -65,9 +65,9 @@ common::journey! {
     /// A commit logs one row whose result is the reply. A refused call leaves no row. A
     /// generated delete answers its known result.
     async fn a_claim_commits_with_its_work_or_not_at_all() -> anyhow::Result<()> {
-        let application = Application::prepare(&request::fixture("platform_fixture")).await?;
-        let routes = &application.routes;
-        let mut database = application.environment.observe().await?;
+        let app = App::prepare(&request::fixture("platform_fixture")).await?;
+        let routes = &app.routes;
+        let mut database = app.env.observe().await?;
 
         let id = uuid::Uuid::now_v7().to_string();
         let created = routes.create("commit", "commit", &id, "standard").await?;
@@ -124,9 +124,9 @@ common::journey! {
     /// A second call with the same key waits for the first claim's transaction, then
     /// answers the same result, and the key logs one row.
     async fn a_competing_claim_waits_for_the_first() -> anyhow::Result<()> {
-        let application = Application::prepare(&request::fixture("platform_fixture")).await?;
-        let routes = &application.routes;
-        let mut database = application.environment.observe().await?;
+        let app = App::prepare(&request::fixture("platform_fixture")).await?;
+        let routes = &app.routes;
+        let mut database = app.env.observe().await?;
 
         let first = routes.post("/widget/hold", hold("compete"));
         let second = async {
@@ -156,11 +156,11 @@ common::journey! {
     /// A host that dies inside an open claim refuses its caller, and its transaction rolls
     /// back, so the same key later answers as a new request.
     async fn a_lost_session_refuses_and_frees_its_key() -> anyhow::Result<()> {
-        let application = Application::prepare(&request::fixture("platform_fixture")).await?;
-        let routes = &application.routes;
-        let environment = &application.environment;
-        let client = &environment.org.cluster.client;
-        let mut database = environment.observe().await?;
+        let app = App::prepare(&request::fixture("platform_fixture")).await?;
+        let routes = &app.routes;
+        let env = &app.env;
+        let client = &env.org.cluster.client;
+        let mut database = env.observe().await?;
 
         let call = routes.post("/widget/hold", hold("lost"));
         let kill = async {
@@ -168,7 +168,7 @@ common::journey! {
             let now: String = sqlx::query_scalar("SELECT now()::text")
                 .fetch_one(&mut database.connection)
                 .await?;
-            request::delete_host(client, environment, Some(0)).await?;
+            request::delete_host(client, env, Some(0)).await?;
             anyhow::Ok(now)
         };
         let (answer, killed) = tokio::join!(call, kill);

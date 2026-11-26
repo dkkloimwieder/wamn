@@ -1,6 +1,6 @@
 //! Postgres application administration under the caller's transaction.
 
-use super::{AdministrationError, ApplicationTarget, ApplicationUserRow, PermissionGrantOutcome};
+use super::{AdministrationError, AppTarget, AppUserRow, PermissionGrantOutcome};
 use crate::identity_error::{IdentityError, IdentityErrorType};
 use sqlx::{PgConnection, Row as _};
 use uuid::Uuid;
@@ -22,7 +22,7 @@ const DROP_USER_ROLE_SQL: &str = "DELETE FROM platform.user_role \
     WHERE user_id = $1 AND role_name = $2";
 
 /// The status row of the environment. No row means active.
-const ENVIRONMENT_STATUS_ROW_SQL: &str = "INSERT INTO platform.env \
+const ENV_STATUS_ROW_SQL: &str = "INSERT INTO platform.env \
     (active) VALUES ($1) \
     ON CONFLICT (id) DO UPDATE SET active = EXCLUDED.active \
     WHERE platform.env.active <> EXCLUDED.active";
@@ -48,12 +48,12 @@ pub async fn require_platform_rows(client: &mut sqlx::PgConnection) -> Result<()
 
 /// Write the status row of the environment, the mirror of its system row that
 /// its host reads (docs/architecture/execution.md#routing-and-availability).
-pub async fn write_environment_status(
+pub async fn write_env_status(
     client: &mut sqlx::PgConnection,
-    status: wamn_registry::EnvironmentStatus,
+    status: wamn_registry::EnvStatus,
 ) -> Result<(), IdentityError> {
-    sqlx::query(ENVIRONMENT_STATUS_ROW_SQL)
-        .bind(status == wamn_registry::EnvironmentStatus::Active)
+    sqlx::query(ENV_STATUS_ROW_SQL)
+        .bind(status == wamn_registry::EnvStatus::Active)
         .execute(&mut *client)
         .await
         .map(|result| result.rows_affected())
@@ -89,16 +89,16 @@ const PERMISSION_LIST_SQL: &str = "SELECT permission FROM platform.permission \
     WHERE role_name = $1 ORDER BY permission";
 
 /// The application users eligible to hold roles, by email.
-pub async fn application_users(
+pub async fn app_users(
     client: &mut sqlx::PgConnection,
-) -> Result<Vec<ApplicationUserRow>, AdministrationError> {
+) -> Result<Vec<AppUserRow>, AdministrationError> {
     sqlx::query(USER_LIST_SQL)
         .fetch_all(&mut *client)
         .await
         .map_err(|error| database_error(&error))?
         .iter()
         .map(|row| {
-            Ok(ApplicationUserRow {
+            Ok(AppUserRow {
                 id: PrincipalId::from(
                     row.try_get::<Uuid, _>(0)
                         .map_err(|error| database_error(&error))?,
@@ -292,7 +292,7 @@ pub struct ProjectAuthority {
 /// Read a user's authority after the caller locks membership.
 pub async fn read_project_authority(
     system: &mut PgConnection,
-    coordinate: ApplicationTarget<'_>,
+    coordinate: AppTarget<'_>,
     principal: &PrincipalId,
 ) -> Result<Option<ProjectAuthority>, IdentityError> {
     let row = sqlx::query(

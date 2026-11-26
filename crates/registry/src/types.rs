@@ -31,7 +31,7 @@ impl std::fmt::Display for Triple {
 /// The coordinate of an environment shared by its project deployments.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Environment {
+pub struct Env {
     pub org: OrgId,
     pub env: crate::EnvName,
 }
@@ -39,7 +39,7 @@ pub struct Environment {
 /// The status of a project environment
 /// (docs/architecture/execution.md#host-run-routes).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum EnvironmentStatus {
+pub enum EnvStatus {
     /// Identity offers its audience and its host serves its routes.
     Active,
     /// Identity offers no audience and its host answers
@@ -47,7 +47,7 @@ pub enum EnvironmentStatus {
     Inactive,
 }
 
-impl EnvironmentStatus {
+impl EnvStatus {
     /// The status literal used by the control routes.
     pub fn as_str(self) -> &'static str {
         match self {
@@ -59,7 +59,7 @@ impl EnvironmentStatus {
 
 /// The environment row of the system database.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct EnvironmentRow {
+pub struct EnvRow {
     pub disposable: bool,
     pub instance_suffix: crate::instance_suffix::InstanceSuffix,
 }

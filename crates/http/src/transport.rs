@@ -29,8 +29,8 @@ use tokio::{
 use tokio_rustls::TlsConnector;
 use tower_service::Service;
 
-use wamn_application::InvocationLifetime;
-use wamn_application::MAX_HOST_CALL_DURATION as REQUEST_TIMEOUT;
+use wamn_app::InvocationLifetime;
+use wamn_app::MAX_HOST_CALL_DURATION as REQUEST_TIMEOUT;
 use wamn_authority::connection_authority::{
     AuthorityDecision, HostPolicy, HttpScheme, TlsIdentity,
 };

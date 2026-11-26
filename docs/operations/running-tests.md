@@ -161,7 +161,7 @@ The helper waits until a client connects.
 Over 10 runs one after another, the median start time of PostgreSQL is 1.05 seconds.
 
 The file store tests start their own MinIO container with `docker run`.
-`crates/environment/tests/support/files.rs` pins its image. At the end of the test, it removes the container.
+`crates/env/tests/support/files.rs` pins its image. At the end of the test, it removes the container.
 
 ## Ignored tests
 
@@ -209,7 +209,7 @@ The checkout does not change.
 Shared test helpers live in `wamn-test-infrastructure`, at `test-support/infrastructure/`.
 It is a development dependency only.
 A helper that one crate uses lives in the `tests/common/` directory of that crate.
-For example, the deployment fixture of `application_routes_kind` lives in `tests/journeys/tests/common/`.
+For example, the deployment fixture of `app_routes_kind` lives in `tests/journeys/tests/common/`.
 No crate in either workspace defines a `test-util` feature.
 Tests use the production constructors with real inputs. Production code has no test-only constructor.
 

@@ -293,7 +293,7 @@ pub async fn project() -> Result<Project> {
             name: "ca".into(),
         },
     };
-    let values = wamn_environment::platform_environment::database_values(
+    let values = wamn_env::platform_env::database_values(
         &connection,
         1,
         json!({"instances": 1, "cpu": "1", "memory": "1Gi", "storage": "1Gi"}),
@@ -310,17 +310,17 @@ pub async fn project() -> Result<Project> {
     let mut project = wamn_postgres::connect(owner_url.as_str()).await?;
     execute(
         &mut project,
-        &wamn_environment::project_setup::privilege_sql(&database),
+        &wamn_env::project_setup::privilege_sql(&database),
     )
     .await?;
-    wamn_environment::platform_migrations::install_project(&mut project).await?;
-    wamn_environment::environment_schema::restore_project(
+    wamn_env::platform_migrations::install_project(&mut project).await?;
+    wamn_env::env_schema::restore_project(
         owner_url.as_str(),
         &wamn_postgres::migrations::embedded_sources(MigrationDatabase::Project),
     )
     .await?;
-    let logins = wamn_environment::provision_project_env::workload::connections(&connection)?;
-    wamn_environment::project_setup::grant(&mut project, &logins).await?;
+    let logins = wamn_env::provision_project_env::workload::connections(&connection)?;
+    wamn_env::project_setup::grant(&mut project, &logins).await?;
     // A package migration creates each model schema, then the environment grants its capture.
     execute(
         &mut project,
@@ -329,7 +329,7 @@ pub async fn project() -> Result<Project> {
     .await?;
     execute(
         &mut project,
-        &wamn_environment::capture_sql::cdc_schema_sql_bundle(&[MODEL_SCHEMA.parse()?], &database),
+        &wamn_env::capture_sql::cdc_schema_sql_bundle(&[MODEL_SCHEMA.parse()?], &database),
     )
     .await?;
     Ok(Project {

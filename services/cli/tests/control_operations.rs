@@ -66,12 +66,11 @@ fn command(root: &Path, url: &str, arguments: &[&str]) -> anyhow::Result<Command
     // A declared application stays a published selection even when its name is a directory.
     std::fs::create_dir_all(root.join("a"))?;
     let file = root.join("environment.yaml");
-    let document: wamn_environment::environment::document::EnvironmentFile =
-        serde_json::from_value(json!({
-            "org":"acme", "env":"dev", "target":"cloud", "revocation_seconds":60,
-            "database":{"instances":1,"storage":"2Gi","cpu":"200m","memory":"256Mi"},
-            "projects":[{"name":"apps","applications":{"a":{ "label":"a"}}}]
-        }))?;
+    let document: wamn_env::env::document::EnvFile = serde_json::from_value(json!({
+        "org":"acme", "env":"dev", "target":"cloud", "revocation_seconds":60,
+        "database":{"instances":1,"storage":"2Gi","cpu":"200m","memory":"256Mi"},
+        "projects":[{"name":"apps","applications":{"a":{ "label":"a"}}}]
+    }))?;
     std::fs::write(&file, document.to_yaml()?)?;
     let mut command = control_command(root, url);
     command.args(arguments).arg("--env").arg(file);
@@ -161,7 +160,7 @@ fn assert_refuses(command: &mut Command, expected: &str) -> anyhow::Result<()> {
 }
 
 #[test]
-fn environment_data_deletion_confirmation_without_terminal() -> anyhow::Result<()> {
+fn env_data_deletion_confirmation_without_terminal() -> anyhow::Result<()> {
     let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create()?;
     for (confirmation, expected) in [
         (&[][..], "data deletion requires a terminal confirmation"),

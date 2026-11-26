@@ -128,7 +128,7 @@ impl ControlRoutes<'_> {
         let mut writer = self.writer.lock().await?;
         self.write_user_membership(&mut writer, attachment, caller, &user.principal_id, &grants)
             .await?;
-        let mut environments: std::collections::BTreeSet<(
+        let mut project_envs: std::collections::BTreeSet<(
             wamn_registry::ProjectId,
             wamn_registry::EnvName,
         )> = grants.memberships.into_iter().collect();
@@ -138,15 +138,15 @@ impl ControlRoutes<'_> {
             grants.project_admins.iter().map(Some).collect()
         };
         for project in admin_targets {
-            environments.extend(self.environments(caller, project).await?);
+            project_envs.extend(self.project_envs(caller, project).await?);
         }
-        let environments: Vec<_> = environments.into_iter().collect();
-        self.write_applications(
+        let project_envs: Vec<_> = project_envs.into_iter().collect();
+        self.write_apps(
             &mut writer,
             attachment,
             caller,
             &user.principal_id,
-            &environments,
+            &project_envs,
         )
         .await?;
         drop(writer);

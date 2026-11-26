@@ -16,7 +16,8 @@ pub enum DeclaredRefusal {
     AdminFixed {
         field: Value,
     },
-    ApplicationWriteIncomplete {
+    #[serde(rename = "application_write_incomplete")]
+    AppWriteIncomplete {
         environment: Value,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         completed: Option<Value>,
@@ -37,7 +38,8 @@ pub enum DeclaredRefusal {
     DeploymentInProgress {
         field: Value,
     },
-    EnvironmentNotFound {
+    #[serde(rename = "environment_not_found")]
+    EnvNotFound {
         field: Value,
     },
     ExclusiveConnectionRequiresLocalTarget {

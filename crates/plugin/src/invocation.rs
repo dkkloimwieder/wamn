@@ -3,9 +3,9 @@
 use std::sync::Arc;
 
 use crate::scope_registry::{Authority, validate_context, validate_identity};
-use wamn_application::ingress::AuthenticatedCaller;
-use wamn_application::invocation_authority::InvocationAuthority;
-use wamn_application::session_identity::SessionIdentity;
+use wamn_app::ingress::AuthenticatedCaller;
+use wamn_app::invocation_authority::InvocationAuthority;
+use wamn_app::session_identity::SessionIdentity;
 use wamn_connection::connection::ConnectionInvocation;
 use wamn_connection::invocation::{ReleaseContext, Scope};
 use wamn_engine::invocation_scope::{InvocationScopes, ScopeLifetime};
@@ -48,7 +48,7 @@ impl AuthorizedInvocation {
             invocation,
             read,
         } = request;
-        wamn_application::native_routes::authorize_registered_operation(
+        wamn_app::native_routes::authorize_registered_operation(
             caller.as_ref(),
             registered_operation,
         )?;

@@ -35,7 +35,7 @@ pub(crate) async fn introspect_with_manifest(
     manifest: &PackageManifest,
     authored_sql: &[AuthoredSql<'_>],
 ) -> Result<CatalogIr> {
-    let schemas = application_schemas(manifest).context("resolve application schemas")?;
+    let schemas = app_schemas(manifest).context("resolve application schemas")?;
 
     let schema_names = schemas
         .iter()
@@ -257,7 +257,7 @@ pub(crate) fn existing_files(root: &Path) -> Result<Vec<PathBuf>> {
     Ok(files)
 }
 
-pub(crate) fn application_schemas(
+pub(crate) fn app_schemas(
     manifest: &PackageManifest,
 ) -> Result<Vec<wamn_package::canonical_name::CanonicalName>, wamn_package::manifest::ManifestError>
 {

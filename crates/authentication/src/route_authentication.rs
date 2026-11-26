@@ -14,7 +14,7 @@ use wamn_package::AttachmentAuthPolicy;
 use hmac::{Hmac, KeyInit as _, Mac as _};
 use sha2::Sha256;
 use tracing::Instrument as _;
-use wamn_application::ingress::{
+use wamn_app::ingress::{
     AuthRejection, AuthenticatedCaller, AuthenticationRequest, CredentialType, Header,
     RouteAuthenticator, RouteCredential, authentication_unavailable, required_bearer_token,
     route_credential, signature_unauthorized, unauthorized,
@@ -30,11 +30,11 @@ use wamn_connection::connection_memory::ConnectionStatus;
 /// (docs/architecture/execution.md#routing-and-availability): its row of
 /// `platform.env`, as `wamn_app`, kept in the host's [auth
 /// memory](wamn_authority::auth_cache).
-pub struct EnvironmentStatusReader {
+pub struct EnvStatusReader {
     postgres: Arc<Authorization>,
 }
 
-impl std::fmt::Debug for EnvironmentStatusReader {
+impl std::fmt::Debug for EnvStatusReader {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("EnvironmentStatusReader")
@@ -42,21 +42,21 @@ impl std::fmt::Debug for EnvironmentStatusReader {
     }
 }
 
-impl EnvironmentStatusReader {
+impl EnvStatusReader {
     pub fn new(postgres: Arc<Authorization>) -> Self {
         Self { postgres }
     }
 }
 
 #[async_trait::async_trait]
-impl wamn_application::ingress::EnvironmentStatus for EnvironmentStatusReader {
+impl wamn_app::ingress::EnvStatus for EnvStatusReader {
     async fn inactive(
         &self,
         project_env_key: &wamn_registry::ProjectEnvKey,
     ) -> anyhow::Result<bool> {
         let target = wamn_registry::ProjectEnvKey::triple(project_env_key);
         self.postgres
-            .environment_inactive(&target.project, project_env_key)
+            .env_inactive(&target.project, project_env_key)
             .await
     }
 }

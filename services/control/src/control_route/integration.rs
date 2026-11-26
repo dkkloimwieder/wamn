@@ -82,8 +82,7 @@ impl ControlRoutes<'_> {
         })?;
         if !attachment.route.type_.is_read() {
             let held =
-                wamn_postgres::advisory_lock::try_environment_lock(&mut authorized, self.org, env)
-                    .await?;
+                wamn_postgres::advisory_lock::try_env_lock(&mut authorized, self.org, env).await?;
             if !held {
                 return Err(Refusal::Declared {
                     code: "deployment_in_progress",
@@ -117,8 +116,8 @@ impl ControlRoutes<'_> {
         } else {
             None
         };
-        let applications = if operation == "connection.delete" {
-            crate::environment_status::applications(self.org, &target.project, env).await?
+        let apps = if operation == "connection.delete" {
+            crate::env_status::apps(self.org, &target.project, env).await?
         } else {
             Vec::new()
         };
@@ -128,7 +127,7 @@ impl ControlRoutes<'_> {
             source,
             Some(|system, project, name, connection| {
                 Box::pin(
-                    wamn_identity::identity::application::service::write_connection_service(
+                    wamn_identity::identity::app::service::write_connection_service(
                         system, project, name, connection,
                     ),
                 )
@@ -145,7 +144,7 @@ impl ControlRoutes<'_> {
                 operation,
                 payload,
             },
-            &applications,
+            &apps,
         )
         .await?;
         if operation == "connection.authorize" {
@@ -168,7 +167,7 @@ impl ControlRoutes<'_> {
                 .ok_or_else(|| anyhow::anyhow!("connection delete returned no principal id"))?
                 .parse::<PrincipalId>()
                 .map_err(anyhow::Error::from)?;
-            wamn_identity::identity::application::service::disable(&mut project, &principal)
+            wamn_identity::identity::app::service::disable(&mut project, &principal)
                 .await
                 .map_err(anyhow::Error::from)?;
         }

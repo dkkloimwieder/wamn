@@ -9,8 +9,8 @@ mod write_log;
 
 use std::sync::Arc;
 
-use wamn_application::database::{Claim, DatabaseTarget, SqlError, SqlRows, SqlValue};
-use wamn_application::session_identity::SessionIdentity;
+use wamn_app::database::{Claim, DatabaseTarget, SqlError, SqlRows, SqlValue};
+use wamn_app::session_identity::SessionIdentity;
 use wamn_event::Causation;
 use wamn_identity_protocol::AuthorityClass;
 use wamn_package::canonical_name::CanonicalName;
@@ -30,7 +30,7 @@ pub(crate) async fn read(
     params: Vec<SqlValue>,
 ) -> Result<SqlRows, SqlError> {
     let (connection, policy) = postgres
-        .checkout_dynamic(target.project, target.environment)
+        .checkout_dynamic(target.project, target.env)
         .await
         .map_err(checkout_pg_error)?;
     let mut connection =
@@ -55,7 +55,7 @@ pub(crate) async fn begin(
     causation: Option<Causation>,
 ) -> Result<Arc<Transaction>, SqlError> {
     let (connection, policy, authority) = postgres
-        .checkout_workload(scope, target.project, target.environment)
+        .checkout_workload(scope, target.project, target.env)
         .await
         .map_err(checkout_pg_error)?;
     let mut connection =

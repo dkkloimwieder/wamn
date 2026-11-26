@@ -42,7 +42,7 @@ pub async fn prepare_host_upgrade<'a>(
 
 /// Upgrade one application after release recovery, SQL and workflow checks.
 /// Helm reserves time for rollback within the deploy Job deadline.
-pub async fn apply_application(
+pub async fn apply_app(
     target: &Target,
     chart: &Path,
     name: &str,
@@ -159,7 +159,7 @@ pub async fn wait_database(
         cluster_uid,
     )
     .await?;
-    wamn_kubernetes::platform_environment::wait_database_applied(
+    wamn_kubernetes::platform_env::wait_database_applied(
         target,
         &owner.database,
         Duration::from_secs(120),

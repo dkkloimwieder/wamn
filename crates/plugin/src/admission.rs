@@ -24,8 +24,8 @@ impl RunTrigger {
 /// Frozen workflow version, input, and execution identity.
 #[derive(Debug)]
 pub struct RunAdmission<'a> {
-    pub application: &'a wamn_registry::ApplicationName,
-    pub environment: &'a wamn_registry::EnvName,
+    pub app: &'a wamn_registry::AppName,
+    pub env: &'a wamn_registry::EnvName,
     pub workflow_id: &'a wamn_package::canonical_name::CanonicalName,
     pub workflow_version: i32,
     pub graph_hash: &'a wamn_digest::Digest,

@@ -39,7 +39,7 @@ fn the_bundle_pins_the_separate_route_component() {
         &EdgeTarget {
             org: &"acme".parse().unwrap(),
             project: &"plant".parse().unwrap(),
-            environment: &"dev".parse().unwrap(),
+            env: &"dev".parse().unwrap(),
         },
         &out,
     )

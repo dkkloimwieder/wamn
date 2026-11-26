@@ -222,23 +222,18 @@ async fn ensure_account(
         return invalid();
     };
     if count == 0 {
-        let deleted = match key_store::retire_environment(
-            &state.authority,
-            client,
-            &inner.issuer,
-            org,
-            &request.env,
-        )
-        .await
-        {
-            Ok(None) => {
-                return json(&Account {
-                    public_key: String::new(),
-                });
-            }
-            Ok(Some(deleted)) => deleted,
-            Err(error) => return signing_error(&error),
-        };
+        let deleted =
+            match key_store::retire_env(&state.authority, client, &inner.issuer, org, &request.env)
+                .await
+            {
+                Ok(None) => {
+                    return json(&Account {
+                        public_key: String::new(),
+                    });
+                }
+                Ok(Some(deleted)) => deleted,
+                Err(error) => return signing_error(&error),
+            };
         let (public_key, jwt) = deleted;
         if let Err(error) = state
             .resolver_request(nats::DELETE_SUBJECT, None, jwt)
@@ -249,7 +244,7 @@ async fn ensure_account(
         }
         return json(&Account { public_key });
     }
-    let (public_key, jwt) = match key_store::ensure_environment(
+    let (public_key, jwt) = match key_store::ensure_env(
         &state.authority,
         client,
         &inner.envelope,
@@ -296,13 +291,13 @@ async fn sign_user(
         return invalid();
     }
     let inbox_prefix = name::nats_user_inbox(&request.public_key);
-    let (name, permissions) = workload_identity::environment_permissions(&request, &inbox_prefix);
+    let (name, permissions) = workload_identity::env_permissions(&request, &inbox_prefix);
     let user = nats::User {
         public_key: &request.public_key,
         name: &name,
         permissions: &permissions,
     };
-    let signed = key_store::environment_user(
+    let signed = key_store::env_user(
         client,
         &inner.envelope,
         &inner.issuer,

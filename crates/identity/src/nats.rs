@@ -279,7 +279,7 @@ impl Authority {
     }
 
     /// Calculate claim limits for the supplied project count.
-    pub fn environment_limits(&self, project_count: i32) -> Result<ClientLimits, Error> {
+    pub fn env_limits(&self, project_count: i32) -> Result<ClientLimits, Error> {
         let scale = |limit: i64| {
             limit.checked_mul(i64::from(project_count)).ok_or_else(|| {
                 Error::new(
@@ -296,7 +296,7 @@ impl Authority {
     }
 
     /// Sign the current revision of an environment account.
-    pub fn environment_account(
+    pub fn env_account(
         &self,
         org: &OrgId,
         env: &EnvName,
@@ -307,7 +307,7 @@ impl Authority {
         let jwt = claims::account(
             &self.operator_signing,
             &key.subject,
-            &name::environment_nats_account(org, env),
+            &name::env_nats_account(org, env),
             key.issued_at,
             project_count,
             limits,

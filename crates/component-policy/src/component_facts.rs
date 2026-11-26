@@ -465,7 +465,7 @@ pub fn normalize_component_fact(
     imports.sort();
     imports.dedup();
     let imports_fingerprint = imports_fingerprint(&imports);
-    refuse_application_operation_imports(&imports)?;
+    refuse_app_operation_imports(&imports)?;
     let effects = normalize_effects(effects, &imports)?;
     let connections = normalize_connections(declaration.connections, &effects)?;
 
@@ -533,7 +533,7 @@ fn verify_projection(
             ComponentFactError::new(ComponentFactErrorType::InvalidSchema, error.to_string())
         })?;
     }
-    refuse_application_operation_imports(imports)?;
+    refuse_app_operation_imports(imports)?;
     normalize_effects(effects.to_vec(), imports).map(|_| ())
 }
 
@@ -564,11 +564,11 @@ fn validate_registered_operation_target(
 /// Refuse an application operation import. A declared dependency composes
 /// into the component bytes at build, so no application operation remains an
 /// import.
-fn refuse_application_operation_imports(imports: &[String]) -> Result<(), ComponentFactError> {
+fn refuse_app_operation_imports(imports: &[String]) -> Result<(), ComponentFactError> {
     let extra = imports
         .iter()
         .map(String::as_str)
-        .filter(|import| is_application_operation_import(import))
+        .filter(|import| is_app_operation_import(import))
         .collect::<Vec<_>>();
     if !extra.is_empty() {
         return Err(ComponentFactError::new(
@@ -597,7 +597,7 @@ fn refuse_application_operation_imports(imports: &[String]) -> Result<(), Compon
 /// what TYPE of import it is and type does not change with version. A
 /// `wasi:clocks` import at an unregistered version is still a platform
 /// import; refusing the version is admission's job, not this classifier's.
-fn is_application_operation_import(name: &str) -> bool {
+fn is_app_operation_import(name: &str) -> bool {
     !crate::is_registered_package(name)
 }
 
@@ -987,7 +987,7 @@ mod tests {
     }
 
     #[test]
-    fn an_application_operation_import_is_refused() {
+    fn an_app_operation_import_is_refused() {
         // A base operation composes into the bytes at build. One left as an
         // import is an undeclared application call.
         assert_eq!(

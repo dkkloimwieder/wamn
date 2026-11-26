@@ -32,7 +32,7 @@ pub enum IdentityRefusal {
     /// The project is a project of the org already.
     ProjectExists,
     /// The environment is not an environment of the org.
-    EnvironmentNotFound,
+    EnvNotFound,
     /// The principal is not an active member of the org.
     UserNotActive,
     /// The principal is not a member of the org, or not a user.

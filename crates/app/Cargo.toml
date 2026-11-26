@@ -1,0 +1,27 @@
+[package]
+name = "wamn-app"
+description = "Plain application contracts for routes, delivery and operation sessions."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+futures-util.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+tracing.workspace = true
+wamn-component-policy.workspace = true
+wamn-connection-type.workspace = true
+wamn-digest.workspace = true
+wamn-identity-protocol.workspace = true
+wamn-oci-reference.workspace = true
+wamn-package.workspace = true
+wamn-registry.workspace = true
+wamn-role.workspace = true
+wamn-routes.workspace = true
+wamn-workflow-graph.workspace = true
+
+[lints]
+workspace = true

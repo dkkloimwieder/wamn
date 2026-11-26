@@ -4,7 +4,7 @@ pub mod admission;
 
 use serde_json::Value;
 use sqlx::{PgConnection, Row as _, postgres::PgRow};
-use wamn_application::application_config::ApplicationConfig;
+use wamn_app::app_config::AppConfig;
 use wamn_digest::Digest;
 use wamn_identity_protocol::PrincipalId;
 use wamn_package::canonical_name::CanonicalName;
@@ -13,9 +13,9 @@ use wamn_workflow_graph::{GraphTrigger, WorkflowGraph};
 /// Take the transaction lock used when authoring a new version.
 pub async fn try_author_lock(
     connection: &mut PgConnection,
-    app: &ApplicationConfig,
+    app: &AppConfig,
 ) -> Result<bool, sqlx::Error> {
-    sqlx::query_scalar(wamn_postgres::ENVIRONMENT_TRANSACTION_LOCK_SQL)
+    sqlx::query_scalar(wamn_postgres::ENV_TRANSACTION_LOCK_SQL)
         .bind(app.org.as_str())
         .bind(app.environment.as_str())
         .fetch_one(connection)
@@ -38,7 +38,7 @@ pub async fn rollback_change(connection: &mut PgConnection) -> Result<(), sqlx::
 /// Returns the graph hash if a new version was stored.
 pub async fn insert_version(
     connection: &mut PgConnection,
-    app: &ApplicationConfig,
+    app: &AppConfig,
     graph: &WorkflowGraph,
     version: i32,
     entry: &GraphTrigger,
@@ -107,7 +107,7 @@ pub async fn insert_version(
 /// Check whether another enabled workflow uses the same request path.
 pub async fn path_taken(
     connection: &mut PgConnection,
-    app: &ApplicationConfig,
+    app: &AppConfig,
     id: &CanonicalName,
     path: &str,
 ) -> Result<bool, sqlx::Error> {
@@ -162,7 +162,7 @@ fn graph_hash(row: &PgRow) -> Result<Digest, sqlx::Error> {
 /// Load the exact version selected for a lifecycle change.
 pub async fn load_version(
     connection: &mut PgConnection,
-    app: &ApplicationConfig,
+    app: &AppConfig,
     id: &CanonicalName,
     version: i32,
 ) -> Result<Option<WorkflowVersion>, sqlx::Error> {
@@ -182,7 +182,7 @@ pub async fn load_version(
 /// Whether a prior data-change version could still have a broker consumer.
 pub async fn previously_had_consumer(
     connection: &mut PgConnection,
-    app: &ApplicationConfig,
+    app: &AppConfig,
     id: &CanonicalName,
 ) -> Result<bool, sqlx::Error> {
     sqlx::query_scalar(
@@ -200,7 +200,7 @@ pub async fn previously_had_consumer(
 /// Enable a version at a fresh WAL boundary and report whether it replaced a data-change version.
 pub async fn enable_version(
     connection: &mut PgConnection,
-    app: &ApplicationConfig,
+    app: &AppConfig,
     id: &CanonicalName,
     version: i32,
 ) -> Result<bool, sqlx::Error> {
@@ -234,7 +234,7 @@ pub async fn enable_version(
 /// Disable the selected version and return its trigger, if the version exists.
 pub async fn disable_version(
     connection: &mut PgConnection,
-    app: &ApplicationConfig,
+    app: &AppConfig,
     id: &CanonicalName,
     version: i32,
 ) -> Result<Option<String>, sqlx::Error> {
@@ -254,7 +254,7 @@ pub async fn disable_version(
 /// Whether an enabled data-change version still owns the consumer.
 pub async fn has_enabled_data_change(
     connection: &mut PgConnection,
-    app: &ApplicationConfig,
+    app: &AppConfig,
     id: &CanonicalName,
 ) -> Result<bool, sqlx::Error> {
     sqlx::query_scalar(
@@ -270,10 +270,7 @@ pub async fn has_enabled_data_change(
 }
 
 /// Read the workflow rows displayed by the host's administration route.
-pub async fn list(
-    connection: &mut PgConnection,
-    app: &ApplicationConfig,
-) -> Result<Value, sqlx::Error> {
+pub async fn list(connection: &mut PgConnection, app: &AppConfig) -> Result<Value, sqlx::Error> {
     let rows: Vec<Value> = sqlx::query_scalar(
         "SELECT (to_jsonb(w) - ARRAY['env', 'app'])
             || jsonb_build_object('environment', w.env, 'application', w.app)
@@ -290,7 +287,7 @@ pub async fn list(
 /// Read ids for the enabled workflows that can receive a Request.
 pub async fn request_workflow_ids(
     connection: &mut PgConnection,
-    app: &ApplicationConfig,
+    app: &AppConfig,
 ) -> Result<Vec<String>, sqlx::Error> {
     sqlx::query_scalar(
         "SELECT workflow_id FROM catalog.workflow

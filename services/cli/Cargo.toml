@@ -40,7 +40,7 @@ rustls = { workspace = true, features = ["aws_lc_rs", "std", "tls12"] }
 # The control operations that the verbs call.
 wamn-release = { workspace = true }
 wamn-engine = { workspace = true, features = ["wasm_component_model_implements"] }
-wamn-environment = { workspace = true }
+wamn-env = { workspace = true }
 wamn-kubernetes.workspace = true
 wamn-platform-install.workspace = true
 # `wamn inspect` and `wamn diff` read verified package artifacts.

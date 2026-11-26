@@ -50,10 +50,8 @@ async fn file_reference_is_introspected_and_other_platform_keys_are_refused() {
         assert!(!attributes.get::<bool, _>(column));
     }
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        (include_str!(
-            "../../environment/tests/support/file_package/migrations/0001_documents.sql"
-        ))
-        .to_string(),
+        (include_str!("../../env/tests/support/file_package/migrations/0001_documents.sql"))
+            .to_string(),
     ))
     .execute(&mut client)
     .await

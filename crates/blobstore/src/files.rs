@@ -77,7 +77,7 @@ pub struct StagedFile {
 pub const FILE_PREFIX: &str = "_wamn_files/";
 /// Wait one minute beyond the longest invocation before removing uncommitted staging.
 pub const MIN_STAGING_AGE: Duration =
-    wamn_application::MAX_HOST_CALL_DURATION.saturating_add(Duration::from_mins(1));
+    wamn_app::MAX_HOST_CALL_DURATION.saturating_add(Duration::from_mins(1));
 
 /// One canonical live or staged object returned by the confined collector listing.
 #[derive(Debug)]
@@ -132,7 +132,7 @@ pub struct StoredFiles {
     bound: BoundContainer,
     signer: ObjectSigner,
     cdn_host: Option<url::Url>,
-    environment: wamn_registry::EnvName,
+    env: wamn_registry::EnvName,
     deadline: tokio::time::Instant,
 }
 impl fmt::Debug for StoredFiles {
@@ -144,8 +144,8 @@ impl fmt::Debug for StoredFiles {
 }
 
 /// The live key stored in `platform.file.blob_key`.
-pub fn live_key(environment: &wamn_registry::EnvName, id: Uuid) -> String {
-    format!("{environment}/{FILE_PREFIX}live/{id}")
+pub fn live_key(env: &wamn_registry::EnvName, id: Uuid) -> String {
+    format!("{env}/{FILE_PREFIX}live/{id}")
 }
 fn staging_key(blob_key: &str) -> String {
     blob_key.replacen(
@@ -166,9 +166,9 @@ impl StoredFiles {
         &self,
     ) -> Result<BoxStream<'_, Result<FileObject, FileStorageError>>, FileStorageError> {
         self.permit("collect", true).await?;
-        let private = self.path(&format!("{}/{FILE_PREFIX}live", self.environment))?;
-        let public = self.path(&format!("{}/public/{FILE_PREFIX}live", self.environment))?;
-        let staged = self.path(&format!("{}/{FILE_PREFIX}staging", self.environment))?;
+        let private = self.path(&format!("{}/{FILE_PREFIX}live", self.env))?;
+        let public = self.path(&format!("{}/public/{FILE_PREFIX}live", self.env))?;
+        let staged = self.path(&format!("{}/{FILE_PREFIX}staging", self.env))?;
         Ok(futures_util::stream::iter([private, public, staged])
             .flat_map(move |prefix| {
                 let directory = format!("{}/", prefix.as_ref());
@@ -187,7 +187,7 @@ impl StoredFiles {
                         let object = if let Some(id) = parsed {
                             Some(FileObject {
                                 path: meta.location.into(),
-                                blob_key: live_key(&self.environment, id),
+                                blob_key: live_key(&self.env, id),
                                 last_modified: meta.last_modified.into(),
                             })
                         } else {
@@ -231,7 +231,7 @@ impl StoredFiles {
         let staged = self.path(&staging_key(&object.blob_key))?;
         if !object
             .blob_key
-            .starts_with(&format!("{}/{FILE_PREFIX}live/", self.environment))
+            .starts_with(&format!("{}/{FILE_PREFIX}live/", self.env))
             || (object.path != self.path(&object.blob_key)?
                 && object.path != self.path(&public_key(&object.blob_key))?
                 && object.path != staged)
@@ -282,14 +282,14 @@ impl StoredFiles {
         bound: BoundContainer,
         signer: ObjectSigner,
         cdn_host: Option<url::Url>,
-        environment: &wamn_registry::EnvName,
+        env: &wamn_registry::EnvName,
         deadline: tokio::time::Instant,
     ) -> Self {
         Self {
             bound,
             signer,
             cdn_host,
-            environment: environment.to_owned(),
+            env: env.to_owned(),
             deadline,
         }
     }
@@ -333,7 +333,7 @@ impl StoredFiles {
 
     fn path(&self, key: &str) -> Result<ObjectPath, FileStorageError> {
         let valid = key
-            .strip_prefix(&format!("{}/", self.environment))
+            .strip_prefix(&format!("{}/", self.env))
             .is_some_and(|key| {
                 [FILE_PREFIX, &format!("public/{FILE_PREFIX}")]
                     .iter()
@@ -360,7 +360,7 @@ impl StoredFiles {
     ) -> Result<StagedFile, FileStorageError> {
         self.run("stage", async {
             self.permit("put", true).await?;
-            let path = self.path(&staging_key(&live_key(&self.environment, id)))?;
+            let path = self.path(&staging_key(&live_key(&self.env, id)))?;
             // Server-side copies retain this attribute, including the public copy.
             let cache_control = "max-age=3600";
             let mut upload = self
@@ -415,7 +415,7 @@ impl StoredFiles {
             }
             Ok(StagedFile {
                 id,
-                blob_key: live_key(&self.environment, id),
+                blob_key: live_key(&self.env, id),
                 size,
                 sha256: wamn_digest::Digest::from(hash.finalize()),
             })
@@ -490,7 +490,7 @@ impl StoredFiles {
     pub async fn finish(&self, id: Uuid) -> Result<(), FileStorageError> {
         self.run("finish", async {
             self.permit("put", true).await?;
-            self.repair(&live_key(&self.environment, id)).await
+            self.repair(&live_key(&self.env, id)).await
         })
         .await
     }
@@ -603,7 +603,7 @@ mod tests {
                 ObjectSigner::new(Arc::new(RecordingSigner::default())),
                 cdn.map(|host| url::Url::parse(&format!("https://{host}")).unwrap()),
                 &"dev".parse().unwrap(),
-                tokio::time::Instant::now() + wamn_application::MAX_HOST_CALL_DURATION,
+                tokio::time::Instant::now() + wamn_app::MAX_HOST_CALL_DURATION,
             ),
             backend,
         )
@@ -782,10 +782,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn collection_refuses_objects_from_another_environment_on_the_same_store() {
+    async fn collection_refuses_objects_from_another_env_on_the_same_store() {
         let (files, backend) = store(false, None);
         let other = StoredFiles {
-            environment: "prod".parse().unwrap(),
+            env: "prod".parse().unwrap(),
             ..files.clone()
         };
         let id = Uuid::new_v4();
@@ -1202,7 +1202,7 @@ mod tests {
                 ObjectSigner::new(Arc::new(RecordingSigner::default())),
                 Some(url::Url::parse("https://cdn.example.com").unwrap()),
                 &"dev".parse().unwrap(),
-                tokio::time::Instant::now() + wamn_application::MAX_HOST_CALL_DURATION,
+                tokio::time::Instant::now() + wamn_app::MAX_HOST_CALL_DURATION,
             );
             let id = Uuid::new_v4();
             let live = files.path(&live_key(&"dev".parse().unwrap(), id)).unwrap();
@@ -1283,7 +1283,7 @@ mod tests {
             ObjectSigner::new(Arc::<RecordingSigner>::clone(&signer)),
             Some(url::Url::parse("https://cdn.example.com").unwrap()),
             &"dev".parse().unwrap(),
-            tokio::time::Instant::now() + wamn_application::MAX_HOST_CALL_DURATION,
+            tokio::time::Instant::now() + wamn_app::MAX_HOST_CALL_DURATION,
         );
         let id = Uuid::new_v4();
         assert_eq!(

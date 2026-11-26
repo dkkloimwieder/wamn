@@ -15,7 +15,7 @@ wash_runtime::wasmtime::component::bindgen!({
     imports: { default: async | trappable | tracing },
     with: {
         "wamn:node/types": crate::operation::node_types,
-        "wamn:ingress/routing.authenticated-caller": wamn_application::ingress::AuthenticatedCaller,
+        "wamn:ingress/routing.authenticated-caller": wamn_app::ingress::AuthenticatedCaller,
     },
     wasmtime_crate: wash_runtime::wasmtime,
 });

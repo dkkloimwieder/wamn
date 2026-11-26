@@ -11,9 +11,9 @@ use wash_runtime::plugin::HostPlugin;
 use wash_runtime::wit::WitWorld;
 
 use crate::invocation_trace::InvocationTrace;
-use wamn_application::MAX_HOST_CALL_DURATION;
-use wamn_application::ingress::RouteProvider;
-use wamn_application::invocation_authority::InvocationAuthority;
+use wamn_app::MAX_HOST_CALL_DURATION;
+use wamn_app::ingress::RouteProvider;
+use wamn_app::invocation_authority::InvocationAuthority;
 
 pub const INVOCATION_SCOPES_ID: &str = "wamn:invocation-scopes";
 
@@ -78,7 +78,7 @@ impl InvocationExecution {
 }
 
 #[async_trait::async_trait]
-impl wamn_application::InvocationLifetime for InvocationExecution {
+impl wamn_app::InvocationLifetime for InvocationExecution {
     fn deadline(&self) -> std::time::Instant {
         self.deadline().into_std()
     }

@@ -2,7 +2,7 @@
 
 use anyhow::Context as _;
 use serde_json::{Value, json};
-pub(crate) use wamn_environment::environment::worker::{Operation, Request};
+pub(crate) use wamn_env::env::worker::{Operation, Request};
 use wamn_identity_protocol::PrincipalId;
 use wamn_kubernetes::client::KubernetesApi;
 use wamn_routes::HostAttachment;
@@ -28,7 +28,7 @@ impl ControlRoutes<'_> {
         command: Option<&crate::platform_event::Command>,
     ) -> Result<Value, Refusal> {
         let request: Request = serde_json::from_str(payload).map_err(|_| invalid("value"))?;
-        let coordinate = wamn_environment::environment_names::environment_resource_name(
+        let coordinate = wamn_env::env_names::project_env_resource_name(
             self.org,
             &request.project,
             &request.env,
@@ -53,7 +53,7 @@ impl ControlRoutes<'_> {
             request.project.clone(),
         );
         if operation.is_some()
-            && wamn_environment::registry::configuration::read(&mut transaction, &triple)
+            && wamn_env::registry::configuration::read(&mut transaction, &triple)
                 .await?
                 .is_none()
         {

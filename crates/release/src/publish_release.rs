@@ -1,6 +1,6 @@
 pub(super) mod plan;
 pub use plan::{
-    application_dependency_permissions, composes_integration, deploy_runtime_schema, parse_package,
+    app_dependency_permissions, composes_integration, deploy_runtime_schema, parse_package,
 };
 use plan::{pin_runtime_schemas, project_components, project_routes, validate_request};
 
@@ -34,18 +34,18 @@ pub use package_sources::{package_route, route_contracts};
 pub struct PublishReleaseManifest<'a> {
     pub org: &'a wamn_registry::OrgId,
     pub project: &'a wamn_registry::ProjectId,
-    pub environment: &'a wamn_registry::EnvName,
+    pub env: &'a wamn_registry::EnvName,
     pub packages: &'a BTreeSet<PackageCoordinate>,
     pub attachments: &'a BTreeMap<wamn_package::canonical_name::CanonicalName, ServingAttachment>,
     /// Local development can use rebuilt dependencies after target validation.
     /// Published construction always requires the declared dependency digests.
-    pub environment_is_disposable: bool,
+    pub env_is_disposable: bool,
 }
 
 impl PublishReleaseManifest<'_> {
     /// The composed environment key derived from the environment coordinate.
     pub fn project_env_key(&self) -> wamn_registry::ProjectEnvKey {
-        wamn_registry::project_env_key(self.org, self.project, self.environment)
+        wamn_registry::project_env_key(self.org, self.project, self.env)
     }
 }
 
@@ -68,7 +68,7 @@ pub enum DependencyDigestRule {
 
 impl DependencyDigestRule {
     /// The rule a target's projected environment marker selects.
-    pub const fn for_environment(disposable: bool) -> Self {
+    pub const fn for_env(disposable: bool) -> Self {
         if disposable {
             Self::Built
         } else {
@@ -227,7 +227,7 @@ pub struct PublishReleaseRequest {
     pub org: wamn_registry::OrgId,
     pub project: wamn_registry::ProjectId,
     /// Environment the release is published for.
-    pub environment: wamn_registry::EnvName,
+    pub env: wamn_registry::EnvName,
     /// Available exact coordinates for the declared application packages.
     pub packages: Vec<PackageCoordinate>,
 }
@@ -235,7 +235,7 @@ pub struct PublishReleaseRequest {
 impl PublishReleaseRequest {
     /// The composed environment key derived from the environment coordinate.
     pub fn project_env_key(&self) -> wamn_registry::ProjectEnvKey {
-        wamn_registry::project_env_key(&self.org, &self.project, &self.environment)
+        wamn_registry::project_env_key(&self.org, &self.project, &self.env)
     }
 }
 
@@ -243,7 +243,7 @@ impl PublishReleaseRequest {
 pub fn deployment_routes(
     packages: &BTreeMap<wamn_package::PackageName, wamn_component_policy::PackageManifest>,
     contracts: &RouteContracts,
-    application: &wamn_registry::ApplicationName,
+    app: &wamn_registry::AppName,
     digest: &wamn_digest::Digest,
 ) -> anyhow::Result<Vec<wamn_routes::http_route_data::RouteDefinition>> {
     let documents = packages
@@ -263,7 +263,7 @@ pub fn deployment_routes(
         .collect::<anyhow::Result<Vec<_>>>()?;
     let attachments = merge_package_attachment_documents(documents)?;
     let attachments = attachments::plan::resolve_owned_route_methods(attachments, contracts)?;
-    let workflow_prefix = wamn_routes::workflow_http_prefix(application);
+    let workflow_prefix = wamn_routes::workflow_http_prefix(app);
     let mut routes = Vec::with_capacity(attachments.len());
     for (id, attachment) in attachments {
         if !matches!(
@@ -360,10 +360,10 @@ pub fn assemble_release(
     let request = PublishReleaseManifest {
         org: &args.org,
         project: &args.project,
-        environment: &args.environment,
+        env: &args.env,
         packages: &packages,
         attachments: &attachments,
-        environment_is_disposable: true,
+        env_is_disposable: true,
     };
     let mut release_components = ReleaseComponents::default();
     for admission in admissions {
@@ -449,7 +449,7 @@ pub fn publish_release_with_package_manifests(
         attachments: route_attachments,
         // Every application release serves the fixed application administration
         // routes (docs/architecture/execution.md#host-run-routes).
-        host_routes: BTreeSet::from([wamn_routes::HostRouteSet::Application]),
+        host_routes: BTreeSet::from([wamn_routes::HostRouteSet::App]),
     };
     seal_release(&projected)
 }
@@ -591,13 +591,13 @@ fn validate_release_package_manifests(
 
 #[cfg(test)]
 mod tests {
-    use super::plan::application_runtime_schema;
+    use super::plan::app_runtime_schema;
     use super::*;
     use crate::test_support::closure_component;
     use wamn_test_infrastructure::publish::source_manifest;
 
     #[test]
-    fn one_application_release_has_one_digest_across_environments() {
+    fn one_app_release_has_one_digest_across_envs() {
         let manifest = source_manifest();
         let packages = BTreeSet::from([PackageCoordinate::new(
             manifest.package.id.clone(),
@@ -606,14 +606,14 @@ mod tests {
         .unwrap()]);
         let manifests: BTreeMap<wamn_package::PackageName, wamn_component_policy::PackageManifest> =
             BTreeMap::from([(manifest.package.id.clone(), manifest)]);
-        let publish = |environment| {
+        let publish = |env| {
             let request = PublishReleaseManifest {
                 org: &"acme".parse().unwrap(),
                 project: &"apps".parse().unwrap(),
-                environment,
+                env,
                 packages: &packages,
                 attachments: &BTreeMap::new(),
-                environment_is_disposable: false,
+                env_is_disposable: false,
             };
             let mut component = closure_component("source_fixture", None);
             component.target.package_id = "source_fixture".parse().unwrap();
@@ -1043,36 +1043,36 @@ mod tests {
     }
 
     #[test]
-    fn runtime_schema_follows_relations_instead_of_the_application_name() {
+    fn runtime_schema_follows_relations_instead_of_the_app_name() {
         let mut manifest = source_manifest();
         manifest.custom_operations.clear();
         manifest.internal_relations.clear();
         for model in manifest.models.values_mut() {
             model.schema = "own_schema".parse().unwrap();
         }
-        application_runtime_schema(&manifest, &BTreeMap::new(), &BTreeSet::new()).unwrap();
+        app_runtime_schema(&manifest, &BTreeMap::new(), &BTreeSet::new()).unwrap();
         for model in manifest.models.values_mut() {
             model.schema = "base_schema".parse().unwrap();
             model.owner = "base_package".parse().unwrap();
         }
-        application_runtime_schema(&manifest, &BTreeMap::new(), &BTreeSet::new()).unwrap();
+        app_runtime_schema(&manifest, &BTreeMap::new(), &BTreeSet::new()).unwrap();
         let mut extra = manifest.models.values().next().unwrap().clone();
         extra.schema = "other_schema".parse().unwrap();
         manifest.models.insert("other".parse().unwrap(), extra);
-        assert!(application_runtime_schema(&manifest, &BTreeMap::new(), &BTreeSet::new()).is_err());
+        assert!(app_runtime_schema(&manifest, &BTreeMap::new(), &BTreeSet::new()).is_err());
     }
 
     /// The rule is selected by the projected environment marker and by nothing
     /// else. wamn-10yt.38 writes that marker; this pins the mapping so an
     /// operator switch cannot be added without failing here.
     #[test]
-    fn the_projected_environment_marker_selects_the_dependency_rule() {
+    fn the_projected_env_marker_selects_the_dependency_rule() {
         assert_eq!(
-            DependencyDigestRule::for_environment(false),
+            DependencyDigestRule::for_env(false),
             DependencyDigestRule::Declared
         );
         assert_eq!(
-            DependencyDigestRule::for_environment(true),
+            DependencyDigestRule::for_env(true),
             DependencyDigestRule::Built
         );
         assert!(DependencyDigestRule::Declared.matches_declared_digest());

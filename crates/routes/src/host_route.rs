@@ -10,30 +10,28 @@
 //! native package identity and route prefixes, as a generated package route does.
 
 use crate::host_wire::{
-    ApiServiceCreateRequest, ApiServiceCreateResult, ApplicationDeployRequest,
-    ApplicationDeployResult, ApplicationRollbackRequest, ApplicationStopRequest,
-    ApplicationUserListResult, CaptureGapCloseRequest, ConnectionAuthorizeRequest,
-    ConnectionAuthorizeResult, ConnectionCopyRequest, ConnectionDeleteResult, ConnectionGetResult,
-    ConnectionListResult, ConnectionSetCredentialRequest, ConnectionSummary, ConnectionTest,
-    ConnectionTestRequest, ConnectionWriteRequest, ControlMineRequest, ControlMineResult,
-    DeclaredRefusal, Empty, EnvironmentConfigureRequest, EnvironmentDeleteRequest,
-    EnvironmentListRequest, EnvironmentListResult, EnvironmentOperationStatusRequest,
-    EnvironmentOperationStatusResult, EnvironmentRequest, EnvironmentStatus,
-    EnvironmentStatusResult, ExternalSystemDeleteResult, ExternalSystemListResult,
-    FileDeleteRequest, FileDeleteResult, FileExposeRequest, FileExposeResult, FileGetRequest,
-    FilePutRequest, IntegrationTypeListRequest, IntegrationTypeListResult, MemberGrantRequest,
-    MemberGrantResult, MemberListRequest, MemberListResult, NumberCounterSetRequest,
-    NumberCounterSetResult, OrgAdminGrantRequest, OrgAdminGrantResult, PatIssueRequest,
-    PatListRequest, PatListResult, PatRevokeRequest, PermissionGrantRequest, PermissionGrantResult,
-    PermissionListRequest, PermissionListResult, PermissionMineResult, PermissionRevokeResult,
-    PlatformSchemaRequest, ProjectAdminGrantRequest, ProjectAdminGrantResult, ProjectCreateRequest,
-    ProjectCreated, ProjectListResult, ProjectRequest, ProjectStatus, RoleCreateResult,
-    RoleDeleteResult, RoleListResult, SchemaDiffRequest, ServicePrincipalCreateRequest,
-    ServicePrincipalCreateResult, ServicePrincipalDisableResult, UserActivateResult,
-    UserCreateRequest, UserCreateResult, UserInviteRequest, UserInviteResult, UserListResult,
-    UserRoleGrantRequest, UserRoleGrantResult, UserRoleRevokeResult, WorkflowAuthorRequest,
-    WorkflowAuthorResult, WorkflowDisableRequest, WorkflowRunRequest, WorkflowRunResult, schema,
-    schemas,
+    ApiServiceCreateRequest, ApiServiceCreateResult, AppDeployRequest, AppDeployResult,
+    AppRollbackRequest, AppStopRequest, AppUserListResult, CaptureGapCloseRequest,
+    ConnectionAuthorizeRequest, ConnectionAuthorizeResult, ConnectionCopyRequest,
+    ConnectionDeleteResult, ConnectionGetResult, ConnectionListResult,
+    ConnectionSetCredentialRequest, ConnectionSummary, ConnectionTest, ConnectionTestRequest,
+    ConnectionWriteRequest, ControlMineRequest, ControlMineResult, DeclaredRefusal, Empty,
+    EnvConfigureRequest, EnvDeleteRequest, EnvListRequest, EnvListResult,
+    EnvOperationStatusRequest, EnvOperationStatusResult, EnvRequest, EnvStatus, EnvStatusResult,
+    ExternalSystemDeleteResult, ExternalSystemListResult, FileDeleteRequest, FileDeleteResult,
+    FileExposeRequest, FileExposeResult, FileGetRequest, FilePutRequest,
+    IntegrationTypeListRequest, IntegrationTypeListResult, MemberGrantRequest, MemberGrantResult,
+    MemberListRequest, MemberListResult, NumberCounterSetRequest, NumberCounterSetResult,
+    OrgAdminGrantRequest, OrgAdminGrantResult, PatIssueRequest, PatListRequest, PatListResult,
+    PatRevokeRequest, PermissionGrantRequest, PermissionGrantResult, PermissionListRequest,
+    PermissionListResult, PermissionMineResult, PermissionRevokeResult, PlatformSchemaRequest,
+    ProjectAdminGrantRequest, ProjectAdminGrantResult, ProjectCreateRequest, ProjectCreated,
+    ProjectListResult, ProjectRequest, ProjectStatus, RoleCreateResult, RoleDeleteResult,
+    RoleListResult, SchemaDiffRequest, ServicePrincipalCreateRequest, ServicePrincipalCreateResult,
+    ServicePrincipalDisableResult, UserActivateResult, UserCreateRequest, UserCreateResult,
+    UserInviteRequest, UserInviteResult, UserListResult, UserRoleGrantRequest, UserRoleGrantResult,
+    UserRoleRevokeResult, WorkflowAuthorRequest, WorkflowAuthorResult, WorkflowDisableRequest,
+    WorkflowRunRequest, WorkflowRunResult, schema, schemas,
 };
 use crate::{route_attachment_id, route_path};
 use RefusalSource::{MalformedInput, PermissionDenied, TransactionInvariant};
@@ -103,7 +101,7 @@ pub enum HostRouteSet {
     /// The application administration contract, served under every
     /// application audience against that environment's database.
     #[serde(rename = "application")]
-    Application,
+    App,
     /// The org and project administration contract of the control serving
     /// root.
     #[serde(rename = "control")]
@@ -123,7 +121,7 @@ pub enum HostHandler {
     PermissionMine,
     /// The user rows of the application
     /// (docs/architecture/execution.md#host-run-routes).
-    ApplicationUserList,
+    AppUserList,
     /// The roles of the application.
     RoleList,
     /// Create one empty authored role.
@@ -164,11 +162,11 @@ pub enum HostHandler {
     OrgAdminRevoke,
     /// The environments of one project
     /// (docs/architecture/execution.md#host-run-routes).
-    EnvironmentList,
+    EnvList,
     /// The current state of one environment in its release namespace: the
     /// digest, the rollout, the workload conditions and the live set
     /// (docs/architecture/execution.md#host-run-routes).
-    EnvironmentStatus,
+    EnvStatus,
     /// The users with a membership or `project-admin` in one project.
     MemberList,
     /// Grant a membership of one environment to an active org member.
@@ -184,9 +182,9 @@ pub enum HostHandler {
     /// (docs/architecture/execution.md#host-run-routes).
     /// Make one environment active
     /// (docs/architecture/execution.md#host-run-routes).
-    EnvironmentActivate,
+    EnvActivate,
     /// Make one environment inactive.
-    EnvironmentInactivate,
+    EnvInactivate,
     /// Make every environment of one project active.
     ProjectActivate,
     /// Make every environment of one project inactive.
@@ -274,7 +272,7 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Command,
         authority: HostRouteAuthority::OrgAdmin,
         handler: HostHandler::ControlExecution,
-        schemas: schemas::<EnvironmentConfigureRequest, ApplicationDeployResult>,
+        schemas: schemas::<EnvConfigureRequest, AppDeployResult>,
         write_transaction: false,
         refusals: &[
             TransactionInvariant("environment_not_found", None),
@@ -289,7 +287,7 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Command,
         authority: HostRouteAuthority::ProjectAdmin,
         handler: HostHandler::ControlExecution,
-        schemas: schemas::<EnvironmentDeleteRequest, ApplicationDeployResult>,
+        schemas: schemas::<EnvDeleteRequest, AppDeployResult>,
         write_transaction: false,
         refusals: &[
             TransactionInvariant("environment_not_found", None),
@@ -304,7 +302,7 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Get,
         authority: HostRouteAuthority::ProjectAdmin,
         handler: HostHandler::ControlExecution,
-        schemas: schemas::<EnvironmentOperationStatusRequest, EnvironmentOperationStatusResult>,
+        schemas: schemas::<EnvOperationStatusRequest, EnvOperationStatusResult>,
         write_transaction: false,
         refusals: &[
             TransactionInvariant("environment_not_found", None),
@@ -389,7 +387,7 @@ const ROUTES: &[HostRoute] = &[
         ],
     },
     HostRoute {
-        set: HostRouteSet::Application,
+        set: HostRouteSet::App,
         operation: "file.put",
         type_: OperationType::Command,
         authority: HostRouteAuthority::Granted,
@@ -407,7 +405,7 @@ const ROUTES: &[HostRoute] = &[
         ],
     },
     HostRoute {
-        set: HostRouteSet::Application,
+        set: HostRouteSet::App,
         operation: "file.get",
         type_: OperationType::Get,
         authority: HostRouteAuthority::Granted,
@@ -425,7 +423,7 @@ const ROUTES: &[HostRoute] = &[
         ],
     },
     HostRoute {
-        set: HostRouteSet::Application,
+        set: HostRouteSet::App,
         operation: "file.delete",
         type_: OperationType::Command,
         authority: HostRouteAuthority::Granted,
@@ -443,7 +441,7 @@ const ROUTES: &[HostRoute] = &[
         ],
     },
     HostRoute {
-        set: HostRouteSet::Application,
+        set: HostRouteSet::App,
         operation: "file.expose",
         type_: OperationType::Command,
         authority: HostRouteAuthority::Granted,
@@ -466,7 +464,7 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Command,
         authority: HostRouteAuthority::ProjectAdmin,
         handler: HostHandler::OperationJob,
-        schemas: schemas::<CaptureGapCloseRequest, ApplicationDeployResult>,
+        schemas: schemas::<CaptureGapCloseRequest, AppDeployResult>,
         write_transaction: false,
         refusals: &[
             TransactionInvariant("environment_not_found", None),
@@ -481,7 +479,7 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Command,
         authority: HostRouteAuthority::ProjectAdmin,
         handler: HostHandler::OperationJob,
-        schemas: schemas::<CaptureGapCloseRequest, ApplicationDeployResult>,
+        schemas: schemas::<CaptureGapCloseRequest, AppDeployResult>,
         write_transaction: false,
         refusals: &[
             TransactionInvariant("environment_not_found", None),
@@ -496,7 +494,7 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Command,
         authority: HostRouteAuthority::OrgAdmin,
         handler: HostHandler::ControlExecution,
-        schemas: schemas::<PlatformSchemaRequest, ApplicationDeployResult>,
+        schemas: schemas::<PlatformSchemaRequest, AppDeployResult>,
         write_transaction: false,
         refusals: &[
             TransactionInvariant("environment_not_found", None),
@@ -511,7 +509,7 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Get,
         authority: HostRouteAuthority::OrgAdmin,
         handler: HostHandler::ControlExecution,
-        schemas: schemas::<ApplicationDeployResult, EnvironmentOperationStatusResult>,
+        schemas: schemas::<AppDeployResult, EnvOperationStatusResult>,
         write_transaction: false,
         refusals: &[
             TransactionInvariant("environment_not_found", None),
@@ -541,7 +539,7 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Command,
         authority: HostRouteAuthority::ProjectAdmin,
         handler: HostHandler::OperationJob,
-        schemas: schemas::<ApplicationStopRequest, ApplicationDeployResult>,
+        schemas: schemas::<AppStopRequest, AppDeployResult>,
         write_transaction: false,
         refusals: &[
             TransactionInvariant("environment_not_found", None),
@@ -556,7 +554,7 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Command,
         authority: HostRouteAuthority::ProjectAdmin,
         handler: HostHandler::OperationJob,
-        schemas: schemas::<ApplicationDeployRequest, ApplicationDeployResult>,
+        schemas: schemas::<AppDeployRequest, AppDeployResult>,
         write_transaction: false,
         refusals: &[
             TransactionInvariant("environment_not_found", None),
@@ -571,7 +569,7 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Command,
         authority: HostRouteAuthority::ProjectAdmin,
         handler: HostHandler::OperationJob,
-        schemas: schemas::<ApplicationRollbackRequest, ApplicationDeployResult>,
+        schemas: schemas::<AppRollbackRequest, AppDeployResult>,
         write_transaction: false,
         refusals: &[
             TransactionInvariant("environment_not_found", None),
@@ -586,7 +584,7 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Command,
         authority: HostRouteAuthority::ProjectAdmin,
         handler: HostHandler::OperationJob,
-        schemas: schemas::<SchemaDiffRequest, ApplicationDeployResult>,
+        schemas: schemas::<SchemaDiffRequest, AppDeployResult>,
         write_transaction: false,
         refusals: &[
             TransactionInvariant("environment_not_found", None),
@@ -601,7 +599,7 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Command,
         authority: HostRouteAuthority::ProjectAdmin,
         handler: HostHandler::OperationJob,
-        schemas: schemas::<ApplicationDeployRequest, ApplicationDeployResult>,
+        schemas: schemas::<AppDeployRequest, AppDeployResult>,
         write_transaction: false,
         refusals: &[
             TransactionInvariant("environment_not_found", None),
@@ -616,7 +614,7 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Command,
         authority: HostRouteAuthority::ProjectAdmin,
         handler: HostHandler::OperationJob,
-        schemas: schemas::<CaptureGapCloseRequest, ApplicationDeployResult>,
+        schemas: schemas::<CaptureGapCloseRequest, AppDeployResult>,
         write_transaction: false,
         refusals: &[
             TransactionInvariant("environment_not_found", None),
@@ -631,7 +629,7 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Get,
         authority: HostRouteAuthority::ProjectAdmin,
         handler: HostHandler::OperationJob,
-        schemas: schemas::<EnvironmentOperationStatusRequest, EnvironmentOperationStatusResult>,
+        schemas: schemas::<EnvOperationStatusRequest, EnvOperationStatusResult>,
         write_transaction: true,
         refusals: &[
             TransactionInvariant("environment_not_found", None),
@@ -996,7 +994,7 @@ const ROUTES: &[HostRoute] = &[
         ],
     },
     HostRoute {
-        set: HostRouteSet::Application,
+        set: HostRouteSet::App,
         operation: "permission.mine",
         type_: OperationType::Get,
         authority: HostRouteAuthority::Member,
@@ -1006,17 +1004,17 @@ const ROUTES: &[HostRoute] = &[
         refusals: &[PermissionDenied],
     },
     HostRoute {
-        set: HostRouteSet::Application,
+        set: HostRouteSet::App,
         operation: "user.list",
         type_: OperationType::Get,
         authority: HostRouteAuthority::Admin,
-        handler: HostHandler::ApplicationUserList,
-        schemas: schemas::<Empty, ApplicationUserListResult>,
+        handler: HostHandler::AppUserList,
+        schemas: schemas::<Empty, AppUserListResult>,
         write_transaction: false,
         refusals: &[PermissionDenied],
     },
     HostRoute {
-        set: HostRouteSet::Application,
+        set: HostRouteSet::App,
         operation: "role.list",
         type_: OperationType::Get,
         authority: HostRouteAuthority::Admin,
@@ -1026,7 +1024,7 @@ const ROUTES: &[HostRoute] = &[
         refusals: &[PermissionDenied],
     },
     HostRoute {
-        set: HostRouteSet::Application,
+        set: HostRouteSet::App,
         operation: "role.create",
         type_: OperationType::Command,
         authority: HostRouteAuthority::Admin,
@@ -1045,7 +1043,7 @@ const ROUTES: &[HostRoute] = &[
         ],
     },
     HostRoute {
-        set: HostRouteSet::Application,
+        set: HostRouteSet::App,
         operation: "role.delete",
         type_: OperationType::Command,
         authority: HostRouteAuthority::Admin,
@@ -1064,7 +1062,7 @@ const ROUTES: &[HostRoute] = &[
         ],
     },
     HostRoute {
-        set: HostRouteSet::Application,
+        set: HostRouteSet::App,
         operation: "permission.list",
         type_: OperationType::Get,
         authority: HostRouteAuthority::Admin,
@@ -1078,7 +1076,7 @@ const ROUTES: &[HostRoute] = &[
         ],
     },
     HostRoute {
-        set: HostRouteSet::Application,
+        set: HostRouteSet::App,
         operation: "permission.grant",
         type_: OperationType::Command,
         authority: HostRouteAuthority::Admin,
@@ -1106,7 +1104,7 @@ const ROUTES: &[HostRoute] = &[
         ],
     },
     HostRoute {
-        set: HostRouteSet::Application,
+        set: HostRouteSet::App,
         operation: "permission.revoke",
         type_: OperationType::Command,
         authority: HostRouteAuthority::Admin,
@@ -1124,7 +1122,7 @@ const ROUTES: &[HostRoute] = &[
         ],
     },
     HostRoute {
-        set: HostRouteSet::Application,
+        set: HostRouteSet::App,
         operation: "user_role.grant",
         type_: OperationType::Command,
         authority: HostRouteAuthority::Admin,
@@ -1139,7 +1137,7 @@ const ROUTES: &[HostRoute] = &[
         ],
     },
     HostRoute {
-        set: HostRouteSet::Application,
+        set: HostRouteSet::App,
         operation: "user_role.revoke",
         type_: OperationType::Command,
         authority: HostRouteAuthority::Admin,
@@ -1159,7 +1157,7 @@ const ROUTES: &[HostRoute] = &[
         ],
     },
     HostRoute {
-        set: HostRouteSet::Application,
+        set: HostRouteSet::App,
         operation: "number_counter.set",
         type_: OperationType::Command,
         authority: HostRouteAuthority::Granted,
@@ -1188,7 +1186,7 @@ const ROUTES: &[HostRoute] = &[
         ],
     },
     HostRoute {
-        set: HostRouteSet::Application,
+        set: HostRouteSet::App,
         operation: "workflow.author",
         type_: OperationType::Command,
         authority: HostRouteAuthority::Admin,
@@ -1204,7 +1202,7 @@ const ROUTES: &[HostRoute] = &[
         ],
     },
     HostRoute {
-        set: HostRouteSet::Application,
+        set: HostRouteSet::App,
         operation: "workflow.enable",
         type_: OperationType::Command,
         authority: HostRouteAuthority::Admin,
@@ -1220,7 +1218,7 @@ const ROUTES: &[HostRoute] = &[
         ],
     },
     HostRoute {
-        set: HostRouteSet::Application,
+        set: HostRouteSet::App,
         operation: "workflow.disable",
         type_: OperationType::Command,
         authority: HostRouteAuthority::Admin,
@@ -1235,7 +1233,7 @@ const ROUTES: &[HostRoute] = &[
         ],
     },
     HostRoute {
-        set: HostRouteSet::Application,
+        set: HostRouteSet::App,
         operation: "workflow.list",
         type_: OperationType::Get,
         authority: HostRouteAuthority::Admin,
@@ -1245,7 +1243,7 @@ const ROUTES: &[HostRoute] = &[
         refusals: &[MalformedInput("invalid_input", None), PermissionDenied],
     },
     HostRoute {
-        set: HostRouteSet::Application,
+        set: HostRouteSet::App,
         operation: "workflow.run",
         type_: OperationType::Command,
         authority: HostRouteAuthority::Admin,
@@ -1453,8 +1451,8 @@ const ROUTES: &[HostRoute] = &[
         operation: "environment.list",
         type_: OperationType::Get,
         authority: HostRouteAuthority::ProjectAdmin,
-        handler: HostHandler::EnvironmentList,
-        schemas: schemas::<EnvironmentListRequest, EnvironmentListResult>,
+        handler: HostHandler::EnvList,
+        schemas: schemas::<EnvListRequest, EnvListResult>,
         write_transaction: false,
         refusals: &[MalformedInput("invalid_input", None), PermissionDenied],
     },
@@ -1463,8 +1461,8 @@ const ROUTES: &[HostRoute] = &[
         operation: "environment.status",
         type_: OperationType::Get,
         authority: HostRouteAuthority::ProjectAdmin,
-        handler: HostHandler::EnvironmentStatus,
-        schemas: schemas::<EnvironmentRequest, EnvironmentStatusResult>,
+        handler: HostHandler::EnvStatus,
+        schemas: schemas::<EnvRequest, EnvStatusResult>,
         write_transaction: false,
         refusals: &[
             TransactionInvariant(
@@ -1596,8 +1594,8 @@ const ROUTES: &[HostRoute] = &[
         operation: "environment.activate",
         type_: OperationType::Command,
         authority: HostRouteAuthority::OrgAdmin,
-        handler: HostHandler::EnvironmentActivate,
-        schemas: schemas::<EnvironmentRequest, EnvironmentStatus>,
+        handler: HostHandler::EnvActivate,
+        schemas: schemas::<EnvRequest, EnvStatus>,
         write_transaction: false,
         refusals: &[
             TransactionInvariant(
@@ -1619,8 +1617,8 @@ const ROUTES: &[HostRoute] = &[
         operation: "environment.inactivate",
         type_: OperationType::Command,
         authority: HostRouteAuthority::OrgAdmin,
-        handler: HostHandler::EnvironmentInactivate,
-        schemas: schemas::<EnvironmentRequest, EnvironmentStatus>,
+        handler: HostHandler::EnvInactivate,
+        schemas: schemas::<EnvRequest, EnvStatus>,
         write_transaction: false,
         refusals: &[
             TransactionInvariant(
@@ -1754,7 +1752,7 @@ static ATTACHMENTS: LazyLock<BTreeMap<(HostRouteSet, CanonicalName), HostAttachm
                 .expect("fixed registered host operation");
                 let method = if route.type_.is_read() { "GET" } else { "POST" };
                 let modes = match route.set {
-                    HostRouteSet::Application => {
+                    HostRouteSet::App => {
                         json!([PAT_AUTHENTICATION_MODE, SESSION_AUTHENTICATION_MODE])
                     }
                     // A control audience is for browser sessions only.
@@ -1894,21 +1892,21 @@ mod tests {
 
     #[test]
     fn host_routes_derive_their_ids_from_the_native_package_identity() {
-        let application = HostRouteSet::Application
+        let app = HostRouteSet::App
             .attachment(&"wamn-control-permission-mine-http".parse().unwrap())
             .expect("permission.mine is an application host route");
         assert_eq!(
-            application.operation,
+            app.operation,
             "wamn-control:permission/mine@0.9.0".parse().unwrap()
         );
-        assert_eq!(application.reference, "wamn-control:permission/mine");
-        assert_eq!(application.registered_operation(), None);
+        assert_eq!(app.reference, "wamn-control:permission/mine");
+        assert_eq!(app.registered_operation(), None);
         assert_eq!(
-            application.definition["route"]["path"],
+            app.definition["route"]["path"],
             "/wamn_control/permission/mine"
         );
         {
-            let observed = &(application.auth_policy);
+            let observed = &(app.auth_policy);
             assert_eq!(observed["modes"].as_array().expect("array").len(), 2);
             assert_eq!(observed["modes"][0], serde_json::json!("pat"));
             assert_eq!(observed["modes"][1], serde_json::json!("session"));
@@ -1927,7 +1925,7 @@ mod tests {
             assert_eq!(observed["modes"][0], serde_json::json!("session"));
         };
         assert!(
-            HostRouteSet::Application
+            HostRouteSet::App
                 .attachment(&"wamn-control-control-mine-http".parse().unwrap())
                 .is_none(),
             "an application release never serves a control route"
@@ -1937,13 +1935,13 @@ mod tests {
         assert!(is_host_route_operation("wamn-control:role/create@0.9.0"));
         assert!(!is_host_route_operation("wamn-receiving:receipt/get"));
 
-        let users = HostRouteSet::Application
+        let users = HostRouteSet::App
             .attachment(&"wamn-control-user-list-http".parse().unwrap())
             .expect("user.list is an application host route");
         let members = HostRouteSet::Control
             .attachment(&"wamn-control-user-list-http".parse().unwrap())
             .expect("user.list is a control host route");
-        assert_eq!(users.route.handler, HostHandler::ApplicationUserList);
+        assert_eq!(users.route.handler, HostHandler::AppUserList);
         assert_eq!(members.route.handler, HostHandler::UserList);
         assert_eq!(users.operation, members.operation);
         assert_eq!(
@@ -1952,7 +1950,7 @@ mod tests {
         );
         assert_eq!(host_route_path_prefix(), "/wamn_control/");
 
-        let counter = HostRouteSet::Application
+        let counter = HostRouteSet::App
             .attachment(&"wamn-control-number-counter-set-http".parse().unwrap())
             .expect("number_counter.set is an application host route");
         assert_eq!(counter.reference, "wamn-control:number-counter/set");
@@ -1974,7 +1972,7 @@ mod tests {
 
     #[test]
     fn file_operations_are_grantable_and_contracts_carry_no_bytes_or_signed_url_switch() {
-        for (id, route) in HostRouteSet::Application
+        for (id, route) in HostRouteSet::App
             .attachments()
             .filter(|(_, attachment)| attachment.route.operation.starts_with("file."))
         {

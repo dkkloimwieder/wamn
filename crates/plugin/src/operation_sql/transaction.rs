@@ -3,10 +3,10 @@
 use std::sync::{Arc, Mutex, atomic::AtomicU64};
 
 use sqlx::Statement as _;
-use wamn_application::database::{Claim, CommitFailure, SqlError, SqlRows, SqlValue};
+use wamn_app::database::{Claim, CommitFailure, SqlError, SqlRows, SqlValue};
 use wamn_event::Causation;
 use wamn_package::canonical_name::CanonicalName;
-use wamn_registry::ApplicationName;
+use wamn_registry::AppName;
 
 use wamn_postgres::{Object, destroy_connection};
 
@@ -126,7 +126,7 @@ impl Transaction {
 
     pub(crate) async fn counter_sequence(
         &self,
-        application: &ApplicationName,
+        app: &AppName,
         sequence: &str,
     ) -> Result<Option<(String, String)>, SqlError> {
         with_txn_conn(&self.state, &self.destroyed, |mut connection| async move {
@@ -137,7 +137,7 @@ impl Transaction {
                     sqlx::SqlSafeStr::into_sql_str("SELECT id::text, pattern FROM platform.number_sequence WHERE app = $1 AND name = $2"),
                 ).await?;
                 sqlx::query_as(statement.sql().clone())
-                    .bind(application.as_str())
+                    .bind(app.as_str())
                     .bind(sequence)
                     .fetch_optional(raw)
                     .await

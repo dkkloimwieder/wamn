@@ -167,7 +167,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn native_ingress_preserves_refusals_bind_transitions_and_application_404() {
+    async fn native_ingress_preserves_refusals_bind_transitions_and_app_404() {
         let (stop, stopping) = tokio::sync::watch::channel(false);
         let ingress = Ingress::new(
             expected_host_router(Some(HOST), stopping),

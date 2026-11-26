@@ -1,6 +1,6 @@
 //! Convert PostgreSQL errors to the application SQL contract.
 
-use wamn_application::database::SqlError;
+use wamn_app::database::SqlError;
 
 /// Keep the database message and constraint and omit row-bearing DETAIL and HINT.
 pub fn postgres_error_detail(error: &sqlx::Error) -> String {

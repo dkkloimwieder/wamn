@@ -12,7 +12,7 @@ use serde_json::Value;
 use wamn_http_client::HttpClient;
 use wamn_test_infrastructure::{containers::start_postgres, scratch::ScratchRoot};
 
-use common::{Environment, Org, run};
+use common::{Env, Org, run};
 
 const PACKAGE: &str = "platform_fixture";
 
@@ -54,16 +54,16 @@ common::journey! {
         );
         fs::write(&manifest, &authored)?;
 
-        let environment = org.apply(PACKAGE).await?;
+        let env = org.apply(PACKAGE).await?;
         let describe = start_postgres().await?;
-        let a = publish(&environment, &source, describe.admin_url()).await?;
-        let schemas_a = schemas(&environment, &a).await?;
+        let a = publish(&env, &source, describe.admin_url()).await?;
+        let schemas_a = schemas(&env, &a).await?;
         assert!(!schemas_a.is_empty(), "A must declare a publication schema");
 
-        let mut deploy = environment.org.command();
+        let mut deploy = env.org.command();
         deploy
             .args(["deploy", "--release", &a, "--application", PACKAGE, "--env"])
-            .arg(&environment.file);
+            .arg(&env.file);
         run(deploy).await?;
 
         fs::write(
@@ -83,14 +83,14 @@ common::journey! {
                 1,
             ),
         )?;
-        let b = publish(&environment, &source, describe.admin_url()).await?;
+        let b = publish(&env, &source, describe.admin_url()).await?;
         drop(describe);
-        let schemas_b = schemas(&environment, &b).await?;
+        let schemas_b = schemas(&env, &b).await?;
         assert!(
             schemas_a.is_subset(&schemas_b) && schemas_a != schemas_b,
             "B must add a publication schema"
         );
-        let outputs = &environment.org.cluster.outputs;
+        let outputs = &env.org.cluster.outputs;
         let (package_base, _) = wamn_registry::org_artifact_bases(&outputs.registry);
         let (registry, repository) = package_base.split_once('/').context("package repository")?;
         let tag = format!("{PACKAGE}-{version}");
@@ -115,18 +115,18 @@ common::journey! {
             b
         );
 
-        let mut project = environment.observe().await?;
+        let mut project = env.observe().await?;
         assert_eq!(installed_digest(&mut project.connection).await?, a);
         drop(project);
 
-        let mut apply = environment.org.command();
-        apply.args(["env", "apply"]).arg(&environment.file);
+        let mut apply = env.org.command();
+        apply.args(["env", "apply"]).arg(&env.file);
         run(apply).await?;
 
-        let mut project = environment.observe().await?;
+        let mut project = env.observe().await?;
         assert_eq!(installed_digest(&mut project.connection).await?, a);
-        let mut system = environment.org.cluster.observe_system().await?;
-        let triple = &environment.triple;
+        let mut system = env.org.cluster.observe_system().await?;
+        let triple = &env.triple;
         let (publication, stored): (String, Vec<String>) = sqlx::query_as(
             "SELECT publication, schema FROM registry.event_reader WHERE org = $1 AND project = $2 AND env = $3",
         )
@@ -181,18 +181,14 @@ async fn prepare_guest_workspace(repository: &Path, workspace: &Path) -> anyhow:
     Ok(())
 }
 
-async fn publish(
-    environment: &Environment,
-    source: &Path,
-    describe_url: &str,
-) -> anyhow::Result<String> {
-    let mut build = environment.org.command();
+async fn publish(env: &Env, source: &Path, describe_url: &str) -> anyhow::Result<String> {
+    let mut build = env.org.command();
     build
         .args(["build", "--refresh-describe"])
         .arg(source)
         .env("DATABASE_URL", describe_url);
     run(build).await?;
-    let mut publish = environment.org.command();
+    let mut publish = env.org.command();
     let workspace = source.parent().context("fixture workspace")?;
     publish
         .arg("publish")
@@ -200,10 +196,10 @@ async fn publish(
     Ok(run(publish).await?.trim().to_owned())
 }
 
-async fn schemas(environment: &Environment, digest: &str) -> anyhow::Result<BTreeSet<String>> {
-    let outputs = &environment.org.cluster.outputs;
+async fn schemas(env: &Env, digest: &str) -> anyhow::Result<BTreeSet<String>> {
+    let outputs = &env.org.cluster.outputs;
     let (package_base, _) = wamn_registry::org_artifact_bases(&outputs.registry);
-    let mut inspect = environment.org.command();
+    let mut inspect = env.org.command();
     inspect
         .args(["inspect", digest, "--insecure-registry", "--artifact-base"])
         .arg(package_base)

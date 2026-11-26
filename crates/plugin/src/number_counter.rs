@@ -23,13 +23,13 @@ use wamn_number_pattern::Policy;
 use crate::OperationHost;
 use crate::invocation::{AuthorizedInvocation, InvocationRequest};
 use crate::write_log::Claim;
-use wamn_application::ingress::AuthenticatedCaller;
-use wamn_application::session_identity::SessionIdentity;
+use wamn_app::ingress::AuthenticatedCaller;
+use wamn_app::session_identity::SessionIdentity;
 /// One set of one counter of a number sequence.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct CounterSet {
     /// The declared application that owns the sequence.
-    pub application: wamn_registry::ApplicationName,
+    pub application: wamn_registry::AppName,
     /// The sequence name.
     pub sequence: String,
     /// The counter name in the sequence's pattern.
@@ -170,7 +170,7 @@ pub async fn set_number_counter(
         project: Some(project.to_owned()),
         user_id: Some(*caller.principal_id()),
         operation: Some(operation.clone().into()),
-        application: Some(set.application.clone()),
+        app: Some(set.application.clone()),
         ..SessionIdentity::default()
     };
     let invocation = AuthorizedInvocation::enter(

@@ -8,10 +8,9 @@ use std::time::Duration;
 
 use anyhow::{Context as _, ensure};
 use common::host::{FIXTURE, fixture, ready, ready_host_pod};
-use common::request::{self, OtherEnvironment, until};
+use common::request::{self, OtherEnv, until};
 use common::{
-    Application, Cluster, Org, active_project_cluster, observe_project_cluster, probe_image,
-    run_job,
+    App, Cluster, Org, active_project_cluster, observe_project_cluster, probe_image, run_job,
 };
 use k8s_openapi::api::core::v1::{Container, Pod, PodSpec, PodTemplateSpec, Service};
 use k8s_openapi::api::discovery::v1::EndpointSlice;
@@ -56,14 +55,14 @@ exit 0
 "#;
 
 common::journey! {
-    async fn environments_in_one_org_are_isolated() -> anyhow::Result<()> {
-        let b = timeout(DEPLOY_DEADLINE, Application::prepare(&fixture()))
+    async fn envs_in_one_org_are_isolated() -> anyhow::Result<()> {
+        let b = timeout(DEPLOY_DEADLINE, App::prepare(&fixture()))
             .await
             .context("deploy the application in B")??;
-        let org = &b.environment.org;
+        let org = &b.env.org;
         let a = timeout(
             APPLY_DEADLINE,
-            OtherEnvironment::apply(org, "alpha", FIXTURE),
+            OtherEnv::apply(org, "alpha", FIXTURE),
         )
         .await
         .context("apply environment A in the shared org")??;
@@ -72,8 +71,8 @@ common::journey! {
 }
 
 common::journey! {
-    async fn environments_in_two_orgs_are_isolated() -> anyhow::Result<()> {
-        let b = timeout(DEPLOY_DEADLINE, Application::prepare(&fixture()))
+    async fn envs_in_two_orgs_are_isolated() -> anyhow::Result<()> {
+        let b = timeout(DEPLOY_DEADLINE, App::prepare(&fixture()))
             .await
             .context("deploy the application in B")??;
         let a = timeout(APPLY_DEADLINE, async {
@@ -85,7 +84,7 @@ common::journey! {
     }
 }
 
-async fn check_isolation(cluster: &Cluster, a: &Triple, b: &Application) -> anyhow::Result<()> {
+async fn check_isolation(cluster: &Cluster, a: &Triple, b: &App) -> anyhow::Result<()> {
     let namespace = a.org.as_str();
     let client = &cluster.client;
     let (labels, image, control, targets) = timeout(OBSERVE_DEADLINE, async {
@@ -160,7 +159,7 @@ async fn source_labels(
     client: &kube::Client,
     a: &Triple,
 ) -> anyhow::Result<BTreeMap<String, String>> {
-    let group = name::environment_host_name(&a.org, &a.env);
+    let group = name::env_host_name(&a.org, &a.env);
     let selector = ListParams::default().labels(&format!("{HOST_GROUP_LABEL}={group}"));
     let pods = Api::<Pod>::namespaced(client.clone(), a.org.as_str());
     let pod = until(
@@ -187,13 +186,13 @@ async fn source_labels(
         .collect()
 }
 
-async fn live_targets(b: &Application) -> anyhow::Result<[(&'static str, SocketAddr); 5]> {
-    let environment = &b.environment;
-    let triple = &environment.triple;
-    let cluster = &environment.org.cluster;
+async fn live_targets(b: &App) -> anyhow::Result<[(&'static str, SocketAddr); 5]> {
+    let env = &b.env;
+    let triple = &env.triple;
+    let cluster = &env.org.cluster;
     let client = &cluster.client;
     let namespace = triple.org.as_str();
-    let host = ready_host_pod(environment, OBSERVE_DEADLINE).await?;
+    let host = ready_host_pod(env, OBSERVE_DEADLINE).await?;
     let host_ip = pod_ip(&host)?;
     // The Ready condition proves the probe listener, and the web call proves HTTP.
     ensure!(
@@ -237,7 +236,7 @@ async fn live_targets(b: &Application) -> anyhow::Result<[(&'static str, SocketA
         .context("query B's primary as the observer")?;
     ensure!(is_primary, "{project} observer reached a standby");
 
-    let release = resource_names::application_release_name(
+    let release = resource_names::app_release_name(
         &triple.org,
         &triple.project,
         &triple.env,

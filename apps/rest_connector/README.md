@@ -30,5 +30,5 @@ It calls the base's `log.append` with outcome `pushed`, the item key, and the no
 The log primary key prevents duplicate rows for the same delivery and item.
 Change data capture (CDC) includes only the consumer schema because its event registration reads that schema.
 
-Run `cargo test -p wamn-environment --test rest_connector_publication` after building all three packages.
+Run `cargo test -p wamn-env --test rest_connector_publication` after building all three packages.
 The test admits the components for the release.

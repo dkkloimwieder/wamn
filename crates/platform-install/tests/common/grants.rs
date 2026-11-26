@@ -34,7 +34,7 @@ pub async fn prepare(url: url::Url, family: WorkloadRoleFamily) -> Fixture {
             // and installs its schemas.
             execute(
                 &mut admin,
-                wamn_environment::project_setup::ensure_project_roles_sql(),
+                wamn_env::project_setup::ensure_project_roles_sql(),
             )
             .await;
             super::database::platform_migration_input(url.as_str(), MigrationDatabase::Project)
@@ -46,10 +46,10 @@ pub async fn prepare(url: url::Url, family: WorkloadRoleFamily) -> Fixture {
             )
             .await;
             for batch in [
-                wamn_environment::project_setup::CATALOG_SCHEMA_SQL,
+                wamn_env::project_setup::CATALOG_SCHEMA_SQL,
                 include_str!("../../../../deploy/sql/run-state.sql"),
                 include_str!("../../../../deploy/sql/run-queue.sql"),
-                wamn_environment::project_setup::APP_SCHEMA_SQL,
+                wamn_env::project_setup::APP_SCHEMA_SQL,
                 "RESET ROLE",
             ] {
                 execute(&mut admin, batch).await;
@@ -61,16 +61,16 @@ pub async fn prepare(url: url::Url, family: WorkloadRoleFamily) -> Fixture {
             project_env_key: &"t1--dev--project".parse().unwrap(),
             database,
         },
-        WorkloadRoleIdentityType::ProjectEnvironment => WorkloadRoleIdentity::ProjectEnvironment {
+        WorkloadRoleIdentityType::ProjectEnv => WorkloadRoleIdentity::ProjectEnv {
             org: &"acme".parse().unwrap(),
             project: &"billing".parse().unwrap(),
-            environment: &"dev".parse().unwrap(),
+            env: &"dev".parse().unwrap(),
             database,
         },
         WorkloadRoleIdentityType::Control => WorkloadRoleIdentity::Control {
             org: &"acme".parse().unwrap(),
             project: &"billing".parse().unwrap(),
-            environment: &"dev".parse().unwrap(),
+            env: &"dev".parse().unwrap(),
             database,
         },
         WorkloadRoleIdentityType::Org => WorkloadRoleIdentity::Org {
@@ -85,11 +85,7 @@ pub async fn prepare(url: url::Url, family: WorkloadRoleFamily) -> Fixture {
     )
     .await;
     if family == WorkloadRoleFamily::Migration {
-        execute(
-            &mut admin,
-            &wamn_environment::project_migration::grants_sql(&login),
-        )
-        .await;
+        execute(&mut admin, &wamn_env::project_migration::grants_sql(&login)).await;
     }
     let mut url = url;
     url.set_username(login.as_str()).unwrap();

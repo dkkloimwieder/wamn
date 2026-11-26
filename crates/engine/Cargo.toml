@@ -9,7 +9,7 @@ license.workspace = true
 wasm_component_model_implements = ["wash-runtime/wasm_component_model_implements"]
 
 [dependencies]
-wamn-application.workspace = true
+wamn-app.workspace = true
 wamn-package.workspace = true
 wamn-routes.workspace = true
 wamn-registry.workspace = true

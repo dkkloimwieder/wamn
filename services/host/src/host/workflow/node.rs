@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 use tokio::time::Instant;
-use wamn_application::native_routes::{OperationRefusal, bounded_node_deadline_ms};
+use wamn_app::native_routes::{OperationRefusal, bounded_node_deadline_ms};
 use wamn_connection::connection::GraphPosition;
 use wamn_engine::operation::node_types;
 use wamn_package::canonical_name::CanonicalName;
@@ -40,20 +40,17 @@ impl Workflow {
         }
         if let Some(generation) = authority.generation {
             let checked_at = Instant::now();
-            let remaining = executor_write(
-                &self.database,
-                &workload.application.project,
-                async |connection| {
+            let remaining =
+                executor_write(&self.database, &workload.app.project, async |connection| {
                     PostgresRunStore::new(connection)
                         .lease_remaining_ms(&authority.delivery, &workload.runner, generation)
                         .await
-                },
-            )
-            .await
-            .map_err(|error| {
-                tracing::warn!(%error, "check workflow node lease");
-                retryable("storage", "the workflow store is unavailable")
-            })?;
+                })
+                .await
+                .map_err(|error| {
+                    tracing::warn!(%error, "check workflow node lease");
+                    retryable("storage", "the workflow store is unavailable")
+                })?;
             let Some(remaining) = remaining.and_then(|ms| u64::try_from(ms).ok()) else {
                 workload.remove_authority(&request.handle);
                 return Err(terminal(
@@ -73,7 +70,7 @@ impl Workflow {
         let config: BTreeMap<CanonicalName, serde_json::Value> =
             serde_json::from_str(&request.config_json)
                 .map_err(|error| invalid("invalid-node-config", error.to_string()))?;
-        if !workload.application.components.iter().any(|component| {
+        if !workload.app.components.iter().any(|component| {
             component.name == request.sibling && component.operations.contains_key(&operation)
         }) {
             return Err(terminal(
@@ -87,7 +84,7 @@ impl Workflow {
             let caller = self
                 .postgres
                 .workflow_node_caller(
-                    &workload.application.project,
+                    &workload.app.project,
                     &workload.project_key,
                     &authority.principal,
                     &authority.role,
@@ -133,7 +130,7 @@ impl Workflow {
                         caller,
                         position: GraphPosition {
                             graph_hash: authority.hash,
-                            application: workload.application.application.clone(),
+                            app: workload.app.application.clone(),
                             graph_id: authority.workflow_id.clone(),
                             graph_version: authority.version,
                             node_id,

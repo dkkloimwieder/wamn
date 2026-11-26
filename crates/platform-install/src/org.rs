@@ -86,8 +86,8 @@ pub fn org_values(
     api_server: &[Value],
 ) -> anyhow::Result<Value> {
     let image = field(inputs, "controlImage")?;
-    let application_chart = field(inputs, "applicationChart")?;
-    let (_, digest) = application_chart
+    let app_chart = field(inputs, "applicationChart")?;
+    let (_, digest) = app_chart
         .strip_prefix("oci://")
         .and_then(|reference| reference.rsplit_once('@'))
         .filter(|(repository, _)| !repository.is_empty())
@@ -157,7 +157,7 @@ pub fn org_values(
                 "registry": internal_registry,
                 "platform_registry": internal_registry,
                 "worker_image": image,
-                "chart": application_chart,
+                "chart": app_chart,
                 "registry_token_metadata": registry_token_metadata(inputs)?,
                 "events": {"stream_replicas": 1, "dup_window_secs": 120},
                 "oauth_encryption": oauth_encryption,

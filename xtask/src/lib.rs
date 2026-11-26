@@ -116,7 +116,8 @@ enum Task {
     /// Run repository formatting, Clippy, and policy checks.
     RepoLint(tasks::RunArgs),
     /// Generate or check the authored environment JSON Schema.
-    EnvironmentSchema {
+    #[command(name = "environment-schema")]
+    EnvSchema {
         #[arg(long)]
         check: bool,
     },
@@ -234,7 +235,7 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
         Task::RequireTestResult(args) => process::require(&std::env::current_dir()?, &args).await,
         Task::TestChanges { base } => test_changes::run(&root, &base),
         Task::RepoLint(args) => tasks::lint(&root, args.mode).await,
-        Task::EnvironmentSchema { check } => repo_policy::environment_schema(&root, check),
+        Task::EnvSchema { check } => repo_policy::env_schema(&root, check),
         Task::Machete => machete::run(&root).await,
         Task::CompilePackagesAlone { manifest } => {
             tasks::packages(&root, manifest.as_deref()).await

@@ -13,7 +13,7 @@ pub enum Role {
     Worker,
 }
 
-pub fn organization(namespace: String, account: &str, role: Role) -> Option<OrgId> {
+pub fn org(namespace: String, account: &str, role: Role) -> Option<OrgId> {
     let org = OrgId::try_from(namespace).ok()?;
     let allowed = match role {
         Role::Control => name::control_service_account(&org),
@@ -27,7 +27,7 @@ pub fn host(namespace: String, account: &str, pod: Option<String>) -> Option<Str
     let env = account
         .rsplit_once("--")
         .and_then(|(_, env)| env.parse::<EnvName>().ok())?;
-    if account != name::environment_service_account(&org, &env) {
+    if account != name::env_service_account(&org, &env) {
         return None;
     }
     // The pod ID must fit one host subject token.
@@ -40,7 +40,7 @@ pub fn host(namespace: String, account: &str, pod: Option<String>) -> Option<Str
     })
 }
 
-pub fn environment_permissions(request: &SignUser, inbox: &str) -> (String, Permissions) {
+pub fn env_permissions(request: &SignUser, inbox: &str) -> (String, Permissions) {
     let mut subscribe = vec![format!("{inbox}.>")];
     let workload = || {
         [
@@ -92,7 +92,7 @@ pub fn environment_permissions(request: &SignUser, inbox: &str) -> (String, Perm
     };
     let name = format!(
         "{name_prefix}-{}",
-        name::environment_key(&request.org, &request.env)
+        name::env_key(&request.org, &request.env)
     );
     let permissions = Permissions {
         pub_: SubjectPermission {

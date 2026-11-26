@@ -1,6 +1,6 @@
 //! Translate SQL values and refusals at the guest interface.
 
-use wamn_application::database::{SqlError, SqlValue as DatabaseValue};
+use wamn_app::database::{SqlError, SqlValue as DatabaseValue};
 
 use super::{PgError, SqlValue};
 

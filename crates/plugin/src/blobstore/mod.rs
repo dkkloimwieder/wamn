@@ -93,7 +93,7 @@ pub(super) fn blobstore_span(
     component_id: &str,
     operation: &'static str,
 ) -> tracing::Span {
-    let make_span = |identity: Option<&wamn_application::session_identity::SessionIdentity>| {
+    let make_span = |identity: Option<&wamn_app::session_identity::SessionIdentity>| {
         effect_span!(
             "wamn.blobstore",
             EffectIdentity {

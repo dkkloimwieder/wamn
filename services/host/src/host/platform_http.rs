@@ -75,7 +75,7 @@ impl PlatformHttp {
                             std::ops::ControlFlow::Break(response) => response,
                             std::ops::ControlFlow::Continue(request) => {
                                 routes
-                                    .application
+                                    .app
                                     .http(&routing, &workflow, &workload, request)
                                     .await
                             }
@@ -125,11 +125,11 @@ impl HostHandler for PlatformHttp {
             .iter()
             .find(|interface| interface.is_incoming_http_handler())
             .and_then(|interface| interface.config.get("host"))
-            && let Some(application) = self.routing.application_config(component_id)
+            && let Some(app) = self.routing.app_config(component_id)
         {
-            let files_prefix = format!("/api/{}/files", application.application);
-            let flow_prefix = wamn_routes::workflow_http_prefix(&application.application);
-            self.files.register(workload.id(), application);
+            let files_prefix = format!("/api/{}/files", app.application);
+            let flow_prefix = wamn_routes::workflow_http_prefix(&app.application);
+            self.files.register(workload.id(), app);
             self.bind(workload.id(), host, &files_prefix, flow_prefix)
                 .await?;
         }
@@ -141,8 +141,8 @@ impl HostHandler for PlatformHttp {
             .ingress
             .on_service_http_unbind(&format!("{workload_id}/platform-http"))
             .await;
-        let application = self.ingress.on_workload_unbind(workload_id).await;
-        platform.and(application)
+        let app = self.ingress.on_workload_unbind(workload_id).await;
+        platform.and(app)
     }
     async fn on_service_http_resolved(
         &self,

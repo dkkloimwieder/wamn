@@ -135,7 +135,7 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
     use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
-    use wamn_application::ingress::Header as RequestHeader;
+    use wamn_app::ingress::Header as RequestHeader;
 
     use wamn_authentication::route_authentication::ControlRouteAuthenticator;
 

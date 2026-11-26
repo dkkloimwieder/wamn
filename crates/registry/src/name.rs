@@ -15,7 +15,7 @@ pub fn valid_resource_segment(value: &str) -> bool {
 }
 
 /// The public host name of an application with a validated label.
-pub fn application_host(label: &str, org: &crate::OrgId, base: &PlatformDomain) -> String {
+pub fn app_host(label: &str, org: &crate::OrgId, base: &PlatformDomain) -> String {
     format!("{label}--{org}.{base}")
 }
 
@@ -34,7 +34,7 @@ pub fn project_env_key(
 }
 
 /// The JetStream account shared by the projects of an environment.
-pub fn environment_nats_account(org: &crate::OrgId, env: &crate::EnvName) -> String {
+pub fn env_nats_account(org: &crate::OrgId, env: &crate::EnvName) -> String {
     format!("ENV_{org}_{env}")
 }
 
@@ -44,15 +44,15 @@ pub fn nats_user_inbox(public_key: &str) -> String {
 }
 
 /// The org Secret holding an environment-scoped NATS user.
-pub fn environment_nats_secret(org: &crate::OrgId, env: &crate::EnvName, kind: &str) -> String {
-    format!("wamn-nats-{kind}-{}", environment_host_name(org, env))
+pub fn env_nats_secret(org: &crate::OrgId, env: &crate::EnvName, kind: &str) -> String {
+    format!("wamn-nats-{kind}-{}", env_host_name(org, env))
 }
 
 /// The org Secret holding a project-scoped NATS user.
 pub fn project_nats_secret(target: &crate::Triple, kind: &str) -> String {
     format!(
         "wamn-nats-{kind}-{}",
-        environment_resource_name(&target.org, &target.project, &target.env)
+        project_env_resource_name(&target.org, &target.project, &target.env)
     )
 }
 
@@ -62,7 +62,7 @@ pub fn control_service_account(org: &crate::OrgId) -> String {
 }
 
 /// Coordinates of one shared environment, without a project database.
-pub fn environment_key(org: &crate::OrgId, env: &crate::EnvName) -> String {
+pub fn env_key(org: &crate::OrgId, env: &crate::EnvName) -> String {
     format!("{org}--{env}")
 }
 
@@ -233,7 +233,7 @@ pub fn cdc_object_name_stem(
 }
 
 /// The subject ceiling shared by the projects of an environment.
-pub fn environment_event_subjects(org: &crate::OrgId, env: &crate::EnvName) -> String {
+pub fn env_event_subjects(org: &crate::OrgId, env: &crate::EnvName) -> String {
     format!("evt.{org}.{env}.>")
 }
 
@@ -276,7 +276,7 @@ pub const HASH_LEN: usize = 20;
 /// characters of SHA-256 over `org/env/project`. The name is at most 47
 /// characters, inside Helm's bound of 53.
 ///
-pub fn environment_resource_name(
+pub fn project_env_resource_name(
     org: &crate::OrgId,
     project: &crate::ProjectId,
     env: &crate::EnvName,
@@ -287,7 +287,7 @@ pub fn environment_resource_name(
 }
 
 /// The Helm release and host group shared by an org and environment.
-pub fn environment_host_name(org: &crate::OrgId, env: &crate::EnvName) -> String {
+pub fn env_host_name(org: &crate::OrgId, env: &crate::EnvName) -> String {
     let hash = hex::encode(sha256(format!("{org}/{env}").as_bytes()));
     let slug: String = env.as_str().chars().take(SLUG_LEN).collect();
     format!("h-{slug}-{}", &hash[..HASH_LEN])
@@ -299,8 +299,8 @@ pub fn host_deployment_name(host_group: &str) -> String {
 }
 
 /// The ServiceAccount shared by an environment's project resources.
-pub fn environment_service_account(org: &crate::OrgId, env: &crate::EnvName) -> String {
-    format!("wamn-host-{}", environment_key(org, env))
+pub fn env_service_account(org: &crate::OrgId, env: &crate::EnvName) -> String {
+    format!("wamn-host-{}", env_key(org, env))
 }
 
 /// A project deployment's complete event subscription.
@@ -365,7 +365,7 @@ pub fn org_audience(org: &crate::OrgId) -> String {
     format!("{ORG_AUDIENCE_PREFIX}{org}")
 }
 /// The release discovery filter for a validated environment slug.
-pub fn application_release_filter(env: &crate::EnvName) -> String {
+pub fn app_release_filter(env: &crate::EnvName) -> String {
     let slug: String = env.as_str().chars().take(SLUG_LEN).collect();
     format!("^r-{slug}-")
 }
@@ -426,7 +426,7 @@ mod tests {
                     .unwrap()
             )
         );
-        let resource = environment_resource_name(
+        let resource = project_env_resource_name(
             &"acme".parse().unwrap(),
             &"billing".parse().unwrap(),
             &"dev".parse().unwrap(),
@@ -434,7 +434,7 @@ mod tests {
         assert!(resource.len() <= 47);
         assert_ne!(
             resource,
-            environment_resource_name(
+            project_env_resource_name(
                 &"acme".parse().unwrap(),
                 &"shipping".parse().unwrap(),
                 &"dev".parse().unwrap()

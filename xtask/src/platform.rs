@@ -41,7 +41,7 @@ pub(crate) fn write_ui_openapi(root: &Path) -> anyhow::Result<()> {
     let output = root.join("apps/target/wamn/platform_ui");
     std::fs::create_dir_all(&output)?;
     for (file, set) in [
-        ("application.openapi.json", HostRouteSet::Application),
+        ("application.openapi.json", HostRouteSet::App),
         ("control.openapi.json", HostRouteSet::Control),
     ] {
         let mut document = tempfile::NamedTempFile::new_in(&output)?;

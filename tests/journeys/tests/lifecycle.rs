@@ -12,8 +12,7 @@ use anyhow::{Context as _, ensure};
 use common::host::{FIXTURE, fixture, ready, runtime};
 use common::request::{output, until, wamn};
 use common::{
-    Application, Environment, Org, Routes, active_project_cluster, observe_project_cluster,
-    probe_image, run_job,
+    App, Env, Org, Routes, active_project_cluster, observe_project_cluster, probe_image, run_job,
 };
 use futures_util::future::try_join_all;
 use hyper::StatusCode;
@@ -40,26 +39,26 @@ common::journey! {
         let original = rollback_source("WAMN_ROLLBACK_FIXTURE_V1_SOURCE")?;
         let broken = rollback_source("WAMN_ROLLBACK_FIXTURE_FAILED_SOURCE")?;
         let next = rollback_source("WAMN_ROLLBACK_FIXTURE_V2_SOURCE")?;
-        let application = within(
+        let app = within(
             DEPLOY_DEADLINE,
             "deploy the original fixture",
-            Application::prepare(&original),
+            App::prepare(&original),
         )
         .await?;
-        let environment = &application.environment;
-        let routes = &application.routes;
+        let env = &app.env;
+        let routes = &app.routes;
         let widget = create_widget(routes).await?;
         require_version(routes, &widget, Version::One).await?;
 
-        let triple = &environment.triple;
-        let release = resource_names::application_release_name(
+        let triple = &env.triple;
+        let release = resource_names::app_release_name(
             &triple.org,
             &triple.project,
             &triple.env,
             &FIXTURE.parse()?,
         );
         let workload = format!("{release}-http");
-        let client = &environment.org.cluster.client;
+        let client = &env.org.cluster.client;
         let namespace = triple.org.as_str();
         let deployments = runtime(
             client,
@@ -92,7 +91,7 @@ common::journey! {
             .context("original replica set UID")?;
 
         let deploy = async {
-            let result = timeout(DEPLOY_DEADLINE, environment.deploy(&broken, FIXTURE))
+            let result = timeout(DEPLOY_DEADLINE, env.deploy(&broken, FIXTURE))
                 .await
                 .context("deploy did not report an outcome")?;
             let Err(error) = result else {
@@ -162,7 +161,7 @@ common::journey! {
         within(
             DEPLOY_DEADLINE,
             "deploy the next healthy release",
-            environment.deploy(&next, FIXTURE),
+            env.deploy(&next, FIXTURE),
         )
         .await?;
         require_version(routes, &widget, Version::Two).await
@@ -173,23 +172,23 @@ common::journey! {
     async fn rollback_serves_every_call_through_web() -> anyhow::Result<()> {
         let v1 = rollback_source("WAMN_ROLLBACK_FIXTURE_V1_SOURCE")?;
         let v2 = rollback_source("WAMN_ROLLBACK_FIXTURE_V2_SOURCE")?;
-        let mut application = within(
+        let mut app = within(
             DEPLOY_DEADLINE,
             "prepare rollback fixture version 1",
-            Application::prepare(&v1),
+            App::prepare(&v1),
         )
         .await?;
-        application.routes.client = HttpClient::builder()
+        app.routes.client = HttpClient::builder()
             .timeout(CALL_DEADLINE)
             .redirects(Redirects::None)
             .build()?;
-        let environment = &application.environment;
-        let routes = &application.routes;
+        let env = &app.env;
+        let routes = &app.routes;
         let widget = create_widget(routes).await?;
         require_version(routes, &widget, Version::One).await?;
 
-        let triple = &environment.triple;
-        let release = resource_names::application_release_name(
+        let triple = &env.triple;
+        let release = resource_names::app_release_name(
             &triple.org,
             &triple.project,
             &triple.env,
@@ -197,7 +196,7 @@ common::journey! {
         );
         let workload = format!("{release}-http");
         let workloads = runtime(
-            &environment.org.cluster.client,
+            &env.org.cluster.client,
             triple.org.as_str(),
             "WorkloadDeployment",
             "workloaddeployments",
@@ -219,7 +218,7 @@ common::journey! {
         within(
             DEPLOY_DEADLINE,
             "deploy rollback fixture version 2",
-            environment.deploy(&v2, FIXTURE),
+            env.deploy(&v2, FIXTURE),
         )
         .await?;
         let second = within(OBSERVE_DEADLINE, "read version 2 workload", async {
@@ -234,7 +233,7 @@ common::journey! {
         );
         require_version(routes, &widget, Version::Two).await?;
 
-        let mut command = environment.org.command();
+        let mut command = env.org.command();
         command
             .args([
                 "rollback",
@@ -243,7 +242,7 @@ common::journey! {
                 &revision.to_string(),
                 "--env",
             ])
-            .arg(&environment.file);
+            .arg(&env.file);
         let (complete, completion) = oneshot::channel();
         let rollout = async {
             let result = async {
@@ -468,29 +467,29 @@ fn workload_ready(workload: &DynamicObject) -> bool {
 
 common::journey! {
     async fn plain_delete_keeps_data_and_apply_creates_a_new_cluster() -> anyhow::Result<()> {
-        let application = within(
+        let app = within(
             DEPLOY_DEADLINE,
             "prepare the fixture",
-            Application::prepare(&fixture()),
+            App::prepare(&fixture()),
         )
         .await?;
-        let environment = &application.environment;
-        let platform = &environment.org.cluster;
-        let namespace = environment.triple.org.as_str();
-        let widget = create_widget(&application.routes).await?;
-        let clusters = project_api(environment, "postgresql.cnpg.io", "Cluster", "clusters");
+        let env = &app.env;
+        let platform = &env.org.cluster;
+        let namespace = env.triple.org.as_str();
+        let widget = create_widget(&app.routes).await?;
+        let clusters = project_api(env, "postgresql.cnpg.io", "Cluster", "clusters");
         let certificates = project_api(
-            environment,
+            env,
             "cert-manager.io",
             "Certificate",
             "certificates",
         );
         let secrets = Api::<Secret>::namespaced(platform.client.clone(), namespace);
         let capture = async {
-            let kept = active_project_cluster(platform, &environment.triple).await?;
+            let kept = active_project_cluster(platform, &env.triple).await?;
             wait_cluster_ready(&clusters, &kept).await?;
             let mut signed = Vec::new();
-            for certificate in release_objects(environment, &certificates).await? {
+            for certificate in release_objects(env, &certificates).await? {
                 let name = certificate
                     .metadata
                     .name
@@ -515,13 +514,13 @@ common::journey! {
         within(
             OBSERVE_DEADLINE,
             "probe product access before plain delete",
-            probe_project_primary(environment, &kept, "connected"),
+            probe_project_primary(env, &kept, "connected"),
         )
         .await?;
 
-        plain_delete(environment).await?;
+        plain_delete(env).await?;
         let retained = async {
-            require_no_active_project(environment).await?;
+            require_no_active_project(env).await?;
             wait_cluster_ready(&clusters, &kept).await?;
             for (certificate, secret) in &signed {
                 require_present(&certificates, certificate).await?;
@@ -554,12 +553,12 @@ common::journey! {
         within(
             OBSERVE_DEADLINE,
             "probe product access after plain delete",
-            probe_project_primary(environment, &kept, "timeout"),
+            probe_project_primary(env, &kept, "timeout"),
         )
         .await?;
 
-        let mut apply = environment.org.command();
-        apply.args(["env", "apply"]).arg(&environment.file);
+        let mut apply = env.org.command();
+        apply.args(["env", "apply"]).arg(&env.file);
         within(
             COMMAND_DEADLINE,
             "apply the same environment file again",
@@ -567,7 +566,7 @@ common::journey! {
         )
         .await?;
         let after_apply = async {
-            let active = active_project_cluster(platform, &environment.triple).await?;
+            let active = active_project_cluster(platform, &env.triple).await?;
             ensure!(active != kept, "apply reused retained Cluster {kept}");
             wait_cluster_ready(&clusters, &active).await?;
             require_present(&clusters, &kept).await
@@ -581,11 +580,7 @@ common::journey! {
     }
 }
 
-async fn probe_project_primary(
-    environment: &Environment,
-    project: &str,
-    expected: &str,
-) -> anyhow::Result<()> {
+async fn probe_project_primary(env: &Env, project: &str, expected: &str) -> anyhow::Result<()> {
     const POSTGRES: u16 = 5432;
     const PROBE: &str = r#"
 export LC_ALL=C
@@ -604,9 +599,9 @@ fi
 printf '%s %s %s\n' "$host" "$port" "$result"
 "#;
 
-    let triple = &environment.triple;
+    let triple = &env.triple;
     let namespace = triple.org.as_str();
-    let client = &environment.org.cluster.client;
+    let client = &env.org.cluster.client;
     let selector = format!("cnpg.io/cluster={project},cnpg.io/instanceRole=primary");
     let primary = Api::<Pod>::namespaced(client.clone(), namespace)
         .list(&ListParams::default().labels(&selector))
@@ -628,7 +623,7 @@ printf '%s %s %s\n' "$host" "$port" "$result"
         ("wasmcloud.com/name".into(), "hostgroup".into()),
         (
             "wasmcloud.com/hostgroup".into(),
-            name::environment_host_name(&triple.org, &triple.env),
+            name::env_host_name(&triple.org, &triple.env),
         ),
     ]);
     let template = PodTemplateSpec {
@@ -679,7 +674,7 @@ printf '%s %s %s\n' "$host" "$port" "$result"
 
 common::journey! {
     async fn data_delete_removes_resources_kept_by_plain_delete() -> anyhow::Result<()> {
-        let environment = within(
+        let env = within(
             COMMAND_DEADLINE,
             "create the org and apply the environment",
             async { Org::create().await?.apply(FIXTURE).await },
@@ -688,22 +683,22 @@ common::journey! {
         within(
             DEPLOY_DEADLINE,
             "deploy the fixture",
-            environment.deploy(&fixture(), FIXTURE),
+            env.deploy(&fixture(), FIXTURE),
         )
         .await?;
-        let clusters = project_api(&environment, "postgresql.cnpg.io", "Cluster", "clusters");
+        let clusters = project_api(&env, "postgresql.cnpg.io", "Cluster", "clusters");
         let certificates = project_api(
-            &environment,
+            &env,
             "cert-manager.io",
             "Certificate",
             "certificates",
         );
-        let issuers = project_api(&environment, "cert-manager.io", "Issuer", "issuers");
+        let issuers = project_api(&env, "cert-manager.io", "Issuer", "issuers");
         let capture = async {
-            let active = active_project_cluster(&environment.org.cluster, &environment.triple).await?;
+            let active = active_project_cluster(&env.org.cluster, &env.triple).await?;
             wait_cluster_ready(&clusters, &active).await?;
             let names = async |api: &Api<DynamicObject>| {
-                release_objects(&environment, api)
+                release_objects(&env, api)
                     .await?
                     .into_iter()
                     .map(|object| {
@@ -734,9 +729,9 @@ common::journey! {
                 .flat_map(|(api, names)| names.iter().map(move |name| (api, name)))
         };
 
-        plain_delete(&environment).await?;
+        plain_delete(&env).await?;
         let retained = async {
-            require_no_active_project(&environment).await?;
+            require_no_active_project(&env).await?;
             for (api, name) in captured() {
                 require_present(api, name).await?;
             }
@@ -749,7 +744,7 @@ common::journey! {
         )
         .await?;
 
-        let coordinate = environment.triple.to_string();
+        let coordinate = env.triple.to_string();
         let args = [
             "env",
             "delete",
@@ -761,7 +756,7 @@ common::journey! {
         within(
             COMMAND_DEADLINE,
             "delete the kept project data",
-            wamn(&environment.org, &args),
+            wamn(&env.org, &args),
         )
         .await?;
         let gone = captured().map(|(api, name)| async move {
@@ -791,13 +786,13 @@ async fn create_widget(routes: &Routes) -> anyhow::Result<String> {
     Ok(id)
 }
 
-async fn plain_delete(environment: &Environment) -> anyhow::Result<()> {
-    let coordinate = environment.triple.to_string();
+async fn plain_delete(env: &Env) -> anyhow::Result<()> {
+    let coordinate = env.triple.to_string();
     // The shared Drop deletes the reapplied instance or accepts an absent registry row.
     within(
         COMMAND_DEADLINE,
         "plain delete the environment",
-        wamn(&environment.org, &["env", "delete", &coordinate]),
+        wamn(&env.org, &["env", "delete", &coordinate]),
     )
     .await?;
     Ok(())
@@ -816,13 +811,12 @@ async fn require_present(api: &Api<DynamicObject>, name: &str) -> anyhow::Result
     Ok(())
 }
 
-async fn require_no_active_project(environment: &Environment) -> anyhow::Result<()> {
-    let mut system = environment.org.cluster.observe_system().await?;
-    let triple = &environment.triple;
-    let active =
-        wamn_environment::registry::deployment::instance_suffix(&mut system.connection, triple)
-            .await
-            .with_context(|| format!("read registry deployment for {triple}"))?;
+async fn require_no_active_project(env: &Env) -> anyhow::Result<()> {
+    let mut system = env.org.cluster.observe_system().await?;
+    let triple = &env.triple;
+    let active = wamn_env::registry::deployment::instance_suffix(&mut system.connection, triple)
+        .await
+        .with_context(|| format!("read registry deployment for {triple}"))?;
     ensure!(
         active.is_none(),
         "plain delete left an active deployment for {triple}: {active:?}"
@@ -830,26 +824,21 @@ async fn require_no_active_project(environment: &Environment) -> anyhow::Result<
     Ok(())
 }
 
-fn project_api(
-    environment: &Environment,
-    group: &str,
-    resource: &str,
-    plural: &str,
-) -> Api<DynamicObject> {
+fn project_api(env: &Env, group: &str, resource: &str, plural: &str) -> Api<DynamicObject> {
     let gvk = GroupVersionKind::gvk(group, "v1", resource);
     Api::namespaced_with(
-        environment.org.cluster.client.clone(),
-        environment.triple.org.as_str(),
+        env.org.cluster.client.clone(),
+        env.triple.org.as_str(),
         &ApiResource::from_gvk_with_plural(&gvk, plural),
     )
 }
 
 async fn release_objects(
-    environment: &Environment,
+    env: &Env,
     api: &Api<DynamicObject>,
 ) -> anyhow::Result<Vec<DynamicObject>> {
-    let triple = &environment.triple;
-    let release = name::environment_resource_name(&triple.org, &triple.project, &triple.env);
+    let triple = &env.triple;
+    let release = name::project_env_resource_name(&triple.org, &triple.project, &triple.env);
     let mut list = api
         .list(&ListParams::default())
         .await

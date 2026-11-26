@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use anyhow::{Context as _, ensure};
 use common::request;
-use common::{Application, Routes};
+use common::{App, Routes};
 use serde_json::{Value, json};
 use tokio::time::Instant;
 
@@ -33,8 +33,8 @@ common::journey! {
     /// A goods-in receipt on a purchase order that requires inspection makes the
     /// `client_acme_receiving` Data change handler create a pending inspection.
     async fn a_receipt_creates_its_inspection() -> anyhow::Result<()> {
-        let application = Application::prepare(&request::fixture("client_acme_receiving")).await?;
-        let routes = &application.routes;
+        let app = App::prepare(&request::fixture("client_acme_receiving")).await?;
+        let routes = &app.routes;
         let suffix = uuid::Uuid::new_v4().simple().to_string();
 
         // The create request fits the HTTP body limit. The supplier's CDC record
@@ -102,7 +102,7 @@ common::journey! {
             .with_context(|| format!("the receipt records: {receipt}"))?
             .to_owned();
 
-        let mut database = application.environment.observe().await?;
+        let mut database = app.env.observe().await?;
         let end = Instant::now() + HANDLER_DEADLINE;
         loop {
             let status: Option<String> = sqlx::query_scalar(

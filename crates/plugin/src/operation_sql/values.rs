@@ -7,7 +7,7 @@ use sqlx::{
     Column as _, Decode, Encode, Row as _, Statement as _, Type, TypeInfo as _, ValueRef as _,
 };
 
-use wamn_application::database::{SqlError, SqlValue};
+use wamn_app::database::{SqlError, SqlValue};
 
 use wamn_postgres::map_pg_error;
 
