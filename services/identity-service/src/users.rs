@@ -1,54 +1,83 @@
 //! Identity requests from the control service, operation workers and host pods.
 
-use std::net::IpAddr;
+use std::sync::Arc;
 
 use bytes::Bytes;
 use http_body_util::{BodyExt as _, Full, Limited};
 use hyper::{Request, Response, StatusCode, body::Incoming};
 use sqlx::PgConnection as Client;
 use wamn_authentication::identity_error::{IdentityErrorType, IdentityRefusal};
+use wamn_identity::authentication_event::{ClientAddress, Event, EventType, Outcome};
 use wamn_identity::identity::{
     create_or_reuse_user,
     issuer::{Issuer, begin_user_write},
 };
 use wamn_identity::password::RefusalCause;
-use wamn_identity::password_requests::{self, Attempt, DeliveryFailure, EmailDelivery};
+use wamn_identity::password_requests::{self, Attempt, DeliveryFailure};
 use wamn_identity::workload_identity::Role;
 use wamn_identity_protocol::PrincipalId;
 use wamn_identity_protocol::wire::{PrincipalRequest, UserRequest, UserResponse};
-use wamn_registry::OrgId;
+use wamn_registry::{OrgId, name};
 
 use crate::{
-    Inner, connect_database,
+    Inner, authentication_event, connect_database,
     mail::Mailer,
     nats,
-    password::{refusal, throttled},
+    password::{admission_reply, refusal, throttled},
     response, unavailable, workload,
 };
 
 pub(super) async fn respond(
-    inner: &Inner,
+    inner: &Arc<Inner>,
     request: Request<Incoming>,
-    source: IpAddr,
+    source: ClientAddress,
 ) -> Response<Full<Bytes>> {
-    let Ok(_permit) = inner.request_slots.try_acquire() else {
-        return throttled();
+    let mut event = authentication_event::workload_event(request.uri().path())
+        .map(|event_type| Event::new(event_type, source));
+    let reply = match inner.request_slots.try_acquire() {
+        Err(_) => {
+            set_outcome(&mut event, Outcome::RequestBusy);
+            throttled()
+        }
+        Ok(_permit) => {
+            if let Ok(reply) = tokio::time::timeout(
+                std::time::Duration::from_secs(10),
+                handle(inner, request, source, &mut event),
+            )
+            .await
+            {
+                reply
+            } else {
+                if let Some(event) = &mut event
+                    && event.outcome.is_some()
+                {
+                    event.outcome = Some(Outcome::TimedOut);
+                }
+                unavailable()
+            }
+        }
     };
-    tokio::time::timeout(
-        std::time::Duration::from_secs(10),
-        handle(inner, request, source),
-    )
-    .await
-    .unwrap_or_else(|_| unavailable())
+    if let Some(event) = event {
+        authentication_event::finish(inner, event);
+    }
+    reply
+}
+
+fn set_outcome(event: &mut Option<Event>, outcome: Outcome) {
+    if let Some(event) = event {
+        event.outcome = Some(outcome);
+    }
 }
 
 async fn handle(
     inner: &Inner,
     request: Request<Incoming>,
-    source: IpAddr,
+    source: ClientAddress,
+    event: &mut Option<Event>,
 ) -> Response<Full<Bytes>> {
     let (parts, body) = request.into_parts();
     let Some(token) = workload::bearer(&parts.headers) else {
+        set_outcome(event, Outcome::WorkloadRefused);
         return forbidden();
     };
     let Some(api) = &inner.kubernetes else {
@@ -58,16 +87,26 @@ async fn handle(
     if route == wamn_identity_protocol::nats::SIGN_HOST_USER_PATH {
         let pod = match workload::authenticate_host(api, token).await {
             Ok(Some(pod)) => pod,
-            Ok(None) => return forbidden(),
+            Ok(None) => {
+                set_outcome(event, Outcome::WorkloadRefused);
+                return forbidden();
+            }
             Err(error) => {
                 tracing::warn!(%error, "check identity host token failed");
                 return unavailable();
             }
         };
+        let event = event
+            .as_mut()
+            .expect("host route has an authentication event");
         let Some(body) = json_body(&parts.headers, body).await else {
+            event.workload = Some(pod);
+            event.outcome = Some(Outcome::RequestInvalid);
             return invalid();
         };
-        return nats::sign_host_user(inner, &pod, &body);
+        let reply = nats::sign_host_user(inner, &pod, &body, event);
+        event.workload = Some(pod);
+        return finish_nats(inner, None, event, reply).await;
     }
     let nats_route = matches!(
         route,
@@ -81,39 +120,64 @@ async fn handle(
     };
     let org = match workload::authenticate(api, token, role).await {
         Ok(Some(org)) => org,
-        Ok(None) => return forbidden(),
+        Ok(None) => {
+            set_outcome(event, Outcome::WorkloadRefused);
+            return forbidden();
+        }
         Err(error) => {
             tracing::warn!(%error, "check identity workload token failed");
             return unavailable();
         }
     };
+    if let Some(event) = event {
+        event.workload = Some(match role {
+            Role::Worker => name::operation(&org),
+            Role::Control => name::control_service_account(&org),
+        });
+        if event.event_type == EventType::InvitationRequest {
+            event.org = Some(org.clone());
+        }
+    }
     let Ok(mut db) = connect_database(&inner.connection).await else {
         return unavailable();
     };
-    match Issuer(&mut db.client).registered(&org).await {
-        Ok(true) => (),
-        Ok(false) => return forbidden(),
+    match Issuer(&mut db.client).org_activity(&org).await {
+        Ok(Some(true)) => (),
+        Ok(Some(false)) => {
+            set_outcome(event, Outcome::OrgInactive);
+            return forbidden();
+        }
+        Ok(None) => {
+            set_outcome(event, Outcome::OrgUnknown);
+            return forbidden();
+        }
         Err(_) => return unavailable(),
     }
-    if !nats_route {
-        match password_requests::admit(
-            &mut Issuer(&mut db.client),
-            &inner.issuer,
-            Attempt::Source(source),
+    if !nats_route
+        && let Some(reply) = admission_reply(
+            &password_requests::admit(
+                &mut Issuer(&mut db.client),
+                &inner.issuer,
+                Attempt::Source(source.ip()),
+            )
+            .await,
+            event.as_mut(),
         )
-        .await
-        {
-            Ok(true) => (),
-            Ok(false) => return throttled(),
-            Err(_) => return unavailable(),
-        }
+    {
+        return reply;
     }
     let Some(bytes) = json_body(&parts.headers, body).await else {
+        set_outcome(event, Outcome::RequestInvalid);
         return invalid();
     };
 
     if nats_route {
-        return nats::respond(inner, &mut db.client, &org, route, &bytes).await;
+        let reply = nats::respond(inner, &mut db.client, &org, route, &bytes, event.as_mut()).await;
+        return if let Some(event) = event {
+            finish_nats(inner, Some(&mut db.client), event, reply).await
+        } else {
+            reply
+        };
     }
     if route == "/users" {
         let Ok(request) = serde_json::from_slice::<UserRequest>(&bytes) else {
@@ -123,16 +187,41 @@ async fn handle(
     }
 
     let Ok(request) = serde_json::from_slice::<PrincipalRequest>(&bytes) else {
+        set_outcome(event, Outcome::RequestInvalid);
         return invalid();
     };
     if route == "/invitations" {
         let Some(state) = &inner.passwords else {
             return response(StatusCode::NOT_FOUND, "text/plain", b"not found\n".to_vec());
         };
-        return invite(&mut db.client, &state.mail, &org, request.principal_id).await;
+        return invite(
+            &mut db.client,
+            &state.mail,
+            &org,
+            request.principal_id,
+            event
+                .as_mut()
+                .expect("invitation route has an authentication event"),
+        )
+        .await;
     }
 
     disable(&mut db.client, &org, &request.principal_id).await
+}
+
+async fn finish_nats(
+    inner: &Inner,
+    connection: Option<&mut Client>,
+    event: &mut Event,
+    reply: Response<Full<Bytes>>,
+) -> Response<Full<Bytes>> {
+    if event.outcome != Some(Outcome::Succeeded) {
+        return reply;
+    }
+    // NATS signing issues credentials in memory. Publish the reply only after the append.
+    event.outcome = None;
+    let recorded = authentication_event::append(inner, connection, event, Outcome::Succeeded).await;
+    if recorded { reply } else { unavailable() }
 }
 
 async fn json_body(headers: &hyper::HeaderMap, body: Incoming) -> Option<Bytes> {
@@ -187,35 +276,31 @@ async fn invite(
     mail: &Mailer,
     org: &OrgId,
     principal: PrincipalId,
+    event: &mut Event,
 ) -> Response<Full<Bytes>> {
     let mut store = Issuer(client);
-    let invitation = match password_requests::invite(&mut store, org, &principal).await {
+    let invitation = match password_requests::invite(&mut store, org, &principal, event).await {
         Ok(invitation) => invitation,
         Err(DeliveryFailure::UnknownPrincipal) => {
             tracing::info!(principal = %principal, cause = %RefusalCause::NoSuchAccount, "password request refused");
             return invalid();
         }
-        Err(DeliveryFailure::Refused { error, email }) => return refusal(&error, &email),
+        Err(DeliveryFailure::Refused { error, email }) => {
+            event.outcome = Some(Outcome::password(&error));
+            return refusal(&error, &email);
+        }
         Err(DeliveryFailure::Unavailable) => return unavailable(),
     };
-    let delivery = async {
-        mail.invite(
+    let accepted = mail
+        .invite(
             &invitation.email,
             &principal,
             invitation.token.secret(),
             invitation.token.expires_at(),
         )
         .await
-        .is_ok()
-    };
-    if password_requests::deliver(
-        &mut store,
-        &invitation.token,
-        EmailDelivery::Invitation,
-        delivery,
-    )
-    .await
-    {
+        .is_ok();
+    if invitation.finish(accepted, event).await {
         response(
             StatusCode::CREATED,
             "application/json",
@@ -312,6 +397,10 @@ mod tests {
             &mail,
             &"demo".parse().unwrap(),
             principal,
+            &mut Event::new(
+                EventType::InvitationRequest,
+                ClientAddress::Socket("127.0.0.1".parse().unwrap()),
+            ),
         )
         .await;
         assert_eq!(reply.status(), StatusCode::SERVICE_UNAVAILABLE);

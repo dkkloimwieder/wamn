@@ -677,6 +677,118 @@ CREATE TRIGGER platform_event_immutable
 
 ALTER TABLE provisioning.platform_event ENABLE ROW LEVEL SECURITY;
 
+-- Identity appends its terminal authentication decisions. Platform operators read them.
+CREATE TABLE identity.authentication_event_type (
+    code text PRIMARY KEY,
+    label text NOT NULL
+);
+INSERT INTO identity.authentication_event_type (code, label) VALUES
+    ('password_sign_in', 'Sign in with password'),
+    ('session_renew', 'Renew session'),
+    ('session_sign_out', 'Sign out of session'),
+    ('session_sign_out_all', 'Sign out of all sessions'),
+    ('password_recovery_request', 'Request password recovery'),
+    ('password_reset', 'Reset password'),
+    ('invitation_request', 'Request enrollment invitation'),
+    ('password_enroll', 'Accept invitation and enroll password'),
+    ('nats_workload_credential_issue', 'Issue workload NATS credential'),
+    ('nats_host_credential_issue', 'Issue host NATS credential');
+
+CREATE TABLE identity.authentication_event_outcome (
+    code text PRIMARY KEY,
+    label text NOT NULL,
+    success boolean NOT NULL
+);
+INSERT INTO identity.authentication_event_outcome (code, label, success) VALUES
+    ('succeeded', 'Succeeded', true),
+    ('delivery_accepted', 'Accepted for delivery', true),
+    ('request_invalid', 'Invalid request', false),
+    ('email_invalid', 'Email input refused', false),
+    ('password_policy_refused', 'Password policy refused', false),
+    ('unknown_email', 'No user at attempted email', false),
+    ('bad_password', 'Password did not match', false),
+    ('principal_unknown', 'Principal was not found', false),
+    ('principal_inactive', 'Principal is inactive', false),
+    ('credential_missing', 'Password credential missing', false),
+    ('credential_corrupt', 'Stored password credential unusable', false),
+    ('audience_invalid', 'Invalid org audience', false),
+    ('org_unknown', 'Org was not found', false),
+    ('org_inactive', 'Org is inactive', false),
+    ('membership_missing', 'Org membership missing', false),
+    ('membership_inactive', 'Org membership is inactive', false),
+    ('global_rate_limited', 'Global rate limit reached', false),
+    ('source_rate_limited', 'Source rate limit reached', false),
+    ('account_rate_limited', 'Account rate limit reached', false),
+    ('request_busy', 'Request capacity exhausted', false),
+    ('password_work_busy', 'Password work capacity exhausted', false),
+    ('token_malformed', 'Credential format or type refused', false),
+    ('token_unknown', 'No matching credential', false),
+    ('token_consumed', 'Email credential already consumed', false),
+    ('token_expired', 'Credential expired', false),
+    ('renewal_inactive', 'Renewal inactivity window expired', false),
+    ('renewal_revoked', 'Login family revoked', false),
+    ('renewal_reused', 'Consumed renewal credential replayed', false),
+    ('already_enrolled', 'Password already enrolled', false),
+    ('address_changed', 'Account email changed during recovery', false),
+    ('delivery_failed', 'Credential delivery failed', false),
+    ('delivery_cleanup_failed', 'Failed delivery credential could not be consumed', false),
+    ('workload_refused', 'Workload credential refused', false),
+    ('org_mismatch', 'Requested org differs from workload org', false),
+    ('public_key_invalid', 'NATS public key refused', false),
+    ('nats_account_missing', 'NATS environment account missing', false),
+    ('signing_failed', 'Credential signing failed', false),
+    ('unavailable', 'Authentication dependency unavailable', false),
+    ('timed_out', 'Authentication request deadline elapsed', false);
+
+CREATE TABLE identity.authentication_event (
+    id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    event_type text NOT NULL REFERENCES identity.authentication_event_type (code),
+    outcome text NOT NULL REFERENCES identity.authentication_event_outcome (code),
+    occurred_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    principal_id uuid REFERENCES identity.principal (id) ON DELETE RESTRICT,
+    attempted_email text CHECK (char_length(attempted_email) <= 512),
+    ip_address inet NOT NULL CHECK (masklen(ip_address) = CASE family(ip_address) WHEN 4 THEN 32 ELSE 128 END),
+    ip_source text NOT NULL CHECK (ip_source IN ('socket', 'forwarded')),
+    peer_ip_address inet CHECK (masklen(peer_ip_address) = CASE family(peer_ip_address) WHEN 4 THEN 32 ELSE 128 END),
+    CHECK ((ip_source = 'forwarded') = (peer_ip_address IS NOT NULL)),
+    org text CHECK (org ~ '^[a-z0-9]+(-[a-z0-9]+)*$' AND char_length(org) <= 40
+                    AND org <> 'wamn' AND org NOT LIKE 'wamn-%'),
+    failure_summary text CHECK (
+        failure_summary IS NULL OR (outcome NOT IN ('succeeded', 'delivery_accepted')
+                                    AND char_length(failure_summary) BETWEEN 1 AND 500)
+    ),
+    login_id uuid,
+    session_jti text CHECK (session_jti ~ '^[0-9a-f]{64}$'),
+    workload text CHECK (char_length(workload) BETWEEN 1 AND 253)
+);
+CREATE TRIGGER authentication_event_immutable
+    BEFORE UPDATE OR DELETE ON identity.authentication_event
+    FOR EACH ROW EXECUTE FUNCTION provisioning.reject_immutable_row_change();
+
+CREATE INDEX authentication_event_sign_in_email_time
+    ON identity.authentication_event (attempted_email, occurred_at DESC, id DESC)
+    WHERE event_type = 'password_sign_in' AND attempted_email IS NOT NULL;
+CREATE INDEX authentication_event_principal_time
+    ON identity.authentication_event (principal_id, occurred_at DESC, id DESC)
+    WHERE principal_id IS NOT NULL;
+CREATE INDEX authentication_event_org_time
+    ON identity.authentication_event (org, occurred_at DESC, id DESC)
+    WHERE org IS NOT NULL;
+
+ALTER TABLE identity.authentication_event ENABLE ROW LEVEL SECURITY;
+DO $authentication_event$
+BEGIN
+    IF to_regrole('wamn_identity_issuer') IS NOT NULL THEN
+        CREATE POLICY issuer_append ON identity.authentication_event
+            FOR INSERT TO wamn_identity_issuer WITH CHECK (true);
+        GRANT INSERT (event_type, outcome, principal_id, attempted_email,
+                      ip_address, ip_source, peer_ip_address, org, failure_summary,
+                      login_id, session_jti, workload)
+            ON identity.authentication_event TO wamn_identity_issuer;
+    END IF;
+END
+$authentication_event$;
+
 CREATE TABLE registry.project_env (
     org              text NOT NULL,
     env              text NOT NULL,

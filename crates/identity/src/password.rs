@@ -86,7 +86,7 @@ impl PasswordError {
         self.cause
     }
     /// Name the case behind a shared cause, such as `no-password` for
-    /// "no such account". Only the log carries it.
+    /// "no such account". Identity uses it in private diagnostics.
     pub fn reason(&self) -> Option<&'static str> {
         self.reason
     }
@@ -234,26 +234,33 @@ impl PasswordWork {
         hash: String,
     ) -> Result<bool, PasswordError> {
         self.run(move || {
-            let hash = PasswordHash::new(&hash)
-                .map_err(|source| infrastructure("stored password hash refused", source))?;
-            let params = Params::try_from(&hash)
-                .map_err(|source| infrastructure("stored password parameters refused", source))?;
-            if hash.algorithm.as_str() != "argon2id"
-                || hash.version != Some(19)
-                || params != *argon().params()
-                || hash.salt.is_none()
-                || hash.hash.is_none()
-            {
-                return Err(failure(
-                    PasswordErrorType::Infrastructure,
-                    "stored password profile refused",
-                ));
-            }
-            match argon().verify_password(password.0.as_bytes(), &hash) {
-                Ok(()) => Ok(true),
-                Err(argon2::password_hash::Error::PasswordInvalid) => Ok(false),
-                Err(source) => Err(infrastructure("password verification failed", source)),
-            }
+            let verify = || {
+                let hash = PasswordHash::new(&hash)
+                    .map_err(|source| infrastructure("stored password hash refused", source))?;
+                let params = Params::try_from(&hash).map_err(|source| {
+                    infrastructure("stored password parameters refused", source)
+                })?;
+                if hash.algorithm.as_str() != "argon2id"
+                    || hash.version != Some(19)
+                    || params != *argon().params()
+                    || hash.salt.is_none()
+                    || hash.hash.is_none()
+                {
+                    return Err(failure(
+                        PasswordErrorType::Infrastructure,
+                        "stored password profile refused",
+                    ));
+                }
+                match argon().verify_password(password.0.as_bytes(), &hash) {
+                    Ok(()) => Ok(true),
+                    Err(argon2::password_hash::Error::PasswordInvalid) => Ok(false),
+                    Err(source) => Err(infrastructure("password verification failed", source)),
+                }
+            };
+            verify().map_err(|mut error| {
+                error.reason = Some("stored-credential");
+                error
+            })
         })
         .await
     }

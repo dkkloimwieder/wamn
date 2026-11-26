@@ -8,6 +8,7 @@ use hyper::{Response, StatusCode, body::Bytes};
 use serde::{Deserialize, Serialize};
 use sqlx::PgConnection;
 use tokio::sync::OnceCell;
+use wamn_identity::authentication_event::{Event, Outcome};
 use wamn_identity::identity::nats as key_store;
 use wamn_identity::nats::{self, Authority, LimitsPerProject};
 use wamn_identity::workload_identity;
@@ -194,13 +195,23 @@ pub(super) async fn respond(
     org: &OrgId,
     route: &str,
     body: &[u8],
+    event: Option<&mut Event>,
 ) -> Response<Full<Bytes>> {
     let Some(state) = &inner.nats else {
         return unavailable();
     };
     match route {
         ENSURE_ACCOUNT_PATH => ensure_account(inner, state, client, org, body).await,
-        SIGN_USER_PATH => sign_user(inner, client, org, body).await,
+        SIGN_USER_PATH => {
+            sign_user(
+                inner,
+                client,
+                org,
+                body,
+                event.expect("worker route has an authentication event"),
+            )
+            .await
+        }
         _ => unreachable!("only NATS routes enter NATS request handling"),
     }
 }
@@ -280,18 +291,25 @@ async fn sign_user(
     client: &mut PgConnection,
     org: &OrgId,
     body: &[u8],
+    event: &mut Event,
 ) -> Response<Full<Bytes>> {
     let Ok(request) = serde_json::from_slice::<SignUser>(body) else {
+        event.outcome = Some(Outcome::RequestInvalid);
         return invalid();
     };
     if &request.org != org {
+        event.org = Some(request.org);
+        event.outcome = Some(Outcome::OrgMismatch);
         return super::users::forbidden();
     }
     if !nats::is_user_public_key(&request.public_key) {
+        event.org = Some(request.org);
+        event.outcome = Some(Outcome::PublicKeyInvalid);
         return invalid();
     }
     let inbox_prefix = name::nats_user_inbox(&request.public_key);
     let (name, permissions) = workload_identity::env_permissions(&request, &inbox_prefix);
+    event.org = Some(request.org);
     let user = nats::User {
         public_key: &request.public_key,
         name: &name,
@@ -307,24 +325,34 @@ async fn sign_user(
     )
     .await;
     match signed {
-        Ok(Some(jwt)) => json(&SignedUser { jwt, inbox_prefix }),
-        Ok(None) => response(
-            StatusCode::NOT_FOUND,
-            "application/json",
-            br#"{"error":"NATS environment account is absent"}"#.to_vec(),
-        ),
-        Err(error) => signing_error(&error),
+        Ok(Some(jwt)) => signed_user(jwt, inbox_prefix, event),
+        Ok(None) => {
+            event.outcome = Some(Outcome::NatsAccountMissing);
+            response(
+                StatusCode::NOT_FOUND,
+                "application/json",
+                br#"{"error":"NATS environment account is absent"}"#.to_vec(),
+            )
+        }
+        Err(error) => credential_signing_error(&error, event),
     }
 }
 
-pub(super) fn sign_host_user(inner: &Inner, pod: &str, body: &[u8]) -> Response<Full<Bytes>> {
+pub(super) fn sign_host_user(
+    inner: &Inner,
+    pod: &str,
+    body: &[u8],
+    event: &mut Event,
+) -> Response<Full<Bytes>> {
     let Some(state) = &inner.nats else {
         return unavailable();
     };
     let Ok(request) = serde_json::from_slice::<SignHostUser>(body) else {
+        event.outcome = Some(Outcome::RequestInvalid);
         return invalid();
     };
     if !nats::is_user_public_key(&request.public_key) {
+        event.outcome = Some(Outcome::PublicKeyInvalid);
         return invalid();
     }
     let inbox_prefix = name::nats_user_inbox(&request.public_key);
@@ -335,9 +363,30 @@ pub(super) fn sign_host_user(inner: &Inner, pod: &str, body: &[u8]) -> Response<
         permissions: &permissions,
     };
     match state.authority.platform_user(&user) {
-        Ok(jwt) => json(&SignedUser { jwt, inbox_prefix }),
-        Err(error) => signing_error(&error),
+        Ok(jwt) => signed_user(jwt, inbox_prefix, event),
+        Err(error) => credential_signing_error(&error, event),
     }
+}
+
+fn signed_user(jwt: String, inbox_prefix: String, event: &mut Event) -> Response<Full<Bytes>> {
+    let reply = json(&SignedUser { jwt, inbox_prefix });
+    if reply.status().is_success() {
+        event.outcome = Some(Outcome::Succeeded);
+    }
+    reply
+}
+
+fn credential_signing_error(error: &nats::Error, event: &mut Event) -> Response<Full<Bytes>> {
+    event.outcome = Some(if error.is_invalid_user_key() {
+        Outcome::PublicKeyInvalid
+    } else if std::error::Error::source(error)
+        .is_some_and(<dyn std::error::Error>::is::<sqlx::Error>)
+    {
+        Outcome::Unavailable
+    } else {
+        Outcome::SigningFailed
+    });
+    signing_error(error)
 }
 
 fn signing_error(error: &nats::Error) -> Response<Full<Bytes>> {

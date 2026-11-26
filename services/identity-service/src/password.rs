@@ -1,6 +1,6 @@
 //! Password endpoints share bounded work, database throttling, and session authority.
 
-use std::net::IpAddr;
+use std::sync::Arc;
 use std::time::Duration;
 
 use bytes::Bytes;
@@ -8,18 +8,20 @@ use http_body_util::{BodyExt as _, Full, Limited};
 use hyper::{Request, Response, StatusCode, body::Incoming};
 use serde::{Deserialize, Serialize};
 use sqlx::PgConnection as Client;
-use wamn_identity::identity::issuer::Issuer;
+use wamn_identity::authentication_event::{Event, Outcome};
+use wamn_identity::control_admission::org_audience_org;
+use wamn_identity::identity::issuer::{Admission, Issuer};
 use wamn_identity::password::{
     Password, PasswordError, PasswordErrorType, PasswordWork, RefusalCause, password_work,
 };
-use wamn_identity::password_requests::{self, Attempt, DeliveryFailure, EmailDelivery};
+use wamn_identity::password_requests::{self, Attempt, DeliveryFailure};
 use wamn_identity::session_exchange::{self, Exchange, ExchangeFailure, RenewalAction, Session};
 use wamn_identity_protocol::PrincipalId;
 
 use zeroize::Zeroizing;
 
 use crate::{
-    IdentityServiceError, Inner,
+    IdentityServiceError, Inner, authentication_event,
     mail::{MailConfig, Mailer},
     response, session, unavailable,
 };
@@ -32,19 +34,12 @@ const MAX_REQUEST_BYTES: usize = 8192;
 #[derive(Debug)]
 pub(super) struct State {
     pub(super) mail: Mailer,
-    pool: sqlx::PgPool,
     work: PasswordWork,
 }
 impl State {
-    pub(super) async fn new(
-        mail: MailConfig,
-        connection: &str,
-    ) -> Result<Self, IdentityServiceError> {
+    pub(super) fn new(mail: MailConfig) -> Result<Self, IdentityServiceError> {
         Ok(Self {
             mail: Mailer::new(mail)?,
-            pool: wamn_postgres::pool(connection, 8).await.map_err(|_| {
-                IdentityServiceError::new("identity password pool configuration refused")
-            })?,
             work: password_work(),
         })
     }
@@ -96,50 +91,63 @@ struct RenewableResponse<'a> {
 }
 
 pub(super) async fn respond(
-    inner: &Inner,
+    inner: &Arc<Inner>,
     state: &State,
     request: Request<Incoming>,
-    source: IpAddr,
+    mut event: Event,
 ) -> Response<Full<Bytes>> {
-    let Ok(_permit) = inner.request_slots.try_acquire() else {
-        return throttled();
+    let reply = match inner.request_slots.try_acquire() {
+        Err(_) => {
+            event.outcome = Some(Outcome::RequestBusy);
+            throttled()
+        }
+        Ok(_permit) => {
+            if let Some(started_at) = session_exchange::unix_seconds() {
+                if let Ok(reply) = tokio::time::timeout(
+                    REQUEST_TIMEOUT,
+                    handle(inner, state, request, started_at, &mut event),
+                )
+                .await
+                {
+                    reply
+                } else {
+                    if event.outcome.is_some() {
+                        event.outcome = Some(Outcome::TimedOut);
+                    }
+                    unavailable()
+                }
+            } else {
+                unavailable()
+            }
+        }
     };
-    let Some(started_at) = session_exchange::unix_seconds() else {
-        return unavailable();
-    };
-    match tokio::time::timeout(
-        REQUEST_TIMEOUT,
-        handle(inner, state, request, source, started_at),
-    )
-    .await
-    {
-        Ok(reply) => reply,
-        Err(_) => unavailable(),
-    }
+    authentication_event::finish(inner, event);
+    reply
 }
 
 async fn handle(
     inner: &Inner,
     state: &State,
     request: Request<Incoming>,
-    source: IpAddr,
     started_at: i64,
+    event: &mut Event,
 ) -> Response<Full<Bytes>> {
     // SQLx flushes pending transaction rollbacks before returning a session to the pool.
-    let Ok(mut database) = state.pool.acquire().await else {
+    let Ok(mut database) = inner.pool.acquire().await else {
         return unavailable();
     };
-    match password_requests::admit(
-        &mut Issuer(&mut database),
-        &inner.issuer,
-        Attempt::Source(source),
-    )
-    .await
-    {
-        Ok(true) => (),
-        Ok(false) => return throttled(),
-        Err(_) => return unavailable(),
+    if let Some(reply) = admission_reply(
+        &password_requests::admit(
+            &mut Issuer(&mut database),
+            &inner.issuer,
+            Attempt::Source(event.client_ip()),
+        )
+        .await,
+        Some(&mut *event),
+    ) {
+        return reply;
     }
+    event.outcome = Some(Outcome::RequestInvalid);
     let (parts, body) = request.into_parts();
     let mut types = parts.headers.get_all(hyper::header::CONTENT_TYPE).iter();
     if !types.next().and_then(|v| v.to_str().ok()).is_some_and(|v| {
@@ -161,29 +169,30 @@ async fn handle(
             };
             let secret = Zeroizing::new(request.invitation);
             let principal = request.principal_id;
+            event.outcome = Some(Outcome::Unavailable);
             let password = match Password::new(request.password) {
                 Ok(value) => value,
                 Err(error) => {
-                    return enrollment_refusal(&mut database, &principal, &error).await;
+                    return enrollment_refusal(&mut database, &principal, &error, event).await;
                 }
             };
-            match password_requests::admit(
-                &mut Issuer(&mut database),
-                &inner.issuer,
-                Attempt::Enrollment(&principal),
-            )
-            .await
-            {
-                Ok(true) => (),
-                Ok(false) => return throttled(),
-                Err(_) => return unavailable(),
+            if let Some(reply) = admission_reply(
+                &password_requests::admit(
+                    &mut Issuer(&mut database),
+                    &inner.issuer,
+                    Attempt::Enrollment(&principal),
+                )
+                .await,
+                Some(&mut *event),
+            ) {
+                return reply;
             }
             match Issuer(&mut database)
-                .enroll(&state.work, &principal, &secret, password)
+                .enroll(&state.work, &principal, &secret, password, event)
                 .await
             {
                 Ok(()) => response(StatusCode::NO_CONTENT, "application/json", Vec::new()),
-                Err(error) => enrollment_refusal(&mut database, &principal, &error).await,
+                Err(error) => enrollment_refusal(&mut database, &principal, &error, event).await,
             }
         }
         "/password/session" => {
@@ -193,25 +202,31 @@ async fn handle(
                 aud: audience,
             }) = serde_json::from_slice(&bytes)
             else {
+                capture_lossy_email(&bytes, event);
                 return invalid();
             };
+            event.attempted_email(&email);
+            event.org = org_audience_org(&audience);
             let Ok(password) = Password::new(password) else {
+                event.outcome = Some(Outcome::PasswordPolicyRefused);
                 return session::unauthorized();
             };
             let Some(email) = password_requests::password_email(&email) else {
+                event.outcome = Some(Outcome::EmailInvalid);
                 return session::unauthorized();
             };
-            match password_requests::admit(
-                &mut Issuer(&mut database),
-                &inner.issuer,
-                Attempt::Login(&email),
-            )
-            .await
-            {
-                Ok(true) => (),
-                Ok(false) => return throttled(),
-                Err(_) => return unavailable(),
+            if let Some(reply) = admission_reply(
+                &password_requests::admit(
+                    &mut Issuer(&mut database),
+                    &inner.issuer,
+                    Attempt::Login(&email),
+                )
+                .await,
+                Some(&mut *event),
+            ) {
+                return reply;
             }
+            event.outcome = Some(Outcome::Unavailable);
             let exchange = Exchange {
                 issuer: &inner.issuer,
                 audience: &audience,
@@ -224,17 +239,19 @@ async fn handle(
                 &state.work,
                 &email,
                 password,
+                Some(event),
             )
             .await
             {
                 Ok(session) => renewable_response(&session),
-                Err(error) => exchange_failure(&error),
+                Err(error) => exchange_failure(&error, event),
             }
         }
         "/password/recover" | "/password/reset" => {
             let resetting = parts.uri.path() == "/password/reset";
             let (email, reset) = if resetting {
                 let Ok(request) = serde_json::from_slice::<ResetRequest>(&bytes) else {
+                    capture_lossy_email(&bytes, event);
                     return invalid();
                 };
                 (
@@ -243,55 +260,61 @@ async fn handle(
                 )
             } else {
                 let Ok(request) = serde_json::from_slice::<RecoveryRequest>(&bytes) else {
+                    capture_lossy_email(&bytes, event);
                     return invalid();
                 };
                 (request.email, None)
             };
+            event.attempted_email(&email);
             let Some(email) = password_requests::password_email(&email) else {
+                event.outcome = Some(Outcome::EmailInvalid);
                 return invalid();
             };
             let mut store = Issuer(&mut database);
-            match password_requests::admit(&mut store, &inner.issuer, Attempt::Recovery(&email))
-                .await
-            {
-                Ok(true) => (),
-                Ok(false) => return throttled(),
-                Err(_) => return unavailable(),
+            if let Some(reply) = admission_reply(
+                &password_requests::admit(&mut store, &inner.issuer, Attempt::Recovery(&email))
+                    .await,
+                Some(&mut *event),
+            ) {
+                return reply;
             }
+            event.outcome = Some(Outcome::Unavailable);
             if let Some((secret, password)) = reset {
-                match password_requests::reset(&mut store, &state.work, &email, &secret, password)
-                    .await
+                match password_requests::reset(
+                    &mut store,
+                    &state.work,
+                    &email,
+                    &secret,
+                    password,
+                    event,
+                )
+                .await
                 {
                     Ok(()) => (),
-                    Err(error) => return delivery_failure(&error, &email),
+                    Err(error) => return delivery_failure(&error, &email, event),
                 }
                 let notified = state.mail.password_changed(&email).await.is_ok();
                 return response(StatusCode::OK, "application/json", serde_json::to_vec(&serde_json::json!({"status":"password_reset", "notification": if notified { "accepted_for_delivery" } else { "unavailable" }})).expect("fixed response"));
             }
-            password_requests::pad_recovery(async {
-                match password_requests::recover(&mut store, &email).await {
-                    Ok(token) => {
-                        let delivery = async {
-                            state
-                                .mail
-                                .reset(&email, token.secret(), token.expires_at())
-                                .await
-                                .is_ok()
-                        };
-                        let _ = password_requests::deliver(
-                            &mut store,
-                            &token,
-                            EmailDelivery::Recovery,
-                            delivery,
-                        )
-                        .await;
+            let completed = password_requests::pad_recovery(async {
+                match password_requests::recover(&mut store, &email, event).await {
+                    Ok(pending) => {
+                        let accepted = state
+                            .mail
+                            .reset(&email, pending.token.secret(), pending.token.expires_at())
+                            .await
+                            .is_ok();
+                        pending.finish(accepted, event).await;
                     }
                     Err(error) => {
-                        let _ = delivery_failure(&error, &email);
+                        let _ = delivery_failure(&error, &email, event);
                     }
                 }
             })
             .await;
+            if !completed && event.outcome.is_some() {
+                event.outcome = Some(Outcome::TimedOut);
+            }
             response(
                 StatusCode::ACCEPTED,
                 "application/json",
@@ -302,6 +325,8 @@ async fn handle(
             let Ok(request) = serde_json::from_slice::<RenewalRequest>(&bytes) else {
                 return invalid();
             };
+            event.org = org_audience_org(&request.aud);
+            event.outcome = Some(Outcome::Unavailable);
             let secret = Zeroizing::new(request.renewal_token);
             let exchange = Exchange {
                 issuer: &inner.issuer,
@@ -314,34 +339,52 @@ async fn handle(
                 "/password/logout" => RenewalAction::Logout,
                 _ => RenewalAction::LogoutAll,
             };
-            match session_exchange::renewal(&mut Issuer(&mut database), exchange, action, &secret)
-                .await
+            match session_exchange::renewal(
+                &mut Issuer(&mut database),
+                exchange,
+                action,
+                &secret,
+                event,
+            )
+            .await
             {
                 Ok(Some(session)) => renewable_response(&session),
                 Ok(None) => logged_out(),
-                Err(error) => exchange_failure(&error),
+                Err(error) => exchange_failure(&error, event),
             }
         }
         _ => invalid(),
     }
 }
 
-fn exchange_failure(error: &ExchangeFailure) -> Response<Full<Bytes>> {
+fn exchange_failure(error: &ExchangeFailure, event: &mut Event) -> Response<Full<Bytes>> {
     match error {
         ExchangeFailure::Unauthorized => session::unauthorized(),
         ExchangeFailure::Unavailable => unavailable(),
-        ExchangeFailure::Password(error) => password_failure(error),
+        ExchangeFailure::Password(error) => {
+            if event.outcome == Some(Outcome::Unavailable) {
+                event.outcome = Some(Outcome::password(error));
+            }
+            password_failure(error)
+        }
     }
 }
 
-fn delivery_failure(error: &DeliveryFailure<'_>, email: &str) -> Response<Full<Bytes>> {
+fn delivery_failure(
+    error: &DeliveryFailure<'_>,
+    email: &str,
+    event: &mut Event,
+) -> Response<Full<Bytes>> {
     match error {
         DeliveryFailure::Unavailable => unavailable(),
         DeliveryFailure::UnknownPrincipal => {
             tracing::info!(email = %email, cause = %RefusalCause::NoSuchAccount, "password request refused");
             invalid()
         }
-        DeliveryFailure::Refused { error, email } => refusal(error, email),
+        DeliveryFailure::Refused { error, email } => {
+            event.outcome = Some(Outcome::password(error));
+            refusal(error, email)
+        }
     }
 }
 
@@ -386,10 +429,15 @@ async fn enrollment_refusal(
     client: &mut Client,
     principal: &PrincipalId,
     error: &PasswordError,
+    event: &mut Event,
 ) -> Response<Full<Bytes>> {
+    event.outcome = Some(Outcome::password(error));
     if let Some(cause) = error.cause() {
         match Issuer(client).enrollment_email(principal).await {
-            Ok(Some(email)) => return refusal(error, &email),
+            Ok(Some(email)) => {
+                event.principal_id = Some(*principal);
+                return refusal(error, &email);
+            }
             Ok(None) => {
                 tracing::info!(principal = %principal, cause = %cause, "password request refused");
             }
@@ -397,6 +445,40 @@ async fn enrollment_refusal(
         }
     }
     password_failure(error)
+}
+
+pub(super) fn admission_reply(
+    result: &Result<Admission, wamn_authentication::identity_error::IdentityError>,
+    event: Option<&mut Event>,
+) -> Option<Response<Full<Bytes>>> {
+    match result {
+        Ok(Admission::Allowed) => None,
+        Ok(Admission::Denied(outcome)) => {
+            if let Some(event) = event {
+                event.outcome = *outcome;
+            }
+            Some(throttled())
+        }
+        Err(_) => {
+            if let Some(event) = event {
+                event.outcome = Some(Outcome::Unavailable);
+            }
+            Some(unavailable())
+        }
+    }
+}
+
+fn capture_lossy_email(bytes: &[u8], event: &mut Event) {
+    #[derive(Deserialize)]
+    struct Email {
+        email: String,
+    }
+    if let std::borrow::Cow::Owned(json) = String::from_utf8_lossy(bytes) {
+        let json = Zeroizing::new(json);
+        if let Ok(request) = serde_json::from_str::<Email>(&json) {
+            event.attempted_email(&request.email);
+        }
+    }
 }
 
 fn password_failure(error: &PasswordError) -> Response<Full<Bytes>> {
@@ -439,7 +521,6 @@ pub(crate) mod tests {
     use serde_json::json;
     use sqlx::Row as _;
     use std::convert::Infallible;
-    use std::sync::Arc;
     use tokio::net::TcpListener;
     use wamn_http_client::HttpClient;
     use wamn_identity_protocol::PlatformComponent;
@@ -534,6 +615,23 @@ pub(crate) mod tests {
         .await
         .unwrap();
         assert_eq!(buckets, [(format!("source:{}", address.ip()), 21)]);
+        let recorded = tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                let event = sqlx::query_as::<_, (String, String, Option<String>)>(
+                    "SELECT host(ip_address), ip_source, host(peer_ip_address)
+                     FROM identity.authentication_event
+                     WHERE event_type = 'password_recovery_request' AND outcome = 'source_rate_limited'",
+                )
+                .fetch_optional(&mut admin.client)
+                .await
+                .unwrap();
+                if let Some(event) = event {
+                    break event;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        }).await.unwrap();
+        assert_eq!(recorded, (address.ip().to_string(), "socket".into(), None));
         server.abort();
     }
 
@@ -686,17 +784,23 @@ pub(crate) mod tests {
             delivered += 1;
             serde_json::from_str::<serde_json::Value>(&line).unwrap()
         };
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let endpoint = format!("http://{}", listener.local_addr().unwrap());
+        let general_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let password_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}", general_listener.local_addr().unwrap());
+        let password_endpoint = format!("http://{}", password_listener.local_addr().unwrap());
         let requests = tokio::spawn(async move {
-            for _ in 0..12 {
-                let (tcp, peer) = listener.accept().await.unwrap();
+            for _ in 0..18 {
+                let (accepted, listener) = tokio::select! {
+                    accepted = general_listener.accept() => (accepted, Listener::General),
+                    accepted = password_listener.accept() => (accepted, Listener::Password),
+                };
+                let (tcp, peer) = accepted.unwrap();
                 let inner = Arc::clone(&service.inner);
                 let handler = service_fn(move |request| {
                     let service = IdentityService {
                         inner: Arc::clone(&inner),
                     };
-                    async move { service.respond(request, peer.ip(), Listener::General).await }
+                    async move { service.respond(request, peer.ip(), listener).await }
                 });
                 hyper::server::conn::http1::Builder::new()
                     .keep_alive(false)
@@ -729,7 +833,7 @@ pub(crate) mod tests {
             .find_map(|l| l.strip_prefix("Invitation code: "))
             .and_then(|code| code.split_once(':').map(|(_, secret)| secret))
             .unwrap();
-        let reply = client.post(format!("{endpoint}/password/enroll")).json(&json!({"principal_id":alice.id().to_string().as_str(),"invitation":secret,"password":"a long enough password"})).send().await.unwrap();
+        let reply = client.post(format!("{password_endpoint}/password/enroll")).json(&json!({"principal_id":alice.id().to_string().as_str(),"invitation":secret,"password":"a long enough password"})).send().await.unwrap();
         assert_eq!(reply.status(), 204);
         // `/users` creates a user once, folds its email into the subject and
         // reports whether it has a password credential.
@@ -801,7 +905,7 @@ pub(crate) mod tests {
             .unwrap();
         assert_eq!(disabled.status(), 409);
         let unknown = client
-            .post(format!("{endpoint}/password/recover"))
+            .post(format!("{password_endpoint}/password/recover"))
             .json(&json!({"email":"unknown@example.invalid"}))
             .send()
             .await
@@ -809,7 +913,7 @@ pub(crate) mod tests {
         assert_eq!(unknown.status(), 202);
         let unknown_body = unknown.bytes().await.unwrap();
         let recovery = client
-            .post(format!("{endpoint}/password/recover"))
+            .post(format!("{password_endpoint}/password/recover"))
             .json(&json!({"email":"alice@example.invalid"}))
             .send()
             .await
@@ -826,7 +930,7 @@ pub(crate) mod tests {
             .unwrap();
         let reset_body = json!({"email":"alice@example.invalid", "secret":secret, "password":"a replacement long password"});
         let reset = client
-            .post(format!("{endpoint}/password/reset"))
+            .post(format!("{password_endpoint}/password/reset"))
             .json(&reset_body)
             .send()
             .await
@@ -840,12 +944,122 @@ pub(crate) mod tests {
         assert!(!notification["subject"].as_str().unwrap().is_empty());
         assert!(!notification["text"].as_str().unwrap().contains(secret));
         let repeated = client
-            .post(format!("{endpoint}/password/reset"))
+            .post(format!("{password_endpoint}/password/reset"))
             .json(&reset_body)
             .send()
             .await
             .unwrap();
         assert_eq!(repeated.status(), 400);
+        for path in [
+            wamn_identity_protocol::nats::SIGN_USER_PATH,
+            wamn_identity_protocol::nats::SIGN_HOST_USER_PATH,
+        ] {
+            let refused = client
+                .post(format!("{endpoint}{path}"))
+                .json(&json!({}))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(refused.status(), 403);
+        }
+        for (path, status) in [("logout", 204), ("logout-all", 401)] {
+            let reply = client
+                .post(format!("{password_endpoint}/password/{path}"))
+                .json(&json!({"renewal_token": "malformed", "aud": "urn:wamn:org:demo"}))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(reply.status(), status);
+        }
+        let long_email = "é".repeat(600);
+        let invalid = client.post(format!("{password_endpoint}/password/session"))
+            .header("x-forwarded-for", "2001:db8::42")
+            .json(&json!({"email": long_email, "password": "long enough password", "aud": "urn:wamn:org:unregistered"}))
+            .send().await.unwrap();
+        assert_eq!(invalid.status(), 401);
+        let invalid = client.post(format!("{password_endpoint}/password/session"))
+            .header("content-type", "application/json")
+            .body(b"{\"email\":\"broken\xff@example.invalid\",\"password\":\"long enough password\",\"aud\":\"urn:wamn:org:demo\"}".to_vec())
+            .send().await.unwrap();
+        assert_eq!(invalid.status(), 400);
+
+        // Refusal appends run off the reply path.
+        let rows = tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                let rows = sqlx::query(
+                    "SELECT event_type, outcome, attempted_email, host(ip_address) AS ip,
+                            ip_source, host(peer_ip_address) AS peer, org, workload, principal_id::text AS principal
+                     FROM identity.authentication_event",
+                )
+                .fetch_all(&mut admin.client)
+                .await
+                .unwrap();
+                if rows.len() >= 12 {
+                    break rows;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        }).await.unwrap();
+        let mut decisions: Vec<_> = rows
+            .iter()
+            .map(|row| {
+                (
+                    row.get::<&str, _>("event_type"),
+                    row.get::<&str, _>("outcome"),
+                )
+            })
+            .collect();
+        decisions.sort_unstable();
+        assert_eq!(
+            decisions,
+            [
+                ("invitation_request", "delivery_accepted"),
+                ("nats_host_credential_issue", "workload_refused"),
+                ("nats_workload_credential_issue", "workload_refused"),
+                ("password_enroll", "succeeded"),
+                ("password_recovery_request", "delivery_accepted"),
+                ("password_recovery_request", "unknown_email"),
+                ("password_reset", "succeeded"),
+                ("password_reset", "token_consumed"),
+                ("password_sign_in", "email_invalid"),
+                ("password_sign_in", "request_invalid"),
+                ("session_sign_out", "token_malformed"),
+                ("session_sign_out_all", "token_malformed"),
+            ]
+        );
+        let get = |outcome| {
+            rows.iter()
+                .find(|row| row.get::<&str, _>("outcome") == outcome)
+                .unwrap()
+        };
+        let invitation = rows
+            .iter()
+            .find(|row| row.get::<&str, _>("event_type") == "invitation_request")
+            .unwrap();
+        assert_eq!(invitation.get::<&str, _>("org"), "demo");
+        assert_eq!(invitation.get::<&str, _>("workload"), "wamn-control-demo");
+        assert_eq!(invitation.get::<&str, _>("principal"), alice_id);
+        assert_eq!(invitation.get::<Option<&str>, _>("attempted_email"), None);
+        let unknown = get("unknown_email");
+        assert_eq!(
+            unknown.get::<&str, _>("attempted_email"),
+            "unknown@example.invalid"
+        );
+        assert_eq!(unknown.get::<Option<&str>, _>("principal"), None);
+        let forwarded = get("email_invalid");
+        assert_eq!(forwarded.get::<&str, _>("attempted_email"), "é".repeat(512));
+        assert_eq!(forwarded.get::<&str, _>("ip"), "2001:db8::42");
+        assert_eq!(forwarded.get::<&str, _>("ip_source"), "forwarded");
+        assert_eq!(forwarded.get::<&str, _>("peer"), "127.0.0.1");
+        assert_eq!(forwarded.get::<&str, _>("org"), "unregistered");
+        let malformed = get("request_invalid");
+        assert_eq!(
+            malformed.get::<&str, _>("attempted_email"),
+            "broken�@example.invalid"
+        );
+        assert_eq!(malformed.get::<&str, _>("ip"), "127.0.0.1");
+        assert_eq!(malformed.get::<&str, _>("ip_source"), "socket");
+        assert_eq!(malformed.get::<Option<&str>, _>("peer"), None);
         review_task.abort();
         requests.await.unwrap();
     }

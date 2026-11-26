@@ -441,7 +441,8 @@ async fn org_activity_controls_new_commands_and_password_logins() -> anyhow::Res
             exchange(),
             &work,
             email,
-            passphrase()
+            passphrase(),
+            None,
         )
         .await,
         Err(ExchangeFailure::Unauthorized)
@@ -454,6 +455,7 @@ async fn org_activity_controls_new_commands_and_password_logins() -> anyhow::Res
         &work,
         email,
         passphrase(),
+        None,
     )
     .await
     .map_err(|error| anyhow::anyhow!("password login after activation failed: {error:?}"))?;

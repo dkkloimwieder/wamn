@@ -11,7 +11,7 @@ use wamn_platform_install::identity_role::grant_identity_issuer_surface_sql;
 use wamn_test_infrastructure::identity as common;
 
 const ISSUER: &str = "https://identity.example.invalid";
-const AUDIENCE: &str = "demo:widgets:dev:a1b2c3d4";
+const AUDIENCE: &str = "urn:wamn:org:demo";
 
 async fn connect(url: &str, role: &str) -> Client {
     let mut client = wamn_postgres::connect(url).await.unwrap();
@@ -67,6 +67,11 @@ async fn rotate(client: &mut Client, secret: &str) -> Option<Renewal> {
 #[tokio::test]
 #[ignore = "requires: docker"]
 async fn targeted_rotation_preserves_deadline_and_replay_revokes_successor() {
+    use std::io::Write as _;
+    use wamn_identity::authentication_event::{ClientAddress, Event, EventType, Outcome};
+    use wamn_identity::identity::{issuer::Issuer, org, session_keys};
+    use wamn_identity::session_exchange::{self, Exchange, ExchangeFailure, RenewalAction};
+
     let postgres = wamn_test_infrastructure::containers::start_postgres()
         .await
         .unwrap();
@@ -78,6 +83,44 @@ async fn targeted_rotation_preserves_deadline_and_replay_revokes_successor() {
         .await
         .unwrap();
     let mut issuer = connect(db.as_str(), "wamn_identity_issuer").await;
+    let org = "demo".parse().unwrap();
+    let mut setup = common::transaction(
+        &mut owner,
+        &wamn_principal::PlatformComponent::Provisioning.principal_id(),
+        "wamn:provisioning",
+    )
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO registry.org (id) VALUES ($1)")
+        .bind(wamn_registry::OrgId::as_str(&org))
+        .execute(&mut *setup)
+        .await
+        .unwrap();
+    org::activate_org_membership(&mut setup, &user, &org)
+        .await
+        .unwrap();
+    setup.commit().await.unwrap();
+
+    let mut key = tempfile::NamedTempFile::new().unwrap();
+    key.write_all(&[7; 32]).unwrap();
+    let envelope = wamn_key::from_file(key.path()).unwrap();
+    session_keys::initialize_session_key(&mut issuer, ISSUER, &envelope)
+        .await
+        .unwrap();
+    let exchange = || Exchange {
+        issuer: ISSUER,
+        audience: AUDIENCE,
+        started_at: session_exchange::unix_seconds().unwrap(),
+        envelope: &envelope,
+    };
+    let renewal_event = || {
+        let mut event = Event::new(
+            EventType::SessionRenew,
+            ClientAddress::Socket("192.0.2.12".parse().unwrap()),
+        );
+        event.org = Some(org.clone());
+        event
+    };
     let first = create(&mut issuer, &user).await;
     assert_eq!(first.login.expires_at - first.login.authenticated_at, 28800);
     assert!(!format!("{first:?}").contains(first.secret()));
@@ -129,12 +172,53 @@ async fn targeted_rotation_preserves_deadline_and_replay_revokes_successor() {
         .unwrap();
     tx.rollback().await.unwrap();
     assert!(rotate(&mut issuer, rolled_back.secret()).await.is_none());
-    let second = rotate(&mut issuer, first.secret()).await.unwrap();
+    let session = session_exchange::renewal(
+        &mut Issuer(&mut issuer),
+        exchange(),
+        RenewalAction::Renew,
+        first.secret(),
+        &mut renewal_event(),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    let second = session.renewal;
     assert_eq!(second.login.id, first.login.id);
     assert_eq!(second.login.authenticated_at, first.login.authenticated_at);
     assert_eq!(second.login.expires_at, first.login.expires_at);
     assert_ne!(second.secret(), first.secret());
-    assert!(rotate(&mut issuer, first.secret()).await.is_none());
+    let (outcome, login_id, token_id): (String, String, String) = sqlx::query_as(
+        "SELECT outcome, login_id::text, session_jti
+         FROM identity.authentication_event WHERE event_type = 'session_renew'",
+    )
+    .fetch_one(&mut owner)
+    .await
+    .unwrap();
+    assert_eq!(outcome, Outcome::Succeeded.code());
+    assert_eq!(login_id, second.login.id);
+    assert_eq!(token_id, session.token.claims().jti);
+
+    sqlx::raw_sql("ALTER POLICY issuer_append ON identity.authentication_event WITH CHECK (false)")
+        .execute(&mut owner)
+        .await
+        .unwrap();
+    let mut replay = renewal_event();
+    let result = session_exchange::renewal(
+        &mut Issuer(&mut issuer),
+        exchange(),
+        RenewalAction::Renew,
+        first.secret(),
+        &mut replay,
+    )
+    .await;
+    assert!(matches!(result, Err(ExchangeFailure::Unauthorized)));
+    assert_eq!(replay.outcome, Some(Outcome::RenewalReused));
+    assert!(
+        replay
+            .append(&mut issuer, Outcome::RenewalReused)
+            .await
+            .is_err()
+    );
     assert!(rotate(&mut issuer, second.secret()).await.is_none());
     assert_eq!(
         sqlx::query("SELECT count(*) FROM identity.renewal_credential")
@@ -144,6 +228,32 @@ async fn targeted_rotation_preserves_deadline_and_replay_revokes_successor() {
             .get::<i64, _>(0),
         2
     );
+    let active = create(&mut issuer, &user).await;
+    let mut logout = Event::new(
+        EventType::SessionSignOut,
+        ClientAddress::Socket("192.0.2.12".parse().unwrap()),
+    );
+    logout.org = Some(org);
+    assert!(
+        session_exchange::renewal(
+            &mut Issuer(&mut issuer),
+            exchange(),
+            RenewalAction::Logout,
+            active.secret(),
+            &mut logout,
+        )
+        .await
+        .unwrap()
+        .is_none()
+    );
+    assert_eq!(logout.outcome, Some(Outcome::Succeeded));
+    assert!(
+        logout
+            .append(&mut issuer, Outcome::Succeeded)
+            .await
+            .is_err()
+    );
+    assert!(rotate(&mut issuer, active.secret()).await.is_none());
     // The issuer can rotate and revoke, but cannot rewrite account binding or deadlines.
     let error =
         sqlx::raw_sql("UPDATE identity.password_login SET expires_at=expires_at+interval '1 hour'")

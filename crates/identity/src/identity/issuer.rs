@@ -1,18 +1,24 @@
 //! Issuer storage for password requests, exchanges and workload admission.
 
-use crate::password::{Invitation, Password, PasswordError, PasswordWork};
-use crate::password_requests::EmailDelivery;
+use crate::authentication_event::{Event, Outcome};
+use crate::password::{Password, PasswordError, PasswordWork};
 use crate::principal::AuthenticatedPrincipal;
 use crate::session_exchange::ExchangeFailure;
 use sqlx::{Connection as _, PgConnection, Postgres, Row as _, Transaction};
 use uuid::Uuid;
 use wamn_authentication::identity_error::IdentityError;
-use wamn_digest::Digest;
 use wamn_identity_protocol::{PlatformComponent, PrincipalId};
 use wamn_registry::OrgId;
 
 use super::{password, password_login, transaction};
 use wamn_authentication::identity_error::database_error;
+
+/// The first denial owns the event for its bucket and window.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Admission {
+    Allowed,
+    Denied(Option<Outcome>),
+}
 
 /// An issuer connection used by the identity rules.
 #[derive(Debug)]
@@ -45,31 +51,26 @@ pub async fn begin_user_write(
 }
 
 impl Issuer<'_> {
-    /// Whether the org is registered and accepts new requests.
-    ///
-    /// # Errors
-    /// Returns an error if the org cannot be read.
-    pub async fn registered(&mut self, org: &OrgId) -> Result<bool, IdentityError> {
+    /// Read the org's active flag, if the org is registered.
+    pub async fn org_activity(&mut self, org: &OrgId) -> Result<Option<bool>, IdentityError> {
         let actor = PlatformComponent::IdentityService.principal_id();
         let mut tx = transaction::read_connection(self.0, &actor)
             .await
             .map_err(|error| database_error(&error))?;
-        let exists = sqlx::query_scalar(
-            "SELECT EXISTS (SELECT 1 FROM registry.org WHERE id = $1 AND active)",
-        )
-        .bind(org.as_str())
-        .fetch_one(&mut *tx)
-        .await
-        .map_err(|error| database_error(&error))?;
+        let active = sqlx::query_scalar("SELECT active FROM registry.org WHERE id = $1")
+            .bind(org.as_str())
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(|error| database_error(&error))?;
         tx.commit().await.map_err(|error| database_error(&error))?;
-        Ok(exists)
+        Ok(active)
     }
 
     pub async fn admit(
         &mut self,
         issuer: &str,
         buckets: &[(&str, i32)],
-    ) -> Result<bool, IdentityError> {
+    ) -> Result<Admission, IdentityError> {
         let mut tx = self
             .0
             .begin()
@@ -78,13 +79,35 @@ impl Issuer<'_> {
         bind_issuer_operation(&mut tx, &PlatformComponent::IdentityService.principal_id())
             .await
             .map_err(|error| database_error(&error))?;
+        // The upsert owns the row lock, including when another replica inserts the bucket first.
         // An over-limit earlier bucket prevents creation of subsequent buckets.
-        let mut allowed = true;
+        let mut admission = Admission::Allowed;
         for (bucket, limit) in buckets {
-            let count: i32 = sqlx::query("INSERT INTO identity.password_attempt (bucket, started_at, attempts) VALUES ($1, clock_timestamp(), 1) ON CONFLICT (bucket) DO UPDATE SET attempts = CASE WHEN identity.password_attempt.started_at <= EXCLUDED.started_at - interval '60 seconds' THEN 1 ELSE LEAST(identity.password_attempt.attempts + 1, $2 + 1) END, started_at = CASE WHEN identity.password_attempt.started_at <= EXCLUDED.started_at - interval '60 seconds' THEN EXCLUDED.started_at ELSE identity.password_attempt.started_at END RETURNING attempts")
-                .bind(bucket).bind(limit).fetch_one(&mut *tx).await.map_err(|error| database_error(&error))?.get(0);
+            let (previous, count): (Option<i32>, i32) = sqlx::query_as(
+                "INSERT INTO identity.password_attempt (bucket, started_at, attempts)
+                 VALUES ($1, clock_timestamp(), 1)
+                 ON CONFLICT (bucket) DO UPDATE SET
+                   attempts = CASE WHEN identity.password_attempt.started_at <= EXCLUDED.started_at - interval '60 seconds'
+                                   THEN 1 ELSE LEAST(identity.password_attempt.attempts + 1, $2 + 1) END,
+                   started_at = CASE WHEN identity.password_attempt.started_at <= EXCLUDED.started_at - interval '60 seconds'
+                                     THEN EXCLUDED.started_at ELSE identity.password_attempt.started_at END
+                 RETURNING OLD.attempts, NEW.attempts",
+            )
+            .bind(bucket)
+            .bind(limit)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(|error| database_error(&error))?;
             if count > *limit {
-                allowed = false;
+                admission = Admission::Denied((previous == Some(*limit)).then(|| {
+                    if *bucket == "global" {
+                        Outcome::GlobalRateLimited
+                    } else if bucket.starts_with("source:") {
+                        Outcome::SourceRateLimited
+                    } else {
+                        Outcome::AccountRateLimited
+                    }
+                }));
                 break;
             }
         }
@@ -93,12 +116,13 @@ impl Issuer<'_> {
             sqlx::query("DELETE FROM identity.password_attempt WHERE started_at < clock_timestamp() - interval '120 seconds'").execute(&mut *tx).await.map_err(|error| database_error(&error))?;
         }
         tx.commit().await.map_err(|error| database_error(&error))?;
-        Ok(allowed)
+        Ok(admission)
     }
 
-    pub async fn recovery_principal(
+    pub(crate) async fn recovery_principal(
         &mut self,
         email: &str,
+        event: &mut Event,
     ) -> Result<Option<PrincipalId>, IdentityError> {
         let mut tx = transaction::read_connection(
             self.0,
@@ -106,15 +130,31 @@ impl Issuer<'_> {
         )
         .await
         .map_err(|error| database_error(&error))?;
-        let row = sqlx::query("SELECT p.id FROM identity.principal p JOIN identity.password_credential c ON c.principal_id=p.id WHERE p.email=$1 AND p.type='user' AND p.active")
-            .bind(email).fetch_optional(&mut *tx).await.map_err(|error| database_error(&error))?;
+        let account: Option<(Uuid, bool, bool)> = sqlx::query_as(
+            "SELECT p.id, p.active, c.principal_id IS NOT NULL
+             FROM identity.principal p LEFT JOIN identity.password_credential c ON c.principal_id=p.id
+             WHERE p.email=$1 AND p.type='user'",
+        )
+        .bind(email)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|error| database_error(&error))?;
         tx.commit().await.map_err(|error| database_error(&error))?;
-        row.map(|row| {
-            row.try_get::<Uuid, _>(0)
-                .map(PrincipalId::from)
-                .map_err(|error| database_error(&error))
-        })
-        .transpose()
+        let Some((id, active, enrolled)) = account else {
+            event.outcome = Some(Outcome::UnknownEmail);
+            return Ok(None);
+        };
+        let principal = PrincipalId::from(id);
+        event.principal_id = Some(principal);
+        if !active || !enrolled {
+            event.outcome = Some(if active {
+                Outcome::CredentialMissing
+            } else {
+                Outcome::PrincipalInactive
+            });
+            return Ok(None);
+        }
+        Ok(Some(principal))
     }
 
     pub async fn enrollment_email(
@@ -135,10 +175,11 @@ impl Issuer<'_> {
         Ok(Some(row.get(0)))
     }
 
-    pub async fn invitation_email(
+    pub(crate) async fn invitation_email(
         &mut self,
         org: &OrgId,
         principal: &PrincipalId,
+        event: &mut Event,
     ) -> Result<Option<String>, IdentityError> {
         let mut tx = transaction::read_connection(
             self.0,
@@ -146,19 +187,33 @@ impl Issuer<'_> {
         )
         .await
         .map_err(|error| database_error(&error))?;
-        let email = sqlx::query_scalar(
-            "SELECT p.email FROM identity.principal p
-             JOIN identity.org_membership m ON m.principal_id = p.id
-             JOIN registry.org o ON o.id = m.org AND o.active
-             WHERE p.id = $1 AND p.type = 'user' AND p.active
-                   AND m.org = $2 AND m.active",
-        )
-        .bind(Uuid::from(*principal))
-        .bind(org.as_str())
-        .fetch_optional(&mut *tx)
-        .await
-        .map_err(|error| database_error(&error))?;
+        let (org_active, member_active, account_active, email): (Option<bool>, Option<bool>, Option<bool>, Option<String>) =
+            sqlx::query_as(
+                "SELECT o.active, m.active, p.active, p.email
+                 FROM (VALUES ($1::uuid, $2::text)) request(principal, org)
+                 LEFT JOIN registry.org o ON o.id = request.org
+                 LEFT JOIN identity.org_membership m ON m.org = o.id AND m.principal_id = request.principal
+                 LEFT JOIN identity.principal p ON p.id = request.principal AND p.type = 'user'",
+            )
+            .bind(Uuid::from(*principal))
+            .bind(org.as_str())
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(|error| database_error(&error))?;
         tx.commit().await.map_err(|error| database_error(&error))?;
+        if account_active.is_some() {
+            event.principal_id = Some(*principal);
+        }
+        if let Some(outcome) = match account_active {
+            None => Some(Outcome::PrincipalUnknown),
+            Some(false) => Some(Outcome::PrincipalInactive),
+            Some(true) => {
+                crate::session_exchange::org_membership_refusal(org_active, member_active)
+            }
+        } {
+            event.outcome = Some(outcome);
+            return Ok(None);
+        }
         Ok(email)
     }
 
@@ -168,8 +223,18 @@ impl Issuer<'_> {
         principal: &PrincipalId,
         secret: &str,
         password: Password,
+        event: &mut Event,
     ) -> Result<(), PasswordError> {
-        password::enroll_password(self.0, work, principal, secret, password).await
+        password::establish_password(
+            self.0,
+            work,
+            principal,
+            secret,
+            password,
+            crate::password::INVITATION_PURPOSE,
+            Some(event),
+        )
+        .await
     }
 
     pub async fn reset(
@@ -178,66 +243,18 @@ impl Issuer<'_> {
         principal: &PrincipalId,
         secret: &str,
         password: Password,
+        event: &mut Event,
     ) -> Result<(), PasswordError> {
-        password::reset_password(self.0, work, principal, secret, password).await
-    }
-
-    pub async fn issue_reset(
-        &mut self,
-        principal: &PrincipalId,
-        email: &str,
-    ) -> Result<Invitation, PasswordError> {
-        password::issue_reset(
+        password::establish_password(
             self.0,
-            &PlatformComponent::IdentityService.principal_id(),
+            work,
             principal,
-            email,
+            secret,
+            password,
+            crate::password::RESET_PURPOSE,
+            Some(event),
         )
         .await
-    }
-
-    pub async fn issue_invitation(
-        &mut self,
-        principal: &PrincipalId,
-    ) -> Result<Invitation, PasswordError> {
-        password::issue_invitation(
-            self.0,
-            &PlatformComponent::IdentityService.principal_id(),
-            principal,
-        )
-        .await
-    }
-
-    pub async fn consume_email_token(
-        &mut self,
-        digest: &Digest,
-        delivery: EmailDelivery,
-    ) -> Result<(), IdentityError> {
-        let result = match delivery {
-            EmailDelivery::Invitation => begin_user_write(self.0).await,
-            EmailDelivery::Recovery => {
-                async {
-                    let mut tx = self.0.begin().await?;
-                    bind_issuer_operation(
-                        &mut tx,
-                        &PlatformComponent::IdentityService.principal_id(),
-                    )
-                    .await?;
-                    Ok(tx)
-                }
-                .await
-            }
-        };
-        let mut tx = result.map_err(|error| database_error(&error))?;
-        sqlx::query(
-            "UPDATE identity.password_token SET consumed_at = clock_timestamp()
-             WHERE token_hash = $1 AND consumed_at IS NULL",
-        )
-        .bind(digest.to_string())
-        .execute(&mut *tx)
-        .await
-        .map_err(|error| database_error(&error))?;
-        tx.commit().await.map_err(|error| database_error(&error))
     }
 }
 
@@ -247,6 +264,7 @@ impl Issuer<'_> {
         work: &PasswordWork,
         email: &str,
         password: Password,
+        mut event: Option<&mut Event>,
     ) -> Result<Option<(Transaction<'_, Postgres>, AuthenticatedPrincipal)>, ExchangeFailure> {
         let mut read = transaction::read_connection(
             self.0,
@@ -261,7 +279,9 @@ impl Issuer<'_> {
                 .await
                 .map_err(|_| ExchangeFailure::Unavailable)?;
         let Some(row) = row else {
-            let result = password::authenticate_password(&mut read, work, email, password).await;
+            let result =
+                password::authenticate_password_with_event(&mut read, work, email, password, event)
+                    .await;
             read.commit()
                 .await
                 .map_err(|_| ExchangeFailure::Unavailable)?;
@@ -275,6 +295,9 @@ impl Issuer<'_> {
             .get::<String, _>(0)
             .parse::<PrincipalId>()
             .map_err(|_| ExchangeFailure::Unavailable)?;
+        if let Some(event) = &mut event {
+            event.principal_id = Some(id);
+        }
         let mut tx = self
             .0
             .begin()
@@ -286,9 +309,10 @@ impl Issuer<'_> {
         password_login::lock_principal(&mut tx, &id)
             .await
             .map_err(|_| ExchangeFailure::Unavailable)?;
-        let principal = password::authenticate_password(&mut tx, work, email, password)
-            .await
-            .map_err(ExchangeFailure::Password)?;
+        let principal =
+            password::authenticate_password_with_event(&mut tx, work, email, password, event)
+                .await
+                .map_err(ExchangeFailure::Password)?;
         Ok(principal.map(|principal| (tx, principal)))
     }
 
@@ -297,12 +321,18 @@ impl Issuer<'_> {
         issuer: &str,
         audience: &str,
         secret: &str,
+        event: &mut Event,
     ) -> Result<Option<(Transaction<'_, Postgres>, PrincipalId)>, IdentityError> {
-        let Some(actor) =
-            password_login::renewal_principal(self.0, issuer, audience, secret).await?
-        else {
-            return Ok(None);
-        };
+        let (actor, login_id) =
+            match password_login::renewal_principal(self.0, issuer, audience, secret).await? {
+                Ok(login) => login,
+                Err(outcome) => {
+                    event.outcome = Some(outcome);
+                    return Ok(None);
+                }
+            };
+        event.principal_id = Some(actor);
+        event.login_id = Some(login_id);
         let tx = self
             .0
             .begin()

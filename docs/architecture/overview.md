@@ -214,6 +214,11 @@ Control refuses if another org has an active membership for the user.
 Project databases keep their user rows. Control's maintenance loop projects the disabled authority into them.
 Already issued access tokens have a 900-second lifetime. The disabled user cannot renew.
 
+Identity records password, invitation, session and NATS credential decisions in `identity.authentication_event` in the system database.
+Platform operators can read the table. Identity can add rows.
+The bootstrap creates the table on a fresh install.
+PostgreSQL refuses row updates and deletions. The system keeps every row.
+
 ## Native and cloud boundaries
 
 wasmCloud owns compilation, linking, stores, interruption, and cancellation.

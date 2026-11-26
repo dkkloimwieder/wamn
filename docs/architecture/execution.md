@@ -922,20 +922,20 @@ The database stores only canonical digest text for random, single-use renewal cr
 Reusing a consumed credential revokes its login family, the sequence of replacement credentials for one login.
 The caller commits that refusal so revocation persists.
 Every login and renewal requires an active principal and active membership in the requested org.
-Credential rotation and access-token signing share one transaction after those tests.
-The service delivers credentials only after that transaction commits.
+Credential rotation, access-token signing and the successful authentication event share one transaction after those tests.
+The service returns the access token and renewal credential after the transaction commits.
 Access-token expiry cannot exceed the login's absolute deadline.
 The caller locks the principal before password verification and keeps that lock through login creation.
 Renewal, logout, and password reset use the same principal lock.
 Principal disablement revokes its families through a database trigger, so reactivation cannot restore them.
 
 The issuer cannot change a login's principal, audience, authentication time, or absolute deadline.
-All writes require an actor. Password credentials keep row history, and password tokens and renewal credentials keep stamps.
+Writes to stamped tables bind an actor. Password credentials keep row history, and password tokens and renewal credentials keep stamps.
 Consumed credentials remain until absolute expiry.
 Global request admission removes at most 100 expired families per call, including their credentials.
 
 Enrollment accepts an active, unenrolled user principal and a matching, unexpired invitation.
-The library locks that principal, creates its password, and consumes every outstanding invitation in one database transaction.
+The library locks that principal, creates its password, consumes outstanding invitations, and writes its success event in one transaction.
 Issuance records the authorized operator. Successful enrollment records the invited user.
 The existing principal, memberships, and PATs remain unchanged.
 The identity issuer has narrow grants for enrollment and authentication.
@@ -960,6 +960,7 @@ Enrollment uses the principal ID for its account counter. Login uses a digest of
 The web proxy sends the client address in `X-Forwarded-For`. Identity uses the last address in that header on the dedicated listener and falls back to the TLS peer address if the header is absent.
 The issuer listener always uses the TLS peer address for its source counter.
 Refused attempts do not extend the window. Counters older than two minutes are removed during admission.
+Identity records at most one rate-limit refusal per bucket in each window.
 Password requests expire after ten seconds and accept at most 8,192 body bytes.
 User management and NATS signing use projected service account tokens with audience `wamn-identity`.
 Identity verifies each token through Kubernetes TokenReview.
@@ -973,6 +974,8 @@ User management shares the password request limits and uses the TLS peer address
 The service sends the one-time secret through Resend to that principal's stored email.
 A successful provider response means accepted for delivery, not confirmed inbox delivery.
 The service makes no automatic send retry and reports failed or uncertain sends as unavailable.
+If the mail provider accepts an invitation or recovery message, identity commits the credential and its event together.
+If delivery fails, identity tries to consume the new credential before it appends the refusal.
 
 `POST /users` accepts `email` and `display_name`.
 It creates the user of the email as `wamn:provisioning`, or reuses the user that has it, and answers 200 with `principal_id` and `enrolled`.
@@ -1027,7 +1030,8 @@ The service makes no automatic mail retry.
 
 `POST /password/reset` accepts `email`, `secret`, and `password`.
 It requires a matching, unexpired reset credential and the existing password policy.
-One transaction replaces the password, consumes all outstanding invitation/reset secrets, and revokes all renewal families for that user.
+One transaction replaces the password, consumes outstanding invitation and reset secrets, and revokes all renewal families for that user.
+The same transaction records the successful reset.
 The service sends a password-change notification after commit and creates no session.
 HTTP 200 reports `{"status":"password_reset","notification":"accepted_for_delivery"}` when the provider accepts the notification.
 If notification fails, the response reports `"notification":"unavailable"`. The password change remains committed.

@@ -57,6 +57,53 @@ async fn identity_issuer_login_refusals() -> anyhow::Result<()> {
         writes.is_empty(),
         "{login} writes outside identity storage: {writes:?}"
     );
+    let may_change_or_read: bool = sqlx::query_scalar(
+        "SELECT has_any_column_privilege($1::name, 'identity.authentication_event', 'SELECT,UPDATE')
+             OR has_table_privilege($1::name, 'identity.authentication_event', 'DELETE,TRUNCATE')",
+    )
+    .bind(&login)
+    .fetch_one(&mut admin)
+    .await?;
+    assert!(!may_change_or_read);
+    let mut issuer = common::log_in(&system.login_url(&login, PASSWORD)?).await?;
+    sqlx::raw_sql(
+        "INSERT INTO identity.authentication_event (event_type, outcome, ip_address, ip_source)
+         VALUES ('password_sign_in', 'unknown_email', '192.0.2.42', 'socket')",
+    )
+    .execute(&mut issuer)
+    .await?;
+    // login_refusals exercises the catalog-derived SELECT, UPDATE, DELETE and TRUNCATE denials.
+    // Use the owner for the same row so ACL and RLS denials cannot mask a missing trigger.
+    let mut owner = admin.begin().await?;
+    sqlx::raw_sql("SET LOCAL ROLE wamn_system")
+        .execute(&mut *owner)
+        .await?;
+    let event_id: i64 = sqlx::query_scalar("SELECT id FROM identity.authentication_event")
+        .fetch_one(&mut *owner)
+        .await?;
+    owner.commit().await?;
+    for command in [
+        "UPDATE identity.authentication_event SET outcome = 'succeeded' WHERE id = $1",
+        "DELETE FROM identity.authentication_event WHERE id = $1",
+    ] {
+        let mut owner = admin.begin().await?;
+        sqlx::raw_sql("SET LOCAL ROLE wamn_system")
+            .execute(&mut *owner)
+            .await?;
+        let error = sqlx::query(command)
+            .bind(event_id)
+            .execute(&mut *owner)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error
+                .as_database_error()
+                .and_then(sqlx::error::DatabaseError::code)
+                .as_deref(),
+            Some("55000")
+        );
+        owner.rollback().await?;
+    }
     let checked = login_refusals(&system, &login, PASSWORD).await?;
     println!("{login}: {checked} refused actions");
     Ok(())

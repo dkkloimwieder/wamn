@@ -4,10 +4,11 @@
 //! principal row, then consumes every outstanding invitation atomically. The
 //! service must share one password-work budget across all its requests.
 
+use crate::authentication_event::{Event, Outcome, commit_success};
 use crate::password::{
     INVITATION_PURPOSE, Invitation, Password, PasswordError, PasswordErrorType, PasswordWork,
-    RESET_PURPOSE, RefusalCause, enrollment_policy, failure, infrastructure, refused,
-    refused_because, secret_type, token_hash,
+    RESET_PURPOSE, RefusalCause, enrollment_policy, failure, infrastructure, refused_because,
+    secret_type, token_hash,
 };
 use crate::principal::{AuthenticatedPrincipal, Principal};
 use sqlx::PgConnection as Client;
@@ -54,7 +55,17 @@ async fn lock_account(
         .await
         .map_err(|source| database(&source))?;
     if !row.is_some_and(|row| row.get::<bool, _>(0)) {
-        return Ok(Some((RefusalCause::NoSuchAccount, None)));
+        let exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM identity.principal WHERE id=$1 AND type='user')",
+        )
+        .bind(Uuid::from(*principal))
+        .fetch_one(&mut **tx)
+        .await
+        .map_err(|source| database(&source))?;
+        return Ok(Some((
+            RefusalCause::NoSuchAccount,
+            exists.then_some("inactive"),
+        )));
     }
     let has_password = sqlx::query(
         "SELECT EXISTS (SELECT 1 FROM identity.password_credential WHERE principal_id = $1)",
@@ -100,6 +111,19 @@ async fn issue_token(
     purpose: &str,
     expected_email: Option<&str>,
 ) -> Result<Invitation, PasswordError> {
+    let (tx, token) =
+        prepare_email_token(client, actor, principal, purpose, expected_email).await?;
+    tx.commit().await.map_err(|source| database(&source))?;
+    Ok(token)
+}
+
+pub(crate) async fn prepare_email_token<'connection>(
+    client: &'connection mut Client,
+    actor: &PrincipalId,
+    principal: &PrincipalId,
+    purpose: &str,
+    expected_email: Option<&str>,
+) -> Result<(sqlx::Transaction<'connection, sqlx::Postgres>, Invitation), PasswordError> {
     let lifetime: i64 = if purpose == INVITATION_PURPOSE {
         86400
     } else {
@@ -136,8 +160,7 @@ async fn issue_token(
         }
     }
     let expires_at: String = sqlx::query("INSERT INTO identity.password_token (token_hash, principal_id, purpose, expires_at) VALUES ($1, $2, $3, clock_timestamp() + $4::bigint * interval '1 second') RETURNING to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI')").bind(hash.to_string()).bind(Uuid::from(*principal)).bind(purpose).bind(lifetime).fetch_one(&mut *tx).await.map_err(|source| database(&source))?.get(0);
-    tx.commit().await.map_err(|source| database(&source))?;
-    Ok(Invitation::new(secret, expires_at))
+    Ok((tx, Invitation::new(secret, expires_at)))
 }
 /// Return the cause when the token cannot establish this principal's password.
 async fn usable_token(
@@ -179,6 +202,7 @@ pub async fn enroll_password(
         secret,
         password,
         INVITATION_PURPOSE,
+        None,
     )
     .await
 }
@@ -192,22 +216,35 @@ pub async fn reset_password(
     secret: &str,
     password: Password,
 ) -> Result<(), PasswordError> {
-    establish_password(client, work, principal, secret, password, RESET_PURPOSE).await?;
-    // The reset revoked every login of the principal (store_password).
-    Ok(())
+    establish_password(
+        client,
+        work,
+        principal,
+        secret,
+        password,
+        RESET_PURPOSE,
+        None,
+    )
+    .await
 }
 
-async fn establish_password(
+pub(crate) async fn establish_password(
     client: &mut Client,
     work: &PasswordWork,
     principal: &PrincipalId,
     secret: &str,
     password: Password,
     purpose: &str,
+    mut event: Option<&mut Event>,
 ) -> Result<(), PasswordError> {
     enrollment_policy(&password)?;
-    let digest = token_hash(secret, purpose)
-        .ok_or_else(|| refused("invitation refused", RefusalCause::UnknownSecret))?;
+    let digest = token_hash(secret, purpose).ok_or_else(|| {
+        refused_because(
+            "invitation refused",
+            RefusalCause::UnknownSecret,
+            Some("malformed"),
+        )
+    })?;
     let mut read = client
         .begin_with("BEGIN ISOLATION LEVEL REPEATABLE READ")
         .await
@@ -219,11 +256,16 @@ async fn establish_password(
         .map_err(|source| database(&source))?;
     let cause = usable_token(&mut read, principal, &digest, purpose).await?;
     read.commit().await.map_err(|source| database(&source))?;
+    if let Some(event) = &mut event
+        && cause != Some(RefusalCause::UnknownSecret)
+    {
+        event.principal_id = Some(*principal);
+    }
     if let Some(cause) = cause {
-        return Err(refused("invitation refused", cause));
+        return Err(token_refusal(cause));
     }
     let hash = work.hash(password).await?;
-    store_password(client, principal, &digest, &hash, purpose).await
+    store_password(client, principal, &digest, &hash, purpose, event).await
 }
 
 async fn store_password(
@@ -232,6 +274,7 @@ async fn store_password(
     token_digest: &wamn_digest::Digest,
     hash: &str,
     purpose: &str,
+    event: Option<&mut Event>,
 ) -> Result<(), PasswordError> {
     let mut tx = client.begin().await.map_err(|source| database(&source))?;
     let operation = if purpose == RESET_PURPOSE {
@@ -246,7 +289,7 @@ async fn store_password(
         return Err(refused_because("invitation refused", cause, reason));
     }
     if let Some(cause) = usable_token(&mut tx, principal, token_digest, purpose).await? {
-        return Err(refused("invitation refused", cause));
+        return Err(token_refusal(cause));
     }
     if purpose == RESET_PURPOSE {
         sqlx::query(
@@ -258,7 +301,7 @@ async fn store_password(
         .await
         .map(|result| result.rows_affected())
         .map_err(|source| database(&source))?;
-        // reset_password records the drop of this revoke after the commit.
+        // Revoke every login before committing the new password.
         super::password_login::revoke_all(&mut tx, principal)
             .await
             .map_err(|source| infrastructure("reset revocation failed", source))?;
@@ -266,11 +309,21 @@ async fn store_password(
         sqlx::query("INSERT INTO identity.password_credential (principal_id, password_hash) VALUES ($1, $2)").bind(Uuid::from(*principal)).bind(hash).execute(&mut *tx).await.map(|result| result.rows_affected()).map_err(|source| database(&source))?;
     }
     sqlx::query("UPDATE identity.password_token SET consumed_at = clock_timestamp() WHERE principal_id = $1 AND consumed_at IS NULL").bind(Uuid::from(*principal)).execute(&mut *tx).await.map(|result| result.rows_affected()).map_err(|source| database(&source))?;
-    tx.commit().await.map_err(|source| database(&source))
+    commit_success(tx, event, Outcome::Succeeded, None)
+        .await
+        .map_err(|source| database(&source))
+}
+
+fn token_refusal(cause: RefusalCause) -> PasswordError {
+    refused_because(
+        "invitation refused",
+        cause,
+        (cause == RefusalCause::NoSuchAccount).then_some("inactive"),
+    )
 }
 
 struct PasswordCandidate {
-    hash: String,
+    hash: Option<String>,
     active: bool,
     principal: Result<Principal, IdentityError>,
 }
@@ -279,7 +332,7 @@ async fn password_candidate(
     client: &mut Client,
     email: &str,
 ) -> Result<Option<PasswordCandidate>, PasswordError> {
-    let row = sqlx::query("SELECT p.id, p.type, p.subject, p.display_name, p.active, c.password_hash FROM identity.principal p JOIN identity.password_credential c ON c.principal_id = p.id WHERE p.email = $1 AND p.type = 'user'")
+    let row = sqlx::query("SELECT p.id, p.type, p.subject, p.display_name, p.active, c.password_hash FROM identity.principal p LEFT JOIN identity.password_credential c ON c.principal_id = p.id WHERE p.email = $1 AND p.type = 'user'")
         .bind(email)
         .fetch_optional(client)
         .await
@@ -298,16 +351,53 @@ pub async fn authenticate_password(
     email: &str,
     password: Password,
 ) -> Result<Option<AuthenticatedPrincipal>, PasswordError> {
-    let Some(candidate) = password_candidate(client, email).await? else {
+    authenticate_password_with_event(client, work, email, password, None).await
+}
+
+pub(crate) async fn authenticate_password_with_event(
+    client: &mut Client,
+    work: &PasswordWork,
+    email: &str,
+    password: Password,
+    mut event: Option<&mut Event>,
+) -> Result<Option<AuthenticatedPrincipal>, PasswordError> {
+    let candidate = password_candidate(client, email).await?;
+    let Some(PasswordCandidate {
+        hash: Some(hash),
+        active,
+        principal,
+    }) = candidate
+    else {
         work.hash(password).await?;
+        if let Some(event) = event {
+            event.outcome = Some(match candidate {
+                Some(candidate) if candidate.active => Outcome::CredentialMissing,
+                Some(_) => Outcome::PrincipalInactive,
+                None => Outcome::UnknownEmail,
+            });
+        }
         return Ok(None);
     };
-    let valid = work.verify(password, candidate.hash).await?;
-    if !valid || !candidate.active {
+    let valid = match work.verify(password, hash).await {
+        Ok(valid) => valid,
+        Err(error) => {
+            if let Some(event) = event {
+                event.outcome = Some(Outcome::password(&error));
+            }
+            return Err(error);
+        }
+    };
+    if !valid || !active {
+        if let Some(event) = &mut event {
+            event.outcome = Some(if active {
+                Outcome::BadPassword
+            } else {
+                Outcome::PrincipalInactive
+            });
+        }
         return Ok(None);
     }
-    candidate
-        .principal
+    principal
         .map(AuthenticatedPrincipal::admitted)
         .map(Some)
         .map_err(|source| infrastructure("stored password principal refused", source))

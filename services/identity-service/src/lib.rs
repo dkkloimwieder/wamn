@@ -2,6 +2,7 @@
 
 use sqlx::Connection as _;
 use sqlx::PgConnection as Client;
+mod authentication_event;
 pub mod cli;
 pub mod mail;
 mod nats;
@@ -30,6 +31,7 @@ use tokio::sync::{Mutex, Semaphore};
 use tokio::task::JoinSet;
 
 use tokio_rustls::TlsAcceptor;
+use wamn_identity::authentication_event::{ClientAddress, Event, Outcome};
 use wamn_identity::identity::session_keys::{
     active_session_key_exists, initialize_session_key, session_jwks,
 };
@@ -129,6 +131,8 @@ struct Inner {
     kubernetes: Option<KubernetesApi>,
     // Password, user management, and NATS signing share eight places per replica.
     request_slots: Semaphore,
+    event_slots: Arc<Semaphore>,
+    pool: sqlx::PgPool,
     envelope: wamn_envelope::encryption::Envelope,
     database: Mutex<Database>,
 }
@@ -230,11 +234,12 @@ impl IdentityService {
             config.nats,
         )
         .await?;
-        let passwords = if let Some(mail) = config.mail {
-            Some(password::State::new(mail, &config.connection).await?)
-        } else {
-            None
-        };
+        let passwords = config.mail.map(password::State::new).transpose()?;
+        let pool = wamn_postgres::pool(&config.connection, 8)
+            .await
+            .map_err(|_| {
+                IdentityServiceError::new("identity request pool configuration refused")
+            })?;
         Ok(Self {
             inner: Arc::new(Inner {
                 issuer: config.issuer,
@@ -244,6 +249,8 @@ impl IdentityService {
                 nats,
                 kubernetes,
                 request_slots: Semaphore::new(8),
+                event_slots: Arc::new(Semaphore::new(authentication_event::PENDING_APPENDS)),
+                pool,
                 database: Mutex::new(database),
             }),
         })
@@ -255,16 +262,28 @@ impl IdentityService {
         peer: IpAddr,
         listener: Listener,
     ) -> Result<Response<Full<Bytes>>, Infallible> {
-        let Some((source, _ip_source)) = client_address(listener, request.headers(), peer) else {
+        let post = request.method() == Method::POST && request.uri().query().is_none();
+        let event_type = post
+            .then(|| authentication_event::password_event(request.uri().path()))
+            .flatten();
+        let Some((address, ip_source)) = client_address(listener, request.headers(), peer) else {
+            if let Some(event_type) = event_type {
+                let mut event = Event::new(event_type, ClientAddress::Socket(peer));
+                event.outcome = Some(Outcome::RequestInvalid);
+                authentication_event::finish(&self.inner, event);
+            }
             return Ok(response(
                 StatusCode::BAD_REQUEST,
                 "application/json",
                 b"{\"error\":\"invalid client address\"}".to_vec(),
             ));
         };
+        let source = match ip_source {
+            IpSource::Socket => ClientAddress::Socket(address),
+            IpSource::Forwarded => ClientAddress::Forwarded { address, peer },
+        };
         if listener == Listener::General
-            && request.method() == Method::POST
-            && request.uri().query().is_none()
+            && post
             && matches!(
                 request.uri().path(),
                 "/users"
@@ -277,21 +296,12 @@ impl IdentityService {
         {
             return Ok(users::respond(&self.inner, request, source).await);
         }
-        if request.method() == Method::POST
-            && request.uri().query().is_none()
-            && matches!(
-                request.uri().path(),
-                "/password/enroll"
-                    | "/password/session"
-                    | "/password/renew"
-                    | "/password/logout"
-                    | "/password/logout-all"
-                    | "/password/recover"
-                    | "/password/reset"
-            )
-            && let Some(state) = &self.inner.passwords
-        {
-            return Ok(password::respond(&self.inner, state, request, source).await);
+        if let Some(event_type) = event_type {
+            let event = Event::new(event_type, source);
+            if let Some(state) = &self.inner.passwords {
+                return Ok(password::respond(&self.inner, state, request, event).await);
+            }
+            authentication_event::finish(&self.inner, event);
         }
         let response = if listener == Listener::Password
             || request.method() != Method::GET

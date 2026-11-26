@@ -331,10 +331,12 @@ async fn concurrent_enrollment_creates_exactly_one_password() {
 #[tokio::test]
 #[ignore = "requires: docker"]
 async fn reset_consumes_email_credentials_and_revokes_renewal_but_preserves_pat() {
+    use wamn_identity::authentication_event::{ClientAddress, Event, EventType, Outcome};
     use wamn_identity::identity::{
         password::{issue_reset, reset_password},
         password_login,
     };
+    use wamn_identity::{identity::issuer::Issuer, password_requests};
 
     let postgres = wamn_test_infrastructure::containers::start_postgres()
         .await
@@ -401,9 +403,33 @@ async fn reset_consumes_email_credentials_and_revokes_renewal_but_preserves_pat(
             .is_err()
     );
     let replacement = || Password::new("the new long replacement password".into()).unwrap();
-    reset_password(&mut issuer, &work, user.id(), first.secret(), replacement())
+    let email = "reset-user@example.invalid";
+    let mut event = Event::new(
+        EventType::PasswordReset,
+        ClientAddress::Socket("192.0.2.11".parse().unwrap()),
+    );
+    event.attempted_email(email);
+    password_requests::reset(
+        &mut Issuer(&mut issuer),
+        &work,
+        email,
+        first.secret(),
+        "the new long replacement password".into(),
+        &mut event,
+    )
+    .await
+    .unwrap();
+    let (outcome, principal, attempted_email): (String, sqlx::types::Uuid, String) =
+        sqlx::query_as(
+            "SELECT outcome, principal_id, attempted_email
+         FROM identity.authentication_event WHERE event_type = 'password_reset'",
+        )
+        .fetch_one(&mut client)
         .await
         .unwrap();
+    assert_eq!(outcome, Outcome::Succeeded.code());
+    assert_eq!(principal, sqlx::types::Uuid::from(*user.id()));
+    assert_eq!(attempted_email, email);
     assert!(
         reset_password(&mut client, &work, user.id(), first.secret(), replacement())
             .await

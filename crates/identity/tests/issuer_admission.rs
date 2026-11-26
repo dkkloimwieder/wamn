@@ -1,6 +1,7 @@
 //! The issuer stamps each recorded admission attempt.
 
-use wamn_identity::identity::issuer::Issuer;
+use wamn_identity::authentication_event::{ClientAddress, Event, EventType, Outcome};
+use wamn_identity::identity::issuer::{Admission, Issuer};
 use wamn_identity_protocol::PlatformComponent;
 use wamn_test_infrastructure::containers::start_postgres;
 
@@ -16,11 +17,12 @@ async fn admission_stamps_every_bucket_as_the_platform_principal() {
     ];
     for &buckets in batches {
         for _ in 0..2 {
-            assert!(
+            assert_eq!(
                 Issuer(&mut client)
                     .admit("https://history.invalid", buckets)
                     .await
-                    .unwrap()
+                    .unwrap(),
+                Admission::Allowed,
             );
         }
     }
@@ -121,15 +123,24 @@ async fn password_exchange_requires_current_org_membership() {
         envelope: &envelope,
     };
 
+    let mut event = Event::new(
+        EventType::PasswordSignIn,
+        ClientAddress::Socket("192.0.2.10".parse().unwrap()),
+    );
+    event.attempted_email(email);
+    event.org = Some(org.clone());
+
     let result = session_exchange::login(
         &mut Issuer(&mut client),
         exchange(),
         &work,
         email,
         passphrase(),
+        Some(&mut event),
     )
     .await;
     assert!(matches!(result, Err(ExchangeFailure::Unauthorized)));
+    assert_eq!(event.outcome, Some(Outcome::MembershipMissing));
     client.ping().await.unwrap();
     let persisted = sqlx::query_scalar::<_, bool>(
         "SELECT EXISTS (SELECT 1 FROM identity.password_login WHERE principal_id = $1)",
@@ -148,17 +159,55 @@ async fn password_exchange_requires_current_org_membership() {
         .unwrap();
     setup.commit().await.unwrap();
 
+    sqlx::raw_sql("ALTER POLICY issuer_append ON identity.authentication_event WITH CHECK (false)")
+        .execute(&mut admin)
+        .await
+        .unwrap();
+    let result = session_exchange::login(
+        &mut Issuer(&mut client),
+        exchange(),
+        &work,
+        email,
+        passphrase(),
+        Some(&mut event),
+    )
+    .await;
+    assert!(matches!(result, Err(ExchangeFailure::Unavailable)));
+    client.ping().await.unwrap();
+    assert!(
+        sqlx::query_scalar::<_, bool>("SELECT NOT EXISTS (SELECT FROM identity.password_login)")
+            .fetch_one(&mut admin)
+            .await
+            .unwrap()
+    );
+    sqlx::raw_sql("ALTER POLICY issuer_append ON identity.authentication_event WITH CHECK (true)")
+        .execute(&mut admin)
+        .await
+        .unwrap();
     let session = session_exchange::login(
         &mut Issuer(&mut client),
         exchange(),
         &work,
         email,
         passphrase(),
+        Some(&mut event),
     )
     .await
     .unwrap();
     assert_eq!(session.token.claims().sub, *principal.id());
     assert_eq!(session.token.claims().aud, audience);
+    let (outcome, principal_id, login_id, jti): (String, uuid::Uuid, String, String) =
+        sqlx::query_as(
+            "SELECT outcome, principal_id, login_id::text, session_jti
+             FROM identity.authentication_event WHERE event_type = 'password_sign_in'",
+        )
+        .fetch_one(&mut admin)
+        .await
+        .unwrap();
+    assert_eq!(outcome, Outcome::Succeeded.code());
+    assert_eq!(principal_id, uuid::Uuid::from(*principal.id()));
+    assert_eq!(login_id, session.renewal.login.id);
+    assert_eq!(jti, session.token.claims().jti);
 }
 
 #[tokio::test]
@@ -191,8 +240,43 @@ async fn concurrent_issuer_connections_share_the_account_limit() {
         });
     }
     let mut allowed = 0;
+    let mut first_denial = 0;
     while let Some(result) = jobs.join_next().await {
-        allowed += i32::from(result.unwrap());
+        match result.unwrap() {
+            Admission::Allowed => allowed += 1,
+            Admission::Denied(Some(Outcome::AccountRateLimited)) => first_denial += 1,
+            Admission::Denied(None) => (),
+            Admission::Denied(Some(other)) => panic!("unexpected admission decision: {other:?}"),
+        }
     }
     assert_eq!(allowed, limit);
+    assert_eq!(first_denial, 1);
+    let mut tx = wamn_test_infrastructure::identity::transaction(
+        &mut admin,
+        &PlatformComponent::Provisioning.principal_id(),
+        "wamn:provisioning",
+    )
+    .await
+    .unwrap();
+    sqlx::raw_sql("UPDATE identity.password_attempt SET started_at = clock_timestamp() - interval '60 seconds' WHERE bucket = 'race-account'")
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    for _ in 0..limit {
+        assert_eq!(
+            Issuer(&mut admin)
+                .admit("https://fixture.invalid", &[("race-account", limit)])
+                .await
+                .unwrap(),
+            Admission::Allowed
+        );
+    }
+    assert_eq!(
+        Issuer(&mut admin)
+            .admit("https://fixture.invalid", &[("race-account", limit)])
+            .await
+            .unwrap(),
+        Admission::Denied(Some(Outcome::AccountRateLimited)),
+    );
 }

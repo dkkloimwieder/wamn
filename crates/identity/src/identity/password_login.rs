@@ -6,6 +6,7 @@
 //! rotation: consumed-credential replay revokes the family as part of refusal.
 //! A successful rotation and access-token signing share one transaction.
 
+use crate::authentication_event::{Event, Outcome};
 use crate::password_login::{ABSOLUTE_LIFETIME, INACTIVITY_LIFETIME, Login, Renewal};
 use crate::principal::AuthenticatedPrincipal;
 use sqlx::Row as _;
@@ -97,6 +98,11 @@ pub async fn create_login(
     Ok(Some(credential(tx, decode(&row)?).await?))
 }
 
+struct RenewalState {
+    login: Login,
+    refusal: Option<Outcome>,
+}
+
 // Lookup before locking reveals only the principal to lock. Every credential
 // fact is re-read in a separate statement after the principal lock is held.
 async fn lookup(
@@ -104,53 +110,72 @@ async fn lookup(
     issuer: &str,
     audience: &str,
     digest: &wamn_digest::Digest,
-) -> Result<Option<(Login, bool, bool)>, IdentityError> {
+) -> Result<Result<RenewalState, Outcome>, IdentityError> {
     let digest = digest.to_string();
     let Some(principal) = sqlx::query_scalar::<_, Uuid>("SELECT l.principal_id FROM identity.renewal_credential c JOIN identity.password_login l ON l.id=c.login_id \
-         WHERE c.token_hash=$1 AND l.issuer=$2 AND l.audience=$3").bind(digest.as_str()).bind(issuer).bind(audience).fetch_optional(&mut **tx).await.map_err(|error| database(&error))? else { return Ok(None) };
+         WHERE c.token_hash=$1 AND l.issuer=$2 AND l.audience=$3").bind(digest.as_str()).bind(issuer).bind(audience).fetch_optional(&mut **tx).await.map_err(|error| database(&error))? else { return Ok(Err(Outcome::TokenUnknown)) };
     let principal = PrincipalId::from(principal);
     if !lock_principal(tx, &principal).await? {
-        return Ok(None);
+        return Ok(Err(Outcome::PrincipalInactive));
     }
     let row = sqlx::query("SELECT l.id::text,l.principal_id,extract(epoch FROM l.authenticated_at)::bigint,extract(epoch FROM l.expires_at)::bigint, \
-         c.consumed_at IS NOT NULL, l.revoked_at IS NULL AND l.expires_at>clock_timestamp() AND l.renewal_expires_at>clock_timestamp() \
+         c.consumed_at IS NOT NULL, l.revoked_at IS NOT NULL, l.expires_at<=clock_timestamp(), l.renewal_expires_at<=clock_timestamp() \
          FROM identity.renewal_credential c JOIN identity.password_login l ON l.id=c.login_id \
          WHERE c.token_hash=$1 AND l.issuer=$2 AND l.audience=$3 FOR UPDATE OF l").bind(digest.as_str()).bind(issuer).bind(audience).fetch_optional(&mut **tx).await.map_err(|error| database(&error))?;
-    row.map(|row| Ok((decode(&row)?, row.get(4), row.get(5))))
-        .transpose()
+    let Some(row) = row else {
+        return Ok(Err(Outcome::TokenUnknown));
+    };
+    let refusal = if row.get::<bool, _>(4) {
+        Some(Outcome::RenewalReused)
+    } else if row.get::<bool, _>(5) {
+        Some(Outcome::RenewalRevoked)
+    } else if row.get::<bool, _>(6) {
+        Some(Outcome::TokenExpired)
+    } else if row.get::<bool, _>(7) {
+        Some(Outcome::RenewalInactive)
+    } else {
+        None
+    };
+    Ok(Ok(RenewalState {
+        login: decode(&row)?,
+        refusal,
+    }))
 }
 
 /// Find the principal for a renewal credential before opening its write transaction.
-pub async fn renewal_principal(
+pub(crate) async fn renewal_principal(
     connection: &mut sqlx::PgConnection,
     issuer: &str,
     audience: &str,
     secret: &str,
-) -> Result<Option<PrincipalId>, IdentityError> {
+) -> Result<Result<(PrincipalId, Uuid), Outcome>, IdentityError> {
     let Ok(token) = SecretToken::parse(SecretType::Renewal, secret) else {
-        return Ok(None);
+        return Ok(Err(Outcome::TokenMalformed));
     };
     let actor = wamn_identity_protocol::PlatformComponent::IdentityService.principal_id();
     let mut transaction = super::transaction::read_connection(connection, &actor)
         .await
         .map_err(|error| database(&error))?;
-    let principal = sqlx::query_scalar::<_, Uuid>("SELECT l.principal_id FROM identity.renewal_credential c JOIN identity.password_login l ON l.id=c.login_id WHERE c.token_hash=$1 AND l.issuer=$2 AND l.audience=$3")
+    let login = sqlx::query_as::<_, (Uuid, Uuid)>("SELECT l.principal_id, l.id FROM identity.renewal_credential c JOIN identity.password_login l ON l.id=c.login_id WHERE c.token_hash=$1 AND l.issuer=$2 AND l.audience=$3")
         .bind(token.digest().to_string()).bind(issuer).bind(audience)
         .fetch_optional(&mut *transaction).await.map_err(|error| database(&error))?;
     transaction
         .commit()
         .await
         .map_err(|error| database(&error))?;
-    Ok(principal.map(PrincipalId::from))
+    Ok(login
+        .map(|(principal, id)| (PrincipalId::from(principal), id))
+        .ok_or(Outcome::TokenUnknown))
 }
 
 /// Authenticate a renewal under the principal lock. Commit refusals that revoke a replayed family.
-pub async fn authenticate_renewal(
+pub(crate) async fn authenticate_renewal(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     principal: &PrincipalId,
     issuer: &str,
     audience: &str,
     secret: &str,
+    event: &mut Event,
 ) -> Result<Option<AuthenticatedPrincipal>, IdentityError> {
     wamn_postgres::bind_transaction_identity(tx, principal, "", "", None, None)
         .await
@@ -161,22 +186,29 @@ pub async fn authenticate_renewal(
     else {
         return Ok(None);
     };
-    let Some((login, consumed, usable)) = lookup(tx, issuer, audience, &digest).await? else {
-        return Ok(None);
+    let RenewalState { login, refusal } = match lookup(tx, issuer, audience, &digest).await? {
+        Ok(state) => state,
+        Err(outcome) => {
+            event.outcome = Some(outcome);
+            return Ok(None);
+        }
     };
     if &login.principal != principal {
+        event.outcome = Some(Outcome::TokenUnknown);
         return Ok(None);
     }
-    if consumed {
+    if refusal == Some(Outcome::RenewalReused) {
         revoke_family(tx, &login).await?;
+    }
+    if refusal.is_some() {
+        event.outcome = refusal;
         return Ok(None);
     }
-    if !usable {
-        return Ok(None);
+    let principal = resolve_principal(tx, &login.principal).await?;
+    if principal.is_none() {
+        event.outcome = Some(Outcome::PrincipalInactive);
     }
-    Ok(resolve_principal(tx, &login.principal)
-        .await?
-        .map(AuthenticatedPrincipal::admitted))
+    Ok(principal.map(AuthenticatedPrincipal::admitted))
 }
 
 /// Consume a credential once and create its replacement in the same transaction.
@@ -189,21 +221,31 @@ pub async fn rotate_login(
     audience: &str,
     secret: &str,
 ) -> Result<Option<Renewal>, IdentityError> {
-    let Some(digest) = SecretToken::parse(SecretType::Renewal, secret)
-        .ok()
-        .map(|token| token.digest())
-    else {
-        return Ok(None);
-    };
-    let Some((login, consumed, usable)) = lookup(tx, issuer, audience, &digest).await? else {
-        return Ok(None);
-    };
-    if consumed {
-        revoke_family(tx, &login).await?;
-        return Ok(None);
+    match rotate_login_decision(tx, issuer, audience, secret).await? {
+        Ok(renewal) => Ok(Some(renewal)),
+        Err(_) => Ok(None),
     }
-    if !usable {
-        return Ok(None);
+}
+
+pub(crate) async fn rotate_login_decision(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    issuer: &str,
+    audience: &str,
+    secret: &str,
+) -> Result<Result<Renewal, Outcome>, IdentityError> {
+    let Ok(token) = SecretToken::parse(SecretType::Renewal, secret) else {
+        return Ok(Err(Outcome::TokenMalformed));
+    };
+    let digest = token.digest();
+    let RenewalState { login, refusal } = match lookup(tx, issuer, audience, &digest).await? {
+        Ok(state) => state,
+        Err(outcome) => return Ok(Err(outcome)),
+    };
+    if refusal == Some(Outcome::RenewalReused) {
+        revoke_family(tx, &login).await?;
+    }
+    if let Some(outcome) = refusal {
+        return Ok(Err(outcome));
     }
     sqlx::query(
         "UPDATE identity.renewal_credential SET consumed_at=clock_timestamp() WHERE token_hash=$1",
@@ -214,7 +256,7 @@ pub async fn rotate_login(
     .map(|result| result.rows_affected())
     .map_err(|error| database(&error))?;
     sqlx::query("UPDATE identity.password_login SET renewal_expires_at=LEAST(expires_at,clock_timestamp()+($2::bigint*interval '1 second')) WHERE id=$1::text::uuid").bind(&login.id).bind(INACTIVITY_LIFETIME).execute(&mut **tx).await.map(|result| result.rows_affected()).map_err(|error| database(&error))?;
-    Ok(Some(credential(tx, login).await?))
+    Ok(Ok(credential(tx, login).await?))
 }
 async fn revoke_family(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
@@ -234,7 +276,7 @@ pub async fn revoke_login(
     if let Some(digest) = SecretToken::parse(SecretType::Renewal, secret)
         .ok()
         .map(|token| token.digest())
-        && let Some((login, _, _)) = lookup(tx, issuer, audience, &digest).await?
+        && let Ok(RenewalState { login, .. }) = lookup(tx, issuer, audience, &digest).await?
     {
         revoke_family(tx, &login).await?;
     }

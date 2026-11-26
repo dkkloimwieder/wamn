@@ -132,15 +132,21 @@ async fn bootstrap_is_atomic_and_uses_database_facts() {
         "SELECT format('%I.%I', schemaname, tablename) FROM pg_tables
          WHERE schemaname IN ('registry', 'identity')
            AND tablename::text !~ '_history$'
-           AND (schemaname = 'registry'
-                OR schemaname = 'identity' AND tablename NOT IN (
+           AND ((schemaname = 'registry'
+                OR schemaname = 'identity' AND NOT starts_with(tablename::text, 'authentication_event')
+                   AND tablename NOT IN (
                     'session_key', 'nats_key', 'password_login', 'password_token',
                     'password_attempt', 'renewal_credential', 'session_signing_state'
                 )) <> EXISTS (
                SELECT FROM pg_trigger
                WHERE tgrelid = to_regclass(format('%I.%I', schemaname, tablename))
                  AND tgfoid = 'wamn_history.log_row_change()'::regprocedure
-           )",
+           )
+           OR (schemaname = 'identity' AND starts_with(tablename::text, 'authentication_event')
+               AND (to_regclass(format('%I.%I', schemaname, tablename || '_history')) IS NOT NULL
+                    OR EXISTS (SELECT FROM pg_trigger
+                        WHERE tgrelid = to_regclass(format('%I.%I', schemaname, tablename))
+                          AND tgfoid = 'wamn_history.stamp_row()'::regprocedure))))",
     )
     .fetch_all(&mut client)
     .await

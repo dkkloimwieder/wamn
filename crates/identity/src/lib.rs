@@ -1,6 +1,7 @@
 //! Platform identities, issuer credentials, and their PostgreSQL storage.
 
 pub mod api_service;
+pub mod authentication_event;
 pub mod control_admission;
 pub mod identity;
 pub mod identity_sql;
