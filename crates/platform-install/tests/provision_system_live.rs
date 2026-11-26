@@ -203,3 +203,49 @@ async fn bootstrap_is_atomic_and_uses_database_facts() {
 
     drop(client);
 }
+
+#[tokio::test]
+#[ignore = "requires: docker, bin:helm"]
+async fn env_provisioning_retries_keep_the_mapping_and_rotate_the_worker_password()
+-> anyhow::Result<()> {
+    use wamn_platform_install::provision_org::create_env_worker_login;
+    use wamn_postgres::provisioning_transaction::provisioning_transaction;
+    use wamn_test_infrastructure::database;
+
+    let system = database::system().await?;
+    let mut admin = system.admin().await?;
+    let org = "acme".parse()?;
+    let env = "dev".parse()?;
+    let first = create_env_worker_login(&mut admin, &org, &env).await?;
+    let mut transaction = provisioning_transaction(&mut admin).await?;
+    sqlx::query("UPDATE registry.env SET disposable = true WHERE org = 'acme' AND env = 'dev'")
+        .execute(&mut *transaction)
+        .await?;
+    transaction.commit().await?;
+    let retried = create_env_worker_login(&mut admin, &org, &env).await?;
+    assert_eq!(first.login, retried.login);
+    assert!(
+        first.password != retried.password,
+        "retry rotates the worker password"
+    );
+    let url = system.login_url(retried.login.as_str(), &retried.password)?;
+    let mut worker = wamn_postgres::connect(url.as_str()).await?;
+    let mapping: (String, String, String, bool) = sqlx::query_as(
+        "SELECT registry.login_org(), registry.login_env(), namespace, disposable FROM registry.env",
+    ).fetch_one(&mut worker).await?;
+    assert_eq!(
+        mapping,
+        (
+            org.to_string(),
+            env.to_string(),
+            "acme--dev".to_owned(),
+            true
+        )
+    );
+    let limit: i32 =
+        sqlx::query_scalar("SELECT rolconnlimit FROM pg_roles WHERE rolname = session_user")
+            .fetch_one(&mut worker)
+            .await?;
+    assert_eq!(limit, -1, "the Pooler owns the connection budget");
+    Ok(())
+}

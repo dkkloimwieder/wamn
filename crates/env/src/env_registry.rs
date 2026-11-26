@@ -26,7 +26,7 @@ pub async fn read_project_env_instance(
     result
 }
 
-/// Record the project and its deployment in the caller's reservation transaction.
+/// Record the project and its deployment in a provisioned environment.
 ///
 /// Returns the stored instance suffix. A new or re-added deployment uses `candidate`.
 pub async fn record_project_env(
@@ -38,6 +38,19 @@ pub async fn record_project_env(
     candidate: &InstanceSuffix,
     disposable: Option<bool>,
 ) -> anyhow::Result<InstanceSuffix> {
+    let provisioned: bool =
+        sqlx::query_scalar("SELECT EXISTS (SELECT FROM registry.env WHERE org=$1 AND env=$2)")
+            .bind(triple.org.as_str())
+            .bind(triple.env.as_str())
+            .fetch_one(&mut **transaction)
+            .await
+            .context("read the environment registration")?;
+    anyhow::ensure!(
+        provisioned,
+        "env {}/{} is not provisioned",
+        triple.org,
+        triple.env
+    );
     deployment::record_project(transaction, &triple.org, &triple.project)
         .await
         .context("record project")?;

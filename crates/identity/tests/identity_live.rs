@@ -218,8 +218,7 @@ async fn project_env_membership_round_trip(client: &mut sqlx::PgConnection, user
              VALUES ('other'); \
              INSERT INTO registry.project (org, id) \
              VALUES ('demo', 'inventory'), ('other', 'widgets'); \
-             INSERT INTO registry.env (org, env) \
-             SELECT id, env \
+             SELECT registry.provision_env(id, env) \
              FROM registry.org CROSS JOIN (VALUES ('dev'), ('prod')) AS envs(env); \
              INSERT INTO registry.project_env \
                (org, env, project, secret_name, instance_suffix) \

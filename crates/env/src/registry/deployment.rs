@@ -99,7 +99,7 @@ pub async fn target_id(
         .await
 }
 
-/// Reserve a deployment, retaining the suffix on an active retry.
+/// Reserve a deployment in a provisioned env, retaining the suffix on an active retry.
 /// Re-add starts a new generation with no applied schema or capture registration.
 pub async fn record(
     transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
@@ -191,14 +191,11 @@ fn upsert_project_sql() -> &'static str {
      ON CONFLICT (org, id) DO NOTHING"
 }
 
-/// Record the environment, then its project database. Parameters follow the caller's
+/// Update the provisioned environment, then record its project database. Parameters follow the caller's
 /// org, project, environment, Secret, namespace, suffix, disposable, and target values.
 fn upsert_project_env_sql() -> &'static str {
-    "WITH parent AS (INSERT INTO registry.env \
-       (org,env,disposable,target_id) \
-       VALUES ($1,$3,COALESCE($7,false),$8::text::uuid) \
-       ON CONFLICT (org,env) DO UPDATE SET disposable=COALESCE($7,registry.env.disposable), \
-         target_id=EXCLUDED.target_id RETURNING org,env) \
+    "WITH parent AS (UPDATE registry.env SET disposable=COALESCE($7,disposable), \
+       target_id=$8::text::uuid WHERE org=$1 AND env=$3 RETURNING org,env) \
      INSERT INTO registry.project_env AS deployment \
        (org,env,project,secret_name,secret_namespace,instance_suffix) \
        SELECT org,env,$2,$4,$5,$6 FROM parent \

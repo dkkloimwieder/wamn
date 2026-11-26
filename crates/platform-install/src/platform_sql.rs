@@ -4,7 +4,7 @@
 /// The caller supplies a quoted role identifier.
 pub fn grant_control_policy_execute_sql(role: &str) -> String {
     format!(
-        " GRANT EXECUTE ON FUNCTION registry.login_org(), registry.login_principal(uuid) TO {role};",
+        " GRANT EXECUTE ON FUNCTION registry.login_org(), registry.login_env(), registry.login_principal(uuid) TO {role};",
     )
 }
 

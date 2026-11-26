@@ -23,7 +23,9 @@ AS $lookup$
      WHERE login_role.rolname::text = $1
        AND group_role.rolname::text = $2
        AND $2 IN ('wamn_control', 'wamn_apply')
-       AND login_role.rolname::text COLLATE "C" ~ ('^' || $2 || '_[0-9a-f]{40}$')
+       AND login_role.rolname::text COLLATE "C" ~
+           CASE $2 WHEN 'wamn_apply' THEN '^wamn_apply_(env_)?[0-9a-f]{40}$'
+                   ELSE '^wamn_control_[0-9a-f]{40}$' END
        AND login_role.rolcanlogin
        AND (login_role.rolvaliduntil IS NULL OR login_role.rolvaliduntil >= CURRENT_TIMESTAMP)
        AND login_role.rolpassword LIKE 'SCRAM-SHA-256$%'

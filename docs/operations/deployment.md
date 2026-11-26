@@ -362,6 +362,7 @@ Use this layout for new installs. Existing Helm records and their resource owner
 The kstatus watcher retains `list` and `watch` on the non-Secret kinds that environment and application charts render.
 
 `wamn env apply env.yaml` holds one environment lock.
+The worker requires an existing environment registration before it reserves projects.
 The worker reserves the selected projects, asks identity to publish the environment account, and writes the host and admin credential Secrets.
 It upgrades one project chart per project and runs that project's SQL in file order.
 If the file no longer lists an application of a project, the worker stops that application. When one of these applications has unfinished runs, the worker refuses before it stops any of them, and names each unfinished run. Otherwise it prints `stopping <app> (release <name>)` and uninstalls each release. The project database and its data stay.
@@ -370,7 +371,7 @@ The worker commits the settings and, on a full apply, removes unused connection 
 A failed apply keeps the previous environment timing settings. If a project fails, the worker stops and names it. Fix the error and run the command again to continue.
 New projects later in the file stay reserved without applied configuration.
 An omitted project schema mode follows the environment's disposable setting.
-Use `--disposable` only when first recording an environment that can be reset.
+Use `--disposable` on the first apply for an environment that can be reset.
 The project chart declares one PostgreSQL Cluster and five managed logins per project.
 The environment YAML sets the database size for all projects. The installation values pin the PostgreSQL image.
 Project upgrades omit the Helm wait flag. Each project Cluster has a CA that signs its five login certificates and its replication certificate.

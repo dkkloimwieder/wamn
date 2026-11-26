@@ -9,7 +9,7 @@ use anyhow::{Context as _, Result, bail, ensure};
 use postgres_protocol::escape::{escape_identifier, escape_literal};
 use sqlx::{Connection as _, PgConnection};
 use wamn_identity_protocol::PrincipalId;
-use wamn_platform_install::provision_org::OrgLogin;
+use wamn_platform_install::provision_org::{OrgLogin, create_env_worker_login};
 use wamn_test_infrastructure::database::{self, PASSWORD, System};
 
 /// Log in as `login`, then check its catalog-derived refusals.
@@ -152,7 +152,13 @@ async fn pooler_auth_login_refusals() -> anyhow::Result<()> {
     )
     .await?;
 
-    // The lookup answers only for an org login of its own group.
+    // The lookup answers only for a login of its own group.
+    let worker = create_env_worker_login(
+        &mut system.admin().await?,
+        &"acme".parse()?,
+        &"dev".parse()?,
+    )
+    .await?;
     let lookup = "SELECT count(*) FROM wamn_pooler.lookup_login($1, $2)";
     let control = system.org_login(wamn_role::CONTROL_ROLE)?.login.as_str();
     let apply = system.org_login(wamn_role::APPLY_ROLE)?.login.as_str();
@@ -160,6 +166,8 @@ async fn pooler_auth_login_refusals() -> anyhow::Result<()> {
     for (candidate, group, found) in [
         (control, wamn_role::CONTROL_ROLE, 1),
         (apply, wamn_role::APPLY_ROLE, 1),
+        (worker.login.as_str(), wamn_role::APPLY_ROLE, 1),
+        (worker.login.as_str(), wamn_role::CONTROL_ROLE, 0),
         (apply, wamn_role::CONTROL_ROLE, 0),
         (migration, wamn_role::SYSTEM_ROLE, 0),
     ] {
@@ -287,14 +295,14 @@ impl Seed {
 }
 
 /// One row of `org` in each table that a `login_org` policy covers, parents first.
-fn seeds(org: &Org<'_>) -> Vec<Seed> {
+fn seeds(org: &Org<'_>, env: &str, command: Option<&str>) -> Vec<Seed> {
     let name = org.name;
     let principal = org.principal.to_string();
     let principal = principal.as_str();
     let email = format!("owner@{name}.example");
     let issuer = format!("https://{name}.example");
-    let label = format!("{name}-web");
-    let target = [("org", name), ("project", PROJECT), ("env", ENV)];
+    let label = format!("{env}-web");
+    let target = [("org", name), ("project", PROJECT), ("env", env)];
     let at_target = |columns: &[(&'static str, &'static str)]| [&target[..], columns].concat();
     vec![
         Seed::new("registry.org", &[("id", name)]),
@@ -334,14 +342,14 @@ fn seeds(org: &Org<'_>) -> Vec<Seed> {
                 ("role", "project-admin"),
             ],
         ),
-        Seed::new("registry.env", &[("org", name), ("env", ENV)]),
+        Seed::new("registry.env", &[("org", name), ("env", env)]),
         Seed::new(
             "provisioning.platform_event",
             &[
                 ("org", name),
-                ("env", ENV),
+                ("env", env),
                 ("project", PROJECT),
-                ("command_id", principal),
+                ("command_id", command.unwrap_or(principal)),
                 ("principal_id", principal),
                 ("event_type", "env_apply"),
                 ("outcome", "started"),
@@ -359,7 +367,7 @@ fn seeds(org: &Org<'_>) -> Vec<Seed> {
             "registry.env_integration",
             &[
                 ("org", name),
-                ("env", ENV),
+                ("env", env),
                 ("name", "erp"),
                 ("version", "1"),
             ],
@@ -639,8 +647,8 @@ async fn org_logins_reach_no_other_org() -> Result<()> {
         .into_iter()
         .map(|(table, scoped, org_column)| (table, Policy { scoped, org_column }))
         .collect();
-    let home_seeds = seeds(&home);
-    let other_seeds = seeds(&other);
+    let home_seeds = seeds(&home, ENV, None);
+    let other_seeds = seeds(&other, ENV, None);
     let seeded: BTreeSet<&str> = home_seeds.iter().map(|seed| seed.table).collect();
     let policed: BTreeSet<&str> = policies.keys().map(String::as_str).collect();
     ensure!(
@@ -702,10 +710,15 @@ async fn org_logins_reach_no_other_org() -> Result<()> {
             )
             .await?;
         } else {
-            // No org login writes this table: the org row comes from org provisioning, and
-            // a password login from the identity issuer.
             for (org, seed) in [(&home, home_seed), (&other, other_seed)] {
-                let statement = format!("{} ON CONFLICT DO NOTHING", seed.insert());
+                let statement = if table == "registry.env" {
+                    format!(
+                        "SELECT registry.provision_env({}, '{ENV}')",
+                        escape_literal(org.name)
+                    )
+                } else {
+                    format!("{} ON CONFLICT DO NOTHING", seed.insert())
+                };
                 commit(&mut admin, &org.principal, &statement).await?;
             }
         }
@@ -890,5 +903,219 @@ async fn org_logins_reach_no_other_org() -> Result<()> {
         }
     }
     println!("{probes} cross-org probes, {joins} membership probes");
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires: docker, bin:helm"]
+async fn env_worker_reaches_only_its_own_env() -> Result<()> {
+    let system = database::system().await?;
+    let mut admin = system.admin().await?;
+    let home = Org {
+        name: "acme",
+        principal: HOME_PRINCIPAL.parse()?,
+    };
+    let sibling_env = "prod";
+    let worker = create_env_worker_login(&mut admin, &home.name.parse()?, &ENV.parse()?).await?;
+    let login = worker.login.as_str();
+    let mut connection = common::log_in(&system.login_url(login, &worker.password)?).await?;
+    let sibling_command = "00000000-0000-4000-8000-00000000000c";
+    let own_seeds = seeds(&home, ENV, None);
+    let sibling_seeds = seeds(&home, sibling_env, Some(sibling_command));
+    let tables: Vec<String> = sqlx::query_scalar(
+        "SELECT c.oid::regclass::text FROM pg_class c
+         JOIN pg_attribute a ON a.attrelid = c.oid AND a.attname = 'env' AND NOT a.attisdropped
+         WHERE c.relkind = 'r' AND has_any_column_privilege($1::name, c.oid, 'SELECT')",
+    )
+    .bind(login)
+    .fetch_all(&mut admin)
+    .await?;
+    ensure!(
+        !tables.is_empty(),
+        "the worker can read no environment tables"
+    );
+    ensure!(
+        tables
+            .iter()
+            .all(|table| own_seeds.iter().any(|seed| seed.table == table)),
+        "an environment table lacks fixtures: {tables:?}"
+    );
+
+    let mut provisioning =
+        wamn_postgres::provisioning_transaction::provisioning_transaction(&mut admin).await?;
+    sqlx::query("SELECT registry.provision_env($1, $2)")
+        .bind(home.name)
+        .bind(sibling_env)
+        .execute(&mut *provisioning)
+        .await?;
+    provisioning.commit().await?;
+    ensure!(
+        columns(&mut admin, login, "registry.env", "INSERT")
+            .await?
+            .is_empty(),
+        "the worker can insert an environment mapping"
+    );
+
+    let mut deletes = Vec::new();
+    for (own, sibling) in own_seeds.iter().zip(&sibling_seeds) {
+        let table = own.table;
+        let env_table = tables.iter().any(|candidate| candidate == table);
+        match table {
+            "registry.org" => continue,
+            "registry.env" => {}
+            _ => {
+                if env_table
+                    && !columns(&mut admin, login, table, "INSERT")
+                        .await?
+                        .is_empty()
+                {
+                    expect_value(
+                        attempt(&mut connection, &home.principal, &own.insert()).await?,
+                        &1,
+                        table,
+                    )?;
+                    expect_code(
+                        attempt(&mut connection, &home.principal, &sibling.insert()).await?,
+                        "42501",
+                        table,
+                    )?;
+                }
+                commit(&mut admin, &home.principal, &own.insert()).await?;
+                if env_table {
+                    commit(&mut admin, &home.principal, &sibling.insert()).await?;
+                }
+            }
+        }
+        if env_table {
+            deletes.extend(
+                check_env_rows(
+                    &mut admin,
+                    &mut connection,
+                    login,
+                    &home.principal,
+                    own,
+                    sibling,
+                )
+                .await?,
+            );
+        }
+    }
+
+    let mut transaction = connection.begin().await?;
+    wamn_postgres::bind_transaction_identity(
+        &mut transaction,
+        &home.principal,
+        "",
+        "",
+        Some("admin:grant-test"),
+        None,
+    )
+    .await?;
+    for (delete, rows) in deletes.iter().rev() {
+        let result = sqlx::raw_sql(sqlx::AssertSqlSafe(delete.as_str()))
+            .execute(&mut *transaction)
+            .await
+            .map(|done| done.rows_affected());
+        expect_value(result, rows, delete)?;
+    }
+    transaction.rollback().await?;
+
+    let org_event = format!(
+        "INSERT INTO provisioning.platform_event (command_id, event_type, outcome, principal_id, org)
+         VALUES (gen_random_uuid(), 'env_apply', 'started', '{HOME_PRINCIPAL}', '{}')", home.name,
+    );
+    expect_code(
+        attempt(&mut connection, &home.principal, &org_event).await?,
+        "42501",
+        &org_event,
+    )?;
+    check_env_project_access(&mut admin, &mut connection, login, &home, sibling_env).await
+}
+
+async fn check_env_rows(
+    admin: &mut PgConnection,
+    worker: &mut PgConnection,
+    login: &str,
+    principal: &PrincipalId,
+    own: &Seed,
+    sibling: &Seed,
+) -> Result<Vec<(String, u64)>> {
+    let table = own.table;
+    let readable = columns(admin, login, table, "SELECT").await?;
+    let updatable = columns(admin, login, table, "UPDATE").await?;
+    let deletable: bool =
+        sqlx::query_scalar("SELECT has_table_privilege($1::name, $2::regclass, 'DELETE')")
+            .bind(login)
+            .bind(table)
+            .fetch_one(admin)
+            .await?;
+    let mut deletes = Vec::new();
+    for (seed, rows) in [(own, 1), (sibling, 0)] {
+        let filter = seed.filter(&readable);
+        let select = format!("SELECT count(*) FROM {table} WHERE {filter}");
+        expect_value(
+            ask::<i64>(worker, principal, &select).await?,
+            &i64::try_from(rows)?,
+            &select,
+        )?;
+        if !updatable.is_empty() {
+            let column = updatable
+                .iter()
+                .find(|column| readable.contains(column))
+                .with_context(|| format!("{login} updates {table} on no column it reads"))?;
+            let column = escape_identifier(column);
+            let update = format!("UPDATE {table} SET {column} = {column} WHERE {filter}");
+            expect_value(attempt(worker, principal, &update).await?, &rows, &update)?;
+        }
+        if deletable {
+            deletes.push((format!("DELETE FROM {table} WHERE {filter}"), rows));
+        }
+    }
+    if updatable.iter().any(|column| column == "env") {
+        let filter = own.filter(&readable);
+        let env = sibling
+            .columns
+            .iter()
+            .find(|(column, _)| *column == "env")
+            .with_context(|| format!("missing sibling environment value for {table}"))?;
+        let update = format!(
+            "UPDATE {table} SET env = {} WHERE {filter}",
+            escape_literal(&env.1)
+        );
+        expect_code(attempt(worker, principal, &update).await?, "42501", &update)?;
+    }
+    Ok(deletes)
+}
+
+async fn check_env_project_access(
+    admin: &mut PgConnection,
+    worker: &mut PgConnection,
+    login: &str,
+    home: &Org<'_>,
+    sibling_env: &str,
+) -> Result<()> {
+    let access_functions: Vec<String> = sqlx::query_scalar(
+        "SELECT p.proname::text FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+         WHERE n.nspname = 'identity' AND p.prosecdef AND oidvectortypes(p.proargtypes) = 'uuid, text, text, text'
+           AND has_function_privilege($1::name, p.oid, 'EXECUTE')",
+    ).bind(login).fetch_all(admin).await?;
+    ensure!(
+        !access_functions.is_empty(),
+        "the worker has no project access functions"
+    );
+    for name in access_functions {
+        for (env, allowed) in [(ENV, true), (sibling_env, false)] {
+            let query = format!(
+                "SELECT identity.{}('{HOME_PRINCIPAL}', '{}', '{env}', '{PROJECT}')",
+                escape_identifier(&name),
+                home.name
+            );
+            expect_value(
+                ask::<bool>(worker, &home.principal, &query).await?,
+                &allowed,
+                &query,
+            )?;
+        }
+    }
     Ok(())
 }

@@ -5,7 +5,7 @@ use ring::rand::{SecureRandom as _, SystemRandom};
 use std::fmt;
 use wamn_kubernetes::client::KubernetesApi;
 use wamn_principal::PlatformComponent;
-use wamn_registry::OrgId;
+use wamn_registry::{EnvName, OrgId};
 use wamn_role::LoginName;
 
 use crate::{
@@ -189,7 +189,6 @@ pub async fn create_org_logins(
     org: &OrgId,
     database: &str,
 ) -> anyhow::Result<Vec<OrgLogin>> {
-    let random = SystemRandom::new();
     let logins = [
         (
             control_login(org, database),
@@ -206,49 +205,9 @@ pub async fn create_org_logins(
     let mut tx =
         wamn_postgres::provisioning_transaction::provisioning_transaction(connection).await?;
     for (login, group, secret) in logins {
-        let mut entropy = [0_u8; 32];
-        random
-            .fill(&mut entropy)
-            .map_err(|_| anyhow::anyhow!("generate the org login password"))?;
-        let password = hex::encode(entropy);
-        let role_error = |error: sqlx::Error| OrgRoleError {
-            login: login.as_str().to_owned(),
-            code: error
-                .as_database_error()
-                .and_then(sqlx::error::DatabaseError::code)
-                .map(std::borrow::Cow::into_owned),
-        };
-        // Bind the password so the client statement text never contains it.
-        sqlx::query(
-            "SELECT set_config('wamn.org_login', $1, true), set_config('wamn.org_password', $2, true),
-                    set_config('wamn.org_group', $3, true)",
-        )
-        .bind(login.as_str())
-        .bind(&password)
-        .bind(group)
-        .execute(&mut *tx)
-        .await
-        .map_err(role_error)?;
-        sqlx::raw_sql(
-            "DO $org_login$
-             DECLARE
-                 login_name text := current_setting('wamn.org_login');
-                 login_password text := current_setting('wamn.org_password');
-                 login_group text := current_setting('wamn.org_group');
-             BEGIN
-                 IF EXISTS (SELECT FROM pg_roles WHERE rolname = login_name) THEN
-                     EXECUTE format('ALTER ROLE %I LOGIN PASSWORD %L', login_name, login_password);
-                     EXECUTE format('GRANT %I TO %I', login_group, login_name);
-                 ELSE
-                     EXECUTE format('CREATE ROLE %I LOGIN PASSWORD %L IN ROLE %I',
-                                    login_name, login_password, login_group);
-                 END IF;
-             END
-             $org_login$",
-        )
-        .execute(&mut *tx)
-        .await
-        .map_err(role_error)?;
+        let password = login_password()?;
+        // -1: the Poolers cap total server connections, not each login (E5.6).
+        write_login(&mut tx, &login, &password, group, -1).await?;
         passwords.push(OrgLogin {
             login,
             secret,
@@ -264,16 +223,134 @@ pub async fn create_org_logins(
     Ok(passwords)
 }
 
+/// Credentials for an environment's system database worker.
+pub struct EnvWorkerLogin {
+    /// The database username of the worker.
+    pub login: LoginName,
+    /// The password to publish in the worker's Secret.
+    pub password: String,
+}
+
+impl fmt::Debug for EnvWorkerLogin {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("EnvWorkerLogin")
+            .field("login", &self.login)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Record the environment mapping and create or rotate its worker login atomically.
+///
+/// # Errors
+///
+/// Returns an error if the org is unavailable, the name does not fit, or a database write fails.
+/// Publish the credentials after this function commits. Serialize provisioning and
+/// publication per environment so a concurrent retry cannot publish a stale password.
+pub async fn create_env_worker_login(
+    connection: &mut sqlx::PgConnection,
+    org: &OrgId,
+    env: &EnvName,
+) -> anyhow::Result<EnvWorkerLogin> {
+    let password = login_password()?;
+    let mut transaction =
+        wamn_postgres::provisioning_transaction::provisioning_transaction(connection).await?;
+    let login = sqlx::query_scalar::<_, String>("SELECT registry.provision_env($1, $2)")
+        .bind(org.as_str())
+        .bind(env.as_str())
+        .fetch_one(&mut *transaction)
+        .await
+        .with_context(|| format!("record env {org}/{env}"))?
+        .parse::<LoginName>()?;
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+        .bind(login.as_str())
+        .execute(&mut *transaction)
+        .await
+        .context("lock the env worker login")?;
+    write_login(
+        &mut transaction,
+        &login,
+        &password,
+        wamn_role::APPLY_ROLE,
+        -1,
+    )
+    .await?;
+    transaction
+        .commit()
+        .await
+        .context("commit env provisioning")?;
+    Ok(EnvWorkerLogin { login, password })
+}
+
+fn login_password() -> anyhow::Result<String> {
+    let mut entropy = [0_u8; 32];
+    SystemRandom::new()
+        .fill(&mut entropy)
+        .map_err(|_| anyhow::anyhow!("generate the system database login password"))?;
+    Ok(hex::encode(entropy))
+}
+
+async fn write_login(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    login: &LoginName,
+    password: &str,
+    group: &str,
+    limit: i32,
+) -> Result<(), SystemRoleError> {
+    let role_error = |error: sqlx::Error| SystemRoleError {
+        login: login.as_str().to_owned(),
+        code: error
+            .as_database_error()
+            .and_then(sqlx::error::DatabaseError::code)
+            .map(std::borrow::Cow::into_owned),
+    };
+    // Bind the password so the client statement text never contains it.
+    sqlx::query(
+        "SELECT set_config('wamn.provision_login', $1, true), set_config('wamn.provision_password', $2, true),
+                set_config('wamn.provision_group', $3, true), set_config('wamn.provision_connection_limit', $4::int::text, true)",
+    )
+    .bind(login.as_str())
+    .bind(password)
+    .bind(group)
+    .bind(limit)
+    .execute(&mut **transaction)
+    .await
+    .map_err(role_error)?;
+    sqlx::raw_sql(
+        "DO $provision_login$
+         DECLARE
+             login_name text := current_setting('wamn.provision_login');
+             login_password text := current_setting('wamn.provision_password');
+             login_group text := current_setting('wamn.provision_group');
+             connection_limit integer := current_setting('wamn.provision_connection_limit')::integer;
+         BEGIN
+             IF EXISTS (SELECT FROM pg_roles WHERE rolname = login_name) THEN
+                 EXECUTE format('ALTER ROLE %I LOGIN PASSWORD %L CONNECTION LIMIT %s',
+                                login_name, login_password, connection_limit);
+                 EXECUTE format('GRANT %I TO %I', login_group, login_name);
+             ELSE
+                 EXECUTE format('CREATE ROLE %I LOGIN PASSWORD %L CONNECTION LIMIT %s IN ROLE %I',
+                                login_name, login_password, connection_limit, login_group);
+             END IF;
+         END
+         $provision_login$",
+    )
+    .execute(&mut **transaction)
+    .await
+    .map(drop)
+    .map_err(role_error)
+}
+
 #[derive(Debug)]
-struct OrgRoleError {
+struct SystemRoleError {
     login: String,
     // PostgreSQL error details can contain the dynamic SQL and password.
     code: Option<String>,
 }
 
-impl std::fmt::Display for OrgRoleError {
+impl std::fmt::Display for SystemRoleError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(formatter, "provision org login {}", self.login)?;
+        write!(formatter, "provision system database login {}", self.login)?;
         if let Some(code) = &self.code {
             write!(formatter, " (SQLSTATE {code})")?;
         }
@@ -281,4 +358,4 @@ impl std::fmt::Display for OrgRoleError {
     }
 }
 
-impl std::error::Error for OrgRoleError {}
+impl std::error::Error for SystemRoleError {}

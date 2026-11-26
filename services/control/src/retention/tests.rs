@@ -33,7 +33,8 @@ async fn maintenance_copies_current_authority_past_an_unreachable_database() -> 
     let mut tx = common::transaction(&mut authority, &actor, "admin:project-authority").await?;
     sqlx::raw_sql(
         "INSERT INTO registry.project (org,id) VALUES ('fill','fixture');
-         INSERT INTO registry.env (org,env) VALUES ('fill','dev'), ('fill','prod');
+         SELECT registry.provision_env('fill','dev');
+         SELECT registry.provision_env('fill','prod');
          INSERT INTO registry.project_env (org,project,env,secret_name,instance_suffix)
          VALUES ('fill','fixture','dev','secret-dev','aaaaaaa1'),
                 ('fill','fixture','prod','secret-prod','aaaaaaa2');",

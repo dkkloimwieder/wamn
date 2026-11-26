@@ -6,7 +6,7 @@ GRANT USAGE ON SCHEMA registry, identity, catalog, platform, wamn_authority TO w
 GRANT INSERT ON platform.tx_identity TO wamn_apply;
 GRANT EXECUTE ON FUNCTION wamn_authority.current_identity(), wamn_authority.current_principal_id(),
     wamn_authority.current_role(), wamn_authority.current_app() TO wamn_apply;
-GRANT EXECUTE ON FUNCTION registry.login_org(), registry.login_principal(uuid) TO wamn_apply;
+GRANT EXECUTE ON FUNCTION registry.login_org(), registry.login_env(), registry.login_principal(uuid) TO wamn_apply;
 GRANT SELECT ON registry.org, registry.project_env,
     registry.target, identity.org_role, identity.project_role,
     identity.project_env_membership, identity.principal TO wamn_apply;
@@ -28,7 +28,7 @@ GRANT SELECT, INSERT, UPDATE (resync_at), DELETE ON registry.capture_gap TO wamn
 GRANT SELECT (principal_id, org, active), UPDATE (active)
     ON identity.org_membership TO wamn_apply;
 
-GRANT SELECT, INSERT (org, env, disposable, target_id) ON registry.env TO wamn_apply;
+GRANT SELECT ON registry.env TO wamn_apply;
 GRANT UPDATE (disposable, target_id, readiness_budget_seconds, drain_bound_seconds, revocation_seconds)
     ON registry.env TO wamn_apply;
 

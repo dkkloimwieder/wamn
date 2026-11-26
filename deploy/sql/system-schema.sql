@@ -158,27 +158,6 @@ CREATE TRIGGER wamn_record_history_stamp
     FOR EACH ROW
     EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 
--- Org isolation follows the authenticated login.
-CREATE FUNCTION registry.login_org() RETURNS text
-LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
-    SELECT o.id FROM registry.org o
-    CROSS JOIN (VALUES
-        ('wamn_control_', 'wamn.control.identity.v0.1'),
-        ('wamn_apply_', 'wamn.apply.identity.v0.1')
-    ) AS family(prefix, domain)
-    WHERE o.active AND starts_with(session_user::text, prefix)
-      AND session_user::text = prefix || left(encode(sha256(
-          int8send(octet_length(convert_to(domain, 'UTF8'))::bigint) || convert_to(domain, 'UTF8')
-          || int8send(3) || convert_to('org', 'UTF8')
-          || int8send(octet_length(convert_to(o.id, 'UTF8'))::bigint) || convert_to(o.id, 'UTF8')
-          || int8send(8) || convert_to('database', 'UTF8')
-          || int8send(octet_length(convert_to(current_database(), 'UTF8'))::bigint)
-          || convert_to(current_database(), 'UTF8')
-      ), 'hex'), 40)
-$$;
-REVOKE ALL ON FUNCTION registry.login_org() FROM PUBLIC;
-
-
 -- ---------------------------------------------------------------------------
 -- Projects — structure within an org. Unique per org (the composite PK);
 -- FK to the owning org.
@@ -600,6 +579,9 @@ CREATE TRIGGER wamn_record_history_stamp
 CREATE TABLE registry.env (
     org text NOT NULL REFERENCES registry.org(id) ON DELETE RESTRICT,
     env text NOT NULL CHECK (env ~ '^[a-z0-9]+(-[a-z0-9]+)*$' AND char_length(env) <= 40),
+    -- Leave room for a project slug and database generation in the 63-byte name.
+    namespace text NOT NULL UNIQUE CHECK (namespace = org || '--' || env
+        AND octet_length('wamn-db-' || namespace || '--p--00000000') <= 63),
     readiness_budget_seconds int NOT NULL DEFAULT 600 CHECK (readiness_budget_seconds > 0),
     drain_bound_seconds int NOT NULL DEFAULT 300 CHECK (drain_bound_seconds > 0),
     revocation_seconds int NOT NULL DEFAULT 60 CHECK (revocation_seconds BETWEEN 0 AND 3600),
@@ -620,6 +602,74 @@ CREATE TABLE registry.env (
 );
 CREATE TRIGGER wamn_record_history_stamp BEFORE INSERT OR UPDATE ON registry.env
     FOR EACH ROW EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
+
+-- The hash binds the worker to one environment and database. The prefix keeps
+-- worker logins distinct from the org apply logins used by Jobs until they move.
+CREATE FUNCTION registry.env_worker_login(org_id text, env_name text, database_name text) RETURNS text
+LANGUAGE sql IMMUTABLE STRICT SET search_path = pg_catalog AS $$
+    SELECT 'wamn_apply_env_' || left(encode(sha256(
+        int8send(28) || convert_to('wamn.apply.env.identity.v0.1', 'UTF8')
+        || int8send(3) || convert_to('org', 'UTF8')
+        || int8send(octet_length(convert_to(org_id, 'UTF8'))::bigint) || convert_to(org_id, 'UTF8')
+        || int8send(3) || convert_to('env', 'UTF8')
+        || int8send(octet_length(convert_to(env_name, 'UTF8'))::bigint) || convert_to(env_name, 'UTF8')
+        || int8send(8) || convert_to('database', 'UTF8')
+        || int8send(octet_length(convert_to(database_name, 'UTF8'))::bigint) || convert_to(database_name, 'UTF8')
+    ), 'hex'), 40)
+$$;
+REVOKE ALL ON FUNCTION registry.env_worker_login(text, text, text) FROM PUBLIC;
+
+-- Only the provisioner records namespace bindings. A retry keeps the applied settings.
+CREATE FUNCTION registry.provision_env(org_id text, env_name text) RETURNS text
+LANGUAGE plpgsql SET search_path = pg_catalog AS $$
+BEGIN
+    PERFORM 1 FROM registry.org WHERE id = org_id AND active FOR SHARE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'org % is inactive or missing', org_id USING ERRCODE = '23503';
+    END IF;
+    INSERT INTO registry.env (org, env, namespace)
+    VALUES (org_id, env_name, org_id || '--' || env_name)
+    ON CONFLICT (org, env) DO NOTHING;
+    RETURN registry.env_worker_login(org_id, env_name, current_database());
+END
+$$;
+REVOKE ALL ON FUNCTION registry.provision_env(text, text) FROM PUBLIC;
+
+CREATE FUNCTION registry.worker_coordinate() RETURNS TABLE (org text, env text)
+LANGUAGE sql STABLE SET search_path = pg_catalog AS $$
+    SELECT e.org, e.env FROM registry.env e JOIN registry.org o ON o.id = e.org
+    WHERE o.active AND starts_with(session_user::text, 'wamn_apply_env_')
+      AND session_user::text = registry.env_worker_login(e.org, e.env, current_database())
+$$;
+REVOKE ALL ON FUNCTION registry.worker_coordinate() FROM PUBLIC;
+
+-- Tenant isolation follows the authenticated login.
+CREATE FUNCTION registry.login_org() RETURNS text
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
+    SELECT org FROM registry.worker_coordinate()
+    UNION ALL
+    SELECT o.id FROM registry.org o
+    CROSS JOIN (VALUES
+        ('wamn_control_', 'wamn.control.identity.v0.1'),
+        ('wamn_apply_', 'wamn.apply.identity.v0.1')
+    ) AS family(prefix, domain)
+    WHERE o.active AND starts_with(session_user::text, prefix)
+      AND session_user::text = prefix || left(encode(sha256(
+          int8send(octet_length(convert_to(domain, 'UTF8'))::bigint) || convert_to(domain, 'UTF8')
+          || int8send(3) || convert_to('org', 'UTF8')
+          || int8send(octet_length(convert_to(o.id, 'UTF8'))::bigint) || convert_to(o.id, 'UTF8')
+          || int8send(8) || convert_to('database', 'UTF8')
+          || int8send(octet_length(convert_to(current_database(), 'UTF8'))::bigint)
+          || convert_to(current_database(), 'UTF8')
+      ), 'hex'), 40)
+$$;
+REVOKE ALL ON FUNCTION registry.login_org() FROM PUBLIC;
+
+CREATE FUNCTION registry.login_env() RETURNS text
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
+    SELECT env FROM registry.worker_coordinate()
+$$;
+REVOKE ALL ON FUNCTION registry.login_env() FROM PUBLIC;
 
 CREATE TABLE registry.platform_event_type (
     code text PRIMARY KEY,
@@ -1182,7 +1232,8 @@ REVOKE ALL ON FUNCTION identity.principal_in_login_org_only(uuid) FROM PUBLIC;
 DO $identity_membership_read$ BEGIN
     IF to_regrole('wamn_system_reader') IS NOT NULL THEN
         GRANT SELECT (principal_id, org, active) ON identity.org_membership TO wamn_system_reader;
-        GRANT EXECUTE ON FUNCTION registry.login_org(), registry.login_principal(uuid) TO wamn_system_reader;
+        GRANT EXECUTE ON FUNCTION registry.login_org(), registry.login_env(),
+            registry.login_principal(uuid) TO wamn_system_reader;
     END IF;
 END $identity_membership_read$;
 
@@ -1195,6 +1246,10 @@ DECLARE
         (COALESCE(pg_has_role(session_user, to_regrole('wamn_control'), 'member'), false)
          OR COALESCE(pg_has_role(session_user, to_regrole('wamn_apply'), 'member'), false))
         AND NOT EXISTS (SELECT FROM pg_roles WHERE rolname = session_user AND rolsuper)
+    $predicate$;
+    env_scope constant text := $predicate$
+        CASE WHEN starts_with(session_user::text, 'wamn_apply_env_')
+             THEN env = (SELECT registry.login_env()) ELSE true END
     $predicate$;
     bound_actor constant text := '(SELECT wamn_authority.current_principal_id()) IS NOT NULL';
 BEGIN
@@ -1210,6 +1265,10 @@ BEGIN
         predicate := CASE relation_name
           WHEN 'registry.org' THEN 'id = (SELECT registry.login_org())'
           ELSE 'org = (SELECT registry.login_org())' END;
+        IF EXISTS (SELECT FROM pg_attribute WHERE attrelid = relation_name::regclass
+                   AND attname = 'env' AND NOT attisdropped) THEN
+            predicate := format('(%s) AND (%s)', predicate, env_scope);
+        END IF;
         predicate := format('CASE WHEN %s THEN %s ELSE true END', org_login, predicate);
         EXECUTE format('ALTER TABLE %s ENABLE ROW LEVEL SECURITY', relation_name);
         EXECUTE format('CREATE POLICY login_org ON %s USING (%s) WITH CHECK (%s AND %s)',
@@ -1217,9 +1276,9 @@ BEGIN
     END LOOP;
 
     EXECUTE format('CREATE POLICY login_org ON provisioning.platform_event
-        USING (CASE WHEN %s THEN org = (SELECT registry.login_org())
+        USING (CASE WHEN %s THEN org = (SELECT registry.login_org()) AND (%s)
             AND principal_id = (SELECT wamn_authority.current_principal_id())
-            ELSE false END)', org_login);
+            ELSE false END)', org_login, env_scope);
 
     ALTER TABLE identity.principal ENABLE ROW LEVEL SECURITY;
     EXECUTE format('CREATE POLICY login_org_select ON identity.principal FOR SELECT
@@ -1238,7 +1297,7 @@ BEGIN
                     USING (%s) WITH CHECK (%s)', predicate, predicate);
 
     IF to_regrole('wamn_control') IS NOT NULL THEN
-        GRANT EXECUTE ON FUNCTION registry.login_org(), registry.login_principal(uuid),
+        GRANT EXECUTE ON FUNCTION registry.login_org(), registry.login_env(), registry.login_principal(uuid),
             identity.principal_in_login_org_only(uuid) TO wamn_control;
         GRANT SELECT ON registry.env TO wamn_control;
         GRANT USAGE ON SCHEMA provisioning TO wamn_control;
@@ -1268,6 +1327,8 @@ RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalo
                   OR COALESCE(pg_has_role(session_user, to_regrole('wamn_apply'), 'member'), false))
                  AND NOT EXISTS (SELECT FROM pg_roles WHERE rolname = session_user AND rolsuper))
             OR org_id = registry.login_org())
+    AND (NOT starts_with(session_user::text, 'wamn_apply_env_')
+         OR (env_name = registry.login_env()) IS TRUE)
     AND EXISTS (SELECT FROM registry.project_env e WHERE e.org=org_id AND e.env=env_name AND e.project=project_id AND e.active)
     AND (identity.project_admin_grant(principal,org_id,project_id)
       OR EXISTS (SELECT FROM identity.project_env_membership m

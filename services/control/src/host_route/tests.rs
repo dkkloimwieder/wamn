@@ -82,8 +82,9 @@ async fn literal_control_http_wire() -> anyhow::Result<()> {
         wamn_postgres::provisioning_transaction::provisioning_transaction(&mut admin).await?;
     sqlx::raw_sql(
         "INSERT INTO registry.project (org, id) VALUES ('acme', 'alpha'), ('acme', 'beta');
-         INSERT INTO registry.env (org, env, active) VALUES
-           ('acme', 'dev', true), ('acme', 'paused', false);
+         SELECT registry.provision_env('acme', 'dev');
+         SELECT registry.provision_env('acme', 'paused');
+         UPDATE registry.env SET active = false WHERE org = 'acme' AND env = 'paused';
          INSERT INTO registry.project_env (org, env, project, secret_name, instance_suffix)
            SELECT org, env, 'alpha', 'fixture-only', 'a1b2c3d4'
            FROM registry.env WHERE org = 'acme';
@@ -533,7 +534,7 @@ async fn project_deactivation_refuses_access_and_preserves_its_sibling() -> anyh
         .bind(org.as_str())
         .execute(&mut *seed)
         .await?;
-    sqlx::query("INSERT INTO registry.env (org, env) VALUES ($1, 'dev')")
+    sqlx::query("SELECT registry.provision_env($1, 'dev')")
         .bind(org.as_str())
         .execute(&mut *seed)
         .await?;

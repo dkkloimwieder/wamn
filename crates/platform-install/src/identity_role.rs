@@ -42,6 +42,7 @@ pub const IDENTITY_ISSUER_READ_COLUMNS: [(&str, &str, &[&str]); 9] = [
         &[
             "org",
             "env",
+            "namespace",
             "active",
             "nats_connections",
             "nats_consumers",

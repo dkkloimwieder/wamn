@@ -3,6 +3,56 @@ use wamn_platform_install::provision_system::install_control_store;
 use wamn_postgres::provisioning_transaction::provisioning_transaction;
 use wamn_registry::{Triple, deployment::Registration};
 
+async fn provision_fixture_env(
+    admin: &mut sqlx::PgConnection,
+    triple: &Triple,
+) -> anyhow::Result<()> {
+    let mut transaction = provisioning_transaction(admin).await?;
+    sqlx::query("SELECT registry.provision_env($1, $2)")
+        .bind(triple.org.as_str())
+        .bind(triple.env.as_str())
+        .execute(&mut *transaction)
+        .await?;
+    transaction.commit().await?;
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires: docker, bin:helm"]
+async fn applying_an_unprovisioned_env_refuses_the_reservation() -> anyhow::Result<()> {
+    let system = wamn_test_infrastructure::database::system().await?;
+    let login = system.org_login(wamn_role::APPLY_ROLE)?;
+    let url = system.login_url(login.login.as_str(), &login.password)?;
+    let mut client = wamn_postgres::connect(url.as_str()).await?;
+    let triple = Triple::new("acme".parse()?, "dev".parse()?, "inventory".parse()?);
+    let mut transaction = provisioning_transaction(&mut client).await?;
+    assert!(
+        wamn_env::env_registry::record_project_env(
+            &mut transaction,
+            &triple,
+            "cloud",
+            "fixture-secret",
+            Some(triple.org.as_str()),
+            &"abcd1234".parse()?,
+            None,
+        )
+        .await
+        .is_err()
+    );
+    transaction.commit().await?;
+    let created: bool =
+        sqlx::query_scalar("SELECT EXISTS (SELECT FROM registry.project WHERE org=$1 AND id=$2)")
+            .bind(triple.org.as_str())
+            .bind(triple.project.as_str())
+            .fetch_one(&mut client)
+            .await?;
+    assert!(
+        !created,
+        "refused reservations leave no project declaration"
+    );
+    Ok(())
+}
+
 /// The native connection summaries decode the complete live query rows.
 #[tokio::test]
 #[ignore = "requires: docker, bin:helm"]
@@ -85,6 +135,10 @@ async fn a_record_without_a_marker_keeps_the_disposable_row() {
         .await
         .map(drop)
         .unwrap();
+    sqlx::query("SELECT registry.provision_env('demo', 'dev')")
+        .execute(&mut *transaction)
+        .await
+        .unwrap();
     transaction.commit().await.unwrap();
     let triple = Triple::new(
         "demo".parse().unwrap(),
@@ -141,6 +195,7 @@ async fn project_configuration_keeps_applied_env_timings() -> anyhow::Result<()>
              "apps":{}}"#,
     )?;
     let triple = document.triple();
+    provision_fixture_env(&mut system.admin().await?, &triple).await?;
     let mut transaction = provisioning_transaction(&mut client).await?;
     wamn_env::env_registry::record_project_env(
         &mut transaction,
@@ -200,6 +255,7 @@ async fn readding_a_deactivated_project_starts_a_new_generation() -> anyhow::Res
              "apps":{"inventory":{"label":"inventory","connections":{"erp":"shared-erp"}}}}"#,
     )?;
     let triple = document.triple();
+    provision_fixture_env(&mut admin, &triple).await?;
     let (org, project, env) = (&triple.org, &triple.project, &triple.env);
     let original = "abcd1234".parse()?;
     let candidate = "efgh5678".parse()?;
@@ -332,6 +388,7 @@ projects:
     let login = system.org_login(wamn_role::APPLY_ROLE)?;
     let url = system.login_url(login.login.as_str(), &login.password)?;
     let mut client = wamn_postgres::connect(url.as_str()).await?;
+    provision_fixture_env(&mut system.admin().await?, &triple).await?;
     let mut transaction = provisioning_transaction(&mut client).await?;
     wamn_env::env_registry::record_project_env(
         &mut transaction,

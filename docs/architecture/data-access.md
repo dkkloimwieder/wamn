@@ -1090,6 +1090,11 @@ The target table stores `id`, unique `name`, `type` (`local` or `cloud`), `activ
 It seeds one active target named `cloud`, with no release time. Repeated schema upgrades create no additional seeds.
 These catalog and target tables exist only in the system database and grant no application access.
 An environment stores its target identity on first apply. The target cannot change. `target_application` and the target platform connection remain separate work.
+Provisioning records the unique Kubernetes namespace in `registry.env.namespace`.
+It creates a worker login for that environment in the same transaction.
+`registry.login_org()` and `registry.login_env()` resolve the worker's coordinates from its authenticated login.
+Row policies restrict environment data to that worker's environment. Control still spans its org's environments.
+Only provisioning can add a mapping. Environment apply requires an existing mapping.
 
 The system database (`wamn_system`) stamps its identity authority relations.
 These relations are `identity.principal`, `identity.org_membership`, `identity.org_role`, `identity.project_role`, and `identity.project_env_membership`.
