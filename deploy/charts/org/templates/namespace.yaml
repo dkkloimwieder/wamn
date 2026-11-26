@@ -4,3 +4,4 @@ metadata:
   name: {{ required "Set org." .Values.org | quote }}
   labels:
     wamn.dev/org: "true"
+    wamn.dev/identity-trust: "true"

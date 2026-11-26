@@ -1,8 +1,9 @@
-//! Kubernetes operations for the org installer.
+//! Kubernetes operations for platform and org installation.
 
 use anyhow::Context as _;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use k8s_openapi::api::{
+    admissionregistration::v1::ValidatingWebhookConfiguration,
     apps::v1::{Deployment, ReplicaSet},
     batch::v1::Job,
     core::v1::{ConfigMap, Namespace, Pod, Secret, Service},
@@ -24,7 +25,6 @@ use crate::{
     job,
 };
 
-const PLATFORM: &str = "platform";
 const CREDENTIAL_JOB: &str = "wamn.dev/control-credential-job";
 const REVISION: &str = "deployment.kubernetes.io/revision";
 
@@ -183,17 +183,65 @@ pub async fn config_map(target: &Target, namespace: &str, name: &str) -> anyhow:
     Ok(serde_json::to_value(object)?)
 }
 
-pub async fn secret_entry(target: &Target, name: &str, key: &str) -> anyhow::Result<Vec<u8>> {
-    let secrets = Api::<Secret>::namespaced(target.client.client(), PLATFORM);
-    let secret = secrets
-        .get(name)
-        .await
-        .with_context(|| format!("read public CA Secret {PLATFORM}/{name}"))?;
-    let bytes = secret
-        .data
-        .and_then(|mut data| data.remove(key))
-        .with_context(|| format!("public CA Secret {PLATFORM}/{name} lacks {key}"))?;
-    Ok(bytes.0)
+/// Check whether cert-manager has injected trust into the admission webhook.
+///
+/// # Errors
+/// Returns an error if the Kubernetes request fails.
+pub async fn webhook_configured(target: &Target, name: &str) -> anyhow::Result<bool> {
+    let webhooks = Api::<ValidatingWebhookConfiguration>::all(target.client.client());
+    let webhook =
+        tokio::time::timeout(crate::client::REQUEST_TIMEOUT, webhooks.get_opt(name)).await??;
+    Ok(has_webhook_ca(webhook))
+}
+
+/// Wait for cainjector to populate the webhook used when admitting Bundles.
+///
+/// # Errors
+/// Returns an error if the request fails or the deadline expires.
+pub async fn wait_for_webhook_ca(
+    target: &Target,
+    name: &str,
+    timeout: Duration,
+) -> anyhow::Result<()> {
+    let webhooks = Api::<ValidatingWebhookConfiguration>::all(target.client.client());
+    wait_named(&webhooks, name, timeout, |object| {
+        Ok(has_webhook_ca(object).then_some(()))
+    })
+    .await
+}
+
+fn has_webhook_ca(object: Option<ValidatingWebhookConfiguration>) -> bool {
+    object
+        .and_then(|object| object.webhooks)
+        .is_some_and(|hooks| {
+            !hooks.is_empty()
+                && hooks.iter().all(|hook| {
+                    hook.client_config
+                        .ca_bundle
+                        .as_ref()
+                        .is_some_and(|ca| !ca.0.is_empty())
+                })
+        })
+}
+
+/// Wait until trust-manager has written the public root in the target namespace.
+///
+/// # Errors
+/// Returns an error if the request fails or the deadline expires.
+pub async fn wait_for_public_root(
+    target: &Target,
+    namespace: &str,
+    name: &str,
+    timeout: Duration,
+) -> anyhow::Result<()> {
+    let maps = Api::<ConfigMap>::namespaced(target.client.client(), namespace);
+    wait_named(&maps, name, timeout, |object| {
+        let ready = object
+            .and_then(|map| map.data)
+            .is_some_and(|data| data.get("ca.crt").is_some_and(|pem| !pem.is_empty()));
+        Ok(ready.then_some(()))
+    })
+    .await
 }
 
 /// Read the Kubernetes API Service and EndpointSlice addresses.

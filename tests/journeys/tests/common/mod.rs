@@ -162,7 +162,7 @@ impl Cluster {
         let ca = secret_key(
             &self.client,
             PLATFORM,
-            &format!("{SYSTEM_CLUSTER}-ca"),
+            &format!("{SYSTEM_CLUSTER}-server-tls"),
             "ca.crt",
         )
         .await?;

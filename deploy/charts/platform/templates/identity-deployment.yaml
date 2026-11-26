@@ -83,7 +83,7 @@ spec:
                     - {key: tls.crt, path: {{ printf "%s/tls.crt" $databaseSecret | quote }}}
                     - {key: tls.key, path: {{ printf "%s/tls.key" $databaseSecret | quote }}}
               - secret:
-                  name: {{ $system.ca | quote }}
+                  name: {{ $system.serverTls | quote }}
                   items:
                     - {key: ca.crt, path: {{ printf "%s/ca.crt" $databaseSecret | quote }}}
         {{- if eq .Values.identity.oauthEncryption.provider "local" }}

@@ -485,7 +485,7 @@ async fn create_observer(client: &kube::Client) -> anyhow::Result<String> {
             .map(|bytes| bytes.0)
             .with_context(|| format!("Secret {PLATFORM}/{name} has no {key}"))
     };
-    let ca = entry(&format!("{SYSTEM_CLUSTER}-ca"), "ca.crt").await?;
+    let ca = entry(&format!("{SYSTEM_CLUSTER}-server-tls"), "ca.crt").await?;
     let admin_tls = format!("{SYSTEM_CLUSTER}-postgres-tls");
     let certificate = entry(&admin_tls, "tls.crt").await?;
     let key = entry(&admin_tls, "tls.key").await?;

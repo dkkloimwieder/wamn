@@ -13,6 +13,9 @@ use wamn_postgres::database::ConnectionConfig;
 
 pub use crate::platform_registry::registry_configuration;
 
+/// The ConfigMap into which trust-manager writes the public system database CA in each org.
+pub const SYSTEM_DATABASE_CA: &str = "wamn-pg-ca";
+
 const LOCAL_PROVIDER: &str = "kind";
 
 /// Public data used to prepare an org release.
@@ -20,9 +23,6 @@ const LOCAL_PROVIDER: &str = "kind";
 pub struct OrgInputs {
     pub values: Value,
     pub database: ConnectionConfig,
-    pub identity_ca: Value,
-    pub nats_ca: Vec<u8>,
-    pub postgres_ca: Vec<u8>,
     pub api_server: Vec<Value>,
 }
 
@@ -31,23 +31,11 @@ pub async fn create(org: &OrgId, owner: &str, installation: &OrgInstaller) -> an
     let OrgInputs {
         values: inputs,
         database,
-        identity_ca,
-        nats_ca,
-        postgres_ca,
         api_server,
     } = installation.inputs().await?;
-    ensure!(!nats_ca.is_empty(), "public NATS CA is absent");
     let inputs = &inputs["data"];
     let image = control_image(inputs)?;
-    let values = org_values(
-        inputs,
-        &database,
-        org,
-        field(&identity_ca["data"], "ca.crt")?,
-        std::str::from_utf8(&nats_ca).context("read the public NATS CA as PEM")?,
-        std::str::from_utf8(&postgres_ca).context("read the public system database CA as PEM")?,
-        &api_server,
-    )?;
+    let values = org_values(inputs, &database, org, &api_server)?;
     let credentials = if registry_token_metadata(inputs)? {
         None
     } else {
@@ -63,6 +51,7 @@ pub async fn create(org: &OrgId, owner: &str, installation: &OrgInstaller) -> an
             .await?;
     }
     let job_uid = installation.provision_logins(org, image, &database).await?;
+    installation.wait_for_trust(org).await?;
     installation.reload_control(org, &job_uid).await?;
     installation.invite_owner(org, image, owner).await
 }
@@ -85,9 +74,6 @@ pub fn org_values(
     inputs: &Value,
     database: &ConnectionConfig,
     org: &OrgId,
-    identity_ca: &str,
-    nats_ca: &str,
-    postgres_ca: &str,
     api_server: &[Value],
 ) -> anyhow::Result<Value> {
     let image = field(inputs, "controlImage")?;
@@ -142,13 +128,13 @@ pub fn org_values(
         json!({
             "host": host, "port": database.port, "database": database.database,
             "username": username, "credentials": {"namespace": org, "name": secret},
-            "server_ca": {"namespace": org, "name": "wamn-pg-ca"},
+            "server_ca": {"namespace": org, "name": SYSTEM_DATABASE_CA},
         })
     };
     let control = crate::provision_org::control_login(org, &database.database);
     let apply = crate::provision_org::apply_login(org, &database.database);
     Ok(json!({
-        "org": org, "base": field(inputs, "base")?, "registry": internal_registry, "identityCa": identity_ca, "natsCa": nats_ca, "postgresCa": postgres_ca,
+        "org": org, "base": field(inputs, "base")?, "registry": internal_registry,
         "postgres": {"image": field(inputs, "postgresImage")?},
         "networkPolicy": {"apiServer": api_server, "registry": registry_egress},
         "control": {

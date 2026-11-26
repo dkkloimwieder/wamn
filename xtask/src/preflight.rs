@@ -4,7 +4,6 @@
 //!
 //! The values come from the product's builders. Values that exist only at deploy
 //! time are stand-ins:
-//! - the identity, NATS and system PostgreSQL CAs of the org values (`STAND_IN_CA`);
 //! - the project instance suffix (`STAND_IN_INSTANCE`);
 //! - the NATS public keys behind the host's workflow and ingress inboxes (`STAND_IN_NATS_KEY`);
 //! - the release package digest and the component image digests (`helm_size` placeholders);
@@ -68,8 +67,6 @@ projects:
       wamn_receiving:
         label: receiving
 ";
-/// Stand-in PEM for the identity, NATS and system PostgreSQL CAs.
-const STAND_IN_CA: &str = "-----BEGIN CERTIFICATE-----\nc3RhbmQtaW4=\n-----END CERTIFICATE-----\n";
 /// Stand-in for the suffix that env apply reserves.
 const STAND_IN_INSTANCE: &str = "00000000";
 /// Stand-in for the public key of a host NATS user.
@@ -247,15 +244,7 @@ async fn render(
             .as_str()
             .context("wamn-system-sql has no database.json")?,
     )?;
-    let org_values = wamn_platform_install::org::org_values(
-        inputs,
-        &database,
-        &org,
-        STAND_IN_CA,
-        STAND_IN_CA,
-        STAND_IN_CA,
-        api_server,
-    )?;
+    let org_values = wamn_platform_install::org::org_values(inputs, &database, &org, api_server)?;
     let helm_namespace = wamn_kubernetes::helm::org_release_namespace(ORG).into_owned();
     let org_file = write_json(directory, "org-values.json", &org_values)?;
     let org_chart = template(

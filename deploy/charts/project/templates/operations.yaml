@@ -26,6 +26,10 @@ rules:
     resources: [secrets]
     resourceNames: {{ $operation.diffSecrets | toJson }}
     verbs: [get]
+  - apiGroups: [""]
+    resources: [configmaps]
+    resourceNames: {{ required "Set operations.diffConfigMaps to the public root ConfigMap names for schema diff." $operation.diffConfigMaps | toJson }}
+    verbs: [get]
   {{- with $operation.diffWorkloads }}
   - apiGroups: [runtime.wasmcloud.dev]
     resources: [workloaddeployments]

@@ -78,7 +78,7 @@ spec:
                     - {key: username, path: {{ printf "%s/username" . | quote }}}
                     - {key: password, path: {{ printf "%s/password" . | quote }}}
               {{- end }}
-              - secret:
+              - configMap:
                   name: {{ $ca | quote }}
                   items:
                     {{- range list $login $apply }}

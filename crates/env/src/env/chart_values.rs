@@ -2,7 +2,7 @@
 
 use crate::app_chart::plan::{release_name, workload_name};
 use serde_json::{Value, json};
-use wamn_platform_install::provision_org::APPLY_SECRET;
+use wamn_platform_install::{org::SYSTEM_DATABASE_CA, provision_org::APPLY_SECRET};
 use wamn_registry::{Triple, name};
 
 /// Set worker and credential values on the project release.
@@ -33,7 +33,6 @@ pub fn set_operation_values<'a>(
         .collect();
     let diff_secrets = [
         APPLY_SECRET.into(),
-        "wamn-pg-ca".into(),
         name::project_login_certificate(database, wamn_role::MIGRATION_ROLE),
         format!("{cluster}-ca"),
     ];
@@ -44,6 +43,7 @@ pub fn set_operation_values<'a>(
         "controlDeployment":wamn_registry::name::control_resource(&triple.org),
         "diffWorkloads":diff_workloads,
         "diffSecrets":diff_secrets,
+        "diffConfigMaps":[SYSTEM_DATABASE_CA],
     });
     values["credentials"] = json!({
         "name":wamn_registry::credential_secret_name(&triple.org, &triple.project, &triple.env),

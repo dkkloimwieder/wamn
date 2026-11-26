@@ -6,7 +6,7 @@
 {{- if and $identity.resendFrom (not $identity.resendSecret) -}}
 {{- fail "Set identity.resendSecret when identity.resendFrom is enabled." -}}
 {{- end -}}
-{{- $database := dict "host" $system.host "port" $system.port "database" $system.name "username" $system.identityRole.name "credentials" (dict "namespace" $system.namespace "name" $system.identityTlsSecret) "server_ca" (dict "namespace" $system.namespace "name" $system.ca) -}}
+{{- $database := dict "host" $system.host "port" $system.port "database" $system.name "username" $system.identityRole.name "credentials" (dict "namespace" $system.namespace "name" $system.identityTlsSecret) "server_ca" (dict "namespace" $system.namespace "name" $system.serverTls) -}}
 {{- $settings := dict "issuer" .Values.global.identityIssuer "database" $database "envelope" $identity.oauthEncryption -}}
 {{- if $identity.authNats.tlsSecret -}}
 {{- $_ := set $settings "nats" (dict "url" .Values.global.nats.schedulerUrl "tls_ca" "/var/run/wamn-identity/nats/ca.crt" "max_projects" .Values.global.maxProjects "limits_per_project" $identity.natsLimitsPerProject) -}}

@@ -48,7 +48,8 @@ spec:
     authQuery: {{ printf "SELECT * FROM wamn_pooler.lookup_login($1, 'wamn_%s')" $family | quote }}
     authQuerySecret: {name: {{ $poolers.authSecret }}}
     clientTLSSecret: {name: {{ $tls }}}
-    serverCASecret: {name: {{ $system.ca }}}
+    # This leaf and the database server leaf share the same issuer.
+    serverCASecret: {name: {{ $tls }}}
     pg_hba:
       - hostssl {{ $system.name }} all all scram-sha-256
       - host all all all reject

@@ -8,7 +8,7 @@ use http_body_util::{BodyExt as _, Full, Limited, combinators::UnsyncBoxBody};
 use hyper::{Request, Response};
 use k8s_openapi::api::{
     authentication::v1::{TokenReview, TokenReviewSpec},
-    core::v1::Secret,
+    core::v1::{ConfigMap, Secret},
 };
 use kube::{
     Api, Client, Config, Resource,
@@ -159,17 +159,28 @@ impl KubernetesApi {
         Ok(secret.data.is_some_and(|data| data.contains_key(key)))
     }
 
-    /// Read a login and CA Secret in the selected namespace within one deadline.
-    pub async fn database_secrets(
-        &self,
-        login: &str,
-        ca: &str,
-    ) -> anyhow::Result<(Secret, Secret)> {
+    /// Read a named Secret in the selected namespace within the request deadline.
+    ///
+    /// # Errors
+    /// Returns the Kubernetes request error or deadline expiry.
+    pub async fn secret(&self, name: &str) -> anyhow::Result<Secret> {
         let secrets = Api::<Secret>::namespaced(self.client(), &self.namespace);
-        Ok(tokio::time::timeout(REQUEST_TIMEOUT, async {
-            tokio::try_join!(secrets.get(login), secrets.get(ca))
-        })
-        .await??)
+        Ok(tokio::time::timeout(REQUEST_TIMEOUT, secrets.get(name)).await??)
+    }
+
+    /// Read a public root from the named ConfigMap in the selected namespace.
+    ///
+    /// # Errors
+    /// Returns an error if the request fails or the ConfigMap has no certificate.
+    pub async fn public_root(&self, name: &str) -> anyhow::Result<Vec<u8>> {
+        let maps = Api::<ConfigMap>::namespaced(self.client(), &self.namespace);
+        let map = tokio::time::timeout(REQUEST_TIMEOUT, maps.get(name)).await??;
+        Ok(map
+            .data
+            .and_then(|mut data| data.remove("ca.crt"))
+            .filter(|pem| !pem.is_empty())
+            .with_context(|| format!("ConfigMap {}/{name} lacks ca.crt", self.namespace))?
+            .into_bytes())
     }
 
     pub async fn patch_secret_data(

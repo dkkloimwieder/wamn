@@ -204,6 +204,7 @@ common::journey! {
         let client = &app.env.org.cluster.client;
         let env = &app.env;
 
+        public_roots_arrive_with_their_certificates(&env.org).await?;
         let old = request::delete_host(client, env, Some(0)).await?;
         request::wait_host_restarted(client, env, &old).await?;
         let (status, answer) = request::read(&app.routes, "/widget/list", &json!({})).await?;
@@ -298,4 +299,122 @@ common::journey! {
         );
         Ok(())
     }
+}
+
+/// Check the controller-produced targets of the installed Bundles, using their
+/// source certificate Secrets and the cluster's actual namespace labels.
+async fn public_roots_arrive_with_their_certificates(org: &Org) -> anyhow::Result<()> {
+    use k8s_openapi::api::core::v1::{ConfigMap, Namespace, Secret};
+    use kube::api::{ApiResource, DynamicObject, GroupVersionKind, ListParams};
+    use rustls::pki_types::{CertificateDer, pem::PemObject as _};
+
+    let client = &org.cluster.client;
+    let namespaces = Api::<Namespace>::all(client.clone());
+    let (hosts, tenant) =
+        tokio::try_join!(namespaces.get("hosts"), namespaces.get(org.name.as_str()))?;
+    let resource = ApiResource::from_gvk_with_plural(
+        &GroupVersionKind::gvk("trust.cert-manager.io", "v1alpha1", "Bundle"),
+        "bundles",
+    );
+    let bundles = Api::<DynamicObject>::all_with(client.clone(), &resource);
+    let sources = Api::<Secret>::namespaced(client.clone(), "platform");
+    let records = latest_trust_release_records(org).await?;
+    for (release, record) in &records {
+        ensure!(
+            !record.contains("PRIVATE KEY-----"),
+            "{release} contains a PEM private key"
+        );
+    }
+    for bundle in bundles.list(&ListParams::default()).await? {
+        let name = bundle.metadata.name.as_deref().context("Bundle name")?;
+        let spec = &bundle.data["spec"];
+        let selector = spec["target"]["namespaceSelector"]["matchLabels"]
+            .as_object()
+            .context("Bundle namespace selector")?;
+        let key = spec["target"]["configMap"]["key"]
+            .as_str()
+            .context("target PEM key")?;
+        let source = &spec["sources"][0]["secret"];
+        let secret = sources
+            .get(source["name"].as_str().context("source Secret name")?)
+            .await?;
+        let source_data = secret.data.context("source Secret data")?;
+        let private_key =
+            serde_json::to_value(source_data.get("tls.key").context("source signing key")?)?;
+        let encoded_key = private_key.as_str().context("encoded source signing key")?;
+        for (release, record) in &records {
+            ensure!(
+                !record.contains(encoded_key),
+                "{release} contains the signing key for Bundle {name}"
+            );
+        }
+        let pem = &source_data
+            .get(source["key"].as_str().context("source PEM key")?)
+            .context("source PEM")?
+            .0;
+        let certificate = CertificateDer::from_pem_slice(pem)?;
+        for namespace in [&hosts, &tenant] {
+            if !selector.iter().all(|(key, value)| {
+                namespace
+                    .metadata
+                    .labels
+                    .as_ref()
+                    .and_then(|labels| labels.get(key))
+                    .map(String::as_str)
+                    == value.as_str()
+            }) {
+                continue;
+            }
+            let ns = namespace
+                .metadata
+                .name
+                .as_deref()
+                .context("namespace name")?;
+            let map = Api::<ConfigMap>::namespaced(client.clone(), ns)
+                .get(name)
+                .await?;
+            let data = map.data.context("root bundle data")?;
+            let pem = data.get(key).context("public PEM")?.as_bytes();
+            let certificates =
+                CertificateDer::pem_slice_iter(pem).collect::<Result<Vec<_>, _>>()?;
+            ensure!(
+                certificates.as_slice() == std::slice::from_ref(&certificate)
+                    && !pem.windows(11).any(|bytes| bytes == b"PRIVATE KEY"),
+                "Bundle {name} in {ns} must contain only the source certificate"
+            );
+        }
+    }
+    Ok(())
+}
+
+async fn latest_trust_release_records(org: &Org) -> anyhow::Result<Vec<(&'static str, String)>> {
+    let outputs = &org.cluster.outputs;
+    let storage = format!("wamn-helm-{}", org.name);
+    let mut records = Vec::new();
+    for (namespace, release) in [
+        ("platform", "wamn-infrastructure"),
+        ("platform", "wamn"),
+        (storage.as_str(), "wamn-org"),
+    ] {
+        let output = tokio::process::Command::new("helm")
+            .args([
+                "get",
+                "all",
+                release,
+                "-n",
+                namespace,
+                "--kube-context",
+                &outputs.context,
+            ])
+            .arg("--kubeconfig")
+            .arg(&outputs.kubeconfig)
+            .output()
+            .await?;
+        ensure!(
+            output.status.success(),
+            "read the latest Helm release {namespace}/{release}"
+        );
+        records.push((release, String::from_utf8(output.stdout)?));
+    }
+    Ok(records)
 }

@@ -6,49 +6,8 @@
     (dict "name" "wamn_apply" "login" false "inherit" false)
     $system.migrationRole $system.identityRole }}
 {{- $cluster := $system.cluster }}
-{{- $caName := $system.ca }}
-{{- $signingCaName := printf "%s-signing-ca" $cluster }}
-{{- $serverTlsName := printf "%s-server-tls" $cluster }}
+{{- $serverTlsName := $system.serverTls }}
 {{- $replicationTlsName := printf "%s-replication-tls" $cluster }}
-{{- $ca := lookup "v1" "Secret" $namespace $signingCaName }}
-{{- $crt := "" }}
-{{- $key := "" }}
-{{- if $ca }}
-{{- $crt = required "System database signing CA requires tls.crt" (index $ca.data "tls.crt") }}
-{{- $key = required "System database signing CA requires tls.key" (index $ca.data "tls.key") }}
-{{- else }}
-{{- $new := genCA "WAMN system PostgreSQL" 3650 }}
-{{- $crt = $new.Cert | b64enc }}
-{{- $key = $new.Key | b64enc }}
-{{- end }}
----
-apiVersion: v1
-kind: Secret
-metadata:
-  name: {{ $caName }}
-  namespace: {{ $namespace }}
-data:
-  ca.crt: {{ $crt | quote }}
----
-apiVersion: v1
-kind: Secret
-metadata:
-  name: {{ $signingCaName }}
-  namespace: {{ $namespace }}
-type: kubernetes.io/tls
-data:
-  tls.crt: {{ $crt | quote }}
-  tls.key: {{ $key | quote }}
----
-apiVersion: cert-manager.io/v1
-kind: Issuer
-metadata:
-  name: {{ $cluster }}
-  namespace: {{ $namespace }}
-spec:
-  ca:
-    secretName: {{ $signingCaName }}
----
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
@@ -129,9 +88,10 @@ spec:
   # Disable the password and keep the instance manager's local peer access.
   enableSuperuserAccess: false
   certificates:
-    serverCASecret: {{ $caName }}
+    # cert-manager writes the issuer certificate to ca.crt in the serving Secret.
+    serverCASecret: {{ $serverTlsName }}
     serverTLSSecret: {{ $serverTlsName }}
-    clientCASecret: {{ $caName }}
+    clientCASecret: {{ $serverTlsName }}
     replicationTLSSecret: {{ $replicationTlsName }}
   resources:
     requests:

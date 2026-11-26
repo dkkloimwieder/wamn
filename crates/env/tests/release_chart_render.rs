@@ -175,3 +175,170 @@ fn the_egress_policy_opens_each_declared_port() {
         assert_eq!(policies.len(), usize::from(!expected.is_empty()));
     }
 }
+
+#[test]
+fn platform_and_org_releases_wire_the_public_roots() -> anyhow::Result<()> {
+    use anyhow::Context as _;
+    use serde_json::{Value, json};
+
+    let root = repository_root();
+    let scratch = Scratch::new("roots");
+    let chart = root.join("deploy/charts/platform");
+    let digest = format!("sha256:{}", "a".repeat(64));
+    for provider in ["kind", "gcp"] {
+        let values = chart.join(format!("values-{provider}.yaml"));
+        let output = helm(&[
+            "template",
+            "wamn",
+            chart.to_str().unwrap(),
+            "-n",
+            "platform",
+            "-f",
+            values.to_str().unwrap(),
+            "--set-json",
+            r#"registryEgress=[{"cidr":"192.0.2.1/32","port":5000}]"#,
+            "--set-string",
+            &format!("appChart=oci://example.invalid/chart@{digest}"),
+            "--set-string",
+            &format!("systemSql.image=example.invalid/control@{digest}"),
+        ]);
+        let platform = objects(&output)?;
+        let database = object(&platform, "ConfigMap", "wamn-system-sql")?["data"]["database.json"]
+            .as_str()
+            .context("system SQL configuration")?;
+        let database = serde_json::from_str(database)?;
+        let inputs = &object(&platform, "ConfigMap", "wamn-org-inputs")?["data"];
+        let org = "acme".parse()?;
+        let org_values = wamn_platform_install::org::org_values(
+            inputs,
+            &database,
+            &org,
+            &[json!({"cidr":"192.0.2.2/32","port":6443})],
+        )?;
+        let values = scratch.0.join("org.json");
+        std::fs::write(&values, serde_json::to_vec(&org_values)?)?;
+        let org_chart = root.join("deploy/charts/org");
+        let org = objects(&helm(&[
+            "template",
+            "wamn-org",
+            org_chart.to_str().unwrap(),
+            "-n",
+            "wamn-helm-acme",
+            "-f",
+            values.to_str().unwrap(),
+        ]))?;
+        let hosts = object(&platform, "Namespace", "hosts")?;
+        let namespace = org
+            .iter()
+            .find(|object| object["kind"] == "Namespace")
+            .context("org namespace")?;
+        let root_secrets: BTreeSet<_> = platform
+            .iter()
+            .filter(|object| object["kind"] == "Certificate" && object["spec"]["isCA"] == true)
+            .map(|certificate| {
+                assert_eq!(certificate["metadata"]["namespace"], "platform");
+                let issuer = certificate["spec"]["issuerRef"]["name"]
+                    .as_str()
+                    .context("root issuer name")?;
+                assert!(object(&platform, "Issuer", issuer)?["spec"]["selfSigned"].is_object());
+                certificate["spec"]["secretName"]
+                    .as_str()
+                    .context("CA Secret name")
+            })
+            .collect::<anyhow::Result<_>>()?;
+        assert!(!root_secrets.is_empty());
+        let mut bundle_sources = BTreeSet::new();
+        let mut host_roots = BTreeSet::new();
+        let mut org_roots = BTreeSet::new();
+        for bundle in platform.iter().filter(|object| object["kind"] == "Bundle") {
+            let name = bundle["metadata"]["name"].as_str().context("Bundle name")?;
+            let sources = bundle["spec"]["sources"]
+                .as_array()
+                .context("Bundle sources")?;
+            let [source] = sources.as_slice() else {
+                anyhow::bail!("Bundle {name} must trust exactly one CA");
+            };
+            assert_eq!(source["secret"]["key"], "tls.crt");
+            bundle_sources.insert(source["secret"]["name"].as_str().context("Bundle source")?);
+            let target = &bundle["spec"]["target"];
+            assert_eq!(target["configMap"]["key"], "ca.crt");
+            assert!(target["secret"].is_null());
+            let selector = target["namespaceSelector"]["matchLabels"]
+                .as_object()
+                .context("root namespace selector")?;
+            assert!(!selector.is_empty());
+            let selected = |namespace: &Value| {
+                selector
+                    .iter()
+                    .all(|(label, value)| namespace["metadata"]["labels"][label] == *value)
+            };
+            assert!(selected(namespace), "{name} must reach the org");
+            org_roots.insert(name);
+            if selected(hosts) {
+                host_roots.insert(name);
+            }
+        }
+        assert_eq!(bundle_sources, root_secrets);
+        assert_eq!(host_roots, BTreeSet::from(["identity-ca"]));
+        let control = org
+            .iter()
+            .find(|object| object["kind"] == "Deployment")
+            .context("org control Deployment")?;
+        let volumes = control["spec"]["template"]["spec"]["volumes"]
+            .as_array()
+            .context("control volumes")?;
+        let database_mount = volumes
+            .iter()
+            .find(|volume| volume["name"] == "database")
+            .context("control database volume")?;
+        let sources = database_mount["projected"]["sources"]
+            .as_array()
+            .context("control database sources")?;
+        let database_ca = sources
+            .iter()
+            .find(|source| {
+                source["configMap"]["name"]
+                    == org_values["control"]["configuration"]["database"]["server_ca"]["name"]
+            })
+            .context("database CA projection from the org ConfigMap")?;
+        let name = database_ca["configMap"]["name"]
+            .as_str()
+            .context("root ConfigMap name")?;
+        assert!(org_roots.contains(name));
+        for object in platform.iter().chain(&org) {
+            let name = object["metadata"]["name"].as_str().unwrap_or_default();
+            match object["kind"].as_str() {
+                Some("Secret") => {
+                    assert!(!root_secrets.contains(name));
+                }
+                Some("ConfigMap") => assert!(!org_roots.contains(name)),
+                _ => {}
+            }
+        }
+    }
+    Ok(())
+}
+
+fn objects(output: &std::process::Output) -> anyhow::Result<Vec<serde_json::Value>> {
+    anyhow::ensure!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_yaml::Deserializer::from_slice(&output.stdout)
+        .map(serde::Deserialize::deserialize)
+        .collect::<Result<_, _>>()
+        .map_err(Into::into)
+}
+
+fn object<'a>(
+    objects: &'a [serde_json::Value],
+    kind: &str,
+    name: &str,
+) -> anyhow::Result<&'a serde_json::Value> {
+    use anyhow::Context as _;
+    objects
+        .iter()
+        .find(|object| object["kind"] == kind && object["metadata"]["name"] == name)
+        .with_context(|| format!("find {kind} {name}"))
+}

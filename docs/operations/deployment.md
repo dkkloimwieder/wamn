@@ -11,7 +11,7 @@ The command uses the current Kubernetes context. Helm validates the operator's v
 Set `WAMN_RELEASE_CHART` to the prepared bundle directory or its published OCI digest reference. You can also pass it with `--chart`.
 
 The command installs or upgrades infrastructure first, then the platform. At the end it waits for the SQL Job to complete and the workloads to roll out. Identity reports readiness through its `/readyz` probe.
-Use `--only infrastructure` for cert-manager, CloudNativePG, and Traefik when enabled. Use `--only platform` for the shared platform workloads on an existing infrastructure install.
+Use `--only infrastructure` for cert-manager, trust-manager, CloudNativePG, and Traefik when enabled. Use `--only platform` for the shared platform workloads on an existing infrastructure install.
 Use `wamn env apply` to roll out a host image.
 
 Set `registryEgress` to the registry's CIDR blocks and TCP ports. If the list is empty, the command uses the IP address and port from `registryEndpoint`.
@@ -96,7 +96,9 @@ wamn platform deploy platform-kind.yaml --chart /var/tmp/wamn-platform-chart
 `wamn platform deploy` records the reference in `wamn-org-inputs`, and `wamn org create` uses it for control's `chart` setting.
 
 The published application bundle includes the infrastructure, platform, org, environment, and project charts.
-Helm installs cert-manager, CloudNativePG, and the ingress controller before the platform.
+Helm installs cert-manager, trust-manager, CloudNativePG, and the ingress controller before the platform.
+On a fresh cluster, `wamn platform deploy` starts cert-manager before it adds trust-manager to the infrastructure release.
+It waits for the trust-manager webhook before it installs the platform chart.
 The platform chart installs the system PostgreSQL Cluster, its SQL Job, shared identity, edge, NATS, the wasmCloud runtime operator, and the collector.
 The org chart owns control, the namespace quota, RBAC, and network policies.
 On kind, create a registry auth file with `{"auths":{"localhost:5001":{}}}`.
@@ -965,6 +967,10 @@ The installer supplies that public apply connection object in the native control
 The other apply phases use the restricted credential from the worker's database volume.
 
 ## PostgreSQL client TLS
+
+On a fresh install, cert-manager issues the identity, NATS, and system database CAs in `platform`. trust-manager runs in `cert-manager` and copies the public roots to org ConfigMaps. It also gives the web proxy the public identity CA in `hosts`.
+Before you replace a signing root, plan a coordinated rollout.
+Include trust bundle updates, leaf certificate reissuance, and restarts for clients that load trust at startup.
 
 Runtime pools, OAuth transactions, and resource leases use SQLx with verified TLS.
 Component configuration names the database host, port, database, login, login Secret, and CNPG CA Secret.

@@ -5,6 +5,39 @@ metadata:
   namespace: platform
 spec:
   selfSigned: {}
+{{- $system := include "wamn-platform.systemDatabase" . | fromJson }}
+{{- range list (dict "name" "wamn-identity-ca" "issuer" "wamn-identity-serving")
+                (dict "name" $system.signingCa "issuer" $system.cluster) }}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ .name }}
+  namespace: platform
+spec:
+  isCA: true
+  secretName: {{ .name }}
+  commonName: {{ .name }}
+  duration: 87600h
+  renewBefore: 8760h
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+    rotationPolicy: Never
+  issuerRef:
+    kind: Issuer
+    name: wamn-selfsigned
+    group: cert-manager.io
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: {{ .issuer }}
+  namespace: platform
+spec:
+  ca:
+    secretName: {{ .name }}
+{{- end }}
 ---
 apiVersion: cert-manager.io/v1
 kind: Certificate

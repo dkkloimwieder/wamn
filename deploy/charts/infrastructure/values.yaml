@@ -3,6 +3,23 @@ cert-manager:
   enableCertificateOwnerRef: true
   crds:
     enabled: true
+# Keep the webhook with cert-manager, outside the platform ingress boundary.
+trust-manager:
+  enabled: true
+  namespace: cert-manager
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 65532
+    seccompProfile:
+      type: RuntimeDefault
+  defaultPackage:
+    enabled: false
+  # Secret targets require cluster-wide Secret reads with dynamic org namespaces.
+  secretTargets:
+    enabled: false
+  app:
+    trust:
+      namespace: platform
 cloudnative-pg:
   image:
     tag: 1.30.2

@@ -243,14 +243,18 @@ fn operation_worker_bindings_use_their_own_accounts_and_namespace_resources() ->
             name,
             format!("{}-operation", values["name"].as_str().unwrap())
         );
-        let allowed = json!({ "secrets": values["diffSecrets"], "workloaddeployments": values["diffWorkloads"] });
+        let allowed = json!({
+            "secrets": values["diffSecrets"],
+            "configmaps": values["diffConfigMaps"],
+            "workloaddeployments": values["diffWorkloads"],
+        });
         let mut observed = std::collections::BTreeSet::new();
         for rule in role["rules"].as_array().unwrap() {
             assert_eq!(rule["verbs"], json!(["get"]));
             for resource in rule["resources"].as_array().unwrap() {
                 let resource = resource.as_str().unwrap();
                 let api = match resource {
-                    "secrets" => "",
+                    "secrets" | "configmaps" => "",
                     "workloaddeployments" => "runtime.wasmcloud.dev",
                     _ => panic!("unexpected {resource} access"),
                 };
@@ -345,5 +349,136 @@ fn colliding_coordinates_read_only_their_own_credentials() -> anyhow::Result<()>
             );
         }
     }
+    Ok(())
+}
+
+#[test]
+fn trust_manager_uses_the_platform_sources_and_cert_manager_webhook_tls() -> anyhow::Result<()> {
+    use anyhow::Context as _;
+    use serde::Deserialize as _;
+    use serde_json::Value;
+
+    let chart = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../deploy/charts/infrastructure");
+    let output = std::process::Command::new("helm")
+        .args(["template", "wamn-infrastructure"])
+        .arg(chart)
+        .args(["-n", "platform", "--include-crds"])
+        .output()?;
+    anyhow::ensure!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let objects = serde_yaml::Deserializer::from_slice(&output.stdout)
+        .map(Value::deserialize)
+        .collect::<Result<Vec<_>, _>>()?;
+    let crd = objects
+        .iter()
+        .find(|object| {
+            object["kind"] == "CustomResourceDefinition"
+                && object["spec"]["group"] == "trust.cert-manager.io"
+        })
+        .context("Bundle CRD")?;
+    assert_eq!(crd["spec"]["names"]["kind"], "Bundle");
+    let webhook = objects
+        .iter()
+        .find(|object| {
+            object["kind"] == "ValidatingWebhookConfiguration"
+                && object["webhooks"][0]["rules"][0]["apiGroups"]
+                    == json!(["trust.cert-manager.io"])
+        })
+        .context("Bundle admission webhook")?;
+    let service = &webhook["webhooks"][0]["clientConfig"]["service"];
+    let namespace = &service["namespace"];
+    assert_eq!(namespace, "cert-manager");
+    let deployment = objects
+        .iter()
+        .find(|object| {
+            object["kind"] == "Deployment"
+                && object["metadata"]["name"] == service["name"]
+                && object["metadata"]["namespace"] == *namespace
+        })
+        .context("trust-manager Deployment")?;
+    let pod = &deployment["spec"]["template"]["spec"];
+    let container = &pod["containers"][0];
+    assert!(
+        container["args"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("--trust-namespace=platform"))
+    );
+    assert_eq!(pod["securityContext"]["runAsNonRoot"], true);
+    assert!(
+        pod["securityContext"]["runAsUser"]
+            .as_u64()
+            .is_some_and(|uid| uid > 0)
+    );
+    assert_eq!(
+        container["securityContext"]["allowPrivilegeEscalation"],
+        false
+    );
+    assert_eq!(
+        container["securityContext"]["seccompProfile"]["type"],
+        "RuntimeDefault"
+    );
+    assert!(
+        container["securityContext"]["capabilities"]["drop"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("ALL"))
+    );
+    let tls_source = webhook["metadata"]["annotations"]["cert-manager.io/inject-ca-from-secret"]
+        .as_str()
+        .context("webhook trust injection")?;
+    let (_, secret) = tls_source
+        .split_once('/')
+        .context("namespaced webhook TLS source")?;
+    assert!(objects.iter().any(|object| object["kind"] == "Certificate"
+        && object["metadata"]["namespace"] == *namespace
+        && object["spec"]["secretName"] == secret));
+    assert!(!objects.iter().any(|object| object["kind"] == "Secret"
+        && object["metadata"]["namespace"] == *namespace
+        && object["metadata"]["name"] == secret));
+
+    let uses_secrets = |role: &Value| {
+        role["rules"].as_array().is_some_and(|rules| {
+            rules.iter().any(|rule| {
+                rule["resources"]
+                    .as_array()
+                    .is_some_and(|resources| resources.contains(&json!("secrets")))
+            })
+        })
+    };
+    let account = &pod["serviceAccountName"];
+    let bindings = objects.iter().filter(|object| {
+        matches!(
+            object["kind"].as_str(),
+            Some("ClusterRoleBinding" | "RoleBinding")
+        ) && object["subjects"].as_array().is_some_and(|subjects| {
+            subjects.iter().any(|subject| {
+                subject["kind"] == "ServiceAccount"
+                    && subject["namespace"] == *namespace
+                    && subject["name"] == *account
+            })
+        })
+    });
+    let mut source_access = false;
+    for binding in bindings {
+        let role_ref = &binding["roleRef"];
+        let role = objects
+            .iter()
+            .find(|object| {
+                object["kind"] == role_ref["kind"]
+                    && object["metadata"]["name"] == role_ref["name"]
+                    && object["metadata"]["namespace"] == binding["metadata"]["namespace"]
+            })
+            .context("trust-manager Role or ClusterRole")?;
+        if uses_secrets(role) {
+            assert_eq!(role["kind"], "Role");
+            assert_eq!(role["metadata"]["namespace"], "platform");
+            source_access = true;
+        }
+    }
+    assert!(source_access);
     Ok(())
 }

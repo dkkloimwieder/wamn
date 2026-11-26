@@ -169,7 +169,7 @@ pub async fn execute(config: &Configuration, payload: &str) -> anyhow::Result<Va
         Request::Plain(task) => (task, None),
     };
     let files = wamn_platform_install::database_files::DatabaseFiles::in_cluster()?;
-    files.materialize(&config.apply_database).await?;
+    files.materialize_system(&config.apply_database).await?;
     let mut release = None;
     let result = async {
         let mut platform = config.platform()?;

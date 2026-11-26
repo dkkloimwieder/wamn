@@ -10,7 +10,7 @@ use anyhow::{Context as _, bail, ensure};
 use common::request::until;
 use common::{Env, Org, PortForward, exec, scale_deployment, secret_key};
 use k8s_openapi::api::batch::v1::Job;
-use k8s_openapi::api::core::v1::Pod;
+use k8s_openapi::api::core::v1::{ConfigMap, Pod};
 use kube::Api;
 use kube::api::{AttachParams, ListParams};
 use sqlx::postgres::{PgConnectOptions, PgSslMode};
@@ -255,11 +255,12 @@ async fn pooler_login(
     let namespace = org.name.as_str();
     let client = &org.cluster.client;
     let secret = format!("wamn-{family}-db");
+    let roots = Api::<ConfigMap>::namespaced(client.clone(), namespace);
     let (username, password, ca, forward) = timeout(REQUEST_DEADLINE, async {
         tokio::try_join!(
             secret_key(client, namespace, &secret, "username"),
             secret_key(client, namespace, &secret, "password"),
-            secret_key(client, namespace, "wamn-pg-ca", "ca.crt"),
+            async { Ok(roots.get("wamn-pg-ca").await?) },
             PortForward::start(pods.clone(), pod, POSTGRES_PORT),
         )
     })
@@ -269,6 +270,10 @@ async fn pooler_login(
     })??;
     let username = String::from_utf8(username).context("Pooler login username must be UTF-8")?;
     let password = String::from_utf8(password).context("Pooler login password must be UTF-8")?;
+    let ca = ca
+        .data
+        .and_then(|mut data| data.remove("ca.crt"))
+        .context("org database CA ConfigMap has no ca.crt")?;
     ensure!(
         !username.is_empty() && !password.is_empty() && !ca.is_empty(),
         "empty Pooler login or CA in {namespace}/{secret}"
@@ -309,7 +314,7 @@ async fn pooler_login(
         .database(DATABASE)
         .username(&username)
         .password(&password)
-        .ssl_root_cert_from_pem(ca)
+        .ssl_root_cert_from_pem(ca.into_bytes())
         .ssl_mode(PgSslMode::VerifyFull);
     Ok(PoolerLogin {
         options,

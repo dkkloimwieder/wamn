@@ -1,4 +1,4 @@
-//! Stage database credentials from Kubernetes Secrets.
+//! Stage database credentials and public roots from the worker namespace.
 
 use anyhow::Context as _;
 use std::sync::Arc;
@@ -17,15 +17,40 @@ impl Clone for DatabaseFiles {
     }
 }
 
+enum CaSource {
+    ProjectSecret,
+    SystemConfigMap,
+}
+
 impl DatabaseFiles {
     /// Open the worker's in-cluster API client.
     pub fn in_cluster() -> anyhow::Result<Self> {
         Ok(Self(Arc::new(KubernetesApi::in_cluster()?)))
     }
 
-    /// Stage the named login and CA in the worker's database volume.
+    /// Stage the project login and CA Secrets in the worker's database volume.
     pub async fn materialize(&self, config: &ConnectionConfig) -> Result<(), DatabaseFilesError> {
-        self.write_files(config)
+        self.materialize_from(config, CaSource::ProjectSecret).await
+    }
+
+    /// Stage the system login Secret and public CA ConfigMap in the worker's database volume.
+    ///
+    /// # Errors
+    /// Returns an error if the worker cannot read or stage the files.
+    pub async fn materialize_system(
+        &self,
+        config: &ConnectionConfig,
+    ) -> Result<(), DatabaseFilesError> {
+        self.materialize_from(config, CaSource::SystemConfigMap)
+            .await
+    }
+
+    async fn materialize_from(
+        &self,
+        config: &ConnectionConfig,
+        source: CaSource,
+    ) -> Result<(), DatabaseFilesError> {
+        self.write_files(config, source)
             .await
             .map_err(|source| DatabaseFilesError {
                 login: config.credentials.name.clone(),
@@ -34,7 +59,7 @@ impl DatabaseFiles {
             })
     }
 
-    async fn write_files(&self, config: &ConnectionConfig) -> anyhow::Result<()> {
+    async fn write_files(&self, config: &ConnectionConfig, source: CaSource) -> anyhow::Result<()> {
         use std::path::Path;
 
         anyhow::ensure!(
@@ -45,10 +70,20 @@ impl DatabaseFiles {
         let root = Path::new(DATABASE_DIR);
         let directory = credential_directory(root, &config.credentials.name)?;
         credential_directory(root, &config.server_ca.name)?;
-        let (login, ca) = self
-            .0
-            .database_secrets(&config.credentials.name, &config.server_ca.name)
-            .await?;
+        let ca = async {
+            match source {
+                CaSource::SystemConfigMap => self.0.public_root(&config.server_ca.name).await,
+                CaSource::ProjectSecret => {
+                    let secret = self.0.secret(&config.server_ca.name).await?;
+                    Ok(secret
+                        .data
+                        .and_then(|mut data| data.remove("ca.crt"))
+                        .with_context(|| format!("Secret {} lacks ca.crt", config.server_ca.name))?
+                        .0)
+                }
+            }
+        };
+        let (login, server_ca) = tokio::try_join!(self.0.secret(&config.credentials.name), ca)?;
         let credentials = match login.type_.as_deref() {
             Some("kubernetes.io/tls") => [
                 ("tls.crt", secret_entry(&login, "tls.crt")?),
@@ -67,7 +102,6 @@ impl DatabaseFiles {
             }
             _ => anyhow::bail!("database credential Secret must be TLS or basic-auth"),
         };
-        let server_ca = secret_entry(&ca, "ca.crt")?;
 
         let mut builder = tokio::fs::DirBuilder::new();
         builder.mode(0o700);
@@ -76,7 +110,10 @@ impl DatabaseFiles {
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
             Err(error) => return Err(error.into()),
         }
-        for (name, bytes) in credentials.into_iter().chain([("ca.crt", server_ca)]) {
+        for (name, bytes) in credentials
+            .into_iter()
+            .chain([("ca.crt", server_ca.as_slice())])
+        {
             let path = directory.join(name);
             let mut file = tokio::fs::OpenOptions::new()
                 .write(true)

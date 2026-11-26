@@ -4,9 +4,11 @@ use std::{net::IpAddr, path::Path, time::Duration};
 
 use anyhow::Context as _;
 use serde_json::Value;
-use wamn_kubernetes::{Target, helm, job};
+use wamn_kubernetes::{Target, helm, job, org_resources};
 
 const INFRASTRUCTURE_RELEASE: &str = "wamn-infrastructure";
+const CERT_MANAGER_WEBHOOK: &str = "wamn-infrastructure-cert-manager-webhook";
+const TRUST_MANAGER_WEBHOOK: &str = "trust-manager";
 const PLATFORM_RELEASE: &str = "wamn";
 const SYSTEM_SQL_JOB: &str = "wamn-system-sql";
 const ROLLOUT_TIMEOUT: Duration = Duration::from_mins(16);
@@ -16,14 +18,41 @@ pub(crate) async fn install_infrastructure(
     charts: &Path,
     values: &Path,
 ) -> anyhow::Result<()> {
+    let infrastructure = charts.join("infra");
+    let trust_values = tempfile::NamedTempFile::new().context("create trust-manager values")?;
+    let set_trust_manager = |enabled: bool| {
+        std::fs::write(
+            trust_values.path(),
+            format!("trust-manager:\n  enabled: {enabled}\n"),
+        )
+        .context("write trust-manager values")
+    };
+    let values = &[values, trust_values.path()];
+    // The trust-manager Certificate is admitted by cert-manager's webhook.
+    // On a fresh cluster, finish the cert-manager startup check first.
+    if !org_resources::webhook_configured(target, CERT_MANAGER_WEBHOOK).await? {
+        set_trust_manager(false)?;
+        upgrade(
+            target,
+            &infrastructure,
+            INFRASTRUCTURE_RELEASE,
+            values,
+            helm::Install::CreateNamespace,
+        )
+        .await?;
+        org_resources::wait_for_webhook_ca(target, CERT_MANAGER_WEBHOOK, ROLLOUT_TIMEOUT).await?;
+    }
+    // Explicitly enable it even when Helm would carry forward the bootstrap values.
+    set_trust_manager(true)?;
     upgrade(
         target,
-        &charts.join("infra"),
+        &infrastructure,
         INFRASTRUCTURE_RELEASE,
-        &[values],
+        values,
         helm::Install::CreateNamespace,
     )
-    .await
+    .await?;
+    org_resources::wait_for_webhook_ca(target, TRUST_MANAGER_WEBHOOK, ROLLOUT_TIMEOUT).await
 }
 
 pub(crate) async fn install_platform(
@@ -36,6 +65,7 @@ pub(crate) async fn install_platform(
         tempfile::NamedTempFile::new().context("create a file for the resolved platform values")?;
     serde_json::to_writer(chart_values.as_file(), overrides)
         .context("write the resolved platform values")?;
+    org_resources::wait_for_webhook_ca(target, TRUST_MANAGER_WEBHOOK, ROLLOUT_TIMEOUT).await?;
     job::remove_previous_in_target(target, SYSTEM_SQL_JOB, ROLLOUT_TIMEOUT).await?;
     upgrade(
         target,
@@ -44,7 +74,8 @@ pub(crate) async fn install_platform(
         &[values, chart_values.path()],
         helm::Install::ExistingNamespace,
     )
-    .await
+    .await?;
+    org_resources::wait_for_public_root(target, "hosts", "identity-ca", ROLLOUT_TIMEOUT).await
 }
 
 /// Resolve the published application chart reference used by the platform.

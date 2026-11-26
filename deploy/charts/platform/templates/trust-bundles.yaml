@@ -1,0 +1,21 @@
+{{- $system := include "wamn-platform.systemDatabase" . | fromJson }}
+{{- range list (dict "name" "identity-ca" "source" "wamn-identity-ca" "label" "wamn.dev/identity-trust")
+                (dict "name" "nats-ca" "source" "wasmcloud-ca" "label" "wamn.dev/org")
+                (dict "name" (printf "%s-ca" $system.cluster) "source" $system.signingCa "label" "wamn.dev/org") }}
+---
+apiVersion: trust.cert-manager.io/v1alpha1
+kind: Bundle
+metadata:
+  name: {{ .name }}
+spec:
+  sources:
+    - secret:
+        name: {{ .source }}
+        key: tls.crt
+  target:
+    configMap:
+      key: ca.crt
+    namespaceSelector:
+      matchLabels:
+        {{ .label }}: "true"
+{{- end }}

@@ -27,5 +27,5 @@ After Helm installs the chart, the org SQL Job in `platform` writes the password
 For local encryption, the chart creates an empty `wamn-oauth` Secret in the org namespace and grants the org SQL Job access to it.
 The Job writes a random 32-byte `key` only when the entry is absent. Control and the environment hosts use that key.
 Cloud KMS uses no org OAuth Secret.
-Pass the public CA certificates as PEM through `identityCa`, `natsCa`, and `postgresCa`.
-Read `tls.crt` from `platform/wamn-identity-ca` and `platform/wasmcloud-ca`, and `ca.crt` from `platform/wamn-pg-ca`.
+trust-manager writes the public identity, NATS, and system database roots to ConfigMaps in the org namespace.
+`wamn org create` waits for these ConfigMaps before it checks the control rollout.

@@ -176,7 +176,7 @@ pub async fn pg(root: &Path, _args: &PgArgs) -> anyhow::Result<()> {
     let secrets = Api::<Secret>::namespaced(target.client.client(), &target.namespace);
     let (certificate, ca) = tokio::try_join!(
         secrets.get("wamn-pg-postgres-tls"),
-        secrets.get("wamn-pg-ca")
+        secrets.get("wamn-pg-server-tls")
     )?;
     let credentials = tempfile::tempdir().context("create a directory for benchmark TLS files")?;
     let mut database = url::Url::parse("postgresql://postgres@127.0.0.1:15432/wamn_pg_minimum")?;

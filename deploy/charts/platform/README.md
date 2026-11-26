@@ -1,6 +1,6 @@
 # Platform chart
 
-This chart installs shared services in `platform` and the edge in `hosts`. Use the Helm release name `wamn` in namespace `platform` and install the infrastructure chart first.
+This chart installs shared services in `platform` and the edge in `hosts`. Use `wamn platform deploy` to install the infrastructure chart first. The platform Helm release is `wamn` in namespace `platform`.
 
 Use `values-kind.yaml` or `values-gcp.yaml` for the installation. The schema validates WAMN inputs. Vendored charts accept their upstream values.
 
@@ -24,6 +24,8 @@ For local encryption, supply the existing `identity.oauthSecret` with a 32-byte 
 For local mail, set `identity.localMail` to the outbox path.
 For Resend, set `identity.resendSecret` to a Secret in `platform` with an `api-key` entry.
 Set `identity.resendFrom` to the verified sender and `identity.inviteUrl` to the web client base.
+
+cert-manager issues the identity, NATS, and system database roots in `platform`. trust-manager distributes the public roots to the orgs and the identity root to `hosts`. Platform database clients verify the server with `ca.crt` from cert-manager leaf Secrets.
 
 The edge trusts the public identity CA. On kind, the edge certificate covers `*.<platformDomain>`. GCP terminates TLS at the external load balancer.
 If the cluster Ingress uses ACME, set `edge.acme` for the `wamn-edge` Issuer in `hosts`.

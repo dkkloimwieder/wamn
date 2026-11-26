@@ -8,7 +8,7 @@ use wamn_postgres::database::{ConnectionConfig, DATABASE_DIR};
 use wamn_registry::OrgId;
 
 use crate::{
-    org::{OrgInputs, control_image, field},
+    org::{OrgInputs, SYSTEM_DATABASE_CA, control_image, field},
     provision_org::{
         CONTROL_AUDIENCE, INVITATION_ACCOUNT, ORG_INPUTS_DIR, OrgActivity, SQL_ACCOUNT,
     },
@@ -62,24 +62,17 @@ impl OrgInstaller {
 
     pub(crate) async fn inputs(&self) -> anyhow::Result<OrgInputs> {
         let target = &self.target;
-        let (inputs, database_config, identity_ca, nats_ca, api_server) = tokio::try_join!(
+        let (inputs, database_config, api_server) = tokio::try_join!(
             org_resources::config_map(target, PLATFORM, ORG_INPUTS),
             org_resources::config_map(target, PLATFORM, SYSTEM_SQL_CONFIG),
-            org_resources::config_map(target, "hosts", "identity-ca"),
-            org_resources::secret_entry(target, "wasmcloud-ca", "tls.crt"),
             async { api_destinations(org_resources::api_addresses(target.client.client()).await?) },
         )?;
         let database: ConnectionConfig =
             serde_json::from_str(field(&database_config["data"], "database.json")?)
                 .context("decode the platform SQL Job connection")?;
-        let postgres_ca =
-            org_resources::secret_entry(target, &database.server_ca.name, "ca.crt").await?;
         Ok(OrgInputs {
             values: inputs,
             database,
-            identity_ca,
-            nats_ca,
-            postgres_ca,
             api_server,
         })
     }
@@ -125,6 +118,17 @@ impl OrgInstaller {
             DEADLINE + Duration::from_secs(30),
         )
         .await
+    }
+
+    pub(crate) async fn wait_for_trust(&self, org: &OrgId) -> anyhow::Result<()> {
+        let target = &self.target;
+        let namespace = org.as_str();
+        tokio::try_join!(
+            org_resources::wait_for_public_root(target, namespace, "identity-ca", DEADLINE),
+            org_resources::wait_for_public_root(target, namespace, "nats-ca", DEADLINE),
+            org_resources::wait_for_public_root(target, namespace, SYSTEM_DATABASE_CA, DEADLINE),
+        )?;
+        Ok(())
     }
 
     pub(crate) async fn reload_control(

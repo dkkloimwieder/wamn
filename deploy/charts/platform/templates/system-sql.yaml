@@ -1,6 +1,6 @@
 {{- $system := include "wamn-platform.systemDatabase" . | fromJson -}}
 {{- $namespace := $system.namespace -}}
-{{- $ca := $system.ca -}}
+{{- $ca := $system.serverTls -}}
 {{- $admin := $system.adminTlsSecret -}}
 {{- $migration := $system.migrationTlsSecret -}}
 {{- $name := printf "%s-system-sql" .Release.Name -}}

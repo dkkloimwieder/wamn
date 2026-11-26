@@ -3,7 +3,7 @@
 Set `namespace` to the org namespace. Helm uses server-side apply for project installs and upgrades.
 
 The chart creates the project's CloudNativePG Cluster, Database, login Secrets, publication, and schema diff ServiceAccount.
-That ServiceAccount reads the named system and project database login and CA Secrets. It can read each declared application's workload to resolve the live package digest.
+That ServiceAccount reads the named login Secrets, the project CA Secret and the system database CA ConfigMap. It can read each declared application's workload to resolve the live package digest.
 The org worker runs operations that use Helm.
 CloudNativePG creates the database at bootstrap. The Database resource installs the extensions.
 `env apply` derives the Cluster name and login Secret names from the registered project generation.
@@ -13,7 +13,7 @@ If backups are configured, Helm creates an ObjectStore and ScheduledBackup for t
 Helm keeps the live Cluster and ObjectStore unless `env deactivate-project --data` removes them.
 To restore into a separate release, see [Backup and recovery](../../../docs/operations/backup-and-recovery.md).
 The CDC reader projects its client certificate and key from `cdcReader.database.credentials` under `/etc/wamn/db/<login-secret>/`. It projects `ca.crt` from `cdcReader.database.server_ca` into the same directory.
-Operation Jobs fetch their named database Secrets and stage the same files in their own volume.
+Operation Jobs fetch the named login and CA objects and stage the same files in their own volume.
 
 The `credentials` values name the empty Secret for the project release and the control ServiceAccount that can read and patch it. Deactivating a connection removes its credential keys from this shared Secret. `credentials.platformLogin` and `credentials.serverCa` name the platform login certificate Secret and the server CA ConfigMap that the control ServiceAccount can get.
 Control writes data keys after install. Helm uses server-side apply and keeps the Secret on uninstall.
