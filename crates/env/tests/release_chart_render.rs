@@ -1,10 +1,13 @@
-//! Renders the app and org charts with `helm template` to check their release objects.
+//! Renders the app, org and project charts to check their release objects.
 //!
 //! These tests need only the local Helm executable.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+
+#[path = "support/pod_security.rs"]
+mod pod_security;
 
 fn repository_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -102,6 +105,56 @@ fn the_control_route_uses_service_port_80_and_the_pod_uses_8080() -> anyhow::Res
         .find(|container_port| container_port["name"] == port["targetPort"])
         .expect("Service target port");
     assert_eq!(port["containerPort"].as_u64(), Some(8080));
+    Ok(())
+}
+
+#[test]
+fn control_and_capture_render_restricted_pods() -> anyhow::Result<()> {
+    use wamn_env::env::{chart_values, lifecycle};
+    use wamn_kubernetes::{helm, platform_env::entry};
+    use wamn_postgres::database::{capture_configuration, connection_for};
+    use wamn_registry::{Triple, name};
+
+    let charts = repository_root().join("deploy/charts");
+    let org_values = serde_json::from_str(include_str!("support/org-chart-values.json"))?;
+    let org = helm::template(&entry(&charts.join("org"), "acme", "acme", org_values)?)?;
+    pod_security::assert_restricted_pods(
+        org.iter().filter(|object| object["kind"] == "Deployment"),
+    );
+
+    let triple = Triple::new("acme".parse()?, "dev".parse()?, "billing".parse()?);
+    let instance = "abcdefgh".parse()?;
+    let connection = connection_for(&triple, &instance);
+    let cluster = name::project_cluster(&connection.database);
+    let publication = name::cdc_object_name(&triple.org, &triple.project, &triple.env, &instance);
+    let mut project = chart_values::publication_values(
+        &triple,
+        &instance,
+        &cluster,
+        &publication,
+        &["app".parse()?],
+    );
+    chart_values::set_operation_values(
+        &mut project,
+        &triple,
+        &cluster,
+        &connection.database,
+        std::iter::empty(),
+    )?;
+    project["namespace"] = serde_json::json!(triple.org);
+    project["cdcReader"] = lifecycle::reader_values(
+        &triple,
+        &capture_configuration(connection)?,
+        "registry.example/wamn-host:test",
+        "nats://nats.platform.svc:4222",
+        false,
+    );
+    let project = helm::template(&entry(&charts.join("project"), "acme", "fixture", project)?)?;
+    pod_security::assert_restricted_pods(
+        project
+            .iter()
+            .filter(|object| object["kind"] == "Deployment"),
+    );
     Ok(())
 }
 

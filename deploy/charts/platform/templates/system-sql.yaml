@@ -30,10 +30,21 @@ spec:
       labels:
         app.kubernetes.io/component: wamn-system-sql
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
       automountServiceAccountToken: false
       restartPolicy: OnFailure
       containers:
         - name: system-sql
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
           image: {{ .Values.systemSql.image | default (printf "%s/wamn-control:%s" .Values.registry .Chart.Version) | quote }}
           imagePullPolicy: IfNotPresent
           args:

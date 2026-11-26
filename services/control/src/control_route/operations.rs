@@ -195,3 +195,41 @@ fn manifest(
     wamn_kubernetes::worker_mounts::mount_registry(&mut job, metadata);
     job
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{Operation, manifest};
+    use wamn_kubernetes::job::Worker;
+    use wamn_postgres::database::DATABASE_DIR;
+    use wamn_registry::Triple;
+
+    #[test]
+    fn operation_job_keeps_work_and_database_staging_writable() -> anyhow::Result<()> {
+        let triple = Triple::new("acme".parse()?, "dev".parse()?, "billing".parse()?);
+        let worker = Worker {
+            image: "registry.example/control".into(),
+            configuration: "control-settings".into(),
+            service_account: "worker".into(),
+        };
+        let job = manifest(Operation::Deploy, &triple, "billing-dev", &worker, false);
+        let pod = &job["spec"]["template"]["spec"];
+        let mounts = pod["containers"][0]["volumeMounts"]
+            .as_array()
+            .expect("worker mounts");
+        let volumes = pod["volumes"].as_array().expect("worker volumes");
+        for (path, medium) in [("/work", None), (DATABASE_DIR, Some("Memory"))] {
+            let mount = mounts
+                .iter()
+                .find(|mount| mount["mountPath"] == path)
+                .unwrap_or_else(|| panic!("missing {path} mount"));
+            assert!(!mount["readOnly"].as_bool().unwrap_or(false), "{path}");
+            let volume = volumes
+                .iter()
+                .find(|volume| volume["name"] == mount["name"])
+                .unwrap_or_else(|| panic!("missing {path} volume"));
+            assert!(volume["emptyDir"].is_object(), "{path} needs an emptyDir");
+            assert_eq!(volume["emptyDir"]["medium"].as_str(), medium, "{path}");
+        }
+        Ok(())
+    }
+}

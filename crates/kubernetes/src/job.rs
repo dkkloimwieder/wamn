@@ -24,12 +24,30 @@ use kube::{
 // Bound execution even if the caller exits. Kubernetes never retries these Jobs.
 const INSTALL_DEADLINE: Duration = Duration::from_mins(15);
 
+/// The wamn Job identity matches the stock host. The group grants access to mounted volumes.
+pub fn pod_security_context() -> Value {
+    json!({
+        "runAsNonRoot": true,
+        "runAsUser": 65532,
+        "runAsGroup": 65532,
+        "fsGroup": 65532,
+        "seccompProfile": {"type": "RuntimeDefault"},
+    })
+}
+
+/// The container settings required for a wamn Job under restricted pod security.
+pub fn container_security_context() -> Value {
+    json!({"allowPrivilegeEscalation": false, "capabilities": {"drop": ["ALL"]}})
+}
+
 pub fn manifest(name: &str, image: &str, command: &[&str], arguments: &[&str]) -> Value {
     json!({"apiVersion":"batch/v1", "kind":"Job", "metadata":{"name":name},
         "spec":{"suspend":true, "backoffLimit":0, "activeDeadlineSeconds":INSTALL_DEADLINE.as_secs(),
             "template":{"metadata":{"labels":{"app.kubernetes.io/component":"wamn-worker"}},
                 "spec":{"restartPolicy":"Never", "automountServiceAccountToken":false,
-                "containers":[{"name":"operation", "image":image, "command":command, "args":arguments, "env":[], "volumeMounts":[]}],
+                "securityContext":pod_security_context(),
+                "containers":[{"name":"operation", "image":image, "command":command, "args":arguments,
+                    "securityContext":container_security_context(), "env":[], "volumeMounts":[]}],
                 "volumes":[]}}}})
 }
 
@@ -495,4 +513,28 @@ fn kubernetes_name(name: &str) -> bool {
             .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
         && name.as_bytes()[0].is_ascii_alphanumeric()
         && name.as_bytes()[name.len() - 1].is_ascii_alphanumeric()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::manifest;
+
+    #[test]
+    fn operation_job_sets_restricted_pod_and_container_contexts() {
+        let job = manifest("op-example", "registry.example/control", &[], &[]);
+        let pod = &job["spec"]["template"]["spec"];
+        let context = &pod["securityContext"];
+        assert_eq!(context["runAsNonRoot"], true);
+        assert_eq!(context["runAsUser"], 65532);
+        assert_eq!(context["runAsGroup"], 65532);
+        assert_eq!(context["fsGroup"], context["runAsGroup"]);
+        assert_eq!(context["seccompProfile"]["type"], "RuntimeDefault");
+        let containers = pod["containers"].as_array().expect("Job containers");
+        assert!(!containers.is_empty());
+        for container in containers {
+            let context = &container["securityContext"];
+            assert_eq!(context["allowPrivilegeEscalation"], false);
+            assert_eq!(context["capabilities"]["drop"], serde_json::json!(["ALL"]));
+        }
+    }
 }

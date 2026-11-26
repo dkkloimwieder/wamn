@@ -258,9 +258,52 @@ fn org_job(account: &str, image: &str, args: &[&str]) -> Value {
                 "spec": {
                     "serviceAccountName": account, "automountServiceAccountToken": false,
                     "restartPolicy": "Never",
-                    "containers": [{"name": account, "image": image, "args": args}],
+                    "securityContext": job::pod_security_context(),
+                    "containers": [{
+                        "name": account, "image": image, "args": args,
+                        "securityContext": job::container_security_context(),
+                    }],
                 },
             },
         },
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{invitation_job, provision_job};
+    use wamn_kubernetes::job;
+    use wamn_postgres::database::configuration;
+
+    #[test]
+    fn org_jobs_use_the_wamn_job_security_contexts() -> anyhow::Result<()> {
+        let org = "acme".parse()?;
+        let image = "registry.example/control";
+        let database = configuration(
+            "platform",
+            "database",
+            "database".into(),
+            5432,
+            "system".into(),
+            "postgres".parse()?,
+            "database-login".into(),
+        );
+
+        for manifest in [
+            provision_job(&org, image, &database),
+            invitation_job(&org, image, "owner@example.com"),
+        ] {
+            let pod = &manifest["spec"]["template"]["spec"];
+            assert_eq!(pod["securityContext"], job::pod_security_context());
+            let containers = pod["containers"].as_array().expect("Job containers");
+            assert!(!containers.is_empty());
+            for container in containers {
+                assert_eq!(
+                    container["securityContext"],
+                    job::container_security_context()
+                );
+            }
+        }
+        Ok(())
+    }
 }

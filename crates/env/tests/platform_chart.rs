@@ -3,6 +3,34 @@
 use serde_json::json;
 use std::path::Path;
 
+#[path = "support/pod_security.rs"]
+mod pod_security;
+
+#[test]
+fn platform_wamn_workloads_render_restricted_pods() -> anyhow::Result<()> {
+    use wamn_kubernetes::{helm, platform_env::entry};
+
+    let chart = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../deploy/charts/platform");
+    for file in ["values-kind.yaml", "values-gcp.yaml"] {
+        let values: serde_json::Value = serde_yaml::from_slice(&std::fs::read(chart.join(file))?)?;
+        let registry = values["registry"].as_str().expect("platform registry");
+        let wamn_images = format!("{registry}/wamn-");
+        let objects = helm::template(&entry(&chart, "platform", "wamn", values)?)?;
+        pod_security::assert_restricted_pods(objects.iter().filter(|object| {
+            object["spec"]["template"]["spec"]["containers"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .any(|container| {
+                    container["image"]
+                        .as_str()
+                        .is_some_and(|image| image.starts_with(&wamn_images))
+                })
+        }));
+    }
+    Ok(())
+}
+
 #[test]
 fn platform_ingress_and_edge_egress_match_the_provider_boundary() -> anyhow::Result<()> {
     let chart = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../deploy/charts/platform");

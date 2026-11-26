@@ -20,9 +20,20 @@ spec:
       annotations:
         checksum/config: {{ include (print $.Template.BasePath "/edge-configmap.yaml") . | sha256sum }}
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
       serviceAccountName: wamn-edge
       containers:
         - name: web
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
           image: {{ .Values.edge.image | default (printf "%s/wamn-edge-web:%s" .Values.registry .Chart.Version) | quote }}
           args: ["--settings", "/etc/wamn-edge/web.json"]
           ports:

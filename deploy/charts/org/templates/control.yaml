@@ -42,12 +42,23 @@ spec:
       annotations:
         checksum/settings: {{ $settings | sha256sum | quote }}
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
       serviceAccountName: {{ $account }}
       {{- if .Values.control.registrySecret }}
       imagePullSecrets: [{name: {{ .Values.control.registrySecret }}}]
       {{- end }}
       containers:
         - name: control
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
           image: {{ .Values.control.image | quote }}
           args: [--settings, /etc/wamn/control/settings.json, platform]
           ports: [{name: http, containerPort: 8080}]

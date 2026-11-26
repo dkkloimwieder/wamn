@@ -17,7 +17,10 @@ use std::time::Duration;
 use anyhow::{Context as _, bail, ensure};
 use k8s_openapi::api::apps::v1::Deployment;
 use k8s_openapi::api::batch::v1::{Job, JobSpec};
-use k8s_openapi::api::core::v1::{ConfigMap, Pod, PodTemplateSpec, Secret, Service};
+use k8s_openapi::api::core::v1::{
+    Capabilities, ConfigMap, Pod, PodSecurityContext, PodTemplateSpec, SeccompProfile, Secret,
+    SecurityContext, Service,
+};
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
 use kube::Api;
 use kube::api::{
@@ -662,13 +665,16 @@ pub async fn scale_deployment(
     .with_context(|| format!("{waiting} within {deadline:?}"))?
 }
 
-/// Run a one-container Job once, collect its exit code and logs, and wait for deletion (C6).
+/// Run one restricted PostgreSQL-image probe Job, collect its exit code and logs, and delete it.
 pub async fn run_job(
     client: &kube::Client,
     namespace: &str,
     mut template: PodTemplateSpec,
     deadline: Duration,
 ) -> anyhow::Result<(i32, String)> {
+    // The CloudNativePG PostgreSQL image uses UID and GID 26.
+    const POSTGRES_ID: i64 = 26;
+
     ensure!(
         template
             .metadata
@@ -678,7 +684,7 @@ pub async fn run_job(
         "the probe pod needs labels"
     );
     let spec = template.spec.as_mut().context("probe pod spec is absent")?;
-    let [container] = spec.containers.as_slice() else {
+    let [container] = spec.containers.as_mut_slice() else {
         bail!("the probe pod must have one container");
     };
     ensure!(
@@ -692,6 +698,25 @@ pub async fn run_job(
                 .is_some_and(|command| !command.is_empty()),
         "the probe container needs an image and command"
     );
+    container.security_context = Some(SecurityContext {
+        allow_privilege_escalation: Some(false),
+        capabilities: Some(Capabilities {
+            drop: Some(vec!["ALL".into()]),
+            ..Capabilities::default()
+        }),
+        ..SecurityContext::default()
+    });
+    spec.security_context = Some(PodSecurityContext {
+        run_as_non_root: Some(true),
+        run_as_user: Some(POSTGRES_ID),
+        run_as_group: Some(POSTGRES_ID),
+        fs_group: Some(POSTGRES_ID),
+        seccomp_profile: Some(SeccompProfile {
+            type_: "RuntimeDefault".into(),
+            ..SeccompProfile::default()
+        }),
+        ..PodSecurityContext::default()
+    });
     spec.restart_policy = Some("Never".to_owned());
     let jobs = Api::<Job>::namespaced(client.clone(), namespace);
     let pods = Api::<Pod>::namespaced(client.clone(), namespace);

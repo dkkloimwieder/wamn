@@ -36,6 +36,13 @@ spec:
       annotations:
         wamn.dev/cdc-configuration: {{ $settings | sha256sum | quote }}
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
       automountServiceAccountToken: false
       serviceAccountName: {{ required "operations.capture is required for the CDC reader" $operations.capture | quote }}
       {{- with .registrySecret }}
@@ -43,6 +50,10 @@ spec:
       {{- end }}
       containers:
         - name: reader
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
           image: {{ .image | quote }}
           command: [/usr/local/bin/wamn-cdc-reader]
           args: [--settings, /etc/wamn/cdc/settings.json]

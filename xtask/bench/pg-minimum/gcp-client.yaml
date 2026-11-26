@@ -23,7 +23,13 @@ spec:
     spec:
       restartPolicy: Never
       securityContext:
+        # The pinned PostgreSQL image uses UID and GID 26.
+        runAsNonRoot: true
+        runAsUser: 26
+        runAsGroup: 26
         fsGroup: 26
+        seccompProfile:
+          type: RuntimeDefault
       nodeSelector:
         role: bench-host
       tolerations:
@@ -33,6 +39,10 @@ spec:
           effect: NoSchedule
       containers:
         - name: pgbench
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
           image: ghcr.io/cloudnative-pg/postgresql:18.6@sha256:899d3ed526b659d77935dde0e6bf2d69dbbf17d3d8c6486ca8cfd04bd3c18533
           command: ["sleep", "7200"]
           env:

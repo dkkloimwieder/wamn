@@ -22,9 +22,20 @@ spec:
         app.kubernetes.io/name: wamn-identity
         app.kubernetes.io/instance: identity
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
       serviceAccountName: identity
       containers:
         - name: identity
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
           image: {{ .Values.identity.image | default (printf "%s/wamn-identity:%s" .Values.registry .Chart.Version) | quote }}
           imagePullPolicy: IfNotPresent
           args: [serve, --settings, /etc/wamn/identity/settings.json, --password-port, {{ .Values.identity.passwordPort | quote }}]
