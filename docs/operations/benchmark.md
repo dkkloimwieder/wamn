@@ -35,6 +35,7 @@ The newest local result is [`local-0.1.102.json`](../../tests/bench/local-0.1.10
 
 `cargo xtask bench-pg-minimum` runs the replays of `cargo xtask bench-local --pg-minimum` against `wamn-pg-1` on GCP tier 2.
 PostgreSQL runs alone on pool `pg`. The pgbench client runs in the Job `xtask/bench/pg-minimum/gcp-client.yaml` on pool `bench`.
+When the cluster enforces the platform NetworkPolicy, add a temporary ingress rule for the benchmark. Allow TCP 5432 to `cnpg.io/cluster=wamn-pg` from `app.kubernetes.io/component=pg-minimum-client` in `platform`. Remove the rule after the run.
 The runner installs Receiving into its own database `wamn_pg_minimum`. The environment databases keep the Cluster statistics settings.
 The runner and pgbench Job use the `wamn-pg-postgres-tls` client certificate and verify the database server with `ca.crt` from `wamn-pg-server-tls`.
 Start a port forward to `svc/wamn-pg-rw` in `platform` on local port 15432 before running the command.

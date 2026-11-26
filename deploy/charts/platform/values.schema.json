@@ -78,6 +78,9 @@
         "required": ["cidr", "port"]
       }
     },
+    "apiServer": {
+      "$ref": "#/properties/registryEgress"
+    },
     "global": {
       "type": "object",
       "additionalProperties": false,
@@ -158,6 +161,12 @@
       "properties": {
         "image": {
           "type": "string"
+        },
+        "passwordPort": {
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 65535,
+          "not": {"const": 8443}
         },
         "oauthEncryption": {
           "type": "object",
@@ -361,6 +370,13 @@
     "runtime-operator": {
       "type": "object",
       "properties": {
+        "networkPolicy": {
+          "type": "object",
+          "required": ["enabled"],
+          "properties": {
+            "enabled": {"const": false}
+          }
+        },
         "operator": {
           "type": "object",
           "properties": {

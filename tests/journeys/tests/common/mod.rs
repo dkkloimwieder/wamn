@@ -60,7 +60,7 @@ pub(super) use journey;
 
 /// The number of tests that hold an org and environment at one time (Epic 15 ruling C9).
 const CAPACITY: usize = 4;
-const PLATFORM: &str = "platform";
+pub(crate) const PLATFORM: &str = "platform";
 const SYSTEM_CLUSTER: &str = "wamn-pg";
 const SYSTEM_DATABASE: &str = "wamn_system";
 const ENV: &str = "dev";
@@ -830,7 +830,7 @@ pub(super) async fn run(command: std::process::Command) -> anyhow::Result<String
 }
 
 /// The identity pods that the identity Service selects.
-async fn identity_pods(client: &kube::Client) -> anyhow::Result<(Service, Vec<Pod>)> {
+pub(crate) async fn identity_pods(client: &kube::Client) -> anyhow::Result<(Service, Vec<Pod>)> {
     let service = Api::<Service>::namespaced(client.clone(), PLATFORM)
         .get("identity")
         .await?;

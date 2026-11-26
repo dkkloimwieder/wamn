@@ -50,8 +50,8 @@ pub struct WebConfig {
     pub platform_domain: PlatformDomain,
     /// Empty on kind, otherwise `gs://<buckets.web>`.
     pub bucket: String,
-    /// Canonical HTTPS identity issuer.
-    pub identity_issuer: String,
+    /// HTTPS origin of identity's password listener.
+    pub identity_password_url: String,
     /// Trusted proxy addresses counted from the direct peer toward the client.
     pub trusted_proxy_hops: usize,
 }
@@ -268,7 +268,7 @@ async fn respond(
     web: &Web,
     releases: &Releases,
     proxy: &Proxy,
-    identity: &str,
+    identity_password_url: &str,
     peer: std::net::IpAddr,
     trusted_proxy_hops: usize,
     mut request: hyper::Request<hyper::body::Incoming>,
@@ -307,7 +307,7 @@ async fn respond(
     {
         let password_route = browser_session::password_route(&request);
         let upstream = if password_request {
-            identity
+            identity_password_url
         } else {
             route.api.as_str()
         };
@@ -470,12 +470,12 @@ pub async fn serve(path: &Path) -> anyhow::Result<()> {
         config.platform_domain,
     ));
     ensure!(
-        config.identity_issuer.starts_with("https://"),
-        "identity must use HTTPS"
+        config.identity_password_url.starts_with("https://"),
+        "identity password URL must use HTTPS"
     );
     let proxy = Arc::new(proxy(&std::fs::read(IDENTITY_CA)?)?);
     let listener = TcpListener::bind(SocketAddr::from(([0, 0, 0, 0], LISTEN_PORT))).await?;
-    let identity: Arc<str> = config.identity_issuer.into();
+    let identity_password_url: Arc<str> = config.identity_password_url.into();
     let trusted_proxy_hops = config.trusted_proxy_hops;
     let mut tasks = tokio::task::JoinSet::new();
     loop {
@@ -484,14 +484,14 @@ pub async fn serve(path: &Path) -> anyhow::Result<()> {
             Some(_) = tasks.join_next(), if !tasks.is_empty() => {}
             accepted = listener.accept() => {
                 let (stream, peer) = accepted?;
-                let identity = Arc::clone(&identity);
+                let identity_password_url = Arc::clone(&identity_password_url);
                 let (web, releases, proxy) = (Arc::clone(&web), Arc::clone(&releases), Arc::clone(&proxy));
                 tasks.spawn(async move {
                     let service = service_fn(move |request: hyper::Request<hyper::body::Incoming>| {
-                        let identity = Arc::clone(&identity);
+                        let identity_password_url = Arc::clone(&identity_password_url);
                         let (web, releases, proxy) = (Arc::clone(&web), Arc::clone(&releases), Arc::clone(&proxy));
                         async move {
-                            let mut response = match respond(&web, &releases, &proxy, &identity, peer.ip(), trusted_proxy_hops, request).await {
+                            let mut response = match respond(&web, &releases, &proxy, &identity_password_url, peer.ip(), trusted_proxy_hops, request).await {
                                 Ok(response) => response,
                                 Err(error) => {
                                     tracing::warn!(%error, "edge request failed");

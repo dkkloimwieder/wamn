@@ -4,6 +4,104 @@ use serde_json::json;
 use std::path::Path;
 
 #[test]
+fn platform_ingress_and_edge_egress_match_the_provider_boundary() -> anyhow::Result<()> {
+    let chart = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../deploy/charts/platform");
+    let cidr = "172.18.0.3/32";
+    let api_port = 6443;
+    for provider in ["kind", "gcp"] {
+        let file = std::fs::read(chart.join(format!("values-{provider}.yaml")))?;
+        let mut values: serde_json::Value = serde_yaml::from_slice(&file)?;
+        values["apiServer"] = json!([{"cidr": cidr, "port": api_port}]);
+        let entry = wamn_kubernetes::platform_env::entry(&chart, "platform", "wamn", values)?;
+        let objects = wamn_kubernetes::helm::template(&entry)?;
+        let find = |kind, name| {
+            objects
+                .iter()
+                .find(|object| object["kind"] == kind && object["metadata"]["name"] == name)
+                .unwrap_or_else(|| panic!("missing rendered {kind}/{name} on {provider}"))
+        };
+        let policies = objects
+            .iter()
+            .filter(|object| object["kind"] == "NetworkPolicy");
+        let platform = policies
+            .clone()
+            .filter(|policy| policy["metadata"]["namespace"] == "platform");
+        let deny: Vec<_> = platform
+            .clone()
+            .filter(|policy| policy["spec"]["podSelector"] == json!({}))
+            .collect();
+        let [deny] = deny.as_slice() else {
+            panic!("expected one platform default-deny on {provider}");
+        };
+        assert_eq!(deny["spec"]["policyTypes"], json!(["Ingress"]));
+        assert!(deny["spec"]["ingress"].as_array().is_none_or(Vec::is_empty));
+        let operator = &find("Deployment", "runtime-operator")["spec"]["selector"];
+        assert!(
+            !platform
+                .clone()
+                .any(|policy| policy["spec"]["podSelector"] == *operator)
+        );
+
+        let edge = find("Deployment", "wamn-edge");
+        let edge_namespace = &edge["metadata"]["namespace"];
+        let edge_name = &edge["spec"]["template"]["metadata"]["labels"]["app.kubernetes.io/name"];
+        let identity = find("Deployment", "identity");
+        let password = identity["spec"]["template"]["spec"]["containers"][0]["ports"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|port| port["name"] == "password")
+            .unwrap();
+        let password_port = &password["containerPort"];
+        let identity_ingress = find("NetworkPolicy", "allow-identity-clients")["spec"]["ingress"]
+            .as_array()
+            .unwrap();
+        let mut password_rules = identity_ingress.iter().filter(|rule| {
+            rule["ports"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|port| port["port"] == *password_port)
+        });
+        assert_eq!(
+            password_rules.next().expect("password ingress")["from"],
+            json!([{
+                "namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": edge_namespace}},
+                "podSelector": {"matchLabels": {"app.kubernetes.io/name": edge_name}}
+            }])
+        );
+        assert!(
+            password_rules.next().is_none(),
+            "only the edge reaches the password listener"
+        );
+
+        let edge_egress: Vec<_> = policies
+            .filter(|policy| {
+                policy["metadata"]["namespace"] == *edge_namespace
+                    && policy["spec"]["podSelector"] == edge["spec"]["selector"]
+                    && policy["spec"]["policyTypes"] == json!(["Egress"])
+            })
+            .collect();
+        if provider == "gcp" {
+            assert!(edge_egress.is_empty());
+            continue;
+        }
+        let [egress] = edge_egress.as_slice() else {
+            panic!("expected one kind edge egress policy");
+        };
+        let rules = egress["spec"]["egress"].as_array().unwrap();
+        assert!(
+            rules
+                .iter()
+                .any(|rule| rule["to"] == json!([{"ipBlock": {"cidr": cidr}}])
+                    && rule["ports"] == json!([{"port": api_port, "protocol": "TCP"}])),
+            "kind edge must reach the Kubernetes API"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn web_and_owner_invitation_policies_use_the_control_pod_port() -> anyhow::Result<()> {
     let chart = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../deploy/charts/org");
     let values = serde_json::from_str(include_str!("support/org-chart-values.json"))?;

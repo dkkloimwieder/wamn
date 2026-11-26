@@ -3,23 +3,25 @@
 mod common;
 
 use std::collections::BTreeMap;
-use std::net::{IpAddr, SocketAddr};
+use std::net::{IpAddr, Ipv6Addr, SocketAddr};
 use std::time::Duration;
 
 use anyhow::{Context as _, ensure};
 use common::host::{FIXTURE, fixture, ready, ready_host_pod};
 use common::request::{self, OtherEnv, until};
 use common::{
-    App, Cluster, Org, active_project_cluster, observe_project_cluster, probe_image, run_job,
+    App, Cluster, Org, PLATFORM, active_project_cluster, exec, identity_pods,
+    observe_project_cluster, probe_image, run_job,
 };
 use k8s_openapi::api::core::v1::{Container, Pod, PodSpec, PodTemplateSpec, Service};
 use k8s_openapi::api::discovery::v1::EndpointSlice;
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
 use k8s_openapi::apimachinery::pkg::util::intstr::IntOrString;
 use kube::Api;
-use kube::api::ListParams;
+use kube::api::{AttachParams, ListParams};
 use serde_json::json;
 use tokio::time::timeout;
+use wamn_http_client::HttpClient;
 use wamn_registry::{Triple, name, resource_names};
 
 const APPLY_DEADLINE: Duration = Duration::from_mins(10);
@@ -54,6 +56,13 @@ done
 exit 0
 "#;
 
+const PASSWORD_REQUEST: &str = r#"
+set -o pipefail
+printf 'POST /password/recover HTTP/1.1\r\nHost: %s\r\nX-Forwarded-For: %s\r\nContent-Type: application/json\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}' "$2" "$3" |
+    timeout 10s openssl s_client -connect "$1" -servername "$2" -verify_hostname "$2" \
+        -CAfile /etc/identity-ca/ca.crt -verify_return_error -quiet -ignore_unexpected_eof
+"#;
+
 common::journey! {
     async fn envs_in_one_org_are_isolated() -> anyhow::Result<()> {
         let b = timeout(DEPLOY_DEADLINE, App::prepare(&fixture()))
@@ -67,6 +76,80 @@ common::journey! {
         .await
         .context("apply environment A in the shared org")??;
         check_isolation(&org.cluster, &a.triple, &b).await
+    }
+}
+
+common::journey! {
+    async fn host_cannot_reach_identity_password_port() -> anyhow::Result<()> {
+        let env = timeout(APPLY_DEADLINE, async {
+            Org::create().await?.apply(FIXTURE).await
+        })
+        .await
+        .context("apply an org environment for the identity probe")??;
+        let org = &env.org;
+        let cluster = &org.cluster;
+        let client = &cluster.client;
+        let host = ready_host_pod(&env, OBSERVE_DEADLINE).await?;
+        let host_ip = pod_ip(&host)?;
+        let host_name = host.metadata.name.context("host pod name")?;
+        let hosts = Api::namespaced(client.clone(), org.name.as_str());
+        let (service, pods) = identity_pods(client).await?;
+        let identity = pods.iter().find(|pod| ready(pod)).context("ready identity pod")?;
+        let identity_ip = pod_ip(identity)?;
+        let identity_host = format!("{}.{PLATFORM}.svc.cluster.local",
+            service.metadata.name.context("identity Service name")?);
+        let ports = identity.spec.as_ref().context("identity pod spec")?.containers
+            .iter().flat_map(|container| container.ports.iter().flatten());
+        let port = |name| -> anyhow::Result<u16> {
+            let port = ports.clone()
+                .find(|port| port.name.as_deref() == Some(name))
+                .with_context(|| format!("identity pod port {name}"))?;
+            Ok(u16::try_from(port.container_port)?)
+        };
+        let password = SocketAddr::new(identity_ip, port("password")?);
+        let general = SocketAddr::new(identity_ip, port("https")?);
+
+        let web_host = format!("{}.{}", org.name, cluster.outputs.base_domain);
+        let reply = HttpClient::builder()
+            .timeout(Duration::from_secs(10))
+            .build()?
+            .post(format!("http://{}/password/recover", cluster.outputs.web_address))
+            .header("host", &web_host)
+            .header("origin", format!("https://{web_host}"))
+            .header("sec-fetch-site", "same-origin")
+            .json(&json!({}))
+            .send()
+            .await?;
+        ensure!(reply.status() == hyper::StatusCode::BAD_REQUEST,
+            "the web proxy did not reach identity's password route: {}", reply.status());
+
+        let result = exec(&hosts, &host_name, &AttachParams::default(), [
+            "bash", "-c", PROBE, "probe", &password.ip().to_string(), &password.port().to_string(),
+        ]).await?;
+        let result = probe_result(result.lines().next(), password)?;
+        ensure!(matches!(result, "timeout" | "refused"),
+            "host probe of identity's password listener at {password}: {result}");
+
+        let forwarded = Ipv6Addr::from(
+            0x2001_0db8_0000_0000_0000_0000_0000_0000u128 | (uuid::Uuid::new_v4().as_u128() >> 64),
+        );
+        let reply = exec(&hosts, &host_name, &AttachParams::default(), [
+            "bash", "-ec", PASSWORD_REQUEST, "probe",
+            &general.to_string(), &identity_host, &forwarded.to_string(),
+        ]).await?;
+        ensure!(reply.lines().next().and_then(|line| line.split_whitespace().nth(1)) == Some("400"),
+            "identity did not process the host request on the general listener: {reply}");
+        let mut system = cluster.observe_system().await?;
+        let socket_bucket = format!("source:{host_ip}");
+        let recorded: Vec<String> = sqlx::query_scalar(
+            "SELECT bucket FROM identity.password_attempt WHERE bucket IN ($1, $2)",
+        )
+        .bind(&socket_bucket)
+        .bind(format!("source:{forwarded}"))
+        .fetch_all(&mut system.connection)
+        .await?;
+        ensure!(recorded == [socket_bucket], "identity recorded source buckets {recorded:?}");
+        Ok(())
     }
 }
 

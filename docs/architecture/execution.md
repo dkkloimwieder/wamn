@@ -954,12 +954,11 @@ Enrollment requires 15 Unicode characters and accepts at most 1,024 UTF-8 bytes 
 The identity chart runs two replicas. Each replica limits password requests to eight and HTTPS connections to 128.
 Password requests use `wamn_postgres::pool` with eight connections. SQLx flushes pending rollbacks before returning a connection to the pool.
 Rotation retains its dedicated database connection and issuer advisory lock.
-The service trusts one hop for the forwarding web proxy. It uses the last address in the `X-Forwarded-For` headers.
+The web proxy sends password requests to a dedicated HTTPS listener. Its NetworkPolicy allows only the web proxy to reach that listener.
 Database counters enforce 60-second windows across replicas: 120 requests globally, 20 per source address, and five per account.
 Enrollment uses the principal ID for its account counter. Login uses a digest of the normalized email.
-The source is the client address forwarded by ingress in `X-Forwarded-For`.
-The Rust web front normalizes the final address in the chain before proxying a password request.
-Direct requests without that header use the TLS peer address.
+The web proxy sends the client address in `X-Forwarded-For`. Identity uses the last address in that header on the dedicated listener and falls back to the TLS peer address if the header is absent.
+The issuer listener always uses the TLS peer address for its source counter.
 Refused attempts do not extend the window. Counters older than two minutes are removed during admission.
 Password requests expire after ten seconds and accept at most 8,192 body bytes.
 User management and NATS signing use projected service account tokens with audience `wamn-identity`.

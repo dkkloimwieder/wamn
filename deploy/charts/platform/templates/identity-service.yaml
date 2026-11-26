@@ -15,3 +15,6 @@ spec:
     - name: https
       port: 443
       targetPort: https
+    - name: password
+      port: {{ .Values.identity.passwordPort }}
+      targetPort: password

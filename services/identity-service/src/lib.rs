@@ -12,6 +12,7 @@ mod workload;
 
 use std::convert::Infallible;
 use std::fmt;
+use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -39,6 +40,33 @@ use wamn_platform_install::identity_role::identity_issuer_login;
 // Match the public-key client's total fetch bound. No retry or stale response
 // is introduced when TLS, request headers, or the authoritative read stalls.
 const IO_TIMEOUT: Duration = Duration::from_secs(5);
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Listener {
+    General,
+    Password,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum IpSource {
+    Socket,
+    Forwarded,
+}
+
+fn client_address(
+    listener: Listener,
+    headers: &hyper::HeaderMap,
+    peer: IpAddr,
+) -> Option<(IpAddr, IpSource)> {
+    if listener == Listener::Password
+        && let Some(value) = headers.get_all("x-forwarded-for").iter().next_back()
+    {
+        let value = value.as_bytes().rsplit(|byte| *byte == b',').next()?;
+        let address = std::str::from_utf8(value).ok()?.trim().parse().ok()?;
+        return Some((address, IpSource::Forwarded));
+    }
+    Some((peer, IpSource::Socket))
+}
 
 /// Validated exact issuer and its narrow database credential.
 #[derive(Clone)]
@@ -224,9 +252,18 @@ impl IdentityService {
     async fn respond(
         &self,
         request: Request<Incoming>,
-        source: std::net::IpAddr,
+        peer: IpAddr,
+        listener: Listener,
     ) -> Result<Response<Full<Bytes>>, Infallible> {
-        if request.method() == Method::POST
+        let Some((source, _ip_source)) = client_address(listener, request.headers(), peer) else {
+            return Ok(response(
+                StatusCode::BAD_REQUEST,
+                "application/json",
+                b"{\"error\":\"invalid client address\"}".to_vec(),
+            ));
+        };
+        if listener == Listener::General
+            && request.method() == Method::POST
             && request.uri().query().is_none()
             && matches!(
                 request.uri().path(),
@@ -240,29 +277,6 @@ impl IdentityService {
         {
             return Ok(users::respond(&self.inner, request, source).await);
         }
-        let source = if let Some(value) = request
-            .headers()
-            .get_all("x-forwarded-for")
-            .iter()
-            .next_back()
-        {
-            let address = value
-                .as_bytes()
-                .rsplit(|byte| *byte == b',')
-                .next()
-                .and_then(|value| std::str::from_utf8(value).ok())
-                .and_then(|value| value.trim().parse::<std::net::IpAddr>().ok());
-            let Some(address) = address else {
-                return Ok(response(
-                    StatusCode::BAD_REQUEST,
-                    "application/json",
-                    b"{\"error\":\"invalid client address\"}".to_vec(),
-                ));
-            };
-            address
-        } else {
-            source
-        };
         if request.method() == Method::POST
             && request.uri().query().is_none()
             && matches!(
@@ -279,7 +293,10 @@ impl IdentityService {
         {
             return Ok(password::respond(&self.inner, state, request, source).await);
         }
-        let response = if request.method() != Method::GET || request.uri().query().is_some() {
+        let response = if listener == Listener::Password
+            || request.method() != Method::GET
+            || request.uri().query().is_some()
+        {
             response(StatusCode::NOT_FOUND, "text/plain", b"not found\n".to_vec())
         } else {
             match request.uri().path() {
@@ -401,9 +418,13 @@ pub fn tls_config(
     Ok(config)
 }
 
-/// Serve HTTPS identity routes; dropping this future closes connections.
+/// Serve identity over HTTPS with a separate password listener for the trusted web proxy.
+///
+/// Only connections to `passwords` can supply a forwarded client address.
+/// Dropping this future closes both listeners and their connections.
 pub async fn serve(
     listener: TcpListener,
+    passwords: TcpListener,
     service: IdentityService,
     tls: rustls::ServerConfig,
 ) -> Result<(), IdentityServiceError> {
@@ -412,17 +433,22 @@ pub async fn serve(
     let slots = Arc::new(tokio::sync::Semaphore::new(128));
     loop {
         tokio::select! {
-            accepted = listener.accept() => {
+            (accepted, listener) = async {
+                tokio::select! {
+                    accepted = listener.accept() => (accepted, Listener::General),
+                    accepted = passwords.accept() => (accepted, Listener::Password),
+                }
+            } => {
                 let (tcp, peer) = accepted.map_err(|_| IdentityServiceError::new("identity HTTPS accept failed"))?;
                 let Ok(slot) = Arc::clone(&slots).try_acquire_owned() else { drop(tcp); continue; };
                 let acceptor = acceptor.clone();
-                let service = service.clone();
+                let service = Arc::clone(&service.inner);
                 connections.spawn(async move {
                     let _slot = slot;
                     let Ok(Ok(tls)) = tokio::time::timeout(IO_TIMEOUT, acceptor.accept(tcp)).await else { return; };
                     let handler = service_fn(move |request| {
-                        let service = service.clone();
-                        async move { service.respond(request, peer.ip()).await }
+                        let service = IdentityService { inner: Arc::clone(&service) };
+                        async move { service.respond(request, peer.ip(), listener).await }
                     });
                     let _ = http1::Builder::new().timer(TokioTimer::new())
                         .header_read_timeout(IO_TIMEOUT)

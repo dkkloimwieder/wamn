@@ -209,6 +209,7 @@ async fn render(
     let resolved = json!({
         "appChart": chart_reference.trim(),
         "registryEgress": platform_install::registry_egress(&platform_file)?,
+        "apiServer": api_server,
     });
     let resolved_file = write_json(directory, "platform-resolved.json", &resolved)?;
     rendered.push(

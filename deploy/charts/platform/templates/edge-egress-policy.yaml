@@ -1,0 +1,38 @@
+{{- if eq .Values.provider "kind" }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: allow-edge-egress, namespace: hosts}
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: wamn-edge, app.kubernetes.io/instance: wamn-edge}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: {wamn.dev/org: "true"}
+          podSelector:
+            matchLabels: {wasmcloud.com/name: hostgroup}
+      ports: [{port: 9191, protocol: TCP}]
+    - to:
+        - namespaceSelector:
+            matchLabels: {wamn.dev/org: "true"}
+          podSelector:
+            matchLabels: {app.kubernetes.io/component: wamn-control}
+      ports: [{port: 8080, protocol: TCP}]
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: platform}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: wamn-identity}
+      ports: [{port: 8443, protocol: TCP}, {port: {{ .Values.identity.passwordPort }}, protocol: TCP}]
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: kube-system}
+          podSelector:
+            matchLabels: {k8s-app: kube-dns}
+      ports: [{port: 53, protocol: UDP}, {port: 53, protocol: TCP}]
+    {{- range .Values.apiServer }}
+    - to: [{ipBlock: {cidr: {{ .cidr | quote }}}}]
+      ports: [{port: {{ .port }}, protocol: TCP}]
+    {{- end }}
+{{- end }}

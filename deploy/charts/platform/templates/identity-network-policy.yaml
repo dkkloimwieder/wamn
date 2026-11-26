@@ -27,3 +27,9 @@ spec:
           podSelector:
             matchLabels: {app.kubernetes.io/component: wamn-worker}
       ports: [{port: 8443, protocol: TCP}]
+    - from:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: hosts}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: wamn-edge}
+      ports: [{port: {{ .Values.identity.passwordPort }}, protocol: TCP}]

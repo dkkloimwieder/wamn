@@ -27,10 +27,12 @@ spec:
         - name: identity
           image: {{ .Values.identity.image | default (printf "%s/wamn-identity:%s" .Values.registry .Chart.Version) | quote }}
           imagePullPolicy: IfNotPresent
-          args: [serve, --settings, /etc/wamn/identity/settings.json]
+          args: [serve, --settings, /etc/wamn/identity/settings.json, --password-port, {{ .Values.identity.passwordPort | quote }}]
           ports:
             - name: https
               containerPort: 8443
+            - name: password
+              containerPort: {{ .Values.identity.passwordPort }}
           readinessProbe:
             httpGet:
               scheme: HTTPS

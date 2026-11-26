@@ -3,6 +3,8 @@ platformDomain: wamn.localhost
 registry: localhost:5001
 registryEndpoint: null
 registryEgress: []
+# Populated by wamn platform deploy from the Kubernetes API Service and endpoints.
+apiServer: []
 global:
   # Each project can fill one 256 MiB stream on every broker pod.
   maxProjects: 32
@@ -10,6 +12,8 @@ global:
     schedulerUrl: nats://wamn-nats.platform.svc.cluster.local:4222
   identityIssuer: https://identity.platform.svc.cluster.local
 runtime-operator:
+  networkPolicy:
+    enabled: false
   global:
     certificates:
       generate: false
@@ -221,6 +225,7 @@ opentelemetry-collector:
           - debug
 identity:
   image: ""
+  passwordPort: 8444
   oauthEncryption:
     provider: local
   oauthSecret: wamn-oauth

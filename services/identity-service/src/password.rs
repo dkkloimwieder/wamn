@@ -432,8 +432,8 @@ pub(crate) mod tests {
     use std::os::unix::fs::OpenOptionsExt as _;
 
     use super::*;
-    use crate::connect_database;
-    use crate::{IdentityConfig, IdentityService};
+    use crate::{IdentityConfig, IdentityService, Listener};
+    use crate::{client_address, connect_database};
     use hyper::service::service_fn;
     use hyper_util::rt::TokioIo;
     use serde_json::json;
@@ -445,6 +445,97 @@ pub(crate) mod tests {
     use wamn_identity_protocol::PlatformComponent;
     use wamn_platform_install::identity_role::identity_issuer_login;
     use wamn_test_infrastructure::containers::{Postgres, start_postgres};
+
+    #[test]
+    fn client_address_uses_the_forwarded_header_on_the_password_listener() {
+        use crate::IpSource;
+
+        let peer = "192.0.2.1".parse().unwrap();
+        let forwarded = "2001:db8::1".parse().unwrap();
+        let mut headers = hyper::HeaderMap::new();
+        headers.insert("x-forwarded-for", "192.0.2.2, 2001:db8::1".parse().unwrap());
+        assert_eq!(
+            client_address(Listener::Password, &headers, peer),
+            Some((forwarded, IpSource::Forwarded))
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires: docker"]
+    async fn general_listener_throttles_and_records_the_socket_ip() {
+        let postgres = start_postgres().await.unwrap();
+        let issuer = "https://password-fixture.invalid";
+        let (mut admin, url, _) = demo_members(&postgres, issuer, &[]).await;
+        let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create().unwrap();
+        let key = scratch.path().join("envelope-key");
+        std::fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .mode(0o600)
+            .open(&key)
+            .unwrap()
+            .write_all(&[42; 32])
+            .unwrap();
+        let service = IdentityService::connect(
+            IdentityConfig::new(issuer, url.as_str())
+                .unwrap()
+                .with_local_mail(scratch.path().join("outbox.jsonl")),
+            wamn_key::from_file(&key).unwrap(),
+        )
+        .await
+        .unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            loop {
+                let (tcp, peer) = listener.accept().await.unwrap();
+                let inner = Arc::clone(&service.inner);
+                let handler = service_fn(move |request| {
+                    let service = IdentityService {
+                        inner: Arc::clone(&inner),
+                    };
+                    async move { service.respond(request, peer.ip(), Listener::General).await }
+                });
+                hyper::server::conn::http1::Builder::new()
+                    .keep_alive(false)
+                    .serve_connection(TokioIo::new(tcp), handler)
+                    .await
+                    .unwrap();
+            }
+        });
+        let client = HttpClient::builder()
+            .timeout(Duration::from_secs(5))
+            .build()
+            .unwrap();
+        let endpoint = format!("http://{address}/password/recover");
+        for _ in 0..20 {
+            let reply = client
+                .post(&endpoint)
+                .json(&json!({}))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(reply.status(), StatusCode::BAD_REQUEST);
+            reply.bytes().await.unwrap();
+        }
+        let forwarded = "192.0.2.7";
+        let reply = client
+            .post(&endpoint)
+            .header("x-forwarded-for", forwarded)
+            .json(&json!({}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(reply.status(), StatusCode::TOO_MANY_REQUESTS);
+        let buckets = sqlx::query_as::<_, (String, i32)>(
+            "SELECT bucket, attempts FROM identity.password_attempt WHERE bucket LIKE 'source:%'",
+        )
+        .fetch_all(&mut admin.client)
+        .await
+        .unwrap();
+        assert_eq!(buckets, [(format!("source:{}", address.ip()), 21)]);
+        server.abort();
+    }
 
     /// Create the issuer login as CNPG would, with the identity issuer surface.
     fn issuer_login_sql(issuer: &str, password: &str) -> String {
@@ -599,11 +690,13 @@ pub(crate) mod tests {
         let endpoint = format!("http://{}", listener.local_addr().unwrap());
         let requests = tokio::spawn(async move {
             for _ in 0..12 {
-                let (tcp, _) = listener.accept().await.unwrap();
-                let service = service.clone();
+                let (tcp, peer) = listener.accept().await.unwrap();
+                let inner = Arc::clone(&service.inner);
                 let handler = service_fn(move |request| {
-                    let service = service.clone();
-                    async move { service.respond(request, "127.0.0.1".parse().unwrap()).await }
+                    let service = IdentityService {
+                        inner: Arc::clone(&inner),
+                    };
+                    async move { service.respond(request, peer.ip(), Listener::General).await }
                 });
                 hyper::server::conn::http1::Builder::new()
                     .keep_alive(false)

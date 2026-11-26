@@ -164,11 +164,11 @@ fn org_chart() -> anyhow::Result<PathBuf> {
         .context("locate deploy/charts/org in the repository or installed chart directory")
 }
 
-/// Build the control NetworkPolicy destinations from the Kubernetes API addresses.
+/// Build NetworkPolicy destinations from the Kubernetes API addresses.
 pub fn api_destinations(destinations: BTreeSet<(IpAddr, i32)>) -> anyhow::Result<Vec<Value>> {
     ensure!(
         !destinations.is_empty(),
-        "no Kubernetes API address for the control NetworkPolicy"
+        "no Kubernetes API address for NetworkPolicy"
     );
     Ok(destinations
         .into_iter()

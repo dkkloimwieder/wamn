@@ -3,10 +3,11 @@
 {{- if $buckets.web -}}
 {{- $bucket = printf "gs://%s" $buckets.web -}}
 {{- end -}}
+{{- $passwordUrl := printf "%s:%d" .Values.global.identityIssuer (int .Values.identity.passwordPort) -}}
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: wamn-edge
   namespace: hosts
 data:
-  web.json: {{ dict "bucket" $bucket "identity_issuer" .Values.global.identityIssuer "platform_domain" .Values.platformDomain "trusted_proxy_hops" .Values.edge.trustedProxyHops | toJson | quote }}
+  web.json: {{ dict "bucket" $bucket "identity_password_url" $passwordUrl "platform_domain" .Values.platformDomain "trusted_proxy_hops" .Values.edge.trustedProxyHops | toJson | quote }}

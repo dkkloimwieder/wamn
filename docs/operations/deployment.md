@@ -761,13 +761,14 @@ The infrastructure chart installs a default TLS ingress controller on non-GCP cl
 The Rust front owns response headers and proxies password requests to identity over HTTPS.
 The CDN caches only what the origin marks as cacheable.
 Set `neg: true` in the edge values. The edge Service then carries the annotation that makes GKE create the network endpoint group.
-The chart renders no Google Cloud resource and no other difference from kind. [Google Cloud prerequisites](gcp.md#cloud-credentials-and-prerequisites) describe the external inputs. Deployment integration remains unfinished.
+The chart renders Kubernetes resources. Edge egress remains open on GCP so the proxy can reach its web bucket. Deployment integration remains unfinished. [Google Cloud prerequisites](gcp.md#cloud-credentials-and-prerequisites)
 The edge keeps `/api` for native file requests and removes it for other API requests.
 It makes sure of the identity certificate, as it does in kind.
 
 ## Identity password configuration
 
-`wamn-identity serve --settings <path>` reads one JSON file. The chart renders the issuer, public database connection, envelope provider, and mail mode into that file.
+`wamn-identity serve --settings <path> --password-port <port>` reads one JSON file. The chart renders the issuer, public database connection, envelope provider, and mail mode into that file.
+The chart gives the web proxy access to the password port. Identity accepts a forwarded client IP on that port and uses the socket IP on the issuer port.
 The pod mounts the database credentials, TLS keys, local wrapping key, and Resend token as files.
 When `identity.authNats.tlsSecret` is set, the chart adds `global.nats.schedulerUrl`, the CA path, and the NATS limits to identity settings.
 Identity mounts `ca.crt` from that Secret.
@@ -992,6 +993,9 @@ Org network policies deny ingress and egress by default.
 `wamn org create` finds the API server destinations and copies `registryEgress` from `wamn-org-inputs` into `networkPolicy.registry`.
 The registry rules allow control, the org worker, and hosts to reach those CIDR blocks and TCP ports.
 The environment and project charts allow connections to their host group and database. The edge accepts ingress from Traefik on installations that use Traefik.
+The platform chart denies ingress by default and allows the specific callers of shared services.
+`wamn platform deploy` discovers Kubernetes API addresses for the CloudNativePG webhook and for edge egress on kind.
+On kind, edge egress allows org host groups, control, identity, DNS, and the Kubernetes API.
 Application deploy adds a public IPv4 egress policy for the TCP ports of that release's wasm integration authorities.
 The rule excludes fixed private and special-use ranges. The runtime still checks each integration's allowed hosts.
 

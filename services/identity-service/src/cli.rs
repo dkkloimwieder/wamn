@@ -1,5 +1,6 @@
 //! Identity HTTPS server and local key maintenance commands.
 
+use std::net::Ipv4Addr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -56,6 +57,9 @@ enum Command {
         /// Path to the identity JSON settings file.
         #[arg(long)]
         settings: PathBuf,
+        /// HTTPS port for password requests from the trusted web proxy.
+        #[arg(long, value_parser = clap::value_parser!(u16).range(1024..))]
+        password_port: u16,
     },
     /// Remove compromised public and private material immediately.
     Remove {
@@ -86,7 +90,7 @@ impl Settings {
 /// Run a local command; lifecycle output contains public metadata only.
 pub async fn run(cli: Cli) -> Result<(), IdentityServiceError> {
     let settings = match &cli.command {
-        Command::Serve { settings }
+        Command::Serve { settings, .. }
         | Command::Remove { settings, .. }
         | Command::Retire { settings } => Settings::read(settings).await?,
     };
@@ -96,7 +100,7 @@ pub async fn run(cli: Cli) -> Result<(), IdentityServiceError> {
         .to_json()
         .map_err(|_| IdentityServiceError::new("encode identity database configuration failed"))?;
     let mut config = IdentityConfig::new(&issuer, &database)?;
-    if matches!(cli.command, Command::Serve { .. }) {
+    if let Command::Serve { password_port, .. } = cli.command {
         config.nats = settings.nats;
         let config = match settings.mail {
             Some(MailSettings::Local { spool }) => config.with_local_mail(spool),
@@ -118,7 +122,7 @@ pub async fn run(cli: Cli) -> Result<(), IdentityServiceError> {
             configuration @ Configuration::Gcp { .. } => wamn_key::open(&configuration),
         }
         .map_err(|_| IdentityServiceError::new("open signing key envelope failed"))?;
-        return run_server(config, envelope).await;
+        return run_server(config, envelope, password_port).await;
     }
     let mut database = connect(&config).await?;
     let output = match cli.command {
@@ -143,6 +147,7 @@ pub async fn run(cli: Cli) -> Result<(), IdentityServiceError> {
 async fn run_server(
     config: IdentityConfig,
     envelope: Envelope,
+    password_port: u16,
 ) -> Result<(), IdentityServiceError> {
     let certificate = tokio::fs::read(TLS_CERT)
         .await
@@ -168,15 +173,15 @@ async fn run_server(
             }
         }
     };
-    let listener = TcpListener::bind((std::net::Ipv4Addr::UNSPECIFIED, 8443))
+    let listener = TcpListener::bind((Ipv4Addr::UNSPECIFIED, 8443))
         .await
         .map_err(|_| IdentityServiceError::new("bind identity HTTPS listener failed"))?;
-    let address = listener
-        .local_addr()
-        .map_err(|_| IdentityServiceError::new("read identity HTTPS address failed"))?;
-    tracing::info!(%address, "identity listening");
+    let passwords = TcpListener::bind((Ipv4Addr::UNSPECIFIED, password_port))
+        .await
+        .map_err(|_| IdentityServiceError::new("bind identity password HTTPS listener failed"))?;
+    tracing::info!(port = 8443, password_port, "identity listening");
     tokio::select! {
-        result = serve(listener, service, tls) => result,
+        result = serve(listener, passwords, service, tls) => result,
         () = maintenance => unreachable!("maintenance runs until shutdown"),
         result = tokio::signal::ctrl_c() => result.map_err(|_| IdentityServiceError::new("identity shutdown signal failed")),
     }

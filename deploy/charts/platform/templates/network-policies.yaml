@@ -1,0 +1,141 @@
+{{- $system := include "wamn-platform.systemDatabase" . | fromJson -}}
+{{- $poolers := include "wamn-platform.systemDatabasePoolers" . | fromJson -}}
+{{- $org := dict "matchLabels" (dict "wamn.dev/org" "true") -}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: default-deny-ingress, namespace: platform}
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: allow-nats-clients, namespace: platform}
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: nats, app.kubernetes.io/instance: wamn}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: {wasmcloud.com/name: runtime-operator}
+        - podSelector:
+            matchLabels: {app.kubernetes.io/name: wamn-identity}
+        - namespaceSelector: {{ $org | toJson }}
+          podSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/component
+                operator: In
+                values: [wamn-control, wamn-worker]
+        - namespaceSelector: {{ $org | toJson }}
+          podSelector:
+            matchLabels: {wasmcloud.com/name: hostgroup}
+        - namespaceSelector: {{ $org | toJson }}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: wamn-cdc-reader}
+      ports: [{port: 4222, protocol: TCP}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: allow-system-database-clients, namespace: platform}
+spec:
+  podSelector:
+    matchLabels: {cnpg.io/cluster: {{ $system.cluster }}}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: {app.kubernetes.io/name: wamn-identity}
+        - podSelector:
+            matchLabels: {cnpg.io/cluster: {{ $system.cluster }}}
+        - podSelector:
+            matchExpressions:
+              - key: cnpg.io/poolerName
+                operator: In
+                values: {{ values $poolers.names | sortAlpha | toJson }}
+        - podSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/component
+                operator: In
+                values: [wamn-system-sql, wamn-org-sql]
+      ports: [{port: {{ $system.port }}, protocol: TCP}]
+    - from:
+        - podSelector:
+            matchLabels: {app.kubernetes.io/name: cloudnative-pg}
+      ports: [{port: 8000, protocol: TCP}]
+{{- range $family, $client := dict "control" "wamn-control" "apply" "wamn-worker" }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: allow-pooler-{{ $family }}-clients, namespace: platform}
+spec:
+  podSelector:
+    matchLabels: {cnpg.io/poolerName: {{ index $poolers.names $family }}}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector: {{ $org | toJson }}
+          podSelector:
+            matchLabels: {app.kubernetes.io/component: {{ $client }}}
+      ports: [{port: {{ $system.port }}, protocol: TCP}]
+{{- end }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: allow-collector-clients, namespace: platform}
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: opentelemetry-collector, app.kubernetes.io/instance: wamn}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector: {{ $org | toJson }}
+          podSelector:
+            matchLabels: {wasmcloud.com/name: hostgroup}
+      ports: [{port: 4317, protocol: TCP}]
+{{- if .Values.apiServer }}
+{{- $apiCidrs := list }}
+{{- range .Values.apiServer }}
+{{- $apiCidrs = append $apiCidrs .cidr }}
+{{- end }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: allow-api-server-to-cnpg-webhook, namespace: platform}
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: cloudnative-pg}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        {{- range $apiCidrs | uniq }}
+        - ipBlock: {cidr: {{ . | quote }}}
+        {{- end }}
+      ports: [{port: 9443, protocol: TCP}]
+{{- end }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: allow-cnpg-to-barman, namespace: platform}
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: plugin-barman-cloud, app.kubernetes.io/instance: wamn}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: {app.kubernetes.io/name: cloudnative-pg}
+      ports: [{port: 9090, protocol: TCP}]
+{{- if and (eq .Values.provider "kind") ((.Values.traefik | default dict).enabled) }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: allow-traefik-front-door, namespace: platform}
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: traefik}
+  policyTypes: [Ingress]
+  ingress:
+    # The public NodePorts can receive traffic from outside the cluster.
+    - ports: [{port: 8000, protocol: TCP}, {port: 8443, protocol: TCP}]
+{{- end }}
