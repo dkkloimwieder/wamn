@@ -167,7 +167,7 @@ pub async fn host_object(
         .await?
         .items
         .into_iter()
-        .find(|host| host.data["env"] == namespace && host.data["hostname"] == address))
+        .find(|host| host.data["environment"] == namespace && host.data["hostname"] == address))
 }
 
 /// The workloads that a Host object reports. Its status leaves out a count of zero.
