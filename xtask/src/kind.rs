@@ -7,7 +7,6 @@ use std::net::Ipv4Addr;
 use std::path::Path;
 
 pub(crate) const CLUSTER: &str = "wamn-local";
-pub(super) const RESULTS_MOUNT: &str = "/var/local/wamn-journey-results";
 const REGISTRY_PORT: &str = "5001";
 const REGISTRY_NAME: &str = "wamn-registry";
 
@@ -19,22 +18,8 @@ pub(crate) struct RegistryEndpoint {
 }
 
 pub async fn create_cluster(root: &Path) -> anyhow::Result<RegistryEndpoint> {
-    create_cluster_with_results(root, None).await
-}
-
-pub(super) async fn create_cluster_with_results(
-    root: &Path,
-    results: Option<&Path>,
-) -> anyhow::Result<RegistryEndpoint> {
     let clusters = process::output(root, "kind", &["get", "clusters"]).await?;
     if !clusters.lines().any(|cluster| cluster == CLUSTER) {
-        let config = results
-            .map(|results| results_config(root, results))
-            .transpose()?;
-        let path = config.as_ref().map_or(
-            Path::new("deploy/kind/kind-config.yaml"),
-            tempfile::NamedTempFile::path,
-        );
         process::run(
             root,
             "kind",
@@ -44,8 +29,7 @@ pub(super) async fn create_cluster_with_results(
                 "--name",
                 CLUSTER,
                 "--config",
-                path.to_str()
-                    .context("kind configuration path must be UTF-8")?,
+                "deploy/kind/kind-config.yaml",
             ],
         )
         .await?;
@@ -63,27 +47,6 @@ pub(super) async fn create_cluster_with_results(
         "server = \"{endpoint}\"\n[host.\"{endpoint}\"]\n  capabilities = [\"pull\", \"resolve\"]"
     );
     for node in nodes.lines() {
-        if let Some(results) = results {
-            let mounts: Vec<Value> = serde_json::from_str(
-                &process::output(
-                    root,
-                    "docker",
-                    &["inspect", "--format", "{{json .Mounts}}", node],
-                )
-                .await?,
-            )?;
-            ensure!(
-                mounts.iter().any(|mount| {
-                    mount["Destination"] == RESULTS_MOUNT
-                        && mount["Source"]
-                            .as_str()
-                            .is_some_and(|source| Path::new(source) == results)
-                        && mount["RW"] == true
-                }),
-                "kind cluster {CLUSTER} needs to be recreated to mount {} on {node}",
-                results.display(),
-            );
-        }
         process::run(
             root,
             "docker",
@@ -127,30 +90,6 @@ pub(super) async fn create_cluster_with_results(
         endpoint.address, endpoint.port
     );
     Ok(endpoint)
-}
-
-fn results_config(root: &Path, results: &Path) -> anyhow::Result<tempfile::NamedTempFile> {
-    let mut config: serde_yaml::Value = serde_yaml::from_reader(std::fs::File::open(
-        root.join("deploy/kind/kind-config.yaml"),
-    )?)?;
-    let nodes = config["nodes"]
-        .as_sequence_mut()
-        .context("kind configuration has no nodes")?;
-    for node in nodes {
-        if node["extraMounts"].is_null() {
-            node["extraMounts"] = serde_yaml::Value::Sequence(Vec::new());
-        }
-        node["extraMounts"]
-            .as_sequence_mut()
-            .context("kind extraMounts must be a list")?
-            .push(serde_yaml::to_value(serde_json::json!({
-                "hostPath": results.to_str().context("run directory path must be UTF-8")?,
-                "containerPath": RESULTS_MOUNT,
-            }))?);
-    }
-    let file = tempfile::NamedTempFile::new()?;
-    serde_yaml::to_writer(file.as_file(), &config)?;
-    Ok(file)
 }
 
 async fn ensure_registry(root: &Path) -> anyhow::Result<String> {

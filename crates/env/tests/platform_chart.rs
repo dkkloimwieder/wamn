@@ -48,6 +48,70 @@ fn web_and_owner_invitation_policies_use_the_control_pod_port() -> anyhow::Resul
 }
 
 #[test]
+fn nats_and_the_collector_use_restricted_pod_contexts() -> anyhow::Result<()> {
+    let chart = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../deploy/charts/platform");
+    for provider in ["kind", "gcp"] {
+        let values = serde_yaml::from_slice(&std::fs::read(
+            chart.join(format!("values-{provider}.yaml")),
+        )?)?;
+        let entry = wamn_kubernetes::platform_env::entry(&chart, "platform", "wamn", values)?;
+        let objects = wamn_kubernetes::helm::template(&entry)?;
+        for (kind, name) in [
+            ("StatefulSet", "wamn-nats"),
+            ("Deployment", "otel-collector"),
+        ] {
+            let workload = objects
+                .iter()
+                .find(|object| object["kind"] == kind && object["metadata"]["name"] == name)
+                .unwrap_or_else(|| panic!("{provider} must render {kind} {name}"));
+            let pod = &workload["spec"]["template"]["spec"];
+            let security = &pod["securityContext"];
+            let uid = security["runAsUser"].as_u64().filter(|&uid| uid > 0);
+            assert!(uid.is_some(), "{provider}/{name} must set a non-root UID");
+            assert_eq!(security["runAsNonRoot"], true, "{provider}/{name}");
+            assert_eq!(
+                security["seccompProfile"]["type"], "RuntimeDefault",
+                "{provider}/{name}"
+            );
+            assert!(
+                security["fsGroup"].as_u64().is_some_and(|group| group > 0),
+                "{provider}/{name} must set a non-root volume group"
+            );
+            for volume in pod["volumes"].as_array().into_iter().flatten() {
+                assert!(volume["hostPath"].is_null(), "{provider}/{name}: {volume}");
+            }
+
+            for field in ["containers", "initContainers"] {
+                for container in pod[field].as_array().into_iter().flatten() {
+                    let container_name = &container["name"];
+                    let security = &container["securityContext"];
+                    let location = format!("{provider}/{name}/{container_name}");
+                    assert_eq!(security["allowPrivilegeEscalation"], false, "{location}");
+                    assert!(
+                        security["capabilities"]["drop"]
+                            .as_array()
+                            .is_some_and(|drop| drop.iter().any(|capability| capability == "ALL")),
+                        "{location} must drop all capabilities"
+                    );
+                    let effective_uid = security["runAsUser"].as_u64().or(uid);
+                    assert_ne!(effective_uid, Some(0), "{location} must run as non-root");
+                    if name == "wamn-nats"
+                        && container["volumeMounts"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .any(|mount| mount["name"] == "pid")
+                    {
+                        assert_eq!(effective_uid, uid, "{location} shares the NATS PID volume");
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn project_retains_only_the_operator_policy_for_each_cluster() -> anyhow::Result<()> {
     use wamn_env::env::chart_values::set_operation_values;
     use wamn_env::platform_env::database_values;

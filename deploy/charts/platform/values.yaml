@@ -83,6 +83,16 @@ nats:
       path: /http
       value: 127.0.0.1:8222
   podTemplate:
+    merge:
+      spec:
+        securityContext:
+          # The reloader signals the NATS process with the same UID.
+          runAsNonRoot: true
+          runAsUser: 65532
+          runAsGroup: 65532
+          fsGroup: 65532
+          seccompProfile:
+            type: RuntimeDefault
     patch:
       - op: add
         path: /spec/volumes/-
@@ -92,6 +102,10 @@ nats:
         value:
           - name: wait-for-operator
             image: nats:2.12.15-alpine@sha256:b270f5e2428354c0335612694d7dd2fb588148e567a5757fdff325ef9c9332e6
+            securityContext:
+              allowPrivilegeEscalation: false
+              capabilities:
+                drop: [ALL]
             command: [sh, -ec]
             args:
               - |
@@ -99,6 +113,11 @@ nats:
             volumeMounts:
               - {name: operator-claims, mountPath: /etc/wamn-nats-operator, readOnly: true}
   container:
+    merge:
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: [ALL]
     patch:
       - op: add
         path: /volumeMounts/-
@@ -155,6 +174,10 @@ nats:
     key: ca.crt
   reloader:
     merge:
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: [ALL]
       resources:
         requests:
           cpu: 10m
@@ -171,6 +194,17 @@ opentelemetry-collector:
     tag: 0.161.0@sha256:fd328de2552466ad78385e1b1289c3f2402b1c45f265b252aab1955b42845ac1
   command:
     name: otelcol-contrib
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 10001
+    runAsGroup: 10001
+    fsGroup: 10001
+    seccompProfile:
+      type: RuntimeDefault
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: [ALL]
   config:
     exporters:
       debug: {}

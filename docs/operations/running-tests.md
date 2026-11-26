@@ -328,7 +328,7 @@ With `--print-cluster-requests`, it prints the cluster requests and does not rea
 It creates or reuses the `wamn-local` cluster and its registry on port 5001.
 If the cluster CNI does not enforce NetworkPolicy, it fails.
 It uses the bundle that `--chart <bundle>` names, or builds one under `target/journey/bundle`.
-If the bundle or the capture setting changes, it runs `wamn platform deploy`.
+If the bundle changes, it runs `wamn platform deploy`.
 It records container restarts, and fails only on a platform pod that never becomes ready.
 Then it creates the read-only observer login on the system database.
 It writes `target/journey/kubeconfig` and `target/journey/cluster.json`.
@@ -382,11 +382,9 @@ The suite masks credential assignments with a value, credentials in URLs, tokens
 It also masks the observer password.
 If collection is incomplete, the test output names the missing evidence.
 
-On kind, set `WAMN_RESULTS` before you create the cluster with `journey-cluster`.
-The collector writes spans and logs to `$WAMN_RESULTS/telemetry/otel.jsonl` through a kind mount.
-Span status messages keep their text, with credential patterns masked.
-The same kind cluster can reuse that directory.
-If the directory changes, create a fresh journey cluster for the new mount.
+Set `WAMN_RESULTS` before running the journey tests.
+On failure, the test saves the collector's pod logs under `platform/pods/` in the test's result directory.
+You can change the result directory between runs on the same kind cluster.
 Pass the path of an existing bundle to reuse its images.
 
 ```bash
