@@ -23,7 +23,7 @@ This document is the work list for wamn, from the crate cleanup to the workflow 
 - Org and environment settings change without a platform deploy or a platform restart.
 - Use stock wasmCloud and upstream mechanisms where they exist. Never patch upstream code and never maintain a copy of upstream code.
 - Runs on kind or on GCP need explicit authorization before they start.
-- No network call runs while a database transaction is open (standing owner rule, 2026-11-26). A mail send, an HTTP request, a Kubernetes API call or a NATS request happens before the transaction begins or after it ends. Existing code that breaks the rule is a T16 bullet. Code that Epic 4 added and that breaks it is fixed inside Epic 4. [Data access](../architecture/data-access.md#inputs-queries-and-transactions) states the rule for the code.
+- No network call runs while a database transaction is open (standing owner rule, 2026-11-26). A mail send, an HTTP request, a Kubernetes API call or a NATS request happens before the transaction begins or after it ends. Existing code that breaks the rule is a T16 bullet. Code that Epic 4 added and that breaks it is fixed inside Epic 4. In Epic 5, each such place is fixed in the bead that rewrites its function (owner ruling 2026-11-26, question 13 in [epic-5-scoping](epic-5-scoping/epic-5-scoping.md#7-questions-for-rulings)). [Data access](../architecture/data-access.md#inputs-queries-and-transactions) states the rule for the code.
 - Every cloud resource that holds tenant data, or grants on it, belongs to one boundary and is permissioned where cloud IAM grants natively: an Artifact Registry repository per org (T8), a backup bucket per environment (T7). Only the provisioning command, run by the platform operator, holds cloud IAM administration. It creates these resources and their top-level grants. A tenant account manages only inside a resource of its own boundary. Org and environment separation never rest on IAM conditions inside a shared resource.
 
 ## Order of work
@@ -35,7 +35,7 @@ This document is the work list for wamn, from the crate cleanup to the workflow 
 | 3 | State and lifecycle: C1, L1, L2, L3, L4, L5, L6, L7, L8, L9. | 2. L2 uses the shared Helm helper of R4. | Yes, for L6, L7, L8 and L9, in one rebuild at the end of the epic. |
 | Rename | R6. | 3 merged. Runs before 4. | Yes. |
 | 4 | Org boundary on kind: T3, T9, T12, and the kind pin and refusal tests of T13. | 1. Can run beside 2 and 3. | Yes: the host's 503 on a failed signing-key fetch (`wamn-authentication`) and the Job security context (`wamn-kubernetes`). The stock host pod already runs as UID 65532, so no `USER` line is added (owner ruling 2026-11-26). |
-| 5 | Environment boundary: T1, T2, T4, T5, T10, and the T16 items on connections and locking. | 4 | Yes: the host's `--environment` argument. |
+| 5 | Environment boundary: T1, T2, T4, T5, T10, and the T16 items on connections, connection events and locking. | 4 | Yes, once, at E5.14 after the owner's go: the host's namespace check and `--environment` argument (`services/host/src/host.rs`), and the host crates that E5.1, E5.11 and E5.13 change. |
 | 6 | Public addresses: T11, and client base paths. | 5 | No (I). |
 | 7 | Cloud and production: T6, T7, T8, the GKE cluster of T13, and the rest of T16. | A GKE cluster, created only with explicit authorization. | Mostly no (I). |
 | 8 and later | Workflow design: W1 to W12. | Every epic above. | Yes. |
@@ -48,6 +48,8 @@ This document is the work list for wamn, from the crate cleanup to the workflow 
 - Epic 2 sets no target for crate count, file size or test count, and adds no second installed-state model, schema language or universal serializer.
 - Epic 3 adds no pending queue, general reconciler, or resolver that looks in several repositories.
 - Nothing in the workflow design is built before Epic 8.
+
+The owner ruled the 16 questions of [epic-5-scoping](epic-5-scoping/epic-5-scoping.md#7-questions-for-rulings) on 2026-11-26. The rulings and the 16 corrections of [epic-5-scoping](epic-5-scoping/epic-5-scoping.md#1-corrections-to-the-plan) are written into R6, L8, T1, T2, T4, T5, T10, T16 and sections 5, 7, 8 and 9.
 
 Two items outside the workflow design wait for it: the deletion of the unnamed NATS entry (T10), and the removal of the `ingress` NATS entry and user (I).
 
@@ -160,12 +162,12 @@ The two live client tests (`apps/platform_ui/test/control-client.live.test.ts`, 
   - A project added back to an env gets a new `instance_suffix` (`crates/environment/src/environment_sql_effects.rs::reserve_project`). Its old suffix stays in the row history (L8).
   - Drop `registry.retired_project_envs` with its history table, the trigger `project_envs_retire_instance` and the function `registry.retire_project_env`. Nothing reads the table (F, at `9e05a8246` only the trigger writes it). Remove their grants in `deploy/sql/apply-grants.sql`, their entry in the protected relations list (`deploy/sql/system-schema.sql`), the entry in `test-support/grant-tests/tests/system.rs` and the mention in `docs/architecture/data-access.md`.
   - Role: the drop command (`crates/authentication/src/administration/sql.rs::DROP_ROLE_SQL`) becomes `role.deactivate` and sets `active = false`. The user-role and role-permission rows stay. An inactive role grants nothing: every permission check ignores it, and reads `active` on each call, with no cached answer (question 10). `role.activate` restores the same grants.
-  - Connection: one `connection.deactivate` replaces `connection.delete` (`crates/connection/src/project_connections/administration.rs`) and `connection.disable` (question 5). It sets `active = false`. In the same command it deletes the Kubernetes Secrets that the connection's `platform.credential` rows point to, and deletes its `platform.oauth_token` and `platform.oauth_authorization` rows. The credential rows and `platform.connection_generation` stay. R6 adds no `erased_at` column and does not change the trigger `credential_immutable` (owner ruling 2026-11-25). Activating a connection needs a new credential in a new generation. A call through an inactive connection is refused. Each call reads `active`, with no cached answer (question 10). Check this, record it as F, and fix it if it is not true.
+  - Connection: one `connection.deactivate` replaces `connection.delete` (`crates/connection/src/project_connections/administration.rs`) and `connection.disable` (question 5). It sets `active = false`. It deletes its `platform.oauth_token` and `platform.oauth_authorization` rows. After commit it removes the connection's credential versions from the one project Secret `wamn-credential-<project-env-key>` (F, `crates/kubernetes/src/kubernetes.rs`, correction 14). The credential rows and `platform.connection_generation` stay. R6 adds no `erased_at` column and does not change the trigger `credential_immutable` (owner ruling 2026-11-25). Activating a connection needs a new credential in a new generation. A call through an inactive connection is refused. Each call reads `active`, with no cached answer (question 10). Check this, record it as F, and fix it if it is not true.
   - Rename the command for removing a project from an env, its request type and its `platform_event_type` code to match what it does (now `environment.delete`, `EnvironmentDeleteRequest`, `environment_delete`). The new names are `project_env.deactivate`, `ProjectEnvDeactivateRequest`, `project_env_deactivate` and the CLI command `wamn env deactivate-project` (question 3). Control routes the operation to the env worker explicitly, because the worker selects env Jobs by the `environment.` prefix today.
 - No `ON DELETE CASCADE` where the parent has no delete path through the API. Change each such foreign key to `RESTRICT`. This covers the parents org, project, env, project in env, app, role, connection, identity principal, org membership, event reader, `platform."user"`, number sequence and run.
 - Keep the cascade only where the API deletes the parent. Of the 27 cascades in `deploy/sql`, only `identity.renewal_credentials.login_id` to `identity.password_logins` has one: expiry cleanup, `password_login::prune_expired` (F, `deploy/sql/system-schema.sql:450`). Env apply deletes the app connection and integration rows itself, so no cascade serves it (F, `crates/environment/src/registry/configuration.rs:171-247`). [r6-scoping/appendix-e-cascades-installs-images.md](r6-scoping/appendix-e-cascades-installs-images.md) records each cascade as F with its delete path.
 - `crates/identity/tests/identity_live.rs` deletes a project to test the cascade. Change it to assert that the delete is refused.
-- `connection_event` (Epic 5) can hold a foreign key to the connection, because connections are never deleted.
+- `connection_event` (Epic 5, T16) holds a required foreign key to the connection, because connections are never deleted.
 - At `9cf40e569`, the only API deletes of the parents above are the four this rule changes: app, project in env, role and connection (F, a search for `DELETE FROM` outside tests).
 - This forces one host image rebuild, at the kind run at the end of the epic, after the owner's go.
 
@@ -343,7 +345,8 @@ F. The CDC reader retries a refused publish without end and does not advance (`c
 - Row history uses the existing `wamn_history.create_history_table` and `wamn_history.log_row_change('unlimited')` (`deploy/sql/record-history.sql`).
 - In the project database, these tables are logged: `platform.pat`, `platform.connection`, `platform.connection_generation`, `platform.external_system`, `catalog.packages`, `catalog.connection_requirement` and `catalog.workflows`.
 - In the system database, these tables are logged: every `registry.*` table, and `identity.principals`, `identity.org_memberships`, `identity.org_roles`, `identity.project_roles`, `identity.project_env_memberships` and `identity.password_credentials`. The record history functions are installed in the system database if they are not there.
-- These tables are not logged: `platform.credential` (Epic 5, after the hint fix), `platform.oauth_token`, `platform.oauth_authorization`, `identity.session_keys`, `identity.nats_keys`, `identity.password_tokens`, `identity.password_attempts`, `identity.renewal_credentials`, `identity.session_signing_state`, the write log, `number_counter`, the run queue and the run state.
+- `platform.credential` is logged in Epic 5, after the hint goes (T16). Its history is private: only the platform login reads it, like `pat_history` (owner ruling 2026-11-26).
+- These tables are not logged: `platform.oauth_token`, `platform.oauth_authorization`, `identity.session_keys`, `identity.nats_keys`, `identity.password_tokens`, `identity.password_attempts`, `identity.renewal_credentials`, `identity.session_signing_state`, the write log, `number_counter`, the run queue and the run state.
 - Grants follow the existing pattern of the logged project tables.
 - `registry.environment_application_connections` has no history until R6 gives it a short singular name. `create_history_table` refuses its 67-byte derived constraint name with `history-name-too-long` (F, `deploy/sql/record-history.sql`). The history naming rule does not change (owner ruling 2026-11-25).
 - Schema reset empties every catalog table, the catalog history tables included (`crates/environment/src/environment_sql_effects.rs::reset_database`). The reset itself is recorded as a `schema_reset` row in `platform_event` (L9).
@@ -379,27 +382,29 @@ F. The CDC reader retries a refused publish without end and does not advance (`c
 
 The direction is sound and close to stock wasmCloud: loading, scheduling, linking and routing are stock. The org boundary holds at the API and network level. It does not hold at the node level, and nothing in Kubernetes separates environments inside an org. The rules below close that.
 
+Epic 4 is done (`main` at `b66800014`). The current-state statements of T3, T9, T12 and T13 describe the code before Epic 4 (correction 1).
+
 ### Findings and their state in code
 
 | # | Severity | Finding | Target | In code |
 | --- | --- | --- | --- | --- |
-| 1 | High | No pod security on any namespace. The worker can create Deployments and Jobs, so a fault in platform code or tenant input reaching a pod spec could run a privileged pod (I on reach). | T3 | Open. `org/templates/namespace.yaml` sets only `wamn.dev/org`. |
+| 1 | High | No pod security on any namespace. The worker can create Deployments and Jobs, so a fault in platform code or tenant input reaching a pod spec could run a privileged pod (I on reach). | T3 | Done for `hosts`, `<org>` and `platform` in Epic 4. Env namespaces get the label in Epic 5 (T1). |
 | 2 | High | The host could not read connection Secrets. | The host pod reads them with its own token. | Done: a projected token, read with kube-rs (`crates/kubernetes/src/client.rs::host_credential_secrets`). The Role's ConfigMap rule is deleted by R2. |
 | 3 | Low | An unnamed `wasmcloud:nats/jetstream` entry on every workload (`crates/environment/src/application_chart/plan.rs::roles`). Its NATS user cannot publish. | Delete the entry (T10). | Narrowed to the project's stream and subjects. `ingress` needs it for its stock handler export until the workflow design. |
 | 4 | High | One org-wide account `wamn-operation-<org>` runs every write Job and can delete the default-deny policy (`org/templates/rbac.yaml`). | T4 | Open. `pods/exec` and `wait_administration` are gone. |
 | 5 | High | The system database is one instance with no backup, and holds the NATS operator root and every account key. | T6 | Open. |
 | 6 | High | One backup credential for all orgs (`project/templates/cluster.yaml` ObjectStore). | T7 | Open. |
 | 7 | Medium | Environments share the org namespace, one quota, one worker. | T1 | Open. |
-| 8 | Medium | The quota counts objects only. No LimitRange. Control and the CDC reader set no requests. | T5 | Open. |
-| 9 | Medium | In `platform` only identity has an ingress policy. NATS, the system database and the Poolers accept any pod. | T12 | Open. |
+| 8 | Medium | The quota counts objects and limits `requests.storage` to 500Gi (F, `deploy/charts/org/values.yaml`, correction 2). No LimitRange. Control and the CDC reader set no requests. | T5 | Open. |
+| 9 | Medium | In `platform` only identity has an ingress policy. NATS, the system database and the Poolers accept any pod. | T12 | Done in Epic 4. |
 | 10 | Medium | The public web proxy lists every ConfigMap in the cluster on every request (`platform/templates/edge-rbac.yaml`, `crates/kubernetes/src/web_release.rs::Releases`, called from `services/web/src/lib.rs`). | T11 | Open. |
 | 11 | Medium | NATS accounts had no limits, and creds never expire. | T10 | Partly done: connections 64, subscriptions 1,024, payload 1 MiB per project times the project count. Consumers unlimited, no revocation, `maxProjects` still used. |
-| 12 | Medium | Two CA mechanisms. Helm-made CA keys sit in release records (`genCA` and `lookup` in `identity-certificate.yaml`, `system-database.yaml`). | T9 | Open. |
+| 12 | Medium | Two CA mechanisms. Helm-made CA keys sit in release records (`genCA` and `lookup` in `identity-certificate.yaml`, `system-database.yaml`). | T9 | Done in Epic 4: cert-manager CAs, trust-manager roots. |
 | 13 | Medium | A killed deploy left the release pending. | L2 | Recovery runs under the lifecycle locks. The Helm wait has no margin before the Job deadline. |
 | 14 | Medium | A guest `COMMIT; BEGIN; INSERT` can forge `platform.tx_identity` inside its own project database. | Detected, not prevented (T14). | No change needed. |
 | 15 | Low | Single-instance project clusters block node drain. | `enablePDB: false` when `instances` is 1. | Open. |
 | 16 | Low | Host `affinity` and `topologySpreadConstraints` values are dropped by the stock template. | Delete the keys (R2). | Open. |
-| 17 | High if off | NetworkPolicy enforcement is unconfirmed on kind. No GKE cluster exists. | T13 | Open. |
+| 17 | High if off | NetworkPolicy enforcement is unconfirmed on kind. No GKE cluster exists. | T13 | Enforced on kind, with refusal tests (Epic 4). No GKE cluster exists. |
 
 Sound today (F): orgs never share a namespace and `allowSharedHosts: false` is set; default-deny covers ingress and egress in each org namespace; no wildcard, `escalate`, `bind` or `impersonate` in wamn Roles; database logins use certificates with one CA per project cluster; TokenReview checks audience, service account and namespace; NATS has one inbox prefix per user and no imports or exports; no cross-org path was found through control; each host pod has its own scheduler user limited to its own subjects (`services/identity-service/src/nats.rs::sign_host_user`); the default data user cannot publish; NATS and Postgres images are pinned by digest.
 
@@ -407,22 +412,27 @@ Sound today (F): orgs never share a namespace and `allowSharedHosts: false` is s
 
 - `platform` and `hosts` per installation.
 - `<org>` per org: the org's control service and its system database login Secrets.
-- `<org>--<env>` per environment (`name::environment_key`): the host group, each project's Postgres cluster, CDC reader and certificates, the application workloads, the NATS creds, the quota, the default-deny policy and the pod security label.
+- `<org>--<env>` per environment (`name::env_key`): the host group, each project's Postgres cluster, CDC reader and certificates, the application workloads, the NATS creds, the quota, the default-deny policy and the pod security label.
 - `wamn-helm-<org>--<env>` per environment for Helm release records.
 - Control runs once per org, in `<org>`, and is the one actor that spans the org's environments.
-- The mapping from a namespace to its org and environment is a row in the system database. Identity and control read it. Neither derives the org from a namespace name.
+- The mapping from a namespace to its org and environment is a row in the system database: a unique `namespace` column on `registry.env` (owner ruling 2026-11-26). Identity and control read it. Neither derives the org from a namespace name.
 - Each environment has its own worker login on the system database. A twin of `registry.login_org` reads the environment from the login name, and tables with an environment column check it for worker logins. Control's login stays per org.
 - The host reports its pod namespace as its environment through the stock `--environment` argument. Today it reports `settings.org` (`services/host/src/host.rs`).
 - Identity checks the environment, not only the org, when a worker asks for NATS creds (`services/identity-service/src/nats.rs`).
-- trust-manager copies the CA certificates into each environment namespace, selected by namespace label. CA values leave the org chart's values.
+- trust-manager copies the CA certificates into each environment namespace, selected by namespace label. The CA values already left the org chart in Epic 4 (F, `crates/platform-install/src/org.rs`, correction 1).
+- The route ConfigMaps move into `<org>--<env>`. The web proxy accepts only a route host label `<prefix>--<namespace>` today (F, `crates/routes/src/route_host.rs::valid_route_host`), so the move alone drops every app URL (correction 8). Provisioning sets an org label on each namespace, and the web proxy reads it through a Namespace list and watch. App URLs do not change (owner ruling 2026-11-26). Public addresses stay in T11 (Epic 6).
+- Each environment namespace gets its own dev OAuth key `wamn-oauth` when OAuth uses local encryption, so dev and prod share no key (owner ruling 2026-11-26). Today the host and control mount `wamn-oauth` from `<org>` (F).
+- Env deactivation keeps the namespace, the NATS account and the streams. Identity refuses new credentials for an inactive env (owner ruling 2026-11-26).
 - A new environment changes no platform value and restarts no platform pod.
 - With `hostNamespaces: []` and `-host-namespaces=` (`deploy/charts/platform/values.yaml`), the stock operator sends no stop to a deleted host pod in a tenant namespace (F). The plan records, measured on kind, that every `wamn env delete` then waits about 300 s while the host drains, and that the host exits 1 (X5, Not verified here). Its fix is separate design work. It must not list environment namespaces in a platform value, because a new environment changes no platform value (I).
 
 ### T2. Environment provisioning
 
-- A CLI command run by the platform operator with the admin kubeconfig creates an environment: the namespace with its labels, the Helm storage namespace, the quota, the environment account and its Role, the default-deny policy, the mapping row, the registry read grants, and the environment's backup bucket with admin on it for the environment account. `wamn org create` creates an org the same way (`crates/platform-install/src/org.rs`). The command name is not set.
-- Each environment namespace gets one read grant on each L4 repository, the org repository and the platform repository, for all its service accounts. It covers the host, the environment account and every project account. These are cloud IAM grants, and the provisioning command makes them (moved from L4 by the owner, 2026-11-25).
-- `env apply` does not change. The CLI calls the org's control service, which starts a Job in the environment namespace as the environment account.
+- The platform operator runs one command with the admin kubeconfig, `wamn env create <org>/<env>`, to create an environment (owner ruling 2026-11-26). It creates the namespace with its labels, the org label included, the Helm storage namespace, the quota and LimitRange, the environment account and its Role, the default-deny policy, the mapping row and the worker login Secret. It commits its SQL first, then creates the Kubernetes objects, as `wamn org create` does (`crates/platform-install/src/org.rs`).
+- The command is idempotent: a retry finishes a partial run. It checks that the org and env names fit the namespace and database name limits.
+- In Epic 5 the command runs on kind only. The registry read grants and the environment's backup bucket, with admin on it for the environment account, are cloud IAM work and stay in Epic 7 (owner ruling 2026-11-26, correction 11).
+- Each environment namespace gets one read grant on each L4 repository, the org repository and the platform repository, for all its service accounts. It covers the host, the environment account and every project account. These are cloud IAM grants, and the provisioning command makes them in Epic 7 (moved from L4 by the owner, 2026-11-25).
+- `env apply` refuses an env that the operator did not provision. Today it creates the `registry.env` row when the row is absent (F, `crates/env/src/registry/deployment.rs`, correction 7). The CLI calls the org's control service, which starts a Job in the environment namespace as the environment account.
 - No wamn component in the cluster gets a cluster-wide right to create namespaces. The only cluster-wide rights are token review for control and identity, and the web proxy's ConfigMap read until T11 removes it (F).
 - An org owner cannot create an environment alone.
 
@@ -444,16 +454,18 @@ Sound today (F): orgs never share a namespace and `allowSharedHosts: false` is s
 
 - The org-wide account `wamn-operation-<org>` goes. Job accounts and their Roles live in `<org>--<env>`.
 - Environment apply and delete run as one environment account per environment namespace, with today's rights and no `pods/exec`.
-- Deploy, rollback, stop, schema apply, schema reset and capture-gap run as the project's own account, `<project>-operation`. It names its login Secrets and workloads and holds no Role, Deployment or Job rights.
+- Deploy, rollback, stop, schema apply, schema reset and capture-gap run as the project's own account, `<project>-operation`. It names its login Secrets and workloads and holds no Role, RoleBinding or Deployment rights.
+- Today deploy, schema apply, schema reset and capture-gap recover and close upgrade the project chart, which renders Roles, RoleBindings and the CDC Deployment. Schema reset also upgrades the shared host release. Deploy and rollback read their own Job (F, `crates/env/src/env/operation.rs`, `crates/env/src/env/capture_gap.rs`, correction 6). Control runs the project chart and host upgrades as an env-account phase of the same operation (owner ruling 2026-11-26).
+- `platform.schema` runs as the org worker today, for a list of projects in one env (F, `crates/env/src/env/worker.rs`). It runs as the env account (decided under rule 1, because it is an env-level task). `schema.diff` already runs as `<coordinate>-operation` (F).
 - Control decides who may deploy which project (`control_route.rs::admits`). The accounts limit what a faulty Job can reach.
-- Every project account can list the Helm records of its environment. They hold chart values, not keys (I).
+- Every project account can list the Helm records of its environment. They hold chart values, not keys (I). Project accounts write their release records in the env's Helm namespace (owner ruling 2026-11-26). A project account can therefore change another project's release records in the same env. This is an accepted risk (section 5).
 - One ValidatingAdmissionPolicy and one binding, installed once by the platform chart, cover what RBAC cannot limit for accounts named `<project>-operation`:
   - no `secretFrom` and no `configFrom` in a WorkloadDeployment;
   - the egress NetworkPolicy has the chart's exact shape;
   - the Service is `ClusterIP`, with no selector and no external address;
   - a workload refers only to the Service with its own name, `<release>-http`.
 - The policy needs no data and has no parameter. The binding selects namespaces by an environment label. It covers create and update of WorkloadDeployment, Service and NetworkPolicy. Delete stays with RBAC.
-- The policy runs in Warn mode on kind while it is built, and in Deny mode before any real customer. In Deny mode, a request the policy cannot evaluate is refused. Its CEL expressions use `has()` guards, so a schema change in the upstream wasmCloud resource type makes a check miss rather than fail. Such changes come only with chart upgrades, which go through review and a kind run with the admission refusal test. The account filter is simple text matching that cannot fail.
+- A platform value selects Deny. Kind defaults to Warn. The kind refusal case sets Deny and makes a server-side dry run as the project account (owner ruling 2026-11-26). Deny is set before any real customer. In Deny mode, a request the policy cannot evaluate is refused. Its CEL expressions use `has()` guards, so a schema change in the upstream wasmCloud resource type makes a check miss rather than fail. Such changes come only with chart upgrades, which go through review and a kind run with the admission refusal test. The account filter is simple text matching that cannot fail.
 - Projects of one environment trust each other at run time. The policy does not check the project in workload config, the stream and subject grants, route hosts or object names. A defect in a deploy Job could therefore bind a workload to another project of the same environment.
 - Future option: make the plain key `wamn.project` the one source the host reads (`crates/plugin/src/lib.rs::PROJECT_CONFIG_KEY`), drop org, project and environment from the JSON in `wamn.application` (`crates/application/src/application_config.rs`), and add the project check with data. The host reads both today and never compares them. That forces a host image rebuild.
 - The policy text is not written.
@@ -462,6 +474,7 @@ Sound today (F): orgs never share a namespace and `allowSharedHosts: false` is s
 
 - A compute quota on every environment namespace: `requests.cpu`, `requests.memory`, `limits.memory`, a LimitRange, and requests on every wamn pod.
 - Quotas are data in the system database, applied by the provisioning command. A change needs no chart upgrade and no restart.
+- The values per env namespace are provisional, not measured (owner ruling 2026-11-26): the nine object and storage limits of today's org quota, `requests.cpu` 8, `requests.memory` 16Gi and `limits.memory` 32Gi. The LimitRange defaults are a 100m CPU request, a 256Mi memory request and a 2Gi memory limit.
 
 ### T6. System database and key custody
 
@@ -515,12 +528,14 @@ Sound today (F): orgs never share a namespace and `allowSharedHosts: false` is s
 
 - One NATS deployment carries scheduler and data traffic. A split is taken only if scheduling is measurably delayed by data traffic. The stock chart keeps it available through a separate data address.
 - Each environment's account limits are data with defaults, changed without a redeploy: connections 64, consumers 2,000, subscriptions 10,000, payload 1 MiB, and two streams and 512 MiB of disk per project. None is measured. Identity re-signs and pushes a change.
-- `global.maxProjects` goes, with `registry.meta.max_projects`, `registry.project_capacity_available`, the check in `crates/environment/src/environment_sql_effects.rs`, the identity setting (`crates/identity/src/identity/nats_store.rs`), the control argument and the chart arithmetic. The platform value is the NATS store size in bytes, holding two streams per project. Identity refuses a storage limit that would overfill the store.
+- The limits are per env in the system database. The store is 16 GiB on a 20 Gi volume. A short SQL-only reservation counts each storage limit against the store. Identity publishes an unpublished revision again. A shrink below current use is refused (owner ruling 2026-11-26).
+- `global.maxProjects` goes, with `registry.meta.max_projects`, `registry.project_capacity_available`, the check in `crates/env/src/env_sql_effects.rs`, the identity setting (`crates/identity/src/identity/nats_store.rs`), the control argument and the chart arithmetic. The platform value is the NATS store size in bytes, holding two streams per project. Identity refuses a storage limit that would overfill the store.
 - Whether NATS 2.12 raises its store size by reload is not verified.
-- Identity revokes users through the account's `revocations` field. Deleting a project revokes its users. Deleting an environment removes its whole account. An entry stays until every JWT it covers has expired. Host and CDC reader creds never expire, so their entries stay until the account key is rotated or expiring creds land. Entries accrue only when a project is deleted, so they grow slowly (I). No signing-key layer is kept to clear them: it adds key management that is not worth it before expiring creds.
+- Identity revokes users through the account's `revocations` field. Deactivating a project in an env revokes that project's NATS users. Identity keeps a table of their public keys only. Env deactivation keeps the account and the streams, and identity refuses new credentials for the env (owner ruling 2026-11-26, correction 9). Today the account is retired when the last project leaves the env (F, `crates/env/src/env/broker.rs::after_delete`).
+- An entry stays until every JWT it covers has expired. Host and CDC reader creds never expire, so their entries stay until the account key is rotated or expiring creds land. Entries accrue only when a project is deactivated in an env, so they grow slowly (I). The signing-key layer stays until T6 removes it in Epic 7 (owner ruling 2026-11-26, correction 10).
 - The stream-admin and recovery Job users are not stored as Secrets. The Job makes a key in memory and asks identity for a JWT that expires with the Job.
-- Host and CDC reader creds do not expire. Expiry with rotation is a future option and needs a host image rebuild, because wamn's scheduler connection and the CDC reader read the creds file once (`crates/broker/src/nats.rs::credentials_options`).
-- Identity gives a project's account only its own project's recovery user (I).
+- Host and CDC reader creds do not expire. Expiry with rotation is a future option and needs a host image rebuild, because the data, workflow and CDC connections read the creds file once (`crates/broker/src/nats.rs::credentials_options`). The scheduler connection makes a key in memory and asks identity for a JWT at start (F, `services/host/src/host.rs::connect_scheduler_nats`, correction 3).
+- Identity gives a project only its own recovery user. Today `POST /nats/users` checks the org only, and the request body names the env, the purpose and the project (F, `services/identity-service/src/nats.rs::sign_user`, correction 4). So any org worker token can get the recovery user of another project in the same org. Identity checks the env, the account and the project from the mapping after TokenReview (T1).
 - The unnamed `wasmcloud:nats/jetstream` workload entry goes when `ingress` stops handling Data change (W4).
 - NATS has no CPU or message-rate limit per account. A flood from one org can slow scheduling and other orgs.
 - During a NATS outage the host keeps serving requests that need no NATS (`tests/journeys/tests/nats_outage.rs`) (F). The web edge does not: the stock runtime-operator drops the application and places it on the host again about 3 minutes after the outage begins, so the edge outage outlasts the NATS outage (measured on kind and recorded in the plan, Not verified here). The plan's remedy before any real customer is a NATS cluster of 3.
@@ -571,10 +586,15 @@ Sound today (F): orgs never share a namespace and `allowSharedHosts: false` is s
 
 From the restructure plan's open items (`docs/plan/wamn-restructure.md`) (F for the plan text). Each is designed in its epic.
 
-- Connection budget per org (Epic 5). The Pooler per-login pools and the computed `max_connections` (206) cap the org count near 12 per system database (wamn-44p7o). Identity could not get a database connection under parallel journey load (measured on kind, Not verified here). Decide identity's pool, and whether its key route reads the database per request, with the budget. The budget lands before, or together with, T1's per-environment worker logins, which add logins per org.
-- One lock per environment (Epic 5). `ensure_environment` takes a lock shared by every environment of the installation (`crates/identity/src/identity/nats_store.rs`), so env applies are serialized across all orgs. The NATS account revision check must stay under the lock.
-- The connection credential hint (Epic 5). crates/connection/src/administration.rs stores the last four characters of the raw credential string as hint, and every connection response returns it (F). For a JSON credential that is "} and two characters of the secret, and a unit test expects it. The hint goes, or becomes a value that shows no secret characters. Connection deactivation (R6) keeps the credential rows, so the hint stays after deactivation (owner ruling 2026-11-25).
-- Connection responses (Epic 5). The connection handlers still send to_jsonb(c) plus extra columns (crates/connection/src/project_connections/administration.rs), and wamn_routes::host_wire::ConnectionSummary only describes that JSON (F, at eec9f3bf4). A new column changes the wire with no type change, and the OpenAPI, which allows no other fields, is then wrong. The handlers build ConnectionSummary from the row, so the type owns the shape.
+- Connection budget (Epic 5, owner ruling 2026-11-26). Today the Pooler per-login pools and the computed `max_connections` (206) limit the org count near 12 per system database (wamn-44p7o). The near-12 count is a measured observation, not a computed ceiling. Identity opens more than the 2 x 8 connections in that sum: direct connections for workload routes, and one dedicated connection per replica for JWKS and health (F, `services/identity-service/src/lib.rs`, `services/identity-service/src/users.rs`, correction 15). Identity could not get a database connection under parallel journey load (measured on kind, Not verified here).
+  - There is no cap on orgs or envs. The Poolers cap the total server connections. A client waits for a free connection, up to a timeout, instead of failing.
+  - Code that needs no session uses transaction pooling. Session connections stay only where a session is needed (advisory locks, SET, LISTEN). E5.6 lists each one with file and symbol.
+  - Identity is counted at its real use.
+  - At E5.14, a kind measurement records how many orgs fit before wait times grow. The result is a capacity fact, not a limit.
+  - The budget lands before, or together with, T1's per-environment worker logins, which add logins per org.
+- One lock per environment (Epic 5). `ensure_env` takes a transaction lock shared by every environment of the issuer (F, `pg_advisory_xact_lock` in `crates/identity/src/identity/nats_store.rs`), so env applies are serialized across all orgs. The NATS account revision check must stay under the lock. A session advisory lock per issuer, org and env, on one pinned connection, replaces it. The resolver lookup and KMS run outside any transaction. A short transaction compares and stores the revision. The push runs after commit under the same session lock (E5.7).
+- The connection credential hint (Epic 5, owner ruling 2026-11-26). crates/connection/src/administration.rs stores the last four characters of the raw credential string as hint (F). For a JSON credential that is "} and two characters of the secret, and a unit test expects it. Five responses return it: write, copy, set_credential, get and list (F, `crates/routes/src/host_route.rs`, correction 13). The hint goes: the column `platform.credential.hint`, the field in every response, the OpenAPI, the org-control client and the CLI output.
+- Connection responses (Epic 5). The connection handlers still send to_jsonb(c) plus extra columns (crates/connection/src/project_connections/administration.rs), and wamn_routes::host_wire::ConnectionSummary only describes that JSON (F, at eec9f3bf4). A new column changes the wire with no type change, and the OpenAPI, which allows no other fields, is then wrong. The handlers build ConnectionSummary from the row, so the type owns the shape (E5.1).
 - Connection parameter schemas accept undeclared fields (Epic 5). The api_key, oauth2_client_credentials, oauth2_authorization_code and aws_sigv4 parameter schemas in deploy/sql/system-schema.sql set no additionalProperties: false, so the validator (crates/connection/src/administration.rs, validates) accepts extra keys, and every connection summary returns a secret placed in parameters. These four schemas must reject undeclared fields.
 - System schema migrations (Epic 7), before any install that must survive an upgrade. The system schema loads only when it is absent, and no system migration exists.
 - A fleet rollout command (Epic 7), run after `wamn platform deploy`. It applies every org and environment again, records each environment's bundle digest, and can resume.
@@ -596,6 +616,15 @@ From the restructure plan's open items (`docs/plan/wamn-restructure.md`) (F for 
   - Only platform operators read the table, for now.
   - The replies, the dummy password work and the timing of every route stay as they are.
   - The only exception to the second rule is the two delivery routes, `POST /invitations` and `POST /password/recover` (owner ruling 2026-11-26). The token commits in its own transaction, as before. Identity sends the mail with no transaction open. Then it writes the row (`delivery_accepted` or `delivery_failed`) in its own transaction. If that insert fails, identity consumes the token with the existing cleanup after a failed delivery. A crash between the token commit and the row leaves a token with no row, and the token expires on its own.
+- Connection events (Epic 5, owner ruling 2026-11-26). `platform.connection_event` is a project table in `deploy/sql/catalog-schema.sql`. No such table exists today (F).
+  - `event_type` and `outcome` are foreign keys to lookup tables (`code text PRIMARY KEY`, `label text NOT NULL`). The outcome table also has `success boolean`. Every row has a required foreign key to the connection.
+  - The rows are immutable: a trigger refuses every UPDATE and DELETE. Retention is full.
+  - Rows record activate, deactivate, a credential change, OAuth authorize, the OAuth callback, and every token refresh outcome.
+  - The refresh status column goes. The refresh back-off reads the latest refresh row. The ruling names `platform.connection.refresh_status`, but the column is `platform.oauth_token.refresh_status` (F, `deploy/sql/catalog-schema.sql`). The summary field `refresh_status` reads the latest refresh row (decided under rule 1, no wire change).
+  - Project users who may read connections can read its rows, and so can operators.
+  - Per-call outcomes are not rows. They are spans, for the durable trace store in Epic 7.
+  - A row never holds a token, a secret or an OAuth `error_description`.
+  - A success row commits with its SQL change. A row after a remote call commits in its own short transaction. A refusal is a bounded best-effort write, as in Epic 4.
 - The host trace sampler (Epic 7, durable traces). The host samples 10% of traces through the constant `TELEMETRY_VARIABLES` in `crates/environment/src/application_chart/plan.rs` (F), which control writes into each host's chart values, so no values file changes it. The sampler becomes a platform setting.
 - Hosts send no traces or logs to the kind collector (Epic 7, durable traces). During runs R6 to R9 of wamn-c1zre, the kind collector received only metrics, and its file exporter wrote nothing (F). Find out why.
 - wamn-owned abbreviations (epic not set, owner ruling 2026-11-25). R6 keeps `pat`, `tx_identity`, `auth_type`, `meta`, `ops`, `ref`, `max_`, `cdc` and the `e-` prefix. A later pass decides whether each one becomes a full word.
@@ -609,7 +638,7 @@ From the restructure plan's open items (`docs/plan/wamn-restructure.md`) (F for 
 - The pinned WFE snapshot `web/wfe/examples/platform/snapshot/policy/host_route.rs` still uses `project.inactivate` (F, at 363742ea4).
 - The platform UI encodes the env slug `envs` as `%65nvs` in its links (found in R6, lane report, Not verified here).
 - Two platform UI tests fail on the base without Epic 4 changes (epic not set, found in Epic 4). Root ran them at 9c5f76d9d and with E4.7, and both fail the same way (F). `apps/platform_ui/test/shell.test.tsx` "uses cookies and keeps no token in browser storage" expects an env audience, but `Session` sends the org audience. `apps/platform_ui/test/projects.test.tsx` "shows every environment and member field" gives the member view an inactive project (lane report for the causes, Not verified here).
-- Network calls inside open database transactions (epic not set, owner rule 2026-11-26). All of these existed before Epic 4, and Epic 4 added none (audit at c95163cc8, [transaction audit](epic-4-scoping/transaction-audit.md)). Root checked the first two and the identity rows (F). The rest are F in the audit's read:
+- Network calls inside open database transactions (epic not set, owner rule 2026-11-26). All of these existed before Epic 4, and Epic 4 added none (audit at c95163cc8, [transaction audit](epic-4-scoping/transaction-audit.md)). Root checked the first two and the identity rows (F). The rest are F in the audit's read. Epic 5 fixes each one in the bead that rewrites its function (owner ruling 2026-11-26): Identity NATS `ensure_env` (E5.7), Control connections (E5.1), Control OAuth and Outbound OAuth (E5.4), Environment configure (E5.11) and Control status (E5.11):
   - Control first owner: `services/control/src/control_route/users.rs` holds the provisioning transaction and the first-owner lock while it calls identity `POST /users`.
   - Control retention: `services/control/src/retention.rs::prune_identities` patches credential Secrets inside its project transaction.
   - Control status: `control_route.rs` set_status writes env status mirrors and reads their login Secrets inside the system transaction. The EnvStatus counts can overlap a login read with an open count transaction.
@@ -619,7 +648,7 @@ From the restructure plan's open items (`docs/plan/wamn-restructure.md`) (F for 
   - Environment configure: `crates/env/src/env/lifecycle.rs` holds the system transaction across Helm recovery and the host upgrade (600 s Helm timeout).
   - Host workflow change, enable and disable: `services/host/src/host/workflow/lifecycle.rs` holds the administration transaction across NATS connects and JetStream stream and consumer requests.
   - Identity session keys: `crates/identity/src/identity/session_keys.rs` wraps new keys through KMS inside the startup and rotation transactions, and `session_exchange.rs::finish_session` can unwrap the signing key through KMS inside the login and renewal transactions.
-  - Identity NATS: `crates/identity/src/identity/nats.rs` bootstrap and `nats_store.rs::ensure_env` call KMS, and ensure_env calls the NATS resolver, inside their transactions.
+  - Identity NATS: `crates/identity/src/identity/nats.rs` bootstrap and `nats_store.rs::ensure_env` call KMS inside their transactions, and `ensure_env` runs the resolver lookup inside its transaction. The push and the delete run after commit (F, `crates/identity/src/identity/nats_store.rs`, `services/identity-service/src/nats.rs`, correction 12).
   - Host request transactions span guest execution: ingress reads and keyed writes, workflow operation nodes, the data-change handler and dynamic SQL streams keep a project transaction open while a guest can call bound HTTP (which can read a Secret) or the object store (`crates/plugin/src/operation.rs`, `operation_sql`). Fixing this one is a design decision, because it gives up one atomic outcome for SQL and the remote effect.
 - Guest pins in root checks (epic not set, owner ruling 2026-11-26). The root checks that lanes run do not build guests against their pin files, so a router change can land with a stale pin (E4.7, 33532cfc6). Add the pin check to the root checks.
 - The stock runtime-operator Service targets a port named `https` that its Deployment does not declare (`runtime-operator/templates/operator/service.yaml`) (epic not set, found in Epic 4, lane report, Not verified here). No caller uses that Service today.
@@ -647,7 +676,7 @@ In scope: the host, control, identity, the web proxy, the CDC reader, the six ch
 | 2 | No pod in a tenant namespace runs privileged or mounts a host path. | No | Yes | A server-side dry run of a privileged pod is refused. |
 | 3 | No credential of org A opens a database, stream, backup or package of org B. | Database and stream yes. Backup and registry no. | Yes | Use org A's backup and pull credentials against org B's folder and repository. |
 | 4 | Only the runtime operator publishes on `runtime.host.>`. | Yes, except each host's own ready subject. | Same | Publish with one host's creds on another host's subject and expect a permission error. |
-| 5 | Nothing that runs for dev reads a prod Secret or prod data of the same org. | NATS and database yes. Kubernetes no. | Yes. Control still spans the org's environments. | `kubectl auth can-i get secret` as the account a dev deploy runs under. |
+| 5 | Nothing that runs for dev reads a prod Secret or prod data of the same org. | Project databases and NATS accounts are separate. But the org apply login reads every env of its org, and the org worker names the NATS account in its request (F, correction 5). Kubernetes no. | Yes. Control still spans the org's environments. | `kubectl auth can-i get secret` as the account a dev deploy runs under. |
 | 6 | A component reaches only its own project's database and stream. | Yes | Yes, resting on the deploy code. | A component importing plain jetstream reads another project's stream and is refused. |
 | 7 | Every committed row is attributed to the caller the host authenticated. | No | No, inside one project database. | Not checked. |
 | 8 | No private key or password is in a Helm record, argv, environment variable or ConfigMap. | Yes, except the Helm-made CA keys. | Yes | Decode the newest release record of each chart and search for key material. |
@@ -656,7 +685,8 @@ In scope: the host, control, identity, the web proxy, the CDC reader, the six ch
 
 ### Accepted risks
 
-- The environment account reads and writes every Secret in its environment namespace. It runs environment apply and delete only.
+- The environment account reads and writes every Secret in its environment namespace. It runs environment apply and delete, `platform.schema`, and the env-account phase of project operations (T4).
+- A project account can change another project's release records in the same env's Helm namespace (T4, owner ruling 2026-11-26).
 - A host can report a false environment in its heartbeat (T15).
 - The runtime operator watches all namespaces. Host pods in tenant namespaces have no finalizer, and the web proxy retries.
 - The account that runs Helm keeps list and watch on the non-Secret objects of watched charts.
@@ -804,6 +834,8 @@ Part 1 of the plan must state the rules of this document. These Part 1 statement
 | Open item: split scheduler NATS from data NATS before the first customer | One NATS. The split is a future option (T10). |
 | The environment values already accept `affinity` | The key goes (R2). |
 
+The rows for T1, T2, T4, T5 and T10 are already in Part 1 (F, correction 16). The Epic 5 rulings of 2026-11-26 change Part 1 again: the one-Job rule, the project Role, the Pooler modes, the provisioning command, the OAuth key, the NATS limits and connection events.
+
 Add as rules: pod security (T3), the admission policy (T4), provisioning by CLI command (T2), the failed rollout rollback (L2), the authority copy (L3), the oversized CDC event (L6), the order of delivery (W4), and the kind pin (T13). Replace "Migrations must work with the previous code" with the L2 rule: schema compatibility is the application developer's decision, and a problem is fixed by migrating forward.
 
 Open items in Part 1 that Epic 1 made stale (F, at `31703d9bb`):
@@ -836,10 +868,10 @@ Structural selection: `cargo tree --locked -e normal -p <consumer>`, and `cargo 
 
 Run as `cargo test -p wamn-journey-tests --test <target> <name> -- --ignored --exact`. An exact filter can pass with zero matching tests, so record the executed case names and the skipped and ignored counts.
 
-- `application_routes_kind::a_command_numbers_without_a_record_and_with_a_key_map` and `an_overlay_insert_inherits_numbering_and_actor_stamps`: deployment creates the number sequence rows. Fixture setup must not insert them.
+- `app_routes_kind::a_command_numbers_without_a_record_and_with_a_key_map` and `an_overlay_insert_inherits_numbering_and_actor_stamps`: deployment creates the number sequence rows. Fixture setup must not insert them.
 - `write_log::a_claim_commits_with_its_work_or_not_at_all`: the delete response and stored result.
 - `host_contracts::a_revoked_grant_is_refused_within_the_revocation_lifetime`: the cache lifetime and revocation.
-- `host_contracts::application_stop_leaves_its_host` and `env_apply_stops_an_unlisted_application_and_keeps_its_data`.
+- `host_contracts::app_stop_leaves_its_host` and `env_apply_stops_an_unlisted_app_and_keeps_its_data`.
 - `nats_outage::the_host_serves_through_a_nats_outage_and_recovers`: run alone, because it stops the shared NATS. During the outage it calls the host pod through a port-forward and logs the web edge status. After NATS returns it waits for the operator, a newer `lastSeen`, the first application's workloads Ready, a call through the web edge, and a second application Ready. The `lastSeen` sample is still taken before NATS stops (F), so a heartbeat in that gap passes that one check. Take the sample just before NATS restarts, and require a strictly newer value after it returns. The later checks already need a reconnected host (I).
 
 ### New tests
@@ -850,7 +882,7 @@ Run as `cargo test -p wamn-journey-tests --test <target> <name> -- --ignored --e
 - L3: one copy pass on real databases.
 - L4: `write::release_values` with two prefixes.
 - R3: literal native HTTP requests, the live client tests on a current test setup, and labels in the published OpenAPI.
-- The kind smoke run: the NetworkPolicy refusal test (T13, the existing `isolation::envs_in_two_orgs_are_isolated`), the service account check of goal 1, a server-side dry run of a privileged pod that is refused (goal 2), and the admission refusal test, in which a project account creates a workload with a `secretFrom` entry and is refused (T4).
+- The kind smoke run: the NetworkPolicy refusal test (T13, the existing `isolation::envs_in_two_orgs_are_isolated`), the service account check of goal 1, a server-side dry run of a privileged pod that is refused (goal 2), and the admission refusal test: with Deny set, a server-side dry run as the project account of a workload with a `secretFrom` entry is refused (T4).
 - One kind run with `restricted` enforced, to confirm the CloudNativePG pods (T3). It uses a two-instance project, so a replica join runs. The backup sidecar is confirmed on GKE (T7).
 - On GKE, when a cluster exists: one backup and restore through workload identity (T7), and a check that pods other than the CloudNativePG pods cannot use the backup grant. Cloud resources and their grants are made by the provisioning command, never by a controller in the cluster.
 - Two runtime operators in one cluster, when an org first needs its own (T15).
@@ -859,13 +891,12 @@ Do not build a fault-injection framework, a crash-point matrix, a WIT-wide prope
 
 ## 9. Not decided
 
-- The name of the environment provisioning command.
+- Decided on 2026-11-26: the provisioning command is `wamn env create` (T2), and the Pooler modes follow the connection budget (T16).
 - The admission policy text, the `platform` ingress allow list, and the restore cluster's backup grant.
 - The copy period of L3.
 - Measured values for the NATS limits.
 - Identity's shared request budget: password and machine requests share eight permits per identity replica. Not verified and not measured.
 - Write-log claims whose outcome is unknown never expire, because the pruning has no caller. Not verified. It is the X4 open item.
-- Transaction mode for control's Pooler. Whether control relies on session state is not verified.
 - The two meanings of "operation": a platform action run as a Job, and an application's operation (`wit/wamn-operation-0.1`). The account name `<project>-operation` uses the first.
 - More efficient message formats for the whole system, covering the data change message, which is always JSON today, and what moves between workflow nodes.
 
