@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::Write as _;
 use std::net::SocketAddr;
 use std::os::unix::fs::OpenOptionsExt as _;
@@ -318,6 +318,72 @@ async fn activity_test_org(
 
 #[tokio::test]
 #[ignore = "requires: docker"]
+async fn project_admin_grant_distinguishes_missing_and_inactive_projects() -> anyhow::Result<()> {
+    use crate::control_route::Refusal;
+    use wamn_app::ingress::{AuthenticatedCaller, CredentialType};
+    use wamn_app::native_routes::DeliveryError;
+    use wamn_platform_install::provision_org::{OrgActivity, set_activity};
+    use wamn_routes::{HostHandler, HostRouteSet};
+
+    let postgres = wamn_test_infrastructure::containers::start_postgres().await?;
+    let org: OrgId = "grant-projects".parse()?;
+    let (database, control_url, principal) = activity_test_org(&postgres, &org).await?;
+    let mut admin = wamn_postgres::connect(database.as_str()).await?;
+    let mut seed =
+        wamn_postgres::provisioning_transaction::provisioning_transaction(&mut admin).await?;
+    sqlx::query("INSERT INTO registry.project (org, id, active) VALUES ($1, 'paused', false)")
+        .bind(org.as_str())
+        .execute(&mut *seed)
+        .await?;
+    seed.commit().await?;
+
+    let delivery = control_delivery(control_url, org.clone(), HashMap::new()).await?;
+    let (id, attachment) = HostRouteSet::Control
+        .attachments()
+        .find(|(_, attachment)| attachment.route.handler == HostHandler::ProjectAdminGrant)
+        .context("project admin grant route")?;
+    let caller = AuthenticatedCaller::new(
+        id.clone(),
+        principal,
+        CredentialType::Session,
+        false,
+        HashSet::new(),
+        None,
+    );
+    let grant = async |project: &str| {
+        let payload = serde_json::json!({"project": project, "principal_id": principal});
+        delivery
+            .handle(attachment, &caller, &payload.to_string())
+            .await
+    };
+    let missing = grant("nowhere").await;
+    assert!(
+        matches!(&missing, Err(Refusal::Declared { code: "project_not_found", detail })
+            if detail["field"] == "project"),
+        "{missing:?}"
+    );
+    let inactive = grant("paused").await;
+    assert!(
+        matches!(
+            &inactive,
+            Err(Refusal::Delivery(DeliveryError::PermissionDenied(_)))
+        ),
+        "{inactive:?}"
+    );
+    set_activity(database.as_str(), &org, OrgActivity::Inactive).await?;
+    let inactive_org = grant("nowhere").await;
+    assert!(
+        matches!(
+            &inactive_org,
+            Err(Refusal::Delivery(DeliveryError::PermissionDenied(_)))
+        ),
+        "{inactive_org:?}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires: docker"]
 async fn org_activity_controls_new_commands_and_password_logins() -> anyhow::Result<()> {
     use wamn_identity::identity::{issuer::Issuer, password};
     use wamn_identity::password::{Password, password_work};
@@ -620,26 +686,10 @@ async fn serve_control_http_with_projects(
     authenticator: ControlRouteAuthenticator,
     logins: HashMap<Triple, PgConnectOptions>,
 ) -> anyhow::Result<(SocketAddr, JoinSet<anyhow::Result<()>>)> {
-    let control = wamn_postgres::pool(&database, 3).await?;
-    let kubernetes = wamn_kubernetes::client::KubernetesApi::from_config(kube::Config::new(
-        "http://127.0.0.1:1".parse()?,
-    ))?;
-    let mut project_logins =
-        crate::project_login::ProjectLogins::new(kubernetes, control.clone(), org.clone());
-    project_logins.test_logins = logins;
     let delivery = Arc::new(
-        HostRouteDelivery::new(HostRouteHandlers {
-            logins: Arc::new(project_logins),
-            org,
-            control,
-            writer: {
-                let writer = wamn_postgres::connect(&database).await?;
-                Writer::new(database, writer)
-            },
-            identity: None,
-            issuer: ISSUER.into(),
-        })
-        .with_control_authenticator(Arc::new(authenticator)),
+        control_delivery(database, org, logins)
+            .await?
+            .with_control_authenticator(Arc::new(authenticator)),
     );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let address = listener.local_addr()?;
@@ -659,4 +709,27 @@ async fn serve_control_http_with_projects(
         }
     });
     Ok((address, server))
+}
+
+async fn control_delivery(
+    database: String,
+    org: OrgId,
+    logins: HashMap<Triple, PgConnectOptions>,
+) -> anyhow::Result<HostRouteDelivery> {
+    let control = wamn_postgres::pool(&database, 3).await?;
+    let kubernetes = wamn_kubernetes::client::KubernetesApi::from_config(kube::Config::new(
+        "http://127.0.0.1:1".parse()?,
+    ))?;
+    let mut project_logins =
+        crate::project_login::ProjectLogins::new(kubernetes, control.clone(), org.clone());
+    project_logins.test_logins = logins;
+    let writer = wamn_postgres::connect(&database).await?;
+    Ok(HostRouteDelivery::new(HostRouteHandlers {
+        logins: Arc::new(project_logins),
+        org,
+        control,
+        writer: Writer::new(database, writer),
+        identity: None,
+        issuer: ISSUER.into(),
+    }))
 }

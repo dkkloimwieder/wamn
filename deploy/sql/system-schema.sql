@@ -1162,10 +1162,12 @@ RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalo
 $$;
 REVOKE ALL ON FUNCTION identity.project_access_grant(uuid,text,text,text) FROM PUBLIC;
 -- Operational authorization also checks activity on every request.
+-- An org admin may name a missing project so the route can report its own refusal.
 CREATE FUNCTION identity.is_project_admin(principal uuid, org_id text, project_id text)
 RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
-    SELECT EXISTS (SELECT FROM registry.project p JOIN registry.org o ON o.id=p.org
-                   WHERE p.org=org_id AND p.id=project_id AND p.active AND o.active)
+    SELECT EXISTS (SELECT FROM registry.org o WHERE o.id=org_id AND o.active)
+    AND NOT EXISTS (SELECT FROM registry.project p
+                    WHERE p.org=org_id AND p.id=project_id AND NOT p.active)
     AND identity.project_admin_grant(principal,org_id,project_id)
 $$;
 REVOKE ALL ON FUNCTION identity.is_project_admin(uuid,text,text) FROM PUBLIC;
