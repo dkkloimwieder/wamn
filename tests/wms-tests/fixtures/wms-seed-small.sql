@@ -33,7 +33,7 @@ SET row_security = off;
 -- The record history trigger requires an actor, and a dump carries none.
 -- These settings hold for the whole session that applies this file.
 BEGIN;
-INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('770df186-ac15-579e-b46b-c297cae2011b'::text::uuid,'','fixture','admin:seed-wms-fixture');
+INSERT INTO platform.tx_identity(principal_id,role,app,operation) VALUES('770df186-ac15-579e-b46b-c297cae2011b'::text::uuid,'','fixture','admin:seed-wms-fixture');
 
 --
 -- Data for Name: location; Type: TABLE DATA; Schema: wms; Owner: postgres

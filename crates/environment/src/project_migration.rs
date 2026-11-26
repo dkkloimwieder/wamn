@@ -6,7 +6,7 @@ pub fn history_table(
     package: &wamn_package::PackageName,
 ) -> String {
     let digest = wamn_digest::canonical_json_sha256(&serde_json::json!([project_env_key, package]));
-    format!("wamn_history.migrations_{}", &digest.hex()[..40])
+    format!("wamn_history.migration_{}", &digest.hex()[..40])
 }
 
 /// Grant runtime use and default access on one application model schema.

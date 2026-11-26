@@ -232,11 +232,11 @@ pub async fn create_org_logins(
             password,
         });
     }
-    sqlx::query("INSERT INTO registry.orgs (id) VALUES ($1) ON CONFLICT DO NOTHING")
+    sqlx::query("INSERT INTO registry.org (id) VALUES ($1) ON CONFLICT DO NOTHING")
         .bind(org.as_str())
         .execute(&mut *tx)
         .await
-        .context("record the org in registry.orgs")?;
+        .context("record the org in registry.org")?;
     tx.commit().await.context("commit org provisioning")?;
     Ok(passwords)
 }

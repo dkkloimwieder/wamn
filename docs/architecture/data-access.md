@@ -551,8 +551,8 @@ For example, `B{seq:batch,per=batch_id,width=4}-{seq:line,reset=batch,width=3}` 
 
 The generated guest accessors call `wamn_postgres_statements::next_number` or `peek_number` with the existing operation transaction.
 These library functions run SQL through that transaction. They have no host numbering import.
-The SQL resolves the sequence through `wamn_authority.current_application()` and the sequence name.
-The host stores the application's name from `environment.yaml` in `platform.tx_identity.application`.
+The SQL resolves the sequence through `wamn_authority.current_app()` and the sequence name.
+The host stores the application's name from `environment.yaml` in `platform.tx_identity.app`.
 The identity function reads that protected row for the open transaction.
 The functions read the stored pattern, so an edited pattern still applies.
 
@@ -795,7 +795,7 @@ No generated `update` or `delete` exists over a history table, so no application
 
 The generated history migration creates each logged relation’s history table under the restricted migration login.
 Generated history changes retain existing history tables and entries.
-It records the CDC exclusion of each history table in `wamn_cdc_exclusions`, as it records an internal relation.
+It records the CDC exclusion of each history table in `wamn_cdc_exclusion`, as it records an internal relation.
 The exclusion row names the package that owns the relation, and its relation id is the history table name.
 
 The generated migration installs one `wamn_record_history_log` trigger on each owned logged relation.
@@ -853,7 +853,7 @@ Package apply holds the same lock while SQLx runs generated history changes, so 
 The cutoff is `transaction_timestamp()` less n days, in UTC.
 The verb deletes an entry older than the cutoff only when no earlier entry of the same row is at or after the cutoff.
 It therefore removes a prefix of the history of a row, never an interior entry, and it writes no marker in the history table.
-In the same statement, it raises the row of the history table in `wamn_history.pruning_watermarks` to the highest transaction id that it removed.
+In the same statement, it raises the row of the history table in `wamn_history.pruning_watermark` to the highest transaction id that it removed.
 The change feed reads that watermark to find an expired cursor.
 
 apply-package owns the grants of the role.
@@ -921,9 +921,9 @@ The writer runs on the environment's `wamn_administration` login, in one transac
 The writer keeps a row that already holds the given values, and it removes no row.
 
 The stamped relations in [`deploy/sql/app-schema.sql`](../../deploy/sql/app-schema.sql) carry four stamp columns as `NOT NULL` and a `wamn_record_history_stamp` trigger.
-The account relations are `user`, `role`, `user_role`, `permission`, `api_key`, and `environment`.
+The account relations are `user`, `role`, `user_role`, `permission`, `api_key`, and `env`.
 The configuration relations are `file`, `number_sequence`, `number_counter`, and `setting`.
-`environment` holds at most one row. The host reads its boolean `active` flag. No row means active.
+`env` holds at most one row. The host reads its boolean `active` flag. No row means active.
 An integration selects a published type and authentication scheme for one project.
 A connection holds that integration's configuration for one environment.
 An external system identifies the external account that records come from.
@@ -932,23 +932,23 @@ Each relation except `number_counter` also has a `wamn_record_history_log` trigg
 The database separates environments. The platform account and configuration tables and their history tables have no `project_id`, row policy, or project key index.
 `role` keys on `name`. `user_role` keys on `(user_id, role_name)`, and `permission` keys on `(role_name, permission)`.
 Their foreign keys reference one column. `api_key` keys on `id`, and `key_hash` is unique in the database.
-`environment` uses a boolean `id` primary key constrained to `true`. Its default is `true`, so it holds at most one status row.
+`env` uses a boolean `id` primary key constrained to `true`. Its default is `true`, so it holds at most one status row.
 No status row means active. The application login reads that row from its selected environment database.
 History keys contain no `project_id`. Environment history uses the key `{"id": true}`.
-The shared control, catalog, and run tables store the composed `org--env--project` key in `project_env_key`.
-The separate `environment` field stores the short name, such as `dev`.
+The system registry stores placement as separate `org`, `env`, and `project` columns.
+The `env` column in `catalog.workflow` and `wamn_run.run` stores the short name, such as `dev`.
 Target JSON, catalog identities, run keys, and manifest targets use `project_env_key`.
 Event fields and workload identity use `project_env_key`. Credential hashes frame that name.
 The management variable is `WAMN_MANAGEMENT_PROJECT_ENV_KEY`. The `ingress` component's workload configuration carries `wamn.project_env_key`.
 The event subject keeps its separate organization, project, and short environment tokens.
 Auth invalidation keys still include the environment key, so equal principal IDs in separate environments keep separate cached grants and status.
-`wamn_app` holds `USAGE` on `platform`, `SELECT` on `user`, `role`, `user_role`, `permission`, `environment` and the seven platform configuration tables, `EXECUTE` on `platform.bump_counter`, `platform.assign_counter` and `platform.set_counter`, and the write log grants. It holds nothing else in `platform`: no grant on `api_key` or on a history table.
-`platform.bump_counter(sequence, counter, key)` is `SECURITY DEFINER`. It inserts the counter row at 1 when the row is absent, returns the value, and increments it, under the row lock. It tests no project and reads no claim. It refuses an id that is not a sequence with `undefined_object`. Guest numbering SQL resolves the sequence by `wamn_authority.current_application()` and the sequence name.
+`wamn_app` holds `USAGE` on `platform`, `SELECT` on `user`, `role`, `user_role`, `permission`, `env` and the seven platform configuration tables, `EXECUTE` on `platform.bump_counter`, `platform.assign_counter` and `platform.set_counter`, and the write log grants. It holds nothing else in `platform`: no grant on `api_key` or on a history table.
+`platform.bump_counter(sequence, counter, key)` is `SECURITY DEFINER`. It inserts the counter row at 1 when the row is absent, returns the value, and increments it, under the row lock. It tests no project and reads no claim. It refuses an id that is not a sequence with `undefined_object`. Guest numbering SQL resolves the sequence by `wamn_authority.current_app()` and the sequence name.
 The guest calls the counter functions in the host operation transaction.
 Dynamic queries use the SELECT-only login and cannot call these write functions.
 `platform.assign_counter(sequence, counter, key)` is `SECURITY DEFINER` and makes sure of the sequence id in the same way. It gives a `per=` counter one value for each key: under a transaction advisory lock on the key, it returns the value of the key row, or takes the next value of the `''` allocator row and inserts the key row with it. It refuses the `''` key with `invalid_parameter_value`.
 `platform.set_counter(sequence, counter, key, value)` is `SECURITY DEFINER` and makes sure of the sequence id in the same way. It is the write of the `number_counter.set` host route: under the row lock, it inserts the counter row with the value or sets the value of the row. It refuses a value below 1 with `invalid_parameter_value`.
-The administration family role `wamn_administration` holds `SELECT`, `INSERT`, `UPDATE`, and `DELETE` on `user`, `role`, `user_role`, `permission`, and `environment`.
+The administration family role `wamn_administration` holds `SELECT`, `INSERT`, `UPDATE`, and `DELETE` on `user`, `role`, `user_role`, `permission`, and `env`.
 It holds the same grants on `external_system`, `integration`, `connection`, `file`, `number_sequence`, and `setting`.
 It holds no grant on `number_counter`: only `platform.bump_counter`, `platform.assign_counter` and `platform.set_counter` write it.
 It holds `INSERT` on the entry columns of their eight history tables, `USAGE` on `wamn_history`, and `EXECUTE` on `wamn_history.row_image`.
@@ -972,16 +972,12 @@ Their stamps apply to administrative writes and future writers that bind an acto
 
 ### Catalog stamps
 
-The project catalog stamps `packages` and `releases`.
-Each separate SQLx migration history also carries the actor stamps.
-Each table carries the four stamp columns as `NOT NULL` with no default and a `wamn_record_history_stamp` trigger.
-These tables keep stamps only, with no history table.
-`release_connection` and `connection_binding` carry stamps and record history for changes within a release.
-`connection_requirement` stores each package's declared names, interfaces, and modes without stamps.
-The system database owns immutable `connection_generation` rows with parameters and credential references.
+The project catalog stamps `catalog.package` rows and keeps their row history.
+`catalog.connection_requirement` stores each package's declared names, interfaces, and modes and keeps row history.
+The project database owns immutable `platform.connection_generation` rows with parameters and credential references.
 Package application binds `wamn:apply-package` for migrations and catalog writes.
 Environment staging, connection administration, local development bindings, and minimum recording bind `wamn:provisioning`, as the platform configuration projection does.
-The `platform.connection` projection and `workflows` keep their existing metadata and carry no record history trigger.
+`platform.connection` and `catalog.workflow` keep their existing metadata and have record history triggers.
 
 ### Files
 
@@ -1058,7 +1054,7 @@ The full schema files own the platform schemas and build fresh installations.
 
 - Storing is two short calls: `file.put(binding, bytes)` streams the bytes to the store the binding names, inserts the row in its own commit and returns `file_id`; the application operation then carries `file_id` like any reference. No transaction waits on the store. A store is a connection with a store integration (`s3` or `gcs`), declared by the package and bound by name in `environment.yaml` with `mode = write`.
 
-- `exposure` is per file: `application` (default; the session holds `file.get` on the owning application, at `/api/<app>/files/<id>`), `private` (only an operation that returns a short-lived signed url; so the roles holding that operation), `public` (anyone with the link, no login). `url` is stored only for `public`, so old links survive a CDN change. Another application never serves the row.
+- `exposure` is per file: `app` (default; the session holds `file.get` on the owning application, at `/api/<app>/files/<id>`), `private` (only an operation that returns a short-lived signed url; so the roles holding that operation), `public` (anyone with the link, no login). `url` is stored only for `public`, so old links survive a CDN change. Another application never serves the row.
 
 ### System database
 
@@ -1072,15 +1068,15 @@ These catalog and target tables exist only in the system database and grant no a
 An environment stores its target identity on first apply. The target cannot change. `target_application` and the target platform connection remain separate work.
 
 The system database (`wamn_system`) stamps its identity authority relations.
-These relations are `identity.principals`, `identity.org_memberships`, `identity.org_roles`, `identity.project_roles`, and `identity.project_env_memberships`.
+These relations are `identity.principal`, `identity.org_membership`, `identity.org_role`, `identity.project_role`, and `identity.project_env_membership`.
 Each relation carries the four stamp columns as `NOT NULL` with no default, and a static `wamn_record_history_stamp` trigger.
-The full system schema also stamps `registry.meta`, `orgs`, `environments`, `projects`, `environment_projects`, `retired_project_envs`, and `capture_gap`.
-It stamps `identity.session_keys`, `session_signing_state`, and `password_attempts` too.
+The full system schema also stamps `registry.meta`, `registry.org`, `registry.env`, `registry.project`, `registry.project_env`, `registry.retired_project_envs`, and `registry.capture_gap`.
+It stamps `identity.session_key`, `identity.session_signing_state`, and `identity.password_attempt` too.
 The full control schema stamps registry declarations and `wamn_authority.author_login_projects`.
 The system operations tables carry no stamps. The append-only `provisioning.platform_event` journal records each lifecycle event with its own timestamp, caller, and command ID.
-In the system database, the actor is an `identity.principals` id.
-Registry rows keep unlimited history, with an exception for `registry.environment_application_connections` while its derived constraint name exceeds PostgreSQL's limit.
-The system logs changes to the identity authority relations listed above and to `identity.password_credentials`.
+In the system database, the actor is an `identity.principal` id.
+Registry rows, including app connection bindings, keep unlimited history.
+The system logs changes to the identity authority relations listed above and to `identity.password_credential`.
 History keeps the actor, operation, and row changes. A control route binds its sealed operation id.
 
 The `SYSTEM_SCHEMA_SQL` composition in [platform installation](../../crates/platform-install/src/lib.rs) installs `record-history.sql` before [`deploy/sql/system-schema.sql`](../../deploy/sql/system-schema.sql).
@@ -1088,9 +1084,9 @@ Initialization creates the `NOLOGIN` owner roles before installing these helpers
 A separate managed migration login inherits the selected owner role and runs the platform migration sequence.
 `SYSTEM_SCHEMA_SQL` does not carry `record-history-app-grants.sql`.
 
-`identity.principals.type` is `user` or `platform`.
+`identity.principal.type` is `user` or `platform`.
 A `platform` row carries its `wamn:<component>` name in `subject` and in `display_name`, and its derived id.
-The `principals_platform_principal_check` constraint pins that subject, display name, and id.
+The `principal_platform_principal_check` constraint pins that subject, display name, and id.
 It also refuses a `wamn:` display name on another type, and the subject pattern of another type refuses a colon.
 The schema seeds `wamn:provisioning` and `wamn:identity-service` under the provisioning principal.
 A platform principal cannot authenticate.
@@ -1161,10 +1157,10 @@ It creates the `platform.number_sequence` row of each sequence that the packages
 It writes or reactivates a user row for each eligible user with project environment membership or inherited administration.
 When the user loses access to that project environment, projection keeps the row for stamps, disables it, revokes its PATs, and removes its role assignments.
 `project_authority` uses `identity.is_project_admin` to set or remove the user's `admin` assignment in `platform.user_role`.
-The identity owner creates that user in `identity.principals`.
+The identity owner creates that user in `identity.principal`.
 One email address names one principal for the whole platform.
 A user who works in two organizations holds one principal and two memberships.
-A user row carries the email of that user from `identity.principals`.
+A user row carries the email of that user from `identity.principal`.
 When an admin grant changes, control runs the same projection with the administration login bound to the caller and the route's sealed operation id.
 Control also runs the projection periodically under the provisioning identity.
 The application host writes roles, permissions and user roles through its [host routes](execution.md#host-run-routes) with the same login and the same binding.

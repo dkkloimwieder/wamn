@@ -75,12 +75,12 @@ pub async fn insert_version(
     };
     let hash = graph.graph_hash();
     let inserted = sqlx::query(
-        "INSERT INTO catalog.workflows
-          (environment, application, workflow_id, version, graph_json, graph_hash,
+        "INSERT INTO catalog.workflow
+          (env, app, workflow_id, version, graph_json, graph_hash,
            trigger, path, schedule, source_package, entity, ops, condition,
            execution_type, execution_role, created_by)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
-         ON CONFLICT (environment, application, workflow_id, version) DO NOTHING",
+         ON CONFLICT (env, app, workflow_id, version) DO NOTHING",
     )
     .bind(app.environment.as_str())
     .bind(app.application.as_str())
@@ -112,8 +112,8 @@ pub async fn path_taken(
     path: &str,
 ) -> Result<bool, sqlx::Error> {
     sqlx::query_scalar(
-        "SELECT EXISTS (SELECT 1 FROM catalog.workflows
-           WHERE environment = $1 AND application = $2 AND enabled
+        "SELECT EXISTS (SELECT 1 FROM catalog.workflow
+           WHERE env = $1 AND app = $2 AND enabled
              AND path = $3 AND workflow_id <> $4)",
     )
     .bind(app.environment.as_str())
@@ -167,8 +167,8 @@ pub async fn load_version(
     version: i32,
 ) -> Result<Option<WorkflowVersion>, sqlx::Error> {
     sqlx::query(
-        "SELECT graph_json, graph_hash, execution_role, enabled FROM catalog.workflows
-          WHERE environment = $1 AND application = $2 AND workflow_id = $3 AND version = $4",
+        "SELECT graph_json, graph_hash, execution_role, enabled FROM catalog.workflow
+          WHERE env = $1 AND app = $2 AND workflow_id = $3 AND version = $4",
     )
     .bind(app.environment.as_str())
     .bind(app.application.as_str())
@@ -186,8 +186,8 @@ pub async fn previously_had_consumer(
     id: &CanonicalName,
 ) -> Result<bool, sqlx::Error> {
     sqlx::query_scalar(
-        "SELECT EXISTS (SELECT 1 FROM catalog.workflows
-                  WHERE environment = $1 AND application = $2 AND workflow_id = $3
+        "SELECT EXISTS (SELECT 1 FROM catalog.workflow
+                  WHERE env = $1 AND app = $2 AND workflow_id = $3
                     AND trigger = 'data_change' AND enable_lsn IS NOT NULL)",
     )
     .bind(app.environment.as_str())
@@ -208,8 +208,8 @@ pub async fn enable_version(
         .fetch_one(&mut *connection)
         .await?;
     let previous: Option<String> = sqlx::query_scalar(
-        "UPDATE catalog.workflows SET enabled = false
-          WHERE environment = $1 AND application = $2 AND workflow_id = $3 AND enabled
+        "UPDATE catalog.workflow SET enabled = false
+          WHERE env = $1 AND app = $2 AND workflow_id = $3 AND enabled
           RETURNING trigger",
     )
     .bind(app.environment.as_str())
@@ -218,8 +218,8 @@ pub async fn enable_version(
     .fetch_optional(&mut *connection)
     .await?;
     sqlx::query(
-        "UPDATE catalog.workflows SET enabled = true, enable_lsn = $5::pg_lsn
-          WHERE environment = $1 AND application = $2 AND workflow_id = $3 AND version = $4",
+        "UPDATE catalog.workflow SET enabled = true, enable_lsn = $5::pg_lsn
+          WHERE env = $1 AND app = $2 AND workflow_id = $3 AND version = $4",
     )
     .bind(app.environment.as_str())
     .bind(app.application.as_str())
@@ -239,8 +239,8 @@ pub async fn disable_version(
     version: i32,
 ) -> Result<Option<String>, sqlx::Error> {
     sqlx::query_scalar(
-        "UPDATE catalog.workflows SET enabled = false
-          WHERE environment = $1 AND application = $2 AND workflow_id = $3 AND version = $4
+        "UPDATE catalog.workflow SET enabled = false
+          WHERE env = $1 AND app = $2 AND workflow_id = $3 AND version = $4
           RETURNING trigger",
     )
     .bind(app.environment.as_str())
@@ -258,8 +258,8 @@ pub async fn has_enabled_data_change(
     id: &CanonicalName,
 ) -> Result<bool, sqlx::Error> {
     sqlx::query_scalar(
-        "SELECT EXISTS (SELECT 1 FROM catalog.workflows
-          WHERE environment = $1 AND application = $2 AND workflow_id = $3
+        "SELECT EXISTS (SELECT 1 FROM catalog.workflow
+          WHERE env = $1 AND app = $2 AND workflow_id = $3
             AND enabled AND trigger = 'data_change')",
     )
     .bind(app.environment.as_str())
@@ -275,7 +275,9 @@ pub async fn list(
     app: &ApplicationConfig,
 ) -> Result<Value, sqlx::Error> {
     let rows: Vec<Value> = sqlx::query_scalar(
-        "SELECT to_jsonb(w) FROM catalog.workflows w WHERE environment = $1 AND application = $2
+        "SELECT (to_jsonb(w) - ARRAY['env', 'app'])
+            || jsonb_build_object('environment', w.env, 'application', w.app)
+          FROM catalog.workflow w WHERE env = $1 AND app = $2
           ORDER BY workflow_id, version",
     )
     .bind(app.environment.as_str())
@@ -291,8 +293,8 @@ pub async fn request_workflow_ids(
     app: &ApplicationConfig,
 ) -> Result<Vec<String>, sqlx::Error> {
     sqlx::query_scalar(
-        "SELECT workflow_id FROM catalog.workflows
-          WHERE environment = $1 AND application = $2 AND enabled AND trigger = 'request'",
+        "SELECT workflow_id FROM catalog.workflow
+          WHERE env = $1 AND app = $2 AND enabled AND trigger = 'request'",
     )
     .bind(app.environment.as_str())
     .bind(app.application.as_str())

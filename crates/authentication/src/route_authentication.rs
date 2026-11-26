@@ -28,7 +28,7 @@ use wamn_connection::connection_memory::ConnectionStatus;
 
 /// The application host's read of the status of its environment
 /// (docs/architecture/execution.md#routing-and-availability): its row of
-/// `platform.environment`, as `wamn_app`, kept in the host's [auth
+/// `platform.env`, as `wamn_app`, kept in the host's [auth
 /// memory](wamn_authority::auth_cache).
 pub struct EnvironmentStatusReader {
     postgres: Arc<Authorization>,

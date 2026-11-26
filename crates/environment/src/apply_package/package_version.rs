@@ -8,10 +8,10 @@ pub(super) async fn record_package_schema(
     artifact_digest: Option<&wamn_digest::Digest>,
 ) -> anyhow::Result<bool> {
     Ok(sqlx::query(
-        "INSERT INTO catalog.packages (package_id, package_version, artifact_digest) \
+        "INSERT INTO catalog.package (package_id, package_version, artifact_digest) \
         VALUES ($1,$2,$3) ON CONFLICT (package_id) DO UPDATE \
         SET package_version=EXCLUDED.package_version, artifact_digest=EXCLUDED.artifact_digest \
-        WHERE ROW(catalog.packages.package_version, catalog.packages.artifact_digest) \
+        WHERE ROW(catalog.package.package_version, catalog.package.artifact_digest) \
         IS DISTINCT FROM ROW(EXCLUDED.package_version, EXCLUDED.artifact_digest)",
     )
     .bind(coordinate.package_id().as_str())
@@ -33,7 +33,7 @@ pub async fn load_applied_package(
     read_package(
         tx,
         package_id,
-        "SELECT artifact_digest, package_version FROM catalog.packages WHERE package_id=$1 FOR UPDATE",
+        "SELECT artifact_digest, package_version FROM catalog.package WHERE package_id=$1 FOR UPDATE",
     )
     .await
 }
@@ -45,7 +45,7 @@ pub async fn read_applied_package(
     read_package(
         tx,
         package_id,
-        "SELECT artifact_digest, package_version FROM catalog.packages WHERE package_id=$1",
+        "SELECT artifact_digest, package_version FROM catalog.package WHERE package_id=$1",
     )
     .await
 }

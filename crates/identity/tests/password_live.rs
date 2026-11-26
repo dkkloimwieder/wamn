@@ -50,9 +50,9 @@ async fn enrollment_preserves_identity_and_pat_and_consumes_all_invitations() {
     let user = new_user(&mut client, "alice").await;
     let other = new_user(&mut client, "bob").await;
     let work = password_work();
-    sqlx::raw_sql("INSERT INTO registry.orgs (id) VALUES ('password-test');
-        INSERT INTO registry.projects (org, id) VALUES ('password-test', 'widgets');
-        WITH parent_environment AS (INSERT INTO registry.environments (org,env) VALUES ('password-test','dev') ON CONFLICT (org,env) DO NOTHING) INSERT INTO registry.environment_projects (org,project,env,secret_name,instance_suffix) VALUES ('password-test','widgets','dev','password-test-secret','a1b2c3d4')").execute(&mut client).await.map(drop).unwrap();
+    sqlx::raw_sql("INSERT INTO registry.org (id) VALUES ('password-test');
+        INSERT INTO registry.project (org, id) VALUES ('password-test', 'widgets');
+        WITH parent_environment AS (INSERT INTO registry.env (org,env) VALUES ('password-test','dev') ON CONFLICT (org,env) DO NOTHING) INSERT INTO registry.project_env (org,project,env,secret_name,instance_suffix) VALUES ('password-test','widgets','dev','password-test-secret','a1b2c3d4')").execute(&mut client).await.map(drop).unwrap();
     wamn_identity::identity::org::activate_org_membership(
         &mut client,
         user.id(),
@@ -69,10 +69,10 @@ async fn enrollment_preserves_identity_and_pat_and_consumes_all_invitations() {
     )
     .await
     .unwrap();
-    let membership: String = sqlx::query("SELECT row_to_json(m)::text FROM identity.project_env_memberships m WHERE principal_id = $1::text::uuid").bind(user.id().to_string().as_str()).fetch_one(&mut client).await.unwrap().get(0);
+    let membership: String = sqlx::query("SELECT row_to_json(m)::text FROM identity.project_env_membership m WHERE principal_id = $1::text::uuid").bind(user.id().to_string().as_str()).fetch_one(&mut client).await.unwrap().get(0);
     // Capture principal and authority rows as they exist before enrollment.
     let before: String = sqlx::query(
-        "SELECT row_to_json(p)::text FROM identity.principals p WHERE id = $1::text::uuid",
+        "SELECT row_to_json(p)::text FROM identity.principal p WHERE id = $1::text::uuid",
     )
     .bind(user.id().to_string().as_str())
     .fetch_one(&mut client)
@@ -87,7 +87,7 @@ async fn enrollment_preserves_identity_and_pat_and_consumes_all_invitations() {
         .unwrap();
     assert_ne!(first.secret(), second.secret());
     assert!(!format!("{first:?}").contains(first.secret()));
-    let expires: String = sqlx::query("SELECT to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI') FROM identity.password_tokens WHERE token_hash = $1").bind(wamn_digest::bytes_sha256(first.secret().as_bytes()).to_string()).fetch_one(&mut client).await.unwrap().get(0);
+    let expires: String = sqlx::query("SELECT to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI') FROM identity.password_token WHERE token_hash = $1").bind(wamn_digest::bytes_sha256(first.secret().as_bytes()).to_string()).fetch_one(&mut client).await.unwrap().get(0);
     assert_eq!(first.expires_at(), expires);
     assert_eq!(
         enroll_password(&mut client, &work, other.id(), first.secret(), password())
@@ -124,7 +124,7 @@ async fn enrollment_preserves_identity_and_pat_and_consumes_all_invitations() {
         Some(RefusalCause::AlreadyEnrolled)
     );
     let after: String = sqlx::query(
-        "SELECT row_to_json(p)::text FROM identity.principals p WHERE id = $1::text::uuid",
+        "SELECT row_to_json(p)::text FROM identity.principal p WHERE id = $1::text::uuid",
     )
     .bind(user.id().to_string().as_str())
     .fetch_one(&mut client)
@@ -132,7 +132,7 @@ async fn enrollment_preserves_identity_and_pat_and_consumes_all_invitations() {
     .unwrap()
     .get(0);
     assert_eq!(before, after);
-    assert_eq!(membership, sqlx::query("SELECT row_to_json(m)::text FROM identity.project_env_memberships m WHERE principal_id = $1::text::uuid").bind(user.id().to_string().as_str()).fetch_one(&mut client).await.unwrap().get::<String, _>(0));
+    assert_eq!(membership, sqlx::query("SELECT row_to_json(m)::text FROM identity.project_env_membership m WHERE principal_id = $1::text::uuid").bind(user.id().to_string().as_str()).fetch_one(&mut client).await.unwrap().get::<String, _>(0));
     let authenticated =
         authenticate_password(&mut client, &work, "alice@example.invalid", password())
             .await
@@ -162,12 +162,12 @@ async fn enrollment_preserves_identity_and_pat_and_consumes_all_invitations() {
             .unwrap()
             .is_none()
     );
-    let row = sqlx::query("SELECT password_hash, created_by::text FROM identity.password_credentials WHERE principal_id = $1::text::uuid").bind(user.id().to_string().as_str()).fetch_one(&mut client).await.unwrap();
+    let row = sqlx::query("SELECT password_hash, created_by::text FROM identity.password_credential WHERE principal_id = $1::text::uuid").bind(user.id().to_string().as_str()).fetch_one(&mut client).await.unwrap();
     let hash: String = row.get(0);
     assert!(hash.starts_with("$argon2id$v=19$m=19456,t=2,p=1$"));
     assert!(!hash.contains(PASSWORD));
     assert_eq!(row.get::<&str, _>(1), user.id().to_string().as_str());
-    let rows = sqlx::query("SELECT token_hash, consumed_at IS NOT NULL, created_by::text FROM identity.password_tokens WHERE principal_id = $1::text::uuid").bind(user.id().to_string().as_str()).fetch_all(&mut client).await.unwrap();
+    let rows = sqlx::query("SELECT token_hash, consumed_at IS NOT NULL, created_by::text FROM identity.password_token WHERE principal_id = $1::text::uuid").bind(user.id().to_string().as_str()).fetch_all(&mut client).await.unwrap();
     assert_eq!(rows.len(), 2);
     assert!(
         rows.iter()
@@ -199,7 +199,7 @@ async fn invitation_expiry_type_purpose_and_transaction_rollback_refuse() {
     let invitation = issue_invitation(&mut client, &actor(), user.id())
         .await
         .unwrap();
-    sqlx::query("UPDATE identity.password_tokens SET expires_at = created_at + interval '1 microsecond' WHERE principal_id = $1::text::uuid").bind(user.id().to_string().as_str()).execute(&mut client).await.map(|result| result.rows_affected()).unwrap();
+    sqlx::query("UPDATE identity.password_token SET expires_at = created_at + interval '1 microsecond' WHERE principal_id = $1::text::uuid").bind(user.id().to_string().as_str()).execute(&mut client).await.map(|result| result.rows_affected()).unwrap();
     assert_eq!(
         enroll_password(
             &mut client,
@@ -221,7 +221,7 @@ async fn invitation_expiry_type_purpose_and_transaction_rollback_refuse() {
         Some(RefusalCause::NoSuchAccount)
     );
     let error = sqlx::query(
-        "INSERT INTO identity.password_tokens (token_hash, principal_id, purpose, expires_at) \
+        "INSERT INTO identity.password_token (token_hash, principal_id, purpose, expires_at) \
          VALUES ($1, $2, 'unknown-purpose', clock_timestamp() + interval '1 hour')",
     )
     .bind(wamn_digest::Digest::from([1u8; 32]).to_string())
@@ -240,7 +240,7 @@ async fn invitation_expiry_type_purpose_and_transaction_rollback_refuse() {
     let invitation = issue_invitation(&mut client, &actor(), user.id())
         .await
         .unwrap();
-    sqlx::raw_sql("CREATE FUNCTION identity.refuse_consumption() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'test refusal'; END $$; CREATE TRIGGER test_refuse BEFORE UPDATE ON identity.password_tokens FOR EACH ROW EXECUTE FUNCTION identity.refuse_consumption()").execute(&mut client).await.map(drop).unwrap();
+    sqlx::raw_sql("CREATE FUNCTION identity.refuse_consumption() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'test refusal'; END $$; CREATE TRIGGER test_refuse BEFORE UPDATE ON identity.password_token FOR EACH ROW EXECUTE FUNCTION identity.refuse_consumption()").execute(&mut client).await.map(drop).unwrap();
     assert_eq!(
         enroll_password(
             &mut client,
@@ -255,14 +255,14 @@ async fn invitation_expiry_type_purpose_and_transaction_rollback_refuse() {
         PasswordErrorType::Infrastructure
     );
     assert_eq!(
-        sqlx::query("SELECT count(*) FROM identity.password_credentials")
+        sqlx::query("SELECT count(*) FROM identity.password_credential")
             .fetch_one(&mut client)
             .await
             .unwrap()
             .get::<i64, _>(0),
         0
     );
-    sqlx::raw_sql("DROP TRIGGER test_refuse ON identity.password_tokens")
+    sqlx::raw_sql("DROP TRIGGER test_refuse ON identity.password_token")
         .execute(&mut client)
         .await
         .map(drop)
@@ -311,7 +311,7 @@ async fn concurrent_enrollment_creates_exactly_one_password() {
         PasswordErrorType::Refused
     );
     assert_eq!(
-        sqlx::query("SELECT count(*) FROM identity.password_credentials")
+        sqlx::query("SELECT count(*) FROM identity.password_credential")
             .fetch_one(&mut left)
             .await
             .unwrap()
@@ -319,7 +319,7 @@ async fn concurrent_enrollment_creates_exactly_one_password() {
         1
     );
     assert_eq!(
-        sqlx::query("SELECT count(*) FROM identity.password_tokens WHERE consumed_at IS NULL")
+        sqlx::query("SELECT count(*) FROM identity.password_token WHERE consumed_at IS NULL")
             .fetch_one(&mut left)
             .await
             .unwrap()
@@ -439,7 +439,7 @@ async fn reset_consumes_email_credentials_and_revokes_renewal_but_preserves_pat(
     );
     let principal_id = sqlx::types::Uuid::from(*user.id());
     let history: Vec<(sqlx::types::Uuid, String, String)> = sqlx::query_as(
-        "SELECT changed_by, type, operation FROM identity.password_credentials_history
+        "SELECT changed_by, type, operation FROM identity.password_credential_history
          WHERE row_key = jsonb_build_object('principal_id', $1::uuid)
          ORDER BY position",
     )
@@ -470,7 +470,14 @@ async fn reset_consumes_email_credentials_and_revokes_renewal_but_preserves_pat(
         .is_none()
     );
     tx.commit().await.unwrap();
-    sqlx::query("UPDATE identity.principals SET email='replacement@example.invalid' WHERE id=$1::text::uuid").bind(user.id().to_string().as_str()).execute(&mut client).await.map(|result| result.rows_affected()).unwrap();
+    sqlx::query(
+        "UPDATE identity.principal SET email='replacement@example.invalid' WHERE id=$1::text::uuid",
+    )
+    .bind(user.id().to_string().as_str())
+    .execute(&mut client)
+    .await
+    .map(|result| result.rows_affected())
+    .unwrap();
     assert!(
         issue_reset(
             &mut client,
@@ -489,7 +496,7 @@ async fn reset_consumes_email_credentials_and_revokes_renewal_but_preserves_pat(
     )
     .await
     .unwrap();
-    sqlx::raw_sql("UPDATE identity.password_tokens SET expires_at=created_at+interval '1 microsecond' WHERE purpose='reset'").execute(&mut client).await.map(drop).unwrap();
+    sqlx::raw_sql("UPDATE identity.password_token SET expires_at=created_at+interval '1 microsecond' WHERE purpose='reset'").execute(&mut client).await.map(drop).unwrap();
     assert!(
         reset_password(
             &mut client,

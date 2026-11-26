@@ -75,7 +75,7 @@ async fn package_apply_refuses_rebinding_an_existing_relation() -> anyhow::Resul
     ] {
         assert!(request(package).await.is_err());
         let (oid, original_mapping): (sqlx::postgres::types::Oid,bool) = sqlx::query_as(
-            "SELECT relation_oid::oid, package_id='first' AND entity_id='item' FROM fixture_app.wamn_entities WHERE relation_oid='fixture_app.item'::regclass")
+            "SELECT relation_oid::oid, package_id='first' AND entity_id='item' FROM fixture_app.wamn_entity WHERE relation_oid='fixture_app.item'::regclass")
             .fetch_one(&mut admin).await?;
         assert_eq!(oid, original);
         assert!(original_mapping);

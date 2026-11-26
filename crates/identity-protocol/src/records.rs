@@ -37,7 +37,7 @@ pub struct OrgUser {
 pub struct EnvironmentSummary {
     /// The environment name.
     pub name: wamn_registry::EnvName,
-    /// The status represented by `registry.environments.active`.
+    /// The status represented by `registry.env.active`.
     pub state: String,
 }
 

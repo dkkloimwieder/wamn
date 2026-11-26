@@ -34,33 +34,33 @@ pub mod session_keys;
 pub mod session_token;
 pub mod transaction;
 
-const INSERT_USER_SQL: &str = "INSERT INTO identity.principals \
+const INSERT_USER_SQL: &str = "INSERT INTO identity.principal \
     (type, subject, email, display_name) VALUES ('user', $1, $2, $3) \
     RETURNING id, type, subject, display_name, active";
 /// The user insert of [`create_or_reuse_user`]. An existing email or subject
 /// skips it.
-const INSERT_USER_IF_ABSENT_SQL: &str = "INSERT INTO identity.principals \
+const INSERT_USER_IF_ABSENT_SQL: &str = "INSERT INTO identity.principal \
     (type, subject, email, display_name) VALUES ('user', $1, $2, $3) \
     ON CONFLICT DO NOTHING";
 const SELECT_USER_BY_EMAIL_SQL: &str = "SELECT p.id, p.active, EXISTS (\
-    SELECT 1 FROM identity.password_credentials c WHERE c.principal_id = p.id) \
-    FROM identity.principals p WHERE p.type = 'user' AND p.email = $1";
+    SELECT 1 FROM identity.password_credential c WHERE c.principal_id = p.id) \
+    FROM identity.principal p WHERE p.type = 'user' AND p.email = $1";
 const SELECT_PRINCIPAL_BY_ID_SQL: &str = "SELECT id, type, subject, \
-    display_name, active FROM identity.principals WHERE id = $1";
-const DISABLE_PRINCIPAL_SQL: &str = "UPDATE identity.principals \
+    display_name, active FROM identity.principal WHERE id = $1";
+const DISABLE_PRINCIPAL_SQL: &str = "UPDATE identity.principal \
     SET active = false \
     WHERE id = $1 \
     RETURNING id, type, subject, display_name, active";
-const ASSIGN_PROJECT_ROLE_SQL: &str = "INSERT INTO identity.project_roles \
+const ASSIGN_PROJECT_ROLE_SQL: &str = "INSERT INTO identity.project_role \
     (principal_id, org, project, role) VALUES ($1, $2, $3, $4) \
     ON CONFLICT DO NOTHING";
-const SELECT_PROJECT_ROLES_SQL: &str = "SELECT role FROM identity.project_roles \
+const SELECT_PROJECT_ROLES_SQL: &str = "SELECT role FROM identity.project_role \
     WHERE principal_id = $1 AND org = $2 AND project = $3 ORDER BY role";
-const GRANT_PROJECT_ENV_MEMBERSHIP_SQL: &str = "INSERT INTO identity.project_env_memberships \
+const GRANT_PROJECT_ENV_MEMBERSHIP_SQL: &str = "INSERT INTO identity.project_env_membership \
     (principal_id, org, project, env) VALUES ($1, $2, $3, $4) \
     ON CONFLICT DO NOTHING";
 const SELECT_PROJECT_ENV_MEMBERSHIP_SQL: &str = "SELECT identity.has_project_access($1,$2,$4,$3)";
-const REVOKE_PROJECT_ENV_MEMBERSHIP_SQL: &str = "DELETE FROM identity.project_env_memberships \
+const REVOKE_PROJECT_ENV_MEMBERSHIP_SQL: &str = "DELETE FROM identity.project_env_membership \
     WHERE principal_id = $1 AND org = $2 AND project = $3 AND env = $4";
 /// Create a passwordless user principal for an externally authenticated
 /// subject.

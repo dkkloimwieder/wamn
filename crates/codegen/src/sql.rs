@@ -277,7 +277,7 @@ pub(crate) fn changes(table: &Table, operation: &OperationDeclaration, tombstone
     predicates.push("    model.id = ANY(ARRAY(SELECT change_id FROM affected))".to_owned());
     let restricted = query_select(table, &predicates);
     let expired = format!(
-        "EXISTS (SELECT FROM wamn_history.pruning_watermarks AS watermark WHERE watermark.history_table = '{history}'::regclass AND ${transaction}::int8 <= watermark.transaction_id)"
+        "EXISTS (SELECT FROM wamn_history.pruning_watermark AS watermark WHERE watermark.history_table = '{history}'::regclass AND ${transaction}::int8 <= watermark.transaction_id)"
     );
     format!(
         "SELECT
@@ -531,7 +531,7 @@ pub(crate) fn authored_changes(
 FROM (
     SELECT pg_snapshot_xmin(snapshot)::text::int8 AS feed_end,
            pg_snapshot_xmax(snapshot)::text::int8 AS feed_max, snapshot,
-           EXISTS (SELECT FROM wamn_history.pruning_watermarks AS watermark WHERE watermark.history_table IN ({expired}) AND ${transaction}::int8 <= watermark.transaction_id) AS expired
+           EXISTS (SELECT FROM wamn_history.pruning_watermark AS watermark WHERE watermark.history_table IN ({expired}) AND ${transaction}::int8 <= watermark.transaction_id) AS expired
     FROM (SELECT pg_current_snapshot() AS snapshot OFFSET 0) AS current
 ) AS bound
 LEFT JOIN LATERAL (

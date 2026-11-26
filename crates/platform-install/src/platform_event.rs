@@ -25,8 +25,8 @@ impl EventType {
     fn code(self) -> &'static str {
         match self {
             Self::OrgCreate => "org_create",
-            Self::EnvironmentApply => "environment_apply",
-            Self::EnvironmentDelete => "environment_delete",
+            Self::EnvironmentApply => "env_apply",
+            Self::EnvironmentDelete => "env_delete",
             Self::Deploy => "deploy",
             Self::Rollback => "rollback",
             Self::SchemaApply => "schema_apply",
@@ -100,7 +100,7 @@ pub async fn record(
     sqlx::query(
         "INSERT INTO provisioning.platform_event
             (command_id, event_type, outcome, principal_id, org, env, project,
-             application, package_digest, helm_revision, job_namespace, job_name, failure_summary)
+             app, package_digest, helm_revision, job_namespace, job_name, failure_summary)
          SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, left($13, 500)
          WHERE NOT EXISTS (
              SELECT FROM provisioning.platform_event

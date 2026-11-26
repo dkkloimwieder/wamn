@@ -316,7 +316,7 @@ mod tests {
         .await;
         assert_eq!(reply.status(), StatusCode::SERVICE_UNAVAILABLE);
         let unconsumed: Vec<bool> = sqlx::query_scalar(
-            "SELECT token_hash = $1 FROM identity.password_tokens WHERE consumed_at IS NULL",
+            "SELECT token_hash = $1 FROM identity.password_token WHERE consumed_at IS NULL",
         )
         .bind(wamn_digest::bytes_sha256(earlier.secret().as_bytes()).to_string())
         .fetch_all(&mut admin.client)

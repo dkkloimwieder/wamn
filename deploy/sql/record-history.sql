@@ -28,7 +28,7 @@ CREATE UNLOGGED TABLE IF NOT EXISTS platform.tx_identity (
     xid xid8 PRIMARY KEY DEFAULT pg_current_xact_id(),
     principal_id uuid NOT NULL,
     role text NOT NULL,
-    application text NOT NULL,
+    app text NOT NULL,
     operation text,
     runner text
 );
@@ -95,12 +95,12 @@ CREATE OR REPLACE FUNCTION wamn_authority.current_role()
 RETURNS text LANGUAGE sql STABLE SET search_path = pg_catalog AS $$
     SELECT (SELECT wamn_authority.current_identity()).role
 $$;
-CREATE OR REPLACE FUNCTION wamn_authority.current_application()
+CREATE OR REPLACE FUNCTION wamn_authority.current_app()
 RETURNS text LANGUAGE sql STABLE SET search_path = pg_catalog AS $$
-    SELECT (SELECT wamn_authority.current_identity()).application
+    SELECT (SELECT wamn_authority.current_identity()).app
 $$;
 REVOKE ALL ON FUNCTION wamn_authority.current_principal_id(),
-    wamn_authority.current_role(), wamn_authority.current_application() FROM PUBLIC;
+    wamn_authority.current_role(), wamn_authority.current_app() FROM PUBLIC;
 
 -- Existing writer roles can bind their own transaction. None can read the table.
 DO $identity_grants$
@@ -116,7 +116,7 @@ BEGIN
         END IF;
         EXECUTE format('GRANT EXECUTE ON FUNCTION wamn_authority.current_identity(), '
             'wamn_authority.current_principal_id(), wamn_authority.current_role(), '
-            'wamn_authority.current_application() TO %I', writer);
+            'wamn_authority.current_app() TO %I', writer);
     END LOOP;
 END
 $identity_grants$;
@@ -129,11 +129,11 @@ REVOKE ALL ON SCHEMA wamn_history FROM PUBLIC;
 -- The highest transaction id removed from each history table. A table has no
 -- row until pruning removes an entry. The relation OID distinguishes a new
 -- history table from a dropped table with the same name.
-CREATE TABLE IF NOT EXISTS wamn_history.pruning_watermarks (
+CREATE TABLE IF NOT EXISTS wamn_history.pruning_watermark (
     history_table regclass PRIMARY KEY,
     transaction_id bigint NOT NULL
 );
-REVOKE ALL ON TABLE wamn_history.pruning_watermarks FROM PUBLIC;
+REVOKE ALL ON TABLE wamn_history.pruning_watermark FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION wamn_history.stamp_row()
 RETURNS trigger

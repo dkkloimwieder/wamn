@@ -59,7 +59,7 @@ async fn ensure_key(
     let pair = KeyPair::new(key_type);
     let packed = seal(envelope, &pair).await?;
     let issued_at = sqlx::query_scalar(
-        "INSERT INTO identity.nats_keys
+        "INSERT INTO identity.nats_key
             (issuer, kind, org, env, public_key, private_key_envelope)
          VALUES ($1, $2, $3, $4, $5, $6) RETURNING issued_at",
     )
@@ -89,7 +89,7 @@ pub(super) async fn ensure_environment(
     let (total, current): (i64, i32) = sqlx::query_as(
         "SELECT COALESCE(sum(project_count), 0),
                 COALESCE(max(project_count) FILTER (WHERE org = $2 AND env = $3), 0)
-         FROM identity.nats_keys WHERE issuer = $1 AND kind = 'environment'",
+         FROM identity.nats_key WHERE issuer = $1 AND kind = 'env'",
     )
     .bind(issuer)
     .bind(org.as_str())
@@ -104,8 +104,8 @@ pub(super) async fn ensure_environment(
     }
 
     let existing: Option<(String, i64)> = sqlx::query_as(
-        "SELECT public_key, issued_at FROM identity.nats_keys
-         WHERE issuer = $1 AND kind = 'environment' AND org = $2 AND env = $3",
+        "SELECT public_key, issued_at FROM identity.nats_key
+         WHERE issuer = $1 AND kind = 'env' AND org = $2 AND env = $3",
     )
     .bind(issuer)
     .bind(org.as_str())
@@ -121,10 +121,10 @@ pub(super) async fn ensure_environment(
         } else {
             // The full resolver breaks same-second ties on JWT bytes.
             sqlx::query_scalar(
-                "UPDATE identity.nats_keys
+                "UPDATE identity.nats_key
                  SET issued_at = GREATEST(issued_at + 1, floor(EXTRACT(EPOCH FROM clock_timestamp()))::bigint),
                      project_count = $4
-                 WHERE issuer = $1 AND kind = 'environment' AND org = $2 AND env = $3
+                 WHERE issuer = $1 AND kind = 'env' AND org = $2 AND env = $3
                  RETURNING issued_at",
             )
             .bind(issuer)
@@ -141,9 +141,9 @@ pub(super) async fn ensure_environment(
         let packed = seal(envelope, &pair).await?;
         let subject = pair.public_key();
         let issued_at = sqlx::query_scalar(
-            "INSERT INTO identity.nats_keys
+            "INSERT INTO identity.nats_key
                 (issuer, kind, org, env, public_key, private_key_envelope, project_count)
-             VALUES ($1, 'environment', $2, $3, $4, $5, $6) RETURNING issued_at",
+             VALUES ($1, 'env', $2, $3, $4, $5, $6) RETURNING issued_at",
         )
         .bind(issuer)
         .bind(org.as_str())
@@ -164,7 +164,7 @@ pub(super) async fn ensure_environment(
         &mut tx,
         envelope,
         issuer,
-        "environment-signing",
+        "env-signing",
         scope,
         KeyPairType::Account,
     )
@@ -187,11 +187,11 @@ pub(super) async fn retire_environment(
     let mut tx = client.begin().await.map_err(database_error)?;
     lock(&mut tx, &format!("{issuer} nats accounts")).await?;
     let row = sqlx::query_as(
-        "UPDATE identity.nats_keys
+        "UPDATE identity.nats_key
          SET issued_at = CASE WHEN project_count = 0 THEN issued_at ELSE
              GREATEST(issued_at + 1, floor(EXTRACT(EPOCH FROM clock_timestamp()))::bigint) END,
              project_count = 0
-         WHERE issuer = $1 AND kind = 'environment' AND org = $2 AND env = $3
+         WHERE issuer = $1 AND kind = 'env' AND org = $2 AND env = $3
          RETURNING public_key, issued_at",
     )
     .bind(issuer)
@@ -213,9 +213,9 @@ pub(super) async fn environment_signer(
 ) -> Result<Option<Account>, Error> {
     let row: Option<(String, i64, Vec<u8>, String)> = sqlx::query_as(
         "SELECT a.public_key, a.issued_at, s.private_key_envelope, s.public_key
-         FROM identity.nats_keys a
-         JOIN identity.nats_keys s USING (issuer, org, env)
-         WHERE a.issuer = $1 AND a.kind = 'environment' AND s.kind = 'environment-signing'
+         FROM identity.nats_key a
+         JOIN identity.nats_key s USING (issuer, org, env)
+         WHERE a.issuer = $1 AND a.kind = 'env' AND s.kind = 'env-signing'
                AND a.org = $2 AND a.env = $3 AND a.project_count > 0",
     )
     .bind(issuer)
@@ -251,7 +251,7 @@ async fn read(
     scope: Scope<'_>,
 ) -> Result<Option<StoredKey>, Error> {
     let row: Option<(Vec<u8>, String, i64)> = sqlx::query_as(
-        "SELECT private_key_envelope, public_key, issued_at FROM identity.nats_keys
+        "SELECT private_key_envelope, public_key, issued_at FROM identity.nats_key
          WHERE issuer = $1 AND kind = $2
                AND org IS NOT DISTINCT FROM $3 AND env IS NOT DISTINCT FROM $4",
     )

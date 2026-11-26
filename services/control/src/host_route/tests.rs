@@ -79,23 +79,23 @@ async fn literal_control_http_wire() -> anyhow::Result<()> {
     let mut seed =
         wamn_postgres::provisioning_transaction::provisioning_transaction(&mut admin).await?;
     sqlx::raw_sql(
-        "INSERT INTO registry.projects (org, id) VALUES ('acme', 'alpha'), ('acme', 'beta');
-         INSERT INTO registry.environments (org, env, active) VALUES
+        "INSERT INTO registry.project (org, id) VALUES ('acme', 'alpha'), ('acme', 'beta');
+         INSERT INTO registry.env (org, env, active) VALUES
            ('acme', 'dev', true), ('acme', 'paused', false);
-         INSERT INTO registry.environment_projects (org, env, project, secret_name, instance_suffix)
+         INSERT INTO registry.project_env (org, env, project, secret_name, instance_suffix)
            SELECT org, env, 'alpha', 'fixture-only', 'a1b2c3d4'
-           FROM registry.environments WHERE org = 'acme';
-         INSERT INTO identity.principals (id, type, subject, email, display_name) VALUES
+           FROM registry.env WHERE org = 'acme';
+         INSERT INTO identity.principal (id, type, subject, email, display_name) VALUES
            ('00000000-0000-0000-0000-000000000001', 'user', 'admin@example.invalid', 'admin@example.invalid', 'Admin'),
            ('00000000-0000-0000-0000-000000000002', 'user', 'member@example.invalid', 'member@example.invalid', 'Member'),
            ('00000000-0000-0000-0000-000000000003', 'user', 'project@example.invalid', 'project@example.invalid', 'Project');
-         INSERT INTO identity.principals (type, subject, email, display_name, active) VALUES
+         INSERT INTO identity.principal (type, subject, email, display_name, active) VALUES
            ('user', 'disabled@example.invalid', 'disabled@example.invalid', 'Disabled', false);
-         INSERT INTO identity.org_memberships (principal_id, org, active)
-           SELECT id, 'acme', active FROM identity.principals WHERE email LIKE '%@example.invalid';
-         INSERT INTO identity.org_roles (principal_id, org, role) VALUES
+         INSERT INTO identity.org_membership (principal_id, org, active)
+           SELECT id, 'acme', active FROM identity.principal WHERE email LIKE '%@example.invalid';
+         INSERT INTO identity.org_role (principal_id, org, role) VALUES
            ('00000000-0000-0000-0000-000000000001', 'acme', 'org-admin');
-         INSERT INTO identity.project_roles (principal_id, org, project, role) VALUES
+         INSERT INTO identity.project_role (principal_id, org, project, role) VALUES
            ('00000000-0000-0000-0000-000000000003', 'acme', 'alpha', 'project-admin');",
     ).execute(&mut *seed).await?;
     seed.commit().await?;
@@ -204,7 +204,7 @@ async fn generated_org_client_live() -> anyhow::Result<()> {
 
     let mut seed =
         wamn_postgres::provisioning_transaction::provisioning_transaction(&mut admin).await?;
-    sqlx::query("INSERT INTO registry.projects (org, id) VALUES ($1, 'billing')")
+    sqlx::query("INSERT INTO registry.project (org, id) VALUES ($1, 'billing')")
         .bind(org.as_str())
         .execute(&mut *seed)
         .await?;

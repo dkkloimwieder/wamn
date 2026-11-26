@@ -8,22 +8,22 @@ use wamn_role::IDENTITY_ISSUER_ROLE;
 use crate::provision_system::SYSTEM_DATABASE;
 
 /// Tables that allow full row mutations by the signing authority.
-pub const IDENTITY_ISSUER_TABLES: [&str; 2] = ["session_keys", "session_signing_state"];
+pub const IDENTITY_ISSUER_TABLES: [&str; 2] = ["session_key", "session_signing_state"];
 /// Reads for the identity issuer.
 pub const IDENTITY_ISSUER_READ_COLUMNS: [(&str, &str, &[&str]); 9] = [
     (
         "identity",
-        "principals",
+        "principal",
         &["id", "type", "subject", "display_name", "active"],
     ),
     (
         "identity",
-        "project_env_memberships",
+        "project_env_membership",
         &["principal_id", "org", "project", "env"],
     ),
     (
         "registry",
-        "environment_projects",
+        "project_env",
         &["org", "env", "project", "instance_suffix"],
     ),
     // The control audience of an org
@@ -31,41 +31,41 @@ pub const IDENTITY_ISSUER_READ_COLUMNS: [(&str, &str, &[&str]); 9] = [
     // registered and the user must hold a control role there.
     (
         "identity",
-        "project_roles",
+        "project_role",
         &["principal_id", "org", "project", "role"],
     ),
-    ("registry", "orgs", &["id"]),
-    ("registry", "projects", &["org", "id"]),
-    ("registry", "environments", &["org", "env", "active"]),
-    ("identity", "org_roles", &["principal_id", "org", "role"]),
+    ("registry", "org", &["id"]),
+    ("registry", "project", &["org", "id"]),
+    ("registry", "env", &["org", "env", "active"]),
+    ("identity", "org_role", &["principal_id", "org", "role"]),
     (
         "identity",
-        "org_memberships",
+        "org_membership",
         &["principal_id", "org", "active"],
     ),
 ];
 
 /// Narrow column grants for passwords and user management.
 pub const IDENTITY_ISSUER_PASSWORD_COLUMNS: &[(&str, &str, &[&str])] = &[
-    ("principals", "SELECT", &["email"]),
+    ("principal", "SELECT", &["email"]),
     (
-        "principals",
+        "principal",
         "INSERT",
         &["type", "subject", "email", "display_name"],
     ),
-    ("principals", "UPDATE", &["active"]),
+    ("principal", "UPDATE", &["active"]),
     (
-        "password_credentials",
+        "password_credential",
         "SELECT",
         &["principal_id", "password_hash"],
     ),
     (
-        "password_credentials",
+        "password_credential",
         "INSERT",
         &["principal_id", "password_hash"],
     ),
     (
-        "password_tokens",
+        "password_token",
         "SELECT",
         &[
             "token_hash",
@@ -76,14 +76,14 @@ pub const IDENTITY_ISSUER_PASSWORD_COLUMNS: &[(&str, &str, &[&str])] = &[
         ],
     ),
     (
-        "password_tokens",
+        "password_token",
         "INSERT",
         &["token_hash", "principal_id", "purpose", "expires_at"],
     ),
-    ("password_tokens", "UPDATE", &["consumed_at"]),
-    ("password_credentials", "UPDATE", &["password_hash"]),
+    ("password_token", "UPDATE", &["consumed_at"]),
+    ("password_credential", "UPDATE", &["password_hash"]),
     (
-        "password_logins",
+        "password_login",
         "SELECT",
         &[
             "id",
@@ -97,7 +97,7 @@ pub const IDENTITY_ISSUER_PASSWORD_COLUMNS: &[(&str, &str, &[&str])] = &[
         ],
     ),
     (
-        "password_logins",
+        "password_login",
         "INSERT",
         &[
             "principal_id",
@@ -109,17 +109,17 @@ pub const IDENTITY_ISSUER_PASSWORD_COLUMNS: &[(&str, &str, &[&str])] = &[
         ],
     ),
     (
-        "password_logins",
+        "password_login",
         "UPDATE",
         &["renewal_expires_at", "revoked_at"],
     ),
     (
-        "renewal_credentials",
+        "renewal_credential",
         "SELECT",
         &["token_hash", "login_id", "consumed_at"],
     ),
-    ("renewal_credentials", "INSERT", &["token_hash", "login_id"]),
-    ("renewal_credentials", "UPDATE", &["consumed_at"]),
+    ("renewal_credential", "INSERT", &["token_hash", "login_id"]),
+    ("renewal_credential", "UPDATE", &["consumed_at"]),
 ];
 
 /// Refuse an issuer outside the HTTPS identity contract.
@@ -170,13 +170,13 @@ pub fn grants_sql() -> String {
          GRANT USAGE ON SCHEMA identity, registry, platform, wamn_authority TO {role}; \
          GRANT USAGE ON SCHEMA wamn_history TO {role}; \
          GRANT EXECUTE ON FUNCTION wamn_history.row_image(record) TO {role}; \
-         GRANT INSERT ON identity.principals_history, identity.password_credentials_history TO {role}; \
+         GRANT INSERT ON identity.principal_history, identity.password_credential_history TO {role}; \
          GRANT INSERT ON platform.tx_identity TO {role}; \
-         GRANT EXECUTE ON FUNCTION wamn_authority.current_identity(), wamn_authority.current_principal_id(), wamn_authority.current_role(), wamn_authority.current_application() TO {role}; \
+         GRANT EXECUTE ON FUNCTION wamn_authority.current_identity(), wamn_authority.current_principal_id(), wamn_authority.current_role(), wamn_authority.current_app() TO {role}; \
          GRANT SELECT, INSERT, UPDATE, DELETE ON \
-           identity.session_keys, identity.session_signing_state TO {role}; \
-         GRANT SELECT, INSERT ON identity.nats_keys TO {role}; \
-         GRANT UPDATE (project_count, issued_at) ON identity.nats_keys TO {role}; \
+           identity.session_key, identity.session_signing_state TO {role}; \
+         GRANT SELECT, INSERT ON identity.nats_key TO {role}; \
+         GRANT UPDATE (project_count, issued_at) ON identity.nats_key TO {role}; \
          GRANT EXECUTE ON FUNCTION identity.is_project_admin(uuid,text,text), identity.has_project_access(uuid,text,text,text) TO {role};",
     );
     for (schema, table, columns) in IDENTITY_ISSUER_READ_COLUMNS {
@@ -206,8 +206,8 @@ pub fn grants_sql() -> String {
         )
         .expect("string write");
     }
-    write!(sql, " GRANT SELECT, INSERT, UPDATE, DELETE ON identity.password_attempts TO {role}; GRANT EXECUTE ON FUNCTION identity.lock_password_principal(uuid) TO {role};").expect("string write");
-    write!(sql, " GRANT DELETE ON identity.password_logins TO {role};").expect("string write");
+    write!(sql, " GRANT SELECT, INSERT, UPDATE, DELETE ON identity.password_attempt TO {role}; GRANT EXECUTE ON FUNCTION identity.lock_password_principal(uuid) TO {role};").expect("string write");
+    write!(sql, " GRANT DELETE ON identity.password_login TO {role};").expect("string write");
     sql.push_str(&crate::platform_sql::grant_control_policy_execute_sql(
         &role,
     ));

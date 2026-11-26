@@ -4,11 +4,11 @@ use wamn_authentication::identity_error::IdentityError;
 use wamn_authentication::identity_error::database_error;
 
 const NUMBER_SEQUENCE_SQL: &str = "INSERT INTO platform.number_sequence \
-    (id, application, name, pattern) VALUES ($1::text::uuid, $2, $3, $4) \
+    (id, app, name, pattern) VALUES ($1::text::uuid, $2, $3, $4) \
     ON CONFLICT (id) DO UPDATE SET \
-      application = EXCLUDED.application, name = EXCLUDED.name, pattern = EXCLUDED.pattern \
-    WHERE (number_sequence.application, number_sequence.name, number_sequence.pattern) \
-          IS DISTINCT FROM (EXCLUDED.application, EXCLUDED.name, EXCLUDED.pattern)";
+      app = EXCLUDED.app, name = EXCLUDED.name, pattern = EXCLUDED.pattern \
+    WHERE (number_sequence.app, number_sequence.name, number_sequence.pattern) \
+          IS DISTINCT FROM (EXCLUDED.app, EXCLUDED.name, EXCLUDED.pattern)";
 
 const SETTING_SQL: &str = "INSERT INTO platform.setting \
     (target_type, target_id, key, value, locked) \
@@ -30,7 +30,7 @@ pub struct NumberSequence {
 /// One `platform.setting` row.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Setting {
-    /// `org`, `project`, `application`, `role` or `user`.
+    /// `org`, `project`, `app`, `role` or `user`.
     pub target_type: String,
     pub target_id: String,
     pub key: String,

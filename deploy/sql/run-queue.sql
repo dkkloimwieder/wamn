@@ -7,7 +7,7 @@
 -- The host grants the first lease during admission. The service takes expired leases.
 --
 -- Project provisioning applies this schema after run-state.sql, which creates
--- the wamn_run schema and the runs table referenced by the queue.
+-- the wamn_run schema and the run table referenced by the queue.
 --
 -- Only host roles can read or write the queue. A project database holds one
 -- project. FORCE RLS requires the protected caller row, and table grants
@@ -29,9 +29,9 @@
 -- `infrastructure-failure` after the janitor grace period. Credential releases
 -- back off from one second, doubled per attempt, with up to 20 percent jitter.
 -- `queue::MAX_RETRY_BACKOFF_MS` caps the full delay at five minutes.
--- The FK to `runs` ON DELETE CASCADE
+-- The FK to `run` ON DELETE CASCADE
 -- ties the lease machinery to the run's immutable history. Status/lifecycle live
--- on `runs` (5.7) — the queue is the lease layer, not a second run-state.
+-- on `run` (5.7) — the queue is the lease layer, not a second run-state.
 -- ---------------------------------------------------------------------------
 CREATE TABLE wamn_run.run_queue (
     created_at timestamptz NOT NULL,
@@ -50,7 +50,7 @@ CREATE TABLE wamn_run.run_queue (
     max_attempts     int  NOT NULL DEFAULT 20,
     enqueued_at      timestamptz NOT NULL DEFAULT now(),
     PRIMARY KEY (run_id),
-    FOREIGN KEY (run_id) REFERENCES wamn_run.runs (run_id) ON DELETE CASCADE
+    FOREIGN KEY (run_id) REFERENCES wamn_run.run (run_id) ON DELETE CASCADE
 );
 CREATE TRIGGER wamn_record_history_stamp
     BEFORE INSERT OR UPDATE ON wamn_run.run_queue

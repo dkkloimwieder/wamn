@@ -162,7 +162,7 @@ async fn app_schema_applies_and_enforces_isolation_on_postgres() {
     // The fixture writes as U1, its test principal, whose row stamps itself.
     writeln!(
         script,
-        "BEGIN; INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('{U1}'::uuid,'','fixture','admin:seed-isolation-fixture');\n\
+        "BEGIN; INSERT INTO platform.tx_identity(principal_id,role,app,operation) VALUES('{U1}'::uuid,'','fixture','admin:seed-isolation-fixture');\n\
          INSERT INTO platform.\"user\" (id, issuer, sub, type, email) VALUES \
            ('{U1}','https://fixture.example','{U1}','user','u1@t1'),\n\
            ('{U2}','wamn','{U2}','service','u2@t1'),\n\
@@ -351,7 +351,7 @@ END $$;
 
 BEGIN;
 SET LOCAL ROLE wamn_platform;
-INSERT INTO platform.tx_identity (principal_id, role, application, operation)
+INSERT INTO platform.tx_identity (principal_id, role, app, operation)
 VALUES ('11111111-1111-1111-1111-111111111111', '', '', 'admin:pat-history-fixture');
 INSERT INTO platform."user" (id, issuer, sub, type, email)
 VALUES ('11111111-1111-1111-1111-111111111111', 'wamn', 'fixture', 'service', 'fixture@example.invalid');
@@ -395,7 +395,7 @@ async fn platform_relations_log_every_row_change_on_postgres() {
     writeln!(
         script,
         "BEGIN;\n\
-         INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('{U1}'::uuid,'','fixture','{SEED}');\n\
+         INSERT INTO platform.tx_identity(principal_id,role,app,operation) VALUES('{U1}'::uuid,'','fixture','{SEED}');\n\
          INSERT INTO platform.\"user\" (id, issuer, sub, type, email) VALUES \
            ('{U1}','https://fixture.example','{U1}','user','u1@t1'),\n\
            ('{U2}','https://fixture.example','{U2}','user','u2@t2'),\n\
@@ -409,7 +409,7 @@ async fn platform_relations_log_every_row_change_on_postgres() {
            ('org', 'acme', 'display.theme', '\"dark\"');\n\
          COMMIT;\n\
          BEGIN;\n\
-         INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('{U2}'::uuid,'','fixture','{CHANGE}');\n\
+         INSERT INTO platform.tx_identity(principal_id,role,app,operation) VALUES('{U2}'::uuid,'','fixture','{CHANGE}');\n\
          UPDATE platform.\"user\" SET active = false WHERE id = '{U2}';\n\
          UPDATE platform.role SET description = 'administrators' WHERE name = 'admin';\n\
          UPDATE platform.user_role SET role_name = 'auditor' WHERE user_id = '{U3}';\n\
@@ -417,7 +417,7 @@ async fn platform_relations_log_every_row_change_on_postgres() {
          UPDATE platform.setting SET value = '\"light\"';\n\
          COMMIT;\n\
          BEGIN;\n\
-         INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('{U3}'::uuid,'','fixture','{REMOVE}');\n\
+         INSERT INTO platform.tx_identity(principal_id,role,app,operation) VALUES('{U3}'::uuid,'','fixture','{REMOVE}');\n\
          DELETE FROM platform.setting;\n\
          UPDATE platform.\"user\" SET active = false WHERE id = '{U1}';\n\
          DELETE FROM platform.user_role WHERE user_id = '{U1}';\n\
@@ -649,7 +649,7 @@ GRANT INSERT ON public.history_probe_history TO wamn_app;
 
 BEGIN;
 SET LOCAL ROLE wamn_app;
-INSERT INTO platform.tx_identity (principal_id, role, application, operation)
+INSERT INTO platform.tx_identity (principal_id, role, app, operation)
 VALUES ('{HISTORY_ACTOR}', '', 'fixture', 'fixture:probe/create@1.0.0');
 SELECT set_config('app.user_id', '{OTHER_HISTORY_ACTOR}', true);
 INSERT INTO public.history_probe (id, amount, created_by, updated_by, created_at, updated_at)
@@ -664,7 +664,7 @@ COMMIT;
 
 BEGIN;
 SET LOCAL ROLE wamn_app;
-INSERT INTO platform.tx_identity (principal_id, role, application, operation)
+INSERT INTO platform.tx_identity (principal_id, role, app, operation)
 VALUES ('{OTHER_HISTORY_ACTOR}', '', 'fixture', 'fixture:probe/update@1.0.0');
 INSERT INTO public.history_probe (id, amount) VALUES (1, 1.00)
 ON CONFLICT (id) DO UPDATE
@@ -679,7 +679,7 @@ COMMIT;
 
 BEGIN;
 SET LOCAL ROLE wamn_app;
-INSERT INTO platform.tx_identity (principal_id, role, application, operation)
+INSERT INTO platform.tx_identity (principal_id, role, app, operation)
 VALUES ('{HISTORY_ACTOR}', '', 'fixture', 'fixture:probe/update@1.0.0');
 UPDATE public.history_probe SET amount = amount, updated_at = '2000-01-01',
     updated_by = '{HISTORY_ACTOR}' WHERE id = 1;
@@ -700,7 +700,7 @@ END $$;
 
 BEGIN;
 SET LOCAL ROLE wamn_app;
-INSERT INTO platform.tx_identity (principal_id, role, application, operation)
+INSERT INTO platform.tx_identity (principal_id, role, app, operation)
 VALUES ('{HISTORY_ACTOR}', '', 'fixture', 'fixture:probe/delete@1.0.0');
 DELETE FROM public.history_probe WHERE id = 1;
 RESET ROLE;
@@ -756,7 +756,7 @@ DO $$ BEGIN
     EXCEPTION WHEN SQLSTATE '55000' THEN NULL;
     END;
 END $$;
-INSERT INTO platform.tx_identity (principal_id, role, application)
+INSERT INTO platform.tx_identity (principal_id, role, app)
 VALUES ('{HISTORY_ACTOR}', '', 'fixture');
 DO $$ BEGIN
     BEGIN
@@ -788,7 +788,7 @@ BEGIN
         'operator:fix-grades'
     ] LOOP
         BEGIN
-            INSERT INTO platform.tx_identity (principal_id, role, application, operation)
+            INSERT INTO platform.tx_identity (principal_id, role, app, operation)
             VALUES ('{HISTORY_ACTOR}', '', 'fixture', proposed);
             UPDATE public.history_probe SET amount = 2 WHERE id = 1;
             ASSERT false, 'invalid operation %', proposed;
@@ -891,8 +891,8 @@ async fn run_queue_stamps_scheduled_runs() {
 {}
 BEGIN;
 {}
-INSERT INTO wamn_run.runs
-    (run_id, graph_id, graph_version, graph_hash, package_id, environment,
+INSERT INTO wamn_run.run
+    (run_id, graph_id, graph_version, graph_hash, package_id, env,
      trigger_source, execution_principal_id, execution_role, invoked_by)
 VALUES ('run', 'fixture', 1, 'sha256:' || repeat('d', 64), 'package', 'dev',
         'schedule', '{HISTORY_ACTOR}', 'admin', 'schedule');

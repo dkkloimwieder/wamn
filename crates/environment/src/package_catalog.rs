@@ -37,7 +37,7 @@ impl InstalledPackageRow<'_> {
 pub async fn installed_package_artifacts(
     connection: &mut PgConnection,
 ) -> Result<Vec<(PackageName, Option<Digest>)>, sqlx::Error> {
-    sqlx::query("SELECT package_id, artifact_digest FROM catalog.packages")
+    sqlx::query("SELECT package_id, artifact_digest FROM catalog.package")
         .try_map(|row: sqlx::postgres::PgRow| {
             InstalledPackageRow {
                 package_id: row.try_get(0)?,

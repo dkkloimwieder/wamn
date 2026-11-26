@@ -7,10 +7,10 @@ use std::sync::Arc;
 use tokio::sync::Notify;
 
 const SCHEMA: &str = "
-CREATE TABLE IF NOT EXISTS samples (
+CREATE TABLE IF NOT EXISTS sample (
     id INTEGER PRIMARY KEY,
     sample_key TEXT NOT NULL UNIQUE,
-    claim_id INTEGER NOT NULL UNIQUE REFERENCES claims (id),
+    claim_id INTEGER NOT NULL UNIQUE REFERENCES claim (id),
     captured_at TEXT NOT NULL,
     body TEXT NOT NULL,
     forwarded_at INTEGER,
@@ -49,7 +49,7 @@ pub struct RefusedSample {
     pub attempts: u32,
 }
 
-/// The samples table of the run-state file.
+/// The `sample` table of the run-state file.
 #[derive(Debug, Clone)]
 pub struct SampleStore {
     store: EdgeStore,
@@ -75,14 +75,14 @@ impl SampleStore {
 
     pub async fn pending_count(&self) -> anyhow::Result<u32> {
         Ok(sqlx::query_scalar(
-            "SELECT count(*) FROM samples WHERE forwarded_at IS NULL AND refused_at IS NULL",
+            "SELECT count(*) FROM sample WHERE forwarded_at IS NULL AND refused_at IS NULL",
         )
         .fetch_one(self.store.pool())
         .await?)
     }
 
     pub async fn pending(&self, limit: u32) -> anyhow::Result<Vec<Sample>> {
-        sqlx::query("SELECT sample_key, claim_id, captured_at, body, attempts FROM samples WHERE forwarded_at IS NULL AND refused_at IS NULL ORDER BY id LIMIT ?")
+        sqlx::query("SELECT sample_key, claim_id, captured_at, body, attempts FROM sample WHERE forwarded_at IS NULL AND refused_at IS NULL ORDER BY id LIMIT ?")
             .bind(limit).fetch_all(self.store.pool()).await?.into_iter().map(|row| Ok(Sample {
                 sample_key: row.try_get(0)?, claim: row.try_get(1)?, captured_at: row.try_get(2)?,
                 body: serde_json::from_str(row.try_get(3)?)?, attempts: row.try_get(4)?,
@@ -90,13 +90,13 @@ impl SampleStore {
     }
 
     pub async fn forwarded(&self, key: &str) -> anyhow::Result<()> {
-        self.update(key, "UPDATE samples SET forwarded_at = ?, attempts = attempts + 1 WHERE sample_key = ? AND forwarded_at IS NULL AND refused_at IS NULL", None).await
+        self.update(key, "UPDATE sample SET forwarded_at = ?, attempts = attempts + 1 WHERE sample_key = ? AND forwarded_at IS NULL AND refused_at IS NULL", None).await
     }
     pub async fn refused(&self, key: &str, reason: &str) -> anyhow::Result<()> {
-        self.update(key, "UPDATE samples SET refused_at = ?, last_error = ?, attempts = attempts + 1 WHERE sample_key = ? AND forwarded_at IS NULL AND refused_at IS NULL", Some(reason)).await
+        self.update(key, "UPDATE sample SET refused_at = ?, last_error = ?, attempts = attempts + 1 WHERE sample_key = ? AND forwarded_at IS NULL AND refused_at IS NULL", Some(reason)).await
     }
     pub async fn attempt_failed(&self, key: &str, error: &str) -> anyhow::Result<()> {
-        let changed = sqlx::query("UPDATE samples SET last_error = ?, attempts = attempts + 1 WHERE sample_key = ? AND forwarded_at IS NULL AND refused_at IS NULL")
+        let changed = sqlx::query("UPDATE sample SET last_error = ?, attempts = attempts + 1 WHERE sample_key = ? AND forwarded_at IS NULL AND refused_at IS NULL")
             .bind(error).bind(key).execute(self.store.pool()).await?.rows_affected();
         anyhow::ensure!(changed == 1, "sample {key} is not pending");
         Ok(())
@@ -121,13 +121,13 @@ impl SampleStore {
         Ok(())
     }
     pub async fn refused_samples(&self) -> anyhow::Result<Vec<RefusedSample>> {
-        Ok(sqlx::query("SELECT sample_key, captured_at, last_error, attempts FROM samples WHERE refused_at IS NOT NULL AND resolved_at IS NULL ORDER BY id")
+        Ok(sqlx::query("SELECT sample_key, captured_at, last_error, attempts FROM sample WHERE refused_at IS NOT NULL AND resolved_at IS NULL ORDER BY id")
             .fetch_all(self.store.pool()).await?.into_iter().map(|row| RefusedSample {
                 sample_key: row.get(0), captured_at: row.get(1), reason: row.get(2), attempts: row.get(3),
             }).collect())
     }
     pub async fn resolve(&self, key: &str, basis: OperatorDecision) -> anyhow::Result<()> {
-        let changed = sqlx::query("UPDATE samples SET resolved_basis = ?, resolved_at = ? WHERE sample_key = ? AND refused_at IS NOT NULL AND resolved_at IS NULL")
+        let changed = sqlx::query("UPDATE sample SET resolved_basis = ?, resolved_at = ? WHERE sample_key = ? AND refused_at IS NOT NULL AND resolved_at IS NULL")
             .bind(basis.as_str()).bind(now_ms()?).bind(key).execute(self.store.pool()).await?.rows_affected();
         anyhow::ensure!(changed == 1, "sample {key} is not refused and open");
         Ok(())

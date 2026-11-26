@@ -160,11 +160,11 @@ The hierarchy is org, environment, project, application.
 `wamn-registry` defines the values that registry readers return.
 `wamn-environment` owns SQL for deployment records, applied configuration, and lifecycle locks.
 `wamn-platform-install` owns SQL for system and org setup. `wamn-connection` holds the project connection store.
-`registry.environments` stores each environment's active flag, disposable setting, target, readiness budget, drain bound, and grant cache lifetime.
-`registry.projects` holds org-level project definitions.
-`registry.environment_projects` places a project under an environment and owns its database Secret and instance suffix.
+`registry.env` stores each environment's active flag, disposable setting, target, readiness budget, drain bound, and grant cache lifetime.
+`registry.project` holds org-level project definitions.
+`registry.project_env` places a project under an environment and owns its database Secret and instance suffix.
 Applications are releases under those project deployments.
-`registry.environment_applications` stores the host label of each application and keeps it unique within the org.
+`registry.env_app` stores the host label of each application and keeps it unique within the org.
 Deploy derives `<label>--<org>.<base>` using the base in `registry.meta.platform_domain`.
 Web accepts an application route only when its host uses the ConfigMap namespace as the org and matches the platform base in web's settings file.
 Environment coordinates contain org and environment.
@@ -180,7 +180,7 @@ Request settings cannot select a different org.
 ## Organization membership and administration
 
 A principal is global. Membership of an org is explicit.
-`identity.org_memberships` holds one row for each principal and org, and uses a boolean `active` flag.
+`identity.org_membership` holds one row for each principal and org, and uses a boolean `active` flag.
 `user.create` and `user.invite` create or reuse the principal and activate its org membership.
 Control refuses a new or reactivated membership if the user belongs to another org, including an inactive membership.
 An active member can hold no project access, a membership of environments, application roles, `project-admin`, or `org-admin`.
@@ -188,7 +188,7 @@ A valid account with no effective access is not an authentication error.
 
 An org admin administers every environment, project and application in the org.
 A project admin administers the applications and connections of that project.
-The system stores each explicit grant in `identity.org_roles` or `identity.project_roles`.
+The system stores each explicit grant in `identity.org_role` or `identity.project_role`.
 `project_authority` records inherited administration as an `admin` assignment in each project environment database that the grant covers.
 
 Org token issuance requires active org membership.

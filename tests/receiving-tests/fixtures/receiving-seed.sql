@@ -34,7 +34,7 @@
 
 BEGIN;
 
-INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('770df186-ac15-579e-b46b-c297cae2011b'::text::uuid,'','fixture','admin:seed-receiving-fixture');
+INSERT INTO platform.tx_identity(principal_id,role,app,operation) VALUES('770df186-ac15-579e-b46b-c297cae2011b'::text::uuid,'','fixture','admin:seed-receiving-fixture');
 
 \if :{?reset}
 TRUNCATE receiving.receipt_line, receiving.receipt,

@@ -32,9 +32,9 @@ async fn maintenance_copies_current_authority_past_an_unreachable_database() -> 
     let actor = wamn_identity_protocol::PlatformComponent::Provisioning.principal_id();
     let mut tx = common::transaction(&mut authority, &actor, "admin:project-authority").await?;
     sqlx::raw_sql(
-        "INSERT INTO registry.projects (org,id) VALUES ('fill','fixture');
-         INSERT INTO registry.environments (org,env) VALUES ('fill','dev'), ('fill','prod');
-         INSERT INTO registry.environment_projects (org,project,env,secret_name,instance_suffix)
+        "INSERT INTO registry.project (org,id) VALUES ('fill','fixture');
+         INSERT INTO registry.env (org,env) VALUES ('fill','dev'), ('fill','prod');
+         INSERT INTO registry.project_env (org,project,env,secret_name,instance_suffix)
          VALUES ('fill','fixture','dev','secret-dev','aaaaaaa1'),
                 ('fill','fixture','prod','secret-prod','aaaaaaa2');",
     )

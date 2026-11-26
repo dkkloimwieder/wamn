@@ -8,7 +8,7 @@ use wamn_principal::PlatformComponent;
 use wamn_test_infrastructure::database;
 
 /// The principal, application and operation that the current transaction acts as.
-const CURRENT: &str = "SELECT principal_id::text, application, operation \
+const CURRENT: &str = "SELECT principal_id::text, app, operation \
                        FROM wamn_authority.current_identity() WHERE principal_id IS NOT NULL";
 
 type Identity = Option<(String, String, Option<String>)>;

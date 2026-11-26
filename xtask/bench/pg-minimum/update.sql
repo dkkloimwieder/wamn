@@ -26,7 +26,7 @@ SELECT ''::text AS role, p.id, p.row_version AS expected_row_version,
  WHERE p.id = md5(('wamn-receiving-seed' || chr(58) || 'order' || chr(58)) || :order_number::integer)::uuid \gset
 \startpipeline
 BEGIN ISOLATION LEVEL READ COMMITTED;
-INSERT INTO platform.tx_identity(principal_id, role, application, operation, runner) VALUES (:principal::uuid, :role, '', :operation, :runner);
+INSERT INTO platform.tx_identity(principal_id, role, app, operation, runner) VALUES (:principal::uuid, :role, '', :operation, :runner);
 SELECT set_config('statement_timeout', :statement_timeout, true), set_config('search_path', COALESCE(:schema, current_setting('search_path')), true);
 INSERT INTO platform.write_log (operation, idempotency_key, request) VALUES (:claim_operation::text, :request_id::text, :request_hash::bytea) ON CONFLICT (operation, idempotency_key) DO NOTHING RETURNING idempotency_key;
 \endpipeline

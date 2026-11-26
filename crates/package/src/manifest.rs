@@ -17,7 +17,7 @@ use crate::OperationType;
 use crate::local_operation::LocalOperation;
 pub use manifest_error::{ManifestError, ManifestErrorType};
 
-pub const CONTROL_OWNED_RELATION_TABLES: [&str; 2] = ["wamn_entities", "wamn_cdc_exclusions"];
+pub const CONTROL_OWNED_RELATION_TABLES: [&str; 2] = ["wamn_entity", "wamn_cdc_exclusion"];
 
 /// Strict package-owned behavior declaration parsed from `wamn.json`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -34,7 +34,7 @@
 --   (1) control-plane authority: project workloads cannot connect here.
 --       Authorized identity readers perform fresh PAT authentication.
 --       The separate identity issuer has explicit key, credential, and throttle grants.
---   (2) no project-database credentials (R8b) — `environment_projects` stores a Secret
+--   (2) no project-database credentials (R8b) — `registry.project_env` stores a Secret
 --       *reference* (secret_name + optional secret_namespace) and NO project DB
 --       credential column (no url/password/dsn). First-party user login hashes
 --       live separately under `identity`. Session signing keys are the explicit
@@ -143,26 +143,26 @@ CREATE TRIGGER wamn_record_history_stamp
 -- Organizations are the units of isolation and billing.
 -- Double hyphens separate components of derived project names.
 -- ---------------------------------------------------------------------------
-CREATE TABLE registry.orgs (
+CREATE TABLE registry.org (
     id             text PRIMARY KEY,
     created_at timestamptz NOT NULL,
     created_by uuid NOT NULL,
     updated_at timestamptz NOT NULL,
     updated_by uuid NOT NULL,
-    CONSTRAINT orgs_id_charset_check
+    CONSTRAINT org_id_charset_check
         CHECK (id ~ '^[a-z0-9]+(-[a-z0-9]+)*$'
                AND char_length(id) <= 40
                AND id <> 'wamn' AND id NOT LIKE 'wamn-%')
 );
 CREATE TRIGGER wamn_record_history_stamp
-    BEFORE INSERT OR UPDATE ON registry.orgs
+    BEFORE INSERT OR UPDATE ON registry.org
     FOR EACH ROW
     EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 
 -- Org isolation follows the authenticated login.
 CREATE FUNCTION registry.login_org() RETURNS text
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
-    SELECT o.id FROM registry.orgs o
+    SELECT o.id FROM registry.org o
     CROSS JOIN (VALUES
         ('wamn_control_', 'wamn.control.identity.v0.1'),
         ('wamn_apply_', 'wamn.apply.identity.v0.1')
@@ -184,8 +184,8 @@ REVOKE ALL ON FUNCTION registry.login_org() FROM PUBLIC;
 -- Projects — structure within an org. Unique per org (the composite PK);
 -- FK to the owning org.
 -- ---------------------------------------------------------------------------
-CREATE TABLE registry.projects (
-    org  text NOT NULL REFERENCES registry.orgs (id) ON DELETE CASCADE,
+CREATE TABLE registry.project (
+    org  text NOT NULL REFERENCES registry.org (id) ON DELETE CASCADE,
     id   text NOT NULL,
     created_at timestamptz NOT NULL,
     created_by uuid NOT NULL,
@@ -194,13 +194,13 @@ CREATE TABLE registry.projects (
     PRIMARY KEY (org, id),
     -- cjv.20 charset backstop: project `id` is a report_id_issues mirror (lowercase slug
     -- ≤ 40 bytes, not under the reserved `wamn` prefix — it too mints names).
-    CONSTRAINT projects_id_charset_check
+    CONSTRAINT project_id_charset_check
         CHECK (id ~ '^[a-z0-9]+(-[a-z0-9]+)*$'
                AND char_length(id) <= 40
                AND id <> 'wamn' AND id NOT LIKE 'wamn-%')
 );
 CREATE TRIGGER wamn_record_history_stamp
-    BEFORE INSERT OR UPDATE ON registry.projects
+    BEFORE INSERT OR UPDATE ON registry.project
     FOR EACH ROW
     EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 
@@ -215,7 +215,7 @@ CREATE TRIGGER wamn_record_history_stamp
 -- component that writes in this database, and only wamn:provisioning does. The
 -- row carries its `wamn:<component>` name in `subject` and in `display_name`,
 -- and the id that `wamn-identity-protocol` derives from that name.
--- `principals_platform_principal_check` pins the subject, display name, and id
+-- `principal_platform_principal_check` pins the subject, display name, and id
 -- of each platform row, and it refuses a `wamn:` display name on another type.
 -- The subject pattern refuses a colon on another type. PostgreSQL has no
 -- UUIDv5, so a Rust test compares the literal with the derivation. A platform
@@ -223,13 +223,13 @@ CREATE TRIGGER wamn_record_history_stamp
 --
 -- `email` is the deliverable address of a user. `reconcile-run-plane` copies
 -- it into the `platform."user"` user row of every project the user can write
--- in (wamn-0h0g.9.18). Only a user carries one: `principals_email_check`
+-- in (wamn-0h0g.9.18). Only a user carries one: `principal_email_check`
 -- refuses an email on another type and refuses a user without one. `subject`
 -- is email-shaped by its own CHECK, but it is an authentication token, so
 -- nothing reads it as an address.
 --
 -- `UNIQUE (email)` says the rule plainly: an address names one user. It needs
--- no `type`, because `principals_email_check` already forces NULL on every
+-- no `type`, because `principal_email_check` already forces NULL on every
 -- other type, and PostgreSQL treats repeated NULLs as distinct. So the
 -- constraint touches no platform row.
 --
@@ -238,7 +238,7 @@ CREATE TRIGGER wamn_record_history_stamp
 -- users collide inside a project instead. That failure stops a whole
 -- `reconcile-run-plane` run, unrelated schema repair included.
 -- ---------------------------------------------------------------------------
-CREATE TABLE identity.principals (
+CREATE TABLE identity.principal (
     id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     type         text NOT NULL,
     subject      text NOT NULL,
@@ -252,20 +252,20 @@ CREATE TABLE identity.principals (
     UNIQUE (id, type),
     UNIQUE (type, subject),
     UNIQUE (email),
-    CONSTRAINT principals_type_check
+    CONSTRAINT principal_type_check
         CHECK (type IN ('user', 'platform')),
-    CONSTRAINT principals_subject_check
+    CONSTRAINT principal_subject_check
         CHECK (type = 'platform'
                OR (subject ~ '^[a-z0-9][a-z0-9._@+-]*$'
                    AND char_length(subject) <= 254)),
-    CONSTRAINT principals_email_check
+    CONSTRAINT principal_email_check
         CHECK ((type = 'user') = (email IS NOT NULL)
                AND (email IS NULL
                     OR (email ~ '^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$'
                         AND char_length(email) <= 254))),
-    CONSTRAINT principals_display_name_check
+    CONSTRAINT principal_display_name_check
         CHECK (btrim(display_name) <> '' AND char_length(display_name) <= 200),
-    CONSTRAINT principals_platform_principal_check
+    CONSTRAINT principal_platform_principal_check
         CHECK (CASE WHEN type = 'platform'
                     THEN (subject, display_name, id) IN (
                              ('wamn:provisioning', 'wamn:provisioning', '770df186-ac15-579e-b46b-c297cae2011b'::uuid),
@@ -274,13 +274,13 @@ CREATE TABLE identity.principals (
                END)
 );
 CREATE TRIGGER wamn_record_history_stamp
-    BEFORE INSERT OR UPDATE ON identity.principals
+    BEFORE INSERT OR UPDATE ON identity.principal
     FOR EACH ROW
     EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 
-CREATE TABLE identity.project_roles (
+CREATE TABLE identity.project_role (
     principal_id uuid NOT NULL
-        REFERENCES identity.principals (id) ON DELETE CASCADE,
+        REFERENCES identity.principal (id) ON DELETE CASCADE,
     org          text NOT NULL,
     project      text NOT NULL,
     role         text NOT NULL,
@@ -290,12 +290,12 @@ CREATE TABLE identity.project_roles (
     updated_by   uuid NOT NULL,
     PRIMARY KEY (principal_id, org, project, role),
     FOREIGN KEY (org, project)
-        REFERENCES registry.projects (org, id) ON DELETE CASCADE,
-    CONSTRAINT project_roles_role_check
+        REFERENCES registry.project (org, id) ON DELETE CASCADE,
+    CONSTRAINT project_role_role_check
         CHECK (role ~ '^[a-z0-9][a-z0-9-]*$' AND char_length(role) <= 64)
 );
 CREATE TRIGGER wamn_record_history_stamp
-    BEFORE INSERT OR UPDATE ON identity.project_roles
+    BEFORE INSERT OR UPDATE ON identity.project_role
     FOR EACH ROW
     EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 
@@ -304,11 +304,11 @@ CREATE TRIGGER wamn_record_history_stamp
 -- A user's membership of one org (docs/plan/platform-ui.md §2.7). The
 -- principal stays global, and the membership's active flag is org-local: an
 -- inactive member keeps the row and holds no access in the org.
-CREATE TABLE identity.org_memberships (
+CREATE TABLE identity.org_membership (
     principal_id   uuid NOT NULL,
     principal_type text NOT NULL DEFAULT 'user',
     org            text NOT NULL
-        REFERENCES registry.orgs (id) ON DELETE CASCADE,
+        REFERENCES registry.org (id) ON DELETE CASCADE,
     active         boolean NOT NULL DEFAULT true,
     created_at     timestamptz NOT NULL,
     created_by     uuid NOT NULL,
@@ -316,12 +316,12 @@ CREATE TABLE identity.org_memberships (
     updated_by     uuid NOT NULL,
     PRIMARY KEY (principal_id, org),
     FOREIGN KEY (principal_id, principal_type)
-        REFERENCES identity.principals (id, type) ON DELETE CASCADE,
-    CONSTRAINT org_memberships_user_check
+        REFERENCES identity.principal (id, type) ON DELETE CASCADE,
+    CONSTRAINT org_membership_user_check
         CHECK (principal_type = 'user')
 );
 CREATE TRIGGER wamn_record_history_stamp
-    BEFORE INSERT OR UPDATE ON identity.org_memberships
+    BEFORE INSERT OR UPDATE ON identity.org_membership
     FOR EACH ROW
     EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 
@@ -335,27 +335,27 @@ BEGIN
         RETURN NEW;
     END IF;
 
-    UPDATE identity.principals SET display_name = display_name WHERE id = NEW.principal_id;
+    UPDATE identity.principal SET display_name = display_name WHERE id = NEW.principal_id;
     IF (COALESCE(pg_has_role(session_user, to_regrole('wamn_control'), 'member'), false)
         OR COALESCE(pg_has_role(session_user, to_regrole('wamn_apply'), 'member'), false))
        AND NOT EXISTS (SELECT FROM pg_roles WHERE rolname = session_user AND rolsuper)
-       AND EXISTS (SELECT FROM identity.org_memberships
+       AND EXISTS (SELECT FROM identity.org_membership
                    WHERE principal_id = NEW.principal_id AND org <> NEW.org) THEN
         RAISE EXCEPTION 'the user already belongs to another org'
-            USING ERRCODE = '23514', CONSTRAINT = 'org_memberships_single_org';
+            USING ERRCODE = '23514', CONSTRAINT = 'org_membership_single_org';
     END IF;
     RETURN NEW;
 END;
 $$;
 REVOKE ALL ON FUNCTION identity.check_org_membership() FROM PUBLIC;
 CREATE TRIGGER check_org_membership
-    AFTER INSERT OR UPDATE OF principal_id, org, active ON identity.org_memberships
+    AFTER INSERT OR UPDATE OF principal_id, org, active ON identity.org_membership
     FOR EACH ROW EXECUTE FUNCTION identity.check_org_membership();
 
 -- A user's administrative role in one org (docs/plan/platform-ui.md §4.4).
 -- A role needs the user's membership of the org, and deleting the
 -- membership deletes the role.
-CREATE TABLE identity.org_roles (
+CREATE TABLE identity.org_role (
     principal_id uuid NOT NULL,
     org          text NOT NULL,
     role         text NOT NULL,
@@ -365,12 +365,12 @@ CREATE TABLE identity.org_roles (
     updated_by   uuid NOT NULL,
     PRIMARY KEY (principal_id, org, role),
     FOREIGN KEY (principal_id, org)
-        REFERENCES identity.org_memberships (principal_id, org) ON DELETE CASCADE,
-    CONSTRAINT org_roles_role_check
+        REFERENCES identity.org_membership (principal_id, org) ON DELETE CASCADE,
+    CONSTRAINT org_role_role_check
         CHECK (role = 'org-admin')
 );
 CREATE TRIGGER wamn_record_history_stamp
-    BEFORE INSERT OR UPDATE ON identity.org_roles
+    BEFORE INSERT OR UPDATE ON identity.org_role
     FOR EACH ROW
     EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 
@@ -379,7 +379,7 @@ CREATE TRIGGER wamn_record_history_stamp
 -- The identity library serializes enrollment on the principal row and consumes
 -- all outstanding invitations in the same transaction as password creation.
 -- Authorized issuer grants belong to the password endpoint implementation.
-CREATE TABLE identity.password_credentials (
+CREATE TABLE identity.password_credential (
     principal_id uuid PRIMARY KEY,
     principal_type text NOT NULL DEFAULT 'user' CHECK (principal_type = 'user'),
     password_hash text NOT NULL CHECK (octet_length(password_hash) <= 256
@@ -389,14 +389,14 @@ CREATE TABLE identity.password_credentials (
     updated_at timestamptz NOT NULL,
     updated_by uuid NOT NULL,
     FOREIGN KEY (principal_id, principal_type)
-        REFERENCES identity.principals (id, type) ON DELETE RESTRICT
+        REFERENCES identity.principal (id, type) ON DELETE RESTRICT
 );
 CREATE TRIGGER wamn_record_history_stamp
-    BEFORE INSERT OR UPDATE ON identity.password_credentials
+    BEFORE INSERT OR UPDATE ON identity.password_credential
     FOR EACH ROW
     EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 
-CREATE TABLE identity.password_tokens (
+CREATE TABLE identity.password_token (
     token_hash text PRIMARY KEY CHECK (token_hash ~ '^sha256:[0-9a-f]{64}$'),
     principal_id uuid NOT NULL,
     principal_type text NOT NULL DEFAULT 'user' CHECK (principal_type = 'user'),
@@ -408,18 +408,18 @@ CREATE TABLE identity.password_tokens (
     updated_at timestamptz NOT NULL,
     updated_by uuid NOT NULL,
     FOREIGN KEY (principal_id, principal_type)
-        REFERENCES identity.principals (id, type) ON DELETE RESTRICT,
+        REFERENCES identity.principal (id, type) ON DELETE RESTRICT,
     CHECK (expires_at > created_at)
 );
-CREATE INDEX password_tokens_principal_idx ON identity.password_tokens (principal_id);
+CREATE INDEX password_token_principal_idx ON identity.password_token (principal_id);
 CREATE TRIGGER wamn_record_history_stamp
-    BEFORE INSERT OR UPDATE ON identity.password_tokens
+    BEFORE INSERT OR UPDATE ON identity.password_token
     FOR EACH ROW
     EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 
 -- One password login owns a family of single-use renewal credentials.
 -- Credential material gets stamps but never row-image history.
-CREATE TABLE identity.password_logins (
+CREATE TABLE identity.password_login (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     principal_id uuid NOT NULL,
     principal_type text NOT NULL DEFAULT 'user' CHECK (principal_type = 'user'),
@@ -434,47 +434,47 @@ CREATE TABLE identity.password_logins (
     updated_at timestamptz NOT NULL,
     updated_by uuid NOT NULL,
     FOREIGN KEY (principal_id, principal_type)
-        REFERENCES identity.principals (id, type) ON DELETE RESTRICT,
+        REFERENCES identity.principal (id, type) ON DELETE RESTRICT,
     CHECK (expires_at = authenticated_at + interval '8 hours'),
     CHECK (renewal_expires_at > authenticated_at AND renewal_expires_at <= expires_at)
 );
-CREATE INDEX password_logins_principal_idx ON identity.password_logins (principal_id);
-CREATE INDEX password_logins_expiry_idx ON identity.password_logins (issuer, expires_at);
+CREATE INDEX password_login_principal_idx ON identity.password_login (principal_id);
+CREATE INDEX password_login_expiry_idx ON identity.password_login (issuer, expires_at);
 CREATE TRIGGER wamn_record_history_stamp
-    BEFORE INSERT OR UPDATE ON identity.password_logins
+    BEFORE INSERT OR UPDATE ON identity.password_login
     FOR EACH ROW
     EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 
-CREATE TABLE identity.renewal_credentials (
+CREATE TABLE identity.renewal_credential (
     token_hash text PRIMARY KEY CHECK (token_hash ~ '^sha256:[0-9a-f]{64}$'),
-    login_id uuid NOT NULL REFERENCES identity.password_logins (id) ON DELETE CASCADE,
+    login_id uuid NOT NULL REFERENCES identity.password_login (id) ON DELETE CASCADE,
     consumed_at timestamptz,
     created_at timestamptz NOT NULL,
     created_by uuid NOT NULL,
     updated_at timestamptz NOT NULL,
     updated_by uuid NOT NULL
 );
-CREATE INDEX renewal_credentials_login_idx ON identity.renewal_credentials (login_id);
+CREATE INDEX renewal_credential_login_idx ON identity.renewal_credential (login_id);
 CREATE TRIGGER wamn_record_history_stamp
-    BEFORE INSERT OR UPDATE ON identity.renewal_credentials
+    BEFORE INSERT OR UPDATE ON identity.renewal_credential
     FOR EACH ROW
     EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 
 -- The principal lock orders disablement against every login writer. The trigger
 -- also covers administrative status changes outside the identity Rust library.
-CREATE FUNCTION identity.revoke_disabled_password_logins() RETURNS trigger
+CREATE FUNCTION identity.revoke_disabled_password_login() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
 BEGIN
-    UPDATE identity.password_logins SET revoked_at = clock_timestamp()
+    UPDATE identity.password_login SET revoked_at = clock_timestamp()
     WHERE principal_id = NEW.id AND revoked_at IS NULL;
     RETURN NEW;
 END;
 $$;
-REVOKE ALL ON FUNCTION identity.revoke_disabled_password_logins() FROM PUBLIC;
-CREATE TRIGGER revoke_disabled_password_logins
-    AFTER UPDATE OF active ON identity.principals
+REVOKE ALL ON FUNCTION identity.revoke_disabled_password_login() FROM PUBLIC;
+CREATE TRIGGER revoke_disabled_password_login
+    AFTER UPDATE OF active ON identity.principal
     FOR EACH ROW WHEN (NOT NEW.active)
-    EXECUTE FUNCTION identity.revoke_disabled_password_logins();
+    EXECUTE FUNCTION identity.revoke_disabled_password_login();
 
 -- never per-session state. A fresh UUID kid is generated for each publication;
 -- rotation never reuses the credential machinery's A/B slot names as kids.
@@ -488,7 +488,7 @@ CREATE TRIGGER revoke_disabled_password_logins
 -- The public key remains valid through cutoff + 930 seconds (900 + 30).
 -- A failed flip rolls back both state and cutoff; no last-use/token writes are
 -- needed. Compromise removal deletes the key immediately and never falls back.
-CREATE TABLE identity.session_keys (
+CREATE TABLE identity.session_key (
     issuer         text NOT NULL CHECK (btrim(issuer) <> ''),
     kid            uuid NOT NULL DEFAULT gen_random_uuid(),
     public_key     bytea NOT NULL CHECK (octet_length(public_key) = 32),
@@ -500,24 +500,24 @@ CREATE TABLE identity.session_keys (
     updated_at timestamptz NOT NULL,
     updated_by uuid NOT NULL,
     PRIMARY KEY (issuer, kid),
-    CONSTRAINT session_keys_retirement_check
+    CONSTRAINT session_key_retirement_check
         CHECK ((signing_cutoff IS NULL) = (private_key_envelope IS NOT NULL))
 );
 CREATE TRIGGER wamn_record_history_stamp
-    BEFORE INSERT OR UPDATE ON identity.session_keys
+    BEFORE INSERT OR UPDATE ON identity.session_key
     FOR EACH ROW
     EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 
 -- Identity owns the NATS operator and account signing keys. Only the
 -- identity issuer may open the envelopes or revise an environment's limits.
-CREATE TABLE identity.nats_keys (
+CREATE TABLE identity.nats_key (
     issuer text NOT NULL CHECK (btrim(issuer) <> ''),
     kind text NOT NULL CHECK (kind IN (
         'operator-root', 'operator-signing', 'system-account',
         'system-signing', 'platform-account', 'platform-signing',
-        'runtime-operator', 'environment', 'environment-signing'
+        'runtime-operator', 'env', 'env-signing'
     )),
-    org text REFERENCES registry.orgs (id) ON DELETE CASCADE,
+    org text REFERENCES registry.org (id) ON DELETE CASCADE,
     env text,
     public_key text NOT NULL,
     private_key_envelope bytea NOT NULL,
@@ -528,21 +528,21 @@ CREATE TABLE identity.nats_keys (
     updated_at timestamptz NOT NULL,
     updated_by uuid NOT NULL,
     UNIQUE NULLS NOT DISTINCT (issuer, kind, org, env),
-    CHECK (CASE WHEN kind IN ('environment', 'environment-signing')
+    CHECK (CASE WHEN kind IN ('env', 'env-signing')
         THEN org IS NOT NULL AND env IS NOT NULL
         ELSE org IS NULL AND env IS NULL END),
-    CHECK ((kind = 'environment') = (project_count IS NOT NULL))
+    CHECK ((kind = 'env') = (project_count IS NOT NULL))
 );
 CREATE TRIGGER wamn_record_history_stamp
-    BEFORE INSERT OR UPDATE ON identity.nats_keys
+    BEFORE INSERT OR UPDATE ON identity.nats_key
     FOR EACH ROW
     EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 
 DO $identity_issuer_grants$ BEGIN
     IF to_regrole('wamn_identity_issuer') IS NOT NULL THEN
         GRANT EXECUTE ON FUNCTION platform.prune_tx_identity() TO wamn_identity_issuer;
-        GRANT SELECT, INSERT ON identity.nats_keys TO wamn_identity_issuer;
-        GRANT UPDATE (project_count, issued_at) ON identity.nats_keys TO wamn_identity_issuer;
+        GRANT SELECT, INSERT ON identity.nats_key TO wamn_identity_issuer;
+        GRANT UPDATE (project_count, issued_at) ON identity.nats_key TO wamn_identity_issuer;
     END IF;
 END $identity_issuer_grants$;
 
@@ -554,7 +554,7 @@ CREATE TABLE identity.session_signing_state (
     updated_at timestamptz NOT NULL,
     updated_by uuid NOT NULL,
     FOREIGN KEY (issuer, active_kid)
-        REFERENCES identity.session_keys (issuer, kid)
+        REFERENCES identity.session_key (issuer, kid)
 );
 CREATE TRIGGER wamn_record_history_stamp
     BEFORE INSERT OR UPDATE ON identity.session_signing_state
@@ -581,7 +581,7 @@ CREATE TRIGGER wamn_record_history_stamp
 -- names and the new environment cannot inherit whatever survived the delete.
 -- Randomness is the whole mechanism — no naming registry, no retry loop, no
 -- derivation. It is deliberately NOT part of the PRIMARY KEY: the triple stays
--- the identity every FK here points at (`registry.event_readers`, and the
+-- the identity every FK here points at (`registry.event_reader`, and the
 -- separately installed ops relations), and a re-provisioned environment must
 -- REPLACE its row rather than accumulate one per instance.
 --
@@ -591,15 +591,15 @@ CREATE TRIGGER wamn_record_history_stamp
 -- existing environment's admitted component fact immutable BY CONSTRUCTION
 -- rather than by a caller remembering to withhold a flag. The condition is
 -- anchored in THIS row, never in a CLI argument or a stage: the target decides.
--- Lifecycle state belongs to registry.environments. Project database state belongs to its deployment.
+-- Lifecycle state belongs to registry.env. Project database state belongs to its deployment.
 --
 -- The active flag controls admission (docs/plan/platform-ui.md §5.4). Identity
 -- offers no audience of an inactive environment, and its host serves none of
 -- its routes. CDC, data and grants stay as they are.
 -- ---------------------------------------------------------------------------
 -- An environment owns the readiness budget, drain bound, grant cache lifetime, and lifecycle of its project deployments.
-CREATE TABLE registry.environments (
-    org text NOT NULL REFERENCES registry.orgs(id) ON DELETE CASCADE,
+CREATE TABLE registry.env (
+    org text NOT NULL REFERENCES registry.org(id) ON DELETE CASCADE,
     env text NOT NULL CHECK (env ~ '^[a-z0-9]+(-[a-z0-9]+)*$' AND char_length(env) <= 40),
     readiness_budget_seconds int NOT NULL DEFAULT 600 CHECK (readiness_budget_seconds > 0),
     drain_bound_seconds int NOT NULL DEFAULT 300 CHECK (drain_bound_seconds > 0),
@@ -612,7 +612,7 @@ CREATE TABLE registry.environments (
     updated_by uuid NOT NULL,
     PRIMARY KEY (org, env)
 );
-CREATE TRIGGER wamn_record_history_stamp BEFORE INSERT OR UPDATE ON registry.environments
+CREATE TRIGGER wamn_record_history_stamp BEFORE INSERT OR UPDATE ON registry.env
     FOR EACH ROW EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 
 CREATE TABLE registry.platform_event_type (
@@ -620,11 +620,11 @@ CREATE TABLE registry.platform_event_type (
     label text NOT NULL
 );
 INSERT INTO registry.platform_event_type (code, label) VALUES
-    ('org_create', 'Create organization'),
-    ('environment_apply', 'Apply environment'),
-    ('environment_delete', 'Delete environment'),
-    ('deploy', 'Deploy application'),
-    ('rollback', 'Roll back application'),
+    ('org_create', 'Create org'),
+    ('env_apply', 'Apply env'),
+    ('env_delete', 'Delete env'),
+    ('deploy', 'Deploy app'),
+    ('rollback', 'Roll back app'),
     ('schema_apply', 'Apply schema'),
     ('schema_reset', 'Reset schema'),
     ('capture_gap_repair', 'Repair capture gap');
@@ -647,7 +647,7 @@ CREATE TABLE provisioning.platform_event (
     command_id uuid NOT NULL,
     event_type text NOT NULL REFERENCES registry.platform_event_type (code),
     outcome text NOT NULL REFERENCES registry.platform_event_outcome (code),
-    principal_id uuid NOT NULL REFERENCES identity.principals (id),
+    principal_id uuid NOT NULL REFERENCES identity.principal (id),
     org text NOT NULL CHECK (org ~ '^[a-z0-9]+(-[a-z0-9]+)*$'
                              AND char_length(org) <= 40
                              AND org <> 'wamn' AND org NOT LIKE 'wamn-%'),
@@ -655,7 +655,7 @@ CREATE TABLE provisioning.platform_event (
     project text CHECK (project ~ '^[a-z0-9]+(-[a-z0-9]+)*$'
                         AND char_length(project) <= 40
                         AND project <> 'wamn' AND project NOT LIKE 'wamn-%'),
-    application text,
+    app text,
     package_digest text CHECK (package_digest ~ '^sha256:[0-9a-f]{64}$'),
     helm_revision integer,
     job_namespace text,
@@ -683,7 +683,7 @@ CREATE TRIGGER platform_event_immutable
 
 ALTER TABLE provisioning.platform_event ENABLE ROW LEVEL SECURITY;
 
-CREATE TABLE registry.environment_projects (
+CREATE TABLE registry.project_env (
     org              text NOT NULL,
     env              text NOT NULL,
     project          text NOT NULL,
@@ -696,57 +696,57 @@ CREATE TABLE registry.environment_projects (
     updated_at timestamptz NOT NULL,
     updated_by uuid NOT NULL,
     PRIMARY KEY (org, env, project),
-    FOREIGN KEY (org, project) REFERENCES registry.projects (org, id) ON DELETE CASCADE,
-    FOREIGN KEY (org, env) REFERENCES registry.environments(org, env) ON DELETE CASCADE,
-    CONSTRAINT project_envs_instance_suffix_check
+    FOREIGN KEY (org, project) REFERENCES registry.project (org, id) ON DELETE CASCADE,
+    FOREIGN KEY (org, env) REFERENCES registry.env(org, env) ON DELETE CASCADE,
+    CONSTRAINT project_env_instance_suffix_check
         CHECK (instance_suffix ~ '^[a-z0-9]{8}$')
 );
 CREATE TRIGGER wamn_record_history_stamp
-    BEFORE INSERT OR UPDATE ON registry.environment_projects
+    BEFORE INSERT OR UPDATE ON registry.project_env
     FOR EACH ROW
     EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 
 -- Applied settings belong to the project deployment.
 -- Helm revisions record deployment attempts and supply rollback history.
-CREATE TABLE registry.environment_applications (
+CREATE TABLE registry.env_app (
     org text NOT NULL,
     env text NOT NULL,
     project text NOT NULL,
-    application text NOT NULL CHECK (application <> ''),
+    app text NOT NULL CHECK (app <> ''),
     label text NOT NULL CHECK (
         octet_length(label) BETWEEN 1 AND 21
         AND label ~ '^[a-z0-9]+(-[a-z0-9]+)*$'),
     client_package text CHECK (client_package <> ''),
     client_web text CHECK (client_web ~ '^sha256:[0-9a-f]{64}$'),
-    PRIMARY KEY (org, env, project, application),
+    PRIMARY KEY (org, env, project, app),
     UNIQUE (org, label),
     FOREIGN KEY (org, env, project)
-        REFERENCES registry.environment_projects (org, env, project) ON DELETE CASCADE,
+        REFERENCES registry.project_env (org, env, project) ON DELETE CASCADE,
     CHECK ((client_package IS NULL) = (client_web IS NULL))
 );
 
-CREATE TABLE registry.environment_integrations (
+CREATE TABLE registry.env_integration (
     org text NOT NULL,
     env text NOT NULL,
     name text NOT NULL CHECK (name ~ '^[a-z][a-z0-9_-]{0,62}$'),
     version integer NOT NULL CHECK (version > 0),
     PRIMARY KEY (org, env, name),
     FOREIGN KEY (org, env)
-        REFERENCES registry.environments (org, env) ON DELETE CASCADE
+        REFERENCES registry.env (org, env) ON DELETE CASCADE
 );
 
-CREATE TABLE registry.environment_application_connections (
+CREATE TABLE registry.env_app_connection (
     org text NOT NULL,
     env text NOT NULL,
     project text NOT NULL,
-    application text NOT NULL,
+    app text NOT NULL,
     alias text NOT NULL CHECK (alias <> ''),
     connection_name text NOT NULL,
-    PRIMARY KEY (org, env, project, application, alias),
-    FOREIGN KEY (org, env, project, application)
-        REFERENCES registry.environment_applications (org, env, project, application) ON DELETE CASCADE,
+    PRIMARY KEY (org, env, project, app, alias),
+    FOREIGN KEY (org, env, project, app)
+        REFERENCES registry.env_app (org, env, project, app) ON DELETE CASCADE,
     FOREIGN KEY (org, env, connection_name)
-        REFERENCES registry.environment_integrations (org, env, name)
+        REFERENCES registry.env_integration (org, env, name)
 );
 
 -- User project access is an explicit grant to one project-environment
@@ -755,7 +755,7 @@ CREATE TABLE registry.environment_application_connections (
 -- project roles do not grant membership, and services use their existing
 -- environment-bound authentication. Deleting an environment removes its
 -- grants, so provisioning the same triple again cannot inherit them.
-CREATE TABLE identity.project_env_memberships (
+CREATE TABLE identity.project_env_membership (
     principal_id   uuid NOT NULL,
     principal_type text NOT NULL DEFAULT 'user',
     org            text NOT NULL,
@@ -767,20 +767,20 @@ CREATE TABLE identity.project_env_memberships (
     updated_by     uuid NOT NULL,
     PRIMARY KEY (principal_id, org, env, project),
     FOREIGN KEY (principal_id, principal_type)
-        REFERENCES identity.principals (id, type) ON DELETE CASCADE,
+        REFERENCES identity.principal (id, type) ON DELETE CASCADE,
     FOREIGN KEY (org, env, project)
-        REFERENCES registry.environment_projects (org, env, project) ON DELETE CASCADE,
-    CONSTRAINT project_env_memberships_user_check
+        REFERENCES registry.project_env (org, env, project) ON DELETE CASCADE,
+    CONSTRAINT project_env_membership_user_check
         CHECK (principal_type = 'user')
 );
 CREATE TRIGGER wamn_record_history_stamp
-    BEFORE INSERT OR UPDATE ON identity.project_env_memberships
+    BEFORE INSERT OR UPDATE ON identity.project_env_membership
     FOR EACH ROW
     EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 
 -- ---------------------------------------------------------------------------
 -- Retired project-envs — the handle a SUPERSEDED instance would otherwise not
--- have (wamn-0h0g.15.90). `registry.environment_projects` holds exactly one row per
+-- have (wamn-0h0g.15.90). `registry.project_env` holds exactly one row per
 -- triple and a re-provision must REPLACE it, so the instant an environment is
 -- deleted the only record of its `instance_suffix` is gone — and with it every
 -- name derived from it (the Kubernetes namespace above all). The orphaned
@@ -791,7 +791,7 @@ CREATE TRIGGER wamn_record_history_stamp
 -- uniqueness mechanism (wamn-0h0g.13.57) and nothing here is ever consulted when
 -- a suffix is minted; this table only remembers what was.
 --
--- Deliberately NOT FK'd to registry.environment_projects: the whole point is to OUTLIVE the row, and the org/project CASCADE
+-- Deliberately NOT FK'd to registry.project_env: the whole point is to OUTLIVE the row, and the org/project CASCADE
 -- that removes it, so an FK would erase the record at exactly the moment it
 -- becomes the only copy. Keyed by (triple, instance_suffix) so a triple
 -- accumulates one row per superseded instance and a repeated delete is idempotent.
@@ -827,14 +827,14 @@ BEGIN
 END $$;
 REVOKE ALL ON FUNCTION registry.retire_project_env() FROM PUBLIC;
 
-CREATE TRIGGER project_envs_retire_instance
-    BEFORE DELETE ON registry.environment_projects
+CREATE TRIGGER project_env_retire_instance
+    BEFORE DELETE ON registry.project_env
     FOR EACH ROW EXECUTE FUNCTION registry.retire_project_env();
 
 -- Call under the project stream capacity lock when reserving projects.
 CREATE FUNCTION registry.project_capacity_available(requested int) RETURNS boolean
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
-    SELECT (SELECT count(*) FROM registry.environment_projects) + requested <= max_projects
+    SELECT (SELECT count(*) FROM registry.project_env) + requested <= max_projects
     FROM registry.meta
 $$;
 REVOKE ALL ON FUNCTION registry.project_capacity_available(int) FROM PUBLIC;
@@ -862,7 +862,7 @@ REVOKE ALL ON FUNCTION registry.project_capacity_available(int) FROM PUBLIC;
 -- registrations or compare the publication shape. Control stops the reader
 -- for capture recovery and restarts it after resynchronization.
 -- ---------------------------------------------------------------------------
-CREATE TABLE registry.event_readers (
+CREATE TABLE registry.event_reader (
     org                          text NOT NULL,
     project                      text NOT NULL,
     env                          text NOT NULL,
@@ -877,7 +877,7 @@ CREATE TABLE registry.event_readers (
     updated_at                   timestamptz NOT NULL DEFAULT now(),
     PRIMARY KEY (org, env, project),
     FOREIGN KEY (org, env, project)
-        REFERENCES registry.environment_projects (org, env, project) ON DELETE CASCADE
+        REFERENCES registry.project_env (org, env, project) ON DELETE CASCADE
 );
 
 -- ---------------------------------------------------------------------------
@@ -905,7 +905,7 @@ CREATE TABLE registry.capture_gap (
     updated_by uuid NOT NULL,
     PRIMARY KEY (org, project, env, created_at),
     FOREIGN KEY (org, env, project)
-        REFERENCES registry.event_readers (org, env, project) ON DELETE CASCADE
+        REFERENCES registry.event_reader (org, env, project) ON DELETE CASCADE
 );
 CREATE TRIGGER wamn_record_history_stamp
     BEFORE INSERT OR UPDATE ON registry.capture_gap
@@ -919,14 +919,14 @@ LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
 DECLARE eligible boolean;
 BEGIN
     SELECT active AND type = 'user' INTO eligible
-    FROM identity.principals WHERE id = principal FOR UPDATE;
+    FROM identity.principal WHERE id = principal FOR UPDATE;
     RETURN COALESCE(eligible, false);
 END;
 $$;
 REVOKE ALL ON FUNCTION identity.lock_password_principal(uuid) FROM PUBLIC;
 
 -- Fixed-window password admission shared by every identity replica.
-CREATE TABLE identity.password_attempts (
+CREATE TABLE identity.password_attempt (
     bucket text PRIMARY KEY CHECK (octet_length(bucket) <= 160),
     started_at timestamptz NOT NULL,
     attempts integer NOT NULL CHECK (attempts > 0),
@@ -937,17 +937,17 @@ CREATE TABLE identity.password_attempts (
 );
 
 -- An environment keeps its target identity.
-ALTER TABLE registry.environments ADD COLUMN target_id uuid REFERENCES registry.target(id);
-CREATE FUNCTION registry.keep_environment_target() RETURNS trigger LANGUAGE plpgsql AS $$
+ALTER TABLE registry.env ADD COLUMN target_id uuid REFERENCES registry.target(id);
+CREATE FUNCTION registry.keep_env_target() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     IF OLD.target_id IS NOT NULL AND NEW.target_id IS DISTINCT FROM OLD.target_id THEN
-        RAISE EXCEPTION 'environment_target_changed' USING ERRCODE = '55000';
+        RAISE EXCEPTION 'env_target_changed' USING ERRCODE = '55000';
     END IF;
     RETURN NEW;
 END $$;
-REVOKE ALL ON FUNCTION registry.keep_environment_target() FROM PUBLIC;
-CREATE TRIGGER environment_target_immutable BEFORE UPDATE OF target_id ON registry.environments
-    FOR EACH ROW EXECUTE FUNCTION registry.keep_environment_target();
+REVOKE ALL ON FUNCTION registry.keep_env_target() FROM PUBLIC;
+CREATE TRIGGER env_target_immutable BEFORE UPDATE OF target_id ON registry.env
+    FOR EACH ROW EXECUTE FUNCTION registry.keep_env_target();
 
 -- Administration reads and writes use the same restricted function families.
 CREATE FUNCTION registry.configure_integration_type(org_id text, operation text, payload jsonb) RETURNS jsonb
@@ -981,7 +981,7 @@ DO $integration_type_acl$ BEGIN
 END $integration_type_acl$;
 
 CREATE TRIGGER wamn_record_history_stamp
-    BEFORE INSERT OR UPDATE ON identity.password_attempts
+    BEFORE INSERT OR UPDATE ON identity.password_attempt
     FOR EACH ROW
     EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 
@@ -992,11 +992,10 @@ BEGIN
     FOR source IN
         SELECT schemaname, tablename FROM pg_catalog.pg_tables
         WHERE schemaname = 'registry'
-          AND tablename <> 'environment_application_connections' -- Its derived constraint name exceeds 63 bytes.
         UNION ALL
         SELECT 'identity', unnest(ARRAY[
-            'principals', 'org_memberships', 'org_roles', 'project_roles',
-            'project_env_memberships', 'password_credentials'
+            'principal', 'org_membership', 'org_role', 'project_role',
+            'project_env_membership', 'password_credential'
         ])
     LOOP
         PERFORM wamn_history.create_history_table(source.schemaname, source.tablename, false);
@@ -1068,7 +1067,7 @@ END $meta$;
 
 -- The system owner stamps both platform principals as wamn:provisioning.
 DO $provisioning$ BEGIN
-  INSERT INTO identity.principals (id, type, subject, display_name)
+  INSERT INTO identity.principal (id, type, subject, display_name)
   VALUES ('770df186-ac15-579e-b46b-c297cae2011b', 'platform',
           'wamn:provisioning', 'wamn:provisioning'),
          ('63082942-c2ba-5970-9b32-e86ed5c3eb79', 'platform',
@@ -1078,32 +1077,32 @@ END $provisioning$;
 DO $control_surface$ BEGIN
   IF EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_control') THEN
     EXECUTE format('GRANT CONNECT ON DATABASE %I TO wamn_control', current_database());
-    REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA "identity", "provisioning", "registry" FROM "wamn_control"; REVOKE ALL PRIVILEGES ON SCHEMA "identity", "provisioning", "registry" FROM "wamn_control"; GRANT USAGE ON SCHEMA "identity", "registry" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."org_memberships" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."org_roles" TO "wamn_control"; GRANT SELECT ON TABLE "identity"."password_logins" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE ON TABLE "identity"."principals" TO "wamn_control"; GRANT SELECT (platform_domain) ON registry.meta TO wamn_control; GRANT SELECT ON registry.integration_type, registry.integration_type_version, registry.integration_type_auth, registry.auth_type TO wamn_control; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."project_env_memberships" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."project_roles" TO "wamn_control"; GRANT SELECT ON TABLE "registry"."environment_projects", "registry"."environment_applications", "registry"."environment_application_connections", "registry"."environment_integrations", "registry"."target" TO "wamn_control"; GRANT SELECT, INSERT ON TABLE "registry"."projects" TO "wamn_control"; GRANT UPDATE ("active") ON TABLE "registry"."environments" TO "wamn_control";
+    REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA "identity", "provisioning", "registry" FROM "wamn_control"; REVOKE ALL PRIVILEGES ON SCHEMA "identity", "provisioning", "registry" FROM "wamn_control"; GRANT USAGE ON SCHEMA "identity", "registry" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."org_membership" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."org_role" TO "wamn_control"; GRANT SELECT ON TABLE "identity"."password_login" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE ON TABLE "identity"."principal" TO "wamn_control"; GRANT SELECT (platform_domain) ON registry.meta TO wamn_control; GRANT SELECT ON registry.integration_type, registry.integration_type_version, registry.integration_type_auth, registry.auth_type TO wamn_control; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."project_env_membership" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."project_role" TO "wamn_control"; GRANT SELECT ON TABLE "registry"."project_env", "registry"."env_app", "registry"."env_app_connection", "registry"."env_integration", "registry"."target" TO "wamn_control"; GRANT SELECT, INSERT ON TABLE "registry"."project" TO "wamn_control"; GRANT UPDATE ("active") ON TABLE "registry"."env" TO "wamn_control";
     GRANT USAGE ON SCHEMA wamn_history TO wamn_control;
     GRANT EXECUTE ON FUNCTION wamn_history.row_image(record) TO wamn_control;
-    GRANT INSERT ON identity.principals_history, identity.org_memberships_history,
-        identity.org_roles_history, identity.project_roles_history,
-        identity.project_env_memberships_history, registry.projects_history,
-        registry.environments_history TO wamn_control;
+    GRANT INSERT ON identity.principal_history, identity.org_membership_history,
+        identity.org_role_history, identity.project_role_history,
+        identity.project_env_membership_history, registry.project_history,
+        registry.env_history TO wamn_control;
   END IF;
 END $control_surface$;
 
 CREATE FUNCTION registry.login_principal(principal uuid) RETURNS boolean
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path=pg_catalog AS $$
-    SELECT EXISTS (SELECT FROM identity.org_memberships m WHERE m.principal_id=principal AND m.org=registry.login_org())
+    SELECT EXISTS (SELECT FROM identity.org_membership m WHERE m.principal_id=principal AND m.org=registry.login_org())
 $$;
 REVOKE ALL ON FUNCTION registry.login_principal(uuid) FROM PUBLIC;
 
 CREATE FUNCTION identity.principal_in_login_org_only(principal uuid) RETURNS boolean
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
     SELECT COALESCE(bool_and(m.org = (SELECT registry.login_org())), false)
-    FROM identity.org_memberships m WHERE m.principal_id = principal
+    FROM identity.org_membership m WHERE m.principal_id = principal
 $$;
 REVOKE ALL ON FUNCTION identity.principal_in_login_org_only(uuid) FROM PUBLIC;
 
 DO $identity_membership_read$ BEGIN
     IF to_regrole('wamn_system_reader') IS NOT NULL THEN
-        GRANT SELECT (principal_id, org, active) ON identity.org_memberships TO wamn_system_reader;
+        GRANT SELECT (principal_id, org, active) ON identity.org_membership TO wamn_system_reader;
         GRANT EXECUTE ON FUNCTION registry.login_org(), registry.login_principal(uuid) TO wamn_system_reader;
     END IF;
 END $identity_membership_read$;
@@ -1121,16 +1120,16 @@ DECLARE
     bound_actor constant text := '(SELECT wamn_authority.current_principal_id()) IS NOT NULL';
 BEGIN
     FOREACH relation_name IN ARRAY ARRAY[
-        'registry.orgs', 'registry.projects',
-        'registry.environments', 'registry.environment_projects',
-        'registry.environment_applications', 'registry.environment_application_connections',
-        'registry.environment_integrations', 'registry.event_readers',
+        'registry.org', 'registry.project',
+        'registry.env', 'registry.project_env',
+        'registry.env_app', 'registry.env_app_connection',
+        'registry.env_integration', 'registry.event_reader',
         'registry.capture_gap', 'registry.retired_project_envs',
-        'identity.org_memberships', 'identity.org_roles',
-        'identity.project_roles', 'identity.project_env_memberships'
+        'identity.org_membership', 'identity.org_role',
+        'identity.project_role', 'identity.project_env_membership'
     ] LOOP
         predicate := CASE relation_name
-          WHEN 'registry.orgs' THEN 'id = (SELECT registry.login_org())'
+          WHEN 'registry.org' THEN 'id = (SELECT registry.login_org())'
           ELSE 'org = (SELECT registry.login_org())' END;
         predicate := format('CASE WHEN %s THEN %s ELSE true END', org_login, predicate);
         EXECUTE format('ALTER TABLE %s ENABLE ROW LEVEL SECURITY', relation_name);
@@ -1143,26 +1142,26 @@ BEGIN
             AND principal_id = (SELECT wamn_authority.current_principal_id())
             ELSE false END)', org_login);
 
-    ALTER TABLE identity.principals ENABLE ROW LEVEL SECURITY;
-    EXECUTE format('CREATE POLICY login_org_select ON identity.principals FOR SELECT
+    ALTER TABLE identity.principal ENABLE ROW LEVEL SECURITY;
+    EXECUTE format('CREATE POLICY login_org_select ON identity.principal FOR SELECT
                     USING (CASE WHEN %s THEN registry.login_principal(id) ELSE true END)', org_login);
-    EXECUTE format('CREATE POLICY login_org_insert ON identity.principals FOR INSERT
+    EXECUTE format('CREATE POLICY login_org_insert ON identity.principal FOR INSERT
                     WITH CHECK (%s)', bound_actor);
     predicate := format('CASE WHEN %s THEN identity.principal_in_login_org_only(id) ELSE true END',
                         org_login);
-    EXECUTE format('CREATE POLICY login_org_update ON identity.principals FOR UPDATE
+    EXECUTE format('CREATE POLICY login_org_update ON identity.principal FOR UPDATE
                     USING (%s) WITH CHECK (%s AND %s)', predicate, bound_actor, predicate);
 
-    ALTER TABLE identity.password_logins ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE identity.password_login ENABLE ROW LEVEL SECURITY;
     predicate := format('CASE WHEN %s THEN registry.login_principal(principal_id) ELSE true END',
                         org_login);
-    EXECUTE format('CREATE POLICY login_org ON identity.password_logins FOR ALL
+    EXECUTE format('CREATE POLICY login_org ON identity.password_login FOR ALL
                     USING (%s) WITH CHECK (%s)', predicate, predicate);
 
     IF to_regrole('wamn_control') IS NOT NULL THEN
         GRANT EXECUTE ON FUNCTION registry.login_org(), registry.login_principal(uuid),
             identity.principal_in_login_org_only(uuid) TO wamn_control;
-        GRANT SELECT ON registry.environments TO wamn_control;
+        GRANT SELECT ON registry.env TO wamn_control;
         GRANT USAGE ON SCHEMA provisioning TO wamn_control;
         GRANT INSERT, SELECT (command_id, outcome) ON provisioning.platform_event TO wamn_control;
     END IF;
@@ -1172,30 +1171,30 @@ $control_security$;
 -- Inherited authority is read from its owning grant on every authorization.
 CREATE FUNCTION identity.is_project_admin(principal uuid, org_id text, project_id text)
 RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
-    SELECT EXISTS (SELECT FROM identity.principals p
-        JOIN identity.org_memberships m ON m.principal_id=p.id AND m.org=org_id AND m.active
+    SELECT EXISTS (SELECT FROM identity.principal p
+        JOIN identity.org_membership m ON m.principal_id=p.id AND m.org=org_id AND m.active
         WHERE p.id=principal AND p.type='user' AND p.active
         AND (NOT ((COALESCE(pg_has_role(session_user, to_regrole('wamn_control'), 'member'), false)
                    OR COALESCE(pg_has_role(session_user, to_regrole('wamn_apply'), 'member'), false))
                   AND NOT EXISTS (SELECT FROM pg_roles WHERE rolname = session_user AND rolsuper))
              OR org_id = registry.login_org())
-        AND (EXISTS (SELECT FROM identity.org_roles r WHERE r.principal_id=p.id AND r.org=org_id AND r.role='org-admin')
-          OR EXISTS (SELECT FROM identity.project_roles r WHERE r.principal_id=p.id AND r.org=org_id AND r.project=project_id AND r.role='project-admin')))
+        AND (EXISTS (SELECT FROM identity.org_role r WHERE r.principal_id=p.id AND r.org=org_id AND r.role='org-admin')
+          OR EXISTS (SELECT FROM identity.project_role r WHERE r.principal_id=p.id AND r.org=org_id AND r.project=project_id AND r.role='project-admin')))
 $$;
 REVOKE ALL ON FUNCTION identity.is_project_admin(uuid,text,text) FROM PUBLIC;
 
-CREATE FUNCTION identity.has_project_access(principal uuid, org_id text, environment text, project_id text)
+CREATE FUNCTION identity.has_project_access(principal uuid, org_id text, env_name text, project_id text)
 RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
     SELECT (NOT ((COALESCE(pg_has_role(session_user, to_regrole('wamn_control'), 'member'), false)
                   OR COALESCE(pg_has_role(session_user, to_regrole('wamn_apply'), 'member'), false))
                  AND NOT EXISTS (SELECT FROM pg_roles WHERE rolname = session_user AND rolsuper))
             OR org_id = registry.login_org())
-    AND EXISTS (SELECT FROM registry.environment_projects e WHERE e.org=org_id AND e.env=environment AND e.project=project_id)
+    AND EXISTS (SELECT FROM registry.project_env e WHERE e.org=org_id AND e.env=env_name AND e.project=project_id)
     AND (identity.is_project_admin(principal,org_id,project_id)
-      OR EXISTS (SELECT FROM identity.project_env_memberships m
-        JOIN identity.org_memberships om USING (principal_id,org)
-        JOIN identity.principals p ON p.id=m.principal_id
-        WHERE m.principal_id=principal AND m.org=org_id AND m.env=environment AND m.project=project_id
+      OR EXISTS (SELECT FROM identity.project_env_membership m
+        JOIN identity.org_membership om USING (principal_id,org)
+        JOIN identity.principal p ON p.id=m.principal_id
+        WHERE m.principal_id=principal AND m.org=org_id AND m.env=env_name AND m.project=project_id
           AND om.active AND p.active AND p.type='user'))
 $$;
 REVOKE ALL ON FUNCTION identity.has_project_access(uuid,text,text,text) FROM PUBLIC;

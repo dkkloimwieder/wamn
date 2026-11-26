@@ -95,7 +95,7 @@ impl Workflows<'_> {
 /// The run rows of one workflow, as (trigger source, status).
 async fn runs(database: &mut common::Observed, id: &str) -> anyhow::Result<Vec<(String, String)>> {
     Ok(sqlx::query_as(
-        "SELECT trigger_source, status FROM wamn_run.runs WHERE graph_id = $1 ORDER BY created_at",
+        "SELECT trigger_source, status FROM wamn_run.run WHERE graph_id = $1 ORDER BY created_at",
     )
     .bind(id)
     .fetch_all(&mut database.connection)
@@ -195,7 +195,7 @@ common::journey! {
         let end = Instant::now() + RUN_DEADLINE;
         let (source, status) = loop {
             let row: Option<(String, String)> = sqlx::query_as(
-                "SELECT trigger_source, status FROM wamn_run.runs WHERE run_id::text = $1",
+                "SELECT trigger_source, status FROM wamn_run.run WHERE run_id::text = $1",
             )
             .bind(run)
             .fetch_optional(&mut database.connection)

@@ -578,13 +578,13 @@ Closing the gap records `resync_at` and starts the reader Deployment again.
 The reader loads its publication and slot names from its JSON configuration file.
 It has no system database login and does not poll the registry.
 
-The gap record is one row per gap in `registry.capture_gap`. Its key is the `registry.event_readers` row (`org`, `project`, `env`) and its own `created_at`. That `created_at` carries the time of the recovery verb. Its fields:
+The gap record is one row per gap in `registry.capture_gap`. Its key is the `registry.event_reader` row (`org`, `project`, `env`) and its own `created_at`. That `created_at` carries the time of the recovery verb. Its fields:
 
 | Field | Value |
 | --- | --- |
 | `slot` | The name of the lost slot. |
 | `start_lsn` | The invalidated slot's `confirmed_flush_lsn`. For a missing slot, the LSN in the `Nats-Msg-Id` of the last CDC event on the source stream. A stream with no CDC event gives null, which means "from registration". |
-| `start_at` | The `commit_ts` of the last CDC event on the source stream. When the stream has no CDC event, the `created_at` of the `registry.event_readers` row. |
+| `start_at` | The `commit_ts` of the last CDC event on the source stream. When the stream has no CDC event, the `created_at` of the `registry.event_reader` row. |
 | `reason` | `missing`, or the `invalidation_reason`. |
 | `end_lsn` | The first position of the new slot. |
 | `resync_at` | Null until `close-capture-gap` sets it. |
@@ -617,9 +617,9 @@ When Postgres stops or moves, as on 2026-09-28 in `wamn-fwzc`, the slot stays on
 
 A true gap has one of three causes: a slot limit passed, a slot dropped by hand, or a restore that does not carry the slot. In each case the slot is missing or invalidated. The reader tells the two apart already. A connection failure is a restart, and a missing or invalidated slot is `CAPTURE GAP`. The reader reports the gap and stops capture. A reader that restarts after a Postgres move does not report a gap.
 
-- The gap row (2026-09-29): `start_lsn` and `start_at` come as the gap record states, with a null `start_lsn` only for an empty stream. No `detected_at`: the reader's event carries the detection time, and the row's `created_at` carries the verb's time. The reader holds no control database credential. The row is keyed by the `registry.event_readers` row and keeps the lost slot's name as a field. A lost slot emits `CDC_CAPTURE_GAP` and ends the process.
+- The gap row (2026-09-29): `start_lsn` and `start_at` come as the gap record states, with a null `start_lsn` only for an empty stream. No `detected_at`: the reader's event carries the detection time, and the row's `created_at` carries the verb's time. The reader holds no control database credential. The row is keyed by the `registry.event_reader` row and keeps the lost slot's name as a field. A lost slot emits `CDC_CAPTURE_GAP` and ends the process.
 
-- The slot name (2026-09-29): the slot keeps `cdc_object_name(org, project, env, instance)`, which the publication and the role share. The row stays keyed by the `registry.event_readers` row and keeps the slot name as a field, because an instance change renames the slot.
+- The slot name (2026-09-29): the slot keeps `cdc_object_name(org, project, env, instance)`, which the publication and the role share. The row stays keyed by the `registry.event_reader` row and keeps the slot name as a field, because an instance change renames the slot.
 
 - The keepalive confirm is split (2026-09-29). The fork returns a keepalive from `next_event` as an event with its `wal_end`, and nothing more. The reader applies the confirm rule. The new fork rev is pinned in `Cargo.toml`. A reader that raises its flushed position while idle and relies on the library's cap is out.
 

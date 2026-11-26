@@ -1,4 +1,4 @@
--- Run-state storage schema (5.7). The production `runs` table persists one row
+-- Run-state storage schema (5.7). The production `run` table persists one row
 -- per execution. This is the durable, queryable record behind run history and
 -- at-least-once execution. The router is a single-shot in-memory walk; these
 -- tables are the facts its host-owned production driver writes.
@@ -45,7 +45,7 @@ LANGUAGE plpgsql
 AS $$
 BEGIN
     IF NEW.package_id IS DISTINCT FROM OLD.package_id
-       OR NEW.environment IS DISTINCT FROM OLD.environment
+       OR NEW.env IS DISTINCT FROM OLD.env
        OR NEW.graph_id IS DISTINCT FROM OLD.graph_id
        OR NEW.graph_version IS DISTINCT FROM OLD.graph_version
        OR NEW.graph_hash IS DISTINCT FROM OLD.graph_hash
@@ -66,7 +66,7 @@ REVOKE ALL ON FUNCTION wamn_run.guard_run_admission_pins_immutable() FROM PUBLIC
 -- Owner ruling wamn-0h0g.20.7 (2026-08-21): the system env policy is projected
 -- by `reconcile-run-plane`; publication verifies the projected source identity.
 -- ---------------------------------------------------------------------------
--- runs: one row per workflow execution. `input_json` is the admitted trigger
+-- run: one row per workflow execution. `input_json` is the admitted trigger
 -- payload; `result_json` is the last node's output on
 -- completion. `state_json` stores the checkpoint at the Response.
 -- The workflow identity and `idempotency_key` deduplicate redelivery. `fail_type` mirrors
@@ -75,10 +75,10 @@ REVOKE ALL ON FUNCTION wamn_run.guard_run_admission_pins_immutable() FROM PUBLIC
 -- exhausted retry budget. Status values are exactly wamn_run_store::RunStatus
 -- as_sql (tied to the crate by a drift-guard test).
 -- ---------------------------------------------------------------------------
-CREATE TABLE wamn_run.runs (
+CREATE TABLE wamn_run.run (
     run_id          text NOT NULL DEFAULT gen_random_uuid()::text,
     package_id      text NOT NULL,
-    environment     text NOT NULL,
+    env             text NOT NULL,
     -- Trusted immutable CDC event ancestry is distinct from retired execution
     -- lineage. The immediate source lets admission verify the carried root/depth
     -- under project RLS.
@@ -114,7 +114,7 @@ CREATE TABLE wamn_run.runs (
     created_at      timestamptz NOT NULL DEFAULT now(),
     updated_at      timestamptz NOT NULL DEFAULT now(),
     CHECK (package_id <> ''
-           AND environment <> ''),
+           AND env <> ''),
     CHECK (
       (event_source_run_id IS NULL AND event_root_run_id IS NULL AND event_depth IS NULL)
       OR
@@ -132,15 +132,15 @@ CREATE TABLE wamn_run.runs (
     -- behind the database would otherwise store a terminal state that looks
     -- older than the admission that created the run. Refuse that write.
     -- At insert both columns take the same `now()`, so equal is admitted.
-    CONSTRAINT runs_updated_after_created
+    CONSTRAINT run_updated_after_created
         CHECK (updated_at >= created_at),
-    CONSTRAINT runs_graph_identity_check CHECK (
+    CONSTRAINT run_graph_identity_check CHECK (
       (graph_id IS NULL AND graph_version IS NULL)
       OR (graph_id IS NOT NULL AND graph_version IS NOT NULL
           AND graph_id <> '' AND graph_version > 0)
     ),
     -- Only workflow executions enter the durable queue.
-    CONSTRAINT runs_execution_grain_check CHECK (
+    CONSTRAINT run_execution_grain_check CHECK (
       trigger_source IS NOT NULL AND trigger_source IN ('request', 'schedule', 'event', 'manual')
       AND graph_id IS NOT NULL AND graph_id <> ''
       AND graph_version IS NOT NULL AND graph_version > 0
@@ -155,38 +155,38 @@ CREATE TABLE wamn_run.runs (
     PRIMARY KEY (run_id)
 );
 -- At-least-once: a redelivered trigger with the same key collapses to one run.
-CREATE UNIQUE INDEX runs_idempotency ON wamn_run.runs
-    (environment, package_id, graph_id, graph_version, trigger_source, idempotency_key)
+CREATE UNIQUE INDEX run_idempotency ON wamn_run.run
+    (env, package_id, graph_id, graph_version, trigger_source, idempotency_key)
     WHERE idempotency_key IS NOT NULL;
 -- History listing and trusted CDC event-causation traversal.
-CREATE INDEX runs_event_root ON wamn_run.runs (event_root_run_id)
+CREATE INDEX run_event_root ON wamn_run.run (event_root_run_id)
     WHERE event_root_run_id IS NOT NULL;
-ALTER TABLE wamn_run.runs ENABLE ROW LEVEL SECURITY;
-ALTER TABLE wamn_run.runs FORCE ROW LEVEL SECURITY;
-CREATE POLICY runs_identity ON wamn_run.runs
+ALTER TABLE wamn_run.run ENABLE ROW LEVEL SECURITY;
+ALTER TABLE wamn_run.run FORCE ROW LEVEL SECURITY;
+CREATE POLICY run_identity ON wamn_run.run
     TO wamn_app, wamn_query
     USING ((SELECT wamn_authority.current_role()) IS NOT NULL)
     WITH CHECK ((SELECT wamn_authority.current_role()) IS NOT NULL);
-CREATE POLICY runs_platform ON wamn_run.runs
+CREATE POLICY run_platform ON wamn_run.run
     AS PERMISSIVE FOR ALL TO wamn_platform
     USING ((SELECT wamn_authority.current_role()) IS NOT NULL)
     WITH CHECK ((SELECT wamn_authority.current_role()) IS NOT NULL);
 
-CREATE TRIGGER runs_event_lineage_immutable
+CREATE TRIGGER run_event_lineage_immutable
 BEFORE UPDATE OF event_source_run_id, event_root_run_id, event_depth
-ON wamn_run.runs
+ON wamn_run.run
 FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_event_lineage_immutable();
 -- The guard is column-targeted, so the lease-time record columns must be named
 -- here or the transition arm never fires for them.
-CREATE TRIGGER runs_admission_pins_immutable
-BEFORE UPDATE OF package_id, environment,
+CREATE TRIGGER run_admission_pins_immutable
+BEFORE UPDATE OF package_id, env,
                  graph_id, graph_version,
                  graph_hash, trigger_source,
                  execution_principal_id, execution_role, invoked_by, invoked_by_user_id
-ON wamn_run.runs
+ON wamn_run.run
 FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_run_admission_pins_immutable();
 -- Application SQL reads run history.
-REVOKE ALL PRIVILEGES ON TABLE wamn_run.runs
+REVOKE ALL PRIVILEGES ON TABLE wamn_run.run
     FROM PUBLIC, wamn_app, wamn_platform;
-GRANT SELECT ON wamn_run.runs TO wamn_app;
-GRANT SELECT, INSERT, UPDATE ON wamn_run.runs TO wamn_platform;
+GRANT SELECT ON wamn_run.run TO wamn_app;
+GRANT SELECT, INSERT, UPDATE ON wamn_run.run TO wamn_platform;

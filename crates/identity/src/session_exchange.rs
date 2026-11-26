@@ -192,7 +192,7 @@ async fn active_member(
     principal: &PrincipalId,
     org: &OrgId,
 ) -> Result<bool, IdentityError> {
-    let member = sqlx::query("SELECT EXISTS (SELECT 1 FROM identity.org_memberships m JOIN identity.principals p ON p.id=m.principal_id WHERE m.principal_id=$1 AND m.org=$2 AND m.active AND p.type='user' AND p.active)")
+    let member = sqlx::query("SELECT EXISTS (SELECT 1 FROM identity.org_membership m JOIN identity.principal p ON p.id=m.principal_id WHERE m.principal_id=$1 AND m.org=$2 AND m.active AND p.type='user' AND p.active)")
         .bind(Uuid::from(*principal)).bind(org.as_str()).fetch_one(client).await.map_err(|error| database_error(&error))?.get(0);
     Ok(member)
 }

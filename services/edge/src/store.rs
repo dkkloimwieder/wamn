@@ -12,7 +12,7 @@ use sqlx::sqlite::{
 use sqlx::{Row as _, SqlitePool};
 
 const SCHEMA: &str = "
-CREATE TABLE IF NOT EXISTS claims (
+CREATE TABLE IF NOT EXISTS claim (
     id INTEGER PRIMARY KEY,
     partition TEXT NOT NULL,
     operation TEXT NOT NULL,
@@ -140,18 +140,18 @@ impl EdgeStore {
         let mut transaction = self.pool().begin().await?;
         // Retention far exceeds the maximum call duration, so late completion cannot
         // update a replacement claim. Unfinished claims never hold samples.
-        sqlx::query("DELETE FROM claims WHERE outcome IS NULL AND begun_at < ?")
+        sqlx::query("DELETE FROM claim WHERE outcome IS NULL AND begun_at < ?")
             .bind(now_ms()?.saturating_sub(30 * 24 * 60 * 60 * 1000))
             .execute(&mut *transaction)
             .await?;
         // This first write serializes claims before their lookup.
-        let inserted = sqlx::query("INSERT INTO claims (partition, operation, idempotency_key, request, begun_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT (partition, operation, idempotency_key) DO NOTHING")
+        let inserted = sqlx::query("INSERT INTO claim (partition, operation, idempotency_key, request, begun_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT (partition, operation, idempotency_key) DO NOTHING")
             .bind(partition.as_str()).bind(log_operation(operation.as_str())).bind(key).bind(request).bind(now_ms()?)
             .execute(&mut *transaction).await?;
         let result = if inserted.rows_affected() == 1 {
             Claim::New(inserted.last_insert_rowid())
         } else {
-            let row = sqlx::query("SELECT request, outcome, begun_at FROM claims WHERE partition = ? AND operation = ? AND idempotency_key = ?")
+            let row = sqlx::query("SELECT request, outcome, begun_at FROM claim WHERE partition = ? AND operation = ? AND idempotency_key = ?")
                 .bind(partition.as_str()).bind(log_operation(operation.as_str())).bind(key).fetch_one(&mut *transaction).await?;
             if row.get::<Vec<u8>, _>(0) != request {
                 Claim::Conflict
@@ -177,7 +177,7 @@ impl EdgeStore {
         sample: Option<(&str, &serde_json::Value)>,
     ) -> anyhow::Result<()> {
         let mut transaction = self.pool().begin().await?;
-        let changed = sqlx::query("UPDATE claims SET outcome = ? WHERE id = ? AND outcome IS NULL")
+        let changed = sqlx::query("UPDATE claim SET outcome = ? WHERE id = ? AND outcome IS NULL")
             .bind(outcome)
             .bind(id)
             .execute(&mut *transaction)
@@ -185,7 +185,7 @@ impl EdgeStore {
             .rows_affected();
         anyhow::ensure!(changed == 1, "claim {id} is not open");
         if let Some((captured_at, body)) = sample {
-            sqlx::query("INSERT INTO samples (sample_key, claim_id, captured_at, body) SELECT idempotency_key, id, ?, ? FROM claims WHERE id = ?")
+            sqlx::query("INSERT INTO sample (sample_key, claim_id, captured_at, body) SELECT idempotency_key, id, ?, ? FROM claim WHERE id = ?")
                 .bind(captured_at).bind(serde_json::to_string(body)?).bind(id).execute(&mut *transaction).await?;
         }
         transaction.commit().await?;
@@ -193,7 +193,7 @@ impl EdgeStore {
     }
 
     pub(crate) async fn release(&self, id: i64) -> anyhow::Result<()> {
-        let changed = sqlx::query("DELETE FROM claims WHERE id = ? AND outcome IS NULL")
+        let changed = sqlx::query("DELETE FROM claim WHERE id = ? AND outcome IS NULL")
             .bind(id)
             .execute(self.pool())
             .await?
@@ -203,10 +203,9 @@ impl EdgeStore {
     }
 
     pub(crate) async fn revision(&self) -> anyhow::Result<String> {
-        let count: i64 =
-            sqlx::query_scalar("SELECT count(*) FROM claims WHERE outcome IS NOT NULL")
-                .fetch_one(self.pool())
-                .await?;
+        let count: i64 = sqlx::query_scalar("SELECT count(*) FROM claim WHERE outcome IS NOT NULL")
+            .fetch_one(self.pool())
+            .await?;
         Ok(count.to_string())
     }
 }

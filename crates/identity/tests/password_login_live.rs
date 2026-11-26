@@ -82,13 +82,13 @@ async fn targeted_rotation_preserves_deadline_and_replay_revokes_successor() {
     assert_eq!(first.login.expires_at - first.login.authenticated_at, 28800);
     assert!(!format!("{first:?}").contains(first.secret()));
     let stored: String =
-        sqlx::query("SELECT row_to_json(c)::text FROM identity.renewal_credentials c")
+        sqlx::query("SELECT row_to_json(c)::text FROM identity.renewal_credential c")
             .fetch_one(&mut owner)
             .await
             .unwrap()
             .get(0);
     assert!(!stored.contains(first.secret()));
-    let hash: String = sqlx::query_scalar("SELECT token_hash FROM identity.renewal_credentials")
+    let hash: String = sqlx::query_scalar("SELECT token_hash FROM identity.renewal_credential")
         .fetch_one(&mut owner)
         .await
         .unwrap();
@@ -137,7 +137,7 @@ async fn targeted_rotation_preserves_deadline_and_replay_revokes_successor() {
     assert!(rotate(&mut issuer, first.secret()).await.is_none());
     assert!(rotate(&mut issuer, second.secret()).await.is_none());
     assert_eq!(
-        sqlx::query("SELECT count(*) FROM identity.renewal_credentials")
+        sqlx::query("SELECT count(*) FROM identity.renewal_credential")
             .fetch_one(&mut owner)
             .await
             .unwrap()
@@ -145,13 +145,12 @@ async fn targeted_rotation_preserves_deadline_and_replay_revokes_successor() {
         2
     );
     // The issuer can rotate and revoke, but cannot rewrite account binding or deadlines.
-    let error = sqlx::raw_sql(
-        "UPDATE identity.password_logins SET expires_at=expires_at+interval '1 hour'",
-    )
-    .execute(&mut issuer)
-    .await
-    .map(drop)
-    .unwrap_err();
+    let error =
+        sqlx::raw_sql("UPDATE identity.password_login SET expires_at=expires_at+interval '1 hour'")
+            .execute(&mut issuer)
+            .await
+            .map(drop)
+            .unwrap_err();
     assert_eq!(
         error
             .as_database_error()
@@ -159,7 +158,7 @@ async fn targeted_rotation_preserves_deadline_and_replay_revokes_successor() {
             .as_deref(),
         Some("42501")
     );
-    let error = sqlx::raw_sql("DELETE FROM identity.renewal_credentials")
+    let error = sqlx::raw_sql("DELETE FROM identity.renewal_credential")
         .execute(&mut issuer)
         .await
         .map(drop)
@@ -192,16 +191,16 @@ async fn inactivity_absolute_expiry_and_bounded_cleanup() {
     let mut owner = connect(db.as_str(), "wamn_system").await;
     let user = user(&mut owner).await;
     let idle = create(&mut owner, &user).await;
-    sqlx::query("UPDATE identity.password_logins SET authenticated_at=authenticated_at-interval '1 hour',expires_at=expires_at-interval '1 hour',renewal_expires_at=clock_timestamp()-interval '1 second' WHERE id=$1::text::uuid").bind(&idle.login.id).execute(&mut owner).await.map(|result| result.rows_affected()).unwrap();
+    sqlx::query("UPDATE identity.password_login SET authenticated_at=authenticated_at-interval '1 hour',expires_at=expires_at-interval '1 hour',renewal_expires_at=clock_timestamp()-interval '1 second' WHERE id=$1::text::uuid").bind(&idle.login.id).execute(&mut owner).await.map(|result| result.rows_affected()).unwrap();
     assert!(rotate(&mut owner, idle.secret()).await.is_none());
     let final_credential = create(&mut owner, &user).await;
-    sqlx::query("UPDATE identity.password_logins SET authenticated_at=authenticated_at-interval '7 hours 55 minutes',expires_at=expires_at-interval '7 hours 55 minutes',renewal_expires_at=expires_at-interval '7 hours 55 minutes' WHERE id=$1::text::uuid").bind(&final_credential.login.id).execute(&mut owner).await.map(|result| result.rows_affected()).unwrap();
+    sqlx::query("UPDATE identity.password_login SET authenticated_at=authenticated_at-interval '7 hours 55 minutes',expires_at=expires_at-interval '7 hours 55 minutes',renewal_expires_at=expires_at-interval '7 hours 55 minutes' WHERE id=$1::text::uuid").bind(&final_credential.login.id).execute(&mut owner).await.map(|result| result.rows_affected()).unwrap();
     let last = rotate(&mut owner, final_credential.secret()).await.unwrap();
-    assert!(sqlx::query("SELECT renewal_expires_at=expires_at FROM identity.password_logins WHERE id=$1::text::uuid").bind(&last.login.id).fetch_one(&mut owner).await.unwrap().get::<bool, _>(0));
+    assert!(sqlx::query("SELECT renewal_expires_at=expires_at FROM identity.password_login WHERE id=$1::text::uuid").bind(&last.login.id).fetch_one(&mut owner).await.unwrap().get::<bool, _>(0));
     for _ in 0..99 {
         create(&mut owner, &user).await;
     }
-    sqlx::raw_sql("UPDATE identity.password_logins SET authenticated_at=authenticated_at-interval '9 hours',expires_at=expires_at-interval '9 hours',renewal_expires_at=renewal_expires_at-interval '9 hours'").execute(&mut owner).await.map(drop).unwrap();
+    sqlx::raw_sql("UPDATE identity.password_login SET authenticated_at=authenticated_at-interval '9 hours',expires_at=expires_at-interval '9 hours',renewal_expires_at=renewal_expires_at-interval '9 hours'").execute(&mut owner).await.map(drop).unwrap();
     assert!(rotate(&mut owner, last.secret()).await.is_none());
     sqlx::raw_sql(sqlx::AssertSqlSafe(grant_identity_issuer_surface_sql()))
         .execute(&mut wamn_postgres::connect(db.as_str()).await.unwrap())
@@ -225,7 +224,7 @@ async fn inactivity_absolute_expiry_and_bounded_cleanup() {
     assert_eq!(login::prune_expired(&mut tx, ISSUER).await.unwrap(), 1);
     tx.commit().await.unwrap();
     assert_eq!(
-        sqlx::query("SELECT count(*) FROM identity.renewal_credentials")
+        sqlx::query("SELECT count(*) FROM identity.renewal_credential")
             .fetch_one(&mut owner)
             .await
             .unwrap()
@@ -334,7 +333,7 @@ async fn disable_waits_for_issuance_and_reenable_cannot_restore_a_family() {
     tx.commit().await.unwrap();
     racing.await.unwrap();
     assert!(rotate(&mut first, issued.secret()).await.is_none());
-    sqlx::query("UPDATE identity.principals SET active=true WHERE id=$1::text::uuid")
+    sqlx::query("UPDATE identity.principal SET active=true WHERE id=$1::text::uuid")
         .bind(user.to_string().as_str())
         .execute(&mut first)
         .await

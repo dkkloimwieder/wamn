@@ -501,7 +501,7 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
 /// Seed enough receipts for multiple list pages, and return one get target.
 async fn seed_app_path(database: &mut sqlx::PgConnection) -> anyhow::Result<String> {
     let mut transaction = sqlx::Connection::begin(database).await?;
-    sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1::text::uuid,'','benchmark','admin:benchmark-app-path')")
+    sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,app,operation) VALUES($1::text::uuid,'','benchmark','admin:benchmark-app-path')")
         .bind(SEED_PRINCIPAL).execute(&mut *transaction).await?;
     let row = sqlx::query(
         "WITH inserted AS ( \
@@ -850,7 +850,7 @@ async fn seed_receipts(
 ) -> anyhow::Result<Vec<Receipt>> {
     sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
             "BEGIN; \
-             INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('{SEED_PRINCIPAL}'::text::uuid,'','fixture','admin:benchmark-seed'); \
+             INSERT INTO platform.tx_identity(principal_id,role,app,operation) VALUES('{SEED_PRINCIPAL}'::text::uuid,'','fixture','admin:benchmark-seed'); \
              INSERT INTO receiving.item (id, item_number) VALUES ('{SEED_ITEM}', 'ITEM-BENCH') \
                ON CONFLICT DO NOTHING; \
              INSERT INTO receiving.location (id, location_code) VALUES ('{SEED_LOCATION}', 'BENCH') \

@@ -134,7 +134,7 @@ impl Transaction {
                 let raw = connection.connection();
                 let statement = sqlx::Executor::prepare(
                     &mut *raw,
-                    sqlx::SqlSafeStr::into_sql_str("SELECT id::text, pattern FROM platform.number_sequence WHERE application = $1 AND name = $2"),
+                    sqlx::SqlSafeStr::into_sql_str("SELECT id::text, pattern FROM platform.number_sequence WHERE app = $1 AND name = $2"),
                 ).await?;
                 sqlx::query_as(statement.sql().clone())
                     .bind(application.as_str())

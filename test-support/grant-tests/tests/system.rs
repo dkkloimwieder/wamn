@@ -250,9 +250,9 @@ fn seeds(org: &Org<'_>) -> Vec<Seed> {
     let target = [("org", name), ("project", PROJECT), ("env", ENVIRONMENT)];
     let at_target = |columns: &[(&'static str, &'static str)]| [&target[..], columns].concat();
     vec![
-        Seed::new("registry.orgs", &[("id", name)]),
+        Seed::new("registry.org", &[("id", name)]),
         Seed::new(
-            "identity.principals",
+            "identity.principal",
             &[
                 ("id", principal),
                 ("type", "user"),
@@ -262,7 +262,7 @@ fn seeds(org: &Org<'_>) -> Vec<Seed> {
             ],
         ),
         Seed::new(
-            "identity.org_memberships",
+            "identity.org_membership",
             &[
                 ("principal_id", principal),
                 ("org", name),
@@ -270,16 +270,16 @@ fn seeds(org: &Org<'_>) -> Vec<Seed> {
             ],
         ),
         Seed::new(
-            "identity.org_roles",
+            "identity.org_role",
             &[
                 ("principal_id", principal),
                 ("org", name),
                 ("role", "org-admin"),
             ],
         ),
-        Seed::new("registry.projects", &[("org", name), ("id", PROJECT)]),
+        Seed::new("registry.project", &[("org", name), ("id", PROJECT)]),
         Seed::new(
-            "identity.project_roles",
+            "identity.project_role",
             &[
                 ("principal_id", principal),
                 ("org", name),
@@ -287,10 +287,7 @@ fn seeds(org: &Org<'_>) -> Vec<Seed> {
                 ("role", "project-admin"),
             ],
         ),
-        Seed::new(
-            "registry.environments",
-            &[("org", name), ("env", ENVIRONMENT)],
-        ),
+        Seed::new("registry.env", &[("org", name), ("env", ENVIRONMENT)]),
         Seed::new(
             "provisioning.platform_event",
             &[
@@ -299,20 +296,20 @@ fn seeds(org: &Org<'_>) -> Vec<Seed> {
                 ("project", PROJECT),
                 ("command_id", principal),
                 ("principal_id", principal),
-                ("event_type", "environment_apply"),
+                ("event_type", "env_apply"),
                 ("outcome", "started"),
             ],
         ),
         Seed::new(
-            "registry.environment_projects",
+            "registry.project_env",
             &at_target(&[("secret_name", "database"), ("instance_suffix", "a1b2c3d4")]),
         ),
         Seed::new(
-            "identity.project_env_memberships",
+            "identity.project_env_membership",
             &[&target[..], &[("principal_id", principal)]].concat(),
         ),
         Seed::new(
-            "registry.environment_integrations",
+            "registry.env_integration",
             &[
                 ("org", name),
                 ("env", ENVIRONMENT),
@@ -321,19 +318,15 @@ fn seeds(org: &Org<'_>) -> Vec<Seed> {
             ],
         ),
         Seed::new(
-            "registry.environment_applications",
-            &[&target[..], &[("application", "web"), ("label", &label)]].concat(),
+            "registry.env_app",
+            &[&target[..], &[("app", "web"), ("label", &label)]].concat(),
         ),
         Seed::new(
-            "registry.environment_application_connections",
-            &at_target(&[
-                ("application", "web"),
-                ("alias", "erp"),
-                ("connection_name", "erp"),
-            ]),
+            "registry.env_app_connection",
+            &at_target(&[("app", "web"), ("alias", "erp"), ("connection_name", "erp")]),
         ),
         Seed::new(
-            "registry.event_readers",
+            "registry.event_reader",
             &at_target(&[
                 ("publication", "capture"),
                 ("slot", "capture"),
@@ -355,7 +348,7 @@ fn seeds(org: &Org<'_>) -> Vec<Seed> {
             &at_target(&[("instance_suffix", "z9y8x7w6")]),
         ),
         Seed::new(
-            "identity.password_logins",
+            "identity.password_login",
             &[
                 ("principal_id", principal),
                 ("issuer", &issuer),
@@ -564,7 +557,7 @@ async fn actor(system: &System, login: &OrgLogin) -> Result<Actor> {
 async fn org_logins_reach_no_other_org() -> Result<()> {
     let system = database::system().await?;
     let mut admin = system.admin().await?;
-    let home_name: String = sqlx::query_scalar("SELECT id FROM registry.orgs")
+    let home_name: String = sqlx::query_scalar("SELECT id FROM registry.org")
         .fetch_one(&mut admin)
         .await?;
     let other_logins = wamn_platform_install::provision_org::create_org_logins(
@@ -676,7 +669,7 @@ async fn org_logins_reach_no_other_org() -> Result<()> {
     // written above is the same insert for a principal of the home org.
     let other_principal = other.principal.to_string();
     let joining = Seed::new(
-        "identity.org_memberships",
+        "identity.org_membership",
         &[
             ("principal_id", &other_principal),
             ("org", home.name),

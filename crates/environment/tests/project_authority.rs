@@ -90,14 +90,14 @@ fn prelude(url: &str) -> (wamn_role::LoginName, String) {
         script,
         r#"
 BEGIN;
-INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('{U1}'::text::uuid,'','fixture','admin:seed-authority-fixture');
+INSERT INTO platform.tx_identity(principal_id,role,app,operation) VALUES('{U1}'::text::uuid,'','fixture','admin:seed-authority-fixture');
 INSERT INTO platform."user" (id, issuer, sub, type, email)
   VALUES ('{U1}','https://fixture.example','{U1}','user','u1@t1');
 INSERT INTO platform.role (name) VALUES ('admin'),('auditor');
 INSERT INTO platform.user_role (user_id, role_name) VALUES ('{U1}','admin');
 INSERT INTO platform.permission (role_name, permission) VALUES ('auditor','platform-fixture:widget/get');
 INSERT INTO platform.setting (target_type, target_id, key, value) VALUES ('org','acme','display.theme','"dark"'::jsonb);
-INSERT INTO platform.number_sequence (id, application, name, pattern) VALUES
+INSERT INTO platform.number_sequence (id, app, name, pattern) VALUES
   ('{SEQUENCE}','{APPLICATION}','purchase_order','P-{{seq:po,width=8}}');
 COMMIT;"#
     )
@@ -177,7 +177,7 @@ async fn author_sql_cannot_write_the_relations_that_authorize_it() {
 DO $$
 DECLARE relation text; operation text;
 BEGIN
-  FOREACH relation IN ARRAY ARRAY['user','role','user_role','permission','environment',
+  FOREACH relation IN ARRAY ARRAY['user','role','user_role','permission','env',
                                   'external_system','connection','number_sequence','number_counter',
                                   'setting'] LOOP
     ASSERT has_table_privilege('wamn_app'::name, ('platform.'||relation)::text, 'SELECT'::text),
@@ -190,7 +190,7 @@ BEGIN
 END $$;
 
 BEGIN;
-INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('{U1}'::uuid,'','fixture','admin:authority-fixture');
+INSERT INTO platform.tx_identity(principal_id,role,app,operation) VALUES('{U1}'::uuid,'','fixture','admin:authority-fixture');
 UPDATE platform."user" SET active = false WHERE id = '{U1}';
 SET LOCAL ROLE {app_generation};
 
@@ -224,15 +224,15 @@ BEGIN
     'INSERT INTO platform.number_counter (sequence_id, counter, key_value, value) VALUES (''{SEQUENCE}'', ''po'', '''', 100)',
     'UPDATE platform.number_counter SET value = 1',
     'DELETE FROM platform.number_counter',
-    'INSERT INTO platform.number_sequence (application, name, pattern) VALUES (''receiving'', ''forged'', ''F-{{seq:f}}'')',
+    'INSERT INTO platform.number_sequence (app, name, pattern) VALUES (''receiving'', ''forged'', ''F-{{seq:f}}'')',
     'UPDATE platform.number_sequence SET pattern = ''F-{{seq:f}}''',
     'INSERT INTO platform.setting (target_type, target_id, key, value) VALUES (''org'', ''acme'', ''locale'', ''true'')',
     'UPDATE platform.setting SET locked = true',
     'INSERT INTO platform.external_system (id,name) VALUES (gen_random_uuid(),''forged'')',
     'DELETE FROM platform.connection',
-    'INSERT INTO platform.environment (active) VALUES (true)',
-    'UPDATE platform.environment SET active = true',
-    'DELETE FROM platform.environment'
+    'INSERT INTO platform.env (active) VALUES (true)',
+    'UPDATE platform.env SET active = true',
+    'DELETE FROM platform.env'
   ] LOOP
     BEGIN
       EXECUTE probe_sql;
@@ -295,7 +295,7 @@ async fn author_sql_reads_and_writes_no_history_table() {
             None,
             r#"{"role_name": "auditor", "permission": "platform-fixture:widget/get"}"#,
         ),
-        entry("environment_history", None, r#"{"id": true}"#),
+        entry("env_history", None, r#"{"id": true}"#),
         entry(
             "setting_history",
             Some(-5),
@@ -316,7 +316,7 @@ DECLARE history text; operation text;
 BEGIN
   FOREACH history IN ARRAY ARRAY['user_history','role_history','user_role_history',
                                  'permission_history',
-                                 'environment_history','number_sequence_history',
+                                 'env_history','number_sequence_history',
                                  'setting_history'] LOOP
     FOREACH operation IN ARRAY ARRAY['SELECT','INSERT','UPDATE','DELETE','TRUNCATE'] LOOP
       ASSERT NOT has_table_privilege('wamn_app'::name, ('platform.'||history)::text, operation),
@@ -335,7 +335,7 @@ BEGIN
 END $$;
 
 BEGIN;
-INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('{U1}'::uuid,'','fixture','admin:authority-fixture');
+INSERT INTO platform.tx_identity(principal_id,role,app,operation) VALUES('{U1}'::uuid,'','fixture','admin:authority-fixture');
 SET LOCAL ROLE {app_generation};
 
 DO $$
@@ -348,7 +348,7 @@ BEGIN
     'SELECT count(*) FROM platform.role_history',
     'SELECT count(*) FROM platform.user_role_history',
     'SELECT count(*) FROM platform.permission_history',
-    'SELECT count(*) FROM platform.environment_history',
+    'SELECT count(*) FROM platform.env_history',
     'SELECT count(*) FROM platform.number_sequence_history',
     'SELECT count(*) FROM platform.setting_history',
     {direct_writes},

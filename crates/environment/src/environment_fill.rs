@@ -23,7 +23,7 @@ pub async fn fill(
     let mut principals = BTreeSet::new();
     principals.extend(
         sqlx::query_scalar::<_, uuid::Uuid>(
-            "SELECT id FROM identity.principals WHERE identity.has_project_access(id,$1,$2,$3)",
+            "SELECT id FROM identity.principal WHERE identity.has_project_access(id,$1,$2,$3)",
         )
         .bind(target.org.as_str())
         .bind(target.env.as_str())

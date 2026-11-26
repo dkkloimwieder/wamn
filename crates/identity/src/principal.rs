@@ -172,7 +172,7 @@ pub fn canonical_subject(value: &str) -> Result<String, IdentityError> {
     Ok(value)
 }
 
-/// Accept the same user email `principals_email_check` accepts: one `@`, no
+/// Accept the same user email `principal_email_check` accepts: one `@`, no
 /// space on either side, a dot in the domain, and at most 254 bytes. The rule
 /// is deliberately loose, because the address is delivered to, not parsed.
 ///
@@ -182,7 +182,7 @@ pub fn canonical_subject(value: &str) -> Result<String, IdentityError> {
 /// not an oversight. One rule beside an identical rule beats two rules that
 /// split the field, and `UNIQUE (email)` then catches `A@x.test` and
 /// `a@x.test` as the one address a reader already reads them as. The fold is
-/// Unicode and not ASCII, because `principals_email_check` admits a non-ASCII
+/// Unicode and not ASCII, because `principal_email_check` admits a non-ASCII
 /// address and a narrower fold would split that address in two.
 pub fn require_email(value: &str) -> Result<String, IdentityError> {
     let value = value.trim().to_lowercase();

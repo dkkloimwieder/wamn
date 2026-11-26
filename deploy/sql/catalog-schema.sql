@@ -4,7 +4,7 @@
 -- administration bind the caller and the sealed operation. The history tables
 -- below retain row changes for unlimited time.
 
-CREATE TABLE catalog.packages (
+CREATE TABLE catalog.package (
     package_id         text        NOT NULL,
     package_version    text        NOT NULL,
     registered_at      timestamptz NOT NULL DEFAULT now(),
@@ -15,21 +15,21 @@ CREATE TABLE catalog.packages (
     created_by         uuid        NOT NULL,
     updated_at         timestamptz NOT NULL,
     updated_by         uuid        NOT NULL,
-    CONSTRAINT packages_pkey PRIMARY KEY (package_id),
-    CONSTRAINT packages_package_id_check
+    CONSTRAINT package_pkey PRIMARY KEY (package_id),
+    CONSTRAINT package_package_id_check
         CHECK (package_id ~ '^[a-z][a-z0-9]*(_[a-z0-9]+)*$'),
-    CONSTRAINT packages_package_version_check CHECK (
+    CONSTRAINT package_package_version_check CHECK (
         package_version <> ''
         AND package_version = btrim(package_version)
         AND strpos(package_version, '@') = 0
         AND strpos(package_version, '::') = 0
     ),
-    CONSTRAINT packages_artifact_digest_check
+    CONSTRAINT package_artifact_digest_check
         CHECK (artifact_digest IS NULL OR artifact_digest ~ '^sha256:[0-9a-f]{64}$')
 );
 
 CREATE TRIGGER wamn_record_history_stamp
-    BEFORE INSERT OR UPDATE ON catalog.packages
+    BEFORE INSERT OR UPDATE ON catalog.package
     FOR EACH ROW
     EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 
@@ -46,11 +46,11 @@ BEGIN
     RETURN NEW;
 END
 $$;
-CREATE TRIGGER packages_schema_guard
-    BEFORE UPDATE ON catalog.packages
+CREATE TRIGGER package_schema_guard
+    BEFORE UPDATE ON catalog.package
     FOR EACH ROW EXECUTE FUNCTION catalog.guard_package_schema();
-CREATE TRIGGER packages_delete_immutable
-    BEFORE DELETE ON catalog.packages
+CREATE TRIGGER package_delete_immutable
+    BEFORE DELETE ON catalog.package
     FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change();
 
 
@@ -109,7 +109,7 @@ CREATE TABLE platform.oauth_token (                    -- host-only; every OAuth
 --                       set expires_at = '-infinity' when only the secret changes (the refresh token stays)
 
 CREATE TABLE platform.oauth_authorization (            -- one pending connection.authorize; single use
-    state         text PRIMARY KEY,                      -- project/environment/32 random bytes, base64url
+    state         text PRIMARY KEY,                      -- project/env/32 random bytes, base64url
     connection_id uuid NOT NULL REFERENCES platform.connection (id) ON DELETE CASCADE,
     generation    bigint NOT NULL,                       -- a newer active generation refuses the callback
     code_verifier bytea NOT NULL,                        -- PKCE, encrypted like the token (wrapped_key, nonce, key_id below)
@@ -212,9 +212,9 @@ CREATE TABLE catalog.connection_requirement (
 
 -- One version of a workflow. Authoring derives immutable trigger columns
 -- from the graph. Enable records a new WAL boundary.
-CREATE TABLE catalog.workflows (
-    environment    text        NOT NULL CHECK (environment <> ''),
-    application    text        NOT NULL CHECK (application <> ''),
+CREATE TABLE catalog.workflow (
+    env            text        NOT NULL CHECK (env <> ''),
+    app            text        NOT NULL CHECK (app <> ''),
     workflow_id    text        NOT NULL CHECK (workflow_id <> ''),
     version        int         NOT NULL CHECK (version > 0),
     graph_json     jsonb       NOT NULL,
@@ -233,18 +233,18 @@ CREATE TABLE catalog.workflows (
     enabled        boolean     NOT NULL DEFAULT false,
     created_by     uuid        NOT NULL,
     created_at     timestamptz NOT NULL DEFAULT now(),
-    CONSTRAINT workflows_pkey
-        PRIMARY KEY (environment, application, workflow_id, version),
-    CONSTRAINT workflows_execution_identity_check
+    CONSTRAINT workflow_pkey
+        PRIMARY KEY (env, app, workflow_id, version),
+    CONSTRAINT workflow_execution_identity_check
         CHECK ((execution_type = 'role') = (execution_role IS NOT NULL)
            AND (trigger = 'request' OR execution_role IS NOT NULL)),
-    CONSTRAINT workflows_request_path_check
+    CONSTRAINT workflow_request_path_check
         CHECK ((trigger = 'request') = (path IS NOT NULL)),
-    CONSTRAINT workflows_enable_lsn_check
+    CONSTRAINT workflow_enable_lsn_check
         CHECK (NOT enabled OR enable_lsn IS NOT NULL),
-    CONSTRAINT workflows_schedule_check
+    CONSTRAINT workflow_schedule_check
         CHECK ((trigger = 'schedule') = (schedule IS NOT NULL)),
-    CONSTRAINT workflows_data_change_check CHECK (
+    CONSTRAINT workflow_data_change_check CHECK (
         (trigger = 'data_change' AND source_package IS NOT NULL AND source_package <> ''
          AND entity IS NOT NULL AND entity <> '' AND ops IS NOT NULL
          AND cardinality(ops) BETWEEN 1 AND 3
@@ -257,11 +257,11 @@ CREATE TABLE catalog.workflows (
         OR (trigger <> 'data_change' AND source_package IS NULL AND entity IS NULL
             AND ops IS NULL AND condition IS NULL))
 );
-CREATE UNIQUE INDEX workflows_one_enabled
-    ON catalog.workflows (environment, application, workflow_id)
+CREATE UNIQUE INDEX workflow_one_enabled
+    ON catalog.workflow (env, app, workflow_id)
     WHERE enabled;
-CREATE UNIQUE INDEX workflows_enabled_request_path
-    ON catalog.workflows (environment, application, path)
+CREATE UNIQUE INDEX workflow_enabled_request_path
+    ON catalog.workflow (env, app, path)
     WHERE enabled AND path IS NOT NULL;
 
 CREATE FUNCTION catalog.guard_workflow_update()
@@ -269,12 +269,12 @@ RETURNS trigger
 LANGUAGE plpgsql
 AS $$
 BEGIN
-    IF ROW(NEW.environment, NEW.application, NEW.workflow_id,
+    IF ROW(NEW.env, NEW.app, NEW.workflow_id,
            NEW.version, NEW.graph_json, NEW.graph_hash, NEW.trigger, NEW.path, NEW.schedule,
            NEW.source_package, NEW.entity, NEW.ops, NEW.condition,
            NEW.execution_type, NEW.execution_role, NEW.created_by, NEW.created_at)
        IS DISTINCT FROM
-       ROW(OLD.environment, OLD.application, OLD.workflow_id,
+       ROW(OLD.env, OLD.app, OLD.workflow_id,
            OLD.version, OLD.graph_json, OLD.graph_hash, OLD.trigger, OLD.path, OLD.schedule,
            OLD.source_package, OLD.entity, OLD.ops, OLD.condition,
            OLD.execution_type, OLD.execution_role, OLD.created_by, OLD.created_at) THEN
@@ -289,11 +289,11 @@ BEGIN
 END
 $$;
 REVOKE ALL ON FUNCTION catalog.guard_workflow_update() FROM PUBLIC;
-CREATE TRIGGER workflows_controlled_update
-    BEFORE UPDATE ON catalog.workflows
+CREATE TRIGGER workflow_controlled_update
+    BEFORE UPDATE ON catalog.workflow
     FOR EACH ROW EXECUTE FUNCTION catalog.guard_workflow_update();
-CREATE TRIGGER workflows_delete_immutable
-    BEFORE DELETE ON catalog.workflows
+CREATE TRIGGER workflow_delete_immutable
+    BEFORE DELETE ON catalog.workflow
     FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change();
 
 -- Project base grants are one mechanism applied to the complete current relation
@@ -303,9 +303,9 @@ DECLARE
     relation_name text;
 BEGIN
     FOREACH relation_name IN ARRAY ARRAY[
-        'packages',
+        'package',
         'connection_requirement',
-        'workflows'
+        'workflow'
     ] LOOP
         EXECUTE format('ALTER TABLE catalog.%I ENABLE ROW LEVEL SECURITY', relation_name);
         EXECUTE format('ALTER TABLE catalog.%I FORCE ROW LEVEL SECURITY', relation_name);
@@ -338,9 +338,9 @@ BEGIN
 END
 $immutable_facts$;
 
-GRANT SELECT ON catalog.packages,
+GRANT SELECT ON catalog.package,
     catalog.connection_requirement,
-    catalog.workflows
+    catalog.workflow
 TO wamn_app;
 
 DO $record_history$
@@ -350,9 +350,9 @@ BEGIN
         ('platform', 'connection'),
         ('platform', 'connection_generation'),
         ('platform', 'external_system'),
-        ('catalog', 'packages'),
+        ('catalog', 'package'),
         ('catalog', 'connection_requirement'),
-        ('catalog', 'workflows')
+        ('catalog', 'workflow')
     ) AS relations(schema_name, relation_name) LOOP
         PERFORM wamn_history.create_history_table(source.schema_name, source.relation_name, false);
         EXECUTE format('CREATE TRIGGER wamn_record_history_log AFTER INSERT OR UPDATE OR DELETE '

@@ -36,7 +36,7 @@
 BEGIN;
 
 -- The record history trigger requires an actor.
-INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('770df186-ac15-579e-b46b-c297cae2011b'::text::uuid,'','fixture','admin:seed-wms-fixture');
+INSERT INTO platform.tx_identity(principal_id,role,app,operation) VALUES('770df186-ac15-579e-b46b-c297cae2011b'::text::uuid,'','fixture','admin:seed-wms-fixture');
 
 \if :{?reset}
 TRUNCATE wms.inventory_transaction,

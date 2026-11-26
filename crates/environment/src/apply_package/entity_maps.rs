@@ -26,14 +26,14 @@ pub(super) async fn reconcile_entity_maps(
         .execute(&mut **tx)
         .await
         .map(drop)
-        .with_context(|| format!("ensure {schema}.wamn_entities"))?;
+        .with_context(|| format!("ensure {schema}.wamn_entity"))?;
         sqlx::raw_sql(sqlx::AssertSqlSafe(
             crate::capture_sql::ensure_cdc_exclusion_map_sql(schema),
         ))
         .execute(&mut **tx)
         .await
         .map(drop)
-        .with_context(|| format!("ensure {schema}.wamn_cdc_exclusions"))?;
+        .with_context(|| format!("ensure {schema}.wamn_cdc_exclusion"))?;
     }
 
     for model in &plan.models {
@@ -49,8 +49,8 @@ pub(super) async fn reconcile_entity_maps(
                     excluded.relation_oid IS NOT NULL AS cdc_excluded \
                FROM pg_catalog.pg_class AS relation \
                JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace \
-               LEFT JOIN {}.wamn_entities AS mapped ON mapped.relation_oid = relation.oid \
-               LEFT JOIN {}.wamn_cdc_exclusions AS excluded ON excluded.relation_oid = relation.oid \
+               LEFT JOIN {}.wamn_entity AS mapped ON mapped.relation_oid = relation.oid \
+               LEFT JOIN {}.wamn_cdc_exclusion AS excluded ON excluded.relation_oid = relation.oid \
               WHERE namespace.nspname = $1 AND relation.relname = $2 \
                 AND relation.relkind = 'r'",
             schema.quoted(),
@@ -131,8 +131,8 @@ pub(super) async fn reconcile_entity_maps(
                     entity.relation_oid IS NOT NULL AS entity_mapped \
                FROM pg_catalog.pg_class AS relation \
                JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace \
-               LEFT JOIN {}.wamn_cdc_exclusions AS mapped ON mapped.relation_oid = relation.oid \
-               LEFT JOIN {}.wamn_entities AS entity ON entity.relation_oid = relation.oid \
+               LEFT JOIN {}.wamn_cdc_exclusion AS mapped ON mapped.relation_oid = relation.oid \
+               LEFT JOIN {}.wamn_entity AS entity ON entity.relation_oid = relation.oid \
               WHERE namespace.nspname = $1 AND relation.relname = $2 \
                 AND relation.relkind = 'r'",
             schema.quoted(),

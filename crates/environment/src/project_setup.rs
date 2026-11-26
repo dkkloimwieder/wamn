@@ -71,7 +71,7 @@ pub fn grant_dynamic_sql_surface_sql() -> String {
          REVOKE ALL ON platform.tx_identity, platform.login_principal FROM {role}; \
          GRANT INSERT ON platform.tx_identity TO {role}; \
          GRANT EXECUTE ON FUNCTION wamn_authority.current_identity(), wamn_authority.current_principal_id(), \
-           wamn_authority.current_role(), wamn_authority.current_application() TO {role};",
+           wamn_authority.current_role(), wamn_authority.current_app() TO {role};",
         ensure_project_roles_sql()
     )
 }
@@ -83,13 +83,13 @@ pub fn grant_platform_surface_sql() -> String {
         "GRANT USAGE ON SCHEMA platform, catalog, wamn_run, wamn_history, wamn_authority TO {role}; \
          GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA platform, catalog, wamn_run TO {role}; \
          GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA platform, catalog, wamn_run TO {role}; \
-         GRANT SELECT, INSERT, UPDATE ON wamn_history.pruning_watermarks TO {role}; \
+         GRANT SELECT, INSERT, UPDATE ON wamn_history.pruning_watermark TO {role}; \
          REVOKE ALL ON platform.login_principal FROM {role}; \
          GRANT EXECUTE ON FUNCTION platform.prune_tx_identity() TO {role}; \
          REVOKE DELETE ON platform.pat FROM {role}; \
-         REVOKE DELETE ON wamn_run.runs FROM {role}; \
+         REVOKE DELETE ON wamn_run.run FROM {role}; \
          GRANT EXECUTE ON FUNCTION wamn_authority.current_identity(), wamn_authority.current_principal_id(), \
-           wamn_authority.current_role(), wamn_authority.current_application() TO {role}; \
+           wamn_authority.current_role(), wamn_authority.current_app() TO {role}; \
          GRANT EXECUTE ON FUNCTION wamn_history.row_image(record), \
            wamn_history.timestamptz_image(timestamptz) TO {role};",
     )

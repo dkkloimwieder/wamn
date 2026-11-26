@@ -33,7 +33,7 @@ wamn workflow run --host-url "$APPLICATION_URL" --workflow-id orders \
   --run-as admin --idempotency-key batch-42 --input orders-input.json
 ```
 
-The command returns the run ID after admission. Read the result in `wamn_run.runs`.
+The command returns the run ID after admission. Read the result in `wamn_run.run`.
 The run records the graph hash, executing principal and role, and invoker.
 The same invocation, key and input return the first run ID. Reusing the key with another input refuses.
 For a Request graph, the result records the Response.

@@ -1,5 +1,5 @@
 //! The `wamn_platform` login of each project environment, built at login from
-//! `registry.environment_projects`. Control reads the login certificate Secret
+//! `registry.project_env`. Control reads the login certificate Secret
 //! and the server CA copy through the Kubernetes API and keeps the PEM bytes
 //! in memory only.
 

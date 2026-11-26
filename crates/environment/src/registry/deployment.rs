@@ -5,8 +5,14 @@ pub async fn instance_suffix(
     connection: &mut sqlx::PgConnection,
     triple: &Triple,
 ) -> Result<Option<InstanceSuffix>, sqlx::Error> {
-    let suffix = sqlx::query_scalar::<_, String>("SELECT instance_suffix FROM registry.environment_projects WHERE org=$1 AND project=$2 AND env=$3")
-        .bind(triple.org.as_str()).bind(triple.project.as_str()).bind(triple.env.as_str()).fetch_optional(&mut *connection).await?;
+    let suffix = sqlx::query_scalar::<_, String>(
+        "SELECT instance_suffix FROM registry.project_env WHERE org=$1 AND project=$2 AND env=$3",
+    )
+    .bind(triple.org.as_str())
+    .bind(triple.project.as_str())
+    .bind(triple.env.as_str())
+    .fetch_optional(&mut *connection)
+    .await?;
     suffix
         .map(|value| wamn_postgres::decode_text(value, 0))
         .transpose()
@@ -18,13 +24,11 @@ pub async fn drain_bound_seconds(
     org: &wamn_registry::OrgId,
     env: &wamn_registry::EnvName,
 ) -> Result<i32, sqlx::Error> {
-    sqlx::query_scalar(
-        "SELECT drain_bound_seconds FROM registry.environments WHERE org=$1 AND env=$2",
-    )
-    .bind(org.as_str())
-    .bind(env.as_str())
-    .fetch_one(&mut *connection)
-    .await
+    sqlx::query_scalar("SELECT drain_bound_seconds FROM registry.env WHERE org=$1 AND env=$2")
+        .bind(org.as_str())
+        .bind(env.as_str())
+        .fetch_one(&mut *connection)
+        .await
 }
 
 /// Read the projects deployed in an environment, ordered by project name.
@@ -33,8 +37,13 @@ pub async fn projects(
     org: &wamn_registry::OrgId,
     env: &wamn_registry::EnvName,
 ) -> Result<Vec<wamn_registry::ProjectId>, sqlx::Error> {
-    let projects = sqlx::query_scalar::<_, String>("SELECT project FROM registry.environment_projects WHERE org=$1 AND env=$2 ORDER BY project")
-        .bind(org.as_str()).bind(env.as_str()).fetch_all(&mut *connection).await?;
+    let projects = sqlx::query_scalar::<_, String>(
+        "SELECT project FROM registry.project_env WHERE org=$1 AND env=$2 ORDER BY project",
+    )
+    .bind(org.as_str())
+    .bind(env.as_str())
+    .fetch_all(&mut *connection)
+    .await?;
     projects
         .into_iter()
         .map(|value| wamn_postgres::decode_text(value, 0))
@@ -46,7 +55,7 @@ pub async fn disposable(
     connection: &mut sqlx::PgConnection,
     triple: &Triple,
 ) -> Result<bool, sqlx::Error> {
-    sqlx::query_scalar("SELECT disposable FROM registry.environment_projects JOIN registry.environments USING (org,env) WHERE org=$1 AND project=$2 AND env=$3")
+    sqlx::query_scalar("SELECT disposable FROM registry.project_env JOIN registry.env USING (org,env) WHERE org=$1 AND project=$2 AND env=$3")
         .bind(triple.org.as_str()).bind(triple.project.as_str()).bind(triple.env.as_str()).fetch_one(&mut *connection).await
 }
 
@@ -55,8 +64,14 @@ pub async fn exists(
     connection: &mut sqlx::PgConnection,
     triple: &Triple,
 ) -> Result<bool, sqlx::Error> {
-    sqlx::query_scalar("SELECT EXISTS(SELECT FROM registry.environment_projects WHERE org=$1 AND project=$2 AND env=$3)")
-        .bind(triple.org.as_str()).bind(triple.project.as_str()).bind(triple.env.as_str()).fetch_one(&mut *connection).await
+    sqlx::query_scalar(
+        "SELECT EXISTS(SELECT FROM registry.project_env WHERE org=$1 AND project=$2 AND env=$3)",
+    )
+    .bind(triple.org.as_str())
+    .bind(triple.project.as_str())
+    .bind(triple.env.as_str())
+    .fetch_one(&mut *connection)
+    .await
 }
 
 /// Record a project without replacing its existing definition.
@@ -109,30 +124,30 @@ pub async fn lock_org(
     transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     org: &wamn_registry::OrgId,
 ) -> Result<(), sqlx::Error> {
-    sqlx::query("SELECT id FROM registry.orgs WHERE id=$1 FOR UPDATE")
+    sqlx::query("SELECT id FROM registry.org WHERE id=$1 FOR UPDATE")
         .bind(org.as_str())
         .fetch_one(&mut **transaction)
         .await?;
     Ok(())
 }
 
-/// Upsert a project row into `registry.projects` (idempotent). Params: `$1` org,
+/// Upsert a project row into `registry.project` (idempotent). Params: `$1` org,
 /// `$2` id. `ON CONFLICT (org, id) DO NOTHING` — a project carries no mutable
 /// placement of its own (placement is per-env), so re-provisioning is a no-op.
 fn upsert_project_sql() -> &'static str {
-    "INSERT INTO registry.projects (org, id) VALUES ($1, $2) \
+    "INSERT INTO registry.project (org, id) VALUES ($1, $2) \
      ON CONFLICT (org, id) DO NOTHING"
 }
 
 /// Record the environment, then its project database. Parameters follow the caller's
 /// org, project, environment, Secret, namespace, suffix, disposable, and target values.
 fn upsert_project_env_sql() -> &'static str {
-    "WITH parent AS (INSERT INTO registry.environments \
+    "WITH parent AS (INSERT INTO registry.env \
        (org,env,disposable,target_id) \
        VALUES ($1,$3,COALESCE($7,false),$8::text::uuid) \
-       ON CONFLICT (org,env) DO UPDATE SET disposable=COALESCE($7,registry.environments.disposable), \
+       ON CONFLICT (org,env) DO UPDATE SET disposable=COALESCE($7,registry.env.disposable), \
          target_id=EXCLUDED.target_id RETURNING org,env,disposable), \
-     deployment AS (INSERT INTO registry.environment_projects \
+     deployment AS (INSERT INTO registry.project_env \
        (org,env,project,secret_name,secret_namespace,instance_suffix) \
        SELECT org,env,$2,$4,$5,$6 FROM parent \
        ON CONFLICT (org,env,project) DO UPDATE SET secret_name=EXCLUDED.secret_name, \

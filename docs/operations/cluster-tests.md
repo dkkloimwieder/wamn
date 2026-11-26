@@ -25,7 +25,7 @@ This query reads the run and its queue row once a second:
 
 ```sql
 SELECT r.status, r.updated_at, q.lease_generation, q.attempts, q.lease_owner, q.lease_expires_at
-  FROM wamn_run.runs AS r
+  FROM wamn_run.run AS r
   LEFT JOIN wamn_run.run_queue AS q USING (run_id)
  WHERE r.run_id = '<run id>';
 ```

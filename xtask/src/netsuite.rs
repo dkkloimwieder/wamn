@@ -185,7 +185,7 @@ async fn execute(args: &Args) -> anyhow::Result<()> {
         let deadline = tokio::time::Instant::now() + Duration::from_secs(120);
         loop {
             let result: Value = tokio::time::timeout_at(deadline, sqlx::query_scalar(
-                "SELECT jsonb_build_object('run_id',run_id,'status',status,'result',result_json,'reason',terminal_reason) FROM wamn_run.runs WHERE run_id=$1"
+                "SELECT jsonb_build_object('run_id',run_id,'status',status,'result',result_json,'reason',terminal_reason) FROM wamn_run.run WHERE run_id=$1"
             ).bind(run).fetch_one(&mut database)).await
                 .with_context(|| format!("Run {run} did not finish within 120 seconds. Inspect it before another call."))??;
             match result["status"].as_str().context("run has no status")? {

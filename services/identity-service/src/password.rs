@@ -500,13 +500,13 @@ pub(crate) mod tests {
             wamn_postgres::provisioning_transaction::provisioning_transaction(&mut admin.client)
                 .await
                 .unwrap();
-        sqlx::query("INSERT INTO registry.orgs (id) VALUES ('demo')")
+        sqlx::query("INSERT INTO registry.org (id) VALUES ('demo')")
             .execute(&mut *tx)
             .await
             .unwrap();
         for member in &members {
             sqlx::query(
-                "INSERT INTO identity.org_memberships (principal_id, org) VALUES ($1, 'demo')",
+                "INSERT INTO identity.org_membership (principal_id, org) VALUES ($1, 'demo')",
             )
             .bind(sqlx::types::Uuid::from(*member.id()))
             .execute(&mut *tx)
@@ -677,7 +677,7 @@ pub(crate) mod tests {
         assert!(users[4].1["error"].is_string());
         let row = sqlx::query(
             "SELECT subject, email, display_name, updated_by::text \
-                 FROM identity.principals WHERE id = $1",
+                 FROM identity.principal WHERE id = $1",
         )
         .bind(sqlx::types::Uuid::from(
             carol.parse::<PrincipalId>().unwrap(),

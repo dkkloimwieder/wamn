@@ -12,8 +12,8 @@ pub(super) fn select_production_lease_sql() -> &'static str {
     "SELECT q.run_id, r.status, r.input_json::text, r.graph_id, r.graph_version, \
             r.graph_hash, r.execution_principal_id, r.execution_role, \
             r.state_json::text, r.event_root_run_id, r.event_depth \
-       FROM run_queue AS q JOIN runs AS r USING (run_id) \
-      WHERE r.package_id = $1 AND r.environment = $2 \
+       FROM run_queue AS q JOIN run AS r USING (run_id) \
+      WHERE r.package_id = $1 AND r.env = $2 \
         AND q.lease_expires_at <= clock_timestamp() AND q.attempts < q.max_attempts \
       ORDER BY q.available_at, q.run_id \
       LIMIT 1 FOR UPDATE OF r, q SKIP LOCKED"
@@ -66,10 +66,10 @@ pub(super) fn select_exhausted_production_sql() -> String {
                 selected_run.graph_id, \
                 selected_run.graph_version \
            FROM run_queue AS q \
-           JOIN runs AS selected_run \
+           JOIN run AS selected_run \
              ON selected_run.run_id = q.run_id \
           WHERE selected_run.package_id = $2 \
-            AND selected_run.environment = $3 \
+            AND selected_run.env = $3 \
                 AND q.lease_expires_at IS NOT NULL \
                 AND q.lease_expires_at \
                     + ($1::bigint * interval '1 millisecond') <= now() \
@@ -99,7 +99,7 @@ fn terminalize_exhausted_sql(status: RunStatus, fail_type: Option<FailType>) -> 
     );
     format!(
         "WITH updated AS ( \
-            UPDATE runs AS r \
+            UPDATE run AS r \
             SET status = '{status}', terminal_reason = '{terminal_reason}', \
                 fail_type = {fail_type_sql}, \
                 result_json = $2::text::jsonb, \

@@ -89,7 +89,7 @@ async fn a_record_without_a_marker_keeps_the_disposable_row() {
         .map(drop)
         .unwrap();
     let mut transaction = provisioning_transaction(&mut client).await.unwrap();
-    sqlx::raw_sql("INSERT INTO registry.orgs (id) VALUES ('demo')")
+    sqlx::raw_sql("INSERT INTO registry.org (id) VALUES ('demo')")
         .execute(&mut *transaction)
         .await
         .map(drop)
@@ -163,7 +163,7 @@ async fn project_configuration_keeps_applied_environment_timings() -> anyhow::Re
     .await?;
     let stored = (321, 432, 75);
     sqlx::query(
-        "UPDATE registry.environments
+        "UPDATE registry.env
          SET readiness_budget_seconds=$3, drain_bound_seconds=$4, revocation_seconds=$5
          WHERE org=$1 AND env=$2",
     )

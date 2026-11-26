@@ -6,7 +6,7 @@ use wamn_identity_protocol::PrincipalId;
 use wamn_registry::{EnvName, OrgId, ProjectId, Triple, instance_suffix::InstanceSuffix};
 
 // Every project deployment affected by an environment lifecycle change.
-const ENVIRONMENT_PROJECTS: &str = "SELECT project,env FROM registry.environment_projects WHERE org=$1 AND env=ANY($2) ORDER BY env,project";
+const ENVIRONMENT_PROJECTS: &str = "SELECT project,env FROM registry.project_env WHERE org=$1 AND env=ANY($2) ORDER BY env,project";
 
 /// Read the platform domain as stored, including an unset value.
 ///
@@ -54,7 +54,7 @@ pub(crate) async fn project_deployments(
     org: &OrgId,
 ) -> Result<Vec<(Triple, InstanceSuffix)>, sqlx::Error> {
     let rows = sqlx::query_as::<_, (String, String, String)>(
-        "SELECT project, env, instance_suffix FROM registry.environment_projects WHERE org=$1 ORDER BY project, env",
+        "SELECT project, env, instance_suffix FROM registry.project_env WHERE org=$1 ORDER BY project, env",
     )
     .bind(org.as_str())
     .fetch_all(pool)
@@ -80,7 +80,7 @@ pub(crate) async fn membership_count(
     env: &EnvName,
 ) -> Result<i32, sqlx::Error> {
     sqlx::query_scalar(
-        "SELECT count(*)::int4 FROM identity.project_env_memberships \
+        "SELECT count(*)::int4 FROM identity.project_env_membership \
          WHERE org = $1 AND project = $2 AND env = $3",
     )
     .bind(org.as_str())
@@ -118,7 +118,7 @@ pub(crate) async fn check_project_roles(
     project: &ProjectId,
 ) -> Result<(), sqlx::Error> {
     sqlx::query_scalar::<_, Uuid>(
-        "SELECT principal_id FROM identity.project_roles WHERE org=$1 AND project=$2",
+        "SELECT principal_id FROM identity.project_role WHERE org=$1 AND project=$2",
     )
     .bind(org.as_str())
     .bind(project.as_str())
@@ -135,7 +135,7 @@ pub(crate) async fn principal_active(
     connection: &mut PgConnection,
     principal: &PrincipalId,
 ) -> Result<bool, sqlx::Error> {
-    sqlx::query_scalar("SELECT active FROM identity.principals WHERE id = $1")
+    sqlx::query_scalar("SELECT active FROM identity.principal WHERE id = $1")
         .bind(Uuid::from(*principal))
         .fetch_one(connection)
         .await
@@ -182,7 +182,7 @@ pub(crate) async fn org_role_holders(
 ) -> Result<(bool, bool), sqlx::Error> {
     sqlx::query_as(
         "SELECT count(*) > 0, COALESCE(bool_or(p.email = $3), false)
-           FROM identity.org_roles r LEFT JOIN identity.principals p ON p.id = r.principal_id
+           FROM identity.org_role r LEFT JOIN identity.principal p ON p.id = r.principal_id
           WHERE r.org = $1 AND r.role = $2",
     )
     .bind(org.as_str())

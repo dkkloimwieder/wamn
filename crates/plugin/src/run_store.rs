@@ -38,11 +38,11 @@ impl<'connection> PostgresRunStore<'connection> {
 
 const ADMIT_SQL: &str = "
     WITH admitted AS (
-        INSERT INTO runs (package_id, environment, graph_id, graph_version, graph_hash,
+        INSERT INTO run (package_id, env, graph_id, graph_version, graph_hash,
           execution_principal_id, execution_role, trigger_source, invoked_by, invoked_by_user_id,
           idempotency_key, input_json, status, event_source_run_id, event_root_run_id, event_depth)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'running', $13, $14, $15)
-        ON CONFLICT (environment, package_id, graph_id, graph_version, trigger_source, idempotency_key)
+        ON CONFLICT (env, package_id, graph_id, graph_version, trigger_source, idempotency_key)
           WHERE idempotency_key IS NOT NULL DO NOTHING
         RETURNING run_id
     )
@@ -52,8 +52,8 @@ const ADMIT_SQL: &str = "
     RETURNING run_id, lease_generation";
 
 const EXISTING_SQL: &str = "
-    SELECT run_id FROM runs
-     WHERE package_id = $1 AND environment = $2 AND graph_id = $3 AND graph_version = $4
+    SELECT run_id FROM run
+     WHERE package_id = $1 AND env = $2 AND graph_id = $3 AND graph_version = $4
        AND trigger_source = $5 AND idempotency_key = $6 AND input_json = $7
        AND execution_principal_id = $8 AND execution_role = $9
        AND invoked_by_user_id IS NOT DISTINCT FROM $10";
@@ -118,13 +118,13 @@ impl PostgresRunStore<'_> {
         envelope: &wamn_event::Envelope,
     ) -> Result<Option<wamn_identity_protocol::PrincipalId>, ProductionLeaseError> {
         let connection = &mut *self.connection;
-        let schemas = sqlx::query("SELECT n.nspname::text FROM pg_namespace n JOIN pg_class c ON c.relnamespace = n.oid WHERE c.relname = 'wamn_entities' AND c.relkind = 'r' ORDER BY 1").fetch_all(&mut *connection).await
+        let schemas = sqlx::query("SELECT n.nspname::text FROM pg_namespace n JOIN pg_class c ON c.relnamespace = n.oid WHERE c.relname = 'wamn_entity' AND c.relkind = 'r' ORDER BY 1").fetch_all(&mut *connection).await
             .map_err(|error| postgres_error("read entity map schemas", &error))?;
         for row in schemas {
             let schema: String = row.get(0);
             let quoted_schema = postgres_protocol::escape::escape_identifier(&schema);
             let sql = format!(
-                "SELECT c.oid, c.relname::text FROM {quoted_schema}.wamn_entities m JOIN pg_class c ON c.oid = m.relation_oid WHERE m.package_id = $1 AND m.entity_id = $2 AND c.relname = m.table_name AND c.relnamespace = $3::text::regnamespace"
+                "SELECT c.oid, c.relname::text FROM {quoted_schema}.wamn_entity m JOIN pg_class c ON c.oid = m.relation_oid WHERE m.package_id = $1 AND m.entity_id = $2 AND c.relname = m.table_name AND c.relnamespace = $3::text::regnamespace"
             );
             let Some(model) = sqlx::query(sqlx::AssertSqlSafe(sql))
                 .bind(envelope.package_id.as_str())

@@ -22,10 +22,10 @@ const DROP_USER_ROLE_SQL: &str = "DELETE FROM platform.user_role \
     WHERE user_id = $1 AND role_name = $2";
 
 /// The status row of the environment. No row means active.
-const ENVIRONMENT_STATUS_ROW_SQL: &str = "INSERT INTO platform.environment \
+const ENVIRONMENT_STATUS_ROW_SQL: &str = "INSERT INTO platform.env \
     (active) VALUES ($1) \
     ON CONFLICT (id) DO UPDATE SET active = EXCLUDED.active \
-    WHERE platform.environment.active <> EXCLUDED.active";
+    WHERE platform.env.active <> EXCLUDED.active";
 
 /// Refuse a project database without platform rows. The database is the org
 /// boundary, so its rows name no project: the caller derives the project of
@@ -297,10 +297,10 @@ pub async fn read_project_authority(
 ) -> Result<Option<ProjectAuthority>, IdentityError> {
     let row = sqlx::query(
         "SELECT p.type, p.active, p.email, p.display_name, \
-         EXISTS (SELECT 1 FROM identity.org_memberships m WHERE m.principal_id=p.id AND m.org=$2 AND m.active), \
+         EXISTS (SELECT 1 FROM identity.org_membership m WHERE m.principal_id=p.id AND m.org=$2 AND m.active), \
          identity.has_project_access(p.id,$2,$4,$3), \
          identity.is_project_admin(p.id,$2,$3) \
-         FROM identity.principals p WHERE p.id=$1",
+         FROM identity.principal p WHERE p.id=$1",
     )
     .bind(Uuid::from(*principal))
     .bind(coordinate.org.as_str())

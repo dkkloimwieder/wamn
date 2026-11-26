@@ -122,7 +122,7 @@ impl<'a, 'session> Administration<'a, 'session> {
         let mut tx = self.system.begin().await.map_err(database_error)?;
         bind_actor(&mut tx, caller, operation).await?;
         let (target, target_type): (Uuid, String) = sqlx::query_as(
-            "SELECT destination.id, destination.type FROM registry.environments e \
+            "SELECT destination.id, destination.type FROM registry.env e \
                  JOIN registry.target destination ON destination.id=e.target_id \
                  WHERE e.org=$1 AND e.env=$2",
         )
@@ -438,7 +438,7 @@ pub async fn required_connection_version(
     name: &str,
 ) -> Result<Option<i32>, ConnectionError> {
     sqlx::query_scalar(
-        "SELECT version FROM registry.environment_integrations WHERE org=$1 AND env=$2 AND name=$3",
+        "SELECT version FROM registry.env_integration WHERE org=$1 AND env=$2 AND name=$3",
     )
     .bind(org.as_str())
     .bind(env.as_str())

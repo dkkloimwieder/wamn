@@ -571,7 +571,7 @@ async fn sample_database(directory: &Path) -> sqlx::SqlitePool {
 async fn samples_where(directory: &Path, condition: &str) -> i64 {
     let pool = sample_database(directory).await;
     let count = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
-        "SELECT count(*) FROM samples WHERE {condition}"
+        "SELECT count(*) FROM sample WHERE {condition}"
     )))
     .fetch_one(&pool)
     .await

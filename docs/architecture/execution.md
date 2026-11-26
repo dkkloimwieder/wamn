@@ -22,7 +22,7 @@ The host makes sure that the original caller holds the entry, once, before the e
 Component membership alone grants no permission to call an operation.
 
 An application host makes sure of the status of its environment for each request, before the auth policy of the route.
-It reads the `active` flag from `platform.environment` through the compiled SQL login of its project. That login inherits `wamn_app`. No row means active.
+It reads the `active` flag from `platform.env` through the compiled SQL login of its project. That login inherits `wamn_app`. No row means active.
 The host keeps the answer in its [auth memory](#auth-memory).
 While the flag is `false`, every route answers 503 with the code `environment-inactive`, and an anonymous route does too.
 A failed read answers 503 `authentication-unavailable`.
@@ -158,7 +158,7 @@ Any other payload answers 400 `delivery-invalid-payload`.
 `environment.status` also answers three nullable `int32` members.
 `users_with_role` counts human users with at least one role, once per user.
 `roles` counts all roles in the environment.
-`memberships` counts explicit rows in `identity.project_env_memberships` for the selected project and environment on the control connection.
+`memberships` counts explicit rows in `identity.project_env_membership` for the selected project and environment on the control connection.
 Inherited administration adds no membership row.
 
 The first two counts share one query through the existing environment administration login, within a read-only transaction.
@@ -208,14 +208,14 @@ A refusal is a declared error of its route, with the input member it names in `f
 A write that changes administrative authority or membership also changes the application rows of each environment it covers, one transaction per environment, with the project's administration login.
 Native control reads a public connection file per `<env>--<project>` at each write. The login directory holds `tls.crt`, `tls.key`, and the server's `ca.crt`.
 Every authority mutation commits its system rows before application projection.
-Projection locks `identity.org_memberships` for the principal and org, then reads current authority.
+Projection locks `identity.org_membership` for the principal and org, then reads current authority.
 It commits the application write before releasing that system lock.
 If an environment fails, the route answers `application_write_incomplete` with that environment and the environments that completed.
 The system mutation remains committed.
 Control's maintenance loop also reconciles each recorded project environment from current system authority.
 The provisional period is 60 seconds. An unavailable database does not stop the other copies.
-The four status routes need `org-admin`, and they write `registry.environments.active` through the `control` family, which holds `UPDATE` on that column only.
-Each status route also writes the flag into the one row of `platform.environment` in each environment, with the same administration login.
+The four status routes need `org-admin`, and they write `registry.env.active` through the `control` family, which holds `UPDATE` on that column only.
+Each status route also writes the flag into the one row of `platform.env` in each environment, with the same administration login.
 An inactivation writes the environments first and commits its system rows last, and an activation commits its system rows first.
 Data, membership and role rows do not change with the status, and CDC stays attached.
 Control calls identity over HTTPS with a projected service account token for the `wamn-identity` audience.
@@ -479,7 +479,7 @@ The `number_counter.set` route binds the requested application after it finds th
 Other host routes, host queue transactions, and platform reads bind no application.
 
 An absent application binds an empty value, so a pooled connection keeps no earlier application.
-[Numbering](data-access.md#numbering) reads the host-bound application through `wamn_authority.current_application()` in the operation transaction.
+[Numbering](data-access.md#numbering) reads the host-bound application through `wamn_authority.current_app()` in the operation transaction.
 
 A platform transaction that only reads binds no principal and no operation.
 Every host read still has its own identity row. There is no autocommit read path.
@@ -574,7 +574,7 @@ It stores one packaging label for each move, keyed by `{packaging_id}/{row_versi
 
 ### Environment workflows
 
-Each authored workflow version is one row in `catalog.workflows`.
+Each authored workflow version is one row in `catalog.workflow`.
 The graph, graph hash, execution policy and trigger columns are immutable.
 One version can be enabled for each workflow.
 Enabled Request paths are unique per environment and application.
@@ -647,7 +647,7 @@ Already admitted work retains its caller. Revocation does not cancel that work o
 Create an API identity with `wamn create-api-service`.
 Supply the project, environment, name, display name, one or more `--role` values, and `--lifetime-seconds`.
 The verb uses `WAMN_CONTROL_URL` and `WAMN_TOKEN`. The session selects the org.
-Control builds the project login from `registry.environment_projects` when it connects.
+Control builds the project login from `registry.project_env` when it connects.
 `--emit-secret` names a private JSON output file. The verb prints only the principal id.
 Control creates or reuses the service, grants its roles, and issues its PAT in one project transaction. An API service cannot receive the reserved `admin` role through this verb.
 
@@ -846,7 +846,7 @@ An `env delete` deletes every key of the environment.
 
 ### Control sessions
 
-Every org in `registry.orgs` has the org audience `urn:wamn:org:<org>`.
+Every org in `registry.org` has the org audience `urn:wamn:org:<org>`.
 The same token serves application and control requests. Login requires active org membership, without an administration grant.
 Control reads org and project administration separately from the system database.
 Control uses the verified subject UUID for the existing org and project eligibility reads.
@@ -964,7 +964,7 @@ Refused attempts do not extend the window. Counters older than two minutes are r
 Password requests expire after ten seconds and accept at most 8,192 body bytes.
 User management and NATS signing use projected service account tokens with audience `wamn-identity`.
 Identity verifies each token through Kubernetes TokenReview.
-For control and worker requests, identity requires the token's namespace to exist in `registry.orgs`.
+For control and worker requests, identity requires the token's namespace to exist in `registry.org`.
 The `wamn-control-<org>` service account can manage users. The `wamn-operation-<org>` service account can request NATS credentials for its own org.
 The `wamn-host-<org>--<env>` service account can request a scheduler user at `POST /nats/host-user`.
 The request body contains only the public key. Identity takes the pod name from TokenReview and refuses a token without it.
@@ -1075,7 +1075,7 @@ Previously cached keys can still authenticate for their remaining 300-second fre
 
 Private signing keys are encrypted by `wamn-envelope` with the same provider and wrapping key as OAuth tokens.
 The identity settings file selects the provider. The local provider reads its wrapping key from `/etc/wamn/oauth/key`.
-`identity.session_keys.private_key_envelope` stores the packed JSON envelope as bytes: ciphertext, nonce, wrapped key and key id.
+`identity.session_key.private_key_envelope` stores the packed JSON envelope as bytes: ciphertext, nonce, wrapped key and key id.
 Retirement erases that whole column. Identity decrypts the active key under the existing shared issuer lock for each signature.
 The public endpoint exposes only public key material.
 The identity service runs signing key rotation on a persisted schedule.

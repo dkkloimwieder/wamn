@@ -1,6 +1,5 @@
 //! File row queries and their administration transactions.
 
-use serde_json::json;
 use sqlx::Row as _;
 use uuid::Uuid;
 use wamn_blobstore::file_route::{
@@ -51,9 +50,8 @@ pub(crate) async fn record(
     application: &wamn_registry::ApplicationName,
     id: Uuid,
 ) -> Result<FileRecord, FileError> {
-    let sql = format!(
-        "SELECT {FILE_COLUMNS} FROM platform.file WHERE id = $1::text::uuid AND application = $2"
-    );
+    let sql =
+        format!("SELECT {FILE_COLUMNS} FROM platform.file WHERE id = $1::text::uuid AND app = $2");
     administration_transaction(postgres, project, principal, operation, async |client| {
         let row = sqlx::query(sqlx::AssertSqlSafe(sql))
             .bind(id.to_string())
@@ -77,7 +75,7 @@ pub(crate) async fn insert(
 ) -> Result<(), FileError> {
     administration_transaction(postgres, project, principal, operation, async |client| {
         sqlx::query(
-            "INSERT INTO platform.file (id, application, connection_id, name, media_type, size, sha256, blob_key, exposure) VALUES ($1::text::uuid,$2,$3::text::uuid,$4,$5,$6,$7,$8,'application')",
+            "INSERT INTO platform.file (id, app, connection_id, name, media_type, size, sha256, blob_key, exposure) VALUES ($1::text::uuid,$2,$3::text::uuid,$4,$5,$6,$7,$8,'app')",
         )
         .bind(file.id.to_string())
         .bind(file.application.as_str())
@@ -106,7 +104,7 @@ pub(crate) async fn delete(
 ) -> Result<(), FileError> {
     administration_transaction(postgres, project, principal, operation, async |client| {
         let deleted =
-            sqlx::query("DELETE FROM platform.file WHERE id = $1::text::uuid AND application = $2")
+            sqlx::query("DELETE FROM platform.file WHERE id = $1::text::uuid AND app = $2")
                 .bind(id.to_string())
                 .bind(application.as_str())
                 .execute(client)
@@ -129,10 +127,13 @@ pub(crate) async fn set_exposure(
     file: FileExposure<'_>,
 ) -> Result<Result<(), FileError>, FileError> {
     administration_transaction(postgres, project, principal, operation, async |client| {
-        sqlx::query("UPDATE platform.file SET exposure = $3, url = $4 WHERE id = $1::text::uuid AND application = $2 AND (exposure IS DISTINCT FROM $3 OR url IS DISTINCT FROM $4)")
+        sqlx::query("UPDATE platform.file SET exposure = $3, url = $4 WHERE id = $1::text::uuid AND app = $2 AND (exposure IS DISTINCT FROM $3 OR url IS DISTINCT FROM $4)")
             .bind(file.id.to_string())
             .bind(file.application.as_str())
-            .bind(file.exposure.literal())
+            .bind(match file.exposure {
+                Exposure::Application => "app",
+                other => other.literal(),
+            })
             .bind(file.url)
             .execute(client)
             .await
@@ -164,8 +165,12 @@ fn decode_record(row: &sqlx::postgres::PgRow) -> Result<FileRecord, FileError> {
         connection_id: row.try_get(1).map_err(file_sql_error)?,
         media_type: row.try_get(2).map_err(file_sql_error)?,
         size: row.try_get(3).map_err(file_sql_error)?,
-        exposure: serde_json::from_value(json!(exposure))
-            .map_err(|error| failed("exposure", error))?,
+        exposure: match exposure.as_str() {
+            "private" => Exposure::Private,
+            "app" => Exposure::Application,
+            "public" => Exposure::Public,
+            _ => return Err(failed("exposure", anyhow::anyhow!("invalid file exposure"))),
+        },
         url: row.try_get(5).map_err(file_sql_error)?,
         blob_key: row.try_get(6).map_err(file_sql_error)?,
     };

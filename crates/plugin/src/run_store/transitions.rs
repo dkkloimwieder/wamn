@@ -1,6 +1,6 @@
 //! Fenced run-state transitions.
 //!
-//! Every executor-owned mutation joins `runs` to the queue-owned
+//! Every executor-owned mutation joins `run` to the queue-owned
 //! `(lease_owner, lease_generation)` authority and returns one typed result row.
 //! The explicit authority run id is deliberately separate from the target run
 //! id: accidentally presenting one run's fence while mutating another is a
@@ -16,7 +16,7 @@ WITH input AS ( \
            $3::text AS lease_owner, $4::bigint AS lease_generation \
 ), \
 locked_run AS MATERIALIZED ( \
-    SELECT r.* FROM runs AS r, input AS i \
+    SELECT r.* FROM run AS r, input AS i \
      WHERE i.target_run_id = i.authority_run_id \
        AND r.run_id = i.target_run_id \
      FOR UPDATE OF r \
@@ -56,7 +56,7 @@ authority AS ( \
 pub(super) fn checkpoint_sql() -> String {
     format!(
         "{prefix}, recorded AS ( \
-             UPDATE runs AS r SET state_json = $5::text::jsonb \
+             UPDATE run AS r SET state_json = $5::text::jsonb \
                FROM authority AS a WHERE a.result_code = 'ready' \
                 AND r.run_id = a.run_id \
                 AND (r.state_json IS NULL OR r.state_json = $5::text::jsonb) \
@@ -77,7 +77,7 @@ pub(super) fn terminalize_sql() -> String {
     format!(
         "{prefix}, \
          terminalized AS ( \
-             UPDATE runs AS r \
+             UPDATE run AS r \
                 SET status = $5, terminal_reason = $6, \
                     result_json = $7::text::jsonb, fail_type = $8, \
                     updated_at = $9::timestamptz \

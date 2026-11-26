@@ -18,23 +18,23 @@ use wamn_authentication::identity_error::{IdentityError, IdentityErrorType, Iden
 use wamn_identity_protocol::PrincipalId;
 
 /// Create the active membership, or make an inactive membership active.
-const ACTIVATE_MEMBERSHIP_SQL: &str = "INSERT INTO identity.org_memberships \
+const ACTIVATE_MEMBERSHIP_SQL: &str = "INSERT INTO identity.org_membership \
     (principal_id, org, active) VALUES ($1, $2, true) \
     ON CONFLICT (principal_id, org) DO UPDATE SET active = true \
-    WHERE NOT identity.org_memberships.active";
+    WHERE NOT identity.org_membership.active";
 
-const ACTIVE_MEMBER_SQL: &str = "SELECT active FROM identity.org_memberships \
+const ACTIVE_MEMBER_SQL: &str = "SELECT active FROM identity.org_membership \
     WHERE principal_id = $1 AND org = $2 FOR UPDATE";
 
 const PROJECT_IN_ORG_SQL: &str = crate::identity_sql::PROJECT_IN_ORG_SQL;
 
-const ORG_ROLE_SQL: &str = "INSERT INTO identity.org_roles (principal_id, org, role) \
+const ORG_ROLE_SQL: &str = "INSERT INTO identity.org_role (principal_id, org, role) \
     VALUES ($1, $2, $3) ON CONFLICT DO NOTHING";
 
 fn membership_write_error(error: &sqlx::Error) -> IdentityError {
     if error.as_database_error().is_some_and(|error| {
         error.code().as_deref() == Some("23514")
-            && error.constraint() == Some("org_memberships_single_org")
+            && error.constraint() == Some("org_membership_single_org")
     }) {
         return IdentityError::refused(
             IdentityErrorType::Conflict,
@@ -136,7 +136,7 @@ pub async fn grant_member(
     super::grant_project_env_membership(client, principal_id, org, project, env).await
 }
 
-const HOLDS_ORG_ADMIN_SQL: &str = "SELECT EXISTS (SELECT 1 FROM identity.org_roles \
+const HOLDS_ORG_ADMIN_SQL: &str = "SELECT EXISTS (SELECT 1 FROM identity.org_role \
     WHERE principal_id = $1 AND org = $2 AND role = $3)";
 
 /// Revoke a membership of one environment. The user's org membership and
@@ -166,7 +166,7 @@ pub async fn revoke_member(
     Ok(())
 }
 
-const DROP_PROJECT_ADMIN_SQL: &str = "DELETE FROM identity.project_roles \
+const DROP_PROJECT_ADMIN_SQL: &str = "DELETE FROM identity.project_role \
     WHERE principal_id = $1 AND org = $2 AND project = $3 AND role = $4";
 
 /// Revoke `project-admin` in one project. Environment memberships stay.
@@ -236,27 +236,27 @@ pub(crate) async fn active_member(
     Ok(())
 }
 
-const REACTIVATE_MEMBERSHIP_SQL: &str = "UPDATE identity.org_memberships SET active = true \
+const REACTIVATE_MEMBERSHIP_SQL: &str = "UPDATE identity.org_membership SET active = true \
     WHERE principal_id = $1 AND org = $2 AND NOT active";
 
-const DROP_ENV_MEMBERSHIPS_SQL: &str = "DELETE FROM identity.project_env_memberships \
+const DROP_ENV_MEMBERSHIPS_SQL: &str = "DELETE FROM identity.project_env_membership \
     WHERE principal_id = $1 AND org = $2";
 
 /// Every project role in the org, or only `$3` when it names one.
-const DROP_PROJECT_ROLES_SQL: &str = "DELETE FROM identity.project_roles \
+const DROP_PROJECT_ROLES_SQL: &str = "DELETE FROM identity.project_role \
     WHERE principal_id = $1 AND org = $2 AND ($3::text IS NULL OR role = $3)";
 
 /// Every org role in the org, or only `$3` when it names one.
-const DROP_ORG_ROLES_SQL: &str = "DELETE FROM identity.org_roles \
+const DROP_ORG_ROLES_SQL: &str = "DELETE FROM identity.org_role \
     WHERE principal_id = $1 AND org = $2 AND ($3::text IS NULL OR role = $3)";
 
-const DEACTIVATE_MEMBERSHIP_SQL: &str = "UPDATE identity.org_memberships SET active = false \
+const DEACTIVATE_MEMBERSHIP_SQL: &str = "UPDATE identity.org_membership SET active = false \
     WHERE principal_id = $1 AND org = $2 AND active";
 
 const ORG_USERS_SQL: &str = "SELECT p.id, p.email, p.display_name, m.active, p.active, \
-    EXISTS (SELECT 1 FROM identity.org_roles o \
+    EXISTS (SELECT 1 FROM identity.org_role o \
         WHERE o.principal_id = p.id AND o.org = $1 AND o.role = $2) \
-    FROM identity.org_memberships m JOIN identity.principals p ON p.id = m.principal_id \
+    FROM identity.org_membership m JOIN identity.principal p ON p.id = m.principal_id \
     WHERE m.org = $1 AND ($3::text IS NULL OR (p.email, p.id) > ($3, $4)) \
     ORDER BY p.email, p.id LIMIT $5";
 
@@ -292,15 +292,15 @@ pub async fn disable_user(
     org: &wamn_registry::OrgId,
 ) -> Result<(), IdentityError> {
     let user = sqlx::query_scalar::<_, Uuid>(
-        "SELECT id FROM identity.principals WHERE id = $1 AND type = 'user' FOR NO KEY UPDATE",
+        "SELECT id FROM identity.principal WHERE id = $1 AND type = 'user' FOR NO KEY UPDATE",
     )
     .bind(Uuid::from(*principal))
     .fetch_optional(&mut **tx)
     .await
     .map_err(|error| database_error(&error))?;
     let (member, active_elsewhere): (bool, bool) = sqlx::query_as(
-        "SELECT EXISTS (SELECT FROM identity.org_memberships WHERE principal_id = $1 AND org = $2),
-                EXISTS (SELECT FROM identity.org_memberships
+        "SELECT EXISTS (SELECT FROM identity.org_membership WHERE principal_id = $1 AND org = $2),
+                EXISTS (SELECT FROM identity.org_membership
                         WHERE principal_id = $1 AND org <> $2 AND active)",
     )
     .bind(Uuid::from(*principal))
@@ -458,7 +458,7 @@ pub async fn org_users_page(
         .collect()
 }
 
-const USER_CONTACT_SQL: &str = "SELECT email, display_name FROM identity.principals \
+const USER_CONTACT_SQL: &str = "SELECT email, display_name FROM identity.principal \
     WHERE id = $1 AND type = 'user'";
 
 /// The email and display name of a user principal, which its application
@@ -633,7 +633,7 @@ pub async fn lock_org_memberships(
     client: &mut sqlx::PgConnection,
     org: &wamn_registry::OrgId,
 ) -> Result<(), IdentityError> {
-    sqlx::query("SELECT principal_id FROM identity.org_memberships WHERE org=$1 ORDER BY principal_id FOR UPDATE").bind(org.as_str()).fetch_all(&mut *client)
+    sqlx::query("SELECT principal_id FROM identity.org_membership WHERE org=$1 ORDER BY principal_id FOR UPDATE").bind(org.as_str()).fetch_all(&mut *client)
         .await.map_err(|error| database_error(&error))?;
     Ok(())
 }

@@ -36,7 +36,7 @@ pub fn application_event_consumer(
         package.as_str().len(),
         entity.len(),
     );
-    format!("application_{}", hex::encode(sha256(identity.as_bytes())))
+    format!("app_{}", hex::encode(sha256(identity.as_bytes())))
 }
 
 /// Name the durable pull consumer of an application's data-change workflow.

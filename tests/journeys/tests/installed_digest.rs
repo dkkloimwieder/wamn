@@ -128,7 +128,7 @@ common::journey! {
         let mut system = environment.org.cluster.observe_system().await?;
         let triple = &environment.triple;
         let (publication, stored): (String, Vec<String>) = sqlx::query_as(
-            "SELECT publication, schema FROM registry.event_readers WHERE org = $1 AND project = $2 AND env = $3",
+            "SELECT publication, schema FROM registry.event_reader WHERE org = $1 AND project = $2 AND env = $3",
         )
         .bind(triple.org.as_str())
         .bind(triple.project.as_str())
@@ -220,7 +220,7 @@ async fn schemas(environment: &Environment, digest: &str) -> anyhow::Result<BTre
 
 async fn installed_digest(connection: &mut sqlx::PgConnection) -> anyhow::Result<String> {
     Ok(
-        sqlx::query_scalar("SELECT artifact_digest FROM catalog.packages WHERE package_id = $1")
+        sqlx::query_scalar("SELECT artifact_digest FROM catalog.package WHERE package_id = $1")
             .bind(PACKAGE)
             .fetch_one(connection)
             .await?,

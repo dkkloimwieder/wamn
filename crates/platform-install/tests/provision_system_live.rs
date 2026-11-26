@@ -132,10 +132,10 @@ async fn bootstrap_is_atomic_and_uses_database_facts() {
         "SELECT format('%I.%I', schemaname, tablename) FROM pg_tables
          WHERE schemaname IN ('registry', 'identity')
            AND tablename::text !~ '_history$'
-           AND (schemaname = 'registry' AND tablename <> 'environment_application_connections'
+           AND (schemaname = 'registry'
                 OR schemaname = 'identity' AND tablename NOT IN (
-                    'session_keys', 'nats_keys', 'password_logins', 'password_tokens',
-                    'password_attempts', 'renewal_credentials', 'session_signing_state'
+                    'session_key', 'nats_key', 'password_login', 'password_token',
+                    'password_attempt', 'renewal_credential', 'session_signing_state'
                 )) <> EXISTS (
                SELECT FROM pg_trigger
                WHERE tgrelid = to_regclass(format('%I.%I', schemaname, tablename))

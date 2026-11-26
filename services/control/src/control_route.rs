@@ -20,7 +20,7 @@
 //! success only when every environment is done.
 //!
 //! The status routes mirror the status of each environment into its row of
-//! `platform.environment` in the same way
+//! `platform.env` in the same way
 //! (docs/architecture/execution.md#routing-and-availability): an inactivation
 //! writes the environments first and commits the system rows last, and an
 //! activation commits the system rows first.

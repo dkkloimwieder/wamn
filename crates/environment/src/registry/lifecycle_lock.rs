@@ -83,7 +83,7 @@ impl LifecycleLock {
         let key = serde_json::to_string(&(&triple.org, &triple.project, &triple.env, application))?;
         let held = lock
             .try_acquire(
-                "SELECT pg_try_advisory_lock(hashtextextended('wamn-application/' || $1, 0))",
+                "SELECT pg_try_advisory_lock(hashtextextended('wamn-app/' || $1, 0))",
                 &[&key],
             )
             .await?;

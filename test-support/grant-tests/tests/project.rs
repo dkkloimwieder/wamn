@@ -120,7 +120,7 @@ async fn app_login_refusals() -> anyhow::Result<()> {
     transaction.rollback().await?;
     let mut transaction = actor.begin().await?;
     let other = sqlx::query(
-        "INSERT INTO platform.tx_identity (xid, principal_id, role, application) \
+        "INSERT INTO platform.tx_identity (xid, principal_id, role, app) \
          VALUES ('1'::xid8, $1, 'viewer', 'fixture')",
     )
     .bind(sqlx::types::Uuid::from(principal))
@@ -143,11 +143,11 @@ async fn app_login_refusals() -> anyhow::Result<()> {
     .await?;
     execute(
         &mut seed,
-        "INSERT INTO catalog.packages (package_id, package_version) VALUES ('probe', '1.0.0')",
+        "INSERT INTO catalog.package (package_id, package_version) VALUES ('probe', '1.0.0')",
     )
     .await?;
     seed.commit().await?;
-    let count = "SELECT count(*) FROM catalog.packages";
+    let count = "SELECT count(*) FROM catalog.package";
     let hidden: i64 = sqlx::query_scalar(count).fetch_one(&mut actor).await?;
     assert_eq!(hidden, 0, "{login} reads catalog rows without an identity");
     let mut transaction = actor.begin().await?;

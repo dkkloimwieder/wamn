@@ -418,7 +418,7 @@ If the lifecycle lock session fails, the operation stops and returns an error.
 SQLx migration versions and checksums identify applied SQL.
 Schema diff reports pending files, missing applied files, and checksum mismatches.
 `schema.mode` accepts `reset` and `migrate`.
-If omitted, the mode is `reset` only when `registry.environments.disposable` is true. Otherwise, it is `migrate`.
+If omitted, the mode is `reset` only when `registry.env.disposable` is true. Otherwise, it is `migrate`.
 An environment name or explicit `reset` mode grants no authority to discard data.
 Editing the mode alone executes no SQL and changes no application selection.
 
@@ -436,7 +436,7 @@ wamn schema reset --project receiving --env environment.yaml
 Schema diff uses the live package digest unless you supply `--release`.
 Schema apply uses the supplied package digest and applies migrations in dependency order without upgrading the application chart.
 An ordinary migration file and its completion record commit together.
-`catalog.packages` stores the current package version and artifact source.
+`catalog.package` stores the current package version and artifact source.
 A separate SQLx history table records each package and environment's applied versions and checksums.
 Authored and generated history migrations run through the same SQLx sequence.
 The restricted migration connection keeps its actor binding across commits.
@@ -845,18 +845,18 @@ SET LOCAL ROLE wamn_system;
 INSERT INTO platform.tx_identity(principal_id, role, application, operation)
 VALUES (:'administrator_id'::uuid, '', '', 'admin:change-email');
 SELECT EXISTS (
-    SELECT 1 FROM identity.principals
+    SELECT 1 FROM identity.principal
     WHERE id = :'principal_id'::uuid AND type = 'user'
     FOR UPDATE
 ) AS account_found \gset
 \if :account_found
-UPDATE identity.principals
+UPDATE identity.principal
 SET email = lower(btrim(:'replacement_email'))
 WHERE id = :'principal_id'::uuid AND type = 'user';
-UPDATE identity.password_tokens
+UPDATE identity.password_token
 SET consumed_at = clock_timestamp()
 WHERE principal_id = :'principal_id'::uuid AND consumed_at IS NULL;
-UPDATE identity.password_logins
+UPDATE identity.password_login
 SET revoked_at = clock_timestamp()
 WHERE principal_id = :'principal_id'::uuid AND revoked_at IS NULL;
 COMMIT;

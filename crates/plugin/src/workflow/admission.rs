@@ -76,8 +76,8 @@ pub async fn schedules(
     sqlx::query(
         "SELECT workflow_id, version, graph_json::text AS graph, graph_hash,
                         execution_role, schedule
-                   FROM catalog.workflows
-                  WHERE environment = $1 AND application = $2 AND enabled AND trigger = 'schedule'
+                   FROM catalog.workflow
+                  WHERE env = $1 AND app = $2 AND enabled AND trigger = 'schedule'
                   ORDER BY workflow_id FOR SHARE",
     )
     .bind(app.environment.as_str())
@@ -94,8 +94,8 @@ pub async fn consumer_workflows(
     app: &ApplicationConfig,
 ) -> Result<Vec<CanonicalName>, sqlx::Error> {
     sqlx::query(
-        "SELECT workflow_id FROM catalog.workflows
-                  WHERE environment = $1 AND application = $2 AND enabled AND trigger = 'data_change'
+        "SELECT workflow_id FROM catalog.workflow
+                  WHERE env = $1 AND app = $2 AND enabled AND trigger = 'data_change'
                   ORDER BY workflow_id",
     )
     .bind(app.environment.as_str())
@@ -139,8 +139,8 @@ pub async fn data_change(
 ) -> Result<Option<DataChangeWorkflow>, ProductionLeaseError> {
     sqlx::query(
         "SELECT workflow_id, version, graph_json::text AS graph, graph_hash, execution_role, condition
-                   FROM catalog.workflows
-                  WHERE environment = $1 AND application = $2 AND workflow_id = $3
+                   FROM catalog.workflow
+                  WHERE env = $1 AND app = $2 AND workflow_id = $3
                     AND enabled AND trigger = 'data_change' AND source_package = $4
                     AND entity = $5 AND $6 = ANY(ops) AND enable_lsn <= $7::text::pg_lsn
                     FOR SHARE",
@@ -168,8 +168,8 @@ pub async fn leased_graph(
     hash: &Digest,
 ) -> Result<String, ProductionLeaseError> {
     sqlx::query_scalar(
-        "SELECT graph_json::text FROM catalog.workflows
-                  WHERE environment = $1 AND application = $2 AND workflow_id = $3
+        "SELECT graph_json::text FROM catalog.workflow
+                  WHERE env = $1 AND app = $2 AND workflow_id = $3
                     AND version = $4 AND graph_hash = $5",
     )
     .bind(app.environment.as_str())
@@ -190,7 +190,7 @@ pub async fn request_workflow(
 ) -> Result<Option<Definition>, ProductionLeaseError> {
     sqlx::query(
         "SELECT workflow_id, version, graph_json::text AS graph, graph_hash, execution_role
-                   FROM catalog.workflows WHERE environment = $1 AND application = $2
+                   FROM catalog.workflow WHERE env = $1 AND app = $2
                     AND enabled AND trigger = 'request' AND path = $3 FOR SHARE",
     )
     .bind(app.environment.as_str())
@@ -212,7 +212,7 @@ pub async fn run_now_workflow(
 ) -> Result<Option<Definition>, ProductionLeaseError> {
     sqlx::query(
         "SELECT workflow_id, version, graph_json::text AS graph, graph_hash, execution_role
-                   FROM catalog.workflows WHERE environment = $1 AND application = $2
+                   FROM catalog.workflow WHERE env = $1 AND app = $2
                     AND enabled AND workflow_id = $3 FOR SHARE",
     )
     .bind(app.environment.as_str())

@@ -72,7 +72,7 @@ pub async fn active_session_key_exists(
 ) -> Result<bool, IdentityError> {
     sqlx::query_scalar(
         "SELECT EXISTS (SELECT FROM identity.session_signing_state s \
-         JOIN identity.session_keys k ON k.issuer = s.issuer AND k.kid = s.active_kid \
+         JOIN identity.session_key k ON k.issuer = s.issuer AND k.kid = s.active_kid \
          WHERE s.issuer = $1 AND k.signing_cutoff IS NULL AND k.private_key_envelope IS NOT NULL)",
     )
     .bind(issuer)
@@ -93,7 +93,7 @@ async fn insert_session_key(
     let encrypted = envelope.encrypt(document.as_ref()).await?;
     let packed = serde_json::to_vec(&encrypted).map_err(|_| corrupt_key())?;
     sqlx::query_scalar(
-        "INSERT INTO identity.session_keys (issuer, public_key, private_key_envelope) \
+        "INSERT INTO identity.session_key (issuer, public_key, private_key_envelope) \
          VALUES ($1, $2, $3) RETURNING kid::text",
     )
     .bind(issuer)
@@ -121,7 +121,7 @@ async fn activate_session_key_if_current(
     let row = sqlx::query(
         "SELECT signing_cutoff IS NULL AND private_key_envelope IS NOT NULL \
          AND published_at + ($3::bigint * interval '1 second') <= clock_timestamp() \
-         FROM identity.session_keys WHERE issuer = $1 AND kid::text = $2",
+         FROM identity.session_key WHERE issuer = $1 AND kid::text = $2",
     )
     .bind(issuer)
     .bind(kid)
@@ -135,7 +135,7 @@ async fn activate_session_key_if_current(
         ));
     }
     if active.as_deref() != Some(kid) {
-        sqlx::query("UPDATE identity.session_keys SET signing_cutoff = clock_timestamp(), private_key_envelope = NULL \
+        sqlx::query("UPDATE identity.session_key SET signing_cutoff = clock_timestamp(), private_key_envelope = NULL \
              WHERE issuer = $1 AND kid::text = $2").bind(issuer).bind(&active).execute(&mut *transaction).await.map(|result| result.rows_affected()).map_err(key_database_error)?;
         sqlx::query("UPDATE identity.session_signing_state SET active_kid = $2::text::uuid WHERE issuer = $1").bind(issuer).bind(kid).execute(&mut *transaction).await.map(|result| result.rows_affected()).map_err(key_database_error)?;
     }
@@ -169,11 +169,11 @@ pub async fn rotate_session_keys(
     }
     let result: Result<(), IdentityError> = async {
         let due = sqlx::query(sqlx::AssertSqlSafe(("SELECT s.active_kid::text FROM identity.session_signing_state s \
-             JOIN identity.session_keys k ON k.issuer=s.issuer AND k.kid=s.active_kid \
+             JOIN identity.session_key k ON k.issuer=s.issuer AND k.kid=s.active_kid \
              WHERE s.issuer=$1 AND k.published_at + ($2::bigint * interval '1 second') <= clock_timestamp()").to_string())).bind(issuer).bind(seconds).fetch_optional(&mut *client).await.map_err(key_database_error)?;
         if let Some(due) = due {
             let expected: String = due.get(0);
-            let pending = sqlx::query(sqlx::AssertSqlSafe(("SELECT kid::text, published_at + ($2::bigint * interval '1 second') <= clock_timestamp() FROM identity.session_keys WHERE issuer=$1 AND signing_cutoff IS NULL \
+            let pending = sqlx::query(sqlx::AssertSqlSafe(("SELECT kid::text, published_at + ($2::bigint * interval '1 second') <= clock_timestamp() FROM identity.session_key WHERE issuer=$1 AND signing_cutoff IS NULL \
                  AND kid IS DISTINCT FROM (SELECT active_kid FROM identity.session_signing_state WHERE issuer=$1) \
                  ORDER BY published_at ASC LIMIT 1").to_string())).bind(issuer).bind(KEY_PUBLICATION_DELAY_SECONDS).fetch_optional(&mut *client).await.map_err(key_database_error)?;
             if let Some(row) = pending {
@@ -210,7 +210,7 @@ pub async fn session_jwks(
 ) -> Result<SessionJwks, IdentityError> {
     validate_issuer(issuer)?;
     let rows = sqlx::query(
-        "SELECT kid::text, public_key FROM identity.session_keys \
+        "SELECT kid::text, public_key FROM identity.session_key \
          WHERE issuer = $1 AND (signing_cutoff IS NULL OR \
              clock_timestamp() < signing_cutoff + ($2::bigint * interval '1 second')) ORDER BY kid",
     )
@@ -256,7 +256,7 @@ pub async fn remove_compromised_session_key(
     .map(|result| result.rows_affected())
     .map_err(key_database_error)?;
     let removed =
-        sqlx::query("DELETE FROM identity.session_keys WHERE issuer = $1 AND kid::text = $2")
+        sqlx::query("DELETE FROM identity.session_key WHERE issuer = $1 AND kid::text = $2")
             .bind(issuer)
             .bind(kid)
             .execute(&mut *transaction)
@@ -273,7 +273,7 @@ pub async fn retire_session_keys(client: &mut Client, issuer: &str) -> Result<u6
     bind_identity_service(&mut transaction).await?;
     lock_issuer(&mut transaction, issuer).await?;
     let removed = sqlx::query(
-        "DELETE FROM identity.session_keys WHERE issuer = $1 AND \
+        "DELETE FROM identity.session_key WHERE issuer = $1 AND \
          clock_timestamp() >= signing_cutoff + ($2::bigint * interval '1 second')",
     )
     .bind(issuer)
@@ -306,7 +306,7 @@ pub(super) async fn sign_message<T>(
         .ok_or_else(|| invalid("issuer has no active session signing key"))?;
     let token = {
         let row = sqlx::query(
-            "SELECT private_key_envelope FROM identity.session_keys \
+            "SELECT private_key_envelope FROM identity.session_key \
              WHERE issuer = $1 AND kid::text = $2 AND signing_cutoff IS NULL",
         )
         .bind(issuer)

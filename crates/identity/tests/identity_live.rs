@@ -35,9 +35,9 @@ async fn platform_identity_round_trip_on_postgres() {
         .expect("map the native fixture login");
 
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        ("INSERT INTO registry.orgs (id) \
+        ("INSERT INTO registry.org (id) \
              VALUES ('demo'); \
-             INSERT INTO registry.projects (org, id) VALUES ('demo', 'widgets');")
+             INSERT INTO registry.project (org, id) VALUES ('demo', 'widgets');")
             .to_string(),
     ))
     .execute(&mut client)
@@ -111,8 +111,8 @@ async fn platform_identity_round_trip_on_postgres() {
         ["project-author", "project-promoter"]
     );
     let stamps = sqlx::query(
-        "SELECT count(*) FROM identity.principals p \
-             JOIN identity.project_roles r ON r.principal_id = p.id \
+        "SELECT count(*) FROM identity.principal p \
+             JOIN identity.project_role r ON r.principal_id = p.id \
              WHERE p.id = $1::text::uuid \
                AND p.created_by = $2::text::uuid AND p.updated_by = $2::text::uuid \
                AND r.created_by = $2::text::uuid AND r.updated_by = $2::text::uuid",
@@ -171,7 +171,7 @@ async fn one_address_admits_one_user(client: &mut sqlx::PgConnection) {
     .await
     .expect("create the first user of the address");
     let stored: String =
-        sqlx::query("SELECT email FROM identity.principals WHERE id = $1::text::uuid")
+        sqlx::query("SELECT email FROM identity.principal WHERE id = $1::text::uuid")
             .bind(first.id().to_string().as_str())
             .fetch_one(&mut *client)
             .await
@@ -203,9 +203,9 @@ async fn project_delete_removes_its_roles_and_memberships(
         project: &wamn_registry::ProjectId,
     ) -> (i64, i64) {
         sqlx::query(
-            "SELECT (SELECT count(*) FROM identity.project_roles \
+            "SELECT (SELECT count(*) FROM identity.project_role \
                          WHERE org = 'demo' AND project = $1), \
-                        (SELECT count(*) FROM identity.project_env_memberships \
+                        (SELECT count(*) FROM identity.project_env_membership \
                          WHERE org = 'demo' AND project = $1)",
         )
         .bind(project.as_str())
@@ -235,7 +235,7 @@ async fn project_delete_removes_its_roles_and_memberships(
     .expect("grant a membership on the project to delete");
     let widgets = rows(client, &"widgets".parse().unwrap()).await;
     assert_eq!(rows(client, &"inventory".parse().unwrap()).await, (1, 1));
-    sqlx::query("DELETE FROM registry.projects WHERE org = 'demo' AND id = 'inventory'")
+    sqlx::query("DELETE FROM registry.project WHERE org = 'demo' AND id = 'inventory'")
         .execute(&mut *client)
         .await
         .map(|result| result.rows_affected())
@@ -249,17 +249,17 @@ async fn project_environment_membership_round_trip(
     user: &Principal,
 ) {
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        ("INSERT INTO registry.orgs (id) \
+        ("INSERT INTO registry.org (id) \
              VALUES ('other'); \
-             INSERT INTO registry.projects (org, id) \
+             INSERT INTO registry.project (org, id) \
              VALUES ('demo', 'inventory'), ('other', 'widgets'); \
-             INSERT INTO registry.environments (org, env) \
+             INSERT INTO registry.env (org, env) \
              SELECT id, env \
-             FROM registry.orgs CROSS JOIN (VALUES ('dev'), ('prod')) AS envs(env); \
-             INSERT INTO registry.environment_projects \
+             FROM registry.org CROSS JOIN (VALUES ('dev'), ('prod')) AS envs(env); \
+             INSERT INTO registry.project_env \
                (org, env, project, secret_name, instance_suffix) \
              SELECT p.org, e.env, p.id, 'membership-test-secret', 'a1b2c3d4' \
-             FROM registry.projects p JOIN registry.environments e ON p.org = e.org;")
+             FROM registry.project p JOIN registry.env e ON p.org = e.org;")
             .to_string(),
     ))
     .execute(&mut *client)
@@ -309,7 +309,7 @@ async fn project_environment_membership_round_trip(
     }
     let stored = sqlx::query(
         "SELECT principal_id::text, count(*) OVER () \
-             FROM identity.project_env_memberships",
+             FROM identity.project_env_membership",
     )
     .fetch_one(&mut *client)
     .await
@@ -318,7 +318,7 @@ async fn project_environment_membership_round_trip(
     assert_eq!(stored.get::<i64, _>(1), 1);
     let stamped: bool = sqlx::query(
         "SELECT created_by = updated_by AND created_by = (SELECT wamn_authority.current_principal_id()) \
-             FROM identity.project_env_memberships",
+             FROM identity.project_env_membership",
     )
     .fetch_one(&mut *client)
     .await
@@ -460,9 +460,9 @@ async fn project_environment_membership_round_trip(
     .await
     .expect("grant before environment replacement");
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        ("DELETE FROM registry.environment_projects \
+        ("DELETE FROM registry.project_env \
              WHERE org = 'demo' AND project = 'widgets' AND env = 'dev'; \
-             INSERT INTO registry.environment_projects \
+             INSERT INTO registry.project_env \
                (org, env, project, secret_name, instance_suffix) \
              VALUES ('demo', 'dev', 'widgets', 'replacement-secret', 'e5f6g7h8');")
             .to_string(),
@@ -493,7 +493,7 @@ async fn project_environment_membership_round_trip(
     )
     .await
     .expect("grant another user before deletion");
-    sqlx::query("DELETE FROM identity.principals WHERE id = $1::text::uuid")
+    sqlx::query("DELETE FROM identity.principal WHERE id = $1::text::uuid")
         .bind(other_user.id().to_string().as_str())
         .execute(&mut *client)
         .await
@@ -519,7 +519,7 @@ async fn provisioning_principal_is_seeded(client: &mut sqlx::PgConnection) -> Pr
     let id: PrincipalId = component.principal_id();
     let row = sqlx::query(
         "SELECT subject, display_name, created_by::text, updated_by::text \
-             FROM identity.principals WHERE id = $1::text::uuid",
+             FROM identity.principal WHERE id = $1::text::uuid",
     )
     .bind(id.to_string().as_str())
     .fetch_one(&mut *client)
@@ -543,18 +543,18 @@ async fn provisioning_principal_is_seeded(client: &mut sqlx::PgConnection) -> Pr
 async fn unbound_identity_writes_refuse(client: &mut sqlx::PgConnection) {
     const PRINCIPAL: &str = "00000000-0000-4000-8000-0000000000f1";
     for statement in [
-        "INSERT INTO identity.principals (type, subject, display_name) \
+        "INSERT INTO identity.principal (type, subject, display_name) \
          VALUES ('user', 'unbound', 'Unbound')"
             .to_owned(),
         format!(
-            "INSERT INTO identity.project_roles (principal_id, org, project, role) \
+            "INSERT INTO identity.project_role (principal_id, org, project, role) \
              VALUES ('{PRINCIPAL}', 'demo', 'widgets', 'unbound')"
         ),
         format!(
-            "INSERT INTO identity.project_env_memberships (principal_id, org, project, env) \
+            "INSERT INTO identity.project_env_membership (principal_id, org, project, env) \
              VALUES ('{PRINCIPAL}', 'demo', 'widgets', 'dev')"
         ),
-        "UPDATE identity.principals SET display_name = 'Unbound'".to_owned(),
+        "UPDATE identity.principal SET display_name = 'Unbound'".to_owned(),
     ] {
         let error = sqlx::query(sqlx::AssertSqlSafe((statement.as_str()).to_string()))
             .execute(&mut *client)
@@ -572,7 +572,7 @@ async fn unbound_identity_writes_refuse(client: &mut sqlx::PgConnection) {
     }
 }
 
-/// `principals_platform_principal_check` reserves the platform principal rows
+/// `principal_platform_principal_check` reserves the platform principal rows
 /// and their `wamn:` names.
 ///
 /// The last row checks that a user needs an email.
@@ -633,7 +633,7 @@ async fn platform_principal_constraint_refuses_other_rows(client: &mut sqlx::PgC
         ),
     ] {
         let error = sqlx::query(
-            "INSERT INTO identity.principals (id, type, subject, email, display_name) \
+            "INSERT INTO identity.principal (id, type, subject, email, display_name) \
                  VALUES ($1, $2, $3, $4, $5)",
         )
         .bind(sqlx::types::Uuid::from(id))

@@ -55,8 +55,8 @@ pub fn grant_replication_access_sql(database: &str, role: &str, schema: &str) ->
         "GRANT CONNECT ON DATABASE {db} TO {role}; \
          GRANT USAGE ON SCHEMA {schema} TO {role}; \
          REVOKE SELECT ON ALL TABLES IN SCHEMA {schema} FROM {role}; \
-         GRANT SELECT ON {schema}.wamn_entities TO {role}; \
-         GRANT SELECT ON {schema}.wamn_cdc_exclusions TO {role};",
+         GRANT SELECT ON {schema}.wamn_entity TO {role}; \
+         GRANT SELECT ON {schema}.wamn_cdc_exclusion TO {role};",
         db = escape_identifier(database),
         schema = escape_identifier(schema),
     )
@@ -68,13 +68,13 @@ pub fn grant_replication_access_sql(database: &str, role: &str, schema: &str) ->
 /// The schema owner owns the map, including when an administrator creates it.
 pub fn ensure_cdc_exclusion_map_sql(schema: &str) -> String {
     format!(
-        "CREATE TABLE IF NOT EXISTS {schema}.wamn_cdc_exclusions ( \
+        "CREATE TABLE IF NOT EXISTS {schema}.wamn_cdc_exclusion ( \
            relation_oid oid PRIMARY KEY, \
            package_id text NOT NULL, \
            relation_id text NOT NULL, \
            table_name text NOT NULL); \
          DO $map_owner$ BEGIN \
-           EXECUTE format('ALTER TABLE %I.wamn_cdc_exclusions OWNER TO %I', {schema_lit}, \
+           EXECUTE format('ALTER TABLE %I.wamn_cdc_exclusion OWNER TO %I', {schema_lit}, \
              (SELECT pg_get_userbyid(nspowner) FROM pg_namespace WHERE nspname = {schema_lit})); \
          END $map_owner$;",
         schema = escape_identifier(schema),
@@ -86,7 +86,7 @@ pub fn ensure_cdc_exclusion_map_sql(schema: &str) -> String {
 /// to another package-local relation identity.
 pub fn upsert_cdc_exclusion_map_sql(schema: &str) -> String {
     format!(
-        "INSERT INTO {schema}.wamn_cdc_exclusions AS current \
+        "INSERT INTO {schema}.wamn_cdc_exclusion AS current \
                (relation_oid, package_id, relation_id, table_name) \
          SELECT c.oid, $1, $2, $3::text FROM pg_class c \
          JOIN pg_namespace n ON n.oid = c.relnamespace \
@@ -113,16 +113,16 @@ pub fn upsert_cdc_exclusion_map_sql(schema: &str) -> String {
 /// The host reads the map to admit Data change runs.
 pub fn ensure_entity_map_sql(schema: &str) -> String {
     format!(
-        "CREATE TABLE IF NOT EXISTS {schema}.wamn_entities ( \
+        "CREATE TABLE IF NOT EXISTS {schema}.wamn_entity ( \
            relation_oid oid PRIMARY KEY, \
            package_id text NOT NULL, \
            entity_id text NOT NULL, \
            table_name text NOT NULL); \
          DO $map_owner$ BEGIN \
-           EXECUTE format('ALTER TABLE %I.wamn_entities OWNER TO %I', {schema_lit}, \
+           EXECUTE format('ALTER TABLE %I.wamn_entity OWNER TO %I', {schema_lit}, \
              (SELECT pg_get_userbyid(nspowner) FROM pg_namespace WHERE nspname = {schema_lit})); \
          END $map_owner$; \
-         GRANT SELECT ON {schema}.wamn_entities TO {role};",
+         GRANT SELECT ON {schema}.wamn_entity TO {role};",
         schema = escape_identifier(schema),
         schema_lit = escape_literal(schema),
         role = escape_identifier(wamn_role::PLATFORM_ROLE),
@@ -138,7 +138,7 @@ pub fn ensure_entity_map_sql(schema: &str) -> String {
 /// only when its package/entity identity is unchanged; it is never rebound.
 pub fn upsert_entity_map_sql(schema: &str) -> String {
     format!(
-        "INSERT INTO {schema}.wamn_entities AS mapped \
+        "INSERT INTO {schema}.wamn_entity AS mapped \
                (relation_oid, package_id, entity_id, table_name) \
          SELECT c.oid, $1, $2, $3::text FROM pg_class c \
          JOIN pg_namespace n ON n.oid = c.relnamespace \

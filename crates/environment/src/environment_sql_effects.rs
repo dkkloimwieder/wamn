@@ -120,10 +120,16 @@ async fn application_names(
     let mut tx =
         wamn_postgres::provisioning_transaction::provisioning_transaction(&mut client).await?;
     let applications: BTreeSet<wamn_registry::ApplicationName> = sqlx::query_scalar::<_, String>(
-        "SELECT application FROM registry.environment_applications WHERE org=$1 AND env=$2 AND project=$3",
+        "SELECT app FROM registry.env_app WHERE org=$1 AND env=$2 AND project=$3",
     )
-    .bind(triple.org.as_str()).bind(triple.env.as_str()).bind(triple.project.as_str())
-    .fetch_all(&mut *tx).await?.into_iter().map(|name| wamn_postgres::decode_text(name, 0)).collect::<Result<_, _>>()?;
+    .bind(triple.org.as_str())
+    .bind(triple.env.as_str())
+    .bind(triple.project.as_str())
+    .fetch_all(&mut *tx)
+    .await?
+    .into_iter()
+    .map(|name| wamn_postgres::decode_text(name, 0))
+    .collect::<Result<_, _>>()?;
     tx.commit().await?;
     drop(client);
     Ok(applications)
@@ -152,8 +158,8 @@ async fn unfinished(
     let mut transaction =
         wamn_postgres::provisioning_transaction::provisioning_transaction(client).await?;
     let runs = sqlx::query(
-        "SELECT package_id, run_id FROM wamn_run.runs
-          WHERE environment = $1 AND ($2::text IS NULL OR package_id = $2)
+        "SELECT package_id, run_id FROM wamn_run.run
+          WHERE env = $1 AND ($2::text IS NULL OR package_id = $2)
             AND status IN ('dispatched', 'running')
           ORDER BY package_id, run_id",
     )
@@ -173,13 +179,12 @@ async fn project_count(
     env: &EnvName,
 ) -> anyhow::Result<u32> {
     let mut tx = wamn_postgres::provisioning_transaction::provisioning_transaction(db).await?;
-    let count: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM registry.environment_projects WHERE org=$1 AND env=$2",
-    )
-    .bind(org.as_str())
-    .bind(env.as_str())
-    .fetch_one(&mut *tx)
-    .await?;
+    let count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM registry.project_env WHERE org=$1 AND env=$2")
+            .bind(org.as_str())
+            .bind(env.as_str())
+            .fetch_one(&mut *tx)
+            .await?;
     tx.commit().await?;
     Ok(u32::try_from(count)?)
 }
@@ -209,7 +214,7 @@ async fn host_projects(
     let mut tx =
         wamn_postgres::provisioning_transaction::provisioning_transaction(&mut client).await?;
     let projects: Vec<ProjectId> = sqlx::query_scalar::<_, String>(
-        "SELECT project FROM registry.environment_projects WHERE org=$1 AND env=$2
+        "SELECT project FROM registry.project_env WHERE org=$1 AND env=$2
          AND ($3::text IS NULL OR project<>$3)
          AND (schema_mode IS NOT NULL OR project=ANY($4)) ORDER BY project",
     )
@@ -318,10 +323,7 @@ pub(crate) async fn materialize_application_principals(
             &subject,
         )
         .await?;
-        let role = format!(
-            "application-{}",
-            package.package.id.as_str().replace('_', "-")
-        );
+        let role = format!("app-{}", package.package.id.as_str().replace('_', "-"));
         wamn_authentication::administration::create_role(&mut transaction, &role).await?;
     }
     write_runtime_grants(&mut transaction, project_env_key, &applications, packages).await?;
@@ -352,10 +354,7 @@ async fn write_runtime_grants(
                 .with_context(|| {
                     format!("application principal {subject} is absent or inactive")
                 })?;
-        let role = format!(
-            "application-{}",
-            package.package.id.as_str().replace('_', "-")
-        );
+        let role = format!("app-{}", package.package.id.as_str().replace('_', "-"));
         let owned: bool = sqlx::query(
             "SELECT EXISTS (SELECT FROM platform.role WHERE name=$1 AND created_by=$3) \
              AND NOT EXISTS (SELECT FROM platform.user_role WHERE role_name=$1 AND user_id<>$2)",
@@ -417,8 +416,8 @@ async fn create_number_sequences(
     .await?;
     for sequence in sequences {
         sqlx::query(
-            "INSERT INTO platform.number_sequence (application, name, pattern) \
-             VALUES ($1, $2, $3) ON CONFLICT (application, name) DO NOTHING",
+            "INSERT INTO platform.number_sequence (app, name, pattern) \
+             VALUES ($1, $2, $3) ON CONFLICT (app, name) DO NOTHING",
         )
         .bind(sequence.application.as_str())
         .bind(&sequence.name)
@@ -436,8 +435,8 @@ async fn check_workflows(
     app: &ApplicationConfig,
 ) -> anyhow::Result<()> {
     let graphs = sqlx::query_as::<_, (String, Value)>(
-        "SELECT workflow_id, graph_json FROM catalog.workflows
-         WHERE environment=$1 AND application=$2 AND enabled ORDER BY workflow_id",
+        "SELECT workflow_id, graph_json FROM catalog.workflow
+         WHERE env=$1 AND app=$2 AND enabled ORDER BY workflow_id",
     )
     .bind(app.environment.as_str())
     .bind(app.application.as_str())
@@ -512,7 +511,7 @@ async fn reset_database(
             .await?;
     }
     // SQLx histories are trusted platform objects, separate from application DDL ownership.
-    for (table,) in sqlx::query_as::<_, (String,)>("SELECT quote_ident(n.nspname)||'.'||quote_ident(c.relname) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='wamn_history' AND c.relname LIKE 'migrations_%' AND c.relkind='r'").fetch_all(&mut *tx).await? {
+    for (table,) in sqlx::query_as::<_, (String,)>("SELECT quote_ident(n.nspname)||'.'||quote_ident(c.relname) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='wamn_history' AND c.relname LIKE 'migration_%' AND c.relkind='r'").fetch_all(&mut *tx).await? {
         sqlx::raw_sql(sqlx::AssertSqlSafe(format!("DROP TABLE {table}"))).execute(&mut *tx).await?;
     }
     let tables: Vec<String> = sqlx::query_scalar("SELECT quote_ident(n.nspname)||'.'||quote_ident(c.relname) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname IN ('catalog','wamn_run') AND c.relkind='r'")
@@ -549,7 +548,7 @@ pub(crate) async fn package_baselines(
     let mut client = connect_project(url).await?;
     let mut packages = BTreeMap::new();
     for row in
-        sqlx::query("SELECT package_id, package_version, artifact_digest FROM catalog.packages")
+        sqlx::query("SELECT package_id, package_version, artifact_digest FROM catalog.package")
             .fetch_all(&mut client)
             .await?
     {
@@ -626,7 +625,7 @@ async fn delete_registry_rows(
     .execute(&mut *transaction)
     .await
     .map(|result| result.rows_affected())
-    .context("delete the registry.environment_projects row")?;
+    .context("delete the registry.project_env row")?;
     transaction
         .commit()
         .await
@@ -657,7 +656,7 @@ async fn reserve(
         "SELECT (SELECT max_projects FROM registry.meta), \
                             count(*)::int \
                      FROM unnest($3::text[]) AS selected(project) \
-                     WHERE NOT EXISTS (SELECT 1 FROM registry.environment_projects AS registered \
+                     WHERE NOT EXISTS (SELECT 1 FROM registry.project_env AS registered \
                          WHERE registered.org = $1 AND registered.env = $2 \
                          AND registered.project = selected.project)",
     )
@@ -908,7 +907,7 @@ async fn capture_registration(
     .bind(env.as_str())
     .fetch_optional(&mut *system.client().await)
     .await
-    .context("read the registry.event_readers row")?;
+    .context("read the registry.event_reader row")?;
     let Some(registration) = registration else {
         bail!("{triple} has no CDC reader registration");
     };
@@ -1092,7 +1091,7 @@ async fn environment_target(
     triple: &Triple,
 ) -> anyhow::Result<Option<Option<String>>> {
     Ok(sqlx::query_scalar::<_, Option<String>>(
-        "SELECT target_id::text FROM registry.environments WHERE org=$1 AND env=$2",
+        "SELECT target_id::text FROM registry.env WHERE org=$1 AND env=$2",
     )
     .bind(triple.org.as_str())
     .bind(triple.env.as_str())
@@ -1127,7 +1126,7 @@ async fn integration_binding(
     version: i32,
     connection: &ConnectionBinding,
 ) -> anyhow::Result<Option<IntegrationBinding>> {
-    let row=sqlx::query("SELECT $1::text AS id,t.code,t.runtime_type,$3::jsonb AS parameters,v.parameter_schema,v.digest,v.operations,$6::bigint AS generation,t.exclusive,v.exports,v.write_interfaces,destination.type FROM registry.integration_type t JOIN registry.target destination ON destination.id=$4::text::uuid AND destination.name=$5 AND destination.active JOIN registry.environments e ON e.org=$7 AND e.env=$8 LEFT JOIN registry.integration_type_version v ON v.integration_type=t.code AND v.version=$9 WHERE t.code=$2")
+    let row=sqlx::query("SELECT $1::text AS id,t.code,t.runtime_type,$3::jsonb AS parameters,v.parameter_schema,v.digest,v.operations,$6::bigint AS generation,t.exclusive,v.exports,v.write_interfaces,destination.type FROM registry.integration_type t JOIN registry.target destination ON destination.id=$4::text::uuid AND destination.name=$5 AND destination.active JOIN registry.env e ON e.org=$7 AND e.env=$8 LEFT JOIN registry.integration_type_version v ON v.integration_type=t.code AND v.version=$9 WHERE t.code=$2")
             .bind(&connection.id).bind(&connection.integration_type).bind(&connection.parameters).bind(&connection.target).bind(target).bind(connection.generation).bind(triple.org.as_str()).bind(triple.env.as_str()).bind(version)
             .fetch_optional(&mut *system.client().await).await?;
     row.map(|row| {

@@ -9,8 +9,8 @@ use wamn_number_pattern::{
 const SEQUENCE_SQL: &str = "SELECT s.id::text, s.pattern, t.value #>> '{}', jsonb_typeof(t.value), \
     platform.valid_timezone(COALESCE(t.value #>> '{}', 'UTC')) \
     FROM platform.number_sequence AS s LEFT JOIN platform.setting AS t \
-    ON t.target_type = 'application' AND t.target_id = s.application AND t.key = 'timezone' \
-    WHERE s.application = (SELECT wamn_authority.current_application()) AND s.name = $1";
+    ON t.target_type = 'app' AND t.target_id = s.app AND t.key = 'timezone' \
+    WHERE s.app = (SELECT wamn_authority.current_app()) AND s.name = $1";
 const COUNTER_SQL: &str = "SELECT value FROM platform.number_counter \
     WHERE sequence_id = $1::text::uuid AND counter = $2 AND key_value = $3";
 

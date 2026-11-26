@@ -27,14 +27,14 @@ async fn admission_stamps_every_bucket_as_the_platform_principal() {
     let actor = PlatformComponent::IdentityService.principal_id();
     wamn_test_infrastructure::record_history::assert_stamp(
         &mut client,
-        "identity.password_attempts",
+        "identity.password_attempt",
         "true",
         &actor,
         &actor,
     )
     .await;
     let stored: std::collections::BTreeSet<_> =
-        sqlx::query_scalar::<_, String>("SELECT bucket FROM identity.password_attempts")
+        sqlx::query_scalar::<_, String>("SELECT bucket FROM identity.password_attempt")
             .fetch_all(&mut client)
             .await
             .unwrap()
@@ -71,7 +71,7 @@ async fn password_exchange_requires_current_org_membership() {
     let mut setup = fixture::transaction(&mut admin, &owner, "wamn:provisioning")
         .await
         .unwrap();
-    sqlx::query("INSERT INTO registry.orgs (id) VALUES ($1)")
+    sqlx::query("INSERT INTO registry.org (id) VALUES ($1)")
         .bind(wamn_registry::OrgId::as_str(&org))
         .execute(&mut *setup)
         .await
@@ -132,7 +132,7 @@ async fn password_exchange_requires_current_org_membership() {
     assert!(matches!(result, Err(ExchangeFailure::Unauthorized)));
     client.ping().await.unwrap();
     let persisted = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS (SELECT 1 FROM identity.password_logins WHERE principal_id = $1)",
+        "SELECT EXISTS (SELECT 1 FROM identity.password_login WHERE principal_id = $1)",
     )
     .bind(uuid::Uuid::from(*principal.id()))
     .fetch_one(&mut admin)

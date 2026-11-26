@@ -15,7 +15,7 @@ use wamn_postgres::WamnPostgres;
 
 /// The status row of the environment, which `wamn_app` reads under its
 /// database boundary.
-const ENVIRONMENT_INACTIVE_SQL: &str = "SELECT NOT active FROM platform.environment";
+const ENVIRONMENT_INACTIVE_SQL: &str = "SELECT NOT active FROM platform.env";
 
 /// The user row of one principal, each role it holds and each permission
 /// of that role, in one read. No row means no user row. A role without
@@ -208,7 +208,7 @@ async fn read_principal_grants(
 }
 
 /// Whether the environment of `project_env_key` is inactive,
-/// from its row of `platform.environment`, read as `wamn_app`
+/// from its row of `platform.env`, read as `wamn_app`
 /// (docs/architecture/execution.md#routing-and-availability). No row means
 /// active. The host keeps the answer in its [auth
 /// memory](wamn_authority::auth_cache).

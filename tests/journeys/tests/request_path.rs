@@ -213,7 +213,7 @@ common::journey! {
             }
         }
 
-        let counters = "SELECT s.application, c.sequence_id::text, c.counter, c.key_value, c.value \
+        let counters = "SELECT s.app, c.sequence_id::text, c.counter, c.key_value, c.value \
                         FROM platform.number_counter c \
                         JOIN platform.number_sequence s ON s.id = c.sequence_id";
         let before: Vec<(String, String, String, String, i64)> = sqlx::query_as(counters)

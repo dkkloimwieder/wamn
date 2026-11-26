@@ -169,7 +169,7 @@ async fn seed(admin: &mut Client, table: &str, statement: &str, age_days: i32) -
     sqlx::raw_sql(sqlx::AssertSqlSafe(
         format!(
             "BEGIN; \
-             INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('{FIXTURE_PRINCIPAL}'::text::uuid,'','fixture','admin:seed-retention-fixture'); \
+             INSERT INTO platform.tx_identity(principal_id,role,app,operation) VALUES('{FIXTURE_PRINCIPAL}'::text::uuid,'','fixture','admin:seed-retention-fixture'); \
              {statement}; \
              COMMIT;"
         ),

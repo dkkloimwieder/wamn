@@ -25,16 +25,11 @@ pub fn ensure_app_acl_role_sql() -> String {
 ///
 pub const HTTP_ADMITTER_CATALOG_RELATIONS: [&str; 2] = ["releases", "connection_requirement"];
 
-/// The `catalog.workflows` columns that callable-HTTP connection authorization
+/// The `catalog.workflow` columns that callable-HTTP connection authorization
 /// reads: the key of one workflow version and its graph. The admitter gets
 /// these columns only, not the whole table.
-pub const HTTP_ADMITTER_WORKFLOW_COLUMNS: [&str; 5] = [
-    "environment",
-    "application",
-    "workflow_id",
-    "version",
-    "graph_json",
-];
+pub const HTTP_ADMITTER_WORKFLOW_COLUMNS: [&str; 5] =
+    ["env", "app", "workflow_id", "version", "graph_json"];
 
 /// The schemas that the callable-HTTP admitter uses.
 pub const HTTP_ADMITTER_SCHEMAS: [&str; 2] = ["catalog", "platform"];
@@ -59,14 +54,14 @@ pub fn http_admitter_relations() -> impl Iterator<Item = (&'static str, &'static
 /// Catalog relations the executor-platform family reads (`wamn-0h0g.22.37`).
 ///
 /// Released and candidate resolution read these through the platform pool,
-/// and the host's workflow admission and resolution read `workflows`.
+/// and the host's workflow admission and resolution read `workflow`.
 ///
 /// TABLE grain, not column grain — the [`grant_system_reader_surface_sql`]
 /// determination: this family holds no write privilege anywhere in `catalog`,
 /// so a column list would withhold only labels and timestamps while making a
 /// statement that reads one more column fail in production instead of at review.
 pub const EXECUTOR_PLATFORM_CATALOG_RELATIONS: [&str; 3] =
-    ["workflows", "connection_requirement", "releases"];
+    ["workflow", "connection_requirement", "releases"];
 
 /// Columns written by workflow checkpoint and terminal transitions.
 pub const EXECUTOR_PLATFORM_RUN_UPDATE_COLUMNS: [&str; 6] = [
@@ -89,7 +84,7 @@ pub const EXECUTOR_PLATFORM_QUEUE_UPDATE_COLUMNS: [&str; 4] = [
 /// Run columns written during admission.
 pub const EXECUTOR_PLATFORM_RUN_INSERT_COLUMNS: [&str; 16] = [
     "package_id",
-    "environment",
+    "env",
     "graph_id",
     "graph_version",
     "graph_hash",
@@ -132,7 +127,7 @@ pub const ADMINISTRATION_RELATIONS: [&str; 14] = [
     "role",
     "user_role",
     "permission",
-    "environment",
+    "env",
     "external_system",
     "connection",
     "file",

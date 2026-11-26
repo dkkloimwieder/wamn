@@ -44,7 +44,7 @@ pub fn transaction_identity_sql(
     let operation = operation.map(escape_literal);
     let runner = runner.map(escape_literal);
     format!(
-        "INSERT INTO platform.tx_identity (principal_id, role, application, operation, runner) \
+        "INSERT INTO platform.tx_identity (principal_id, role, app, operation, runner) \
          VALUES ('{principal}'::uuid, {role}, {application}, {}, {})",
         operation.as_deref().unwrap_or("NULL"),
         runner.as_deref().unwrap_or("NULL"),

@@ -15,7 +15,7 @@ pub(super) fn prune_history_sql(table: &str) -> String {
                                AND earlier.position < entry.position \
                                AND earlier.changed_at >= cutoff.at) \
           RETURNING entry.transaction_id), \
-          watermark AS (INSERT INTO wamn_history.pruning_watermarks AS current \
+          watermark AS (INSERT INTO wamn_history.pruning_watermark AS current \
                          (history_table, transaction_id) \
                        SELECT {table_literal}::regclass, max(transaction_id) FROM removed \
                        HAVING count(*) > 0 \

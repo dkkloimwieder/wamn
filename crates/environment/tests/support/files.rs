@@ -47,7 +47,7 @@ pub async fn transaction<'connection>(
     operation: &str,
 ) -> Result<sqlx::Transaction<'connection, sqlx::Postgres>, sqlx::Error> {
     let mut transaction = sqlx::Connection::begin(connection).await?;
-    sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1,'','fixture',$2)")
+    sqlx::query("INSERT INTO platform.tx_identity(principal_id,role,app,operation) VALUES($1,'','fixture',$2)")
         .bind(uuid::Uuid::from(*principal)).bind(operation).execute(&mut *transaction).await?;
     Ok(transaction)
 }
@@ -122,7 +122,7 @@ pub async fn fixture(name: &str) -> anyhow::Result<Fixture> {
         .await
         .expect("begin fixture transaction");
     sqlx::query(
-        "INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES($1::text::uuid,'','fixture','admin:file-fixture')",
+        "INSERT INTO platform.tx_identity(principal_id,role,app,operation) VALUES($1::text::uuid,'','fixture','admin:file-fixture')",
     )
     .bind(CALLER)
     .execute(&mut writer)
@@ -174,7 +174,7 @@ pub async fn metadata(writer: &mut Client) -> anyhow::Result<()> {
     .await?;
     sqlx::query(
         "INSERT INTO platform.file \
-         (id,application,connection_id,name,media_type,size,sha256,blob_key) \
+         (id,app,connection_id,name,media_type,size,sha256,blob_key) \
          VALUES ($1::text::uuid,$2,$3::text::uuid,'fixture.txt','text/plain',0,'sha256:' || repeat('0',64), \
                  'dev/_wamn_files/live/' || $1)",
     )
@@ -381,7 +381,7 @@ pub async fn age_metadata(fixture: &mut Fixture) -> anyhow::Result<()> {
     );
 
     sqlx::raw_sql(sqlx::AssertSqlSafe(
-        ("BEGIN; INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('a0000000-0000-4000-8000-0000000000c4','','fixture','admin:file-fixture'); ALTER TABLE platform.file DISABLE TRIGGER wamn_record_history_stamp; \
+        ("BEGIN; INSERT INTO platform.tx_identity(principal_id,role,app,operation) VALUES('a0000000-0000-4000-8000-0000000000c4','','fixture','admin:file-fixture'); ALTER TABLE platform.file DISABLE TRIGGER wamn_record_history_stamp; \
          UPDATE platform.file SET created_at=now()-interval '31 days'; \
          ALTER TABLE platform.file ENABLE TRIGGER wamn_record_history_stamp; COMMIT")
             .to_string(),

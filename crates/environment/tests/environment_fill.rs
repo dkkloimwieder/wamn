@@ -12,11 +12,11 @@ use wamn_test_infrastructure::identity as common;
 fn seed_org_project_env_sql() -> String {
     let actor = wamn_principal::PlatformComponent::Provisioning.principal_id();
     format!(
-        "INSERT INTO platform.tx_identity(principal_id,role,application,operation) VALUES('{actor}','','fixture','wamn:provisioning'); \
-         INSERT INTO registry.orgs(id) VALUES ('fill'); \
-         INSERT INTO registry.projects(org,id) VALUES ('fill','fixture'); \
-         WITH parent_environment AS (INSERT INTO registry.environments (org,env) VALUES ('fill','dev')) \
-         INSERT INTO registry.environment_projects (org,project,env,secret_name,instance_suffix) VALUES ('fill','fixture','dev','s1','aaaaaaa1');"
+        "INSERT INTO platform.tx_identity(principal_id,role,app,operation) VALUES('{actor}','','fixture','wamn:provisioning'); \
+         INSERT INTO registry.org(id) VALUES ('fill'); \
+         INSERT INTO registry.project(org,id) VALUES ('fill','fixture'); \
+         WITH parent_environment AS (INSERT INTO registry.env (org,env) VALUES ('fill','dev')) \
+         INSERT INTO registry.project_env (org,project,env,secret_name,instance_suffix) VALUES ('fill','fixture','dev','s1','aaaaaaa1');"
     )
 }
 
@@ -33,7 +33,7 @@ async fn provisioning_disables_and_reactivates_environment_member_rows() -> anyh
     let mut authority = common::transaction(
         &mut authority_connection,
         &wamn_principal::PlatformComponent::Provisioning.principal_id(),
-        "admin:environment-fill",
+        "admin:env-fill",
     )
     .await?;
     let member = *wamn_identity::identity::create_user(
@@ -76,8 +76,7 @@ async fn provisioning_disables_and_reactivates_environment_member_rows() -> anyh
     .await?;
     let member_id = sqlx::types::Uuid::from(member);
     let actor = wamn_principal::PlatformComponent::Provisioning.principal_id();
-    let mut application =
-        common::transaction(&mut client, &actor, "admin:application-grants").await?;
+    let mut application = common::transaction(&mut client, &actor, "admin:app-grants").await?;
     wamn_authentication::administration::create_role(&mut application, "editor").await?;
     sqlx::query("INSERT INTO platform.user_role (user_id, role_name) VALUES ($1, 'editor')")
         .bind(member_id)
@@ -95,7 +94,7 @@ async fn provisioning_disables_and_reactivates_environment_member_rows() -> anyh
     let mut authority = common::transaction(
         &mut authority_connection,
         &wamn_principal::PlatformComponent::Provisioning.principal_id(),
-        "admin:revoke-environment-member",
+        "admin:revoke-env-member",
     )
     .await?;
     wamn_identity::identity::org::revoke_member(

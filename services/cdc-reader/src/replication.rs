@@ -400,8 +400,8 @@ fn relation_classification_lookup_sql(schema: &str) -> String {
         "SELECT entity.package_id AS entity_package_id, entity.entity_id, \
                 excluded.package_id AS excluded_package_id, excluded.relation_id \
            FROM (SELECT $1::oid AS relation_oid) AS lookup \
-           LEFT JOIN {}.wamn_entities AS entity USING (relation_oid) \
-           LEFT JOIN {}.wamn_cdc_exclusions AS excluded USING (relation_oid)",
+           LEFT JOIN {}.wamn_entity AS entity USING (relation_oid) \
+           LEFT JOIN {}.wamn_cdc_exclusion AS excluded USING (relation_oid)",
         escape_identifier(schema),
         escape_identifier(schema),
     )

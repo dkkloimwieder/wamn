@@ -13,8 +13,8 @@
 -- (follow-up bead).
 --
 -- DISTINCT FROM the T1 control-plane registry (deploy/sql/system-schema.sql,
--- wamn-q3n.3): that is the PLATFORM-GLOBAL system DB (orgs / projects /
--- environment_projects / sagas), owned by wamn_system, NOT project-targeted, NO RLS base grants.
+-- wamn-q3n.3): that is the system database, owned by wamn_system. It holds
+-- registry.org, registry.project, and registry.project_env.
 -- THIS schema belongs to one project environment database. Its tables have no
 -- row security. The catalog requires a protected caller identity. wamn_app's
 -- WRITE authority is NOT uniform across these tables — see WRITE AUTHORITY
@@ -40,7 +40,7 @@
 --
 -- WRITE AUTHORITY (R11): grants control which relations a caller can read or write.
 --
---   PLATFORM-PROTECTED — user, role, user_role, permission, environment,
+--   PLATFORM-PROTECTED — user, role, user_role, permission, env,
 --   and the platform configuration tables.
 --   SELECT only. The trust chain consumes these rows as authorization INPUT. Author SQL
 --   holding DML here could write itself the credential its own policies are then
@@ -238,13 +238,13 @@ GRANT SELECT ON platform.permission TO wamn_app;
 
 -- ---------------------------------------------------------------------------
 -- Environment — the active flag of this environment, mirrored from
--- registry.environments.active in the system database (docs/plan/platform-ui.md
+-- registry.env.active in the system database (docs/plan/platform-ui.md
 -- §5.4, owner rulings of 2026-10-02 on wamn-zua8.2). The host reads it as
 -- wamn_app on each request and answers environment-inactive while it is
 -- inactive. No row means active: the first status route of the control host
 -- writes the row through the administration login.
 -- ---------------------------------------------------------------------------
-CREATE TABLE platform.environment (
+CREATE TABLE platform.env (
     id         boolean NOT NULL DEFAULT true CHECK (id),
     active     boolean NOT NULL DEFAULT true,
     created_at timestamptz NOT NULL,
@@ -254,10 +254,10 @@ CREATE TABLE platform.environment (
     PRIMARY KEY (id)
 );
 CREATE TRIGGER wamn_record_history_stamp
-    BEFORE INSERT OR UPDATE ON platform.environment
+    BEFORE INSERT OR UPDATE ON platform.env
     FOR EACH ROW
     EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
-GRANT SELECT ON platform.environment TO wamn_app;
+GRANT SELECT ON platform.env TO wamn_app;
 
 -- ---------------------------------------------------------------------------
 -- HISTORY TABLES. The database separates environments, so these tables have
@@ -266,7 +266,7 @@ GRANT SELECT ON platform.environment TO wamn_app;
 DO $history_tables$ BEGIN
   PERFORM wamn_history.create_history_table('platform', 'user', false);
   PERFORM wamn_history.create_history_table('platform', relation, false)
-     FROM unnest(ARRAY['role', 'user_role', 'permission', 'environment', 'pat']) AS relation;
+     FROM unnest(ARRAY['role', 'user_role', 'permission', 'env', 'pat']) AS relation;
 END $history_tables$;
 
 CREATE TRIGGER wamn_record_history_log
@@ -290,7 +290,7 @@ CREATE TRIGGER wamn_record_history_log
     EXECUTE FUNCTION wamn_history.log_row_change('unlimited');
 
 CREATE TRIGGER wamn_record_history_log
-    AFTER INSERT OR UPDATE OR DELETE ON platform.environment
+    AFTER INSERT OR UPDATE OR DELETE ON platform.env
     FOR EACH ROW
     EXECUTE FUNCTION wamn_history.log_row_change('unlimited');
 
@@ -361,15 +361,15 @@ GRANT DELETE ON platform.write_log TO wamn_app;
 -- File objects belong to one application and use the active storage generation.
 CREATE TABLE platform.file (
     id                    uuid NOT NULL DEFAULT gen_random_uuid(),
-    application           text NOT NULL CHECK (application <> ''),
+    app                   text NOT NULL CHECK (app <> ''),
     connection_id         uuid NOT NULL REFERENCES platform.connection (id),
     name                  text NOT NULL CHECK (name <> ''),
     media_type            text NOT NULL CHECK (media_type <> ''),
     size                  bigint NOT NULL CHECK (size >= 0),
     sha256                text NOT NULL CHECK (sha256 ~ '^sha256:[0-9a-f]{64}$'),
     blob_key              text NOT NULL UNIQUE,
-    exposure              text NOT NULL DEFAULT 'application'
-                              CHECK (exposure IN ('private', 'application', 'public')),
+    exposure              text NOT NULL DEFAULT 'app'
+                              CHECK (exposure IN ('private', 'app', 'public')),
     url                   text,
     width                 integer CHECK (width > 0),
     height                integer CHECK (height > 0),
@@ -402,7 +402,7 @@ CREATE TRIGGER file_store BEFORE INSERT OR UPDATE OF connection_id ON platform.f
 -- One document number sequence of one application, and its pattern.
 CREATE TABLE platform.number_sequence (
     id          uuid NOT NULL DEFAULT gen_random_uuid(),
-    application text NOT NULL CHECK (application <> ''),
+    app         text NOT NULL CHECK (app <> ''),
     name        text NOT NULL CHECK (name <> ''),
     pattern     text NOT NULL CHECK (pattern <> ''),
     created_at  timestamptz NOT NULL,
@@ -410,7 +410,7 @@ CREATE TABLE platform.number_sequence (
     updated_at  timestamptz NOT NULL,
     updated_by  uuid NOT NULL,
     PRIMARY KEY (id),
-    UNIQUE (application, name)
+    UNIQUE (app, name)
 );
 
 -- One counter of a sequence for one key value. `value` is the next value to
@@ -443,7 +443,7 @@ CREATE TABLE platform.setting (
     updated_by uuid NOT NULL,
     PRIMARY KEY (target_type, target_id, key),
     CONSTRAINT setting_target_type_check
-        CHECK (target_type IN ('org', 'project', 'application', 'role', 'user'))
+        CHECK (target_type IN ('org', 'project', 'app', 'role', 'user'))
 );
 
 GRANT SELECT ON platform.external_system, platform.connection TO wamn_app;
@@ -523,7 +523,7 @@ GRANT EXECUTE ON FUNCTION platform.valid_timezone(text) TO wamn_app;
 -- function reads the application from the transaction caller.
 -- Each takes a sequence id and refuses an id that is not a sequence with
 -- undefined_object. The guest renderer resolves the sequence id from
--- wamn_authority.current_application() and the sequence name. It calls these
+-- wamn_authority.current_app() and the sequence name. It calls these
 -- functions through SQL in the host operation transaction.
 --
 -- ---------------------------------------------------------------------------

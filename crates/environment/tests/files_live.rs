@@ -38,7 +38,7 @@ async fn application_file_writes_are_refused_and_history_uses_the_standard_contr
             "{statement}"
         );
     }
-    let row = sqlx::query("SELECT application,connection_id::text,created_by::text, \
+    let row = sqlx::query("SELECT app,connection_id::text,created_by::text, \
          updated_by::text,created_at=updated_at,exposure,url FROM platform.file WHERE id=$1::text::uuid").bind(files::FILE).fetch_one(&mut fixture
         .guest)
         .await?;
@@ -47,7 +47,7 @@ async fn application_file_writes_are_refused_and_history_uses_the_standard_contr
     assert_eq!(row.get::<String, _>(2), files::CALLER);
     assert_eq!(row.get::<String, _>(3), files::CALLER);
     assert!(row.get::<bool, _>(4));
-    assert_eq!(row.get::<String, _>(5), "application");
+    assert_eq!(row.get::<String, _>(5), "app");
     assert!(row.get::<Option<String>, _>(6).is_none());
     let entry =
         sqlx::query("SELECT changed_by::text,operation,after->>'id' FROM platform.file_history")

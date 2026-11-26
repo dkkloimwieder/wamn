@@ -50,12 +50,11 @@ impl Issuer<'_> {
         let mut tx = transaction::read_connection(self.0, &actor)
             .await
             .map_err(|error| database_error(&error))?;
-        let exists =
-            sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM registry.orgs WHERE id = $1)")
-                .bind(org.as_str())
-                .fetch_one(&mut *tx)
-                .await
-                .map_err(|error| database_error(&error))?;
+        let exists = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM registry.org WHERE id = $1)")
+            .bind(org.as_str())
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(|error| database_error(&error))?;
         tx.commit().await.map_err(|error| database_error(&error))?;
         Ok(exists)
     }
@@ -76,7 +75,7 @@ impl Issuer<'_> {
         // An over-limit earlier bucket prevents creation of subsequent buckets.
         let mut allowed = true;
         for (bucket, limit) in buckets {
-            let count: i32 = sqlx::query("INSERT INTO identity.password_attempts (bucket, started_at, attempts) VALUES ($1, clock_timestamp(), 1) ON CONFLICT (bucket) DO UPDATE SET attempts = CASE WHEN identity.password_attempts.started_at <= EXCLUDED.started_at - interval '60 seconds' THEN 1 ELSE LEAST(identity.password_attempts.attempts + 1, $2 + 1) END, started_at = CASE WHEN identity.password_attempts.started_at <= EXCLUDED.started_at - interval '60 seconds' THEN EXCLUDED.started_at ELSE identity.password_attempts.started_at END RETURNING attempts")
+            let count: i32 = sqlx::query("INSERT INTO identity.password_attempt (bucket, started_at, attempts) VALUES ($1, clock_timestamp(), 1) ON CONFLICT (bucket) DO UPDATE SET attempts = CASE WHEN identity.password_attempt.started_at <= EXCLUDED.started_at - interval '60 seconds' THEN 1 ELSE LEAST(identity.password_attempt.attempts + 1, $2 + 1) END, started_at = CASE WHEN identity.password_attempt.started_at <= EXCLUDED.started_at - interval '60 seconds' THEN EXCLUDED.started_at ELSE identity.password_attempt.started_at END RETURNING attempts")
                 .bind(bucket).bind(limit).fetch_one(&mut *tx).await.map_err(|error| database_error(&error))?.get(0);
             if count > *limit {
                 allowed = false;
@@ -85,7 +84,7 @@ impl Issuer<'_> {
         }
         if buckets.first().is_some_and(|(key, _)| *key == "global") {
             password_login::prune_expired(&mut tx, issuer).await?;
-            sqlx::query("DELETE FROM identity.password_attempts WHERE started_at < clock_timestamp() - interval '120 seconds'").execute(&mut *tx).await.map_err(|error| database_error(&error))?;
+            sqlx::query("DELETE FROM identity.password_attempt WHERE started_at < clock_timestamp() - interval '120 seconds'").execute(&mut *tx).await.map_err(|error| database_error(&error))?;
         }
         tx.commit().await.map_err(|error| database_error(&error))?;
         Ok(allowed)
@@ -101,7 +100,7 @@ impl Issuer<'_> {
         )
         .await
         .map_err(|error| database_error(&error))?;
-        let row = sqlx::query("SELECT p.id FROM identity.principals p JOIN identity.password_credentials c ON c.principal_id=p.id WHERE p.email=$1 AND p.type='user' AND p.active")
+        let row = sqlx::query("SELECT p.id FROM identity.principal p JOIN identity.password_credential c ON c.principal_id=p.id WHERE p.email=$1 AND p.type='user' AND p.active")
             .bind(email).fetch_optional(&mut *tx).await.map_err(|error| database_error(&error))?;
         tx.commit().await.map_err(|error| database_error(&error))?;
         row.map(|row| {
@@ -119,7 +118,7 @@ impl Issuer<'_> {
         let mut tx = transaction::read_connection(self.0, principal)
             .await
             .map_err(|error| database_error(&error))?;
-        let Ok(Some(row)) = sqlx::query("SELECT email FROM identity.principals WHERE id = $1")
+        let Ok(Some(row)) = sqlx::query("SELECT email FROM identity.principal WHERE id = $1")
             .bind(Uuid::from(*principal))
             .fetch_optional(&mut *tx)
             .await
@@ -142,8 +141,8 @@ impl Issuer<'_> {
         .await
         .map_err(|error| database_error(&error))?;
         let email = sqlx::query_scalar(
-            "SELECT p.email FROM identity.principals p
-             JOIN identity.org_memberships m ON m.principal_id = p.id
+            "SELECT p.email FROM identity.principal p
+             JOIN identity.org_membership m ON m.principal_id = p.id
              WHERE p.id = $1 AND p.type = 'user' AND p.active
                    AND m.org = $2 AND m.active",
         )
@@ -224,7 +223,7 @@ impl Issuer<'_> {
         };
         let mut tx = result.map_err(|error| database_error(&error))?;
         sqlx::query(
-            "UPDATE identity.password_tokens SET consumed_at = clock_timestamp()
+            "UPDATE identity.password_token SET consumed_at = clock_timestamp()
              WHERE token_hash = $1 AND consumed_at IS NULL",
         )
         .bind(digest.to_string())
@@ -249,7 +248,7 @@ impl Issuer<'_> {
         .await
         .map_err(|_| ExchangeFailure::Unavailable)?;
         let row =
-            sqlx::query("SELECT id::text FROM identity.principals WHERE email=$1 AND type='user'")
+            sqlx::query("SELECT id::text FROM identity.principal WHERE email=$1 AND type='user'")
                 .bind(email)
                 .fetch_optional(&mut *read)
                 .await

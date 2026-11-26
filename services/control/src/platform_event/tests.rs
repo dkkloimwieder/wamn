@@ -80,7 +80,7 @@ async fn a_platform_command_keeps_two_immutable_events() -> anyhow::Result<()> {
         panic!("expected the control start and one Job result, got {events:?}");
     };
     for row in [start, end] {
-        assert_eq!(row.0, "environment_apply");
+        assert_eq!(row.0, "env_apply");
         assert_eq!(row.2, uuid::Uuid::from(actor));
         assert_eq!(row.3, org.as_str());
         assert_eq!(row.4.as_deref(), Some("dev"));
@@ -183,7 +183,7 @@ async fn org_provisioning_journals_success_and_early_failure() -> anyhow::Result
         let secrets = KubernetesApi::from_config(config)?;
         let result = provision_org(url.as_str(), &org, Ok((secrets, oauth))).await;
         let registered: bool =
-            sqlx::query_scalar("SELECT EXISTS (SELECT FROM registry.orgs WHERE id = $1)")
+            sqlx::query_scalar("SELECT EXISTS (SELECT FROM registry.org WHERE id = $1)")
                 .bind(name)
                 .fetch_one(&mut admin)
                 .await?;
