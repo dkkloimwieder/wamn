@@ -71,7 +71,7 @@ pub struct State {
 
 pub async fn state(platform: &Platform, document: &EnvDocument) -> anyhow::Result<State> {
     let Some(row) =
-        env_sql_effects::env_row(&platform.system_database_url, &document.triple()).await?
+        env_sql_effects::env_row(&platform.system_transaction_url, &document.triple()).await?
     else {
         return Ok(State {
             disposable: None,

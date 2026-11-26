@@ -30,8 +30,10 @@ type ChartSelector = fn(&Path) -> anyhow::Result<Arc<SelectedChart>>;
 /// The platform inputs of the lifecycle verbs.
 #[derive(Debug)]
 pub struct Platform {
-    /// The system database URL selected for this verb.
+    /// The system database endpoint for operations that pin an advisory lock.
     pub system_database_url: String,
+    /// The system database endpoint for SQL that needs no session state.
+    pub system_transaction_url: String,
     /// The operation worker's writer for database credentials.
     pub database_files: Option<Arc<DatabaseFiles>>,
     /// The cluster, its context and the operator release's namespace (R6).

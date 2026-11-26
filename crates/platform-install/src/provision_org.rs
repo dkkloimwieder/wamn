@@ -190,25 +190,22 @@ pub async fn create_org_logins(
     database: &str,
 ) -> anyhow::Result<Vec<OrgLogin>> {
     let random = SystemRandom::new();
-    // These limits match the role limits in the platform Poolers.
     let logins = [
         (
             control_login(org, database),
             wamn_role::CONTROL_ROLE,
-            8_i32,
             CONTROL_SECRET,
         ),
         (
             apply_login(org, database),
             wamn_role::APPLY_ROLE,
-            16_i32,
             APPLY_SECRET,
         ),
     ];
     let mut passwords = Vec::with_capacity(logins.len());
     let mut tx =
         wamn_postgres::provisioning_transaction::provisioning_transaction(connection).await?;
-    for (login, group, limit, secret) in logins {
+    for (login, group, secret) in logins {
         let mut entropy = [0_u8; 32];
         random
             .fill(&mut entropy)
@@ -224,12 +221,11 @@ pub async fn create_org_logins(
         // Bind the password so the client statement text never contains it.
         sqlx::query(
             "SELECT set_config('wamn.org_login', $1, true), set_config('wamn.org_password', $2, true),
-                    set_config('wamn.org_group', $3, true), set_config('wamn.org_connection_limit', $4::int::text, true)",
+                    set_config('wamn.org_group', $3, true)",
         )
         .bind(login.as_str())
         .bind(&password)
         .bind(group)
-        .bind(limit)
         .execute(&mut *tx)
         .await
         .map_err(role_error)?;
@@ -239,15 +235,13 @@ pub async fn create_org_logins(
                  login_name text := current_setting('wamn.org_login');
                  login_password text := current_setting('wamn.org_password');
                  login_group text := current_setting('wamn.org_group');
-                 connection_limit integer := current_setting('wamn.org_connection_limit')::integer;
              BEGIN
                  IF EXISTS (SELECT FROM pg_roles WHERE rolname = login_name) THEN
-                     EXECUTE format('ALTER ROLE %I LOGIN PASSWORD %L CONNECTION LIMIT %s',
-                                    login_name, login_password, connection_limit);
+                     EXECUTE format('ALTER ROLE %I LOGIN PASSWORD %L', login_name, login_password);
                      EXECUTE format('GRANT %I TO %I', login_group, login_name);
                  ELSE
-                     EXECUTE format('CREATE ROLE %I LOGIN PASSWORD %L CONNECTION LIMIT %s IN ROLE %I',
-                                    login_name, login_password, connection_limit, login_group);
+                     EXECUTE format('CREATE ROLE %I LOGIN PASSWORD %L IN ROLE %I',
+                                    login_name, login_password, login_group);
                  END IF;
              END
              $org_login$",

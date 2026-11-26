@@ -307,6 +307,50 @@ fn platform_and_org_releases_wire_the_public_roots() -> anyhow::Result<()> {
             "-f",
             values.to_str().unwrap(),
         ]))?;
+        let settings = &org_values["control"]["configuration"];
+        for (host, client, mode) in [
+            (&settings["database"]["host"], "control", "transaction"),
+            (&settings["apply_database"]["host"], "worker", "session"),
+            (&settings["apply_transaction_host"], "worker", "transaction"),
+        ] {
+            let host = host.as_str().context("system database host")?;
+            let (name, _) = host.split_once('.').context("Pooler service hostname")?;
+            let pooler = object(&platform, "Pooler", name)?;
+            assert_eq!(pooler["spec"]["pgbouncer"]["poolMode"], mode);
+            let tls = pooler["spec"]["pgbouncer"]["clientTLSSecret"]["name"]
+                .as_str()
+                .context("Pooler TLS certificate")?;
+            let dns = object(&platform, "Certificate", tls)?["spec"]["dnsNames"]
+                .as_array()
+                .context("Pooler certificate DNS names")?;
+            assert!(dns.contains(&json!(host)));
+            let ingress = platform
+                .iter()
+                .find(|object| {
+                    object["kind"] == "NetworkPolicy"
+                        && object["spec"]["podSelector"]["matchLabels"]["cnpg.io/poolerName"]
+                            == name
+                })
+                .context("Pooler ingress policy")?;
+            assert_eq!(
+                ingress["spec"]["ingress"][0]["from"][0]["podSelector"]["matchLabels"]["app.kubernetes.io/component"],
+                format!("wamn-{client}")
+            );
+            let egress = object(
+                &org,
+                "NetworkPolicy",
+                &format!("allow-{client}-to-postgres"),
+            )?;
+            assert!(
+                egress["spec"]["egress"]
+                    .as_array()
+                    .context("SQL egress")?
+                    .iter()
+                    .any(|rule| {
+                        rule["to"][0]["podSelector"]["matchLabels"]["cnpg.io/poolerName"] == name
+                    })
+            );
+        }
         let hosts = object(&platform, "Namespace", "hosts")?;
         let namespace = org
             .iter()

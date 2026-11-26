@@ -1,6 +1,10 @@
 {{- $system := include "wamn-platform.systemDatabase" . | fromJson -}}
 {{- $poolers := include "wamn-platform.systemDatabasePoolers" . | fromJson -}}
 {{- $values := .Values.postgres.pooler -}}
+{{- $total := add $values.control.maxDbConnections $values.apply.maxDbConnections $values.applyTransaction.maxDbConnections -}}
+{{- if gt $total 150 -}}
+{{- fail "System Pooler caps must sum to at most 150 to leave headroom for direct connections." -}}
+{{- end -}}
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
@@ -52,8 +56,8 @@ spec:
         - name: pgbouncer
           resources: {{- toYaml $values.resources | nindent 12 }}
   pgbouncer:
-    poolMode: session
-    authQuery: {{ printf "SELECT * FROM wamn_pooler.lookup_login($1, 'wamn_%s')" $family | quote }}
+    poolMode: {{ ternary "session" "transaction" (eq $family "apply") }}
+    authQuery: {{ printf "SELECT * FROM wamn_pooler.lookup_login($1, 'wamn_%s')" (ternary "control" "apply" (eq $family "control")) | quote }}
     authQuerySecret: {name: {{ $poolers.authSecret }}}
     clientTLSSecret: {name: {{ $tls }}}
     # This leaf and the database server leaf share the same issuer.
@@ -65,11 +69,15 @@ spec:
       client_tls_sslmode: require
       server_tls_sslmode: verify-full
       max_client_conn: {{ $values.maxClientConnections | quote }}
-      max_user_connections: {{ $limits.maxUserConnections | quote }}
+      # The separate postgres authentication database also uses this pool size.
+      default_pool_size: "20"
       max_db_connections: {{ $limits.maxDbConnections | quote }}
+      # An idle backend for a different login still occupies a slot.
+      server_idle_timeout: "5"
+      {{- if ne $family "apply" }}
+      max_prepared_statements: "200"
+      {{- end }}
       query_wait_timeout: {{ $limits.queryWaitTimeout | quote }}
-      {{- if eq $family "apply" }}
       # The first login for a role can also wait for a backend connection.
       client_login_timeout: {{ $limits.queryWaitTimeout | quote }}
-      {{- end }}
 {{- end }}

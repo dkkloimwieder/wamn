@@ -222,7 +222,7 @@ pub async fn write(
     Ok(true)
 }
 
-/// Write the applied timing settings after project configuration and return the stored drain bound.
+/// Write the applied timing settings after project configuration and the host upgrade.
 pub(crate) async fn write_env(
     connection: &mut sqlx::PgConnection,
     org: &wamn_registry::OrgId,
@@ -230,13 +230,13 @@ pub(crate) async fn write_env(
     readiness_budget_seconds: i32,
     drain_bound_seconds: i32,
     revocation_seconds: u32,
-) -> Result<i32, sqlx::Error> {
+) -> Result<(), sqlx::Error> {
     let revocation_seconds = i32::try_from(revocation_seconds)
         .map_err(|source| sqlx::Error::Encode(Box::new(source)))?;
     sqlx::query_scalar(
         "UPDATE registry.env
          SET readiness_budget_seconds=$3, drain_bound_seconds=$4, revocation_seconds=$5
-         WHERE org=$1 AND env=$2 RETURNING drain_bound_seconds",
+         WHERE org=$1 AND env=$2 RETURNING 1",
     )
     .bind(org.as_str())
     .bind(env.as_str())
@@ -245,6 +245,7 @@ pub(crate) async fn write_env(
     .bind(revocation_seconds)
     .fetch_one(&mut *connection)
     .await
+    .map(|_: i32| ())
 }
 
 /// Remove stale pins after all project binding writes for the environment succeed.

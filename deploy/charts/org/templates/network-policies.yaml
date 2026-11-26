@@ -72,6 +72,13 @@ spec:
           podSelector:
             matchLabels: {cnpg.io/poolerName: {{ . | splitList "." | first | quote }}}
       ports: [{port: {{ $client.connection.port | int }}, protocol: TCP}]
+    {{- if eq $name "worker" }}
+    - to:
+        - namespaceSelector: {{ $platform | toJson }}
+          podSelector:
+            matchLabels: {cnpg.io/poolerName: {{ required "Set control.configuration.apply_transaction_host." $database.apply_transaction_host | splitList "." | first | quote }}}
+      ports: [{port: {{ $client.connection.port | int }}, protocol: TCP}]
+    {{- end }}
 {{- end }}
 {{- end }}
 {{- range $name, $labels := dict "control" $control "worker" $worker }}

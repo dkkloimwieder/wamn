@@ -63,20 +63,20 @@ spec:
         - podSelector:
             matchLabels: {app.kubernetes.io/name: cloudnative-pg}
       ports: [{port: 8000, protocol: TCP}]
-{{- range $family, $client := dict "control" "wamn-control" "apply" "wamn-worker" }}
+{{- range $family, $name := $poolers.names }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
-metadata: {name: allow-pooler-{{ $family }}-clients, namespace: platform}
+metadata: {name: allow-pooler-{{ $family | kebabcase }}-clients, namespace: platform}
 spec:
   podSelector:
-    matchLabels: {cnpg.io/poolerName: {{ index $poolers.names $family }}}
+    matchLabels: {cnpg.io/poolerName: {{ $name }}}
   policyTypes: [Ingress]
   ingress:
     - from:
         - namespaceSelector: {{ $org | toJson }}
           podSelector:
-            matchLabels: {app.kubernetes.io/component: {{ $client }}}
+            matchLabels: {app.kubernetes.io/component: {{ ternary "wamn-control" "wamn-worker" (eq $family "control") }}}
       ports: [{port: {{ $system.port }}, protocol: TCP}]
 {{- end }}
 ---

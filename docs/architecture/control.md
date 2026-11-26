@@ -17,7 +17,8 @@ It checks that the apply login name matches the org and database.
 | --- | --- |
 | `org` | Org served by this process |
 | `public_origin` | Public control origin |
-| `database`, `apply_database` | Public connection objects for control reads and lifecycle writes |
+| `database`, `apply_database` | Public connection objects for control SQL and worker lifecycle locks |
+| `apply_transaction_host` | Worker endpoint for SQL that needs no session state. It uses the port, login, and TLS settings from `apply_database`. |
 | `identity_issuer` | Shared identity endpoint for token verification and user administration |
 | `nats_url` | Shared in-cluster NATS endpoint |
 | `worker_image` | Pinned control image for operation Jobs |

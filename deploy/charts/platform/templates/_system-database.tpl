@@ -11,30 +11,12 @@
 
 {{- define "wamn-platform.systemDatabasePoolers" -}}
 {{- $system := include "wamn-platform.systemDatabase" . | fromJson -}}
-{{- $names := dict -}}
-{{- range list "control" "apply" -}}
-{{- $_ := set $names . (printf "%s-%s" $system.cluster .) -}}
-{{- end -}}
+{{- $names := dict "control" (printf "%s-control" $system.cluster)
+                   "apply" (printf "%s-apply" $system.cluster)
+                   "applyTransaction" (printf "%s-apply-transaction" $system.cluster) -}}
 {{- dict "names" $names "authRole" "wamn_pooler_auth" "authSecret" "wamn-pg-pooler-auth-tls" | toJson -}}
 {{- end -}}
 
 {{- define "wamn-platform.identityReplicas" -}}
 2
-{{- end -}}
-
-{{- define "wamn-platform.systemDatabaseMaxConnections" -}}
-{{- $pooler := .Values.postgres.pooler -}}
-{{- $poolerConnections := add $pooler.control.maxDbConnections $pooler.apply.maxDbConnections -}}
-{{- /* The auth_query pool uses one login per Pooler, capped by max_user_connections. */ -}}
-{{- $passwordLookupConnections := add $pooler.control.maxUserConnections $pooler.apply.maxUserConnections -}}
-{{- /* services/identity-service/src/password.rs::State::new opens a pool of 8 per replica. */ -}}
-{{- $identityConnections := mul (include "wamn-platform.identityReplicas" .) 8 -}}
-{{- /* The exclusive org SQL Job holds one dedicated connection for provisioning or an activity change. */ -}}
-{{- $provisionOrgConnections := 1 -}}
-{{- /* crates/platform-install/src/provision_system.rs::provision_system holds the admin connection and uses one extra connection at a time. */ -}}
-{{- $systemSqlConnections := 2 -}}
-{{- /* PostgreSQL 18 defaults: superuser_reserved_connections=3, reserved_connections=0. */ -}}
-{{- $reservedConnections := 3 -}}
-{{- $margin := 10 -}}
-{{- add $poolerConnections $passwordLookupConnections $identityConnections $provisionOrgConnections $systemSqlConnections $reservedConnections $margin -}}
 {{- end -}}

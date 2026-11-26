@@ -109,7 +109,7 @@ spec:
     roles: {{ concat $ordered $roles | toJson }}
   podSelectorRefs:
     {{- range $family, $name := $poolers.names }}
-    - name: {{ $family }}-pooler
+    - name: {{ $family | kebabcase }}-pooler
       selector:
         matchLabels: {cnpg.io/poolerName: {{ $name }}}
     {{- end }}
@@ -131,8 +131,8 @@ spec:
     pg_hba:
       - hostssl {{ $database }} {{ $system.identityRole.name }} all cert
       {{- range $family := keys $poolers.names | sortAlpha }}
-      - hostssl {{ $database }} +wamn_{{ $family }} ${podselector:{{ $family }}-pooler} scram-sha-256
-      - hostssl postgres {{ $poolers.authRole }} ${podselector:{{ $family }}-pooler} cert
+      - hostssl {{ $database }} +wamn_{{ ternary "control" "apply" (eq $family "control") }} ${podselector:{{ $family | kebabcase }}-pooler} scram-sha-256
+      - hostssl postgres {{ $poolers.authRole }} ${podselector:{{ $family | kebabcase }}-pooler} cert
       {{- end }}
       - hostssl {{ $database }} postgres ${podselector:platform-sql-jobs} cert
       - hostssl postgres postgres ${podselector:system-sql} cert
@@ -143,7 +143,8 @@ spec:
       - host all postgres,{{ $system.migrationRole.name }} all reject
       - hostssl all all all scram-sha-256
     parameters:
-      max_connections: {{ include "wamn-platform.systemDatabaseMaxConnections" . | quote }}
+      # Fixed budget. See docs/architecture/data-access.md.
+      max_connections: "320"
       max_slot_wal_keep_size: "4GB"
       pg_stat_statements.max: "10000"
       pg_stat_statements.track: top

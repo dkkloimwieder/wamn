@@ -27,7 +27,7 @@ use hyper_util::rt::{TokioIo, TokioTimer};
 use rustls::pki_types::pem::PemObject as _;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use tokio::net::TcpListener;
-use tokio::sync::{Mutex, Semaphore};
+use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore};
 use tokio::task::JoinSet;
 
 use tokio_rustls::TlsAcceptor;
@@ -42,6 +42,7 @@ use wamn_platform_install::identity_role::identity_issuer_login;
 // Match the public-key client's total fetch bound. No retry or stale response
 // is introduced when TLS, request headers, or the authoritative read stalls.
 const IO_TIMEOUT: Duration = Duration::from_secs(5);
+const REQUEST_SLOTS: u32 = 8;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Listener {
@@ -130,7 +131,7 @@ struct Inner {
     nats: Option<nats::State>,
     kubernetes: Option<KubernetesApi>,
     // Password, user management, and NATS signing share eight places per replica.
-    request_slots: Semaphore,
+    request_slots: Arc<Semaphore>,
     event_slots: Arc<Semaphore>,
     pool: sqlx::PgPool,
     envelope: wamn_envelope::encryption::Envelope,
@@ -139,6 +140,9 @@ struct Inner {
 
 pub(crate) struct Database {
     pub(crate) client: Client,
+    // Delivery may finish after its HTTP request times out. Keep the slot until
+    // the direct workload connection closes.
+    workload_slot: Option<OwnedSemaphorePermit>,
 }
 
 impl AsMut<Client> for Database {
@@ -165,7 +169,10 @@ pub(crate) async fn connect_database(input: &str) -> Result<Database, IdentitySe
         .await
         .map_err(|_| IdentityServiceError::new("identity database connection timed out"))?
         .map_err(|_| IdentityServiceError::new("identity database connection failed"))?;
-    Ok(Database { client })
+    Ok(Database {
+        client,
+        workload_slot: None,
+    })
 }
 
 impl Inner {
@@ -241,7 +248,7 @@ impl IdentityService {
         )
         .await?;
         let passwords = config.mail.map(password::State::new).transpose()?;
-        let pool = wamn_postgres::pool(&config.connection, 8)
+        let pool = wamn_postgres::pool(&config.connection, REQUEST_SLOTS)
             .await
             .map_err(|_| {
                 IdentityServiceError::new("identity request pool configuration refused")
@@ -253,7 +260,7 @@ impl IdentityService {
             passwords,
             nats,
             kubernetes,
-            request_slots: Semaphore::new(8),
+            request_slots: Arc::new(Semaphore::new(REQUEST_SLOTS as usize)),
             event_slots: Arc::new(Semaphore::new(authentication_event::PENDING_APPENDS)),
             pool,
             database: Mutex::new(database),

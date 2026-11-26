@@ -43,6 +43,7 @@ pub struct Configuration {
     pub public_origin: String,
     pub database: wamn_postgres::database::ConnectionConfig,
     pub apply_database: wamn_postgres::database::ConnectionConfig,
+    pub apply_transaction_host: String,
     pub identity_issuer: String,
     pub nats_url: String,
     /// The org's package and application component origin.
@@ -107,6 +108,12 @@ impl Configuration {
         }
     }
 
+    fn apply_transaction_database(&self) -> anyhow::Result<String> {
+        let mut connection = self.apply_database.clone();
+        connection.host.clone_from(&self.apply_transaction_host);
+        connection.to_json()
+    }
+
     fn platform(&self) -> anyhow::Result<Platform> {
         let insecure_registry = wamn_registry::registry_is_loopback(&self.registry)
             || self.registry.split('/').next()
@@ -114,6 +121,7 @@ impl Configuration {
         let (package_base, _) = wamn_registry::org_artifact_bases(&self.registry);
         Ok(Platform {
             system_database_url: self.apply_database.to_json()?,
+            system_transaction_url: self.apply_transaction_database()?,
             database_files: None,
             cluster: Arc::new(wamn_kubernetes::Target::in_cluster(
                 WORKER_KUBECONFIG.into(),
@@ -200,7 +208,7 @@ pub async fn serve(config: Configuration) -> anyhow::Result<()> {
     write_kubeconfig(Path::new(WORKER_KUBECONFIG), config.org.as_str())?;
     let database = config.database.to_json()?;
     let writer = wait_for_system_schema(&database).await?;
-    // Keep three pooled connections alongside the dedicated writer.
+    // These four SQLx clients share the control transaction Pooler's backends.
     let pool = wamn_postgres::pool(&database, 3).await?;
     let logins = Arc::new(project_login::ProjectLogins::new(
         wamn_kubernetes::client::KubernetesApi::in_cluster()?,

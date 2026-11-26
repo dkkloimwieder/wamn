@@ -41,6 +41,55 @@ fn platform_and_infrastructure_pods_declare_resources() -> anyhow::Result<()> {
 }
 
 #[test]
+fn system_poolers_leave_postgres_headroom_and_bound_queueing() -> anyhow::Result<()> {
+    use anyhow::Context as _;
+    use wamn_kubernetes::{helm, platform_env::entry};
+
+    let chart = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../deploy/charts/platform");
+    for file in ["values-kind.yaml", "values-gcp.yaml"] {
+        let values = serde_yaml::from_slice(&std::fs::read(chart.join(file))?)?;
+        let objects = helm::template(&entry(&chart, "platform", "wamn", values)?)?;
+        let cluster = objects
+            .iter()
+            .find(|object| object["kind"] == "Cluster")
+            .context("system database Cluster")?;
+        let maximum: u64 = cluster["spec"]["postgresql"]["parameters"]["max_connections"]
+            .as_str()
+            .context("fixed PostgreSQL connection budget")?
+            .parse()?;
+        let mut backends = 0;
+        for pooler in objects.iter().filter(|object| {
+            object["kind"] == "Pooler"
+                && object["spec"]["cluster"]["name"] == cluster["metadata"]["name"]
+        }) {
+            assert_eq!(pooler["spec"]["deploymentStrategy"]["type"], "Recreate");
+            let instances = pooler["spec"]["instances"]
+                .as_u64()
+                .context("pooler replicas")?;
+            let pgbouncer = &pooler["spec"]["pgbouncer"];
+            let setting = |key: &str| -> anyhow::Result<u64> {
+                Ok(pgbouncer["parameters"][key]
+                    .as_str()
+                    .context(key.to_owned())?
+                    .parse()?)
+            };
+            let cap = setting("max_db_connections")?;
+            let auth = cap.min(setting("default_pool_size")?);
+            backends += instances * (cap + auth);
+            assert!(pgbouncer["parameters"]["max_user_connections"].is_null());
+            let wait = setting("query_wait_timeout")?;
+            assert!(setting("client_login_timeout")? >= wait);
+            assert!((1..wait).contains(&setting("server_idle_timeout")?));
+            if pgbouncer["poolMode"] == "transaction" {
+                assert!(setting("max_prepared_statements")? > 0);
+            }
+        }
+        assert!(backends > 0 && backends < maximum);
+    }
+    Ok(())
+}
+
+#[test]
 fn platform_wamn_workloads_render_restricted_pods() -> anyhow::Result<()> {
     use wamn_kubernetes::{helm, platform_env::entry};
 

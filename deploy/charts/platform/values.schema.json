@@ -319,7 +319,7 @@
         "pooler": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["maxClientConnections", "control", "apply"],
+          "required": ["maxClientConnections", "control", "apply", "applyTransaction"],
           "properties": {
             "maxClientConnections": {
               "type": "integer",
@@ -329,24 +329,13 @@
               "$ref": "#/definitions/resources"
             },
             "control": {
-              "type": "object",
-              "additionalProperties": false,
-              "required": ["maxUserConnections", "maxDbConnections", "queryWaitTimeout"],
-              "properties": {
-                "maxUserConnections": {"const": 8},
-                "maxDbConnections": {"type": "integer", "minimum": 8},
-                "queryWaitTimeout": {"const": 120}
-              }
+              "$ref": "#/definitions/systemPooler"
             },
             "apply": {
-              "type": "object",
-              "additionalProperties": false,
-              "required": ["maxUserConnections", "maxDbConnections", "queryWaitTimeout"],
-              "properties": {
-                "maxUserConnections": {"const": 16},
-                "maxDbConnections": {"type": "integer", "minimum": 16},
-                "queryWaitTimeout": {"const": 900}
-              }
+              "$ref": "#/definitions/systemPooler"
+            },
+            "applyTransaction": {
+              "$ref": "#/definitions/systemPooler"
             }
           }
         }
@@ -424,6 +413,15 @@
     ]
   },
   "definitions": {
+    "systemPooler": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["maxDbConnections", "queryWaitTimeout"],
+      "properties": {
+        "maxDbConnections": {"type": "integer", "minimum": 1, "maximum": 150},
+        "queryWaitTimeout": {"type": "integer", "minimum": 1}
+      }
+    },
     "projectId": {
       "type": "string",
       "pattern": "^[a-z][a-z0-9-]{4,28}[a-z0-9]$"

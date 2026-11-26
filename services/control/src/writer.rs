@@ -1,4 +1,4 @@
-//! The dedicated, reconnecting control database writer.
+//! The serialized control writer and its reconnecting Pooler client.
 
 use std::{fmt, time::Duration};
 
@@ -10,7 +10,7 @@ use tokio::{
 
 const CONNECTION_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// The control session that serializes writes and replaces a failed connection.
+/// The client connection that serializes writes through the transaction Pooler.
 pub struct Writer {
     database: String,
     connection: Mutex<Option<PgConnection>>,
@@ -42,7 +42,7 @@ impl Writer {
             return Ok(MutexGuard::map(slot, |slot| slot.insert(connection)));
         }
 
-        // The old session has dropped. Keep the slot locked for one bounded
+        // The old client has dropped. Keep the slot locked for one bounded
         // attempt so another caller cannot open a second writer.
         let connection = timeout(CONNECTION_TIMEOUT, wamn_postgres::connect(&self.database))
             .await

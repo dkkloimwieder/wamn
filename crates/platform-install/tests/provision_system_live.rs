@@ -167,6 +167,19 @@ async fn bootstrap_is_atomic_and_uses_database_facts() {
     .await
     .unwrap();
     assert!(recorded_seed);
+    let org = "fixture-org".parse().unwrap();
+    let logins =
+        wamn_platform_install::provision_org::create_org_logins(&mut client, &org, "fixture_1")
+            .await
+            .unwrap();
+    for login in logins {
+        let limit: i32 = sqlx::query_scalar("SELECT rolconnlimit FROM pg_roles WHERE rolname=$1")
+            .bind(login.login.as_str())
+            .fetch_one(&mut client)
+            .await
+            .unwrap();
+        assert_eq!(limit, -1, "{}", login.login);
+    }
     let concurrent_database = postgres.create_database("fixture_2").await.unwrap();
     let mut first = connect(concurrent_database.as_str()).await;
     let mut second = connect(concurrent_database.as_str()).await;

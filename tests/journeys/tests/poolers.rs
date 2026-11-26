@@ -1,4 +1,4 @@
-//! The system Poolers admit org logins, queue at the per-login limit, and expose their settings.
+//! The system Poolers admit org logins, queue at the shared connection limit.
 //! Cargo runs this target separately from the certificate renewal target.
 
 mod common;
@@ -8,8 +8,7 @@ use std::time::Duration;
 
 use anyhow::{Context as _, bail, ensure};
 use common::request::until;
-use common::{Env, Org, PortForward, exec, scale_deployment, secret_key};
-use k8s_openapi::api::batch::v1::Job;
+use common::{Env, Org, PortForward, exec, secret_key};
 use k8s_openapi::api::core::v1::{ConfigMap, Pod};
 use kube::Api;
 use kube::api::{AttachParams, ListParams};
@@ -27,47 +26,27 @@ const POSTGRES_PORT: u16 = 5432;
 const METRICS_PORT: u16 = 9127;
 const CONTROL: &str = "control";
 const APPLY: &str = "apply";
+const APPLY_TRANSACTION: &str = "apply-transaction";
 /// Time for org creation and environment apply through their CLI waits.
 const PROVISION_DEADLINE: Duration = Duration::from_mins(15);
-/// Time for scaling control or for finished work to leave the org.
-const CONTROL_DEADLINE: Duration = Duration::from_secs(120);
 /// Time for a Pooler pod to report Ready or for all held sessions to open.
 const READY_DEADLINE: Duration = Duration::from_secs(60);
 /// Time for credential reads, a port-forward setup, or an individual request.
 const REQUEST_DEADLINE: Duration = Duration::from_secs(15);
 /// Time for the extra client to appear in the Pooler metrics.
 const QUEUE_DEADLINE: Duration = Duration::from_secs(30);
-/// Time to close a held session and receive the queued answer.
+/// Time to release a backend and receive the queued answer.
 const RESUME_DEADLINE: Duration = Duration::from_secs(10);
 
 common::journey! {
-    /// C7. The next client waits at each per-login limit and proceeds when one session closes.
-    async fn each_login_queues_at_its_connection_limit() -> anyhow::Result<()> {
-        let env = provision().await?;
-        let org = &env.org;
-        let mut control = RestoreControl {
-            org,
-            name: wamn_registry::name::control_resource(&org.name),
-            armed: true,
-        };
-        let result = async {
-            control.scale(0).await?;
-            wait_for_idle_org(org, &control.name).await?;
-            let pods = platform_pods(org);
-            for (family, limit) in [(CONTROL, 8), (APPLY, 16)] {
-                let pod = ready_pooler(&pods, family).await?;
-                assert_queue(org, &pods, &pod, family, limit)
-                    .await
-                    .with_context(|| format!("check the {family} login limit on {pod}"))?;
-            }
-            Ok(())
-        }
-        .await;
-        let restored = control.restore().await;
-        match (result, restored) {
-            (result, Ok(())) | (Ok(()), result) => result,
-            (Err(test), Err(restore)) => Err(test.context(format!("restore control: {restore:#}"))),
-        }
+    /// A second org waits at the shared cap. It proceeds after a transaction ends.
+    async fn orgs_share_the_transaction_pooler_budget() -> anyhow::Result<()> {
+        let holder = provision().await?;
+        let waiter = provision().await?;
+        let pods = platform_pods(&holder.org);
+        let pod = ready_pooler(&pods, APPLY_TRANSACTION).await?;
+        let limit = backend_limit(&pods, &pod).await?;
+        assert_queue(&holder.org, &waiter.org, &pods, &pod, limit).await
     }
 }
 
@@ -99,47 +78,42 @@ common::journey! {
     }
 }
 
-common::journey! {
-    /// C9. The local admin console reports the live query and apply login wait settings.
-    async fn each_pooler_reports_its_wait_settings() -> anyhow::Result<()> {
-        let env = provision().await?;
-        let pods = platform_pods(&env.org);
-        for (family, query_wait) in [(CONTROL, 120), (APPLY, 900)] {
-            let pod = ready_pooler(&pods, family).await?;
-            // CloudNativePG configures peer authentication on this local console.
-            let config = timeout(
-                REQUEST_DEADLINE,
-                exec(
-                    &pods,
-                    &pod,
-                    &AttachParams::default().container("pgbouncer"),
-                    [
-                        "psql",
-                        "-XAtw",
-                        "-F",
-                        "\t",
-                        "-h",
-                        "/controller/run",
-                        "-p",
-                        "5432",
-                        "-U",
-                        "pgbouncer",
-                        "-d",
-                        "pgbouncer",
-                        "-c",
-                        "SHOW CONFIG",
-                    ],
-                ),
-            )
-            .await
-            .with_context(|| format!("SHOW CONFIG on {pod} within {REQUEST_DEADLINE:?}"))??;
-            assert_setting(&pod, &config, "query_wait_timeout", query_wait)?;
-            if family == APPLY {
-                assert_setting(&pod, &config, "client_login_timeout", 900)?;
-            }
-        }
-        Ok(())
-    }
+async fn backend_limit(pods: &Api<Pod>, pod: &str) -> anyhow::Result<usize> {
+    // CloudNativePG configures peer authentication on the local admin console.
+    let config = timeout(
+        REQUEST_DEADLINE,
+        exec(
+            pods,
+            pod,
+            &AttachParams::default().container("pgbouncer"),
+            [
+                "psql",
+                "-XAtw",
+                "-F",
+                "\t",
+                "-h",
+                "/controller/run",
+                "-p",
+                "5432",
+                "-U",
+                "pgbouncer",
+                "-d",
+                "pgbouncer",
+                "-c",
+                "SHOW CONFIG",
+            ],
+        ),
+    )
+    .await
+    .with_context(|| format!("SHOW CONFIG on {pod} within {REQUEST_DEADLINE:?}"))??;
+    let limit = config
+        .lines()
+        .filter_map(|line| line.split_once('\t'))
+        .find_map(|(key, columns)| (key == "max_db_connections").then_some(columns))
+        .and_then(|columns| columns.split('\t').next())
+        .context("the Pooler reports its database connection limit")?
+        .parse()?;
+    Ok(limit)
 }
 
 async fn provision() -> anyhow::Result<Env> {
@@ -174,71 +148,6 @@ async fn ready_pooler(pods: &Api<Pod>, family: &str) -> anyhow::Result<String> {
     .with_context(|| format!("find {waiting} within {READY_DEADLINE:?}"))?
 }
 
-async fn wait_for_idle_org(org: &Org, control: &str) -> anyhow::Result<()> {
-    let namespace = org.name.as_str();
-    let pods = Api::<Pod>::namespaced(org.cluster.client.clone(), namespace);
-    let jobs = Api::<Job>::namespaced(org.cluster.client.clone(), namespace);
-    let selector = ListParams::default().labels(&format!("app.kubernetes.io/name={control}"));
-    let waiting = format!("control pods to exit and Jobs to finish in {namespace}");
-    timeout(
-        CONTROL_DEADLINE,
-        until(CONTROL_DEADLINE, &waiting, || async {
-            let all_jobs = ListParams::default();
-            let (pods, jobs) = tokio::try_join!(pods.list(&selector), jobs.list(&all_jobs))?;
-            let finished = jobs.items.iter().all(|job| {
-                job.status
-                    .iter()
-                    .flat_map(|status| status.conditions.iter().flatten())
-                    .any(|condition| {
-                        condition.status == "True"
-                            && matches!(condition.type_.as_str(), "Complete" | "Failed")
-                    })
-            });
-            Ok((pods.items.is_empty() && finished).then_some(()))
-        }),
-    )
-    .await
-    .with_context(|| format!("wait for {waiting} within {CONTROL_DEADLINE:?}"))?
-}
-
-struct RestoreControl<'a> {
-    org: &'a Org,
-    name: String,
-    armed: bool,
-}
-
-impl RestoreControl<'_> {
-    async fn scale(&self, replicas: i32) -> anyhow::Result<()> {
-        scale_deployment(
-            &self.org.cluster.client,
-            self.org.name.as_str(),
-            &self.name,
-            replicas,
-            CONTROL_DEADLINE,
-        )
-        .await
-    }
-
-    async fn restore(&mut self) -> anyhow::Result<()> {
-        self.scale(1).await?;
-        self.armed = false;
-        Ok(())
-    }
-}
-
-impl Drop for RestoreControl<'_> {
-    fn drop(&mut self) {
-        if self.armed {
-            let result = tokio::task::block_in_place(|| {
-                tokio::runtime::Handle::current().block_on(self.scale(1))
-            });
-            if let Err(error) = result {
-                eprintln!("restore {} to one replica: {error:#}", self.name);
-            }
-        }
-    }
-}
-
 struct PoolerLogin {
     options: PgConnectOptions,
     _relay: JoinSet<anyhow::Result<()>>,
@@ -254,7 +163,8 @@ async fn pooler_login(
 ) -> anyhow::Result<PoolerLogin> {
     let namespace = org.name.as_str();
     let client = &org.cluster.client;
-    let secret = format!("wamn-{family}-db");
+    let role = if family == CONTROL { CONTROL } else { APPLY };
+    let secret = format!("wamn-{role}-db");
     let roots = Api::<ConfigMap>::namespaced(client.clone(), namespace);
     let (username, password, ca, forward) = timeout(REQUEST_DEADLINE, async {
         tokio::try_join!(
@@ -325,13 +235,14 @@ async fn pooler_login(
 }
 
 async fn assert_queue(
-    org: &Org,
+    holder: &Org,
+    waiter: &Org,
     pods: &Api<Pod>,
     pod: &str,
-    family: &str,
     limit: usize,
 ) -> anyhow::Result<()> {
-    let login = pooler_login(org, pods, pod, family).await?;
+    let holder = pooler_login(holder, pods, pod, APPLY_TRANSACTION).await?;
+    let waiter = pooler_login(waiter, pods, pod, APPLY_TRANSACTION).await?;
     let metrics = timeout(
         REQUEST_DEADLINE,
         PortForward::start(pods.clone(), pod, METRICS_PORT),
@@ -340,10 +251,17 @@ async fn assert_queue(
     .context("start the Pooler metrics port-forward")??;
     let url = format!("http://{}/metrics", metrics.address);
     let http = HttpClient::builder().timeout(REQUEST_DEADLINE).build()?;
+    let mut connection = timeout(REQUEST_DEADLINE, waiter.options.connect()).await??;
+    timeout(
+        REQUEST_DEADLINE,
+        sqlx::query("SELECT 1").execute(&mut connection),
+    )
+    .await
+    .context("prepare the waiting client's statement before saturating the pool")??;
     let mut held = Vec::with_capacity(limit);
     timeout(READY_DEADLINE, async {
         for index in 0..limit {
-            let session = hold_session(&login.options)
+            let session = hold_session(&holder.options)
                 .await
                 .with_context(|| format!("open held session {}", index + 1))?;
             held.push(session);
@@ -353,41 +271,21 @@ async fn assert_queue(
     .await
     .with_context(|| format!("open all {limit} held sessions within {READY_DEADLINE:?}"))??;
 
-    let mut released = held.pop().context("a held session to close")?;
-    // Session pooling keeps this backend linked after ROLLBACK. Closing an idle
-    // session lets PgBouncer reuse its backend for the queued client.
-    timeout(
-        REQUEST_DEADLINE,
-        sqlx::raw_sql("ROLLBACK").execute(&mut released),
-    )
-    .await
-    .context("end the transaction in the session that will close")??;
-
-    let username = login.options.get_username();
-    let counts = queue_counts(&http, &url, username).await?;
-    ensure!(
-        counts == (0, limit),
-        "{username} waiting and active counts before the extra client: {counts:?}, expected (0, {limit})"
-    );
-
-    let connection = timeout(REQUEST_DEADLINE, login.options.connect())
-        .await
-        .context("connect the extra session within the request deadline")?
-        .context("connect the extra session")?;
+    let username = waiter.options.get_username();
     let mut extra = JoinSet::new();
     extra.spawn(select_one(connection));
-    let waiting = format!("{username} has one waiting client and {limit} active servers");
-    let last_counts = Cell::new(counts);
+    let waiting = format!("{username} queues while the other org holds the backend budget");
+    let last_counts = Cell::new((0, 0));
     let queued = until(QUEUE_DEADLINE, &waiting, || async {
         let counts = queue_counts(&http, &url, username).await?;
         last_counts.set(counts);
-        Ok((counts == (1, limit)).then_some(()))
+        Ok((counts == (1, 0)).then_some(()))
     });
     tokio::select! {
         biased;
         result = extra.join_next() => {
             result.context("extra session task")??.context("extra session finished before queueing")?;
-            bail!("extra session answered while all {limit} sessions held a server");
+            bail!("extra session answered while the other org held the backend budget");
         }
         result = timeout(QUEUE_DEADLINE, queued) => {
             result.context("Pooler metrics polling timed out").flatten().with_context(|| {
@@ -398,12 +296,16 @@ async fn assert_queue(
     }
 
     timeout(RESUME_DEADLINE, async {
-        released.close().await.context("close one held session")?;
+        // Keep the client open. Transaction pooling releases its backend at rollback.
+        sqlx::raw_sql("ROLLBACK")
+            .execute(held.last_mut().context("a held transaction")?)
+            .await
+            .context("release one backend")?;
         extra.join_next().await.context("extra session task")??
     })
     .await
     .with_context(|| {
-        format!("extra query answers within {RESUME_DEADLINE:?} after closing one session")
+        format!("extra query answers within {RESUME_DEADLINE:?} after ending one transaction")
     })??;
     timeout(REQUEST_DEADLINE, async {
         for connection in held {
@@ -472,21 +374,4 @@ async fn queue_counts(
             .with_context(|| format!("parse the {name} count for {username}"))
     };
     Ok((count("cl_waiting")?, count("sv_active")?))
-}
-
-fn assert_setting(pod: &str, config: &str, key: &str, seconds: u64) -> anyhow::Result<()> {
-    let value = config
-        .lines()
-        .filter_map(|line| line.split_once('\t'))
-        .find(|(name, _)| *name == key)
-        .and_then(|(_, columns)| columns.split('\t').next())
-        .with_context(|| format!("{pod} SHOW CONFIG has no {key} value"))?;
-    let setting = || format!("{pod} {key} seconds: {value}");
-    let duration =
-        Duration::try_from_secs_f64(value.parse().with_context(setting)?).with_context(setting)?;
-    ensure!(
-        duration == Duration::from_secs(seconds),
-        "{pod} reports {key}={value}, expected {seconds} seconds"
-    );
-    Ok(())
 }

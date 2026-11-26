@@ -278,11 +278,13 @@ postgres:
     resources:
       requests: {cpu: 100m, memory: 256Mi}
       limits: {memory: 2Gi}
+    # Backend caps for wamn_system. Keep their sum within 150.
     control:
-      maxUserConnections: 8
       maxDbConnections: 50
       queryWaitTimeout: 120
     apply:
-      maxUserConnections: 16
-      maxDbConnections: 100
+      maxDbConnections: 80
+      queryWaitTimeout: 900
+    applyTransaction:
+      maxDbConnections: 20
       queryWaitTimeout: 900

@@ -1060,6 +1060,28 @@ The full schema files own the platform schemas and build fresh installations.
 
 ### System database
 
+The system PostgreSQL connection budget is fixed at 320. Each endpoint uses one PgBouncer pod. The caps for connections to `wamn_system` default to 50 for control transactions, 80 for worker sessions, and 20 for worker transactions. The chart keeps their combined cap at or below 150. Each endpoint can also open up to 20 connections to `postgres` for password lookup.
+
+PgBouncer queues clients until it can assign a server connection or the login or query times out. An unused connection closes after five seconds so another login can use that slot. The chart defaults to a 120-second wait for control and 900 seconds for workers. A client can set a shorter deadline.
+
+Identity connects directly with its certificate. Each replica can use eight pooled connections for password routes and event writes, and eight direct connections for workload routes. An invitation holds its workload slot until its delivery writes finish, even if the HTTP request times out. Each replica also keeps one dedicated connection for JWKS and health, and can open one maintenance connection for rotation or pruning. The fixed budget leaves room for identity during rollout, install Jobs, CNPG, and reserved PostgreSQL connections.
+
+These system database paths pin a backend across statements or transactions.
+
+| File and symbol | Session state |
+| --- | --- |
+| `crates/env/src/registry/lifecycle_lock.rs` — `LifecycleLock::acquire_env`, `acquire_wait`, `start` | Session advisory lock and `idle_session_timeout` across worker lifecycle operations. The worker opens this connection in `crates/env/src/env_sql_effects.rs::lock_env`. |
+| `crates/platform-install/src/platform_database.rs` — `lock_org_login` | The org SQL Job holds a session advisory lock across role changes and Secret writes in `provision_org::provision`. |
+| `crates/postgres/src/migrations.rs` — `apply_target` | The system migration login holds a session advisory lock across migration checks and apply. Entry point `crates/platform-install/src/provision_system.rs::initialize_system`. |
+| `crates/identity/src/identity/session_keys.rs` — `rotate_session_keys` | Direct maintenance session serializes scheduled signing-key rotation with a session advisory lock. |
+| `crates/identity/src/identity/nats_store.rs` — `ensure_env` | E5.7 uses the pinned workload connection for the per-env account advisory lock, including publication after commit. |
+
+Control's serialized writer, the worker's registry reads, its final settings write, and its outcome journal use transaction poolers. Transaction-local settings and transaction advisory locks stay within the owning transaction. The install Job runs bootstrap and password lookup setup using its direct admin certificate.
+
+The worker lifecycle lock callers under `crates/env/src/env/` are `lifecycle.rs::configure`, `delete.rs::deactivate`, `operation.rs::{app, reset}`, `capture_gap.rs::{recover, close}`, and the schema branch of `worker.rs::execute_task`.
+
+The vendored CloudNativePG chart 0.29.2 exposes the Pooler mode and PgBouncer parameters. Its operator 1.30.2 defaults to PgBouncer 1.26.1. The transaction endpoints track named prepared statements so SQLx 0.9.0 can use them across server connections (`sqlx-postgres/src/connection/executor.rs`). [CloudNativePG Pooler options](https://github.com/cloudnative-pg/cloudnative-pg/blob/v1.30.2/docs/src/connection_pooling.md), [operator image defaults](https://github.com/cloudnative-pg/cloudnative-pg/blob/v1.30.2/pkg/versions/versions.go), [PgBouncer 1.26.1 parameters](https://github.com/pgbouncer/pgbouncer/blob/pgbouncer_1_26_1/doc/config.md)
+
 The system database owns the integration catalog, `registry.integration_type` and `registry.integration_type_version`.
 It also owns `registry.target`, the deployment target identities.
 The full system schema files install these tables.

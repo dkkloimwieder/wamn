@@ -342,8 +342,7 @@ At most 4 tests hold an org at one time.
 At the end of a test, `wamn env deactivate-project` tears down its project deployment and retains its data for recovery.
 If capture is enabled and a test fails, the suite saves evidence before it deactivates the project deployment.
 The org stays.
-One cluster holds up to about 12 orgs, because of the Pooler limits of the system database (wamn-44p7o).
-A run that needs more orgs uses a second fresh cluster.
+The system database Poolers cap server connections and queue clients under load. Org and env creation remain independent of this budget. The kind capacity run measures where wait times start rising.
 
 The `nats_outage` target stops the platform NATS server, so it must run alone.
 Cargo runs the test targets one after another, so the command above runs it alone.

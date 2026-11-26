@@ -34,15 +34,15 @@ pub(super) async fn respond(
 ) -> Response<Full<Bytes>> {
     let mut event = authentication_event::workload_event(request.uri().path())
         .map(|event_type| Event::new(event_type, source));
-    let reply = match inner.request_slots.try_acquire() {
+    let reply = match Arc::clone(&inner.request_slots).try_acquire_owned() {
         Err(_) => {
             set_outcome(&mut event, Outcome::RequestBusy);
             throttled()
         }
-        Ok(_permit) => {
+        Ok(permit) => {
             if let Ok(reply) = tokio::time::timeout(
                 std::time::Duration::from_secs(10),
-                handle(inner, request, source, &mut event),
+                handle(inner, request, source, &mut event, permit),
             )
             .await
             {
@@ -74,6 +74,7 @@ async fn handle(
     request: Request<Incoming>,
     source: ClientAddress,
     event: &mut Option<Event>,
+    permit: tokio::sync::OwnedSemaphorePermit,
 ) -> Response<Full<Bytes>> {
     let (parts, body) = request.into_parts();
     let Some(token) = workload::bearer(&parts.headers) else {
@@ -141,6 +142,7 @@ async fn handle(
     let Ok(mut db) = connect_database(&inner.connection).await else {
         return unavailable();
     };
+    db.workload_slot = Some(permit);
     match Issuer(&mut db.client).org_activity(&org).await {
         Ok(Some(true)) => (),
         Ok(Some(false)) => {

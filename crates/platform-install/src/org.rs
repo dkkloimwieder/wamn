@@ -143,6 +143,7 @@ pub fn org_values(
                 "org": org,
                 "database": connection(field(inputs, "controlDatabaseHost")?, control.as_str(), CONTROL_SECRET),
                 "apply_database": connection(field(inputs, "applyDatabaseHost")?, apply.as_str(), APPLY_SECRET),
+                "apply_transaction_host": field(inputs, "applyTransactionDatabaseHost")?,
                 "identity_issuer": field(inputs, "identityIssuer")?,
                 "nats_url": field(inputs, "natsUrl")?,
                 "registry": internal_registry,

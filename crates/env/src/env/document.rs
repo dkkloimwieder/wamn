@@ -41,7 +41,7 @@ impl EnvDocument {
     /// Read applied configuration by coordinate from the registry.
     pub async fn read(platform: &super::Platform, triple: &Triple) -> anyhow::Result<Self> {
         let configuration =
-            env_sql_effects::read_env_configuration(&platform.system_database_url, triple)
+            env_sql_effects::read_env_configuration(&platform.system_transaction_url, triple)
                 .await?
                 .with_context(|| format!("environment {triple} has no applied configuration"))?;
         let document = Self::from_configuration(configuration);

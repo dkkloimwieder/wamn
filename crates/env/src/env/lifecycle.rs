@@ -98,8 +98,10 @@ pub async fn configure(
                     )
                 })?;
             }
-            // Keep the lock session free for its heartbeat while Helm waits.
-            let mut connection = wamn_postgres::connect(&platform.system_database_url).await?;
+            // Keep the lifecycle lock, but finish the Helm call before opening the SQL transaction.
+            host_values["drainBoundSeconds"] = drain_bound_seconds.into();
+            resources::upgrade_host(platform, org, env, &host_values).await?;
+            let mut connection = wamn_postgres::connect(&platform.system_transaction_url).await?;
             let mut transaction =
                 wamn_postgres::provisioning_transaction::provisioning_transaction(&mut connection)
                     .await?;
@@ -114,7 +116,7 @@ pub async fn configure(
                     .await
                     .context("remove connection pins after project configuration")?;
             }
-            let drain_bound_seconds = configuration::write_env(
+            configuration::write_env(
                 &mut transaction,
                 org,
                 env,
@@ -124,8 +126,6 @@ pub async fn configure(
             )
             .await
             .context("save the applied environment settings")?;
-            host_values["drainBoundSeconds"] = drain_bound_seconds.into();
-            resources::upgrade_host(platform, org, env, &host_values).await?;
             transaction.commit().await?;
             Ok(())
         })

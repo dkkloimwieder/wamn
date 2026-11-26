@@ -120,7 +120,7 @@ The org chart declares the namespace, base RBAC, object and storage quotas, and 
 The environment chart allows traffic for its host group. The project chart allows traffic for its database and change reader.
 Each application release adds its integration ports to the host group's public egress. The runtime enforces the authorities on each wasm integration.
 The platform chart owns the system PostgreSQL Cluster in namespace `platform`.
-Org control and apply logins use separate PgBouncer session poolers to reach the system database.
+Control SQL and worker SQL without a lifecycle lock use PgBouncer transaction poolers. Worker lifecycle locks use a separate session pooler.
 Clients check the pooler hostname and TLS certificate against the platform CA.
 The project chart owns each project's PostgreSQL Cluster, database, managed logins, backups, and change capture resources.
 The environment chart owns the shared host group.
@@ -132,7 +132,7 @@ Environment apply and project deactivation check for unfinished application runs
 
 The control service authenticates each request and selects the operation worker, chart, credentials, and target.
 Each apply Job holds the environment advisory lock on a dedicated system database session.
-It commits the environment timing settings on a separate session after the host upgrade succeeds.
+It writes and commits the environment timing settings through the transaction pooler after the host upgrade succeeds.
 Workers apply package migrations through SQLx while logged in as the restricted migration role.
 Trusted catalog writes use a separate connection.
 The project chart creates each credential store Secret. Control writes individual credential keys through the Kubernetes API, so credential values stay outside Helm values.

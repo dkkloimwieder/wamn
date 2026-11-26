@@ -197,7 +197,8 @@ pub async fn execute(config: &Configuration, payload: &str) -> anyhow::Result<Va
         }
         let outcome = worker_outcome(&result);
         let recorded = async {
-            let mut connection = wamn_postgres::connect(&config.apply_database.to_json()?).await?;
+            let mut connection =
+                wamn_postgres::connect(config.apply_transaction_database()?.as_str()).await?;
             platform_event::record(
                 &mut connection,
                 &config.org,
