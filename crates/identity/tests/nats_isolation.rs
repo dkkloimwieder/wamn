@@ -12,7 +12,8 @@ use serde::Deserialize;
 use serde_json::Value;
 use sqlx::PgConnection;
 use tempfile::NamedTempFile;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
+use tokio::time::{sleep, timeout};
 use wamn_envelope::encryption::Envelope;
 use wamn_identity::identity::nats as key_store;
 use wamn_identity::nats::{self, Bootstrap, LimitsPerProject, Permissions, SubjectPermission};
@@ -47,8 +48,8 @@ struct NatsSettings {
 
 /// The identity database, the bootstrapped authority and the NATS server that trusts it.
 struct Platform {
-    _system: System,
-    _key: NamedTempFile,
+    system: System,
+    database_login: String,
     db: PgConnection,
     envelope: Envelope,
     issuer: String,
@@ -59,26 +60,10 @@ struct Platform {
 
 async fn platform() -> Result<Platform> {
     let rendered = containers::render_platform()?;
-    let settings = rendered
-        .iter()
-        .find(|object| {
-            object["kind"] == "ConfigMap" && object["metadata"]["name"] == "identity-settings"
-        })
-        .and_then(|config| config["data"]["settings.json"].as_str())
-        .context("the platform chart renders no identity settings")?;
-    let settings: Settings = serde_json::from_str(settings)?;
+    let settings = identity_settings(&rendered)?;
     let system = database::system().await?;
-    let mut db = wamn_postgres::connect(
-        system
-            .login_url(&settings.database.username, database::PASSWORD)?
-            .as_str(),
-    )
-    .await?;
-    let mut key = NamedTempFile::new()?;
-    let seed = ring::rand::generate::<[u8; 32]>(&ring::rand::SystemRandom::new())
-        .map_err(|_| anyhow::anyhow!("generate the envelope key"))?;
-    key.write_all(&seed.expose())?;
-    let envelope = wamn_key::from_file(key.path())?;
+    let mut db = connect_identity(&system, &settings.database.username).await?;
+    let envelope = local_envelope()?;
     let bootstrap = key_store::bootstrap(
         &mut db,
         &settings.issuer,
@@ -95,8 +80,8 @@ async fn platform() -> Result<Platform> {
         .connect(nats.url())
         .await?;
     Ok(Platform {
-        _system: system,
-        _key: key,
+        system,
+        database_login: settings.database.username,
         db,
         envelope,
         issuer: settings.issuer,
@@ -106,29 +91,66 @@ async fn platform() -> Result<Platform> {
     })
 }
 
+fn identity_settings(rendered: &[Value]) -> Result<Settings> {
+    let settings = rendered
+        .iter()
+        .find(|object| {
+            object["kind"] == "ConfigMap" && object["metadata"]["name"] == "identity-settings"
+        })
+        .and_then(|config| config["data"]["settings.json"].as_str())
+        .context("the platform chart renders no identity settings")?;
+    Ok(serde_json::from_str(settings)?)
+}
+
+async fn connect_identity(system: &System, login: &str) -> Result<PgConnection> {
+    let url = system.login_url(login, database::PASSWORD)?;
+    wamn_postgres::connect(url.as_str()).await
+}
+
+fn local_envelope() -> Result<Envelope> {
+    let mut key = NamedTempFile::new()?;
+    let seed = ring::rand::generate::<[u8; 32]>(&ring::rand::SystemRandom::new())
+        .map_err(|_| anyhow::anyhow!("generate the envelope key"))?;
+    key.write_all(&seed.expose())?;
+    Ok(wamn_key::from_file(key.path())?)
+}
+
 impl Platform {
     /// Ensure the environment account for one project and publish it to the resolver.
-    async fn env(&mut self, env: &str) -> Result<(String, Value)> {
-        let (account, jwt) = key_store::ensure_env(
+    async fn env(&self, env: &str) -> Result<(String, Value)> {
+        let mut account_claims = Value::Null;
+        let account = key_store::ensure_env(
             &self.bootstrap.authority,
-            &mut self.db,
+            connect_identity(&self.system, &self.database_login).await?,
             &self.envelope,
-            &self.issuer,
-            (&ORG.parse()?, &env.parse()?),
+            (&self.issuer, &ORG.parse()?, &env.parse()?),
             1,
-            async |_: &str| Ok::<_, std::io::Error>(Vec::<u8>::new()),
+            async |account| {
+                let subject = nats::LOOKUP_SUBJECT.replacen('*', account, 1);
+                let reply = self
+                    .resolver
+                    .request(subject, "".into())
+                    .await
+                    .map_err(std::io::Error::other)?;
+                Ok::<_, std::io::Error>(reply.payload)
+            },
+            async |_, jwt| {
+                account_claims = claims(&jwt).map_err(std::io::Error::other)?;
+                let reply = self
+                    .resolver
+                    .request(nats::UPDATE_SUBJECT, jwt.into())
+                    .await
+                    .map_err(std::io::Error::other)?;
+                let reply: Value = serde_json::from_slice(&reply.payload)?;
+                if reply["data"]["code"] != 200 {
+                    return Err(std::io::Error::other(format!(
+                        "the resolver refused the account: {reply}"
+                    )));
+                }
+                Ok(())
+            },
         )
         .await?;
-        let account_claims = claims(&jwt)?;
-        let reply = self
-            .resolver
-            .request(nats::UPDATE_SUBJECT, jwt.into())
-            .await?;
-        let reply: Value = serde_json::from_slice(&reply.payload)?;
-        ensure!(
-            reply["data"]["code"] == 200,
-            "the resolver refused the account: {reply}"
-        );
         Ok((account, account_claims))
     }
 
@@ -195,6 +217,136 @@ impl Platform {
             .await?;
         Ok((client, received))
     }
+}
+
+#[tokio::test]
+#[ignore = "requires: docker, bin:helm"]
+async fn env_account_publication_serializes_one_env_and_retries_its_committed_revision()
+-> Result<()> {
+    let settings = identity_settings(&containers::render_platform()?)?;
+    let system = database::system().await?;
+    let connect = || connect_identity(&system, &settings.database.username);
+    let mut first = connect().await?;
+    let mut second = connect().await?;
+    let sibling = connect().await?;
+    let mut observer = system.admin().await?;
+    let first_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut first)
+        .await?;
+    let second_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut second)
+        .await?;
+    let envelope = local_envelope()?;
+    let issuer = settings.issuer.as_str();
+    let authority = key_store::bootstrap(
+        &mut first,
+        issuer,
+        &envelope,
+        settings.nats.max_projects,
+        settings.nats.limits_per_project,
+    )
+    .await?
+    .authority;
+    let org = ORG.parse()?;
+    let dev = "dev".parse()?;
+    let prod = "prod".parse()?;
+    let missing = async |_: &str| Ok::<_, std::io::Error>(Vec::<u8>::new());
+    let (publishing, publication) = oneshot::channel();
+    let (release, finish) = oneshot::channel();
+    let initial = key_store::ensure_env(
+        &authority,
+        first,
+        &envelope,
+        (issuer, &org, &dev),
+        1,
+        missing,
+        async move |_, jwt| {
+            publishing
+                .send(jwt)
+                .map_err(|_| std::io::Error::other("publication was not observed"))?;
+            finish.await.map_err(std::io::Error::other)?;
+            Err(std::io::Error::other(
+                "the resolver did not acknowledge publication",
+            ))
+        },
+    );
+    let concurrent = async {
+        let initial_jwt = timeout(WAIT, publication).await??;
+        let mut retry_jwt = String::new();
+        let retry = key_store::ensure_env(
+            &authority,
+            second,
+            &envelope,
+            (issuer, &org, &dev),
+            1,
+            missing,
+            async |_, jwt| {
+                retry_jwt = jwt;
+                Ok(())
+            },
+        );
+        let observe = async {
+            timeout(Duration::from_secs(5), async {
+                loop {
+                    if sqlx::query_scalar::<_, bool>("SELECT $1 = ANY(pg_blocking_pids($2))")
+                        .bind(first_pid)
+                        .bind(second_pid)
+                        .fetch_one(&mut observer)
+                        .await?
+                    {
+                        return Ok::<_, sqlx::Error>(());
+                    }
+                    sleep(Duration::from_millis(10)).await;
+                }
+            })
+            .await
+            .context("the second request for dev must wait for the first publication")??;
+            let committed: i64 = sqlx::query_scalar(
+                "SELECT issued_at FROM identity.nats_key
+                 WHERE issuer = $1 AND kind = 'env' AND org = $2 AND env = $3",
+            )
+            .bind(issuer)
+            .bind(org.as_str())
+            .bind(dev.as_str())
+            .fetch_one(&mut observer)
+            .await?;
+            ensure!(
+                claims(&initial_jwt)?["iat"] == committed,
+                "the dev revision must be committed before publication"
+            );
+            timeout(
+                Duration::from_secs(3),
+                key_store::ensure_env(
+                    &authority,
+                    sibling,
+                    &envelope,
+                    (issuer, &org, &prod),
+                    1,
+                    missing,
+                    async |_, _| Ok(()),
+                ),
+            )
+            .await
+            .context("prod must publish while the dev publication is held")??;
+            release
+                .send(())
+                .map_err(|()| anyhow::anyhow!("dev stopped publishing early"))?;
+            Ok::<_, anyhow::Error>(committed)
+        };
+        let (retry, committed) = tokio::join!(retry, observe);
+        let committed = committed?;
+        retry?;
+        assert_eq!(
+            claims(&retry_jwt)?["iat"],
+            committed,
+            "retry must publish the committed revision"
+        );
+        Ok::<_, anyhow::Error>(())
+    };
+    let (initial, concurrent) = timeout(WAIT, async { tokio::join!(initial, concurrent) }).await?;
+    concurrent?;
+    ensure!(initial.is_err(), "unacknowledged publication must fail");
+    Ok(())
 }
 
 fn every_subject() -> Permissions {

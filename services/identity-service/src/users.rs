@@ -171,13 +171,16 @@ async fn handle(
         return invalid();
     };
 
-    if nats_route {
-        let reply = nats::respond(inner, &mut db.client, &org, route, &bytes, event.as_mut()).await;
-        return if let Some(event) = event {
-            finish_nats(inner, Some(&mut db.client), event, reply).await
-        } else {
-            reply
-        };
+    if route == wamn_identity_protocol::nats::ENSURE_ACCOUNT_PATH {
+        // Account publication needs this direct session through the resolver reply.
+        return nats::ensure_account(inner, db.client, &org, &bytes).await;
+    }
+    if route == wamn_identity_protocol::nats::SIGN_USER_PATH {
+        let event = event
+            .as_mut()
+            .expect("worker route has an authentication event");
+        let reply = nats::sign_user(inner, &mut db.client, &org, &bytes, event).await;
+        return finish_nats(inner, Some(&mut db.client), event, reply).await;
     }
     if route == "/users" {
         let Ok(request) = serde_json::from_slice::<UserRequest>(&bytes) else {

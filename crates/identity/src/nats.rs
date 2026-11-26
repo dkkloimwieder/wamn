@@ -9,9 +9,10 @@ use serde::Deserialize;
 use wamn_registry::{EnvName, OrgId, name};
 use zeroize::Zeroizing;
 
+pub(crate) use claims::account_revision_to_replace;
 pub use claims::{
-    ClientLimits, Permissions, ResponsePermission, SubjectPermission, account_limits_match,
-    credentials, is_user_public_key,
+    ClientLimits, Permissions, ResponsePermission, SubjectPermission, credentials,
+    is_user_public_key,
 };
 
 /// Context about a failed NATS identity operation.

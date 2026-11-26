@@ -94,53 +94,80 @@ pub async fn bootstrap(
     )
 }
 
-/// Persist the environment key and issue its current account JWT.
+/// Persist and publish the environment's current account JWT under its session lock.
 /// For an existing account, `lookup` returns the resolver's JWT or empty bytes.
+/// The dedicated database connection is consumed. Publication errors leave the
+/// committed revision available for a retry.
+///
+/// # Errors
+///
+/// Returns an error if the lock, key storage, signing, or resolver operation fails,
+/// or if the account would exceed the installation's project limit.
 pub async fn ensure_env<B, E>(
     authority: &Authority,
-    client: &mut PgConnection,
+    client: PgConnection,
     envelope: &Envelope,
-    issuer: &str,
-    (org, env): (&OrgId, &EnvName),
+    (issuer, org, env): (&str, &OrgId, &EnvName),
     project_count: i32,
     lookup: impl AsyncFnOnce(&str) -> Result<B, E>,
-) -> Result<(String, String), Error>
+    publish: impl AsyncFnOnce(&str, String) -> Result<(), E>,
+) -> Result<String, Error>
 where
     B: AsRef<[u8]>,
     E: error::Error + Send + Sync + 'static,
 {
     let limits = authority.env_limits(project_count)?;
-    let key = nats_store::ensure_env(
-        client,
-        envelope,
-        issuer,
-        (org, env),
-        project_count,
-        authority.max_projects(),
-        async |subject, issued_at| {
-            let jwt = lookup(subject)
-                .await
-                .map_err(|source| Error::new("look up NATS environment account claim", source))?;
-            nats::account_limits_match(jwt.as_ref(), issued_at, &limits)
-        },
-    )
-    .await?;
-    authority.env_account(org, env, project_count, key, &limits)
+    nats_store::with_env_lock(client, issuer, (org, env), async |client| {
+        let key = nats_store::ensure_env(
+            client,
+            envelope,
+            issuer,
+            (org, env),
+            project_count,
+            authority.max_projects(),
+            async |subject, issued_at| {
+                let jwt = lookup(subject).await.map_err(|source| {
+                    Error::new("look up NATS environment account claim", source)
+                })?;
+                nats::account_revision_to_replace(jwt.as_ref(), issued_at, &limits)
+            },
+        )
+        .await?;
+        let (public_key, jwt) = authority.env_account(org, env, project_count, key, &limits)?;
+        publish(&public_key, jwt)
+            .await
+            .map_err(|source| Error::new("publish NATS environment account", source))?;
+        Ok(public_key)
+    })
+    .await
 }
 
-/// Advance the account revision and sign a full-resolver delete request.
-pub async fn retire_env(
+/// Advance the account revision and publish its removal under the same session lock.
+/// The dedicated database connection is consumed.
+///
+/// # Errors
+///
+/// Returns an error if the lock, key storage, signing, or resolver operation fails.
+pub async fn retire_env<E: error::Error + Send + Sync + 'static>(
     authority: &Authority,
-    client: &mut PgConnection,
+    client: PgConnection,
     issuer: &str,
     org: &OrgId,
     env: &EnvName,
-) -> Result<Option<(String, String)>, Error> {
-    let Some((account, issued_at)) = nats_store::retire_env(client, issuer, org, env).await? else {
-        return Ok(None);
-    };
-    let jwt = authority.retired_account(&account, issued_at)?;
-    Ok(Some((account, jwt)))
+    publish: impl AsyncFnOnce(String) -> Result<(), E>,
+) -> Result<Option<String>, Error> {
+    nats_store::with_env_lock(client, issuer, (org, env), async |client| {
+        let Some((account, issued_at)) = nats_store::retire_env(client, issuer, org, env).await?
+        else {
+            return Ok(None);
+        };
+        let jwt = authority.retired_account(&account, issued_at)?;
+        publish(jwt)
+            .await
+            .map_err(|source| Error::new("retire NATS environment account", source))?;
+        Ok(Some(account))
+    })
+    .await
 }
 
 /// Issue a scoped JWT in an existing environment account.

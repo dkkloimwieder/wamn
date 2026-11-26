@@ -79,11 +79,11 @@ pub(super) const UNLIMITED_CLIENT_LIMITS: ClientLimits = ClientLimits {
     payload: UNLIMITED,
 };
 
-pub fn account_limits_match(
+pub(crate) fn account_revision_to_replace(
     jwt: &[u8],
     issued_at: i64,
     limits: &ClientLimits,
-) -> Result<bool, Error> {
+) -> Result<Option<i64>, Error> {
     #[derive(Deserialize)]
     struct StoredAccount {
         iat: i64,
@@ -97,7 +97,7 @@ pub fn account_limits_match(
     }
 
     if jwt.is_empty() {
-        return Ok(false);
+        return Ok(None);
     }
     let mut parts = jwt.splitn(3, |&byte| byte == b'.');
     let (Some(_), Some(payload), Some(_)) = (parts.next(), parts.next(), parts.next()) else {
@@ -112,8 +112,11 @@ pub fn account_limits_match(
         .map_err(|source| Error::new("decode NATS resolver account JWT payload", source))?;
     let stored: StoredAccount = serde_json::from_slice(&decoded)
         .map_err(|source| Error::new("decode NATS resolver account claims", source))?;
-    // An earlier revision can match while a newer update is awaiting publication.
-    Ok(stored.iat == issued_at && stored.nats.limits == *limits)
+    // An older resolver revision means the committed revision is still pending.
+    Ok(
+        (stored.iat > issued_at || (stored.iat == issued_at && stored.nats.limits != *limits))
+            .then_some(stored.iat),
+    )
 }
 
 #[derive(Serialize)]

@@ -12,9 +12,7 @@ use wamn_identity::authentication_event::{Event, Outcome};
 use wamn_identity::identity::nats as key_store;
 use wamn_identity::nats::{self, Authority, LimitsPerProject};
 use wamn_identity::workload_identity;
-use wamn_identity_protocol::nats::{
-    Account, ENSURE_ACCOUNT_PATH, EnsureAccount, SIGN_USER_PATH, SignHostUser, SignUser, SignedUser,
-};
+use wamn_identity_protocol::nats::{Account, EnsureAccount, SignHostUser, SignUser, SignedUser};
 use wamn_kubernetes::client::KubernetesApi;
 use wamn_registry::{OrgId, name};
 
@@ -189,40 +187,15 @@ pub(super) async fn start(
     }))
 }
 
-pub(super) async fn respond(
+pub(super) async fn ensure_account(
     inner: &Inner,
-    client: &mut PgConnection,
+    client: PgConnection,
     org: &OrgId,
-    route: &str,
     body: &[u8],
-    event: Option<&mut Event>,
 ) -> Response<Full<Bytes>> {
     let Some(state) = &inner.nats else {
         return unavailable();
     };
-    match route {
-        ENSURE_ACCOUNT_PATH => ensure_account(inner, state, client, org, body).await,
-        SIGN_USER_PATH => {
-            sign_user(
-                inner,
-                client,
-                org,
-                body,
-                event.expect("worker route has an authentication event"),
-            )
-            .await
-        }
-        _ => unreachable!("only NATS routes enter NATS request handling"),
-    }
-}
-
-async fn ensure_account(
-    inner: &Inner,
-    state: &State,
-    client: &mut PgConnection,
-    org: &OrgId,
-    body: &[u8],
-) -> Response<Full<Bytes>> {
     let Ok(request) = serde_json::from_slice::<EnsureAccount>(body) else {
         return invalid();
     };
@@ -233,36 +206,38 @@ async fn ensure_account(
         return invalid();
     };
     if count == 0 {
-        let deleted =
-            match key_store::retire_env(&state.authority, client, &inner.issuer, org, &request.env)
-                .await
-            {
-                Ok(None) => {
-                    return json(&Account {
-                        public_key: String::new(),
-                    });
-                }
-                Ok(Some(deleted)) => deleted,
-                Err(error) => return signing_error(&error),
-            };
-        let (public_key, jwt) = deleted;
-        if let Err(error) = state
-            .resolver_request(nats::DELETE_SUBJECT, None, jwt)
-            .await
+        return match key_store::retire_env(
+            &state.authority,
+            client,
+            &inner.issuer,
+            org,
+            &request.env,
+            async |jwt| {
+                state
+                    .resolver_request(nats::DELETE_SUBJECT, None, jwt)
+                    .await
+            },
+        )
+        .await
         {
-            tracing::warn!(%error, "retire NATS environment account failed");
-            return unavailable();
-        }
-        return json(&Account { public_key });
+            Ok(public_key) => json(&Account {
+                public_key: public_key.unwrap_or_default(),
+            }),
+            Err(error) => signing_error(&error),
+        };
     }
-    let (public_key, jwt) = match key_store::ensure_env(
+    let public_key = match key_store::ensure_env(
         &state.authority,
         client,
         &inner.envelope,
-        &inner.issuer,
-        (org, &request.env),
+        (&inner.issuer, org, &request.env),
         count,
         async |account| state.lookup_account(account).await,
+        async |account, jwt| {
+            state
+                .resolver_request(nats::UPDATE_SUBJECT, Some(account), jwt)
+                .await
+        },
     )
     .await
     {
@@ -276,23 +251,19 @@ async fn ensure_account(
         }
         Err(error) => return signing_error(&error),
     };
-    if let Err(error) = state
-        .resolver_request(nats::UPDATE_SUBJECT, Some(&public_key), jwt)
-        .await
-    {
-        tracing::warn!(%error, "publish NATS environment account failed");
-        return unavailable();
-    }
     json(&Account { public_key })
 }
 
-async fn sign_user(
+pub(super) async fn sign_user(
     inner: &Inner,
     client: &mut PgConnection,
     org: &OrgId,
     body: &[u8],
     event: &mut Event,
 ) -> Response<Full<Bytes>> {
+    if inner.nats.is_none() {
+        return unavailable();
+    }
     let Ok(request) = serde_json::from_slice::<SignUser>(body) else {
         event.outcome = Some(Outcome::RequestInvalid);
         return invalid();
