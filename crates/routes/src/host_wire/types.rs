@@ -12,7 +12,7 @@ pub struct Empty {}
 #[derive(Debug, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ConnectionListResult {
-    connections: Vec<ConnectionSummary>,
+    pub connections: Vec<ConnectionSummary>,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]

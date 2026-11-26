@@ -6,14 +6,13 @@ use wamn_app::app_config::{
     AppComponent, AppConfig, AppConnection, AppOperation, AppOperationType,
 };
 use wamn_blobstore::file_route::{FileError, FileRefusal};
-use wamn_connection::administration::{self, Request as AdminRequest};
+use wamn_connection::administration;
 use wamn_connection::bound_http::{Attempt, BoundHttp, Call, Response as HttpResponse};
 use wamn_connection::connection::ConnectionInvocation;
-use wamn_connection::connection_credentials::KubernetesStore;
 use wamn_connection::connection_facts::ConnectionCache as _;
 use wamn_connection::invocation::{ReleaseContext, Scope};
 use wamn_connection::project_connections::Administration;
-use wamn_identity_protocol::{AuthorityClass, PrincipalId};
+use wamn_identity_protocol::AuthorityClass;
 use wamn_package::ConnectionMode;
 use wamn_postgres::{ClassCredentials, ProjectConfig, StaticCredentialProvider, WamnPostgres};
 use wamn_registry::Triple;
@@ -226,18 +225,12 @@ async fn deactivation_refuses_warm_runtime_bindings() -> anyhow::Result<()> {
     let mut tx =
         wamn_postgres::provisioning_transaction::provisioning_transaction(&mut project).await?;
     for name in ["web", "device", "files"] {
-        let mut administration = Administration::new(&mut tx, &mut system, None, None);
-        administration::execute(
+        let mut administration = Administration::new(&mut tx, &mut system, None);
+        administration::configure(
             &mut administration,
-            &KubernetesStore,
-            |_| unreachable!(),
-            AdminRequest {
-                caller: PrincipalId::from(Uuid::nil()),
-                org: &target.org,
-                operation: "connection.deactivate",
-                payload: &json!({"project":target.project,"env":target.env,"name":name})
-                    .to_string(),
-            },
+            &target.org,
+            "connection.deactivate",
+            &json!({"project":target.project,"env":target.env,"name":name}),
         )
         .await?;
     }

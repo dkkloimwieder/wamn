@@ -85,7 +85,6 @@ CREATE TABLE platform.credential (
     store         text NOT NULL CHECK (store = 'k8s'),
     ref           text NOT NULL,
     version       text NOT NULL,
-    hint          text,
     created_at    timestamptz NOT NULL,
     created_by    uuid NOT NULL,
     UNIQUE (id, connection_id)

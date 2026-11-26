@@ -53,13 +53,15 @@ async fn applying_an_unprovisioned_env_refuses_the_reservation() -> anyhow::Resu
     Ok(())
 }
 
-/// The native connection summaries decode the complete live query rows.
+/// The native connection summaries preserve nullable credential and token metadata.
 #[tokio::test]
 #[ignore = "requires: docker, bin:helm"]
 async fn native_connection_summary_decodes_query_rows() -> anyhow::Result<()> {
-    use serde_json::{Value, json};
-    use wamn_connection::{administration::configure, project_connections::Administration};
-    use wamn_routes::host_wire::ConnectionSummary;
+    use serde_json::json;
+    use wamn_connection::{
+        administration::{Outcome, configure},
+        project_connections::Administration,
+    };
     use wamn_test_infrastructure::database;
 
     let project = database::project().await?;
@@ -72,42 +74,60 @@ async fn native_connection_summary_decodes_query_rows() -> anyhow::Result<()> {
              (id, name, integration_type, auth_type, target_id, active_generation, service_principal_id)
          VALUES ('00000000-0000-0000-0000-000000000001', 'plain', 'http', 'none', gen_random_uuid(), 1, gen_random_uuid()),
                 ('00000000-0000-0000-0000-000000000002', 'authenticated', 'http', 'api_key', gen_random_uuid(), 1, gen_random_uuid());
-         INSERT INTO platform.credential (id, connection_id, store, ref, version, hint)
-         VALUES ('00000000-0000-0000-0000-000000000003', '00000000-0000-0000-0000-000000000002', 'k8s', 'fixture-only', '1', 'hint');
+         INSERT INTO platform.credential (id, connection_id, store, ref, version)
+         VALUES ('00000000-0000-0000-0000-000000000003', '00000000-0000-0000-0000-000000000002', 'k8s', 'fixture-only', '1');
          INSERT INTO platform.connection_generation (connection_id, generation, parameters, credential_id)
          VALUES ('00000000-0000-0000-0000-000000000001', 1, '{}', NULL),
-                ('00000000-0000-0000-0000-000000000002', 1, '{}', '00000000-0000-0000-0000-000000000003');",
+                ('00000000-0000-0000-0000-000000000002', 1, '{}', '00000000-0000-0000-0000-000000000003');
+         INSERT INTO platform.oauth_token(connection_id,ciphertext,nonce,wrapped_key,key_id,expires_at,updated_at)
+         VALUES ('00000000-0000-0000-0000-000000000002',decode('01','hex'),decode('02','hex'),
+                 decode('03','hex'),'fixture','-infinity',now());",
     )
     .execute(&mut *transaction)
     .await?;
     transaction.commit().await?;
 
     let mut transaction = provisioning_transaction(&mut project).await?;
-    let mut administration = Administration::new(&mut transaction, &mut system, None, None);
+    let mut administration = Administration::new(&mut transaction, &mut system, None);
     let org = "acme".parse()?;
-    let listed = configure(
+    let Outcome::List(rows) = configure(
         &mut administration,
         &org,
         "connection.list",
         &json!({"project":"billing", "env":"dev"}),
     )
-    .await?;
-    let rows = listed["connections"].as_array().expect("connection rows");
-    assert!(rows.iter().any(|row| row["name"] == "plain"));
-    assert!(rows.iter().any(|row| row["name"] == "authenticated"));
-    for row in rows {
-        let summary: ConnectionSummary = serde_json::from_value(row.clone())?;
-        assert_eq!(summary.status, "active");
-        assert_eq!(serde_json::to_value(&summary)?, *row);
-        let found: Value = configure(
+    .await?
+    else {
+        panic!("expected connection list");
+    };
+    for name in ["plain", "authenticated"] {
+        let listed = rows
+            .iter()
+            .find(|details| details.row.name == name)
+            .expect("fixture row");
+        let Outcome::Connection(found) = configure(
             &mut administration,
             &org,
             "connection.get",
-            &json!({"project":"billing", "env":"dev", "name":summary.name}),
+            &json!({"project":"billing", "env":"dev", "name":name}),
         )
-        .await?;
-        let summary: ConnectionSummary = serde_json::from_value(found.clone())?;
-        assert_eq!(serde_json::to_value(summary)?, found);
+        .await?
+        else {
+            panic!("expected a connection");
+        };
+        assert_eq!(listed.row.id, found.row.id);
+        assert!(found.row.active);
+        let has_credential = name == "authenticated";
+        assert_eq!(found.row.credential_created_at.is_some(), has_credential);
+        assert_eq!(found.row.credential_created_by.is_some(), has_credential);
+        assert_eq!(
+            found.row.refresh_status.as_deref(),
+            has_credential.then_some("ok")
+        );
+        assert_eq!(
+            found.row.expires_at.as_deref(),
+            has_credential.then_some("-infinity")
+        );
     }
     Ok(())
 }

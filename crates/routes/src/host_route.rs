@@ -1883,6 +1883,28 @@ mod tests {
     }
 
     #[test]
+    fn control_connection_summaries_omit_credential_hints() {
+        let document = HostRouteSet::Control.openapi();
+        let paths = document["paths"].as_object().unwrap();
+        let mut summaries = paths
+            .iter()
+            .filter(|(path, _)| path.starts_with("/wamn_control/connection/"))
+            .flat_map(|(path, methods)| {
+                methods.as_object().unwrap().values().filter_map(move |method| {
+                    let value = method.pointer("/responses/200/content/application~1json/schema/items/oneOf/0/properties/value")?;
+                    let summary = value.pointer("/properties/connections/items").unwrap_or(value);
+                    summary.pointer("/properties/active_generation").map(|_| (path, summary))
+                })
+            })
+            .peekable();
+        assert!(summaries.peek().is_some());
+        for (path, summary) in summaries {
+            assert!(summary["properties"].get("hint").is_none(), "{path}");
+            assert_eq!(summary["additionalProperties"], false, "{path}");
+        }
+    }
+
+    #[test]
     fn host_routes_derive_their_ids_from_the_native_package_identity() {
         let app = HostRouteSet::App
             .attachment(&"wamn-control-permission-mine-http".parse().unwrap())

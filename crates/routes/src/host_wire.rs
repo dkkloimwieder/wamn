@@ -120,7 +120,7 @@ pub struct ConnectionTest {
     pub error: Option<String>,
 }
 
-/// The project's connection summary after the control handler adds route context.
+/// The project's connection summary with its route coordinates.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ConnectionSummary {
@@ -142,8 +142,6 @@ pub struct ConnectionSummary {
     pub service_principal_id: String,
     pub status: String,
     pub parameters: Value,
-    #[schemars(schema_with = "nullable::<String>")]
-    pub hint: Option<String>,
     #[schemars(schema_with = "nullable::<String>")]
     pub credential_created_at: Option<String>,
     #[schemars(schema_with = "nullable::<String>")]

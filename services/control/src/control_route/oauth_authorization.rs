@@ -10,8 +10,10 @@ use zeroize::Zeroizing;
 
 use super::oauth_authorization_store as store;
 use wamn_connection::connection_credentials::KubernetesStore;
-use wamn_envelope::encryption::Envelope;
+use wamn_connection::project_connections::ConnectionRow;
+use wamn_envelope::encryption::{Encrypted, Envelope};
 use wamn_http::{oauth, transport::HttpTransport};
+use wamn_registry::{EnvName, ProjectId};
 
 /// A refusal with a safe public reason. Sources never enter a callback page.
 pub struct Error {
@@ -45,6 +47,46 @@ fn failed(reason: &'static str, source: impl Into<anyhow::Error>) -> Error {
     Error {
         reason: reason.into(),
         source: Some(source.into()),
+    }
+}
+
+pub(super) struct PreparedAuthorization {
+    url: String,
+    state: String,
+    connection: uuid::Uuid,
+    generation: i64,
+    encrypted: Encrypted,
+}
+
+impl PreparedAuthorization {
+    /// Store the state only if the connection still has the authorized generation.
+    pub(super) async fn store(
+        self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        caller: wamn_identity_protocol::PrincipalId,
+    ) -> Result<String, Error> {
+        let current: Option<i64> = sqlx::query_scalar(
+            "SELECT active_generation FROM platform.connection
+             WHERE id=$1 AND active FOR NO KEY UPDATE",
+        )
+        .bind(self.connection)
+        .fetch_optional(&mut **tx)
+        .await
+        .map_err(|error| failed("authorization connection check failed", error))?;
+        if current != Some(self.generation) {
+            return Err(refused("connection changed during authorization"));
+        }
+        store::insert(
+            tx,
+            &self.state,
+            self.connection,
+            self.generation,
+            &self.encrypted,
+            caller,
+        )
+        .await
+        .map_err(|error| failed("authorization state write failed", error))?;
+        Ok(self.url)
     }
 }
 
@@ -82,35 +124,17 @@ impl Authorization {
         &self.redirect_uri
     }
 
-    /// The caller holds the active connection row and its ProjectAdmin transaction.
-    pub async fn authorize(
+    /// Encrypt the verifier after the read transaction ends.
+    pub(super) async fn prepare_authorization(
         &self,
-        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-        context: &Value,
-        caller: wamn_identity_protocol::PrincipalId,
-    ) -> Result<String, Error> {
-        let connection = context["id"]
-            .as_str()
-            .and_then(|id| id.parse::<uuid::Uuid>().ok())
-            .ok_or_else(|| refused("connection not found"))?;
-        let generation = context["active_generation"]
-            .as_i64()
-            .ok_or_else(|| refused("connection generation missing"))?;
-        if context["auth_type"] != "oauth2_authorization_code" {
-            return Err(refused("unsupported authentication type"));
-        }
+        context: &ConnectionRow,
+        project: &ProjectId,
+        env: &EnvName,
+    ) -> Result<PreparedAuthorization, Error> {
         let (url, state, verifier) = oauth::authorize(
-            &context["parameters"]["auth"],
+            &context.parameters["auth"],
             &self.redirect_uri,
-            &format!(
-                "{}/{}",
-                context["project"]
-                    .as_str()
-                    .ok_or_else(|| refused("missing project"))?,
-                context["env"]
-                    .as_str()
-                    .ok_or_else(|| refused("missing environment"))?
-            ),
+            &format!("{project}/{env}"),
         )
         .map_err(|error| failed("invalid authorization parameters", error))?;
         let verifier = Zeroizing::new(verifier);
@@ -119,10 +143,13 @@ impl Authorization {
             .encrypt(verifier.as_bytes())
             .await
             .map_err(|error| failed("authorization state encryption failed", error))?;
-        store::insert(tx, &state, connection, generation, &encrypted, caller)
-            .await
-            .map_err(|error| failed("authorization state write failed", error))?;
-        Ok(url)
+        Ok(PreparedAuthorization {
+            url,
+            state,
+            connection: context.id,
+            generation: context.active_generation,
+            encrypted,
+        })
     }
 
     /// Roll back every refusal, including expired and stale-generation states.

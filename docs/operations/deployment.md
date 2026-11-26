@@ -624,8 +624,9 @@ A replay, an expired state, or a generation change returns an error page.
 After expiry or a generation change, start authorization again.
 A secret-only `set-credential` retains the refresh token and forces refresh with the new secret.
 
-The control host writes credential values through the environment store.
-Postgres keeps their references and display hints.
+Control saves each new credential version in the shared project Secret before it commits the reference in Postgres.
+If control stops between these steps, the Secret can contain an unused version. A retry writes a fresh version.
+Connection responses and CLI output include credential creation metadata.
 The baseline schema owns fresh installations.
 
 The control routes use project administrator authority.

@@ -88,14 +88,17 @@ impl ControlRoutes<'_> {
             let mut client = wamn_postgres::connect(login).await?;
             let mut transaction =
                 wamn_identity::identity::transaction::read_connection(&mut client, caller).await?;
-            let mut database = Administration::new(&mut transaction, &mut writer, None, None);
-            let context = administration::configure(
+            let mut database = Administration::new(&mut transaction, &mut writer, None);
+            let administration::Outcome::Other(context) = administration::configure(
                 &mut database,
                 self.org,
                 "connection.test",
                 &json!({"project":project,"env":env,"name":request["name"]}),
             )
-            .await?;
+            .await?
+            else {
+                unreachable!("connection.test always returns health context");
+            };
             transaction.rollback().await?;
             (context, pin)
         };

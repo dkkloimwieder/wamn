@@ -80,8 +80,7 @@ common::journey! {
 }
 
 common::journey! {
-    /// Each environment keeps its own credential: `connection get` shows its own hint,
-    /// `connection copy` from A into B copies A's parameters and keeps B's credential, and
+    /// `connection copy` from A into B keeps B's active Secret version, and
     /// B's host ServiceAccount may get its own credential Secret but not A's. The outside
     /// call with the credential is a service test (Epic 15 ruling Q-B).
     async fn another_envs_credential_is_refused() -> anyhow::Result<()> {
@@ -97,7 +96,7 @@ common::journey! {
         let target =
             |triple: &Triple| json!({"project": triple.project, "env": triple.env, "name": CONNECTION});
 
-        let mut hints = Vec::new();
+        let mut beta_credential = String::new();
         for (env, header) in [(&a, "X-Alpha-Key"), (&b, "X-Beta-Key")] {
             let mut request = target(&env.triple);
             request["integration_type"] = json!("http");
@@ -110,11 +109,9 @@ common::journey! {
             let env = env.triple.env.as_str();
             let credential =
                 json!({"key": format!("{env}-{}", uuid::Uuid::new_v4().simple())}).to_string();
-            // The product hint is the last four characters of the credential value.
-            let hint: String = credential
-                .chars()
-                .skip(credential.chars().count() - 4)
-                .collect();
+            if env == "beta" {
+                beta_credential.push_str(&credential);
+            }
             let request = file(format!("{env}-write.json"), request.to_string())?;
             let credential = file(format!("{env}-credential.json"), credential)?;
             wamn(
@@ -129,7 +126,6 @@ common::journey! {
                 ],
             )
             .await?;
-            hints.push(hint);
         }
         let get = async |triple: &Triple| -> anyhow::Result<Value> {
             let request = file(
@@ -140,15 +136,7 @@ common::journey! {
                 &wamn(&org, &["connection", "get", "--file", &request]).await?,
             )?)
         };
-        let (alpha, beta) = (get(&a.triple).await?, get(&b.triple).await?);
-        ensure!(
-            alpha["hint"] == hints[0].as_str(),
-            "alpha shows its own hint: {alpha}"
-        );
-        ensure!(
-            beta["hint"] == hints[1].as_str(),
-            "beta shows its own hint: {beta}"
-        );
+        let alpha = get(&a.triple).await?;
 
         let mut copy = target(&b.triple);
         copy["source_env"] = json!(a.triple.env);
@@ -156,11 +144,29 @@ common::journey! {
         wamn(&org, &["connection", "copy", "--file", &copy]).await?;
         let copied = get(&b.triple).await?;
         ensure!(
-            copied["parameters"] == alpha["parameters"] && copied["hint"] == hints[1].as_str(),
-            "a copy takes alpha's parameters and keeps beta's credential: {copied}"
+            copied["parameters"] == alpha["parameters"],
+            "a copy takes alpha's parameters: {copied}"
         );
 
         let client = &org.cluster.client;
+        let mut observed = common::admit_observer(&org.cluster, &b.triple).await?;
+        let (reference, version): (String, String) = sqlx::query_as(
+            "SELECT k.ref,k.version FROM platform.connection c
+             JOIN platform.connection_generation g ON (g.connection_id,g.generation)=(c.id,c.active_generation)
+             JOIN platform.credential k ON k.id=g.credential_id WHERE c.name=$1",
+        )
+        .bind(CONNECTION)
+        .fetch_one(&mut observed.connection)
+        .await?;
+        let secrets = Api::<k8s_openapi::api::core::v1::Secret>::namespaced(
+            client.clone(), org.name.as_str(),
+        );
+        let mut entries = secrets.get(&reference).await?.data.context("credential entries")?;
+        let credential = entries.remove(&version).context("active credential version")?;
+        ensure!(
+            credential.0 == beta_credential.as_bytes(),
+            "copy must retain beta's credential"
+        );
         let account = name::env_service_account(&org.name, &b.triple.env);
         for (owner, allowed) in [(&a.triple, false), (&b.triple, true)] {
             let secret = name::credential_secret_name(&org.name, &owner.project, &owner.env);

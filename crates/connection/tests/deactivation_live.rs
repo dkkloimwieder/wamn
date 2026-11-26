@@ -6,7 +6,7 @@ use std::sync::Mutex;
 use serde_json::{Value, json};
 use sqlx::PgConnection;
 use uuid::Uuid;
-use wamn_connection::administration::{ConnectionError, Request, execute};
+use wamn_connection::administration::{ConnectionError, Request, configure, prepare_write};
 use wamn_connection::connection_credentials::{StoreVersion, WriteCredentials};
 use wamn_connection::project_connections::Administration;
 use wamn_identity_protocol::PrincipalId;
@@ -53,31 +53,36 @@ async fn command(
     secrets: &Secrets,
     operation: &str,
     payload: &Value,
-) -> anyhow::Result<Value> {
+) -> anyhow::Result<()> {
+    let org = "acme".parse::<OrgId>()?;
     let mut transaction = provisioning_transaction(project).await?;
-    let mut database = Administration::new(&mut transaction, system, None, None);
-    let result = execute(
+    let mut database = Administration::new(&mut transaction, system, None);
+    if operation == "connection.deactivate" {
+        configure(&mut database, &org, operation, payload).await?;
+        transaction.commit().await?;
+        return Ok(());
+    }
+    let write = prepare_write(
         &mut database,
-        secrets,
         |_| unreachable!("these host connections have no wasm authority"),
         Request {
             caller: PrincipalId::from(Uuid::nil()),
-            org: &"acme".parse::<OrgId>()?,
+            org: &org,
             operation,
-            payload: &payload.to_string(),
+            payload: payload.clone(),
         },
+        None,
     )
     .await;
-    match result {
-        Ok(result) => {
-            transaction.commit().await?;
-            Ok(result)
-        }
-        Err(error) => {
-            transaction.rollback().await?;
-            Err(error.into())
-        }
-    }
+    transaction.rollback().await?;
+    let env = payload["env"].as_str().unwrap().parse()?;
+    let project_id = payload["project"].as_str().unwrap().parse()?;
+    let staged = write?.stage(secrets, &org, &project_id, &env).await?;
+    let mut transaction = provisioning_transaction(project).await?;
+    let mut database = Administration::new(&mut transaction, system, None);
+    staged.publish(&mut database, &env).await?;
+    transaction.commit().await?;
+    Ok(())
 }
 
 async fn credentials(

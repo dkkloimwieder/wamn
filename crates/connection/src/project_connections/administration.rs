@@ -2,9 +2,10 @@
 
 use std::pin::Pin;
 
+use crate::administration::StoredCredential;
 use crate::administration::{ConnectionError, refuse};
 use serde_json::Value;
-use sqlx::{Connection as _, PgConnection, Postgres, Transaction};
+use sqlx::{Connection as _, PgConnection, Postgres, Row as _, Transaction};
 use uuid::Uuid;
 use wamn_identity_protocol::PrincipalId;
 use wamn_registry::OrgId;
@@ -18,16 +19,14 @@ pub(crate) enum Lookup {
 
 /// Data for a new connection before its first generation is written.
 #[derive(Debug)]
-pub(crate) struct NewConnection<'a> {
+pub(crate) struct NewConnection {
     pub id: Uuid,
-    pub name: Option<&'a str>,
-    pub integration: Option<&'a str>,
-    pub auth: &'a str,
+    pub integration: String,
+    pub auth: String,
     pub external: Option<Uuid>,
     pub target: Uuid,
     pub resource: Option<String>,
-    pub principal: PrincipalId,
-    pub authority: Option<&'a str>,
+    pub authority: Option<String>,
 }
 
 /// How a credential or parameter change affects the current token.
@@ -38,8 +37,52 @@ pub(crate) enum TokenChange {
     Expire,
 }
 
-/// Integration type, auth type, parameters and authority from the source.
-pub(crate) type CopySource = (String, String, Value, Option<String>);
+/// Parameters and immutable coordinates read from the copy source.
+#[derive(Debug)]
+pub struct CopySource {
+    pub(crate) integration_type: String,
+    pub(crate) auth_type: String,
+    pub(crate) parameters: Value,
+    pub(crate) authority: Option<String>,
+}
+
+/// Connection data projected from the project database for the control wire adapter.
+#[derive(Debug)]
+pub struct ConnectionRow {
+    pub id: Uuid,
+    pub name: String,
+    pub integration_type: String,
+    pub auth_type: String,
+    pub external_system_id: Option<Uuid>,
+    pub target_id: Uuid,
+    pub resource_key: Option<String>,
+    pub authority: Option<String>,
+    pub active_generation: i64,
+    pub service_principal_id: Uuid,
+    pub active: bool,
+    pub parameters: Value,
+    pub credential_created_at: Option<String>,
+    pub credential_created_by: Option<Uuid>,
+    pub refresh_status: Option<String>,
+    pub expires_at: Option<String>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct ConnectionState {
+    pub id: Uuid,
+    pub generation: i64,
+    pub active: bool,
+}
+
+#[derive(Debug)]
+pub(crate) struct WriteContext {
+    pub state: ConnectionState,
+    pub integration_type: String,
+    pub auth_type: String,
+    pub authority: Option<String>,
+    pub external_system_id: Option<Uuid>,
+    pub service_principal_id: Uuid,
+}
 
 type WriteService = for<'a, 'session> fn(
     &'a mut PgConnection,
@@ -55,22 +98,19 @@ type WriteService = for<'a, 'session> fn(
 pub struct Administration<'a, 'session> {
     project: &'a mut Transaction<'session, Postgres>,
     system: &'a mut PgConnection,
-    source: Option<&'a mut PgConnection>,
     write_service: Option<WriteService>,
 }
 
 impl<'a, 'session> Administration<'a, 'session> {
-    /// Borrow the request's transactions and its existing service writer.
+    /// Borrow the request's project transaction and system session and its existing service writer.
     pub fn new(
         project: &'a mut Transaction<'session, Postgres>,
         system: &'a mut PgConnection,
-        source: Option<&'a mut PgConnection>,
         write_service: Option<WriteService>,
     ) -> Self {
         Self {
             project,
             system,
-            source,
             write_service,
         }
     }
@@ -93,13 +133,31 @@ impl<'a, 'session> Administration<'a, 'session> {
 
     pub(crate) async fn lock_connection(
         &mut self,
-        name: Option<&str>,
-    ) -> Result<Option<Value>, ConnectionError> {
-        sqlx::query_scalar("SELECT to_jsonb(c) FROM platform.connection c WHERE name=$1 FOR UPDATE")
-            .bind(name)
-            .fetch_optional(&mut **self.project)
-            .await
-            .map_err(database_error)
+        name: &str,
+    ) -> Result<Option<WriteContext>, ConnectionError> {
+        sqlx::query(
+            "SELECT id,active_generation,active,integration_type,auth_type,
+                    authority,external_system_id,service_principal_id
+             FROM platform.connection WHERE name=$1 FOR UPDATE",
+        )
+        .bind(name)
+        .try_map(|row| {
+            Ok(WriteContext {
+                state: ConnectionState {
+                    id: row.try_get("id")?,
+                    generation: row.try_get("active_generation")?,
+                    active: row.try_get("active")?,
+                },
+                integration_type: row.try_get("integration_type")?,
+                auth_type: row.try_get("auth_type")?,
+                authority: row.try_get("authority")?,
+                external_system_id: row.try_get("external_system_id")?,
+                service_principal_id: row.try_get("service_principal_id")?,
+            })
+        })
+        .fetch_optional(&mut **self.project)
+        .await
+        .map_err(database_error)
     }
 
     pub(crate) async fn integration_metadata(
@@ -157,18 +215,6 @@ impl<'a, 'session> Administration<'a, 'session> {
     ) -> Result<Option<(Value, Option<Uuid>)>, ConnectionError> {
         sqlx::query_as("SELECT parameters,credential_id FROM platform.connection_generation WHERE connection_id=$1 AND generation=$2")
             .bind(id).bind(generation).fetch_optional(&mut **self.project).await.map_err(database_error)
-    }
-
-    pub(crate) async fn copy_source(
-        &mut self,
-        name: Option<&str>,
-    ) -> Result<Option<CopySource>, ConnectionError> {
-        let source = self
-            .source
-            .as_deref_mut()
-            .ok_or_else(|| refuse("invalid_input", "source_env"))?;
-        sqlx::query_as("SELECT c.integration_type,c.auth_type,g.parameters,c.authority FROM platform.connection c JOIN platform.connection_generation g ON (g.connection_id,g.generation)=(c.id,c.active_generation) WHERE c.name=$1")
-                .bind(name).fetch_optional(source).await.map_err(database_error)
     }
 
     pub(crate) async fn required_version(
@@ -240,10 +286,12 @@ impl<'a, 'session> Administration<'a, 'session> {
 
     pub(crate) async fn insert_connection(
         &mut self,
-        row: NewConnection<'_>,
+        row: &NewConnection,
+        name: &str,
+        principal: PrincipalId,
     ) -> Result<(), ConnectionError> {
         sqlx::query("INSERT INTO platform.connection(id,name,integration_type,auth_type,external_system_id,target_id,resource_key,active_generation,service_principal_id,authority) VALUES($1,$2,$3,$4,$5,$6,$7,1,$8,$9)")
-                .bind(row.id).bind(row.name).bind(row.integration).bind(row.auth).bind(row.external).bind(row.target).bind(row.resource).bind(Uuid::from(row.principal)).bind(row.authority).execute(&mut **self.project).await.map_err(connection_write_error)?;
+                .bind(row.id).bind(name).bind(&row.integration).bind(&row.auth).bind(row.external).bind(row.target).bind(row.resource.as_deref()).bind(Uuid::from(principal)).bind(row.authority.as_deref()).execute(&mut **self.project).await.map_err(connection_write_error)?;
 
         Ok(())
     }
@@ -252,14 +300,14 @@ impl<'a, 'session> Administration<'a, 'session> {
         &mut self,
         id: Uuid,
         credential_id: Option<Uuid>,
-        stored: Option<&Value>,
+        stored: Option<&StoredCredential>,
         token_change: TokenChange,
         parameters: &Value,
     ) -> Result<(), ConnectionError> {
         let next: i64=sqlx::query_scalar("SELECT coalesce(max(generation),0)+1 FROM platform.connection_generation WHERE connection_id=$1").bind(id).fetch_one(&mut **self.project).await.map_err(database_error)?;
         if let Some(stored) = stored {
-            sqlx::query("INSERT INTO platform.credential(id,connection_id,store,ref,version,hint) VALUES($1,$2,$3,$4,$5,$6)")
-                .bind(credential_id).bind(id).bind(stored["store"].as_str()).bind(stored["ref"].as_str()).bind(stored["version"].as_str()).bind(stored["hint"].as_str()).execute(&mut **self.project).await.map_err(database_error)?;
+            sqlx::query("INSERT INTO platform.credential(id,connection_id,store,ref,version) VALUES($1,$2,$3,$4,$5)")
+                .bind(stored.id).bind(id).bind(stored.version.store).bind(&stored.version.reference).bind(&stored.version.version).execute(&mut **self.project).await.map_err(database_error)?;
         }
         match token_change {
             TokenChange::Delete => {
@@ -403,18 +451,84 @@ impl<'a, 'session> Administration<'a, 'session> {
         Ok(row)
     }
 
-    pub(crate) async fn connection_summary(&mut self, id: Uuid) -> Result<Value, ConnectionError> {
-        sqlx::query_scalar("SELECT (to_jsonb(c)-'active')||jsonb_build_object('status',CASE WHEN c.active THEN 'active' ELSE 'disabled' END,'parameters',g.parameters,'hint',k.hint,'credential_created_at',k.created_at,'credential_created_by',k.created_by,'refresh_status',o.refresh_status,'expires_at',o.expires_at) FROM platform.connection c JOIN platform.connection_generation g ON (g.connection_id,g.generation)=(c.id,c.active_generation) LEFT JOIN platform.credential k ON k.id=g.credential_id LEFT JOIN platform.oauth_token o ON o.connection_id=c.id WHERE c.id=$1")
-        .bind(id).fetch_one(&mut **self.project).await.map_err(database_error)
+    pub(crate) async fn connection_summary(
+        &mut self,
+        id: Uuid,
+    ) -> Result<ConnectionRow, ConnectionError> {
+        sqlx::query(
+            "SELECT c.id,c.name,c.integration_type,c.auth_type,c.external_system_id,
+                    c.target_id,c.resource_key,c.authority,c.active_generation,c.service_principal_id,
+                    c.active,g.parameters,to_jsonb(k.created_at) #>> '{}' AS credential_created_at,
+                    k.created_by AS credential_created_by,o.refresh_status,
+                    to_jsonb(o.expires_at) #>> '{}' AS expires_at
+             FROM platform.connection c
+             JOIN platform.connection_generation g ON (g.connection_id,g.generation)=(c.id,c.active_generation)
+             LEFT JOIN platform.credential k ON k.id=g.credential_id
+             LEFT JOIN platform.oauth_token o ON o.connection_id=c.id WHERE c.id=$1",
+        )
+        .bind(id)
+        .try_map(|row| Ok(ConnectionRow {
+            id: row.try_get("id")?,
+            name: row.try_get("name")?,
+            integration_type: row.try_get("integration_type")?,
+            auth_type: row.try_get("auth_type")?,
+            external_system_id: row.try_get("external_system_id")?,
+            target_id: row.try_get("target_id")?,
+            resource_key: row.try_get("resource_key")?,
+            authority: row.try_get("authority")?,
+            active_generation: row.try_get("active_generation")?,
+            service_principal_id: row.try_get("service_principal_id")?,
+            active: row.try_get("active")?,
+            parameters: row.try_get("parameters")?,
+            credential_created_at: row.try_get("credential_created_at")?,
+            credential_created_by: row.try_get("credential_created_by")?,
+            refresh_status: row.try_get("refresh_status")?,
+            expires_at: row.try_get("expires_at")?,
+        }))
+        .fetch_one(&mut **self.project)
+        .await
+        .map_err(database_error)
     }
 
     pub(crate) async fn version_summary(
         &mut self,
-        integration: Option<&str>,
-    ) -> Result<Value, ConnectionError> {
-        sqlx::query_scalar("SELECT jsonb_build_object('versions',coalesce(jsonb_agg(version ORDER BY version),'[]'::jsonb),'deprecated_fields',(SELECT coalesce(jsonb_agg(DISTINCT f.key),'[]'::jsonb) FROM registry.integration_type_version v,jsonb_each(v.parameter_schema->'properties') f WHERE v.integration_type=$1 AND f.value->>'deprecated'='true')) FROM registry.integration_type_version WHERE integration_type=$1")
-        .bind(integration).fetch_one(&mut *self.system).await.map_err(database_error)
+        integration: &str,
+    ) -> Result<(Vec<i32>, Vec<String>), ConnectionError> {
+        sqlx::query_as(
+            "SELECT ARRAY(SELECT version FROM registry.integration_type_version
+                          WHERE integration_type=$1 ORDER BY version),
+                    ARRAY(SELECT DISTINCT f.key FROM registry.integration_type_version v,
+                          jsonb_each(v.parameter_schema->'properties') f
+                          WHERE v.integration_type=$1 AND f.value->>'deprecated'='true'
+                          ORDER BY f.key)",
+        )
+        .bind(integration)
+        .fetch_one(&mut *self.system)
+        .await
+        .map_err(database_error)
     }
+}
+
+/// Read the source generation in the caller's authorized source transaction.
+pub async fn copy_source(
+    source: &mut PgConnection,
+    name: &str,
+) -> Result<Option<CopySource>, ConnectionError> {
+    sqlx::query(
+        "SELECT c.integration_type,c.auth_type,g.parameters,c.authority FROM platform.connection c
+         JOIN platform.connection_generation g ON (g.connection_id,g.generation)=(c.id,c.active_generation)
+         WHERE c.name=$1",
+    )
+    .bind(name)
+    .try_map(|row| Ok(CopySource {
+        integration_type: row.try_get("integration_type")?,
+        auth_type: row.try_get("auth_type")?,
+        parameters: row.try_get("parameters")?,
+        authority: row.try_get("authority")?,
+    }))
+    .fetch_optional(source)
+    .await
+    .map_err(database_error)
 }
 
 pub(super) fn database_error(source: sqlx::Error) -> ConnectionError {

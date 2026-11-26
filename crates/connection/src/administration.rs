@@ -5,12 +5,14 @@ use std::fmt;
 use serde_json::{Value, json};
 use uuid::Uuid;
 use wamn_identity_protocol::PrincipalId;
-use wamn_registry::OrgId;
+use wamn_registry::{EnvName, OrgId, ProjectId};
 
 use crate::connection_credentials::{StoreVersion, WriteCredentials};
 use wamn_kubernetes::kubernetes::CredentialSecret;
 
-use crate::project_connections::{Administration, Lookup, NewConnection, TokenChange};
+use crate::project_connections::{
+    Administration, ConnectionRow, ConnectionState, CopySource, Lookup, NewConnection, TokenChange,
+};
 
 /// A refused configuration write, or its database failure.
 #[derive(Debug)]
@@ -150,12 +152,12 @@ pub fn validate_request(operation: &str, request: &Value) -> Result<(), Connecti
     Ok(())
 }
 
-/// Authority and payload for one administration operation.
+/// Authority and payload for a connection write.
 pub struct Request<'a> {
     pub caller: PrincipalId,
     pub org: &'a OrgId,
     pub operation: &'a str,
-    pub payload: &'a str,
+    pub payload: Value,
 }
 
 impl fmt::Debug for Request<'_> {
@@ -168,334 +170,403 @@ impl fmt::Debug for Request<'_> {
     }
 }
 
-/// Execute the named administration steps against the selected project.
-pub async fn execute(
+/// Project row and registry version data for a connection response.
+#[derive(Debug)]
+pub struct ConnectionDetails {
+    pub row: ConnectionRow,
+    pub versions: Vec<i32>,
+    pub deprecated_fields: Vec<String>,
+}
+
+/// Results passed to the control route for serialization.
+#[derive(Debug)]
+pub enum Outcome {
+    Connection(ConnectionDetails),
+    List(Vec<ConnectionDetails>),
+    Authorize(ConnectionRow),
+    Other(Value),
+}
+
+/// A validated write that can stage its Secret after the read transaction ends.
+pub struct ConnectionWrite {
+    expected: Option<ConnectionState>,
+    id: Uuid,
+    name: String,
+    new_connection: Option<NewConnection>,
+    activation_principal: Option<Uuid>,
+    credential: Option<String>,
+    credential_id: Option<Uuid>,
+    token_change: TokenChange,
+    parameters: Value,
+}
+
+impl fmt::Debug for ConnectionWrite {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ConnectionWrite")
+            .field("id", &self.id)
+            .field("name", &self.name)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Validate a write against the current project and registry state.
+pub async fn prepare_write(
     database: &mut Administration<'_, '_>,
-    credentials: &dyn WriteCredentials,
     authority_port: fn(&str) -> Result<u16, ConnectionError>,
     request: Request<'_>,
-) -> Result<Value, ConnectionError> {
+    source: Option<CopySource>,
+) -> Result<ConnectionWrite, ConnectionError> {
     let Request {
         caller,
         org,
         operation,
-        payload,
+        payload: mut request,
     } = request;
-    let mut request: Value =
-        serde_json::from_str(payload).map_err(|_| refuse("invalid_input", "value"))?;
     validate_request(operation, &request)?;
-    if operation == "connection.deactivate" {
-        let name = request["name"].as_str();
-        let id = database
-            .connection_id(name, Lookup::Lock)
-            .await?
-            .ok_or_else(|| refuse("not_found", "connection"))?;
-        let row = database.deactivate_connection(id).await?;
-        return Ok(json!({
-            "id": id,
-            "name": name,
-            "env": request["env"],
-            "principal_id": row["service_principal_id"],
-            "credentials": row["credentials"]
-        }));
-    }
     let credential = request
         .as_object_mut()
         .expect("validated object")
         .remove("credential")
         .filter(|value| operation != "connection.activate" || !value.is_null());
-    let requested_authority = request
+    let requested_parameters = request
         .as_object_mut()
         .expect("validated object")
-        .remove("authority");
+        .remove("parameters");
+    let name = request["name"].as_str().expect("validated name").to_owned();
     let activating = operation == "connection.activate";
-    if activating
-        || matches!(
-            operation,
-            "connection.write" | "connection.copy" | "connection.set_credential"
+    let existing = database.lock_connection(&name).await?;
+    if existing.is_none() && operation != "connection.write" {
+        return Err(refuse("not_found", "connection"));
+    }
+    let new = existing.is_none();
+    let id = existing
+        .as_ref()
+        .map_or_else(Uuid::new_v4, |row| row.state.id);
+    let (integration, auth) = match &existing {
+        Some(row) => (row.integration_type.as_str(), row.auth_type.as_str()),
+        None => (
+            request["integration_type"]
+                .as_str()
+                .expect("validated integration type"),
+            request["auth_type"].as_str().expect("validated auth type"),
+        ),
+    };
+    if activating && (auth == "none") == credential.is_some() {
+        return Err(refuse("invalid_input", "credential"));
+    }
+    let metadata = database
+        .integration_metadata(Some(integration), Some(auth))
+        .await?
+        .ok_or_else(|| refuse("invalid_input", "auth_type"))?;
+    let target = if new {
+        Some(
+            database
+                .target(
+                    caller,
+                    operation,
+                    org,
+                    request["env"].as_str(),
+                    metadata["exclusive"] == true,
+                )
+                .await?,
         )
-    {
-        let existing = database.lock_connection(request["name"].as_str()).await?;
-        let context = match existing {
-            Some(row) => row,
-            None if operation == "connection.write" => {
-                json!({"id":Uuid::new_v4(),"integration_type":request["integration_type"],"auth_type":request["auth_type"]})
-            }
-            None => return Err(refuse("not_found", "connection")),
-        };
-        let id: Uuid = serde_json::from_value(context["id"].clone())
-            .expect("UUID from PostgreSQL or generator");
-        let auth = context["auth_type"].as_str().expect("stored auth type");
-        if activating && (auth == "none") == credential.is_some() {
-            return Err(refuse("invalid_input", "credential"));
+    } else {
+        None
+    };
+    let stored_authority = existing.as_ref().and_then(|row| row.authority.as_deref());
+    let authority = if operation == "connection.write" {
+        match &request["authority"] {
+            Value::String(value) => Some(value.as_str()),
+            Value::Null => None,
+            _ => return Err(refuse("invalid_input", "authority")),
         }
-        let new = context["active_generation"].is_null();
-        let metadata = database
-            .integration_metadata(
-                context["integration_type"].as_str(),
-                context["auth_type"].as_str(),
-            )
-            .await?;
-        let metadata = metadata.ok_or_else(|| refuse("invalid_input", "auth_type"))?;
-        let target = if new {
-            Some(
-                database
-                    .target(
-                        caller,
-                        operation,
-                        org,
-                        request["env"].as_str(),
-                        metadata["exclusive"] == true,
-                    )
-                    .await?,
-            )
-        } else {
-            None
-        };
-        let authority = if operation == "connection.write" {
-            match requested_authority.as_ref() {
-                Some(Value::String(value)) => Some(value.as_str()),
-                None | Some(Value::Null) => None,
-                _ => return Err(refuse("invalid_input", "authority")),
-            }
-        } else {
-            context["authority"].as_str()
-        };
-        if metadata["runtime_type"] == "wasm" {
-            authority_port(authority.ok_or_else(|| refuse("invalid_input", "authority"))?)?;
-        } else if authority.is_some() {
-            return Err(refuse("invalid_input", "authority"));
+    } else {
+        stored_authority
+    };
+    if metadata["runtime_type"] == "wasm" {
+        authority_port(authority.ok_or_else(|| refuse("invalid_input", "authority"))?)?;
+    } else if authority.is_some() {
+        return Err(refuse("invalid_input", "authority"));
+    }
+    if !new && stored_authority != authority {
+        return Err(refuse("immutable_field", "authority"));
+    }
+    let versions = database.versions(Some(integration)).await?;
+    let schemas: Vec<Value> = versions
+        .iter()
+        .map(|v| v["parameter_schema"].clone())
+        .collect();
+    if schemas.is_empty() {
+        return Err(refuse("invalid_input", "integration_type"));
+    }
+    let previous = database
+        .previous(id, existing.as_ref().map(|row| row.state.generation))
+        .await?;
+    let changed_parameters = if operation == "connection.copy" {
+        let source = source.ok_or_else(|| refuse("not_found", "connection"))?;
+        if integration != source.integration_type || auth != source.auth_type {
+            return Err(refuse("immutable_field", "integration_type"));
         }
-        if !new && context["authority"].as_str() != authority {
+        if source.authority.as_deref() != authority {
             return Err(refuse("immutable_field", "authority"));
         }
-        let versions = database
-            .versions(context["integration_type"].as_str())
-            .await?;
-        let schemas: Vec<Value> = versions
+        Some(source.parameters)
+    } else if activating || operation == "connection.set_credential" {
+        // Both operations reuse the destination generation's parameters.
+        None
+    } else {
+        requested_parameters
+    };
+    let parameters = changed_parameters
+        .as_ref()
+        .unwrap_or_else(|| &previous.as_ref().expect("existing generation").0);
+    if metadata["runtime_type"] == "wasm" && parameters.get("authority").is_some() {
+        return Err(refuse("invalid_input", "parameters"));
+    }
+    validate_connection_parameters(
+        parameters,
+        previous.as_ref().map(|p| &p.0),
+        &schemas,
+        &metadata["auth_schema"],
+    )?;
+    let version = database
+        .required_version(
+            caller,
+            operation,
+            org,
+            request["env"].as_str().expect("validated env"),
+            request["name"].as_str().expect("validated name"),
+        )
+        .await?;
+    if let Some(version) = version {
+        let published = versions
             .iter()
-            .map(|v| v["parameter_schema"].clone())
-            .collect();
-        if schemas.is_empty() {
-            return Err(refuse("invalid_input", "integration_type"));
-        }
-        let previous = database
-            .previous(id, context["active_generation"].as_i64())
-            .await?;
-        if operation == "connection.copy" {
-            let copied = database.copy_source(request["name"].as_str()).await?;
-            let (integration_type, auth, parameters, source_authority) =
-                copied.ok_or_else(|| refuse("not_found", "connection"))?;
-            if context["integration_type"] != integration_type || context["auth_type"] != auth {
-                return Err(refuse("immutable_field", "integration_type"));
-            }
-            if source_authority.as_deref() != authority {
-                return Err(refuse("immutable_field", "authority"));
-            }
-            request["parameters"] = parameters;
-        } else if activating || operation == "connection.set_credential" {
-            request["parameters"] = previous.as_ref().expect("existing generation").0.clone();
-        }
-        if metadata["runtime_type"] == "wasm" && request["parameters"].get("authority").is_some() {
-            return Err(refuse("invalid_input", "parameters"));
-        }
-        validate_connection_parameters(
-            &request["parameters"],
-            previous.as_ref().map(|p| &p.0),
-            &schemas,
-            &metadata["auth_schema"],
-        )?;
-        let version = database
-            .required_version(
-                caller,
-                operation,
-                org,
-                request["env"].as_str().expect("validated env"),
-                request["name"].as_str().expect("validated name"),
-            )
-            .await?;
-        if let Some(version) = version {
-            let published = versions
-                .iter()
-                .find(|entry| entry["version"] == version)
-                .ok_or_else(|| refuse("invalid_input", "version"))?;
-            validate_version_parameters(&request["parameters"], &published["parameter_schema"])?;
-        }
-        let external: Option<Uuid> = if let Some(name) = request["external_system"].as_str() {
-            Some(
-                database
-                    .external_system_id(Some(name), Lookup::Read)
-                    .await?
-                    .ok_or_else(|| refuse("not_found", "external_system"))?,
-            )
-        } else {
-            None
-        };
-        if operation == "connection.write"
-            && !new
-            && (context["integration_type"] != request["integration_type"]
-                || context["auth_type"] != request["auth_type"]
-                || context["external_system_id"] != json!(external))
-        {
-            return Err(refuse("immutable_field", "connection"));
-        }
-        let principal = if new {
-            Some(
-                database
-                    .write_service(
-                        &format!("connection-{id}"),
-                        request["name"].as_str().expect("validated connection name"),
-                    )
-                    .await?,
-            )
-        } else {
-            None
-        };
-        let stored = if let Some(credential) = credential {
-            if auth == "none" {
-                return Err(refuse("invalid_input", "credential"));
-            }
-            let value = credential
-                .as_str()
-                .ok_or_else(|| refuse("invalid_input", "credential"))?;
+            .find(|entry| entry["version"] == version)
+            .ok_or_else(|| refuse("invalid_input", "version"))?;
+        validate_version_parameters(parameters, &published["parameter_schema"])?;
+    }
+    let external: Option<Uuid> = if let Some(name) = request["external_system"].as_str() {
+        Some(
+            database
+                .external_system_id(Some(name), Lookup::Read)
+                .await?
+                .ok_or_else(|| refuse("not_found", "external_system"))?,
+        )
+    } else {
+        None
+    };
+    if operation == "connection.write"
+        && let Some(row) = &existing
+        && (Some(row.integration_type.as_str()) != request["integration_type"].as_str()
+            || Some(row.auth_type.as_str()) != request["auth_type"].as_str()
+            || row.external_system_id != external)
+    {
+        return Err(refuse("immutable_field", "connection"));
+    }
+    let credential = match credential {
+        Some(Value::String(value)) if auth != "none" => {
             let parsed: Value =
-                serde_json::from_str(value).map_err(|_| refuse("invalid_input", "credential"))?;
+                serde_json::from_str(&value).map_err(|_| refuse("invalid_input", "credential"))?;
             if !validates(&parsed, &metadata["credential_schema"]) {
                 return Err(refuse("invalid_input", "credential"));
             }
-            let target = wamn_registry::Triple::new(
-                org.to_owned(),
-                request["env"]
-                    .as_str()
-                    .expect("validated env")
-                    .parse()
-                    .map_err(|_| refuse("invalid_input", "env"))?,
-                request["project"]
-                    .as_str()
-                    .expect("validated project")
-                    .parse()
-                    .map_err(|_| refuse("invalid_input", "project"))?,
-            );
-            Some(store_credential(credentials, &target, value).await?)
-        } else {
-            None
-        };
-        let credential_id = stored
-            .as_ref()
-            .map(|v| serde_json::from_value::<Uuid>(v["id"].clone()).expect("generated UUID"))
-            .or_else(|| {
-                if activating {
-                    None
-                } else {
-                    previous.as_ref().and_then(|p| p.1)
-                }
-            });
-        if (auth == "none") != credential_id.is_none() {
-            return Err(refuse("invalid_input", "credential"));
+            Some(value)
         }
-        if let Some(principal) = principal {
-            let target = target.expect("new connection has a target");
-            let mut resource = metadata["resource_key_template"]
-                .as_str()
-                .map(str::to_owned);
-            if let Some(resource) = &mut resource {
-                let template = resource.clone();
-                for part in template.split('{').skip(1) {
-                    let field = part
-                        .split_once('}')
-                        .ok_or_else(|| refuse("invalid_input", "resource_key"))?
-                        .0;
-                    if field == "authority"
-                        && let Some(authority) = authority
-                    {
-                        *resource = resource.replace("{authority}", authority);
-                        continue;
-                    }
-                    if !schemas
-                        .iter()
-                        .any(|s| s["properties"][field]["immutable"] == true)
-                    {
-                        return Err(refuse("invalid_input", "resource_key"));
-                    }
-                    let value = database
-                        .resource_value(&request["parameters"], field)
-                        .await?;
-                    let value = value.ok_or_else(|| refuse("invalid_input", "resource_key"))?;
-                    *resource = resource.replace(&format!("{{{field}}}"), &value);
-                }
-            }
-            database
-                .insert_connection(NewConnection {
-                    id,
-                    name: request["name"].as_str(),
-                    integration: context["integration_type"].as_str(),
-                    auth,
-                    external,
-                    target,
-                    resource,
-                    principal,
-                    authority,
-                })
-                .await?;
-        }
-        let token_change = if activating
-            || previous.as_ref().map(|p| &p.0["auth"]) != Some(&request["parameters"]["auth"])
-            || (stored.is_some()
-                && matches!(
-                    auth,
-                    "oauth2_client_credentials" | "oauth2_client_credentials_jwt"
-                )) {
-            TokenChange::Delete
-        } else if stored.is_some() && auth == "oauth2_authorization_code" {
-            TokenChange::Expire
-        } else {
-            TokenChange::Keep
-        };
-        database
-            .write_generation(
-                id,
-                credential_id,
-                stored.as_ref(),
-                token_change,
-                &request["parameters"],
-            )
-            .await?;
-        if activating {
-            database.activate_connection(id).await?;
-            return Ok(json!({
-                "id": id,
-                "name": request["name"],
-                "env": request["env"],
-                "principal_id": context["service_principal_id"]
-            }));
-        }
-        return summary(database, org, &request, id).await;
+        Some(_) => return Err(refuse("invalid_input", "credential")),
+        None => None,
+    };
+    let credential_id = if activating {
+        None
+    } else {
+        previous.as_ref().and_then(|p| p.1)
+    };
+    if (auth == "none") != (credential.is_none() && credential_id.is_none()) {
+        return Err(refuse("invalid_input", "credential"));
     }
-    configure(database, org, operation, &request).await
+
+    let new_connection = if let Some(target) = target {
+        let template = metadata["resource_key_template"].as_str();
+        let mut resource = template.map(str::to_owned);
+        if let (Some(template), Some(resource)) = (template, &mut resource) {
+            for part in template.split('{').skip(1) {
+                let field = part
+                    .split_once('}')
+                    .ok_or_else(|| refuse("invalid_input", "resource_key"))?
+                    .0;
+                if field == "authority"
+                    && let Some(authority) = authority
+                {
+                    *resource = resource.replace("{authority}", authority);
+                    continue;
+                }
+                if !schemas
+                    .iter()
+                    .any(|s| s["properties"][field]["immutable"] == true)
+                {
+                    return Err(refuse("invalid_input", "resource_key"));
+                }
+                let value = database.resource_value(parameters, field).await?;
+                let value = value.ok_or_else(|| refuse("invalid_input", "resource_key"))?;
+                *resource = resource.replace(&format!("{{{field}}}"), &value);
+            }
+        }
+        Some(NewConnection {
+            id,
+            integration: integration.to_owned(),
+            auth: auth.to_owned(),
+            external,
+            target,
+            resource,
+            authority: authority.map(str::to_owned),
+        })
+    } else {
+        None
+    };
+    let token_change = if activating
+        || previous.as_ref().map(|p| &p.0["auth"]) != Some(&parameters["auth"])
+        || (credential.is_some()
+            && matches!(
+                auth,
+                "oauth2_client_credentials" | "oauth2_client_credentials_jwt"
+            )) {
+        TokenChange::Delete
+    } else if credential.is_some() && auth == "oauth2_authorization_code" {
+        TokenChange::Expire
+    } else {
+        TokenChange::Keep
+    };
+    let activation_principal = activating.then(|| {
+        existing
+            .as_ref()
+            .expect("existing connection")
+            .service_principal_id
+    });
+    Ok(ConnectionWrite {
+        expected: existing.map(|row| row.state),
+        id,
+        name,
+        new_connection,
+        activation_principal,
+        credential,
+        credential_id,
+        token_change,
+        parameters: changed_parameters.unwrap_or_else(|| previous.expect("existing generation").0),
+    })
 }
 
-/// Read system type metadata and project rows without a system connection function.
+impl ConnectionWrite {
+    /// Stage a fresh credential version with no transaction open.
+    pub async fn stage(
+        mut self,
+        store: &dyn WriteCredentials,
+        org: &OrgId,
+        project: &ProjectId,
+        env: &EnvName,
+    ) -> Result<StagedWrite, ConnectionError> {
+        let stored = match self.credential.take() {
+            Some(value) => Some(store_credential(store, org, project, env, &value).await?),
+            None => None,
+        };
+        Ok(StagedWrite {
+            write: self,
+            stored,
+        })
+    }
+}
+
+/// A validated write whose new credential, if any, is available in the store.
+#[derive(Debug)]
+pub struct StagedWrite {
+    write: ConnectionWrite,
+    stored: Option<StoredCredential>,
+}
+
+impl StagedWrite {
+    /// Publish the validated generation. The caller commits before using the result.
+    pub async fn publish(
+        &self,
+        database: &mut Administration<'_, '_>,
+        env: &EnvName,
+    ) -> Result<Outcome, ConnectionError> {
+        let write = &self.write;
+        let current = database.lock_connection(&write.name).await?;
+        if current.map(|row| row.state) != write.expected {
+            return Err(refuse("invalid_input", "connection"));
+        }
+        if let Some(connection) = &write.new_connection {
+            let principal = database
+                .write_service(&format!("connection-{}", write.id), &write.name)
+                .await?;
+            database
+                .insert_connection(connection, &write.name, principal)
+                .await?;
+        }
+        database
+            .write_generation(
+                write.id,
+                self.stored
+                    .as_ref()
+                    .map(|credential| credential.id)
+                    .or(write.credential_id),
+                self.stored.as_ref(),
+                write.token_change,
+                &write.parameters,
+            )
+            .await?;
+        if let Some(principal) = write.activation_principal {
+            database.activate_connection(write.id).await?;
+            return Ok(Outcome::Other(json!({
+                "id": write.id,
+                "name": write.name,
+                "env": env,
+                "principal_id": principal,
+            })));
+        }
+        Ok(Outcome::Connection(details(database, write.id).await?))
+    }
+
+    /// Discard a staged version after a confirmed rollback.
+    pub async fn discard(self, store: &dyn WriteCredentials) -> Result<(), ConnectionError> {
+        if let Some(stored) = self.stored {
+            store
+                .destroy(&stored.version.reference, &stored.version.version)
+                .await
+                .map_err(store_error)?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct StoredCredential {
+    pub(crate) id: Uuid,
+    pub(crate) version: StoreVersion,
+}
+
+/// Read connection configuration or change local state in the caller's transaction.
 pub async fn configure(
     database: &mut Administration<'_, '_>,
     org: &OrgId,
     operation: &str,
     request: &Value,
-) -> Result<Value, ConnectionError> {
+) -> Result<Outcome, ConnectionError> {
     if request.get("credential").is_some() {
         return Err(refuse("invalid_input", "credential"));
     }
     if operation == "integration_type.list" {
         return database
             .configure_integration_type(org, operation, request)
-            .await;
+            .await
+            .map(Outcome::Other);
     }
     let name = request["name"].as_str();
     if operation.starts_with("external_system.") {
-        return match operation {
-            "external_system.list" => database.list_external_systems().await,
+        let value = match operation {
+            "external_system.list" => database.list_external_systems().await?,
             "external_system.write" => {
                 database.insert_external_system(name).await?;
-                Ok(json!({"name":name}))
+                json!({"name":name})
             }
             "external_system.delete" => {
                 let id = database
@@ -504,18 +575,19 @@ pub async fn configure(
                     .ok_or_else(|| refuse("not_found", "name"))?;
                 database.refuse_external_system_references(id).await?;
                 database.delete_external_system(id).await?;
-                Ok(json!({"name":name}))
+                json!({"name":name})
             }
-            _ => Err(refuse("invalid_input", "operation")),
+            _ => return Err(refuse("invalid_input", "operation")),
         };
+        return Ok(Outcome::Other(value));
     }
     if operation == "connection.list" {
         let ids = database.connection_ids().await?;
-        let mut rows = Vec::new();
+        let mut rows = Vec::with_capacity(ids.len());
         for id in ids {
-            rows.push(summary(database, org, request, id).await?);
+            rows.push(details(database, id).await?);
         }
-        return Ok(json!({"connections":rows}));
+        return Ok(Outcome::List(rows));
     }
     let lookup = if operation == "connection.test" {
         Lookup::Read
@@ -526,83 +598,79 @@ pub async fn configure(
         .connection_id(name, lookup)
         .await?
         .ok_or_else(|| refuse("not_found", "connection"))?;
-    let mut row = summary(database, org, request, id).await?;
-    if matches!(operation, "connection.test" | "connection.authorize") && row["status"] != "active"
-    {
+    if operation == "connection.deactivate" {
+        let row = database.deactivate_connection(id).await?;
+        return Ok(Outcome::Other(json!({
+            "id": id,
+            "name": name,
+            "env": request["env"],
+            "principal_id": row["service_principal_id"],
+            "credentials": row["credentials"],
+        })));
+    }
+    if operation == "connection.get" {
+        return Ok(Outcome::Connection(details(database, id).await?));
+    }
+    let row = database.connection_summary(id).await?;
+    if !row.active {
         return Err(refuse("connection_inactive", "connection"));
     }
     match operation {
-        "connection.get" => Ok(row),
         "connection.authorize" => {
-            if row["auth_type"] != "oauth2_authorization_code" {
+            if row.auth_type != "oauth2_authorization_code" {
                 return Err(refuse("unsupported_auth_type", "auth_type"));
             }
-            Ok(row)
+            Ok(Outcome::Authorize(row))
         }
         "connection.test" => {
-            if row["auth_type"] == "oauth2_authorization_code" {
+            if row.auth_type == "oauth2_authorization_code" {
                 return Err(refuse("unsupported_auth_type", "auth_type"));
             }
-            let metadata = database
-                .test_metadata(row["integration_type"].as_str(), row["auth_type"].as_str())
+            let mut metadata = database
+                .test_metadata(Some(&row.integration_type), Some(&row.auth_type))
                 .await?;
-            for (key, value) in metadata.as_object().expect("object") {
-                row[key] = value.clone();
-            }
-            row["credential"] = database.credential_reference(id).await?;
-            Ok(row)
+            metadata["integration_type"] = row.integration_type.into();
+            metadata["auth_type"] = row.auth_type.into();
+            metadata["parameters"] = row.parameters;
+            metadata["credential"] = database.credential_reference(id).await?;
+            Ok(Outcome::Other(metadata))
         }
         _ => Err(refuse("invalid_input", "operation")),
     }
 }
 
-async fn summary(
+async fn details(
     database: &mut Administration<'_, '_>,
-    org: &OrgId,
-    request: &Value,
     id: Uuid,
-) -> Result<Value, ConnectionError> {
-    let mut row = database.connection_summary(id).await?;
-    let metadata = database
-        .version_summary(row["integration_type"].as_str())
-        .await?;
-    row["versions"] = metadata["versions"].clone();
-    row["deprecated_fields"] = metadata["deprecated_fields"].clone();
-    row["org"] = json!(org);
-    row["project"] = request["project"].clone();
-    row["env"] = request["env"].clone();
-    Ok(row)
+) -> Result<ConnectionDetails, ConnectionError> {
+    let row = database.connection_summary(id).await?;
+    let (versions, deprecated_fields) = database.version_summary(&row.integration_type).await?;
+    Ok(ConnectionDetails {
+        row,
+        versions,
+        deprecated_fields,
+    })
 }
 
 async fn store_credential(
     store: &dyn WriteCredentials,
-    target: &wamn_registry::Triple,
+    org: &OrgId,
+    project: &ProjectId,
+    env: &EnvName,
     value: &str,
-) -> Result<Value, ConnectionError> {
-    let id = uuid::Uuid::new_v4();
+) -> Result<StoredCredential, ConnectionError> {
+    let id = Uuid::new_v4();
     let secret = CredentialSecret {
-        name: wamn_registry::credential_secret_name(&target.org, &target.project, &target.env),
-        org: target.org.as_str(),
-        env: target.env.as_str(),
-        project: target.project.as_str(),
+        name: wamn_registry::credential_secret_name(org, project, env),
+        org: org.as_str(),
+        env: env.as_str(),
+        project: project.as_str(),
     };
-    let StoreVersion {
-        store,
-        reference,
-        version,
-    } = store
+    let version = store
         .put(secret, id, value.as_bytes())
         .await
         .map_err(store_error)?;
-    let hint: String = value
-        .chars()
-        .rev()
-        .take(4)
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
-        .collect();
-    Ok(json!({"id":id.to_string(),"store":store,"ref":reference,"version":version,"hint":hint}))
+    Ok(StoredCredential { id, version })
 }
 
 fn validate_required_fields(parameters: &Value, schema: &Value) -> Result<(), ConnectionError> {
@@ -790,24 +858,23 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn credential_value_reaches_only_the_store_and_metadata_carries_the_hint() {
+    async fn credential_value_reaches_the_store_with_a_new_reference() {
         let store = RecordingStore::default();
         let value = r#"{"key":"private-1234"}"#;
         let metadata = store_credential(
             &store,
-            &wamn_registry::Triple::new(
-                "acme".parse().unwrap(),
-                "dev".parse().unwrap(),
-                "app".parse().unwrap(),
-            ),
+            &"acme".parse().unwrap(),
+            &"app".parse().unwrap(),
+            &"dev".parse().unwrap(),
             value,
         )
         .await
         .unwrap();
         assert_eq!(*store.0.lock().unwrap(), vec![value.as_bytes()]);
-        assert_eq!(metadata["hint"], "34\"}");
-        assert!(metadata.get("credential").is_none());
-        assert!(!metadata.to_string().contains("private-1234"));
+        assert_eq!(
+            metadata.version.reference,
+            format!("reference-{}", metadata.id)
+        );
     }
 
     #[test]

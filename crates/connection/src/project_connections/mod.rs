@@ -117,6 +117,9 @@ mod credential_cleanup;
 mod references;
 mod store;
 
-pub use administration::{Administration, configure_integration_type, required_connection_version};
-pub(crate) use administration::{Lookup, NewConnection, TokenChange};
+pub use administration::{
+    Administration, ConnectionRow, CopySource, configure_integration_type, copy_source,
+    required_connection_version,
+};
+pub(crate) use administration::{ConnectionState, Lookup, NewConnection, TokenChange};
 pub use credential_cleanup::retired_credentials;

@@ -21,7 +21,7 @@ async fn record_refuses_external_system_deletion() -> anyhow::Result<()> {
     .await?;
     let mut tx = client.begin().await?;
     let mut system = wamn_postgres::connect(postgres.admin_url()).await?;
-    let mut database = Administration::new(&mut tx, &mut system, None, None);
+    let mut database = Administration::new(&mut tx, &mut system, None);
     let error = configure(
         &mut database,
         &"acme".parse()?,
