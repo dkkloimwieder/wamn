@@ -50,7 +50,7 @@ spec:
         - name: control
           image: {{ .Values.control.image | quote }}
           args: [--settings, /etc/wamn/control/settings.json, platform]
-          ports: [{name: http, containerPort: 80}]
+          ports: [{name: http, containerPort: 8080}]
           env:
             - {name: DOCKER_CONFIG, value: /credentials/registry}
           volumeMounts:

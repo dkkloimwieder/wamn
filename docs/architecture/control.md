@@ -29,7 +29,8 @@ It checks that the apply login name matches the org and database.
 | `events` | Optional event policy with `stream_replicas` and `dup_window_secs` |
 | `oauth_encryption` | Optional envelope encryption configuration |
 
-Control listens on port 80. It derives the JWKS URL and org audience and verifies EdDSA signatures.
+Control listens on port 8080. The org Service forwards port 80 to the named `http` port on the control pod.
+Control derives the JWKS URL and org audience and verifies EdDSA signatures.
 The worker ConfigMap and service account names follow from the org.
 
 Control authorizes the target and submits one Kubernetes Job.

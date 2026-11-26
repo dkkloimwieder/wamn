@@ -1,6 +1,4 @@
-//! Renders `deploy/charts/app` with `helm template` and tests what an
-//! environment's Helm release holds
-//! (docs/architecture/overview.md#environment-lifecycle).
+//! Renders the app and org charts with `helm template` to check their release objects.
 //!
 //! These tests need only the local Helm executable.
 
@@ -50,6 +48,61 @@ fn an_unstamped_chart_does_not_render() {
     assert!(status.success());
     let output = helm(&["template", "x", chart.to_str().expect("utf-8 path")]);
     assert!(!output.status.success());
+}
+
+#[test]
+fn the_control_route_uses_service_port_80_and_the_pod_uses_8080() -> anyhow::Result<()> {
+    let root = repository_root();
+    let output = helm(&[
+        "template",
+        "acme",
+        root.join("deploy/charts/org").to_str().unwrap(),
+        "-f",
+        root.join("crates/env/tests/support/org-chart-values.json")
+            .to_str()
+            .unwrap(),
+    ]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let objects: Vec<serde_yaml::Value> = serde_yaml::Deserializer::from_slice(&output.stdout)
+        .map(serde::Deserialize::deserialize)
+        .collect::<Result<_, _>>()?;
+    let route = objects
+        .iter()
+        .find_map(|object| object["data"]["route.json"].as_str())
+        .expect("control route");
+    let route: serde_json::Value = serde_json::from_str(route)?;
+    let service = objects
+        .iter()
+        .find(|object| object["kind"] == "Service")
+        .expect("control Service");
+    let name = service["metadata"]["name"].as_str().expect("Service name");
+    let namespace = service["metadata"]["namespace"]
+        .as_str()
+        .expect("Service namespace");
+    assert_eq!(
+        route["api"],
+        format!("http://{name}.{namespace}.svc.cluster.local")
+    );
+
+    let port = &service["spec"]["ports"][0];
+    assert_eq!(port["port"].as_u64(), Some(80));
+    assert_eq!(port["targetPort"].as_str(), Some("http"));
+    let pod = &objects
+        .iter()
+        .find(|object| object["kind"] == "Deployment")
+        .expect("control Deployment")["spec"]["template"];
+    let port = pod["spec"]["containers"][0]["ports"]
+        .as_sequence()
+        .expect("control pod ports")
+        .iter()
+        .find(|container_port| container_port["name"] == port["targetPort"])
+        .expect("Service target port");
+    assert_eq!(port["containerPort"].as_u64(), Some(8080));
+    Ok(())
 }
 
 /// The integration egress policy opens exactly the sibling `egressPort`s and

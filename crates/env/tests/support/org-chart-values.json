@@ -1,0 +1,24 @@
+{
+  "org": "acme",
+  "base": "wamn.localhost",
+  "control": {
+    "image": "registry.example/control@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "configuration": {
+      "identity_issuer": "https://identity.platform.svc.cluster.local",
+      "nats_url": "nats://wamn-nats.platform.svc.cluster.local:4222",
+      "database": {
+        "host": "wamn-control-rw.platform.svc.cluster.local",
+        "port": 5432,
+        "username": "control",
+        "credentials": {"name": "control-login"},
+        "server_ca": {"name": "wamn-pg-ca"}
+      },
+      "apply_database": {
+        "host": "wamn-apply-rw.platform.svc.cluster.local",
+        "port": 5432,
+        "username": "apply",
+        "credentials": {"name": "apply-login"}
+      }
+    }
+  }
+}

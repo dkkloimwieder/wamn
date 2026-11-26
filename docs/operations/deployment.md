@@ -156,7 +156,7 @@ umask 077
 mkdir -p /tmp/wamn-local-access
 kind export kubeconfig --name wamn-local --kubeconfig /tmp/wamn-local-access/kubeconfig
 kubectl --kubeconfig /tmp/wamn-local-access/kubeconfig -n local \
-  port-forward deployment/c-local 8080:80
+  port-forward deployment/c-local 8080:8080
 ```
 
 Keep that command running while you use the service.

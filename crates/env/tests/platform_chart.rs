@@ -4,6 +4,50 @@ use serde_json::json;
 use std::path::Path;
 
 #[test]
+fn web_and_owner_invitation_policies_use_the_control_pod_port() -> anyhow::Result<()> {
+    let chart = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../deploy/charts/org");
+    let values = serde_json::from_str(include_str!("support/org-chart-values.json"))?;
+    let entry = wamn_kubernetes::platform_env::entry(&chart, "acme", "acme", values)?;
+    let objects = wamn_kubernetes::helm::template(&entry)?;
+    let control = &objects
+        .iter()
+        .find(|object| object["kind"] == "Deployment")
+        .expect("control Deployment")["spec"];
+    let control_selector = &control["selector"];
+    let pod_port = &control["template"]["spec"]["containers"][0]["ports"][0]["containerPort"];
+    let invitation = json!({"matchLabels": {"app.kubernetes.io/component": "wamn-org-invitation"}});
+    let web = json!({"matchLabels": {"app.kubernetes.io/name": "wamn-edge"}});
+    let expected_ports = json!([{"port": pod_port, "protocol": "TCP"}]);
+    for (subject, direction, peers, peer) in [
+        (control_selector, "ingress", "from", &web),
+        (control_selector, "ingress", "from", &invitation),
+        (&invitation, "egress", "to", control_selector),
+    ] {
+        let mut rules = objects
+            .iter()
+            .filter(|object| {
+                object["kind"] == "NetworkPolicy" && object["spec"]["podSelector"] == *subject
+            })
+            .filter_map(|object| object["spec"][direction].as_array())
+            .flatten()
+            .filter(|rule| {
+                rule[peers]
+                    .as_array()
+                    .is_some_and(|peers| peers.iter().any(|entry| entry["podSelector"] == *peer))
+            })
+            .peekable();
+        assert!(
+            rules.peek().is_some(),
+            "missing {direction} rule for {peer}"
+        );
+        for rule in rules {
+            assert_eq!(rule["ports"], expected_ports, "{direction} rule for {peer}");
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn project_retains_only_the_operator_policy_for_each_cluster() -> anyhow::Result<()> {
     use wamn_env::env::chart_values::set_operation_values;
     use wamn_env::platform_env::database_values;

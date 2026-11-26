@@ -28,7 +28,7 @@ use wamn_env::env::Platform;
 use wamn_identity_client::users::UserClient;
 pub use writer::Writer;
 
-const HTTP_PORT: u16 = 80;
+const HTTP_PORT: u16 = 8080;
 const HTTP_DRAIN_TIMEOUT: Duration = Duration::from_secs(1);
 const REGISTRY_AUTH_FILE: &str = "/credentials/registry/config.json";
 const IDENTITY_CA: &str = "/etc/identity-ca/ca.crt";
