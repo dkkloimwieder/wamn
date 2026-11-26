@@ -5,12 +5,15 @@ use serde_json::{Value, json};
 use sqlx::Connection as _;
 use wamn_connection::administration::{self, ConnectionDetails, ConnectionError, Outcome};
 use wamn_connection::connection_credentials::{KubernetesStore, destroy_credentials};
-use wamn_connection::project_connections::{Administration, ConnectionRow, copy_source};
+use wamn_connection::project_connections::{
+    Administration, ConnectionEvent, ConnectionRow, EventOutcome, EventType, copy_source,
+};
 use wamn_identity_protocol::PrincipalId;
 use wamn_registry::{EnvName, ProjectId};
 use wamn_routes::HostAttachment;
 use wamn_routes::host_wire::{
-    ConnectionAuthorizeResult, ConnectionGetResult, ConnectionListResult, ConnectionSummary,
+    ConnectionAuthorizeResult, ConnectionEvent as WireEvent, ConnectionEventsResult,
+    ConnectionGetResult, ConnectionListResult, ConnectionSummary,
 };
 
 impl From<ConnectionError> for Refusal {
@@ -111,133 +114,183 @@ impl ControlRoutes<'_> {
         let credentials_store = KubernetesStore::in_namespace(&namespace);
         let login = self.login(&target.project, env).await?;
         let mut client = wamn_postgres::connect(login).await?;
-        let mut project = client.begin().await?;
-        bind_actor(&mut project, attachment, caller).await?;
-        let mut database = Administration::new(&mut project, writer, None);
-        let outcome = if matches!(
-            operation,
-            "connection.write"
-                | "connection.copy"
-                | "connection.set_credential"
-                | "connection.activate"
-        ) {
-            let write = administration::prepare_write(
-                &mut database,
-                wamn_http::wasm_authority::wasm_authority_port,
-                administration::Request {
-                    caller: *caller,
-                    org: self.org,
-                    operation,
-                    payload: request,
-                },
-                source,
-            )
-            .await?;
-            project.rollback().await?;
-
-            // Publish only after the immutable Secret version exists.
-            let staged = write
-                .stage(&credentials_store, self.org, &target.project, env)
-                .await?;
+        let mut event = None;
+        let result = async {
             let mut project = client.begin().await?;
-            let result = async {
-                bind_actor(&mut project, attachment, caller).await?;
-                let mut database = Administration::new(
-                    &mut project,
-                    writer,
-                    Some(|system, project, name, connection| {
-                        Box::pin(
-                            wamn_identity::identity::app::service::write_connection_service(
-                                system, project, name, connection,
-                            ),
-                        )
-                    }),
-                );
-                Ok::<_, Refusal>(staged.publish(&mut database, env).await?)
-            }
-            .await;
-            match result {
-                Ok(outcome) => {
-                    // A lost commit acknowledgement leaves the version available to SQL.
-                    project.commit().await?;
-                    outcome
+            bind_actor(&mut project, attachment, caller).await?;
+            let event_type = match operation {
+                "connection.activate" => Some(EventType::Activate),
+                "connection.deactivate" => Some(EventType::Deactivate),
+                "connection.set_credential" => Some(EventType::CredentialChange),
+                "connection.write" if request.get("credential").is_some() => {
+                    Some(EventType::CredentialChange)
                 }
-                Err(error) => {
-                    project.rollback().await?;
-                    if let Err(error) = staged.discard(&credentials_store).await {
-                        tracing::warn!(%error, "could not discard staged connection credential");
-                    }
-                    return Err(error);
-                }
+                "connection.authorize" => Some(EventType::OAuthAuthorize),
+                _ => None,
+            };
+            if let Some(event_type) = event_type {
+                let row = sqlx::query_as(
+                    "SELECT id, active_generation FROM platform.connection
+                     WHERE name=$1 FOR NO KEY UPDATE",
+                )
+                .bind(request["name"].as_str())
+                .fetch_optional(&mut *project)
+                .await?;
+                event = row.map(|(connection, generation)| ConnectionEvent {
+                    connection,
+                    generation,
+                    event_type,
+                    principal: Some(*caller),
+                });
             }
-        } else {
-            let outcome =
-                administration::configure(&mut database, self.org, operation, &request).await?;
-            if matches!(outcome, Outcome::Authorize(_)) {
+            let mut database = Administration::new(&mut project, writer, None);
+            let outcome = if matches!(
+                operation,
+                "connection.write"
+                    | "connection.copy"
+                    | "connection.set_credential"
+                    | "connection.activate"
+            ) {
+                let write = administration::prepare_write(
+                    &mut database,
+                    wamn_http::wasm_authority::wasm_authority_port,
+                    administration::Request {
+                        caller: *caller,
+                        org: self.org,
+                        operation,
+                        payload: request,
+                    },
+                    source,
+                )
+                .await?;
                 project.rollback().await?;
-            } else {
-                project.commit().await?;
-            }
-            outcome
-        };
 
-        let value = match outcome {
-            Outcome::Connection(details) => {
-                let connection = summary(details, self.org, &target.project, env);
-                if operation == "connection.get" {
-                    let redirect_uri = if connection.auth_type == "oauth2_authorization_code" {
-                        Some(self.oauth()?.redirect_uri().to_owned())
-                    } else {
-                        None
-                    };
-                    serde_json::to_value(ConnectionGetResult {
-                        connection,
-                        redirect_uri,
-                    })
-                } else {
-                    serde_json::to_value(connection)
-                }
-            }
-            Outcome::List(details) => serde_json::to_value(ConnectionListResult {
-                connections: details
-                    .into_iter()
-                    .map(|details| summary(details, self.org, &target.project, env))
-                    .collect(),
-            }),
-            Outcome::Authorize(row) => {
-                let oauth = self.oauth()?;
-                let local;
-                let envelope = if let Some(envelope) = oauth.shared_envelope() {
-                    envelope
-                } else {
-                    local = self.logins.oauth_key(&namespace).await?;
-                    &local
-                };
-                let authorization = oauth
-                    .prepare_authorization(envelope, &row, &target.project, env)
-                    .await
-                    .map_err(|error| Refusal::Failed(error.into()))?;
+                // Publish only after the immutable Secret version exists.
+                let staged = write
+                    .stage(&credentials_store, self.org, &target.project, env)
+                    .await?;
                 let mut project = client.begin().await?;
-                bind_actor(&mut project, attachment, caller).await?;
-                let authorization_url = authorization
-                    .store(&mut project, *caller)
-                    .await
-                    .map_err(|error| Refusal::Failed(error.into()))?;
-                project.commit().await?;
-                serde_json::to_value(ConnectionAuthorizeResult { authorization_url })
-            }
-            Outcome::Other(mut value) => {
-                if let Some(credentials) = value
-                    .as_object_mut()
-                    .and_then(|row| row.remove("credentials"))
-                {
-                    // Repeating deactivation can read the same immutable references.
-                    destroy_credentials(&credentials_store, &credentials).await?;
+                let result = async {
+                    bind_actor(&mut project, attachment, caller).await?;
+                    let mut database = Administration::new(
+                        &mut project,
+                        writer,
+                        Some(|system, project, name, connection| {
+                            Box::pin(
+                                wamn_identity::identity::app::service::write_connection_service(
+                                    system, project, name, connection,
+                                ),
+                            )
+                        }),
+                    );
+                    Ok::<_, Refusal>(staged.publish(&mut database, env).await?)
                 }
-                Ok(value)
-            }
-        };
-        Ok(value.map_err(anyhow::Error::from)?)
+                .await;
+                match result {
+                    Ok(outcome) => {
+                        // A lost commit acknowledgement leaves the version available to SQL.
+                        event = None;
+                        project.commit().await?;
+                        outcome
+                    }
+                    Err(error) => {
+                        project.rollback().await?;
+                        if let Err(error) = staged.discard(&credentials_store).await {
+                            tracing::warn!(%error, "could not discard staged connection credential");
+                        }
+                        return Err(error);
+                    }
+                }
+            } else {
+                let outcome =
+                    administration::configure(&mut database, self.org, operation, &request).await?;
+                if matches!(outcome, Outcome::Authorize(_)) {
+                    project.rollback().await?;
+                } else {
+                    event = None;
+                    project.commit().await?;
+                }
+                outcome
+            };
+
+            let value = match outcome {
+                Outcome::Events { events, next_before } => serde_json::to_value(ConnectionEventsResult {
+                    events: events.into_iter().map(|row| WireEvent {
+                        id: row.id,
+                        generation: row.generation,
+                        principal_id: row.principal_id,
+                        occurred_at: row.occurred_at,
+                        event_type: row.event_type,
+                        outcome: row.outcome,
+                    }).collect(),
+                    next_before,
+                }),
+                Outcome::Connection(details) => {
+                    let connection = summary(details, self.org, &target.project, env);
+                    if operation == "connection.get" {
+                        let redirect_uri = if connection.auth_type == "oauth2_authorization_code" {
+                            Some(self.oauth()?.redirect_uri().to_owned())
+                        } else {
+                            None
+                        };
+                        serde_json::to_value(ConnectionGetResult {
+                            connection,
+                            redirect_uri,
+                        })
+                    } else {
+                        serde_json::to_value(connection)
+                    }
+                }
+                Outcome::List(details) => serde_json::to_value(ConnectionListResult {
+                    connections: details
+                        .into_iter()
+                        .map(|details| summary(details, self.org, &target.project, env))
+                        .collect(),
+                }),
+                Outcome::Authorize(row) => {
+                    let oauth = self.oauth()?;
+                    let local;
+                    let envelope = if let Some(envelope) = oauth.shared_envelope() {
+                        envelope
+                    } else {
+                        local = self.logins.oauth_key(&namespace).await?;
+                        &local
+                    };
+                    let authorization = oauth
+                        .prepare_authorization(envelope, &row, &target.project, env)
+                        .await
+                        .map_err(|error| Refusal::Failed(error.into()))?;
+                    let mut project = client.begin().await?;
+                    bind_actor(&mut project, attachment, caller).await?;
+                    let authorization_url = authorization
+                        .store(&mut project, *caller)
+                        .await
+                        .map_err(|error| Refusal::Failed(error.into()))?;
+                    event = None;
+                    project.commit().await?;
+                    serde_json::to_value(ConnectionAuthorizeResult { authorization_url })
+                }
+                Outcome::Other(mut value) => {
+                    if let Some(credentials) = value
+                        .as_object_mut()
+                        .and_then(|row| row.remove("credentials"))
+                    {
+                        // Repeating deactivation can read the same immutable references.
+                        destroy_credentials(&credentials_store, &credentials).await?;
+                    }
+                    Ok(value)
+                }
+            };
+            Ok(value.map_err(anyhow::Error::from)?)
+        }.await;
+        if let (Some(event), Err(error)) = (event, &result) {
+            let outcome = match error {
+                Refusal::Declared { .. } => EventOutcome::Refused,
+                _ => EventOutcome::Failed,
+            };
+            event.record_refusal(&mut client, outcome).await;
+        }
+        result
     }
 
     fn oauth(&self) -> Result<&super::oauth_authorization::Authorization, Refusal> {

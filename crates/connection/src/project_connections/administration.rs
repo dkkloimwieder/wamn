@@ -11,6 +11,8 @@ use uuid::Uuid;
 use wamn_identity_protocol::PrincipalId;
 use wamn_registry::OrgId;
 
+use super::{ConnectionEvent, EventOutcome, EventType};
+
 /// Whether administration needs to hold the row until transaction end.
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum Lookup {
@@ -304,7 +306,7 @@ impl<'a, 'session> Administration<'a, 'session> {
         stored: Option<&StoredCredential>,
         token_change: TokenChange,
         parameters: &Value,
-    ) -> Result<(), ConnectionError> {
+    ) -> Result<i64, ConnectionError> {
         let next: i64=sqlx::query_scalar("SELECT coalesce(max(generation),0)+1 FROM platform.connection_generation WHERE connection_id=$1").bind(id).fetch_one(&mut **self.project).await.map_err(database_error)?;
         if let Some(stored) = stored {
             sqlx::query("INSERT INTO platform.credential(id,connection_id,store,ref,version) VALUES($1,$2,$3,$4,$5)")
@@ -343,7 +345,7 @@ impl<'a, 'session> Administration<'a, 'session> {
             .await
             .map_err(database_error)?;
 
-        Ok(())
+        Ok(next)
     }
 
     pub(crate) async fn configure_integration_type(
@@ -428,12 +430,12 @@ impl<'a, 'session> Administration<'a, 'session> {
         &mut self,
         id: Uuid,
     ) -> Result<Value, ConnectionError> {
-        let row = sqlx::query_scalar(
+        let (row, generation) = sqlx::query_as(
             "UPDATE platform.connection SET active=false WHERE id=$1
              RETURNING jsonb_build_object('service_principal_id',service_principal_id,
                   'credentials',(SELECT coalesce(jsonb_agg(jsonb_build_object(
                        'store',store,'ref',ref,'version',version)),'[]'::jsonb)
-                  FROM platform.credential WHERE connection_id=$1))",
+                  FROM platform.credential WHERE connection_id=$1)), active_generation",
         )
         .bind(id)
         .fetch_one(&mut **self.project)
@@ -449,7 +451,48 @@ impl<'a, 'session> Administration<'a, 'session> {
             .execute(&mut **self.project)
             .await
             .map_err(database_error)?;
+        self.record_success(id, generation, EventType::Deactivate)
+            .await?;
         Ok(row)
+    }
+
+    pub(crate) async fn record_success(
+        &mut self,
+        connection: Uuid,
+        generation: i64,
+        event_type: EventType,
+    ) -> Result<(), ConnectionError> {
+        ConnectionEvent {
+            connection,
+            generation,
+            event_type,
+            principal: None,
+        }
+        .append(self.project, EventOutcome::Succeeded)
+        .await
+        .map_err(database_error)
+    }
+
+    pub(crate) async fn connection_events(
+        &mut self,
+        id: Uuid,
+        before: Option<i64>,
+        limit: i64,
+    ) -> Result<Vec<super::EventRow>, ConnectionError> {
+        sqlx::query_as(
+            "SELECT id::text AS id, generation, principal_id::text AS principal_id,
+                    to_jsonb(occurred_at) #>> '{}' AS occurred_at, event_type, outcome
+             FROM platform.connection_event WHERE connection_id=$1
+               AND ($2::bigint IS NULL OR (connection_event.occurred_at, connection_event.id) <
+                   (SELECT occurred_at, id FROM platform.connection_event WHERE id=$2 AND connection_id=$1))
+             ORDER BY connection_event.occurred_at DESC, connection_event.id DESC LIMIT $3",
+        )
+        .bind(id)
+        .bind(before)
+        .bind(limit)
+        .fetch_all(&mut **self.project)
+        .await
+        .map_err(database_error)
     }
 
     pub(crate) async fn connection_summary(
@@ -460,7 +503,12 @@ impl<'a, 'session> Administration<'a, 'session> {
             "SELECT c.id,c.name,c.integration_type,c.auth_type,c.external_system_id,
                     c.target_id,c.resource_key,c.authority,c.active_generation,c.service_principal_id,
                     c.active,g.parameters,to_jsonb(k.created_at) #>> '{}' AS credential_created_at,
-                    k.created_by AS credential_created_by,o.refresh_status,
+                    k.created_by AS credential_created_by,
+                    (SELECT CASE WHEN r.success THEN 'ok' ELSE 'failing' END
+                     FROM platform.connection_event e
+                     JOIN platform.connection_event_outcome r ON r.code=e.outcome
+                     WHERE e.connection_id=c.id AND e.event_type='token_refresh'
+                     ORDER BY e.occurred_at DESC,e.id DESC LIMIT 1) AS refresh_status,
                     to_jsonb(o.expires_at) #>> '{}' AS expires_at
              FROM platform.connection c
              JOIN platform.connection_generation g ON (g.connection_id,g.generation)=(c.id,c.active_generation)

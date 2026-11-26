@@ -771,9 +771,11 @@ The authorization URL preserves existing query parameters and adds the state, ca
 
 The callback opens its own connection through the control login and holds no org write lock during the provider call.
 
-It locks the active connection before locking and deleting the state. The same transaction exchanges the code and writes the encrypted token.
-A successful callback consumes the state once.
-Every refusal rolls back, including provider errors, expired states, and stale generations.
+The callback and token refresh share a PostgreSQL session lock for the connection.
+A short transaction reads the active generation and the pending state.
+The callback decrypts the verifier, reads the Secret, exchanges the code, and encrypts the token after that transaction ends.
+A second transaction checks the generation and commits the token, state deletion, and success event together.
+A refused callback leaves the pending state in place.
 Expired or stale states remain until a generation write or deactivation removes them.
 A generation write deletes pending states, so a later callback refuses the old state.
 The callback escapes all page values and returns no credential material.
@@ -790,7 +792,7 @@ This applies to token fetches, refreshes, candidate health, and authorization co
 The browser's `authorize_url` stays outside this token boundary.
 
 OAuth storage uses `platform.oauth_token` and `platform.oauth_authorization` in the project database.
-The host binds the principal that created the state before it reads or writes other protected rows.
+The callback attributes its event and token write to the principal that created the authorization state.
 Only the host connection role and the control role receive table grants.
 Each row uses a fresh AES-256 data key and AES-256-GCM encryption.
 An envelope key protects that data key.
@@ -802,13 +804,12 @@ Each host retains at most 1024 unwrapped keys and evicts the least recently used
 The cache identity includes both `key_id` and `wrapped_key`.
 Debug output omits keys and plaintext.
 
-The host refreshes tokens under a project database transaction.
-Its first statement records the call's executing principal in `platform.tx_identity`.
-It locks `platform.connection` with `FOR NO KEY UPDATE`, then reads the shared token row again.
-A token is due when its expiry is within 60 seconds, including negative infinity.
-A waiting host uses the row that the first host writes.
-The lock also serializes refresh with credential rotation.
-A stale generation cannot write a token.
+The host takes a PostgreSQL session lock for the connection.
+A short transaction reads the current generation, the stored token, and the latest refresh outcome.
+A token is due when its expiry is within 60 seconds.
+The host decrypts the token, calls the provider if a refresh is due, and encrypts the result between transactions.
+A second transaction checks that the generation is still active and commits the token with its success event.
+A waiting host reads the winner's token or failure event after the session lock is released.
 
 The host keeps decrypted access tokens under the connection id and generation until the refresh margin.
 A new connection generation replaces the cached token entries of older generations.
@@ -823,12 +824,15 @@ A missing member value is JSON null.
 Authorization code needs an existing row and uses the refresh-token grant for a due token.
 A response without a replacement refresh token keeps the prior value.
 
-A failed first fetch stores an encrypted object with both members null.
-Failures set `refresh_status` to `failing` and record the database clock time.
-All hosts refuse further attempts for 30 seconds.
-After that window, the next call attempts refresh again.
-A successful refresh sets the status to `ok`.
-`connection.get` and the CLI show `refresh_status` and UTC `expires_at` without token bytes.
+A failed fetch records a refresh event, including when no token exists yet.
+Hosts wait 30 seconds after a failed refresh of the active generation.
+A newer callback token clears the wait.
+The latest refresh event supplies `refresh_status` for `connection.get` and the CLI.
+Token metadata also includes UTC `expires_at`.
+
+`connection.events` lists retained events for one connection in newest-first order.
+Use `next_before` as the next request's `before` value when the response includes a cursor.
+The route uses the same project administrator permission as `connection.get`.
 
 The generation transaction deletes tokens for either client credentials type when credentials or `parameters.auth` change.
 For authorization code, a change to `parameters.auth` deletes the token.

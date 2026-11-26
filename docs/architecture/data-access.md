@@ -63,6 +63,11 @@ It grants USAGE and CREATE on that schema to the migration login. These grants d
 The separate catalog connection creates platform-owned relations. The table and sequence defaults do not cover those relations.
 CDC requires model schemas to exist. It prepares capture after package SQL runs.
 
+The project database retains an immutable history in `platform.connection_event`.
+The platform login can append events and read the history and its lookup tables.
+Project administrators read the history through `connection.events`.
+An event contains connection and actor IDs, generation, time, a type code, and an outcome code.
+
 Each entity map records its relation OID, package, and entity.
 Package apply refuses rebinding an existing relation OID to another package or entity.
 Schema ownership does not grant runtime mutation authority.

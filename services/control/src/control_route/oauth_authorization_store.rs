@@ -6,6 +6,19 @@ use uuid::Uuid;
 use wamn_envelope::encryption::Encrypted;
 use wamn_identity_protocol::PrincipalId;
 
+pub(super) async fn find(
+    database: &mut PgConnection,
+    state: &str,
+) -> sqlx::Result<Option<(Uuid, i64, Uuid)>> {
+    sqlx::query_as(
+        "SELECT connection_id,generation,created_by FROM platform.oauth_authorization
+         WHERE state=$1",
+    )
+    .bind(state)
+    .fetch_optional(database)
+    .await
+}
+
 /// Authorization state read under a row lock for a single callback.
 #[derive(Debug)]
 pub(super) struct LockedAuthorization {
@@ -97,12 +110,9 @@ pub(super) async fn delete(
     connection: &mut PgConnection,
     state: &str,
 ) -> Result<bool, sqlx::Error> {
-    Ok(
-        sqlx::query("DELETE FROM platform.oauth_authorization WHERE state=$1")
-            .bind(state)
-            .execute(connection)
-            .await?
-            .rows_affected()
-            != 0,
-    )
+    let result = sqlx::query("DELETE FROM platform.oauth_authorization WHERE state=$1")
+        .bind(state)
+        .execute(connection)
+        .await?;
+    Ok(result.rows_affected() == 1)
 }

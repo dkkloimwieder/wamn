@@ -57,7 +57,8 @@ pub fn grant_dynamic_sql_surface_sql() -> String {
     format!(
         "{} DO $read$ DECLARE target record; relation record; \
          private_relations CONSTANT name[] := ARRAY[ \
-           'credential', 'credential_history', 'oauth_token', 'oauth_authorization', 'pat', 'pat_history']; BEGIN \
+           'credential', 'credential_history', 'oauth_token', 'oauth_authorization', 'pat', 'pat_history', \
+           'connection_event', 'connection_event_type', 'connection_event_outcome']; BEGIN \
          FOR target IN SELECT nspname FROM pg_namespace WHERE nspname NOT LIKE 'pg_%' AND nspname NOT IN ('information_schema', 'wamn_history') LOOP \
            EXECUTE format('GRANT USAGE ON SCHEMA %I TO {role}', target.nspname); \
            FOR relation IN SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace \
@@ -89,6 +90,8 @@ pub fn grant_platform_surface_sql() -> String {
          REVOKE ALL ON platform.login_principal FROM {role}; \
          GRANT EXECUTE ON FUNCTION platform.prune_tx_identity() TO {role}; \
          REVOKE DELETE ON platform.pat, platform.role FROM {role}; \
+         REVOKE UPDATE, DELETE ON platform.connection_event FROM {role}; \
+         REVOKE INSERT, UPDATE, DELETE ON platform.connection_event_type, platform.connection_event_outcome FROM {role}; \
          REVOKE DELETE ON wamn_run.run FROM {role}; \
          GRANT EXECUTE ON FUNCTION wamn_authority.current_identity(), wamn_authority.current_principal_id(), \
            wamn_authority.current_role(), wamn_authority.current_app() TO {role}; \

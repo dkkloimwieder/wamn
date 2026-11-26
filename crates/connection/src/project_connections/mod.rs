@@ -1,8 +1,10 @@
 //! Authorized connection reads and storage for OAuth tokens.
 
+mod event;
 mod oauth;
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use crate::oauth_token::{Available, Error, Fetch, Refresh};
 use anyhow::Context as _;
@@ -14,11 +16,12 @@ use wamn_registry::{
     connections::{ConnectionFact, ConnectionGeneration, CredentialReference},
 };
 
-use wamn_postgres::{ExecutorOpenError, Object, WamnPostgres, open_executor_read};
+use wamn_postgres::{ConnectionGuard, ExecutorOpenError, WamnPostgres, open_executor_read};
 
 use self::store::ConnectionStore;
 
-pub use oauth::write_token;
+pub use event::{ConnectionEvent, EventOutcome, EventRow, EventType};
+pub use oauth::{lock_active_generation, lock_oauth_session, unlock_oauth_session, write_token};
 
 struct ProjectDatabase<'a> {
     pools: &'a WamnPostgres,
@@ -41,12 +44,15 @@ impl ProjectDatabase<'_> {
         Ok(value)
     }
 
-    async fn oauth_connection(&self) -> anyhow::Result<Object> {
+    async fn oauth_connection(&self) -> anyhow::Result<ConnectionGuard> {
         let (connection, _) = self
             .pools
             .checkout_platform(self.project, AuthorityClass::Platform)
             .await?;
-        Ok(connection)
+        Ok(ConnectionGuard::new(
+            connection,
+            Arc::clone(self.pools.destroyed_connections()),
+        ))
     }
 }
 

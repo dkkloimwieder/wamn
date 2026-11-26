@@ -6,7 +6,9 @@ use std::sync::Mutex;
 use serde_json::{Value, json};
 use sqlx::PgConnection;
 use uuid::Uuid;
-use wamn_connection::administration::{ConnectionError, Request, configure, prepare_write};
+use wamn_connection::administration::{
+    ConnectionError, Outcome, Request, configure, prepare_write,
+};
 use wamn_connection::connection_credentials::{StoreVersion, WriteCredentials};
 use wamn_connection::project_connections::Administration;
 use wamn_identity_protocol::PrincipalId;
@@ -245,6 +247,52 @@ async fn deactivation_keeps_history_and_activation_writes_a_fresh_generation() -
             .unwrap(),
         replacement.as_bytes()
     );
+    let mut tx = provisioning_transaction(&mut project).await?;
+    let mut administration = Administration::new(&mut tx, &mut system, None);
+    let Outcome::Events { events, .. } = configure(
+        &mut administration,
+        &"acme".parse()?,
+        "connection.events",
+        &json!({"project":"billing","env":"dev","name":"invoices"}),
+    )
+    .await?
+    else {
+        panic!("expected connection events");
+    };
+    assert_eq!(
+        events
+            .iter()
+            .map(|event| (
+                event.event_type.as_str(),
+                event.outcome.as_str(),
+                event.generation
+            ))
+            .collect::<Vec<_>>(),
+        [
+            ("activate", "succeeded", generation),
+            ("deactivate", "succeeded", active_generation),
+            ("credential_change", "succeeded", active_generation),
+            ("credential_change", "succeeded", active_generation - 1),
+        ]
+    );
+    let Outcome::Events { events: older, .. } = configure(
+        &mut administration,
+        &"acme".parse()?,
+        "connection.events",
+        &json!({"project":"billing","env":"dev","name":"invoices","before":events[1].id}),
+    )
+    .await?
+    else {
+        panic!("expected the next page of connection events");
+    };
+    assert!(
+        older
+            .iter()
+            .map(|event| &event.id)
+            .eq(events[2..].iter().map(|event| &event.id))
+    );
+    tx.rollback().await?;
+
     let mut tx = provisioning_transaction(&mut project).await?;
     let plain_id: Uuid = sqlx::query_scalar(
         "INSERT INTO platform.connection(name,integration_type,auth_type,target_id,active_generation,service_principal_id)

@@ -95,7 +95,12 @@ async fn native_connection_summary_decodes_query_rows() -> anyhow::Result<()> {
                 ('00000000-0000-0000-0000-000000000002', 1, '{}', '00000000-0000-0000-0000-000000000003');
          INSERT INTO platform.oauth_token(connection_id,ciphertext,nonce,wrapped_key,key_id,expires_at,updated_at)
          VALUES ('00000000-0000-0000-0000-000000000002',decode('01','hex'),decode('02','hex'),
-                 decode('03','hex'),'fixture','-infinity',now());",
+                 decode('03','hex'),'fixture','-infinity',now());
+         INSERT INTO platform.connection_event
+             (connection_id,generation,principal_id,event_type,outcome)
+         VALUES ('00000000-0000-0000-0000-000000000002',1,gen_random_uuid(),'token_refresh','failed'),
+                ('00000000-0000-0000-0000-000000000002',1,gen_random_uuid(),'token_refresh','succeeded'),
+                ('00000000-0000-0000-0000-000000000002',1,gen_random_uuid(),'oauth_callback','refused');",
     )
     .execute(&mut *transaction)
     .await?;

@@ -1,4 +1,4 @@
-//! Shared OAuth token refresh, serialized with connection generation writes.
+//! Shared OAuth token refresh with per-connection session locking.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -49,8 +49,7 @@ impl Cache {
 }
 
 /// JSON encrypted in oauth_token.ciphertext, also used by authorization callbacks.
-/// A null access token records a failed first fetch without inventing a token.
-#[derive(Default, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize)]
 pub struct Token {
     pub access_token: Option<String>,
     pub refresh_token: Option<String>,
@@ -120,7 +119,7 @@ pub struct Request<'a> {
     pub rejected: Option<&'a str>,
 }
 
-/// Arguments for a refresh under the active generation lock.
+/// Arguments for a refresh of the active generation.
 pub struct Refresh<'a> {
     pub principal: wamn_identity_protocol::PrincipalId,
     pub connection: uuid::Uuid,
@@ -139,7 +138,7 @@ impl std::fmt::Debug for Refresh<'_> {
     }
 }
 
-/// The provider call runs while the token store holds the generation lock.
+/// The provider call runs between transactions while the session lock is held.
 pub type Fetch<'a> = Box<
     dyn FnOnce(
             Option<Token>,
@@ -161,7 +160,7 @@ impl Error {
     }
 }
 
-/// Hold the connection row through the provider call and the encrypted write.
+/// Reuse or refresh the token under the connection’s session advisory lock.
 pub async fn get<'a, F, Fut>(
     request: Request<'a>,
     envelope: &'a Envelope,

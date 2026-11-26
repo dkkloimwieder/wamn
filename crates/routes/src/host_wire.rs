@@ -163,3 +163,33 @@ pub struct ConnectionGetResult {
     #[schemars(with = "String")]
     pub redirect_uri: Option<String>,
 }
+
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ConnectionEvent {
+    pub id: String,
+    pub generation: i64,
+    pub principal_id: String,
+    pub occurred_at: String,
+    pub event_type: String,
+    pub outcome: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ConnectionEventsResult {
+    pub events: Vec<ConnectionEvent>,
+    #[schemars(schema_with = "nullable::<String>")]
+    pub next_before: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ConnectionEventsRequest {
+    pub project: String,
+    pub env: String,
+    pub name: String,
+    #[serde(default)]
+    #[schemars(with = "String")]
+    pub before: Option<String>,
+}

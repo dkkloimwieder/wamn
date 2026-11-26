@@ -34,6 +34,7 @@ use crate::host_wire::{
     WorkflowAuthorRequest, WorkflowAuthorResult, WorkflowDisableRequest, WorkflowRunRequest,
     WorkflowRunResult, schema, schemas,
 };
+use crate::host_wire::{ConnectionEventsRequest, ConnectionEventsResult};
 use crate::{route_attachment_id, route_path};
 use RefusalSource::{MalformedInput, PermissionDenied, TransactionInvariant};
 use std::collections::BTreeMap;
@@ -934,6 +935,20 @@ const ROUTES: &[HostRoute] = &[
             TransactionInvariant("referenced", None),
             TransactionInvariant("resource_in_use", None),
             TransactionInvariant("unsupported_auth_type", None),
+        ],
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "connection.events",
+        type_: OperationType::Get,
+        authority: HostRouteAuthority::ProjectAdmin,
+        handler: HostHandler::IntegrationAdministration,
+        schemas: schemas::<ConnectionEventsRequest, ConnectionEventsResult>,
+        write_transaction: false,
+        refusals: &[
+            TransactionInvariant("invalid_input", None),
+            TransactionInvariant("not_found", None),
+            PermissionDenied,
         ],
     },
     HostRoute {

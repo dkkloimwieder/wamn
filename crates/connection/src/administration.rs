@@ -11,7 +11,8 @@ use crate::connection_credentials::{StoreVersion, WriteCredentials};
 use wamn_kubernetes::kubernetes::CredentialSecret;
 
 use crate::project_connections::{
-    Administration, ConnectionRow, ConnectionState, CopySource, Lookup, NewConnection, TokenChange,
+    Administration, ConnectionRow, ConnectionState, CopySource, EventRow, EventType, Lookup,
+    NewConnection, TokenChange,
 };
 
 /// A refused configuration write, or its database failure.
@@ -88,6 +89,7 @@ pub fn validate_request(operation: &str, request: &Value) -> Result<(), Connecti
         | "connection.authorize"
         | "connection.get"
         | "connection.deactivate" => &["project", "env", "name"],
+        "connection.events" => &["project", "env", "name", "before"],
         "connection.write" => &[
             "project",
             "env",
@@ -181,6 +183,10 @@ pub struct ConnectionDetails {
 /// Results passed to the control route for serialization.
 #[derive(Debug)]
 pub enum Outcome {
+    Events {
+        events: Vec<EventRow>,
+        next_before: Option<String>,
+    },
     Connection(ConnectionDetails),
     List(Vec<ConnectionDetails>),
     Authorize(ConnectionRow),
@@ -502,7 +508,7 @@ impl StagedWrite {
                 .insert_connection(connection, &write.name, principal)
                 .await?;
         }
-        database
+        let generation = database
             .write_generation(
                 write.id,
                 self.stored
@@ -516,12 +522,20 @@ impl StagedWrite {
             .await?;
         if let Some(principal) = write.activation_principal {
             database.activate_connection(write.id).await?;
+            database
+                .record_success(write.id, generation, EventType::Activate)
+                .await?;
             return Ok(Outcome::Other(json!({
                 "id": write.id,
                 "name": write.name,
                 "env": env,
                 "principal_id": principal,
             })));
+        }
+        if self.stored.is_some() {
+            database
+                .record_success(write.id, generation, EventType::CredentialChange)
+                .await?;
         }
         Ok(Outcome::Connection(details(database, write.id).await?))
     }
@@ -589,7 +603,7 @@ pub async fn configure(
         }
         return Ok(Outcome::List(rows));
     }
-    let lookup = if operation == "connection.test" {
+    let lookup = if matches!(operation, "connection.test" | "connection.events") {
         Lookup::Read
     } else {
         Lookup::Lock
@@ -610,6 +624,32 @@ pub async fn configure(
     }
     if operation == "connection.get" {
         return Ok(Outcome::Connection(details(database, id).await?));
+    }
+    if operation == "connection.events" {
+        const PAGE_SIZE: u16 = 100;
+        let before = request
+            .get("before")
+            .map(|before| {
+                before
+                    .as_str()
+                    .and_then(|value| value.parse::<i64>().ok())
+                    .filter(|id| *id > 0)
+                    .ok_or_else(|| refuse("invalid_input", "before"))
+            })
+            .transpose()?;
+        let mut events = database
+            .connection_events(id, before, i64::from(PAGE_SIZE) + 1)
+            .await?;
+        let next_before = if events.len() > usize::from(PAGE_SIZE) {
+            events.pop();
+            events.last().map(|event| event.id.clone())
+        } else {
+            None
+        };
+        return Ok(Outcome::Events {
+            events,
+            next_before,
+        });
     }
     let row = database.connection_summary(id).await?;
     if !row.active {

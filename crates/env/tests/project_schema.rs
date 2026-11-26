@@ -339,6 +339,7 @@ async fn project_history_covers_platform_and_catalog_writes() {
 DO $$
 DECLARE
   source record;
+  relation regclass;
   logs_rows boolean;
 BEGIN
   FOR source IN
@@ -346,13 +347,18 @@ BEGIN
     WHERE schemaname IN ('platform', 'catalog')
       AND tablename::text !~ '_history$'
   LOOP
-    logs_rows := source.schemaname = 'catalog' OR source.tablename NOT IN (
+    relation := to_regclass(format('%I.%I', source.schemaname, source.tablename));
+    logs_rows := source.schemaname = 'catalog' OR (source.tablename NOT IN (
       'oauth_token', 'oauth_authorization', 'number_counter', 'write_log',
-      'tx_identity', 'login_principal'
-    );
+      'tx_identity', 'login_principal', 'connection_event'
+    ) AND NOT EXISTS (
+      SELECT FROM pg_constraint
+      WHERE conrelid = 'platform.connection_event'::regclass AND contype = 'f'
+        AND confrelid = relation AND confrelid <> 'platform.connection'::regclass
+    ));
     ASSERT logs_rows = EXISTS (
       SELECT FROM pg_trigger
-      WHERE tgrelid = to_regclass(format('%I.%I', source.schemaname, source.tablename))
+      WHERE tgrelid = relation
         AND tgfoid = 'wamn_history.log_row_change()'::regprocedure
     ), format('%I.%I', source.schemaname, source.tablename);
   END LOOP;

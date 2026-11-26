@@ -10,7 +10,10 @@ use zeroize::Zeroizing;
 
 use super::oauth_authorization_store as store;
 use wamn_connection::connection_credentials::KubernetesStore;
-use wamn_connection::project_connections::ConnectionRow;
+use wamn_connection::project_connections::{
+    ConnectionEvent, ConnectionRow, EventOutcome, EventType, lock_active_generation,
+    lock_oauth_session, unlock_oauth_session, write_token,
+};
 use wamn_envelope::encryption::{Encrypted, Envelope};
 use wamn_http::{oauth, transport::HttpTransport};
 use wamn_registry::{EnvName, ProjectId};
@@ -65,7 +68,10 @@ impl PreparedAuthorization {
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         caller: wamn_identity_protocol::PrincipalId,
     ) -> Result<String, Error> {
-        if lock_generation(tx, self.connection).await? != Some(self.generation) {
+        let current = lock_active_generation(tx, self.connection)
+            .await
+            .map_err(|error| failed("authorization connection check failed", error))?;
+        if current != Some(self.generation) {
             return Err(refused("connection changed during authorization"));
         }
         store::insert(
@@ -78,6 +84,15 @@ impl PreparedAuthorization {
         )
         .await
         .map_err(|error| failed("authorization state write failed", error))?;
+        ConnectionEvent {
+            connection: self.connection,
+            generation: self.generation,
+            event_type: EventType::OAuthAuthorize,
+            principal: Some(caller),
+        }
+        .append(tx, EventOutcome::Succeeded)
+        .await
+        .map_err(|error| failed("authorization event write failed", error))?;
         Ok(self.url)
     }
 }
@@ -148,7 +163,7 @@ impl Authorization {
         })
     }
 
-    /// Exchange a callback with the mapped env's key and credential store.
+    /// Exchange the code between transactions while serializing callbacks and refreshes.
     pub async fn callback(
         &self,
         database: &mut sqlx::PgConnection,
@@ -156,47 +171,55 @@ impl Authorization {
         namespace: &str,
         query: &str,
     ) -> Result<(), Error> {
-        let query: Callback = callback_parameters(query)?;
-        if let Some(error) = query.error {
-            return Err(refused(format!("provider refused authorization: {error}")));
-        }
+        let query = callback_parameters(query)?;
         let state = query
             .state
+            .as_deref()
             .filter(|state| !state.is_empty())
             .ok_or_else(|| refused("missing state"))?;
-        let code = Zeroizing::new(
-            query
+        let code = match query.error {
+            Some(error) => Err(refused(format!("provider refused authorization: {error}"))),
+            None => query
                 .code
                 .filter(|code| !code.is_empty())
-                .ok_or_else(|| refused("missing authorization code"))?,
-        );
-        // Serialize exchanges for one connection without holding a transaction during I/O.
-        let connection: uuid::Uuid = sqlx::query_scalar(
-            "SELECT connection_id FROM platform.oauth_authorization WHERE state=$1",
-        )
-        .bind(&state)
-        .fetch_optional(&mut *database)
-        .await
-        .map_err(|error| failed("authorization state read failed", error))?
-        .ok_or_else(|| refused("connection or authorization state unavailable"))?;
-        sqlx::query(
-            "SELECT pg_advisory_lock(hashtextextended('wamn-oauth/' || $1::uuid::text, 0))",
-        )
-        .bind(connection)
-        .execute(&mut *database)
-        .await
-        .map_err(|error| failed("callback state lock failed", error))?;
-        let result = self
-            .exchange(database, envelope, namespace, &state, &code)
-            .await;
-        let unlocked = sqlx::query(
-            "SELECT pg_advisory_unlock(hashtextextended('wamn-oauth/' || $1::uuid::text, 0))",
-        )
-        .bind(connection)
-        .execute(database)
-        .await
-        .map_err(|error| failed("callback state unlock failed", error));
-        result.and(unlocked.map(|_| ()))
+                .map(Zeroizing::new)
+                .ok_or_else(|| refused("missing authorization code")),
+        };
+        let pending = store::find(database, state)
+            .await
+            .map_err(|error| failed("authorization state read failed", error))?;
+        let Some((connection, generation, principal)) = pending else {
+            code?;
+            return Err(refused("connection or authorization state unavailable"));
+        };
+        let event = ConnectionEvent {
+            connection,
+            generation,
+            event_type: EventType::OAuthCallback,
+            principal: Some(principal.into()),
+        };
+        lock_oauth_session(database, connection)
+            .await
+            .map_err(|error| failed("callback session unavailable", error))?;
+        let result = match code {
+            Ok(code) => {
+                self.exchange(database, envelope, namespace, state, &code, &event)
+                    .await
+            }
+            Err(error) => Err(error),
+        };
+        if let Err(error) = &result {
+            let outcome = if error.source.is_some() {
+                EventOutcome::Failed
+            } else {
+                EventOutcome::Refused
+            };
+            event.record_refusal(database, outcome).await;
+        }
+        let unlock = unlock_oauth_session(database, connection)
+            .await
+            .map_err(|error| failed("callback session release failed", error));
+        result.and(unlock)
     }
 
     async fn exchange(
@@ -206,12 +229,13 @@ impl Authorization {
         namespace: &str,
         state: &str,
         code: &str,
+        event: &ConnectionEvent,
     ) -> Result<(), Error> {
         let mut tx = database
             .begin()
             .await
             .map_err(|error| failed("callback transaction failed", error))?;
-        // Deactivation and credential writes lock the connection before deleting state.
+        // A generation write locks the connection before deleting pending states.
         let context = store::lock_connection(&mut tx, state)
             .await
             .map_err(|error| failed("connection unavailable", error))?
@@ -220,19 +244,19 @@ impl Authorization {
             .await
             .map_err(|error| failed("authorization state read failed", error))?
             .ok_or_else(|| refused("unknown or replayed state"))?;
-        if !authorization.unexpired {
-            return Err(refused("expired state"));
-        }
         tx.commit()
             .await
             .map_err(|error| failed("callback snapshot failed", error))?;
-        let connection = authorization.connection;
+        if !authorization.unexpired {
+            return Err(refused("expired state"));
+        }
         if context["active_generation"].as_i64() != Some(authorization.generation) {
             return Err(refused("connection generation changed"));
         }
         if context["auth_type"] != "oauth2_authorization_code" {
             return Err(refused("connection authentication type changed"));
         }
+
         let verifier = envelope
             .decrypt(&authorization.verifier)
             .await
@@ -261,14 +285,11 @@ impl Authorization {
             .encrypt(&plaintext)
             .await
             .map_err(|error| failed("token encryption failed", error))?;
+
         let mut tx = database
             .begin()
             .await
             .map_err(|error| failed("callback transaction failed", error))?;
-        let current = lock_generation(&mut tx, connection).await?;
-        if current != Some(authorization.generation) {
-            return Err(refused("connection generation changed"));
-        }
         wamn_postgres::bind_transaction_identity(
             &mut tx,
             &authorization.principal,
@@ -279,15 +300,21 @@ impl Authorization {
         )
         .await
         .map_err(|error| failed("callback identity failed", error))?;
+        let current = lock_active_generation(&mut tx, authorization.connection)
+            .await
+            .map_err(|error| failed("connection unavailable", error))?;
+        if current != Some(authorization.generation) {
+            return Err(refused("connection generation changed"));
+        }
         if !store::delete(&mut tx, state)
             .await
             .map_err(|error| failed("authorization state delete failed", error))?
         {
             return Err(refused("unknown or replayed state"));
         }
-        wamn_connection::project_connections::write_token(
+        write_token(
             &mut tx,
-            connection,
+            authorization.connection,
             &encrypted,
             (Duration::from_secs(token.expires_in.unwrap_or(3600)).as_secs_f64()
                 - received.elapsed().as_secs_f64())
@@ -295,19 +322,14 @@ impl Authorization {
         )
         .await
         .map_err(|error| failed("token write failed", error))?;
+        event
+            .append(&mut tx, EventOutcome::Succeeded)
+            .await
+            .map_err(|error| failed("callback event write failed", error))?;
         tx.commit()
             .await
             .map_err(|error| failed("callback commit failed", error))
     }
-}
-
-async fn lock_generation(
-    tx: &mut sqlx::PgConnection,
-    connection: uuid::Uuid,
-) -> Result<Option<i64>, Error> {
-    sqlx::query_scalar("SELECT active_generation FROM platform.connection WHERE id=$1 AND active FOR NO KEY UPDATE")
-        .bind(connection)
-        .fetch_optional(tx).await.map_err(|error| failed("connection unavailable", error))
 }
 
 async fn credential(namespace: &str, context: &Value) -> anyhow::Result<Zeroizing<String>> {

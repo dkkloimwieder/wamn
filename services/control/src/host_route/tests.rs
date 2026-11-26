@@ -736,3 +736,246 @@ async fn control_delivery(
         issuer: ISSUER.into(),
     }))
 }
+
+#[tokio::test]
+#[ignore = "requires: docker, bin:helm"]
+async fn oauth_refresh_records_attempts_and_serializes_hosts() -> anyhow::Result<()> {
+    use wamn_connection::{
+        connection_credentials::ConnectionCredentials,
+        connection_facts::ConnectionFacts,
+        connection_memory::ConnectionMemory,
+        oauth_token::{self, Fetched, Token},
+    };
+    use wamn_identity_protocol::AuthorityClass;
+    use wamn_postgres::{ClassCredentials, ProjectConfig, StaticCredentialProvider, WamnPostgres};
+
+    fn request(
+        facts: &ConnectionFacts,
+        principal: PrincipalId,
+        connection: uuid::Uuid,
+        generation: i64,
+    ) -> oauth_token::Request<'_> {
+        oauth_token::Request {
+            reader: facts.reader(),
+            principal,
+            project: facts.project(),
+            env: facts.env(),
+            connection,
+            generation,
+            authorization_code: false,
+            rejected: None,
+        }
+    }
+
+    let fixture = wamn_test_infrastructure::database::project().await?;
+    let mut admin = fixture.admin().await?;
+    let mut tx =
+        wamn_postgres::provisioning_transaction::provisioning_transaction(&mut admin).await?;
+    let connection: uuid::Uuid = sqlx::query_scalar(
+        "INSERT INTO platform.connection(name,integration_type,auth_type,target_id,active_generation,service_principal_id)
+         VALUES ('billing','http','oauth2_client_credentials',gen_random_uuid(),1,gen_random_uuid())
+         RETURNING id",
+    )
+    .fetch_one(&mut *tx)
+    .await?;
+    sqlx::query(
+        "INSERT INTO platform.connection_generation(connection_id,generation) VALUES ($1,1),($1,2)",
+    )
+    .bind(connection)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+
+    let project: wamn_registry::ProjectId = "billing".parse()?;
+    let env = "dev".parse()?;
+    let org = "acme".parse()?;
+    let key = wamn_registry::name::project_env_key(&org, &project, &env);
+    let url = fixture.login_url(wamn_role::PLATFORM_LOGIN)?;
+    let database = || {
+        let mut provider = StaticCredentialProvider::default();
+        provider.insert(
+            project.clone(),
+            ProjectConfig {
+                credentials: ClassCredentials::default()
+                    .with_class(AuthorityClass::Platform, url.as_str()),
+                guest_pool_max_size: 1,
+                platform_pool_max_size: 1,
+                wait_timeout_ms: 5_000,
+                statement_timeout_ms: 5_000,
+            },
+        );
+        Arc::new(WamnPostgres::with_provider(Arc::new(provider)))
+    };
+    let first_db = database();
+    let second_db = database();
+    let facts = |db| {
+        ConnectionFacts::new(
+            Arc::new(ConnectionMemory::default()),
+            Arc::new(ConnectionCredentials::for_org(&org, None)),
+            db,
+            &key,
+            &project,
+            &env,
+        )
+    };
+    let first = facts(&first_db);
+    let second = facts(&second_db);
+    let principal = PrincipalId::from(uuid::Uuid::new_v4());
+    let first_key = control_session_envelope()?;
+    let second_key = control_session_envelope()?;
+
+    let failed = oauth_token::get(
+        request(&first, principal, connection, 1),
+        &first_key,
+        |_| async {
+            anyhow::bail!("provider refused the fixture request");
+        },
+    )
+    .await;
+    assert!(failed.is_err());
+    let cooling = oauth_token::get(
+        request(&second, principal, connection, 1),
+        &second_key,
+        |_| async {
+            panic!("the second host called the provider during back-off");
+        },
+    )
+    .await;
+    assert!(cooling.is_err());
+
+    let mut tx =
+        wamn_postgres::provisioning_transaction::provisioning_transaction(&mut admin).await?;
+    sqlx::query("UPDATE platform.connection SET active_generation=2 WHERE id=$1")
+        .bind(connection)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+
+    let (entered, waiting) = tokio::sync::oneshot::channel();
+    let first_refresh = oauth_token::get(
+        request(&first, principal, connection, 2),
+        &first_key,
+        |_| async {
+            // Administration can lock the row while the provider work is in flight.
+            sqlx::query("SELECT id FROM platform.connection WHERE id=$1 FOR NO KEY UPDATE NOWAIT")
+                .bind(connection)
+                .fetch_one(&mut admin)
+                .await?;
+            entered.send(()).expect("second host is waiting to start");
+            tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let blocked: bool = sqlx::query_scalar(
+                    "SELECT EXISTS(SELECT FROM pg_locks
+                     WHERE locktype='advisory' AND NOT granted
+                       AND database=(SELECT oid FROM pg_database WHERE datname=current_database()))",
+                )
+                .fetch_one(&mut admin)
+                .await?;
+                if blocked {
+                    break Ok::<_, sqlx::Error>(());
+                }
+                tokio::task::yield_now().await;
+            }
+        }).await??;
+            Ok(Fetched {
+                token: Token {
+                    access_token: Some("fixture-access-token".into()),
+                    refresh_token: None,
+                },
+                expires_in: Some(600),
+            })
+        },
+    );
+    let second_refresh = async {
+        waiting.await.context("first host reached provider work")?;
+        Ok::<_, anyhow::Error>(
+            oauth_token::get(
+                request(&second, principal, connection, 2),
+                &second_key,
+                |_| async {
+                    panic!("the second host missed the first host's token");
+                },
+            )
+            .await?,
+        )
+    };
+    let (first_token, second_token) = tokio::join!(first_refresh, second_refresh);
+    assert_eq!(first_token?.token, second_token?.token);
+    let events: Vec<(i64, String)> = sqlx::query_as(
+        "SELECT generation,outcome FROM platform.connection_event
+         WHERE connection_id=$1 AND event_type='token_refresh' ORDER BY id",
+    )
+    .bind(connection)
+    .fetch_all(&mut admin)
+    .await?;
+    assert_eq!(events, [(1, "failed".into()), (2, "succeeded".into())]);
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires: docker, bin:helm"]
+async fn oauth_callback_records_a_provider_refusal_without_consuming_state() -> anyhow::Result<()> {
+    use crate::control_route::oauth_authorization::Authorization;
+
+    let fixture = wamn_test_infrastructure::database::project().await?;
+    let mut admin = fixture.admin().await?;
+    let mut tx =
+        wamn_postgres::provisioning_transaction::provisioning_transaction(&mut admin).await?;
+    let connection: uuid::Uuid = sqlx::query_scalar(
+        "INSERT INTO platform.connection(name,integration_type,auth_type,target_id,active_generation,service_principal_id)
+         VALUES ('orders','http','oauth2_authorization_code',gen_random_uuid(),1,gen_random_uuid())
+         RETURNING id",
+    )
+    .fetch_one(&mut *tx)
+    .await?;
+    sqlx::query(
+        "INSERT INTO platform.connection_generation(connection_id,generation) VALUES ($1,1)",
+    )
+    .bind(connection)
+    .execute(&mut *tx)
+    .await?;
+    let state = "billing/dev/fixture-state";
+    let principal = uuid::Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO platform.oauth_authorization
+             (state,connection_id,generation,code_verifier,wrapped_key,nonce,key_id,created_by,expires_at)
+         VALUES ($1,$2,1,'fixture','fixture','fixture','fixture',$3,clock_timestamp()+interval '10 minutes')",
+    )
+    .bind(state)
+    .bind(connection)
+    .bind(principal)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+
+    let authorization = Authorization::new("https://control.example.invalid", None)?;
+    let envelope = control_session_envelope()?;
+    let login = fixture.login_url(wamn_role::PLATFORM_LOGIN)?;
+    let mut platform = wamn_postgres::connect(login.as_str()).await?;
+    let reply = authorization
+        .callback(
+            &mut platform,
+            &envelope,
+            "acme--dev",
+            &format!("state={state}&error=access_denied&error_description=provider+details"),
+        )
+        .await;
+    assert!(reply.is_err());
+
+    let row: (String, uuid::Uuid) = sqlx::query_as(
+        "SELECT outcome,principal_id FROM platform.connection_event
+         WHERE connection_id=$1 AND event_type='oauth_callback'",
+    )
+    .bind(connection)
+    .fetch_one(&mut platform)
+    .await?;
+    assert_eq!(row, ("refused".into(), principal));
+    let pending: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT FROM platform.oauth_authorization WHERE state=$1)",
+    )
+    .bind(state)
+    .fetch_one(&mut platform)
+    .await?;
+    assert!(pending);
+    Ok(())
+}

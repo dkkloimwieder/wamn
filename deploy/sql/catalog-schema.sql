@@ -79,6 +79,48 @@ CREATE UNIQUE INDEX connection_resource_per_target
     ON platform.connection (target_id, resource_key)
     WHERE resource_key IS NOT NULL;
 
+CREATE TABLE platform.connection_event_type (
+    code text PRIMARY KEY,
+    label text NOT NULL
+);
+INSERT INTO platform.connection_event_type VALUES
+    ('activate', 'Activate'),
+    ('deactivate', 'Deactivate'),
+    ('credential_change', 'Credential change'),
+    ('oauth_authorize', 'OAuth authorize'),
+    ('oauth_callback', 'OAuth callback'),
+    ('token_refresh', 'OAuth token refresh');
+
+CREATE TABLE platform.connection_event_outcome (
+    code text PRIMARY KEY,
+    label text NOT NULL,
+    success boolean NOT NULL
+);
+INSERT INTO platform.connection_event_outcome VALUES
+    ('succeeded', 'Succeeded', true),
+    ('refused', 'Refused', false),
+    ('failed', 'Failed', false),
+    ('superseded', 'Connection generation changed', false);
+
+CREATE TABLE platform.connection_event (
+    id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    connection_id uuid NOT NULL REFERENCES platform.connection (id) ON DELETE RESTRICT,
+    generation bigint NOT NULL,
+    principal_id uuid NOT NULL,
+    occurred_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    event_type text NOT NULL REFERENCES platform.connection_event_type (code),
+    outcome text NOT NULL REFERENCES platform.connection_event_outcome (code)
+);
+CREATE INDEX connection_event_timeline
+    ON platform.connection_event (connection_id, occurred_at DESC, id DESC);
+CREATE INDEX connection_event_latest_refresh
+    ON platform.connection_event (connection_id, occurred_at DESC, id DESC) INCLUDE (generation)
+    WHERE event_type = 'token_refresh';
+
+CREATE TRIGGER connection_event_immutable
+    BEFORE UPDATE OR DELETE OR TRUNCATE ON platform.connection_event
+    FOR EACH STATEMENT EXECUTE FUNCTION catalog.reject_immutable_row_change();
+
 CREATE TABLE platform.credential (
     id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     connection_id uuid NOT NULL REFERENCES platform.connection (id) ON DELETE RESTRICT,
@@ -96,13 +138,12 @@ CREATE TABLE platform.oauth_token (                    -- host-only; every OAuth
     wrapped_key    bytea NOT NULL,                       -- the row's AES-256 data key, wrapped by the envelope key
     key_id         text NOT NULL,                        -- the envelope key: a Cloud KMS key version (local: key file id)
     expires_at     timestamptz NOT NULL,
-    refresh_status text NOT NULL DEFAULT 'ok' CHECK (refresh_status IN ('ok', 'failing')),
-    updated_at     timestamptz NOT NULL                  -- fetch and refresh lock the connection row, not this one
+    updated_at     timestamptz NOT NULL
 );
 -- authorization code: no row = not authorized; calls refused until connection.authorize completes
 -- client credentials (secret or JWT): no row = no token yet; the first call fetches one
--- every fetch and refresh: FOR NO KEY UPDATE on the platform.connection row (it always exists), re-read this row,
--- call the provider only if the token is missing or due; connection administration locks the same row
+-- Callback and refresh hold a session advisory lock per connection during provider I/O.
+-- Short SQL transactions check the generation before reading or publishing a token.
 --   client credentials: delete this row when the credential or parameters.auth changes
 --   authorization code: delete this row when parameters.auth changes (authorize again);
 --                       set expires_at = '-infinity' when only the secret changes (the refresh token stays)
@@ -197,6 +238,11 @@ CREATE TRIGGER external_system_name_immutable BEFORE UPDATE OF name ON platform.
 GRANT USAGE ON SCHEMA platform TO wamn_app;
 GRANT SELECT ON platform.external_system, platform.connection, platform.connection_generation TO wamn_app;
 REVOKE ALL ON platform.credential, platform.oauth_token, platform.oauth_authorization FROM wamn_app, wamn_query;
+REVOKE ALL ON platform.connection_event, platform.connection_event_type,
+    platform.connection_event_outcome FROM wamn_app, wamn_query;
+GRANT SELECT ON platform.connection_event, platform.connection_event_type,
+    platform.connection_event_outcome TO wamn_platform;
+GRANT INSERT ON platform.connection_event TO wamn_platform;
 GRANT SELECT, INSERT, UPDATE, DELETE ON platform.external_system,
     platform.oauth_token, platform.oauth_authorization TO wamn_platform;
 GRANT SELECT, INSERT, UPDATE ON platform.connection TO wamn_platform;
