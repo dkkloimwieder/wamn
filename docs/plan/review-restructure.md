@@ -33,7 +33,7 @@ This document is the work list for wamn, from the crate cleanup to the workflow 
 | 2 | Deletion and API contracts: R2, R3, R4, R5, C2. | 1 | Yes: R2 and R3 touch host crates (`wamn-routes` and `wamn-package` are host crates). |
 | 3 | State and lifecycle: C1, L1, L2, L3, L4, L5, L6, L7, L8, L9. | 2. L2 uses the shared Helm helper of R4. | Yes, for L6, L7, L8 and L9, in one rebuild at the end of the epic. |
 | Rename | R6. | 3 merged. Runs before 4. | Yes. |
-| 4 | Org boundary on kind: T3, T9, T12, and the kind pin and refusal tests of T13. | 1. Can run beside 2 and 3. | Yes: the non-root `USER` in the `Dockerfile`. |
+| 4 | Org boundary on kind: T3, T9, T12, and the kind pin and refusal tests of T13. | 1. Can run beside 2 and 3. | Yes: the host's 503 on a failed signing-key fetch (`wamn-authentication`) and the Job security context (`wamn-kubernetes`). The stock host pod already runs as UID 65532, so no `USER` line is added (owner ruling 2026-11-26). |
 | 5 | Environment boundary: T1, T2, T4, T5, T10, and the T16 items on connections and locking. | 4 | Yes: the host's `--environment` argument. |
 | 6 | Public addresses: T11, and client base paths. | 5 | No (I). |
 | 7 | Cloud and production: T6, T7, T8, the GKE cluster of T13, and the rest of T16. | A GKE cluster, created only with explicit authorization. | Mostly no (I). |
@@ -428,13 +428,16 @@ Sound today (F): orgs never share a namespace and `allowSharedHosts: false` is s
 ### T3. Pod security
 
 - Every tenant namespace, `<org>` and `<org>--<env>`, and `platform` and `hosts`, enforce the `restricted` level, with `warn` at the same level so a preflight dry run shows violations.
-- Nodes are shared by default. A node pool is a per-org setting, used when an org needs it.
-- The host group and the runtime operator pass with the stock chart's hardened defaults.
+- Nodes are shared by default. A node pool is a per-org setting, built when an org first needs it (owner ruling 2026-11-26).
+- The host group and the runtime operator pass with the stock chart's hardened defaults. The stock host pod runs as UID 65532 with `runAsNonRoot` (`runtime-operator/values.yaml:399`) (F).
+- Pod specs set `runAsUser`. No `USER` line is added to the `Dockerfile` (owner ruling 2026-11-26).
 - Needs one security context block (non-root user, `fsGroup`, seccomp, no privilege escalation, all capabilities dropped): control, the CDC reader, the Job manifest in `services/control/src/control_route/operations.rs::manifest`, identity, the web proxy, the platform Jobs, NATS and its init container, and the OpenTelemetry collector. wamn runs a separate NATS chart and sets no security context for it (F).
 - Control moves off port 80 to a port above 1024 (I).
 - Before enforcing on `platform`, check the whole rendered platform chart.
-- Not confirmed: that every CloudNativePG pod passes, including init pods and the backup sidecar. The kind run shows it.
-- The namespaces of cert-manager and the CloudNativePG operator are owned by their own charts and are not covered.
+- Not confirmed: that every CloudNativePG pod passes, including init pods and the backup sidecar. The kind run shows it for the instance, init, join and Pooler pods, with a two-instance project. Backups stay off on kind (T7), so the backup sidecar is confirmed on GKE in Epic 7 (owner ruling 2026-11-26).
+- The wamn infrastructure chart creates the `cert-manager` namespace (`deploy/charts/infrastructure/templates/namespaces.yaml`) (F). It is not covered.
+- The CloudNativePG controller and its webhook run in `platform` (`deploy/charts/infrastructure/values.yaml`) (F). It stays there under `restricted`, and its rendered pod already passes (owner ruling 2026-11-26).
+- The journey capture `hostPath` export in `platform` goes. Journeys collect pod logs instead (owner ruling 2026-11-26).
 
 ### T4. Job accounts and the admission policy
 
@@ -500,10 +503,12 @@ Sound today (F): orgs never share a namespace and `allowSharedHosts: false` is s
 ### T9. Certificates and the CSRF check
 
 - cert-manager makes the identity CA and the system database CA: a self-signed Issuer, an `isCA` Certificate and a CA Issuer, as the chart already does for the NATS CA. The `genCA` and `lookup` blocks go. No chart generates a key.
-- trust-manager distributes the CA certificates. Its source namespace is `platform` (I).
+- trust-manager distributes the CA certificates. Its source namespace is `platform` (I). It is the pinned stock trust-manager chart in the infrastructure chart. The NATS CA moves with the identity and system database roots, so `identityCa`, `postgresCa` and `natsCa` leave the org values (owner ruling 2026-11-26).
 - The CSRF key, its cookie `__Host-wamn-web-csrf`, its header `x-wamn-csrf`, `platform/templates/edge-csrf-secret.yaml`, `web/runtime/src/csrf.ts` and the HMAC code in `services/web/src/browser_session.rs` go.
-- The web proxy checks `Sec-Fetch-Site` on every unsafe request with a session cookie: `same-origin` and `none` pass, `same-site` and `cross-site` are refused. Without that header it compares `Origin` with `Host`. A request with neither header is refused. Callers that are not browsers use bearer tokens, not the session cookie, so the refusal does not reach them.
-- These rebuild the web proxy image and the web runtime, not the host image.
+- The web proxy checks `Sec-Fetch-Site` on every unsafe request with a session cookie: `same-origin` and `none` pass, `same-site` and `cross-site` are refused. Without that header it compares `Origin` with `Host`. A request with neither header is refused (owner ruling 2026-11-26, Part 1 amended). Callers that are not browsers use bearer tokens, not the session cookie, so the refusal does not reach them.
+- The browser runtime uses the readable CSRF cookie to detect a session change (`web/runtime/src/transport.ts`) (F). In cookie mode the runtime does not reuse reads (owner ruling 2026-11-26).
+- The `ingress` guest reads `x-wamn-csrf` for its cache decision (`apps/guests/ingress/src/lib.rs`) (F). That branch goes.
+- These rebuild the web proxy image, the web runtime and the bundles that include it, and the `ingress` guest that `ctl` and `control` embed. The CA move changes `wamn-platform-install`, which the CLI, control and identity link (F). They do not rebuild the host image.
 
 ### T10. NATS
 
@@ -535,13 +540,16 @@ Sound today (F): orgs never share a namespace and `allowSharedHosts: false` is s
 ### T12. Network policies
 
 - `platform` gets one default-deny ingress policy, and one allow per service naming its real callers: NATS, the system database, the Poolers, the runtime operator and the trace collector. The allow list comes from the tenant egress rules plus the CloudNativePG operator reaching the system database pods (I). It is not written.
-- `hosts` gets one egress policy for the web proxy: host group Services, identity, the API server and DNS only.
+- `hosts` gets one egress policy for the web proxy: host group Services, org control, identity, the API server and DNS only. Control is a real callee: route ConfigMaps point the proxy at its Service (F). This policy is enforced on kind only in Epic 4. GCP adds the web bucket path in Epic 7 (owner ruling 2026-11-26).
+- The stock runtime-operator NetworkPolicy allows any source (`runtime-operator/templates/operator/networkpolicy.yaml`) (F). It is turned off with the exposed value `networkPolicy.enabled`.
 
 ### T13. Cluster versions and NetworkPolicy enforcement
 
 - Not pinned today (F, at eec9f3bf4): mise.toml has no kind entry, deploy/kind/kind-config.yaml sets no node image, and docs/operations/deployment.md names kind 0.32. Pin kind 0.33.0 with a checksum in mise.toml, set kindest/node:v1.36.4 by digest in deploy/kind/kind-config.yaml, and name kind 0.33 in docs/operations/deployment.md.
 - Kubernetes stays on 1.36. Moving to 1.37 needs Helm 4.3, cert-manager 1.22 and CloudNativePG 1.31.
-- The kind smoke run gets a refusal test: from a pod in one org, connect to a host and to a Postgres pod in another org. Both must fail.
+- The kind smoke run gets a refusal test: from a pod in one org, connect to a host and to a Postgres pod in another org. Both must fail. The existing `isolation::envs_in_two_orgs_are_isolated` already does this with positive controls (F). The smoke run selects it, and no second test is written.
+- A kind case checks section 5 goal 1: no service account of one org can act in another org's namespaces. It derives the accounts from the cluster (owner ruling 2026-11-26).
+- Root reads the kind 0.33.0 checksum and the node image digest from the upstream release pages and cites them in the commit (owner ruling 2026-11-26). Acceptance uses a fresh pinned cluster.
 - The next GKE cluster enforces NetworkPolicy from creation. Dataplane V2 can be chosen only at creation. The create command goes into `docs/operations/gcp.md`.
 
 ### T14. Transaction identity inside a project database
@@ -575,7 +583,8 @@ From the restructure plan's open items (`docs/plan/wamn-restructure.md`) (F for 
 - CDC session failure classes (Epic 7). `services/cdc-reader/src/replication.rs::classify` searches the error text for "invalidat" before it reads the error type (F). A configuration error that names a column such as `invalidated_at`, for example a value that is not UTF-8, is then treated as a capture gap, not as a fatal error. Match the typed errors first.
 - Unread project schema report (Epic 7). `crates/environment/src/environment_sql_effects.rs::read_project` runs `platform_migrations::observe_project` on every project read and stores it in `analyse::ProjectState::schema_report`, which no code reads (F). Delete the field and its query.
 - Lost connections on kind (Epic 7, wamn-c1zre, owner ruling 2026-11-25). `application_routes_kind` failed in 4 of 9 runs on the Epic 3 bundle: two 503 answers (host pool checkout timeout) and two 401 answers. A probe in the host pod showed TCP timeouts to the project database on port 5432 while DNS, the Service endpoints, the primary's Ready state and the network policies allowed the connection (F). Every one of 16 probe timeouts fell inside a burst of `"Could not receive message" error="netlink receive: no such file or directory"` from kindnet's network policy engine (kindest/kindnetd:v20260528-9350166c, kind v0.32.0) during its nftables syncs (F). The cause is kind's network (I). The 503 is the correct answer to a lost database connection, so the journey gets no retry. Failures occurred at 2 to 6 and at 6 to 10 orgs, so a full cluster is not needed (F). After R9, every netfilter netlink socket in `/proc/net/netlink` and queue 101 in `/proc/net/netfilter/nfnetlink_queue` showed 0 drops and 0 user drops, on a kindnet pod with 0 restarts (F). The kindnet errors are ENOENT ("no such file or directory"), not ENOBUFS, so larger netlink buffers do not help (F). The likely cause is a verdict sent for a packet that is no longer queued, similar to netfilter bug 1766 (kube-network-policies issue 12, kind issue 3713) (I). The fix is outside wamn: a different network policy engine on kind for journeys (for example Cilium or Calico), or a kernel with a fix.
-- A failed signing-key fetch answers 401 (Epic 4). `crates/authentication/src/route_authentication.rs::PlatformRouteAuthenticator::authenticate_session` maps every `verify(token)` error to `unauthorized()` with no log line (F, on main since be8564fe6a). A new host fetches the JWKS on its first session request (`crates/authentication/src/access_token.rs::AccessTokenVerifier::verify`), so a lost fetch answers 401 (I, the probable cause of the two 401 answers above). A failure to fetch the key answers 503, logs a warning and writes an `authentication_event` row. An invalid token stays 401. No `authentication_event` table exists today (F). The fix forces a host image rebuild.
+- A failed signing-key fetch answers 401 (Epic 4). `crates/authentication/src/route_authentication.rs::PlatformRouteAuthenticator::authenticate_session` maps every `verify(token)` error to `unauthorized()` with no log line (F, on main since be8564fe6a). A new host fetches the JWKS on its first session request (`crates/authentication/src/access_token.rs::AccessTokenVerifier::verify`), so a lost fetch answers 401 (I, the probable cause of the two 401 answers above). On a host session route, a failure to fetch the key answers 503 `authentication-unavailable` and logs a warning. The refresh limiter also answers 503. The host writes no `authentication_event` row. An invalid token stays 401 (owner ruling 2026-11-26). The fix forces a host image rebuild.
+- Authentication events (Epic 4, owner ruling 2026-11-26). `authentication_event` is a table in the system database, and identity writes it. No such table exists today (F). The rows are immutable: a trigger refuses every UPDATE and DELETE. Retention is full, with no pruning. `event_type` and `outcome` are foreign keys to lookup tables (`code text PRIMARY KEY`, `label text NOT NULL`). The outcome table also has `success boolean`. A row stores the IP address and the attempted email, also for an unknown user. The host does not write it. The table loads through the bootstrap SQL only. Its write points, codes, columns, indexes and grants are in [the addendum](epic-4-scoping/authentication-event.md).
 - The host trace sampler (Epic 7, durable traces). The host samples 10% of traces through the constant `TELEMETRY_VARIABLES` in `crates/environment/src/application_chart/plan.rs` (F), which control writes into each host's chart values, so no values file changes it. The sampler becomes a platform setting.
 - Hosts send no traces or logs to the kind collector (Epic 7, durable traces). During runs R6 to R9 of wamn-c1zre, the kind collector received only metrics, and its file exporter wrote nothing (F). Find out why.
 - wamn-owned abbreviations (epic not set, owner ruling 2026-11-25). R6 keeps `pat`, `tx_identity`, `auth_type`, `meta`, `ops`, `ref`, `max_`, `cdc` and the `e-` prefix. A later pass decides whether each one becomes a full word.
@@ -815,8 +824,8 @@ Run as `cargo test -p wamn-journey-tests --test <target> <name> -- --ignored --e
 - L3: one copy pass on real databases.
 - L4: `write::release_values` with two prefixes.
 - R3: literal native HTTP requests, the live client tests on a current test setup, and labels in the published OpenAPI.
-- The kind smoke run: the NetworkPolicy refusal test (T13), and the admission refusal test, in which a project account creates a workload with a `secretFrom` entry and is refused (T4).
-- One kind run with `restricted` enforced, to confirm the CloudNativePG pods (T3).
+- The kind smoke run: the NetworkPolicy refusal test (T13, the existing `isolation::envs_in_two_orgs_are_isolated`), the service account check of goal 1, a server-side dry run of a privileged pod that is refused (goal 2), and the admission refusal test, in which a project account creates a workload with a `secretFrom` entry and is refused (T4).
+- One kind run with `restricted` enforced, to confirm the CloudNativePG pods (T3). It uses a two-instance project, so a replica join runs. The backup sidecar is confirmed on GKE (T7).
 - On GKE, when a cluster exists: one backup and restore through workload identity (T7), and a check that pods other than the CloudNativePG pods cannot use the backup grant. Cloud resources and their grants are made by the provisioning command, never by a controller in the cluster.
 - Two runtime operators in one cluster, when an org first needs its own (T15).
 
