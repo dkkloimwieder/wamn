@@ -9,7 +9,6 @@
 import { en } from "zod/locales";
 import * as z from "zod/mini";
 
-import { CSRF_HEADER, readCsrf } from "./csrf.js";
 import { encodeReadQuery } from "./readQuery.js";
 import { createReadStore, writeTouches, type ReadReply } from "./readCache.js";
 import type {
@@ -44,11 +43,8 @@ export interface HttpReply {
 /**
  * What one application supplies to reach its own deployment.
  *
- * A request carries its session one way. A bearer caller holds the token and
- * the transport sends it in the authorization header. A cookie caller holds
- * nothing: the browser sends the session cookie, and the transport copies the
- * CSRF token from its readable cookie into a header. The two options cannot
- * be given together.
+ * A bearer caller supplies a token for the authorization header. In cookie
+ * mode the browser sends the session cookie.
  */
 export type TransportOptions = BearerOptions | CookieOptions;
 
@@ -72,8 +68,6 @@ export interface CookieOptions extends CommonOptions {
   /** The browser carries the session in its cookie. */
   readonly cookie: true;
   readonly credential?: undefined;
-  /** The cookie string to read the CSRF token from. `document.cookie` is the default. */
-  readonly cookies?: () => string;
 }
 
 // zod/mini carries no messages of its own. The generated forms show a refused
@@ -453,9 +447,8 @@ function classifyPartial(
  */
 export function createTransport(options: TransportOptions): Transport & Required<Pick<Transport, "probe">> {
   const call = options.fetch ?? globalThis.fetch;
-  // The store belongs to this transport and to one session, so one caller's
-  // reads never answer another's.
-  const reads = createReadStore();
+  // The browser can replace its session cookie between calls on this transport.
+  const reads = options.cookie === true ? undefined : createReadStore();
   const writeListeners = new Set<(writes: readonly string[] | null) => void>();
   const send = async (target: string, init: RequestInit): Promise<ReadReply> => {
     const response = await call(`${options.baseUrl}${target}`, init);
@@ -465,23 +458,6 @@ export function createTransport(options: TransportOptions): Transport & Required
       cacheControl: response.headers.get("cache-control"),
       etag: response.headers.get("etag"),
     };
-  };
-  /** Put the session or the credential on one request. */
-  const credentials = (headers: { [name: string]: string }, init: RequestInit, read: boolean) => {
-    if (options.cookie === true) {
-      // The CSRF cookie is read on every request, because a renewal replaces
-      // it. Without it the web proxy refuses a signed-in write. A read
-      // needs no CSRF header, and a request with one is never cached.
-      // A new session or a renewal sets a new cookie, and empties the store.
-      const csrf = readCsrf(options.cookies?.());
-      reads.belongTo(csrf);
-      if (csrf !== null && !read) {
-        headers[CSRF_HEADER] = csrf;
-      }
-      init.credentials = "include";
-    } else if (options.credential !== undefined) {
-      headers["authorization"] = `Bearer ${options.credential}`;
-    }
   };
   /** Send one request, and return its reply or the uncertainty of a failed send. */
   const exchange = async (
@@ -505,10 +481,15 @@ export function createTransport(options: TransportOptions): Transport & Required
       headers["content-type"] = "application/json";
       init.body = JSON.stringify(request.items);
     }
-    credentials(headers, init, read);
+    if (options.cookie === true) {
+      init.credentials = "include";
+      if (read) init.cache = "no-store";
+    } else if (options.credential !== undefined) {
+      headers["authorization"] = `Bearer ${options.credential}`;
+    }
     let reply: HttpReply;
     try {
-      if (read) {
+      if (read && reads !== undefined) {
         // A read the store holds sends the store's tag with cache
         // "no-store", so its 304 reaches the store. A read the store does
         // not hold, as after a reload, uses "no-cache": the browser
@@ -536,7 +517,7 @@ export function createTransport(options: TransportOptions): Transport & Required
       // returns, so each such read revalidates next, and each listener
       // decides whether to read what its page shows again.
       if (!read) {
-        reads.invalidate(request.contract.writes);
+        reads?.invalidate(request.contract.writes);
         for (const listener of [...writeListeners]) {
           listener(request.contract.writes);
         }

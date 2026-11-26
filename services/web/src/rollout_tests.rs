@@ -90,7 +90,6 @@ async fn host_replacement_routes_the_next_post_to_the_serving_host() {
         tasks.spawn(async move {
             let proxy = Proxy {
                 client: http_transport::client(Connector(native_connector().unwrap()), |_| {}),
-                csrf_key: ring::hmac::Key::new(ring::hmac::HMAC_SHA256, &[0; 32]),
             };
             let (stream, _) = listener.accept().await.unwrap();
             let service = service_fn(|request| async {

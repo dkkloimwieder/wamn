@@ -48,7 +48,7 @@ wamn-edge --config <path> samples resolve <sample_key> <basis>
 ## Serve the cluster web edge
 
 The `edge-web` image runs `wamn-web`, a separate service from the device binary.
-Its JSON settings name the web bucket, identity HTTPS issuer and `trusted_proxy_hops`. The service listens on port 8080 and reads the identity CA and CSRF key from mounted files.
+Its JSON settings name the web bucket, identity HTTPS issuer and `trusted_proxy_hops`. The service listens on port 8080 and reads the identity CA from a mounted file.
 Count trusted proxies from the direct peer toward the client. Zero uses the direct peer.
 Direct requests without a forwarded header also use the peer, including Kubernetes port forwards.
 The installer selects two for GCP: its load balancer appends the client and its own address to `X-Forwarded-For`.

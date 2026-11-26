@@ -52,7 +52,7 @@ pub struct HttpResponse {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReadCache {
     /// The Cache-Control value that the host derived for the route. None is
-    /// `no-store`, as for a request that carries the CSRF header.
+    /// `no-store`.
     pub cache_control: Option<String>,
     /// The ETag that the host derived for the read.
     pub etag: Option<String>,
@@ -260,20 +260,13 @@ async fn try_handle(
             let data = refusal.pointer.map(|pointer| json!({ "pointer": pointer }));
             detailed_error_response(400, "schema-invalid", None, data)
         })?;
-    // A request that carries the CSRF header is not cached
-    // (docs/architecture/execution.md), and neither is any response but a success.
-    let cache_control = matched
-        .definition
-        .cache_control
-        .take()
-        .filter(|_| header_values(&head.headers, CSRF_HEADER).is_empty())
-        .map(|value| {
-            if is_feed_read(&mapped) {
-                feed_cache_control(&value)
-            } else {
-                value
-            }
-        });
+    let cache_control = matched.definition.cache_control.take().map(|value| {
+        if is_feed_read(&mapped) {
+            feed_cache_control(&value)
+        } else {
+            value
+        }
+    });
     let trace = trace_context(&head.headers);
     let if_none_match = (method == "GET")
         .then(|| header_values(&head.headers, "if-none-match").join(", "))
@@ -314,9 +307,6 @@ fn feed_cache_control(list: &str) -> String {
     let target = list.split(',').next().unwrap_or(list).trim();
     format!("{target}, no-cache")
 }
-
-/// The request header that repeats the readable CSRF cookie.
-const CSRF_HEADER: &str = "x-wamn-csrf";
 
 /// The longest request target a read accepts, path and query together.
 const READ_TARGET_BYTES: usize = 8 * 1024;

@@ -1,14 +1,12 @@
 /**
  * The platform login, carried by cookie.
  *
- * The web proxy sets the session, CSRF and renewal cookies at sign-in.
+ * The web proxy sets the session and renewal cookies at sign-in.
  * The body holds the user id and two expiry times. The page keeps no token
  * in browser storage. The keeper renews on load and again before expiry.
  */
 
 import * as z from "zod/mini";
-
-import { CSRF_HEADER, readCsrf } from "./csrf.js";
 
 /** The user id and expiry times of the session token and login, in Unix seconds. */
 export interface SessionTimes {
@@ -34,15 +32,10 @@ const TIMES = z.looseObject({
 
 async function post(path: string, body: unknown, options: SessionOptions): Promise<Response> {
   const call = options.fetch ?? globalThis.fetch;
-  const headers: Record<string, string> = { "content-type": "application/json" };
-  if (path === "/password/renew" || path === "/password/logout") {
-    const csrf = readCsrf();
-    if (csrf !== null) headers[CSRF_HEADER] = csrf;
-  }
   return call(`${options.baseUrl ?? ""}${path}`, {
     method: "POST",
     credentials: "include",
-    headers,
+    headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
   });
 }

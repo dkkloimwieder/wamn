@@ -33,7 +33,6 @@ use wamn_registry::{name::valid_resource_segment, platform_domain::PlatformDomai
 
 const LISTEN_PORT: u16 = 8080;
 const IDENTITY_CA: &str = "/etc/wamn-edge/identity-ca/ca.crt";
-const CSRF_KEY_FILE: &str = "/etc/wamn-edge/csrf/key";
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(1);
 const CONNECT_RETRIES: usize = 2;
 
@@ -234,7 +233,6 @@ type ProxyBody = UnsyncBoxBody<Bytes, hyper::Error>;
 
 struct Proxy {
     client: Client<Connector, ProxyBody>,
-    csrf_key: ring::hmac::Key,
 }
 
 fn boxed(response: Response<Full<Bytes>>) -> Response<ProxyBody> {
@@ -340,17 +338,11 @@ async fn respond(
                     .trim()
                     .parse::<std::net::IpAddr>()?
             };
-        let mut request = match browser_session::forward(
-            request,
-            &proxy.csrf_key,
-            password_route,
-            password_request,
-        )
-        .await
-        {
-            Ok(request) => request,
-            Err(status) => return Ok(boxed(empty(status))),
-        };
+        let mut request =
+            match browser_session::forward(request, password_route, password_request).await {
+                Ok(request) => request,
+                Err(status) => return Ok(boxed(empty(status))),
+            };
         request
             .headers_mut()
             .insert("x-forwarded-for", address.to_string().parse()?);
@@ -374,7 +366,7 @@ async fn respond(
         let mut response = proxy.client.request(request).await?;
         remove_hop_headers(response.headers_mut());
         if password_request {
-            return browser_session::respond(password_route, response, &proxy.csrf_key).await;
+            return browser_session::respond(password_route, response).await;
         }
         if api_request
             && !native_api_request
@@ -413,7 +405,7 @@ fn response_headers(headers: &mut hyper::HeaderMap) {
     }
 }
 
-fn proxy(ca: &[u8], csrf_key: &[u8; 32]) -> anyhow::Result<Proxy> {
+fn proxy(ca: &[u8]) -> anyhow::Result<Proxy> {
     let connector = HttpConnector::new();
     let mut roots = rustls::RootCertStore::empty();
     for cert in rustls::pki_types::CertificateDer::pem_slice_iter(ca) {
@@ -432,7 +424,6 @@ fn proxy(ca: &[u8], csrf_key: &[u8; 32]) -> anyhow::Result<Proxy> {
         client: http_transport::client(Connector(connector), |builder| {
             builder.retry_canceled_requests(false);
         }),
-        csrf_key: ring::hmac::Key::new(ring::hmac::HMAC_SHA256, csrf_key),
     })
 }
 
@@ -482,12 +473,7 @@ pub async fn serve(path: &Path) -> anyhow::Result<()> {
         config.identity_issuer.starts_with("https://"),
         "identity must use HTTPS"
     );
-    let csrf_key = std::fs::read(CSRF_KEY_FILE).context("read web CSRF key file")?;
-    let csrf_key = csrf_key
-        .as_slice()
-        .try_into()
-        .context("web CSRF key must contain 32 bytes")?;
-    let proxy = Arc::new(proxy(&std::fs::read(IDENTITY_CA)?, csrf_key)?);
+    let proxy = Arc::new(proxy(&std::fs::read(IDENTITY_CA)?)?);
     let listener = TcpListener::bind(SocketAddr::from(([0, 0, 0, 0], LISTEN_PORT))).await?;
     let identity: Arc<str> = config.identity_issuer.into();
     let trusted_proxy_hops = config.trusted_proxy_hops;
@@ -664,7 +650,6 @@ mod tests {
         let connector = native_connector().unwrap();
         let proxy = Proxy {
             client: http_transport::client(Connector(connector.clone()), |_| {}),
-            csrf_key: ring::hmac::Key::new(ring::hmac::HMAC_SHA256, &[0; 32]),
         };
         let mut config = kube::Config::new(endpoint.parse().unwrap());
         config.default_namespace = "hosts".into();

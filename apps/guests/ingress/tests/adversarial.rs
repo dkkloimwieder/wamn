@@ -562,7 +562,7 @@ fn a_feed_read_is_revalidated_every_time_under_the_target_of_its_list() {
 }
 
 #[test]
-fn only_a_successful_read_without_the_csrf_header_carries_its_cache_control() {
+fn only_a_successful_read_carries_its_cache_control() {
     const READ: &str = "private, max-age=10, stale-while-revalidate=60";
     let mut read = route();
     read.method = "GET".to_string();
@@ -572,20 +572,18 @@ fn only_a_successful_read_without_the_csrf_header_carries_its_cache_control() {
     get.method = "get".to_string();
     get.target = "/receipts/list".to_string();
 
+    get.headers.push(Header {
+        name: "X-Wamn-Csrf".to_string(),
+        value: "unused".to_string(),
+    });
+
     let mut backend = FakeBackend::new(read.clone());
     let output = request(&mut backend, &get, b"");
     assert_eq!(output.status, 200);
-    assert!(output.read.as_ref().unwrap().cache_control.is_some());
-
-    let mut with_csrf = get.clone();
-    with_csrf.headers.push(Header {
-        name: "X-Wamn-Csrf".to_string(),
-        value: "token".to_string(),
-    });
-    let mut backend = FakeBackend::new(read.clone());
-    let output = request(&mut backend, &with_csrf, b"");
-    assert_eq!(output.status, 200);
-    assert!(output.read.as_ref().unwrap().cache_control.is_none());
+    assert_eq!(
+        output.read.as_ref().unwrap().cache_control.as_deref(),
+        Some(READ)
+    );
 
     let mut backend = FakeBackend::new(read.clone());
     backend.response = response(503, "");
@@ -601,10 +599,6 @@ fn only_a_successful_read_without_the_csrf_header_carries_its_cache_control() {
     let output = request(&mut backend, &get, b"");
     assert_eq!(output.status, 401);
     assert!(output.read.is_none());
-
-    let mut backend = FakeBackend::new(route());
-    let output = request(&mut backend, &head(), br#"{"amount":1}"#);
-    assert_eq!(output.status, 200);
 }
 
 #[test]

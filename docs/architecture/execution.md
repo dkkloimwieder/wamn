@@ -61,7 +61,7 @@ A `get` sends `no-cache`, and a `query` or `projection` sends `max-age=10, stale
 A `query` with its feed part (the [change feed](#change-feed)) sends `no-cache`.
 Each is `private`, unless the auth policy of the route is `none`, and then it is `public`.
 A successful read also sends `Vary: Authorization, Cookie`.
-Every other response sends `Cache-Control: no-store`: a write, any status other than 200, and any request that carries `x-wamn-csrf`.
+Writes and failed reads send `Cache-Control: no-store`.
 [`read_cache_control`](../../crates/engine/src/ingress.rs) owns the values.
 
 ## Signed file results
@@ -87,7 +87,7 @@ The guest interface stays unchanged.
 ## Host-run routes
 
 A host-run route is a route that the host answers with a fixed handler instead of a component.
-It keeps the route table, the credentials, the CSRF treatment and the operation grant of any route.
+It follows the same rules for routing, credentials, browser request checks and operation grants.
 The fixed route sets live in [`wamn-routes`](../../crates/routes/src/host_route.rs) and are built with the platform.
 A serving manifest names the sets it serves in `host-routes`, and it leaves the member out when the list is empty.
 The native route table declares its package id `wamn_control`, its version and its route prefixes in [`host_route.rs`](../../crates/routes/src/host_route.rs).
@@ -690,7 +690,7 @@ The edge refuses every protected route until its identity design is defined.
 PAT and signature policies on the application host retain their existing behavior.
 
 Identity returns tokens as JSON to `wamn-web`, which sets the browser cookies and returns only the principal ID and expiry times.
-The web proxy checks CSRF on unsafe cookie-authenticated requests and forwards the session as a bearer token.
+The web proxy checks the source of unsafe cookie-authenticated requests before forwarding the session as a bearer token.
 Host and control admit sessions only through `Authorization: Bearer`.
 The browser stores access and renewal tokens in HttpOnly cookies.
 The shared browser runtime signs in directly to the deployment's org and renews on load and before expiry.
@@ -1004,16 +1004,18 @@ Previously issued access tokens expire on their own deadline. Logout prevents re
 
 At the web proxy, login and renewal reply with `sub`, `expires_at`, and `login_expires_at`.
 `__Host-wamn-session` and `__Host-wamn-renewal` hold the access and renewal tokens and use `HttpOnly`.
-`__Host-wamn-web-csrf` is readable by the page. It contains a random nonce and a signature.
-Web computes the signature with HMAC-SHA256 over the access token's `jti` and the nonce.
-All three cookies use `Path=/`, `Secure`, and `SameSite=Strict` and expire at the login deadline.
+Both cookies use `Path=/`, `Secure`, and `SameSite=Strict` and expire at the login deadline.
 API admission still enforces the access token's own expiry.
-Unsafe requests authenticated by cookie, including renewal and logout, must send the CSRF cookie value in `x-wamn-csrf` and pass the HMAC check.
-Login, enrollment, recovery, and reset require a same-origin HTTPS `Origin` header.
+
+For unsafe requests with a session cookie, including renewal and logout, web accepts one `Sec-Fetch-Site` value of `same-origin` or `none`.
+Web refuses any other or repeated value with HTTP 403.
+If the header is absent, web requires an HTTPS `Origin` that matches the incoming `Host`.
+If both headers are absent, web refuses the request.
+Login, enrollment, recovery, and reset always require a same-origin HTTPS `Origin` header.
 
 Web takes the renewal token from its cookie for renewal and logout and sends it to identity in JSON.
-Logout clears all three cookies with `Max-Age=0`. Identity's `/password/logout-all` takes a renewal token in JSON.
-Before forwarding, web removes all three cookies and the CSRF header.
+Logout clears both cookies with `Max-Age=0`. Identity's `/password/logout-all` takes a renewal token in JSON.
+Before forwarding, web removes both cookies.
 If the session cookie supplied an access token, web puts it in `Authorization: Bearer`.
 An explicit authorization header alongside a session cookie is refused.
 
@@ -1110,7 +1112,7 @@ Any other reply gives every item the same outcome. The table's `many_cases` stat
 The browser trusts the platform for the values inside a reply, so it holds no schema validator and no copy of the wire spelling rules.
 The runtime also holds what a generated component calls: the state of one read, the members of a draft, and the display text of a declared value.
 
-Each transport holds a [read store](../../web/runtime/src/readCache.ts), keyed by the operation and the canonical GET target.
+Each bearer-mode transport holds a [read store](../../web/runtime/src/readCache.ts), keyed by the operation and the canonical GET target.
 Equal reads in flight share one request, and a list stays fresh for its `max-age`.
 A stale entry with an ETag sends `If-None-Match`, and a 304 reuses the stored reply.
 The store keeps only a 200 reply that classifies as completed or refused.
@@ -1122,10 +1124,12 @@ A write names each relation that it inserts into, updates or deletes from. A rel
 A write marks stale only the stored reads that share a relation with it, by the one rule `writeTouches` in the runtime.
 A write whose contract names no relation, or a read whose contract names none, counts as touching, so that pair behaves as before.
 An event workflow runs after the write's response and can write other tables, which the browser cannot see. A stored read of such a table stays fresh until its `max-age` ends, and its ETag then reads the change.
-A new CSRF cookie empties the store, so one session's reads never answer the next session.
+
+In cookie mode, each read sends a separate GET with `cache: "no-store"`.
+This bypasses the runtime read store and the browser's HTTP cache. The browser can change the session cookie between calls.
 The transport also calls each `onWrite` listener with the write's relations after the write settles.
 A generated detail, a table, an edit cell, the record text in a table's reference column and a form's selector list listen through `afterWrites` with the relations of their own read.
-Each reads again only after a write that touches them, so an unchanged read costs one 304 and an untouched read costs nothing.
+Each reads again only after a write that touches its relations. In bearer mode, a matching ETag saves the response body.
 A form's own record read does not read again, because the form sends the revision that it read when it opened.
 
 The [Receiving web application](../../apps/wamn_receiving/web/README.md) uses wfe descriptions for tables, details, forms, and deletes.

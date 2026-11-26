@@ -34,7 +34,7 @@ interface Seen {
  * A transport over a fetch that answers from the queue, in order. A reply
  * waits for `release` when `held` is true, so a test can overlap two reads.
  */
-function harness(options: { held?: boolean; cookies?: () => string } = {}) {
+function harness(options: { held?: boolean; cookie?: true } = {}) {
   const replies: Stated[] = [];
   const seen: Seen[] = [];
   const waiting: Array<() => void> = [];
@@ -66,9 +66,9 @@ function harness(options: { held?: boolean; cookies?: () => string } = {}) {
     });
   };
   const transport: Transport =
-    options.cookies === undefined
+    options.cookie === undefined
       ? createTransport({ baseUrl: "https://example.test", fetch })
-      : createTransport({ baseUrl: "", cookie: true, cookies: options.cookies, fetch });
+      : createTransport({ baseUrl: "", cookie: true, fetch });
   // Releases every held reply, or only the one at `index`, in request order.
   const release = (index?: number) => {
     if (index === undefined) {
@@ -297,26 +297,33 @@ describe("the read store", () => {
     }
   });
 
-  it("empties itself when the session cookie changes", async () => {
-    let cookie = "__Host-wamn-web-csrf=one";
-    const { transport, replies, seen } = harness({ cookies: () => cookie });
-    replies.push({ status: 200, body: ROWS, cacheControl: LIST, etag: 'W/"v1"' });
-    await transport.invoke(list("open"));
-    cookie = "__Host-wamn-web-csrf=two";
-    replies.push({ status: 200, body: ROWS, cacheControl: LIST, etag: 'W/"v1"' });
-    await transport.invoke(list("open"));
-    {
-      const observed = seen.map((call) => call.ifNoneMatch);
-      expect(observed).toHaveProperty(["length"], 2);
-      expect(observed).toHaveProperty(["0"], undefined);
-      expect(observed).toHaveProperty(["1"], undefined);
+  it("fetches each cookie-mode read without reusing a pending or cached reply", async () => {
+    const { transport, replies, seen } = harness({ cookie: true });
+    for (const id of ["first", "next", "later"]) {
+      replies.push({
+        status: 200,
+        body: JSON.stringify([{ value: { rows: [{ id }] } }]),
+        cacheControl: LIST,
+        etag: `"${id}"`,
+      });
     }
+    const read = list("open");
+    const [first, next] = await Promise.all([transport.invoke(read), transport.invoke(read)]);
+    const later = await transport.invoke(read);
+    expect(first).toMatchObject({ status: "completed", value: { rows: [{ id: "first" }] } });
+    expect(next).toMatchObject({ status: "completed", value: { rows: [{ id: "next" }] } });
+    expect(later).toMatchObject({ status: "completed", value: { rows: [{ id: "later" }] } });
+    expect(seen.map(({ cache, ifNoneMatch }) => [cache, ifNoneMatch])).toEqual([
+      ["no-store", undefined],
+      ["no-store", undefined],
+      ["no-store", undefined],
+    ]);
   });
 });
 
 describe("a write listener", () => {
-  it("hears each write once, after it settles, and nothing after it stops", async () => {
-    const { transport, replies } = harness();
+  it("hears each write once in cookie mode, after it settles and before the listener stops", async () => {
+    const { transport, replies } = harness({ cookie: true });
     const heard: number[] = [];
     let settled = 0;
     const stop = afterWrites(transport, [], () => heard.push(settled));

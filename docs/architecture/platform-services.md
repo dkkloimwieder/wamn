@@ -355,7 +355,8 @@ Delivery is at least once for application handlers.
 An active user with an active membership in that org receives one RFC 9068 access token.
 Identity reads no application roles and opens no project database connection for login or renewal.
 Session target declarations and the environment discovery route are removed.
-Identity returns tokens in JSON. The web proxy owns the browser cookies and checks signed CSRF on cookie-authenticated writes.
+Identity returns tokens in JSON. The web proxy owns the browser cookies.
+For unsafe requests with a session cookie, the proxy checks `Sec-Fetch-Site` or, if that header is absent, compares `Origin` with `Host`.
 The [execution page](execution.md#caller-authentication) owns the token profile and renewal bounds.
 
 ## PAT issuance

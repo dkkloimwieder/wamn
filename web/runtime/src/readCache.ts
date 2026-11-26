@@ -1,5 +1,5 @@
 /**
- * The read store of one transport (`docs/architecture/execution.md`).
+ * The read store of one bearer-mode transport (`docs/architecture/execution.md`).
  *
  * It holds the last reply of each read, keyed by the operation and the
  * canonical target, so equal reads on one page send one request. The response
@@ -54,13 +54,10 @@ export interface ReadStore {
   ): Promise<HttpReply>;
   /** Marks stale each stored reply that a write of `writes` touches. */
   invalidate(writes: readonly string[] | null): void;
-  /** Empties the store when the session differs from the one it holds. */
-  belongTo(session: string | null): void;
 }
 
 export function createReadStore(): ReadStore {
-  let entries = new Map<string, Entry>();
-  let session: string | null = null;
+  const entries = new Map<string, Entry>();
   // A write adds one. A read that started before a write shares no request
   // with a later read, and the reply it stores is stale.
   let generation = 0;
@@ -139,13 +136,6 @@ export function createReadStore(): ReadStore {
         if (writeTouches(writes, entry.reads)) {
           entry.freshUntil = 0;
         }
-      }
-    },
-    belongTo(owner) {
-      if (owner !== session) {
-        session = owner;
-        generation += 1;
-        entries = new Map();
       }
     },
   };

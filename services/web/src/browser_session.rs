@@ -3,7 +3,6 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context as _, ensure};
-use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use http_body_util::{BodyExt, Full, Limited};
 use hyper::body::Incoming;
 use hyper::header::{
@@ -12,16 +11,13 @@ use hyper::header::{
 };
 use hyper::http::uri::Authority;
 use hyper::{HeaderMap, Method, Request, Response, StatusCode};
-use ring::{hmac, rand};
 use serde::{Deserialize, Serialize};
 
 use crate::{ProxyBody, boxed, remove_hop_headers};
 
 const SESSION: &str = "__Host-wamn-session";
 const RENEWAL: &str = "__Host-wamn-renewal";
-const CSRF: &str = "__Host-wamn-web-csrf";
-const CSRF_HEADER: &str = "x-wamn-csrf";
-const NONCE_BYTES: usize = 32;
+const SEC_FETCH_SITE: &str = "sec-fetch-site";
 const MAX_PASSWORD_BODY_BYTES: usize = 8192;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -51,7 +47,6 @@ pub(super) fn password_route(request: &Request<Incoming>) -> Option<PasswordRout
 struct Cookies {
     session: Option<String>,
     renewal: Option<String>,
-    csrf: Option<String>,
 }
 
 fn take_cookies(headers: &mut HeaderMap) -> Result<Cookies, StatusCode> {
@@ -67,7 +62,6 @@ fn take_cookies(headers: &mut HeaderMap) -> Result<Cookies, StatusCode> {
             let field = match name.trim_end() {
                 SESSION => &mut found.session,
                 RENEWAL => &mut found.renewal,
-                CSRF => &mut found.csrf,
                 _ => {
                     if !retained.is_empty() {
                         retained.push_str("; ");
@@ -118,49 +112,12 @@ fn same_origin(headers: &HeaderMap) -> bool {
         })
 }
 
-#[derive(Deserialize)]
-struct Claims<'a> {
-    jti: &'a str,
-}
-
-fn csrf_message(session: &str, nonce: &[u8; NONCE_BYTES]) -> Option<Vec<u8>> {
-    let (header, rest) = session.split_once('.')?;
-    let (payload, signature) = rest.split_once('.')?;
-    if header.is_empty() || signature.is_empty() || signature.contains('.') {
-        return None;
-    }
-    let decoded = URL_SAFE_NO_PAD.decode(payload).ok()?;
-    // The JWT payload supplies only a binding for the CSRF MAC. The upstream
-    // verifier owns access-token admission.
-    let Claims { jti } = serde_json::from_slice(&decoded).ok()?;
-    if jti.is_empty() {
-        return None;
-    }
-    let mut message = Vec::with_capacity(jti.len() + nonce.len());
-    message.extend_from_slice(jti.as_bytes());
-    message.extend_from_slice(nonce);
-    Some(message)
-}
-
-fn valid_csrf(headers: &HeaderMap, key: &hmac::Key, session: &str, cookie: Option<&str>) -> bool {
-    let mut values = headers.get_all(CSRF_HEADER).iter();
-    let Some((cookie, header)) = cookie.zip(values.next()) else {
-        return false;
+fn allows_session_write(headers: &HeaderMap) -> bool {
+    let mut sites = headers.get_all(SEC_FETCH_SITE).iter();
+    let Some(site) = sites.next() else {
+        return same_origin(headers);
     };
-    if values.next().is_some() || header.as_bytes() != cookie.as_bytes() {
-        return false;
-    }
-    let Some((encoded_nonce, encoded_mac)) = cookie.split_once('.') else {
-        return false;
-    };
-    let mut nonce = [0; NONCE_BYTES];
-    let mut mac = [0; 32];
-    matches!(
-        URL_SAFE_NO_PAD.decode_slice(encoded_nonce, &mut nonce),
-        Ok(NONCE_BYTES)
-    ) && matches!(URL_SAFE_NO_PAD.decode_slice(encoded_mac, &mut mac), Ok(32))
-        && csrf_message(session, &nonce)
-            .is_some_and(|message| hmac::verify(key, &message, &mac).is_ok())
+    sites.next().is_none() && matches!(site.as_bytes(), b"same-origin" | b"none")
 }
 
 #[derive(Deserialize)]
@@ -177,7 +134,6 @@ struct IdentityRenewal<'a> {
 
 pub(super) async fn forward(
     request: Request<Incoming>,
-    key: &hmac::Key,
     route: Option<PasswordRoute>,
     password_request: bool,
 ) -> Result<Request<ProxyBody>, StatusCode> {
@@ -191,8 +147,8 @@ pub(super) async fn forward(
             return Err(StatusCode::FORBIDDEN);
         }
     } else if !parts.method.is_safe()
-        && let Some(session) = &cookies.session
-        && !valid_csrf(&parts.headers, key, session, cookies.csrf.as_deref())
+        && cookies.session.is_some()
+        && !allows_session_write(&parts.headers)
     {
         return Err(StatusCode::FORBIDDEN);
     }
@@ -209,7 +165,6 @@ pub(super) async fn forward(
     };
 
     remove_hop_headers(&mut parts.headers);
-    parts.headers.remove(CSRF_HEADER);
     if password_request {
         parts.headers.remove(COOKIE);
     }
@@ -263,14 +218,9 @@ fn set_cookies(
     headers: &mut HeaderMap,
     session: &str,
     renewal: &str,
-    csrf: &str,
     age: u64,
 ) -> anyhow::Result<()> {
-    for (name, token, http_only) in [
-        (SESSION, session, "; HttpOnly"),
-        (RENEWAL, renewal, "; HttpOnly"),
-        (CSRF, csrf, ""),
-    ] {
+    for (name, token) in [(SESSION, session), (RENEWAL, renewal)] {
         ensure!(
             token
                 .bytes()
@@ -278,7 +228,7 @@ fn set_cookies(
             "invalid identity cookie value for {name}"
         );
         let mut value = HeaderValue::try_from(format!(
-            "{name}={token}; Path=/; Max-Age={age}; Secure; SameSite=Strict{http_only}"
+            "{name}={token}; Path=/; Max-Age={age}; Secure; SameSite=Strict; HttpOnly"
         ))
         .with_context(|| format!("encode {name} cookie"))?;
         value.set_sensitive(true);
@@ -290,7 +240,6 @@ fn set_cookies(
 pub(super) async fn respond(
     route: Option<PasswordRoute>,
     mut response: Response<Incoming>,
-    key: &hmac::Key,
 ) -> anyhow::Result<Response<ProxyBody>> {
     response.headers_mut().remove(SET_COOKIE);
     match (route, response.status()) {
@@ -307,19 +256,9 @@ pub(super) async fn respond(
             ensure!(
                 issued.login_expires_at > now
                     && issued.login_expires_at >= issued.expires_at
+                    && !issued.access_token.is_empty()
                     && !issued.renewal_token.is_empty(),
                 "identity returned an unusable session"
-            );
-            let mut nonce = [0_u8; NONCE_BYTES];
-            rand::SecureRandom::fill(&rand::SystemRandom::new(), &mut nonce)
-                .map_err(|_| anyhow::anyhow!("generate browser CSRF nonce"))?;
-            let message = csrf_message(issued.access_token, &nonce)
-                .context("identity access token has no session ID")?;
-            let mac = hmac::sign(key, &message);
-            let csrf = format!(
-                "{}.{}",
-                URL_SAFE_NO_PAD.encode(nonce),
-                URL_SAFE_NO_PAD.encode(mac)
             );
             let body = serde_json::to_vec(&SessionTimes {
                 sub: issued.sub,
@@ -335,13 +274,12 @@ pub(super) async fn respond(
                 reply.headers_mut(),
                 issued.access_token,
                 issued.renewal_token,
-                &csrf,
                 issued.login_expires_at - now,
             )?;
             Ok(boxed(reply))
         }
         (Some(PasswordRoute::Logout), StatusCode::NO_CONTENT) => {
-            set_cookies(response.headers_mut(), "", "", "", 0)?;
+            set_cookies(response.headers_mut(), "", "", 0)?;
             Ok(response.map(BodyExt::boxed_unsync))
         }
         _ => Ok(response.map(BodyExt::boxed_unsync)),
@@ -352,63 +290,38 @@ pub(super) async fn respond(
 mod tests {
     use super::*;
     use hyper::service::service_fn;
-    use hyper_util::client::legacy::{Client, connect::HttpConnector};
     use hyper_util::rt::TokioIo;
     use std::convert::Infallible;
-    use tokio::net::TcpListener;
 
     const HOST_NAME: &str = "shop--acme.example.test";
+    const ACCESS_TOKEN: &str = "header.payload.signature";
 
-    fn key() -> hmac::Key {
-        hmac::Key::new(hmac::HMAC_SHA256, &[7; 32])
-    }
-
-    /// A JWT-shaped session token whose payload names `jti`.
-    fn session(jti: &str) -> String {
-        let payload = serde_json::json!({ "jti": jti }).to_string();
-        format!(
-            "{}.{}.signature",
-            URL_SAFE_NO_PAD.encode(br#"{"alg":"EdDSA"}"#),
-            URL_SAFE_NO_PAD.encode(payload)
-        )
-    }
-
-    /// Serve each connection with `answer` on a loopback port.
-    async fn serve<F, A>(answer: F) -> (std::net::SocketAddr, tokio::task::JoinHandle<()>)
+    /// Pass an HTTP request through Hyper without opening a socket.
+    async fn exchange<F, A>(request: hyper::http::request::Builder, answer: F) -> Response<Incoming>
     where
-        F: Fn(Request<Incoming>) -> A + Clone + Send + 'static,
+        F: Fn(Request<Incoming>) -> A + Send + 'static,
         A: std::future::Future<Output = Response<Full<bytes::Bytes>>> + Send + 'static,
     {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let address = listener.local_addr().unwrap();
-        let task = tokio::spawn(async move {
-            while let Ok((stream, _)) = listener.accept().await {
-                let answer = answer.clone();
-                let service = service_fn(move |request| {
-                    let answer = answer.clone();
-                    async move { Ok::<_, Infallible>(answer(request).await) }
-                });
-                let _ = hyper::server::conn::http1::Builder::new()
-                    .serve_connection(TokioIo::new(stream), service)
-                    .await;
-            }
+        let (client, server) = tokio::io::duplex(4096);
+        let service = service_fn(move |request| {
+            let reply = answer(request);
+            async move { Ok::<_, Infallible>(reply.await) }
         });
-        (address, task)
-    }
-
-    /// Send `request` to `address` with `HOST_NAME` as its host.
-    async fn send(
-        address: std::net::SocketAddr,
-        request: hyper::http::request::Builder,
-    ) -> Response<Incoming> {
+        tokio::spawn(async move {
+            hyper::server::conn::http1::Builder::new()
+                .serve_connection(TokioIo::new(server), service)
+                .await
+                .unwrap();
+        });
+        let (mut sender, connection) = hyper::client::conn::http1::handshake(TokioIo::new(client))
+            .await
+            .unwrap();
+        tokio::spawn(connection);
         let request = request
-            .uri(format!("http://{address}/"))
             .header(HOST, HOST_NAME)
             .body(Full::new(bytes::Bytes::new()))
             .unwrap();
-        let client: Client<HttpConnector, Full<bytes::Bytes>> =
-            crate::http_transport::http_client();
-        client.request(request).await.unwrap()
+        sender.send_request(request).await.unwrap()
     }
 
     /// The headers that web forwards for `request` to `path`, or its refusal.
@@ -417,13 +330,12 @@ mod tests {
         request: hyper::http::request::Builder,
     ) -> Result<HeaderMap, StatusCode> {
         let (sender, mut received) = tokio::sync::mpsc::unbounded_channel();
-        let (address, task) = serve(move |mut request: Request<Incoming>| {
+        exchange(request.uri(path), move |request| {
             let sender = sender.clone();
             async move {
-                *request.uri_mut() = path.parse().unwrap();
                 let route = password_route(&request);
                 let password = path.starts_with("/password/");
-                let forwarded = forward(request, &key(), route, password)
+                let forwarded = forward(request, route, password)
                     .await
                     .map(|request| request.into_parts().0.headers);
                 sender.send(forwarded).unwrap();
@@ -431,33 +343,35 @@ mod tests {
             }
         })
         .await;
-        send(address, request).await;
-        task.abort();
         received.recv().await.unwrap()
     }
 
-    /// The browser reply to a login that identity answers with `access_token`.
-    async fn login(access_token: &str) -> Response<ProxyBody> {
+    /// The browser reply to a successful identity response for `route`.
+    async fn session_reply(route: PasswordRoute) -> Response<ProxyBody> {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        let body = serde_json::json!({
-            "sub": "subject", "expires_at": now + 900, "login_expires_at": now + 3600,
-            "access_token": access_token, "renewal_token": "renewal",
-        })
-        .to_string();
-        let (address, task) = serve(move |_| {
+        let (status, body) = if route == PasswordRoute::Logout {
+            (StatusCode::NO_CONTENT, String::new())
+        } else {
+            let body = serde_json::json!({
+                "sub": "subject", "expires_at": now + 900, "login_expires_at": now + 3600,
+                "access_token": ACCESS_TOKEN, "renewal_token": "renewal",
+            });
+            (StatusCode::OK, body.to_string())
+        };
+        let response = exchange(Request::builder().method(Method::POST), move |_| {
             let body = body.clone();
-            async move { Response::new(Full::new(body.into())) }
+            async move {
+                Response::builder()
+                    .status(status)
+                    .body(Full::new(body.into()))
+                    .unwrap()
+            }
         })
         .await;
-        let response = send(address, Request::builder().method(Method::POST)).await;
-        let reply = respond(Some(PasswordRoute::Login), response, &key())
-            .await
-            .unwrap();
-        task.abort();
-        reply
+        respond(Some(route), response).await.unwrap()
     }
 
     fn set_cookie<'a>(reply: &'a Response<ProxyBody>, name: &str) -> &'a str {
@@ -470,71 +384,117 @@ mod tests {
             .unwrap()
     }
 
-    fn csrf_cookie(reply: &Response<ProxyBody>) -> String {
-        let cookie = set_cookie(reply, CSRF);
-        let (pair, _) = cookie.split_once(';').unwrap();
-        pair[CSRF.len() + 1..].to_owned()
-    }
-
     #[tokio::test]
-    async fn login_sets_host_prefixed_secure_cookies_and_a_readable_csrf_cookie() {
-        let token = session("a");
-        let reply = login(&token).await;
-        for (name, http_only) in [(SESSION, true), (RENEWAL, true), (CSRF, false)] {
-            let cookie = set_cookie(&reply, name);
-            assert!(name.starts_with("__Host-"), "{name}");
-            let attributes: Vec<_> = cookie.split("; ").skip(1).collect();
-            assert!(attributes.contains(&"Secure"), "{cookie}");
-            assert!(attributes.contains(&"Path=/"), "{cookie}");
-            assert_eq!(attributes.contains(&"HttpOnly"), http_only, "{cookie}");
-        }
-        let body = reply.into_body().collect().await.unwrap().to_bytes();
-        assert!(!String::from_utf8_lossy(&body).contains(&token));
-    }
-
-    #[tokio::test]
-    async fn unsafe_methods_need_the_signed_csrf_cookie_and_its_header() {
-        let (a, b) = (session("a"), session("b"));
-        let (csrf_a, csrf_again, csrf_b) = (
-            csrf_cookie(&login(&a).await),
-            csrf_cookie(&login(&a).await),
-            csrf_cookie(&login(&b).await),
-        );
-        assert_ne!(csrf_a, csrf_again);
-        let request = |method: Method, cookie: &str, header: Option<&str>| {
-            let mut request = Request::builder()
-                .method(method)
-                .header(COOKIE, format!("{SESSION}={a}; {CSRF}={cookie}; other=1"));
-            if let Some(header) = header {
-                request = request.header(CSRF_HEADER, header);
-            }
-            request
-        };
-
-        let headers = forwarded("/api/shop/x", request(Method::POST, &csrf_a, Some(&csrf_a)))
-            .await
-            .unwrap();
-        assert_eq!(headers[AUTHORIZATION], format!("Bearer {a}").as_str());
-        assert_eq!(headers[COOKIE], "other=1");
-        assert!(!headers.contains_key(CSRF_HEADER));
-        forwarded("/api/shop/x", request(Method::GET, "", None))
-            .await
-            .unwrap();
-        for (cookie, header) in [
-            (&csrf_a, None),
-            (&csrf_a, Some(&csrf_again)),
-            (&csrf_b, Some(&csrf_b)),
+    async fn login_and_renewal_set_two_secure_cookies_and_logout_clears_them() {
+        for route in [
+            PasswordRoute::Login,
+            PasswordRoute::Renew,
+            PasswordRoute::Logout,
         ] {
-            assert_eq!(
-                forwarded(
-                    "/api/shop/x",
-                    request(Method::POST, cookie, header.map(String::as_str))
-                )
-                .await
-                .unwrap_err(),
-                StatusCode::FORBIDDEN
-            );
+            let reply = session_reply(route).await;
+            assert_eq!(reply.headers().get_all(SET_COOKIE).iter().count(), 2);
+            for (name, token) in [
+                ("__Host-wamn-session", ACCESS_TOKEN),
+                ("__Host-wamn-renewal", "renewal"),
+            ] {
+                let cookie = set_cookie(&reply, name);
+                let (pair, attributes) = cookie.split_once("; ").unwrap();
+                let attributes: Vec<_> = attributes.split("; ").collect();
+                for attribute in ["Secure", "Path=/", "HttpOnly", "SameSite=Strict"] {
+                    assert!(attributes.contains(&attribute), "{cookie}");
+                }
+                if route == PasswordRoute::Logout {
+                    assert_eq!(pair, format!("{name}="));
+                    assert!(attributes.contains(&"Max-Age=0"), "{cookie}");
+                } else {
+                    assert_eq!(pair, format!("{name}={token}"));
+                }
+            }
+            let body = reply.into_body().collect().await.unwrap().to_bytes();
+            assert!(!String::from_utf8_lossy(&body).contains(ACCESS_TOKEN));
         }
+    }
+
+    #[tokio::test]
+    async fn unsafe_session_requests_use_fetch_site_or_fall_back_to_origin() {
+        let origin = format!("https://{HOST_NAME}");
+        let other_origin = "https://other.example.test";
+        for (sites, origin, allowed) in [
+            (&["same-origin"][..], None, true),
+            (&["none"][..], Some(other_origin), true),
+            (&["same-site"][..], Some(origin.as_str()), false),
+            (&["cross-site"][..], None, false),
+            (&["unknown"][..], Some(origin.as_str()), false),
+            (
+                &["same-origin", "same-origin"][..],
+                Some(origin.as_str()),
+                false,
+            ),
+            (&["same-origin, none"][..], Some(origin.as_str()), false),
+            (&[][..], Some(origin.as_str()), true),
+            (&[][..], Some(other_origin), false),
+            (&[][..], None, false),
+        ] {
+            let mut request = Request::builder()
+                .method(Method::POST)
+                .header(COOKIE, format!("{SESSION}={ACCESS_TOKEN}; other=1"));
+            for site in sites {
+                request = request.header("Sec-Fetch-Site", *site);
+            }
+            if let Some(origin) = origin {
+                request = request.header(ORIGIN, origin);
+            }
+            let result = forwarded("/api/shop/x", request).await;
+            if allowed {
+                let headers = result.unwrap();
+                assert_eq!(
+                    headers[AUTHORIZATION],
+                    format!("Bearer {ACCESS_TOKEN}").as_str()
+                );
+                assert_eq!(headers[COOKIE], "other=1");
+            } else {
+                assert_eq!(
+                    result.unwrap_err(),
+                    StatusCode::FORBIDDEN,
+                    "{sites:?} {origin:?}"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn safe_session_and_bearer_only_requests_need_no_origin_headers() {
+        let headers = forwarded(
+            "/api/shop/x",
+            Request::builder()
+                .method(Method::GET)
+                .header(COOKIE, format!("{SESSION}={ACCESS_TOKEN}")),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            headers[AUTHORIZATION],
+            format!("Bearer {ACCESS_TOKEN}").as_str()
+        );
+        let headers = forwarded(
+            "/api/shop/x",
+            Request::builder()
+                .method(Method::POST)
+                .header(AUTHORIZATION, "Bearer caller-token"),
+        )
+        .await
+        .unwrap();
+        assert_eq!(headers[AUTHORIZATION], "Bearer caller-token");
+
+        let mixed = forwarded(
+            "/api/shop/x",
+            Request::builder()
+                .method(Method::POST)
+                .header(COOKIE, format!("{SESSION}={ACCESS_TOKEN}"))
+                .header(AUTHORIZATION, "Bearer caller-token"),
+        )
+        .await;
+        assert_eq!(mixed.unwrap_err(), StatusCode::UNAUTHORIZED);
     }
 
     #[tokio::test]
@@ -546,7 +506,10 @@ mod tests {
             "/password/reset",
         ] {
             let request = |origin: Option<String>| {
-                let request = Request::builder().method(Method::POST);
+                let request = Request::builder()
+                    .method(Method::POST)
+                    .header(COOKIE, format!("{SESSION}={ACCESS_TOKEN}"))
+                    .header("Sec-Fetch-Site", "same-origin");
                 match origin {
                     Some(origin) => request.header(ORIGIN, origin),
                     None => request,

@@ -7417,7 +7417,6 @@ name = "wamn-web"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "base64 0.22.1",
  "bytes",
  "clap",
  "http-body-util",
@@ -7426,7 +7425,6 @@ dependencies = [
  "hyper-util",
  "kube",
  "object_store",
- "ring",
  "rustls",
  "serde",
  "serde_json",

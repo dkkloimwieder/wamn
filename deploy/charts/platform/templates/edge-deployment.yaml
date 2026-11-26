@@ -40,9 +40,6 @@ spec:
             - name: identity-ca
               mountPath: /etc/wamn-edge/identity-ca
               readOnly: true
-            - name: csrf
-              mountPath: /etc/wamn-edge/csrf
-              readOnly: true
           resources:
 {{ toYaml .Values.edge.resources | indent 12 }}
       volumes:
@@ -55,9 +52,3 @@ spec:
             items:
               - key: ca.crt
                 path: ca.crt
-        - name: csrf
-          secret:
-            secretName: wamn-web-csrf
-            items:
-              - key: key
-                path: key

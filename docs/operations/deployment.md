@@ -705,8 +705,8 @@ It writes `clients/<package>/<web digest hex>/` and skips all writes when the in
 That page owns the command, required inputs, destination paths, output, and errors.
 The shell reads `/config.json` from the installed web service before sign-in.
 Browser sign-in uses the web host over HTTPS.
-The platform chart mounts the `key` entry of `hosts/wamn-web-csrf` in the web Deployment.
-Helm generates 32 random bytes on first install and reuses the Secret on upgrades.
+For unsafe requests with a session cookie, web accepts `Sec-Fetch-Site: same-origin` or `Sec-Fetch-Site: none`.
+If that header is absent, web requires an HTTPS `Origin` that matches the incoming `Host`.
 The bucket must allow reads without credentials.
 Edge deployment remains outside the local platform milestone.
 

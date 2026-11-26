@@ -82,55 +82,18 @@ describe("the transport carrier", () => {
     return stub.seen[0];
   }
 
-  it("sends the cookies and the CSRF token, and no authorization, in cookie mode", async () => {
-    const call = await send({
-      cookie: true,
-      cookies: () => "theme=dark; __Host-wamn-web-csrf=c5rf; other=x",
-    });
+  it("lets the browser carry the session in cookie mode", async () => {
+    const call = await send({ cookie: true });
     expect(call?.init.credentials).toBe("include");
-    expect(new Headers(call?.init.headers).has("authorization")).toBe(false);
-    {
-      const observed = headersOf(call);
-      expect(observed).toHaveProperty(["content-type"], "application/json");
-      expect(observed).toHaveProperty(["x-wamn-csrf"], "c5rf");
-    }
-  });
-
-  it("reads the CSRF cookie again on each request", async () => {
-    let jar = "__Host-wamn-web-csrf=first";
-    const stub = stubFetch([completed, completed]);
-    const transport = createTransport({
-      baseUrl: "",
-      cookie: true,
-      cookies: () => jar,
-      fetch: stub.fetch,
-    });
-    await transport.invoke(request);
-    jar = "__Host-wamn-web-csrf=second";
-    await transport.invoke(request);
-    {
-      const observed = stub.seen.map((call) => headersOf(call)["x-wamn-csrf"]);
-      expect(observed).toHaveProperty(["length"], 2);
-      expect(observed).toHaveProperty(["0"], "first");
-      expect(observed).toHaveProperty(["1"], "second");
-    }
-  });
-
-  it("sends no CSRF header when the cookie is absent, and the router decides", async () => {
-    const call = await send({ cookie: true, cookies: () => "theme=dark" });
-    expect(new Headers(call?.init.headers).has("x-wamn-csrf")).toBe(false);
-    expect(call?.init.credentials).toBe("include");
-    expect(new Headers(call?.init.headers).has("authorization")).toBe(false);
-    {
-      const observed = headersOf(call);
-      expect(observed).toHaveProperty(["content-type"], "application/json");
-    }
+    const headers = new Headers(call?.init.headers);
+    expect(headers.get("content-type")).toBe("application/json");
+    expect(headers.has("authorization")).toBe(false);
+    expect(headers.has("x-wamn-csrf")).toBe(false);
   });
 
   it("sends the bearer token and no cookies in bearer mode", async () => {
     const call = await send({ credential: "token" });
     expect(call?.init.credentials).toBeUndefined();
-    expect(new Headers(call?.init.headers).has("x-wamn-csrf")).toBe(false);
     {
       const observed = headersOf(call);
       expect(observed).toHaveProperty(["content-type"], "application/json");
@@ -142,14 +105,13 @@ describe("the transport carrier", () => {
     const call = await send({});
     expect(new Headers(call?.init.headers).has("authorization")).toBe(false);
     expect(call?.init.credentials).toBeUndefined();
-    expect(new Headers(call?.init.headers).has("x-wamn-csrf")).toBe(false);
     {
       const observed = headersOf(call);
       expect(observed).toHaveProperty(["content-type"], "application/json");
     }
   });
 
-  it("sends a read as a GET with its one item in the query and no CSRF header", async () => {
+  it("sends a read as a GET with its one item in the query and no body", async () => {
     const stub = stubFetch([
       () => new Response('[{"value":{"id":"a"}}]', { status: 200 }),
       () => new Response('[{"request_id":"r1","value":{"id":"a"}}]', { status: 200 }),
@@ -157,7 +119,6 @@ describe("the transport carrier", () => {
     const transport = createTransport({
       baseUrl: "https://example.test",
       cookie: true,
-      cookies: () => "__Host-wamn-web-csrf=c5rf",
       fetch: stub.fetch,
     });
     const read = { ...request, method: "GET", items: [{ id: "a" }] };
@@ -173,7 +134,6 @@ describe("the transport carrier", () => {
     expect(call?.init.credentials).toBe("include");
     expect(new Headers(call?.init.headers).has("authorization")).toBe(false);
     const headers = new Headers(call?.init.headers);
-    expect(headers.has("x-wamn-csrf")).toBe(false);
     expect(headers.has("content-type")).toBe(false);
     // A read carries no request identity, so an outcome with one matches nothing.
     expect((await transport.invoke(read)).status).toBe("uncertain");
@@ -229,10 +189,9 @@ describe("the session calls", () => {
     for (const call of stub.seen) {
       expect(call.init.method).toBe("POST");
       expect(call.init.credentials).toBe("include");
-      {
-        const observed = headersOf(call);
-        expect(observed).toHaveProperty(["content-type"], "application/json");
-      }
+      const headers = new Headers(call.init.headers);
+      expect(headers.get("content-type")).toBe("application/json");
+      expect(headers.has("x-wamn-csrf")).toBe(false);
     }
   });
 
