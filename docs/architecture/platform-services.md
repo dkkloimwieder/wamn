@@ -175,6 +175,7 @@ It calls the registered command of the separate consumer application, then advan
 
 The integration selects its authentication scheme with `auth_type`.
 The credential store holds secret fields. The connection generation holds public authentication fields under `parameters.auth`.
+Connection administration accepts only the `parameters.auth` fields that the selected auth type declares.
 The host reads both objects and applies the selected scheme.
 
 | `auth_type` | Credential | `parameters.auth` |
