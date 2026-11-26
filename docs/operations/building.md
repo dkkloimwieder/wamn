@@ -204,9 +204,9 @@ A pointer change must name the submodule and say `bump` or `pin` in its commit s
 A backward change must also say `revert`.
 Initialize the submodules and fetch their history before this check.
 `cargo xtask netsuite-live` runs the two [NetSuite operator workflows](../../apps/netsuite/README.md#owner-run-live-calls).
-[mise.toml](../../mise.toml) pins Helm, KCL, OpenTofu, wash, and cargo-deny with download checksums.
+[mise.toml](../../mise.toml) pins kind and other repository tools with download checksums.
 Run `mise install` to install them, then activate mise or use `mise exec -- <command>`.
-The pins retain the Linux x86_64 artifacts used by the former installers.
+The pins use Linux x86_64 artifacts.
 Docker receives its Helm and KCL download pins from that same file.
 The [mise HTTP backend](https://mise.jdx.dev/dev-tools/backends/http.html) verifies those checksums.
 

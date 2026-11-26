@@ -35,7 +35,8 @@ tar -xOzf deploy/charts/platform/charts/runtime-operator-2.12.3.tgz \
 
 ## Local platform
 
-Use Docker, kind 0.32, Helm, kubectl, OpenSSL, and the pinned KCL compiler on the deployment host.
+Use Docker, kind 0.33.0, Helm, kubectl, OpenSSL, and the pinned KCL compiler on the deployment host.
+Install the pinned kind binary with `mise install` from the repository root. [Tool installation](building.md#repository-tasks-and-tools)
 Keep registry, database, and broker credentials outside committed files.
 Certificate subjects must match the endpoint names that their clients verify.
 
@@ -57,6 +58,7 @@ cargo xtask kind-cluster-create
 ```
 
 The command reuses the `wamn-local` cluster and the registry at `localhost:5001` if they already exist.
+It uses the pinned node image when it creates a cluster. [Kind configuration](../../deploy/kind/kind-config.yaml)
 Copy the kind values file to `platform-kind.yaml` and add the printed `registryEndpoint` block. The kind values file sets the registry to `localhost:5001`. [Kind values](../../deploy/charts/platform/values-kind.yaml)
 Prepare the artifacts as [building](building.md#platform-artifacts) describes.
 

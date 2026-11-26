@@ -309,6 +309,8 @@ The `wamn dev` tests in `services/cli/tests/dev_command.rs` check only that the 
 The journey tests in `wamn-journey-tests` run on a local kind cluster through product commands.
 Each test has the marker `requires: cluster, bin:helm`.
 SQL only observes results, through a read-only login and a port-forward.
+Install the pinned kind binary before you run these commands. [Local platform prerequisites](deployment.md#local-platform)
+For acceptance, let `cargo xtask preflight` create a fresh `wamn-local` cluster from the pinned node image.
 
 ```bash
 cargo xtask preflight
