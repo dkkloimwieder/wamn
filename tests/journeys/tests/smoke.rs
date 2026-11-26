@@ -324,10 +324,17 @@ common::journey! {
         pods.create(&params, &Pod::deserialize(&pod)?)
             .await
             .context("the compliant pod must be admitted")?;
-        pod["spec"]["containers"][0]["securityContext"]["privileged"] = true.into();
+        let security_context = pod["spec"]["containers"][0]["securityContext"]
+            .as_object_mut()
+            .expect("the probe container security context is an object");
+        security_context.insert("privileged".into(), true.into());
+        security_context.remove("allowPrivilegeEscalation");
         let result = pods.create(&params, &serde_json::from_value(pod)?).await;
         ensure!(
-            matches!(&result, Err(kube::Error::Api(status)) if status.code == 403 && status.reason == "Forbidden"),
+            matches!(&result, Err(kube::Error::Api(status))
+                if status.code == 403
+                    && status.reason == "Forbidden"
+                    && status.message.contains(r#"violates PodSecurity "restricted"#)),
             "the privileged pod must be forbidden in {}: {:?}",
             org.name,
             result.map(|_| ()),
