@@ -232,7 +232,7 @@ async fn configure_project(
             if !schemas.is_empty() && !paused {
                 platform.cluster.wait_reader_ready(triple).await?;
             }
-            // Stop before save deletes the registry rows, so a failed stop is found again.
+            // Stop before save deactivates the apps, so apply can retry a failed stop.
             let removed: Vec<_> = super::analyse::app_releases(platform, lock, triple)
                 .await?
                 .into_iter()

@@ -410,7 +410,10 @@ If Helm returns success, the worker verifies that each workload from the release
 If that check fails, the worker restores the previous release and checks that it serves again. If this was the first install, the worker uninstalls it. The operation reports the original failure and any rollback or cleanup failure.
 Committed migrations remain installed. Application developers choose schema compatibility and migrate forward if the restored code cannot use the migrated schema. See [Application schema changes](../application-schema-changes.md).
 Environment apply refuses unfinished runs in the selected application.
-Project deactivation checks all applications in the project environment unless you pass `--data`.
+When the env file omits an app, `wamn env apply` stops its release and marks the app inactive.
+The app keeps its host label and its data. Add it back to the file and apply again to reactivate it.
+Run `wamn deploy` to serve the app again.
+Project deactivation checks all apps in the project env unless you pass `--data`.
 If the lifecycle lock session fails, the operation stops and returns an error.
 
 ### Select SQL independently

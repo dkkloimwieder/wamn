@@ -17,8 +17,9 @@ GRANT SELECT (org, id), INSERT (org, id) ON registry.project TO wamn_apply;
 GRANT INSERT (org, env, project, secret_name, secret_namespace, instance_suffix) ON registry.project_env TO wamn_apply;
 GRANT UPDATE (secret_name, secret_namespace, instance_suffix, active, schema_mode)
     ON registry.project_env TO wamn_apply;
-GRANT SELECT, INSERT, UPDATE, DELETE ON registry.env_app,
-    registry.env_app_connection, registry.env_integration TO wamn_apply;
+GRANT SELECT, INSERT, UPDATE ON registry.env_app TO wamn_apply;
+GRANT SELECT, INSERT, UPDATE, DELETE ON registry.env_app_connection, registry.env_integration
+    TO wamn_apply;
 GRANT INSERT (principal_id, org, project, env) ON identity.project_env_membership TO wamn_apply;
 GRANT DELETE ON identity.project_env_membership TO wamn_apply;
 GRANT SELECT, INSERT, UPDATE, DELETE ON registry.event_reader TO wamn_apply;

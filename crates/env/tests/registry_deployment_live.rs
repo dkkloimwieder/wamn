@@ -313,3 +313,86 @@ async fn project_deactivation_frees_capacity_and_readd_starts_a_new_generation()
     assert!(!has_project_env_membership(&mut admin, member.id(), org, project, env).await?);
     Ok(())
 }
+
+/// Applying an edited env file deactivates the omitted app and can reactivate it.
+#[tokio::test]
+#[ignore = "requires: docker, bin:helm"]
+async fn env_apply_deactivates_and_reactivates_an_app() -> anyhow::Result<()> {
+    use wamn_env::{
+        env::document::{EnvDocument, EnvFile},
+        registry::configuration,
+    };
+    use wamn_test_infrastructure::{database, scratch::ScratchRoot};
+
+    let scratch = ScratchRoot::create()?;
+    let path = scratch.path().join("env.yaml");
+    let declared = "org: acme
+env: dev
+target: cloud
+revocation_seconds: 45
+database: {instances: 1, storage: 1Gi, cpu: '1', memory: 256Mi}
+connections: {erp: {version: 1}}
+projects:
+  - name: inventory
+    apps:
+      stock: {label: stock-web, connections: {backend: erp}}
+";
+    std::fs::write(&path, declared)?;
+    let mut omitted = EnvFile::compile(&path)?;
+    let (app, selection) = omitted.projects[0]
+        .apps
+        .pop_first()
+        .expect("the file declares one app");
+    let triple = omitted.triple(&omitted.projects[0].name);
+    let omitted = omitted.to_yaml()?;
+
+    let system = database::system().await?;
+    let login = system.org_login(wamn_role::APPLY_ROLE)?;
+    let url = system.login_url(login.login.as_str(), &login.password)?;
+    let mut client = wamn_postgres::connect(url.as_str()).await?;
+    let mut transaction = provisioning_transaction(&mut client).await?;
+    wamn_env::env_registry::record_project_env(
+        &mut transaction,
+        &triple,
+        "cloud",
+        "fixture-secret",
+        Some(triple.org.as_str()),
+        &"abcd1234".parse()?,
+        None,
+    )
+    .await?;
+    transaction.commit().await?;
+
+    for (file, active) in [
+        (declared, true),
+        (omitted.as_str(), false),
+        (declared, true),
+    ] {
+        std::fs::write(&path, file)?;
+        let document = EnvDocument::compile(&path)?;
+        let mut transaction = provisioning_transaction(&mut client).await?;
+        assert!(configuration::write(&mut transaction, &document.configuration()).await?);
+        transaction.commit().await?;
+
+        let (stored_active, label): (bool, String) = sqlx::query_as(
+            "SELECT active, label FROM registry.env_app
+             WHERE org=$1 AND env=$2 AND project=$3 AND app=$4",
+        )
+        .bind(triple.org.as_str())
+        .bind(triple.env.as_str())
+        .bind(triple.project.as_str())
+        .bind(app.as_str())
+        .fetch_one(&mut client)
+        .await?;
+        assert_eq!(stored_active, active);
+        assert_eq!(label, selection.label);
+        let applied = configuration::read(&mut client, &triple)
+            .await?
+            .expect("the project was configured");
+        assert_eq!(
+            applied.apps.get(&app).map(|app| &app.connections),
+            active.then_some(&selection.connections)
+        );
+    }
+    Ok(())
+}

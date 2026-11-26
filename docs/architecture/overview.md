@@ -164,7 +164,8 @@ The hierarchy is org, environment, project, application.
 `registry.project` holds org-level project definitions.
 `registry.project_env` records whether a project deployment is active, along with its database Secret and instance suffix. Deactivation keeps the row and removes its explicit memberships. Re-applying the project creates a new database generation.
 Applications are releases under those project deployments.
-`registry.env_app` stores the host label of each application and keeps it unique within the org.
+`registry.env_app` stores each app's active flag and host label.
+Each label stays unique within the org, including labels held by inactive apps.
 Deploy derives `<label>--<org>.<base>` using the base in `registry.meta.platform_domain`.
 Web accepts an application route only when its host uses the ConfigMap namespace as the org and matches the platform base in web's settings file.
 Environment coordinates contain org and environment.

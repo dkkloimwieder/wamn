@@ -706,6 +706,7 @@ CREATE TABLE registry.env_app (
     env text NOT NULL,
     project text NOT NULL,
     app text NOT NULL CHECK (app <> ''),
+    active boolean NOT NULL DEFAULT true,
     label text NOT NULL CHECK (
         octet_length(label) BETWEEN 1 AND 21
         AND label ~ '^[a-z0-9]+(-[a-z0-9]+)*$'),

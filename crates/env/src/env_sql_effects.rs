@@ -117,7 +117,7 @@ async fn app_names(system: &PgLifecycleLock, triple: &Triple) -> anyhow::Result<
     let mut tx =
         wamn_postgres::provisioning_transaction::provisioning_transaction(&mut client).await?;
     let apps: BTreeSet<wamn_registry::AppName> = sqlx::query_scalar::<_, String>(
-        "SELECT app FROM registry.env_app WHERE org=$1 AND env=$2 AND project=$3",
+        "SELECT app FROM registry.env_app WHERE org=$1 AND env=$2 AND project=$3 AND active",
     )
     .bind(triple.org.as_str())
     .bind(triple.env.as_str())

@@ -313,8 +313,7 @@ common::journey! {
 }
 
 common::journey! {
-    /// `wamn env apply` with a file that no longer lists an application uninstalls its
-    /// release, and the rows that the application wrote stay in the project database.
+    /// `wamn env apply` stops serving an omitted app and keeps its project data.
     async fn env_apply_stops_an_unlisted_app_and_keeps_its_data() -> anyhow::Result<()> {
         let app = App::prepare(&fixture()).await?;
         let env = &app.env;
@@ -349,6 +348,23 @@ common::journey! {
             "the WorkloadDeployments of the unlisted application go",
             || async { Ok(deployments().await?.is_empty().then_some(())) },
         )
+        .await?;
+        let routes = &app.routes;
+        let request = json!([{
+            "request_id": "kept", "id": id, "idempotency_key": "kept", "code": "standard"
+        }]);
+        until(RUNTIME_DEADLINE, "web stops serving the app", || async {
+            let status = routes
+                .client
+                .post(format!("{}/widget/create", routes.endpoint))
+                .header("Host", &routes.host)
+                .bearer_auth(&routes.bearer)
+                .json(&request)
+                .send()
+                .await?
+                .status();
+            Ok((status == hyper::StatusCode::NOT_FOUND).then_some(()))
+        })
         .await?;
         let mut database = env.observe().await?;
         let kept: bool =

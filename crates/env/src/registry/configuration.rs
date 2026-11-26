@@ -16,7 +16,8 @@ struct ConfigurationHeader<'a> {
     revocation_seconds: i32,
 }
 
-/// Read applied settings and connection pins. Return none for an inactive or unconfigured deployment.
+/// Read applied settings, connection pins, and active apps with their aliases.
+/// Return none for an inactive or unconfigured deployment.
 pub async fn read(
     connection: &mut sqlx::PgConnection,
     triple: &Triple,
@@ -28,9 +29,10 @@ pub async fn read(
          JOIN registry.target t ON t.id=e.target_id LEFT JOIN LATERAL ( \
            SELECT 1 AS record_type, app AS name, label AS value, \
              client_package, client_web, NULL::text AS alias, NULL::integer AS version \
-           FROM registry.env_app WHERE org=p.org AND env=p.env AND project=p.project \
-           UNION ALL SELECT 2, app, connection_name, NULL, NULL, alias, NULL \
-           FROM registry.env_app_connection WHERE org=p.org AND env=p.env AND project=p.project \
+           FROM registry.env_app WHERE org=p.org AND env=p.env AND project=p.project AND active \
+           UNION ALL SELECT 2, ac.app, ac.connection_name, NULL, NULL, ac.alias, NULL \
+           FROM registry.env_app_connection ac JOIN registry.env_app a USING (org,env,project,app) \
+           WHERE ac.org=p.org AND ac.env=p.env AND ac.project=p.project AND a.active \
            UNION ALL SELECT 3, name, NULL, NULL, NULL, NULL, version \
            FROM registry.env_integration WHERE org=p.org AND env=p.env \
          ) c ON true WHERE p.org=$1 AND p.env=$2 AND p.project=$3 AND p.active AND p.schema_mode IS NOT NULL \
@@ -107,7 +109,7 @@ pub async fn read(
                 configuration
                     .apps
                     .get_mut(&app)
-                    .expect("connection references a stored application")
+                    .expect("connection alias references an active app")
                     .connections
                     .insert(
                         row.try_get("alias")?,
@@ -131,10 +133,10 @@ pub async fn read(
     Ok(Some(configuration))
 }
 
-/// Replace a deployment's settings and upsert its environment pins in one transaction.
+/// Replace a deployment's settings and pins, and deactivate omitted apps in one transaction.
 ///
-/// The caller holds the environment lifecycle lock, checks placement, and binds
-/// the provisioning actor. Return false if the deployment is missing.
+/// The caller holds the env lifecycle lock, checks placement, and binds
+/// the provisioning actor. Return false if the deployment is inactive or missing.
 pub async fn write(
     connection: &mut sqlx::PgConnection,
     configuration: &EnvConfiguration,
@@ -175,7 +177,8 @@ pub async fn write(
     }
     let apps: Vec<_> = c.apps.keys().map(AppName::as_str).collect();
     sqlx::query(
-        "DELETE FROM registry.env_app WHERE org=$1 AND env=$2 AND project=$3 AND NOT(app=ANY($4))",
+        "UPDATE registry.env_app SET active=false
+         WHERE org=$1 AND env=$2 AND project=$3 AND active AND NOT(app=ANY($4))",
     )
     .bind(c.settings.org.as_str())
     .bind(c.settings.env.as_str())
@@ -195,7 +198,7 @@ pub async fn write(
              (org,env,project,app,label,client_package,client_web) \
              VALUES ($1,$2,$3,$4,$5,$6,$7) \
              ON CONFLICT (org,env,project,app) DO UPDATE SET label=EXCLUDED.label, \
-             client_package=EXCLUDED.client_package, client_web=EXCLUDED.client_web",
+             client_package=EXCLUDED.client_package, client_web=EXCLUDED.client_web, active=true",
         )
         .bind(c.settings.org.as_str())
         .bind(c.settings.env.as_str())

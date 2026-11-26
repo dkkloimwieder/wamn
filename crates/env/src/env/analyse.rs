@@ -68,7 +68,7 @@ pub fn select_app(
     })
 }
 
-/// Derive application release names from declarations and observed workloads.
+/// Derive app release names from active declarations and observed workloads.
 pub(crate) async fn app_releases(
     platform: &Platform,
     system: &PostgresSession,
