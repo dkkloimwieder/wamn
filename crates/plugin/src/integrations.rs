@@ -225,3 +225,28 @@ impl bound::HostCall for ActiveCtx<'_> {
         }
     }
 }
+
+#[cfg(test)]
+pub(super) async fn begin_fixture(
+    facts: &Arc<ConnectionFacts>,
+    id: uuid::Uuid,
+) -> anyhow::Result<Result<(), String>> {
+    use wash_runtime::engine::ctx::{Ctx, extract_active_ctx};
+
+    let mut shared = SharedCtx::new(
+        Ctx::builder("fixture", "integration")
+            .with_plugins(HashMap::from([(
+                ID,
+                Arc::new(State {
+                    workload: "fixture".to_owned(),
+                    id,
+                    bound: OnceLock::from(Arc::clone(facts)),
+                }) as Arc<dyn HostPlugin + Send + Sync>,
+            )]))
+            .build(),
+    );
+    Ok(bound::Host::begin(&mut extract_active_ctx(&mut shared))
+        .await
+        .map_err(|error| anyhow::anyhow!(error.to_string()))?
+        .map(|_| ()))
+}

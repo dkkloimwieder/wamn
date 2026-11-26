@@ -20,7 +20,7 @@ pub struct ConfigurationArgs {
     /// JSON request with project, name, environment, and route parameters.
     #[arg(long)]
     pub file: PathBuf,
-    /// Credential value. Write, test and set-credential accept this file.
+    /// Credential value. Write, test, set-credential and activate accept this file.
     #[arg(long)]
     pub credential_file: Option<PathBuf>,
 }
@@ -39,9 +39,8 @@ pub enum ConnectionCommand {
     Copy(ConfigurationArgs),
     SetCredential(ConfigurationArgs),
     Authorize(ConfigurationArgs),
-    Disable(ConfigurationArgs),
-    Enable(ConfigurationArgs),
-    Delete(ConfigurationArgs),
+    Deactivate(ConfigurationArgs),
+    Activate(ConfigurationArgs),
     List(ConfigurationArgs),
     Get(ConfigurationArgs),
 }
@@ -94,7 +93,10 @@ fn request(args: &ConfigurationArgs, operation: &str) -> anyhow::Result<Value> {
         ensure!(
             matches!(
                 operation,
-                "connection.write" | "connection.test" | "connection.set_credential"
+                "connection.write"
+                    | "connection.test"
+                    | "connection.set_credential"
+                    | "connection.activate"
             ),
             "this route does not accept a credential"
         );
@@ -165,9 +167,8 @@ pub async fn connection(args: ConnectionArgs) -> anyhow::Result<()> {
         ConnectionCommand::Copy(args) => ("connection.copy", args),
         ConnectionCommand::SetCredential(args) => ("connection.set_credential", args),
         ConnectionCommand::Authorize(args) => ("connection.authorize", args),
-        ConnectionCommand::Disable(args) => ("connection.disable", args),
-        ConnectionCommand::Enable(args) => ("connection.enable", args),
-        ConnectionCommand::Delete(args) => ("connection.delete", args),
+        ConnectionCommand::Deactivate(args) => ("connection.deactivate", args),
+        ConnectionCommand::Activate(args) => ("connection.activate", args),
         ConnectionCommand::List(args) => ("connection.list", args),
         ConnectionCommand::Get(args) => ("connection.get", args),
     };

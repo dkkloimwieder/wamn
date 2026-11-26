@@ -8,7 +8,6 @@ use wamn_identity_protocol::PrincipalId;
 use wamn_registry::OrgId;
 
 use crate::connection_credentials::{StoreVersion, WriteCredentials};
-use crate::references;
 use wamn_kubernetes::kubernetes::CredentialSecret;
 
 use crate::project_connections::{Administration, Lookup, NewConnection, TokenChange};
@@ -86,9 +85,7 @@ pub fn validate_request(operation: &str, request: &Value) -> Result<(), Connecti
         | "external_system.delete"
         | "connection.authorize"
         | "connection.get"
-        | "connection.enable"
-        | "connection.disable"
-        | "connection.delete" => &["project", "env", "name"],
+        | "connection.deactivate" => &["project", "env", "name"],
         "connection.write" => &[
             "project",
             "env",
@@ -109,7 +106,9 @@ pub fn validate_request(operation: &str, request: &Value) -> Result<(), Connecti
             "version",
         ],
         "connection.copy" => &["project", "env", "name", "source_env"],
-        "connection.set_credential" => &["project", "env", "name", "credential"],
+        "connection.activate" | "connection.set_credential" => {
+            &["project", "env", "name", "credential"]
+        }
         _ => return Err(refuse("invalid_input", "operation")),
     };
     if object.keys().any(|key| !allowed.contains(&key.as_str())) {
@@ -175,7 +174,6 @@ pub async fn execute(
     credentials: &dyn WriteCredentials,
     authority_port: fn(&str) -> Result<u16, ConnectionError>,
     request: Request<'_>,
-    apps: &[wamn_app::app_config::AppConfig],
 ) -> Result<Value, ConnectionError> {
     let Request {
         caller,
@@ -186,26 +184,37 @@ pub async fn execute(
     let mut request: Value =
         serde_json::from_str(payload).map_err(|_| refuse("invalid_input", "value"))?;
     validate_request(operation, &request)?;
-    if operation == "connection.delete" {
+    if operation == "connection.deactivate" {
+        let name = request["name"].as_str();
         let id = database
-            .connection_id(request["name"].as_str(), Lookup::Read)
-            .await?;
-        if let Some(id) = id {
-            references::refuse_app_references(apps, &id.to_string())?;
-        }
+            .connection_id(name, Lookup::Lock)
+            .await?
+            .ok_or_else(|| refuse("not_found", "connection"))?;
+        let row = database.deactivate_connection(id).await?;
+        return Ok(json!({
+            "id": id,
+            "name": name,
+            "env": request["env"],
+            "principal_id": row["service_principal_id"],
+            "credentials": row["credentials"]
+        }));
     }
     let credential = request
         .as_object_mut()
         .expect("validated object")
-        .remove("credential");
+        .remove("credential")
+        .filter(|value| operation != "connection.activate" || !value.is_null());
     let requested_authority = request
         .as_object_mut()
         .expect("validated object")
         .remove("authority");
-    if matches!(
-        operation,
-        "connection.write" | "connection.copy" | "connection.set_credential"
-    ) {
+    let activating = operation == "connection.activate";
+    if activating
+        || matches!(
+            operation,
+            "connection.write" | "connection.copy" | "connection.set_credential"
+        )
+    {
         let existing = database.lock_connection(request["name"].as_str()).await?;
         let context = match existing {
             Some(row) => row,
@@ -216,6 +225,10 @@ pub async fn execute(
         };
         let id: Uuid = serde_json::from_value(context["id"].clone())
             .expect("UUID from PostgreSQL or generator");
+        let auth = context["auth_type"].as_str().expect("stored auth type");
+        if activating && (auth == "none") == credential.is_some() {
+            return Err(refuse("invalid_input", "credential"));
+        }
         let new = context["active_generation"].is_null();
         let metadata = database
             .integration_metadata(
@@ -280,7 +293,7 @@ pub async fn execute(
                 return Err(refuse("immutable_field", "authority"));
             }
             request["parameters"] = parameters;
-        } else if operation == "connection.set_credential" {
+        } else if activating || operation == "connection.set_credential" {
             request["parameters"] = previous.as_ref().expect("existing generation").0.clone();
         }
         if metadata["runtime_type"] == "wasm" && request["parameters"].get("authority").is_some() {
@@ -326,7 +339,6 @@ pub async fn execute(
         {
             return Err(refuse("immutable_field", "connection"));
         }
-        let auth = context["auth_type"].as_str().expect("stored auth type");
         let principal = if new {
             Some(
                 database
@@ -371,7 +383,13 @@ pub async fn execute(
         let credential_id = stored
             .as_ref()
             .map(|v| serde_json::from_value::<Uuid>(v["id"].clone()).expect("generated UUID"))
-            .or_else(|| previous.as_ref().and_then(|p| p.1));
+            .or_else(|| {
+                if activating {
+                    None
+                } else {
+                    previous.as_ref().and_then(|p| p.1)
+                }
+            });
         if (auth == "none") != credential_id.is_none() {
             return Err(refuse("invalid_input", "credential"));
         }
@@ -420,8 +438,8 @@ pub async fn execute(
                 })
                 .await?;
         }
-        let token_change = if previous.as_ref().map(|p| &p.0["auth"])
-            != Some(&request["parameters"]["auth"])
+        let token_change = if activating
+            || previous.as_ref().map(|p| &p.0["auth"]) != Some(&request["parameters"]["auth"])
             || (stored.is_some()
                 && matches!(
                     auth,
@@ -442,6 +460,15 @@ pub async fn execute(
                 &request["parameters"],
             )
             .await?;
+        if activating {
+            database.activate_connection(id).await?;
+            return Ok(json!({
+                "id": id,
+                "name": request["name"],
+                "env": request["env"],
+                "principal_id": context["service_principal_id"]
+            }));
+        }
         return summary(database, org, &request, id).await;
     }
     configure(database, org, operation, &request).await
@@ -475,9 +502,7 @@ pub async fn configure(
                     .external_system_id(name, Lookup::Lock)
                     .await?
                     .ok_or_else(|| refuse("not_found", "name"))?;
-                database
-                    .refuse_env_references("external_system", &id.to_string())
-                    .await?;
+                database.refuse_external_system_references(id).await?;
                 database.delete_external_system(id).await?;
                 Ok(json!({"name":name}))
             }
@@ -502,6 +527,10 @@ pub async fn configure(
         .await?
         .ok_or_else(|| refuse("not_found", "connection"))?;
     let mut row = summary(database, org, request, id).await?;
+    if matches!(operation, "connection.test" | "connection.authorize") && row["status"] != "active"
+    {
+        return Err(refuse("connection_inactive", "connection"));
+    }
     match operation {
         "connection.get" => Ok(row),
         "connection.authorize" => {
@@ -522,23 +551,6 @@ pub async fn configure(
             }
             row["credential"] = database.credential_reference(id).await?;
             Ok(row)
-        }
-        "connection.enable" | "connection.disable" => {
-            database
-                .set_connection_active(id, operation == "connection.enable")
-                .await?;
-            Ok(
-                json!({"id":id,"name":name,"env":request["env"],"principal_id":row["service_principal_id"]}),
-            )
-        }
-        "connection.delete" => {
-            database
-                .refuse_env_references("connection", &id.to_string())
-                .await?;
-            let credentials = database.delete_connection(id).await?;
-            Ok(
-                json!({"id":id,"name":name,"env":request["env"],"principal_id":row["service_principal_id"],"credentials":credentials}),
-            )
         }
         _ => Err(refuse("invalid_input", "operation")),
     }

@@ -983,7 +983,7 @@ Environment staging, connection administration, local development bindings, and 
 
 `platform.file` records one owning application and the connection generation that stored its bytes.
 Application tables can reference `platform.file(id)`, as they reference `platform.external_system(id)`.
-Connection disablement preserves these references. A foreign key refuses deletion of a referenced file.
+Connection deactivation preserves these references. A foreign key refuses deletion of a referenced file.
 Application roles read file metadata but cannot insert, update, or delete it.
 File rows use the standard stamps and unlimited history.
 
@@ -1027,9 +1027,9 @@ Anonymous callers receive 401. A caller without the grant receives 403.
 Private files return 403 through that URL, including for administrators.
 Another application never serves the file.
 
-Reads by `file_id` require no current binding and use the recorded connection generation.
+Reads by `file_id` use the recorded connection's active generation.
 Removing a binding preserves these reads and application references to the file.
-Disabling the connection stops reads. The registry requires an active connection and project enablement.
+Deactivating the connection refuses new reads and writes. The database also checks that new file rows use an active store.
 
 A package marks a UUID result field with `result.signed_reads` in its public KCL operation declaration. Each entry may set `lifetime_seconds`; omission selects 900 seconds. The compiler refuses zero and values above 900.
 The host replaces that file ID with a signed URL after the operation returns. The guest uses the existing WIT contract.
@@ -1050,7 +1050,7 @@ Collector follow-up belongs to `wamn-2wdsf.4`.
 
 The full schema files own the platform schemas and build fresh installations.
 
-- `file` is the only file table. An image is a file with an image media type; `width` and `height` are nullable. `connection_id` names the store. Each row pins its application and the connection generation that stored its bytes. Reads and deletes use that generation's bucket and prefix. The application links `file_id` from its own table (which record, which purpose). No generic attachment-by-(table, id) table.
+- `file` is the only file table. An image is a file with an image media type; `width` and `height` are nullable. `connection_id` names the store. Each row pins its app and connection. Reads and deletes use the active generation's bucket and prefix. The application links `file_id` from its own table (which record, which purpose). No generic attachment-by-(table, id) table.
 
 - Storing is two short calls: `file.put(binding, bytes)` streams the bytes to the store the binding names, inserts the row in its own commit and returns `file_id`; the application operation then carries `file_id` like any reference. No transaction waits on the store. A store is a connection with a store integration (`s3` or `gcs`), declared by the package and bound by name in `env.yaml` with `mode = write`.
 

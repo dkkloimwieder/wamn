@@ -81,7 +81,7 @@ CREATE UNIQUE INDEX connection_resource_per_target
 
 CREATE TABLE platform.credential (
     id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    connection_id uuid NOT NULL REFERENCES platform.connection (id) ON DELETE CASCADE,
+    connection_id uuid NOT NULL REFERENCES platform.connection (id) ON DELETE RESTRICT,
     store         text NOT NULL CHECK (store = 'k8s'),
     ref           text NOT NULL,
     version       text NOT NULL,
@@ -91,7 +91,7 @@ CREATE TABLE platform.credential (
     UNIQUE (id, connection_id)
 );
 CREATE TABLE platform.oauth_token (                    -- host-only; every OAuth type, shared across pods
-    connection_id  uuid PRIMARY KEY REFERENCES platform.connection (id) ON DELETE CASCADE,
+    connection_id  uuid PRIMARY KEY REFERENCES platform.connection (id) ON DELETE RESTRICT,
     ciphertext     bytea NOT NULL,                       -- AES-256-GCM: access token; refresh token for authorization code
     nonce          bytea NOT NULL,
     wrapped_key    bytea NOT NULL,                       -- the row's AES-256 data key, wrapped by the envelope key
@@ -103,14 +103,14 @@ CREATE TABLE platform.oauth_token (                    -- host-only; every OAuth
 -- authorization code: no row = not authorized; calls refused until connection.authorize completes
 -- client credentials (secret or JWT): no row = no token yet; the first call fetches one
 -- every fetch and refresh: FOR NO KEY UPDATE on the platform.connection row (it always exists), re-read this row,
--- call the provider only if the token is missing or due; connection.write and set_credential lock the same row
+-- call the provider only if the token is missing or due; connection administration locks the same row
 --   client credentials: delete this row when the credential or parameters.auth changes
 --   authorization code: delete this row when parameters.auth changes (authorize again);
 --                       set expires_at = '-infinity' when only the secret changes (the refresh token stays)
 
 CREATE TABLE platform.oauth_authorization (            -- one pending connection.authorize; single use
     state         text PRIMARY KEY,                      -- project/env/32 random bytes, base64url
-    connection_id uuid NOT NULL REFERENCES platform.connection (id) ON DELETE CASCADE,
+    connection_id uuid NOT NULL REFERENCES platform.connection (id) ON DELETE RESTRICT,
     generation    bigint NOT NULL,                       -- a newer active generation refuses the callback
     code_verifier bytea NOT NULL,                        -- PKCE, encrypted like the token (wrapped_key, nonce, key_id below)
     wrapped_key   bytea NOT NULL,
@@ -121,7 +121,7 @@ CREATE TABLE platform.oauth_authorization (            -- one pending connection
 );
 
 CREATE TABLE platform.connection_generation (
-    connection_id uuid NOT NULL REFERENCES platform.connection (id) ON DELETE CASCADE,
+    connection_id uuid NOT NULL REFERENCES platform.connection (id) ON DELETE RESTRICT,
     generation    bigint NOT NULL CHECK (generation > 0),
     parameters    jsonb NOT NULL DEFAULT '{}',
     credential_id uuid,
@@ -198,8 +198,10 @@ CREATE TRIGGER external_system_name_immutable BEFORE UPDATE OF name ON platform.
 GRANT USAGE ON SCHEMA platform TO wamn_app;
 GRANT SELECT ON platform.external_system, platform.connection, platform.connection_generation TO wamn_app;
 REVOKE ALL ON platform.credential, platform.oauth_token, platform.oauth_authorization FROM wamn_app, wamn_query;
-GRANT SELECT, INSERT, UPDATE, DELETE ON platform.external_system, platform.connection,
-    platform.connection_generation, platform.credential, platform.oauth_token, platform.oauth_authorization TO wamn_platform;
+GRANT SELECT, INSERT, UPDATE, DELETE ON platform.external_system,
+    platform.oauth_token, platform.oauth_authorization TO wamn_platform;
+GRANT SELECT, INSERT, UPDATE ON platform.connection TO wamn_platform;
+GRANT SELECT, INSERT, UPDATE ON platform.connection_generation, platform.credential TO wamn_platform;
 
 CREATE TABLE catalog.connection_requirement (
     component_digest text NOT NULL CHECK (component_digest ~ '^sha256:[0-9a-f]{64}$'),

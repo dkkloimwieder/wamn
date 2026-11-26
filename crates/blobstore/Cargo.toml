@@ -25,7 +25,6 @@ wamn-registry.workspace = true
 wamn-storage.workspace = true
 
 [dev-dependencies]
-wamn-authentication.workspace = true
 bytes.workspace = true
 object_store.workspace = true
 tokio = { workspace = true, features = ["macros", "rt", "test-util"] }

@@ -201,6 +201,15 @@ pub async fn app_objects(
 
 /// Call the control route `operation` with the owner session, and return its value.
 pub async fn control(org: &Org, operation: &str, value: Value) -> anyhow::Result<Value> {
+    let mut reply = control_reply(org, operation, value).await?;
+    reply
+        .as_object_mut()
+        .and_then(|element| element.remove("value"))
+        .with_context(|| format!("{operation} refused: {reply}"))
+}
+
+/// Call the control route and keep its structured result or refusal.
+pub async fn control_reply(org: &Org, operation: &str, value: Value) -> anyhow::Result<Value> {
     let (_, attachment) = wamn_routes::HostRouteSet::Control
         .attachments()
         .find(|(_, attachment)| attachment.route.operation == operation)
@@ -237,11 +246,8 @@ pub async fn control(org: &Org, operation: &str, value: Value) -> anyhow::Result
         status == hyper::StatusCode::OK,
         "{operation} answered {status}: {text}"
     );
-    let mut answer: Value = serde_json::from_str(&text)?;
-    answer[0]
-        .as_object_mut()
-        .and_then(|element| element.remove("value"))
-        .with_context(|| format!("{operation} refused: {text}"))
+    let [answer] = serde_json::from_str::<[Value; 1]>(&text)?;
+    Ok(answer)
 }
 
 /// Read the application route `operation` of `app` with `token`, and return the status.

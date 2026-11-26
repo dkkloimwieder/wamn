@@ -350,7 +350,16 @@ pub struct ConnectionCopyRequest {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct ConnectionDeleteResult {
+pub struct ConnectionActivateRequest {
+    pub project: String,
+    pub env: String,
+    pub name: String,
+    pub credential: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ConnectionStatusResult {
     pub name: String,
     pub principal_id: String,
     pub id: String,

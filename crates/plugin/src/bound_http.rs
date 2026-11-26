@@ -418,3 +418,6 @@ fn wit_error(error: ConnectionError) -> http::ConnectionError {
         ConnectionError::Unauthorized => http::ConnectionError::Unauthorized,
     }
 }
+
+#[cfg(test)]
+mod deactivation;

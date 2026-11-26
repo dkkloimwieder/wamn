@@ -5,7 +5,7 @@ use std::sync::Arc;
 use wamn_connection::connection_facts::{ConnectionAnswer, ConnectionFacts};
 use wamn_connection::connection_memory::ConnectionStatus;
 use wamn_connection::invocation::ReleaseContext;
-use wamn_connection_type::{BlobstoreDefinition, BlobstoreProvider};
+use wamn_connection_type::{BlobstoreDefinition, BlobstoreProvider, RuntimeType};
 use wamn_registry::integration_code::IntegrationCode;
 use wamn_storage::client::{self, StoreClient};
 
@@ -45,10 +45,12 @@ impl ObjectStorage {
         let answer = active_answer(facts, &id)
             .await?
             .ok_or_else(|| anyhow::anyhow!("connection disabled"))?;
-        let generation = facts.generation(&id, answer.fact.active_generation).await?;
-        anyhow::ensure!(generation.runtime_type == "host", "not a native store");
+        anyhow::ensure!(
+            facts.runtime_type(&id) == Some(RuntimeType::Host),
+            "not a native store"
+        );
         let bound = BlobstoreDefinition::parse_for(
-            &generation.parameters,
+            &answer.generation.parameters,
             client::provider(integration_type)?,
         )?;
         let client = self.client(facts, id, &answer, &bound).await?;
@@ -91,7 +93,7 @@ impl ObjectStorage {
             let answer = active_answer(facts, &id)
                 .await?
                 .context("file connection disabled")?;
-            let configuration = facts.generation(&id, answer.fact.active_generation).await?;
+            let configuration = &answer.generation;
             anyhow::ensure!(
                 matches!(configuration.integration_type.as_str(), "s3" | "gcs"),
                 "not a file connection"

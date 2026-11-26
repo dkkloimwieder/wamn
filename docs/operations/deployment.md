@@ -611,7 +611,11 @@ Each verb reads its JSON request from `--file`.
 The request names the project, and connection requests also name the environment in `env`.
 The first connection write reads the credential value from `--credential-file`, except for authentication type `none`.
 `connection set-credential` reads later values from that flag too.
-`connection delete` returns `workload_not_ready` if any deployed application in the selected project environment lacks a true Ready condition.
+`wamn connection deactivate --file /private/target.json` refuses new calls, removes the connection's OAuth records, and erases its credential keys from the shared project Secret.
+The connection, its bindings, and its credential and generation history stay.
+If a Secret update fails, the connection stays inactive. Repeat deactivation to finish removing its credential keys.
+`wamn connection activate --file /private/target.json --credential-file /private/new-credential.json` creates a generation with a fresh credential.
+Omit `--credential-file` for authentication type `none`.
 
 ### Integration write interfaces
 

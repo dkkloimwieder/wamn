@@ -3,12 +3,9 @@
 use super::{ControlRoutes, ProjectTarget, Refusal, parse};
 use serde_json::{Value, json};
 use sqlx::Connection as _;
-use wamn_connection::connection_credentials::KubernetesStore;
+use wamn_connection::administration::{self, ConnectionError};
+use wamn_connection::connection_credentials::{KubernetesStore, destroy_credentials};
 use wamn_connection::project_connections::Administration;
-use wamn_connection::{
-    administration::{self, ConnectionError},
-    references,
-};
 use wamn_identity_protocol::PrincipalId;
 use wamn_routes::HostAttachment;
 use wamn_routes::host_wire::ConnectionAuthorizeResult;
@@ -116,11 +113,6 @@ impl ControlRoutes<'_> {
         } else {
             None
         };
-        let apps = if operation == "connection.delete" {
-            crate::env_status::apps(self.org, &target.project, env).await?
-        } else {
-            Vec::new()
-        };
         let mut database = Administration::new(
             &mut project,
             writer,
@@ -133,10 +125,10 @@ impl ControlRoutes<'_> {
                 )
             }),
         );
-        let credentials = KubernetesStore;
+        let credentials_store = KubernetesStore;
         let mut result = administration::execute(
             &mut database,
-            &credentials,
+            &credentials_store,
             wamn_http::wasm_authority::wasm_authority_port,
             administration::Request {
                 caller: *caller,
@@ -144,7 +136,6 @@ impl ControlRoutes<'_> {
                 operation,
                 payload,
             },
-            &apps,
         )
         .await?;
         if operation == "connection.authorize" {
@@ -161,22 +152,14 @@ impl ControlRoutes<'_> {
             })
             .map_err(anyhow::Error::from)?);
         }
-        if operation == "connection.delete" {
-            let principal = result["principal_id"]
-                .as_str()
-                .ok_or_else(|| anyhow::anyhow!("connection delete returned no principal id"))?
-                .parse::<PrincipalId>()
-                .map_err(anyhow::Error::from)?;
-            wamn_identity::identity::app::service::disable(&mut project, &principal)
-                .await
-                .map_err(anyhow::Error::from)?;
-        }
         project.commit().await?;
-        if let Some(credentials) = result.get("credentials") {
-            references::destroy_credentials(&KubernetesStore, credentials).await?;
-        }
-        if let Some(row) = result.as_object_mut() {
-            let _ = row.remove("credentials");
+        if let Some(credentials) = result
+            .as_object_mut()
+            .and_then(|row| row.remove("credentials"))
+        {
+            // The inactive flag is committed even if the Secret update fails.
+            // A repeated deactivation can read the same immutable references.
+            destroy_credentials(&credentials_store, &credentials).await?;
         }
         if operation == "connection.get" && result["auth_type"] == "oauth2_authorization_code" {
             result["redirect_uri"] = self

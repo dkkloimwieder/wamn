@@ -77,6 +77,23 @@ impl WriteCredentials for KubernetesStore {
     }
 }
 
+/// Destroy the stored credential versions after the inactive state commits.
+pub async fn destroy_credentials(
+    store: &dyn WriteCredentials,
+    credentials: &serde_json::Value,
+) -> Result<(), crate::administration::ConnectionError> {
+    for credential in credentials.as_array().into_iter().flatten() {
+        store
+            .destroy(
+                credential["ref"].as_str().expect("database reference"),
+                credential["version"].as_str().expect("database version"),
+            )
+            .await
+            .map_err(crate::administration::store_error)?;
+    }
+    Ok(())
+}
+
 /// The immutable database reference returned by a credential write.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StoreVersion {

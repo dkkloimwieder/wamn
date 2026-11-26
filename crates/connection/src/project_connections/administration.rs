@@ -335,12 +335,12 @@ impl<'a, 'session> Administration<'a, 'session> {
         Ok(())
     }
 
-    pub async fn refuse_env_references(
+    /// Refuse deleting an external system that another row references.
+    pub(crate) async fn refuse_external_system_references(
         &mut self,
-        group: &str,
-        id: &str,
+        id: Uuid,
     ) -> Result<(), ConnectionError> {
-        super::references::refuse_env_references(self.project, group, id).await
+        super::references::refuse_external_system_references(self.project, id).await
     }
 
     pub(crate) async fn connection_ids(&mut self) -> Result<Vec<Uuid>, ConnectionError> {
@@ -366,29 +366,41 @@ impl<'a, 'session> Administration<'a, 'session> {
         Ok(sqlx::query_scalar("SELECT jsonb_build_object('store',k.store,'ref',k.ref,'version',k.version) FROM platform.connection c JOIN platform.connection_generation g ON (g.connection_id,g.generation)=(c.id,c.active_generation) JOIN platform.credential k ON k.id=g.credential_id WHERE c.id=$1").bind(id).fetch_optional(&mut **self.project).await.map_err(database_error)?.unwrap_or(Value::Null))
     }
 
-    pub(crate) async fn set_connection_active(
-        &mut self,
-        id: Uuid,
-        active: bool,
-    ) -> Result<(), ConnectionError> {
-        sqlx::query("UPDATE platform.connection SET active=$2 WHERE id=$1")
+    pub(crate) async fn activate_connection(&mut self, id: Uuid) -> Result<(), ConnectionError> {
+        sqlx::query("UPDATE platform.connection SET active=true WHERE id=$1")
             .bind(id)
-            .bind(active)
             .execute(&mut **self.project)
             .await
             .map_err(connection_write_error)?;
         Ok(())
     }
 
-    pub(crate) async fn delete_connection(&mut self, id: Uuid) -> Result<Value, ConnectionError> {
-        let credentials: Value=sqlx::query_scalar("SELECT coalesce(jsonb_agg(jsonb_build_object('store',store,'ref',ref,'version',version)),'[]'::jsonb) FROM platform.credential WHERE connection_id=$1").bind(id).fetch_one(&mut **self.project).await.map_err(database_error)?;
-        sqlx::query("DELETE FROM platform.connection WHERE id=$1")
+    pub(crate) async fn deactivate_connection(
+        &mut self,
+        id: Uuid,
+    ) -> Result<Value, ConnectionError> {
+        let row = sqlx::query_scalar(
+            "UPDATE platform.connection SET active=false WHERE id=$1
+             RETURNING jsonb_build_object('service_principal_id',service_principal_id,
+                  'credentials',(SELECT coalesce(jsonb_agg(jsonb_build_object(
+                       'store',store,'ref',ref,'version',version)),'[]'::jsonb)
+                  FROM platform.credential WHERE connection_id=$1))",
+        )
+        .bind(id)
+        .fetch_one(&mut **self.project)
+        .await
+        .map_err(connection_write_error)?;
+        sqlx::query("DELETE FROM platform.oauth_token WHERE connection_id=$1")
             .bind(id)
             .execute(&mut **self.project)
             .await
             .map_err(database_error)?;
-
-        Ok(credentials)
+        sqlx::query("DELETE FROM platform.oauth_authorization WHERE connection_id=$1")
+            .bind(id)
+            .execute(&mut **self.project)
+            .await
+            .map_err(database_error)?;
+        Ok(row)
     }
 
     pub(crate) async fn connection_summary(&mut self, id: Uuid) -> Result<Value, ConnectionError> {

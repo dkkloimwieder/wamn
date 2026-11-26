@@ -390,7 +390,7 @@ LANGUAGE plpgsql SET search_path = pg_catalog AS $$
 BEGIN
     IF NOT EXISTS (
         SELECT FROM platform.connection
-        WHERE id = NEW.connection_id AND integration_type IN ('gcs', 's3', 'disk')
+        WHERE id = NEW.connection_id AND active AND integration_type IN ('gcs', 's3', 'disk')
     ) THEN
         RAISE EXCEPTION 'file_connection_requires_host_store' USING ERRCODE = '23514';
     END IF;

@@ -42,11 +42,7 @@ impl RegistryFileConnections {
             if answer.fact.status != wamn_connection::connection_memory::ConnectionStatus::Active {
                 continue;
             }
-            let generation = self
-                .facts
-                .generation(&id, answer.fact.active_generation)
-                .await
-                .map_err(|error| failed("collector", error))?;
+            let generation = &answer.generation;
             if !matches!(generation.integration_type.as_str(), "gcs" | "s3" | "disk") {
                 continue;
             }
@@ -114,13 +110,8 @@ impl RegistryFileConnections {
                 answer.fact.status == wamn_connection::connection_memory::ConnectionStatus::Active
             })
             .ok_or_else(|| refused(FileRefusal::BindingRefused, "connection"))?;
-        let generation = self
-            .facts
-            .generation(&id, answer.fact.active_generation)
-            .await
-            .map_err(|error| failed("binding", error))?;
-        // These are native storage providers. A stored file remains readable even
-        // when this application has no current declaration for its connection.
+        let generation = &answer.generation;
+        // A stored file can use its active connection without a current app declaration.
         if !matches!(generation.integration_type.as_str(), "gcs" | "s3") {
             return Err(refused(FileRefusal::BindingRefused, "connection"));
         }

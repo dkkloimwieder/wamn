@@ -97,7 +97,7 @@ Credential changes use the current generation without a host restart.
 Guest SQL, queue maintenance, HTTP admission, and event materialization use distinct authority classes.
 Private event binding files remain outside guest configuration, and workload configuration cannot replace them.
 Credential generations remain separate from invocation identity.
-A replacement generation must demonstrate live use before the previous generation can retire.
+Credential rotation gives the previous version time to retire. Deactivation removes every credential version for the connection in one command.
 A resource or connection cannot silently cross a project, environment, or generation boundary.
 The [database contract](data-access.md) owns SQL-specific authorization and transaction behavior.
 
@@ -288,7 +288,7 @@ Its storage API promotes staging with a metadata row and removes staging without
 The host must supply the catalog lookup before it calls that API.
 Bucket creation installs a [one-day rule for incomplete multipart uploads](../operations/gcp.md#2-project-resources).
 A storage handle retains its connection generation.
-Each operation refuses a disabled connection or a changed generation before calling storage.
+Each operation reads the connection status before calling storage. It refuses an inactive connection or a changed generation.
 The blobstore plugin shares storage clients by connection and generation in a bounded cache.
 Each project retains one plugin for guest access and file routes across resident releases.
 Range reads fetch only the requested bytes.

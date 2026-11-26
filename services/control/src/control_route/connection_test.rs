@@ -26,7 +26,13 @@ impl ControlRoutes<'_> {
         .await
         {
             Ok(Ok(result)) => Ok(result),
-            Ok(Err(error @ Refusal::Delivery(_))) => Err(error),
+            Ok(Err(
+                error @ (Refusal::Delivery(_)
+                | Refusal::Declared {
+                    code: "connection_inactive",
+                    ..
+                }),
+            )) => Err(error),
             Ok(Err(Refusal::Declared { code, detail })) => test_outcome(Err(format!(
                 "{code}: {}",
                 detail["field"].as_str().unwrap_or("value")

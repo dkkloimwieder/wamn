@@ -17,20 +17,6 @@ pub struct ConnectionAnswer {
     pub generation: Arc<ConnectionGeneration>,
 }
 
-/// A generation row with its runtime type from this workload's declaration.
-#[derive(Debug)]
-pub struct Generation {
-    pub runtime_type: &'static str,
-    data: Arc<ConnectionGeneration>,
-}
-
-impl std::ops::Deref for Generation {
-    type Target = ConnectionGeneration;
-    fn deref(&self) -> &Self::Target {
-        &self.data
-    }
-}
-
 /// Access to the host's single project-lifetime cache.
 pub trait ConnectionCache: std::fmt::Debug + Send + Sync {
     fn bind_app(
@@ -137,15 +123,8 @@ impl ConnectionFacts {
         self.reader.connection_handle(name, generation)
     }
 
-    /// Read connection metadata under one cache key, without a system read.
+    /// Read the live connection fact before reusing cached generation metadata.
     pub async fn answer(&self, id: &uuid::Uuid) -> anyhow::Result<Option<Arc<ConnectionAnswer>>> {
-        if let Some(answer) = self
-            .cache
-            .as_ref()
-            .and_then(|cache| cache.get(&self.project_env_key, id))
-        {
-            return Ok(Some(answer));
-        }
         let Some(fact) = self
             .reader
             .connection_fact(&self.project, &self.env, id)
@@ -153,6 +132,14 @@ impl ConnectionFacts {
         else {
             return Ok(None);
         };
+        if let Some(answer) = self
+            .cache
+            .as_ref()
+            .and_then(|cache| cache.get(&self.project_env_key, id))
+            .filter(|answer| answer.fact == fact)
+        {
+            return Ok(Some(answer));
+        }
         let generation = self
             .reader
             .connection_generation(&self.project, &self.env, id, fact.active_generation)
@@ -192,34 +179,16 @@ impl ConnectionFacts {
                 .await?,
         })
     }
-    pub async fn generation(&self, id: &uuid::Uuid, generation: i64) -> anyhow::Result<Generation> {
-        let data = match self.answer(id).await? {
-            Some(answer) if answer.fact.active_generation == generation => {
-                Arc::clone(&answer.generation)
-            }
-            _ => Arc::new(
-                self.reader
-                    .connection_generation(&self.project, &self.env, id, generation)
-                    .await?
-                    .context("connection generation unavailable")?,
-            ),
-        };
+    /// The bound runtime type from the workload's declaration.
+    pub fn runtime_type(&self, id: &uuid::Uuid) -> Option<wamn_connection_type::RuntimeType> {
         let connection_id = id.to_string();
-        let runtime_type = self
-            .app
-            .as_ref()
-            .and_then(|app| {
-                app.components
-                    .iter()
-                    .flat_map(|component| &component.connections)
-                    .find(|binding| binding.connection_id == connection_id)
-            })
-            .map_or("", |binding| match binding.runtime_type {
-                wamn_connection_type::RuntimeType::Host => "host",
-                wamn_connection_type::RuntimeType::Wasm => "wasm",
-                wamn_connection_type::RuntimeType::Native => "native",
-            });
-        Ok(Generation { runtime_type, data })
+        self.app
+            .as_ref()?
+            .components
+            .iter()
+            .flat_map(|component| &component.connections)
+            .find(|binding| binding.connection_id == connection_id)
+            .map(|binding| binding.runtime_type)
     }
     /// Read the credential selected by a connection fact.
     pub async fn secret(

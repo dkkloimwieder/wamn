@@ -4,7 +4,6 @@ use std::{collections::BTreeMap, time::Duration};
 
 use anyhow::Context as _;
 use serde_json::Value;
-use wamn_app::app_config::{APP_CONFIG, AppConfig};
 use wamn_registry::{EnvName, EnvStatus, OrgId, ProjectId, name};
 use wamn_routes::host_wire::{
     EnvStatusResult, EnvStatusResultRollout, EnvStatusResultWorkload,
@@ -111,48 +110,6 @@ pub fn runtime_status<'a>(
         roles: None,
         memberships: None,
     })
-}
-
-/// Read application bindings when every workload in the project environment is Ready.
-/// Returns `None` while any of those workloads lacks a true Ready condition.
-///
-/// # Errors
-/// Returns an error if a matching workload lacks a valid application for this coordinate.
-pub fn apps<'a>(
-    org: &OrgId,
-    project: &ProjectId,
-    env: &EnvName,
-    workloads: impl IntoIterator<Item = Workload<'a>>,
-) -> anyhow::Result<Option<Vec<AppConfig>>> {
-    let workloads = project_workloads(org, project, env, workloads).collect::<Vec<_>>();
-    if workloads.iter().any(|workload| {
-        !workload.data["status"]["conditions"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .any(|condition| condition["type"] == "Ready" && condition["status"] == "True")
-    }) {
-        return Ok(None);
-    }
-    workloads
-        .into_iter()
-        .map(|workload| {
-            let components = workload.data["spec"]["template"]["spec"]["components"]
-                .as_array()
-                .context("application workload has no components")?;
-            let config = components
-                .iter()
-                .find_map(|component| component["localResources"]["config"][APP_CONFIG].as_str())
-                .context("application workload has no wamn.app")?;
-            let app: AppConfig = serde_json::from_str(config)?;
-            anyhow::ensure!(
-                &app.org == org && &app.project == project && &app.env == env,
-                "application workload coordinate mismatch"
-            );
-            Ok(app)
-        })
-        .collect::<anyhow::Result<_>>()
-        .map(Some)
 }
 
 /// Update the system first on activation, and the project databases first on inactivation.

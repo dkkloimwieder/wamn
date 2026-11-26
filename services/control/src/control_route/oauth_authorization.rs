@@ -168,6 +168,11 @@ impl Authorization {
                 .filter(|code| !code.is_empty())
                 .ok_or_else(|| refused("missing authorization code"))?,
         );
+        // Deactivation and credential writes lock the connection before deleting state.
+        let context = store::lock_connection(tx, &state)
+            .await
+            .map_err(|error| failed("connection unavailable", error))?
+            .ok_or_else(|| refused("connection or authorization state unavailable"))?;
         let authorization = store::lock(tx, &state)
             .await
             .map_err(|error| failed("authorization state read failed", error))?
@@ -186,10 +191,6 @@ impl Authorization {
         .await
         .map_err(|error| failed("callback identity failed", error))?;
         let connection = authorization.connection;
-        let context = store::lock_connection(tx, connection)
-            .await
-            .map_err(|error| failed("connection unavailable", error))?
-            .ok_or_else(|| refused("connection unavailable"))?;
         if context["active_generation"].as_i64() != Some(authorization.generation) {
             return Err(refused("connection generation changed"));
         }

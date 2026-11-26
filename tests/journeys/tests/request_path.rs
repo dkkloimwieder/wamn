@@ -18,6 +18,68 @@ use wamn_test_infrastructure::scratch::ScratchRoot;
 const CONNECTION: &str = "upstream";
 
 common::journey! {
+    /// The control command removes the selected connection's Secret entries.
+    async fn deactivation_removes_only_the_connections_secret_versions() -> anyhow::Result<()> {
+        use common::host::{control, control_reply};
+        use k8s_openapi::api::core::v1::Secret;
+
+        let org = Org::create().await?;
+        let project = OtherEnv::apply(&org, "credentials", "platform_fixture").await?;
+        let target = |name: &str| json!({
+            "project":project.triple.project,"env":project.triple.env,"name":name
+        });
+        let parameters = json!({
+            "primary-authority":"api.example.invalid",
+            "tls-verification":"verify-authority",
+            "auth":{"in":"header","name":"X-Test-Key"}
+        });
+        for name in ["retiring", "unrelated"] {
+            let mut input = target(name);
+            input["integration_type"] = json!("http");
+            input["auth_type"] = json!("api_key");
+            input["parameters"] = parameters.clone();
+            input["credential"] = json!({"key":name}).to_string().into();
+            control(&org, "connection.write", input).await?;
+        }
+        let mut rotation = target("retiring");
+        rotation["credential"] = json!({"key":"second"}).to_string().into();
+        control(&org, "connection.set_credential", rotation).await?;
+        let mut observed = common::admit_observer(&org.cluster, &project.triple).await?;
+        let versions: Vec<(String, String)> = sqlx::query_as(
+            "SELECT c.name, k.version FROM platform.credential k
+             JOIN platform.connection c ON c.id=k.connection_id",
+        )
+        .fetch_all(&mut observed.connection)
+        .await?;
+        let secrets = Api::<Secret>::namespaced(org.cluster.client.clone(), org.name.as_str());
+        let secret_name = name::credential_secret_name(
+            &org.name, &project.triple.project, &project.triple.env,
+        );
+        let before = secrets.get(&secret_name).await?.data.context("credential entries")?;
+        for (_, version) in &versions {
+            assert!(before.contains_key(version));
+        }
+
+        control(&org, "connection.deactivate", target("retiring")).await?;
+        let after = secrets.get(&secret_name).await?.data.unwrap_or_default();
+        for (name, version) in &versions {
+            if name == "retiring" {
+                assert!(!after.contains_key(version));
+            } else {
+                assert_eq!(after.get(version), before.get(version));
+            }
+        }
+
+        let mut candidate = target("retiring");
+        candidate["parameters"] = parameters;
+        candidate["credential"] = json!({"key":"candidate"}).to_string().into();
+        let answer = control_reply(&org, "connection.test", candidate).await?;
+        assert_eq!(answer["error"]["code"], "connection_inactive");
+        Ok(())
+    }
+}
+
+common::journey! {
     /// Each environment keeps its own credential: `connection get` shows its own hint,
     /// `connection copy` from A into B copies A's parameters and keeps B's credential, and
     /// B's host ServiceAccount may get its own credential Secret but not A's. The outside

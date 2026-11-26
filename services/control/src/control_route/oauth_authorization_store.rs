@@ -77,16 +77,16 @@ pub(super) async fn lock(
     }))
 }
 
-/// Lock the live connection and return its current generation and credential reference.
+/// Lock the pending state’s live connection before locking the state itself.
 ///
 /// # Errors
 /// Returns an error if the database cannot read or lock the connection.
 pub(super) async fn lock_connection(
     transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    connection: Uuid,
+    state: &str,
 ) -> Result<Option<Value>, sqlx::Error> {
-    sqlx::query_scalar("SELECT to_jsonb(c)||jsonb_build_object('parameters',g.parameters,'credential',jsonb_build_object('store',k.store,'ref',k.ref,'version',k.version)) FROM platform.connection c JOIN platform.connection_generation g ON (g.connection_id,g.generation)=(c.id,c.active_generation) LEFT JOIN platform.credential k ON k.id=g.credential_id WHERE c.id=$1 AND c.active FOR NO KEY UPDATE OF c")
-        .bind(connection).fetch_optional(&mut **transaction).await
+    sqlx::query_scalar("SELECT to_jsonb(c)||jsonb_build_object('parameters',g.parameters,'credential',jsonb_build_object('store',k.store,'ref',k.ref,'version',k.version)) FROM platform.connection c JOIN platform.connection_generation g ON (g.connection_id,g.generation)=(c.id,c.active_generation) LEFT JOIN platform.credential k ON k.id=g.credential_id WHERE c.id=(SELECT connection_id FROM platform.oauth_authorization WHERE state=$1) AND c.active FOR NO KEY UPDATE OF c")
+        .bind(state).fetch_optional(&mut **transaction).await
 }
 
 /// Delete the authorization state inside the transaction that uses it.

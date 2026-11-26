@@ -146,6 +146,8 @@ pub(super) enum ConnectionAuthority {
         id: uuid::Uuid,
         generation: i64,
     },
+    #[cfg(test)]
+    Test,
 }
 
 impl core::fmt::Debug for BoundContainer {
@@ -182,11 +184,21 @@ impl BoundContainer {
     }
 
     pub(super) async fn permit_connection(&self, verb: &'static str) -> Result<(), StoreError> {
+        #[cfg(not(test))]
         let ConnectionAuthority::Live {
             facts,
             id,
             generation,
         } = &self.authority;
+        #[cfg(test)]
+        let ConnectionAuthority::Live {
+            facts,
+            id,
+            generation,
+        } = &self.authority
+        else {
+            return Ok(());
+        };
         if !facts.answer(id).await.ok().flatten().is_some_and(|answer| {
             answer.fact.status == ConnectionStatus::Active
                 && answer.fact.active_generation == *generation
@@ -390,83 +402,52 @@ pub(crate) mod test_binding {
     use std::sync::Arc;
 
     use object_store::ObjectStore;
-    use wamn_connection::connection_facts::{ConnectionAnswer, ConnectionCache as _};
-    use wamn_connection::connection_memory::{ConnectionFact, ConnectionStatus};
 
     use super::{BoundContainer, ConnectionAuthority, Objects};
 
-    const GENERATION: i64 = 1;
-
-    /// Bind `store` under the live authority of a connection the host cache
-    /// holds as active in its bound generation.
     pub(crate) fn admitted(
         store: Arc<dyn ObjectStore>,
         container: &str,
         prefix: &str,
     ) -> BoundContainer {
-        bind(store, container, prefix, true)
+        BoundContainer::new(
+            Objects::new(store),
+            container,
+            prefix,
+            ConnectionAuthority::Test,
+        )
     }
 
-    /// Bind `store` under the live authority of a connection, which the host
-    /// cache answers only when `active`. Otherwise the answer comes from a
-    /// project database the host holds no login for.
-    pub(crate) fn bind(
+    pub(crate) fn unavailable(
         store: Arc<dyn ObjectStore>,
         container: &str,
         prefix: &str,
-        active: bool,
     ) -> BoundContainer {
-        let app = Arc::new(wamn_app::app_config::AppConfig {
-            org: "acme".parse().unwrap(),
-            project: "project-a".parse().unwrap(),
-            env: "dev".parse().unwrap(),
-            app: "app".parse().unwrap(),
-            grant_cache_seconds: 3600,
-            components: Vec::new(),
-        });
         let postgres = Arc::new(
             wamn_postgres::WamnPostgres::from_host_config(std::collections::BTreeMap::new())
                 .unwrap(),
         );
-        let cache = Arc::new(wamn_authentication::authorization::Authorization::new(
-            postgres,
-        ));
-        let facts = Arc::clone(&cache).facts(app).unwrap();
-        let id = uuid::Uuid::new_v4();
-        if active {
-            cache.insert(
-                facts.project_env_key(),
-                id,
-                Arc::new(ConnectionAnswer {
-                    fact: ConnectionFact {
-                        active_generation: GENERATION,
-                        status: ConnectionStatus::Active,
-                        credential_id: None,
-                        service_principal_id: "5c2b7e1a-9d3f-4a6b-8c1e-2f4d6a8b0c3e"
-                            .parse()
-                            .unwrap(),
-                        target_id: uuid::Uuid::new_v4(),
-                        resource_key: None,
-                        authority: None,
-                    },
-                    generation: Arc::new(wamn_registry::connections::ConnectionGeneration {
-                        name: "files".into(),
-                        integration_type: "s3".parse().unwrap(),
-                        auth_type: "access_key".into(),
-                        external_system: None,
-                        parameters: serde_json::json!({}),
-                    }),
-                }),
-            );
-        }
+        let facts = wamn_connection::connection_facts::ConnectionFacts::new(
+            Arc::default(),
+            Arc::new(
+                wamn_connection::connection_credentials::ConnectionCredentials::for_org(
+                    &"acme".parse().unwrap(),
+                    None,
+                ),
+            ),
+            &postgres,
+            &"acme--dev--project-a".parse().unwrap(),
+            &"project-a".parse().unwrap(),
+            &"dev".parse().unwrap(),
+        );
         BoundContainer::new(
             Objects::new(store),
             container,
             prefix,
             ConnectionAuthority::Live {
-                facts,
-                id,
-                generation: GENERATION,
+                facts: Arc::new(facts),
+                id: uuid::Uuid::new_v4(),
+                generation: 1,
             },
         )
     }
@@ -476,7 +457,7 @@ pub(crate) mod test_binding {
 mod tests {
     use object_store::{ObjectStore, ObjectStoreExt as _, memory::InMemory, path::Path};
 
-    use super::test_binding::{admitted, bind};
+    use super::test_binding::{admitted, unavailable};
     use super::*;
 
     fn bound(prefix: &str) -> (BoundContainer, Arc<InMemory>) {
@@ -514,7 +495,7 @@ mod tests {
 
     #[tokio::test]
     async fn unavailable_connection_refuses_every_store_call() {
-        let container = bind(Arc::new(InMemory::new()), "wamn-labels", "p", false);
+        let container = unavailable(Arc::new(InMemory::new()), "wamn-labels", "p");
         assert!(matches!(
             container.put("item", vec![]).await,
             Err(StoreError::Refused { .. })

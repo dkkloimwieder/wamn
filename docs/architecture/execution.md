@@ -377,7 +377,7 @@ A guest cannot extend that deadline.
 
 Connection activation changes the generation selected for new work.
 Admitted runs never substitute a newer connection generation for their pin.
-Connection effects refuse a changed generation, a disabled connection, or an unavailable pinned credential.
+Connection effects refuse a changed generation, an inactive connection, or an unavailable pinned credential.
 Superseded generation records remain immutable. Retaining a record does not extend the lifetime of its credential.
 
 
@@ -696,9 +696,10 @@ The shared browser runtime signs in directly to the deployment's org and renews 
 
 ### Connection memory
 
-The host caches active connection facts and generation data for the project's cache lifetime.
-The connection ID and project coordinate identify the facts, which include status, generation, credential UUID, and service principal.
-The host reads these facts from the project database when they are absent or expired.
+The host reads the connection fact from the project database on each call.
+The connection ID and project coordinate identify the fact, which includes status, generation, credential UUID, and service principal.
+Within the project cache lifetime, the host reuses cached generation data when it matches the live fact.
+Inactive connections refuse new calls.
 
 One credential reader serves the whole host process.
 It keeps a bounded cache of successful reads by project coordinate and credential UUID.
@@ -711,8 +712,8 @@ Inbound signature authentication resolves the credential name through the enviro
 The active connection fact supplies the credential UUID and service principal.
 The signature check uses the same credential reader.
 
-The [engine](../../crates/engine/src/integration.rs) compiles the component of a wasm or native version once per component digest and keeps it in host memory.
-The [connections dispatch](../../crates/connection/src/integrations.rs) links an instance per (connection id, generation, credential id) from that compiled component.
+The app chart loads each Wasm integration as a sibling component.
+The bound integration plugin reads the active connection when the sibling begins a call. [Integration binding](../../crates/plugin/src/integrations.rs)
 Typed integration imports use labels, the connection names that code declares.
 The host resolves each label by its component digest, package, and name.
 HTTP and blobstore share one authority resolver.
@@ -733,7 +734,7 @@ A call waits up to 30 seconds for a lease, then returns its interface's `unavail
 If the session drops, the host refuses calls until it reacquires the leases that its connections still need.
 Readiness never waits for a resource lease.
 
-A connection key delete stops new calls and releases its lease after the current call finishes.
+Deactivation refuses new calls. It lets calls already admitted finish.
 During shutdown, the host stops the queue, drains exclusive calls, and closes the lease session before native cleanup.
 
 Published versions record which exported interfaces permit writes in `write_interfaces`.
@@ -741,7 +742,7 @@ Environment apply refuses a read declaration that imports one of those interface
 Host types retain their method and storage enforcement at run time.
 
 `connection.test` validates candidate values with the connection writer's parameter and credential schemas.
-It uses the live release's bound version, or the newest published version when no live binding exists.
+It first refuses an inactive connection. It uses the live release's bound version, or the newest published version when no live binding exists.
 An explicit version overrides that default.
 The host resolves metadata without creating a connection and rolls back its read transactions before network I/O.
 
@@ -769,11 +770,11 @@ The authorization URL preserves existing query parameters and adds the state, ca
 
 The callback opens its own connection through the control login and holds no org write lock during the provider call.
 
-It locks the state and active connection generation, deletes the state, exchanges the code, and writes the encrypted token in one transaction.
+It locks the active connection before locking and deleting the state. The same transaction exchanges the code and writes the encrypted token.
 A successful callback consumes the state once.
 Every refusal rolls back, including provider errors, expired states, and stale generations.
-Expired or stale states remain until a generation write or connection deletion removes them.
-A generation write deletes pending states, so a later callback reports an unknown state.
+Expired or stale states remain until a generation write or deactivation removes them.
+A generation write deletes pending states, so a later callback refuses the old state.
 The callback escapes all page values and returns no credential material.
 
 One OAuth module uses `oauth2` with its default HTTP client disabled.
@@ -787,9 +788,7 @@ The host refuses any other token origin before sending a request.
 This applies to token fetches, refreshes, candidate health, and authorization code exchanges.
 The browser's `authorize_url` stays outside this token boundary.
 
-OAuth storage uses `identity.oauth_token` and `identity.oauth_authorization` in the system database.
-A public authorization callback locks its pending state through `registry.lock_oauth_authorization`.
-The function restricts the state to the control login’s org.
+OAuth storage uses `platform.oauth_token` and `platform.oauth_authorization` in the project database.
 The host binds the principal that created the state before it reads or writes other protected rows.
 Only the host connection role and the control role receive table grants.
 Each row uses a fresh AES-256 data key and AES-256-GCM encryption.
@@ -802,16 +801,16 @@ Each host retains at most 1024 unwrapped keys and evicts the least recently used
 The cache identity includes both `key_id` and `wrapped_key`.
 Debug output omits keys and plaintext.
 
-The host refreshes tokens under a system database transaction.
+The host refreshes tokens under a project database transaction.
 Its first statement records the call's executing principal in `platform.tx_identity`.
-It locks `registry.connection` with `FOR NO KEY UPDATE`, then reads the shared token row again.
+It locks `platform.connection` with `FOR NO KEY UPDATE`, then reads the shared token row again.
 A token is due when its expiry is within 60 seconds, including negative infinity.
 A waiting host uses the row that the first host writes.
 The lock also serializes refresh with credential rotation.
 A stale generation cannot write a token.
 
 The host keeps decrypted access tokens under the connection id and generation until the refresh margin.
-A connection key deletion drops those entries.
+A new connection generation replaces the cached token entries of older generations.
 An OAuth API response of 401 or 403 follows the same lock path and permits one fresh token and one retry.
 Concurrent refusals reuse a token that another host already refreshed.
 If a token request fails before an API call, the host returns `credential-unavailable`.
@@ -834,15 +833,15 @@ The generation transaction deletes tokens for either client credentials type whe
 For authorization code, a change to `parameters.auth` deletes the token.
 A secret change alone sets its expiry to negative infinity and preserves its encrypted token bytes.
 Every new generation deletes pending authorizations for that connection.
-Connection deletion cascades to both OAuth tables.
+`connection.deactivate` sets the connection inactive and clears its rows from both OAuth tables.
+After the database commit, it erases the connection's credential keys from the project Secret.
+Credential and generation records stay in Postgres.
+`connection.activate` creates a new generation and requires a fresh credential unless the authentication type is `none`.
+OAuth authorization-code connections must authorize again after activation.
 
-Every writer of these facts records the change in a [`ConnectionDrops`](../../crates/broker/src/connection_changes.rs).
-Its caller deletes the keys of the list after the commit. `wamn-broker::Publisher` publishes both authorization and connection changes through one client.
-A failed delete is logged, the commit stands, and the 60 seconds bound it.
-A connection write, copy, credential change, disable, enable or delete deletes the key of that connection.
-A connection write, copy or delete also deletes the connection map of its environment, because it can create or remove a connection.
-`wamn env apply` deletes the release key of each release whose connection rows changed.
-`env deactivate-project` tears down the project deployment and removes its connection credentials.
+`wamn env deactivate-project` tears down the project deployment and deletes its connection credential Secret.
+The registry keeps the inactive project env and removes its memberships and app connection bindings.
+`wamn env apply` marks omitted apps inactive and reactivates them when they return to the env file.
 
 ### Control sessions
 

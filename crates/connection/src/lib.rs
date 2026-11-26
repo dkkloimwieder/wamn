@@ -10,4 +10,3 @@ pub mod credential_cleanup;
 pub mod invocation;
 pub mod oauth_token;
 pub mod project_connections;
-pub mod references;
