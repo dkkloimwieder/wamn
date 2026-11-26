@@ -15,7 +15,7 @@ pub struct AppConfig {
     pub project: wamn_registry::ProjectId,
     pub env: wamn_registry::EnvName,
     pub app: wamn_registry::AppName,
-    /// One positive grant cache lifetime for the project, in seconds.
+    /// Lifetime of cached positive project facts, in seconds.
     pub grant_cache_seconds: u32,
     pub components: Vec<AppComponent>,
 }

@@ -26,12 +26,13 @@ use crate::host_wire::{
     PermissionGrantRequest, PermissionGrantResult, PermissionListRequest, PermissionListResult,
     PermissionMineResult, PermissionRevokeResult, PlatformSchemaRequest, ProjectAdminGrantRequest,
     ProjectAdminGrantResult, ProjectCreateRequest, ProjectCreated, ProjectEnvDeactivateRequest,
-    ProjectListResult, ProjectRequest, ProjectStatus, RoleCreateResult, RoleDeleteResult,
-    RoleListResult, SchemaDiffRequest, ServicePrincipalCreateRequest, ServicePrincipalCreateResult,
-    ServicePrincipalDisableResult, UserActivateResult, UserCreateRequest, UserCreateResult,
-    UserInviteRequest, UserInviteResult, UserListResult, UserRoleGrantRequest, UserRoleGrantResult,
-    UserRoleRevokeResult, WorkflowAuthorRequest, WorkflowAuthorResult, WorkflowDisableRequest,
-    WorkflowRunRequest, WorkflowRunResult, schema, schemas,
+    ProjectListResult, ProjectRequest, ProjectStatus, RoleActivateResult, RoleCreateResult,
+    RoleDeactivateResult, RoleListResult, SchemaDiffRequest, ServicePrincipalCreateRequest,
+    ServicePrincipalCreateResult, ServicePrincipalDisableResult, UserActivateResult,
+    UserCreateRequest, UserCreateResult, UserInviteRequest, UserInviteResult, UserListResult,
+    UserRoleGrantRequest, UserRoleGrantResult, UserRoleRevokeResult, WorkflowAuthorRequest,
+    WorkflowAuthorResult, WorkflowDisableRequest, WorkflowRunRequest, WorkflowRunResult, schema,
+    schemas,
 };
 use crate::{route_attachment_id, route_path};
 use RefusalSource::{MalformedInput, PermissionDenied, TransactionInvariant};
@@ -120,12 +121,14 @@ pub enum HostHandler {
     /// The user rows of the application
     /// (docs/architecture/execution.md#host-run-routes).
     AppUserList,
-    /// The roles of the application.
+    /// The active roles of the application.
     RoleList,
     /// Create one empty authored role.
     RoleCreate,
-    /// Delete one authored role with its assignments and permissions.
-    RoleDelete,
+    /// Suspend an authored role's grants.
+    RoleDeactivate,
+    /// Restore an authored role's grants.
+    RoleActivate,
     /// The permission rows of one role, with the roots that require each.
     PermissionList,
     /// Select an operation for a role and write its released closure.
@@ -1032,9 +1035,7 @@ const ROUTES: &[HostRoute] = &[
         refusals: &[
             TransactionInvariant(
                 "admin_fixed",
-                Some(
-                    "The admin role is built in. It holds every operation, and it cannot be created, deleted or given a permission.",
-                ),
+                Some("The built-in admin role always stays active and holds every operation."),
             ),
             MalformedInput("invalid_input", None),
             PermissionDenied,
@@ -1042,18 +1043,33 @@ const ROUTES: &[HostRoute] = &[
     },
     HostRoute {
         set: HostRouteSet::App,
-        operation: "role.delete",
+        operation: "role.deactivate",
         type_: OperationType::Command,
         authority: HostRouteAuthority::Admin,
-        handler: HostHandler::RoleDelete,
-        schemas: schemas::<PermissionListRequest, RoleDeleteResult>,
+        handler: HostHandler::RoleDeactivate,
+        schemas: schemas::<PermissionListRequest, RoleDeactivateResult>,
         write_transaction: false,
         refusals: &[
             TransactionInvariant(
                 "admin_fixed",
-                Some(
-                    "The admin role is built in. It holds every operation, and it cannot be created, deleted or given a permission.",
-                ),
+                Some("The built-in admin role always stays active and holds every operation."),
+            ),
+            MalformedInput("invalid_input", None),
+            PermissionDenied,
+        ],
+    },
+    HostRoute {
+        set: HostRouteSet::App,
+        operation: "role.activate",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::Admin,
+        handler: HostHandler::RoleActivate,
+        schemas: schemas::<PermissionListRequest, RoleActivateResult>,
+        write_transaction: false,
+        refusals: &[
+            TransactionInvariant(
+                "admin_fixed",
+                Some("The built-in admin role always stays active and holds every operation."),
             ),
             MalformedInput("invalid_input", None),
             PermissionDenied,
@@ -1084,9 +1100,7 @@ const ROUTES: &[HostRoute] = &[
         refusals: &[
             TransactionInvariant(
                 "admin_fixed",
-                Some(
-                    "The admin role is built in. It holds every operation, and it cannot be created, deleted or given a permission.",
-                ),
+                Some("The built-in admin role always stays active and holds every operation."),
             ),
             MalformedInput("invalid_input", None),
             TransactionInvariant(
@@ -1098,7 +1112,7 @@ const ROUTES: &[HostRoute] = &[
                 Some("The current release does not serve this operation."),
             ),
             PermissionDenied,
-            TransactionInvariant("role_not_found", Some("This role does not exist.")),
+            TransactionInvariant("role_not_found", Some("This role is missing or inactive.")),
         ],
     },
     HostRoute {
@@ -1130,7 +1144,7 @@ const ROUTES: &[HostRoute] = &[
         refusals: &[
             MalformedInput("invalid_input", None),
             PermissionDenied,
-            TransactionInvariant("role_not_found", Some("This role does not exist.")),
+            TransactionInvariant("role_not_found", Some("This role is missing or inactive.")),
             TransactionInvariant("user_not_found", Some("The application has no such user.")),
         ],
     },

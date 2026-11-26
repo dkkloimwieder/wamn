@@ -1,5 +1,5 @@
 //! Host contracts through product deployment: probes, the host's NATS user, the stop
-//! and status path, and the grant cache lifetime.
+//! and status path, and the project cache configuration.
 
 mod common;
 
@@ -27,9 +27,9 @@ const SECOND: &str = "second_fixture";
 const HOST_DEADLINE: Duration = Duration::from_secs(300);
 /// How long the operator takes to see a Workload change on the Host object.
 const RUNTIME_DEADLINE: Duration = Duration::from_secs(180);
-/// The grant cache lifetime that the grant cache test applies.
+/// The project cache lifetime the test deploys.
 const REVOCATION_SECONDS: u64 = 5;
-/// The time a call takes, past the cache lifetime, to reach the host and be refused.
+/// Additional time for the authority projection and the call to reach the host.
 const REVOCATION_MARGIN: Duration = Duration::from_secs(10);
 
 common::journey! {
@@ -378,8 +378,8 @@ common::journey! {
 }
 
 common::journey! {
-    /// A project admin grant reaches the host at once, because the host caches only positive
-    /// grants. A revoke reaches it within `revocation_seconds`.
+    /// A projected project admin grant reaches the host on its next read.
+    /// The deployment supplies the configured cache lifetime for other project facts.
     async fn a_revoked_grant_is_refused_within_the_revocation_lifetime() -> anyhow::Result<()> {
         let env = Org::create().await?.apply(FIXTURE).await?;
         reapply(&env, |file| {

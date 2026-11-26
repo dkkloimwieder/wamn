@@ -116,10 +116,11 @@ Any other payload answers 400 `delivery-invalid-payload`.
 | Route | Answer |
 | --- | --- |
 | `wamn-control:permission/mine@0.10.0` | `admin`, and the stable references the caller holds. An `admin` holds every operation the release serves. |
-| `wamn-control:user/list@0.10.0` (application) | Lists active project users. Each entry in `users` has `id`, `email`, `display_name`, `roles` and `admin_covered`. `admin_covered` is true when the user holds `admin`. |
-| `wamn-control:role/list@0.10.0` | `roles`: every role of the project, `admin` included. |
+| `wamn-control:user/list@0.10.0` (app) | Lists active project users. Each entry in `users` has `id`, `email`, `display_name`, active `roles` and `admin_covered`. `admin_covered` is true when the user holds `admin`. |
+| `wamn-control:role/list@0.10.0` | `roles` contains the active roles of the project, including `admin`. |
 | `wamn-control:role/create@0.10.0` | Takes `role` and creates the empty authored role. Answers `created`. |
-| `wamn-control:role/delete@0.10.0` | Takes `role` and deletes the authored role with its assignments and permissions. Answers `deleted`. |
+| `wamn-control:role/deactivate@0.10.0` | Takes `role` and suspends its grants while keeping assignments and permissions. Answers `deactivated`. |
+| `wamn-control:role/activate@0.10.0` | Takes `role` and restores its stored grants. Answers `activated`. |
 | `wamn-control:permission/list@0.10.0` | Takes `role`. Answers `operations`: each operation the release serves and each stored row of the role, with `served`, `grantable`, `admin_only` and `selected`. |
 | `wamn-control:permission/grant@0.10.0` | Takes `role` and `operation`, and writes one permission row. Answers `rows_added`. |
 | `wamn-control:permission/revoke@0.10.0` | Takes `role` and `operation`, and removes that permission row. Answers an empty object. |
@@ -630,18 +631,18 @@ A personal access token, or PAT, is an opaque bearer credential.
 The host uses its project platform login to check the token and the active service row.
 A connection PAT also needs an active connection whose service principal matches the token.
 Authorization reads the principal’s operation permissions in the target project database.
-The host keeps both answers in its [auth memory](#auth-memory).
+The host caches PAT identity in its [auth memory](#auth-memory) and reads role activity on every call.
 Service credentials use their authored application grants and cannot mint a user session.
 The route authenticator requires neither the platform operator subject nor a system `admin` role.
 
 The host verifies every org access token and resolves its exact `(iss, sub)` to an active user in the project database.
-It caches successful resolutions under the project grant lifetime and reads permissions with the local UUID.
+It caches successful resolutions under the project cache lifetime and reads permissions with the local UUID.
 The same project grant reader supplies roles for a session and a PAT.
 A caller that holds `admin` holds every operation of the serving release. Any other role holds its stored stable references `<package>:<interface>/<operation>`, and the host matches each sealed operation of the release by its reference.
 Missing, revoked, expired, or mismatched authority returns 401.
 An unavailable project identity or grant read refuses admission with 503.
 Logout, reset, account disablement, and membership removal prevent further renewal. Issued access tokens expire within 900 seconds.
-A revoked PAT or disabled service stops authenticating when the cached answer expires.
+A revoked PAT stops authenticating when its cached PAT identity expires. A disabled service loses its grants on the next call.
 Already admitted work retains its caller. Revocation does not cancel that work or undo its effects.
 
 Create an API identity with `wamn create-api-service`.
@@ -660,9 +661,8 @@ The value sets the project cache lifetime and ranges from 0 to 3600 seconds. Zer
 
 The host verifies every session token. A positive subject lookup maps the issuer and subject to the active user UUID.
 A PAT cache key also includes the hash of the whole token. The host checks token expiry on every admission.
-On a grant cache miss, one read of `platform."user"`, `platform.user_role`, and `platform.permission` supplies the UUID's permissions.
+One read of `platform."user"`, `platform.user_role`, `platform.role`, and `platform.permission` supplies the UUID's current permissions on each call.
 Invocation binds and workflow callers use the guest login. Route authentication uses the host's platform login.
-Missing users, inactive users, and empty grant sets are read again on the next request.
 Cached facts expire on the local project lifetime. Token validity remains bounded by the issuer's expiry and signing keys.
 
 The org audience is `urn:wamn:org:{org}`.
@@ -696,7 +696,7 @@ The shared browser runtime signs in directly to the deployment's org and renews 
 
 ### Connection memory
 
-The host caches active connection facts and generation data for the project's grant cache lifetime.
+The host caches active connection facts and generation data for the project's cache lifetime.
 The connection ID and project coordinate identify the facts, which include status, generation, credential UUID, and service principal.
 The host reads these facts from the project database when they are absent or expired.
 
@@ -874,7 +874,7 @@ No guest component writes an authorization relation. No guest component receives
 
 `operator` is removed.
 
-`permission.grant X` requires an existing authored role and an operation `X` that the current serving release serves. It inserts one row. The operation is idempotent.
+`permission.grant X` requires an active authored role and an operation `X` that the current serving release serves. It inserts one row. The operation is idempotent.
 
 `permission.revoke X` deletes that row.
 

@@ -24,7 +24,6 @@ use super::project_reads::{
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 enum Fact {
     Env,
-    Grants(PrincipalId),
     Subject([u8; 32]),
     Pat([u8; 32]),
     Connection(uuid::Uuid),
@@ -40,7 +39,6 @@ struct Key {
 #[derive(Debug, Clone)]
 enum Answer {
     ActiveEnv,
-    Grants(PrincipalGrants),
     Subject(PrincipalId),
     Pat(Arc<ProjectPat>),
     Connection(Arc<ConnectionAnswer>),
@@ -106,7 +104,7 @@ impl Authorization {
         self
     }
 
-    fn key(&self, project: &ProjectId, key: &ProjectEnvKey, fact: Fact) -> anyhow::Result<Key> {
+    fn lifetime(&self, project: &ProjectId, key: &ProjectEnvKey) -> anyhow::Result<Duration> {
         let lifetimes = self
             .lifetimes
             .read()
@@ -118,9 +116,13 @@ impl Authorization {
             configured_project == project,
             "project admission coordinates disagree"
         );
+        Ok(*lifetime)
+    }
+
+    fn key(&self, project: &ProjectId, key: &ProjectEnvKey, fact: Fact) -> anyhow::Result<Key> {
         Ok(Key {
+            lifetime: self.lifetime(project, key)?,
             project_env: key.clone(),
-            lifetime: *lifetime,
             fact,
         })
     }
@@ -158,21 +160,15 @@ impl Authorization {
         Ok(inactive)
     }
 
+    /// Read active roles and permissions on each call.
     pub async fn principal_grants(
         &self,
         project: &ProjectId,
         project_key: &ProjectEnvKey,
         principal: &PrincipalId,
     ) -> anyhow::Result<PrincipalGrants> {
-        let key = self.key(project, project_key, Fact::Grants(*principal))?;
-        if let Some(Answer::Grants(grants)) = self.answers.get(&key) {
-            return Ok(grants);
-        }
-        let grants = read_platform_grants(&self.postgres, project, project_key, principal).await?;
-        if grants.present && grants.active && !grants.roles.is_empty() {
-            self.answers.insert(key, Answer::Grants(grants.clone()));
-        }
-        Ok(grants)
+        self.lifetime(project, project_key)?;
+        read_platform_grants(&self.postgres, project, project_key, principal).await
     }
 
     pub async fn guest_principal_grants(
@@ -195,7 +191,7 @@ impl Authorization {
                 Ok(sqlx::query_scalar::<_, Vec<String>>(
                     "SELECT ARRAY(SELECT permission FROM platform.permission WHERE role_name = r.name)
                        FROM platform.role AS r
-                      WHERE r.name = $1 AND EXISTS (
+                      WHERE r.name = $1 AND r.active AND EXISTS (
                           SELECT 1 FROM platform.\"user\" WHERE id = $2 AND active
                       )",
                 )

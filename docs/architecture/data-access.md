@@ -931,6 +931,7 @@ Each relation except `number_counter` also has a `wamn_record_history_log` trigg
 `number_counter` has no history table, because one entry per counter advance doubles the writes of every create.
 The database separates environments. The platform account and configuration tables and their history tables have no `project_id`, row policy, or project key index.
 `role` keys on `name`. `user_role` keys on `(user_id, role_name)`, and `permission` keys on `(role_name, permission)`.
+`role.active` controls whether its assignments and permissions grant authority. Deactivation keeps both sets of rows.
 Their foreign keys reference one column. `api_key` keys on `id`, and `key_hash` is unique in the database.
 `env` uses a boolean `id` primary key constrained to `true`. Its default is `true`, so it holds at most one status row.
 No status row means active. The application login reads that row from its selected environment database.
@@ -941,22 +942,21 @@ Target JSON, catalog identities, run keys, and manifest targets use `project_env
 Event fields and workload identity use `project_env_key`. Credential hashes frame that name.
 The management variable is `WAMN_MANAGEMENT_PROJECT_ENV_KEY`. The `ingress` component's workload configuration carries `wamn.project_env_key`.
 The event subject keeps its separate organization, project, and short environment tokens.
-Auth invalidation keys still include the environment key, so equal principal IDs in separate environments keep separate cached grants and status.
+Auth cache keys include the environment key, so separate environments keep separate cached facts.
 `wamn_app` holds `USAGE` on `platform`, `SELECT` on `user`, `role`, `user_role`, `permission`, `env` and the seven platform configuration tables, `EXECUTE` on `platform.bump_counter`, `platform.assign_counter` and `platform.set_counter`, and the write log grants. It holds nothing else in `platform`: no grant on `api_key` or on a history table.
 `platform.bump_counter(sequence, counter, key)` is `SECURITY DEFINER`. It inserts the counter row at 1 when the row is absent, returns the value, and increments it, under the row lock. It tests no project and reads no claim. It refuses an id that is not a sequence with `undefined_object`. Guest numbering SQL resolves the sequence by `wamn_authority.current_app()` and the sequence name.
 The guest calls the counter functions in the host operation transaction.
 Dynamic queries use the SELECT-only login and cannot call these write functions.
 `platform.assign_counter(sequence, counter, key)` is `SECURITY DEFINER` and makes sure of the sequence id in the same way. It gives a `per=` counter one value for each key: under a transaction advisory lock on the key, it returns the value of the key row, or takes the next value of the `''` allocator row and inserts the key row with it. It refuses the `''` key with `invalid_parameter_value`.
 `platform.set_counter(sequence, counter, key, value)` is `SECURITY DEFINER` and makes sure of the sequence id in the same way. It is the write of the `number_counter.set` host route: under the row lock, it inserts the counter row with the value or sets the value of the row. It refuses a value below 1 with `invalid_parameter_value`.
-The administration family role `wamn_administration` holds `SELECT`, `INSERT`, `UPDATE`, and `DELETE` on `user`, `role`, `user_role`, `permission`, and `env`.
+The administration family role `wamn_administration` holds `SELECT`, `INSERT`, `UPDATE`, and `DELETE` on `user`, `user_role`, `permission`, and `env`.
 It holds the same grants on `external_system`, `integration`, `connection`, `file`, `number_sequence`, and `setting`.
 It holds no grant on `number_counter`: only `platform.bump_counter`, `platform.assign_counter` and `platform.set_counter` write it.
 It holds `INSERT` on the entry columns of their eight history tables, `USAGE` on `wamn_history`, and `EXECUTE` on `wamn_history.row_image`.
 The `external_system`, `integration`, and `connection` projections have no history tables.
 No entry column names a project, and administration holds no project derivation grant.
 It holds `USAGE` on `catalog` and `SELECT` on `catalog.releases`.
-The CLI role writer makes sure of the target database against the registry and needs the administration grants. It requires no superuser or row-security bypass.
-It refuses an `project_env_key` that differs from the registry environment key, so role writes invalidate the selected environment's cached grants.
+Role commands use the application host's `wamn_platform` grants of `SELECT`, `INSERT`, and `UPDATE` on `role`. The next authorization read sees changes to role activity.
 Identity password login reads active org membership in the system database and needs no project role reader.
 The audit retention role holds no grant on these history tables, because their retention is `unlimited`.
 A foreign key cascade writes its delete entries with the actor and the operation of the deleting transaction.
@@ -1167,8 +1167,7 @@ The application host writes roles, permissions and user roles through its [host 
 The bootstrap invitation writes system membership. The environment lifecycle projects it when the application database is initialized.
 A session requires an active `platform."user"` row in the project environment.
 The caller sees `permission-denied`.
-The host's [auth memory](execution.md#auth-memory) answers the test, and a miss reads the row.
-The host may accept a disabled user until its positive cache entry expires after `revocation_seconds`.
+The host reads the user row and active roles when it resolves the session's grants. [Auth memory](execution.md#auth-memory)
 There is still no foreign key on a stamp column.
 Application SQL cannot replace the host caller. A second identity insert fails, and application logins cannot update or delete identity rows.
 Administrative SQL still controls its own attribution.

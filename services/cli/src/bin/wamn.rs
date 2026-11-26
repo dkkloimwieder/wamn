@@ -30,7 +30,8 @@ enum Command {
     GrantRole(wamn_cli::role_verbs::UserRoleArgs),
     RevokeRole(wamn_cli::role_verbs::UserRoleArgs),
     CreateRole(wamn_cli::role_verbs::RoleArgs),
-    DeleteRole(wamn_cli::role_verbs::RoleArgs),
+    DeactivateRole(wamn_cli::role_verbs::RoleArgs),
+    ActivateRole(wamn_cli::role_verbs::RoleArgs),
     GrantPermission(wamn_cli::role_verbs::PermissionArgs),
     RevokePermission(wamn_cli::role_verbs::PermissionArgs),
     /// Create an API service and save its private PAT.
@@ -118,7 +119,8 @@ async fn main() -> anyhow::Result<()> {
         Command::GrantRole(args) => wamn_cli::role_verbs::grant(args).await,
         Command::RevokeRole(args) => wamn_cli::role_verbs::revoke(args).await,
         Command::CreateRole(args) => wamn_cli::role_verbs::create_role(args).await,
-        Command::DeleteRole(args) => wamn_cli::role_verbs::delete_role(args).await,
+        Command::DeactivateRole(args) => wamn_cli::role_verbs::deactivate_role(args).await,
+        Command::ActivateRole(args) => wamn_cli::role_verbs::activate_role(args).await,
         Command::GrantPermission(args) => wamn_cli::role_verbs::grant_permission(args).await,
         Command::RevokePermission(args) => wamn_cli::role_verbs::revoke_permission(args).await,
 

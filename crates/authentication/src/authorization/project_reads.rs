@@ -17,12 +17,13 @@ use wamn_postgres::WamnPostgres;
 /// database boundary.
 const ENV_INACTIVE_SQL: &str = "SELECT NOT active FROM platform.env";
 
-/// The user row of one principal, each role it holds and each permission
+/// The user row of one principal, each active role it holds and each permission
 /// of that role, in one read. No row means no user row. A role without
 /// permissions, such as `admin`, yields one row with a null permission, and a
-/// principal without roles yields one row with a null role.
+/// principal without active roles yields one row with a null role.
 const PRINCIPAL_GRANTS_SQL: &str = "SELECT u.active, r.role_name, p.permission, u.type = 'user' \
-    FROM platform.\"user\" u LEFT JOIN platform.user_role r \
+    FROM platform.\"user\" u \
+    LEFT JOIN (platform.user_role r JOIN platform.role a ON a.name = r.role_name AND a.active) \
     ON r.user_id = u.id \
     LEFT JOIN platform.permission p \
     ON p.role_name = r.role_name \
@@ -163,7 +164,7 @@ pub(super) async fn read_project_pat(
     }
 }
 
-/// Read the user row, roles and permissions after a cache miss.
+/// Read the current user row, active roles and their permissions.
 pub(super) async fn read_platform_grants(
     postgres: &WamnPostgres,
     project: &wamn_registry::ProjectId,

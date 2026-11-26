@@ -31,7 +31,7 @@ function mount(
     const path = route.pathname;
     calls.push(path);
     const answer = (value: unknown) => new Response(JSON.stringify([{ value }]));
-    if (/\/(create|delete|grant|revoke)$/.test(path)) {
+    if (/\/(create|deactivate|grant|revoke)$/.test(path)) {
       const body = JSON.parse(String(init?.body))[0];
       writes.push({ path, value: body.value });
       if (failure && path.endsWith(failure))
@@ -41,7 +41,7 @@ function mount(
           ]),
         );
       if (path.endsWith("/role/create")) roles.push(body.value.role);
-      if (path.endsWith("/role/delete")) roles = roles.filter((name) => name !== body.value.role);
+      if (path.endsWith("/role/deactivate")) roles = roles.filter((name) => name !== body.value.role);
       if (path.endsWith("/permission/grant")) selected.add(`${body.value.role}:${body.value.operation}`);
       if (path.endsWith("/permission/revoke")) selected.delete(`${body.value.role}:${body.value.operation}`);
       if (path.endsWith("/user_role/grant")) held.add(body.value.role);
@@ -50,7 +50,7 @@ function mount(
         JSON.stringify([
           {
             request_id: body.request_id,
-            value: { created: true, deleted: true, rows_added: 1, granted: true, revoked: true },
+            value: { created: true, deactivated: true, rows_added: 1, granted: true, revoked: true },
           },
         ]),
       );
@@ -112,8 +112,8 @@ describe("application roles", () => {
     const reader = await screen.findByRole("link", { name: "reader" }, { timeout: 5000 });
     expect(within(reader.closest("tr")!).getByRole("cell", { name: "1" })).toBeTruthy();
 
-    expect(within(reader.closest("tr")!).getByRole("button", { name: "Delete role reader" })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Delete role admin" })).toBeNull();
+    expect(within(reader.closest("tr")!).getByRole("button", { name: "Deactivate role reader" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Deactivate role admin" })).toBeNull();
     expect(within(screen.getByRole("table")).queryByRole("checkbox")).toBeNull();
     fireEvent.click(reader);
     await screen.findByRole("table", { name: "Permissions for reader" });
@@ -176,7 +176,7 @@ describe("application roles", () => {
     expect(cell()).toHaveProperty("checked", !granted);
     expect(state.writes).toHaveLength(2);
   });
-  it("creates on its own form screen, cancels, and confirms deletion", async () => {
+  it("creates on its own form screen, cancels, and confirms deactivation", async () => {
     const { writes } = mount();
     await screen.findByRole("link", { name: "reader" });
     fireEvent.click(screen.getByRole("button", { name: "Create role" }));
@@ -189,16 +189,16 @@ describe("application roles", () => {
     input(await screen.findByRole("textbox", { name: "Role" }), "clerk");
     fireEvent.click(screen.getByRole("button", { name: "Create role" }));
     await screen.findByRole("link", { name: "clerk" });
-    fireEvent.click(screen.getByRole("button", { name: "Delete role clerk" }));
+    fireEvent.click(screen.getByRole("button", { name: "Deactivate role clerk" }));
     fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Cancel" }));
     expect(writes).toHaveLength(1);
-    await confirm("Delete role clerk");
+    await confirm("Deactivate role clerk");
     await waitFor(() => expect(screen.queryByRole("link", { name: "clerk" })).toBeNull());
     {
       const observed = writes.map((entry) => entry.path);
       expect(observed).toHaveProperty(["length"], 2);
       expect(observed).toHaveProperty(["0"], "/api/wamn_control/role/create");
-      expect(observed).toHaveProperty(["1"], "/api/wamn_control/role/delete");
+      expect(observed).toHaveProperty(["1"], "/api/wamn_control/role/deactivate");
     }
   });
   it("opens a role named create without colliding with the create form", async () => {
@@ -215,15 +215,15 @@ describe("application roles", () => {
     );
     await screen.findByRole("table", { name: "Permissions for create" });
   });
-  it("keeps failed create and delete actions visible with their errors", async () => {
+  it("keeps failed create and deactivate actions visible with their errors", async () => {
     const state = mount("roles/create", { fail: "/role/create" });
     input(await screen.findByRole("textbox", { name: "Role" }), "clerk");
     fireEvent.click(screen.getByRole("button", { name: "Create role" }));
     await screen.findByText(/permission_denied/);
     expect(screen.getByRole("textbox", { name: "Role" })).toHaveProperty("value", "clerk");
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-    state.fail("/role/delete");
-    await confirm("Delete role reader");
+    state.fail("/role/deactivate");
+    await confirm("Deactivate role reader");
     await screen.findByRole("alert");
     expect(screen.getByRole("link", { name: "reader", hidden: true })).toBeTruthy();
   });
@@ -321,7 +321,7 @@ describe("permissions overview", () => {
     expect(within(adminOnly).getByRole("img", { name: "No" })).toBeTruthy();
     expect(within(table).queryByText("old:item/read")).toBeNull();
     expect(within(screen.getByRole("table")).queryByRole("checkbox")).toBeNull();
-    expect(screen.queryByRole("button", { name: /Delete role|Create role/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Deactivate role|Create role/ })).toBeNull();
     {
       const observed = writes;
       expect(observed).toHaveProperty(["length"], 0);

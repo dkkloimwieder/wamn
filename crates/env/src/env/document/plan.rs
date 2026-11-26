@@ -14,7 +14,7 @@ pub struct EnvDocument {
     /// Time for the host to drain before shutdown.
     #[serde(default = "default_drain_bound_seconds")]
     pub drain_bound_seconds: i32,
-    /// Grant cache lifetime in seconds. Zero disables the cache.
+    /// Lifetime of cached positive project facts in seconds. Zero disables the cache.
     pub revocation_seconds: u32,
     /// Application name to its selection and membership.
     #[serde(deserialize_with = "read_apps")]

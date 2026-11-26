@@ -63,7 +63,11 @@ pub async fn write_env_status(
 
 const ROLE_EXISTS_SQL: &str = "SELECT 1 FROM platform.role WHERE name = $1";
 
-const DROP_ROLE_SQL: &str = "DELETE FROM platform.role WHERE name = $1";
+const LOCK_ACTIVE_ROLE_SQL: &str =
+    "SELECT 1 FROM platform.role WHERE name = $1 AND active FOR SHARE";
+
+const SET_ROLE_ACTIVE_SQL: &str = "UPDATE platform.role SET active = $2 \
+    WHERE name = $1 AND active <> $2";
 
 const PERMISSION_SQL: &str = "INSERT INTO platform.permission \
     (role_name, permission) VALUES ($1, $2) \
@@ -79,11 +83,12 @@ const USER_LIST_SQL: &str = "SELECT u.id, u.email, u.display_name, \
     COALESCE(array_agg(r.role_name ORDER BY r.role_name) \
              FILTER (WHERE r.role_name IS NOT NULL), '{}') \
     FROM platform.\"user\" u \
-    LEFT JOIN platform.user_role r ON r.user_id = u.id \
+    LEFT JOIN (platform.user_role r JOIN platform.role a ON a.name = r.role_name AND a.active) \
+        ON r.user_id = u.id \
     WHERE u.type = 'user' AND u.active \
     GROUP BY u.id, u.email, u.display_name ORDER BY u.email, u.id";
 
-const ROLE_LIST_SQL: &str = "SELECT name FROM platform.role ORDER BY name";
+const ROLE_LIST_SQL: &str = "SELECT name FROM platform.role WHERE active ORDER BY name";
 
 const PERMISSION_LIST_SQL: &str = "SELECT permission FROM platform.permission \
     WHERE role_name = $1 ORDER BY permission";
@@ -111,7 +116,7 @@ pub async fn app_users(
         .collect()
 }
 
-/// The role names of the database, `admin` included.
+/// The active role names of the database, `admin` included.
 pub async fn role_names(
     client: &mut sqlx::PgConnection,
 ) -> Result<Vec<String>, AdministrationError> {
@@ -124,16 +129,18 @@ pub async fn role_names(
         .collect())
 }
 
-pub(super) async fn remove_role(
+pub(super) async fn set_role_active(
     client: &mut PgConnection,
     role: &str,
+    active: bool,
 ) -> Result<bool, IdentityError> {
-    let removed = sqlx::query(DROP_ROLE_SQL)
+    let updated = sqlx::query(SET_ROLE_ACTIVE_SQL)
         .bind(role)
+        .bind(active)
         .execute(client)
         .await
         .map_err(|error| database_error(&error))?;
-    Ok(removed.rows_affected() == 1)
+    Ok(updated.rows_affected() == 1)
 }
 
 pub(super) async fn role_exists(
@@ -141,6 +148,18 @@ pub(super) async fn role_exists(
     role: &str,
 ) -> Result<bool, IdentityError> {
     Ok(sqlx::query(ROLE_EXISTS_SQL)
+        .bind(role)
+        .fetch_optional(client)
+        .await
+        .map_err(|error| database_error(&error))?
+        .is_some())
+}
+
+pub(super) async fn lock_active_role(
+    client: &mut PgConnection,
+    role: &str,
+) -> Result<bool, IdentityError> {
+    Ok(sqlx::query(LOCK_ACTIVE_ROLE_SQL)
         .bind(role)
         .fetch_optional(client)
         .await
@@ -165,7 +184,9 @@ pub(super) async fn is_admin(
     actor: &PrincipalId,
 ) -> Result<bool, IdentityError> {
     Ok(sqlx::query(
-        "SELECT EXISTS (SELECT 1 FROM platform.user_role WHERE user_id=$1 AND role_name='admin')",
+        "SELECT EXISTS (SELECT 1 FROM platform.user_role r \
+         JOIN platform.role a ON a.name = r.role_name AND a.active \
+         WHERE r.user_id = $1 AND r.role_name = 'admin')",
     )
     .bind(Uuid::from(*actor))
     .fetch_one(client)
@@ -180,8 +201,10 @@ pub(super) async fn holds_permission(
     reference: &str,
 ) -> Result<bool, IdentityError> {
     Ok(sqlx::query(
-        "SELECT EXISTS (SELECT 1 FROM platform.user_role r JOIN platform.permission p ON p.role_name=r.role_name \
-         WHERE r.user_id=$1 AND p.permission=$2)",
+        "SELECT EXISTS (SELECT 1 FROM platform.user_role r \
+         JOIN platform.role a ON a.name = r.role_name AND a.active \
+         JOIN platform.permission p ON p.role_name = r.role_name \
+         WHERE r.user_id = $1 AND p.permission = $2)",
     )
     .bind(Uuid::from(*actor))
     .bind(reference)

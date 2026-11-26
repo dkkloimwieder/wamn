@@ -22,11 +22,11 @@ pub enum AdministrationRefusal {
     AdminTakesNoPermission,
     /// `apply-package` creates `admin`, so no caller creates it.
     AdminCreated,
-    /// `admin` is the built-in role.
-    AdminDeleted,
+    /// The built-in `admin` role stays active.
+    AdminStatusFixed,
     /// The name is not a role slug.
     NotProjectRole { role: String },
-    /// The role does not exist in the environment.
+    /// The role is unavailable for the operation.
     RoleNotFound { role: String },
     /// The operation is fixed to `admin` or to every member (§2.5).
     NotGrantable { reference: String },
@@ -52,8 +52,8 @@ impl fmt::Display for AdministrationRefusal {
             Self::AdminCreated => {
                 formatter.write_str("admin is the built-in role; apply-package creates it")
             }
-            Self::AdminDeleted => {
-                formatter.write_str("admin is the built-in role and cannot be deleted")
+            Self::AdminStatusFixed => {
+                formatter.write_str("admin is the built-in role and stays active")
             }
             Self::NotProjectRole { role } => write!(
                 formatter,
@@ -61,7 +61,7 @@ impl fmt::Display for AdministrationRefusal {
                  the first character, at most 64 bytes"
             ),
             Self::RoleNotFound { role } => {
-                write!(formatter, "role {role} does not exist in the environment")
+                write!(formatter, "role {role} is unavailable for this operation")
             }
             Self::NotGrantable { reference } => write!(
                 formatter,
@@ -191,16 +191,31 @@ pub async fn create_role(
     Ok(sql::insert_role(client, role).await?)
 }
 
-/// Delete the authored role `role` with its assignments and permissions. A
-/// delete of an absent role changes nothing.
-pub async fn delete_role(
+/// Stop an authored role from granting authority and retain its stored grants.
+pub async fn deactivate_role(
     client: &mut sqlx::PgConnection,
     role: &str,
 ) -> Result<bool, AdministrationError> {
+    set_role_active(client, role, false).await
+}
+
+/// Restore an authored role's stored grants.
+pub async fn activate_role(
+    client: &mut sqlx::PgConnection,
+    role: &str,
+) -> Result<bool, AdministrationError> {
+    set_role_active(client, role, true).await
+}
+
+async fn set_role_active(
+    client: &mut sqlx::PgConnection,
+    role: &str,
+    active: bool,
+) -> Result<bool, AdministrationError> {
     if role == ADMIN_ROLE {
-        return Err(AdministrationRefusal::AdminDeleted.into());
+        return Err(AdministrationRefusal::AdminStatusFixed.into());
     }
-    Ok(sql::remove_role(client, role).await?)
+    Ok(sql::set_role_active(client, role, active).await?)
 }
 
 /// Refuse unless `role` exists in the environment.
@@ -263,7 +278,14 @@ pub async fn mutate_grant(
             }
             .into());
         }
-        if !matches!(change, GrantChange::UserRole { grant: false, .. }) {
+        if grant {
+            if !sql::lock_active_role(client, role).await? {
+                return Err(AdministrationRefusal::RoleNotFound {
+                    role: role.to_owned(),
+                }
+                .into());
+            }
+        } else if matches!(change, GrantChange::Permission { .. }) {
             require_role(client, role).await?;
         }
         if let GrantChange::Permission {

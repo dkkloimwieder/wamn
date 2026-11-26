@@ -328,7 +328,7 @@ pub(crate) async fn materialize_app_principals(
 }
 
 /// Add the selected application's permissions while retaining grants needed by running code.
-/// Principals and generated roles must already exist. Shared or authored roles refuse.
+/// Principals and generated roles must be active. Shared or authored roles refuse.
 async fn write_runtime_grants(
     transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     project_env_key: &wamn_registry::ProjectEnvKey,

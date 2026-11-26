@@ -25,7 +25,7 @@ pub struct Request<'a> {
 /// Write the service row, grants, and PAT in one project transaction.
 ///
 /// # Errors
-/// Returns an error for an invalid name, missing roles, or a refused project write.
+/// Returns an error for an invalid name, missing or inactive roles, or a refused project write.
 pub async fn create(
     tx: &mut Transaction<'_, Postgres>,
     key: &ProjectEnvKey,

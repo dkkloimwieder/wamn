@@ -151,8 +151,14 @@ pub struct RoleCreateResult {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct RoleDeleteResult {
-    pub deleted: bool,
+pub struct RoleDeactivateResult {
+    pub deactivated: bool,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RoleActivateResult {
+    pub activated: bool,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]

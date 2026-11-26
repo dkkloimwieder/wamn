@@ -26,8 +26,9 @@ use sqlx::PgConnection as Client;
 use wamn_app::app_config::AppConfig;
 use wamn_app::ingress::AuthenticatedCaller;
 use wamn_authentication::administration::{
-    AdministrationError, AdministrationRefusal, GrantAuthority, GrantChange, GrantError, app_users,
-    create_role, delete_role, mutate_grant, permission_is_grantable, permission_rows, role_names,
+    AdministrationError, AdministrationRefusal, GrantAuthority, GrantChange, GrantError,
+    activate_role, app_users, create_role, deactivate_role, mutate_grant, permission_is_grantable,
+    permission_rows, role_names,
 };
 use wamn_plugin::OperationHost;
 use wamn_plugin::number_counter::{CounterSet, CounterSetRefusal};
@@ -99,7 +100,7 @@ fn declared(refusal: &AdministrationRefusal) -> Refusal {
     let (code, field) = match refusal {
         AdministrationRefusal::AdminTakesNoPermission
         | AdministrationRefusal::AdminCreated
-        | AdministrationRefusal::AdminDeleted => ("admin_fixed", "role"),
+        | AdministrationRefusal::AdminStatusFixed => ("admin_fixed", "role"),
         AdministrationRefusal::NotProjectRole { .. } => ("invalid_input", "role"),
         AdministrationRefusal::RoleNotFound { .. } => ("role_not_found", "role"),
         AdministrationRefusal::NotGrantable { .. } => ("operation_not_grantable", "operation"),
@@ -191,11 +192,19 @@ impl AppRoutes<'_> {
                 })
                 .await
             }
-            HostHandler::RoleDelete => {
+            HostHandler::RoleDeactivate => {
                 let request: RoleRequest = parse(payload)?;
                 self.run(attachment, principal, true, async |client| {
-                    let deleted = delete_role(client, &request.role).await?;
-                    Ok(json!({ "deleted": deleted }))
+                    let deactivated = deactivate_role(client, &request.role).await?;
+                    Ok(json!({ "deactivated": deactivated }))
+                })
+                .await
+            }
+            HostHandler::RoleActivate => {
+                let request: RoleRequest = parse(payload)?;
+                self.run(attachment, principal, true, async |client| {
+                    let activated = activate_role(client, &request.role).await?;
+                    Ok(json!({ "activated": activated }))
                 })
                 .await
             }

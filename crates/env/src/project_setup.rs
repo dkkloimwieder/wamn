@@ -86,7 +86,7 @@ pub fn grant_platform_surface_sql() -> String {
          GRANT SELECT, INSERT, UPDATE ON wamn_history.pruning_watermark TO {role}; \
          REVOKE ALL ON platform.login_principal FROM {role}; \
          GRANT EXECUTE ON FUNCTION platform.prune_tx_identity() TO {role}; \
-         REVOKE DELETE ON platform.pat FROM {role}; \
+         REVOKE DELETE ON platform.pat, platform.role FROM {role}; \
          REVOKE DELETE ON wamn_run.run FROM {role}; \
          GRANT EXECUTE ON FUNCTION wamn_authority.current_identity(), wamn_authority.current_principal_id(), \
            wamn_authority.current_role(), wamn_authority.current_app() TO {role}; \

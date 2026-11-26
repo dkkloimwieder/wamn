@@ -92,7 +92,7 @@ describe.skipIf(baseUrl === undefined)("the generated control client", () => {
       }
     }
     {
-      const observed = await role.delete_(transport, [{ request_id: requestId(), value: { role: "admin" } }]);
+      const observed = await role.deactivate(transport, [{ request_id: requestId(), value: { role: "admin" } }]);
       expect(observed).toHaveProperty(["status"], "refused");
       expect(observed).toHaveProperty(["code"], "admin_fixed");
       expect(observed).toHaveProperty(["detail", "detail", "field"], "role");

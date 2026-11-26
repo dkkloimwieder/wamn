@@ -47,7 +47,7 @@ Breadcrumbs name the organization, project, and environment in uppercase.
 The Roles grid reads served operations from `permission.list` for each role.
 Each checkbox sends one grant or revoke command and returns to its previous value after failure.
 The admin column is read-only, and admin-only operations are disabled.
-Create role and Grant role open form screens. Delete role and Revoke role require confirmation.
+Create role and Grant role open form screens. Deactivate role and Revoke role require confirmation.
 The application Users table links each name to its roles table. Both tables use Records pagination.
 A viewer with one held project opens that project directly when entering Control. The parent action still returns to the organization.
 The Users group contains Project access and Memberships links for the addressed user.

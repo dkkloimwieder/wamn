@@ -163,13 +163,14 @@ CREATE TRIGGER wamn_record_history_stamp
 -- Roles — named roles. `admin` is the one built-in role:
 -- apply-package writes it, and it holds every operation the serving release
 -- serves with no permission rows. Every other role is authored. A user or
--- service holds a role through `wamn grant-role`. `role_name_check` is the
--- role slug of identity (`wamn_identity_protocol::RoleName`), so no stored
--- role name is one that a session refuses.
+-- service holds a role through `wamn grant-role`. Only active roles grant
+-- authority. Deactivation keeps assignments and permissions. `role_name_check`
+-- enforces the role slug of identity (`wamn_identity_protocol::RoleName`).
 -- ---------------------------------------------------------------------------
 CREATE TABLE platform.role (
     name        text NOT NULL,
     description text,
+    active      boolean NOT NULL DEFAULT true,
     created_at  timestamptz NOT NULL,
     created_by  uuid NOT NULL,
     updated_at  timestamptz NOT NULL,

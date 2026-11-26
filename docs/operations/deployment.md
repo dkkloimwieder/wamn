@@ -291,7 +291,7 @@ The CLI sends database operations to the control service.
 See [Native control](../architecture/control.md) for the service and worker configuration.
 
 The registry stores applied project settings, application host labels, client pins, and connection aliases.
-The shared environment owns its target, readiness budget, drain bound, grant cache lifetime, and connection versions.
+The shared environment owns its target, readiness budget, drain bound, project fact cache lifetime, and connection versions.
 The top package pins its base packages by OCI digest.
 Helm records the release history. A WorkloadDeployment exposes the applied package digest and Helm revision.
 
@@ -304,7 +304,7 @@ The example uses `receiving--local.wamn.localhost`.
 The platform's `platformDomain` value supplies the base for both deploy and web.
 An application connection alias names a connection from the shared `connections` map.
 Set `revocation_seconds` to an integer from 0 to 3600 for the environment.
-Deploy takes this applied value from the registry and sets the grant cache lifetime on each application workload. Zero disables the cache.
+Deploy takes this applied value from the registry and sets the project fact cache lifetime on each application workload. Zero disables the cache. Each call reads role activity from the database.
 The optional `readiness_budget_seconds` field caps the wait for the selected application template after Helm returns. The wait also shares the Helm command's time budget.
 It defaults to 600 seconds.
 The optional `drain_bound_seconds` field sets how long the host can drain before shutdown.
@@ -781,8 +781,7 @@ The route bodies and limits are in [password enrollment](../architecture/executi
 
 `apply-package` writes the built-in role `admin` in each project.
 `admin` has no permission rows and holds every operation that the serving release serves.
-Every other role is authored in the project, and it holds the stable operation references `<package>:<interface>/<operation>` granted to it.
-A user or a service reaches no route and no environment at sign-in until it holds a role.
+Every other role is authored in the project and grants its stable operation references `<package>:<interface>/<operation>` while active.
 
 Give a role with `wamn grant-role`, and take it away with `wamn revoke-role`.
 Both verbs use the application host URL and the caller's session token.
@@ -798,14 +797,15 @@ Grant or revoke system project-admin or org-admin to change application administ
 Control records `admin` in each project environment that the grant covers.
 Revoking the last grant that covers the user removes that assignment.
 The target needs an existing application user or service row.
-The HTTP owner refuses unknown and disabled users. A grant also refuses a missing role.
+The HTTP owner refuses unknown and disabled users. A grant also refuses a missing or inactive role.
 Service principal email addresses use `<subject>@<platform domain>`.
 Create an API service and its PAT through control with `wamn create-api-service`.
 
 ### Authored roles
 
-Create an authored role with `wamn create-role`, and delete it with `wamn delete-role`.
-The delete also removes the role's assignments and permissions.
+Create an authored role with `wamn create-role`.
+Use `wamn deactivate-role` to suspend its grants and `wamn activate-role` to restore them.
+Deactivation takes effect on the next call and keeps the role's assignments and permissions.
 The verbs take the same host and session arguments as `grant-role`.
 The `--role` argument names the role.
 A role name has lowercase letters, digits, and hyphens after the first character, and at most 64 bytes.

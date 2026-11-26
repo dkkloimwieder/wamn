@@ -22,7 +22,7 @@ use wamn_app::ingress::{
 use wamn_identity_protocol::secret::PatToken;
 
 use crate::access_token::AccessTokenVerifier;
-use crate::authorization::Authorization;
+use crate::authorization::{Authorization, held_grants};
 use wamn_connection::connection_facts::ConnectionFacts;
 use wamn_connection::connection_memory::ConnectionStatus;
 
@@ -243,11 +243,7 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
             if !grants.active || grants.user {
                 return Err(signature_unauthorized());
             }
-            let permissions = self
-                .postgres
-                .user_operation_permissions(project, request.target, &principal)
-                .await
-                .map_err(|_| authentication_unavailable())?;
+            let permissions = held_grants(&grants);
             return Ok(Some(AuthenticatedCaller::new(
                 request.attachment_id.clone(),
                 principal,

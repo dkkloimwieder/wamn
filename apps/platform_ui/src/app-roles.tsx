@@ -96,11 +96,11 @@ export function ApplicationRoles(props: ScreenProps & { overview?: boolean }) {
             actions: (cell) => (
               <Show when={cell.row.role !== "admin"}>
                 <ConfirmAction
-                  label={`Delete role ${cell.row.role}`}
-                  description={`Delete the role ${cell.row.role} and its permissions?`}
+                  label={`Deactivate role ${cell.row.role}`}
+                  description={`Suspend access granted by ${cell.row.role}? Its assignments and permissions will be kept.`}
                   run={async () => {
                     value(
-                      await role.delete_(props.transport, [
+                      await role.deactivate(props.transport, [
                         { request_id: crypto.randomUUID(), value: { role: cell.row.role } },
                       ]),
                     );

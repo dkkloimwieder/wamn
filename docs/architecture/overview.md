@@ -160,7 +160,7 @@ The hierarchy is org, environment, project, application.
 `wamn-registry` defines the values that registry readers return.
 `wamn-env` owns SQL for deployment records, applied configuration, and lifecycle locks.
 `wamn-platform-install` owns SQL for system and org setup. `wamn-connection` holds the project connection store.
-`registry.env` stores each environment's active flag, disposable setting, target, readiness budget, drain bound, and grant cache lifetime.
+`registry.env` stores each environment's active flag, disposable setting, target, readiness budget, drain bound, and project fact cache lifetime.
 `registry.project` holds org-level project definitions.
 `registry.project_env` records whether a project deployment is active, along with its database Secret and instance suffix. Deactivation keeps the row and removes its explicit memberships. Re-applying the project creates a new database generation.
 Applications are releases under those project deployments.

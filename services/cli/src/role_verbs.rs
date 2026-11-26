@@ -77,11 +77,21 @@ pub async fn create_role(args: RoleArgs) -> anyhow::Result<()> {
     .await
 }
 
-pub async fn delete_role(args: RoleArgs) -> anyhow::Result<()> {
+pub async fn deactivate_role(args: RoleArgs) -> anyhow::Result<()> {
     crate::component_verbs::call(
         &args.env.host_url,
         &args.env.token,
-        "role.delete",
+        "role.deactivate",
+        &json!({"role": args.role}),
+    )
+    .await
+}
+
+pub async fn activate_role(args: RoleArgs) -> anyhow::Result<()> {
+    crate::component_verbs::call(
+        &args.env.host_url,
+        &args.env.token,
+        "role.activate",
         &json!({"role": args.role}),
     )
     .await

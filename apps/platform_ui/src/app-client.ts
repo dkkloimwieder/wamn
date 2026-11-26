@@ -30,7 +30,7 @@ export type PermissionListResult = OperationResult<typeof permission.list>;
 export const role = {
   list: bind("role.list", sdk.wamnControlRoleList_0100),
   create: bind("role.create", sdk.wamnControlRoleCreate_0100),
-  delete_: bind("role.delete", sdk.wamnControlRoleDelete_0100),
+  deactivate: bind("role.deactivate", sdk.wamnControlRoleDeactivate_0100),
 };
 
 export const user = {

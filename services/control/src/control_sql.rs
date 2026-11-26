@@ -91,7 +91,7 @@ pub(crate) async fn membership_count(
     .await
 }
 
-/// Count users with at least one application role, and count the defined roles.
+/// Count users with an active application role, and count active roles.
 ///
 /// # Errors
 /// Returns an error if either count cannot be read.
@@ -100,8 +100,9 @@ pub(crate) async fn app_counts(connection: &mut PgConnection) -> Result<(i32, i3
         "SELECT \
          (SELECT count(*)::int4 FROM platform.\"user\" u \
           WHERE u.type = 'user' AND EXISTS \
-            (SELECT 1 FROM platform.user_role r WHERE r.user_id = u.id)), \
-         (SELECT count(*)::int4 FROM platform.role r)",
+            (SELECT 1 FROM platform.user_role r JOIN platform.role a ON a.name = r.role_name \
+             WHERE r.user_id = u.id AND a.active)), \
+         (SELECT count(*)::int4 FROM platform.role WHERE active)",
     )
     .fetch_one(connection)
     .await
