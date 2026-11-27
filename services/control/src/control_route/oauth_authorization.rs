@@ -4,15 +4,17 @@ use std::{fmt, time::Duration};
 
 use anyhow::Context as _;
 use serde_json::Value;
-use sqlx::Connection as _;
+use sqlx::{Connection as _, PgConnection, postgres::PgConnectOptions};
+use tokio::time::{Instant, sleep, timeout, timeout_at};
 use url::Url;
+use wamn_app::MAX_HOST_CALL_DURATION;
 use zeroize::Zeroizing;
 
 use super::oauth_authorization_store as store;
 use wamn_connection::connection_credentials::KubernetesStore;
 use wamn_connection::project_connections::{
-    ConnectionEvent, ConnectionRow, EventOutcome, EventType, lock_active_generation,
-    lock_oauth_session, unlock_oauth_session, write_token,
+    ConnectionEvent, ConnectionRow, EventOutcome, EventType, OAUTH_LEASE_POLL_INTERVAL, OAuthLease,
+    lock_active_generation,
 };
 use wamn_envelope::encryption::{Encrypted, Envelope};
 use wamn_http::{oauth, transport::HttpTransport};
@@ -97,6 +99,12 @@ impl PreparedAuthorization {
     }
 }
 
+struct CallbackToken {
+    encrypted: Encrypted,
+    lifetime: Duration,
+    received: Instant,
+}
+
 /// The control host's public callback address and shared envelope backend.
 #[derive(Debug)]
 pub struct Authorization {
@@ -163,10 +171,11 @@ impl Authorization {
         })
     }
 
-    /// Exchange the code between transactions while serializing callbacks and refreshes.
+    /// Exchange the code outside SQL using the connection's shared OAuth lease.
     pub async fn callback(
         &self,
-        database: &mut sqlx::PgConnection,
+        login: &PgConnectOptions,
+        mut database: PgConnection,
         envelope: &Envelope,
         namespace: &str,
         query: &str,
@@ -185,7 +194,7 @@ impl Authorization {
                 .map(Zeroizing::new)
                 .ok_or_else(|| refused("missing authorization code")),
         };
-        let pending = store::find(database, state)
+        let pending = store::find(&mut database, state)
             .await
             .map_err(|error| failed("authorization state read failed", error))?;
         let Some((connection, generation, principal)) = pending else {
@@ -198,72 +207,54 @@ impl Authorization {
             event_type: EventType::OAuthCallback,
             principal: Some(principal.into()),
         };
-        lock_oauth_session(database, connection)
-            .await
-            .map_err(|error| failed("callback session unavailable", error))?;
-        let result = match code {
-            Ok(code) => {
-                self.exchange(database, envelope, namespace, state, &code, &event)
-                    .await
+        let code = match code {
+            Ok(code) => code,
+            Err(error) => {
+                event
+                    .record_refusal(&mut database, EventOutcome::Refused)
+                    .await;
+                return Err(error);
             }
-            Err(error) => Err(error),
         };
-        if let Err(error) = &result {
-            let outcome = if error.source.is_some() {
-                EventOutcome::Failed
-            } else {
-                EventOutcome::Refused
-            };
-            event.record_refusal(database, outcome).await;
-        }
-        let unlock = unlock_oauth_session(database, connection)
+        let prepared = wait_for_callback_lease(login, database, state).await;
+        let (context, authorization, lease) = match prepared {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                record_callback_failure(login, &event, None, &error).await;
+                return Err(error);
+            }
+        };
+        let result = async {
+            let token = timeout_at(
+                lease.work_deadline(),
+                self.exchange(envelope, namespace, &code, &context, &authorization),
+            )
             .await
-            .map_err(|error| failed("callback session release failed", error));
-        result.and(unlock)
+            .map_err(|error| failed("authorization exchange timed out", error))??;
+            publish_callback(login, state, &authorization, &event, &lease, &token).await
+        }
+        .await;
+        if let Err(error) = &result {
+            record_callback_failure(login, &event, Some(&lease), error).await;
+        }
+        result
     }
 
     async fn exchange(
         &self,
-        database: &mut sqlx::PgConnection,
         envelope: &Envelope,
         namespace: &str,
-        state: &str,
         code: &str,
-        event: &ConnectionEvent,
-    ) -> Result<(), Error> {
-        let mut tx = database
-            .begin()
-            .await
-            .map_err(|error| failed("callback transaction failed", error))?;
-        // A generation write locks the connection before deleting pending states.
-        let context = store::lock_connection(&mut tx, state)
-            .await
-            .map_err(|error| failed("connection unavailable", error))?
-            .ok_or_else(|| refused("connection or authorization state unavailable"))?;
-        let authorization = store::lock(&mut tx, state)
-            .await
-            .map_err(|error| failed("authorization state read failed", error))?
-            .ok_or_else(|| refused("unknown or replayed state"))?;
-        tx.commit()
-            .await
-            .map_err(|error| failed("callback snapshot failed", error))?;
-        if !authorization.unexpired {
-            return Err(refused("expired state"));
-        }
-        if context["active_generation"].as_i64() != Some(authorization.generation) {
-            return Err(refused("connection generation changed"));
-        }
-        if context["auth_type"] != "oauth2_authorization_code" {
-            return Err(refused("connection authentication type changed"));
-        }
-
+        context: &Value,
+        authorization: &store::LockedAuthorization,
+    ) -> Result<CallbackToken, Error> {
         let verifier = envelope
             .decrypt(&authorization.verifier)
             .await
             .map_err(|error| failed("authorization state decryption failed", error))?;
         let verifier = std::str::from_utf8(verifier.expose())
             .map_err(|error| failed("invalid PKCE verifier", error))?;
-        let material = credential(namespace, &context)
+        let material = credential(namespace, context)
             .await
             .map_err(|error| failed("client credential unavailable", error))?;
         let token = oauth::exchange_code(
@@ -276,7 +267,7 @@ impl Authorization {
         )
         .await
         .map_err(|error| failed(error.reason, error))?;
-        let received = tokio::time::Instant::now();
+        let received = Instant::now();
         let plaintext = Zeroizing::new(
             serde_json::to_vec(&token.token)
                 .map_err(|error| failed("token encoding failed", error))?,
@@ -286,49 +277,156 @@ impl Authorization {
             .await
             .map_err(|error| failed("token encryption failed", error))?;
 
-        let mut tx = database
-            .begin()
-            .await
-            .map_err(|error| failed("callback transaction failed", error))?;
-        wamn_postgres::bind_transaction_identity(
-            &mut tx,
-            &authorization.principal,
-            "",
-            "",
-            Some("connection.oauth_callback"),
-            None,
-        )
+        Ok(CallbackToken {
+            encrypted,
+            lifetime: Duration::from_secs(token.expires_in.unwrap_or(3600)),
+            received,
+        })
+    }
+}
+
+async fn callback_connection(login: &PgConnectOptions) -> Result<PgConnection, Error> {
+    PgConnection::connect_with(login)
         .await
-        .map_err(|error| failed("callback identity failed", error))?;
-        let current = lock_active_generation(&mut tx, authorization.connection)
-            .await
-            .map_err(|error| failed("connection unavailable", error))?;
-        if current != Some(authorization.generation) {
-            return Err(refused("connection generation changed"));
+        .map_err(|error| failed("callback database unavailable", error))
+}
+
+async fn wait_for_callback_lease(
+    login: &PgConnectOptions,
+    mut database: PgConnection,
+    state: &str,
+) -> Result<(Value, store::LockedAuthorization, OAuthLease), Error> {
+    timeout(MAX_HOST_CALL_DURATION, async {
+        loop {
+            let snapshot = claim_callback(&mut database, state).await?;
+            drop(database);
+            if let Some(snapshot) = snapshot {
+                return Ok(snapshot);
+            }
+            sleep(OAUTH_LEASE_POLL_INTERVAL).await;
+            database = callback_connection(login).await?;
         }
-        if !store::delete(&mut tx, state)
-            .await
-            .map_err(|error| failed("authorization state delete failed", error))?
-        {
-            return Err(refused("unknown or replayed state"));
-        }
-        write_token(
-            &mut tx,
-            authorization.connection,
-            &encrypted,
-            (Duration::from_secs(token.expires_in.unwrap_or(3600)).as_secs_f64()
-                - received.elapsed().as_secs_f64())
-            .max(0.0),
-        )
+    })
+    .await
+    .map_err(|error| failed("authorization lease wait timed out", error))?
+}
+
+async fn claim_callback(
+    database: &mut PgConnection,
+    state: &str,
+) -> Result<Option<(Value, store::LockedAuthorization, OAuthLease)>, Error> {
+    let mut tx = database
+        .begin()
         .await
-        .map_err(|error| failed("token write failed", error))?;
-        event
-            .append(&mut tx, EventOutcome::Succeeded)
-            .await
-            .map_err(|error| failed("callback event write failed", error))?;
-        tx.commit()
-            .await
-            .map_err(|error| failed("callback commit failed", error))
+        .map_err(|error| failed("callback transaction failed", error))?;
+    // A generation write locks the connection before deleting pending states.
+    let context = store::lock_connection(&mut tx, state)
+        .await
+        .map_err(|error| failed("connection unavailable", error))?
+        .ok_or_else(|| refused("connection or authorization state unavailable"))?;
+    let authorization = store::lock(&mut tx, state)
+        .await
+        .map_err(|error| failed("authorization state read failed", error))?
+        .ok_or_else(|| refused("unknown or replayed state"))?;
+    if !authorization.unexpired {
+        return Err(refused("expired state"));
+    }
+    if context["active_generation"].as_i64() != Some(authorization.generation) {
+        return Err(refused("connection generation changed"));
+    }
+    if context["auth_type"] != "oauth2_authorization_code" {
+        return Err(refused("connection authentication type changed"));
+    }
+    let lease = OAuthLease::claim(&mut tx, authorization.connection)
+        .await
+        .map_err(|error| failed("authorization lease claim failed", error))?;
+    tx.commit()
+        .await
+        .map_err(|error| failed("callback snapshot failed", error))?;
+    Ok(lease.map(|lease| (context, authorization, lease)))
+}
+
+async fn publish_callback(
+    login: &PgConnectOptions,
+    state: &str,
+    authorization: &store::LockedAuthorization,
+    event: &ConnectionEvent,
+    lease: &OAuthLease,
+    token: &CallbackToken,
+) -> Result<(), Error> {
+    let mut database = callback_connection(login).await?;
+    let mut tx = database
+        .begin()
+        .await
+        .map_err(|error| failed("callback transaction failed", error))?;
+    wamn_postgres::bind_transaction_identity(
+        &mut tx,
+        &authorization.principal,
+        "",
+        "",
+        Some("connection.oauth_callback"),
+        None,
+    )
+    .await
+    .map_err(|error| failed("callback identity failed", error))?;
+    let current = lock_active_generation(&mut tx, authorization.connection)
+        .await
+        .map_err(|error| failed("connection unavailable", error))?;
+    if current != Some(authorization.generation) {
+        return Err(refused("connection generation changed"));
+    }
+    let remaining =
+        (token.lifetime.as_secs_f64() - token.received.elapsed().as_secs_f64()).max(0.0);
+    if !lease
+        .write_token(&mut tx, &token.encrypted, remaining)
+        .await
+        .map_err(|error| failed("token write failed", error))?
+    {
+        return Err(refused("authorization lease expired"));
+    }
+    if !store::delete(&mut tx, state)
+        .await
+        .map_err(|error| failed("authorization state delete failed", error))?
+    {
+        return Err(refused("unknown or replayed state"));
+    }
+    event
+        .append(&mut tx, EventOutcome::Succeeded)
+        .await
+        .map_err(|error| failed("callback event write failed", error))?;
+    tx.commit()
+        .await
+        .map_err(|error| failed("callback commit failed", error))
+}
+
+async fn record_callback_failure(
+    login: &PgConnectOptions,
+    event: &ConnectionEvent,
+    lease: Option<&OAuthLease>,
+    error: &Error,
+) {
+    let outcome = if error.source.is_some() {
+        EventOutcome::Failed
+    } else {
+        EventOutcome::Refused
+    };
+    let record = async {
+        let mut database = callback_connection(login).await?;
+        if let Some(lease) = lease {
+            lease
+                .record_failure(&mut database, event, outcome)
+                .await
+                .map_err(|error| failed("callback lease release failed", error))?;
+        } else {
+            event.record_refusal(&mut database, outcome).await;
+        }
+        Ok::<_, Error>(())
+    };
+    if !timeout(Duration::from_secs(1), record)
+        .await
+        .is_ok_and(|result| result.is_ok())
+    {
+        tracing::warn!("OAuth callback failure could not be recorded");
     }
 }
 

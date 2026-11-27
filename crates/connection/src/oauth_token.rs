@@ -1,4 +1,4 @@
-//! Shared OAuth token refresh with per-connection session locking.
+//! Shared OAuth token refresh with per-connection leases.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -115,6 +115,8 @@ pub struct Request<'a> {
     pub connection: uuid::Uuid,
     pub generation: i64,
     pub authorization_code: bool,
+    /// The caller's deadline for waiting and provider work.
+    pub deadline: Instant,
     /// A 401 refreshes only the access token that the provider refused.
     pub rejected: Option<&'a str>,
 }
@@ -125,6 +127,8 @@ pub struct Refresh<'a> {
     pub connection: uuid::Uuid,
     pub generation: i64,
     pub authorization_code: bool,
+    /// The caller's deadline for waiting and provider work.
+    pub deadline: Instant,
     pub rejected: Option<&'a str>,
 }
 
@@ -138,7 +142,7 @@ impl std::fmt::Debug for Refresh<'_> {
     }
 }
 
-/// The provider call runs between transactions while the session lock is held.
+/// The provider call runs after the lease commits and the connection is returned.
 pub type Fetch<'a> = Box<
     dyn FnOnce(
             Option<Token>,
@@ -160,7 +164,7 @@ impl Error {
     }
 }
 
-/// Reuse or refresh the token under the connection’s session advisory lock.
+/// Reuse a stored token or acquire the connection's refresh lease.
 pub async fn get<'a, F, Fut>(
     request: Request<'a>,
     envelope: &'a Envelope,
@@ -182,6 +186,7 @@ where
                 connection: request.connection,
                 generation: request.generation,
                 authorization_code: request.authorization_code,
+                deadline: request.deadline,
                 rejected: request.rejected,
             },
             envelope,

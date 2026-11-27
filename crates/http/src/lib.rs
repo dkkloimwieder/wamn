@@ -113,6 +113,7 @@ async fn oauth2_token(
             connection: key.0,
             generation: key.1,
             authorization_code: auth_type == "oauth2_authorization_code",
+            deadline: transport.deadline(),
             rejected,
         },
         &envelope,

@@ -119,7 +119,7 @@ impl HttpTransport {
         self.addresses
     }
 
-    fn deadline(&self) -> Instant {
+    pub(crate) fn deadline(&self) -> Instant {
         let deadline = Instant::now() + REQUEST_TIMEOUT;
         self.invocation.as_ref().map_or(deadline, |execution| {
             deadline.min(Instant::from_std(execution.deadline()))

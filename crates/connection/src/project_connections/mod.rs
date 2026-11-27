@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use crate::oauth_token::{Available, Error, Fetch, Refresh};
 use anyhow::Context as _;
+use sqlx::{Connection as _, Postgres, Transaction};
 use uuid::Uuid;
 use wamn_envelope::encryption::Envelope;
 use wamn_identity_protocol::AuthorityClass;
@@ -21,7 +22,7 @@ use wamn_postgres::{ConnectionGuard, ExecutorOpenError, WamnPostgres, open_execu
 use self::store::ConnectionStore;
 
 pub use event::{ConnectionEvent, EventOutcome, EventRow, EventType};
-pub use oauth::{lock_active_generation, lock_oauth_session, unlock_oauth_session, write_token};
+pub use oauth::{OAUTH_LEASE_POLL_INTERVAL, OAuthLease, lock_active_generation};
 
 struct ProjectDatabase<'a> {
     pools: &'a WamnPostgres,
@@ -42,6 +43,18 @@ impl ProjectDatabase<'_> {
             .context(context)?;
         guard.commit().await?;
         Ok(value)
+    }
+
+    async fn oauth_transaction<T>(
+        &self,
+        operation: impl AsyncFnOnce(&mut Transaction<'_, Postgres>) -> anyhow::Result<T>,
+    ) -> anyhow::Result<T> {
+        let mut guard = self.oauth_connection().await?;
+        let mut tx = guard.connection().begin().await?;
+        let result = operation(&mut tx).await?;
+        tx.commit().await?;
+        guard.repool();
+        Ok(result)
     }
 
     async fn oauth_connection(&self) -> anyhow::Result<ConnectionGuard> {

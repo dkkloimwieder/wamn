@@ -330,6 +330,7 @@ An error, trap, cancellation, or deadline destroys unfinished transaction state 
 Queue lease renewal keeps a connection guard from the start of its transaction through commit or rollback.
 Shutdown cancellation destroys that connection, so the pool cannot retain its open transaction or row locks.
 The shared `finish_queue_transaction` function also guards the connection while commit or rollback awaits PostgreSQL.
+OAuth refresh and the authorization callback commit a lease in the project token row and release the database connection before network I/O. A separate transaction verifies the claim and commits the token and event together.
 Serialization and deadlock errors reach the caller without an automatic transaction retry.
 
 ### The write log

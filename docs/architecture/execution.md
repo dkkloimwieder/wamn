@@ -769,12 +769,11 @@ The host appends `/oauth/callback` to that origin.
 PKCE binds the authorization code to the verifier through a SHA-256 challenge.
 The authorization URL preserves existing query parameters and adds the state, callback address, scopes, and S256 challenge.
 
-The callback opens its own connection through the control login and holds no org write lock during the provider call.
-
-The callback and token refresh share a PostgreSQL session lock for the connection.
-A short transaction reads the active generation and the pending state.
-The callback decrypts the verifier, reads the Secret, exchanges the code, and encrypts the token after that transaction ends.
-A second transaction checks the generation and commits the token, state deletion, and success event together.
+The callback and token refresh share a lease in the project's OAuth token row.
+The callback opens its own connection through the control login.
+A short transaction locks the connection before the pending state and claims the lease.
+The callback closes the database connection before it decrypts the verifier, reads the Secret, exchanges the code, and encrypts the token.
+A second transaction checks the generation and lease and commits the token, state deletion, and success event together.
 A refused callback leaves the pending state in place.
 Expired or stale states remain until a generation write or deactivation removes them.
 A generation write deletes pending states, so a later callback refuses the old state.
@@ -804,16 +803,16 @@ Each host retains at most 1024 unwrapped keys and evicts the least recently used
 The cache identity includes both `key_id` and `wrapped_key`.
 Debug output omits keys and plaintext.
 
-The host takes a PostgreSQL session lock for the connection.
 A short transaction reads the current generation, the stored token, and the latest refresh outcome.
 A token is due when its expiry is within 60 seconds.
-The host decrypts the token, calls the provider if a refresh is due, and encrypts the result between transactions.
-A second transaction checks that the generation is still active and commits the token with its success event.
-A waiting host reads the winner's token or failure event after the session lock is released.
+The host claims the lease before a refresh and returns the connection to the pool before it decrypts the token, calls the provider, and encrypts the result.
+The lease lasts for the 30-second HTTP request timeout plus a 10-second margin.
+A second transaction checks the active generation and exact lease expiry and commits the token and success event while clearing the lease.
+A waiting host polls every 50 milliseconds up to its request deadline. It can read the published token or claim a lease that has expired.
 
 The host keeps decrypted access tokens under the connection id and generation until the refresh margin.
 A new connection generation replaces the cached token entries of older generations.
-An OAuth API response of 401 or 403 follows the same lock path and permits one fresh token and one retry.
+An OAuth API response of 401 or 403 follows the same lease path and permits one fresh token and one retry.
 Concurrent refusals reuse a token that another host already refreshed.
 If a token request fails before an API call, the host returns `credential-unavailable`.
 If a token refresh fails during a retry for the same generation and credential, the host returns the first API response.
@@ -821,10 +820,10 @@ If a token refresh fails during a retry for the same generation and credential, 
 The ciphertext encodes a JSON object with `access_token` and `refresh_token` members.
 A missing member value is JSON null.
 
-Authorization code needs an existing row and uses the refresh-token grant for a due token.
+Authorization code needs a published token and uses the refresh-token grant for a due token.
 A response without a replacement refresh token keeps the prior value.
 
-A failed fetch records a refresh event, including when no token exists yet.
+A failed fetch records a refresh event and clears the lease in one short transaction, including when no token exists yet.
 Hosts wait 30 seconds after a failed refresh of the active generation.
 A newer callback token clears the wait.
 The latest refresh event supplies `refresh_status` for `connection.get` and the CLI.

@@ -138,12 +138,13 @@ CREATE TABLE platform.oauth_token (                    -- host-only; every OAuth
     wrapped_key    bytea NOT NULL,                       -- the row's AES-256 data key, wrapped by the envelope key
     key_id         text NOT NULL,                        -- the envelope key: a Cloud KMS key version (local: key file id)
     expires_at     timestamptz NOT NULL,
-    updated_at     timestamptz NOT NULL
+    updated_at     timestamptz NOT NULL,
+    refresh_lease_until timestamptz NOT NULL DEFAULT '-infinity'
 );
--- authorization code: no row = not authorized; calls refused until connection.authorize completes
--- client credentials (secret or JWT): no row = no token yet; the first call fetches one
--- Callback and refresh hold a session advisory lock per connection during provider I/O.
--- Short SQL transactions check the generation before reading or publishing a token.
+-- A lease can create a placeholder with updated_at = '-infinity' before the first token exists.
+-- Authorization-code calls require a published token. Client credentials can fetch the first token.
+-- Callback and refresh commit a lease and release the connection before provider I/O.
+-- Short SQL transactions check the generation and lease before publishing a token.
 --   client credentials: delete this row when the credential or parameters.auth changes
 --   authorization code: delete this row when parameters.auth changes (authorize again);
 --                       set expires_at = '-infinity' when only the secret changes (the refresh token stays)

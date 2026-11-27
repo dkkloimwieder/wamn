@@ -513,7 +513,8 @@ impl<'a, 'session> Administration<'a, 'session> {
              FROM platform.connection c
              JOIN platform.connection_generation g ON (g.connection_id,g.generation)=(c.id,c.active_generation)
              LEFT JOIN platform.credential k ON k.id=g.credential_id
-             LEFT JOIN platform.oauth_token o ON o.connection_id=c.id WHERE c.id=$1",
+             LEFT JOIN platform.oauth_token o ON o.connection_id=c.id AND o.updated_at <> '-infinity'
+             WHERE c.id=$1",
         )
         .bind(id)
         .try_map(|row: PgRow| Ok(ConnectionRow {

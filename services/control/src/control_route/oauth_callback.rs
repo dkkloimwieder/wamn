@@ -1,5 +1,6 @@
 //! Public control callback pages. The pending state supplies all authority.
 
+use sqlx::Connection as _;
 use wamn_http::body::{HttpBody, oauth_callback_page as page};
 
 use super::oauth_authorization::{Authorization, callback_target};
@@ -37,13 +38,12 @@ pub async fn response(
         local = key;
         &local
     };
-    let Ok(mut database) = wamn_postgres::connect(login).await else {
+    let Ok(database) = sqlx::PgConnection::connect_with(&login).await else {
         return page(503, "callback database unavailable");
     };
     let result = oauth
-        .callback(&mut database, envelope, &namespace, query)
+        .callback(&login, database, envelope, &namespace, query)
         .await;
-    drop(database);
     match result {
         Ok(()) => page(200, "Authorization succeeded. You can close this page."),
         Err(error) => page(400, &error.reason),
