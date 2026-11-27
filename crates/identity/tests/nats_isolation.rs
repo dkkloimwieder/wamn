@@ -94,10 +94,12 @@ async fn register_envs(system: &System) -> Result<()> {
     let mut admin = system.admin().await?;
     let mut tx =
         wamn_postgres::provisioning_transaction::provisioning_transaction(&mut admin).await?;
-    sqlx::query("INSERT INTO registry.env (org, env) SELECT $1, unnest(ARRAY['dev', 'prod'])")
-        .bind(ORG)
-        .execute(&mut *tx)
-        .await?;
+    sqlx::query(
+        "SELECT registry.provision_env($1, env) FROM unnest(ARRAY['dev', 'prod']) AS envs(env)",
+    )
+    .bind(ORG)
+    .execute(&mut *tx)
+    .await?;
     tx.commit().await?;
     Ok(())
 }
