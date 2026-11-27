@@ -321,7 +321,7 @@ cargo test -p wamn-journey-tests -- --ignored
 ```
 
 `cargo xtask preflight` checks the charts before a platform deploy.
-It renders the charts and the env namespaces, SQL Job, access rules, network policies, and quota objects.
+It renders the charts and the env namespaces, SQL Jobs, access rules, network policies, and quota objects.
 It checks that chart images resolve and that wamn containers accept their arguments with the rendered user and group IDs.
 Then it sends every object to the kind API server in a server-side dry run.
 For each restricted namespace, it also dry-runs Pods and supported built-in workload templates in a temporary namespace with the same Pod Security labels.

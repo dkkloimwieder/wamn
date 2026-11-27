@@ -8,6 +8,7 @@ use wamn_postgres::database::{ConnectionConfig, DATABASE_DIR};
 use wamn_registry::{EnvName, OrgId, name};
 
 use crate::{
+    env_install::EnvSqlStep,
     org::{OrgInputs, SYSTEM_DATABASE_CA, control_image, field},
     provision_org::{CONTROL_AUDIENCE, INVITATION_ACCOUNT, OrgActivity, SQL_ACCOUNT},
 };
@@ -196,31 +197,38 @@ pub(crate) fn env_sql_account(namespace: &str) -> String {
     format!("{ENV_SQL_COMPONENT}-{namespace}")
 }
 
-/// Build the platform Job that provisions the env's database login and quota.
+/// Build one of the platform Jobs that provision an env.
 pub fn env_provision_job(
     org: &OrgId,
     env: &EnvName,
+    prod: bool,
     image: &str,
     database: &ConnectionConfig,
+    step: EnvSqlStep,
 ) -> Value {
-    let account = env_sql_account(&name::env_key(org, env));
-    let mut job = platform_sql_job(
-        ENV_SQL_COMPONENT,
-        image,
-        database,
-        &[
-            "provision-env",
-            org.as_str(),
-            env.as_str(),
-            "--database",
-            SQL_CONFIG_PATH,
-        ],
-    );
+    let verb = match step {
+        EnvSqlStep::Record => "provision-env",
+        EnvSqlStep::PublishWorker => "provision-env-worker",
+    };
+    let mut args = vec![
+        verb,
+        org.as_str(),
+        env.as_str(),
+        "--database",
+        SQL_CONFIG_PATH,
+    ];
+    if prod {
+        args.push("--prod");
+    }
+    let mut job = platform_sql_job(ENV_SQL_COMPONENT, image, database, &args);
     job["metadata"]["namespace"] = PLATFORM.into();
     let spec = &mut job["spec"]["template"]["spec"];
-    spec["serviceAccountName"] = account.into();
+    spec["serviceAccountName"] = match step {
+        EnvSqlStep::Record => "default".into(),
+        EnvSqlStep::PublishWorker => env_sql_account(&name::env_key(org, env)).into(),
+    };
     spec["containers"][0]["terminationMessagePath"] = ENV_SQL_RESULT_PATH.into();
-    spec["automountServiceAccountToken"] = true.into();
+    spec["automountServiceAccountToken"] = matches!(step, EnvSqlStep::PublishWorker).into();
     job
 }
 

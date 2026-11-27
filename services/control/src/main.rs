@@ -4,7 +4,7 @@ use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
 use wamn_platform_install::{
-    env_install,
+    env_install::{self, EnvSqlStep},
     provision_org::{self, OrgActivity},
 };
 
@@ -35,12 +35,9 @@ enum Command {
         database: PathBuf,
     },
     #[command(hide = true)]
-    ProvisionEnv {
-        org: wamn_registry::OrgId,
-        env: wamn_registry::EnvName,
-        #[arg(long)]
-        database: PathBuf,
-    },
+    ProvisionEnv(ProvisionEnv),
+    #[command(hide = true)]
+    ProvisionEnvWorker(ProvisionEnv),
     #[command(hide = true)]
     ActivateOrg {
         org: wamn_registry::OrgId,
@@ -59,6 +56,35 @@ enum Command {
         #[arg(long)]
         owner: String,
     },
+}
+
+#[derive(clap::Args)]
+struct ProvisionEnv {
+    org: wamn_registry::OrgId,
+    env: wamn_registry::EnvName,
+    #[arg(long)]
+    prod: bool,
+    #[arg(long)]
+    database: PathBuf,
+}
+
+impl ProvisionEnv {
+    async fn run(&self, step: EnvSqlStep) -> anyhow::Result<()> {
+        let default_cpu_millicores =
+            env_install::read_env_default_cpu_millicores(&self.database).await?;
+        let database = wamn_postgres::read_connection_config(&self.database)
+            .await?
+            .to_json()?;
+        env_install::provision_in_cluster(
+            &database,
+            &self.org,
+            &self.env,
+            self.prod,
+            default_cpu_millicores,
+            step,
+        )
+        .await
+    }
 }
 
 #[tokio::main]
@@ -109,14 +135,8 @@ async fn main() -> anyhow::Result<()> {
                 wamn_kubernetes::client::KubernetesApi::in_cluster().map_err(anyhow::Error::from);
             wamn_platform_install::provision_org::provision_org(&database, &org, setup).await
         }
-        Command::ProvisionEnv { org, env, database } => {
-            let default_cpu_millicores =
-                env_install::read_env_default_cpu_millicores(&database).await?;
-            let database = wamn_postgres::read_connection_config(&database)
-                .await?
-                .to_json()?;
-            env_install::provision_in_cluster(&database, &org, &env, default_cpu_millicores).await
-        }
+        Command::ProvisionEnv(args) => args.run(EnvSqlStep::Record).await,
+        Command::ProvisionEnvWorker(args) => args.run(EnvSqlStep::PublishWorker).await,
         Command::ActivateOrg { org, database } => {
             let database = wamn_postgres::read_connection_config(&database)
                 .await?

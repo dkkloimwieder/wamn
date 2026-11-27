@@ -1,6 +1,6 @@
 //! Provision a kind environment with the platform operator's kubeconfig.
 
-use anyhow::{Context as _, ensure};
+use anyhow::{Context as _, bail, ensure};
 use ring::rand::{SecureRandom as _, SystemRandom};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -17,14 +17,15 @@ use crate::{
     },
     platform_database::lock_env_login,
     platform_registry::docker_configuration,
-    provision_org::{APPLY_SECRET, OAUTH_ENCRYPTION_INPUT, OAUTH_SECRET, create_env_worker_login},
+    provision_org::{
+        APPLY_SECRET, OAUTH_ENCRYPTION_INPUT, OAUTH_SECRET, create_env_worker_login, record_env,
+    },
     provision_system::connect_system_database,
 };
 
 mod manifest;
 
-pub use manifest::{ENV_ACCOUNT, ENV_LABEL, ORG_NAME_LABEL};
-pub use manifest::{Quota, sql_prerequisites};
+pub use manifest::{ENV_ACCOUNT, ENV_LABEL, ORG_NAME_LABEL, Quota, sql_prerequisites};
 use manifest::{boundary, namespaces, network_policies};
 
 /// Optional file in the platform SQL Job's mounted ConfigMap.
@@ -33,9 +34,9 @@ pub const ENV_DEFAULT_CPU_MILLICORES_FILE: &str = "env-default-cpu-millicores";
 /// Provision the env mapping, quota, worker login and Kubernetes boundary.
 ///
 /// # Errors
-/// Returns an error if the names are too long, the platform is not kind, or
-/// the database or Kubernetes apply fails. Rerun the command to finish a partial apply.
-pub async fn create(org: &OrgId, env: &EnvName) -> anyhow::Result<()> {
+/// Returns an error if the platform is not kind, SQL refuses the request, or Kubernetes apply fails.
+/// Retry with the same prod choice to finish a partial apply.
+pub async fn create(org: &OrgId, env: &EnvName, prod: bool) -> anyhow::Result<()> {
     validate_names(org, env)?;
     let target = Target::developer(PLATFORM).await?;
     let OrgInputs {
@@ -60,22 +61,10 @@ pub async fn create(org: &OrgId, env: &EnvName) -> anyhow::Result<()> {
 
     let image = control_image(inputs)?;
     let namespace = name::env_key(org, env);
-    let storage = helm::org_release_namespace(&namespace);
-    let (workloads, _) = namespaces(org, env, &namespace, &storage);
-    org_resources::apply_namespace(&target, &namespace, &workloads).await?;
-    for object in sql_prerequisites(&namespace) {
-        if object["kind"] == "Secret" {
-            env_resources::create_secret(&target, &object).await?;
-        } else {
-            env_resources::apply(&target, &object).await?;
-        }
-    }
-    let sql_job = env_provision_job(org, env, image, &database);
-    let result = job::run_with_termination_message(&target, &sql_job, DEADLINE)
+    let sql_job = env_provision_job(org, env, prod, image, &database, EnvSqlStep::Record);
+    let (committed, _) = run_sql_job(&target, &sql_job)
         .await
         .with_context(|| format!("provision env {org}/{env} in the platform SQL Job"))?;
-    let committed: EnvSqlResult =
-        serde_json::from_str(&result).context("decode the committed env provisioning settings")?;
     ensure!(
         committed.namespace == namespace,
         "SQL Job returned another env namespace"
@@ -89,20 +78,27 @@ pub async fn create(org: &OrgId, env: &EnvName) -> anyhow::Result<()> {
             database.port,
             &api_server,
             &registry,
-            &committed.quota,
+            &committed,
         )? {
             if object["kind"] == "Namespace" {
                 let name = object["metadata"]["name"]
                     .as_str()
                     .context("env Namespace has no name")?;
-                if name != namespace {
-                    org_resources::apply_namespace(&target, name, &object).await?;
-                }
+                org_resources::apply_namespace(&target, name, &object).await?;
             } else {
                 env_resources::apply(&target, &object).await?;
             }
         }
-        for object in worker_configuration(inputs, &database, org, namespace, &committed.login, &api_server)? {
+        for object in sql_prerequisites(namespace) {
+            if object["kind"] == "Secret" {
+                env_resources::create_secret(&target, &object).await?;
+            } else {
+                env_resources::apply(&target, &object).await?;
+            }
+        }
+        let worker_job = env_provision_job(org, env, committed.prod, image, &database, EnvSqlStep::PublishWorker);
+        let (_, login) = run_sql_job(&target, &worker_job).await?;
+        for object in worker_configuration(inputs, &database, org, namespace, &login, &api_server)? {
             env_resources::apply(&target, &object).await?;
         }
         org_resources::write_registry_credentials_in(&target, namespace, &credentials).await?;
@@ -116,7 +112,21 @@ pub async fn create(org: &OrgId, env: &EnvName) -> anyhow::Result<()> {
         crate::org_install::wait_for_trust(&target, namespace).await
     }
     .await
-    .with_context(|| format!("env {org}/{env} is recorded. Run wamn env create {org}/{env} again to finish provisioning"))
+    .with_context(|| {
+        let prod_arg = if committed.prod { " --prod" } else { "" };
+        format!("env {org}/{env} is recorded. Run wamn env create {org}/{env}{prod_arg} again to finish provisioning")
+    })
+}
+
+async fn run_sql_job(
+    target: &Target,
+    manifest: &Value,
+) -> anyhow::Result<(EnvSettings, wamn_role::LoginName)> {
+    let result = job::run_with_termination_message(target, manifest, DEADLINE).await?;
+    match serde_json::from_str(&result).context("decode the env provisioning result")? {
+        EnvSqlResult::Committed(settings, login) => Ok((settings, login)),
+        EnvSqlResult::Refused(message) => bail!("{message}"),
+    }
 }
 
 /// Build the settings and PostgreSQL inputs mounted or read by env Jobs.
@@ -172,18 +182,18 @@ pub fn manifests(
     database_port: u16,
     api_server: &[Value],
     registry: &[Value],
-    quota: &Quota,
+    settings: &EnvSettings,
 ) -> anyhow::Result<Vec<Value>> {
     let namespace = name::env_key(org, env);
     let storage = helm::org_release_namespace(&namespace);
-    let (workloads, releases) = namespaces(org, env, &namespace, &storage);
+    let (workloads, releases) = namespaces(org, env, &namespace, &storage, settings.prod);
     let [session_pooler, transaction_pooler] = apply_pooler_hosts;
     let apply_poolers = [
         service_name(session_pooler)?,
         service_name(transaction_pooler)?,
     ];
     let mut objects = vec![workloads, releases];
-    objects.extend(boundary(org, &namespace, &storage, quota));
+    objects.extend(boundary(org, &namespace, &storage, &settings.quota));
     objects.extend(network_policies(
         &namespace,
         apply_poolers,
@@ -243,46 +253,96 @@ pub async fn read_env_default_cpu_millicores(database: &Path) -> anyhow::Result<
     Ok(Some(millicores))
 }
 
-/// Provision the committed env data and publish its worker login from the SQL Job.
+/// The two platform SQL Jobs that provision an env.
+#[derive(Debug, Clone, Copy)]
+pub enum EnvSqlStep {
+    /// Record the environment before the operator applies its Namespace.
+    Record,
+    /// Rotate and publish the worker login after the operator prepares its Secret.
+    PublishWorker,
+}
+
+/// Run one env provisioning step and return its result to the operator.
 ///
 /// The CPU request override applies only when the Job creates the quota row.
 pub async fn provision_in_cluster(
     database: &str,
     org: &OrgId,
     env: &EnvName,
+    prod: bool,
     default_cpu_millicores: Option<i64>,
+    step: EnvSqlStep,
 ) -> anyhow::Result<()> {
     validate_names(org, env)?;
-    let api = KubernetesApi::in_cluster()?;
     let mut connection = connect_system_database(database).await?;
+    let result = match step {
+        EnvSqlStep::Record => {
+            record_env(&mut connection, org, env, prod, default_cpu_millicores).await
+        }
+        EnvSqlStep::PublishWorker => {
+            publish_worker(&mut connection, org, env, prod, default_cpu_millicores).await
+        }
+    };
+    let result = match result {
+        Ok((login, settings)) => EnvSqlResult::Committed(settings, login),
+        Err(error) => match error
+            .downcast_ref::<sqlx::Error>()
+            .and_then(sqlx::Error::as_database_error)
+        {
+            Some(database)
+                if matches!(
+                    database.constraint(),
+                    Some("env_one_prod_per_org" | "env_prod_immutable")
+                ) =>
+            {
+                EnvSqlResult::Refused(database.message().to_owned())
+            }
+            _ => return Err(error),
+        },
+    };
+    drop(connection);
+    tokio::fs::write(ENV_SQL_RESULT_PATH, serde_json::to_vec(&result)?)
+        .await
+        .context("publish the env provisioning Job result")
+}
+
+async fn publish_worker(
+    connection: &mut sqlx::PgConnection,
+    org: &OrgId,
+    env: &EnvName,
+    prod: bool,
+    default_cpu_millicores: Option<i64>,
+) -> anyhow::Result<(wamn_role::LoginName, EnvSettings)> {
+    let api = KubernetesApi::in_cluster()?;
     // Keep the same session lock through publication, after the SQL transaction commits.
-    lock_env_login(&mut connection, org, env).await?;
-    let worker = create_env_worker_login(&mut connection, org, env, default_cpu_millicores).await?;
+    lock_env_login(connection, org, env).await?;
+    let worker =
+        create_env_worker_login(connection, org, env, prod, default_cpu_millicores).await?;
     env_resources::publish_login(
         &api,
-        &worker.namespace,
+        &worker.settings.namespace,
         APPLY_SECRET,
         worker.login.as_str(),
         &worker.password,
     )
     .await?;
-    drop(connection);
-    let committed = EnvSqlResult {
-        namespace: worker.namespace,
-        login: worker.login,
-        quota: worker.quota,
-    };
-    tokio::fs::write(ENV_SQL_RESULT_PATH, serde_json::to_vec(&committed)?)
-        .await
-        .context("publish the committed env settings as the Job result")
+    Ok((worker.login, worker.settings))
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-struct EnvSqlResult {
-    namespace: String,
-    login: wamn_role::LoginName,
-    quota: Quota,
+enum EnvSqlResult {
+    Committed(EnvSettings, wamn_role::LoginName),
+    Refused(String),
+}
+
+/// The Namespace and admission settings recorded at env provisioning.
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct EnvSettings {
+    pub(crate) namespace: String,
+    pub(crate) prod: bool,
+    pub(crate) quota: Quota,
 }
 
 #[cfg(test)]
@@ -315,7 +375,25 @@ mod tests {
             "database-login".into(),
         );
         let image = "registry.example/control";
-        let env_job = env_provision_job(&org, &env, image, &database);
+        let record_job = env_provision_job(&org, &env, true, image, &database, EnvSqlStep::Record);
+        let record_pod = &record_job["spec"]["template"]["spec"];
+        assert_eq!(record_job["metadata"]["namespace"], PLATFORM);
+        assert_eq!(record_pod["automountServiceAccountToken"], false);
+        assert_eq!(record_pod["containers"][0]["args"][0], "provision-env");
+        assert!(
+            record_pod["containers"][0]["args"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("--prod"))
+        );
+        let env_job = env_provision_job(
+            &org,
+            &env,
+            true,
+            image,
+            &database,
+            EnvSqlStep::PublishWorker,
+        );
         let org_job = crate::org_install::provision_job(&org, image, &database);
         let env_pod = &env_job["spec"]["template"]["spec"];
         let org_pod = &org_job["spec"]["template"]["spec"];
@@ -350,11 +428,32 @@ mod tests {
     }
 
     #[test]
+    fn prod_label_only_marks_the_prod_workload_namespace() -> anyhow::Result<()> {
+        let org: OrgId = "acme".parse()?;
+        let env: EnvName = "blue".parse()?;
+        let namespace = name::env_key(&org, &env);
+        let storage = helm::org_release_namespace(&namespace);
+        for prod in [false, true] {
+            let (workloads, releases) = namespaces(&org, &env, &namespace, &storage, prod);
+            let label = prod.then(|| json!("true"));
+            assert_eq!(
+                workloads["metadata"]["labels"].get("wamn.dev/prod"),
+                label.as_ref()
+            );
+            assert!(
+                releases["metadata"]["labels"]
+                    .get("wamn.dev/prod")
+                    .is_none()
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
     fn env_boundary_applies_committed_budgets_and_namespaced_access() -> anyhow::Result<()> {
         let org: OrgId = "acme".parse()?;
         let env = "dev".parse()?;
         let namespace = name::env_key(&org, &env);
-        let storage = helm::org_release_namespace(&namespace);
         let quota = serde_json::from_value(json!({
             "pods": 23, "jobs": 11, "persistent_volume_claims": 12,
             "secrets": 81, "config_maps": 29, "services": 13,
@@ -363,6 +462,13 @@ mod tests {
             "memory_limit_bytes": 8_i64 << 30, "default_cpu_millicores": 120,
             "default_memory_request_bytes": 128 << 20, "default_memory_limit_bytes": 512 << 20
         }))?;
+        let settings = EnvSettings {
+            namespace,
+            prod: false,
+            quota,
+        };
+        let namespace = settings.namespace.as_str();
+        let storage = helm::org_release_namespace(namespace);
         let manifests = manifests(
             &org,
             &env,
@@ -370,7 +476,7 @@ mod tests {
             5432,
             &[],
             &[],
-            &quota,
+            &settings,
         )?;
         let find = |kind, name: &str| {
             manifests
@@ -379,7 +485,7 @@ mod tests {
                 .with_context(|| format!("find {kind}/{name}"))
         };
 
-        for name in [namespace.as_str(), storage.as_ref()] {
+        for name in [namespace, storage.as_ref()] {
             let labels = &find("Namespace", name)?["metadata"]["labels"];
             assert_eq!(labels[ENV_LABEL], "true");
             assert_eq!(labels[ORG_NAME_LABEL], org.as_str());
@@ -398,7 +504,7 @@ mod tests {
             }));
         }
         assert_eq!(
-            find("Namespace", &namespace)?["metadata"]["labels"][manifest::ENV_HOST_GROUP_LABEL],
+            find("Namespace", namespace)?["metadata"]["labels"][manifest::ENV_HOST_GROUP_LABEL],
             name::env_host_name(&org, &env)
         );
         let deny = &find("NetworkPolicy", "default-deny")?["spec"];
@@ -447,7 +553,7 @@ mod tests {
             .filter(|object| object["kind"] != "Namespace")
         {
             let namespace_label = &object["metadata"]["namespace"];
-            assert!(namespace_label == namespace.as_str() || namespace_label == storage.as_ref());
+            assert!(namespace_label == namespace || namespace_label == storage.as_ref());
         }
         Ok(())
     }

@@ -216,7 +216,7 @@ async fn env_provisioning_retries_keep_the_mapping_and_rotate_the_worker_passwor
     let mut admin = system.admin().await?;
     let org = "acme".parse()?;
     let env = "dev".parse()?;
-    let first = create_env_worker_login(&mut admin, &org, &env, None).await?;
+    let first = create_env_worker_login(&mut admin, &org, &env, false, None).await?;
     let mut transaction = provisioning_transaction(&mut admin).await?;
     let desired_pods = 198;
     let defaults: (i64, i64, i64, i64, i64, i64) = sqlx::query_as(
@@ -238,7 +238,7 @@ async fn env_provisioning_retries_keep_the_mapping_and_rotate_the_worker_passwor
         .await?;
     transaction.commit().await?;
     let custom_cpu = 25;
-    let retried = create_env_worker_login(&mut admin, &org, &env, Some(custom_cpu)).await?;
+    let retried = create_env_worker_login(&mut admin, &org, &env, false, Some(custom_cpu)).await?;
     let quota: (i32, i64) = sqlx::query_as(
         "SELECT pods, default_cpu_millicores FROM registry.env_quota WHERE org=$1 AND env=$2",
     )
@@ -252,7 +252,7 @@ async fn env_provisioning_retries_keep_the_mapping_and_rotate_the_worker_passwor
         "reprovisioning keeps the existing quota"
     );
     let custom_env: wamn_registry::EnvName = "custom".parse()?;
-    create_env_worker_login(&mut admin, &org, &custom_env, Some(custom_cpu)).await?;
+    create_env_worker_login(&mut admin, &org, &custom_env, false, Some(custom_cpu)).await?;
     let stored_cpu: i64 = sqlx::query_scalar(
         "SELECT default_cpu_millicores FROM registry.env_quota WHERE org=$1 AND env=$2",
     )
@@ -285,5 +285,52 @@ async fn env_provisioning_retries_keep_the_mapping_and_rotate_the_worker_passwor
             .fetch_one(&mut worker)
             .await?;
     assert_eq!(limit, -1, "the Pooler owns the connection budget");
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires: docker, bin:helm"]
+async fn env_provisioning_accepts_one_prod_per_org_and_keeps_the_first_choice() -> anyhow::Result<()>
+{
+    use wamn_platform_install::provision_org::create_env_worker_login;
+
+    let system = wamn_test_infrastructure::database::system().await?;
+    let mut first = system.admin().await?;
+    let mut second = system.admin().await?;
+    let org = "acme".parse()?;
+    let blue = "blue".parse()?;
+    let green = "green".parse()?;
+    let (blue_result, green_result) = tokio::join!(
+        create_env_worker_login(&mut first, &org, &blue, true, None),
+        create_env_worker_login(&mut second, &org, &green, true, None),
+    );
+    let (prod_env, other, conflict) = match (blue_result, green_result) {
+        (Ok(_), Err(error)) => (&blue, &green, error),
+        (Err(error), Ok(_)) => (&green, &blue, error),
+        results => panic!("expected one committed prod choice: {results:?}"),
+    };
+    let sqlstate = |error: &anyhow::Error| {
+        error
+            .downcast_ref::<sqlx::Error>()
+            .and_then(sqlx::Error::as_database_error)
+            .and_then(sqlx::error::DatabaseError::code)
+            .map(std::borrow::Cow::into_owned)
+    };
+    assert_eq!(sqlstate(&conflict).as_deref(), Some("23505"));
+
+    for (env, prod) in [(prod_env, true), (other, false)] {
+        create_env_worker_login(&mut first, &org, env, prod, None).await?;
+        let refused = create_env_worker_login(&mut first, &org, env, !prod, None)
+            .await
+            .unwrap_err();
+        assert_eq!(sqlstate(&refused).as_deref(), Some("55000"));
+        let stored: bool =
+            sqlx::query_scalar("SELECT prod FROM registry.env WHERE org=$1 AND env=$2")
+                .bind(org.as_str())
+                .bind(env.as_str())
+                .fetch_one(&mut first)
+                .await?;
+        assert_eq!(stored, prod);
+    }
     Ok(())
 }

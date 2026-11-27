@@ -172,14 +172,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn env_create_accepts_exactly_an_org_and_env() {
+    fn env_create_accepts_an_org_and_env_with_an_optional_prod_flag() {
         use wamn_cli::env_requests::Command as EnvCommand;
 
-        let command = Cli::try_parse_from(["wamn", "env", "create", "acme/dev"]).unwrap();
-        assert!(matches!(
-            command.command,
-            Command::Env(EnvCommand::Create { .. })
-        ));
+        for (prod, flag) in [(false, None), (true, Some("--prod"))] {
+            let args = ["wamn", "env", "create", "acme/dev"]
+                .into_iter()
+                .chain(flag);
+            let command = Cli::try_parse_from(args).unwrap();
+            assert!(matches!(
+                command.command,
+                Command::Env(EnvCommand::Create { prod: choice, .. }) if choice == prod
+            ));
+        }
         for coordinate in ["acme", "acme/dev/billing", "acme/", "/dev", "acme/DEV"] {
             assert!(Cli::try_parse_from(["wamn", "env", "create", coordinate]).is_err());
         }

@@ -9,6 +9,7 @@ use wamn_registry::{EnvName, OrgId};
 use wamn_role::LoginName;
 
 use crate::{
+    env_install::EnvSettings,
     org_install::{PLATFORM, PROVISION_JOB},
     platform_event::{Command, EventType, Outcome, record},
     provision_system::connect_system_database,
@@ -207,8 +208,7 @@ pub struct EnvWorkerLogin {
     pub login: LoginName,
     /// The password to publish in the worker's Secret.
     pub password: String,
-    pub(crate) namespace: String,
-    pub(crate) quota: crate::env_install::Quota,
+    pub(crate) settings: EnvSettings,
 }
 
 impl fmt::Debug for EnvWorkerLogin {
@@ -227,13 +227,14 @@ impl fmt::Debug for EnvWorkerLogin {
 ///
 /// # Errors
 ///
-/// Returns an error if the org is unavailable, the name does not fit, or a database write fails.
+/// Returns an error if the org is unavailable, the prod choice is refused, or a database write fails.
 /// Publish the credentials after this function commits. Serialize provisioning and
 /// publication per environment so a concurrent retry cannot publish a stale password.
 pub async fn create_env_worker_login(
     connection: &mut sqlx::PgConnection,
     org: &OrgId,
     env: &EnvName,
+    prod: bool,
     default_cpu_millicores: Option<i64>,
 ) -> anyhow::Result<EnvWorkerLogin> {
     let password = login_password()?;
@@ -248,13 +249,8 @@ pub async fn create_env_worker_login(
     .execute(&mut *transaction)
     .await
     .context("lock the env worker login")?;
-    let login = sqlx::query_scalar::<_, String>("SELECT registry.provision_env($1, $2)")
-        .bind(org.as_str())
-        .bind(env.as_str())
-        .fetch_one(&mut *transaction)
-        .await
-        .with_context(|| format!("record env {org}/{env}"))?
-        .parse::<LoginName>()?;
+    let (login, settings) =
+        provision_env(&mut transaction, org, env, prod, default_cpu_millicores).await?;
     write_login(
         &mut transaction,
         &login,
@@ -263,6 +259,49 @@ pub async fn create_env_worker_login(
         -1,
     )
     .await?;
+    transaction
+        .commit()
+        .await
+        .context("commit env worker provisioning")?;
+    Ok(EnvWorkerLogin {
+        login,
+        password,
+        settings,
+    })
+}
+
+pub(crate) async fn record_env(
+    connection: &mut sqlx::PgConnection,
+    org: &OrgId,
+    env: &EnvName,
+    prod: bool,
+    default_cpu_millicores: Option<i64>,
+) -> anyhow::Result<(LoginName, EnvSettings)> {
+    let mut transaction =
+        wamn_postgres::provisioning_transaction::provisioning_transaction(connection).await?;
+    let result = provision_env(&mut transaction, org, env, prod, default_cpu_millicores).await?;
+    transaction
+        .commit()
+        .await
+        .context("commit env provisioning")?;
+    Ok(result)
+}
+
+async fn provision_env(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    org: &OrgId,
+    env: &EnvName,
+    prod: bool,
+    default_cpu_millicores: Option<i64>,
+) -> anyhow::Result<(LoginName, EnvSettings)> {
+    let login = sqlx::query_scalar::<_, String>("SELECT registry.provision_env($1, $2, $3)")
+        .bind(org.as_str())
+        .bind(env.as_str())
+        .bind(prod)
+        .fetch_one(&mut **transaction)
+        .await
+        .with_context(|| format!("record env {org}/{env}"))?
+        .parse::<LoginName>()?;
     let insert_quota = match default_cpu_millicores {
         Some(millicores) => sqlx::query(
             "INSERT INTO registry.env_quota (default_cpu_millicores, org, env) VALUES ($1, $2, $3)
@@ -277,30 +316,28 @@ pub async fn create_env_worker_login(
     insert_quota
         .bind(org.as_str())
         .bind(env.as_str())
-        .execute(&mut *transaction)
+        .execute(&mut **transaction)
         .await
         .context("initialize the env quota")?;
-    let (namespace, quota): (String, serde_json::Value) = sqlx::query_as(
-        "SELECT e.namespace, to_jsonb(q)
+    let (namespace, stored_prod, quota): (String, bool, serde_json::Value) = sqlx::query_as(
+        "SELECT e.namespace, e.prod, to_jsonb(q)
            FROM registry.env e JOIN registry.env_quota q USING (org, env)
           WHERE e.org=$1 AND e.env=$2",
     )
     .bind(org.as_str())
     .bind(env.as_str())
-    .fetch_one(&mut *transaction)
+    .fetch_one(&mut **transaction)
     .await
     .context("read the env provisioning data")?;
     let quota = serde_json::from_value(quota).context("decode the env quota")?;
-    transaction
-        .commit()
-        .await
-        .context("commit env provisioning")?;
-    Ok(EnvWorkerLogin {
+    Ok((
         login,
-        password,
-        namespace,
-        quota,
-    })
+        EnvSettings {
+            namespace,
+            prod: stored_prod,
+            quota,
+        },
+    ))
 }
 
 fn login_password() -> anyhow::Result<String> {

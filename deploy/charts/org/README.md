@@ -5,6 +5,7 @@ The platform uses `wamn.dev/org` for org control and `wamn.dev/org-workloads` fo
 The chart sets Pod Security enforcement and warnings to `restricted` in the org namespace.
 Set `org` to the registry org slug. The platform, hosts, cert-manager, default, kube-* and wamn names are reserved.
 `wamn env create` applies the resource quota and container defaults to each env namespace using the system database settings.
+If the registry marks the env as prod, the command applies `wamn.dev/prod=true` to its workload namespace.
 
 `wamn org create` finds the API server destinations and sets `networkPolicy.apiServer`.
 It reads the required `registryEgress` list from `wamn-org-inputs` and sets `networkPolicy.registry`.

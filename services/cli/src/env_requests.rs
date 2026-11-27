@@ -12,6 +12,9 @@ pub enum Command {
     Create {
         #[arg(value_name = "ORG/ENV", value_parser = parse_env)]
         coordinate: EnvCoordinate,
+        /// Mark this env as prod on first provisioning.
+        #[arg(long)]
+        prod: bool,
     },
     Apply(Apply),
     DeactivateProject(DeactivateProject),
@@ -71,9 +74,13 @@ pub async fn revoke_pat(args: RevokePat) -> anyhow::Result<()> {
 
 pub async fn run(command: Command) -> anyhow::Result<()> {
     let (operation, triple, value) = match command {
-        Command::Create { coordinate } => {
-            return wamn_platform_install::env_install::create(&coordinate.org, &coordinate.env)
-                .await;
+        Command::Create { coordinate, prod } => {
+            return wamn_platform_install::env_install::create(
+                &coordinate.org,
+                &coordinate.env,
+                prod,
+            )
+            .await;
         }
         Command::Apply(args) => {
             let document = wamn_env::env::document::EnvFile::compile(&args.file)?;

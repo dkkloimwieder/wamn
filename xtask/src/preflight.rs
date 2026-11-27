@@ -300,20 +300,23 @@ async fn render(
         .context("the environment has one project")?;
     let triple = document.triple();
     let env_namespace = name::env_key(&triple.org, &triple.env);
-    // Stand-in database settings. Provisioning itself reads the committed quota.
+    // Stand-in database settings. Provisioning reads the committed prod choice and quota.
     let default_cpu_millicores = sql_config[env_install::ENV_DEFAULT_CPU_MILLICORES_FILE]
         .as_str()
         .map(str::parse::<i64>)
         .transpose()
         .context("decode the platform env CPU request")?
         .unwrap_or(200);
-    let quota = serde_json::from_value(json!({
-        "pods": 20, "jobs": 10, "persistent_volume_claims": 10, "secrets": 100,
-        "config_maps": 100, "services": 20, "clusters": 10, "workload_deployments": 20,
-        "storage_bytes": 10_i64 << 30, "cpu_millicores": 4000,
-        "memory_request_bytes": 4_i64 << 30, "memory_limit_bytes": 8_i64 << 30,
-        "default_cpu_millicores": default_cpu_millicores, "default_memory_request_bytes": 256 << 20,
-        "default_memory_limit_bytes": 1 << 30,
+    let prod = true;
+    let settings = serde_json::from_value(json!({
+        "namespace": env_namespace, "prod": prod, "quota": {
+            "pods": 20, "jobs": 10, "persistent_volume_claims": 10, "secrets": 100,
+            "config_maps": 100, "services": 20, "clusters": 10, "workload_deployments": 20,
+            "storage_bytes": 10_i64 << 30, "cpu_millicores": 4000,
+            "memory_request_bytes": 4_i64 << 30, "memory_limit_bytes": 8_i64 << 30,
+            "default_cpu_millicores": default_cpu_millicores, "default_memory_request_bytes": 256 << 20,
+            "default_memory_limit_bytes": 1 << 30,
+        },
     }))?;
     let mut env_objects = env_install::manifests(
         &triple.org,
@@ -327,7 +330,7 @@ async fn render(
         org_values["networkPolicy"]["registry"]
             .as_array()
             .context("org has no registry destinations")?,
-        &quota,
+        &settings,
     )?;
     let worker_login = "wamn_apply_env_0000000000000000000000000000000000000000".parse()?;
     let worker_configuration = env_install::worker_configuration(
@@ -345,12 +348,15 @@ async fn render(
     )?;
     env_objects.extend(worker_configuration);
     env_objects.extend(env_install::sql_prerequisites(&env_namespace));
-    env_objects.push(org_install::env_provision_job(
-        &triple.org,
-        &triple.env,
-        image,
-        &database,
-    ));
+    env_objects.extend(
+        [
+            env_install::EnvSqlStep::Record,
+            env_install::EnvSqlStep::PublishWorker,
+        ]
+        .map(|step| {
+            org_install::env_provision_job(&triple.org, &triple.env, prod, image, &database, step)
+        }),
+    );
     rendered.push(Rendered {
         label: "env create".into(),
         namespace: env_namespace.clone(),

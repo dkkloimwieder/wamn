@@ -124,13 +124,16 @@ The platform chart sets one JetStream file store to 16 GiB on a 20 GiB volume. T
 The full resolver has a separate volume. [Platform chart](../../deploy/charts/platform/README.md)
 
 On kind, run `wamn env create <org>/<env>` with the same admin kubeconfig and registry auth file before the first `wamn env apply`.
-The command checks that the names fit. It prepares the workload namespace and an empty login Secret before it starts a SQL Job in `platform`.
-The Job commits the env and quota. It writes the worker login to the Secret after the commit.
+Add `--prod` to mark the environment as prod. An org can have one prod environment or none.
+The first commit of the environment fixes its choice in `registry.env.prod`.
+The command checks that the names fit and commits the env and quota through a SQL Job in `platform`.
+It then creates the namespaces and adds `wamn.dev/prod=true` to the prod workload namespace.
+After the command prepares the worker Secret, a second Job creates the login in SQL and publishes its credentials after commit.
 For each new environment on kind, the chart sets the default container CPU request to `10m` (10 millicores).
 If the chart supplies no value, the database sets the request to `100m`.
-The command then creates the Helm storage namespace. It applies the env account, worker configuration, network policies, quotas, and local registry credentials.
+The command applies the env account, worker configuration, network policies, quotas, and local registry credentials.
 Local OAuth encryption uses a separate `wamn-oauth` key in each env namespace. Control reads that key for authorize and callback. A retry keeps the key and publishes the worker’s new password.
-If provisioning fails partway through, run the same command again.
+If provisioning fails partway through, retry with the original `--prod` choice.
 If the quota changes in the system database, run the command again to apply it.
 
 The system database stores each environment's NATS limits in `registry.env`.

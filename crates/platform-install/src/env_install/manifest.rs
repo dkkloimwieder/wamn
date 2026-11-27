@@ -11,6 +11,7 @@ use crate::{
 
 /// The namespace label that identifies envs for admission.
 pub const ENV_LABEL: &str = "wamn.dev/env";
+pub(super) const PROD_LABEL: &str = "wamn.dev/prod";
 
 /// The namespace label that pins the host group for app egress admission.
 pub(super) const ENV_HOST_GROUP_LABEL: &str = "wamn.dev/env-host-group";
@@ -46,6 +47,7 @@ pub(super) fn namespaces(
     env: &EnvName,
     namespace: &str,
     storage: &str,
+    prod: bool,
 ) -> (Value, Value) {
     let labeled = |name| {
         json!({
@@ -63,6 +65,9 @@ pub(super) fn namespaces(
     workloads["metadata"]["labels"][ENV_HOST_GROUP_LABEL] = name::env_host_name(org, env).into();
     workloads["metadata"]["labels"]["wamn.dev/org-workloads"] = "true".into();
     workloads["metadata"]["labels"]["wamn.dev/identity-trust"] = "true".into();
+    if prod {
+        workloads["metadata"]["labels"][PROD_LABEL] = "true".into();
+    }
     let storage = labeled(storage);
     (workloads, storage)
 }

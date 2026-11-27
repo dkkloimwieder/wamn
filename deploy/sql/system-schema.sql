@@ -587,6 +587,7 @@ CREATE TABLE registry.env (
     revocation_seconds int NOT NULL DEFAULT 60 CHECK (revocation_seconds BETWEEN 0 AND 3600),
     active boolean NOT NULL DEFAULT true,
     disposable boolean NOT NULL DEFAULT false,
+    prod boolean NOT NULL DEFAULT false,
     -- The platform database owner sets an environment's NATS limits.
     nats_connections bigint NOT NULL DEFAULT 64 CHECK (nats_connections > 0),
     nats_consumers bigint NOT NULL DEFAULT 2000 CHECK (nats_consumers > 0),
@@ -600,6 +601,7 @@ CREATE TABLE registry.env (
     updated_by uuid NOT NULL,
     PRIMARY KEY (org, env)
 );
+CREATE UNIQUE INDEX env_one_prod_per_org ON registry.env (org) WHERE prod;
 CREATE TRIGGER wamn_record_history_stamp BEFORE INSERT OR UPDATE ON registry.env
     FOR EACH ROW EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 
@@ -649,21 +651,33 @@ LANGUAGE sql IMMUTABLE STRICT SET search_path = pg_catalog AS $$
 $$;
 REVOKE ALL ON FUNCTION registry.env_worker_login(text, text, text) FROM PUBLIC;
 
--- Only the provisioner records namespace bindings. A retry keeps the applied settings.
-CREATE FUNCTION registry.provision_env(org_id text, env_name text) RETURNS text
+-- Only the provisioner records namespace bindings and the first prod choice.
+CREATE FUNCTION registry.provision_env(org_id text, env_name text, requested_prod boolean DEFAULT false) RETURNS text
 LANGUAGE plpgsql SET search_path = pg_catalog AS $$
+DECLARE
+    stored_prod boolean;
 BEGIN
     PERFORM 1 FROM registry.org WHERE id = org_id AND active FOR SHARE;
     IF NOT FOUND THEN
         RAISE EXCEPTION 'org % is inactive or missing', org_id USING ERRCODE = '23503';
     END IF;
-    INSERT INTO registry.env (org, env, namespace)
-    VALUES (org_id, env_name, org_id || '--' || env_name)
-    ON CONFLICT (org, env) DO NOTHING;
+    INSERT INTO registry.env (org, env, namespace, prod)
+    VALUES (org_id, env_name, org_id || '--' || env_name, requested_prod)
+    ON CONFLICT DO NOTHING;
+    SELECT e.prod INTO stored_prod FROM registry.env e WHERE e.org = org_id AND e.env = env_name;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'org % already has a prod env', org_id
+            USING ERRCODE = '23505', CONSTRAINT = 'env_one_prod_per_org';
+    END IF;
+    IF stored_prod IS DISTINCT FROM requested_prod THEN
+        RAISE EXCEPTION 'env %/% was first provisioned %. Retry with the same choice.', org_id, env_name,
+            CASE WHEN stored_prod THEN 'with --prod' ELSE 'without --prod' END
+            USING ERRCODE = '55000', CONSTRAINT = 'env_prod_immutable';
+    END IF;
     RETURN registry.env_worker_login(org_id, env_name, current_database());
 END
 $$;
-REVOKE ALL ON FUNCTION registry.provision_env(text, text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION registry.provision_env(text, text, boolean) FROM PUBLIC;
 
 CREATE FUNCTION registry.worker_coordinate() RETURNS TABLE (org text, env text)
 LANGUAGE sql STABLE SET search_path = pg_catalog AS $$

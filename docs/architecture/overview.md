@@ -119,6 +119,7 @@ Helm stores host, project, and application releases in `wamn-helm-<org>--<env>`.
 The charts place runtime objects in the environment namespace recorded in `registry.env`.
 The org chart declares the namespace, base RBAC, and default-deny network policy.
 On kind, `wamn env create` applies quotas and container defaults in each env namespace.
+The registry stores the `--prod` choice at first provisioning. The command labels the prod workload namespace after the registry commit.
 The environment chart allows traffic for its host group. The project chart allows traffic for its database and change reader.
 Each application release adds its integration ports to the host group's public egress. The runtime enforces the authorities on each wasm integration.
 The platform chart owns the system PostgreSQL Cluster in namespace `platform`.
