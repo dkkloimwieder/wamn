@@ -17,13 +17,12 @@ use wamn_http_client::HttpClient;
 use super::{Env, Org, PLATFORM, PortForward, identity_pods, identity_port, run};
 
 /// The fixture application that every host journey deploys.
-pub const FIXTURE: &str = "platform_fixture";
+pub const FIXTURE: &str = "platform-fixture";
+pub const FIXTURE_PACKAGE: &str = "platform_fixture";
 
 /// The source package of [`FIXTURE`].
 pub fn fixture() -> PathBuf {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../apps")
-        .join(FIXTURE)
+    super::request::fixture(FIXTURE_PACKAGE)
 }
 
 /// Run `check` once a second until it gives a value, and fail at `deadline`.

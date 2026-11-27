@@ -33,7 +33,7 @@ pub async fn create(
     request: &Request<'_>,
 ) -> anyhow::Result<PatResponse> {
     ensure!(
-        request.name.parse::<wamn_registry::ProjectId>().is_ok(),
+        wamn_registry::identifiers::api_service_name_is_valid(request.name),
         "invalid API service name"
     );
     ensure!(

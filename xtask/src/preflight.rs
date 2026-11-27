@@ -68,7 +68,7 @@ database:
 projects:
   - name: receiving
     apps:
-      wamn_receiving:
+      wamn-receiving:
         label: receiving
 ";
 /// Stand-in for the suffix that env apply reserves.

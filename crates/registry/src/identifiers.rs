@@ -1,12 +1,12 @@
 //! Slug syntax shared by registry coordinate constructors.
 //!
-//! Organization, project, and environment identifiers share this module's
-//! character, length, and hyphen rules (wamn-0h0g.9.20).
+//! Organization, project, environment, and application identifiers share this
+//! module's character, length, and hyphen rules.
 //! Organization and project identifiers also reject the reserved `wamn` prefix.
-//! Environment identifiers permit that prefix. Derived resource names permit
-//! consecutive hyphens and use their own length limit.
+//! Project identifiers also reject reserved root path segments. Derived resource
+//! names permit consecutive hyphens and use their own length limit.
 
-/// Max bytes in an organization, project, or environment identifier.
+/// Max bytes in an organization, project, environment, or application identifier.
 ///
 /// The number comes from the name provisioning composes, not from this crate.
 /// A per-project-env database is named
@@ -36,7 +36,7 @@ pub fn app_label_reason(label: &str) -> Option<&'static str> {
 /// The platform-reserved id prefix (wamn-66x). The platform mints `wamn-db-…`
 /// and `wamn-…` database, namespace and Secret names, so a project id in that
 /// space collides with a platform-owned name.
-const RESERVED_PROJECT_PREFIX: &str = "wamn";
+const RESERVED_WAMN_PREFIX: &str = "wamn";
 
 pub(crate) fn is_alnum(byte: u8) -> bool {
     byte.is_ascii_lowercase() || byte.is_ascii_digit()
@@ -78,9 +78,30 @@ fn slug_reason(id: &str) -> Option<&'static str> {
     None
 }
 
-/// Whether `id` sits under the platform-reserved `wamn` prefix (wamn-66x): the
-/// bare word `wamn`, or any id starting `wamn-`. The boundary is a hyphen, so
-/// `wamning` is an ordinary project id. This mirrors the catalog rule.
+/// Whether `id` is `wamn` or starts with `wamn-`.
+pub(crate) fn has_reserved_wamn_prefix(id: &str) -> bool {
+    id == RESERVED_WAMN_PREFIX || id.starts_with("wamn-")
+}
+
+/// Whether a name is a valid API service slug outside the reserved `wamn` prefix.
+pub fn api_service_name_is_valid(name: &str) -> bool {
+    project_id_reason(name).is_none() && !has_reserved_wamn_prefix(name)
+}
+
+/// Whether `id` is reserved for a platform name or a whole root path segment.
 pub(crate) fn project_id_is_reserved(id: &str) -> bool {
-    id == RESERVED_PROJECT_PREFIX || id.starts_with("wamn-")
+    has_reserved_wamn_prefix(id)
+        || matches!(
+            id,
+            "api"
+                | "password"
+                | "oauth"
+                | "assets"
+                | "clients"
+                | "platform-ui"
+                | "healthz"
+                | "invite"
+                | "recover"
+                | "reset"
+        )
 }

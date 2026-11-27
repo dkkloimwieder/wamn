@@ -9,18 +9,19 @@ pub static DEFAULT_PROJECT: LazyLock<ProjectId> =
     LazyLock::new(|| "default".parse().expect("fixed default project"));
 
 /// A lowercase project slug of at most 40 bytes, with isolated hyphens.
+/// The platform reserves `wamn`, `wamn-*`, and its root path segments.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub struct ProjectId(Box<str>);
 
-/// An project name refused by the registry slug rule.
+/// A project name refused by the registry slug or reservation rules.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ParseProjectIdError;
 
 impl fmt::Display for ParseProjectIdError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(
-            "expected a lowercase project slug of 1 to 40 bytes with isolated hyphens outside the reserved wamn prefix",
+            "expected a lowercase project slug of 1 to 40 bytes with isolated hyphens and a nonreserved name",
         )
     }
 }
@@ -107,6 +108,7 @@ mod tests {
             ("a-9".to_owned(), true),
             ("9".to_owned(), true),
             ("wamning".to_owned(), true),
+            ("api-v2".to_owned(), true),
             ("wamn".to_owned(), false),
             ("wamn-db".to_owned(), false),
             ("x".repeat(40), true),
@@ -121,6 +123,28 @@ mod tests {
         ] {
             let parsed = value.parse::<super::ProjectId>();
             assert_eq!(parsed.is_ok(), valid, "{value:?}");
+        }
+    }
+
+    #[test]
+    fn platform_root_segments_are_reserved() {
+        for root in [
+            "api",
+            "password",
+            "oauth",
+            "assets",
+            "clients",
+            "platform-ui",
+            "healthz",
+            "invite",
+            "recover",
+            "reset",
+        ] {
+            assert!(root.parse::<super::ProjectId>().is_err(), "{root}");
+            assert!(
+                crate::identifiers::api_service_name_is_valid(root),
+                "{root}"
+            );
         }
     }
 }

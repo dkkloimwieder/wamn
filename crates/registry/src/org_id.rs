@@ -28,7 +28,7 @@ impl TryFrom<String> for OrgId {
 
     fn try_from(value: String) -> Result<Self, Self::Error> {
         if crate::identifiers::project_id_reason(&value).is_some()
-            || crate::identifiers::project_id_is_reserved(&value)
+            || crate::identifiers::has_reserved_wamn_prefix(&value)
             || matches!(
                 value.as_str(),
                 "platform" | "hosts" | "cert-manager" | "default"
@@ -109,6 +109,7 @@ mod tests {
             ("a-9".to_owned(), true),
             ("9".to_owned(), true),
             ("wamning".to_owned(), true),
+            ("api".to_owned(), true),
             ("wamn".to_owned(), false),
             ("wamn-db".to_owned(), false),
             ("x".repeat(40), true),

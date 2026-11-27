@@ -1,7 +1,8 @@
 # Receiving change walkthrough
 
 This walkthrough uses an installed `kind` platform. Follow the [development loop](../../docs/operations/development-loop.md) to prepare publication credentials, the build database, and `env.yaml`.
-Name the document's selected application `wamn_receiving`. Use the platform's identity service for browser sign-in.
+Name the selected application `wamn-receiving` in the environment file.
+Use the platform's identity service for browser sign-in.
 
 ## Prepare a release
 
@@ -9,7 +10,7 @@ From the repository root, publish and apply the initial schema. The publish comm
 
 ```bash
 "$CARGO_TARGET_DIR/debug/wamn" schema publish apps/wamn_receiving --env env.yaml
-"$CARGO_TARGET_DIR/debug/wamn" schema apply wamn_receiving --release <published-digest> --env env.yaml
+"$CARGO_TARGET_DIR/debug/wamn" schema apply wamn-receiving --release <published-digest> --env env.yaml
 "$CARGO_TARGET_DIR/debug/wamn" dev --config env.yaml --overlay-root apps/wamn_receiving --watch
 ```
 
@@ -21,7 +22,8 @@ A failed build leaves the deployed release available.
 
 Change a response value in `apps/wamn_receiving/component/src/reads.rs`.
 Save the file and wait for deployment to finish.
-Request the affected operation through the installed `/api/wamn_receiving` route and check the changed value.
+Request the affected operation at its installed `/api` route.
+Make sure that the response contains the changed value.
 Restore the source file and wait for the next deployment.
 Use the product schema commands before deploying a change to application SQL.
 The watcher keeps application data between saves.

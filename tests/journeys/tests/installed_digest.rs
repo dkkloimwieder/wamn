@@ -12,9 +12,8 @@ use serde_json::Value;
 use wamn_http_client::HttpClient;
 use wamn_test_infrastructure::{containers::start_postgres, scratch::ScratchRoot};
 
+use common::host::{FIXTURE as APP, FIXTURE_PACKAGE as PACKAGE};
 use common::{Env, Org, run};
-
-const PACKAGE: &str = "platform_fixture";
 
 common::journey! {
     async fn env_apply_uses_the_installed_digest_after_a_tag_moves() -> anyhow::Result<()> {
@@ -54,7 +53,7 @@ common::journey! {
         );
         fs::write(&manifest, &authored)?;
 
-        let env = org.apply(PACKAGE).await?;
+        let env = org.apply(APP).await?;
         let describe = start_postgres().await?;
         let a = publish(&env, &source, describe.admin_url()).await?;
         let schemas_a = schemas(&env, &a).await?;
@@ -62,7 +61,7 @@ common::journey! {
 
         let mut deploy = env.org.command();
         deploy
-            .args(["deploy", "--release", &a, "--app", PACKAGE, "--env"])
+            .args(["deploy", "--release", &a, "--app", APP, "--env"])
             .arg(&env.file);
         run(deploy).await?;
 

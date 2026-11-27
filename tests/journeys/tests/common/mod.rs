@@ -216,19 +216,19 @@ pub struct App {
 }
 
 impl App {
-    /// Create an org and environment, and deploy the source package at `source`.
-    pub async fn prepare(source: &Path) -> anyhow::Result<Self> {
-        let name = source
+    /// Create an org and environment, and deploy `source` as application `app`.
+    pub async fn prepare(source: &Path, app: &str) -> anyhow::Result<Self> {
+        let package = source
             .file_name()
             .and_then(|name| name.to_str())
             .context("fixture directory name")?;
-        let env = Org::create().await?.apply(name).await?;
-        env.deploy(source, name).await?;
+        let env = Org::create().await?.apply(app).await?;
+        env.deploy(source, app).await?;
         let org = &env.org;
         let outputs = &org.cluster.outputs;
         let host = wamn_registry::name::app_host(LABEL, &org.name, &outputs.base_domain.parse()?);
         // The fixture routes accept a PAT only, and an API service cannot hold `admin`.
-        caller_role(&env, source, name, &host).await?;
+        caller_role(&env, source, package, &host).await?;
         let secret = env.scratch.path().join("caller.json");
         let triple = &env.triple;
         let mut command = org.command();
@@ -272,14 +272,14 @@ impl App {
 
 /// Create the API caller's role on the application host, and grant it each operation that
 /// the fixture's build output serves, its bases' operations included.
-async fn caller_role(env: &Env, source: &Path, app: &str, host: &str) -> anyhow::Result<()> {
+async fn caller_role(env: &Env, source: &Path, package: &str, host: &str) -> anyhow::Result<()> {
     // `wamn deploy` builds the package into `<workspace>/target/wamn/<package>`.
     let manifest = std::fs::read(
         source
             .parent()
             .context("fixture workspace")?
             .join("target/wamn")
-            .join(app)
+            .join(package)
             .join("wamn.json"),
     )?;
     let owners = wamn_package::manifest::OperationOwners::from_slice(&manifest)?;

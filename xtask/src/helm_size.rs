@@ -136,10 +136,15 @@ fn stamp_chart(root: &Path, out: &Path) -> Result<std::path::PathBuf> {
 
 /// The environment that deploys package `id` as one application.
 fn env(id: &PackageName) -> Result<EnvDocument> {
+    let slug = id.as_str().replace('_', "-");
+    let app = slug
+        .get(..wamn_registry::identifiers::MAX_PROJECT_ID_LEN)
+        .unwrap_or(&slug)
+        .trim_end_matches('-');
     let document = serde_json::json!({
         "org": ORG, "project": "wms", "env": "dev", "target": "cloud",
         "revocation_seconds": 60,
-        "apps": {id.as_str(): {
+        "apps": {app: {
             "label": "app",
             "client": {"package": id, "web": format!("sha256:{}", "0".repeat(64))},
         }},

@@ -8,6 +8,7 @@ mod common;
 use std::time::Duration;
 
 use anyhow::{Context as _, ensure};
+use common::host::{FIXTURE, fixture};
 use common::request::{self, until};
 use common::{App, Observed};
 use serde_json::{Value, json};
@@ -65,7 +66,7 @@ common::journey! {
     /// A commit logs one row whose result is the reply. A refused call leaves no row. A
     /// generated delete answers its known result.
     async fn a_claim_commits_with_its_work_or_not_at_all() -> anyhow::Result<()> {
-        let app = App::prepare(&request::fixture("platform_fixture")).await?;
+        let app = App::prepare(&fixture(), FIXTURE).await?;
         let routes = &app.routes;
         let mut database = app.env.observe().await?;
 
@@ -124,7 +125,7 @@ common::journey! {
     /// A second call with the same key waits for the first claim's transaction, then
     /// answers the same result, and the key logs one row.
     async fn a_competing_claim_waits_for_the_first() -> anyhow::Result<()> {
-        let app = App::prepare(&request::fixture("platform_fixture")).await?;
+        let app = App::prepare(&fixture(), FIXTURE).await?;
         let routes = &app.routes;
         let mut database = app.env.observe().await?;
 
@@ -156,7 +157,7 @@ common::journey! {
     /// A host that dies inside an open claim refuses its caller, and its transaction rolls
     /// back, so the same key later answers as a new request.
     async fn a_lost_session_refuses_and_frees_its_key() -> anyhow::Result<()> {
-        let app = App::prepare(&request::fixture("platform_fixture")).await?;
+        let app = App::prepare(&fixture(), FIXTURE).await?;
         let routes = &app.routes;
         let env = &app.env;
         let client = &env.org.cluster.client;

@@ -3,6 +3,7 @@
 mod common;
 
 use anyhow::Context as _;
+use common::host::{FIXTURE, FIXTURE_PACKAGE};
 use common::{App, Routes};
 use serde_json::{Value, json};
 use sqlx::Row as _;
@@ -13,7 +14,7 @@ common::journey! {
     /// idempotency conflict, because the hash keeps the supplied spelling and line order
     /// (`docs/architecture/data-access.md`).
     async fn a_retry_with_reordered_lines_is_an_idempotency_conflict() -> anyhow::Result<()> {
-        let app = fixture(&"platform_fixture".parse().unwrap()).await?;
+        let app = fixture(FIXTURE_PACKAGE, FIXTURE).await?;
         let routes = &app.routes;
         let mut database = app.env.observe().await?;
 
@@ -119,7 +120,7 @@ common::journey! {
     /// The entry refuses a query limit above the released maximum with an HTTP 400 pointer
     /// (`docs/architecture/execution.md`).
     async fn a_read_above_its_declared_maximum_is_refused() -> anyhow::Result<()> {
-        let app = fixture(&"platform_fixture".parse().unwrap()).await?;
+        let app = fixture(FIXTURE_PACKAGE, FIXTURE).await?;
         let paths = &app.routes;
         let load = json!([{"limit": 100_000}]);
         let (status, answer) = get(paths, "/widget_maker/query", &load).await?;
@@ -147,19 +148,14 @@ async fn get(paths: &Routes, path: &str, body: &Value) -> anyhow::Result<(u16, V
     Ok((response.status().as_u16(), response.json().await?))
 }
 
-async fn fixture(package: &wamn_package::PackageName) -> anyhow::Result<App> {
-    App::prepare(
-        &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../apps")
-            .join(package.as_str()),
-    )
-    .await
+async fn fixture(package: &str, app: &str) -> anyhow::Result<App> {
+    App::prepare(&common::request::fixture(package), app).await
 }
 
 common::journey! {
     /// Generated sequence bindings run in a guest command without any record.
     async fn a_command_numbers_without_a_record_and_with_a_key_map() -> anyhow::Result<()> {
-        let app = fixture(&"platform_fixture".parse().unwrap()).await?;
+        let app = fixture(FIXTURE_PACKAGE, FIXTURE).await?;
         let paths = &app.routes;
         for (index, batch, keyed) in [
             (1, "a", "B0001-001"),
@@ -193,7 +189,7 @@ common::journey! {
 common::journey! {
     /// An overlay with no field declarations inherits the numbered insert and actors.
     async fn an_overlay_insert_inherits_numbering_and_actor_stamps() -> anyhow::Result<()> {
-        let app = fixture(&"platform_fixture_overlay".parse().unwrap()).await?;
+        let app = fixture("platform_fixture_overlay", "platform-fixture-overlay").await?;
         let caller = app.caller().to_string();
         let paths = &app.routes;
         for (index, number) in [(1, "a-G0001"), (2, "a-G0002")] {
@@ -230,7 +226,7 @@ async fn post(paths: &Routes, path: &str, body: &Value) -> anyhow::Result<Value>
 
 common::journey! {
     async fn a_role_without_the_list_permission_is_refused_the_feed() -> anyhow::Result<()> {
-        let app = fixture(&"platform_fixture".parse().unwrap()).await?;
+        let app = fixture(FIXTURE_PACKAGE, FIXTURE).await?;
         let paths = &app.routes;
         let caller = app.caller().to_string();
         owner(&app, &["create-role", "--role", "reader"]).await?;

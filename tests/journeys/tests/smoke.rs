@@ -27,7 +27,7 @@ use wamn_http_client::HttpClient;
 use wamn_kubernetes::{client::resource, helm::org_release_namespace};
 use wamn_registry::name;
 
-const APP: &str = "wamn_receiving";
+const APP: &str = "wamn-receiving";
 
 common::journey! {
     /// An owner deploys one application, and web answers 401 without a token and 200 with
@@ -35,7 +35,7 @@ common::journey! {
     async fn the_owner_reaches_an_app_and_control_through_web() -> anyhow::Result<()> {
         let source = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../apps")
-            .join(APP);
+            .join("wamn_receiving");
         let env = Org::create().await?.apply(APP).await?;
         env.deploy(&source, APP).await?;
 
@@ -386,7 +386,7 @@ common::journey! {
     /// Deny admits the rendered workload and refuses a Secret reference as the deploy account.
     async fn project_admission_refuses_workload_secret_references() -> anyhow::Result<()> {
         let env = Org::create().await?.apply(FIXTURE).await?;
-        let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps").join(FIXTURE);
+        let source = common::host::fixture();
         env.deploy(&source, FIXTURE).await?;
         let triple = &env.triple;
         let namespace = env.namespace();

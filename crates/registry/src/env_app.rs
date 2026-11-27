@@ -16,18 +16,20 @@ use std::{
     str::FromStr,
 };
 
-/// A nonempty application name stored as SQL text.
+/// A lowercase application slug of at most 40 bytes, with isolated hyphens.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub struct AppName(String);
 
-/// A refusal to parse a nonempty application name stored as SQL text.
+/// An application name refused by the registry slug rule.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ParseAppNameError;
 
 impl fmt::Display for ParseAppNameError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("expected a nonempty application name without a NUL byte")
+        formatter.write_str(
+            "expected a lowercase application slug of 1 to 40 bytes with isolated hyphens",
+        )
     }
 }
 
@@ -37,7 +39,7 @@ impl TryFrom<String> for AppName {
     type Error = ParseAppNameError;
 
     fn try_from(value: String) -> Result<Self, Self::Error> {
-        if value.is_empty() || value.as_bytes().contains(&0) {
+        if crate::identifiers::project_id_reason(&value).is_some() {
             return Err(ParseAppNameError);
         }
         Ok(Self(value))
@@ -89,14 +91,27 @@ mod name_tests {
 
     #[test]
     fn parse_rule() {
+        let max = "a".repeat(40);
+        let too_long = "a".repeat(41);
         for (value, valid) in [
-            ("orders", true),
-            ("sales.eu", true),
-            ("Order processing", true),
-            ("注文", true),
-            (" ", true),
+            ("9", true),
+            ("orders-2", true),
+            (max.as_str(), true),
+            ("api", true),
+            ("wamn-app", true),
             ("", false),
+            (too_long.as_str(), false),
+            ("Orders", false),
+            ("sales.eu", false),
+            ("orders_now", false),
+            ("orders now", false),
+            ("orders/now", false),
+            ("orders%2fnow", false),
+            ("注文", false),
             ("orders\0", false),
+            ("-orders", false),
+            ("orders-", false),
+            ("orders--now", false),
         ] {
             let parsed = value.parse::<AppName>();
             assert_eq!(parsed.is_ok(), valid, "{value:?}");

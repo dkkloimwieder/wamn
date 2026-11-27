@@ -33,7 +33,10 @@ common::journey! {
     /// A goods-in receipt on a purchase order that requires inspection makes the
     /// `client_acme_receiving` Data change handler create a pending inspection.
     async fn a_receipt_creates_its_inspection() -> anyhow::Result<()> {
-        let app = App::prepare(&request::fixture("client_acme_receiving")).await?;
+        let app = App::prepare(
+            &request::fixture(request::ACME_RECEIVING_PACKAGE),
+            request::ACME_RECEIVING_APP,
+        ).await?;
         let routes = &app.routes;
         let suffix = uuid::Uuid::new_v4().simple().to_string();
 

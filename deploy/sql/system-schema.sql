@@ -171,12 +171,13 @@ CREATE TABLE registry.project (
     updated_at timestamptz NOT NULL,
     updated_by uuid NOT NULL,
     PRIMARY KEY (org, id),
-    -- cjv.20 charset backstop: project `id` is a report_id_issues mirror (lowercase slug
-    -- ≤ 40 bytes, not under the reserved `wamn` prefix — it too mints names).
+    -- Match ProjectId's slug rule, platform prefix and reserved root segments.
     CONSTRAINT project_id_charset_check
         CHECK (id ~ '^[a-z0-9]+(-[a-z0-9]+)*$'
                AND char_length(id) <= 40
-               AND id <> 'wamn' AND id NOT LIKE 'wamn-%')
+               AND id <> 'wamn' AND id NOT LIKE 'wamn-%'
+               AND id NOT IN ('api', 'password', 'oauth', 'assets', 'clients',
+                              'platform-ui', 'healthz', 'invite', 'recover', 'reset'))
 );
 CREATE TRIGGER wamn_record_history_stamp
     BEFORE INSERT OR UPDATE ON registry.project
@@ -946,7 +947,7 @@ CREATE TABLE registry.env_app (
     org text NOT NULL,
     env text NOT NULL,
     project text NOT NULL,
-    app text NOT NULL CHECK (app <> ''),
+    app text NOT NULL CHECK (app ~ '^[a-z0-9]+(-[a-z0-9]+)*$' AND char_length(app) <= 40),
     active boolean NOT NULL DEFAULT true,
     label text NOT NULL CHECK (
         octet_length(label) BETWEEN 1 AND 21

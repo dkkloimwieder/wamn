@@ -80,7 +80,7 @@ async fn ready_identity(client: &kube::Client) -> anyhow::Result<(Pod, String)> 
 
 common::journey! {
     async fn envs_in_one_org_are_isolated() -> anyhow::Result<()> {
-        let b = timeout(DEPLOY_DEADLINE, App::prepare(&fixture()))
+        let b = timeout(DEPLOY_DEADLINE, App::prepare(&fixture(), FIXTURE))
             .await
             .context("deploy the application in B")??;
         let org = &b.env.org;
@@ -207,7 +207,7 @@ common::journey! {
 
 common::journey! {
     async fn envs_in_two_orgs_are_isolated() -> anyhow::Result<()> {
-        let b = timeout(DEPLOY_DEADLINE, App::prepare(&fixture()))
+        let b = timeout(DEPLOY_DEADLINE, App::prepare(&fixture(), FIXTURE))
             .await
             .context("deploy the application in B")??;
         let a = timeout(APPLY_DEADLINE, async {

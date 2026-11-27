@@ -8,6 +8,7 @@ mod common;
 use std::time::Duration;
 
 use anyhow::{Context as _, ensure};
+use common::request::{ACME_RECEIVING_APP as APP, ACME_RECEIVING_PACKAGE};
 use common::{Env, Org, active_project_cluster, host, request};
 use futures_util::TryStreamExt as _;
 use k8s_openapi::api::{
@@ -23,13 +24,12 @@ use tokio::task::JoinHandle;
 use tokio::time::{Instant, timeout};
 use wamn_registry::name;
 
-const APP: &str = "client_acme_receiving";
 const COMMAND: Duration = Duration::from_mins(20);
 const OBSERVE: Duration = Duration::from_secs(30);
 
 common::journey! {
     async fn commands_wait_for_their_resources() -> anyhow::Result<()> {
-        let source = request::fixture(APP);
+        let source = request::fixture(ACME_RECEIVING_PACKAGE);
         ensure!(source.is_dir(), "missing fixture {}", source.display());
         let org = timeout(COMMAND, Org::create())
             .await

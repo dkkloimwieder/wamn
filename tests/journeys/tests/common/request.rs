@@ -21,6 +21,8 @@ use super::{App, CALLER_ROLE, Env, Org, PROJECT, Routes, failure, run};
 
 /// How long a host pod takes to start again, and its workloads to be placed.
 pub const RESTART_DEADLINE: Duration = Duration::from_secs(300);
+pub const ACME_RECEIVING_APP: &str = "client-acme-receiving";
+pub const ACME_RECEIVING_PACKAGE: &str = "client_acme_receiving";
 
 /// Poll `check` once a second until it answers a value, or fail at `deadline`.
 pub async fn until<T, F, Fut>(deadline: Duration, what: &str, mut check: F) -> anyhow::Result<T>
@@ -39,10 +41,10 @@ where
 }
 
 /// The path of a fixture application's source package.
-pub fn fixture(app: &str) -> std::path::PathBuf {
+pub fn fixture(package: &str) -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../apps")
-        .join(app)
+        .join(package)
 }
 
 /// One more environment of an org. Runs `wamn env deactivate-project` after failure capture, if enabled.

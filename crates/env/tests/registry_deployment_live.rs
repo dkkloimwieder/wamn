@@ -19,6 +19,89 @@ async fn provision_fixture_env(
 
 #[tokio::test]
 #[ignore = "requires: docker, bin:helm"]
+async fn system_schema_enforces_project_roots_and_app_slugs() -> anyhow::Result<()> {
+    let system = wamn_test_infrastructure::database::system().await?;
+    let mut client = system.admin().await?;
+    let triple = Triple::new("acme".parse()?, "dev".parse()?, "inventory".parse()?);
+    provision_fixture_env(&mut client, &triple).await?;
+    let mut transaction = provisioning_transaction(&mut client).await?;
+    wamn_env::env_registry::record_project_env(
+        &mut transaction,
+        &triple,
+        "cloud",
+        "fixture-secret",
+        &"abcd1234".parse()?,
+        None,
+    )
+    .await?;
+    transaction.commit().await?;
+
+    let max = "a".repeat(40);
+    let too_long = "a".repeat(41);
+    let projects = [
+        ("api-v2", true),
+        ("wamning", true),
+        ("wamn", false),
+        ("wamn-tools", false),
+        ("api", false),
+        ("password", false),
+        ("oauth", false),
+        ("assets", false),
+        ("clients", false),
+        ("platform-ui", false),
+        ("healthz", false),
+        ("invite", false),
+        ("recover", false),
+        ("reset", false),
+    ];
+    let apps = [
+        ("api", true),
+        ("wamn-orders", true),
+        (max.as_str(), true),
+        ("", false),
+        (too_long.as_str(), false),
+        ("Orders", false),
+        ("orders_now", false),
+        ("orders/now", false),
+        ("é", false),
+        ("-orders", false),
+        ("orders-", false),
+        ("orders--now", false),
+    ];
+    for (statement, cases) in [
+        (
+            "INSERT INTO registry.project (org, id) VALUES ('acme', $1)",
+            projects.as_slice(),
+        ),
+        (
+            "INSERT INTO registry.env_app (org, env, project, app, label)
+             VALUES ('acme', 'dev', 'inventory', $1, 'fixture')",
+            apps.as_slice(),
+        ),
+    ] {
+        for &(name, allowed) in cases {
+            let mut transaction = provisioning_transaction(&mut client).await?;
+            let result = sqlx::query(statement)
+                .bind(name)
+                .execute(&mut *transaction)
+                .await;
+            if allowed {
+                result?;
+            } else {
+                let error = result.expect_err(name);
+                let code = error
+                    .as_database_error()
+                    .and_then(sqlx::error::DatabaseError::code);
+                assert_eq!(code.as_deref(), Some("23514"), "{name:?}: {error}");
+            }
+            transaction.rollback().await?;
+        }
+    }
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires: docker, bin:helm"]
 async fn applying_an_unprovisioned_env_refuses_the_reservation() -> anyhow::Result<()> {
     let system = wamn_test_infrastructure::database::system().await?;
     let login = system.org_login(wamn_role::APPLY_ROLE)?;

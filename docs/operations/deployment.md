@@ -341,6 +341,9 @@ The top package pins its base packages by OCI digest.
 Helm records the release history. A WorkloadDeployment exposes the applied package digest and Helm revision.
 
 Use one `env.yaml` file for each environment. Each application name must be unique in the file.
+Use 1 to 40 lowercase ASCII letters, digits, and single hyphens for application and project names.
+Put hyphens between letters or digits.
+See [Naming](../architecture/naming.md#environment-names) for the reserved project names.
 The [environment schema](../../crates/env/env.schema.json) describes the YAML fields.
 Set each application's `label` to a value unique within the org, across all its environments and projects.
 Use 1 to 21 lowercase letters, digits, and single hyphens between letters or digits.
@@ -372,7 +375,7 @@ database:
 projects:
   - name: receiving
     apps:
-      wamn_receiving:
+      wamn-receiving:
         label: receiving
 ```
 
@@ -430,12 +433,12 @@ Run `wamn env apply env.yaml` before deploying the application.
 Use the source directory or set `RELEASE_DIGEST` to the full digest of a published release.
 
 ```bash
-wamn deploy apps/wamn_receiving --app wamn_receiving --env env.yaml
-wamn deploy --release "$RELEASE_DIGEST" --app wamn_receiving --env env.yaml
-wamn rollback wamn_receiving --env env.yaml
-wamn rollback wamn_receiving --revision 3 --env env.yaml
+wamn deploy apps/wamn_receiving --app wamn-receiving --env env.yaml
+wamn deploy --release "$RELEASE_DIGEST" --app wamn-receiving --env env.yaml
+wamn rollback wamn-receiving --env env.yaml
+wamn rollback wamn-receiving --revision 3 --env env.yaml
 wamn status --env env.yaml
-wamn status wamn_receiving --env env.yaml
+wamn status wamn-receiving --env env.yaml
 ```
 
 Status reports each project in the file. An application name selects its project.
@@ -479,8 +482,8 @@ To use the reset example, pass `--disposable` the first time you apply the envir
 ```bash
 wamn build apps/wamn_receiving
 PACKAGE_DIGEST=$(wamn publish apps/target/wamn/wamn_receiving)
-wamn schema diff wamn_receiving --env env.yaml
-wamn schema apply wamn_receiving --env env.yaml --release "$PACKAGE_DIGEST"
+wamn schema diff wamn-receiving --env env.yaml
+wamn schema apply wamn-receiving --env env.yaml --release "$PACKAGE_DIGEST"
 wamn schema reset --project receiving --env env.yaml
 ```
 
@@ -705,7 +708,7 @@ The same immutable web artifact can serve more than one environment.
 Deploy a published release through control:
 
 ```bash
-wamn deploy --env env.yaml --app wamn_receiving --release "$RELEASE_DIGEST"
+wamn deploy --env env.yaml --app wamn-receiving --release "$RELEASE_DIGEST"
 ```
 
 The operation worker holds the environment lock through SQL and the application rollout.

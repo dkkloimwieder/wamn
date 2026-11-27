@@ -4,6 +4,7 @@
 mod common;
 
 use anyhow::{Context as _, ensure};
+use common::host::{FIXTURE, fixture};
 use common::request::{self, OtherEnv, wamn};
 use common::{App, Org};
 use k8s_openapi::api::authorization::v1::{
@@ -25,7 +26,7 @@ common::journey! {
         use common::host::{control, control_reply};
 
         let org = Org::create().await?;
-        let project = OtherEnv::apply(&org, "credentials", "platform_fixture").await?;
+        let project = OtherEnv::apply(&org, "credentials", FIXTURE).await?;
         let target = |name: &str| json!({
             "project":project.triple.project,"env":project.triple.env,"name":name
         });
@@ -87,8 +88,8 @@ common::journey! {
     /// call with the credential is a service test (Epic 15 ruling Q-B).
     async fn another_envs_credential_is_refused() -> anyhow::Result<()> {
         let org = Org::create().await?;
-        let a = OtherEnv::apply(&org, "alpha", "platform_fixture").await?;
-        let b = OtherEnv::apply(&org, "beta", "platform_fixture").await?;
+        let a = OtherEnv::apply(&org, "alpha", FIXTURE).await?;
+        let b = OtherEnv::apply(&org, "beta", FIXTURE).await?;
         let scratch = ScratchRoot::create()?;
         let file = |name: String, contents: String| -> anyhow::Result<String> {
             let path = scratch.path().join(name);
@@ -207,7 +208,7 @@ common::journey! {
     /// their own caller: the actor stamps, and the history operation and changer. And
     /// `number.issue` advances only this application's counters.
     async fn each_session_carries_its_own_identity() -> anyhow::Result<()> {
-        let app = App::prepare(&request::fixture("platform_fixture")).await?;
+        let app = App::prepare(&fixture(), FIXTURE).await?;
         let client = &app.env.org.cluster.client;
         let env = &app.env;
 
@@ -301,7 +302,7 @@ common::journey! {
             .await?;
         let advanced: Vec<_> = after.iter().filter(|row| !before.contains(row)).collect();
         ensure!(
-            !advanced.is_empty() && advanced.iter().all(|row| row.0 == "platform_fixture"),
+            !advanced.is_empty() && advanced.iter().all(|row| row.0 == FIXTURE),
             "number.issue advances only this application's counters: {advanced:?}"
         );
         Ok(())

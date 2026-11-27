@@ -36,7 +36,7 @@ common::journey! {
     /// The host pod becomes Ready through the startup and readiness probes that its pod spec
     /// declares, within the time those probes allow, and then serves a call through web.
     async fn the_host_pod_becomes_ready_through_its_probes() -> anyhow::Result<()> {
-        let app = App::prepare(&fixture()).await?;
+        let app = App::prepare(&fixture(), FIXTURE).await?;
         let pods = common::host::host_pods(&app.env).await?;
         let pod = pods.first().context("the environment has no host pod")?;
         let container = pod
@@ -315,7 +315,7 @@ common::journey! {
 common::journey! {
     /// `wamn env apply` stops serving an omitted app and keeps its project data.
     async fn env_apply_stops_an_unlisted_app_and_keeps_its_data() -> anyhow::Result<()> {
-        let app = App::prepare(&fixture()).await?;
+        let app = App::prepare(&fixture(), FIXTURE).await?;
         let env = &app.env;
         let id = uuid::Uuid::now_v7().to_string();
         let created = app

@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::{Context as _, ensure};
-use common::host::{FIXTURE, fixture, ready, runtime};
+use common::host::{FIXTURE, FIXTURE_PACKAGE, fixture, ready, runtime};
 use common::request::{output, until, wamn};
 use common::{
     App, Env, Org, Routes, active_project_cluster, observe_project_cluster, probe_image, run_job,
@@ -43,7 +43,7 @@ common::journey! {
         let app = within(
             DEPLOY_DEADLINE,
             "deploy the original fixture",
-            App::prepare(&original),
+            App::prepare(&original, FIXTURE),
         )
         .await?;
         let env = &app.env;
@@ -176,7 +176,7 @@ common::journey! {
         let mut app = within(
             DEPLOY_DEADLINE,
             "prepare rollback fixture version 1",
-            App::prepare(&v1),
+            App::prepare(&v1, FIXTURE),
         )
         .await?;
         app.routes.client = HttpClient::builder()
@@ -414,8 +414,8 @@ fn rollback_source(export: &str) -> anyhow::Result<PathBuf> {
             format!("{export} is missing; use the exports from cargo xtask prepare-tests")
         })?;
     ensure!(
-        path.ends_with(FIXTURE) && path.join("wamn.k").is_file(),
-        "{export} does not name a {FIXTURE} source package: {}",
+        path.ends_with(FIXTURE_PACKAGE) && path.join("wamn.k").is_file(),
+        "{export} does not name a {FIXTURE_PACKAGE} source package: {}",
         path.display()
     );
     Ok(path)
@@ -470,7 +470,7 @@ common::journey! {
         let app = within(
             DEPLOY_DEADLINE,
             "prepare the fixture",
-            App::prepare(&fixture()),
+            App::prepare(&fixture(), FIXTURE),
         )
         .await?;
         let env = &app.env;

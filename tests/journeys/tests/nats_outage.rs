@@ -50,7 +50,7 @@ common::journey! {
     /// The stock operator places the first application again before the edge call.
     /// The web edge serves a call and the second `WorkloadDeployment` is Ready.
     async fn the_host_serves_through_a_nats_outage_and_recovers() -> anyhow::Result<()> {
-        let app = App::prepare(&fixture()).await?;
+        let app = App::prepare(&fixture(), FIXTURE).await?;
         let env = &app.env;
         let client = &env.org.cluster.client;
         let pod = ready_host_pod(env, HOST_DEADLINE).await?;

@@ -31,7 +31,7 @@ The loop builds each base before the overlay.
 
 ```bash
 "$CARGO_TARGET_DIR/debug/wamn" publish apps/platform_fixture --env env.yaml
-"$CARGO_TARGET_DIR/debug/wamn" schema apply platform_fixture --release <published-digest> --env env.yaml
+"$CARGO_TARGET_DIR/debug/wamn" schema apply platform-fixture --release <published-digest> --env env.yaml
 "$CARGO_TARGET_DIR/debug/wamn" dev --config env.yaml --overlay-root apps/platform_fixture --watch
 ```
 
@@ -68,7 +68,7 @@ Run the three phases separately:
 ```bash
 /usr/bin/time -f 'build %e seconds' "$CARGO_TARGET_DIR/debug/wamn" build apps/platform_fixture
 /usr/bin/time -f 'publication %e seconds' "$CARGO_TARGET_DIR/debug/wamn" publish apps/platform_fixture --env env.yaml
-/usr/bin/time -f 'deployment %e seconds' "$CARGO_TARGET_DIR/debug/wamn" deploy --app platform_fixture --release <published-digest> --env env.yaml
+/usr/bin/time -f 'deployment %e seconds' "$CARGO_TARGET_DIR/debug/wamn" deploy --app platform-fixture --release <published-digest> --env env.yaml
 ```
 
 The publish command reads existing build output and prints the top package OCI digest.

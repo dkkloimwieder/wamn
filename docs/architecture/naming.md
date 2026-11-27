@@ -15,8 +15,8 @@ Package names use `[a-z][a-z0-9]*(_[a-z0-9]+)*`. The name `wamn` is reserved.
 `wamn_catalog::PackageName` owns this rule. Storage keeps underscores.
 WIT operation exports replace them with hyphens.
 
-Application names are nonempty SQL text. They have no character-class rule.
-`wamn_registry::AppName` refuses empty text and NUL bytes. It preserves all other text.
+Application names use the [registry coordinate syntax](#environment-names).
+The package directory uses the package name. For example, deploy `apps/wamn_receiving` as `wamn-receiving`.
 
 Captured database events name their package in the `package_id` JSON field.
 Run records and trace fields also keep their published wire spelling.
@@ -113,10 +113,15 @@ SQLx reads and writes it as text. `platform.login_principal` keeps its login-to-
 
 ## Environment names
 
-`wamn_registry::OrgId`, `ProjectId`, and `EnvName` own registry coordinate names.
-Each name has at most 40 bytes of lowercase ASCII letters, digits, and isolated hyphens.
+`wamn_registry` owns the `OrgId`, `EnvName`, `ProjectId`, and `AppName` types.
+Each name is one URL-safe segment of 1 to 40 bytes.
+Names contain lowercase ASCII letters, digits, and single hyphens.
 Names start and end with a letter or digit.
 Org and project IDs also refuse `wamn` and the `wamn-` prefix.
+Projects also reserve the whole names `api`, `password`, `oauth`, `assets`, `clients`, `platform-ui`, `healthz`, `invite`, `recover`, and `reset`.
+For example, `api-v2` is a valid project name.
+The system database enforces the project and application name rules.
+
 `ProjectEnvKey` parses the combined deployment key and its shared name budget.
 Internal calls carry these types. HTTP and WIT fields remain strings.
 
