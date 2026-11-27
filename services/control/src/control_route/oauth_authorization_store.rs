@@ -93,10 +93,16 @@ pub(super) async fn lock_connection(
 ///
 /// # Errors
 /// Returns an error if the state cannot be deleted.
-pub(super) async fn delete(connection: &mut PgConnection, state: &str) -> Result<(), sqlx::Error> {
-    sqlx::query("DELETE FROM platform.oauth_authorization WHERE state=$1")
-        .bind(state)
-        .execute(connection)
-        .await?;
-    Ok(())
+pub(super) async fn delete(
+    connection: &mut PgConnection,
+    state: &str,
+) -> Result<bool, sqlx::Error> {
+    Ok(
+        sqlx::query("DELETE FROM platform.oauth_authorization WHERE state=$1")
+            .bind(state)
+            .execute(connection)
+            .await?
+            .rows_affected()
+            != 0,
+    )
 }

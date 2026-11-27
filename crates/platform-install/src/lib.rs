@@ -10,7 +10,6 @@ pub mod install;
 mod migration_history;
 pub mod org;
 pub mod org_install;
-pub mod org_secrets;
 mod platform_database;
 pub mod platform_event;
 pub mod platform_install;

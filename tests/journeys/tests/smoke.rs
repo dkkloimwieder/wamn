@@ -89,8 +89,17 @@ common::journey! {
         .await
         .context("apply the org environments for the authorization check")??;
         let client = &a.org.cluster.client;
-        let source = [a.org.name.to_string(), format!("wamn-helm-{}", a.org.name)];
-        let target = [b.org.name.to_string(), format!("wamn-helm-{}", b.org.name)];
+        let namespaces = |env: &common::Env| {
+            let namespace = env.namespace();
+            [
+                env.org.name.to_string(),
+                format!("wamn-helm-{}", env.org.name),
+                format!("wamn-helm-{namespace}"),
+                namespace,
+            ]
+        };
+        let source = namespaces(&a);
+        let target = namespaces(&b);
         timeout(Duration::from_mins(5), check_authorization(client, &source, &target))
             .await
             .context("review the org service-account permissions")?
@@ -99,8 +108,8 @@ common::journey! {
 
 async fn check_authorization(
     client: &Client,
-    source: &[String; 2],
-    target: &[String; 2],
+    source: &[String; 4],
+    target: &[String; 4],
 ) -> anyhow::Result<()> {
     let mut accounts = Vec::new();
     for namespace in source {
@@ -120,8 +129,11 @@ async fn check_authorization(
     }
 
     let reviews = Api::<SubjectAccessReview>::all(client.clone());
-    // The worker watches pods in its org and lists release Secrets in its Helm namespace.
-    for (namespace, resource) in source.iter().zip(["pods", "secrets"]) {
+    // The env worker watches env pods and lists the env's Helm records.
+    for (namespace, resource) in [
+        (source[3].as_str(), "pods"),
+        (source[2].as_str(), "secrets"),
+    ] {
         let mut allowed = false;
         for (account_namespace, account) in &accounts {
             let attributes = ResourceAttributes {

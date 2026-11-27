@@ -24,11 +24,24 @@ pub async fn response(
     let Ok(login) = logins.options(&project, &env).await else {
         return page(503, "callback database unavailable");
     };
+    let Ok(namespace) = logins.namespace(&env).await else {
+        return page(503, "callback database unavailable");
+    };
+    let local;
+    let envelope = if let Some(envelope) = oauth.shared_envelope() {
+        envelope
+    } else {
+        let Ok(key) = logins.oauth_key(&namespace).await else {
+            return page(503, "callback key unavailable");
+        };
+        local = key;
+        &local
+    };
     let Ok(mut database) = wamn_postgres::connect(login).await else {
         return page(503, "callback database unavailable");
     };
     let result = oauth
-        .callback(&mut database, request.uri().query().unwrap_or_default())
+        .callback(&mut database, envelope, &namespace, query)
         .await;
     drop(database);
     match result {

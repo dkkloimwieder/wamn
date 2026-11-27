@@ -91,7 +91,6 @@ impl ControlRoutes<'_> {
             }
         }
         authorized.commit().await?;
-        let login = self.login(&target.project, env).await?;
         let source = if operation == "connection.copy" {
             let source_env = target.source_env.as_ref().expect("validated source env");
             let login = self.login(&target.project, source_env).await?;
@@ -108,6 +107,9 @@ impl ControlRoutes<'_> {
         } else {
             None
         };
+        let namespace = self.logins.namespace(env).await?;
+        let credentials_store = KubernetesStore::in_namespace(&namespace);
+        let login = self.login(&target.project, env).await?;
         let mut client = wamn_postgres::connect(login).await?;
         let mut project = client.begin().await?;
         bind_actor(&mut project, attachment, caller).await?;
@@ -135,7 +137,7 @@ impl ControlRoutes<'_> {
 
             // Publish only after the immutable Secret version exists.
             let staged = write
-                .stage(&KubernetesStore, self.org, &target.project, env)
+                .stage(&credentials_store, self.org, &target.project, env)
                 .await?;
             let mut project = client.begin().await?;
             let result = async {
@@ -162,7 +164,7 @@ impl ControlRoutes<'_> {
                 }
                 Err(error) => {
                     project.rollback().await?;
-                    if let Err(error) = staged.discard(&KubernetesStore).await {
+                    if let Err(error) = staged.discard(&credentials_store).await {
                         tracing::warn!(%error, "could not discard staged connection credential");
                     }
                     return Err(error);
@@ -204,8 +206,15 @@ impl ControlRoutes<'_> {
             }),
             Outcome::Authorize(row) => {
                 let oauth = self.oauth()?;
+                let local;
+                let envelope = if let Some(envelope) = oauth.shared_envelope() {
+                    envelope
+                } else {
+                    local = self.logins.oauth_key(&namespace).await?;
+                    &local
+                };
                 let authorization = oauth
-                    .prepare_authorization(&row, &target.project, env)
+                    .prepare_authorization(envelope, &row, &target.project, env)
                     .await
                     .map_err(|error| Refusal::Failed(error.into()))?;
                 let mut project = client.begin().await?;
@@ -223,7 +232,7 @@ impl ControlRoutes<'_> {
                     .and_then(|row| row.remove("credentials"))
                 {
                     // Repeating deactivation can read the same immutable references.
-                    destroy_credentials(&KubernetesStore, &credentials).await?;
+                    destroy_credentials(&credentials_store, &credentials).await?;
                 }
                 Ok(value)
             }

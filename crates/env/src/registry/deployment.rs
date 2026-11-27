@@ -1,4 +1,3 @@
-use anyhow::Context as _;
 use wamn_registry::{Triple, deployment::Registration, instance_suffix::InstanceSuffix};
 
 /// Read the stored instance suffix, if the project deployment is active.
@@ -17,6 +16,19 @@ pub async fn instance_suffix(
     suffix
         .map(|value| wamn_postgres::decode_text(value, 0))
         .transpose()
+}
+
+/// Read the environment's provisioned Kubernetes namespace.
+pub async fn namespace(
+    connection: &mut sqlx::PgConnection,
+    org: &wamn_registry::OrgId,
+    env: &wamn_registry::EnvName,
+) -> Result<Option<String>, sqlx::Error> {
+    sqlx::query_scalar("SELECT namespace FROM registry.env WHERE org=$1 AND env=$2")
+        .bind(org.as_str())
+        .bind(env.as_str())
+        .fetch_optional(connection)
+        .await
 }
 
 /// Read the environment's host drain bound in seconds.
@@ -73,23 +85,6 @@ pub async fn exists(
     .bind(triple.env.as_str())
     .fetch_one(&mut *connection)
     .await
-}
-
-/// Require the platform operator's env mapping before recording a deployment.
-pub(crate) async fn require_provisioned(
-    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    org: &wamn_registry::OrgId,
-    env: &wamn_registry::EnvName,
-) -> anyhow::Result<()> {
-    let provisioned: bool =
-        sqlx::query_scalar("SELECT EXISTS (SELECT FROM registry.env WHERE org=$1 AND env=$2)")
-            .bind(org.as_str())
-            .bind(env.as_str())
-            .fetch_one(&mut **transaction)
-            .await
-            .context("read the environment registration")?;
-    anyhow::ensure!(provisioned, "env {org}/{env} is not provisioned");
-    Ok(())
 }
 
 /// Record a project without replacing its existing definition.

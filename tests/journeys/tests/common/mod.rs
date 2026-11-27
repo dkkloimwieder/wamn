@@ -69,7 +69,7 @@ const CAPACITY: usize = 4;
 pub(crate) const PLATFORM: &str = "platform";
 const SYSTEM_CLUSTER: &str = "wamn-pg";
 const SYSTEM_DATABASE: &str = "wamn_system";
-const ENV: &str = "dev";
+pub(crate) const ENV: &str = "dev";
 const PROJECT: &str = "fixture";
 const LABEL: &str = "fixture";
 /// The role of the API service that calls the fixture routes.
@@ -278,6 +278,12 @@ impl Org {
 
     /// Write an environment file with one project and one application, and run `wamn env apply`.
     pub async fn apply(self, app: &str) -> anyhow::Result<Env> {
+        self.create_env(&ENV.parse()?).await?;
+        self.apply_created(app).await
+    }
+
+    /// Apply in an existing env, so a journey can start its watches before apply.
+    pub async fn apply_created(self, app: &str) -> anyhow::Result<Env> {
         let scratch = ScratchRoot::create()?;
         let file = scratch.path().join("env.yaml");
         // A JSON document is a YAML document.
@@ -301,7 +307,6 @@ impl Org {
             triple,
             scratch,
         };
-        env.org.create_env(&env.triple.env).await?;
         let mut command = env.org.command();
         command.args(["env", "apply"]).arg(&env.file);
         run(command).await?;
@@ -318,6 +323,10 @@ pub struct Env {
 }
 
 impl Env {
+    pub fn namespace(&self) -> String {
+        name::env_key(&self.triple.org, &self.triple.env)
+    }
+
     /// Admit the observer login to the project database, and connect with it.
     ///
     /// Each `wamn env apply` and `wamn deploy` upgrades the project chart, which puts its
@@ -480,7 +489,7 @@ pub async fn active_project_cluster(cluster: &Cluster, triple: &Triple) -> anyho
 /// Admit the read-only observer to the active project Cluster (C2, C3).
 pub async fn admit_observer(cluster: &Cluster, triple: &Triple) -> anyhow::Result<Observed> {
     let name = active_project_cluster(cluster, triple).await?;
-    observe_project_cluster(cluster, triple.org.as_str(), &name).await
+    observe_project_cluster(cluster, &name::env_key(&triple.org, &triple.env), &name).await
 }
 
 /// Admit the read-only observer to a named project Cluster kept after deletion (C2).

@@ -1307,6 +1307,6 @@ Package verification supplies an empty relation with the public provenance key.
 It reads no registry. Introspection permits this UUID reference outside the package schemas and still refuses other external table references.
 Package migration grants schema access and REFERENCES only while the owner creates this foreign key, then removes those temporary grants.
 
-Database connection configuration contains no password. One native basic-auth Secret stores each role's username and password. SQLx resolves that Secret and the cluster CA in the org namespace. Operator connections also require verified TLS.
+Database connection configuration contains no password. One native basic-auth Secret stores each role's username and password. SQLx resolves that Secret and the cluster CA in the login’s namespace. Operator connections also require verified TLS.
 
 Applications may import `wamn:postgres/client@0.4.0` for dynamic SQL. The interface exposes only `query`. It has no write method, transaction resource or cursor resource. Each call uses a separate login that inherits `wamn_query`. This role has SELECT privileges and no application writer membership. Each dynamic call runs inside a read-only transaction. Operation SQL uses the separate host transaction on `wamn_app`. Both interfaces stream their rows and report completion separately.

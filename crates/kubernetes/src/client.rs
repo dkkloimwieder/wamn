@@ -147,18 +147,6 @@ impl KubernetesApi {
         }))
     }
 
-    /// Check for a key in the named Secret.
-    pub async fn secret_contains_key(
-        &self,
-        namespace: &str,
-        name: &str,
-        key: &str,
-    ) -> anyhow::Result<bool> {
-        let secrets = Api::<Secret>::namespaced(self.client(), namespace);
-        let secret = tokio::time::timeout(REQUEST_TIMEOUT, secrets.get(name)).await??;
-        Ok(secret.data.is_some_and(|data| data.contains_key(key)))
-    }
-
     /// Read a named Secret in the selected namespace within the request deadline.
     ///
     /// # Errors

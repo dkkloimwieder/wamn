@@ -102,7 +102,7 @@ common::journey! {
         let env = Org::create().await?.apply(FIXTURE).await?;
         let client = &env.org.cluster.client;
         let triple = &env.triple;
-        let namespace = triple.org.as_str();
+        let namespace = &env.namespace();
         let pod = ready_host_pod(&env, HOST_DEADLINE).await?;
         let accounts = Api::<ServiceAccount>::namespaced(client.clone(), namespace);
         let host_account = wamn_registry::name::env_service_account(&triple.org, &triple.env);
@@ -235,7 +235,7 @@ common::journey! {
         ensure!(!removed.is_empty(), "{SECOND} has no Workload objects");
         let workloads = common::host::runtime(
             client,
-            env.triple.org.as_str(),
+            &env.namespace(),
             "Workload",
             "workloads",
         );

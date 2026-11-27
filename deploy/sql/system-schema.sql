@@ -634,7 +634,7 @@ CREATE TRIGGER wamn_record_history_stamp BEFORE INSERT OR UPDATE ON registry.env
     FOR EACH ROW EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 
 -- The hash binds the worker to one environment and database. The prefix keeps
--- worker logins distinct from the org apply logins used by Jobs until they move.
+-- worker logins distinct from the org apply logins used by SQL fixtures.
 CREATE FUNCTION registry.env_worker_login(org_id text, env_name text, database_name text) RETURNS text
 LANGUAGE sql IMMUTABLE STRICT SET search_path = pg_catalog AS $$
     SELECT 'wamn_apply_env_' || left(encode(sha256(

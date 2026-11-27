@@ -37,11 +37,14 @@ common::journey! {
         timeout(OBSERVE, check_org(&org))
             .await
             .context("read the control rollout after org create")??;
-        let mut watches = timeout(OBSERVE, Watches::start(&org))
+        let env_name = common::ENV.parse()?;
+        timeout(COMMAND, org.create_env(&env_name)).await.context("create the waits environment")??;
+        let namespace = name::env_key(&org.name, &env_name);
+        let mut watches = timeout(OBSERVE, Watches::start(&org, &namespace))
             .await
             .context("start the rollout watches")??;
 
-        let env = timeout(COMMAND, org.apply(APP))
+        let env = timeout(COMMAND, org.apply_created(APP))
             .await
             .context("initial env apply")??;
         watches.check(&env, Stage::Apply).await?;
@@ -181,9 +184,8 @@ struct Watches {
 }
 
 impl Watches {
-    async fn start(org: &Org) -> anyhow::Result<Self> {
+    async fn start(org: &Org, namespace: &str) -> anyhow::Result<Self> {
         let client = &org.cluster.client;
-        let namespace = org.name.as_str();
         let api = |group, version, resource, plural| {
             let resource = ApiResource::from_gvk_with_plural(
                 &GroupVersionKind::gvk(group, version, resource),

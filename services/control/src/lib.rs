@@ -32,7 +32,6 @@ const HTTP_PORT: u16 = 8080;
 const HTTP_DRAIN_TIMEOUT: Duration = Duration::from_secs(1);
 const REGISTRY_AUTH_FILE: &str = "/credentials/registry/config.json";
 const IDENTITY_CA: &str = "/etc/identity-ca/ca.crt";
-const OAUTH_KEY: &str = "/etc/wamn/oauth/key";
 const SETTINGS_FILE: &str = "/etc/wamn/control/settings.json";
 
 /// Public component configuration. Database passwords stay in CNPG Secrets.
@@ -41,9 +40,9 @@ const SETTINGS_FILE: &str = "/etc/wamn/control/settings.json";
 pub struct Configuration {
     pub org: wamn_registry::OrgId,
     pub public_origin: String,
-    pub database: wamn_postgres::database::ConnectionConfig,
-    pub apply_database: wamn_postgres::database::ConnectionConfig,
-    pub apply_transaction_host: String,
+    pub database: Option<wamn_postgres::database::ConnectionConfig>,
+    pub apply_database: Option<wamn_postgres::database::ConnectionConfig>,
+    pub apply_transaction_host: Option<String>,
     pub identity_issuer: String,
     pub nats_url: String,
     /// The org's package and application component origin.
@@ -74,21 +73,6 @@ impl Configuration {
         let bytes = std::fs::read(path)
             .with_context(|| format!("read control settings {}", path.display()))?;
         let config: Self = serde_json::from_slice(&bytes).context("decode control settings")?;
-        ensure!(
-            config.database.credentials.namespace == config.org
-                && config.apply_database.credentials.namespace == config.org
-                && config.database.server_ca.namespace == config.org
-                && config.apply_database.server_ca.namespace == config.org,
-            "control credentials must belong to the org namespace"
-        );
-        ensure!(
-            config.apply_database.username
-                == wamn_platform_install::provision_org::apply_login(
-                    &config.org,
-                    &config.apply_database.database,
-                ),
-            "operation configuration requires the org apply login"
-        );
         let (_, digest) = config
             .worker_image
             .rsplit_once('@')
@@ -104,29 +88,40 @@ impl Configuration {
                 "{}-settings",
                 wamn_registry::name::control_resource(&self.org)
             ),
-            service_account: format!("wamn-operation-{}", self.org),
+            service_account: wamn_platform_install::env_install::ENV_ACCOUNT.into(),
         }
     }
 
-    fn apply_transaction_database(&self) -> anyhow::Result<String> {
-        let mut connection = self.apply_database.clone();
-        connection.host.clone_from(&self.apply_transaction_host);
+    fn apply_transaction_database(
+        &self,
+        database: &wamn_postgres::database::ConnectionConfig,
+    ) -> anyhow::Result<String> {
+        let host = self
+            .apply_transaction_host
+            .as_deref()
+            .context("worker transaction Pooler hostname is absent")?;
+        let mut connection = database.clone();
+        host.clone_into(&mut connection.host);
         connection.to_json()
     }
 
-    fn platform(&self) -> anyhow::Result<Platform> {
+    fn platform(
+        &self,
+        database: &wamn_postgres::database::ConnectionConfig,
+        namespace: &str,
+    ) -> anyhow::Result<Platform> {
         let insecure_registry = wamn_registry::registry_is_loopback(&self.registry)
             || self.registry.split('/').next()
                 == Some(wamn_platform_install::release_chart::POD_REGISTRY);
         let (package_base, _) = wamn_registry::org_artifact_bases(&self.registry);
         Ok(Platform {
-            system_database_url: self.apply_database.to_json()?,
-            system_transaction_url: self.apply_transaction_database()?,
+            system_database_url: database.to_json()?,
+            system_transaction_url: self.apply_transaction_database(database)?,
             database_files: None,
             cluster: Arc::new(wamn_kubernetes::Target::in_cluster(
                 WORKER_KUBECONFIG.into(),
                 "operation",
-                self.org.to_string(),
+                namespace.to_owned(),
             )?),
             chart: self.chart.clone(),
             chart_download: None,
@@ -204,9 +199,15 @@ async fn wait_for_system_schema(database: &str) -> anyhow::Result<sqlx::PgConnec
 
 /// Serve org routes on native HTTP and drain active requests on shutdown.
 pub async fn serve(config: Configuration) -> anyhow::Result<()> {
-    config.platform()?;
-    write_kubeconfig(Path::new(WORKER_KUBECONFIG), config.org.as_str())?;
-    let database = config.database.to_json()?;
+    let database = config
+        .database
+        .as_ref()
+        .context("control database configuration is absent")?;
+    ensure!(
+        database.credentials.namespace == config.org && database.server_ca.namespace == config.org,
+        "control database credentials must belong to the org namespace"
+    );
+    let database = database.to_json()?;
     let writer = wait_for_system_schema(&database).await?;
     // These four SQLx clients share the control transaction Pooler's backends.
     let pool = wamn_postgres::pool(&database, 3).await?;
@@ -230,14 +231,11 @@ pub async fn serve(config: Configuration) -> anyhow::Result<()> {
         .as_ref()
         .map(|configuration| {
             let envelope = match configuration {
-                wamn_envelope::encryption::Configuration::Local => {
-                    wamn_key::from_file(Path::new(OAUTH_KEY))
-                }
+                wamn_envelope::encryption::Configuration::Local => None,
                 wamn_envelope::encryption::Configuration::Gcp { .. } => {
-                    wamn_key::open(configuration)
+                    Some(wamn_key::open(configuration)?)
                 }
-            }?;
-            let envelope = Arc::new(envelope);
+            };
             control_route::oauth_authorization::Authorization::new(&config.public_origin, envelope)
                 .map(Arc::new)
         })

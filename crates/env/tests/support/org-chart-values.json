@@ -10,15 +10,12 @@
         "host": "wamn-control-rw.platform.svc.cluster.local",
         "port": 5432,
         "username": "control",
-        "credentials": {"name": "control-login"},
-        "server_ca": {"name": "wamn-pg-ca"}
-      },
-      "apply_transaction_host": "wamn-apply-transaction.platform.svc.cluster.local",
-      "apply_database": {
-        "host": "wamn-apply-rw.platform.svc.cluster.local",
-        "port": 5432,
-        "username": "apply",
-        "credentials": {"name": "apply-login"}
+        "credentials": {
+          "name": "control-login"
+        },
+        "server_ca": {
+          "name": "wamn-pg-ca"
+        }
       }
     }
   }

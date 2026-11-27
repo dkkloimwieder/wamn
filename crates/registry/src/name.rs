@@ -135,9 +135,12 @@ pub fn project_cluster(database: &str) -> String {
     )
 }
 
-/// The project primary service in its organization.
-pub fn project_database_host(database: &str, org: &crate::OrgId) -> String {
-    format!("{}-rw.{org}.svc.cluster.local", project_cluster(database))
+/// The project primary service in its environment namespace.
+pub fn project_database_host(database: &str, namespace: &str) -> String {
+    format!(
+        "{}-rw.{namespace}.svc.cluster.local",
+        project_cluster(database)
+    )
 }
 
 /// A login certificate Secret for this coordinate, generation, and role. Its 43 bytes
@@ -262,7 +265,7 @@ pub fn dev_host_group(key: &crate::ProjectEnvKey) -> String {
 pub fn operation(org: &crate::OrgId) -> String {
     format!("wamn-operation-{org}")
 }
-/// The installed OCI pull credential Secret in each org namespace.
+/// The installed OCI pull credential Secret in kind org and environment namespaces.
 pub const REGISTRY_PULL: &str = "wamn-registry-pull";
 
 /// The longest slug in a release name: the env name cut to this length.

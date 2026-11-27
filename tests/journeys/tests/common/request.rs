@@ -172,8 +172,9 @@ async fn host_pods_of(
     org: &wamn_registry::OrgId,
     env: &EnvName,
 ) -> anyhow::Result<Vec<Pod>> {
+    let namespace = name::env_key(org, env);
     let deployment = name::host_deployment_name(&name::env_host_name(org, env));
-    let selector = Api::<Deployment>::namespaced(client.clone(), org.as_str())
+    let selector = Api::<Deployment>::namespaced(client.clone(), &namespace)
         .get(&deployment)
         .await?
         .spec
@@ -183,7 +184,7 @@ async fn host_pods_of(
         .map(|(key, value)| format!("{key}={value}"))
         .collect::<Vec<_>>()
         .join(",");
-    Ok(Api::<Pod>::namespaced(client.clone(), org.as_str())
+    Ok(Api::<Pod>::namespaced(client.clone(), &namespace)
         .list(&ListParams::default().labels(&selector))
         .await?
         .items)
@@ -217,14 +218,14 @@ pub async fn delete_host(
         grace_period_seconds: grace,
         ..DeleteParams::default()
     };
-    Api::<Pod>::namespaced(client.clone(), env.triple.org.as_str())
+    Api::<Pod>::namespaced(client.clone(), &env.namespace())
         .delete(&name, &params)
         .await?;
     Ok(uid)
 }
 
 /// Wait until a host pod other than `old` is Ready, and every WorkloadDeployment of the
-/// org namespace reports Ready after that pod started.
+/// environment namespace reports Ready after that pod started.
 pub async fn wait_host_restarted(
     client: &kube::Client,
     env: &Env,
@@ -243,14 +244,14 @@ pub async fn wait_host_restarted(
         "workloaddeployments",
     );
     let deployments =
-        Api::<DynamicObject>::namespaced_with(client.clone(), env.triple.org.as_str(), &resource);
+        Api::<DynamicObject>::namespaced_with(client.clone(), &env.namespace(), &resource);
     until(
         RESTART_DEADLINE,
         "every WorkloadDeployment is Ready on the new host",
         || async {
             let items = deployments.list(&ListParams::default()).await?.items;
             if items.is_empty() {
-                bail!("the org namespace has no WorkloadDeployment");
+                bail!("the environment namespace has no WorkloadDeployment");
             }
             Ok(items
                 .iter()

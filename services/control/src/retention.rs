@@ -12,17 +12,20 @@ mod tests;
 
 const DATABASE_TIMEOUT: Duration = Duration::from_secs(5);
 
-async fn prune_identities(connection: &mut sqlx::PgConnection) -> anyhow::Result<()> {
+async fn prune_identities(
+    connection: &mut sqlx::PgConnection,
+    namespace: &str,
+) -> anyhow::Result<()> {
     let mut transaction = connection.begin().await?;
     crate::control_sql::prune_transaction_identities(&mut transaction).await?;
     let retired =
         wamn_connection::project_connections::retired_credentials(&mut transaction).await?;
+    transaction.commit().await?;
     wamn_connection::credential_cleanup::collect(
-        &wamn_connection::connection_credentials::KubernetesStore,
+        &wamn_connection::connection_credentials::KubernetesStore::in_namespace(namespace),
         retired,
     )
     .await;
-    transaction.commit().await?;
     Ok(())
 }
 
@@ -42,7 +45,13 @@ where
             let login: wamn_postgres::ConnectionInput<'static> = login?.into();
             let deadline = Instant::now() + DATABASE_TIMEOUT;
             let mut project = timeout_at(deadline, wamn_postgres::connect(login)).await??;
-            if let Err(error) = timeout_at(deadline, prune_identities(&mut project))
+            let mut registry = system.acquire().await?;
+            let namespace =
+                wamn_env::registry::deployment::namespace(&mut registry, &triple.org, &triple.env)
+                    .await?
+                    .ok_or_else(|| anyhow::anyhow!("env {} has no namespace", triple.env))?;
+            drop(registry);
+            if let Err(error) = timeout_at(deadline, prune_identities(&mut project, &namespace))
                 .await
                 .unwrap_or_else(|error| Err(error.into()))
             {

@@ -6,12 +6,21 @@ use serde_json::{Value, json};
 use wamn_env::env::worker::{self, Task};
 use wamn_kubernetes::client::KubernetesApi;
 use wamn_kubernetes::helm::UpgradeRolledBack;
+use wamn_kubernetes::job::{ObservationError, ObservationErrorType, observe};
 
 use crate::{
     Configuration,
     execution::Execution,
     platform_event::{self, Command, Outcome},
 };
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct JobStatusRequest {
+    job: String,
+    project: Option<wamn_registry::ProjectId>,
+    env: Option<wamn_registry::EnvName>,
+}
 
 impl Execution {
     pub(crate) async fn platform_schema(
@@ -45,42 +54,60 @@ impl Execution {
         payload: &str,
         command: Option<&Command>,
     ) -> anyhow::Result<Value> {
-        let api = wamn_kubernetes::client::KubernetesApi::in_cluster()?;
-        ensure!(
-            api.namespace == self.org,
-            "platform worker must share the org namespace"
-        );
-        let env = operation.as_str() == "project_env.deactivate"
+        let mut api = KubernetesApi::in_cluster()?;
+        let env_operation = operation.as_str() == "project_env.deactivate"
             || operation.as_str().starts_with("env.");
         let input: Value = serde_json::from_str(payload)?;
-        let coordinate = if env {
+        if operation.as_str() == "platform.operation_status" && input["env"].is_null() {
+            let request: JobStatusRequest = serde_json::from_value(input)?;
+            let _ = (request.project, request.env);
+            // The org-admin status route also accepts the Job-only coordinate.
+            // Complete discovery in SQL before reading any Kubernetes objects.
+            let namespaces = sqlx::query_scalar::<_, String>(
+                "SELECT namespace FROM registry.env WHERE org=$1 ORDER BY namespace",
+            )
+            .bind(self.org.as_str())
+            .fetch_all(&self.control)
+            .await?;
+            let coordinate = format!("{}/platform", self.org);
+            for namespace in namespaces {
+                api.namespace = namespace;
+                match observe(&api, &request.job, &coordinate, &["platform"]).await {
+                    Err(error)
+                        if error
+                            .downcast_ref::<ObservationError>()
+                            .is_some_and(|error| error.type_ == ObservationErrorType::NotFound) => {
+                    }
+                    result => return result,
+                }
+            }
+            return Err(ObservationError {
+                type_: ObservationErrorType::NotFound,
+            }
+            .into());
+        }
+        let env: wamn_registry::EnvName = input["env"]
+            .as_str()
+            .context("environment is absent")?
+            .parse()?;
+        api.namespace = self.logins.namespace(&env).await?;
+        let coordinate = if env_operation {
             wamn_env::env_names::project_env_resource_name(
                 &self.org,
                 &input["project"]
                     .as_str()
                     .context("project is absent")?
                     .parse()?,
-                &input["env"]
-                    .as_str()
-                    .context("environment is absent")?
-                    .parse()?,
+                &env,
             )?
         } else {
             format!("{}/platform", self.org)
         };
-        let worker_type = if env { "env" } else { "platform" };
+        let worker_type = if env_operation { "env" } else { "platform" };
         if operation.as_str().ends_with("operation_status") {
-            #[derive(Deserialize)]
-            #[serde(deny_unknown_fields)]
-            struct Status {
-                job: String,
-                project: Option<wamn_registry::ProjectId>,
-                env: Option<wamn_registry::EnvName>,
-            }
-            let request: Status = serde_json::from_str(payload)?;
+            let request: JobStatusRequest = serde_json::from_str(payload)?;
             let _ = (request.project, request.env);
-            return wamn_kubernetes::job::observe(&api, &request.job, &coordinate, &[worker_type])
-                .await;
+            return observe(&api, &request.job, &coordinate, &[worker_type]).await;
         }
         ensure!(
             !matches!(
@@ -97,6 +124,7 @@ impl Execution {
             &["/usr/local/bin/wamn-control"],
             &["--settings", crate::SETTINGS_FILE, "worker"],
         );
+        job["metadata"]["namespace"] = api.namespace.as_str().into();
         job["metadata"]["annotations"] =
             json!({"wamn.dev/operation-target":coordinate,"wamn.dev/operation":worker_type});
         job["spec"]["suspend"] = false.into();
@@ -112,7 +140,7 @@ impl Execution {
             {"name":"configuration","mountPath":"/etc/wamn/control","readOnly":true},
             {"name":"work","mountPath":"/work"}
         ]);
-        if env {
+        if env_operation {
             wamn_kubernetes::worker_mounts::mount_broker_ca(&mut job);
             wamn_kubernetes::worker_mounts::mount_identity_worker_token(
                 &mut job,
@@ -169,14 +197,24 @@ pub async fn execute(config: &Configuration, payload: &str) -> anyhow::Result<Va
         Request::Plain(task) => (task, None),
     };
     let files = wamn_platform_install::database_files::DatabaseFiles::in_cluster()?;
-    files.materialize_system(&config.apply_database).await?;
+    let database = config
+        .apply_database
+        .as_ref()
+        .context("worker database configuration is absent")?;
+    let api = KubernetesApi::in_cluster()?;
+    ensure!(
+        database.credentials.namespace == api.namespace
+            && database.server_ca.namespace == api.namespace,
+        "worker database credentials must belong to its pod namespace"
+    );
+    files.materialize_system(database).await?;
     let mut release = None;
     let result = async {
-        let mut platform = config.platform()?;
+        let mut platform = config.platform(database, &api.namespace)?;
         platform.database_files = Some(std::sync::Arc::new(files));
         crate::write_kubeconfig(
             std::path::Path::new(crate::WORKER_KUBECONFIG),
-            config.org.as_str(),
+            &api.namespace,
         )?;
         worker::execute_task(
             platform,
@@ -198,7 +236,7 @@ pub async fn execute(config: &Configuration, payload: &str) -> anyhow::Result<Va
         let outcome = worker_outcome(&result);
         let recorded = async {
             let mut connection =
-                wamn_postgres::connect(config.apply_transaction_database()?.as_str()).await?;
+                wamn_postgres::connect(&config.apply_transaction_database(database)?).await?;
             platform_event::record(
                 &mut connection,
                 &config.org,

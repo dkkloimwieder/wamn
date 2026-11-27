@@ -74,6 +74,7 @@ async fn read_row(system: &mut Client, triple: &Triple) -> anyhow::Result<Option
                 Ok::<_, sqlx::Error>(EnvRow {
                     instance_suffix: wamn_postgres::decode_text(row.try_get(0)?, 0)?,
                     disposable: row.try_get(1)?,
+                    namespace: row.try_get(2)?,
                 })
             })
             .transpose()?,
@@ -654,7 +655,6 @@ async fn reserve_project(
             &document.settings.project,
             &document.settings.env,
         ),
-        Some(document.settings.org.as_str()),
         &instance,
         disposable,
     )

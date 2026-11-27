@@ -43,7 +43,11 @@ pub async fn recover(
         &triple,
         async |lock| {
             let instance = lock.capture_instance(&triple).await?;
-            let owner = wamn_postgres::database::connection_for(&triple, &instance);
+            let owner = wamn_postgres::database::connection_for(
+                &triple,
+                &instance,
+                &platform.cluster.namespace,
+            );
             let publication_exists = platform
                 .cluster
                 .publication_exists(&owner.database)

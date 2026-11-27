@@ -60,6 +60,7 @@ impl EnvStatus {
 /// The environment row of the system database.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EnvRow {
+    pub namespace: String,
     pub disposable: bool,
     pub instance_suffix: crate::instance_suffix::InstanceSuffix,
 }

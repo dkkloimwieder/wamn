@@ -200,6 +200,26 @@ pub async fn execute_task(
     authority: super::write::AuthorityPort,
     release: &mut Option<WorkloadRelease>,
 ) -> anyhow::Result<Value> {
+    let env = match &request {
+        Task::ProjectOperation { request, .. } => &request.env,
+        Task::Env { env, .. } => env,
+        Task::Schema { env, .. } => env.as_ref().context("environment is absent")?,
+    };
+    let mut system = wamn_postgres::connect(&platform.system_transaction_url).await?;
+    let (login_env, namespace): (bool, String) = sqlx::query_as(
+        "SELECT registry.login_env() IS NOT DISTINCT FROM env, namespace
+         FROM registry.env WHERE org=$1 AND env=$2",
+    )
+    .bind(org.as_str())
+    .bind(env.as_str())
+    .fetch_one(&mut system)
+    .await
+    .context("read worker environment mapping")?;
+    ensure!(
+        login_env && namespace == platform.cluster.namespace,
+        "worker pod, system login and task must share the registry environment"
+    );
+    drop(system);
     let mut output = Vec::new();
     match request {
         Task::ProjectOperation { operation, request } => {

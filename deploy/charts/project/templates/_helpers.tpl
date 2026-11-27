@@ -2,7 +2,6 @@
 {{- $name := .Values.operations.name -}}
 {{- dict
     "databaseClients" (printf "%s-allow-project-database-clients" $name)
-    "controlToDatabase" (printf "%s-allow-control-to-project-database" $name)
     "workerToDatabase" (printf "%s-allow-worker-to-project-database" $name)
     "operator" (printf "%s-allow-cnpg-operator" .Values.operations.cluster)
     "replication" (printf "%s-allow-project-database-replication" $name)

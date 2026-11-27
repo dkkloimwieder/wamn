@@ -19,7 +19,7 @@ Each `wamn platform deploy` waits for the previous SQL Job, removes it, and runs
 Identity serves the fixed `global.identityIssuer` address and uses the system PostgreSQL login in `platform`. The edge sends password requests to the same hostname at `identity.passwordPort`. Only the edge can reach that port. Identity uses the socket IP for requests on the issuer port.
 The chart mounts the `identity-settings` ConfigMap as a JSON file.
 The readiness probe checks the database and active signing key.
-Both identity replicas share a wrapping key. With local encryption, each org has its own OAuth wrapping key.
+Both identity replicas share a wrapping key. With local encryption, each environment has its own OAuth wrapping key.
 
 Ingress in `platform` is denied by default. `wamn platform deploy` discovers the Kubernetes API Service and endpoint address and port pairs and sets `apiServer` for the CloudNativePG webhook and kind edge policy. For an offline render, supply representative pairs as `cidr` and `port` entries.
 On kind, the edge can reach org and env host groups, org control, identity, DNS and the Kubernetes API. GCP leaves edge egress open for the web bucket.

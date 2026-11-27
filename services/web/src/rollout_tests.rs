@@ -60,19 +60,24 @@ async fn host_replacement_routes_the_next_post_to_the_serving_host() {
             }
         });
 
-        // Only the Kubernetes ConfigMap source is synthetic.
+        // Only the Kubernetes route discovery source is synthetic.
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let endpoint = format!("http://{}", listener.local_addr().unwrap());
         let route = serde_json::json!({"host":host,"release":"unused","api":format!("http://{service}")});
-        let objects = serde_json::json!({"items":[{"metadata":{"name":"route","namespace":"acme"},"data":{"route.json":route.to_string()}}]}).to_string();
+        let objects = serde_json::json!({"items":[{"metadata":{"name":"route","namespace":"acme--dev"},"data":{"route.json":route.to_string()}}]}).to_string();
+        let namespaces = serde_json::json!({"items":[{"metadata":{"name":"acme--dev","labels":{
+            "wamn.dev/env":"true","wamn.dev/org-workloads":"true","wamn.dev/org-name":"acme"
+        }}}]}).to_string();
         tasks.spawn(async move {
             loop {
                 let (stream, _) = listener.accept().await.unwrap();
                 let objects = &objects;
-                let service = service_fn(move |_| async move {
+                let namespaces = &namespaces;
+                let service = service_fn(move |request: hyper::Request<hyper::body::Incoming>| async move {
+                    let body = if request.uri().path() == "/api/v1/namespaces" { namespaces } else { objects };
                     Ok::<_, Infallible>(Response::builder()
                         .header(hyper::header::CONNECTION, "close")
-                        .body(Full::new(Bytes::from(objects.clone()))).unwrap())
+                        .body(Full::new(Bytes::copy_from_slice(body.as_bytes()))).unwrap())
                 });
                 hyper::server::conn::http1::Builder::new()
                     .serve_connection(TokioIo::new(stream), service).await.unwrap();
@@ -83,7 +88,7 @@ async fn host_replacement_routes_the_next_post_to_the_serving_host() {
         let releases = Releases::new(
             KubernetesApi::from_config(config).unwrap(),
             "example.test".parse().unwrap(),
-        );
+        ).await.unwrap();
         let web = Web { store: None };
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let edge = listener.local_addr().unwrap();

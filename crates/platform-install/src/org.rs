@@ -6,7 +6,7 @@ use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
 use wamn_registry::OrgId;
 
-use crate::provision_org::{APPLY_SECRET, CONTROL_SECRET, OAUTH_ENCRYPTION_INPUT};
+use crate::provision_org::{CONTROL_SECRET, OAUTH_ENCRYPTION_INPUT};
 use crate::release_chart::POD_REGISTRY;
 use crate::{org_install::OrgInstaller, platform_registry::docker_configuration};
 use wamn_postgres::database::ConnectionConfig;
@@ -99,18 +99,14 @@ pub fn org_values(
         })
     };
     let control = crate::provision_org::control_login(org, &database.database);
-    let apply = crate::provision_org::apply_login(org, &database.database);
     Ok(json!({
         "org": org, "base": field(inputs, "base")?, "registry": internal_registry,
-        "postgres": {"image": field(inputs, "postgresImage")?},
         "networkPolicy": {"apiServer": api_server, "registry": registry_egress},
         "control": {
             "image": image,
             "configuration": {
                 "org": org,
                 "database": connection(field(inputs, "controlDatabaseHost")?, control.as_str(), CONTROL_SECRET),
-                "apply_database": connection(field(inputs, "applyDatabaseHost")?, apply.as_str(), APPLY_SECRET),
-                "apply_transaction_host": field(inputs, "applyTransactionDatabaseHost")?,
                 "identity_issuer": field(inputs, "identityIssuer")?,
                 "nats_url": field(inputs, "natsUrl")?,
                 "registry": internal_registry,

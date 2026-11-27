@@ -15,12 +15,12 @@ use wamn_routes::host_wire::EnvStatusResult;
 
 /// Read runtime status through the control pod's Kubernetes ServiceAccount.
 pub(crate) async fn read(
+    namespace: &str,
     org: &wamn_registry::OrgId,
     project: &wamn_registry::ProjectId,
     env: &wamn_registry::EnvName,
 ) -> anyhow::Result<EnvStatusResult> {
     let api = KubernetesApi::in_cluster()?;
-    let namespace = &api.namespace;
     let params = ListParams::default();
     let deployments = Api::<Deployment>::namespaced(api.client(), namespace);
     let deployments = tokio::time::timeout(

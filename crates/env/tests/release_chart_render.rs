@@ -111,7 +111,7 @@ fn the_control_route_uses_service_port_80_and_the_pod_uses_8080() -> anyhow::Res
 }
 
 #[test]
-fn org_and_project_render_restricted_pods_with_resources() -> anyhow::Result<()> {
+fn control_host_and_capture_render_in_their_namespaces() -> anyhow::Result<()> {
     use wamn_env::env::{chart_values, lifecycle};
     use wamn_env::platform_env::database_values;
     use wamn_kubernetes::{helm, platform_env::entry};
@@ -127,8 +127,67 @@ fn org_and_project_render_restricted_pods_with_resources() -> anyhow::Result<()>
     );
 
     let triple = Triple::new("acme".parse()?, "dev".parse()?, "billing".parse()?);
+    let namespace = name::env_key(&triple.org, &triple.env);
     let instance = "abcdefgh".parse()?;
-    let connection = connection_for(&triple, &instance);
+    let connection = connection_for(&triple, &instance, &namespace);
+    let storage = helm::org_release_namespace(&namespace);
+    let host = wamn_env::env::ensure::host_values(
+        &triple.org,
+        &triple.env,
+        &namespace,
+        &format!("registry.example/wamn-host:test@sha256:{}", "a".repeat(64)),
+        &serde_json::Map::new(),
+        300,
+        &std::iter::once((
+            triple.project.to_string(),
+            wamn_env::env::ensure::host_project_values(&triple, &connection)?,
+        ))
+        .collect(),
+        "tls://wamn-nats.platform.svc:4222",
+        "https://identity.platform.svc",
+        false,
+        true,
+        &[],
+        &serde_json::json!({"provider":"local"}),
+        "workflow",
+        "ingress",
+    );
+    let host = helm::template(&entry(&charts.join("env"), &storage, "fixture", host)?)?;
+    let deployment = host
+        .iter()
+        .find(|object| object["kind"] == "Deployment")
+        .expect("host group Deployment");
+    let container = &deployment["spec"]["template"]["spec"]["containers"][0];
+    let namespace_variable = container["env"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find_map(|env| {
+            if env["valueFrom"]["fieldRef"]["fieldPath"] == "metadata.namespace" {
+                env["name"].as_str()
+            } else {
+                None
+            }
+        })
+        .expect("pod namespace environment variable");
+    assert!(
+        container["args"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|arg| arg == &format!("--environment=$({namespace_variable})"))
+    );
+    for object in host {
+        assert_eq!(
+            object["metadata"]["namespace"], namespace,
+            "{}",
+            object["kind"]
+        );
+        if let Some(settings) = object["data"]["settings.json"].as_str() {
+            let settings: serde_json::Value = serde_json::from_str(settings)?;
+            assert_eq!(settings["namespace"], namespace);
+        }
+    }
     let cluster = name::project_cluster(&connection.database);
     let publication = name::cdc_object_name(&triple.org, &triple.project, &triple.env, &instance);
     let mut project = database_values(
@@ -167,7 +226,12 @@ fn org_and_project_render_restricted_pods_with_resources() -> anyhow::Result<()>
         "nats://nats.platform.svc:4222",
         false,
     );
-    let project = helm::template(&entry(&charts.join("project"), "acme", "fixture", project)?)?;
+    let project = helm::template(&entry(
+        &charts.join("project"),
+        &storage,
+        "fixture",
+        project,
+    )?)?;
     pod_resources::assert_pod_resources(&project);
     let store = project
         .iter()
@@ -177,6 +241,28 @@ fn org_and_project_render_restricted_pods_with_resources() -> anyhow::Result<()>
         &store["spec"]["instanceSidecarConfiguration"]["resources"],
         "backup sidecar",
     );
+    for object in &project {
+        assert_eq!(
+            object["metadata"]["namespace"], namespace,
+            "{}",
+            object["kind"]
+        );
+        if object["kind"] == "RoleBinding"
+            && object["subjects"][0]["name"] == name::control_service_account(&triple.org)
+        {
+            assert_eq!(object["subjects"][0]["namespace"], triple.org.as_str());
+        }
+        if let Some(settings) = object["data"]["settings.json"].as_str() {
+            let settings: serde_json::Value = serde_json::from_str(settings)?;
+            let database = settings["database"]["database"]
+                .as_str()
+                .expect("CDC database");
+            assert_eq!(
+                settings["database"]["host"],
+                name::project_database_host(database, &namespace)
+            );
+        }
+    }
     pod_security::assert_restricted_pods(
         project
             .iter()
@@ -213,14 +299,14 @@ fn the_egress_policy_opens_each_declared_port() {
             .chain(connection_ports.iter().copied())
             .collect();
         let values = serde_json::json!({
-            "namespace": "acme",
+            "namespace": "acme--dev",
             "platform": {
                 "roles": {"ingress": {"image": format!("registry.example/ingress@{digest}")}},
                 "workflow": {"image": format!("registry.example/workflow@{digest}")},
             },
             "release": {"manifestDigest": digest},
             "env": "acme/shop/dev",
-            "routeHost": "app.example.com",
+            "routeHost": "app--acme.example.com",
             "apps": {"app": {}},
             "route": {"config": {"wamn.project_env_key": "key"}},
             "components": components,
@@ -283,12 +369,48 @@ fn platform_and_org_releases_wire_the_public_roots() -> anyhow::Result<()> {
             &format!("systemSql.image=example.invalid/control@{digest}"),
         ]);
         let platform = objects(&output)?;
+        let edge = object(&platform, "ClusterRole", "wamn-edge")?;
+        let rule = edge["rules"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|rule| rule["resources"] == json!(["namespaces"]))
+            .context("edge namespace rule")?;
+        assert_eq!(rule["verbs"], json!(["list", "watch"]));
         let database = object(&platform, "ConfigMap", "wamn-system-sql")?["data"]["database.json"]
             .as_str()
             .context("system SQL configuration")?;
         let database = serde_json::from_str(database)?;
         let inputs = &object(&platform, "ConfigMap", "wamn-org-inputs")?["data"];
         let org = "acme".parse()?;
+        let namespace = wamn_registry::name::env_key(&org, &"dev".parse()?);
+        let login = "wamn_apply_env_0000000000000000000000000000000000000000".parse()?;
+        let [worker, _] = wamn_platform_install::env_install::worker_configuration(
+            inputs,
+            &database,
+            &org,
+            &namespace,
+            &login,
+            &[json!({"cidr":"192.0.2.2/32","port":6443})],
+        )?;
+        assert_eq!(worker["metadata"]["namespace"], namespace);
+        let worker_settings: Value = serde_json::from_str(
+            worker["data"]["settings.json"]
+                .as_str()
+                .context("worker settings")?,
+        )?;
+        assert_eq!(
+            worker_settings["apply_database"]["username"],
+            login.as_str()
+        );
+        assert_eq!(
+            worker_settings["apply_database"]["credentials"]["namespace"],
+            namespace
+        );
+        assert!(
+            worker_settings.get("database").is_none(),
+            "worker settings expose control credentials"
+        );
         let org_values = wamn_platform_install::org::org_values(
             inputs,
             &database,
@@ -308,10 +430,27 @@ fn platform_and_org_releases_wire_the_public_roots() -> anyhow::Result<()> {
             values.to_str().unwrap(),
         ]))?;
         let settings = &org_values["control"]["configuration"];
-        for (host, client, mode) in [
-            (&settings["database"]["host"], "control", "transaction"),
-            (&settings["apply_database"]["host"], "worker", "session"),
-            (&settings["apply_transaction_host"], "worker", "transaction"),
+        assert!(settings.get("apply_database").is_none());
+        assert!(settings.get("apply_transaction_host").is_none());
+        for (host, client, mode, namespace_label) in [
+            (
+                &settings["database"]["host"],
+                "control",
+                "transaction",
+                "wamn.dev/org",
+            ),
+            (
+                &worker_settings["apply_database"]["host"],
+                "worker",
+                "session",
+                "wamn.dev/org-workloads",
+            ),
+            (
+                &worker_settings["apply_transaction_host"],
+                "worker",
+                "transaction",
+                "wamn.dev/org-workloads",
+            ),
         ] {
             let host = host.as_str().context("system database host")?;
             let (name, _) = host.split_once('.').context("Pooler service hostname")?;
@@ -336,20 +475,24 @@ fn platform_and_org_releases_wire_the_public_roots() -> anyhow::Result<()> {
                 ingress["spec"]["ingress"][0]["from"][0]["podSelector"]["matchLabels"]["app.kubernetes.io/component"],
                 format!("wamn-{client}")
             );
-            let egress = object(
-                &org,
-                "NetworkPolicy",
-                &format!("allow-{client}-to-postgres"),
-            )?;
-            assert!(
-                egress["spec"]["egress"]
-                    .as_array()
-                    .context("SQL egress")?
-                    .iter()
-                    .any(|rule| {
-                        rule["to"][0]["podSelector"]["matchLabels"]["cnpg.io/poolerName"] == name
-                    })
+            assert_eq!(
+                ingress["spec"]["ingress"][0]["from"][0]["namespaceSelector"]["matchLabels"]
+                    [namespace_label],
+                "true"
             );
+            if client == "control" {
+                let egress = object(&org, "NetworkPolicy", "allow-control-to-postgres")?;
+                assert!(
+                    egress["spec"]["egress"]
+                        .as_array()
+                        .context("SQL egress")?
+                        .iter()
+                        .any(|rule| {
+                            rule["to"][0]["podSelector"]["matchLabels"]["cnpg.io/poolerName"]
+                                == name
+                        })
+                );
+            }
         }
         let hosts = object(&platform, "Namespace", "hosts")?;
         let namespace = org

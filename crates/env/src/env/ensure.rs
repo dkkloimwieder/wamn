@@ -137,6 +137,7 @@ pub(super) async fn read_host_values(
     Ok(host_values(
         org,
         env,
+        &platform.cluster.namespace,
         &image,
         &placement,
         drain_bound_seconds,
@@ -159,9 +160,8 @@ pub fn host_project_values(
 ) -> anyhow::Result<Value> {
     let (org, project, env) = (&triple.org, &triple.project, &triple.env);
     anyhow::ensure!(
-        connection.credentials.namespace == org.as_str()
-            && connection.server_ca.namespace == org.as_str(),
-        "project login Secrets and host must share an org"
+        connection.credentials.namespace == connection.server_ca.namespace,
+        "project login Secrets and server CA must share an environment namespace"
     );
     let mut logins = Map::new();
     for (family, config) in crate::provision_project_env::workload::connections(connection)? {
@@ -190,6 +190,7 @@ pub fn host_project_values(
 pub fn host_values(
     org: &OrgId,
     env: &EnvName,
+    namespace: &str,
     image: &str,
     placement: &Map<String, Value>,
     drain_bound_seconds: i32,
@@ -206,6 +207,7 @@ pub fn host_values(
     json!({
         "org":org,
         "env":env,
+        "namespace":namespace,
         "hostName":name::env_host_name(org, env),
         "serviceAccount":name::env_service_account(org, env),
         "image":image,

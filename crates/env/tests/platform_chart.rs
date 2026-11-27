@@ -478,11 +478,12 @@ fn project_retains_only_the_operator_policy_for_each_cluster() -> anyhow::Result
     use wamn_registry::name;
 
     let triple = wamn_registry::Triple::new("acme".parse()?, "dev".parse()?, "billing".parse()?);
+    let namespace = name::env_key(&triple.org, &triple.env);
     let release = name::project_env_resource_name(&triple.org, &triple.project, &triple.env);
     let chart = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../deploy/charts/project");
     let mut names = std::collections::BTreeSet::new();
     for instance in ["abcdefgh", "ijklmnop"] {
-        let connection = connection_for(&triple, &instance.parse()?);
+        let connection = connection_for(&triple, &instance.parse()?, &namespace);
         let cluster = name::project_cluster(&connection.database);
         let mut values = database_values(
             &connection,
@@ -662,12 +663,14 @@ fn colliding_coordinates_read_only_their_own_credentials() -> anyhow::Result<()>
     assert_ne!(secrets[0], secrets[1]);
     for index in 0..coordinates.len() {
         let (org, project, env) = coordinates[index];
+        let namespace = wamn_registry::name::env_key(&org.parse()?, &env.parse()?);
+        let storage = wamn_kubernetes::helm::org_release_namespace(&namespace);
         let entry = wamn_kubernetes::platform_env::entry(
             &repository.join("deploy/charts/env"),
-            org,
+            &storage,
             &accounts[index],
             json!({
-                "org":org, "env":env, "hostName":accounts[index], "serviceAccount":accounts[index],
+                "org":org, "env":env, "namespace":namespace, "hostName":accounts[index], "serviceAccount":accounts[index],
                 "image":format!("registry.example/wamn-host:test@sha256:{}", "a".repeat(64)),
                 "drainBoundSeconds":60,
                 "identityIssuer":"https://identity.platform.svc.cluster.local",

@@ -1,5 +1,5 @@
 {{- if .Values.projects }}
-{{- $org := include "env.namespace" . }}
+{{- $namespace := include "env.namespace" . }}
 {{- $env := required "Set env." .Values.env }}
 {{- $name := required "Set hostName." .Values.hostName }}
 {{- $nats := required "Set natsUrl." .Values.natsUrl }}
@@ -67,12 +67,12 @@
     (dict "id" "wasmcloud-nats" "workloadConfig" "deny" "config" $natsConfig "bindings" $bindings)
 }}
 
-{{- $settings := dict "org" $org "env" $env "identity_issuer" $issuer "nats_url" $nats "drain_bound_seconds" $drain "insecure_registry" .Values.insecureRegistry "oauth_encryption" .Values.oauthEncryption "projects" $projects | toJson }}
+{{- $settings := dict "org" (required "Set org." .Values.org) "env" $env "namespace" $namespace "identity_issuer" $issuer "nats_url" $nats "drain_bound_seconds" $drain "insecure_registry" .Values.insecureRegistry "oauth_encryption" .Values.oauthEncryption "projects" $projects | toJson }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: {{ $settingsName }}
-  namespace: {{ $org | quote }}
+  namespace: {{ $namespace | quote }}
 data:
   settings.json: {{ $settings | quote }}
 
@@ -93,7 +93,7 @@ data:
 {{- end }}
 {{- $group := merge (dict
     "name" $name
-    "namespace" $org
+    "namespace" $namespace
     "image" (dict "repository" (trimSuffix $tag $image) "tag" (trimPrefix ":" $tag))
     "schedulerNatsUrl" $nats
     "dataNatsUrl" $nats

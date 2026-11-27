@@ -40,6 +40,7 @@ pub fn set_operation_values<'a>(
         "name":name,"cluster":cluster,
         "capture":capture,
         "hostGroup":wamn_registry::name::env_host_name(&triple.org, &triple.env),
+        "controlNamespace":triple.org,
         "controlDeployment":wamn_registry::name::control_resource(&triple.org),
         "diffWorkloads":diff_workloads,
         "diffSecrets":diff_secrets,
@@ -47,6 +48,7 @@ pub fn set_operation_values<'a>(
     });
     values["credentials"] = json!({
         "name":wamn_registry::credential_secret_name(&triple.org, &triple.project, &triple.env),
+        "controlNamespace":triple.org,
         "controlAccount":wamn_registry::name::control_service_account(&triple.org),
         "platformLogin":wamn_registry::name::project_login_certificate(database, wamn_role::PLATFORM_LOGIN),
         "serverCa":wamn_registry::name::project_server_ca_copy(cluster),

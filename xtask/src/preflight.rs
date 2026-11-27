@@ -311,7 +311,10 @@ async fn render(
     let mut env_objects = wamn_platform_install::env_install::manifests(
         &triple.org,
         &env_namespace,
-        wamn_platform_install::org::field(inputs, "applyDatabaseHost")?,
+        [
+            wamn_platform_install::org::field(inputs, "applyDatabaseHost")?,
+            wamn_platform_install::org::field(inputs, "applyTransactionDatabaseHost")?,
+        ],
         database.port,
         api_server,
         org_values["networkPolicy"]["registry"]
@@ -319,6 +322,21 @@ async fn render(
             .context("org has no registry destinations")?,
         &quota,
     )?;
+    let worker_login = "wamn_apply_env_0000000000000000000000000000000000000000".parse()?;
+    let worker_configuration = wamn_platform_install::env_install::worker_configuration(
+        inputs,
+        &database,
+        &triple.org,
+        &env_namespace,
+        &worker_login,
+        api_server,
+    )?;
+    let postgres = serde_json::from_str(
+        worker_configuration[1]["data"]["postgres.json"]
+            .as_str()
+            .context("worker PostgreSQL configuration")?,
+    )?;
+    env_objects.extend(worker_configuration);
     env_objects.extend(wamn_platform_install::env_install::sql_prerequisites(
         &env_namespace,
     ));
@@ -330,12 +348,13 @@ async fn render(
     ));
     rendered.push(Rendered {
         label: "env create".into(),
-        namespace: env_namespace,
+        namespace: env_namespace.clone(),
         objects: env_objects,
     });
 
     let instance: wamn_registry::instance_suffix::InstanceSuffix = STAND_IN_INSTANCE.parse()?;
-    let connection = connection_for(&triple, &instance);
+    let connection = connection_for(&triple, &instance, &env_namespace);
+    let helm_namespace = wamn_kubernetes::helm::org_release_namespace(&env_namespace);
     let connections = workload::connections(&connection)?;
     let registry = control["registry"]
         .as_str()
@@ -352,6 +371,7 @@ async fn render(
     let host_values = host::host_values(
         org_id,
         env,
+        &env_namespace,
         &host_image,
         &serde_json::Map::new(),
         document.drain_bound_seconds,
@@ -386,8 +406,7 @@ async fn render(
     // lifecycle.rs::configure: the project release values.
     let cluster = name::project_cluster(&connection.database);
     let publication = name::cdc_object_name(org_id, project, env, &instance);
-    let mut project_values =
-        platform_env::database_values(&connection, 1, sizing, &org_values["postgres"])?;
+    let mut project_values = platform_env::database_values(&connection, 1, sizing, &postgres)?;
     wamn_env::env::chart_values::set_operation_values(
         &mut project_values,
         &triple,
@@ -462,6 +481,7 @@ async fn render(
         .parse()?;
     let mut app_values = wamn_env::env::write::release_values(
         &document,
+        &env_namespace,
         &platform_domain,
         &app,
         &manifests,

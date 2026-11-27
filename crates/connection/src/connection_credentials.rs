@@ -32,12 +32,28 @@ pub trait WriteCredentials: Send + Sync {
 }
 
 /// Read, save, and retire control-plane credential versions.
-#[derive(Debug)]
-pub struct KubernetesStore;
+#[derive(Debug, Default)]
+pub struct KubernetesStore<'a> {
+    namespace: Option<&'a str>,
+}
 
-impl KubernetesStore {
+impl<'a> KubernetesStore<'a> {
+    /// Use a namespace already resolved from the project environment.
+    pub fn in_namespace(namespace: &'a str) -> Self {
+        Self {
+            namespace: Some(namespace),
+        }
+    }
+
+    fn credentials(&self) -> Result<CredentialSecrets, wamn_kubernetes::Error> {
+        match self.namespace {
+            Some(namespace) => CredentialSecrets::in_namespace(namespace),
+            None => CredentialSecrets::in_cluster(),
+        }
+    }
+
     pub async fn read(&self, reference: &str, version: &str) -> anyhow::Result<Vec<u8>> {
-        let store = CredentialSecrets::in_cluster().map_err(|error| {
+        let store = self.credentials().map_err(|error| {
             let local = error.type_ == Some(ErrorType::NoCluster);
             let error = anyhow::Error::new(error);
             if local {
@@ -53,16 +69,14 @@ impl KubernetesStore {
 }
 
 #[async_trait::async_trait]
-impl WriteCredentials for KubernetesStore {
+impl WriteCredentials for KubernetesStore<'_> {
     async fn put(
         &self,
         target: CredentialSecret<'_>,
         id: Uuid,
         value: &[u8],
     ) -> anyhow::Result<StoreVersion> {
-        let version = CredentialSecrets::in_cluster()?
-            .put(&target, id, value)
-            .await?;
+        let version = self.credentials()?.put(&target, id, value).await?;
         Ok(StoreVersion {
             store: "k8s",
             reference: target.name,
@@ -71,9 +85,7 @@ impl WriteCredentials for KubernetesStore {
     }
 
     async fn destroy(&self, reference: &str, version: &str) -> anyhow::Result<()> {
-        Ok(CredentialSecrets::in_cluster()?
-            .destroy(reference, version)
-            .await?)
+        Ok(self.credentials()?.destroy(reference, version).await?)
     }
 }
 

@@ -59,7 +59,7 @@ common::journey! {
         );
         let workload = format!("{release}-http");
         let client = &env.org.cluster.client;
-        let namespace = triple.org.as_str();
+        let namespace = &wamn_registry::name::env_key(&triple.org, &triple.env);
         let deployments = runtime(
             client,
             namespace,
@@ -197,7 +197,7 @@ common::journey! {
         let workload = format!("{release}-http");
         let workloads = runtime(
             &env.org.cluster.client,
-            triple.org.as_str(),
+            &env.namespace(),
             "WorkloadDeployment",
             "workloaddeployments",
         );
@@ -474,7 +474,7 @@ common::journey! {
         .await?;
         let env = &app.env;
         let platform = &env.org.cluster;
-        let namespace = env.triple.org.as_str();
+        let namespace = &env.namespace();
         let widget = create_widget(&app.routes).await?;
         let clusters = project_api(env, "postgresql.cnpg.io", "Cluster", "clusters");
         let certificates = project_api(
@@ -615,7 +615,7 @@ printf '%s %s %s\n' "$host" "$port" "$result"
 "#;
 
     let triple = &env.triple;
-    let namespace = triple.org.as_str();
+    let namespace = &wamn_registry::name::env_key(&triple.org, &triple.env);
     let client = &env.org.cluster.client;
     let selector = format!("cnpg.io/cluster={project},cnpg.io/instanceRole=primary");
     let primary = Api::<Pod>::namespaced(client.clone(), namespace)
@@ -843,7 +843,7 @@ fn project_api(env: &Env, group: &str, resource: &str, plural: &str) -> Api<Dyna
     let gvk = GroupVersionKind::gvk(group, "v1", resource);
     Api::namespaced_with(
         env.org.cluster.client.clone(),
-        env.triple.org.as_str(),
+        &env.namespace(),
         &ApiResource::from_gvk_with_plural(&gvk, plural),
     )
 }

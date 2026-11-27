@@ -3,14 +3,11 @@
 {{- $name := printf "c-%s" $namespace }}
 {{- $account := printf "wamn-control-%s" $namespace }}
 {{- $configuration := .Values.control.configuration }}
-{{- $oauth := $configuration.oauth_encryption | default dict }}
-{{- $oauthSecret := ternary "wamn-oauth" .Values.control.oauthSecret (eq (get $oauth "provider") "local") }}
 {{- $_ := required "Set control.configuration.identity_issuer to the platform identity issuer." $configuration.identity_issuer }}
 {{- $_ := required "Set control.configuration.nats_url to the platform NATS address." $configuration.nats_url }}
 {{- $settings := merge (dict "public_origin" (printf "https://%s" (include "org.controlHost" .))) $configuration | toJson }}
 {{- $database := $configuration.database }}
 {{- $login := required "Set control.configuration.database.credentials.name." $database.credentials.name }}
-{{- $apply := required "Set control.configuration.apply_database.credentials.name." $configuration.apply_database.credentials.name }}
 {{- $ca := required "Set control.configuration.database.server_ca.name." $database.server_ca.name }}
 apiVersion: v1
 kind: ConfigMap
@@ -72,9 +69,6 @@ spec:
             - {name: identity-ca, mountPath: /etc/identity-ca, readOnly: true}
             - {name: identity-token, mountPath: /var/run/secrets/wamn-identity, readOnly: true}
             - {name: registry, mountPath: /credentials/registry, readOnly: true}
-            {{- if $oauthSecret }}
-            - {name: oauth, mountPath: /etc/wamn/oauth, readOnly: true}
-            {{- end }}
       volumes:
         - name: configuration
           configMap: {name: {{ $name }}-settings}
@@ -83,19 +77,15 @@ spec:
           projected:
             defaultMode: 0400
             sources:
-              {{- range list $login $apply }}
               - secret:
-                  name: {{ . | quote }}
+                  name: {{ $login | quote }}
                   items:
-                    - {key: username, path: {{ printf "%s/username" . | quote }}}
-                    - {key: password, path: {{ printf "%s/password" . | quote }}}
-              {{- end }}
+                    - {key: username, path: {{ printf "%s/username" $login | quote }}}
+                    - {key: password, path: {{ printf "%s/password" $login | quote }}}
               - configMap:
                   name: {{ $ca | quote }}
                   items:
-                    {{- range list $login $apply }}
-                    - {key: ca.crt, path: {{ printf "%s/ca.crt" . | quote }}}
-                    {{- end }}
+                    - {key: ca.crt, path: {{ printf "%s/ca.crt" $login | quote }}}
         - {name: identity-ca, configMap: {name: identity-ca}}
         - name: identity-token
           projected:
@@ -111,13 +101,6 @@ spec:
           {{- else }}
           configMap: {name: wamn-registry-helper}
           {{- end }}
-        {{- if $oauthSecret }}
-        - name: oauth
-          secret:
-            secretName: {{ $oauthSecret }}
-            defaultMode: 384 # 0600
-            items: [{key: key, path: key}]
-        {{- end }}
 ---
 apiVersion: v1
 kind: Service

@@ -411,7 +411,7 @@ async fn postgres_settings(target: &Target) -> anyhow::Result<serde_json::Value>
 async fn apps(target: &Target, triple: &Triple) -> anyhow::Result<Vec<AppName>> {
     let mut apps = Vec::new();
     let coordinate = triple.to_string();
-    let workloads = workloads(target.client.client(), triple.org.as_str());
+    let workloads = workloads(target.client.client(), &target.namespace);
     for item in workloads.list(&ListParams::default()).await?.items {
         let annotations = item.metadata.annotations.as_ref();
         let annotation = |key| {
@@ -439,17 +439,17 @@ async fn host_pods(target: &Target, release_name: &str) -> anyhow::Result<Value>
 }
 
 async fn workload_annotations(
+    target: &Target,
     triple: &Triple,
     app: &AppName,
 ) -> anyhow::Result<Option<BTreeMap<String, String>>> {
-    let api = KubernetesApi::in_cluster()?;
     let release = wamn_registry::resource_names::app_release_name(
         &triple.org,
         &triple.project,
         &triple.env,
         app,
     );
-    let workloads = crate::client::workloads(api.client(), triple.org.as_str());
+    let workloads = crate::client::workloads(target.client.client(), &target.namespace);
     let workload = tokio::time::timeout(
         crate::client::REQUEST_TIMEOUT,
         workloads.get_opt(&format!("{release}-http")),
@@ -658,7 +658,7 @@ impl Target {
         triple: &Triple,
         app: &AppName,
     ) -> anyhow::Result<Option<BTreeMap<String, String>>> {
-        workload_annotations(triple, app).await
+        workload_annotations(self, triple, app).await
     }
 
     pub async fn apps(&self, triple: &Triple) -> anyhow::Result<Vec<AppName>> {

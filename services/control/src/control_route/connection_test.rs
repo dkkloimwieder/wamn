@@ -160,7 +160,8 @@ impl ControlRoutes<'_> {
             ),
             None if context["credential"].is_object() => {
                 let stored = &context["credential"];
-                let bytes = KubernetesStore
+                let namespace = self.logins.namespace(env).await?;
+                let bytes = KubernetesStore::in_namespace(&namespace)
                     .read(
                         stored["ref"]
                             .as_str()

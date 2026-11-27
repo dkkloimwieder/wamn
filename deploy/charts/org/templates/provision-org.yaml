@@ -1,6 +1,4 @@
 {{- $org := .Values.org -}}
-{{- $oauth := .Values.control.configuration.oauth_encryption | default dict -}}
-{{- $localOAuth := eq (get $oauth "provider") "local" -}}
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -8,11 +6,9 @@ metadata:
   namespace: {{ $org | quote }}
 automountServiceAccountToken: false
 {{- if .Values.control.image }}
-{{- $secrets := list }}
-{{- range list .Values.control.configuration.database .Values.control.configuration.apply_database }}
-{{- $secret := required "Set the org database credentials name." .credentials.name }}
-{{- $login := required "Set the org database username." .username }}
-{{- $secrets = append $secrets $secret }}
+{{- $database := .Values.control.configuration.database }}
+{{- $secret := required "Set the org database credentials name." $database.credentials.name }}
+{{- $login := required "Set the org database username." $database.username }}
 ---
 apiVersion: v1
 kind: Secret
@@ -23,16 +19,7 @@ type: kubernetes.io/basic-auth
 data:
   # Kubernetes requires a key. Helm owns the public username and the Job owns the password.
   username: {{ $login | b64enc | quote }}
-{{- end }}
-{{- if $localOAuth }}
----
-apiVersion: v1
-kind: Secret
-metadata:
-  name: wamn-oauth
-  namespace: {{ $org | quote }}
-type: Opaque
-{{- end }}
+
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -42,14 +29,8 @@ metadata:
 rules:
   - apiGroups: [""]
     resources: [secrets]
-    resourceNames: {{ $secrets | toJson }}
+    resourceNames: [{{ $secret | quote }}]
     verbs: [get, update, patch]
-  {{- if $localOAuth }}
-  - apiGroups: [""]
-    resources: [secrets]
-    resourceNames: [wamn-oauth]
-    verbs: [get, update, patch]
-  {{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

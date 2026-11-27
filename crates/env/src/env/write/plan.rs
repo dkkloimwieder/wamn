@@ -15,6 +15,7 @@ use super::{EnvDocument, Value, ValuesInput};
 )]
 pub(super) fn release_values(
     document: &EnvDocument,
+    namespace: &str,
     platform_domain: &wamn_registry::platform_domain::PlatformDomain,
     app: &wamn_registry::AppName,
     package_manifests: &std::collections::BTreeMap<
@@ -72,6 +73,7 @@ pub(super) fn release_values(
         },
     )]);
     let mut rendered = chart::values(&ValuesInput {
+        namespace,
         org: document.settings.org.clone(),
         project: document.settings.project.clone(),
         env: document.settings.env.clone(),

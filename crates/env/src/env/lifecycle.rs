@@ -74,7 +74,8 @@ pub async fn configure(
                 )?
             };
             for (project, instance) in projects.iter().zip(reserved) {
-                let connection = connection_for(&project.triple(), &instance);
+                let connection =
+                    connection_for(&project.triple(), &instance, &platform.cluster.namespace);
                 let database = crate::platform_env::database_values(
                     &connection,
                     replicas,

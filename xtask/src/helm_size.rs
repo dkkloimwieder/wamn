@@ -179,8 +179,10 @@ async fn record_bytes(
         .context("the environment has one application")?;
     let settings = &document.settings;
     let (_, component_base) = wamn_registry::org_artifact_bases("registry.example.com");
+    let env_namespace = wamn_registry::name::env_key(&settings.org, &settings.env);
     let values = wamn_env::env::write::release_values(
         &document,
+        &env_namespace,
         &"wamn.example.com".parse()?,
         app,
         &manifests,
@@ -198,7 +200,7 @@ async fn record_bytes(
         &settings.env,
         app,
     )?;
-    let namespace = wamn_kubernetes::helm::org_release_namespace(ORG);
+    let namespace = wamn_kubernetes::helm::org_release_namespace(&env_namespace);
     let rendered = wamn_kubernetes::helm::run(&[
         OsStr::new("install"),
         OsStr::new(&release),

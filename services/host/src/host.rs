@@ -199,6 +199,7 @@ const OAUTH_KEY: &str = "/etc/wamn/oauth/key";
 struct Settings {
     org: wamn_registry::OrgId,
     env: wamn_registry::EnvName,
+    namespace: String,
     drain_bound_seconds: u64,
     identity_issuer: Option<String>,
     nats_url: String,
@@ -446,6 +447,25 @@ async fn connect_scheduler_nats(
     .await
 }
 
+fn host_environment<'a>(reported: Option<&'a str>, mapped: &str) -> anyhow::Result<&'a str> {
+    let namespace = reported.context("host requires the operator pod namespace")?;
+    anyhow::ensure!(
+        namespace == mapped && !mapped.is_empty(),
+        "operator pod namespace differs from the registry environment namespace"
+    );
+    Ok(namespace)
+}
+
+#[cfg(test)]
+#[test]
+fn host_reports_only_the_mapped_pod_namespace() -> anyhow::Result<()> {
+    let mapped = "acme--dev";
+    assert_eq!(host_environment(Some(mapped), mapped)?, mapped);
+    assert!(host_environment(Some("acme--prod"), mapped).is_err());
+    assert!(host_environment(None, mapped).is_err());
+    Ok(())
+}
+
 pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     let startup_started = Instant::now();
     let descriptor_soft_limit = wash_runtime::host::quota::raise_descriptor_limit();
@@ -466,12 +486,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         args.scheduler_nats_url == settings.nats_url && args.data_nats_url == settings.nats_url,
         "host broker arguments must match the settings NATS URL"
     );
-    anyhow::ensure!(
-        args.environment
-            .as_deref()
-            .is_none_or(|namespace| namespace == settings.org.as_str()),
-        "operator host namespace and settings org differ"
-    );
+    let environment = host_environment(args.environment.as_deref(), &settings.namespace)?;
     tracing::info!(org = %settings.org, env = %settings.env, "loaded host settings");
     let issuer = settings
         .identity_issuer
@@ -648,7 +663,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         .with_config(host_config)
         .with_meters(Meters::new(MeterKind::Duration))
         .with_label("hostgroup", args.host_group.clone())
-        .with_environment(settings.org.as_str());
+        .with_environment(environment);
     if let Some(host_name) = &args.host_name {
         builder = builder.with_hostname(host_name);
     }

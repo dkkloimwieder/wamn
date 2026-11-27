@@ -41,5 +41,8 @@ pub async fn connection(
     let instance = deployment::instance_suffix(registry, triple)
         .await?
         .with_context(|| format!("project deployment {triple} is absent"))?;
-    Ok(connection_for(triple, &instance))
+    let namespace = deployment::namespace(registry, &triple.org, &triple.env)
+        .await?
+        .with_context(|| format!("env {}/{} is not provisioned", triple.org, triple.env))?;
+    Ok(connection_for(triple, &instance, &namespace))
 }

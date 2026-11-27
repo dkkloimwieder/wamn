@@ -13,6 +13,7 @@ pub(crate) struct StatusMirror {
     pub(crate) project: ProjectId,
     pub(crate) env: EnvName,
     pub(crate) status: EnvStatus,
+    pub(crate) instance: InstanceSuffix,
 }
 
 /// Read the platform domain as stored, including an unset value.
@@ -34,8 +35,8 @@ pub(crate) async fn status_mirrors(
     project: Option<&ProjectId>,
     env: Option<&EnvName>,
 ) -> Result<Vec<StatusMirror>, sqlx::Error> {
-    sqlx::query_as::<_, (String, String, bool)>(
-        "SELECT d.project, d.env, p.active AND e.active
+    sqlx::query_as::<_, (String, String, bool, String)>(
+        "SELECT d.project, d.env, p.active AND e.active, d.instance_suffix
          FROM registry.project_env d
          JOIN registry.project p ON p.org=d.org AND p.id=d.project
          JOIN registry.env e ON e.org=d.org AND e.env=d.env
@@ -49,10 +50,11 @@ pub(crate) async fn status_mirrors(
     .fetch_all(connection)
     .await?
     .into_iter()
-    .map(|(project, env, active)| {
+    .map(|(project, env, active, instance)| {
         Ok(StatusMirror {
             project: wamn_postgres::decode_text(project, 0)?,
             env: wamn_postgres::decode_text(env, 1)?,
+            instance: wamn_postgres::decode_text(instance, 3)?,
             status: if active {
                 EnvStatus::Active
             } else {

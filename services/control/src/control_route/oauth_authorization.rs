@@ -1,6 +1,6 @@
 //! Authorization code exchange and encrypted, single-use PKCE state.
 
-use std::{fmt, sync::Arc, time::Duration};
+use std::{fmt, time::Duration};
 
 use anyhow::Context as _;
 use serde_json::Value;
@@ -65,15 +65,7 @@ impl PreparedAuthorization {
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         caller: wamn_identity_protocol::PrincipalId,
     ) -> Result<String, Error> {
-        let current: Option<i64> = sqlx::query_scalar(
-            "SELECT active_generation FROM platform.connection
-             WHERE id=$1 AND active FOR NO KEY UPDATE",
-        )
-        .bind(self.connection)
-        .fetch_optional(&mut **tx)
-        .await
-        .map_err(|error| failed("authorization connection check failed", error))?;
-        if current != Some(self.generation) {
+        if lock_generation(tx, self.connection).await? != Some(self.generation) {
             return Err(refused("connection changed during authorization"));
         }
         store::insert(
@@ -94,13 +86,13 @@ impl PreparedAuthorization {
 #[derive(Debug)]
 pub struct Authorization {
     redirect_uri: String,
-    envelope: Arc<Envelope>,
+    envelope: Option<Envelope>,
     transport: HttpTransport,
 }
 
 impl Authorization {
     /// Configure one public HTTP origin, without accepting request headers as authority.
-    pub fn new(origin: &str, envelope: Arc<Envelope>) -> anyhow::Result<Self> {
+    pub fn new(origin: &str, envelope: Option<Envelope>) -> anyhow::Result<Self> {
         let url = Url::parse(origin)?;
         anyhow::ensure!(
             matches!(url.scheme(), "http" | "https")
@@ -124,9 +116,14 @@ impl Authorization {
         &self.redirect_uri
     }
 
+    pub(super) fn shared_envelope(&self) -> Option<&Envelope> {
+        self.envelope.as_ref()
+    }
+
     /// Encrypt the verifier after the read transaction ends.
     pub(super) async fn prepare_authorization(
         &self,
+        envelope: &Envelope,
         context: &ConnectionRow,
         project: &ProjectId,
         env: &EnvName,
@@ -138,8 +135,7 @@ impl Authorization {
         )
         .map_err(|error| failed("invalid authorization parameters", error))?;
         let verifier = Zeroizing::new(verifier);
-        let encrypted = self
-            .envelope
+        let encrypted = envelope
             .encrypt(verifier.as_bytes())
             .await
             .map_err(|error| failed("authorization state encryption failed", error))?;
@@ -152,33 +148,12 @@ impl Authorization {
         })
     }
 
-    /// Roll back every refusal, including expired and stale-generation states.
+    /// Exchange a callback with the mapped env's key and credential store.
     pub async fn callback(
         &self,
         database: &mut sqlx::PgConnection,
-        query: &str,
-    ) -> Result<(), Error> {
-        let mut tx = database
-            .begin()
-            .await
-            .map_err(|error| failed("callback transaction failed", error))?;
-        match self.exchange(&mut tx, query).await {
-            Ok(()) => tx
-                .commit()
-                .await
-                .map_err(|error| failed("callback commit failed", error)),
-            Err(error) => {
-                tx.rollback()
-                    .await
-                    .map_err(|source| failed("callback rollback failed", source))?;
-                Err(error)
-            }
-        }
-    }
-
-    async fn exchange(
-        &self,
-        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        envelope: &Envelope,
+        namespace: &str,
         query: &str,
     ) -> Result<(), Error> {
         let query: Callback = callback_parameters(query)?;
@@ -195,28 +170,62 @@ impl Authorization {
                 .filter(|code| !code.is_empty())
                 .ok_or_else(|| refused("missing authorization code"))?,
         );
+        // Serialize exchanges for one connection without holding a transaction during I/O.
+        let connection: uuid::Uuid = sqlx::query_scalar(
+            "SELECT connection_id FROM platform.oauth_authorization WHERE state=$1",
+        )
+        .bind(&state)
+        .fetch_optional(&mut *database)
+        .await
+        .map_err(|error| failed("authorization state read failed", error))?
+        .ok_or_else(|| refused("connection or authorization state unavailable"))?;
+        sqlx::query(
+            "SELECT pg_advisory_lock(hashtextextended('wamn-oauth/' || $1::uuid::text, 0))",
+        )
+        .bind(connection)
+        .execute(&mut *database)
+        .await
+        .map_err(|error| failed("callback state lock failed", error))?;
+        let result = self
+            .exchange(database, envelope, namespace, &state, &code)
+            .await;
+        let unlocked = sqlx::query(
+            "SELECT pg_advisory_unlock(hashtextextended('wamn-oauth/' || $1::uuid::text, 0))",
+        )
+        .bind(connection)
+        .execute(database)
+        .await
+        .map_err(|error| failed("callback state unlock failed", error));
+        result.and(unlocked.map(|_| ()))
+    }
+
+    async fn exchange(
+        &self,
+        database: &mut sqlx::PgConnection,
+        envelope: &Envelope,
+        namespace: &str,
+        state: &str,
+        code: &str,
+    ) -> Result<(), Error> {
+        let mut tx = database
+            .begin()
+            .await
+            .map_err(|error| failed("callback transaction failed", error))?;
         // Deactivation and credential writes lock the connection before deleting state.
-        let context = store::lock_connection(tx, &state)
+        let context = store::lock_connection(&mut tx, state)
             .await
             .map_err(|error| failed("connection unavailable", error))?
             .ok_or_else(|| refused("connection or authorization state unavailable"))?;
-        let authorization = store::lock(tx, &state)
+        let authorization = store::lock(&mut tx, state)
             .await
             .map_err(|error| failed("authorization state read failed", error))?
             .ok_or_else(|| refused("unknown or replayed state"))?;
         if !authorization.unexpired {
             return Err(refused("expired state"));
         }
-        wamn_postgres::bind_transaction_identity(
-            tx,
-            &authorization.principal,
-            "",
-            "",
-            Some("connection.oauth_callback"),
-            None,
-        )
-        .await
-        .map_err(|error| failed("callback identity failed", error))?;
+        tx.commit()
+            .await
+            .map_err(|error| failed("callback snapshot failed", error))?;
         let connection = authorization.connection;
         if context["active_generation"].as_i64() != Some(authorization.generation) {
             return Err(refused("connection generation changed"));
@@ -224,17 +233,13 @@ impl Authorization {
         if context["auth_type"] != "oauth2_authorization_code" {
             return Err(refused("connection authentication type changed"));
         }
-        store::delete(tx, &state)
-            .await
-            .map_err(|error| failed("authorization state delete failed", error))?;
-        let verifier = self
-            .envelope
+        let verifier = envelope
             .decrypt(&authorization.verifier)
             .await
             .map_err(|error| failed("authorization state decryption failed", error))?;
         let verifier = std::str::from_utf8(verifier.expose())
             .map_err(|error| failed("invalid PKCE verifier", error))?;
-        let material = credential(&context)
+        let material = credential(namespace, &context)
             .await
             .map_err(|error| failed("client credential unavailable", error))?;
         let token = oauth::exchange_code(
@@ -252,13 +257,36 @@ impl Authorization {
             serde_json::to_vec(&token.token)
                 .map_err(|error| failed("token encoding failed", error))?,
         );
-        let encrypted = self
-            .envelope
+        let encrypted = envelope
             .encrypt(&plaintext)
             .await
             .map_err(|error| failed("token encryption failed", error))?;
+        let mut tx = database
+            .begin()
+            .await
+            .map_err(|error| failed("callback transaction failed", error))?;
+        let current = lock_generation(&mut tx, connection).await?;
+        if current != Some(authorization.generation) {
+            return Err(refused("connection generation changed"));
+        }
+        wamn_postgres::bind_transaction_identity(
+            &mut tx,
+            &authorization.principal,
+            "",
+            "",
+            Some("connection.oauth_callback"),
+            None,
+        )
+        .await
+        .map_err(|error| failed("callback identity failed", error))?;
+        if !store::delete(&mut tx, state)
+            .await
+            .map_err(|error| failed("authorization state delete failed", error))?
+        {
+            return Err(refused("unknown or replayed state"));
+        }
         wamn_connection::project_connections::write_token(
-            tx,
+            &mut tx,
             connection,
             &encrypted,
             (Duration::from_secs(token.expires_in.unwrap_or(3600)).as_secs_f64()
@@ -267,11 +295,22 @@ impl Authorization {
         )
         .await
         .map_err(|error| failed("token write failed", error))?;
-        Ok(())
+        tx.commit()
+            .await
+            .map_err(|error| failed("callback commit failed", error))
     }
 }
 
-async fn credential(context: &Value) -> anyhow::Result<Zeroizing<String>> {
+async fn lock_generation(
+    tx: &mut sqlx::PgConnection,
+    connection: uuid::Uuid,
+) -> Result<Option<i64>, Error> {
+    sqlx::query_scalar("SELECT active_generation FROM platform.connection WHERE id=$1 AND active FOR NO KEY UPDATE")
+        .bind(connection)
+        .fetch_optional(tx).await.map_err(|error| failed("connection unavailable", error))
+}
+
+async fn credential(namespace: &str, context: &Value) -> anyhow::Result<Zeroizing<String>> {
     let reference = &context["credential"];
     let text = |field: &str| {
         reference[field]
@@ -280,7 +319,9 @@ async fn credential(context: &Value) -> anyhow::Result<Zeroizing<String>> {
     };
     let reference = text("ref")?;
     let version = text("version")?;
-    let bytes = KubernetesStore.read(reference, version).await?;
+    let bytes = KubernetesStore::in_namespace(namespace)
+        .read(reference, version)
+        .await?;
     String::from_utf8(bytes)
         .context("credential is not UTF-8")
         .map(Zeroizing::new)

@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 /// Root of the database credential mounts in deployed processes.
 pub const DATABASE_DIR: &str = "/etc/wamn/db";
 
-/// A named credential source in the organization's namespace.
+/// A named credential source in the database’s namespace.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct SecretRef {
@@ -75,6 +75,7 @@ pub fn configuration(
 pub fn connection_for(
     triple: &wamn_registry::Triple,
     instance: &wamn_registry::instance_suffix::InstanceSuffix,
+    namespace: &str,
 ) -> ConnectionConfig {
     use wamn_registry::name;
     let database =
@@ -82,9 +83,9 @@ pub fn connection_for(
     let owner = project_migration_login();
     let certificate = name::project_login_certificate(&database, owner.as_str());
     configuration(
-        triple.org.as_str(),
+        namespace,
         &name::project_cluster(&database),
-        name::project_database_host(&database, &triple.org),
+        name::project_database_host(&database, namespace),
         5432,
         database,
         owner,

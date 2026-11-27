@@ -167,7 +167,7 @@ The first two counts share one query through the existing environment administra
 Each count read has a two-second timeout, and both reads run concurrently.
 A failed or timed-out read logs a warning and returns null for its counts, without failing the runtime status answer.
 
-The control service reads the shared host Deployment and application WorkloadDeployments from the org namespace.
+The control service reads the shared host Deployment and application WorkloadDeployments from the recorded environment namespace.
 It reads the package digest and content revision from each WorkloadDeployment.
 The content revision stays the same after a rollback restores that revision's saved manifest.
 

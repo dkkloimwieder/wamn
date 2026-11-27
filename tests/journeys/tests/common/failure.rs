@@ -136,8 +136,7 @@ impl Capture {
             .await
             .map_err(|_| anyhow::anyhow!("load the journey cluster inputs"))?;
 
-        // Current environment, project and application charts deploy in the org namespace.
-        // Also capture any existing coordinate-named namespaces.
+        // Collect the org namespace and the provisioned environment namespaces.
         let mut namespaces: BTreeSet<_> = self.orgs.iter().cloned().collect();
         namespaces.insert(PLATFORM.to_owned());
         let mut release_namespaces: BTreeSet<_> = self

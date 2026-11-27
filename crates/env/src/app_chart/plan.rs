@@ -479,7 +479,7 @@ pub fn values(input: &ValuesInput<'_>) -> anyhow::Result<Value> {
     );
     values.insert("routeHost".into(), route_host.into());
     values.insert("org".into(), input.org.to_string().into());
-    values.insert("namespace".into(), input.org.as_str().into());
+    values.insert("namespace".into(), input.namespace.into());
     values.insert("project".into(), input.project.to_string().into());
     values.insert(
         "apps".into(),
@@ -534,6 +534,7 @@ pub struct Role {
 /// The inputs of one application's install values.
 #[derive(Debug, Clone)]
 pub struct ValuesInput<'a> {
+    pub namespace: &'a str,
     pub org: wamn_registry::OrgId,
     pub project: wamn_registry::ProjectId,
     pub env: wamn_registry::EnvName,

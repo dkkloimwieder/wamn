@@ -231,7 +231,8 @@ Then it installs the product SQL through the product functions.
 Each test logs in as the real login.
 The project logins are `wamn_migration`, `wamn_app_login`, `wamn_query_login`, `wamn_platform_login` and `wamn_cdc`.
 The system logins are `wamn_platform_sql_<digest>`, `wamn_identity_issuer_<digest>` and `wamn_pooler_auth`.
-The org logins are `wamn_control_<digest>` and `wamn_apply_<digest>`.
+The org login is `wamn_control_<digest>`. The environment worker login is `wamn_apply_env_<digest>`.
+Isolated SQL fixtures also use the org-wide `wamn_apply_<digest>` login.
 CloudNativePG gives these logins a client certificate. The test gives each one a password, because a grant depends on the role and not on the login method.
 
 The tests make sure of these facts for each login:
@@ -323,7 +324,7 @@ cargo test -p wamn-journey-tests -- --ignored
 It renders the charts and the env namespaces, SQL Job, access rules, network policies, and quota objects.
 It checks that chart images resolve and that wamn containers accept their arguments with the rendered user and group IDs.
 Then it sends every object to the kind API server in a server-side dry run.
-For `platform`, `hosts` and the org namespace, it also dry-runs each rendered pod template in a temporary namespace with the same Pod Security labels.
+For `platform`, `hosts`, the org namespace and the environment namespace, it also dry-runs each rendered pod template in a temporary namespace with the same Pod Security labels.
 The kind journeys exercise pods that operators generate after deployment.
 Without `--chart <bundle>`, it builds a bundle under `target/preflight`.
 With `--print-cluster-requests`, it prints the cluster requests and does not read the cluster.

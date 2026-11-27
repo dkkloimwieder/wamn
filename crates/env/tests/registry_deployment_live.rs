@@ -32,7 +32,6 @@ async fn applying_an_unprovisioned_env_refuses_the_reservation() -> anyhow::Resu
             &triple,
             "cloud",
             "fixture-secret",
-            Some(triple.org.as_str()),
             &"abcd1234".parse()?,
             None,
         )
@@ -59,7 +58,6 @@ async fn applying_an_unprovisioned_env_refuses_the_reservation() -> anyhow::Resu
         &triple,
         "cloud",
         "fixture-secret",
-        Some(triple.org.as_str()),
         &candidate,
         None,
     )
@@ -238,7 +236,6 @@ async fn project_configuration_keeps_applied_env_timings() -> anyhow::Result<()>
         &triple,
         &document.settings.target,
         "fixture-secret",
-        Some(triple.org.as_str()),
         &"abcd1234".parse()?,
         None,
     )
@@ -431,7 +428,6 @@ projects:
         &triple,
         "cloud",
         "fixture-secret",
-        Some(triple.org.as_str()),
         &"abcd1234".parse()?,
         None,
     )

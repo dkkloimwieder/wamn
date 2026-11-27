@@ -9,9 +9,7 @@ use wamn_registry::{EnvName, OrgId, name};
 
 use crate::{
     org::{OrgInputs, SYSTEM_DATABASE_CA, control_image, field},
-    provision_org::{
-        CONTROL_AUDIENCE, INVITATION_ACCOUNT, ORG_INPUTS_DIR, OrgActivity, SQL_ACCOUNT,
-    },
+    provision_org::{CONTROL_AUDIENCE, INVITATION_ACCOUNT, OrgActivity, SQL_ACCOUNT},
 };
 
 pub(crate) const PLATFORM: &str = "platform";
@@ -187,16 +185,7 @@ pub fn api_destinations(destinations: BTreeSet<(IpAddr, i32)>) -> anyhow::Result
 /// Build the platform Job that provisions an org's database logins.
 pub fn provision_job(org: &OrgId, image: &str, database: &ConnectionConfig) -> Value {
     let mut sql = sql_job(org, image, database, "provision-org");
-    let spec = &mut sql["spec"]["template"]["spec"];
-    spec["automountServiceAccountToken"] = true.into();
-    spec["volumes"]
-        .as_array_mut()
-        .expect("SQL Job volumes are an array")
-        .push(json!({"name": "org-inputs", "configMap": {"name": ORG_INPUTS}}));
-    spec["containers"][0]["volumeMounts"]
-        .as_array_mut()
-        .expect("SQL Job mounts are an array")
-        .push(json!({"name": "org-inputs", "mountPath": ORG_INPUTS_DIR, "readOnly": true}));
+    sql["spec"]["template"]["spec"]["automountServiceAccountToken"] = true.into();
     sql
 }
 

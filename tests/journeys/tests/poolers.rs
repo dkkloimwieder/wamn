@@ -46,19 +46,19 @@ common::journey! {
         let pods = platform_pods(&holder.org);
         let pod = ready_pooler(&pods, APPLY_TRANSACTION).await?;
         let limit = backend_limit(&pods, &pod).await?;
-        assert_queue(&holder.org, &waiter.org, &pods, &pod, limit).await
+        assert_queue(&holder, &waiter, &pods, &pod, limit).await
     }
 }
 
 common::journey! {
-    /// C8. Each Pooler admits the matching provisioned org login through its auth query.
+    /// C8. Each Pooler admits the matching provisioned control or env login through its auth query.
     async fn each_pooler_admits_its_provisioned_login() -> anyhow::Result<()> {
         let env = provision().await?;
         let org = &env.org;
         let pods = platform_pods(org);
-        for family in [CONTROL, APPLY] {
+        for family in [CONTROL, APPLY, APPLY_TRANSACTION] {
             let pod = ready_pooler(&pods, family).await?;
-            let login = pooler_login(org, &pods, &pod, family).await?;
+            let login = pooler_login(&env, &pods, &pod, family).await?;
             let probe = async {
                 let connection = login
                     .options
@@ -156,13 +156,18 @@ struct PoolerLogin {
 }
 
 async fn pooler_login(
-    org: &Org,
+    env: &Env,
     pods: &Api<Pod>,
     pod: &str,
     family: &str,
 ) -> anyhow::Result<PoolerLogin> {
-    let namespace = org.name.as_str();
-    let client = &org.cluster.client;
+    let namespace = if family == CONTROL {
+        env.org.name.to_string()
+    } else {
+        env.namespace()
+    };
+    let namespace = namespace.as_str();
+    let client = &env.org.cluster.client;
     let role = if family == CONTROL { CONTROL } else { APPLY };
     let secret = format!("wamn-{role}-db");
     let roots = Api::<ConfigMap>::namespaced(client.clone(), namespace);
@@ -183,7 +188,7 @@ async fn pooler_login(
     let ca = ca
         .data
         .and_then(|mut data| data.remove("ca.crt"))
-        .context("org database CA ConfigMap has no ca.crt")?;
+        .context("system database CA ConfigMap has no ca.crt")?;
     ensure!(
         !username.is_empty() && !password.is_empty() && !ca.is_empty(),
         "empty Pooler login or CA in {namespace}/{secret}"
@@ -235,8 +240,8 @@ async fn pooler_login(
 }
 
 async fn assert_queue(
-    holder: &Org,
-    waiter: &Org,
+    holder: &Env,
+    waiter: &Env,
     pods: &Api<Pod>,
     pod: &str,
     limit: usize,

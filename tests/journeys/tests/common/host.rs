@@ -110,7 +110,7 @@ pub fn ready(pod: &Pod) -> bool {
 pub async fn host_pods(env: &Env) -> anyhow::Result<Vec<Pod>> {
     let client = &env.org.cluster.client;
     let triple = &env.triple;
-    let namespace = triple.org.as_str();
+    let namespace = &env.namespace();
     let name = wamn_registry::name::host_deployment_name(&wamn_registry::name::env_host_name(
         &triple.org,
         &triple.env,
@@ -183,7 +183,7 @@ pub async fn app_objects(
     app: &str,
 ) -> anyhow::Result<Vec<DynamicObject>> {
     let client = &env.org.cluster.client;
-    Ok(runtime(client, env.triple.org.as_str(), kind, plural)
+    Ok(runtime(client, &env.namespace(), kind, plural)
         .list(&ListParams::default())
         .await?
         .items

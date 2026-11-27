@@ -13,7 +13,7 @@ use crate::{
 pub const ENV_LABEL: &str = "wamn.dev/env";
 
 /// The namespace label that carries the org used in public app host names.
-pub const ORG_NAME_LABEL: &str = "wamn.dev/org-name";
+pub use wamn_kubernetes::web_release::ROUTE_ORG_LABEL as ORG_NAME_LABEL;
 
 /// The ServiceAccount used for environment-wide jobs.
 pub const ENV_ACCOUNT: &str = "wamn-env";
@@ -123,6 +123,10 @@ pub(super) fn boundary(org: &OrgId, namespace: &str, storage: &str, quota: &Quot
         rule("discovery.k8s.io", &["endpointslices"], &["list"]),
     ];
     let control_rules = [
+        json!({
+            "apiGroups":[""], "resources":["secrets"], "resourceNames":[crate::provision_org::OAUTH_SECRET],
+            "verbs":["get"],
+        }),
         rule("batch", &["jobs"], &["create", "get"]),
         rule("", &["pods"], &read),
         rule("", &["pods/log"], &["get"]),
@@ -198,7 +202,7 @@ fn bind_role(namespace: &str, name: &str, rules: &[Value], subject: &Value) -> [
 
 pub(super) fn network_policies(
     namespace: &str,
-    apply_pooler: &str,
+    apply_poolers: [&str; 2],
     database_port: u16,
     api_server: &[Value],
     registry: &[Value],
@@ -255,7 +259,14 @@ pub(super) fn network_policies(
                     json!({"app.kubernetes.io/name":"nats","app.kubernetes.io/instance":"wamn"}),
                     4222,
                 ),
-                platform_rule(json!({"cnpg.io/poolerName":apply_pooler}), database_port),
+                platform_rule(
+                    json!({"cnpg.io/poolerName":apply_poolers[0]}),
+                    database_port,
+                ),
+                platform_rule(
+                    json!({"cnpg.io/poolerName":apply_poolers[1]}),
+                    database_port,
+                ),
             ],
         ),
     ];

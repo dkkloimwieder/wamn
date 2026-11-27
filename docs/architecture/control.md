@@ -6,12 +6,11 @@ It has no application release, route guest, runtime operator registration, or ho
 The org chart deploys the `control` image.
 
 Start the service with `wamn-control --settings /etc/wamn/control/settings.json platform`.
-The org chart renders this JSON file and mounts it for control and the org worker.
-The control Deployment mounts the org's control and apply logins and the system database CA certificate.
-The worker uses the org's apply login for lifecycle operations.
+The org chart renders the control settings and mounts the org control login and system database CA.
+Environment provisioning prepares the worker settings and the environment apply login.
 Both database fields use `wamn-postgres::ConnectionConfig`.
-The service refuses a database credential outside its org namespace.
-It checks that the apply login name matches the org and database.
+Control verifies that its login belongs to the org namespace.
+The worker verifies that its apply login, pod namespace, and registry mapping belong to the same environment.
 
 | Field | Meaning |
 | --- | --- |
@@ -47,10 +46,10 @@ Only the rollback worker reads Helm history for the target package and applicati
 Job status is visible only through the authorized target and operation annotations.
 Control writes command starts and dispatch refusals or failures to `provisioning.platform_event`. Workers use the apply login to write the result of a command they run.
 
-Deploy, rollback, stop, schema apply, schema reset, capture-gap recovery and close, and environment lifecycle Jobs use the org worker account for Helm.
+Deploy, rollback, stop, schema apply, schema reset, capture-gap recovery and close, and environment lifecycle Jobs use the environment worker account for Helm.
 The project chart creates the `<coordinate>-operation` account for schema diff. It stages files from named database Secrets and reads declared application workloads.
 Workers select managed database logins from the project placement and write their ServiceAccount kubeconfig under `/work`.
-They fetch the named Secrets in the org and write the login files and the server's `ca.crt` to `/etc/wamn/db/<login-secret>/` in memory.
+They fetch the named Secrets in the environment namespace and write the login files and the server's `ca.crt` to `/etc/wamn/db/<login-secret>/` in memory.
 Project logins use `tls.crt` and `tls.key` in that directory.
 The recovery Job mounts its project recovery certificate. It can read only that project's source stream and receive replies on its own inbox.
 The [record history pruning code](../../crates/env/src/prune_record_history.rs) uses a project database login and binds `wamn:audit-retention` for each transaction.

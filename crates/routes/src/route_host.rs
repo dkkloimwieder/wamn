@@ -1,18 +1,18 @@
 use wamn_registry::platform_domain::PlatformDomain;
 
-/// Accept the namespace control host or an application host in the platform domain.
-pub fn valid_route_host(host: &str, namespace: &str, base: &PlatformDomain) -> bool {
+/// Accept an org control host or an environment app host in the platform domain.
+pub fn valid_route_host(host: &str, org: &str, control: bool, base: &PlatformDomain) -> bool {
     let Some((label, domain)) = host.split_once('.') else {
         return false;
     };
-    if domain != base.as_str() || namespace.is_empty() || label.len() > 63 || host.len() > 253 {
+    if domain != base.as_str() || org.is_empty() || label.len() > 63 || host.len() > 253 {
         return false;
     }
-    if label == namespace {
-        return true;
+    if control {
+        return label == org;
     }
     label
-        .strip_suffix(namespace)
+        .strip_suffix(org)
         .and_then(|prefix| prefix.strip_suffix("--"))
         .is_some_and(|prefix| {
             !prefix.is_empty()
@@ -39,8 +39,8 @@ mod tests {
         );
         let control = format!("{acme}.{base}");
         let app = wamn_registry::name::app_host("shop", &acme, &base);
-        assert!(valid_route_host(&control, "acme", &base));
-        assert!(valid_route_host(&app, "acme", &base));
+        assert!(valid_route_host(&control, "acme", true, &base));
+        assert!(valid_route_host(&app, "acme", false, &base));
         for host in [
             format!("{globex}.{base}"),
             wamn_registry::name::app_host("shop", &globex, &base),
@@ -54,8 +54,14 @@ mod tests {
             format!("shop.{acme}.{base}"),
             acme.to_string(),
         ] {
-            assert!(!valid_route_host(&host, "acme", &base), "{host}");
+            assert!(
+                !valid_route_host(&host, "acme", false, &base)
+                    && !valid_route_host(&host, "acme", true, &base),
+                "{host}"
+            );
         }
-        assert!(!valid_route_host(&control, "", &base));
+        assert!(!valid_route_host(&control, "", true, &base));
+        assert!(!valid_route_host(&control, "acme", false, &base));
+        assert!(!valid_route_host(&app, "acme", true, &base));
     }
 }

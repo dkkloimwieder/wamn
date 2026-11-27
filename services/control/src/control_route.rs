@@ -476,15 +476,19 @@ impl ControlRoutes<'_> {
                         detail: json!({ "field": "env" }),
                     });
                 }
+                let namespace = self.logins.namespace(&request.env).await?;
                 let status =
-                    crate::env_status::read(self.org, &request.project, &request.env).await?;
+                    crate::env_status::read(&namespace, self.org, &request.project, &request.env)
+                        .await?;
+                let login = tokio::time::timeout(
+                    std::time::Duration::from_secs(2),
+                    self.login(&request.project, &request.env),
+                )
+                .await;
                 let app = async {
-                    let login = self
-                        .login(&request.project, &request.env)
-                        .await
-                        .map_err(|_| {
-                            anyhow::anyhow!("no administration login for status counts")
-                        })?;
+                    let login = login?.map_err(|_| {
+                        anyhow::anyhow!("no administration login for status counts")
+                    })?;
                     app_counts(login, caller).await
                 };
                 let memberships = async {
@@ -713,10 +717,36 @@ impl ControlRoutes<'_> {
     ) -> Result<(), Refusal> {
         let mut writer = self.writer.lock().await?;
         let mut transaction = self.begin(&mut writer, attachment, caller).await?;
-        let project_scope = if let Some(env) = env {
+        let project_scope = env.is_none().then_some(project);
+        let before =
+            crate::control_sql::status_mirrors(&mut transaction, self.org, project_scope, env)
+                .await?;
+        transaction.commit().await?;
+        let logins = async {
+            let mut logins = Vec::with_capacity(before.len());
+            for mirror in &before {
+                let triple = wamn_registry::Triple::new(
+                    self.org.clone(),
+                    mirror.env.clone(),
+                    mirror.project.clone(),
+                );
+                let login =
+                    self.logins
+                        .login(&triple, &mirror.instance)
+                        .await
+                        .map_err(|error| {
+                            tracing::warn!(%error, %triple, "no administration login");
+                            incomplete(&mirror.project, &mirror.env, &[])
+                        })?;
+                logins.push(ConnectionInput::from(login));
+            }
+            Ok::<_, Refusal>(logins)
+        }
+        .await;
+        let mut transaction = self.begin(&mut writer, attachment, caller).await?;
+        if let Some(env) = env {
             let envs = status_envs(&mut transaction, self.org, project, env).await?;
             set_env_status(&mut transaction, self.org, project, &envs, status).await?;
-            None
         } else {
             let updated =
                 crate::control_sql::set_project_status(&mut transaction, self.org, project, status)
@@ -727,18 +757,27 @@ impl ControlRoutes<'_> {
                     detail: json!({"field":"project"}),
                 });
             }
-            Some(project)
-        };
+        }
         let mirrors =
             crate::control_sql::status_mirrors(&mut transaction, self.org, project_scope, env)
                 .await?;
+        let stable = before.len() == mirrors.len()
+            && before.iter().zip(&mirrors).all(|(old, new)| {
+                old.project == new.project && old.env == new.env && old.instance == new.instance
+            });
+        if !stable {
+            return Err(anyhow::anyhow!("project deployment changed during status update").into());
+        }
         status::change_status(
             status,
             move || async move {
                 transaction.commit().await?;
                 Ok(())
             },
-            || self.write_statuses(attachment, caller, &mirrors),
+            || async {
+                self.write_statuses(attachment, caller, &mirrors, logins?)
+                    .await
+            },
         )
         .await
     }
@@ -749,17 +788,15 @@ impl ControlRoutes<'_> {
         attachment: &HostAttachment,
         caller: &PrincipalId,
         mirrors: &[crate::control_sql::StatusMirror],
+        logins: Vec<ConnectionInput<'static>>,
     ) -> Result<(), Refusal> {
-        let mut logins = Vec::with_capacity(mirrors.len());
-        for mirror in mirrors {
-            logins.push(self.login(&mirror.project, &mirror.env).await?);
-        }
         let mut completed: Vec<String> = Vec::new();
         for (mirror, login) in mirrors.iter().zip(logins) {
             let crate::control_sql::StatusMirror {
                 project,
                 env,
                 status,
+                ..
             } = mirror;
             match write_status(login, attachment, caller, *status).await {
                 Ok(()) => {}

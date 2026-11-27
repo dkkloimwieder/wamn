@@ -1,9 +1,6 @@
 {{- $org := .Values.org -}}
 {{- $control := dict "app.kubernetes.io/name" (printf "c-%s" $org) -}}
-{{- $worker := dict "app.kubernetes.io/component" "wamn-worker" -}}
 {{- $identity := dict "app.kubernetes.io/name" "wamn-identity" -}}
-{{- $host := dict "wasmcloud.com/name" "hostgroup" -}}
-{{- $cdc := dict "app.kubernetes.io/name" "wamn-cdc-reader" -}}
 {{- $postgres := dict "matchExpressions" (list (dict "key" "cnpg.io/cluster" "operator" "Exists")) -}}
 {{- $edge := dict "namespaceSelector" (dict "matchLabels" (dict "kubernetes.io/metadata.name" "hosts")) "podSelector" (dict "matchLabels" (dict "app.kubernetes.io/name" "wamn-edge")) -}}
 {{- $platform := dict "matchLabels" (dict "kubernetes.io/metadata.name" "platform") -}}
@@ -38,14 +35,13 @@ spec:
   ingress:
     - from: [{{ $edge | toJson }}]
       ports: [{port: 8080, protocol: TCP}]
-{{- range $name, $labels := dict "control" $control "worker" $worker }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
-metadata: {name: allow-{{ $name }}-to-identity, namespace: {{ $org | quote }}}
+metadata: {name: allow-control-to-identity, namespace: {{ $org | quote }}}
 spec:
   podSelector:
-    matchLabels: {{ $labels | toJson }}
+    matchLabels: {{ $control | toJson }}
   policyTypes: [Egress]
   egress:
     - to:
@@ -53,42 +49,32 @@ spec:
           podSelector:
             matchLabels: {{ $identity | toJson }}
       ports: [{port: 8443, protocol: TCP}]
-{{- end }}
 {{- $database := .Values.control.configuration -}}
-{{- $systemClients := dict "control" (dict "labels" $control "connection" ($database.database | default dict)) "worker" (dict "labels" $worker "connection" ($database.apply_database | default dict)) }}
-{{- range $name, $client := $systemClients }}
-{{- with $client.connection.host }}
+{{- with $database.database }}
+{{- if .host }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
-metadata: {name: allow-{{ $name }}-to-postgres, namespace: {{ $org | quote }}}
+metadata: {name: allow-control-to-postgres, namespace: {{ $org | quote }}}
 spec:
   podSelector:
-    matchLabels: {{ $client.labels | toJson }}
+    matchLabels: {{ $control | toJson }}
   policyTypes: [Egress]
   egress:
     - to:
         - namespaceSelector: {{ $platform | toJson }}
           podSelector:
-            matchLabels: {cnpg.io/poolerName: {{ . | splitList "." | first | quote }}}
-      ports: [{port: {{ $client.connection.port | int }}, protocol: TCP}]
-    {{- if eq $name "worker" }}
-    - to:
-        - namespaceSelector: {{ $platform | toJson }}
-          podSelector:
-            matchLabels: {cnpg.io/poolerName: {{ required "Set control.configuration.apply_transaction_host." $database.apply_transaction_host | splitList "." | first | quote }}}
-      ports: [{port: {{ $client.connection.port | int }}, protocol: TCP}]
-    {{- end }}
+            matchLabels: {cnpg.io/poolerName: {{ .host | splitList "." | first | quote }}}
+      ports: [{port: {{ .port | int }}, protocol: TCP}]
 {{- end }}
 {{- end }}
-{{- range $name, $labels := dict "control" $control "worker" $worker }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
-metadata: {name: allow-{{ $name }}-to-nats, namespace: {{ $org | quote }}}
+metadata: {name: allow-control-to-nats, namespace: {{ $org | quote }}}
 spec:
   podSelector:
-    matchLabels: {{ $labels | toJson }}
+    matchLabels: {{ $control | toJson }}
   policyTypes: [Egress]
   egress:
     - to:
@@ -96,24 +82,34 @@ spec:
           podSelector:
             matchLabels: {app.kubernetes.io/name: nats, app.kubernetes.io/instance: wamn}
       ports: [{port: 4222, protocol: TCP}]
-{{- end }}
-{{- $apiClients := dict "control" (dict "matchLabels" $control) "worker" (dict "matchLabels" $worker) "postgres" $postgres "host" (dict "matchLabels" $host) "cdc" (dict "matchLabels" $cdc) }}
-{{- $registryClients := dict "control" (dict "matchLabels" $control) "worker" (dict "matchLabels" $worker) "host" (dict "matchLabels" $host) }}
-{{- range $purpose, $destinations := dict "api-server" .Values.networkPolicy.apiServer "registry" .Values.networkPolicy.registry }}
-{{- if $destinations }}
-{{- range $name, $selector := ternary $apiClients $registryClients (eq $purpose "api-server") }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
-metadata: {name: allow-{{ $name }}-to-{{ $purpose }}, namespace: {{ $org | quote }}}
+metadata: {name: allow-control-to-project-databases, namespace: {{ $org | quote }}}
 spec:
-  podSelector: {{ $selector | toJson }}
+  podSelector:
+    matchLabels: {{ $control | toJson }}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: {wamn.dev/org-name: {{ $org | quote }}, wamn.dev/env: "true", wamn.dev/org-workloads: "true"}
+          podSelector: {{ $postgres | toJson }}
+      ports: [{port: 5432, protocol: TCP}]
+{{- range $purpose, $destinations := dict "api-server" .Values.networkPolicy.apiServer "registry" .Values.networkPolicy.registry }}
+{{- if $destinations }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: allow-control-to-{{ $purpose }}, namespace: {{ $org | quote }}}
+spec:
+  podSelector:
+    matchLabels: {{ $control | toJson }}
   policyTypes: [Egress]
   egress:
     {{- range $destinations }}
     - to: [{ipBlock: {cidr: {{ .cidr | quote }}}}]
       ports: [{port: {{ .port | int }}, protocol: TCP}]
     {{- end }}
-{{- end }}
 {{- end }}
 {{- end }}

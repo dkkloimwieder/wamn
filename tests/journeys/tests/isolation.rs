@@ -105,7 +105,7 @@ common::journey! {
         let client = &cluster.client;
         let host = ready_host_pod(&env, OBSERVE_DEADLINE).await?;
         let host_name = host.metadata.name.context("host pod name")?;
-        let hosts = Api::namespaced(client.clone(), org.name.as_str());
+        let hosts = Api::namespaced(client.clone(), &env.namespace());
         let (identity, identity_host) = ready_identity(client).await?;
         let identity_ip = pod_ip(&identity)?;
         let password = SocketAddr::new(identity_ip, identity_port(&identity, "password")?);
@@ -133,14 +133,15 @@ common::journey! {
             "host probe of identity's password listener at {password}: {result}");
 
         // Only admitted control requests reach the general listener's source counter.
-        let control = hosts.list(&ListParams::default().labels("app.kubernetes.io/component=wamn-control"))
+        let controls = Api::namespaced(client.clone(), org.name.as_str());
+        let control = controls.list(&ListParams::default().labels("app.kubernetes.io/component=wamn-control"))
             .await?.items.into_iter().find(ready).context("ready control pod")?;
         let control_ip = pod_ip(&control)?;
         let control_name = control.metadata.name.context("control pod name")?;
         let forwarded = Ipv6Addr::from(
             0x2001_0db8_0000_0000_0000_0000_0000_0000u128 | (uuid::Uuid::new_v4().as_u128() >> 64),
         );
-        let reply = exec(&hosts, &control_name, &AttachParams::default(), [
+        let reply = exec(&controls, &control_name, &AttachParams::default(), [
             "bash", "-ec", IDENTITY_POST, "probe",
             &general.to_string(), &identity_host, "/invitations", &forwarded.to_string(),
             "/var/run/secrets/wamn-identity/token",
@@ -190,7 +191,7 @@ common::journey! {
         let client = &env.org.cluster.client;
         let host = ready_host_pod(&env, OBSERVE_DEADLINE).await?;
         let host_name = host.metadata.name.context("host pod name")?;
-        let hosts = Api::namespaced(client.clone(), env.org.name.as_str());
+        let hosts = Api::namespaced(client.clone(), &env.namespace());
         let (identity, identity_host) = ready_identity(client).await?;
         let general = SocketAddr::new(pod_ip(&identity)?, identity_port(&identity, "https")?);
         let reply = exec(&hosts, &host_name, &AttachParams::default(), [
@@ -218,7 +219,7 @@ common::journey! {
 }
 
 async fn check_isolation(cluster: &Cluster, a: &Triple, b: &App) -> anyhow::Result<()> {
-    let namespace = a.org.as_str();
+    let namespace = &name::env_key(&a.org, &a.env);
     let client = &cluster.client;
     let (labels, image, control, targets) = timeout(OBSERVE_DEADLINE, async {
         let labels = source_labels(client, a).await?;
@@ -290,7 +291,7 @@ async fn source_labels(
 ) -> anyhow::Result<BTreeMap<String, String>> {
     let group = name::env_host_name(&a.org, &a.env);
     let selector = ListParams::default().labels(&format!("{HOST_GROUP_LABEL}={group}"));
-    let pods = Api::<Pod>::namespaced(client.clone(), a.org.as_str());
+    let pods = Api::<Pod>::namespaced(client.clone(), &name::env_key(&a.org, &a.env));
     let pod = until(
         OBSERVE_DEADLINE,
         &format!("{a} has a Ready host pod"),
@@ -320,7 +321,7 @@ async fn live_targets(b: &App) -> anyhow::Result<[(&'static str, SocketAddr); 5]
     let triple = &env.triple;
     let cluster = &env.org.cluster;
     let client = &cluster.client;
-    let namespace = triple.org.as_str();
+    let namespace = &env.namespace();
     let host = ready_host_pod(env, OBSERVE_DEADLINE).await?;
     let host_ip = pod_ip(&host)?;
     // The Ready condition proves the probe listener, and the web call proves HTTP.

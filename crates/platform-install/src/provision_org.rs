@@ -1,4 +1,4 @@
-//! Provision an org's system database logins, registry row, and local OAuth key.
+//! Provision an org's control login and registry row.
 
 use anyhow::Context as _;
 use ring::rand::{SecureRandom as _, SystemRandom};
@@ -16,8 +16,8 @@ use crate::{
 
 pub const CONTROL_SECRET: &str = "wamn-control-db";
 pub const APPLY_SECRET: &str = "wamn-apply-db";
-pub(crate) const OAUTH_SECRET: &str = "wamn-oauth";
-pub const ORG_INPUTS_DIR: &str = "/etc/wamn/org-inputs";
+/// The local OAuth wrapping key Secret in the environment namespace.
+pub const OAUTH_SECRET: &str = "wamn-oauth";
 pub const OAUTH_ENCRYPTION_INPUT: &str = "oauthEncryption";
 pub const SQL_ACCOUNT: &str = "wamn-org-sql";
 pub const INVITATION_ACCOUNT: &str = "wamn-org-invitation";
@@ -32,7 +32,7 @@ pub fn control_login(org: &OrgId, database: &str) -> LoginName {
     )
 }
 
-/// The system database login used for this org's operations.
+/// The org-wide apply login used by isolated SQL fixtures.
 pub fn apply_login(org: &OrgId, database: &str) -> LoginName {
     wamn_registry::name::credential_login(
         wamn_role::APPLY_ROLE,
@@ -49,7 +49,7 @@ pub fn apply_login(org: &OrgId, database: &str) -> LoginName {
 pub async fn provision_org(
     database: &str,
     org: &OrgId,
-    setup: anyhow::Result<(KubernetesApi, serde_json::Value)>,
+    setup: anyhow::Result<KubernetesApi>,
 ) -> anyhow::Result<()> {
     let (_, database_name) = wamn_postgres::identity(database)?;
     let mut connection = connect_system_database(database)
@@ -71,16 +71,7 @@ pub async fn provision_org(
     let job = Some((PLATFORM, PROVISION_JOB));
     record(&mut connection, org, &command, Outcome::Started, job).await?;
     let result = match setup {
-        Ok((secrets, oauth_encryption)) => {
-            provision(
-                &mut connection,
-                &database_name,
-                org,
-                &oauth_encryption,
-                &secrets,
-            )
-            .await
-        }
+        Ok(secrets) => provision(&mut connection, &database_name, org, &secrets).await,
         Err(error) => Err(error),
     };
     let outcome = if result.is_ok() {
@@ -131,27 +122,11 @@ async fn provision(
     connection: &mut sqlx::PgConnection,
     database: &str,
     org: &OrgId,
-    oauth_encryption: &serde_json::Value,
     secrets: &KubernetesApi,
 ) -> anyhow::Result<()> {
     let control = control_login(org, database);
     crate::platform_database::lock_org_login(connection, &control).await?;
-    if oauth_encryption["provider"] == "local"
-        && !secrets
-            .secret_contains_key(org.as_str(), OAUTH_SECRET, "key")
-            .await?
-    {
-        // The host's envelope reader requires 32 raw bytes.
-        let mut key = [0_u8; 32];
-        SystemRandom::new()
-            .fill(&mut key)
-            .map_err(|_| anyhow::anyhow!("generate the OAuth encryption key for org {org}"))?;
-        secrets
-            .patch_namespaced_secret_data(org.as_str(), OAUTH_SECRET, "key", &key)
-            .await?;
-    }
-
-    for login in create_org_logins(connection, org, database).await? {
+    for login in create_org_login_set(connection, org, database, None).await? {
         secrets
             .patch_namespaced_secret_data(
                 org.as_str(),
@@ -183,28 +158,31 @@ impl fmt::Debug for OrgLogin {
     }
 }
 
-/// Create or rotate the org's control and apply logins and record the org, in one transaction.
+/// Set up the control and org-level apply logins for noncluster SQL fixtures.
 pub async fn create_org_logins(
     connection: &mut sqlx::PgConnection,
     org: &OrgId,
     database: &str,
 ) -> anyhow::Result<Vec<OrgLogin>> {
-    let logins = [
-        (
-            control_login(org, database),
-            wamn_role::CONTROL_ROLE,
-            CONTROL_SECRET,
-        ),
-        (
-            apply_login(org, database),
-            wamn_role::APPLY_ROLE,
-            APPLY_SECRET,
-        ),
-    ];
-    let mut passwords = Vec::with_capacity(logins.len());
+    create_org_login_set(connection, org, database, Some(apply_login(org, database))).await
+}
+
+async fn create_org_login_set(
+    connection: &mut sqlx::PgConnection,
+    org: &OrgId,
+    database: &str,
+    fixture_apply: Option<LoginName>,
+) -> anyhow::Result<Vec<OrgLogin>> {
+    let control = (
+        control_login(org, database),
+        wamn_role::CONTROL_ROLE,
+        CONTROL_SECRET,
+    );
+    let apply = fixture_apply.map(|login| (login, wamn_role::APPLY_ROLE, APPLY_SECRET));
+    let mut passwords = Vec::with_capacity(1 + usize::from(apply.is_some()));
     let mut tx =
         wamn_postgres::provisioning_transaction::provisioning_transaction(connection).await?;
-    for (login, group, secret) in logins {
+    for (login, group, secret) in std::iter::once(control).chain(apply) {
         let password = login_password()?;
         // -1: the Poolers cap total server connections, not each login (E5.6).
         write_login(&mut tx, &login, &password, group, -1).await?;

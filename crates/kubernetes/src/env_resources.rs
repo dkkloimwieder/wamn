@@ -21,6 +21,7 @@ pub async fn apply(target: &Target, object: &Value) -> anyhow::Result<()> {
         .as_str()
         .context("env resource has no kind")?;
     let (group, plural) = match kind {
+        "ConfigMap" => ("", "configmaps"),
         "ServiceAccount" => ("", "serviceaccounts"),
         "ResourceQuota" => ("", "resourcequotas"),
         "LimitRange" => ("", "limitranges"),

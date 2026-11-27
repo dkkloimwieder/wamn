@@ -235,6 +235,7 @@ pub async fn app(
                             .await?;
                     let mut values = write::release_values(
                         &document,
+                        &platform.cluster.namespace,
                         &platform_domain,
                         name,
                         &packages.manifests,

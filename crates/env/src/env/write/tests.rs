@@ -97,6 +97,7 @@ fn workload_images_keep_each_repository_and_digest() -> anyhow::Result<()> {
     let manifests = BTreeMap::from([(manifest.package.id.clone(), manifest)]);
     let values = release_values(
         &document,
+        "acme--dev",
         &"example.test".parse()?,
         app,
         &manifests,
@@ -106,6 +107,16 @@ fn workload_images_keep_each_repository_and_digest() -> anyhow::Result<()> {
         &app_repository,
         |_| Ok(502),
     )?;
+    assert_eq!(values["namespace"].as_str(), Some("acme--dev"));
+    let host = values["routeHost"].as_str().expect("public app host");
+    assert_eq!(
+        host,
+        wamn_registry::name::app_host(
+            &document.apps[app].label,
+            &document.settings.org,
+            &"example.test".parse()?
+        )
+    );
     let mut images = workload_images(&values, &chart)?;
     assert!(images.remove(image_set.ingress.as_str()));
     assert!(images.remove(image_set.workflow.as_str()));

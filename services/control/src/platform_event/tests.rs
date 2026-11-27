@@ -151,10 +151,10 @@ async fn org_provisioning_journals_success_and_early_failure() -> anyhow::Result
         loop {
             let (stream, _) = listener.accept().await?;
             let fixture = service_fn(|request: hyper::Request<hyper::body::Incoming>| async move {
-                let response = if request.method() == Method::GET {
-                    json_response(403, &json!({"kind":"Status","status":"Failure","reason":"Forbidden","code":403}))
-                } else {
+                let response = if request.method() == Method::PATCH {
                     json_response(200, &json!({"apiVersion":"v1","kind":"Secret","metadata":{"name":"fixture"}}))
+                } else {
+                    json_response(403, &json!({"kind":"Status","status":"Failure","reason":"Forbidden","code":403}))
                 };
                 Ok::<_, Infallible>(response)
             });
@@ -165,19 +165,16 @@ async fn org_provisioning_journals_success_and_early_failure() -> anyhow::Result
         }
     });
 
-    for (name, oauth, expected) in [
-        ("refused-org", json!({"provider":"local"}), "failed"),
-        (
-            "created-org",
-            json!({"provider":"gcp","project":"fixture","region":"us-central1"}),
-            "succeeded",
-        ),
-    ] {
+    for (name, expected) in [("refused-org", "failed"), ("created-org", "succeeded")] {
         let org = name.parse()?;
-        let mut config = kube::Config::new(server_uri.parse()?);
-        config.default_namespace = "platform".into();
-        let secrets = KubernetesApi::from_config(config)?;
-        let result = provision_org(url.as_str(), &org, Ok((secrets, oauth))).await;
+        let setup = if expected == "succeeded" {
+            let mut config = kube::Config::new(server_uri.parse()?);
+            config.default_namespace = "platform".into();
+            Ok(KubernetesApi::from_config(config)?)
+        } else {
+            Err(anyhow::anyhow!("Kubernetes client setup refused"))
+        };
+        let result = provision_org(url.as_str(), &org, setup).await;
         let registered: bool =
             sqlx::query_scalar("SELECT EXISTS (SELECT FROM registry.org WHERE id = $1)")
                 .bind(name)

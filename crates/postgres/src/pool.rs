@@ -298,7 +298,10 @@ impl CredentialProvider for StaticCredentialProvider {
                     && options.get_username() == expected
                     && wamn_registry::name::project_database_key(database).as_ref() == Some(key)
                     && options.get_host()
-                        == wamn_registry::name::project_database_host(database, &triple.org)
+                        == wamn_registry::name::project_database_host(
+                            database,
+                            &wamn_registry::name::env_key(&triple.org, &triple.env),
+                        )
                     && options.get_port() == 5432
                     && options.get_socket().is_none(),
                 "the {class} credential does not match project {key} and its database endpoint"
@@ -449,7 +452,10 @@ mod tests {
         format!(
             "postgres://{}:pw@{}:5432/{database}",
             wamn_role::APP_LOGIN,
-            wamn_registry::name::project_database_host(&database, &triple.org)
+            wamn_registry::name::project_database_host(
+                &database,
+                &wamn_registry::name::env_key(&triple.org, &triple.env),
+            )
         )
     }
 

@@ -113,9 +113,9 @@ Use the same kubeconfig to run `wamn org deactivate <org>` or `wamn org activate
 Deactivation refuses new commands and logins for the org. Its workloads keep running.
 Activation restores admission under the existing grants.
 On kind, the command copies the registry entry into the org's `wamn-registry-pull` Secret.
-The command installs the org chart with public platform settings. Its platform Job writes the control and apply passwords to their org Secrets before the invitation Job runs.
+The command installs the org chart with public platform settings. Its platform Job writes the control password to the org Secret before the invitation Job runs.
 The Job records its start and result as `org_create` in the system journal, including failures before the org is registered.
-For local OAuth encryption, the same Job generates a separate 32-byte key in `<org>/wamn-oauth` if the `key` entry is absent. Cloud KMS uses no org OAuth Secret. [Org chart](../../deploy/charts/org/README.md)
+[Org chart](../../deploy/charts/org/README.md)
 
 If the owner email belongs to another org, control refuses the invitation with HTTP 409.
 The command exits with `Error: Job <org>/wamn-org-invitation-<suffix> failed`. The invitation Job's log shows the HTTP 409.
@@ -126,8 +126,8 @@ The full resolver has a separate volume. [Platform chart](../../deploy/charts/pl
 On kind, run `wamn env create <org>/<env>` with the same admin kubeconfig and registry auth file before the first `wamn env apply`.
 The command checks that the names fit. It prepares the workload namespace and an empty login Secret before it starts a SQL Job in `platform`.
 The Job commits the env and quota. It writes the worker login to the Secret after the commit.
-The command then creates the Helm storage namespace and applies the env account, default-deny policy, quota, LimitRange and local registry credentials.
-Local OAuth encryption uses a separate `wamn-oauth` key in each env namespace. A retry keeps that key and publishes the worker's new password.
+The command then creates the Helm storage namespace. It applies the env account, worker configuration, network policies, quotas, and local registry credentials.
+Local OAuth encryption uses a separate `wamn-oauth` key in each env namespace. Control reads that key for authorize and callback. A retry keeps the key and publishes the worker’s new password.
 If provisioning fails partway through, run the same command again.
 If the quota changes in the system database, run the command again to apply it.
 
@@ -282,13 +282,13 @@ Control records dispatch failures and refusals, and workers record the results o
 The journal remains after Kubernetes removes the Job and its logs.
 
 The server selects the image, command, namespace, actor, chart, and credential references.
-Operation workers stage the org's apply login and system database CA in the Job's in-memory volume.
+Operation workers stage the environment's apply login and system database CA in the Job's in-memory volume.
 They stage project logins and the project CA as needed.
 Reset advances replication through the capture login and removes package objects through their migration login.
 SQL steps run inside the authorized operation Job with their owning role credentials.
 The control image runs workers and reads the installed chart reference.
 The installed control configuration names the pinned worker image and its configuration.
-Deploy, rollback, stop, schema apply, reset, and capture-gap recovery and close all use the org worker ServiceAccount because they run Helm.
+Deploy, rollback, stop, schema apply, reset, and capture-gap recovery and close use the environment worker ServiceAccount because they run Helm.
 Schema diff alone uses the project operation ServiceAccount. It can read declared application workloads and stage named migration credentials and database CAs in the Job's database volume.
 Configure creates the CDC reader's ServiceAccount from `operations.capture`. The Deployment mounts the replication login and the project's database CA certificate. Delete removes the account with the reader.
 
@@ -364,9 +364,9 @@ projects:
 
 Helm installs, upgrades, and rollbacks use `--server-side=true`.
 Environment and application installs and upgrades pass `--skip-crds`. The installation release provides the runtime resource types.
-Org release records go in `wamn-helm-<org>`. The charts use an explicit org namespace value for their workloads and credentials.
-`wamn org create` creates the storage namespace before installing the org chart.
-Use this layout for new installs. Existing Helm records and their resource ownership stay in place.
+Org release records go in `wamn-helm-<org>`.
+Host, project, and app release records go in `wamn-helm-<org>--<env>`.
+Their workloads and credentials go in `<org>--<env>`. This layout requires a fresh installation.
 The kstatus watcher retains `list` and `watch` on the non-Secret kinds that environment and application charts render.
 
 `wamn env apply env.yaml` holds one environment lock.
@@ -934,7 +934,7 @@ Each platform upgrade runs the Job again. It preserves the baseline and skips mi
 
 Set `WAMN_CONTROL_URL` and `WAMN_TOKEN` for project SQL operations.
 Supply the environment document with `--env`.
-Control selects its installed chart and pinned worker image and runs a bounded Job in the org namespace.
+Control selects its installed chart and pinned worker image. It reads the environment mapping, then starts a Job in that namespace.
 
 ```bash
 wamn platform schema diff --target project --env env.yaml
@@ -1001,7 +1001,7 @@ Include trust bundle updates, leaf certificate reissuance, and restarts for clie
 
 Runtime pools, OAuth transactions, and resource leases use SQLx with verified TLS.
 Component configuration names the database host, port, database, login, login Secret, and CNPG CA Secret.
-The login and CA Secrets live in the consumer’s namespace. Shared identity, the platform SQL Job, and the org provisioning Jobs mount them in `platform`. Hosts, CDC readers, and control use read-only mounts in their org namespace.
+The login and CA Secrets live in the consumer’s namespace. Shared identity, the platform SQL Job, and the org provisioning Jobs mount them in `platform`. Hosts and CDC readers mount their database credentials in the environment namespace. Control mounts its system login in the org namespace and reads project logins through Kubernetes.
 Operation workers copy the selected Secret keys to a memory-backed volume as the database names become known.
 The database client reads `ca.crt` from `/etc/wamn/db/<login-secret>/` to verify the server.
 For a password login, the client reads `username` and `password` from that directory.
@@ -1017,7 +1017,7 @@ The provisioned CNPG clusters accept client connections only over TLS.
 
 Org network policies deny ingress and egress by default.
 `wamn org create` finds the API server destinations and copies `registryEgress` from `wamn-org-inputs` into `networkPolicy.registry`.
-The registry rules allow control, the org worker, and hosts to reach those CIDR blocks and TCP ports.
+The registry rules allow control, the environment worker, and hosts to reach those CIDR blocks and TCP ports.
 The environment and project charts allow connections to their host group and database. The edge accepts ingress from Traefik on installations that use Traefik.
 The platform chart denies ingress by default and allows the specific callers of shared services.
 `wamn platform deploy` discovers Kubernetes API addresses for the CloudNativePG webhook and for edge egress on kind.
@@ -1028,7 +1028,7 @@ The rule excludes fixed private and special-use ranges. The runtime still checks
 ## Kubernetes credentials
 
 The project chart creates an empty `wamn-credential-<org>--<env>--<project>` Secret with one key per credential UUID.
-Control reads and patches that Secret by name. Each merge patch updates one credential key and the labels control owns.
+Control reads and patches that Secret by name in the recorded environment namespace. Each merge patch updates one credential key and the labels control owns.
 Use Helm server-side apply for the project chart so the Secret keeps its credential keys on upgrade.
 Helm retains the Secret during uninstall.
 The database stores the Secret name and entry name as a `k8s` reference.

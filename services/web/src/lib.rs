@@ -465,10 +465,8 @@ pub async fn serve(path: &Path) -> anyhow::Result<()> {
         ))
     };
     let web = Arc::new(Web { store });
-    let releases = Arc::new(Releases::new(
-        KubernetesApi::in_cluster()?,
-        config.platform_domain,
-    ));
+    let releases =
+        Arc::new(Releases::new(KubernetesApi::in_cluster()?, config.platform_domain).await?);
     ensure!(
         config.identity_password_url.starts_with("https://"),
         "identity password URL must use HTTPS"
@@ -478,8 +476,11 @@ pub async fn serve(path: &Path) -> anyhow::Result<()> {
     let identity_password_url: Arc<str> = config.identity_password_url.into();
     let trusted_proxy_hops = config.trusted_proxy_hops;
     let mut tasks = tokio::task::JoinSet::new();
+    let namespaces = releases.watch_namespaces();
+    tokio::pin!(namespaces);
     loop {
         tokio::select! {
+            () = &mut namespaces => unreachable!("Namespace watch runs until shutdown"),
             signal = tokio::signal::ctrl_c() => { signal?; break; }
             Some(_) = tasks.join_next(), if !tasks.is_empty() => {}
             accepted = listener.accept() => {
@@ -519,7 +520,7 @@ pub async fn serve(path: &Path) -> anyhow::Result<()> {
 /// Returns an error naming the host and path if a response is not successful.
 pub async fn probe(path: &Path) -> anyhow::Result<()> {
     let config: WebConfig = serde_json::from_slice(&std::fs::read(path)?)?;
-    let releases = Releases::new(KubernetesApi::in_cluster()?, config.platform_domain);
+    let releases = Releases::new(KubernetesApi::in_cluster()?, config.platform_domain).await?;
     let client: Client<HttpConnector, Empty<Bytes>> = http_transport::http_client();
     for (host, route) in releases.routes().await? {
         let row = releases.read(&route.namespace, &route.release).await?;
@@ -632,9 +633,15 @@ mod tests {
                     let (route, release) = (&route, &release);
                     async move {
                         let (status, value) = match request.uri().path() {
-                            "/api/v1/configmaps" => (StatusCode::OK,
-                                json!({"items":[{"metadata":{"name":"app","namespace":"acme"},"data":{"route.json":route.to_string()}}]})),
-                            "/api/v1/namespaces/acme/configmaps/app" => (StatusCode::OK,
+                            "/api/v1/namespaces" => (StatusCode::OK, json!({"metadata":{"resourceVersion":"1"},"items":[
+                                {"metadata":{"name":"acme--dev","labels":{"wamn.dev/env":"true","wamn.dev/org-workloads":"true","wamn.dev/org-name":"acme"}}},
+                                {"metadata":{"name":"acme--prod","labels":{"wamn.dev/env":"true","wamn.dev/org-workloads":"true"}}}
+                            ]})),
+                            "/api/v1/configmaps" => (StatusCode::OK, json!({"items":[
+                                {"metadata":{"name":"a","namespace":"acme--prod"},"data":{"route.json":route.to_string()}},
+                                {"metadata":{"name":"app","namespace":"acme--dev"},"data":{"route.json":route.to_string()}}
+                            ]})),
+                            "/api/v1/namespaces/acme--dev/configmaps/app" => (StatusCode::OK,
                                 json!({"data":{"release.json":release.to_string()}})),
                             _ => (StatusCode::ACCEPTED, json!(null)),
                         };
@@ -656,7 +663,9 @@ mod tests {
         let releases = Releases::new(
             KubernetesApi::from_config(config).unwrap(),
             "example".parse().unwrap(),
-        );
+        )
+        .await
+        .unwrap();
         let web = Web { store: None };
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let front = format!("http://{}", listener.local_addr().unwrap());

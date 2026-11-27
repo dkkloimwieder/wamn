@@ -61,8 +61,10 @@ fn key_file_requires_exact_length_and_private_permissions() {
 #[tokio::test]
 async fn wrong_envelope_key_and_tampered_columns_refuse() {
     let envelope = local(&[7; 32], 0o600).unwrap();
-    let other = local(&[8; 32], 0o600).unwrap();
+    let other = from_secret(&[8; 32]).unwrap();
     let row = envelope.encrypt(b"private-token").await.unwrap();
+    let same = from_secret(&[7; 32]).unwrap();
+    assert_eq!(same.decrypt(&row).await.unwrap().expose(), b"private-token");
     assert!(other.decrypt(&row).await.is_err());
     let mut relabeled = row.clone();
     relabeled.key_id = other.encrypt(b"private-token").await.unwrap().key_id;

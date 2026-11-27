@@ -1,5 +1,5 @@
 {{- define "env.namespace" -}}
-{{- required "Set org." .Values.org -}}
+{{- required "Set namespace." .Values.namespace -}}
 {{- end -}}
 
 

@@ -1,7 +1,0 @@
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: wamn-platform
-  namespace: {{ .Values.org | quote }}
-data:
-  postgres.json: {{ .Values.postgres | toJson | quote }}

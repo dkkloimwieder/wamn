@@ -65,7 +65,7 @@ impl DatabaseFiles {
         anyhow::ensure!(
             config.credentials.namespace == self.0.namespace
                 && config.server_ca.namespace == self.0.namespace,
-            "database credential sources and worker must share the org namespace"
+            "database credential sources and worker must share a namespace"
         );
         let root = Path::new(DATABASE_DIR);
         let directory = credential_directory(root, &config.credentials.name)?;

@@ -33,6 +33,13 @@ impl CredentialSecrets {
         Ok(Self::new(KubernetesApi::in_cluster()?))
     }
 
+    /// Read and patch credential versions in a namespace selected by the caller.
+    pub fn in_namespace(namespace: &str) -> Result<Self, Error> {
+        let mut api = KubernetesApi::in_cluster()?;
+        namespace.clone_into(&mut api.namespace);
+        Ok(Self::new(api))
+    }
+
     pub(crate) fn new(api: KubernetesApi) -> Self {
         Self {
             secrets: api.into_secrets(),

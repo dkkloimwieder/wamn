@@ -57,13 +57,51 @@ impl ProjectLogins {
         if let Some(options) = self.test_logins.get(triple) {
             return Ok(options.clone());
         }
+        let namespace = self.namespace(&triple.env).await?;
+        self.login_in(triple, instance, &namespace).await
+    }
+
+    pub(crate) async fn namespace(&self, env: &EnvName) -> anyhow::Result<String> {
+        let mut connection = self.control.acquire().await?;
+        wamn_env::registry::deployment::namespace(&mut connection, &self.org, env)
+            .await?
+            .with_context(|| format!("env {}/{env} is not provisioned", self.org))
+    }
+
+    pub(crate) async fn oauth_key(
+        &self,
+        namespace: &str,
+    ) -> anyhow::Result<wamn_envelope::encryption::Envelope> {
+        let secrets = Api::<Secret>::namespaced(self.kubernetes.client(), namespace);
+        let secret = tokio::time::timeout(
+            REQUEST_TIMEOUT,
+            secrets.get(wamn_platform_install::provision_org::OAUTH_SECRET),
+        )
+        .await??;
+        let key = secret
+            .data
+            .and_then(|mut data| data.remove("key"))
+            .context("environment OAuth Secret has no key")?;
+        let bytes = zeroize::Zeroizing::new(key.0);
+        Ok(wamn_key::from_secret(&bytes)?)
+    }
+
+    pub(crate) async fn login_in(
+        &self,
+        triple: &Triple,
+        instance: &InstanceSuffix,
+        namespace: &str,
+    ) -> anyhow::Result<PgConnectOptions> {
+        #[cfg(test)]
+        if let Some(options) = self.test_logins.get(triple) {
+            return Ok(options.clone());
+        }
         let config = wamn_identity::platform_login::platform_connection(
-            wamn_postgres::database::connection_for(triple, instance),
+            wamn_postgres::database::connection_for(triple, instance, namespace),
         )?;
         let server_ca = wamn_registry::name::project_server_ca_copy(
             &wamn_registry::name::project_cluster(&config.database),
         );
-        let namespace = &self.kubernetes.namespace;
         let secrets = Api::<Secret>::namespaced(self.kubernetes.client(), namespace);
         let maps = Api::<ConfigMap>::namespaced(self.kubernetes.client(), namespace);
         let (login, ca) = tokio::time::timeout(REQUEST_TIMEOUT, async {

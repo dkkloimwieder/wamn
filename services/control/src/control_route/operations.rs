@@ -62,27 +62,29 @@ impl ControlRoutes<'_> {
                 detail: json!({"field":"env"}),
             });
         }
+        let namespace =
+            wamn_env::registry::deployment::namespace(&mut transaction, self.org, &request.env)
+                .await?
+                .ok_or_else(|| Refusal::Declared {
+                    code: "env_not_found",
+                    detail: json!({"field":"env"}),
+                })?;
         transaction.commit().await?;
         drop(writer);
 
-        let api;
-        let api = if let Some(api) = self.operation_jobs {
-            api
+        let mut api = if let Some(api) = self.operation_jobs {
+            api.clone()
         } else {
-            api = KubernetesApi::in_cluster().map_err(anyhow::Error::from)?;
-            &api
+            KubernetesApi::in_cluster().map_err(anyhow::Error::from)?
         };
-        let namespace = &api.namespace;
-        if namespace != self.org {
-            return Err(anyhow::anyhow!("operation worker must share the org namespace").into());
-        }
+        api.namespace = namespace;
         let Some(operation) = operation else {
             if request.app.is_some() || request.release.is_some() || request.revision.is_some() {
                 return Err(invalid("value"));
             }
             let name = request.job.as_deref().ok_or_else(|| invalid("job"))?;
             return wamn_kubernetes::job::observe(
-                api,
+                &api,
                 name,
                 &coordinate,
                 &[
@@ -98,12 +100,13 @@ impl ControlRoutes<'_> {
         let mut job = manifest(
             operation,
             &triple,
+            &api.namespace,
             &coordinate,
             worker,
             self.registry_token_metadata,
         );
         let input = json!({"type":"project_operation","operation":operation,"request":request});
-        crate::platform::submit(api, &mut job, &input, command)
+        crate::platform::submit(&api, &mut job, &input, command)
             .await
             .map_err(Refusal::from)
     }
@@ -145,6 +148,7 @@ fn validate(operation: Operation, request: &Request) -> Result<(), Refusal> {
 fn manifest(
     operation: Operation,
     triple: &wamn_registry::Triple,
+    namespace: &str,
     coordinate: &str,
     worker: &wamn_kubernetes::job::Worker,
     metadata: bool,
@@ -156,7 +160,7 @@ fn manifest(
         &["/usr/local/bin/wamn-control"],
         &["--settings", crate::SETTINGS_FILE, "worker"],
     );
-    job["metadata"]["namespace"] = triple.org.as_str().into();
+    job["metadata"]["namespace"] = namespace.into();
     job["metadata"]["annotations"] = json!({TARGET:coordinate,OPERATION:operation.command()});
     job["spec"]["ttlSecondsAfterFinished"] = 3600.into();
     job["spec"]["template"]["spec"]["serviceAccountName"] = match operation {
@@ -210,7 +214,16 @@ mod tests {
             configuration: "control-settings".into(),
             service_account: "worker".into(),
         };
-        let job = manifest(Operation::Deploy, &triple, "billing-dev", &worker, false);
+        let namespace = wamn_registry::name::env_key(&triple.org, &triple.env);
+        let job = manifest(
+            Operation::Deploy,
+            &triple,
+            &namespace,
+            "billing-dev",
+            &worker,
+            false,
+        );
+        assert_eq!(job["metadata"]["namespace"], namespace);
         let pod = &job["spec"]["template"]["spec"];
         let mounts = pod["containers"][0]["volumeMounts"]
             .as_array()
@@ -240,7 +253,15 @@ mod tests {
             configuration: "control-settings".into(),
             service_account: "worker".into(),
         };
-        let job = manifest(Operation::Deploy, &triple, "billing-dev", &worker, false);
+        let namespace = wamn_registry::name::env_key(&triple.org, &triple.env);
+        let job = manifest(
+            Operation::Deploy,
+            &triple,
+            &namespace,
+            "billing-dev",
+            &worker,
+            false,
+        );
         let containers = job["spec"]["template"]["spec"]["containers"]
             .as_array()
             .expect("project Job containers");

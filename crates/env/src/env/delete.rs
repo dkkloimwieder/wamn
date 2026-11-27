@@ -104,8 +104,9 @@ async fn deactivate_locked(
             .cluster
             .database_cluster_exists(&name::project_cluster(&database))
             .await?;
-    let project_connection = (database_managed && !cluster_missing)
-        .then(|| wamn_postgres::database::connection_for(triple, &instance));
+    let project_connection = (database_managed && !cluster_missing).then(|| {
+        wamn_postgres::database::connection_for(triple, &instance, &platform.cluster.namespace)
+    });
     let project_lock = if cluster_missing {
         lines.push(format!(
             "--data: project database {database} unreachable (Cluster is absent). Deleted without the database-side steps."

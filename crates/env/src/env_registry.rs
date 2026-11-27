@@ -34,11 +34,12 @@ pub async fn record_project_env(
     triple: &Triple,
     target: &str,
     secret_name: &str,
-    secret_namespace: Option<&str>,
     candidate: &InstanceSuffix,
     disposable: Option<bool>,
 ) -> anyhow::Result<InstanceSuffix> {
-    deployment::require_provisioned(transaction, &triple.org, &triple.env).await?;
+    let namespace = deployment::namespace(transaction, &triple.org, &triple.env)
+        .await?
+        .with_context(|| format!("env {}/{} is not provisioned", triple.org, triple.env))?;
     deployment::record_project(transaction, &triple.org, &triple.project)
         .await
         .context("record project")?;
@@ -63,7 +64,7 @@ pub async fn record_project_env(
         &wamn_registry::deployment::Registration {
             triple,
             secret_name,
-            secret_namespace,
+            secret_namespace: Some(&namespace),
             instance_suffix: candidate,
             disposable,
             target_id: &target_id,

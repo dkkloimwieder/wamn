@@ -43,6 +43,12 @@ pub fn from_file(path: &Path) -> Result<Envelope, Error> {
     Ok(Envelope::new(Box::new(Backend::File(file_key(path)?))))
 }
 
+/// Open the local envelope key read from the environment's Kubernetes Secret.
+pub fn from_secret(key: &[u8]) -> Result<Envelope, Error> {
+    let key = data_key(key).map_err(|_| Error::new("open", "local key must contain 32 bytes"))?;
+    Ok(Envelope::new(Box::new(Backend::File(local_key(key)))))
+}
+
 fn kms(project: &str, region: &str) -> Result<Kms, Error> {
     if ![project, region].iter().all(|value| {
         !value.is_empty()
@@ -118,8 +124,12 @@ fn file_key(path: &Path) -> Result<FileKey, Error> {
     let mut key = Zeroizing::new([0; 32]);
     file.read_exact(key.as_mut())
         .map_err(|_| Error::new("open", "key file unavailable"))?;
+    Ok(local_key(key))
+}
+
+fn local_key(key: Zeroizing<[u8; 32]>) -> FileKey {
     let id = format!("file:{}", &hex::encode(Sha256::digest(key.as_ref()))[..16]);
-    Ok(FileKey { key, id })
+    FileKey { key, id }
 }
 fn data_key(bytes: &[u8]) -> Result<Zeroizing<[u8; 32]>, Error> {
     bytes

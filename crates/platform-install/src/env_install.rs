@@ -3,7 +3,7 @@
 use anyhow::{Context as _, ensure};
 use ring::rand::{SecureRandom as _, SystemRandom};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Value, json};
 use wamn_kubernetes::{Target, client::KubernetesApi, env_resources, helm, job, org_resources};
 use wamn_registry::{EnvName, OrgId, name};
 
@@ -49,7 +49,10 @@ pub async fn create(org: &OrgId, env: &EnvName) -> anyhow::Result<()> {
     let registry = field(inputs, "registry")?;
     let credentials = docker_configuration(registry, &internal_registry(registry))?;
     let registry = registry_destinations(inputs)?;
-    let apply_pooler = field(inputs, "applyDatabaseHost")?;
+    let apply_poolers = [
+        field(inputs, "applyDatabaseHost")?,
+        field(inputs, "applyTransactionDatabaseHost")?,
+    ];
 
     let image = control_image(inputs)?;
     let namespace = name::env_key(org, env);
@@ -78,7 +81,7 @@ pub async fn create(org: &OrgId, env: &EnvName) -> anyhow::Result<()> {
         for object in manifests(
             org,
             namespace,
-            apply_pooler,
+            apply_poolers,
             database.port,
             &api_server,
             &registry,
@@ -95,6 +98,9 @@ pub async fn create(org: &OrgId, env: &EnvName) -> anyhow::Result<()> {
                 env_resources::apply(&target, &object).await?;
             }
         }
+        for object in worker_configuration(inputs, &database, org, namespace, &committed.login, &api_server)? {
+            env_resources::apply(&target, &object).await?;
+        }
         org_resources::write_registry_credentials_in(&target, namespace, &credentials).await?;
         if encryption["provider"] == "local" {
             let mut key = [0_u8; 32];
@@ -109,11 +115,56 @@ pub async fn create(org: &OrgId, env: &EnvName) -> anyhow::Result<()> {
     .with_context(|| format!("env {org}/{env} is recorded. Run wamn env create {org}/{env} again to finish provisioning"))
 }
 
+/// Build the settings and PostgreSQL inputs mounted or read by env Jobs.
+pub fn worker_configuration(
+    inputs: &Value,
+    database: &wamn_postgres::database::ConnectionConfig,
+    org: &OrgId,
+    namespace: &str,
+    login: &wamn_role::LoginName,
+    api_server: &[Value],
+) -> anyhow::Result<[Value; 2]> {
+    let mut values = crate::org::org_values(inputs, database, org, api_server)?;
+    let mut configuration = values["control"]["configuration"].take();
+    configuration
+        .as_object_mut()
+        .context("missing worker settings")?
+        .remove("database");
+    configuration["public_origin"] = format!("https://{org}.{}", field(inputs, "base")?).into();
+    configuration["apply_transaction_host"] = field(inputs, "applyTransactionDatabaseHost")?.into();
+    configuration["apply_database"] = json!({
+        "host":field(inputs, "applyDatabaseHost")?,
+        "port":database.port,
+        "database":database.database,
+        "username":login,
+        "credentials":{"namespace":namespace,"name":APPLY_SECRET},
+        "server_ca":{"namespace":namespace,"name":crate::org::SYSTEM_DATABASE_CA},
+    });
+    let config_map = |name: &str, file: &str, value: &Value| {
+        json!({"apiVersion":"v1","kind":"ConfigMap",
+            "metadata":{"name":name,"namespace":namespace},
+            "data":{(file):value.to_string()},
+        })
+    };
+    Ok([
+        config_map(
+            &format!("{}-settings", name::control_resource(org)),
+            "settings.json",
+            &configuration,
+        ),
+        config_map(
+            "wamn-platform",
+            "postgres.json",
+            &json!({"image": field(inputs, "postgresImage")?}),
+        ),
+    ])
+}
+
 /// Render the env's namespaces and admission, access and network rules.
 pub fn manifests(
     org: &OrgId,
     namespace: &str,
-    apply_pooler_host: &str,
+    apply_pooler_hosts: [&str; 2],
     database_port: u16,
     api_server: &[Value],
     registry: &[Value],
@@ -121,12 +172,16 @@ pub fn manifests(
 ) -> anyhow::Result<Vec<Value>> {
     let storage = helm::org_release_namespace(namespace);
     let (workloads, releases) = namespaces(org, namespace, &storage);
-    let apply_pooler = service_name(apply_pooler_host)?;
+    let [session_pooler, transaction_pooler] = apply_pooler_hosts;
+    let apply_poolers = [
+        service_name(session_pooler)?,
+        service_name(transaction_pooler)?,
+    ];
     let mut objects = vec![workloads, releases];
     objects.extend(boundary(org, namespace, &storage, quota));
     objects.extend(network_policies(
         namespace,
-        apply_pooler,
+        apply_poolers,
         database_port,
         api_server,
         registry,
@@ -181,6 +236,7 @@ pub async fn provision_in_cluster(
     drop(connection);
     let committed = EnvSqlResult {
         namespace: worker.namespace,
+        login: worker.login,
         quota: worker.quota,
     };
     tokio::fs::write(ENV_SQL_RESULT_PATH, serde_json::to_vec(&committed)?)
@@ -192,6 +248,7 @@ pub async fn provision_in_cluster(
 #[serde(deny_unknown_fields)]
 struct EnvSqlResult {
     namespace: String,
+    login: wamn_role::LoginName,
     quota: Quota,
 }
 
@@ -275,7 +332,7 @@ mod tests {
         let manifests = manifests(
             &org,
             &namespace,
-            "pooler.platform.svc",
+            ["pooler.platform.svc", "pooler-transaction.platform.svc"],
             5432,
             &[],
             &[],
@@ -298,6 +355,14 @@ mod tests {
         assert!(
             find("Namespace", &storage)?["metadata"]["labels"]["wamn.dev/org-workloads"].is_null()
         );
+        let worker_egress = find("NetworkPolicy", "allow-worker-to-platform")?["spec"]["egress"]
+            .as_array()
+            .context("worker egress rules")?;
+        for pooler in ["pooler", "pooler-transaction"] {
+            assert!(worker_egress.iter().any(|rule| {
+                rule["to"][0]["podSelector"]["matchLabels"]["cnpg.io/poolerName"] == pooler
+            }));
+        }
         let deny = &find("NetworkPolicy", "default-deny")?["spec"];
         assert_eq!(deny["podSelector"], json!({}));
         assert_eq!(deny["policyTypes"], json!(["Ingress", "Egress"]));

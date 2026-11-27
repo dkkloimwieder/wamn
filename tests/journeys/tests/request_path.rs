@@ -51,7 +51,8 @@ common::journey! {
         )
         .fetch_all(&mut observed.connection)
         .await?;
-        let secrets = Api::<Secret>::namespaced(org.cluster.client.clone(), org.name.as_str());
+        let namespace = name::env_key(&project.triple.org, &project.triple.env);
+        let secrets = Api::<Secret>::namespaced(org.cluster.client.clone(), &namespace);
         let secret_name = name::credential_secret_name(
             &org.name, &project.triple.project, &project.triple.env,
         );
@@ -175,9 +176,9 @@ common::journey! {
                     &PostParams::default(),
                     &SubjectAccessReview {
                         spec: SubjectAccessReviewSpec {
-                            user: Some(format!("system:serviceaccount:{}:{account}", org.name)),
+                            user: Some(format!("system:serviceaccount:{}:{account}", name::env_key(&b.triple.org, &b.triple.env))),
                             resource_attributes: Some(ResourceAttributes {
-                                namespace: Some(org.name.to_string()),
+                                namespace: Some(name::env_key(&owner.org, &owner.env)),
                                 verb: Some("get".to_owned()),
                                 resource: Some("secrets".to_owned()),
                                 name: Some(secret.clone()),
@@ -210,7 +211,7 @@ common::journey! {
         let client = &app.env.org.cluster.client;
         let env = &app.env;
 
-        public_roots_arrive_with_their_certificates(&env.org).await?;
+        public_roots_arrive_with_their_certificates(env).await?;
         let old = request::delete_host(client, env, Some(0)).await?;
         request::wait_host_restarted(client, env, &old).await?;
         let (status, answer) = request::read(&app.routes, "/widget/list", &json!({})).await?;
@@ -309,22 +310,26 @@ common::journey! {
 
 /// Check the controller-produced targets of the installed Bundles, using their
 /// source certificate Secrets and the cluster's actual namespace labels.
-async fn public_roots_arrive_with_their_certificates(org: &Org) -> anyhow::Result<()> {
+async fn public_roots_arrive_with_their_certificates(env: &common::Env) -> anyhow::Result<()> {
     use k8s_openapi::api::core::v1::{ConfigMap, Namespace, Secret};
     use kube::api::{ApiResource, DynamicObject, GroupVersionKind, ListParams};
     use rustls::pki_types::{CertificateDer, pem::PemObject as _};
 
+    let org = &env.org;
     let client = &org.cluster.client;
     let namespaces = Api::<Namespace>::all(client.clone());
-    let (hosts, tenant) =
-        tokio::try_join!(namespaces.get("hosts"), namespaces.get(org.name.as_str()))?;
+    let tenant = format!("wamn.dev/org-name={}", org.name);
+    let params = ListParams::default().labels(&tenant);
+    let (hosts, tenant) = tokio::try_join!(namespaces.get("hosts"), namespaces.list(&params))?;
+    let mut destinations = tenant.items;
+    destinations.push(hosts);
     let resource = ApiResource::from_gvk_with_plural(
         &GroupVersionKind::gvk("trust.cert-manager.io", "v1alpha1", "Bundle"),
         "bundles",
     );
     let bundles = Api::<DynamicObject>::all_with(client.clone(), &resource);
     let sources = Api::<Secret>::namespaced(client.clone(), "platform");
-    let records = latest_trust_release_records(org).await?;
+    let records = latest_trust_release_records(env).await?;
     for (release, record) in &records {
         ensure!(
             !record.contains("PRIVATE KEY-----"),
@@ -359,7 +364,7 @@ async fn public_roots_arrive_with_their_certificates(org: &Org) -> anyhow::Resul
             .context("source PEM")?
             .0;
         let certificate = CertificateDer::from_pem_slice(pem)?;
-        for namespace in [&hosts, &tenant] {
+        for namespace in &destinations {
             if !selector.iter().all(|(key, value)| {
                 namespace
                     .metadata
@@ -393,20 +398,40 @@ async fn public_roots_arrive_with_their_certificates(org: &Org) -> anyhow::Resul
     Ok(())
 }
 
-async fn latest_trust_release_records(org: &Org) -> anyhow::Result<Vec<(&'static str, String)>> {
-    let outputs = &org.cluster.outputs;
-    let storage = format!("wamn-helm-{}", org.name);
+async fn latest_trust_release_records(env: &common::Env) -> anyhow::Result<Vec<(String, String)>> {
+    use k8s_openapi::api::core::v1::Secret;
+    use kube::api::ListParams;
+
+    let outputs = &env.org.cluster.outputs;
+    let org_storage = format!("wamn-helm-{}", env.org.name);
+    let env_storage = format!("wamn-helm-{}", env.namespace());
+    let mut releases = vec![
+        ("platform", "wamn-infrastructure".to_owned()),
+        ("platform", "wamn".to_owned()),
+        (org_storage.as_str(), "wamn-org".to_owned()),
+    ];
+    let releases_in_env = Api::<Secret>::namespaced(env.org.cluster.client.clone(), &env_storage)
+        .list_metadata(&ListParams::default().labels("owner=helm,status=deployed"))
+        .await?;
+    ensure!(
+        !releases_in_env.items.is_empty(),
+        "{env_storage} has no deployed Helm releases"
+    );
+    for metadata in releases_in_env.items {
+        let release = metadata
+            .metadata
+            .labels
+            .and_then(|mut labels| labels.remove("name"))
+            .context("Helm release name label")?;
+        releases.push((&env_storage, release));
+    }
     let mut records = Vec::new();
-    for (namespace, release) in [
-        ("platform", "wamn-infrastructure"),
-        ("platform", "wamn"),
-        (storage.as_str(), "wamn-org"),
-    ] {
+    for (namespace, release) in releases {
         let output = tokio::process::Command::new("helm")
             .args([
                 "get",
                 "all",
-                release,
+                &release,
                 "-n",
                 namespace,
                 "--kube-context",

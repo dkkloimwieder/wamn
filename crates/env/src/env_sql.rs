@@ -64,8 +64,8 @@ pub const IDENTITY_PLATFORM_SRC_ORG_ORG_PROJECT_ENVS_SQL: &str = "SELECT project
 pub const IDENTITY_PLATFORM_SRC_ORG_CREATE_PROJECT_SQL: &str =
     "INSERT INTO registry.project (org, id) VALUES ($1, $2) ON CONFLICT (org, id) DO NOTHING";
 
-/// Read the active deployment's suffix and its env's disposable setting.
-pub const CONTROL_ENV_SRC_ENV_ANALYSE_READ_ROW: &str = "SELECT instance_suffix, disposable FROM registry.project_env p JOIN registry.env USING (org,env) \
+/// Read the active deployment's suffix, disposable setting and namespace.
+pub const CONTROL_ENV_SRC_ENV_ANALYSE_READ_ROW: &str = "SELECT instance_suffix, disposable, namespace FROM registry.project_env p JOIN registry.env USING (org,env) \
               WHERE org = $1 AND project = $2 AND env = $3 AND p.active";
 
 /// Read the instance suffix and drain bound before project deactivation.
