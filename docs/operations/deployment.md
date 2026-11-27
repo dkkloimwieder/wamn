@@ -126,6 +126,8 @@ The full resolver has a separate volume. [Platform chart](../../deploy/charts/pl
 On kind, run `wamn env create <org>/<env>` with the same admin kubeconfig and registry auth file before the first `wamn env apply`.
 The command checks that the names fit. It prepares the workload namespace and an empty login Secret before it starts a SQL Job in `platform`.
 The Job commits the env and quota. It writes the worker login to the Secret after the commit.
+For each new environment on kind, the chart sets the default container CPU request to `10m` (10 millicores).
+If the chart supplies no value, the database sets the request to `100m`.
 The command then creates the Helm storage namespace. It applies the env account, worker configuration, network policies, quotas, and local registry credentials.
 Local OAuth encryption uses a separate `wamn-oauth` key in each env namespace. Control reads that key for authorize and callback. A retry keeps the key and publishes the worker’s new password.
 If provisioning fails partway through, run the same command again.

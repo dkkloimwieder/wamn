@@ -15,6 +15,8 @@ The full resolver has a separate 1 GiB volume. The NATS init container waits for
 The SQL Job runs `provision-system` from the `wamn-control` image. Platform artifact stamping pins that image through `systemSql.image`.
 It applies pending system migrations and records `platformDomain` for application hosts and platform principal email addresses.
 Each `wamn platform deploy` waits for the previous SQL Job, removes it, and runs a new Job through Helm.
+The kind values file sets `envDefaultCpuMillicores` to `10` for new environments. The env SQL Job reads it from `wamn-system-sql`.
+If the value is absent, PostgreSQL supplies the default of 100 millicores. An existing environment keeps its stored quota.
 
 Identity serves the fixed `global.identityIssuer` address and uses the system PostgreSQL login in `platform`. The edge sends password requests to the same hostname at `identity.passwordPort`. Only the edge can reach that port. Identity uses the socket IP for requests on the issuer port.
 The chart mounts the `identity-settings` ConfigMap as a JSON file.

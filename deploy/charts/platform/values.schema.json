@@ -14,6 +14,11 @@
         "gcp"
       ]
     },
+    "envDefaultCpuMillicores": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Initial container CPU request in millicores for environment namespaces on kind."
+    },
     "traefik": {
       "type": "object",
       "properties": {

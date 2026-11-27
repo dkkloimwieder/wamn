@@ -11,6 +11,9 @@ metadata:
   namespace: {{ $namespace }}
 data:
   database.json: {{ dict "host" $system.host "port" $system.port "database" $system.name "username" "postgres" "credentials" (dict "namespace" $namespace "name" $admin) "server_ca" (dict "namespace" $namespace "name" $ca) | toJson | quote }}
+  {{- if and (eq .Values.provider "kind") (hasKey .Values "envDefaultCpuMillicores") }}
+  env-default-cpu-millicores: {{ .Values.envDefaultCpuMillicores | quote }}
+  {{- end }}
 ---
 apiVersion: batch/v1
 kind: Job

@@ -35,7 +35,7 @@ use wamn_env::provision_project_env::workload;
 use wamn_kubernetes::org_resources;
 use wamn_platform_install::release_chart::POD_REGISTRY;
 use wamn_platform_install::release_chart::bundle;
-use wamn_platform_install::{deployment, org_install, platform_install};
+use wamn_platform_install::{deployment, env_install, org_install, platform_install};
 use wamn_postgres::database::{capture_configuration, connection_for};
 use wamn_registry::{OrgId, name};
 
@@ -249,8 +249,9 @@ async fn render(
     // wamn org create: org values from the rendered platform inputs.
     let org: OrgId = ORG.parse()?;
     let inputs = &find(&platform.objects, "ConfigMap", "wamn-org-inputs")?["data"];
+    let sql_config = &find(&platform.objects, "ConfigMap", "wamn-system-sql")?["data"];
     let database: wamn_postgres::database::ConnectionConfig = serde_json::from_str(
-        find(&platform.objects, "ConfigMap", "wamn-system-sql")?["data"]["database.json"]
+        sql_config["database.json"]
             .as_str()
             .context("wamn-system-sql has no database.json")?,
     )?;
@@ -300,15 +301,21 @@ async fn render(
     let triple = document.triple();
     let env_namespace = name::env_key(&triple.org, &triple.env);
     // Stand-in database settings. Provisioning itself reads the committed quota.
+    let default_cpu_millicores = sql_config[env_install::ENV_DEFAULT_CPU_MILLICORES_FILE]
+        .as_str()
+        .map(str::parse::<i64>)
+        .transpose()
+        .context("decode the platform env CPU request")?
+        .unwrap_or(200);
     let quota = serde_json::from_value(json!({
         "pods": 20, "jobs": 10, "persistent_volume_claims": 10, "secrets": 100,
         "config_maps": 100, "services": 20, "clusters": 10, "workload_deployments": 20,
         "storage_bytes": 10_i64 << 30, "cpu_millicores": 4000,
         "memory_request_bytes": 4_i64 << 30, "memory_limit_bytes": 8_i64 << 30,
-        "default_cpu_millicores": 200, "default_memory_request_bytes": 256 << 20,
+        "default_cpu_millicores": default_cpu_millicores, "default_memory_request_bytes": 256 << 20,
         "default_memory_limit_bytes": 1 << 30,
     }))?;
-    let mut env_objects = wamn_platform_install::env_install::manifests(
+    let mut env_objects = env_install::manifests(
         &triple.org,
         &triple.env,
         [
@@ -323,7 +330,7 @@ async fn render(
         &quota,
     )?;
     let worker_login = "wamn_apply_env_0000000000000000000000000000000000000000".parse()?;
-    let worker_configuration = wamn_platform_install::env_install::worker_configuration(
+    let worker_configuration = env_install::worker_configuration(
         inputs,
         &database,
         &triple.org,
@@ -337,9 +344,7 @@ async fn render(
             .context("worker PostgreSQL configuration")?,
     )?;
     env_objects.extend(worker_configuration);
-    env_objects.extend(wamn_platform_install::env_install::sql_prerequisites(
-        &env_namespace,
-    ));
+    env_objects.extend(env_install::sql_prerequisites(&env_namespace));
     env_objects.push(org_install::env_provision_job(
         &triple.org,
         &triple.env,

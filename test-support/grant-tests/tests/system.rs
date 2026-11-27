@@ -157,6 +157,7 @@ async fn pooler_auth_login_refusals() -> anyhow::Result<()> {
         &mut system.admin().await?,
         &"acme".parse()?,
         &"dev".parse()?,
+        None,
     )
     .await?;
     let lookup = "SELECT count(*) FROM wamn_pooler.lookup_login($1, $2)";
@@ -916,7 +917,8 @@ async fn env_worker_reaches_only_its_own_env() -> Result<()> {
         principal: HOME_PRINCIPAL.parse()?,
     };
     let sibling_env = "prod";
-    let worker = create_env_worker_login(&mut admin, &home.name.parse()?, &ENV.parse()?).await?;
+    let worker =
+        create_env_worker_login(&mut admin, &home.name.parse()?, &ENV.parse()?, None).await?;
     let login = worker.login.as_str();
     let mut connection = common::log_in(&system.login_url(login, &worker.password)?).await?;
     let sibling_command = "00000000-0000-4000-8000-00000000000c";

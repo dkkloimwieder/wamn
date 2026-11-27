@@ -4,6 +4,7 @@ use anyhow::{Context as _, ensure};
 use ring::rand::{SecureRandom as _, SystemRandom};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use std::{io::ErrorKind, path::Path};
 use wamn_kubernetes::{Target, client::KubernetesApi, env_resources, helm, job, org_resources};
 use wamn_registry::{EnvName, OrgId, name};
 
@@ -25,6 +26,9 @@ mod manifest;
 pub use manifest::{ENV_ACCOUNT, ENV_LABEL, ORG_NAME_LABEL};
 pub use manifest::{Quota, sql_prerequisites};
 use manifest::{boundary, namespaces, network_policies};
+
+/// Optional file in the platform SQL Job's mounted ConfigMap.
+pub const ENV_DEFAULT_CPU_MILLICORES_FILE: &str = "env-default-cpu-millicores";
 
 /// Provision the env mapping, quota, worker login and Kubernetes boundary.
 ///
@@ -214,18 +218,46 @@ fn service_name(host: &str) -> anyhow::Result<&str> {
         .context("database host has no service name")
 }
 
+/// Read the initial environment CPU request from the platform SQL configuration.
+///
+/// A missing file leaves the database column default in effect.
+///
+/// # Errors
+/// Returns an error if the file cannot be read or does not contain a positive integer.
+pub async fn read_env_default_cpu_millicores(database: &Path) -> anyhow::Result<Option<i64>> {
+    let path = database.with_file_name(ENV_DEFAULT_CPU_MILLICORES_FILE);
+    let value = match tokio::fs::read_to_string(&path).await {
+        Ok(value) => value,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error).with_context(|| format!("read {}", path.display())),
+    };
+    let millicores: i64 = value
+        .trim()
+        .parse()
+        .with_context(|| format!("read CPU millicores from {}", path.display()))?;
+    ensure!(
+        millicores > 0,
+        "CPU millicores must be positive in {}",
+        path.display()
+    );
+    Ok(Some(millicores))
+}
+
 /// Provision the committed env data and publish its worker login from the SQL Job.
+///
+/// The CPU request override applies only when the Job creates the quota row.
 pub async fn provision_in_cluster(
     database: &str,
     org: &OrgId,
     env: &EnvName,
+    default_cpu_millicores: Option<i64>,
 ) -> anyhow::Result<()> {
     validate_names(org, env)?;
     let api = KubernetesApi::in_cluster()?;
     let mut connection = connect_system_database(database).await?;
     // Keep the same session lock through publication, after the SQL transaction commits.
     lock_env_login(&mut connection, org, env).await?;
-    let worker = create_env_worker_login(&mut connection, org, env).await?;
+    let worker = create_env_worker_login(&mut connection, org, env, default_cpu_millicores).await?;
     env_resources::publish_login(
         &api,
         &worker.namespace,

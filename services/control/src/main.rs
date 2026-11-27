@@ -3,7 +3,10 @@
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
-use wamn_platform_install::provision_org::{self, OrgActivity};
+use wamn_platform_install::{
+    env_install,
+    provision_org::{self, OrgActivity},
+};
 
 #[derive(Parser)]
 struct Cli {
@@ -107,10 +110,12 @@ async fn main() -> anyhow::Result<()> {
             wamn_platform_install::provision_org::provision_org(&database, &org, setup).await
         }
         Command::ProvisionEnv { org, env, database } => {
+            let default_cpu_millicores =
+                env_install::read_env_default_cpu_millicores(&database).await?;
             let database = wamn_postgres::read_connection_config(&database)
                 .await?
                 .to_json()?;
-            wamn_platform_install::env_install::provision_in_cluster(&database, &org, &env).await
+            env_install::provision_in_cluster(&database, &org, &env, default_cpu_millicores).await
         }
         Command::ActivateOrg { org, database } => {
             let database = wamn_postgres::read_connection_config(&database)

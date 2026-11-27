@@ -216,7 +216,7 @@ async fn env_provisioning_retries_keep_the_mapping_and_rotate_the_worker_passwor
     let mut admin = system.admin().await?;
     let org = "acme".parse()?;
     let env = "dev".parse()?;
-    let first = create_env_worker_login(&mut admin, &org, &env).await?;
+    let first = create_env_worker_login(&mut admin, &org, &env, None).await?;
     let mut transaction = provisioning_transaction(&mut admin).await?;
     let desired_pods = 198;
     let defaults: (i64, i64, i64, i64, i64, i64) = sqlx::query_as(
@@ -237,17 +237,30 @@ async fn env_provisioning_retries_keep_the_mapping_and_rotate_the_worker_passwor
         .execute(&mut *transaction)
         .await?;
     transaction.commit().await?;
-    let retried = create_env_worker_login(&mut admin, &org, &env).await?;
-    let pods: i32 =
-        sqlx::query_scalar("SELECT pods FROM registry.env_quota WHERE org=$1 AND env=$2")
-            .bind(org.as_str())
-            .bind(env.as_str())
-            .fetch_one(&mut admin)
-            .await?;
+    let custom_cpu = 25;
+    let retried = create_env_worker_login(&mut admin, &org, &env, Some(custom_cpu)).await?;
+    let quota: (i32, i64) = sqlx::query_as(
+        "SELECT pods, default_cpu_millicores FROM registry.env_quota WHERE org=$1 AND env=$2",
+    )
+    .bind(org.as_str())
+    .bind(env.as_str())
+    .fetch_one(&mut admin)
+    .await?;
     assert_eq!(
-        pods, desired_pods,
-        "reprovisioning keeps the adjusted quota"
+        quota,
+        (desired_pods, defaults.3),
+        "reprovisioning keeps the existing quota"
     );
+    let custom_env: wamn_registry::EnvName = "custom".parse()?;
+    create_env_worker_login(&mut admin, &org, &custom_env, Some(custom_cpu)).await?;
+    let stored_cpu: i64 = sqlx::query_scalar(
+        "SELECT default_cpu_millicores FROM registry.env_quota WHERE org=$1 AND env=$2",
+    )
+    .bind(org.as_str())
+    .bind(custom_env.as_str())
+    .fetch_one(&mut admin)
+    .await?;
+    assert_eq!(stored_cpu, custom_cpu);
     assert_eq!(first.login, retried.login);
     assert!(
         first.password != retried.password,

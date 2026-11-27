@@ -222,6 +222,9 @@ impl fmt::Debug for EnvWorkerLogin {
 
 /// Record the env mapping and quota and create or rotate its worker login atomically.
 ///
+/// A new quota row uses the supplied CPU request or the column default.
+/// Existing quota rows keep their values.
+///
 /// # Errors
 ///
 /// Returns an error if the org is unavailable, the name does not fit, or a database write fails.
@@ -231,6 +234,7 @@ pub async fn create_env_worker_login(
     connection: &mut sqlx::PgConnection,
     org: &OrgId,
     env: &EnvName,
+    default_cpu_millicores: Option<i64>,
 ) -> anyhow::Result<EnvWorkerLogin> {
     let password = login_password()?;
     let mut transaction =
@@ -259,15 +263,23 @@ pub async fn create_env_worker_login(
         -1,
     )
     .await?;
-    sqlx::query(
-        "INSERT INTO registry.env_quota (org, env) VALUES ($1, $2)
-         ON CONFLICT (org, env) DO NOTHING",
-    )
-    .bind(org.as_str())
-    .bind(env.as_str())
-    .execute(&mut *transaction)
-    .await
-    .context("initialize the env quota")?;
+    let insert_quota = match default_cpu_millicores {
+        Some(millicores) => sqlx::query(
+            "INSERT INTO registry.env_quota (default_cpu_millicores, org, env) VALUES ($1, $2, $3)
+             ON CONFLICT (org, env) DO NOTHING",
+        )
+        .bind(millicores),
+        None => sqlx::query(
+            "INSERT INTO registry.env_quota (org, env) VALUES ($1, $2)
+             ON CONFLICT (org, env) DO NOTHING",
+        ),
+    };
+    insert_quota
+        .bind(org.as_str())
+        .bind(env.as_str())
+        .execute(&mut *transaction)
+        .await
+        .context("initialize the env quota")?;
     let (namespace, quota): (String, serde_json::Value) = sqlx::query_as(
         "SELECT e.namespace, to_jsonb(q)
            FROM registry.env e JOIN registry.env_quota q USING (org, env)

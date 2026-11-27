@@ -1,5 +1,6 @@
 provider: kind
 registry: localhost:5001
+envDefaultCpuMillicores: 10
 traefik:
   enabled: true
 identity:
