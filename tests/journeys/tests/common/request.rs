@@ -77,6 +77,7 @@ impl<'a> OtherEnv<'a> {
             _scratch: scratch,
         };
         failure::env(&env.triple);
+        org.create_env(&env.triple.env).await?;
         let mut command = org.command();
         command.args(["env", "apply"]).arg(&env.file);
         run(command).await?;

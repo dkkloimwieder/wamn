@@ -396,6 +396,8 @@ fn platform_and_org_releases_wire_the_public_roots() -> anyhow::Result<()> {
                     .iter()
                     .all(|(label, value)| namespace["metadata"]["labels"][label] == *value)
             };
+            let env = json!({"metadata":{"labels":{"wamn.dev/org-workloads":"true","wamn.dev/identity-trust":"true"}}});
+            assert!(selected(&env), "{name} must reach the env");
             assert!(selected(namespace), "{name} must reach the org");
             org_roots.insert(name);
             if selected(hosts) {

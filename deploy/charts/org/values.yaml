@@ -1,15 +1,5 @@
 org: ""
 base: ""
-quota:
-  count/pods: 200
-  count/jobs.batch: 50
-  count/persistentvolumeclaims: 50
-  requests.storage: 500Gi
-  count/secrets: 500
-  count/configmaps: 500
-  count/services: 100
-  count/clusters.postgresql.cnpg.io: 50
-  count/workloaddeployments.runtime.wasmcloud.dev: 200
 networkPolicy:
   apiServer: []
   registry: []

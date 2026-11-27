@@ -15,7 +15,7 @@ spec:
           podSelector:
             matchLabels: {app.kubernetes.io/name: wamn-edge}
         - namespaceSelector:
-            matchLabels: {wamn.dev/org: "true"}
+            matchLabels: {wamn.dev/org-workloads: "true"}
           podSelector:
             matchLabels: {wasmcloud.com/name: hostgroup}
         - namespaceSelector:
@@ -23,7 +23,7 @@ spec:
           podSelector:
             matchLabels: {app.kubernetes.io/component: wamn-control}
         - namespaceSelector:
-            matchLabels: {wamn.dev/org: "true"}
+            matchLabels: {wamn.dev/org-workloads: "true"}
           podSelector:
             matchLabels: {app.kubernetes.io/component: wamn-worker}
       ports: [{port: 8443, protocol: TCP}]

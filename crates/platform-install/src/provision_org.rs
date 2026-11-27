@@ -16,7 +16,7 @@ use crate::{
 
 pub const CONTROL_SECRET: &str = "wamn-control-db";
 pub const APPLY_SECRET: &str = "wamn-apply-db";
-const OAUTH_SECRET: &str = "wamn-oauth";
+pub(crate) const OAUTH_SECRET: &str = "wamn-oauth";
 pub const ORG_INPUTS_DIR: &str = "/etc/wamn/org-inputs";
 pub const OAUTH_ENCRYPTION_INPUT: &str = "oauthEncryption";
 pub const SQL_ACCOUNT: &str = "wamn-org-sql";
@@ -229,6 +229,8 @@ pub struct EnvWorkerLogin {
     pub login: LoginName,
     /// The password to publish in the worker's Secret.
     pub password: String,
+    pub(crate) namespace: String,
+    pub(crate) quota: crate::env_install::Quota,
 }
 
 impl fmt::Debug for EnvWorkerLogin {
@@ -240,7 +242,7 @@ impl fmt::Debug for EnvWorkerLogin {
     }
 }
 
-/// Record the environment mapping and create or rotate its worker login atomically.
+/// Record the env mapping and quota and create or rotate its worker login atomically.
 ///
 /// # Errors
 ///
@@ -255,6 +257,15 @@ pub async fn create_env_worker_login(
     let password = login_password()?;
     let mut transaction =
         wamn_postgres::provisioning_transaction::provisioning_transaction(connection).await?;
+    sqlx::query(
+        "SELECT pg_advisory_xact_lock(hashtextextended(
+             registry.env_worker_login($1, $2, current_database()), 0))",
+    )
+    .bind(org.as_str())
+    .bind(env.as_str())
+    .execute(&mut *transaction)
+    .await
+    .context("lock the env worker login")?;
     let login = sqlx::query_scalar::<_, String>("SELECT registry.provision_env($1, $2)")
         .bind(org.as_str())
         .bind(env.as_str())
@@ -262,11 +273,6 @@ pub async fn create_env_worker_login(
         .await
         .with_context(|| format!("record env {org}/{env}"))?
         .parse::<LoginName>()?;
-    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
-        .bind(login.as_str())
-        .execute(&mut *transaction)
-        .await
-        .context("lock the env worker login")?;
     write_login(
         &mut transaction,
         &login,
@@ -275,11 +281,36 @@ pub async fn create_env_worker_login(
         -1,
     )
     .await?;
+    sqlx::query(
+        "INSERT INTO registry.env_quota (org, env) VALUES ($1, $2)
+         ON CONFLICT (org, env) DO NOTHING",
+    )
+    .bind(org.as_str())
+    .bind(env.as_str())
+    .execute(&mut *transaction)
+    .await
+    .context("initialize the env quota")?;
+    let (namespace, quota): (String, serde_json::Value) = sqlx::query_as(
+        "SELECT e.namespace, to_jsonb(q)
+           FROM registry.env e JOIN registry.env_quota q USING (org, env)
+          WHERE e.org=$1 AND e.env=$2",
+    )
+    .bind(org.as_str())
+    .bind(env.as_str())
+    .fetch_one(&mut *transaction)
+    .await
+    .context("read the env provisioning data")?;
+    let quota = serde_json::from_value(quota).context("decode the env quota")?;
     transaction
         .commit()
         .await
         .context("commit env provisioning")?;
-    Ok(EnvWorkerLogin { login, password })
+    Ok(EnvWorkerLogin {
+        login,
+        password,
+        namespace,
+        quota,
+    })
 }
 
 fn login_password() -> anyhow::Result<String> {

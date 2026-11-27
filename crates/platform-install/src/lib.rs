@@ -1,9 +1,10 @@
-//! Platform and org installation workflows.
+//! Platform, org, and env installation workflows.
 
 mod apply;
 pub mod database_files;
 pub mod deployment;
 pub mod env;
+pub mod env_install;
 pub mod identity_role;
 pub mod install;
 mod migration_history;

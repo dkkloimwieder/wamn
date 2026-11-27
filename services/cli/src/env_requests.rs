@@ -4,12 +4,33 @@ use anyhow::{Context as _, ensure};
 use clap::{Args, Subcommand};
 use serde_json::json;
 use std::{io::IsTerminal as _, path::PathBuf};
+use wamn_registry::{EnvName, OrgId};
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
+    /// Provision an env using the admin kubeconfig for a kind platform.
+    Create {
+        #[arg(value_name = "ORG/ENV", value_parser = parse_env)]
+        coordinate: EnvCoordinate,
+    },
     Apply(Apply),
     DeactivateProject(DeactivateProject),
 }
+/// An operator env coordinate without a project.
+#[derive(Clone, Debug)]
+pub struct EnvCoordinate {
+    org: OrgId,
+    env: EnvName,
+}
+
+fn parse_env(coordinate: &str) -> anyhow::Result<EnvCoordinate> {
+    let (org, env) = coordinate.split_once('/').context("expected org/env")?;
+    Ok(EnvCoordinate {
+        org: org.parse()?,
+        env: env.parse()?,
+    })
+}
+
 #[derive(Debug, Args)]
 pub struct Apply {
     pub file: PathBuf,
@@ -50,6 +71,10 @@ pub async fn revoke_pat(args: RevokePat) -> anyhow::Result<()> {
 
 pub async fn run(command: Command) -> anyhow::Result<()> {
     let (operation, triple, value) = match command {
+        Command::Create { coordinate } => {
+            return wamn_platform_install::env_install::create(&coordinate.org, &coordinate.env)
+                .await;
+        }
         Command::Apply(args) => {
             let document = wamn_env::env::document::EnvFile::compile(&args.file)?;
             let project = match &args.app {

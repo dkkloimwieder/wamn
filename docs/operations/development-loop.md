@@ -8,6 +8,7 @@ The deployed release stays available after the command exits.
 ## Prepare the platform
 
 Use the [deployment procedure](deployment.md) to install a disposable development platform.
+Provision the env with `wamn env create <org>/<env>` using the admin kubeconfig.
 Apply its authored `env.yaml` through `wamn env apply`.
 Make the registry and control endpoint reachable from the development machine.
 Use the platform's own credential and identity services for connections and sign-in.

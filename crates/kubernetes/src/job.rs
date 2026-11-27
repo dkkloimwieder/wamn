@@ -221,6 +221,50 @@ pub async fn run_exclusive(
     Ok(uid)
 }
 
+/// Run a generated Job and read its successful container's termination message.
+pub async fn run_with_termination_message(
+    target: &Target,
+    manifest: &Value,
+    timeout: Duration,
+) -> anyhow::Result<String> {
+    let jobs = Api::<Job>::namespaced(target.client.client(), &target.namespace);
+    let job = Job::deserialize(manifest).context("decode Job manifest")?;
+    let container = job
+        .spec
+        .as_ref()
+        .and_then(|spec| spec.template.spec.as_ref())
+        .and_then(|spec| spec.containers.first())
+        .context("Job has no container")?;
+    let created =
+        tokio::time::timeout(REQUEST_TIMEOUT, jobs.create(&PostParams::default(), &job)).await??;
+    let name = created.metadata.name.context("Job name is absent")?;
+    let uid = created.metadata.uid.context("Job UID is absent")?;
+    wait(&jobs, &name, timeout).await?;
+    let pods = Api::<Pod>::namespaced(target.client.client(), &target.namespace);
+    let params = ListParams::default().labels(&format!("batch.kubernetes.io/controller-uid={uid}"));
+    let result = tokio::time::timeout(REQUEST_TIMEOUT, pods.list(&params)).await??;
+    result
+        .items
+        .into_iter()
+        .filter(|pod| {
+            pod.metadata
+                .owner_references
+                .as_ref()
+                .is_some_and(|owners| {
+                    owners.iter().any(|owner| {
+                        owner.controller == Some(true) && owner.kind == "Job" && owner.uid == uid
+                    })
+                })
+        })
+        .filter_map(|pod| pod.status.and_then(|status| status.container_statuses))
+        .flatten()
+        .filter(|status| status.name == container.name)
+        .filter_map(|status| status.state.and_then(|state| state.terminated))
+        .filter(|state| state.exit_code == 0)
+        .find_map(|state| state.message.filter(|message| !message.is_empty()))
+        .with_context(|| format!("Job {}/{name} returned no result", target.namespace))
+}
+
 async fn wait_instance(
     jobs: &Api<Job>,
     name: &str,

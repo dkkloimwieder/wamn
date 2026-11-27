@@ -62,23 +62,36 @@ pub async fn write_registry_credentials(
     org: &OrgId,
     credentials: &[u8],
 ) -> anyhow::Result<()> {
-    let secrets = Api::<Secret>::namespaced(target.client.client(), org.as_str());
+    write_registry_credentials_in(target, org.as_str(), credentials).await
+}
+
+/// Apply the local image-pull Secret in the supplied namespace.
+pub async fn write_registry_credentials_in(
+    target: &Target,
+    namespace: &str,
+    credentials: &[u8],
+) -> anyhow::Result<()> {
+    let secrets = Api::<Secret>::namespaced(target.client.client(), namespace);
     secrets
         .patch(
             REGISTRY_PULL,
             &PatchParams::apply(APPLY_MANAGER),
-            &Patch::Apply(registry_credentials(org, credentials)),
+            &Patch::Apply(registry_secret(namespace, credentials)),
         )
         .await
-        .with_context(|| format!("apply {REGISTRY_PULL} in {org}"))?;
+        .with_context(|| format!("apply {REGISTRY_PULL} in {namespace}"))?;
     Ok(())
 }
 
 /// Build the org's image-pull Secret from its Docker configuration bytes.
 pub fn registry_credentials(org: &OrgId, credentials: &[u8]) -> Value {
+    registry_secret(org.as_str(), credentials)
+}
+
+fn registry_secret(namespace: &str, credentials: &[u8]) -> Value {
     json!({
         "apiVersion": "v1", "kind": "Secret", "type": "kubernetes.io/dockerconfigjson",
-        "metadata": {"name": REGISTRY_PULL, "namespace": org},
+        "metadata": {"name": REGISTRY_PULL, "namespace": namespace},
         "data": {".dockerconfigjson": STANDARD.encode(credentials)},
     })
 }

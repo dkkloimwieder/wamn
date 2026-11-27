@@ -2,6 +2,7 @@
 
 pub mod client;
 pub mod deployment_components;
+pub mod env_resources;
 pub mod helm;
 pub mod job;
 pub mod kubernetes;

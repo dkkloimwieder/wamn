@@ -38,19 +38,7 @@ pub async fn record_project_env(
     candidate: &InstanceSuffix,
     disposable: Option<bool>,
 ) -> anyhow::Result<InstanceSuffix> {
-    let provisioned: bool =
-        sqlx::query_scalar("SELECT EXISTS (SELECT FROM registry.env WHERE org=$1 AND env=$2)")
-            .bind(triple.org.as_str())
-            .bind(triple.env.as_str())
-            .fetch_one(&mut **transaction)
-            .await
-            .context("read the environment registration")?;
-    anyhow::ensure!(
-        provisioned,
-        "env {}/{} is not provisioned",
-        triple.org,
-        triple.env
-    );
+    deployment::require_provisioned(transaction, &triple.org, &triple.env).await?;
     deployment::record_project(transaction, &triple.org, &triple.project)
         .await
         .context("record project")?;

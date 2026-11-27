@@ -118,7 +118,7 @@ spec:
         matchExpressions:
           - key: app.kubernetes.io/component
             operator: In
-            values: [wamn-system-sql, wamn-org-sql]
+            values: [wamn-system-sql, wamn-org-sql, wamn-env-sql]
     - name: system-sql
       selector:
         matchLabels:

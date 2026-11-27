@@ -13,12 +13,12 @@ use wamn_postgres::database::ConnectionConfig;
 
 pub use crate::platform_registry::registry_configuration;
 
-/// The ConfigMap into which trust-manager writes the public system database CA in each org.
+/// The ConfigMap with the public system database CA in each org and env namespace.
 pub const SYSTEM_DATABASE_CA: &str = "wamn-pg-ca";
 
-const LOCAL_PROVIDER: &str = "kind";
+pub(crate) const LOCAL_PROVIDER: &str = "kind";
 
-/// Public data used to prepare an org release.
+/// Public platform inputs for org and env provisioning.
 #[derive(Debug)]
 pub struct OrgInputs {
     pub values: Value,
@@ -87,43 +87,10 @@ pub fn org_values(
         .parse::<wamn_digest::Digest>()
         .context("invalid appChart digest in the platform release")?;
     let registry = field(inputs, "registry")?;
-    let registry_egress: Value = serde_json::from_str(field(inputs, "registryEgress")?)
-        .context("decode registryEgress from wamn-org-inputs")?;
-    let registry_egress = registry_egress
-        .as_array()
-        .filter(|destinations| !destinations.is_empty())
-        .context("registryEgress in wamn-org-inputs must be a nonempty list")?;
-    for (index, destination) in registry_egress.iter().enumerate() {
-        let valid_shape = destination
-            .as_object()
-            .is_some_and(|fields| fields.len() == 2);
-        let cidr = destination["cidr"]
-            .as_str()
-            .and_then(|cidr| cidr.split_once('/'));
-        let valid_cidr = cidr.is_some_and(|(address, prefix)| {
-            let (Ok(address), Ok(bits)) = (address.parse::<IpAddr>(), prefix.parse::<u8>()) else {
-                return false;
-            };
-            prefix.bytes().all(|byte| byte.is_ascii_digit())
-                && bits <= if address.is_ipv4() { 32 } else { 128 }
-        });
-        let valid_port = destination["port"]
-            .as_u64()
-            .is_some_and(|port| (1..=u64::from(u16::MAX)).contains(&port));
-        ensure!(
-            valid_shape && valid_cidr && valid_port,
-            "registryEgress entry {index} in wamn-org-inputs must contain a valid CIDR and TCP port"
-        );
-    }
+    let registry_egress = registry_destinations(inputs)?;
     let oauth_encryption: Value = serde_json::from_str(field(inputs, OAUTH_ENCRYPTION_INPUT)?)
         .context("decode the platform OAuth encryption configuration")?;
-    let internal_registry = registry
-        .strip_prefix("localhost:5001")
-        .filter(|rest| rest.is_empty() || rest.starts_with('/'))
-        .map_or_else(
-            || registry.to_owned(),
-            |path| format!("{POD_REGISTRY}{path}"),
-        );
+    let internal_registry = internal_registry(registry);
     let connection = |host: &str, username: &str, secret: &str| {
         json!({
             "host": host, "port": database.port, "database": database.database,
@@ -156,6 +123,48 @@ pub fn org_values(
             },
         },
     }))
+}
+
+pub(crate) fn registry_destinations(inputs: &Value) -> anyhow::Result<Vec<Value>> {
+    let registry_egress: Vec<Value> = serde_json::from_str(field(inputs, "registryEgress")?)
+        .context("decode registryEgress from wamn-org-inputs")?;
+    ensure!(
+        !registry_egress.is_empty(),
+        "registryEgress in wamn-org-inputs must be a nonempty list"
+    );
+    for (index, destination) in registry_egress.iter().enumerate() {
+        let valid_shape = destination
+            .as_object()
+            .is_some_and(|fields| fields.len() == 2);
+        let cidr = destination["cidr"]
+            .as_str()
+            .and_then(|cidr| cidr.split_once('/'));
+        let valid_cidr = cidr.is_some_and(|(address, prefix)| {
+            let (Ok(address), Ok(bits)) = (address.parse::<IpAddr>(), prefix.parse::<u8>()) else {
+                return false;
+            };
+            prefix.bytes().all(|byte| byte.is_ascii_digit())
+                && bits <= if address.is_ipv4() { 32 } else { 128 }
+        });
+        let valid_port = destination["port"]
+            .as_u64()
+            .is_some_and(|port| (1..=u64::from(u16::MAX)).contains(&port));
+        ensure!(
+            valid_shape && valid_cidr && valid_port,
+            "registryEgress entry {index} in wamn-org-inputs must contain a valid CIDR and TCP port"
+        );
+    }
+    Ok(registry_egress)
+}
+
+pub(crate) fn internal_registry(registry: &str) -> String {
+    registry
+        .strip_prefix("localhost:5001")
+        .filter(|rest| rest.is_empty() || rest.starts_with('/'))
+        .map_or_else(
+            || registry.to_owned(),
+            |path| format!("{POD_REGISTRY}{path}"),
+        )
 }
 
 /// Read a required string from the platform inputs.

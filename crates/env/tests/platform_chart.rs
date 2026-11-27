@@ -186,6 +186,61 @@ fn platform_ingress_and_edge_egress_match_the_provider_boundary() -> anyhow::Res
                 .any(|policy| policy["spec"]["podSelector"] == *operator)
         );
 
+        let workloads = json!({"matchLabels":{"wamn.dev/org-workloads":"true"}});
+        let selects_workloads = |peers: &serde_json::Value| {
+            peers.as_array().is_some_and(|peers| {
+                peers
+                    .iter()
+                    .any(|peer| peer["namespaceSelector"] == workloads)
+            })
+        };
+        for name in [
+            "allow-nats-clients",
+            "allow-pooler-apply-clients",
+            "allow-collector-clients",
+            "allow-identity-clients",
+        ] {
+            let ingress = find("NetworkPolicy", name)["spec"]["ingress"]
+                .as_array()
+                .expect("env ingress policy");
+            assert!(
+                ingress.iter().any(|rule| selects_workloads(&rule["from"])),
+                "{name} must admit env clients"
+            );
+        }
+        let cluster = find("Cluster", "wamn-pg");
+        let sql_jobs = cluster["spec"]["podSelectorRefs"]
+            .as_array()
+            .expect("system database pod selectors")
+            .iter()
+            .find(|selector| selector["name"] == "platform-sql-jobs")
+            .expect("platform SQL Job selector");
+        let selects_env_sql = |selector: &serde_json::Value| {
+            selector["matchExpressions"]
+                .as_array()
+                .is_some_and(|expressions| {
+                    expressions.iter().any(|expression| {
+                        expression["key"] == "app.kubernetes.io/component"
+                            && expression["operator"] == "In"
+                            && expression["values"].as_array().is_some_and(|values| {
+                                values.iter().any(|value| value == "wamn-env-sql")
+                            })
+                    })
+                })
+        };
+        assert!(selects_env_sql(&sql_jobs["selector"]));
+        let database_ingress =
+            find("NetworkPolicy", "allow-system-database-clients")["spec"]["ingress"]
+                .as_array()
+                .expect("system database ingress rules");
+        assert!(
+            database_ingress
+                .iter()
+                .filter_map(|rule| rule["from"].as_array())
+                .flatten()
+                .any(|peer| selects_env_sql(&peer["podSelector"]))
+        );
+
         let edge = find("Deployment", "wamn-edge");
         let edge_namespace = &edge["metadata"]["namespace"];
         let edge_name = &edge["spec"]["template"]["metadata"]["labels"]["app.kubernetes.io/name"];
@@ -234,6 +289,10 @@ fn platform_ingress_and_edge_egress_match_the_provider_boundary() -> anyhow::Res
             panic!("expected one kind edge egress policy");
         };
         let rules = egress["spec"]["egress"].as_array().unwrap();
+        assert!(
+            rules.iter().any(|rule| selects_workloads(&rule["to"])),
+            "kind edge must reach env hosts"
+        );
         assert!(
             rules
                 .iter()
@@ -428,7 +487,7 @@ fn project_retains_only_the_operator_policy_for_each_cluster() -> anyhow::Result
         let mut values = database_values(
             &connection,
             1,
-            json!({"instances": 1, "storage": "2Gi", "cpu": "200m", "memory": "256Mi"}),
+            json!({"instances": 1, "storage": "2Gi", "cpu": "200m", "memory": "3Gi"}),
             &json!({"image": "registry.example/postgresql:test"}),
         )?;
         set_operation_values(
@@ -440,6 +499,16 @@ fn project_retains_only_the_operator_policy_for_each_cluster() -> anyhow::Result
         )?;
         let entry = entry(&chart, triple.org.as_str(), &release, values)?;
         let objects = wamn_kubernetes::helm::template(&entry)?;
+        let rendered_cluster = objects
+            .iter()
+            .find(|object| object["kind"] == "Cluster")
+            .expect("project Cluster");
+        let resources = &rendered_cluster["spec"]["resources"];
+        assert_eq!(resources["requests"]["memory"], "3Gi");
+        assert_eq!(
+            resources["limits"]["memory"],
+            resources["requests"]["memory"]
+        );
         let mut kept = objects.iter().filter(|object| {
             object["kind"] == "NetworkPolicy"
                 && object["metadata"]["annotations"]["helm.sh/resource-policy"] == "keep"

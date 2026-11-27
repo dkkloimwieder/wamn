@@ -603,6 +603,36 @@ CREATE TABLE registry.env (
 CREATE TRIGGER wamn_record_history_stamp BEFORE INSERT OR UPDATE ON registry.env
     FOR EACH ROW EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 
+-- Provisional per-env admission budgets. Store CPU in millicores and memory and storage in bytes.
+CREATE TABLE registry.env_quota (
+    org text NOT NULL,
+    env text NOT NULL,
+    pods integer NOT NULL DEFAULT 200 CHECK (pods > 0),
+    jobs integer NOT NULL DEFAULT 50 CHECK (jobs > 0),
+    persistent_volume_claims integer NOT NULL DEFAULT 50 CHECK (persistent_volume_claims > 0),
+    secrets integer NOT NULL DEFAULT 500 CHECK (secrets > 0),
+    config_maps integer NOT NULL DEFAULT 500 CHECK (config_maps > 0),
+    services integer NOT NULL DEFAULT 100 CHECK (services > 0),
+    clusters integer NOT NULL DEFAULT 50 CHECK (clusters > 0),
+    workload_deployments integer NOT NULL DEFAULT 200 CHECK (workload_deployments > 0),
+    storage_bytes bigint NOT NULL DEFAULT 536870912000 CHECK (storage_bytes > 0), -- 500 GiB
+    cpu_millicores bigint NOT NULL DEFAULT 8000 CHECK (cpu_millicores > 0),
+    memory_request_bytes bigint NOT NULL DEFAULT 17179869184 CHECK (memory_request_bytes > 0), -- 16 GiB
+    memory_limit_bytes bigint NOT NULL DEFAULT 34359738368 CHECK (memory_limit_bytes > 0), -- 32 GiB
+    default_cpu_millicores bigint NOT NULL DEFAULT 100 CHECK (default_cpu_millicores > 0),
+    default_memory_request_bytes bigint NOT NULL DEFAULT 268435456 CHECK (default_memory_request_bytes > 0), -- 256 MiB
+    default_memory_limit_bytes bigint NOT NULL DEFAULT 2147483648
+        CHECK (default_memory_limit_bytes >= default_memory_request_bytes), -- 2 GiB
+    created_at timestamptz NOT NULL,
+    created_by uuid NOT NULL,
+    updated_at timestamptz NOT NULL,
+    updated_by uuid NOT NULL,
+    PRIMARY KEY (org, env),
+    FOREIGN KEY (org, env) REFERENCES registry.env (org, env) ON DELETE RESTRICT
+);
+CREATE TRIGGER wamn_record_history_stamp BEFORE INSERT OR UPDATE ON registry.env_quota
+    FOR EACH ROW EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
+
 -- The hash binds the worker to one environment and database. The prefix keeps
 -- worker logins distinct from the org apply logins used by Jobs until they move.
 CREATE FUNCTION registry.env_worker_login(org_id text, env_name text, database_name text) RETURNS text

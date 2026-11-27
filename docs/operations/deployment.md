@@ -101,7 +101,7 @@ Helm installs cert-manager, trust-manager, CloudNativePG, and the ingress contro
 On a fresh cluster, `wamn platform deploy` starts cert-manager before it adds trust-manager to the infrastructure release.
 It waits for the trust-manager webhook before it installs the platform chart.
 The platform chart installs the system PostgreSQL Cluster, its SQL Job, shared identity, edge, NATS, the wasmCloud runtime operator, and the collector.
-The org chart owns control, the namespace quota, RBAC, and network policies.
+The org chart owns control, RBAC, and network policies.
 On kind, create a registry auth file with `{"auths":{"localhost:5001":{}}}`.
 On kind, set `WAMN_REGISTRY_AUTH_FILE` to the path of that file.
 If the platform uses registry token metadata, skip these two steps.
@@ -122,6 +122,14 @@ The command exits with `Error: Job <org>/wamn-org-invitation-<suffix> failed`. T
 
 The platform chart sets one JetStream file store to 16 GiB on a 20 GiB volume. The chart value `global.natsFileStoreBytes` gives NATS and identity the same byte limit.
 The full resolver has a separate volume. [Platform chart](../../deploy/charts/platform/README.md)
+
+On kind, run `wamn env create <org>/<env>` with the same admin kubeconfig and registry auth file before the first `wamn env apply`.
+The command checks that the names fit. It prepares the workload namespace and an empty login Secret before it starts a SQL Job in `platform`.
+The Job commits the env and quota. It writes the worker login to the Secret after the commit.
+The command then creates the Helm storage namespace and applies the env account, default-deny policy, quota, LimitRange and local registry credentials.
+Local OAuth encryption uses a separate `wamn-oauth` key in each env namespace. A retry keeps that key and publishes the worker's new password.
+If provisioning fails partway through, run the same command again.
+If the quota changes in the system database, run the command again to apply it.
 
 The system database stores each environment's NATS limits in `registry.env`.
 The defaults are 64 connections, 2,000 consumers per stream, 10,000 subscriptions per connection, and 1 MiB per message.
@@ -1013,7 +1021,7 @@ The registry rules allow control, the org worker, and hosts to reach those CIDR 
 The environment and project charts allow connections to their host group and database. The edge accepts ingress from Traefik on installations that use Traefik.
 The platform chart denies ingress by default and allows the specific callers of shared services.
 `wamn platform deploy` discovers Kubernetes API addresses for the CloudNativePG webhook and for edge egress on kind.
-On kind, edge egress allows org host groups, control, identity, DNS, and the Kubernetes API.
+On kind, edge egress allows org and env host groups, org control, identity, DNS, and the Kubernetes API.
 Application deploy adds a public IPv4 egress policy for the TCP ports of that release's wasm integration authorities.
 The rule excludes fixed private and special-use ranges. The runtime still checks each integration's allowed hosts.
 

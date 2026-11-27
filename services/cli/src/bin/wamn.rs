@@ -172,6 +172,20 @@ mod tests {
     use super::*;
 
     #[test]
+    fn env_create_accepts_exactly_an_org_and_env() {
+        use wamn_cli::env_requests::Command as EnvCommand;
+
+        let command = Cli::try_parse_from(["wamn", "env", "create", "acme/dev"]).unwrap();
+        assert!(matches!(
+            command.command,
+            Command::Env(EnvCommand::Create { .. })
+        ));
+        for coordinate in ["acme", "acme/dev/billing", "acme/", "/dev", "acme/DEV"] {
+            assert!(Cli::try_parse_from(["wamn", "env", "create", coordinate]).is_err());
+        }
+    }
+
+    #[test]
     fn source_publication_refuses_a_caller_supplied_publisher() {
         for arguments in [
             vec![

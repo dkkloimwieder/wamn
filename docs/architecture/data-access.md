@@ -1094,7 +1094,9 @@ It seeds one active target named `cloud`, with no release time. Repeated schema 
 These catalog and target tables exist only in the system database and grant no application access.
 An environment stores its target identity on first apply. The target cannot change. `target_application` and the target platform connection remain separate work.
 Provisioning records the unique Kubernetes namespace in `registry.env.namespace`.
-It creates a worker login for that environment in the same transaction.
+It creates the env worker login and initializes the budgets and container defaults in `registry.env_quota` in the same transaction.
+On kind, a Job in `platform` commits these rows and publishes the worker login to its assigned Secret.
+The operator command reads the public quota from the Job result and applies the remaining Kubernetes objects.
 `registry.login_org()` and `registry.login_env()` resolve the worker's coordinates from its authenticated login.
 Row policies restrict environment data to that worker's environment. Control still spans its org's environments.
 Only provisioning can add a mapping. Environment apply requires an existing mapping.
@@ -1102,7 +1104,7 @@ Only provisioning can add a mapping. Environment apply requires an existing mapp
 The system database (`wamn_system`) stamps its identity authority relations.
 These relations are `identity.principal`, `identity.org_membership`, `identity.org_role`, `identity.project_role`, and `identity.project_env_membership`.
 Each relation carries the four stamp columns as `NOT NULL` with no default, and a static `wamn_record_history_stamp` trigger.
-The full system schema also stamps `registry.meta`, `registry.org`, `registry.env`, `registry.project`, `registry.project_env`, and `registry.capture_gap`.
+The full system schema also stamps `registry.meta`, `registry.org`, `registry.env`, `registry.env_quota`, `registry.project`, `registry.project_env`, and `registry.capture_gap`.
 It stamps `identity.session_key`, `identity.session_signing_state`, and `identity.password_attempt` too.
 The full control schema stamps registry declarations and `wamn_authority.author_login_projects`.
 The system operations tables carry no stamps. The append-only `provisioning.platform_event` journal records each lifecycle event with its own timestamp, caller, and command ID.

@@ -30,6 +30,9 @@ spec:
     requests:
       cpu: {{ .cpu | quote }}
       memory: {{ .memory | quote }}
+    limits:
+      # An explicit limit follows the project sizing, even above the env default.
+      memory: {{ .memory | quote }}
   storage:
     size: {{ .storage | quote }}
   {{- if not $recovery }}

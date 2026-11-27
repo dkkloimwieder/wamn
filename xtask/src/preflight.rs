@@ -298,6 +298,42 @@ async fn render(
         .next()
         .context("the environment has one project")?;
     let triple = document.triple();
+    let env_namespace = name::env_key(&triple.org, &triple.env);
+    // Stand-in database settings. Provisioning itself reads the committed quota.
+    let quota = serde_json::from_value(json!({
+        "pods": 20, "jobs": 10, "persistent_volume_claims": 10, "secrets": 100,
+        "config_maps": 100, "services": 20, "clusters": 10, "workload_deployments": 20,
+        "storage_bytes": 10_i64 << 30, "cpu_millicores": 4000,
+        "memory_request_bytes": 4_i64 << 30, "memory_limit_bytes": 8_i64 << 30,
+        "default_cpu_millicores": 200, "default_memory_request_bytes": 256 << 20,
+        "default_memory_limit_bytes": 1 << 30,
+    }))?;
+    let mut env_objects = wamn_platform_install::env_install::manifests(
+        &triple.org,
+        &env_namespace,
+        wamn_platform_install::org::field(inputs, "applyDatabaseHost")?,
+        database.port,
+        api_server,
+        org_values["networkPolicy"]["registry"]
+            .as_array()
+            .context("org has no registry destinations")?,
+        &quota,
+    )?;
+    env_objects.extend(wamn_platform_install::env_install::sql_prerequisites(
+        &env_namespace,
+    ));
+    env_objects.push(org_install::env_provision_job(
+        &triple.org,
+        &triple.env,
+        image,
+        &database,
+    ));
+    rendered.push(Rendered {
+        label: "env create".into(),
+        namespace: env_namespace,
+        objects: env_objects,
+    });
+
     let instance: wamn_registry::instance_suffix::InstanceSuffix = STAND_IN_INSTANCE.parse()?;
     let connection = connection_for(&triple, &instance);
     let connections = workload::connections(&connection)?;

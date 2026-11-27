@@ -266,6 +266,16 @@ impl Org {
         command
     }
 
+    /// Provision an env through the operator command.
+    pub async fn create_env(&self, env: &wamn_registry::EnvName) -> anyhow::Result<()> {
+        let mut command = self.cluster.command();
+        command
+            .args(["env", "create"])
+            .arg(format!("{}/{env}", self.name));
+        run(command).await?;
+        Ok(())
+    }
+
     /// Write an environment file with one project and one application, and run `wamn env apply`.
     pub async fn apply(self, app: &str) -> anyhow::Result<Env> {
         let scratch = ScratchRoot::create()?;
@@ -291,6 +301,7 @@ impl Org {
             triple,
             scratch,
         };
+        env.org.create_env(&env.triple.env).await?;
         let mut command = env.org.command();
         command.args(["env", "apply"]).arg(&env.file);
         run(command).await?;

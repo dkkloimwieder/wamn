@@ -9,7 +9,7 @@ spec:
   egress:
     - to:
         - namespaceSelector:
-            matchLabels: {wamn.dev/org: "true"}
+            matchLabels: {wamn.dev/org-workloads: "true"}
           podSelector:
             matchLabels: {wasmcloud.com/name: hostgroup}
       ports: [{port: 9191, protocol: TCP}]

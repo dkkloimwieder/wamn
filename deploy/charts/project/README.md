@@ -1,6 +1,7 @@
 # Project chart
 
 Set `namespace` to the org namespace. Helm uses server-side apply for project installs and upgrades.
+The PostgreSQL container memory limit follows the project memory request.
 
 The chart creates the project's CloudNativePG Cluster, Database, login Secrets, publication, and schema diff ServiceAccount.
 That ServiceAccount reads the named login Secrets, the project CA Secret and the system database CA ConfigMap. It can read each declared application's workload to resolve the live package digest.

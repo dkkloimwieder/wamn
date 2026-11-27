@@ -50,6 +50,22 @@ async fn applying_an_unprovisioned_env_refuses_the_reservation() -> anyhow::Resu
         !created,
         "refused reservations leave no project declaration"
     );
+    let mut admin = system.admin().await?;
+    provision_fixture_env(&mut admin, &triple).await?;
+    let mut transaction = provisioning_transaction(&mut client).await?;
+    let candidate = "abcd1234".parse()?;
+    let reserved = wamn_env::env_registry::record_project_env(
+        &mut transaction,
+        &triple,
+        "cloud",
+        "fixture-secret",
+        Some(triple.org.as_str()),
+        &candidate,
+        None,
+    )
+    .await?;
+    transaction.commit().await?;
+    assert_eq!(reserved, candidate);
     Ok(())
 }
 

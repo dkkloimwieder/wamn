@@ -32,6 +32,13 @@ enum Command {
         database: PathBuf,
     },
     #[command(hide = true)]
+    ProvisionEnv {
+        org: wamn_registry::OrgId,
+        env: wamn_registry::EnvName,
+        #[arg(long)]
+        database: PathBuf,
+    },
+    #[command(hide = true)]
     ActivateOrg {
         org: wamn_registry::OrgId,
         #[arg(long)]
@@ -103,6 +110,12 @@ async fn main() -> anyhow::Result<()> {
             }
             .await;
             wamn_platform_install::provision_org::provision_org(&database, &org, setup).await
+        }
+        Command::ProvisionEnv { org, env, database } => {
+            let database = wamn_postgres::read_connection_config(&database)
+                .await?
+                .to_json()?;
+            wamn_platform_install::env_install::provision_in_cluster(&database, &org, &env).await
         }
         Command::ActivateOrg { org, database } => {
             let database = wamn_postgres::read_connection_config(&database)

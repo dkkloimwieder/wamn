@@ -1,10 +1,10 @@
 # Org chart
 
-The org chart declares the tenant namespace, base RBAC, resource quota, and default-deny ingress and egress.
-The platform selects the namespace by its `wamn.dev/org` label.
+The org chart declares the org namespace, base RBAC and default-deny ingress and egress.
+The platform uses `wamn.dev/org` for org control and `wamn.dev/org-workloads` for services shared by org and env workloads.
 The chart sets Pod Security enforcement and warnings to `restricted` in the org namespace.
 Set `org` to the registry org slug. The platform, hosts, cert-manager, default, kube-* and wamn names are reserved.
-The quota caps object counts and storage requests. Set individual limits in `quota`.
+`wamn env create` applies the resource quota and container defaults to each env namespace using the system database settings.
 
 `wamn org create` finds the API server destinations and sets `networkPolicy.apiServer`.
 It reads the required `registryEgress` list from `wamn-org-inputs` and sets `networkPolicy.registry`.

@@ -218,11 +218,36 @@ async fn env_provisioning_retries_keep_the_mapping_and_rotate_the_worker_passwor
     let env = "dev".parse()?;
     let first = create_env_worker_login(&mut admin, &org, &env).await?;
     let mut transaction = provisioning_transaction(&mut admin).await?;
+    let desired_pods = 198;
+    let defaults: (i64, i64, i64, i64, i64, i64) = sqlx::query_as(
+        "UPDATE registry.env_quota SET pods = $3 WHERE org=$1 AND env=$2
+         RETURNING cpu_millicores, memory_request_bytes, memory_limit_bytes,
+                   default_cpu_millicores, default_memory_request_bytes, default_memory_limit_bytes",
+    )
+    .bind(org.as_str())
+    .bind(env.as_str())
+    .bind(desired_pods)
+    .fetch_one(&mut *transaction)
+    .await?;
+    assert_eq!(
+        defaults,
+        (8_000, 16 << 30, 32 << 30, 100, 256 << 20, 2 << 30)
+    );
     sqlx::query("UPDATE registry.env SET disposable = true WHERE org = 'acme' AND env = 'dev'")
         .execute(&mut *transaction)
         .await?;
     transaction.commit().await?;
     let retried = create_env_worker_login(&mut admin, &org, &env).await?;
+    let pods: i32 =
+        sqlx::query_scalar("SELECT pods FROM registry.env_quota WHERE org=$1 AND env=$2")
+            .bind(org.as_str())
+            .bind(env.as_str())
+            .fetch_one(&mut admin)
+            .await?;
+    assert_eq!(
+        pods, desired_pods,
+        "reprovisioning keeps the adjusted quota"
+    );
     assert_eq!(first.login, retried.login);
     assert!(
         first.password != retried.password,

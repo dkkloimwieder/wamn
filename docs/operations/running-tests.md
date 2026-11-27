@@ -320,7 +320,8 @@ cargo test -p wamn-journey-tests -- --ignored
 ```
 
 `cargo xtask preflight` checks the charts before a platform deploy.
-It renders the charts, checks that their images resolve, and checks that the wamn containers accept their arguments with the rendered user and group IDs.
+It renders the charts and the env namespaces, SQL Job, access rules, network policies, and quota objects.
+It checks that chart images resolve and that wamn containers accept their arguments with the rendered user and group IDs.
 Then it sends every object to the kind API server in a server-side dry run.
 For `platform`, `hosts` and the org namespace, it also dry-runs each rendered pod template in a temporary namespace with the same Pod Security labels.
 The kind journeys exercise pods that operators generate after deployment.
@@ -338,7 +339,7 @@ It writes `target/journey/kubeconfig` and `target/journey/cluster.json`.
 The tests read `cluster.json`. A missing file or entry fails the test.
 
 Each test creates its own org with `wamn org create` and a unique owner email, and opens the owner session.
-Then it applies its own environment with `wamn env apply`.
+Then it provisions the environment with `wamn env create` and applies it with `wamn env apply`.
 At most 4 tests hold an org at one time.
 At the end of a test, `wamn env deactivate-project` tears down its project deployment and retains its data for recovery.
 If capture is enabled and a test fails, the suite saves evidence before it deactivates the project deployment.

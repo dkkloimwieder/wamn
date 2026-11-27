@@ -116,7 +116,8 @@ One YAML file declares the projects, applications, and connection pins of an env
 The registry stores the applied settings and one version per connection name in the environment.
 Helm records deployment and rollback history in `wamn-helm-<org>`. The org worker can list the release Secrets there.
 The charts place org resources explicitly using the namespace supplied in their values.
-The org chart declares the namespace, base RBAC, object and storage quotas, and default-deny network policy.
+The org chart declares the namespace, base RBAC, and default-deny network policy.
+On kind, `wamn env create` applies quotas and container defaults in each env namespace.
 The environment chart allows traffic for its host group. The project chart allows traffic for its database and change reader.
 Each application release adds its integration ports to the host group's public egress. The runtime enforces the authorities on each wasm integration.
 The platform chart owns the system PostgreSQL Cluster in namespace `platform`.

@@ -15,7 +15,7 @@ use tokio::time::{Instant, timeout_at};
 use crate::Target;
 use plan::{Recovery, app_recovery_revision, recovery};
 
-/// The Helm storage namespace for releases owned by an org.
+/// The Helm storage namespace for releases owned by an org or env namespace.
 pub fn org_release_namespace(org_namespace: &str) -> Cow<'_, str> {
     Cow::Owned(format!("wamn-helm-{org_namespace}"))
 }

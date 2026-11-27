@@ -22,7 +22,7 @@ The readiness probe checks the database and active signing key.
 Both identity replicas share a wrapping key. With local encryption, each org has its own OAuth wrapping key.
 
 Ingress in `platform` is denied by default. `wamn platform deploy` discovers the Kubernetes API Service and endpoint address and port pairs and sets `apiServer` for the CloudNativePG webhook and kind edge policy. For an offline render, supply representative pairs as `cidr` and `port` entries.
-On kind, the edge can reach org host groups, org control, identity, DNS and the Kubernetes API. GCP leaves edge egress open for the web bucket.
+On kind, the edge can reach org and env host groups, org control, identity, DNS and the Kubernetes API. GCP leaves edge egress open for the web bucket.
 
 For local encryption, supply the existing `identity.oauthSecret` with a 32-byte `key`. For Cloud KMS, supply the matching project and region under `identity.oauthEncryption` and configure the pod identity. Identity stores signing keys in encrypted form.
 

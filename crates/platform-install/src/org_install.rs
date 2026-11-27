@@ -5,7 +5,7 @@ use serde_json::{Value, json};
 use std::{collections::BTreeSet, net::IpAddr, path::PathBuf, time::Duration};
 use wamn_kubernetes::{Target, helm, job, org_resources};
 use wamn_postgres::database::{ConnectionConfig, DATABASE_DIR};
-use wamn_registry::OrgId;
+use wamn_registry::{EnvName, OrgId, name};
 
 use crate::{
     org::{OrgInputs, SYSTEM_DATABASE_CA, control_image, field},
@@ -19,7 +19,7 @@ const ORG_INPUTS: &str = "wamn-org-inputs";
 const SYSTEM_SQL_CONFIG: &str = "wamn-system-sql";
 pub(crate) const PROVISION_JOB: &str = "wamn-provision-org";
 const SQL_CONFIG_PATH: &str = "/etc/wamn/system-sql/database.json";
-const DEADLINE: Duration = Duration::from_secs(300);
+pub(crate) const DEADLINE: Duration = Duration::from_secs(300);
 
 /// The org chart and the cluster selected by the administrator.
 #[derive(Debug)]
@@ -61,20 +61,7 @@ impl OrgInstaller {
     }
 
     pub(crate) async fn inputs(&self) -> anyhow::Result<OrgInputs> {
-        let target = &self.target;
-        let (inputs, database_config, api_server) = tokio::try_join!(
-            org_resources::config_map(target, PLATFORM, ORG_INPUTS),
-            org_resources::config_map(target, PLATFORM, SYSTEM_SQL_CONFIG),
-            async { api_destinations(org_resources::api_addresses(target.client.client()).await?) },
-        )?;
-        let database: ConnectionConfig =
-            serde_json::from_str(field(&database_config["data"], "database.json")?)
-                .context("decode the platform SQL Job connection")?;
-        Ok(OrgInputs {
-            values: inputs,
-            database,
-            api_server,
-        })
+        provisioning_inputs(&self.target).await
     }
 
     pub(crate) async fn install_release(&self, org: &OrgId, values: &Value) -> anyhow::Result<()> {
@@ -121,14 +108,7 @@ impl OrgInstaller {
     }
 
     pub(crate) async fn wait_for_trust(&self, org: &OrgId) -> anyhow::Result<()> {
-        let target = &self.target;
-        let namespace = org.as_str();
-        tokio::try_join!(
-            org_resources::wait_for_public_root(target, namespace, "identity-ca", DEADLINE),
-            org_resources::wait_for_public_root(target, namespace, "nats-ca", DEADLINE),
-            org_resources::wait_for_public_root(target, namespace, SYSTEM_DATABASE_CA, DEADLINE),
-        )?;
-        Ok(())
+        wait_for_trust(&self.target, org.as_str()).await
     }
 
     pub(crate) async fn reload_control(
@@ -153,6 +133,31 @@ impl OrgInstaller {
         )
         .await
     }
+}
+
+pub(crate) async fn provisioning_inputs(target: &Target) -> anyhow::Result<OrgInputs> {
+    let (inputs, database_config, api_server) = tokio::try_join!(
+        org_resources::config_map(target, PLATFORM, ORG_INPUTS),
+        org_resources::config_map(target, PLATFORM, SYSTEM_SQL_CONFIG),
+        async { api_destinations(org_resources::api_addresses(target.client.client()).await?) },
+    )?;
+    let database: ConnectionConfig =
+        serde_json::from_str(field(&database_config["data"], "database.json")?)
+            .context("decode the platform SQL Job connection")?;
+    Ok(OrgInputs {
+        values: inputs,
+        database,
+        api_server,
+    })
+}
+
+pub(crate) async fn wait_for_trust(target: &Target, namespace: &str) -> anyhow::Result<()> {
+    tokio::try_join!(
+        org_resources::wait_for_public_root(target, namespace, "identity-ca", DEADLINE),
+        org_resources::wait_for_public_root(target, namespace, "nats-ca", DEADLINE),
+        org_resources::wait_for_public_root(target, namespace, SYSTEM_DATABASE_CA, DEADLINE),
+    )?;
+    Ok(())
 }
 
 fn org_chart() -> anyhow::Result<PathBuf> {
@@ -195,14 +200,60 @@ pub fn provision_job(org: &OrgId, image: &str, database: &ConnectionConfig) -> V
     sql
 }
 
+pub(crate) const ENV_SQL_COMPONENT: &str = "wamn-env-sql";
+pub(crate) const ENV_SQL_RESULT_PATH: &str = "/dev/termination-log";
+
+pub(crate) fn env_sql_account(namespace: &str) -> String {
+    format!("{ENV_SQL_COMPONENT}-{namespace}")
+}
+
+/// Build the platform Job that provisions the env's database login and quota.
+pub fn env_provision_job(
+    org: &OrgId,
+    env: &EnvName,
+    image: &str,
+    database: &ConnectionConfig,
+) -> Value {
+    let account = env_sql_account(&name::env_key(org, env));
+    let mut job = platform_sql_job(
+        ENV_SQL_COMPONENT,
+        image,
+        database,
+        &[
+            "provision-env",
+            org.as_str(),
+            env.as_str(),
+            "--database",
+            SQL_CONFIG_PATH,
+        ],
+    );
+    job["metadata"]["namespace"] = PLATFORM.into();
+    let spec = &mut job["spec"]["template"]["spec"];
+    spec["serviceAccountName"] = account.into();
+    spec["containers"][0]["terminationMessagePath"] = ENV_SQL_RESULT_PATH.into();
+    spec["automountServiceAccountToken"] = true.into();
+    job
+}
+
 fn sql_job(org: &OrgId, image: &str, database: &ConnectionConfig, verb: &str) -> Value {
-    let login = &database.credentials.name;
-    let mut sql = org_job(
+    let mut job = platform_sql_job(
         SQL_ACCOUNT,
         image,
+        database,
         &[verb, org.as_str(), "--database", SQL_CONFIG_PATH],
     );
-    sql["metadata"] = json!({"name": PROVISION_JOB});
+    job["metadata"] = json!({"name": PROVISION_JOB});
+    job
+}
+
+fn platform_sql_job(
+    component: &str,
+    image: &str,
+    database: &ConnectionConfig,
+    args: &[&str],
+) -> Value {
+    let login = &database.credentials.name;
+    let mut sql = org_job(component, image, args);
     let spec = &mut sql["spec"]["template"]["spec"];
     spec["volumes"] = json!([
         {"name": "configuration", "configMap": {"name": SYSTEM_SQL_CONFIG}},
