@@ -185,7 +185,7 @@ async fn read_token(
          WHERE c.id=$1",
     )
     .bind(request.connection)
-    .try_map(|row| {
+    .try_map(|row: sqlx::postgres::PgRow| {
         let encrypted = match row.try_get::<Option<Vec<u8>>, _>("ciphertext")? {
             Some(ciphertext) => Some(Encrypted {
                 ciphertext,
