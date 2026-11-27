@@ -24,13 +24,14 @@ use serde_json::{Value, json};
 use tokio::time::timeout;
 use wamn_env::app_chart::plan::workload_name;
 use wamn_http_client::HttpClient;
-use wamn_kubernetes::helm::org_release_namespace;
+use wamn_kubernetes::{client::resource, helm::org_release_namespace};
+use wamn_registry::name;
 
 const APP: &str = "wamn_receiving";
 
 common::journey! {
     /// An owner deploys one application, and web answers 401 without a token and 200 with
-    /// the owner token, for one application call and one control call.
+    /// the owner token, for an HTTP app call and a trusted HTTPS control call.
     async fn the_owner_reaches_an_app_and_control_through_web() -> anyhow::Result<()> {
         let source = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../apps")
@@ -44,26 +45,50 @@ common::journey! {
         let label = file["projects"][0]["apps"][APP]["label"]
             .as_str()
             .context("the environment file has no application label")?;
-        let app =
-            wamn_registry::name::app_host(label, &org.name, &outputs.base_domain.parse()?);
-        let control = format!("{}.{}", org.name, outputs.base_domain);
+        let app = name::app_host(label, &org.name, &outputs.base_domain.parse()?);
+        let app_url = format!("http://{}/api/location/list", outputs.web_address);
+        let mut control = url::Url::parse(&org.control_url())?;
+        control.set_scheme("https").expect("HTTPS control URL");
+        control.set_path("/wamn_control/control/mine");
+        let control_host = control.host_str().context("control host")?;
+
+        let ca = common::secret_key(&org.cluster.client, "hosts", "wamn-edge-ca", "tls.crt").await?;
+        let certificates = resource(
+            org.cluster.client.clone(), "hosts", "cert-manager.io", "v1", "Certificate", "certificates",
+        );
+        let certificate = certificates.get(&name::control_resource(&org.name)).await?;
+        let wildcard = certificate.data["spec"]["dnsNames"]
+            .as_array()
+            .context("the org certificate has no DNS names")?
+            .iter()
+            .filter_map(Value::as_str)
+            .find(|host| host.starts_with("*."))
+            .context("the org certificate has no wildcard host")?;
+        let env_host = wildcard.replacen('*', common::ENV, 1);
+        let mut tls_address = outputs.web_address;
+        tls_address.set_port(443);
         let client = HttpClient::builder()
-            .timeout(std::time::Duration::from_secs(60))
+            .roots(&ca)?
+            .resolve(control_host, tls_address)
+            .resolve(&env_host, tls_address)
+            .timeout(Duration::from_secs(60))
             .build()?;
-        for (host, path) in [
-            (app.as_str(), "/api/location/list"),
-            (control.as_str(), "/wamn_control/control/mine"),
+
+        let health = client.get(format!("https://{env_host}/healthz")).send().await?;
+        ensure!(health.status().is_success(), "wildcard host returned {}", health.status());
+        for (host, url) in [
+            (app.as_str(), app_url.as_str()),
+            (control_host, control.as_str()),
         ] {
-            let url = format!("http://{}{path}", outputs.web_address);
-            let refused = client.get(&url).header("Host", host).send().await?;
+            let refused = client.get(url).header("Host", host).send().await?;
             let status = refused.status();
             ensure!(
                 status == hyper::StatusCode::UNAUTHORIZED,
-                "{host}{path} without a token answered {status}: {}",
+                "{host} at {url} without a token answered {status}: {}",
                 refused.text().await?
             );
             let answered = client
-                .get(&url)
+                .get(url)
                 .header("Host", host)
                 .bearer_auth(&org.token)
                 .send()
@@ -72,10 +97,10 @@ common::journey! {
             let text = answered.text().await?;
             ensure!(
                 status == hyper::StatusCode::OK,
-                "{host}{path} with the owner token answered {status}: {text}"
+                "{host} at {url} with the owner token answered {status}: {text}"
             );
             serde_json::from_str::<Value>(&text)
-                .with_context(|| format!("{host}{path} answered no JSON: {text}"))?;
+                .with_context(|| format!("{host} at {url} answered no JSON: {text}"))?;
         }
         Ok(())
     }

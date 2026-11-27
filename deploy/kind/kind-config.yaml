@@ -1,4 +1,4 @@
-# The local cluster maps its ingress ports to host ports 80 and 443.
+# Port 80 serves local HTTP. Port 443 serves TLS with the org certificates.
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 kubeadmConfigPatchesJSON6902:

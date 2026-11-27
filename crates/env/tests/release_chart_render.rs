@@ -624,6 +624,7 @@ fn platform_and_org_releases_wire_the_public_roots() -> anyhow::Result<()> {
             &org,
             &[json!({"cidr":"192.0.2.2/32","port":6443})],
         )?;
+        let control_name = wamn_registry::name::control_resource(&org);
         let values = scratch.0.join("org.json");
         std::fs::write(&values, serde_json::to_vec(&org_values)?)?;
         let org_chart = root.join("deploy/charts/org");
@@ -636,6 +637,78 @@ fn platform_and_org_releases_wire_the_public_roots() -> anyhow::Result<()> {
             "-f",
             values.to_str().unwrap(),
         ]))?;
+        let edge_service = object(&platform, "Service", "wamn-edge")?;
+        let edge_namespace = &edge_service["metadata"]["namespace"];
+        let public_tls: Vec<_> = org
+            .iter()
+            .filter(|object| matches!(object["kind"].as_str(), Some("Certificate" | "Ingress")))
+            .collect();
+        if provider == "kind" {
+            let certificate = object(&org, "Certificate", &control_name)?;
+            let ingress = object(&org, "Ingress", &control_name)?;
+            assert_eq!(public_tls.len(), 2);
+            assert_eq!(&certificate["metadata"]["namespace"], edge_namespace);
+            assert_eq!(&ingress["metadata"]["namespace"], edge_namespace);
+            let issuer_name = certificate["spec"]["issuerRef"]["name"]
+                .as_str()
+                .context("org certificate issuer name")?;
+            let issuer = object(&platform, "Issuer", issuer_name)?;
+            assert_eq!(&issuer["metadata"]["namespace"], edge_namespace);
+            assert_eq!(certificate["spec"]["issuerRef"]["kind"], "Issuer");
+            assert!(issuer["spec"]["ca"]["secretName"].is_string());
+            let apex = format!(
+                "{}.{}",
+                org_values["org"].as_str().context("org slug")?,
+                wamn_platform_install::org::field(inputs, "base")?
+            );
+            let wildcard = format!("*.{apex}");
+            let expected_hosts = BTreeSet::from([apex.as_str(), wildcard.as_str()]);
+            assert_eq!(
+                host_names(&certificate["spec"]["dnsNames"])?,
+                expected_hosts
+            );
+            let tls_entries = ingress["spec"]["tls"]
+                .as_array()
+                .context("org Ingress TLS")?;
+            let [tls] = tls_entries.as_slice() else {
+                anyhow::bail!("the org Ingress must reference one TLS Secret");
+            };
+            assert_eq!(tls["secretName"], certificate["spec"]["secretName"]);
+            assert_eq!(host_names(&tls["hosts"])?, expected_hosts);
+            assert_eq!(
+                ingress["metadata"]["annotations"]["traefik.ingress.kubernetes.io/router.entrypoints"],
+                "websecure"
+            );
+            assert_eq!(
+                ingress["metadata"]["annotations"]["traefik.ingress.kubernetes.io/router.tls"],
+                "true"
+            );
+            let rules = ingress["spec"]["rules"]
+                .as_array()
+                .context("org Ingress rules")?;
+            let mut routed = BTreeSet::new();
+            for rule in rules {
+                routed.insert(wamn_platform_install::org::field(rule, "host")?);
+                let paths = rule["http"]["paths"]
+                    .as_array()
+                    .context("org Ingress paths")?;
+                let [path] = paths.as_slice() else {
+                    anyhow::bail!("each org host must serve one catch-all path");
+                };
+                assert_eq!(path["path"], "/");
+                assert_eq!(path["pathType"], "Prefix");
+                assert_eq!(
+                    path["backend"]["service"],
+                    json!({
+                        "name": edge_service["metadata"]["name"],
+                        "port": {"name": edge_service["spec"]["ports"][0]["name"]},
+                    })
+                );
+            }
+            assert_eq!(routed, expected_hosts);
+        } else {
+            assert!(public_tls.is_empty());
+        }
         let settings = &org_values["control"]["configuration"];
         assert!(settings.get("apply_database").is_none());
         assert!(settings.get("apply_transaction_host").is_none());
@@ -708,9 +781,12 @@ fn platform_and_org_releases_wire_the_public_roots() -> anyhow::Result<()> {
             .context("org namespace")?;
         let root_secrets: BTreeSet<_> = platform
             .iter()
-            .filter(|object| object["kind"] == "Certificate" && object["spec"]["isCA"] == true)
+            .filter(|object| {
+                object["kind"] == "Certificate"
+                    && object["spec"]["isCA"] == true
+                    && object["metadata"]["namespace"] == "platform"
+            })
             .map(|certificate| {
-                assert_eq!(certificate["metadata"]["namespace"], "platform");
                 let issuer = certificate["spec"]["issuerRef"]["name"]
                     .as_str()
                     .context("root issuer name")?;
@@ -793,6 +869,17 @@ fn platform_and_org_releases_wire_the_public_roots() -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+fn host_names(value: &serde_json::Value) -> anyhow::Result<BTreeSet<&str>> {
+    use anyhow::Context as _;
+
+    value
+        .as_array()
+        .context("host names must be a list")?
+        .iter()
+        .map(|name| name.as_str().context("host name must be a string"))
+        .collect()
 }
 
 fn objects(output: &std::process::Output) -> anyhow::Result<Vec<serde_json::Value>> {

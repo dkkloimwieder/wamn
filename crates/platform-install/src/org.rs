@@ -26,7 +26,7 @@ pub struct OrgInputs {
     pub api_server: Vec<Value>,
 }
 
-/// Install the org release, provision its logins, then invite its owner.
+/// Install the org release, provision its logins, wait for kind TLS, then invite its owner.
 pub async fn create(org: &OrgId, owner: &str, installation: &OrgInstaller) -> anyhow::Result<()> {
     let OrgInputs {
         values: inputs,
@@ -36,13 +36,14 @@ pub async fn create(org: &OrgId, owner: &str, installation: &OrgInstaller) -> an
     let inputs = &inputs["data"];
     let image = control_image(inputs)?;
     let values = org_values(inputs, &database, org, &api_server)?;
-    let credentials = if registry_token_metadata(inputs)? {
-        None
-    } else {
+    let on_kind = values["provider"] == LOCAL_PROVIDER;
+    let credentials = if on_kind {
         Some(docker_configuration(
             field(inputs, "registry")?,
             field(&values, "registry")?,
         )?)
+    } else {
+        None
     };
     installation.install_release(org, &values).await?;
     if let Some(credentials) = credentials {
@@ -53,6 +54,9 @@ pub async fn create(org: &OrgId, owner: &str, installation: &OrgInstaller) -> an
     let job_uid = installation.provision_logins(org, image, &database).await?;
     installation.wait_for_trust(org).await?;
     installation.reload_control(org, &job_uid).await?;
+    if on_kind {
+        installation.wait_for_public_certificate(org).await?;
+    }
     installation.invite_owner(org, image, owner).await
 }
 
@@ -63,10 +67,6 @@ pub(crate) fn control_image(inputs: &Value) -> anyhow::Result<&str> {
     )?;
     digest.parse::<wamn_digest::Digest>()?;
     Ok(image)
-}
-
-fn registry_token_metadata(inputs: &Value) -> anyhow::Result<bool> {
-    Ok(field(inputs, "provider")? != LOCAL_PROVIDER)
 }
 
 /// The org chart values from the platform's public org inputs.
@@ -87,6 +87,7 @@ pub fn org_values(
         .parse::<wamn_digest::Digest>()
         .context("invalid appChart digest in the platform release")?;
     let registry = field(inputs, "registry")?;
+    let provider = field(inputs, "provider")?;
     let registry_egress = registry_destinations(inputs)?;
     let oauth_encryption: Value = serde_json::from_str(field(inputs, OAUTH_ENCRYPTION_INPUT)?)
         .context("decode the platform OAuth encryption configuration")?;
@@ -101,6 +102,7 @@ pub fn org_values(
     let control = crate::provision_org::control_login(org, &database.database);
     Ok(json!({
         "org": org, "base": field(inputs, "base")?, "registry": internal_registry,
+        "provider": provider,
         "networkPolicy": {"apiServer": api_server, "registry": registry_egress},
         "control": {
             "image": image,
@@ -113,7 +115,7 @@ pub fn org_values(
                 "platform_registry": internal_registry,
                 "worker_image": image,
                 "chart": app_chart,
-                "registry_token_metadata": registry_token_metadata(inputs)?,
+                "registry_token_metadata": provider != LOCAL_PROVIDER,
                 "events": {"stream_replicas": 1, "dup_window_secs": 120},
                 "oauth_encryption": oauth_encryption,
             },

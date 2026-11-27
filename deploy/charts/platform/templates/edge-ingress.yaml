@@ -1,12 +1,13 @@
-{{- if not .Values.edge.neg }}
+{{- if eq .Values.provider "kind" }}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: wamn-edge
   namespace: hosts
+  annotations:
+    # Keep the HTTP path for local clients, including legacy app hosts.
+    traefik.ingress.kubernetes.io/router.entrypoints: web
 spec:
-  tls:
-    - secretName: wamn-edge-tls
   defaultBackend:
     service:
       name: wamn-edge

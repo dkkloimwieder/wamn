@@ -178,7 +178,6 @@ A port-forward connects a local port to a pod.
 The control Service selects the org's control Deployment, `c-<org>`.
 Use `<org>.<base>`, where `<base>` is the platform chart's `platformDomain`.
 The example uses org `local` and host `local.wamn.localhost`.
-The edge certificate covers `*.wamn.localhost`, including application hosts.
 Export the cluster access file to a private directory:
 
 ```bash
@@ -202,8 +201,18 @@ A permitted control query requires a password-login token for the org audience.
 The local TLS ingress listens on host port 443.
 Port 80 reaches the same ingress controller.
 For the same control call through web on port 80, use `http://local.wamn.localhost/wamn_control/control/mine`.
-The edge certificate covers the application hostnames.
-Trust the local certificate explicitly when using these endpoints.
+On port 443, the org certificate covers `local.wamn.localhost` and `*.local.wamn.localhost`.
+Use port 80 for the current app hosts, such as `receiving--local.wamn.localhost`.
+To use HTTPS, export the public CA from the kind cluster and pass it to curl.
+If you use HTTPS with `wamn` or a browser, add the CA to the client's trust store.
+
+```bash
+kubectl --context kind-wamn-local -n hosts get secret wamn-edge-ca \
+  -o 'jsonpath={.data.tls\.crt}' | base64 --decode > /tmp/wamn-local-access/edge-ca.crt
+curl -i --cacert /tmp/wamn-local-access/edge-ca.crt \
+  https://local.wamn.localhost/wamn_control/control/mine
+```
+
 Kind selects no hosted UI artifact.
 
 Call an application route through web at `/api/<route path>` on `<label>--<org>.<base>`.

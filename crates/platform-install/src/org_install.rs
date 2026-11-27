@@ -3,6 +3,7 @@
 use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
 use std::{collections::BTreeSet, net::IpAddr, path::PathBuf, time::Duration};
+use wamn_kubernetes::client::{ready, resource, wait_named};
 use wamn_kubernetes::{Target, helm, job, org_resources};
 use wamn_postgres::database::{ConnectionConfig, DATABASE_DIR};
 use wamn_registry::{EnvName, OrgId, name};
@@ -108,6 +109,24 @@ impl OrgInstaller {
 
     pub(crate) async fn wait_for_trust(&self, org: &OrgId) -> anyhow::Result<()> {
         wait_for_trust(&self.target, org.as_str()).await
+    }
+
+    pub(crate) async fn wait_for_public_certificate(&self, org: &OrgId) -> anyhow::Result<()> {
+        let certificates = resource(
+            self.target.client.client(),
+            "hosts",
+            "cert-manager.io",
+            "v1",
+            "Certificate",
+            "certificates",
+        );
+        wait_named(
+            &certificates,
+            &name::control_resource(org),
+            DEADLINE,
+            |certificate| Ok(certificate.filter(ready).map(drop)),
+        )
+        .await
     }
 
     pub(crate) async fn reload_control(

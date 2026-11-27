@@ -1,0 +1,37 @@
+{{- if eq .Values.provider "kind" }}
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: wamn-edge-selfsigned
+  namespace: hosts
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: wamn-edge-ca
+  namespace: hosts
+spec:
+  isCA: true
+  secretName: wamn-edge-ca
+  commonName: wamn-edge-ca
+  duration: 87600h
+  renewBefore: 8760h
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+    rotationPolicy: Never
+  issuerRef:
+    kind: Issuer
+    name: wamn-edge-selfsigned
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: wamn-edge-ca
+  namespace: hosts
+spec:
+  ca:
+    secretName: wamn-edge-ca
+{{- end }}

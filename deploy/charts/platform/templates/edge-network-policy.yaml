@@ -1,4 +1,4 @@
-{{- if not .Values.edge.neg }}
+{{- if eq .Values.provider "kind" }}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:

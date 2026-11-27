@@ -258,7 +258,6 @@ edge:
   image: ""
   trustedProxyHops: 1
   neg: false
-  acme: null
   service:
     type: ClusterIP
     nodePort: null

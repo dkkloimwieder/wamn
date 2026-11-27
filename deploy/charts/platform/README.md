@@ -35,7 +35,8 @@ Set `identity.resendFrom` to the verified sender and `identity.inviteUrl` to the
 
 cert-manager issues the identity, NATS, and system database roots in `platform`. trust-manager distributes the public roots to the orgs and the identity root to `hosts`. Platform database clients verify the server with `ca.crt` from cert-manager leaf Secrets.
 
-The edge trusts the public identity CA. On kind, the edge certificate covers `*.<platformDomain>`. GCP terminates TLS at the external load balancer.
-If the cluster Ingress uses ACME, set `edge.acme` for the `wamn-edge` Issuer in `hosts`.
+The edge trusts the public identity CA. On kind, the platform owns the `wamn-edge-ca` Issuer in `hosts`.
+It signs each org's public certificate. The platform Ingress serves local HTTP.
+GCP terminates TLS at the external load balancer.
 
 The platform chart installs admission rules for project operation accounts in environment namespaces. Set `projectOperationAdmission: Deny` to refuse invalid workload, Service, and egress policy requests. The kind default is `Warn`.

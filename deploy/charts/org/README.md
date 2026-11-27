@@ -16,7 +16,10 @@ Environment and project releases supply the policy rules for their host groups, 
 `wamn org create` creates and uses `wamn-helm-<org>` as the Helm release namespace.
 Environment workers store their release records in their own Helm namespace.
 Set `control.image` and `control.configuration` to deploy the org's control service and render its settings file. Pass the platform's `global.identityIssuer` and `global.nats.schedulerUrl` as `identity_issuer` and `nats_url`.
-The control API route uses `<org>.<base>`. The `wamn org create` command reads the platform wildcard base from `wamn-org-inputs`.
+The control API route uses `<org>.<base>`. The `wamn org create` command reads the domain and provider from `wamn-org-inputs`.
+On kind, the org release owns an Ingress and a Certificate in `hosts`.
+The certificate covers `<org>.<base>` and `*.<org>.<base>`. The shared `wamn-edge-ca` Issuer signs it.
+For a direct Helm install on kind, set `provider: kind`.
 The command also reads `appChart` from that ConfigMap and sets the `chart` value in the control configuration.
 Set `control.configuration.registry` to the org origin for packages and application components.
 Set `WAMN_REGISTRY` to that org origin when you publish. On kind, use `localhost:5001` from the publishing machine.
@@ -30,3 +33,4 @@ After Helm installs the chart, the org SQL Job in `platform` writes the password
 For local encryption, control reads `wamn-oauth` from the environment namespace.
 trust-manager writes the public identity, NATS, and system database roots to ConfigMaps in the org namespace.
 `wamn org create` waits for these ConfigMaps before it checks the control rollout.
+On kind, it also waits for the org certificate after the SQL Job succeeds.

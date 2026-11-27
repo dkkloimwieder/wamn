@@ -1,0 +1,48 @@
+{{- if eq .Values.provider "kind" }}
+{{- $name := printf "c-%s" .Values.org }}
+{{- $host := include "org.controlHost" . }}
+{{- $hosts := list $host (printf "*.%s" $host) }}
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ $name }}
+  namespace: hosts
+spec:
+  secretName: {{ $name }}
+  dnsNames:
+    {{- range $hosts }}
+    - {{ . | quote }}
+    {{- end }}
+  issuerRef:
+    kind: Issuer
+    name: wamn-edge-ca
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ $name }}
+  namespace: hosts
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+spec:
+  tls:
+    - secretName: {{ $name }}
+      hosts:
+        {{- range $hosts }}
+        - {{ . | quote }}
+        {{- end }}
+  rules:
+    {{- range $hosts }}
+    - host: {{ . | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: wamn-edge
+                port:
+                  name: http
+    {{- end }}
+{{- end }}

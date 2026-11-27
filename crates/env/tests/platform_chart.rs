@@ -305,6 +305,68 @@ fn platform_ingress_and_edge_egress_match_the_provider_boundary() -> anyhow::Res
 }
 
 #[test]
+fn kind_platform_owns_the_public_ca_and_plain_http_ingress() -> anyhow::Result<()> {
+    use anyhow::Context as _;
+    use wamn_kubernetes::{helm, platform_env::entry};
+
+    let chart = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../deploy/charts/platform");
+    for provider in ["kind", "gcp"] {
+        let values = std::fs::read(chart.join(format!("values-{provider}.yaml")))?;
+        let platform = helm::template(&entry(
+            &chart,
+            "platform",
+            "wamn",
+            serde_yaml::from_slice(&values)?,
+        )?)?;
+        let edge = platform
+            .iter()
+            .find(|object| object["kind"] == "Service" && object["metadata"]["name"] == "wamn-edge")
+            .context("edge Service")?;
+        let edge_objects = |kind| {
+            platform.iter().filter(move |object| {
+                object["kind"] == kind
+                    && object["metadata"]["namespace"] == edge["metadata"]["namespace"]
+            })
+        };
+        let certificates: Vec<_> = edge_objects("Certificate").collect();
+        let ingresses: Vec<_> = edge_objects("Ingress").collect();
+        if provider == "gcp" {
+            assert!(certificates.is_empty() && ingresses.is_empty());
+            assert!(edge_objects("Issuer").next().is_none());
+            continue;
+        }
+        let [root] = certificates.as_slice() else {
+            anyhow::bail!("the kind platform must provide one public CA certificate");
+        };
+        assert_eq!(root["spec"]["isCA"], true);
+        let mut issuers = edge_objects("Issuer");
+        assert!(issuers.any(|issuer| {
+            issuer["spec"]["selfSigned"].is_object()
+                && issuer["metadata"]["name"] == root["spec"]["issuerRef"]["name"]
+        }));
+        assert_eq!(
+            edge_objects("Issuer")
+                .filter(|issuer| issuer["spec"]["ca"]["secretName"] == root["spec"]["secretName"])
+                .count(),
+            1
+        );
+        let [ingress] = ingresses.as_slice() else {
+            anyhow::bail!("the kind platform must provide one HTTP ingress");
+        };
+        assert_eq!(
+            ingress["metadata"]["annotations"]["traefik.ingress.kubernetes.io/router.entrypoints"],
+            "web"
+        );
+        assert!(ingress["spec"]["tls"].is_null());
+        assert_eq!(
+            ingress["spec"]["defaultBackend"]["service"],
+            json!({"name": edge["metadata"]["name"], "port": {"name": edge["spec"]["ports"][0]["name"]}})
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn web_and_owner_invitation_policies_use_the_control_pod_port() -> anyhow::Result<()> {
     let chart = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../deploy/charts/org");
     let values = serde_json::from_str(include_str!("support/org-chart-values.json"))?;
