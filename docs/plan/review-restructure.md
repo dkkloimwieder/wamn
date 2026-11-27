@@ -39,6 +39,7 @@ This document is the work list for wamn, from the crate cleanup to the workflow 
 | 5 | Environment boundary: T1, T2, T4, T5, T10, and the T16 items on connections, connection events and locking. | 4 | Yes, once, at E5.14 after the owner's go: the host's namespace check and `--environment` argument (`services/host/src/host.rs`), and the host crates that E5.1, E5.11 and E5.13 change. |
 | 6 | Public addresses: T11, and client base paths. | 5 | No (I). |
 | 7 | Cloud and production: T6, T7, T8, the GKE cluster of T13, and the rest of T16. | A GKE cluster, created only with explicit authorization. | Mostly no (I). |
+| Cleanup | Removes what Epics 3 to 5 added that the product does not need. The owner rules each item. Not started. | 5 | Not known until the owner rules the items. |
 | 8 and later | Workflow design: W1 to W12. | Every epic above. | Yes. |
 
 - Each item is done when its own check, stated in its section, and its refusal tests pass.
