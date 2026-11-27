@@ -5,6 +5,7 @@ use std::pin::Pin;
 use crate::administration::StoredCredential;
 use crate::administration::{ConnectionError, refuse};
 use serde_json::Value;
+use sqlx::postgres::PgRow;
 use sqlx::{Connection as _, PgConnection, Postgres, Row as _, Transaction};
 use uuid::Uuid;
 use wamn_identity_protocol::PrincipalId;
@@ -141,7 +142,7 @@ impl<'a, 'session> Administration<'a, 'session> {
              FROM platform.connection WHERE name=$1 FOR UPDATE",
         )
         .bind(name)
-        .try_map(|row| {
+        .try_map(|row: PgRow| {
             Ok(WriteContext {
                 state: ConnectionState {
                     id: row.try_get("id")?,
@@ -467,7 +468,7 @@ impl<'a, 'session> Administration<'a, 'session> {
              LEFT JOIN platform.oauth_token o ON o.connection_id=c.id WHERE c.id=$1",
         )
         .bind(id)
-        .try_map(|row| Ok(ConnectionRow {
+        .try_map(|row: PgRow| Ok(ConnectionRow {
             id: row.try_get("id")?,
             name: row.try_get("name")?,
             integration_type: row.try_get("integration_type")?,
@@ -520,7 +521,7 @@ pub async fn copy_source(
          WHERE c.name=$1",
     )
     .bind(name)
-    .try_map(|row| Ok(CopySource {
+    .try_map(|row: PgRow| Ok(CopySource {
         integration_type: row.try_get("integration_type")?,
         auth_type: row.try_get("auth_type")?,
         parameters: row.try_get("parameters")?,
