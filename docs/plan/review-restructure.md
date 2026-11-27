@@ -37,7 +37,7 @@ This document is the work list for wamn, from the crate cleanup to the workflow 
 | Rename | R6. | 3 merged. Runs before 4. | Yes. |
 | 4 | Org boundary on kind: T3, T9, T12, and the kind pin and refusal tests of T13. | 1. Can run beside 2 and 3. | Yes: the host's 503 on a failed signing-key fetch (`wamn-authentication`) and the Job security context (`wamn-kubernetes`). The stock host pod already runs as UID 65532, so no `USER` line is added (owner ruling 2026-11-26). |
 | 5 | Environment boundary: T1, T2, T4, T5, T10, and the T16 items on connections, connection events and locking. | 4 | Yes, once, at E5.14 after the owner's go: the host's namespace check and `--environment` argument (`services/host/src/host.rs`), and the host crates that E5.1, E5.11 and E5.13 change. |
-| 6 | Public addresses: T11, and client base paths. | 5 | No (I). |
+| 6 | Public addresses: T11, and client base paths. | 5 | Yes, once, at E6.8 after the owner's go, with `edge-web`, `control`, the browser bundles, and `identity` if E6.7 needs it (owner ruling 2026-11-27). The host links `wamn-routes`, `wamn-kubernetes` and `wamn-registry`, and T11 changes how the workload binds its host (correction 7). |
 | 7 | Cloud and production: T6, T7, T8, the GKE cluster of T13, and the rest of T16. | A GKE cluster, created only with explicit authorization. | Mostly no (I). |
 | Cleanup | Removes what Epics 3 to 5 added that the product does not need. The owner rules each item. Not started. | 5 | Not known until the owner rules the items. |
 | 8 and later | Workflow design: W1 to W12. | Every epic above. | Yes. |
@@ -52,6 +52,8 @@ This document is the work list for wamn, from the crate cleanup to the workflow 
 - Nothing in the workflow design is built before Epic 8.
 
 The owner ruled the 16 questions of [epic-5-scoping](epic-5-scoping/epic-5-scoping.md#7-questions-for-rulings) on 2026-11-26. The rulings and the 16 corrections of [epic-5-scoping](epic-5-scoping/epic-5-scoping.md#1-corrections-to-the-plan) are written into R6, L8, T1, T2, T4, T5, T10, T16 and sections 5, 7, 8 and 9.
+
+The owner ruled the 10 questions of [epic-6-scoping](epic-6-scoping/epic-6-scoping.md#7-questions-for-rulings) on 2026-11-27. The rulings and the 12 corrections are written into T2, T11 and sections 7 and 8.
 
 Two items outside the workflow design wait for it: the deletion of the unnamed NATS entry (T10), and the removal of the `ingress` NATS entry and user (I).
 
@@ -399,7 +401,7 @@ Epic 4 is done (`main` at `b66800014`). The current-state statements of T3, T9, 
 | 7 | Medium | Environments share the org namespace, one quota, one worker. | T1 | Open. |
 | 8 | Medium | The quota counts objects and limits `requests.storage` to 500Gi (F, `deploy/charts/org/values.yaml`, correction 2). No LimitRange. Control and the CDC reader set no requests. | T5 | Open. |
 | 9 | Medium | In `platform` only identity has an ingress policy. NATS, the system database and the Poolers accept any pod. | T12 | Done in Epic 4. |
-| 10 | Medium | The public web proxy lists every ConfigMap in the cluster on every request (`platform/templates/edge-rbac.yaml`, `crates/kubernetes/src/web_release.rs::Releases`, called from `services/web/src/lib.rs`). | T11 | Open. |
+| 10 | Medium | The public web proxy lists the ConfigMaps labeled `wamn.route=true` in every namespace before every request, `/healthz` included (`platform/templates/edge-rbac.yaml`, `crates/kubernetes/src/web_release.rs::Releases::routes`, `services/web/src/lib.rs:276`, epic 6 correction 3). | T11 | Open. |
 | 11 | Medium | NATS accounts had no limits, and creds never expire. | T10 | Partly done: connections 64, subscriptions 1,024, payload 1 MiB per project times the project count. Consumers unlimited, no revocation, `maxProjects` still used. |
 | 12 | Medium | Two CA mechanisms. Helm-made CA keys sit in release records (`genCA` and `lookup` in `identity-certificate.yaml`, `system-database.yaml`). | T9 | Done in Epic 4: cert-manager CAs, trust-manager roots. |
 | 13 | Medium | A killed deploy left the release pending. | L2 | Recovery runs under the lifecycle locks. The Helm wait has no margin before the Job deadline. |
@@ -435,7 +437,8 @@ Sound today (F): orgs never share a namespace and `allowSharedHosts: false` is s
 - In Epic 5 the command runs on kind only. The registry read grants and the environment's backup bucket, with admin on it for the environment account, are cloud IAM work and stay in Epic 7 (owner ruling 2026-11-26, correction 11).
 - Each environment namespace gets one read grant on each L4 repository, the org repository and the platform repository, for all its service accounts. It covers the host, the environment account and every project account. These are cloud IAM grants, and the provisioning command makes them in Epic 7 (moved from L4 by the owner, 2026-11-25).
 - `env apply` refuses an env that the operator did not provision. Today it creates the `registry.env` row when the row is absent (F, `crates/env/src/registry/deployment.rs`, correction 7). The CLI calls the org's control service, which starts a Job in the environment namespace as the environment account.
-- No wamn component in the cluster gets a cluster-wide right to create namespaces. The only cluster-wide rights are token review for control and identity, and the web proxy's ConfigMap read until T11 removes it (F).
+- No wamn component in the cluster gets a cluster-wide right to create namespaces. The cluster-wide rights are token review for control and identity, and the web proxy's Namespace list and watch and its ConfigMap read (F, `deploy/charts/platform/templates/edge-rbac.yaml:16`, epic 6 correction 8). T11 replaces the ConfigMap read with a Service list and watch.
+- `wamn env create <org>/<env> --prod` marks the prod env, fixed at first provisioning (T11, owner ruling 2026-11-27).
 - An org owner cannot create an environment alone.
 
 ### T3. Pod security
@@ -544,16 +547,26 @@ Sound today (F): orgs never share a namespace and `allowSharedHosts: false` is s
 
 ### T11. Web proxy and public addresses
 
-- The proxy keeps its route table in memory and follows changes with one watch on Services and one on Namespaces, reading only names and labels. Route data moves to annotations on the `<app>-http` Service. The proxy's ClusterRole drops ConfigMaps. The two ConfigMaps per application in `application/templates/web-release.yaml` and `crates/kubernetes/src/web_release.rs::Releases::read` go.
-- The prod marker is a label on one environment namespace per org, set by the provisioning command from the registry row, which stays the record. The command refuses a second prod environment in an org. The proxy reads the label from its Namespace watch. Route annotations, which the project account writes, cannot mark prod. The Namespace watch shows the proxy nothing new, because every Service already carries its namespace name (I).
+The owner ruled the 10 questions of [epic-6-scoping](epic-6-scoping/epic-6-scoping.md#7-questions-for-rulings) on 2026-11-27. The 12 corrections of [epic-6-scoping](epic-6-scoping/epic-6-scoping.md#1-corrections-to-the-plan) are written into this section, T2, the order of work and section 7.
+
+- The proxy keeps its route table in memory. It follows changes with one watch on Services and one on Namespaces, and reads only names, labels and annotations. Today it lists every ConfigMap labeled `wamn.route=true` in every namespace before each request, `/healthz` included, and reads the release ConfigMap by name for static requests (F, `crates/kubernetes/src/web_release.rs::Releases::routes`, `services/web/src/lib.rs:276`, correction 3).
+- Route data moves to annotations on the `<app>-http` Service. Control routing moves to annotations on the control Service `c-<org>-http`, read through the same Service watch (ruling 6). Two producers go: the app chart pair in `deploy/charts/app/templates/web-release.yaml` and the org chart pair in `deploy/charts/org/templates/control-route.yaml` (correction 2). `Releases::read`, the per-request list, the edge ConfigMap right and the project Role app ConfigMap rights go with them.
+- The edge ClusterRole keeps Namespace list and watch, and adds Service list and watch (F, `deploy/charts/platform/templates/edge-rbac.yaml:16`, correction 8).
+- The Namespace watch supplies the org from `wamn.dev/org-name`, tells control from workload namespaces by `wamn.dev/org-workloads`, and supplies the prod label (F, `crates/platform-install/src/env_install/manifest.rs:64`, correction 4). No Service can supply the prod fact.
+- Prod is chosen with `wamn env create <org>/<env> --prod`, fixed at first provisioning. An org can have no prod env. Moving prod is not built (ruling 2). The registry has no prod field today (F, `deploy/sql/system-schema.sql:579`, correction 6). `registry.env` gains it, with one prod row per org at most in SQL. The command sets the prod Namespace label after its SQL commits.
 - Prod is `<org>.<domain>`. Every other environment is `<env>.<org>.<domain>`. No public address has two hyphens in a row. Internal names keep the double hyphen.
-- The path is `/<project>/<application>`. The API is `<host>/<project>/<application>/api/<route>`. A caller that is not a browser uses the same address with its token.
-- The proxy checks the environment from the name: a route in `<org>--<env>` may claim only `<env>.<org>.<domain>`, and only the environment marked prod may claim `<org>.<domain>`. Names may not contain two hyphens in a row (`crates/registry/src/identifiers.rs`), so `<org>--<env>` splits cleanly.
-- The label setting goes: the `label` column, `UNIQUE (org, label)`, `application_host` (`crates/registry/src/name.rs`), `MAX_APPLICATION_LABEL_LEN` and the route label in `crates/environment/src/application_chart/plan.rs`.
-- The default application is a setting of the user. After login at the org address a user lands on it, or chooses when there are several.
-- To design: the landing page and chooser, listing only applications the user may use; the fixed root paths (`/api/`, `/config.json`, `/password/`, `/oauth/callback`, `/wamn_control/`) as names a project may not take; and what a session's active role means across projects. The certificate is decided: `wamn org create` makes one wildcard certificate `*.<org>.<domain>`, with `<org>.<domain>` as a second name, through GCP Certificate Manager and a certificate map, beside the org's repository. On kind, cert-manager's local CA Issuer signs it. No platform redeploy.
+- An application has one mount, `/<project>/<application>/`, with a trailing slash. Its pages, assets, `config.json` and API are under the mount. Org control and identity stay at the host root (ruling 1, correction 12).
+- The public native paths are `/<project>/<application>/api/files`, `/api/flow` and `/api/health`. Web translates them to the current native paths. Org control routes and the OAuth callback stay on the org origin (ruling 7). OpenAPI paths and the generated SDKs do not change (I).
+- The upstream Host is the Service's internal host, `<app>-http.<org>--<env>.svc.cluster.local`, in place of `routeHost`. Web translates the public path (ruling 5). Today the workload binds the public host as `routeHost` (F, `deploy/charts/app/templates/workloads.yaml:36`), and the host registers its file and flow routes under it (F, `services/host/src/host/platform_http.rs::bind`, correction 7).
+- The proxy checks the environment from the name: a route in `<org>--<env>` serves only `<env>.<org>.<domain>`, and only the env marked prod serves `<org>.<domain>`. The two-hyphen rule covers org, env and project slugs, so `<org>--<env>` splits cleanly (F, correction 5).
+- An application name is one URL-safe slug segment, with the project slug rule, in Rust and SQL (ruling 3). Today `AppName` accepts any nonempty text without a NUL byte (F, `crates/registry/src/env_app.rs:36`, correction 5). Fixture and example apps that the rule refuses are renamed.
+- A project may not take these first segments: `api`, `password`, `oauth`, `assets`, `clients`, `platform-ui`, `healthz`, `invite`, `recover` and `reset`, beside `wamn` and `wamn-*` (ruling 4). `project_id_is_reserved` and its SQL check refuse them (`crates/registry/src/identifiers.rs:84`).
+- The label setting goes: `registry.env_app.label`, its check, `UNIQUE (org, label)`, `crates/registry/src/name.rs::app_host`, `crates/registry/src/identifiers.rs::MAX_APP_LABEL_LEN` and `app_label_reason`, `ValuesInput::route_label` in `crates/env/src/app_chart/plan.rs`, `routeHost`, `webClients`, `webDigests` and the env document `label` (correction 1).
+- A rollback to an app Helm revision from before T11 is refused. No compatibility path keeps the ConfigMap routes (decided under rule 1, greenfield).
+- The default application is a setting of the user, not of the env. After login at the org address, a user lands on the default application, or chooses when there are several. The chooser lists only applications the user may use. These are in Epic 6, as E6.7 (ruling 8). No user setting exists today (F, `deploy/sql/system-schema.sql:220`, `:286`, correction 11). The rest is designed in [landing](epic-6-scoping/landing.md) and waits for the owner's rulings.
+- Certificates on kind: the org Helm release owns one certificate `*.<org>.<domain>` with `<org>.<domain>`, in `hosts`, from one local CA Issuer. `edge.acme` goes (ruling 9). Today one certificate `*.<platformDomain>` and one Secret `wamn-edge-tls` serve every host, and `wamn org create` makes no public certificate or DNS record (F, correction 9). GCP Certificate Manager and its certificate map, beside the org repository, stay in Epic 7.
 - One origin per org and environment: one login covers every application there, and a script fault in one application can act in the others (I).
-- Dev cannot act on prod in the browser: a `__Host-` cookie is not shared with a subdomain, and the CSRF check refuses `same-site` requests.
+- Dev cannot act on prod in the browser: a `__Host-` cookie is not sent to another host, and the T9 check refuses `same-site` requests.
 
 ### T12. Network policies
 
@@ -841,7 +854,7 @@ Part 1 of the plan must state the rules of this document. These Part 1 statement
 | The project is the trust unit | The environment is the shared execution trust group. The project is the data, ownership and recovery boundary. |
 | Jobs that run Helm use the org worker | Environment account and project accounts (T4). |
 | Environment account storage is 256 MiB per project; limits scale by project count; the install sizes JetStream from `maxProjects` | Limits per environment as data, store size in bytes (T10). |
-| Application hosts use `<label>--<org>.<base>`; labels unique in an org | The public address scheme and path form (T11). |
+| Application hosts use `<label>--<org>.<base>`; labels unique in an org | The public address scheme and path form (T11). Part 1 states it, with the Epic 5 label bridge (F, `docs/plan/wamn-restructure.md:42`, epic 6 correction 10). The bridge sentence goes when T11 lands. |
 | The CSRF cookie and header | The `Sec-Fetch-Site` check (T9). |
 | One stock `WorkloadDeployment` with one workflow service component | `trigger` and `workflow` (W1). |
 | Data change renders a durable subscription per (model, op) aimed at `ingress` | Pull consumers per subscriber (W2, W3). |
@@ -892,6 +905,8 @@ Run as `cargo test -p wamn-journey-tests --test <target> <name> -- --ignored --e
 - `host_contracts::a_revoked_grant_is_refused_within_the_revocation_lifetime`: the cache lifetime and revocation.
 - `host_contracts::app_stop_leaves_its_host` and `env_apply_stops_an_unlisted_app_and_keeps_its_data`.
 - `nats_outage::the_host_serves_through_a_nats_outage_and_recovers`: run alone, because it stops the shared NATS. During the outage it calls the host pod through a port-forward and logs the web edge status. After NATS returns it waits for the operator, a newer `lastSeen`, the first application's workloads Ready, a call through the web edge, and a second application Ready. The `lastSeen` sample is still taken before NATS stops (F), so a heartbeat in that gap passes that one check. Take the sample just before NATS restarts, and require a strictly newer value after it returns. The later checks already need a reconnected host (I).
+
+- Epic 6 (T11): every journey that builds an app URL changes in the bead that changes the address: `app_routes_kind`, `data_change`, `host_contracts`, `installed_digest`, `isolation`, `lifecycle`, `nats_outage`, `pooler_renewal`, `poolers`, `request_path`, `smoke`, `waits`, `workflows` and `write_log`. They run at E6.8, on a fresh wamn-local per group (owner ruling 2026-11-27).
 
 ### New tests
 
