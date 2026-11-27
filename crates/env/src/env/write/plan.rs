@@ -16,7 +16,6 @@ use super::{EnvDocument, Value, ValuesInput};
 pub(super) fn release_values(
     document: &EnvDocument,
     namespace: &str,
-    platform_domain: &wamn_registry::platform_domain::PlatformDomain,
     app: &wamn_registry::AppName,
     package_manifests: &std::collections::BTreeMap<
         wamn_package::PackageName,
@@ -78,8 +77,6 @@ pub(super) fn release_values(
         project: document.settings.project.clone(),
         env: document.settings.env.clone(),
         manifest_digest: *package_digest,
-        route_label: &selection.label,
-        platform_domain,
         client: selection.client.as_ref(),
         apps,
         route,

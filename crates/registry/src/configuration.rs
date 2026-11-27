@@ -35,7 +35,6 @@ pub struct EnvConfiguration {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AppConfiguration {
-    pub label: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub client: Option<Client>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]

@@ -513,7 +513,9 @@ The host creates an authority handle for each Request or run.
 The handle specifies who executes, their role, and the lease for a durable run.
 
 Format 0.2 gives each node one purpose: entry, call or response.
-A Request path is relative to `/api/<app>/flow`. The host accepts POST with JSON and authenticates the bearer token.
+A public Request path is relative to `/<project>/<app>/api/flow`.
+Web forwards it under `/api/<app>/flow` on the app Service.
+The host accepts POST with JSON and authenticates the bearer token.
 It checks `wamn-workflow:<app>/<workflow_id>`, also listed by `permission.list` and `permission.mine`.
 Each path that ends reaches a Response node.
 If a reachable call can write, the host admits a leased run before dispatch. Other Request calls run inline.

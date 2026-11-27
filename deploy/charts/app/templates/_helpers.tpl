@@ -22,3 +22,7 @@ hostgroup: {{ required "hostGroup is required" .Values.hostGroup | quote }}
 {{- define "app.namespace" -}}
 {{- required "Set namespace." .Values.namespace -}}
 {{- end -}}
+
+{{- define "app.httpService" -}}
+{{- printf "%s-http" (default .Release.Name .Values.name) -}}
+{{- end -}}

@@ -38,7 +38,7 @@ common::journey! {
             .await
             .context("read the control rollout after org create")??;
         let env_name = common::ENV.parse()?;
-        timeout(COMMAND, org.create_env(&env_name)).await.context("create the waits environment")??;
+        timeout(COMMAND, org.create_prod_env()).await.context("create the waits environment")??;
         let namespace = name::env_key(&org.name, &env_name);
         let mut watches = timeout(OBSERVE, Watches::start(&org, &namespace))
             .await

@@ -293,7 +293,7 @@ mod tests {
     use hyper_util::rt::TokioIo;
     use std::convert::Infallible;
 
-    const HOST_NAME: &str = "shop--acme.example.test";
+    const HOST_NAME: &str = "dev.acme.example.test";
     const ACCESS_TOKEN: &str = "header.payload.signature";
 
     /// Pass an HTTP request through Hyper without opening a socket.

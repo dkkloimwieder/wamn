@@ -9,7 +9,7 @@ use std::{
 };
 
 use anyhow::{Context as _, ensure};
-use common::{Org, host::FIXTURE, service_account_can};
+use common::{Org, host::FIXTURE, request::OtherEnv, run, service_account_can};
 use futures_util::{StreamExt as _, TryStreamExt as _, stream};
 use k8s_openapi::api::authorization::v1::{ResourceAttributes, SubjectAccessReview};
 use k8s_openapi::api::core::v1::{Pod, ServiceAccount};
@@ -24,14 +24,13 @@ use serde_json::{Value, json};
 use tokio::time::timeout;
 use wamn_env::app_chart::plan::workload_name;
 use wamn_http_client::HttpClient;
-use wamn_kubernetes::{client::resource, helm::org_release_namespace};
+use wamn_kubernetes::helm::org_release_namespace;
 use wamn_registry::name;
 
 const APP: &str = "wamn-receiving";
 
 common::journey! {
-    /// An owner deploys one application, and web answers 401 without a token and 200 with
-    /// the owner token, for an HTTP app call and a trusted HTTPS control call.
+    /// Serve the prod and preview app mounts and org control over trusted HTTPS.
     async fn the_owner_reaches_an_app_and_control_through_web() -> anyhow::Result<()> {
         let source = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../apps")
@@ -41,46 +40,34 @@ common::journey! {
 
         let org = &env.org;
         let outputs = &org.cluster.outputs;
-        let file: Value = serde_json::from_slice(&std::fs::read(&env.file)?)?;
-        let label = file["projects"][0]["apps"][APP]["label"]
-            .as_str()
-            .context("the environment file has no application label")?;
-        let app = name::app_host(label, &org.name, &outputs.base_domain.parse()?);
-        let app_url = format!("http://{}/api/location/list", outputs.web_address);
-        let mut control = url::Url::parse(&org.control_url())?;
-        control.set_scheme("https").expect("HTTPS control URL");
-        control.set_path("/wamn_control/control/mine");
-        let control_host = control.host_str().context("control host")?;
+        let preview_app = "receiving-preview";
+        let preview = OtherEnv::apply(org, "preview", preview_app).await?;
+        let mut deploy = org.command();
+        deploy.arg("deploy").arg(&source).args(["--app", preview_app, "--env"]).arg(&preview.file);
+        run(deploy).await?;
 
+        let prod_host = env.public_host()?;
+        let preview_host = name::env_host(&org.name, &preview.triple.env, &outputs.base_domain.parse()?);
+        let prod_path = format!("{}api/location/list", name::app_mount(&env.triple.project, &APP.parse()?));
+        let preview_path = format!("{}api/location/list", name::app_mount(&preview.triple.project, &preview_app.parse()?));
         let ca = common::secret_key(&org.cluster.client, "hosts", "wamn-edge-ca", "tls.crt").await?;
-        let certificates = resource(
-            org.cluster.client.clone(), "hosts", "cert-manager.io", "v1", "Certificate", "certificates",
-        );
-        let certificate = certificates.get(&name::control_resource(&org.name)).await?;
-        let wildcard = certificate.data["spec"]["dnsNames"]
-            .as_array()
-            .context("the org certificate has no DNS names")?
-            .iter()
-            .filter_map(Value::as_str)
-            .find(|host| host.starts_with("*."))
-            .context("the org certificate has no wildcard host")?;
-        let env_host = wildcard.replacen('*', common::ENV, 1);
         let mut tls_address = outputs.web_address;
         tls_address.set_port(443);
         let client = HttpClient::builder()
             .roots(&ca)?
-            .resolve(control_host, tls_address)
-            .resolve(&env_host, tls_address)
+            .resolve(&prod_host, tls_address)
+            .resolve(&preview_host, tls_address)
             .timeout(Duration::from_secs(60))
             .build()?;
-
-        let health = client.get(format!("https://{env_host}/healthz")).send().await?;
-        ensure!(health.status().is_success(), "wildcard host returned {}", health.status());
-        for (host, url) in [
-            (app.as_str(), app_url.as_str()),
-            (control_host, control.as_str()),
+        let control_path = "/wamn_control/control/mine";
+        for (host, path) in [
+            (&prod_host, prod_path.as_str()),
+            (&preview_host, preview_path.as_str()),
+            (&prod_host, control_path),
+            (&preview_host, control_path),
         ] {
-            let refused = client.get(url).header("Host", host).send().await?;
+            let url = format!("https://{host}{path}");
+            let refused = client.get(&url).send().await?;
             let status = refused.status();
             ensure!(
                 status == hyper::StatusCode::UNAUTHORIZED,
@@ -88,8 +75,7 @@ common::journey! {
                 refused.text().await?
             );
             let answered = client
-                .get(url)
-                .header("Host", host)
+                .get(&url)
                 .bearer_auth(&org.token)
                 .send()
                 .await?;
@@ -101,6 +87,14 @@ common::journey! {
             );
             serde_json::from_str::<Value>(&text)
                 .with_context(|| format!("{host} at {url} answered no JSON: {text}"))?;
+        }
+        for (host, path) in [(&prod_host, &preview_path), (&preview_host, &prod_path)] {
+            let status = client.get(format!("https://{host}{path}"))
+                .bearer_auth(&org.token)
+                .send()
+                .await?
+                .status();
+            ensure!(status == hyper::StatusCode::NOT_FOUND, "{host}{path} answered {status}");
         }
         Ok(())
     }

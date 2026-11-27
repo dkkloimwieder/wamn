@@ -30,7 +30,7 @@ const NATS_POD: &str = "wamn-nats-0";
 /// The pod label of the stock runtime-operator Deployment.
 const OPERATOR: &str = "wasmcloud.com/name=runtime-operator";
 /// A second application with the fixture package, applied after the outage.
-const SECOND: &str = "second_fixture";
+const SECOND: &str = "second-fixture";
 /// How long the host pod or application workloads take to become Ready.
 const HOST_DEADLINE: Duration = Duration::from_secs(300);
 /// How long the NATS pod takes to stop or to become Ready again.
@@ -48,7 +48,7 @@ common::journey! {
     /// The test logs the web edge status during the outage.
     /// When NATS returns, the operator is Ready and the Host reports a newer `lastSeen`.
     /// The stock operator places the first application again before the edge call.
-    /// The web edge serves a call and the second `WorkloadDeployment` is Ready.
+    /// The web edge serves both app mounts on the same host after the outage.
     async fn the_host_serves_through_a_nats_outage_and_recovers() -> anyhow::Result<()> {
         let app = App::prepare(&fixture(), FIXTURE).await?;
         let env = &app.env;
@@ -88,7 +88,12 @@ common::journey! {
         let edge = &app.routes;
         let direct = Routes {
             endpoint: format!("http://{}", forward.address),
-            host: edge.host.clone(),
+            host: wamn_registry::name::service_host(
+                &wamn_env::app_chart::plan::workload_name(&wamn_env::release_chart::release_name(
+                    &env.triple.org, &env.triple.project, &env.triple.env, &FIXTURE.parse()?,
+                )?),
+                namespace,
+            ),
             bearer: edge.bearer.clone(),
             client: edge.client.clone(),
         };
@@ -203,7 +208,7 @@ common::journey! {
             .context("waiting for the web edge recovery call to complete")??;
         drop(restore);
 
-        reapply(env, |file| declare(file, SECOND, "second")).await?;
+        reapply(env, |file| declare(file, SECOND)).await?;
         env.deploy(&fixture(), SECOND).await?;
         until(
             HOST_DEADLINE,
@@ -223,7 +228,18 @@ common::journey! {
                 .then_some(()))
             },
         )
-        .await
+        .await?;
+        for app in [FIXTURE, SECOND] {
+            let mount = wamn_registry::name::app_mount(&env.triple.project, &app.parse()?);
+            let url = format!("http://{}{mount}api/health", env.org.cluster.outputs.web_address);
+            until(EDGE_DEADLINE, &format!("the web edge serves {mount}"), || async {
+                let response = edge.client.request(hyper::Method::HEAD, &url)
+                    .header("Host", &edge.host)
+                    .send().await?;
+                Ok((response.status() == hyper::StatusCode::NO_CONTENT).then_some(()))
+            }).await?;
+        }
+        Ok(())
     }
 }
 

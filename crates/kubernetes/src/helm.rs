@@ -13,7 +13,10 @@ use std::{
 };
 use tokio::time::{Instant, timeout_at};
 
-use crate::{Target, web_release::WEB_RELEASE_ANNOTATION};
+use crate::{
+    Target,
+    web_release::{ReleaseAnnotation, WEB_RELEASE_ANNOTATION},
+};
 use plan::{Recovery, app_recovery_revision, recovery};
 
 /// The Helm storage namespace for releases owned by an org or env namespace.
@@ -296,7 +299,7 @@ impl Error for UpgradeRolledBack {
 /// Require a saved app manifest to publish its route on its workload Service.
 ///
 /// # Errors
-/// Refuses malformed manifests and app revisions from before Service routes.
+/// Refuses malformed manifests and app revisions without a mounted Service route.
 pub fn require_app_service_route(
     manifest: &[u8],
     namespace: &str,
@@ -310,12 +313,13 @@ pub fn require_app_service_route(
             && object["metadata"]["namespace"] == namespace
             && object["metadata"]["annotations"][WEB_RELEASE_ANNOTATION]
                 .as_str()
-                .is_some_and(|value| !value.is_empty())
+                .and_then(|value| serde_json::from_str::<ReleaseAnnotation>(value).ok())
+                .is_some_and(|route| route.app_mount().is_some())
         {
             return Ok(());
         }
     }
-    anyhow::bail!("application release {namespace}/{release} predates Service routes");
+    anyhow::bail!("application release {namespace}/{release} has no mounted Service route");
 }
 
 async fn app_revision_manifest(
@@ -700,11 +704,17 @@ mod tests {
     #[test]
     fn an_app_rollback_requires_its_service_to_carry_the_route() {
         let old = b"kind: Service\nmetadata: {name: app-http, namespace: acme--dev}";
-        let new = format!(
-            "kind: Service\nmetadata:\n  name: app-http\n  namespace: acme--dev\n  annotations:\n    {WEB_RELEASE_ANNOTATION}: '{{}}'"
-        );
+        let service = |annotation: &Value| {
+            format!(
+                "kind: Service\nmetadata:\n  name: app-http\n  namespace: acme--dev\n  annotations:\n    {WEB_RELEASE_ANNOTATION}: '{annotation}'"
+            )
+        };
+        let digest = wamn_digest::bytes_sha256(b"release");
+        let legacy = service(&json!({"host":"shop--acme.example.test","digest":digest}));
+        let mounted = service(&json!({"app":"stock","project":"shop","digest":digest}));
         assert!(require_app_service_route(old, "acme--dev", "app").is_err());
-        assert!(require_app_service_route(new.as_bytes(), "acme--dev", "app").is_ok());
+        assert!(require_app_service_route(legacy.as_bytes(), "acme--dev", "app").is_err());
+        assert!(require_app_service_route(mounted.as_bytes(), "acme--dev", "app").is_ok());
     }
 
     #[test]

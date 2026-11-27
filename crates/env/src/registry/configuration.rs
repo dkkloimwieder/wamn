@@ -27,7 +27,7 @@ pub async fn read(
         "SELECT t.name AS target, e.readiness_budget_seconds, e.drain_bound_seconds, e.revocation_seconds, p.schema_mode, c.* \
          FROM registry.project_env p JOIN registry.env e USING (org,env) \
          JOIN registry.target t ON t.id=e.target_id LEFT JOIN LATERAL ( \
-           SELECT 1 AS record_type, app AS name, label AS value, \
+           SELECT 1 AS record_type, app AS name, NULL::text AS value, \
              client_package, client_web, NULL::text AS alias, NULL::integer AS version \
            FROM registry.env_app WHERE org=p.org AND env=p.env AND project=p.project AND active \
            UNION ALL SELECT 2, ac.app, ac.connection_name, NULL, NULL, ac.alias, NULL \
@@ -98,7 +98,6 @@ pub async fn read(
                 configuration.apps.insert(
                     wamn_postgres::decode_text(row.try_get("name")?, "name")?,
                     AppConfiguration {
-                        label: row.try_get("value")?,
                         client,
                         connections: BTreeMap::new(),
                     },
@@ -195,16 +194,15 @@ pub async fn write(
     for (name, app) in &c.apps {
         sqlx::query(
             "INSERT INTO registry.env_app \
-             (org,env,project,app,label,client_package,client_web) \
-             VALUES ($1,$2,$3,$4,$5,$6,$7) \
-             ON CONFLICT (org,env,project,app) DO UPDATE SET label=EXCLUDED.label, \
+             (org,env,project,app,client_package,client_web) \
+             VALUES ($1,$2,$3,$4,$5,$6) \
+             ON CONFLICT (org,env,project,app) DO UPDATE SET \
              client_package=EXCLUDED.client_package, client_web=EXCLUDED.client_web, active=true",
         )
         .bind(c.settings.org.as_str())
         .bind(c.settings.env.as_str())
         .bind(c.settings.project.as_str())
         .bind(name.as_str())
-        .bind(&app.label)
         .bind(app.client.as_ref().map(|client| client.package.as_str()))
         .bind(app.client.as_ref().map(|client| client.web.to_string()))
         .execute(&mut *transaction)

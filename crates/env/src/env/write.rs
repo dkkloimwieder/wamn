@@ -23,7 +23,6 @@ pub type AuthorityPort = fn(&str) -> Result<u16, wamn_connection::administration
 pub fn release_values(
     document: &EnvDocument,
     namespace: &str,
-    platform_domain: &wamn_registry::platform_domain::PlatformDomain,
     app: &wamn_registry::AppName,
     package_manifests: &std::collections::BTreeMap<
         wamn_package::PackageName,
@@ -38,7 +37,6 @@ pub fn release_values(
     plan::release_values(
         document,
         namespace,
-        platform_domain,
         app,
         package_manifests,
         package_digest,

@@ -16,16 +16,12 @@ release:
   manifestDigest: ""
 # `org/env/project`.
 env: ""
-# Public host derived by the release planner from the application's label.
-routeHost: ""
 # Exactly one application name to its package membership.
 apps: {}
-# Derived host to the declared client package ID.
-webClients: {}
-# Host to pinned web artifact digest.
-webDigests: {}
-# Organization whose platform UI configuration the edge serves.
-org: ""
+# Optional client package and pinned web artifact digest.
+client: null
+# Project that owns the application.
+project: ""
 route:
   config: {}
 # Application and integration sibling components pinned by OCI manifest digest.

@@ -63,5 +63,7 @@ wamn-web --settings <path> probe
 Web watches Service and Namespace metadata and keeps its route table in memory.
 It serves HTTP 503 for routes until both initial lists finish. The `/healthz` endpoint stays available.
 If a watch ends, web keeps its routes while it requests a fresh list.
-The probe lists the same metadata once. It requests `/` and `/config.json` through the local listener for each host with a browser bundle.
+The probe lists the same metadata once.
+For each route with a browser bundle, it requests the index and `config.json` through the local listener.
+It uses the app mount for application bundles and the host root for the org bundle.
 It fails if a response is not HTTP 200.

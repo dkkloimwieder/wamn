@@ -7082,7 +7082,6 @@ dependencies = [
  "wamn-digest",
  "wamn-package",
  "wamn-registry",
- "wamn-routes",
 ]
 
 [[package]]

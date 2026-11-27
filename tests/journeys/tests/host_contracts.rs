@@ -22,7 +22,7 @@ use wamn_identity_protocol::nats::{SIGN_HOST_USER_PATH, SignHostUser, SignedUser
 use wamn_test_infrastructure::scratch::ScratchRoot;
 
 /// A second application with the fixture package, for the stop and status path.
-const SECOND: &str = "second_fixture";
+const SECOND: &str = "second-fixture";
 /// How long one host pod waits to become the only Ready one after `wamn env apply`.
 const HOST_DEADLINE: Duration = Duration::from_secs(300);
 /// How long the operator takes to see a Workload change on the Host object.
@@ -221,7 +221,7 @@ common::journey! {
     /// counts fewer workloads.
     async fn app_stop_leaves_its_host() -> anyhow::Result<()> {
         let env = Org::create().await?.apply(FIXTURE).await?;
-        reapply(&env, |file| declare(file, SECOND, "second")).await?;
+        reapply(&env, |file| declare(file, SECOND)).await?;
         env.deploy(&fixture(), FIXTURE).await?;
         env.deploy(&fixture(), SECOND).await?;
         let client = &env.org.cluster.client;

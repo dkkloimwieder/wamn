@@ -63,7 +63,6 @@ pub(super) use journey;
 const CAPACITY: usize = 4;
 pub(crate) const ENV: &str = "dev";
 const PROJECT: &str = "fixture";
-const LABEL: &str = "fixture";
 /// The role of the API service that calls the fixture routes.
 const CALLER_ROLE: &str = "route-caller";
 /// How long CloudNativePG takes to apply the observer's pg_hba line.
@@ -131,9 +130,16 @@ impl Org {
             .map(drop)
     }
 
+    /// Provision the primary environment at the org apex.
+    pub async fn create_prod_env(&self) -> anyhow::Result<()> {
+        let mut command = self.cluster.env_create_command(&self.name, &ENV.parse()?);
+        command.arg("--prod");
+        run(command).await.map(drop)
+    }
+
     /// Write an environment file with one project and one application, and run `wamn env apply`.
     pub async fn apply(self, app: &str) -> anyhow::Result<Env> {
-        self.create_env(&ENV.parse()?).await?;
+        self.create_prod_env().await?;
         self.apply_created(app).await
     }
 
@@ -150,7 +156,7 @@ impl Org {
                 "target": "cloud",
                 "revocation_seconds": 60,
                 "database": {"instances": 1, "storage": "1Gi", "cpu": "100m", "memory": "256Mi"},
-                "projects": [{"name": PROJECT, "apps": {app: {"label": LABEL}}}],
+                "projects": [{"name": PROJECT, "apps": {app: {}}}],
             }))?,
         )?;
         let triple = Triple::new(self.name.clone(), ENV.parse()?, PROJECT.parse()?);
@@ -180,6 +186,23 @@ pub struct Env {
 impl Env {
     pub fn namespace(&self) -> String {
         name::env_key(&self.triple.org, &self.triple.env)
+    }
+
+    /// The primary environment is provisioned as prod and serves the org apex.
+    pub fn public_host(&self) -> anyhow::Result<String> {
+        Ok(name::org_host(
+            &self.triple.org,
+            &self.org.cluster.outputs.base_domain.parse()?,
+        ))
+    }
+
+    /// The public app mount for CLI calls through the org apex.
+    pub fn app_url(&self, app: &str) -> anyhow::Result<String> {
+        Ok(format!(
+            "http://{}{}",
+            self.public_host()?,
+            name::app_mount(&self.triple.project, &app.parse()?)
+        ))
     }
 
     /// Admit the observer login to the project database, and connect with it.
@@ -226,9 +249,10 @@ impl App {
         env.deploy(source, app).await?;
         let org = &env.org;
         let outputs = &org.cluster.outputs;
-        let host = wamn_registry::name::app_host(LABEL, &org.name, &outputs.base_domain.parse()?);
+        let host = env.public_host()?;
+        let mount = name::app_mount(&env.triple.project, &app.parse()?);
         // The fixture routes accept a PAT only, and an API service cannot hold `admin`.
-        caller_role(&env, source, package, &host).await?;
+        caller_role(&env, source, package, &env.app_url(app)?).await?;
         let secret = env.scratch.path().join("caller.json");
         let triple = &env.triple;
         let mut command = org.command();
@@ -250,7 +274,7 @@ impl App {
             .context("the API service secret has no principal")?
             .parse()?;
         let routes = Routes {
-            endpoint: format!("http://{}/api", outputs.web_address),
+            endpoint: format!("http://{}{mount}api", outputs.web_address),
             host,
             bearer,
             client: HttpClient::builder()
@@ -272,7 +296,12 @@ impl App {
 
 /// Create the API caller's role on the application host, and grant it each operation that
 /// the fixture's build output serves, its bases' operations included.
-async fn caller_role(env: &Env, source: &Path, package: &str, host: &str) -> anyhow::Result<()> {
+async fn caller_role(
+    env: &Env,
+    source: &Path,
+    package: &str,
+    host_url: &str,
+) -> anyhow::Result<()> {
     // `wamn deploy` builds the package into `<workspace>/target/wamn/<package>`.
     let manifest = std::fs::read(
         source
@@ -305,16 +334,15 @@ async fn caller_role(env: &Env, source: &Path, package: &str, host: &str) -> any
             operations.insert(reference(&base.package, &base.version, local)?);
         }
     }
-    let host_url = format!("http://{host}");
     let mut command = env.org.command();
     command
-        .args(["create-role", "--host-url", &host_url])
+        .args(["create-role", "--host-url", host_url])
         .args(["--role", CALLER_ROLE]);
     run(command).await?;
     for operation in &operations {
         let mut command = env.org.command();
         command
-            .args(["grant-permission", "--host-url", &host_url])
+            .args(["grant-permission", "--host-url", host_url])
             .args(["--role", CALLER_ROLE, "--operation", operation]);
         run(command).await?;
     }

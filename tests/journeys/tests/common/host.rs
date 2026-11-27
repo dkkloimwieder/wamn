@@ -56,18 +56,9 @@ pub async fn reapply(env: &Env, edit: impl FnOnce(&mut Value)) -> anyhow::Result
     run(command).await.map(drop)
 }
 
-/// Declare `app` with `label` in the environment's one project.
-pub fn declare(file: &mut Value, app: &str, label: &str) {
-    file["projects"][0]["apps"][app] = json!({"label": label});
-}
-
-/// The label that the environment file gives `app`.
-fn label(env: &Env, app: &str) -> anyhow::Result<String> {
-    let file: Value = serde_json::from_slice(&std::fs::read(&env.file)?)?;
-    file["projects"][0]["apps"][app]["label"]
-        .as_str()
-        .map(str::to_owned)
-        .with_context(|| format!("the environment file has no label for {app}"))
+/// Declare `app` in the environment's one project.
+pub fn declare(file: &mut Value, app: &str) {
+    file["projects"][0]["apps"][app] = json!({});
 }
 
 /// A stock wasmCloud runtime resource, such as `Host` or `Workload`.
@@ -265,10 +256,10 @@ pub async fn app_get(
         .context("application route path")?;
     let org = &env.org;
     let outputs = &org.cluster.outputs;
-    let host =
-        wamn_registry::name::app_host(&label(env, app)?, &org.name, &outputs.base_domain.parse()?);
+    let host = env.public_host()?;
+    let mount = wamn_registry::name::app_mount(&env.triple.project, &app.parse()?);
     Ok(web()?
-        .get(format!("http://{}/api{path}", outputs.web_address))
+        .get(format!("http://{}{mount}api{path}", outputs.web_address))
         .header("Host", host)
         .bearer_auth(token)
         .send()

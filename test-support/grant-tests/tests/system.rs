@@ -303,7 +303,6 @@ fn seeds(org: &Org<'_>, env: &str, command: Option<&str>) -> Vec<Seed> {
     let principal = principal.as_str();
     let email = format!("owner@{name}.example");
     let issuer = format!("https://{name}.example");
-    let label = format!("{env}-web");
     let target = [("org", name), ("project", PROJECT), ("env", env)];
     let at_target = |columns: &[(&'static str, &'static str)]| [&target[..], columns].concat();
     vec![
@@ -374,10 +373,7 @@ fn seeds(org: &Org<'_>, env: &str, command: Option<&str>) -> Vec<Seed> {
                 ("version", "1"),
             ],
         ),
-        Seed::new(
-            "registry.env_app",
-            &[&target[..], &[("app", "web"), ("label", &label)]].concat(),
-        ),
+        Seed::new("registry.env_app", &at_target(&[("app", "web")])),
         Seed::new(
             "registry.env_app_connection",
             &at_target(&[("app", "web"), ("alias", "erp"), ("connection_name", "erp")]),

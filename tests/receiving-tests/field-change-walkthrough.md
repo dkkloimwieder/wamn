@@ -22,7 +22,7 @@ A failed build leaves the deployed release available.
 
 Change a response value in `apps/wamn_receiving/component/src/reads.rs`.
 Save the file and wait for deployment to finish.
-Request the affected operation at its installed `/api` route.
+Request the affected operation under `/<project>/wamn-receiving/api/`.
 Make sure that the response contains the changed value.
 Restore the source file and wait for the next deployment.
 Use the product schema commands before deploying a change to application SQL.
@@ -34,15 +34,8 @@ Their automated assertions stop at that missing step; they do not create data th
 
 ## Open the browser
 
-In a second terminal, run the browser client against the installed application URL.
-
-```bash
-cd apps/wamn_receiving/web
-WAMN_ROUTE_URL=https://receiving.example.test pnpm run dev
-```
-
-Open Vite's address and sign in with the platform account.
-Vite reads configuration from the installed web service and preserves `/api` when it forwards requests.
+The installed application URL ends in `/<project>/wamn-receiving/`.
+The browser client and Vite proxy need application base path support to use it.
 See the [web README](../../apps/wamn_receiving/web/README.md) for the screens and data prerequisites.
 
 ## Measure a change

@@ -145,7 +145,6 @@ fn env(id: &PackageName) -> Result<EnvDocument> {
         "org": ORG, "project": "wms", "env": "dev", "target": "cloud",
         "revocation_seconds": 60,
         "apps": {app: {
-            "label": "app",
             "client": {"package": id, "web": format!("sha256:{}", "0".repeat(64))},
         }},
     });
@@ -188,7 +187,6 @@ async fn record_bytes(
     let values = wamn_env::env::write::release_values(
         &document,
         &env_namespace,
-        &"wamn.example.com".parse()?,
         app,
         &manifests,
         &package_digest(id),

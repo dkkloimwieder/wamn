@@ -22,17 +22,6 @@
 /// the ceiling so an id the registry accepts is an id provisioning can shape.
 pub const MAX_PROJECT_ID_LEN: usize = 40;
 
-/// Space left in a DNS label after the separator and the longest org slug.
-pub const MAX_APP_LABEL_LEN: usize = 63 - "--".len() - MAX_PROJECT_ID_LEN;
-
-/// Explain why an application host label fails the slug or length rule.
-pub fn app_label_reason(label: &str) -> Option<&'static str> {
-    if label.len() > MAX_APP_LABEL_LEN {
-        return Some("too long (max 21 bytes)");
-    }
-    component_slug_reason(label)
-}
-
 /// The platform-reserved id prefix (wamn-66x). The platform mints `wamn-db-…`
 /// and `wamn-…` database, namespace and Secret names, so a project id in that
 /// space collides with a platform-owned name.

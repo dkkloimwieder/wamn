@@ -110,7 +110,7 @@ metadata:
   name: {{ $name }}-http
   namespace: {{ $namespace | quote }}
   annotations:
-    wamn.dev/web-release: {{ dict "host" $host "api" (printf "http://%s-http.%s.svc.cluster.local" $name $namespace) "digest" $digest "clients" dict "webs" dict "platformUi" .Values.control.platformUi "org" $namespace | toJson | quote }}
+    wamn.dev/web-release: {{ dict "digest" $digest "platformUi" .Values.control.platformUi | toJson | quote }}
 spec:
   selector: {app.kubernetes.io/name: {{ $name }}}
   ports: [{name: http, port: 80, targetPort: http}]

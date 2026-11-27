@@ -5,7 +5,7 @@ metadata:
   name: wamn-edge
   namespace: hosts
   annotations:
-    # Keep the HTTP path for local clients, including legacy app hosts.
+    # Keep port 80 for local CLI calls and journeys.
     traefik.ingress.kubernetes.io/router.entrypoints: web
 spec:
   defaultBackend:

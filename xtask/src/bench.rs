@@ -29,7 +29,7 @@ const SEED_PRINCIPAL: &str = "00000000-0000-0000-0000-000000000000";
 
 #[derive(Debug, ClapArgs)]
 pub struct Args {
-    /// The host name of the application, such as `receiving--acme.wamn.dev`.
+    /// The application environment host, such as `acme.wamn.dev` for prod.
     #[arg(long)]
     host: String,
     /// Override the API base URL and send `--host` as the Host header.

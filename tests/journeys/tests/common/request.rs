@@ -56,8 +56,7 @@ pub struct OtherEnv<'a> {
 }
 
 impl<'a> OtherEnv<'a> {
-    /// Write an environment file for `env` with the harness project and an application
-    /// labelled `env`, and run `wamn env apply`. A label is unique in its org.
+    /// Write the file for a non-production environment and run `wamn env apply`.
     pub async fn apply(org: &'a Org, env: &str, app: &str) -> anyhow::Result<Self> {
         let scratch = ScratchRoot::create()?;
         let file = scratch.path().join("env.yaml");
@@ -69,7 +68,7 @@ impl<'a> OtherEnv<'a> {
                 "target": "cloud",
                 "revocation_seconds": 60,
                 "database": {"instances": 1, "storage": "1Gi", "cpu": "100m", "memory": "256Mi"},
-                "projects": [{"name": PROJECT, "apps": {app: {"label": env}}}],
+                "projects": [{"name": PROJECT, "apps": {app: {}}}],
             }))?,
         )?;
         let env = Self {

@@ -74,8 +74,8 @@ async fn system_schema_enforces_project_roots_and_app_slugs() -> anyhow::Result<
             projects.as_slice(),
         ),
         (
-            "INSERT INTO registry.env_app (org, env, project, app, label)
-             VALUES ('acme', 'dev', 'inventory', $1, 'fixture')",
+            "INSERT INTO registry.env_app (org, env, project, app)
+             VALUES ('acme', 'dev', 'inventory', $1)",
             apps.as_slice(),
         ),
     ] {
@@ -373,7 +373,7 @@ async fn readding_a_deactivated_project_starts_a_new_generation() -> anyhow::Res
     let document = EnvDocument::from_json(
         br#"{"org":"acme","project":"inventory","env":"dev","target":"cloud",
              "revocation_seconds":60,"integrations":{"shared-erp":{"version":1}},
-             "apps":{"inventory":{"label":"inventory","connections":{"erp":"shared-erp"}}}}"#,
+             "apps":{"inventory":{"connections":{"erp":"shared-erp"}}}}"#,
     )?;
     let triple = document.triple();
     provision_fixture_env(&mut admin, &triple).await?;
@@ -494,7 +494,7 @@ connections: {erp: {version: 1}}
 projects:
   - name: inventory
     apps:
-      stock: {label: stock-web, connections: {backend: erp}}
+      stock: {connections: {backend: erp}}
 ";
     std::fs::write(&path, declared)?;
     let mut omitted = EnvFile::compile(&path)?;
@@ -533,8 +533,8 @@ projects:
         assert!(configuration::write(&mut transaction, &document.configuration()).await?);
         transaction.commit().await?;
 
-        let (stored_active, label): (bool, String) = sqlx::query_as(
-            "SELECT active, label FROM registry.env_app
+        let stored_active: bool = sqlx::query_scalar(
+            "SELECT active FROM registry.env_app
              WHERE org=$1 AND env=$2 AND project=$3 AND app=$4",
         )
         .bind(triple.org.as_str())
@@ -544,7 +544,6 @@ projects:
         .fetch_one(&mut client)
         .await?;
         assert_eq!(stored_active, active);
-        assert_eq!(label, selection.label);
         let applied = configuration::read(&mut client, &triple)
             .await?
             .expect("the project was configured");

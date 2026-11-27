@@ -32,11 +32,6 @@ pub struct AppSelection {
     /// Desired release, read from the registry or supplied by the deploy request.
     #[serde(skip)]
     pub current: DeclaredRelease,
-    #[schemars(
-        length(min = 1, max = "wamn_registry::identifiers::MAX_APP_LABEL_LEN"),
-        regex(pattern = "^[a-z0-9]+(-[a-z0-9]+)*$")
-    )]
-    pub label: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub client: Option<Client>,
     /// Transient membership from the verified release manifest.
@@ -231,12 +226,6 @@ pub(super) fn require_apps(
     integrations: &BTreeMap<String, Integration>,
 ) -> anyhow::Result<()> {
     for (name, app) in apps {
-        if let Some(reason) = wamn_registry::identifiers::app_label_reason(&app.label) {
-            anyhow::bail!(
-                "application {name}: invalid host label {:?}: {reason}",
-                app.label
-            );
-        }
         for (alias, connection) in &app.connections {
             ensure!(
                 !alias.is_empty(),

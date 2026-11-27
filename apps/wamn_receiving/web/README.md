@@ -28,18 +28,9 @@ The shell shows literal uppercase breadcrumbs after sign-in.
 ## Run it
 
 Deploy Receiving on a disposable `kind` platform with the [development loop](../../../docs/operations/development-loop.md).
-Set `WAMN_ROUTE_URL` to its installed application URL, including the application hostname.
-The browser and the development machine must trust the platform certificate.
-Install the web packages once with `pnpm install` at the repository root.
-
-```bash
-cd apps/wamn_receiving/web
-WAMN_ROUTE_URL=https://receiving.example.test pnpm run dev
-```
-
-Open the address that Vite prints. Sign in with an account from the installed platform.
-Vite forwards `/config.json`, sign-in requests, and `/api` requests to that application URL.
-It keeps the `/api` prefix. The installed web service supplies browser configuration.
+Web serves Receiving under `/<project>/<app>/` on the environment host.
+Trust the local org certificate before you send requests to that host.
+The Vite proxy still forwards paths at the host root. It needs application base path support to reach a deployed app.
 
 `pnpm run build` writes the static files to `apps/target/wamn/wamn_receiving/web`.
 Use [`wamn web upload`](../../../docs/operations/deployment.md#web-client-files) to publish the client files.

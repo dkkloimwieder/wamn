@@ -14,9 +14,24 @@ pub fn valid_resource_segment(value: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || b"._-".contains(&byte))
 }
 
-/// The public host name of an application with a validated label.
-pub fn app_host(label: &str, org: &crate::OrgId, base: &PlatformDomain) -> String {
-    format!("{label}--{org}.{base}")
+/// The public apex of an organization.
+pub fn org_host(org: &crate::OrgId, base: &PlatformDomain) -> String {
+    format!("{org}.{base}")
+}
+
+/// The public host of a non-production environment.
+pub fn env_host(org: &crate::OrgId, env: &crate::EnvName, base: &PlatformDomain) -> String {
+    format!("{env}.{org}.{base}")
+}
+
+/// The public mount of an application, including its trailing slash.
+pub fn app_mount(project: &crate::ProjectId, app: &crate::AppName) -> String {
+    format!("/{project}/{app}/")
+}
+
+/// The DNS name of a Service on the cluster's internal network.
+pub fn service_host(service: &str, namespace: &str) -> String {
+    format!("{service}.{namespace}.svc.cluster.local")
 }
 
 /// The key of a project environment: `<org>--<env>--<project>` (owner
@@ -403,6 +418,18 @@ pub fn control_resource(org: &crate::OrgId) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn public_hosts_and_mounts_keep_their_coordinate_boundaries() {
+        let org = "acme".parse().unwrap();
+        let env = "test".parse().unwrap();
+        let base = "example.test".parse().unwrap();
+        let project = "orders".parse().unwrap();
+        let app = "receiving".parse().unwrap();
+        assert_eq!(org_host(&org, &base), "acme.example.test");
+        assert_eq!(env_host(&org, &env, &base), "test.acme.example.test");
+        assert_eq!(app_mount(&project, &app), "/orders/receiving/");
+    }
+
     #[test]
     fn resource_coordinates_keep_project_databases_separate() {
         let first = crate::Triple::new(

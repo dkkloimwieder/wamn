@@ -23,7 +23,6 @@ uuid = { workspace = true, features = ["v4"] }
 wamn-digest.workspace = true
 wamn-package.workspace = true
 wamn-registry.workspace = true
-wamn-routes.workspace = true
 
 [dev-dependencies]
 hyper-util = { workspace = true, features = ["tokio"] }

@@ -7,7 +7,6 @@ use wamn_package::canonical_name::CanonicalName;
 use wamn_package::manifest::deploy::PublishedComponent;
 use wamn_package::{OperationType, PackageName};
 use wamn_registry::configuration::Client;
-use wamn_registry::platform_domain::PlatformDomain;
 use wamn_routes::http_route_data::RouteDefinition;
 
 use super::binding::Binding;
@@ -445,40 +444,15 @@ pub fn values(input: &ValuesInput<'_>) -> anyhow::Result<Value> {
     );
 
     let env = wamn_registry::name::host_status(&input.org, &input.project, &input.env);
-    let route_host =
-        wamn_registry::name::app_host(input.route_label, &input.org, input.platform_domain);
-    ensure!(
-        route_host.len() <= 253,
-        "application host exceeds 253 bytes"
-    );
     let mut values = Mapping::new();
     values.insert(
         "release".into(),
         mapping([("manifestDigest", input.manifest_digest.to_string())]),
     );
     values.insert("env".into(), env.into());
-    values.insert(
-        "webClients".into(),
-        serde_yaml::to_value(
-            input
-                .client
-                .into_iter()
-                .map(|client| (&route_host, &client.package))
-                .collect::<BTreeMap<_, _>>(),
-        )?,
-    );
-    values.insert(
-        "webDigests".into(),
-        serde_yaml::to_value(
-            input
-                .client
-                .into_iter()
-                .map(|client| (&route_host, &client.web))
-                .collect::<BTreeMap<_, _>>(),
-        )?,
-    );
-    values.insert("routeHost".into(), route_host.into());
-    values.insert("org".into(), input.org.to_string().into());
+    if let Some(client) = input.client {
+        values.insert("client".into(), serde_yaml::to_value(client)?);
+    }
     values.insert("namespace".into(), input.namespace.into());
     values.insert("project".into(), input.project.to_string().into());
     values.insert(
@@ -540,8 +514,6 @@ pub struct ValuesInput<'a> {
     pub env: wamn_registry::EnvName,
     /// `sha256:<hex>` of the release manifest.
     pub manifest_digest: wamn_digest::Digest,
-    pub route_label: &'a str,
-    pub platform_domain: &'a PlatformDomain,
     pub client: Option<&'a Client>,
     /// Exactly one application's membership, retained in Helm values for status reads.
     pub apps: wamn_registry::EnvApps,

@@ -68,8 +68,7 @@ database:
 projects:
   - name: receiving
     apps:
-      wamn-receiving:
-        label: receiving
+      wamn-receiving: {}
 ";
 /// Stand-in for the suffix that env apply reserves.
 const STAND_IN_INSTANCE: &str = "00000000";
@@ -486,14 +485,9 @@ async fn render(
     let platform_registry = wamn_platform_install::org::field(control, "platform_registry")?;
     let integration_base = format!("{platform_registry}/wamn/integrations");
     let (_, component_base) = wamn_registry::org_artifact_bases(registry);
-    let platform_domain = inputs["base"]
-        .as_str()
-        .context("org inputs have no base")?
-        .parse()?;
     let mut app_values = wamn_env::env::write::release_values(
         &document,
         &env_namespace,
-        &platform_domain,
         &app,
         &manifests,
         &digest,

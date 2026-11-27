@@ -504,7 +504,7 @@ The case has a 90-minute bound.
 It reapplies the platform chart and requires readiness.
 It reuses `ControlOperations` for authenticated deploy, rollback, and schema apply through the public HTTPS control route.
 It makes one public HTTPS GET and requires the UI document with certificate validation enabled.
-Application requests use a TLS port-forward with host names of the form `<label>--<org>.<base>`.
+Send app requests through the TLS port-forward at `/<project>/<app>/`. Use the environment host, or the org apex for prod.
 The GKE body omits the kind-only outsider enrollment from the local mail file.
 
 The case attempts project deactivation and PAT revocation after operation success or failure.

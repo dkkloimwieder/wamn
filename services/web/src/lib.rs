@@ -1,4 +1,4 @@
-//! Route application hosts through chart-owned Service annotations.
+//! Route public hosts and application mounts to chart-owned Services.
 
 use std::convert::Infallible;
 use std::future::poll_fn;
@@ -12,7 +12,7 @@ use std::time::Duration;
 use anyhow::{Context as _, ensure};
 use bytes::Bytes;
 use http_body_util::{BodyExt as _, Empty, Full, combinators::UnsyncBoxBody};
-use hyper::header::{CACHE_CONTROL, CONTENT_LENGTH, CONTENT_TYPE, HOST};
+use hyper::header::{CACHE_CONTROL, CONTENT_LENGTH, CONTENT_TYPE, HOST, LOCATION};
 use hyper::service::service_fn;
 use hyper::{Method, Response, StatusCode, Uri};
 use hyper_util::client::legacy::{Client, connect::HttpConnector};
@@ -46,7 +46,7 @@ mod rollout_tests;
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WebConfig {
-    /// Base domain covered by the platform wildcard certificate.
+    /// Base domain used for org and environment public hosts.
     pub platform_domain: PlatformDomain,
     /// Empty on kind, otherwise `gs://<buckets.web>`.
     pub bucket: String,
@@ -56,21 +56,12 @@ pub struct WebConfig {
     pub trusted_proxy_hops: usize,
 }
 
-fn web_root(row: &LiveRelease, host: &str) -> anyhow::Result<String> {
-    ensure!(row.host == host, "the release does not serve this host");
-    if let Some(platform_ui) = &row.platform_ui {
-        return Ok(format!("platform-ui/sha256-{}", platform_ui.hex()));
+fn web_root(row: &LiveRelease) -> Option<String> {
+    if let Some(platform_ui) = &row.release.platform_ui {
+        return Some(format!("platform-ui/sha256-{}", platform_ui.hex()));
     }
-    let package = row
-        .clients
-        .get(host)
-        .context("the host has no web client")?;
-    let hex = row
-        .webs
-        .get(host)
-        .context("the host has no web client")?
-        .hex();
-    Ok(format!("clients/{package}/{hex}"))
+    let client = row.release.client.as_ref()?;
+    Some(format!("clients/{}/{}", client.package, client.web.hex()))
 }
 
 #[derive(Debug)]
@@ -88,26 +79,22 @@ impl Web {
     async fn answer(
         &self,
         row: &LiveRelease,
-        host: &str,
         path: &str,
         method: &Method,
     ) -> anyhow::Result<Response<Full<Bytes>>> {
         if method != Method::GET && method != Method::HEAD {
             return Ok(empty(StatusCode::METHOD_NOT_ALLOWED));
         }
-        if path == "/"
-            && row.host == host
-            && row.platform_ui.is_none()
-            && (!row.clients.contains_key(host) || !row.webs.contains_key(host))
-        {
-            return Ok(empty(StatusCode::NOT_FOUND));
-        }
-        let root = web_root(row, host)?;
         let path = path.trim_start_matches('/');
         if path.split('/').any(|part| part == "." || part == "..") || path.contains(['%', '\\']) {
             return Ok(empty(StatusCode::BAD_REQUEST));
         }
-        let (file, pinned) = if let Some(file) = path.strip_prefix(&format!("{root}/")) {
+        let root = web_root(row);
+        let pinned = root.as_ref().and_then(|root| {
+            path.strip_prefix(root)
+                .and_then(|tail| tail.strip_prefix('/'))
+        });
+        let (file, pinned) = if let Some(file) = pinned {
             (file, true)
         } else if path.starts_with("clients/") || path.starts_with("platform-ui/") {
             return Ok(empty(StatusCode::NOT_FOUND));
@@ -118,10 +105,12 @@ impl Web {
         };
         let config = file == "config.json";
         let file = if config {
-            let target = if row.platform_ui.is_none() {
-                let project = row.project.as_ref().context("the release has no project")?;
+            let target = if let Some(project) = &row.release.project {
+                let Some(client) = &row.release.client else {
+                    return Ok(empty(StatusCode::NOT_FOUND));
+                };
                 serde_json::json!({"org":row.org,"project":project,
-                    "release":row.digest,"web":row.webs[host]})
+                    "release":row.release.digest,"web":client.web})
             } else {
                 serde_json::json!({"org":row.org})
             };
@@ -130,6 +119,9 @@ impl Web {
                 content_type: "application/json".into(),
             }
         } else {
+            let Some(root) = root else {
+                return Ok(empty(StatusCode::NOT_FOUND));
+            };
             let Some(store) = &self.store else {
                 return Ok(empty(StatusCode::SERVICE_UNAVAILABLE));
             };
@@ -200,7 +192,21 @@ type TlsConnector = hyper_rustls::HttpsConnector<HttpConnector>;
 /// Hyper hands the connector only the URI. All attempts finish before it
 /// hands the upstream connection the request, including streaming bodies.
 #[derive(Clone)]
-struct Connector(TlsConnector);
+struct Connector {
+    tls: TlsConnector,
+    #[cfg(test)]
+    test_address: Option<SocketAddr>,
+}
+
+impl Connector {
+    fn new(tls: TlsConnector) -> Self {
+        Self {
+            tls,
+            #[cfg(test)]
+            test_address: None,
+        }
+    }
+}
 
 impl Service<Uri> for Connector {
     type Response = <TlsConnector as Service<Uri>>::Response;
@@ -212,7 +218,14 @@ impl Service<Uri> for Connector {
     }
 
     fn call(&mut self, uri: Uri) -> Self::Future {
-        let mut connector = self.0.clone();
+        let mut connector = self.tls.clone();
+        #[cfg(test)]
+        let uri = match self.test_address {
+            Some(address) => format!("http://{address}")
+                .parse()
+                .expect("test socket URI"),
+            None => uri,
+        };
         Box::pin(async move {
             let mut retries = CONNECT_RETRIES;
             loop {
@@ -265,6 +278,69 @@ fn remove_hop_headers(headers: &mut hyper::HeaderMap) {
     }
 }
 
+/// Match an endpoint and its descendants on a path segment boundary.
+fn at_path(path: &str, prefix: &str) -> bool {
+    path.strip_prefix(prefix)
+        .is_some_and(|tail| tail.is_empty() || tail.starts_with('/'))
+}
+
+fn upstream_path(path: &str, app: Option<&wamn_registry::AppName>) -> Option<String> {
+    if let Some(app) = app {
+        if path == "/api/health" || path.starts_with("/wamn_control/") {
+            return Some(path.to_owned());
+        }
+        let tail = path.strip_prefix("/api/")?;
+        if at_path(tail, "files") || at_path(tail, "flow") {
+            return Some(format!("/api/{app}/{tail}"));
+        }
+        return Some(format!("/{tail}"));
+    }
+    if path.starts_with("/api/") {
+        return Some(path["/api".len()..].to_owned());
+    }
+    (path.starts_with("/password/")
+        || path.starts_with("/wamn_control/")
+        || path == "/oauth/callback")
+        .then(|| path.to_owned())
+}
+
+fn public_location(location: &str, row: &LiveRelease, api: bool) -> Option<String> {
+    let upstream_path = if location.starts_with('/') && !location.starts_with("//") {
+        location
+    } else {
+        let target = location
+            .strip_prefix("http://")
+            .or_else(|| location.strip_prefix("//"))?;
+        let (authority, path) = target.split_at(target.find('/')?);
+        let host = authority.strip_suffix(":80").unwrap_or(authority);
+        host.eq_ignore_ascii_case(&row.upstream_host)
+            .then_some(path)?
+    };
+    let path = upstream_path.split(['?', '#']).next()?;
+    let Some(mount) = &row.mount else {
+        return if api {
+            Some(format!("/api{upstream_path}"))
+        } else {
+            (location != upstream_path).then(|| upstream_path.to_owned())
+        };
+    };
+    let app = row.release.app.as_ref()?;
+    let mount = mount.trim_end_matches('/');
+    if let Some(tail) = path
+        .strip_prefix("/api/")
+        .and_then(|path| path.strip_prefix(app.as_str()))
+        && let Some(tail) = tail.strip_prefix('/')
+        && (at_path(tail, "files") || at_path(tail, "flow"))
+    {
+        let suffix = &upstream_path[path.len()..];
+        return Some(format!("{mount}/api/{tail}{suffix}"));
+    }
+    if path == "/api/health" || (!api && path.starts_with("/wamn_control/")) {
+        return Some(format!("{mount}{upstream_path}"));
+    }
+    Some(format!("{mount}/api{upstream_path}"))
+}
+
 async fn respond(
     web: &Web,
     releases: &Releases,
@@ -286,44 +362,47 @@ async fn respond(
         .next()
         .unwrap_or_default()
         .to_ascii_lowercase();
-    let route = match releases.route(&host).await {
+    let route = match releases.route(&host, request.uri().path()).await {
         RouteLookup::Found(route) => route,
         RouteLookup::Loading => return Ok(boxed(empty(StatusCode::SERVICE_UNAVAILABLE))),
         RouteLookup::Missing => return Ok(boxed(empty(StatusCode::NOT_FOUND))),
     };
-    let path = request.uri().path();
-    let native_api_request = path
-        .strip_prefix("/api/")
-        .and_then(|path| path.split_once('/'))
-        .is_some_and(|(_, path)| {
-            matches!(path, "files" | "flow")
-                || path.starts_with("files/")
-                || path.starts_with("flow/")
-        });
+    let public_path = request.uri().path();
+    let query = request.uri().query();
+    let path = if let Some(mount) = &route.mount {
+        let prefix = mount.trim_end_matches('/');
+        let tail = public_path.strip_prefix(prefix).context("route mount")?;
+        if tail.is_empty() {
+            let mut response = empty(StatusCode::PERMANENT_REDIRECT);
+            let mut location = mount.to_owned();
+            if let Some(query) = query {
+                location.push('?');
+                location.push_str(query);
+            }
+            response.headers_mut().insert(LOCATION, location.parse()?);
+            return Ok(boxed(response));
+        }
+        tail
+    } else {
+        public_path
+    };
     let api_request = path.starts_with("/api/");
-    let password_request = path.starts_with("/password/");
-    if api_request
-        || password_request
-        || path.starts_with("/wamn_control/")
-        || path == "/oauth/callback"
-    {
+    let password_request = route.mount.is_none() && path.starts_with("/password/");
+    if let Some(mut upstream_path) = upstream_path(path, route.release.app.as_ref()) {
         let password_route = browser_session::password_route(&request);
-        let upstream = if password_request {
-            identity_password_url
+        if let Some(query) = query {
+            upstream_path.push('?');
+            upstream_path.push_str(query);
+        }
+        *request.uri_mut() = if password_request {
+            format!(
+                "{}{upstream_path}",
+                identity_password_url.trim_end_matches('/')
+            )
         } else {
-            route.api.as_str()
-        };
-        let path = request
-            .uri()
-            .path_and_query()
-            .context("request path")?
-            .as_str();
-        let path = if api_request && !native_api_request {
-            path.strip_prefix("/api").expect("API prefix")
-        } else {
-            path
-        };
-        *request.uri_mut() = format!("{}{path}", upstream.trim_end_matches('/')).parse()?;
+            format!("http://{}{upstream_path}", route.upstream_host)
+        }
+        .parse()?;
         let address =
             if trusted_proxy_hops == 0 || !request.headers().contains_key("x-forwarded-for") {
                 peer
@@ -354,42 +433,35 @@ async fn respond(
             hyper::header::CONNECTION,
             hyper::header::HeaderValue::from_static("close"),
         );
-        if password_request {
-            let authority = request
+        let upstream_host = if password_request {
+            request
                 .uri()
                 .authority()
                 .context("identity authority")?
                 .as_str()
-                .parse()?;
-            request.headers_mut().insert(HOST, authority);
+        } else if route.mount.is_some() {
+            &route.upstream_host
         } else {
-            request.headers_mut().insert(HOST, host.parse()?);
-        }
+            &host
+        };
+        let upstream_host = upstream_host.parse()?;
+        request.headers_mut().insert(HOST, upstream_host);
         let mut response = proxy.client.request(request).await?;
         remove_hop_headers(response.headers_mut());
         if password_request {
             return browser_session::respond(password_route, response).await;
         }
-        if api_request
-            && !native_api_request
-            && let Some(location) = response
-                .headers()
-                .get(hyper::header::LOCATION)
-                .and_then(|value| value.to_str().ok())
-                .and_then(|location| {
-                    location.strip_prefix(&format!("{}/", route.api.trim_end_matches('/')))
-                })
+        if let Some(location) = response
+            .headers()
+            .get(LOCATION)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|location| public_location(location, &route, api_request))
         {
-            let location = format!("/api/{location}").parse()?;
-            response
-                .headers_mut()
-                .insert(hyper::header::LOCATION, location);
+            response.headers_mut().insert(LOCATION, location.parse()?);
         }
         return Ok(response.map(http_body_util::BodyExt::boxed_unsync));
     }
-    Ok(boxed(
-        web.answer(&route, &host, path, request.method()).await?,
-    ))
+    Ok(boxed(web.answer(&route, path, request.method()).await?))
 }
 
 fn response_headers(headers: &mut hyper::HeaderMap) {
@@ -422,7 +494,7 @@ fn proxy(ca: &[u8]) -> anyhow::Result<Proxy> {
     let connector =
         http_transport::tls_connector(tls, connector, Schemes::HttpAndHttps, Protocols::Http1);
     Ok(Proxy {
-        client: http_transport::client(Connector(connector), |builder| {
+        client: http_transport::client(Connector::new(connector), |builder| {
             builder.retry_canceled_requests(false);
         }),
     })
@@ -525,38 +597,44 @@ pub async fn probe(path: &Path) -> anyhow::Result<()> {
     let config: WebConfig = serde_json::from_slice(&std::fs::read(path)?)?;
     let releases = Releases::new(KubernetesApi::in_cluster()?, config.platform_domain);
     let client: Client<HttpConnector, Empty<Bytes>> = http_transport::http_client();
-    for (host, row) in releases.list().await? {
-        if row.platform_ui.is_none() && !row.clients.contains_key(&host) {
-            continue;
-        }
-        for path in ["/", "/config.json"] {
-            let request = hyper::Request::builder()
-                .uri(format!("http://127.0.0.1:{LISTEN_PORT}{path}"))
-                .header(HOST, &host)
-                .body(Empty::new())?;
-            tokio::time::timeout(Duration::from_secs(30), async {
-                let response = client.request(request).await?;
-                ensure!(
-                    response.status() == StatusCode::OK,
-                    "web probe {host}{path}: {}",
-                    response.status()
-                );
-                response.into_body().collect().await?;
-                Ok::<_, anyhow::Error>(())
-            })
-            .await
-            .with_context(|| format!("web probe {host}{path} timed out"))??;
+    for (host, rows) in releases.list().await? {
+        for row in rows {
+            if web_root(&row).is_none() {
+                continue;
+            }
+            let mount = row.mount.as_deref().unwrap_or("/");
+            for path in [mount.to_owned(), format!("{mount}config.json")] {
+                let request = hyper::Request::builder()
+                    .uri(format!("http://127.0.0.1:{LISTEN_PORT}{path}"))
+                    .header(HOST, &host)
+                    .body(Empty::new())?;
+                tokio::time::timeout(Duration::from_secs(30), async {
+                    let response = client.request(request).await?;
+                    ensure!(
+                        response.status() == StatusCode::OK,
+                        "web probe {host}{path}: {}",
+                        response.status()
+                    );
+                    response.into_body().collect().await?;
+                    Ok::<_, anyhow::Error>(())
+                })
+                .await
+                .with_context(|| format!("web probe {host}{path} timed out"))??;
+            }
         }
     }
     Ok(())
 }
 
 #[cfg(test)]
-async fn wait_for_route(releases: &Releases, host: &str) {
-    while matches!(releases.route(host).await, RouteLookup::Loading) {
+async fn wait_for_route(releases: &Releases, host: &str, path: &str) {
+    while matches!(releases.route(host, path).await, RouteLookup::Loading) {
         tokio::time::sleep(Duration::from_millis(5)).await;
     }
-    assert!(matches!(releases.route(host).await, RouteLookup::Found(_)));
+    assert!(matches!(
+        releases.route(host, path).await,
+        RouteLookup::Found(_)
+    ));
 }
 
 #[cfg(test)]
@@ -565,23 +643,71 @@ mod tests {
     use object_store::memory::InMemory;
 
     fn row(digit: char) -> LiveRelease {
+        let org = "acme".parse().unwrap();
+        let project = "shop".parse().unwrap();
+        let app = "stock".parse().unwrap();
         LiveRelease {
-            host: "app.example.com".into(),
-            api: "http://app-http.acme--dev.svc.cluster.local".into(),
-            digest: (format!("sha256:{}", "c".repeat(64)))
-                .parse::<wamn_digest::Digest>()
-                .unwrap(),
-            clients: [("app.example.com".into(), "app".parse().unwrap())].into(),
-            webs: [(
-                "app.example.com".into(),
-                format!("sha256:{}", digit.to_string().repeat(64))
-                    .parse()
-                    .unwrap(),
-            )]
-            .into(),
-            platform_ui: None,
-            org: "acme".parse().unwrap(),
-            project: Some("app".parse().unwrap()),
+            upstream_host: "release-http.acme--dev.svc.cluster.local".into(),
+            org,
+            mount: Some(wamn_registry::name::app_mount(&project, &app)),
+            release: Arc::new(wamn_kubernetes::web_release::ReleaseAnnotation {
+                project: Some(project),
+                app: Some(app),
+                digest: wamn_digest::bytes_sha256(b"release"),
+                client: Some(wamn_registry::configuration::Client {
+                    package: "app".parse().unwrap(),
+                    web: wamn_digest::bytes_sha256(digit.to_string().as_bytes()),
+                }),
+                platform_ui: None,
+            }),
+        }
+    }
+
+    #[test]
+    fn mounted_native_paths_use_the_workload_paths_and_reverse_their_locations() {
+        let row = row('a');
+        for (public, native) in [
+            ("/api/files", "/api/stock/files"),
+            ("/api/files/object", "/api/stock/files/object"),
+            ("/api/flow/receive", "/api/stock/flow/receive"),
+            ("/api/health", "/api/health"),
+            ("/api/files-report", "/files-report"),
+            ("/api/flowchart", "/flowchart"),
+            ("/api/health/history", "/health/history"),
+            ("/api/widget/list", "/widget/list"),
+        ] {
+            assert_eq!(
+                upstream_path(public, row.release.app.as_ref()).as_deref(),
+                Some(native)
+            );
+            let location = format!("http://{}{native}?key=a%2Fb#part", row.upstream_host);
+            let mounted = format!("/shop/stock{public}?key=a%2Fb#part");
+            assert_eq!(
+                public_location(&location, &row, true).as_deref(),
+                Some(mounted.as_str())
+            );
+        }
+        assert_eq!(
+            public_location("/api/stock/files/object", &row, true).as_deref(),
+            Some("/shop/stock/api/files/object")
+        );
+        let location = format!(
+            "http://{}:80/api/stock/flow/receive",
+            row.upstream_host.to_ascii_uppercase()
+        );
+        assert_eq!(
+            public_location(&location, &row, true).as_deref(),
+            Some("/shop/stock/api/flow/receive")
+        );
+        for location in [
+            "https://example.net/path",
+            "//example.net/path",
+            "http://release-http.acme--dev.svc.cluster.local.example.net/path",
+        ] {
+            assert!(
+                public_location(location, &row, true).is_none(),
+                "{location}"
+            );
         }
     }
 
@@ -607,21 +733,18 @@ mod tests {
         };
         let first = row('a');
         let second = row('b');
-        assert_ne!(
-            web_root(&first, &first.host).unwrap(),
-            web_root(&second, &second.host).unwrap()
-        );
+        assert_ne!(web_root(&first).unwrap(), web_root(&second).unwrap());
         for row in [&first, &second] {
-            let response = web
-                .answer(row, &row.host, "/config.json", &Method::GET)
-                .await
-                .unwrap();
+            let response = web.answer(row, "/config.json", &Method::GET).await.unwrap();
             assert_eq!(response.headers()[CACHE_CONTROL], "no-cache");
             let config: serde_json::Value = serde_json::from_slice(&body(response).await).unwrap();
-            assert_eq!(config["org"], "acme");
-            assert_eq!(config["project"], "app");
-            assert_eq!(config["release"], serde_json::json!(first.digest));
-            assert_eq!(config["web"], serde_json::json!(row.webs[&row.host]));
+            assert_eq!(config["org"], serde_json::json!(row.org));
+            assert_eq!(config["project"], serde_json::json!(row.release.project));
+            assert_eq!(config["release"], serde_json::json!(first.release.digest));
+            assert_eq!(
+                config["web"],
+                serde_json::json!(row.release.client.as_ref().unwrap().web)
+            );
         }
     }
 
@@ -634,7 +757,7 @@ mod tests {
         );
         let web = Web { store: None };
         let proxy = Proxy {
-            client: http_transport::client(Connector(native_connector().unwrap()), |_| {}),
+            client: http_transport::client(Connector::new(native_connector().unwrap()), |_| {}),
         };
         let (front, back) = tokio::io::duplex(4096);
         let mut tasks = tokio::task::JoinSet::new();
@@ -666,15 +789,15 @@ mod tests {
                     .unwrap();
             tasks.spawn(async move { connection.await.unwrap() });
             for (host, path, status) in [
-                ("app--acme.example.test", "/healthz", StatusCode::OK),
+                ("dev.acme.example.test", "/healthz", StatusCode::OK),
                 (
-                    "app--acme.example.test",
+                    "dev.acme.example.test",
                     "/config.json",
                     StatusCode::SERVICE_UNAVAILABLE,
                 ),
                 (
                     "acme.example.test",
-                    "/api/health",
+                    "/shop/stock/api/health",
                     StatusCode::SERVICE_UNAVAILABLE,
                 ),
             ] {
@@ -699,42 +822,35 @@ mod tests {
         let web = Web {
             store: Some(Arc::<InMemory>::clone(&store)),
         };
-        let mut row = row('a');
-        row.platform_ui = Some(
-            (format!("sha256:{}", "a".repeat(64)))
-                .parse::<wamn_digest::Digest>()
-                .unwrap(),
-        );
-        row.org = "acme".parse().unwrap();
-        let root = web_root(&row, &row.host).unwrap();
-        row.webs.clear();
+        let control = |pin: &[u8]| LiveRelease {
+            upstream_host: "c-acme-http.acme.svc.cluster.local".into(),
+            org: "acme".parse().unwrap(),
+            mount: None,
+            release: Arc::new(wamn_kubernetes::web_release::ReleaseAnnotation {
+                digest: wamn_digest::bytes_sha256(b"control"),
+                project: None,
+                app: None,
+                client: None,
+                platform_ui: Some(wamn_digest::bytes_sha256(pin)),
+            }),
+        };
+        let row = control(b"platform");
+        let root = web_root(&row).unwrap();
         put(&store, &root, "index.html", "platform").await;
-
         let config = web
-            .answer(&row, &row.host, "/config.json", &Method::GET)
+            .answer(&row, "/config.json", &Method::GET)
             .await
             .unwrap();
         let config: serde_json::Value = serde_json::from_slice(&body(config).await).unwrap();
         assert_eq!(config["org"], row.org.as_str());
         assert!(config.get("project").is_none());
-        let original_root = root;
-        row.platform_ui = Some(
-            (format!("sha256:{}", "b".repeat(64)))
-                .parse::<wamn_digest::Digest>()
-                .unwrap(),
-        );
-        let root = web_root(&row, &row.host).unwrap();
-        assert_ne!(original_root, root);
-        put(&store, &root, "index.html", "new platform").await;
-        row.platform_ui = Some(
-            (format!("sha256:{}", "b".repeat(64)))
-                .parse::<wamn_digest::Digest>()
-                .unwrap(),
-        );
-        assert!(
-            web.answer(&row, "other.example.com", "/", &Method::GET)
-                .await
-                .is_err()
+        let new = control(b"new platform");
+        let new_root = web_root(&new).unwrap();
+        assert_ne!(root, new_root);
+        put(&store, &new_root, "index.html", "new platform").await;
+        assert_eq!(
+            body(web.answer(&new, "/", &Method::GET).await.unwrap()).await,
+            "new platform"
         );
         for (path, status) in [
             ("/assets/missing.js", StatusCode::NOT_FOUND),
@@ -742,18 +858,12 @@ mod tests {
             ("/clients/other/file", StatusCode::NOT_FOUND),
         ] {
             assert_eq!(
-                web.answer(&row, &row.host, path, &Method::GET)
-                    .await
-                    .unwrap()
-                    .status(),
+                web.answer(&row, path, &Method::GET).await.unwrap().status(),
                 status
             );
         }
         assert_eq!(
-            web.answer(&row, &row.host, "/", &Method::POST)
-                .await
-                .unwrap()
-                .status(),
+            web.answer(&row, "/", &Method::POST).await.unwrap().status(),
             StatusCode::METHOD_NOT_ALLOWED
         );
     }

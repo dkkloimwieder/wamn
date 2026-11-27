@@ -242,7 +242,6 @@ pub(super) async fn app(
                     let mut values = write::release_values(
                         &document,
                         &platform.cluster.namespace,
-                        &platform_domain,
                         name,
                         &packages.manifests,
                         &digest,

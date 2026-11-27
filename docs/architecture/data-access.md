@@ -1021,14 +1021,9 @@ The bucket lifecycle rule aborts incomplete multipart uploads after one day.
 Unlinked metadata and live objects never expire by age alone.
 Raw blobstore writes, deletes, and clears refuse file-managed keys and their public copies.
 
-Release hosts serve file transfers on a separate HTTP/1.1 listener.
-The release chart sets `--files-addr=0.0.0.0:8082` and exposes it through the `<release>-files` Service.
-Outside the chart, `--files-addr` or `WAMN_FILES_ADDR` enables this listener.
-A control host refuses this configuration.
-
-The edge sends `/api/<app>/files` and its child paths to this Service before the general `/api/` route.
-It keeps the full path and streams uploads without request buffering.
-The Rust web front streams upload bodies to the file service.
+The app HTTP Service carries file transfers.
+Web translates `/<project>/<app>/api/files` and its child paths to the host path `/api/<app>/files`.
+Web streams upload bodies to the Service.
 The storage layer still refuses sizes outside the metadata integer range.
 
 File transfers share the route authenticator and its authentication cache for sessions and PATs.
@@ -1065,7 +1060,7 @@ The full schema files own the platform schemas and build fresh installations.
 
 - Storing is two short calls: `file.put(binding, bytes)` streams the bytes to the store the binding names, inserts the row in its own commit and returns `file_id`; the application operation then carries `file_id` like any reference. No transaction waits on the store. A store is a connection with a store integration (`s3` or `gcs`), declared by the package and bound by name in `env.yaml` with `mode = write`.
 
-- `exposure` is per file: `app` (default; the session holds `file.get` on the owning application, at `/api/<app>/files/<id>`), `private` (only an operation that returns a short-lived signed url; so the roles holding that operation), `public` (anyone with the link, no login). `url` is stored only for `public`, so old links survive a CDN change. Another application never serves the row.
+- `exposure` is per file: `app` (default; the session holds `file.get` on the owning application, at `/<project>/<app>/api/files/<id>`), `private` (only an operation that returns a short-lived signed url; so the roles holding that operation), `public` (anyone with the link, no login). `url` is stored only for `public`, so old links survive a CDN change. Another application never serves the row.
 
 ### System database
 

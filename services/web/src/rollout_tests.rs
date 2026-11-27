@@ -13,17 +13,19 @@ use super::*;
 #[tokio::test]
 async fn host_replacement_routes_the_next_post_to_the_serving_host() {
     tokio::time::timeout(Duration::from_secs(10), async {
-        let host = "app--acme.example.test";
+        let host = "dev.acme.example.test";
+        let upstream = "app-http.acme--dev.svc.cluster.local";
+        let mount = "/shop/stock/";
         let mut tasks = tokio::task::JoinSet::new();
         let mut backends = Vec::new();
         for _ in 0..2 {
             let (stop, stopping) = watch::channel(false);
             let ingress = Ingress::new(
-                expected_host_router(Some(host), stopping),
+                expected_host_router(Some(upstream), stopping),
                 "127.0.0.1:0".parse().unwrap(),
             ).await.unwrap();
             let (sender, mut jobs) = mpsc::channel::<ServiceHttpJob>(4);
-            ingress.on_service_http_resolved("http", &[IngressRoute::ingress(host)], sender).await.unwrap();
+            ingress.on_service_http_resolved("http", &[IngressRoute::ingress(upstream)], sender).await.unwrap();
             ingress.start().await.unwrap();
             let calls = Arc::new(AtomicUsize::new(0));
             let recorded = Arc::clone(&calls);
@@ -65,8 +67,7 @@ async fn host_replacement_routes_the_next_post_to_the_serving_host() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let endpoint = format!("http://{}", listener.local_addr().unwrap());
         let route = serde_json::json!({
-            "host":host, "api":format!("http://{service}"), "org":"acme", "project":"app",
-            "digest":wamn_digest::bytes_sha256(b"release"), "clients":{}, "webs":{}
+            "project":"shop", "app":"stock", "digest":wamn_digest::bytes_sha256(b"release")
         });
         let objects = serde_json::json!({"metadata":{"resourceVersion":"2"},"items":[
             {"metadata":{"name":"app-http","namespace":"acme--dev","annotations":{
@@ -106,13 +107,15 @@ async fn host_replacement_routes_the_next_post_to_the_serving_host() {
         ));
         let watching = Arc::clone(&releases);
         tasks.spawn(async move { watching.watch().await });
-        wait_for_route(&releases, host).await;
+        wait_for_route(&releases, host, mount).await;
         let web = Web { store: None };
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let edge = listener.local_addr().unwrap();
         tasks.spawn(async move {
+            let mut connector = Connector::new(native_connector().unwrap());
+            connector.test_address = Some(service);
             let proxy = Proxy {
-                client: http_transport::client(Connector(native_connector().unwrap()), |_| {}),
+                client: http_transport::client(connector, |_| {}),
             };
             let (stream, _) = listener.accept().await.unwrap();
             let service = service_fn(|request| async {
@@ -122,6 +125,13 @@ async fn host_replacement_routes_the_next_post_to_the_serving_host() {
                 .serve_connection(TokioIo::new(stream), service).await.unwrap();
         });
         let client: Client<HttpConnector, Full<Bytes>> = http_transport::http_client();
+        let redirect = hyper::Request::builder()
+            .uri(format!("http://{edge}{}?tab=activity", mount.trim_end_matches('/')))
+            .header(HOST, host).body(Full::new(Bytes::new())).unwrap();
+        let response = client.request(redirect).await.unwrap();
+        assert_eq!(response.status(), StatusCode::PERMANENT_REDIRECT);
+        assert_eq!(response.headers()[LOCATION], format!("{mount}?tab=activity"));
+        response.into_body().collect().await.unwrap();
         for (index, (ingress, _, _)) in backends.iter().enumerate() {
             if index > 0 {
                 *selected.write().await = ingress.addr();
@@ -130,7 +140,7 @@ async fn host_replacement_routes_the_next_post_to_the_serving_host() {
                 backends[0].0.stopped().await;
             }
             let request = hyper::Request::builder()
-                .method(Method::POST).uri(format!("http://{edge}/api/mutate"))
+                .method(Method::POST).uri(format!("http://{edge}{mount}api/mutate"))
                 .header(HOST, host).body(Full::new(Bytes::new())).unwrap();
             let response = client.request(request).await.unwrap();
             assert_eq!(response.status(), StatusCode::OK, "host replacement must serve the next request");

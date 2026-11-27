@@ -949,13 +949,9 @@ CREATE TABLE registry.env_app (
     project text NOT NULL,
     app text NOT NULL CHECK (app ~ '^[a-z0-9]+(-[a-z0-9]+)*$' AND char_length(app) <= 40),
     active boolean NOT NULL DEFAULT true,
-    label text NOT NULL CHECK (
-        octet_length(label) BETWEEN 1 AND 21
-        AND label ~ '^[a-z0-9]+(-[a-z0-9]+)*$'),
     client_package text CHECK (client_package <> ''),
     client_web text CHECK (client_web ~ '^sha256:[0-9a-f]{64}$'),
     PRIMARY KEY (org, env, project, app),
-    UNIQUE (org, label),
     FOREIGN KEY (org, env, project)
         REFERENCES registry.project_env (org, env, project) ON DELETE RESTRICT,
     CHECK ((client_package IS NULL) = (client_web IS NULL))

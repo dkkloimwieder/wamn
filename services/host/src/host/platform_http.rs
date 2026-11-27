@@ -34,12 +34,12 @@ impl PlatformHttp {
     async fn bind(
         &self,
         id: &str,
-        host: &str,
+        service_host: &str,
         files_prefix: &str,
         flow_prefix: String,
     ) -> anyhow::Result<()> {
         let routes = ["/wamn_control", files_prefix, &flow_prefix].map(|prefix| IngressRoute {
-            host: host.to_owned(),
+            host: service_host.to_owned(),
             path_prefix: NormalizedPathPrefix::new(prefix),
             scope: RouteScope::Ingress,
         });

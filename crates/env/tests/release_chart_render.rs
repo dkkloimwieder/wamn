@@ -162,7 +162,7 @@ fn an_unstamped_chart_does_not_render() {
 
 #[test]
 fn the_control_route_uses_service_port_80_and_the_pod_uses_8080() -> anyhow::Result<()> {
-    use wamn_kubernetes::web_release::{LiveRelease, WEB_RELEASE_ANNOTATION};
+    use wamn_kubernetes::web_release::{ReleaseAnnotation, WEB_RELEASE_ANNOTATION};
 
     let root = repository_root();
     let ui = wamn_digest::bytes_sha256(b"platform UI");
@@ -184,22 +184,14 @@ fn the_control_route_uses_service_port_80_and_the_pod_uses_8080() -> anyhow::Res
     ]))?;
     let name = format!("{}-http", wamn_registry::name::control_resource(&org));
     let service = object(&rendered, "Service", &name)?;
-    let namespace = service["metadata"]["namespace"]
-        .as_str()
-        .expect("Service namespace");
-    let route: LiveRelease = serde_json::from_str(
+    let route: ReleaseAnnotation = serde_json::from_str(
         service["metadata"]["annotations"][WEB_RELEASE_ANNOTATION]
             .as_str()
             .expect("control Service route"),
     )?;
-    assert_eq!(
-        route.api,
-        format!("http://{name}.{namespace}.svc.cluster.local")
-    );
-    assert_eq!(route.host, format!("{org}.wamn.localhost"));
-    assert_eq!(route.org, org);
+    assert_eq!(service["metadata"]["namespace"], org.as_str());
     assert_eq!(route.platform_ui, Some(ui));
-    assert!(route.project.is_none());
+    assert!(route.app_mount().is_none());
     assert!(
         rendered
             .iter()
@@ -417,7 +409,7 @@ fn an_app_service_carries_its_workload_route_and_static_pins() -> anyhow::Result
     use wamn_kubernetes::{
         helm,
         platform_env::entry,
-        web_release::{LiveRelease, WEB_RELEASE_ANNOTATION},
+        web_release::{ReleaseAnnotation, WEB_RELEASE_ANNOTATION},
     };
     use wamn_registry::{Triple, name};
 
@@ -425,42 +417,51 @@ fn an_app_service_carries_its_workload_route_and_static_pins() -> anyhow::Result
     let app = "app".parse()?;
     let release = release_name(&triple.org, &triple.project, &triple.env, &app);
     let namespace = name::env_key(&triple.org, &triple.env);
-    let host = name::app_host("app", &triple.org, &"example.com".parse()?);
     let digest = wamn_digest::bytes_sha256(b"release");
     let web = wamn_digest::bytes_sha256(b"bundle");
     let values = json!({
-        "namespace":namespace, "org":triple.org, "project":triple.project,
+        "namespace":namespace, "project":triple.project,
         "platform":{
             "roles":{"ingress":{"image":format!("registry.example/ingress@{digest}")}},
             "workflow":{"image":format!("registry.example/workflow@{digest}")},
         },
         "release":{"manifestDigest":digest}, "env":name::host_status(&triple.org, &triple.project, &triple.env),
-        "routeHost":host, "apps":{(app.as_str()):{}}, "route":{"config":{"wamn.project_env_key":"key"}},
-        "webClients":{(host.as_str()):"client"}, "webDigests":{(host.as_str()):web}, "hostGroup":"host",
+        "apps":{(app.as_str()):{}}, "route":{"config":{"wamn.project_env_key":"key"}},
+        "client":{"package":"client","web":web}, "hostGroup":"host",
     });
     let chart = repository_root().join("deploy/charts/app");
     let rendered = helm::template(&entry(&chart, &namespace, &release, values)?)?;
     let service = object(&rendered, "Service", &workload_name(&release))?;
     let metadata = &service["metadata"];
-    let route: LiveRelease = serde_json::from_str(
+    let route: ReleaseAnnotation = serde_json::from_str(
         metadata["annotations"][WEB_RELEASE_ANNOTATION]
             .as_str()
             .expect("app Service route"),
     )?;
-    assert_eq!(
-        route.api,
-        format!(
-            "http://{}.{}.svc.cluster.local",
-            workload_name(&release),
-            metadata["namespace"].as_str().unwrap()
-        ),
-    );
-    assert_eq!(route.host, host);
     assert_eq!(route.digest, digest);
-    assert_eq!(route.org, triple.org);
-    assert_eq!(route.project.as_ref(), Some(&triple.project));
-    assert_eq!(route.clients[&host].as_str(), "client");
-    assert_eq!(route.webs[&host], web);
+    assert_eq!(
+        route.app_mount().as_deref(),
+        Some(name::app_mount(&triple.project, &app).as_str())
+    );
+    let client = route.client.expect("app web pin");
+    assert_eq!(client.package.as_str(), "client");
+    assert_eq!(client.web, web);
+    let workload = object(&rendered, "WorkloadDeployment", &workload_name(&release))?;
+    let workload = &workload["spec"]["template"]["spec"];
+    assert_eq!(workload["kubernetes"]["service"]["name"], metadata["name"]);
+    let http = workload["hostInterfaces"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|interface| interface["namespace"] == "wasi" && interface["package"] == "http")
+        .expect("the route workload configures its incoming handler");
+    assert_eq!(
+        http["config"]["host"],
+        name::service_host(
+            metadata["name"].as_str().unwrap(),
+            metadata["namespace"].as_str().unwrap()
+        )
+    );
     assert!(rendered.iter().all(|object| object["kind"] != "ConfigMap"));
     Ok(())
 }
@@ -500,7 +501,7 @@ fn the_egress_policy_opens_each_declared_port() {
             },
             "release": {"manifestDigest": digest},
             "env": "acme/shop/dev",
-            "routeHost": "app--acme.example.com",
+            "project": "shop",
             "apps": {"app": {}},
             "route": {"config": {"wamn.project_env_key": "key"}},
             "components": components,

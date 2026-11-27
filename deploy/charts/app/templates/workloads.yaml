@@ -1,11 +1,13 @@
 {{- include "app.requireImageSet" . }}
+{{- $service := include "app.httpService" . }}
+{{- $namespace := include "app.namespace" . }}
 {{- $config := required "route.config is required" .Values.route.config }}
 ---
 apiVersion: runtime.wasmcloud.dev/v1alpha1
 kind: WorkloadDeployment
 metadata:
-  name: {{ (default .Release.Name .Values.name) }}-http
-  namespace: {{ include "app.namespace" . | quote }}
+  name: {{ $service }}
+  namespace: {{ $namespace | quote }}
   annotations:
     {{- include "app.annotations" . | nindent 4 }}
     wamn.package-digest: {{ .Values.release.manifestDigest | quote }}
@@ -19,10 +21,10 @@ spec:
     spec:
       hostSelector:
         {{- include "app.hostSelector" . | nindent 8 }}
-      environment: {{ include "app.namespace" . | quote }}
+      environment: {{ $namespace | quote }}
       kubernetes:
         service:
-          name: {{ (default .Release.Name .Values.name) }}-http
+          name: {{ $service }}
       service:
         image: {{ .Values.platform.workflow.image | quote }}
         imagePullPolicy: Always
@@ -33,7 +35,7 @@ spec:
           version: "0.3.0"
           interfaces: [handler]
           config:
-            host: {{ required "routeHost is required for the route workload" .Values.routeHost | quote }}
+            host: {{ printf "%s.%s.svc.cluster.local" $service $namespace | quote }}
         - namespace: wamn
           package: ingress
           version: "0.1.0"

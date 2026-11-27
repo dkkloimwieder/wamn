@@ -1,12 +1,12 @@
 # Workflow operations
 
 Workflow commands connect to the application host and require its `admin` role.
-Set `WAMN_TOKEN` to the administrator's session token. Pass the application URL in `--host-url`.
+Set `WAMN_TOKEN` to the administrator's session token. Pass the application URL, including `/<project>/<app>/`, in `--host-url`.
 
 ## Author and enable a workflow
 
 Write a format 0.3 graph with one entry node. The entry chooses Request, Schedule or Data change.
-A Request declares a path such as `/orders/create`. Calls use POST with a JSON body at `/api/orders/flow/orders/create`.
+A Request declares a path such as `/orders/create`. Calls use POST with a JSON body at `/<project>/orders/api/flow/orders/create` for the application named `orders`.
 Give each end of a Request path a Response node.
 A Schedule declares a five-field UTC cron. A Data change entry names the source package, entity and row operations.
 Specify `--execution-role` for a Schedule or Data change workflow. A Request with no execution role runs as its caller.

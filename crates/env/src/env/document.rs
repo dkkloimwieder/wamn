@@ -64,7 +64,6 @@ impl EnvDocument {
                     (
                         name.clone(),
                         AppConfiguration {
-                            label: app.label.clone(),
                             client: app.client.clone(),
                             connections: app.connections.clone(),
                         },
@@ -87,7 +86,6 @@ impl EnvDocument {
                     (
                         name,
                         AppSelection {
-                            label: app.label,
                             client: app.client,
                             connections: app.connections,
                             current: DeclaredRelease::None,
@@ -155,10 +153,19 @@ mod tests {
     fn configuration() -> Value {
         json!({"org":"acme","project":"wms","env":"prod","target":"cloud",
             "revocation_seconds":60,"schema":{"mode":"reset"},
-            "apps":{"wms":{"label":"wms",
+            "apps":{"wms":{
                 "connections":{"erp":"shared-erp"},
                 "client":{"package":"wamn_wms","web":format!("sha256:{:064x}",1)}}},
             "integrations":{"shared-erp":{"version":1}}})
+    }
+
+    #[test]
+    fn the_environment_document_refuses_the_retired_app_label() -> anyhow::Result<()> {
+        let mut input = configuration();
+        assert!(EnvDocument::from_json(&serde_json::to_vec(&input)?).is_ok());
+        input["apps"]["wms"]["label"] = "legacy".into();
+        assert!(EnvDocument::from_json(&serde_json::to_vec(&input)?).is_err());
+        Ok(())
     }
 
     #[test]

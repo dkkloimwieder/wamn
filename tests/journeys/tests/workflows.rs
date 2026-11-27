@@ -55,7 +55,7 @@ impl Workflows<'_> {
         command
             .arg("workflow")
             .args(args)
-            .args(["--host-url", &format!("http://{}", self.app.routes.host)]);
+            .args(["--host-url", &self.app.env.app_url(APP)?]);
         request::output(command).await
     }
 
@@ -83,13 +83,9 @@ impl Workflows<'_> {
     /// workflow's permission.
     async fn request(&self, path: &str, body: &Value) -> anyhow::Result<(u16, Value)> {
         let routes = &self.app.routes;
-        let prefix = wamn_routes::workflow_http_prefix(&APP.parse()?);
         let response = routes
             .client
-            .post(format!(
-                "{}{prefix}{path}",
-                routes.endpoint.trim_end_matches("/api")
-            ))
+            .post(format!("{}/flow{path}", routes.endpoint))
             .header("Host", &routes.host)
             .bearer_auth(&self.app.env.org.token)
             .json(body)

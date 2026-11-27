@@ -202,7 +202,7 @@ The local TLS ingress listens on host port 443.
 Port 80 reaches the same ingress controller.
 For the same control call through web on port 80, use `http://local.wamn.localhost/wamn_control/control/mine`.
 On port 443, the org certificate covers `local.wamn.localhost` and `*.local.wamn.localhost`.
-Use port 80 for the current app hosts, such as `receiving--local.wamn.localhost`.
+Use port 80 for local CLI calls to the org or environment host.
 To use HTTPS, export the public CA from the kind cluster and pass it to curl.
 If you use HTTPS with `wamn` or a browser, add the CA to the client's trust store.
 
@@ -215,8 +215,8 @@ curl -i --cacert /tmp/wamn-local-access/edge-ca.crt \
 
 Kind selects no hosted UI artifact.
 
-Call an application route through web at `/api/<route path>` on `<label>--<org>.<base>`.
-Web strips `/api` before it forwards the request for a route declared by the application.
+Call an application route through web at `/<project>/<app>/api/<route path>` on the environment host.
+Web removes the app mount and the `/api` prefix before it forwards a route declared by the app.
 Find the route paths in `wamn.http.routes` in the application's HTTP WorkloadDeployment.
 This key is under `localResources.config` for the `ingress` component.
 The Receiving [manifest](../../apps/wamn_receiving/wamn.k) declares `/location/list` in `routes.operations`.
@@ -224,17 +224,17 @@ The Receiving [manifest](../../apps/wamn_receiving/wamn.k) declares `/location/l
 After you deploy Receiving, call its location list route without a token. This request returns HTTP 401.
 
 ```bash
-curl -i http://receiving--local.wamn.localhost/api/location/list
+curl -i http://dev.local.wamn.localhost/receiving/wamn-receiving/api/location/list
 ```
 
 Set `WAMN_TOKEN` to an authorized token for the org. Send it as a bearer token to get HTTP 200.
 
 ```bash
-curl -i -H "Authorization: Bearer $WAMN_TOKEN" http://receiving--local.wamn.localhost/api/location/list
+curl -i -H "Authorization: Bearer $WAMN_TOKEN" http://dev.local.wamn.localhost/receiving/wamn-receiving/api/location/list
 ```
 
-`GET /` on an application host serves the pinned web client for that application.
-If the host has no pinned web client, `GET /` and `HEAD /` return HTTP 404 with an empty body.
+`GET /<project>/<app>/` serves the pinned web client for that application.
+If the app has no pinned web client, `GET` and `HEAD` at its mount return HTTP 404 with an empty body.
 
 ### Cleanup
 
@@ -335,7 +335,7 @@ Control selects the installed database, chart, registry and broker configuration
 The CLI sends database operations to the control service.
 See [Native control](../architecture/control.md) for the service and worker configuration.
 
-The registry stores applied project settings, application host labels, client pins, and connection aliases.
+The registry stores applied project settings, client pins, and connection aliases.
 The shared environment owns its target, readiness budget, drain bound, project fact cache lifetime, and connection versions.
 The top package pins its base packages by OCI digest.
 Helm records the release history. A WorkloadDeployment exposes the applied package digest and Helm revision.
@@ -345,11 +345,10 @@ Use 1 to 40 lowercase ASCII letters, digits, and single hyphens for application 
 Put hyphens between letters or digits.
 See [Naming](../architecture/naming.md#environment-names) for the reserved project names.
 The [environment schema](../../crates/env/env.schema.json) describes the YAML fields.
-Set each application's `label` to a value unique within the org, across all its environments and projects.
-Use 1 to 21 lowercase letters, digits, and single hyphens between letters or digits.
-Deploy uses `<label>--<org>.<base>` as the host name.
-The example uses `receiving--local.wamn.localhost`.
-The platform's `platformDomain` value supplies the base for both deploy and web.
+Each app uses the path `/<project>/<app>/`.
+If you provision the environment with `--prod`, web serves that app on `<org>.<domain>`.
+Otherwise, web uses `<env>.<org>.<domain>`.
+The example uses `dev.local.wamn.localhost`. The platform's `platformDomain` value supplies the domain.
 An application connection alias names a connection from the shared `connections` map.
 Set `revocation_seconds` to an integer from 0 to 3600 for the environment.
 Deploy takes this applied value from the registry and sets the project fact cache lifetime on each application workload. Zero disables the cache. Each call reads role activity from the database.
@@ -375,8 +374,7 @@ database:
 projects:
   - name: receiving
     apps:
-      wamn-receiving:
-        label: receiving
+      wamn-receiving: {}
 ```
 
 Helm installs, upgrades, and rollbacks use `--server-side=true`.
@@ -462,7 +460,7 @@ If that check fails, the worker restores the previous release and checks that it
 Committed migrations remain installed. Application developers choose schema compatibility and migrate forward if the restored code cannot use the migrated schema. See [Application schema changes](../application-schema-changes.md).
 Environment apply refuses unfinished runs in the selected application.
 When the env file omits an app, `wamn env apply` stops its release and marks the app inactive.
-The app keeps its host label and its data. Add it back to the file and apply again to reactivate it.
+The app keeps its data. Add it back to the file and apply again to reactivate it.
 Run `wamn deploy` to serve the app again.
 Project deactivation checks all apps in the project env unless you pass `--data`.
 If the lifecycle lock session fails, the operation stops and returns an error.
@@ -702,7 +700,7 @@ The optional `client` field pins an application web artifact: `client = {package
 The web digest is `sha256:` and 64 lowercase hexadecimal digits, as `wamn web push` prints it.
 Without `client`, the host serves no application web client, even when the release contains one client package.
 `wamn web upload --web` pulls the artifact by digest from the repository in `--artifact-base` and writes its files to the bucket.
-The revision values keep the host-to-package map in `webClients` and the host-to-web-digest map in `webDigests`.
+The app Service annotation carries the client package and web digest from the revision values.
 
 The same immutable web artifact can serve more than one environment.
 Deploy a published release through control:
@@ -747,20 +745,20 @@ Pass the environment document’s `client.web` digest and the registry inputs.
 The uploader reads the package id and client name from `web.json`.
 It writes `clients/<package>/<web digest hex>/` and skips all writes when the index already exists.
 That page owns the command, required inputs, destination paths, output, and errors.
-The shell reads `/config.json` from the installed web service before sign-in.
+Web serves the app configuration at `/<project>/<app>/config.json` and the org configuration at `/config.json`.
 Browser sign-in uses the web host over HTTPS.
 For unsafe requests with a session cookie, web accepts `Sec-Fetch-Site: same-origin` or `Sec-Fetch-Site: none`.
 If that header is absent, web requires an HTTPS `Origin` that matches the incoming `Host`.
 The bucket must allow reads without credentials.
 Edge deployment remains outside the local platform milestone.
 
-Release hosts expose workload HTTP on port 80, probes on port 8081, and native file transfers on port 8082.
-The `<release>-files` Service selects the shared environment host and maps port 80 to the named `files` port.
-The edge sends `/api/<app>/files` and its child paths there before the general `/api/` route.
-File and workflow requests keep the full path. Other API requests lose the `/api` prefix.
+The app HTTP Service carries native files, workflows, and other application calls.
+Web translates `/<project>/<app>/api/files` and `/<project>/<app>/api/flow` to the host paths `/api/<app>/files` and `/api/<app>/flow`.
+Web forwards the health probe to `/api/health` on the same Service.
+The upstream Host is the app Service DNS name.
 
 The Rust edge reads the live release and serves its bucket files.
-For an application, it selects `clients/<package>/<web digest hex>/` from the host's pinned package and web digest.
+For an application, it selects `clients/<package>/<web digest hex>/` from the Service's pinned package and web digest.
 The digest uses `sha256:` and 64 lowercase hex digits. A missing or invalid web digest refuses.
 
 The Rust web front generates `config.json` with `org`, `project`, `release` and `web` from the live release.
@@ -820,7 +818,7 @@ Identity creates the first session signing key at startup. CloudNativePG manages
 
 Create a Secret in `platform` with an `api-key` entry.
 Set `identity.resendSecret` to that Secret and `identity.resendFrom` to the verified sender in the platform chart.
-Set `identity.inviteUrl` to the web client base, for example `https://receiving--acme.wamn.dev`.
+Set `identity.inviteUrl` to the org origin, for example `https://acme.wamn.dev`.
 The invitation mail links to `<inviteUrl>/invite#<code>`.
 The reset mail links to `<inviteUrl>/reset#<secret>`.
 If `inviteUrl` is empty, each mail shows the code.
@@ -841,11 +839,12 @@ The route bodies and limits are in [password enrollment](../architecture/executi
 Every other role is authored in the project and grants its stable operation references `<package>:<interface>/<operation>` while active.
 
 Give a role with `wamn grant-role`, and take it away with `wamn revoke-role`.
-Both verbs use the application host URL and the caller's session token.
+Set `WAMN_APP_URL` to the full application URL, including `/<project>/<app>/`.
+Both verbs use that URL and the caller's session token.
 The target user is named by principal UUID:
 
 ```bash
-wamn grant-role --host-url "$WAMN_CONTROL_URL" --token "$WAMN_TOKEN" \
+wamn grant-role --host-url "$WAMN_APP_URL" --token "$WAMN_TOKEN" \
   --user-id <principal UUID> --role <authored role>
 ```
 
@@ -871,7 +870,7 @@ The verbs refuse `admin`.
 Select an operation for an authored role with `wamn grant-permission`:
 
 ```bash
-wamn grant-permission --host-url "$WAMN_CONTROL_URL" --token "$WAMN_TOKEN" \
+wamn grant-permission --host-url "$WAMN_APP_URL" --token "$WAMN_TOKEN" \
   --role <role> \
   --operation <package>:<interface>/<operation>
 ```

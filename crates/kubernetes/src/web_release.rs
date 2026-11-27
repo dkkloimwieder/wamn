@@ -16,8 +16,10 @@ use kube::{
 };
 use serde::Deserialize;
 use tokio::sync::RwLock;
-use wamn_registry::{OrgId, platform_domain::PlatformDomain};
-use wamn_routes::valid_route_host;
+use wamn_registry::{
+    AppName, EnvName, OrgId, ProjectId, configuration::Client, name,
+    platform_domain::PlatformDomain,
+};
 
 use crate::client::{KubernetesApi, REQUEST_TIMEOUT};
 
@@ -27,21 +29,37 @@ pub const WEB_RELEASE_ANNOTATION: &str = "wamn.dev/web-release";
 /// The provisioner-owned label that assigns an org to a namespace.
 pub const ROUTE_ORG_LABEL: &str = "wamn.dev/org-name";
 
-/// The API destination and static pins served from one deployed Service.
+/// The coordinates and artifact pins published on a Service.
 #[derive(Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct LiveRelease {
-    pub host: String,
-    pub api: String,
+pub struct ReleaseAnnotation {
     pub digest: wamn_digest::Digest,
-    pub clients: BTreeMap<String, wamn_package::PackageName>,
-    pub webs: BTreeMap<String, wamn_digest::Digest>,
+    pub project: Option<ProjectId>,
+    pub app: Option<AppName>,
+    pub client: Option<Client>,
     pub platform_ui: Option<wamn_digest::Digest>,
-    pub org: OrgId,
-    pub project: Option<wamn_registry::ProjectId>,
 }
 
-/// The result of an in-memory lookup for a public host.
+impl ReleaseAnnotation {
+    /// The public mount if this record describes an application.
+    pub fn app_mount(&self) -> Option<String> {
+        let (project, app) = (self.project.as_ref()?, self.app.as_ref()?);
+        (self.platform_ui.is_none() && name::valid_resource_segment(app.as_str()))
+            .then(|| name::app_mount(project, app))
+    }
+}
+
+/// The discovered Service and its release.
+#[derive(Debug, PartialEq, Eq)]
+pub struct LiveRelease {
+    pub upstream_host: String,
+    pub org: OrgId,
+    pub release: Arc<ReleaseAnnotation>,
+    /// The public mount, including its trailing slash.
+    pub mount: Option<String>,
+}
+
+/// The result of an in-memory lookup for a public host and path.
 #[derive(Debug)]
 pub enum RouteLookup {
     Loading,
@@ -52,28 +70,49 @@ pub enum RouteLookup {
 #[derive(Debug, PartialEq, Eq)]
 struct RouteScope {
     org: OrgId,
-    control: bool,
+    env: Option<EnvName>,
+    prod: bool,
 }
 
-fn scope(name: &str, metadata: &ObjectMeta) -> Option<RouteScope> {
+impl RouteScope {
+    fn host(&self, domain: &PlatformDomain) -> String {
+        match &self.env {
+            Some(env) if !self.prod => name::env_host(&self.org, env, domain),
+            _ => name::org_host(&self.org, domain),
+        }
+    }
+}
+
+fn scope(namespace: &str, metadata: &ObjectMeta) -> Option<RouteScope> {
     let labels = metadata.labels.as_ref()?;
-    let control = labels
-        .get("wamn.dev/org")
-        .is_some_and(|value| value == "true");
-    let env = labels
-        .get("wamn.dev/env")
-        .is_some_and(|value| value == "true")
-        && labels
-            .get("wamn.dev/org-workloads")
-            .is_some_and(|value| value == "true");
+    let marked = |key| labels.get(key).is_some_and(|value| value == "true");
     let org: OrgId = labels.get(ROUTE_ORG_LABEL)?.parse().ok()?;
-    ((control && name == org.as_str()) || (!control && env)).then_some(RouteScope { org, control })
+    let env = if marked("wamn.dev/org") {
+        if namespace != org.as_str() {
+            return None;
+        }
+        None
+    } else {
+        if !marked("wamn.dev/env") || !marked("wamn.dev/org-workloads") {
+            return None;
+        }
+        let (prefix, env) = namespace.split_once("--")?;
+        if prefix != org.as_str() {
+            return None;
+        }
+        Some(env.parse().ok()?)
+    };
+    Some(RouteScope {
+        org,
+        env,
+        prod: marked("wamn.dev/prod"),
+    })
 }
 
 fn service_release(
     (service, namespace): &ServiceKey,
     metadata: &ObjectMeta,
-) -> Option<Arc<LiveRelease>> {
+) -> Option<Arc<ReleaseAnnotation>> {
     let annotation = metadata.annotations.as_ref()?.get(WEB_RELEASE_ANNOTATION)?;
     match serde_json::from_str(annotation) {
         Ok(release) => Some(Arc::new(release)),
@@ -85,13 +124,49 @@ fn service_release(
 }
 
 type ServiceKey = (String, String);
-type RouteTable = BTreeMap<String, Arc<LiveRelease>>;
+
+#[derive(Debug, Default)]
+struct HostRoutes {
+    control: Option<Arc<LiveRelease>>,
+    // Use the mount without its final slash as the key so both forms resolve.
+    apps: BTreeMap<String, Arc<LiveRelease>>,
+}
+
+impl HostRoutes {
+    fn route(&self, path: &str) -> Option<&Arc<LiveRelease>> {
+        let control = self.control.as_ref();
+        let Some(path) = path.strip_prefix('/') else {
+            return control;
+        };
+        let Some((project, rest)) = path.split_once('/') else {
+            return control;
+        };
+        let (app, tail) = rest.split_once('/').unwrap_or((rest, ""));
+        if matches!(
+            project,
+            "api" | "password" | "oauth" | "wamn_control" | "assets" | "clients" | "platform-ui"
+        ) {
+            return control;
+        }
+        let key = &path[..project.len() + 1 + app.len()];
+        match self.apps.get(key) {
+            Some(route) => Some(route),
+            // A missing application API must not fall through to the org's web client.
+            None if (tail.starts_with("api/") || tail.starts_with("wamn_control/"))
+                && project.parse::<ProjectId>().is_ok() =>
+            {
+                None
+            }
+            None => control,
+        }
+    }
+}
 
 #[derive(Debug, Default)]
 struct Discovery {
     scopes: Option<BTreeMap<String, RouteScope>>,
-    services: Option<BTreeMap<ServiceKey, Arc<LiveRelease>>>,
-    routes: RouteTable,
+    services: Option<BTreeMap<ServiceKey, Arc<ReleaseAnnotation>>>,
+    routes: BTreeMap<String, HostRoutes>,
 }
 
 impl Discovery {
@@ -120,21 +195,63 @@ impl Discovery {
             return;
         };
         self.routes.clear();
-        for ((name, namespace), release) in services {
-            if !scopes.get(namespace).is_some_and(|scope| {
-                valid_route_host(&release.host, scope.org.as_str(), scope.control, domain)
-            }) {
-                tracing::warn!(namespace, service = name, host = %release.host, "dropping route outside its namespace host pattern");
+        let mut controls = BTreeMap::new();
+        for ((service, namespace), release) in services {
+            let Some(scope) = scopes.get(namespace) else {
                 continue;
+            };
+            let mount = if scope.env.is_some() && service.ends_with("-http") {
+                match release.app_mount() {
+                    Some(mount) => Some(mount),
+                    None => continue,
+                }
+            } else if scope.env.is_none()
+                && *service == name::resource_suffix(&name::control_resource(&scope.org), "http")
+                && release.project.is_none()
+                && release.app.is_none()
+                && release.client.is_none()
+            {
+                None
+            } else {
+                tracing::warn!(
+                    namespace,
+                    service,
+                    "dropping release outside its namespace scope"
+                );
+                continue;
+            };
+            let route = Arc::new(LiveRelease {
+                upstream_host: name::service_host(service, namespace),
+                org: scope.org.clone(),
+                release: Arc::clone(release),
+                mount,
+            });
+            if let Some(mount) = &route.mount {
+                let host = scope.host(domain);
+                if host.len() > 253 {
+                    continue;
+                }
+                let apps = &mut self.routes.entry(host).or_default().apps;
+                // Keep the first claim in Service name, then namespace order.
+                match apps.entry(mount[1..mount.len() - 1].to_owned()) {
+                    Entry::Vacant(entry) => {
+                        entry.insert(route);
+                    }
+                    Entry::Occupied(_) => {
+                        tracing::warn!(namespace, service, mount, "dropping duplicate web route");
+                    }
+                }
+            } else {
+                controls.insert(&scope.org, route);
             }
-            // Keep the first claim in Service name, then namespace order.
-            match self.routes.entry(release.host.clone()) {
-                Entry::Vacant(entry) => {
-                    entry.insert(Arc::clone(release));
-                }
-                Entry::Occupied(_) => {
-                    tracing::warn!(namespace, service = name, host = %release.host, "dropping duplicate web route");
-                }
+        }
+        for scope in scopes.values() {
+            let Some(control) = controls.get(&scope.org) else {
+                continue;
+            };
+            let host = scope.host(domain);
+            if host.len() <= 253 {
+                self.routes.entry(host).or_default().control = Some(Arc::clone(control));
             }
         }
     }
@@ -270,13 +387,17 @@ impl Releases {
         }
     }
 
-    /// Resolve a host from memory without waiting for Kubernetes.
-    pub async fn route(&self, host: &str) -> RouteLookup {
+    /// Resolve a host and path from memory without waiting for Kubernetes.
+    pub async fn route(&self, host: &str, path: &str) -> RouteLookup {
         let discovery = self.discovery.read().await;
         if !discovery.ready() {
             return RouteLookup::Loading;
         }
-        match discovery.routes.get(host) {
+        match discovery
+            .routes
+            .get(host)
+            .and_then(|routes| routes.route(path))
+        {
             Some(release) => RouteLookup::Found(Arc::clone(release)),
             None => RouteLookup::Missing,
         }
@@ -312,7 +433,7 @@ impl Releases {
     ///
     /// # Errors
     /// Returns an error if a Kubernetes list fails.
-    pub async fn list(&self) -> anyhow::Result<BTreeMap<String, Arc<LiveRelease>>> {
+    pub async fn list(&self) -> anyhow::Result<BTreeMap<String, Vec<Arc<LiveRelease>>>> {
         let namespaces = Api::<Namespace>::all(self.api.client());
         let services = Api::<Service>::all(self.api.client());
         let ((_, namespaces), (_, services)) = tokio::try_join!(
@@ -323,7 +444,18 @@ impl Releases {
         discovery.namespaces(namespaces);
         discovery.services(services);
         discovery.rebuild(&self.platform_domain);
-        Ok(discovery.routes)
+        Ok(discovery
+            .routes
+            .into_iter()
+            .map(|(host, routes)| {
+                let releases = routes
+                    .control
+                    .into_iter()
+                    .chain(routes.apps.into_values())
+                    .collect();
+                (host, releases)
+            })
+            .collect())
     }
 }
 
@@ -347,15 +479,21 @@ mod tests {
         }
     }
 
-    fn service(name: &str, namespace: &str, host: &str, pin: &str) -> Value {
-        let release = json!({
-            "host":host, "api":format!("http://{name}.{namespace}.svc.cluster.local"),
-            "org":"acme", "project":"app", "digest":wamn_digest::bytes_sha256(b"release"),
-            "clients":{(host):"app"}, "webs":{(host):wamn_digest::bytes_sha256(pin.as_bytes())},
-        });
+    fn annotated_service(name: &str, namespace: &str, release: &Value) -> Value {
         json!({"metadata":{"name":name,"namespace":namespace,"annotations":{
             (WEB_RELEASE_ANNOTATION):release.to_string()
         }}})
+    }
+
+    fn service(name: &str, namespace: &str, app: &str, pin: &str) -> Value {
+        annotated_service(
+            name,
+            namespace,
+            &json!({
+                "project":"shop", "app":app, "digest":wamn_digest::bytes_sha256(b"release"),
+                "client":{"package":"app","web":wamn_digest::bytes_sha256(pin.as_bytes())}
+            }),
+        )
     }
 
     fn env_labels(org: &str) -> Value {
@@ -363,55 +501,122 @@ mod tests {
     }
 
     #[test]
-    fn namespace_scope_filters_hosts_and_the_first_service_claim_wins() {
+    fn namespace_coordinates_scope_apps_and_share_control_across_the_org_hosts() {
         let mut discovery = Discovery::default();
         let domain = "example.test".parse().unwrap();
-        let host = "app--acme.example.test";
-        let control_host = "acme.example.test";
-        assert!(!discovery.ready());
+        let dev = "dev.acme.example.test";
+        let apex = "acme.example.test";
+        let mut prod_labels = env_labels("acme");
+        prod_labels["wamn.dev/prod"] = json!("true");
         discovery.namespaces(MetadataChange::List(vec![
             namespace("acme--dev", env_labels("acme")),
-            namespace("other--dev", env_labels("other")),
+            namespace("acme--test", env_labels("acme")),
+            namespace("acme--main", prod_labels),
+            namespace("other--dev", env_labels("acme")),
             namespace(
                 "acme",
                 json!({(ROUTE_ORG_LABEL):"acme","wamn.dev/org":"true"}),
             ),
         ]));
         assert!(!discovery.ready());
-        let primary = service("b-http", "acme--dev", host, "primary");
-        let duplicate = service("c-http", "acme--dev", host, "duplicate");
-        let other_org = service("a-http", "other--dev", host, "foreign");
-        let unknown = service("a-http", "acme--unknown", host, "unscoped");
-        let control = service("c-acme-http", "acme", control_host, "control");
+        let objects = [
+            service("b-http", "acme--dev", "stock", "first"),
+            service("c-http", "acme--dev", "stock", "duplicate"),
+            service("d-http", "acme--dev", "orders", "orders"),
+            service("a-http", "acme--main", "stock", "prod"),
+            service("a-http", "other--dev", "stock", "foreign"),
+            annotated_service(
+                "c-acme-http",
+                "acme",
+                &json!({"digest":wamn_digest::bytes_sha256(b"control")}),
+            ),
+            annotated_service(
+                "e-http",
+                "acme--test",
+                &json!({
+                    "host":apex, "digest":wamn_digest::bytes_sha256(b"bad"),
+                    "project":"shop", "app":"stock"
+                }),
+            ),
+        ];
         discovery.services(MetadataChange::List(
-            [duplicate, other_org, unknown, control, primary]
+            objects
                 .into_iter()
                 .map(|mut item| serde_json::from_value(item["metadata"].take()).unwrap())
                 .collect(),
         ));
         discovery.rebuild(&domain);
         assert!(discovery.ready());
-        assert_eq!(
-            discovery.routes[host].webs[host],
-            wamn_digest::bytes_sha256(b"primary")
+        let routes = &discovery.routes;
+        for (host, path, pin, upstream) in [
+            (
+                dev,
+                "/shop/stock",
+                "first",
+                "b-http.acme--dev.svc.cluster.local",
+            ),
+            (
+                dev,
+                "/shop/orders/api/health",
+                "orders",
+                "d-http.acme--dev.svc.cluster.local",
+            ),
+            (
+                apex,
+                "/shop/stock/",
+                "prod",
+                "a-http.acme--main.svc.cluster.local",
+            ),
+        ] {
+            let route = routes[host].route(path).unwrap();
+            assert_eq!(
+                route.release.client.as_ref().unwrap().web,
+                wamn_digest::bytes_sha256(pin.as_bytes())
+            );
+            assert_eq!(route.upstream_host, upstream);
+        }
+        for host in [apex, dev, "test.acme.example.test"] {
+            for path in [
+                "/",
+                "/config.json",
+                "/password/login",
+                "/oauth/callback",
+                "/wamn_control/control/mine",
+            ] {
+                let route = routes[host].route(path).unwrap();
+                assert!(route.mount.is_none());
+                assert_eq!(route.upstream_host, "c-acme-http.acme.svc.cluster.local");
+            }
+        }
+        assert!(routes[apex].route("/shop/orders/api/health").is_none());
+        assert!(routes[apex].route("/shop/orders/").unwrap().mount.is_none());
+        assert!(
+            routes[dev]
+                .route("/shop/stockroom/")
+                .unwrap()
+                .mount
+                .is_none()
         );
-        assert!(discovery.routes.contains_key(control_host));
+        assert!(routes["test.acme.example.test"].apps.is_empty());
+        assert!(!routes.contains_key("other.example.test"));
+        assert!(!routes.contains_key("main.acme.example.test"));
+        assert!(!routes.contains_key("stock--acme.example.test"));
 
         assert!(discovery.namespaces(MetadataChange::Apply(namespace(
             "acme--dev",
-            env_labels("other"),
+            env_labels("other")
         ))));
         discovery.rebuild(&domain);
-        assert!(!discovery.routes.contains_key(host));
-        assert!(discovery.routes.contains_key(control_host));
+        assert!(!discovery.routes.contains_key(dev));
+        assert!(discovery.routes.contains_key(apex));
     }
 
     #[tokio::test]
     async fn service_watch_retains_routes_until_relist_and_applies_event_changes() {
-        let host = "app--acme.example.test";
+        let host = "dev.acme.example.test";
         let ns = "acme--dev";
-        let first = service("app-http", ns, host, "first");
-        let second = service("app-http", ns, host, "updated");
+        let first = service("app-http", ns, "app", "first");
+        let second = service("app-http", ns, "app", "updated");
         let mut responses = [
             ("limit=", json!({"metadata":{"resourceVersion":"1","continue":"next"},"items":[]}).to_string()),
             ("continue=next", json!({"metadata":{"resourceVersion":"1"},"items":[first]}).to_string()),
@@ -419,7 +624,7 @@ mod tests {
                 json!({"type":"MODIFIED","object":second}),
                 json!({"type":"ERROR","object":{"code":410,"reason":"Expired"}}),
             )),
-            ("limit=", json!({"metadata":{"resourceVersion":"3"},"items":[service("replacement-http", ns, host, "relisted")]}).to_string()),
+            ("limit=", json!({"metadata":{"resourceVersion":"3"},"items":[service("replacement-http", ns, "app", "relisted")]}).to_string()),
             ("resourceVersion=3", format!("{}\n", json!({"type":"DELETED","object":{
                 "metadata":{"name":"replacement-http","namespace":ns}
             }}))),
@@ -468,15 +673,25 @@ mod tests {
             for pin in [b"first".as_slice(), b"updated"] {
                 assert!(discovery.services(updates.recv().await.unwrap()));
                 discovery.rebuild(&domain);
-                let route = &discovery.routes[host];
-                assert_eq!(route.digest, wamn_digest::bytes_sha256(b"release"));
-                assert_eq!(route.webs[host], wamn_digest::bytes_sha256(pin));
+                let route = discovery.routes[host].route("/shop/app/").unwrap();
+                assert_eq!(route.release.digest, wamn_digest::bytes_sha256(b"release"));
+                assert_eq!(
+                    route.release.client.as_ref().unwrap().web,
+                    wamn_digest::bytes_sha256(pin)
+                );
             }
             relist.notify_one();
             assert!(discovery.services(updates.recv().await.unwrap()));
             discovery.rebuild(&domain);
             assert_eq!(
-                discovery.routes[host].webs[host],
+                discovery.routes[host]
+                    .route("/shop/app/")
+                    .unwrap()
+                    .release
+                    .client
+                    .as_ref()
+                    .unwrap()
+                    .web,
                 wamn_digest::bytes_sha256(b"relisted")
             );
             assert!(discovery.services(updates.recv().await.unwrap()));
