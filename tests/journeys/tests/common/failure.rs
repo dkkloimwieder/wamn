@@ -18,12 +18,10 @@ use kube::api::{DynamicObject, ListParams, LogParams};
 use kube::{Api, ResourceExt as _};
 use serde_json::{Value, json};
 use wamn_identity_protocol::PAT_TOKEN_PREFIX;
+use wamn_kubernetes::helm::org_release_namespace;
 use wamn_registry::{OrgId, Triple, name};
 
 use super::{Capacity, Cluster, Org, PLATFORM, host, load_cluster, postgres_clusters};
-
-// Storage namespaces named by wamn_kubernetes::helm::org_release_namespace.
-const HELM_NAMESPACE_PREFIX: &str = "wamn-helm-";
 
 tokio::task_local! {
     static CAPTURE: RefCell<Capture>;
@@ -142,7 +140,12 @@ impl Capture {
         let mut release_namespaces: BTreeSet<_> = self
             .orgs
             .iter()
-            .map(|org| format!("{HELM_NAMESPACE_PREFIX}{org}"))
+            .map(|org| org_release_namespace(org).into_owned())
+            .collect();
+        let env_releases: BTreeSet<_> = self
+            .envs
+            .iter()
+            .map(|env| org_release_namespace(env))
             .collect();
         match Api::<Namespace>::all(cluster.client.clone())
             .list_metadata(&ListParams::default())
@@ -150,10 +153,7 @@ impl Capture {
         {
             Ok(list) => namespaces.extend(list.items.into_iter().filter_map(|namespace| {
                 let name = namespace.metadata.name?;
-                if name
-                    .strip_prefix(HELM_NAMESPACE_PREFIX)
-                    .is_some_and(|env| self.envs.contains(env))
-                {
+                if env_releases.contains(name.as_str()) {
                     release_namespaces.insert(name);
                     return None;
                 }

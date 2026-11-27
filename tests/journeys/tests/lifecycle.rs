@@ -24,6 +24,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use tokio::sync::oneshot;
 use tokio::time::{Instant, timeout};
+use wamn_env::app_chart::plan::workload_name;
 use wamn_http_client::{HttpClient, Redirects};
 use wamn_registry::{name, resource_names};
 
@@ -57,7 +58,7 @@ common::journey! {
             &triple.env,
             &FIXTURE.parse()?,
         );
-        let workload = format!("{release}-http");
+        let workload = workload_name(&release);
         let client = &env.org.cluster.client;
         let namespace = &wamn_registry::name::env_key(&triple.org, &triple.env);
         let deployments = runtime(
@@ -194,7 +195,7 @@ common::journey! {
             &triple.env,
             &FIXTURE.parse()?,
         );
-        let workload = format!("{release}-http");
+        let workload = workload_name(&release);
         let workloads = runtime(
             &env.org.cluster.client,
             &env.namespace(),

@@ -22,7 +22,9 @@ use kube::{
 use serde::Deserialize as _;
 use serde_json::{Value, json};
 use tokio::time::timeout;
+use wamn_env::app_chart::plan::workload_name;
 use wamn_http_client::HttpClient;
+use wamn_kubernetes::helm::org_release_namespace;
 
 const APP: &str = "wamn_receiving";
 
@@ -93,8 +95,8 @@ common::journey! {
             let namespace = env.namespace();
             [
                 env.org.name.to_string(),
-                format!("wamn-helm-{}", env.org.name),
-                format!("wamn-helm-{namespace}"),
+                org_release_namespace(env.org.name.as_str()).into_owned(),
+                org_release_namespace(&namespace).into_owned(),
                 namespace,
             ]
         };
@@ -373,7 +375,7 @@ common::journey! {
         let release = wamn_registry::resource_names::app_release_name(
             &triple.org, &triple.project, &triple.env, &FIXTURE.parse()?,
         );
-        let mut installed = workloads.get(&format!("{release}-http")).await?;
+        let mut installed = workloads.get(&workload_name(&release)).await?;
         let outputs = &env.org.cluster.outputs;
         let mut config = kube::Config::from_custom_kubeconfig(
             kube::config::Kubeconfig::read_from(&outputs.kubeconfig)?,
@@ -382,10 +384,10 @@ common::journey! {
                 ..Default::default()
             },
         ).await?;
-        let coordinate = wamn_registry::name::project_env_resource_name(
+        let account = wamn_registry::name::project_operation_account(
             &triple.org, &triple.project, &triple.env,
         );
-        config.auth_info.impersonate = Some(format!("system:serviceaccount:{namespace}:{coordinate}-operation"));
+        config.auth_info.impersonate = Some(format!("system:serviceaccount:{namespace}:{account}"));
         let project = Api::<kube::api::DynamicObject>::namespaced_with(
             Client::try_from(config)?, &namespace, &resource,
         );

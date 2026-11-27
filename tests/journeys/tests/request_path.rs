@@ -9,9 +9,11 @@ use common::{App, Org};
 use k8s_openapi::api::authorization::v1::{
     ResourceAttributes, SubjectAccessReview, SubjectAccessReviewSpec,
 };
+use k8s_openapi::api::core::v1::Secret;
 use kube::Api;
 use kube::api::PostParams;
 use serde_json::{Value, json};
+use wamn_kubernetes::helm::org_release_namespace;
 use wamn_registry::{Triple, name};
 use wamn_test_infrastructure::scratch::ScratchRoot;
 
@@ -21,7 +23,6 @@ common::journey! {
     /// The control command removes the selected connection's Secret entries.
     async fn deactivation_removes_only_the_connections_secret_versions() -> anyhow::Result<()> {
         use common::host::{control, control_reply};
-        use k8s_openapi::api::core::v1::Secret;
 
         let org = Org::create().await?;
         let project = OtherEnv::apply(&org, "credentials", "platform_fixture").await?;
@@ -159,9 +160,8 @@ common::journey! {
         .bind(CONNECTION)
         .fetch_one(&mut observed.connection)
         .await?;
-        let secrets = Api::<k8s_openapi::api::core::v1::Secret>::namespaced(
-            client.clone(), org.name.as_str(),
-        );
+        let namespace = name::env_key(&b.triple.org, &b.triple.env);
+        let secrets = Api::<Secret>::namespaced(client.clone(), &namespace);
         let mut entries = secrets.get(&reference).await?.data.context("credential entries")?;
         let credential = entries.remove(&version).context("active credential version")?;
         ensure!(
@@ -176,7 +176,7 @@ common::journey! {
                     &PostParams::default(),
                     &SubjectAccessReview {
                         spec: SubjectAccessReviewSpec {
-                            user: Some(format!("system:serviceaccount:{}:{account}", name::env_key(&b.triple.org, &b.triple.env))),
+                            user: Some(format!("system:serviceaccount:{namespace}:{account}")),
                             resource_attributes: Some(ResourceAttributes {
                                 namespace: Some(name::env_key(&owner.org, &owner.env)),
                                 verb: Some("get".to_owned()),
@@ -311,7 +311,7 @@ common::journey! {
 /// Check the controller-produced targets of the installed Bundles, using their
 /// source certificate Secrets and the cluster's actual namespace labels.
 async fn public_roots_arrive_with_their_certificates(env: &common::Env) -> anyhow::Result<()> {
-    use k8s_openapi::api::core::v1::{ConfigMap, Namespace, Secret};
+    use k8s_openapi::api::core::v1::{ConfigMap, Namespace};
     use kube::api::{ApiResource, DynamicObject, GroupVersionKind, ListParams};
     use rustls::pki_types::{CertificateDer, pem::PemObject as _};
 
@@ -399,16 +399,16 @@ async fn public_roots_arrive_with_their_certificates(env: &common::Env) -> anyho
 }
 
 async fn latest_trust_release_records(env: &common::Env) -> anyhow::Result<Vec<(String, String)>> {
-    use k8s_openapi::api::core::v1::Secret;
     use kube::api::ListParams;
 
     let outputs = &env.org.cluster.outputs;
-    let org_storage = format!("wamn-helm-{}", env.org.name);
-    let env_storage = format!("wamn-helm-{}", env.namespace());
+    let namespace = env.namespace();
+    let org_storage = org_release_namespace(env.org.name.as_str());
+    let env_storage = org_release_namespace(&namespace);
     let mut releases = vec![
         ("platform", "wamn-infrastructure".to_owned()),
         ("platform", "wamn".to_owned()),
-        (org_storage.as_str(), "wamn-org".to_owned()),
+        (org_storage.as_ref(), "wamn-org".to_owned()),
     ];
     let releases_in_env = Api::<Secret>::namespaced(env.org.cluster.client.clone(), &env_storage)
         .list_metadata(&ListParams::default().labels("owner=helm,status=deployed"))

@@ -21,6 +21,8 @@ wamn-identity-protocol.workspace = true
 wamn-http-client = { workspace = true, features = ["tls12"] }
 wamn-registry.workspace = true
 wamn-env.workspace = true
+wamn-kubernetes.workspace = true
+wamn-platform-install.workspace = true
 wamn-test-infrastructure.workspace = true
 hyper = { workspace = true }
 # Port-forwards and pods/exec use the WebSocket transport, as in xtask.

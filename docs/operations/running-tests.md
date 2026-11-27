@@ -350,6 +350,14 @@ The `nats_outage` target stops the platform NATS server, so it must run alone.
 Cargo runs the test targets one after another, so the command above runs it alone.
 Do not run it beside another journey run.
 
+Before each group of journey targets, recreate `wamn-local` with the same bundle.
+The org and env pods keep their resource requests after deactivation, so each journey leaves less capacity for the next. [T16](../plan/review-restructure.md#t16-before-any-real-customer)
+
+```bash
+cargo xtask kind-cluster-delete wamn-local
+cargo xtask journey-cluster --chart <bundle>
+```
+
 ### System Pooler capacity on kind
 
 The system database Poolers cap server connections and queue clients under load.

@@ -11,6 +11,10 @@ use sqlx::postgres::{PgConnectOptions, PgSslMode};
 use tokio::net::{TcpStream, UnixListener};
 use tokio::task::JoinSet;
 use tokio::time::{sleep, timeout};
+use wamn_platform_install::{
+    org::SYSTEM_DATABASE_CA,
+    provision_org::{APPLY_SECRET, CONTROL_SECRET},
+};
 
 use super::{PLATFORM, PortForward, SYSTEM_DATABASE};
 
@@ -100,11 +104,14 @@ impl Pooler {
         namespace: &str,
     ) -> anyhow::Result<PgConnectOptions> {
         let family = self.family;
-        let role = if family == CONTROL { CONTROL } else { APPLY };
-        let secret = format!("wamn-{role}-db");
+        let secret = if family == CONTROL {
+            CONTROL_SECRET
+        } else {
+            APPLY_SECRET
+        };
         let secrets = Api::<Secret>::namespaced(client.clone(), namespace);
         let roots = Api::<ConfigMap>::namespaced(client.clone(), namespace);
-        let (login, ca) = tokio::try_join!(secrets.get(&secret), roots.get("wamn-pg-ca"))
+        let (login, ca) = tokio::try_join!(secrets.get(secret), roots.get(SYSTEM_DATABASE_CA))
             .with_context(|| format!("read {namespace}/{secret} and the system database CA"))?;
         let mut data = login.data.context("Pooler login Secret has no data")?;
         let mut entry = |key| {

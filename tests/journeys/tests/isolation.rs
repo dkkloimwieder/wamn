@@ -21,6 +21,7 @@ use kube::Api;
 use kube::api::{AttachParams, ListParams};
 use serde_json::json;
 use tokio::time::timeout;
+use wamn_env::app_chart::plan::workload_name;
 use wamn_http_client::HttpClient;
 use wamn_registry::{Triple, name, resource_names};
 
@@ -365,7 +366,7 @@ async fn live_targets(b: &App) -> anyhow::Result<[(&'static str, SocketAddr); 5]
         &triple.env,
         &FIXTURE.parse()?,
     );
-    let http = name::resource_suffix(&release, "http");
+    let http = workload_name(&release);
     let host_http = SocketAddr::new(host_ip, HOST_HTTP);
     let primary_postgres = SocketAddr::new(primary_ip, POSTGRES);
     let (rw_address, http_address) = tokio::try_join!(
