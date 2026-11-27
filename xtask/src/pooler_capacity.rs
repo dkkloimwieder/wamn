@@ -169,7 +169,10 @@ struct Observation {
 struct PoolRow {
     database: String,
     user: String,
+    cl_active: u64,
     cl_waiting: u64,
+    sv_active: u64,
+    sv_idle: u64,
     maxwait: u64,
     maxwait_us: u64,
 }
@@ -511,7 +514,7 @@ async fn show_pools(pods: &Api<Pod>, pod: &str) -> anyhow::Result<Vec<PoolRow>> 
         &AttachParams::default().container("pgbouncer"),
         [
             "psql",
-            "-Xtw",
+            "-Xw",
             "--csv",
             "-h",
             "/controller/run",
@@ -527,11 +530,14 @@ async fn show_pools(pods: &Api<Pod>, pod: &str) -> anyhow::Result<Vec<PoolRow>> 
     )
     .await
     .with_context(|| format!("SHOW POOLS on {pod}"))?;
+    parse_pools(&csv).with_context(|| format!("read SHOW POOLS on {pod}"))
+}
+
+fn parse_pools(csv: &str) -> csv::Result<Vec<PoolRow>> {
     // CSV column names select the measured fields independently of other Pooler columns.
     csv::Reader::from_reader(csv.as_bytes())
-        .deserialize::<PoolRow>()
-        .collect::<Result<_, _>>()
-        .with_context(|| format!("read SHOW POOLS on {pod}"))
+        .deserialize()
+        .collect()
 }
 
 fn percentiles(clients: impl Iterator<Item = Vec<AcquireTime>>) -> Option<Percentiles> {
@@ -670,13 +676,37 @@ fn print_report(report: &Run) {
 
 #[cfg(test)]
 mod tests {
-    use super::{AcquireTime, Percentiles, Threshold, percentiles, threshold};
+    use super::{AcquireTime, Percentiles, Threshold, parse_pools, percentiles, threshold};
 
     fn exact(us: u64) -> AcquireTime {
         AcquireTime {
             us,
             at_least: false,
         }
+    }
+
+    #[test]
+    fn show_pools_csv_records_connection_counts_and_wait() {
+        let csv = "\
+database,user,cl_active,cl_waiting,cl_active_cancel_req,cl_waiting_cancel_req,sv_active,sv_active_cancel,sv_being_canceled,sv_idle,sv_used,sv_tested,sv_login,maxwait,maxwait_us,pool_mode,load_balance_hosts
+pgbouncer,pgbouncer,1,0,0,0,0,0,0,0,0,0,0,0,0,statement,
+wamn_system,wamn_apply_env_008d19b8ea0478cd4ba5e117d9946df0b61541e5,3,2,0,0,4,0,0,1,0,0,0,1,250,transaction,
+";
+        let rows = parse_pools(csv).expect("parse PgBouncer 1.26.1 SHOW POOLS CSV");
+        let row = rows
+            .iter()
+            .find(|row| row.database == "wamn_system")
+            .expect("SHOW POOLS includes the wamn_system row");
+        assert_eq!(
+            row.user,
+            "wamn_apply_env_008d19b8ea0478cd4ba5e117d9946df0b61541e5"
+        );
+        assert_eq!(row.cl_active, 3);
+        assert_eq!(row.cl_waiting, 2);
+        assert_eq!(row.sv_active, 4);
+        assert_eq!(row.sv_idle, 1);
+        assert_eq!(row.maxwait, 1);
+        assert_eq!(row.maxwait_us, 250);
     }
 
     #[test]
