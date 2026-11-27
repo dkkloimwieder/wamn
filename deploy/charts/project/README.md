@@ -3,7 +3,7 @@
 Set `namespace` to the environment namespace from the registry. Helm uses server-side apply for project installs and upgrades.
 The PostgreSQL container memory limit follows the project memory request.
 
-The chart creates the project's CloudNativePG Cluster, Database, login Secrets, publication, and schema diff ServiceAccount.
+The chart creates the project's CloudNativePG Cluster, Database, login Secrets, publication, and operation ServiceAccount. The operation Role names project login Secrets and declared application resources. A RoleBinding in the environment's Helm namespace grants access to release records.
 That ServiceAccount reads the named login Secrets, the project CA Secret and the system database CA ConfigMap. It can read each declared application's workload to resolve the live package digest.
 The environment worker runs operations that use Helm.
 CloudNativePG creates the database at bootstrap. The Database resource installs the extensions.

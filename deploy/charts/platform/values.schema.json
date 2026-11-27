@@ -3,6 +3,10 @@
   "type": "object",
   "additionalProperties": false,
   "properties": {
+    "projectOperationAdmission": {
+      "type": "string",
+      "enum": ["Warn", "Deny"]
+    },
     "provider": {
       "type": "string",
       "enum": [

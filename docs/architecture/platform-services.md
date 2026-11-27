@@ -339,7 +339,7 @@ Identity reserves file storage across environments in a short SQL transaction.
 Identity publishes the signed account revision after commit and keeps the previous reservation until the resolver acknowledges a decrease.
 The account contains all the environment's project streams. Accounts exchange no imports or exports.
 
-The org worker generates the other environment user keys and stores their credentials in Secrets in the org namespace.
+The environment worker generates the other environment user keys and stores their credentials in Secrets in the environment namespace.
 The worker uses the environment's `stream-admin` credentials to manage project streams.
 Each project's CDC reader can publish only to the project's event subjects.
 Its recovery worker can request stream information and read messages from that project's stream.

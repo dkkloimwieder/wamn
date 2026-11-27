@@ -5,6 +5,7 @@
 
 use crate::{kind, platform, process};
 use anyhow::{Context as _, ensure};
+use k8s_openapi::api::admissionregistration::v1::ValidatingAdmissionPolicyBinding;
 use k8s_openapi::api::core::v1::{ConfigMap, Namespace, Pod, Secret};
 use k8s_openapi::api::networking::v1::NetworkPolicy;
 use kube::Api;
@@ -135,7 +136,14 @@ pub async fn run(root: &Path, args: Args) -> anyhow::Result<()> {
         .await?
         .and_then(|map| map.data)
         .and_then(|mut data| data.remove("appChart"));
-    if installed.as_deref() == Some(reference.trim()) {
+    let binding = Api::<ValidatingAdmissionPolicyBinding>::all(client.clone())
+        .get_opt("wamn-project-operation")
+        .await?;
+    let denies = binding
+        .and_then(|binding| binding.spec)
+        .and_then(|spec| spec.validation_actions)
+        .is_some_and(|actions| actions == ["Deny"]);
+    if installed.as_deref() == Some(reference.trim()) && denies {
         println!("The platform is installed at {}.", reference.trim());
     } else {
         process::execute(
@@ -194,6 +202,7 @@ fn platform_values(
             "port": endpoint.port,
         }))?,
     );
+    values.insert("projectOperationAdmission".into(), "Deny".into());
     let defaults: serde_yaml::Value =
         serde_yaml::from_slice(&std::fs::read(charts.join("values.yaml"))?)?;
     let base_domain = values

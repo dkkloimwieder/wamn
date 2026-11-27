@@ -333,7 +333,7 @@ With `--print-cluster-requests`, it prints the cluster requests and does not rea
 It creates or reuses the `wamn-local` cluster and its registry on port 5001.
 If the cluster CNI does not enforce NetworkPolicy, it fails.
 It uses the bundle that `--chart <bundle>` names, or builds one under `target/journey/bundle`.
-If the bundle changes, it runs `wamn platform deploy`.
+It runs `wamn platform deploy` if the bundle changes or the admission binding needs `Deny` for the refusal journey.
 It records container restarts, and fails only on a platform pod that never becomes ready.
 Then it creates the read-only observer login on the system database.
 It writes `target/journey/kubeconfig` and `target/journey/cluster.json`.

@@ -28,6 +28,7 @@ use wamn_release::release_package::{OpenedPackage, open_package_digest};
 use super::{
     Platform, bindings,
     document::{DeclaredRelease, EnvDocument, WorkloadRelease},
+    operation_phase::{Phase, Step},
     sql, stage, write,
 };
 use crate::apply_package::{ApplyPackageRequest, apply_package};
@@ -179,16 +180,21 @@ async fn recover_release(
 }
 
 /// Execute an application operation using its applied project document.
-pub async fn app(
+pub(super) async fn app(
     platform: &Platform,
     mut document: EnvDocument,
     name: &AppName,
     operation: App<'_>,
+    phase: Option<&Phase<'_>>,
     journal_release: &mut Option<WorkloadRelease>,
 ) -> anyhow::Result<Value> {
     let triple = document.triple();
     Box::pin(LifecycleLock::hold(
-        DatabaseConnection::Direct(&platform.system_database_url),
+        if phase.is_some() {
+            DatabaseConnection::EnvPhase(&platform.system_transaction_url)
+        } else {
+            DatabaseConnection::Direct(&platform.system_database_url)
+        },
         &triple,
         async |system| {
             ensure!(
@@ -263,7 +269,10 @@ pub async fn app(
                         packages.manifests.values(),
                     )?;
                     project.check_workflows(&app).await?;
-                    apply_sql(platform, system, &triple, &connection, &owner, &packages).await?;
+                    apply_sql(
+                        platform, system, &triple, &connection, &owner, &packages,
+                        phase.context("deploy or schema apply needs an environment phase")?,
+                    ).await?;
                     env_sql_effects::materialize_app_principals(
                         &platform_domain,
                         &owner,
@@ -289,7 +298,10 @@ pub async fn app(
                 }
                 App::Apply(digest) => {
                     let packages = Packages::open(platform, digest).await?;
-                    apply_sql(platform, system, &triple, &connection, &owner, &packages).await?;
+                    apply_sql(
+                        platform, system, &triple, &connection, &owner, &packages,
+                        phase.context("deploy or schema apply needs an environment phase")?,
+                    ).await?;
                     Ok(json!({"release":digest}))
                 }
                 App::Diff(digest) => {
@@ -377,6 +389,7 @@ async fn apply_sql(
     connection: &wamn_postgres::database::ConnectionConfig,
     owner: &str,
     packages: &Packages,
+    phase: &Phase<'_>,
 ) -> anyhow::Result<()> {
     let order = packages.order()?;
     let schemas = publication_schemas(platform, owner, &packages.manifests).await?;
@@ -393,16 +406,46 @@ async fn apply_sql(
         })
         .await?;
     }
+    phase.publication(&schemas).await?;
+    if !schemas.is_empty() {
+        let instance = system.instance(triple).await?;
+        let publication = wamn_registry::name::cdc_object_name(
+            &triple.org,
+            &triple.project,
+            &triple.env,
+            &instance,
+        );
+        let capture = wamn_postgres::database::capture_configuration(connection.clone())?;
+        platform.prepare_database(&capture).await?;
+        env_sql_effects::prepare_cdc(
+            owner,
+            &capture.to_json()?,
+            &connection.database,
+            &publication,
+            &schemas,
+        )
+        .await?;
+    }
+    phase.request(Step::WaitReader).await
+}
+
+pub(super) async fn update_publication(
+    platform: &Platform,
+    system: &PostgresSession,
+    triple: &Triple,
+    schemas: &[wamn_package::canonical_name::CanonicalName],
+) -> anyhow::Result<bool> {
+    let instance = system.instance(triple).await?;
+    let connection = system.connection(triple).await?;
     let cluster = connection
         .server_ca
         .name
         .strip_suffix("-ca")
         .context("project cluster CA")?;
-    let instance = system.instance(triple).await?;
     let publication =
         wamn_registry::name::cdc_object_name(&triple.org, &triple.project, &triple.env, &instance);
     let mut values =
-        super::chart_values::publication_values(triple, &instance, cluster, &publication, &schemas);
+        super::chart_values::publication_values(triple, &instance, cluster, &publication, schemas);
     let paused = system.has_capture_gap(triple).await?;
     values["cdcReader"] = json!({"pause":paused});
     let coord =
@@ -414,23 +457,7 @@ async fn apply_sql(
         values,
     )
     .await?;
-    if schemas.is_empty() {
-        return Ok(());
-    }
-    let capture = wamn_postgres::database::capture_configuration(connection.clone())?;
-    platform.prepare_database(&capture).await?;
-    env_sql_effects::prepare_cdc(
-        owner,
-        &capture.to_json()?,
-        &connection.database,
-        &publication,
-        &schemas,
-    )
-    .await?;
-    if !paused {
-        platform.cluster.wait_reader_ready(triple).await?;
-    }
-    Ok(())
+    Ok(!schemas.is_empty() && !paused)
 }
 
 async fn publication_schemas(
@@ -463,12 +490,16 @@ async fn publication_schemas(
 }
 
 /// Reapply the installed SQL of a disposable project under its lifecycle lock.
-pub async fn reset(platform: &Platform, document: &EnvDocument) -> anyhow::Result<Value> {
+pub(super) async fn reset(
+    platform: &Platform,
+    document: &EnvDocument,
+    phase: &Phase<'_>,
+) -> anyhow::Result<Value> {
     let triple = document.triple();
     // Reset has no application selection. Its SQL application sources are the
     // exact installed artifact digests of the whole database.
     Box::pin(LifecycleLock::hold(
-        DatabaseConnection::Direct(&platform.system_database_url),
+        DatabaseConnection::EnvPhase(&platform.system_transaction_url),
         &triple,
         async |system| {
             let disposable = system.disposable(&triple).await?;
@@ -496,23 +527,12 @@ pub async fn reset(platform: &Platform, document: &EnvDocument) -> anyhow::Resul
                         packages.artifacts.insert(id, artifact);
                     }
                     packages.order()?;
-                    super::ensure::suspend_project(platform, system, &triple, None).await?;
+                    phase.request(Step::SuspendHost).await?;
                     let migration = wamn_postgres::migration_scope::MigrationDatabase::Project
                         .configuration(&owner)?;
                     system.reset(&owner, &migration, &triple).await?;
-                    apply_sql(platform, system, &triple, &conn, &owner, &packages).await?;
-                    let values = super::ensure::read_host_values(
-                        platform,
-                        system,
-                        &triple.org,
-                        &triple.env,
-                        &[],
-                        None,
-                        None,
-                    )
-                    .await?;
-                    super::ensure::upgrade_host(platform, &triple.org, &triple.env, &values)
-                        .await?;
+                    apply_sql(platform, system, &triple, &conn, &owner, &packages, phase).await?;
+                    phase.request(Step::ResumeHost).await?;
                     Ok(json!({"reset":triple.project}))
                 },
             )

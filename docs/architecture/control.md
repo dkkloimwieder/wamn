@@ -31,10 +31,10 @@ The worker verifies that its apply login, pod namespace, and registry mapping be
 
 Control listens on port 8080. The org Service forwards port 80 to the named `http` port on the control pod.
 Control derives the JWKS URL and org audience and verifies EdDSA signatures.
-The worker ConfigMap and service account names follow from the org.
+The registry provides the environment namespace for Job submission.
 
-Control authorizes the target and submits one Kubernetes Job.
-It puts the request in an immutable ConfigMap owned by that Job. For a journaled command, the ConfigMap also carries the command ID and authenticated actor.
+Control authorizes the target and submits the operation Jobs.
+It puts each request in an immutable ConfigMap owned by its Job. For a journaled command, the ConfigMap also carries the command ID and authenticated actor.
 The worker mounts the request and reads applied project configuration from the registry.
 The request cannot select an image, command, credential, namespace, or chart path.
 
@@ -46,8 +46,14 @@ Only the rollback worker reads Helm history for the target package and applicati
 Job status is visible only through the authorized target and operation annotations.
 Control writes command starts and dispatch refusals or failures to `provisioning.platform_event`. Workers use the apply login to write the result of a command they run.
 
-Deploy, rollback, stop, schema apply, schema reset, capture-gap recovery and close, and environment lifecycle Jobs use the environment worker account for Helm.
-The project chart creates the `<coordinate>-operation` account for schema diff. It stages files from named database Secrets and reads declared application workloads.
+The project chart creates the `<coordinate>-operation` account for application, schema, and capture-gap operations.
+The account stages files from named database Secrets and manages declared application resources.
+Environment apply, project deactivation, and platform schema use `wamn-env`.
+Deploy, schema apply, schema reset, and capture-gap recovery and close also have a companion Job under `wamn-env` for project and host chart changes.
+The companion holds the environment lifecycle lock through both phases. Each project has a ConfigMap for exchanging requests and replies for the active operation.
+The project Job is the operation ID and reports the outcome after its requested environment steps succeed.
+On failure, committed SQL and completed Helm steps stay applied. The normal retry or rollback procedure applies.
+
 Workers select managed database logins from the project placement and write their ServiceAccount kubeconfig under `/work`.
 They fetch the named Secrets in the environment namespace and write the login files and the server's `ca.crt` to `/etc/wamn/db/<login-secret>/` in memory.
 Project logins use `tls.crt` and `tls.key` in that directory.
@@ -77,7 +83,7 @@ Platform schema inspection and apply use `platform.schema` to start a SQL Job an
 The service selects the worker image.
 Cloud node pool administration belongs to the platform infrastructure tooling.
 
-Environment creation and configuration use `env.configure`.
+`wamn env create` provisions the environment boundary. The `env.configure` Job applies the project configuration.
 To deactivate a project in an environment, Control sends `project_env.deactivate` to the env worker.
 Their Jobs call installer-owned role and database interfaces and then the environment lifecycle owner.
 The installer runs a separate initial SQL bootstrap only when the baseline is absent and no configuration is recorded.

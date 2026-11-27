@@ -288,8 +288,8 @@ Reset advances replication through the capture login and removes package objects
 SQL steps run inside the authorized operation Job with their owning role credentials.
 The control image runs workers and reads the installed chart reference.
 The installed control configuration names the pinned worker image and its configuration.
-Deploy, rollback, stop, schema apply, reset, and capture-gap recovery and close use the environment worker ServiceAccount because they run Helm.
-Schema diff alone uses the project operation ServiceAccount. It can read declared application workloads and stage named migration credentials and database CAs in the Job's database volume.
+Project operations use the project operation ServiceAccount. It can read declared application workloads and stage named database credentials and CAs in the Job's database volume.
+Deploy, schema apply, reset, and capture-gap recovery and close use a companion Job under the environment worker ServiceAccount for project and host chart changes.
 Configure creates the CDC reader's ServiceAccount from `operations.capture`. The Deployment mounts the replication login and the project's database CA certificate. Delete removes the account with the reader.
 
 
@@ -432,7 +432,7 @@ Application workloads and file Services select that host. Database credentials a
 Status reports application release state.
 The route ConfigMaps carry `wamn.route=true`. The edge reads that label.
 A source deploy builds and publishes once. A digest deploy starts with the published package.
-Both forms submit one Job. The worker resolves the package closure and environment bindings under the lifecycle lock.
+Both forms submit one operation. The project Job resolves the package closure and environment bindings. The environment Job holds the lifecycle lock and updates the project chart.
 Before deployment or explicit rollback, the worker checks that the deployed Helm revision is serving. If it is unready, the worker restores the newest earlier successful Helm revision before it proceeds. The worker uninstalls an interrupted first install.
 It refuses if an enabled workflow calls a sibling or export absent from the candidate.
 It allows up to 120 seconds for the project database to accept a SQL connection.
@@ -951,7 +951,7 @@ A later failure keeps earlier commits.
 Files that begin with `-- no-transaction` need safe retries after partial execution.
 
 Control reads the environment's recorded database instance and installed connection projection.
-The project SQL Job uses the project's migration login.
+The SQL Job runs as `wamn-env` and uses each project's migration login.
 The platform owner roles stay `NOLOGIN`. Migration logins inherit their privileges through membership.
 Platform migration execution refuses administrator sessions.
 

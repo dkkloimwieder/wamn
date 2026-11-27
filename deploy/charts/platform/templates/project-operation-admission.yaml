@@ -1,0 +1,141 @@
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: wamn-project-operation
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [runtime.wasmcloud.dev]
+        apiVersions: [v1alpha1]
+        operations: [CREATE, UPDATE]
+        resources: [workloaddeployments]
+        scope: Namespaced
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        resources: [services]
+        scope: Namespaced
+      - apiGroups: [networking.k8s.io]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        resources: [networkpolicies]
+        scope: Namespaced
+  matchConditions:
+    - name: project-operation-in-target-namespace
+      expression: >-
+        request.namespace != '' &&
+        request.userInfo.username.startsWith('system:serviceaccount:' + request.namespace + ':') &&
+        request.userInfo.username.endsWith('-operation')
+  variables:
+    - name: o
+      expression: dyn(object)
+    - name: s
+      expression: 'has(variables.o.spec) ? variables.o.spec : {}'
+    - name: w
+      expression: >-
+        has(variables.s.template) && has(variables.s.template.spec) ? variables.s.template.spec : {}
+    - name: isWorkload
+      expression: request.resource.group == 'runtime.wasmcloud.dev'
+    - name: isService
+      expression: request.resource.group == ''
+    - name: isPolicy
+      expression: request.resource.group == 'networking.k8s.io'
+    - name: excluded
+      expression: >-
+        ['0.0.0.0/8', '10.0.0.0/8', '100.64.0.0/10', '127.0.0.0/8',
+         '169.254.0.0/16', '172.16.0.0/12', '192.0.0.0/24', '192.168.0.0/16',
+         '198.18.0.0/15', '224.0.0.0/4', '240.0.0.0/4']
+  validations:
+    - message: Workload configuration and environment values must be inline.
+      reason: Forbidden
+      expression: >-
+        !variables.isWorkload ||
+        (
+          (!has(variables.w.hostInterfaces) ||
+            variables.w.hostInterfaces.all(h, !has(h.secretFrom) && !has(h.configFrom))) &&
+          (!has(variables.w.components) ||
+            variables.w.components.all(c,
+              !has(c.localResources) || !has(c.localResources.environment) ||
+              (!has(c.localResources.environment.secretFrom) &&
+               !has(c.localResources.environment.configFrom)))) &&
+          (!has(variables.w.service) || !has(variables.w.service.localResources) ||
+            !has(variables.w.service.localResources.environment) ||
+            (!has(variables.w.service.localResources.environment.secretFrom) &&
+             !has(variables.w.service.localResources.environment.configFrom)))
+        )
+    - message: A workload can refer only to its own HTTP Service.
+      reason: Forbidden
+      expression: >-
+        !variables.isWorkload ||
+        (
+          (!has(variables.s.kubernetes) || !has(variables.s.kubernetes.service) ||
+            (has(variables.s.kubernetes.service.name) && has(variables.o.metadata.name) &&
+             variables.o.metadata.name.endsWith('-http') &&
+             variables.s.kubernetes.service.name == variables.o.metadata.name)) &&
+          (!has(variables.w.kubernetes) || !has(variables.w.kubernetes.service) ||
+            (has(variables.w.kubernetes.service.name) && has(variables.o.metadata.name) &&
+             variables.o.metadata.name.endsWith('-http') &&
+             variables.w.kubernetes.service.name == variables.o.metadata.name))
+        )
+    - message: Project Services must be selectorless ClusterIP Services with no external address.
+      reason: Forbidden
+      expression: >-
+        !variables.isService ||
+        (
+          has(variables.s.type) && variables.s.type == 'ClusterIP' &&
+          (!has(variables.s.selector) || size(variables.s.selector) == 0) &&
+          (!has(variables.s.externalIPs) || size(variables.s.externalIPs) == 0) &&
+          (!has(variables.s.externalName) || variables.s.externalName == '') &&
+          (!has(variables.s.loadBalancerIP) || variables.s.loadBalancerIP == '') &&
+          !has(variables.s.loadBalancerClass) &&
+          (!has(variables.s.loadBalancerSourceRanges) ||
+            size(variables.s.loadBalancerSourceRanges) == 0) &&
+          (!has(variables.s.healthCheckNodePort) || variables.s.healthCheckNodePort == 0) &&
+          (!has(variables.s.ports) ||
+            variables.s.ports.all(p, !has(p.nodePort) || p.nodePort == 0))
+        )
+    - message: Project egress must use the environment host group and public IPv4 TCP ports.
+      reason: Forbidden
+      expression: >-
+        !variables.isPolicy ||
+        (
+          has(variables.s.policyTypes) && variables.s.policyTypes == ['Egress'] &&
+          (!has(variables.s.ingress) || size(variables.s.ingress) == 0) &&
+          has(variables.s.podSelector) && has(variables.s.podSelector.matchLabels) &&
+          (!has(variables.s.podSelector.matchExpressions) ||
+            size(variables.s.podSelector.matchExpressions) == 0) &&
+          namespaceObject != null && has(namespaceObject.metadata.labels) &&
+          'wamn.dev/env-host-group' in namespaceObject.metadata.labels &&
+          variables.s.podSelector.matchLabels == {
+            'wasmcloud.com/name': 'hostgroup',
+            'wasmcloud.com/hostgroup': namespaceObject.metadata.labels['wamn.dev/env-host-group']
+          } &&
+          has(variables.s.egress) && size(variables.s.egress) == 1 &&
+          variables.s.egress.all(e,
+            has(e.to) && size(e.to) == 1 &&
+            e.to.all(p,
+              !has(p.podSelector) && !has(p.namespaceSelector) &&
+              has(p.ipBlock) && has(p.ipBlock.cidr) && p.ipBlock.cidr == '0.0.0.0/0' &&
+              has(p.ipBlock.except) &&
+              size(p.ipBlock.except) == size(variables.excluded) &&
+              variables.excluded.all(c, c in p.ipBlock.except)) &&
+            has(e.ports) && size(e.ports) > 0 &&
+            e.ports.all(p,
+              has(p.protocol) && p.protocol == 'TCP' &&
+              has(p.port) && type(p.port) == int && p.port >= 1 && p.port <= 65535 &&
+              !has(p.endPort)) &&
+            e.ports.all(p, size(e.ports.filter(q, q.port == p.port)) == 1))
+        )
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: wamn-project-operation
+spec:
+  policyName: wamn-project-operation
+  validationActions: [{{ .Values.projectOperationAdmission | quote }}]
+  matchResources:
+    namespaceSelector:
+      matchLabels:
+        wamn.dev/env: "true"

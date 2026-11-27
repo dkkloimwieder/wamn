@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use wamn_registry::{OrgId, name};
+use wamn_registry::{EnvName, OrgId, name};
 
 use crate::{
     org_install::{ENV_SQL_COMPONENT, PLATFORM, env_sql_account},
@@ -11,6 +11,9 @@ use crate::{
 
 /// The namespace label that identifies envs for admission.
 pub const ENV_LABEL: &str = "wamn.dev/env";
+
+/// The namespace label that pins the host group for app egress admission.
+pub(super) const ENV_HOST_GROUP_LABEL: &str = "wamn.dev/env-host-group";
 
 /// The namespace label that carries the org used in public app host names.
 pub use wamn_kubernetes::web_release::ROUTE_ORG_LABEL as ORG_NAME_LABEL;
@@ -38,7 +41,12 @@ pub struct Quota {
     default_memory_limit_bytes: i64,
 }
 
-pub(super) fn namespaces(org: &OrgId, namespace: &str, storage: &str) -> (Value, Value) {
+pub(super) fn namespaces(
+    org: &OrgId,
+    env: &EnvName,
+    namespace: &str,
+    storage: &str,
+) -> (Value, Value) {
     let labeled = |name| {
         json!({
             "apiVersion":"v1", "kind":"Namespace",
@@ -52,6 +60,7 @@ pub(super) fn namespaces(org: &OrgId, namespace: &str, storage: &str) -> (Value,
         })
     };
     let mut workloads = labeled(namespace);
+    workloads["metadata"]["labels"][ENV_HOST_GROUP_LABEL] = name::env_host_name(org, env).into();
     workloads["metadata"]["labels"]["wamn.dev/org-workloads"] = "true".into();
     workloads["metadata"]["labels"]["wamn.dev/identity-trust"] = "true".into();
     let storage = labeled(storage);
@@ -180,6 +189,16 @@ pub(super) fn boundary(org: &OrgId, namespace: &str, storage: &str, quota: &Quot
             "",
             &["secrets"],
             &["get", "list", "create", "update", "delete"],
+        )],
+        &worker,
+    ));
+    objects.extend(bind_role(
+        storage,
+        "wamn-helm-project-bindings",
+        &[rule(
+            "rbac.authorization.k8s.io",
+            &["rolebindings"],
+            &manage,
         )],
         &worker,
     ));

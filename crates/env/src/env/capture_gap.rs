@@ -1,6 +1,9 @@
 //! Stop capture for recovery and retry reader restart after resynchronization.
 use super::Platform;
-use super::database::{DatabaseConnection, LifecycleLock};
+use super::{
+    database::{DatabaseConnection, LifecycleLock},
+    operation_phase::{Phase, Step},
+};
 use anyhow::{Context as _, ensure};
 pub use recovery::{
     CloseCaptureGapRequest, ClosedCaptureGap, RecoverCaptureGapRequest, RecoveredCaptureGap,
@@ -32,14 +35,15 @@ pub(super) async fn set_paused(
 }
 
 /// Recover a lost capture position while pausing its reader through the project chart.
-pub async fn recover(
+pub(super) async fn recover(
     platform: &Platform,
     args: &RecoverCaptureGapRequest,
+    phase: &Phase<'_>,
 ) -> anyhow::Result<RecoveredCaptureGap> {
     let triple =
         wamn_registry::Triple::new(args.org.clone(), args.env.clone(), args.project.clone());
     LifecycleLock::hold(
-        DatabaseConnection::Direct(&args.system_database_url),
+        DatabaseConnection::EnvPhase(&args.system_transaction_url),
         &triple,
         async |lock| {
             let instance = lock.capture_instance(&triple).await?;
@@ -59,27 +63,33 @@ pub async fn recover(
             );
             let capture = wamn_postgres::database::capture_configuration(owner)?;
             platform.prepare_database(&capture).await?;
-            recovery::recover_capture_gap(args, &instance, &capture.to_json()?, platform, lock)
-                .await
+            recovery::recover_capture_gap(
+                args,
+                &instance,
+                &capture.to_json()?,
+                platform,
+                lock,
+                phase,
+            )
+            .await
         },
     )
     .await
 }
 
 /// Record resynchronization and retry restarting the reader without changing its time.
-pub async fn close(
-    platform: &Platform,
+pub(super) async fn close(
     args: &CloseCaptureGapRequest,
+    phase: &Phase<'_>,
 ) -> anyhow::Result<ClosedCaptureGap> {
     let triple =
         wamn_registry::Triple::new(args.org.clone(), args.env.clone(), args.project.clone());
     LifecycleLock::hold(
-        DatabaseConnection::Direct(&args.system_database_url),
+        DatabaseConnection::EnvPhase(&args.system_transaction_url),
         &triple,
         async |lock| {
             let closed = lock.close_capture_gap(&triple).await?;
-            let paused = lock.has_capture_gap(&triple).await?;
-            set_paused(platform, &triple, paused).await?;
+            phase.request(Step::SyncCapture).await?;
             Ok(closed)
         },
     )

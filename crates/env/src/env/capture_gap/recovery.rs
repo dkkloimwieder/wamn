@@ -23,7 +23,7 @@ pub struct RecoverCaptureGapRequest {
 
     /// Apply connection of the system database: the instance suffix, the reader
     /// registration, and the gap row.
-    pub system_database_url: String,
+    pub system_transaction_url: String,
 
     /// The NATS of the event streams, with the client certificate.
     pub nats: wamn_event::deploy_broker::EventObserver,
@@ -37,7 +37,7 @@ pub struct CloseCaptureGapRequest {
     pub env: wamn_registry::EnvName,
 
     /// Apply connection of the system database.
-    pub system_database_url: String,
+    pub system_transaction_url: String,
 }
 
 /// The gap row `recover-capture-gap` wrote.
@@ -68,6 +68,7 @@ pub(super) async fn recover_capture_gap(
     admin_database_url: &str,
     platform: &super::super::Platform,
     system: &PostgresSession,
+    phase: &crate::env::operation_phase::Phase<'_>,
 ) -> anyhow::Result<RecoveredCaptureGap> {
     validate_project_env_cdc(&args.org, &args.project, &args.env)
         .map_err(|e| anyhow::anyhow!("cdc names: {e}"))?;
@@ -98,8 +99,9 @@ pub(super) async fn recover_capture_gap(
 
     // Refusals leave a healthy Deployment running. Stop it before the repaired
     // capture position can become visible to a restarting reader.
-    super::set_paused(platform, &triple, true).await?;
-    platform.cluster.wait_reader_stopped(&triple).await?;
+    phase
+        .request(crate::env::operation_phase::Step::PauseCapture)
+        .await?;
 
     let end_lsn = env_sql_effects::repair_capture(&mut admin, &replication_name).await?;
     let created_at = system

@@ -115,7 +115,7 @@ Only overlays compose with their pinned bases.
 One YAML file declares the projects, applications, and connection pins of an environment.
 The registry stores the applied settings and one version per connection name in the environment.
 Helm stores the org release in `wamn-helm-<org>`.
-Helm stores host, project, and application releases in `wamn-helm-<org>--<env>`. The environment worker can list those release records.
+Helm stores host, project, and application releases in `wamn-helm-<org>--<env>`. The environment and project workers can read and write the records in their environment. Projects in the same environment share that access.
 The charts place runtime objects in the environment namespace recorded in `registry.env`.
 The org chart declares the namespace, base RBAC, and default-deny network policy.
 On kind, `wamn env create` applies quotas and container defaults in each env namespace.

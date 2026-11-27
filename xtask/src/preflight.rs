@@ -310,7 +310,7 @@ async fn render(
     }))?;
     let mut env_objects = wamn_platform_install::env_install::manifests(
         &triple.org,
-        &env_namespace,
+        &triple.env,
         [
             wamn_platform_install::org::field(inputs, "applyDatabaseHost")?,
             wamn_platform_install::org::field(inputs, "applyTransactionDatabaseHost")?,

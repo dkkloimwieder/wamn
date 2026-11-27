@@ -34,3 +34,5 @@ cert-manager issues the identity, NATS, and system database roots in `platform`.
 
 The edge trusts the public identity CA. On kind, the edge certificate covers `*.<platformDomain>`. GCP terminates TLS at the external load balancer.
 If the cluster Ingress uses ACME, set `edge.acme` for the `wamn-edge` Issuer in `hosts`.
+
+The platform chart installs admission rules for project operation accounts in environment namespaces. Set `projectOperationAdmission: Deny` to refuse invalid workload, Service, and egress policy requests. The kind default is `Warn`.

@@ -57,7 +57,7 @@ pub async fn create(org: &OrgId, env: &EnvName) -> anyhow::Result<()> {
     let image = control_image(inputs)?;
     let namespace = name::env_key(org, env);
     let storage = helm::org_release_namespace(&namespace);
-    let (workloads, _) = namespaces(org, &namespace, &storage);
+    let (workloads, _) = namespaces(org, env, &namespace, &storage);
     org_resources::apply_namespace(&target, &namespace, &workloads).await?;
     for object in sql_prerequisites(&namespace) {
         if object["kind"] == "Secret" {
@@ -80,7 +80,7 @@ pub async fn create(org: &OrgId, env: &EnvName) -> anyhow::Result<()> {
     async {
         for object in manifests(
             org,
-            namespace,
+            env,
             apply_poolers,
             database.port,
             &api_server,
@@ -163,24 +163,25 @@ pub fn worker_configuration(
 /// Render the env's namespaces and admission, access and network rules.
 pub fn manifests(
     org: &OrgId,
-    namespace: &str,
+    env: &EnvName,
     apply_pooler_hosts: [&str; 2],
     database_port: u16,
     api_server: &[Value],
     registry: &[Value],
     quota: &Quota,
 ) -> anyhow::Result<Vec<Value>> {
-    let storage = helm::org_release_namespace(namespace);
-    let (workloads, releases) = namespaces(org, namespace, &storage);
+    let namespace = name::env_key(org, env);
+    let storage = helm::org_release_namespace(&namespace);
+    let (workloads, releases) = namespaces(org, env, &namespace, &storage);
     let [session_pooler, transaction_pooler] = apply_pooler_hosts;
     let apply_poolers = [
         service_name(session_pooler)?,
         service_name(transaction_pooler)?,
     ];
     let mut objects = vec![workloads, releases];
-    objects.extend(boundary(org, namespace, &storage, quota));
+    objects.extend(boundary(org, &namespace, &storage, quota));
     objects.extend(network_policies(
-        namespace,
+        &namespace,
         apply_poolers,
         database_port,
         api_server,
@@ -319,7 +320,8 @@ mod tests {
     #[test]
     fn env_boundary_applies_committed_budgets_and_namespaced_access() -> anyhow::Result<()> {
         let org: OrgId = "acme".parse()?;
-        let namespace = name::env_key(&org, &"dev".parse()?);
+        let env = "dev".parse()?;
+        let namespace = name::env_key(&org, &env);
         let storage = helm::org_release_namespace(&namespace);
         let quota = serde_json::from_value(json!({
             "pods": 23, "jobs": 11, "persistent_volume_claims": 12,
@@ -331,7 +333,7 @@ mod tests {
         }))?;
         let manifests = manifests(
             &org,
-            &namespace,
+            &env,
             ["pooler.platform.svc", "pooler-transaction.platform.svc"],
             5432,
             &[],
@@ -363,6 +365,10 @@ mod tests {
                 rule["to"][0]["podSelector"]["matchLabels"]["cnpg.io/poolerName"] == pooler
             }));
         }
+        assert_eq!(
+            find("Namespace", &namespace)?["metadata"]["labels"][manifest::ENV_HOST_GROUP_LABEL],
+            name::env_host_name(&org, &env)
+        );
         let deny = &find("NetworkPolicy", "default-deny")?["spec"];
         assert_eq!(deny["podSelector"], json!({}));
         assert_eq!(deny["policyTypes"], json!(["Ingress", "Egress"]));
@@ -397,6 +403,13 @@ mod tests {
                     .any(|resource| resource == "pods/exec" || resource == "*")
             })
         ));
+        let releases = find("Role", "wamn-helm-releases")?;
+        assert_eq!(releases["metadata"]["namespace"], storage.as_ref());
+        assert_eq!(releases["rules"][0]["resources"], json!(["secrets"]));
+        assert_eq!(
+            releases["rules"][0]["verbs"],
+            json!(["get", "list", "create", "update", "delete"])
+        );
         for object in manifests
             .iter()
             .filter(|object| object["kind"] != "Namespace")

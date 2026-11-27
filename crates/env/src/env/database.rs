@@ -8,9 +8,20 @@ use crate::env_sql_effects::{PostgresSession, lock_env};
 #[derive(Debug)]
 pub(crate) enum DatabaseConnection<'a> {
     Direct(&'a str),
-    WaitForEnv { input: &'a str, triple: &'a Triple },
-    Wait { input: &'a str, database: &'a str },
-    Delete { input: &'a str, data: bool },
+    /// Use a transaction Pooler while the companion Job holds the lock.
+    EnvPhase(&'a str),
+    WaitForEnv {
+        input: &'a str,
+        triple: &'a Triple,
+    },
+    Wait {
+        input: &'a str,
+        database: &'a str,
+    },
+    Delete {
+        input: &'a str,
+        data: bool,
+    },
 }
 
 #[derive(Debug)]
@@ -62,7 +73,7 @@ pub struct IntegrationBinding {
 #[derive(Debug)]
 pub(crate) struct LifecycleLock {
     pub(crate) session: PostgresSession,
-    pub(crate) lost: tokio::sync::watch::Receiver<bool>,
+    pub(crate) lost: Option<tokio::sync::watch::Receiver<bool>>,
 }
 
 impl LifecycleLock {
@@ -88,7 +99,9 @@ impl LifecycleLock {
         // Keep the guarded SQL futures out of the worker's stack frame.
         let operation = Box::pin(operation);
         async move {
-            let mut lost = self.lost.clone();
+            let Some(mut lost) = self.lost.clone() else {
+                return operation.await;
+            };
             tokio::select! {
                 biased;
                 _ = lost.wait_for(|lost| *lost) => anyhow::bail!("lifecycle lock lost; operation stopped"),

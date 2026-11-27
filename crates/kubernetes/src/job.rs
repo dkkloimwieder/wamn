@@ -119,6 +119,22 @@ fn state(job: &Job) -> State {
     }
 }
 
+/// Read whether a named Job has finished, or return None while it is absent.
+pub async fn finished(api: &KubernetesApi, name: &str) -> anyhow::Result<Option<bool>> {
+    let jobs = Api::<Job>::namespaced(api.client(), &api.namespace);
+    let job = tokio::time::timeout(REQUEST_TIMEOUT, jobs.get_opt(name)).await??;
+    Ok(job
+        .as_ref()
+        .map(|job| matches!(state(job), State::Succeeded | State::Failed)))
+}
+
+/// Check that a submitted Job has its mounted request.
+pub async fn has_input(api: &KubernetesApi, name: &str) -> anyhow::Result<bool> {
+    let inputs = Api::<ConfigMap>::namespaced(api.client(), &api.namespace);
+    let input = tokio::time::timeout(REQUEST_TIMEOUT, inputs.get_opt(&input_name(name))).await??;
+    Ok(input.is_some())
+}
+
 /// Wait for a named Job to reach a terminal condition within the caller's deadline.
 pub async fn wait(jobs: &Api<Job>, name: &str, timeout: Duration) -> anyhow::Result<()> {
     let result = wait_named(jobs, name, timeout, |job| {
@@ -345,9 +361,13 @@ pub struct Worker {
     pub service_account: String,
 }
 
+fn input_name(job: &str) -> String {
+    format!("{job}-input")
+}
+
 /// Submit one bounded operation Job. The caller has already authorized its target.
 pub async fn submit(api: &KubernetesApi, job: &mut Value, request: &str) -> anyhow::Result<Value> {
-    let input = format!("{}-input", name(job));
+    let input = input_name(name(job));
     job["spec"]["suspend"] = false.into();
     job["spec"]["template"]["spec"]["volumes"]
         .as_array_mut()
@@ -454,11 +474,14 @@ pub async fn observe(
     operations: &[&str],
 ) -> anyhow::Result<Value> {
     let namespace = &api.namespace;
-    if !kubernetes_name(name)
-        || name
-            .strip_prefix("op-")
-            .is_none_or(|id| uuid::Uuid::parse_str(id).is_err())
-    {
+    let id = name.strip_prefix("op-").and_then(|id| {
+        if operations == ["project-env-phase"] {
+            id.strip_suffix("-env")
+        } else {
+            Some(id)
+        }
+    });
+    if !kubernetes_name(name) || id.is_none_or(|id| uuid::Uuid::parse_str(id).is_err()) {
         return Err(ObservationError {
             type_: ObservationErrorType::InvalidName,
         }

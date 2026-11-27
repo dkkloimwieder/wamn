@@ -1,3 +1,6 @@
+# Project operation admission. Choose Deny before serving customers.
+projectOperationAdmission: Warn
+
 provider: kind
 platformDomain: wamn.localhost
 registry: localhost:5001

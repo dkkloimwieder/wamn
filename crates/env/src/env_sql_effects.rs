@@ -1093,6 +1093,9 @@ pub(crate) async fn lock_env(
         DatabaseConnection::Direct(input) => {
             PgLifecycleLock::acquire_env(connect(input).await?, org, env).await?
         }
+        DatabaseConnection::EnvPhase(input) => {
+            PgLifecycleLock::under_companion_lock(connect(input).await?)
+        }
         DatabaseConnection::WaitForEnv { input, triple } => {
             PgLifecycleLock::acquire_wait(connect(input).await?, triple).await?
         }

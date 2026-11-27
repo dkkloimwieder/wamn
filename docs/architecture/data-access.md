@@ -1081,7 +1081,7 @@ These system database paths pin a backend across statements or transactions.
 
 Control's serialized writer, the worker's registry reads, its final settings write, and its outcome journal use transaction poolers. Transaction-local settings and transaction advisory locks stay within the owning transaction. The install Job runs bootstrap and password lookup setup using its direct admin certificate.
 
-The worker lifecycle lock callers under `crates/env/src/env/` are `lifecycle.rs::configure`, `delete.rs::deactivate`, `operation.rs::{app, reset}`, `capture_gap.rs::{recover, close}`, and the schema branch of `worker.rs::execute_task`.
+The worker lifecycle lock callers under `crates/env/src/env/` are `lifecycle.rs::configure`, `delete.rs::deactivate`, operations without a companion Job in `operation.rs::app`, `operation_phase.rs::Phase::serve`, and the schema branch of `worker.rs::execute_task`. For paired operations, the env Job owns the lock and the project Job uses the transaction Pooler for system SQL.
 
 The vendored CloudNativePG chart 0.29.2 exposes the Pooler mode and PgBouncer parameters. Its operator 1.30.2 defaults to PgBouncer 1.26.1. The transaction endpoints track named prepared statements so SQLx 0.9.0 can use them across server connections (`sqlx-postgres/src/connection/executor.rs`). [CloudNativePG Pooler options](https://github.com/cloudnative-pg/cloudnative-pg/blob/v1.30.2/docs/src/connection_pooling.md), [operator image defaults](https://github.com/cloudnative-pg/cloudnative-pg/blob/v1.30.2/pkg/versions/versions.go), [PgBouncer 1.26.1 parameters](https://github.com/pgbouncer/pgbouncer/blob/pgbouncer_1_26_1/doc/config.md)
 

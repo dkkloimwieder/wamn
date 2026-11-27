@@ -25,15 +25,20 @@ pub fn set_operation_values<'a>(
         name::project_env_resource_name(&triple.org, &triple.project, &triple.env)
     };
     let capture = name::cdc_reader_name(&triple.org, &triple.project, &triple.env);
-    let diff_workloads: Vec<_> = apps
-        .map(|app| {
-            let release = release_name(&triple.org, &triple.project, &triple.env, app);
-            workload_name(&release)
-        })
-        .collect();
-    let diff_secrets = [
+    let mut workloads = Vec::new();
+    let mut config_maps = Vec::new();
+    let mut policies = Vec::new();
+    for app in apps {
+        let release = release_name(&triple.org, &triple.project, &triple.env, app);
+        workloads.push(workload_name(&release));
+        policies.push(format!("{release}-allow-public-integration-ports"));
+        config_maps.push(format!("{release}-route"));
+        config_maps.push(release);
+    }
+    let login_secrets = [
         APPLY_SECRET.into(),
         name::project_login_certificate(database, wamn_role::MIGRATION_ROLE),
+        name::project_login_certificate(database, wamn_role::CDC_LOGIN),
         format!("{cluster}-ca"),
     ];
     values["operations"] = json!({
@@ -42,9 +47,13 @@ pub fn set_operation_values<'a>(
         "hostGroup":wamn_registry::name::env_host_name(&triple.org, &triple.env),
         "controlNamespace":triple.org,
         "controlDeployment":wamn_registry::name::control_resource(&triple.org),
-        "diffWorkloads":diff_workloads,
-        "diffSecrets":diff_secrets,
-        "diffConfigMaps":[SYSTEM_DATABASE_CA],
+        "workloads":workloads,
+        "appConfigMaps":config_maps,
+        "appNetworkPolicies":policies,
+        "loginSecrets":login_secrets,
+        "systemCa":SYSTEM_DATABASE_CA,
+        "phaseConfigMap":super::operation_phase::config_map_name(&name),
+        "publication":database,
     });
     values["credentials"] = json!({
         "name":wamn_registry::credential_secret_name(&triple.org, &triple.project, &triple.env),

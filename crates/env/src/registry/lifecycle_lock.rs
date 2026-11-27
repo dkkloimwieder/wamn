@@ -17,12 +17,22 @@ pub const DEPLOYMENT_IN_PROGRESS: &str = "deployment in progress";
 const ENV_SHARED_LOCK_SQL: &str =
     "SELECT pg_try_advisory_lock_shared(hashtextextended('wamn-env/' || $1 || '/' || $2, 0))";
 
-/// A held lifecycle lock. A one-second heartbeat keeps the session alive.
-/// PostgreSQL expires an idle session after five seconds, even behind a port forward.
+/// A database connection for a lifecycle operation. A held lock uses a
+/// one-second heartbeat so PostgreSQL does not expire its idle session.
 pub struct LifecycleLock {
     client: Arc<tokio::sync::Mutex<Client>>,
-    connection: JoinHandle<()>,
+    guard: Option<LockGuard>,
+}
+
+struct LockGuard {
+    heartbeat: JoinHandle<()>,
     lost: tokio::sync::watch::Receiver<bool>,
+}
+
+impl Drop for LockGuard {
+    fn drop(&mut self) {
+        self.heartbeat.abort();
+    }
 }
 
 impl std::fmt::Debug for LifecycleLock {
@@ -102,6 +112,14 @@ impl LifecycleLock {
         Ok(lock)
     }
 
+    /// Use transaction pooling when the companion Job already owns the lock.
+    pub(crate) fn under_companion_lock(client: Client) -> Self {
+        Self {
+            client: Arc::new(tokio::sync::Mutex::new(client)),
+            guard: None,
+        }
+    }
+
     async fn start(mut client: Client) -> anyhow::Result<Self> {
         sqlx::raw_sql("SET idle_session_timeout = '5s'")
             .execute(&mut client)
@@ -109,7 +127,7 @@ impl LifecycleLock {
         let client = Arc::new(tokio::sync::Mutex::new(client));
         let heartbeat = Arc::clone(&client);
         let (sender, lost) = tokio::sync::watch::channel(false);
-        let connection = tokio::spawn(async move {
+        let heartbeat = tokio::spawn(async move {
             loop {
                 tokio::time::sleep(Duration::from_secs(1)).await;
                 let mut client = heartbeat.lock().await;
@@ -124,8 +142,7 @@ impl LifecycleLock {
         });
         Ok(Self {
             client,
-            connection,
-            lost,
+            guard: Some(LockGuard { heartbeat, lost }),
         })
     }
 
@@ -152,8 +169,11 @@ impl LifecycleLock {
 
     /// Release the lock before the verb returns, without waiting for session expiry.
     pub async fn release(self) {
-        self.connection.abort();
-        if *self.lost.borrow() {
+        let Some(guard) = &self.guard else {
+            return;
+        };
+        guard.heartbeat.abort();
+        if *guard.lost.borrow() {
             return;
         }
         let _ = sqlx::query("SELECT pg_advisory_unlock_all()")
@@ -180,8 +200,8 @@ impl LifecycleLock {
     }
 
     /// Subscribe to loss of the session holding the advisory locks.
-    pub fn loss_signal(&self) -> tokio::sync::watch::Receiver<bool> {
-        self.lost.clone()
+    pub(crate) fn loss_signal(&self) -> Option<tokio::sync::watch::Receiver<bool>> {
+        self.guard.as_ref().map(|guard| guard.lost.clone())
     }
 
     /// Cancel protected work when the session that owns its advisory locks is lost.
@@ -193,8 +213,10 @@ impl LifecycleLock {
         work: impl std::future::Future<Output = anyhow::Result<T>> + 'a,
     ) -> impl std::future::Future<Output = anyhow::Result<T>> + 'a {
         let work = Box::pin(work);
-        let mut lost = self.lost.clone();
         async move {
+            let Some(mut lost) = self.loss_signal() else {
+                return work.await;
+            };
             tokio::select! {
                 biased;
                 _ = lost.wait_for(|lost| *lost) => bail!("lifecycle lock lost; operation stopped"),
@@ -203,16 +225,9 @@ impl LifecycleLock {
         }
     }
 
-    /// Borrow the session that owns the advisory locks for SQL, including
-    /// transactions. The heartbeat waits for this guard. End any transaction
-    /// and drop the guard before waiting on external work.
+    /// Borrow the connection for SQL. A lock heartbeat waits for this guard.
+    /// End any transaction before waiting on external work.
     pub async fn client(&self) -> tokio::sync::MutexGuard<'_, Client> {
         self.client.lock().await
-    }
-}
-
-impl Drop for LifecycleLock {
-    fn drop(&mut self) {
-        self.connection.abort();
     }
 }

@@ -4,6 +4,7 @@ use super::{
     Platform, capture_gap,
     document::{EnvDocument, EnvFile, WorkloadRelease},
     operation,
+    operation_phase::{self, Phase},
 };
 use anyhow::{Context as _, ensure};
 use serde::{Deserialize, Serialize};
@@ -52,6 +53,11 @@ impl Operation {
         })
     }
 
+    /// Whether this operation needs an environment-account Job alongside its project Job.
+    pub fn has_env_phase(self) -> bool {
+        !operation_phase::steps(self).is_empty()
+    }
+
     pub fn command(self) -> &'static str {
         match self {
             Self::Deploy => "deploy",
@@ -67,75 +73,78 @@ impl Operation {
 }
 
 /// Execute a project operation using the org and platform artifact origins.
-pub async fn execute(
+async fn execute(
     org: &OrgId,
     org_origin: &str,
     platform_origin: &str,
-    platform: Platform,
-    (operation, request): (Operation, Request),
+    platform: &Platform,
+    (operation, request, phase): (Operation, Request, Option<&Phase<'_>>),
     authority_port: super::write::AuthorityPort,
     release: &mut Option<WorkloadRelease>,
 ) -> anyhow::Result<Value> {
     let triple = Triple::new(org.clone(), request.env, request.project);
-    let chart = (platform.select_chart)(&platform.chart)?;
-    let platform = Platform {
-        chart: chart.directory().to_owned(),
-        ..platform
-    };
     match operation {
         Operation::Recover => {
             let recovered = capture_gap::recover(
-                &platform,
+                platform,
                 &capture_gap::RecoverCaptureGapRequest {
                     org: triple.org,
                     project: triple.project,
                     env: triple.env,
-                    system_database_url: platform.system_database_url.clone(),
+                    system_transaction_url: platform.system_transaction_url.clone(),
                     nats: wamn_event::deploy_broker::EventObserver {
                         nats_url: platform.nats_url.clone(),
                         nats_tls_ca: wamn_event::deploy_broker::CA_FILE.into(),
                         creds: "/etc/wamn/recovery-nats/user.creds".into(),
                     },
                 },
+                phase.context("capture recovery needs an environment phase")?,
             )
             .await?;
             Ok(
                 json!({"slot":recovered.replication_name,"reason":recovered.reason,"start_lsn":recovered.start_lsn,
-                "start_at":recovered.start_at.to_rfc3339(),"end_lsn":recovered.end_lsn,
-                "created_at":recovered.created_at.to_rfc3339()}),
+            "start_at":recovered.start_at.to_rfc3339(),"end_lsn":recovered.end_lsn,
+            "created_at":recovered.created_at.to_rfc3339()}),
             )
         }
         Operation::Close => {
             let closed = capture_gap::close(
-                &platform,
                 &capture_gap::CloseCaptureGapRequest {
                     org: triple.org,
                     project: triple.project,
                     env: triple.env,
-                    system_database_url: platform.system_database_url.clone(),
+                    system_transaction_url: platform.system_transaction_url.clone(),
                 },
+                phase.context("capture close needs an environment phase")?,
             )
             .await?;
             Ok(
                 json!({"slot":closed.replication_name,"created_at":closed.created_at.to_rfc3339(),
-                "resync_at":closed.resync_at.to_rfc3339()}),
+            "resync_at":closed.resync_at.to_rfc3339()}),
             )
         }
         Operation::Reset => {
-            let document = EnvDocument::read(&platform, &triple).await?;
-            operation::reset(&platform, &document).await
+            let document = EnvDocument::read(platform, &triple).await?;
+            operation::reset(
+                platform,
+                &document,
+                phase.context("schema reset needs an environment phase")?,
+            )
+            .await
         }
         _ => {
             let app = request.app.context("application is required")?;
-            let document = EnvDocument::read(&platform, &triple).await?;
+            let document = EnvDocument::read(platform, &triple).await?;
+            let chart;
             let integration_base;
             let component_base;
             operation::app(
-                &platform,
+                platform,
                 document,
                 &app,
                 match operation {
                     Operation::Deploy => {
+                        chart = (platform.select_chart)(&platform.chart)?;
                         integration_base = format!("{platform_origin}/wamn/integrations");
                         (_, component_base) = wamn_registry::org_artifact_bases(org_origin);
                         operation::App::Deploy {
@@ -156,11 +165,20 @@ pub async fn execute(
                         unreachable!("handled project operation")
                     }
                 },
+                phase,
                 release,
             )
             .await
         }
     }
+}
+
+/// The two distinct Jobs submitted by control for a phased operation.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PhaseJobs {
+    project: String,
+    env: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -169,6 +187,13 @@ pub enum Task {
     ProjectOperation {
         operation: Operation,
         request: Request,
+        jobs: Option<PhaseJobs>,
+    },
+    ProjectEnvPhase {
+        operation: Operation,
+        project: wamn_registry::ProjectId,
+        env: wamn_registry::EnvName,
+        project_job: String,
     },
     Env {
         operation: String,
@@ -202,7 +227,7 @@ pub async fn execute_task(
 ) -> anyhow::Result<Value> {
     let env = match &request {
         Task::ProjectOperation { request, .. } => &request.env,
-        Task::Env { env, .. } => env,
+        Task::Env { env, .. } | Task::ProjectEnvPhase { env, .. } => env,
         Task::Schema { env, .. } => env.as_ref().context("environment is absent")?,
     };
     let mut system = wamn_postgres::connect(&platform.system_transaction_url).await?;
@@ -222,17 +247,59 @@ pub async fn execute_task(
     drop(system);
     let mut output = Vec::new();
     match request {
-        Task::ProjectOperation { operation, request } => {
-            execute(
+        Task::ProjectOperation {
+            operation,
+            request,
+            jobs,
+        } => {
+            ensure!(
+                operation.has_env_phase() == jobs.is_some(),
+                "project operation does not match its environment phase"
+            );
+            let phase = jobs.as_ref().map(|jobs| {
+                let coordinate = wamn_registry::name::project_env_resource_name(
+                    org,
+                    &request.project,
+                    &request.env,
+                );
+                Phase::new(&platform.cluster.client, &coordinate, &jobs.project)
+            });
+            let work = execute(
                 org,
                 org_origin,
                 platform_origin,
-                platform,
-                (operation, request),
+                &platform,
+                (operation, request, phase.as_ref()),
                 authority,
                 release,
-            )
-            .await
+            );
+            match (&phase, &jobs) {
+                (Some(phase), Some(jobs)) => Box::pin(phase.join(&jobs.env, work)).await,
+                _ => work.await,
+            }
+        }
+        Task::ProjectEnvPhase {
+            operation,
+            project,
+            env,
+            project_job,
+        } => {
+            ensure!(
+                operation.has_env_phase(),
+                "operation has no environment phase"
+            );
+            let triple = Triple::new(org.clone(), env, project);
+            let chart = (platform.select_chart)(&platform.chart)?;
+            platform.chart = chart.directory().to_owned();
+            let coordinate = wamn_registry::name::project_env_resource_name(
+                &triple.org,
+                &triple.project,
+                &triple.env,
+            );
+            Phase::new(&platform.cluster.client, &coordinate, &project_job)
+                .serve(&platform, &triple, operation)
+                .await?;
+            Ok(json!({"completed":true}))
         }
         Task::Env {
             operation,

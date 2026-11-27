@@ -83,7 +83,7 @@ impl ControlRoutes<'_> {
                 return Err(invalid("value"));
             }
             let name = request.job.as_deref().ok_or_else(|| invalid("job"))?;
-            return wamn_kubernetes::job::observe(
+            let mut status = wamn_kubernetes::job::observe(
                 &api,
                 name,
                 &coordinate,
@@ -92,20 +92,56 @@ impl ControlRoutes<'_> {
                 ],
             )
             .await
-            .map_err(super::operation_refusal);
+            .map_err(super::operation_refusal)?;
+            if status["state"] == "failed"
+                && let Ok(mut phase) = wamn_kubernetes::job::observe(
+                    &api,
+                    &format!("{name}-env"),
+                    &coordinate,
+                    &["project-env-phase"],
+                )
+                .await
+                && let Value::String(log) = phase["log"].take()
+                && !log.is_empty()
+                && let Value::String(project_log) = &mut status["log"]
+            {
+                project_log.push_str("\nEnvironment phase\n");
+                project_log.push_str(&log);
+            }
+            return Ok(status);
         };
         let worker = self
             .worker
             .context("installed operation worker is absent")?;
+        let name = format!("op-{}", uuid::Uuid::new_v4());
         let mut job = manifest(
-            operation,
+            &name,
+            Some(operation),
             &triple,
             &api.namespace,
             &coordinate,
             worker,
             self.registry_token_metadata,
         );
-        let input = json!({"type":"project_operation","operation":operation,"request":request});
+        let mut input = json!({"type":"project_operation","operation":operation,"request":request});
+        if operation.has_env_phase() {
+            let env_name = format!("{name}-env");
+            let mut phase_job = manifest(
+                &env_name,
+                None,
+                &triple,
+                &api.namespace,
+                &coordinate,
+                worker,
+                self.registry_token_metadata,
+            );
+            let phase_task = json!({
+                "type":"project_env_phase", "operation":operation,
+                "project":request.project, "env":request.env, "project_job":name,
+            });
+            crate::platform::submit(&api, &mut phase_job, &phase_task, None).await?;
+            input["jobs"] = json!({"project":name, "env":env_name});
+        }
         crate::platform::submit(&api, &mut job, &input, command)
             .await
             .map_err(Refusal::from)
@@ -146,32 +182,28 @@ fn validate(operation: Operation, request: &Request) -> Result<(), Refusal> {
 }
 
 fn manifest(
-    operation: Operation,
+    name: &str,
+    operation: Option<Operation>,
     triple: &wamn_registry::Triple,
     namespace: &str,
     coordinate: &str,
     worker: &wamn_kubernetes::job::Worker,
     metadata: bool,
 ) -> Value {
-    let name = format!("op-{}", uuid::Uuid::new_v4());
     let mut job = wamn_kubernetes::job::manifest(
-        &name,
+        name,
         &worker.image,
         &["/usr/local/bin/wamn-control"],
         &["--settings", crate::SETTINGS_FILE, "worker"],
     );
     job["metadata"]["namespace"] = namespace.into();
-    job["metadata"]["annotations"] = json!({TARGET:coordinate,OPERATION:operation.command()});
+    let command = operation.map_or("project-env-phase", Operation::command);
+    job["metadata"]["annotations"] = json!({TARGET:coordinate,OPERATION:command});
     job["spec"]["ttlSecondsAfterFinished"] = 3600.into();
-    job["spec"]["template"]["spec"]["serviceAccountName"] = match operation {
-        Operation::Diff => format!("{coordinate}-operation").into(),
-        Operation::Deploy
-        | Operation::Rollback
-        | Operation::Stop
-        | Operation::Apply
-        | Operation::Reset
-        | Operation::Recover
-        | Operation::Close => worker.service_account.as_str().into(),
+    job["spec"]["template"]["spec"]["serviceAccountName"] = if operation.is_some() {
+        format!("{coordinate}-operation").into()
+    } else {
+        worker.service_account.as_str().into()
     };
     job["spec"]["template"]["spec"]["automountServiceAccountToken"] = true.into();
     job["spec"]["template"]["spec"]["volumes"] = json!([
@@ -184,7 +216,15 @@ fn manifest(
         {"name":"work","mountPath":"/work"}
     ]);
     container["resources"]["limits"]["cpu"] = "2".into();
-    if matches!(operation, Operation::Recover) {
+    if operation.is_none() {
+        // The env Job is submitted first and keeps its lock until the project Job exits.
+        let deadline = job["spec"]["activeDeadlineSeconds"]
+            .as_u64()
+            .expect("Job deadline");
+        job["spec"]["activeDeadlineSeconds"] =
+            (deadline + wamn_kubernetes::client::REQUEST_TIMEOUT.as_secs() * 4).into();
+    }
+    if matches!(operation, Some(Operation::Recover)) {
         wamn_kubernetes::worker_mounts::mount_broker_ca(&mut job);
         wamn_kubernetes::job::mount(
             &mut job,
@@ -207,6 +247,57 @@ mod tests {
     use wamn_registry::Triple;
 
     #[test]
+    fn the_environment_phase_runs_the_companion_on_the_env_account() -> anyhow::Result<()> {
+        let triple = Triple::new("acme".parse()?, "dev".parse()?, "billing".parse()?);
+        let namespace = wamn_registry::name::env_key(&triple.org, &triple.env);
+        let coordinate = wamn_registry::name::project_env_resource_name(
+            &triple.org,
+            &triple.project,
+            &triple.env,
+        );
+        let worker = Worker {
+            image: "registry.example/control".into(),
+            configuration: "control-settings".into(),
+            service_account: wamn_platform_install::env_install::ENV_ACCOUNT.into(),
+        };
+        let project = manifest(
+            "op-example",
+            Some(Operation::Reset),
+            &triple,
+            &namespace,
+            &coordinate,
+            &worker,
+            false,
+        );
+        let companion = manifest(
+            "op-example-env",
+            None,
+            &triple,
+            &namespace,
+            &coordinate,
+            &worker,
+            false,
+        );
+        let account = |job: &serde_json::Value| {
+            job["spec"]["template"]["spec"]["serviceAccountName"]
+                .as_str()
+                .unwrap()
+                .to_owned()
+        };
+        assert_eq!(account(&project), format!("{coordinate}-operation"));
+        assert_eq!(account(&companion), worker.service_account);
+        assert_eq!(
+            project["metadata"]["annotations"][super::TARGET],
+            companion["metadata"]["annotations"][super::TARGET]
+        );
+        assert_ne!(
+            project["metadata"]["annotations"][super::OPERATION],
+            companion["metadata"]["annotations"][super::OPERATION]
+        );
+        Ok(())
+    }
+
+    #[test]
     fn operation_job_keeps_work_and_database_staging_writable() -> anyhow::Result<()> {
         let triple = Triple::new("acme".parse()?, "dev".parse()?, "billing".parse()?);
         let worker = Worker {
@@ -216,7 +307,8 @@ mod tests {
         };
         let namespace = wamn_registry::name::env_key(&triple.org, &triple.env);
         let job = manifest(
-            Operation::Deploy,
+            "op-test",
+            Some(Operation::Deploy),
             &triple,
             &namespace,
             "billing-dev",
@@ -255,7 +347,8 @@ mod tests {
         };
         let namespace = wamn_registry::name::env_key(&triple.org, &triple.env);
         let job = manifest(
-            Operation::Deploy,
+            "op-test",
+            Some(Operation::Deploy),
             &triple,
             &namespace,
             "billing-dev",

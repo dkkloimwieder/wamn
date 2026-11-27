@@ -41,6 +41,107 @@ fn helm(arguments: &[&str]) -> std::process::Output {
 }
 
 #[test]
+fn project_role_names_its_secrets_and_release_resources_and_binds_helm_storage()
+-> anyhow::Result<()> {
+    use serde_json::json;
+    use wamn_env::env::chart_values::set_operation_values;
+    use wamn_kubernetes::{helm, platform_env::entry};
+    use wamn_registry::{Triple, name};
+
+    let triple = Triple::new("acme".parse()?, "dev".parse()?, "billing".parse()?);
+    let namespace = name::env_key(&triple.org, &triple.env);
+    let storage = helm::org_release_namespace(&namespace);
+    let connection =
+        wamn_postgres::database::connection_for(&triple, &"abcdefgh".parse()?, &namespace);
+    let cluster = name::project_cluster(&connection.database);
+    let app = "shop".parse()?;
+    let mut values = json!({"namespace": namespace});
+    set_operation_values(
+        &mut values,
+        &triple,
+        &cluster,
+        &connection.database,
+        [&app].into_iter(),
+    )?;
+    let directory = repository_root().join("deploy/charts/project");
+    let entry = entry(&directory, &storage, "fixture", values)?;
+    let objects = helm::template(&entry)?;
+    let storage_binding = objects
+        .iter()
+        .find(|object| {
+            object["kind"] == "RoleBinding" && object["metadata"]["namespace"] == storage.as_ref()
+        })
+        .expect("project account must be bound in Helm storage");
+    assert_eq!(storage_binding["roleRef"]["name"], "wamn-helm-releases");
+    let subject = &storage_binding["subjects"][0];
+    assert_eq!(subject["kind"], "ServiceAccount");
+    assert_eq!(subject["namespace"], namespace);
+    let workload_binding = objects
+        .iter()
+        .find(|object| {
+            object["kind"] == "RoleBinding"
+                && object["metadata"]["namespace"] == namespace
+                && object["subjects"][0] == *subject
+        })
+        .expect("the same project account must be bound in the workload namespace");
+    let role = objects
+        .iter()
+        .find(|object| {
+            object["kind"] == "Role"
+                && object["metadata"]["name"] == workload_binding["roleRef"]["name"]
+        })
+        .expect("the project Role must exist");
+    let rules = role["rules"].as_array().unwrap();
+    assert!(rules.iter().all(|rule| {
+        rule["resources"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|resource| {
+                !matches!(
+                    resource.as_str(),
+                    Some("roles" | "rolebindings" | "deployments")
+                )
+            })
+    }));
+    let operation = &entry["values"]["operations"];
+    let rules_for = |resource: String| {
+        rules.iter().filter(move |rule| {
+            rule["resources"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|name| name == resource.as_str())
+        })
+    };
+    let names = |resource: &str, verb: &str| {
+        rules_for(resource.to_owned())
+            .filter(|rule| rule["verbs"].as_array().unwrap().iter().any(|v| v == verb))
+            .map(|rule| rule["resourceNames"].clone())
+            .collect::<Vec<_>>()
+    };
+    let secret_rules = rules_for("secrets".into()).collect::<Vec<_>>();
+    assert_eq!(secret_rules.len(), 1);
+    assert_eq!(secret_rules[0]["verbs"], json!(["get"]));
+    assert_eq!(secret_rules[0]["resourceNames"], operation["loginSecrets"]);
+    assert_eq!(
+        names("workloaddeployments", "patch"),
+        [operation["workloads"].clone()]
+    );
+    assert_eq!(names("services", "patch"), [operation["workloads"].clone()]);
+    assert_eq!(
+        names("networkpolicies", "delete"),
+        [operation["appNetworkPolicies"].clone()]
+    );
+    let config_patches = names("configmaps", "patch");
+    assert!(config_patches.contains(&operation["appConfigMaps"]));
+    assert!(config_patches.contains(&json!([operation["phaseConfigMap"]])));
+    assert!(objects.iter().any(|object| object["kind"] == "ConfigMap"
+        && object["metadata"]["name"] == operation["phaseConfigMap"]));
+    Ok(())
+}
+
+#[test]
 fn an_unstamped_chart_does_not_render() {
     let scratch = Scratch::new("unstamped");
     let chart = scratch.0.join("chart");
@@ -242,8 +343,15 @@ fn control_host_and_capture_render_in_their_namespaces() -> anyhow::Result<()> {
         "backup sidecar",
     );
     for object in &project {
+        let storage_binding =
+            object["kind"] == "RoleBinding" && object["roleRef"]["name"] == "wamn-helm-releases";
+        let expected = if storage_binding {
+            storage.as_ref()
+        } else {
+            namespace.as_str()
+        };
         assert_eq!(
-            object["metadata"]["namespace"], namespace,
+            object["metadata"]["namespace"], expected,
             "{}",
             object["kind"]
         );

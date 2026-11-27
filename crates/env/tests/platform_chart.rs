@@ -534,113 +534,50 @@ fn project_retains_only_the_operator_policy_for_each_cluster() -> anyhow::Result
 }
 
 #[test]
-fn operation_worker_bindings_use_their_own_accounts_and_namespace_resources() -> anyhow::Result<()>
-{
-    let document = wamn_registry::Triple::new(
-        "acme".parse().expect("fixed identifier"),
-        "dev".parse().unwrap(),
-        "billing".parse().expect("fixed identifier"),
-    );
-    let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let cluster = "database-owner";
-    let database = "recorded-environment-database";
-    let app = "shop".parse()?;
-    let mut values = json!({});
-    wamn_env::env::chart_values::set_operation_values(
-        &mut values,
-        &document,
-        cluster,
-        database,
-        std::iter::once(&app),
-    )?;
-    values["namespace"] = json!(document.org);
-    let entry = wamn_kubernetes::platform_env::entry(
-        &repository.join("deploy/charts/project"),
-        document.org.as_str(),
-        "fixture",
-        values,
-    )?;
-    let objects = wamn_kubernetes::helm::template(&entry)?;
-    let values = &entry["values"]["operations"];
-    let mut identities = std::collections::BTreeSet::new();
-    for object in &objects {
-        assert!(
-            identities.insert((
-                object["apiVersion"].to_string(),
-                object["kind"].to_string(),
-                object["metadata"]["namespace"].to_string(),
-                object["metadata"]["name"].to_string()
-            )),
-            "duplicate resource identity would replace its rules"
-        );
-    }
-    for account in objects
-        .iter()
-        .filter(|object| object["kind"] == "ServiceAccount")
-    {
-        assert_eq!(account["metadata"]["namespace"], document.org.as_str());
-        let name = account["metadata"]["name"].as_str().unwrap();
-        let binding = objects
-            .iter()
-            .find(|object| object["kind"] == "RoleBinding" && object["metadata"]["name"] == name);
-        if name == values["capture"] {
-            assert!(binding.is_none());
-            assert!(
-                !objects.iter().any(|object| {
-                    object["kind"] == "Role" && object["metadata"]["name"] == name
-                })
-            );
-            continue;
-        }
-        let binding = binding.unwrap();
-        assert_eq!(binding["subjects"][0]["name"], name);
-        assert_eq!(
-            binding["subjects"][0]["namespace"],
-            account["metadata"]["namespace"]
-        );
-        let role = objects
-            .iter()
-            .find(|object| {
-                object["kind"] == "Role"
-                    && object["metadata"]["name"] == binding["roleRef"]["name"]
-                    && object["metadata"]["namespace"] == binding["metadata"]["namespace"]
-            })
-            .unwrap();
-        assert_eq!(role["metadata"]["namespace"], document.org.as_str());
+fn project_admission_matches_env_namespaces_and_selects_the_requested_mode() -> anyhow::Result<()> {
+    use wamn_kubernetes::{helm, platform_env::entry};
+    use wamn_platform_install::env_install::ENV_LABEL;
 
+    let chart = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../deploy/charts/platform");
+    let mut kind: serde_json::Value =
+        serde_yaml::from_slice(&std::fs::read(chart.join("values-kind.yaml"))?)?;
+    for mode in ["Warn", "Deny"] {
+        let objects = helm::template(&entry(&chart, "platform", "wamn", kind.clone())?)?;
+        let [policy]: [&serde_json::Value; 1] = objects
+            .iter()
+            .filter(|object| object["kind"] == "ValidatingAdmissionPolicy")
+            .collect::<Vec<_>>()
+            .try_into()
+            .expect("one project admission policy");
+        let [binding]: [&serde_json::Value; 1] = objects
+            .iter()
+            .filter(|object| object["kind"] == "ValidatingAdmissionPolicyBinding")
+            .collect::<Vec<_>>()
+            .try_into()
+            .expect("one binding for project admission");
+        assert_eq!(binding["spec"]["policyName"], policy["metadata"]["name"]);
+        assert_eq!(binding["spec"]["validationActions"], json!([mode]));
         assert_eq!(
-            name,
-            format!("{}-operation", values["name"].as_str().unwrap())
+            binding["spec"]["matchResources"]["namespaceSelector"],
+            json!({"matchLabels": {(ENV_LABEL): "true"}})
         );
-        let allowed = json!({
-            "secrets": values["diffSecrets"],
-            "configmaps": values["diffConfigMaps"],
-            "workloaddeployments": values["diffWorkloads"],
-        });
-        let mut observed = std::collections::BTreeSet::new();
-        for rule in role["rules"].as_array().unwrap() {
-            assert_eq!(rule["verbs"], json!(["get"]));
-            for resource in rule["resources"].as_array().unwrap() {
-                let resource = resource.as_str().unwrap();
-                let api = match resource {
-                    "secrets" | "configmaps" => "",
-                    "workloaddeployments" => "runtime.wasmcloud.dev",
-                    _ => panic!("unexpected {resource} access"),
-                };
-                assert_eq!(rule["apiGroups"], json!([api]));
-                assert!(observed.insert(resource));
-                assert_eq!(rule["resourceNames"], allowed[resource]);
-            }
+        assert_eq!(policy["spec"]["failurePolicy"], "Fail");
+        let rules = policy["spec"]["matchConstraints"]["resourceRules"]
+            .as_array()
+            .unwrap();
+        let resource = |rule: &serde_json::Value| rule["resources"][0].as_str().unwrap().to_owned();
+        let resources: std::collections::BTreeSet<_> = rules.iter().map(resource).collect();
+        assert_eq!(
+            resources,
+            ["workloaddeployments", "services", "networkpolicies"]
+                .map(str::to_owned)
+                .into()
+        );
+        for rule in rules {
+            assert_eq!(rule["operations"], json!(["CREATE", "UPDATE"]));
+            assert_eq!(rule["scope"], "Namespaced");
         }
-        assert_eq!(
-            observed,
-            allowed
-                .as_object()
-                .unwrap()
-                .keys()
-                .map(String::as_str)
-                .collect()
-        );
+        kind["projectOperationAdmission"] = "Deny".into();
     }
     Ok(())
 }

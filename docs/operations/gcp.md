@@ -47,18 +47,19 @@ The owner supplies these external cloud inputs.
 4. Workload Identity grants for the rendered worker accounts.
    Workload Identity authenticates Kubernetes workloads to Google Cloud without service-account keys.
    Grant access to each account below. Do not grant access to an entire namespace. Remove former namespace grants from existing deployments.
-   The control chart renders `hosts/wamn-control-<org>`.
-   Environment provisioning creates `hosts/wamn-host-<org>--<env>--<project>` for application and shared hosts.
-   Helm-running Jobs use `<org>/wamn-operation-<org>`. Schema diff uses `<org>/<coordinate>-operation`.
-   Use the schema diff ServiceAccount name in the org namespace, with the `-operation` suffix removed, as the coordinate.
+   The org chart creates `<org>/wamn-control-<org>`.
+   The environment chart creates `<org>--<env>/wamn-host-<org>--<env>` for the shared host group.
+   The environment and project Jobs use `<org>--<env>/wamn-env` and `<org>--<env>/<coordinate>-operation`, respectively.
+   These grants require the environment accounts to exist. The current `wamn env create` command supports kind.
+   Use the project operation ServiceAccount name in the environment namespace, with the `-operation` suffix removed, as the coordinate.
 
    Set these values for one configured target before you grant access:
 
    ```bash
    NUMBER=$(gcloud projects describe wamn-dev --format 'value(projectNumber)')
    ORG=<org>
-   PROJECT=<project>
    ENV=<env>
+   ENV_NAMESPACE="$ORG--$ENV"
    COORDINATE=<project-coordinate>
    POOL="principal://iam.googleapis.com/projects/$NUMBER/locations/global/workloadIdentityPools/wamn-dev.svc.id.goog/subject/ns"
    ```
@@ -66,8 +67,8 @@ The owner supplies these external cloud inputs.
    Grant registry reads to the accounts that read OCI artifacts:
 
    ```bash
-   for ACCOUNT in "hosts/wamn-control-$ORG" "hosts/wamn-host-$ORG--$PROJECT--$ENV" \
-     "$ORG/wamn-operation-$ORG" "$ORG/$COORDINATE-operation"
+   for ACCOUNT in "$ORG/wamn-control-$ORG" "$ENV_NAMESPACE/wamn-host-$ENV_NAMESPACE" \
+     "$ENV_NAMESPACE/wamn-env" "$ENV_NAMESPACE/$COORDINATE-operation"
    do
      gcloud artifacts repositories add-iam-policy-binding wamn --project wamn-dev --location us-central1 \
        --member "$POOL/${ACCOUNT%/*}/sa/${ACCOUNT#*/}" --role roles/artifactregistry.reader
@@ -78,7 +79,7 @@ The owner supplies these external cloud inputs.
 
    ```bash
    gcloud storage buckets add-iam-policy-binding gs://wamn-dev-labels \
-     --member "$POOL/hosts/sa/wamn-host-$ORG--$PROJECT--$ENV" --role roles/storage.objectAdmin
+     --member "$POOL/$ENV_NAMESPACE/sa/wamn-host-$ENV_NAMESPACE" --role roles/storage.objectAdmin
    ```
 
    For another target, use its configured repositories and buckets.

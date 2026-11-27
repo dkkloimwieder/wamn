@@ -112,7 +112,7 @@ impl Execution {
         ensure!(
             !matches!(
                 serde_json::from_str::<Task>(payload)?,
-                Task::ProjectOperation { .. }
+                Task::ProjectOperation { .. } | Task::ProjectEnvPhase { .. }
             ),
             "project operations require project route authorization"
         );

@@ -156,6 +156,32 @@ impl KubernetesApi {
         Ok(tokio::time::timeout(REQUEST_TIMEOUT, secrets.get(name)).await??)
     }
 
+    /// Read the data of a named ConfigMap.
+    pub async fn config_map_data(
+        &self,
+        name: &str,
+    ) -> anyhow::Result<std::collections::BTreeMap<String, String>> {
+        let maps = Api::<ConfigMap>::namespaced(self.client(), &self.namespace);
+        let map = tokio::time::timeout(REQUEST_TIMEOUT, maps.get(name)).await??;
+        Ok(map.data.unwrap_or_default())
+    }
+
+    /// Merge the supplied data keys into a named ConfigMap.
+    pub async fn merge_config_map_data(
+        &self,
+        name: &str,
+        data: serde_json::Value,
+    ) -> anyhow::Result<()> {
+        let maps = Api::<ConfigMap>::namespaced(self.client(), &self.namespace);
+        let patch = serde_json::json!({"data": data});
+        tokio::time::timeout(
+            REQUEST_TIMEOUT,
+            maps.patch(name, &PatchParams::default(), &Patch::Merge(&patch)),
+        )
+        .await??;
+        Ok(())
+    }
+
     /// Read a public root from the named ConfigMap in the selected namespace.
     ///
     /// # Errors

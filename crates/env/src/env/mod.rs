@@ -12,6 +12,7 @@ pub mod drain;
 pub mod ensure;
 pub mod lifecycle;
 pub mod operation;
+mod operation_phase;
 pub mod runtime;
 pub mod sql;
 pub mod stage;

@@ -354,3 +354,57 @@ common::journey! {
         Ok(())
     }
 }
+
+common::journey! {
+    /// Deny admits the rendered workload and refuses a Secret reference as the deploy account.
+    async fn project_admission_refuses_workload_secret_references() -> anyhow::Result<()> {
+        let env = Org::create().await?.apply(FIXTURE).await?;
+        let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps").join(FIXTURE);
+        env.deploy(&source, FIXTURE).await?;
+        let triple = &env.triple;
+        let namespace = env.namespace();
+        let resource = kube::api::ApiResource::from_gvk_with_plural(
+            &kube::api::GroupVersionKind::gvk("runtime.wasmcloud.dev", "v1alpha1", "WorkloadDeployment"),
+            "workloaddeployments",
+        );
+        let workloads = Api::<kube::api::DynamicObject>::namespaced_with(
+            env.org.cluster.client.clone(), &namespace, &resource,
+        );
+        let release = wamn_registry::resource_names::app_release_name(
+            &triple.org, &triple.project, &triple.env, &FIXTURE.parse()?,
+        );
+        let mut installed = workloads.get(&format!("{release}-http")).await?;
+        let outputs = &env.org.cluster.outputs;
+        let mut config = kube::Config::from_custom_kubeconfig(
+            kube::config::Kubeconfig::read_from(&outputs.kubeconfig)?,
+            &kube::config::KubeConfigOptions {
+                context: Some(outputs.context.clone()),
+                ..Default::default()
+            },
+        ).await?;
+        let coordinate = wamn_registry::name::project_env_resource_name(
+            &triple.org, &triple.project, &triple.env,
+        );
+        config.auth_info.impersonate = Some(format!("system:serviceaccount:{namespace}:{coordinate}-operation"));
+        let project = Api::<kube::api::DynamicObject>::namespaced_with(
+            Client::try_from(config)?, &namespace, &resource,
+        );
+        let name = "admission-probe-http";
+        let mut candidate = kube::api::DynamicObject::new(name, &resource).within(&namespace);
+        candidate.data = json!({"spec": installed.data["spec"].take()});
+        let workload = &mut candidate.data["spec"]["template"]["spec"];
+        workload["kubernetes"]["service"]["name"] = name.into();
+        let params = PostParams { dry_run: true, ..Default::default() };
+        project.create(&params, &candidate).await.context("admit the compliant workload as the project account")?;
+        candidate.data["spec"]["template"]["spec"]["hostInterfaces"][0]["secretFrom"] =
+            json!([{"name":"admission-probe"}]);
+        let result = project.create(&params, &candidate).await;
+        ensure!(
+            matches!(&result, Err(kube::Error::Api(status))
+                if status.code == 403 && status.message.contains("wamn-project-operation")),
+            "expected denial by the project admission policy, got {:?}",
+            result.map(|_| ()),
+        );
+        Ok(())
+    }
+}
