@@ -1,7 +1,7 @@
 //! Preflight before a kind platform deploy: the charts render, their images
 //! resolve, the wamn containers accept their arguments, and the Kubernetes API
-//! server accepts every object and admits its pod templates under the target
-//! namespace's pod security policy.
+//! server accepts every object. It checks Pods and supported built-in workload
+//! templates under the target namespace's Pod Security policy.
 //!
 //! The values come from the product's builders. Values that exist only at deploy
 //! time are stand-ins:
@@ -1001,7 +1001,12 @@ fn admission_pod(object: &Value) -> Option<Value> {
     let template = match object["kind"].as_str()? {
         "Pod" => object,
         "CronJob" => &object["spec"]["jobTemplate"]["spec"]["template"],
-        _ => &object["spec"]["template"],
+        "Job" | "Deployment" | "StatefulSet" | "DaemonSet" | "ReplicaSet" => {
+            &object["spec"]["template"]
+        }
+        // The kind run enforces restricted for Pods that operators generate,
+        // including CloudNativePG Pooler Pods.
+        _ => return None,
     };
     if !template["spec"]["containers"].is_array() {
         return None;
@@ -1373,6 +1378,37 @@ mod tests {
             docker_user(&json!({}), &container).as_deref(),
             Some("0:2000")
         );
+    }
+
+    #[test]
+    fn restricted_pod_dry_run_skips_poolers_and_checks_deployments() {
+        let pooler = json!({
+            "apiVersion": "postgresql.cnpg.io/v1",
+            "kind": "Pooler",
+            "spec": {
+                "template": {
+                    "spec": {
+                        "containers": [{
+                            "name": "pgbouncer",
+                            "resources": {"requests": {"cpu": "100m"}},
+                        }],
+                    },
+                },
+            },
+        });
+        let deployment = json!({
+            "apiVersion": "apps/v1",
+            "kind": "Deployment",
+            "spec": {
+                "template": {
+                    "spec": {
+                        "containers": [{"name": "server", "image": "example.invalid/server"}],
+                    },
+                },
+            },
+        });
+        assert!(admission_pod(&pooler).is_none());
+        assert!(admission_pod(&deployment).is_some());
     }
 
     #[test]
