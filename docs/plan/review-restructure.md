@@ -684,6 +684,7 @@ From the restructure plan's open items (`docs/plan/wamn-restructure.md`) (F for 
 - A test tool runs once against a real target before it lands (standing owner rule, 2026-11-27). At E5.14, `cargo xtask pooler-capacity` landed without a run on kind. `show_pools` called `psql -Xtw --csv`, and `-t` drops the CSV header, so every snapshot failed with "missing field `database`" (F, 871d1d96d). [Part 1](wamn-restructure.md#tests) records the rule.
 - Guest pins in root checks (epic not set, owner ruling 2026-11-26). The root checks that lanes run do not build guests against their pin files, so a router change can land with a stale pin (E4.7, 33532cfc6). Add the pin check to the root checks.
 - The stock runtime-operator Service targets a port named `https` that its Deployment does not declare (`runtime-operator/templates/operator/service.yaml`) (epic not set, found in Epic 4, lane report, Not verified here). No caller uses that Service today.
+- Stale test docs (epic not set, found in E6.5, lane report, Not verified here). The NetSuite README "Kind fixture" section names the absent `env_apply_kind` target (`apps/netsuite/README.md:232`). The build guide links to the absent `tests/selection.toml` (`docs/operations/building.md:23`), in place of the `cargo xtask test-changes` instructions.
 - X5 is in T1.
 
 ## 5. Threat model
