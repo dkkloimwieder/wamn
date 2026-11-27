@@ -327,12 +327,26 @@ fn control_host_and_capture_render_in_their_namespaces() -> anyhow::Result<()> {
         "nats://nats.platform.svc:4222",
         false,
     );
+    let nats_public_key = nkeys::KeyPair::new_user().public_key();
+    project["cdcReader"]["natsPublicKey"] = nats_public_key.as_str().into();
     let project = helm::template(&entry(
         &charts.join("project"),
         &storage,
         "fixture",
         project,
     )?)?;
+    let cdc_reader = &project
+        .iter()
+        .find(|object| {
+            object["kind"] == "Deployment"
+                && object["metadata"]["name"]
+                    == name::cdc_reader_name(&triple.org, &triple.project, &triple.env)
+        })
+        .expect("CDC reader Deployment")["spec"]["template"];
+    assert_eq!(
+        cdc_reader["metadata"]["annotations"]["wamn.dev/cdc-nats-user"],
+        nats_public_key
+    );
     pod_resources::assert_pod_resources(&project);
     let store = project
         .iter()

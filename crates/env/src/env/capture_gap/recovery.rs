@@ -24,9 +24,6 @@ pub struct RecoverCaptureGapRequest {
     /// Apply connection of the system database: the instance suffix, the reader
     /// registration, and the gap row.
     pub system_transaction_url: String,
-
-    /// The NATS of the event streams, with the client certificate.
-    pub nats: wamn_event::deploy_broker::EventObserver,
 }
 
 /// Inputs of one capture gap close.
@@ -86,9 +83,23 @@ pub(super) async fn recover_capture_gap(
         env_sql_effects::inspect_capture(admin_database_url, &database, &replication_name, &triple)
             .await?;
     let reason = status.reason;
+    let credentials = super::super::broker::job_user(
+        platform,
+        &triple.org,
+        &triple.env,
+        wamn_identity_protocol::nats::UserPurpose::Recovery {
+            project: triple.project.clone(),
+        },
+    )
+    .await?;
     let last = platform
         .broker
-        .last_capture_event(&args.nats, &registration.stream, &triple)
+        .last_capture_event(
+            &platform.nats_url,
+            &credentials,
+            &registration.stream,
+            &triple,
+        )
         .await?;
     let start_lsn = if reason == MISSING_CAPTURE_REASON {
         last.map(|(lsn, _)| pg_lsn(lsn))

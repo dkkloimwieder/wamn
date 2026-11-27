@@ -1,10 +1,10 @@
-//! Runtime status and the order of status changes across the two stores.
+//! Runtime status and its optional database counts.
 
 use std::{collections::BTreeMap, time::Duration};
 
 use anyhow::Context as _;
 use serde_json::Value;
-use wamn_registry::{EnvName, EnvStatus, OrgId, ProjectId, name};
+use wamn_registry::{EnvName, OrgId, ProjectId, name};
 use wamn_routes::host_wire::{
     EnvStatusResult, EnvStatusResultRollout, EnvStatusResultWorkload,
     EnvStatusResultWorkloadCondition,
@@ -110,31 +110,6 @@ pub fn runtime_status<'a>(
         roles: None,
         memberships: None,
     })
-}
-
-/// Update the system first on activation, and the project databases first on inactivation.
-///
-/// # Errors
-/// Returns the first error from either update.
-pub async fn change_status<E, System, Projects>(
-    status: EnvStatus,
-    write_system: impl FnOnce() -> System,
-    write_projects: impl FnOnce() -> Projects,
-) -> Result<(), E>
-where
-    System: Future<Output = Result<(), E>>,
-    Projects: Future<Output = Result<(), E>>,
-{
-    match status {
-        EnvStatus::Active => {
-            write_system().await?;
-            write_projects().await
-        }
-        EnvStatus::Inactive => {
-            write_projects().await?;
-            write_system().await
-        }
-    }
 }
 
 /// Bound each count read so unavailable databases cannot prevent runtime status from answering.

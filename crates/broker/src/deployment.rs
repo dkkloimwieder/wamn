@@ -6,11 +6,11 @@ use async_nats::jetstream::stream::RawMessageErrorKind;
 use chrono::{DateTime, Utc};
 use std::path::Path;
 use std::time::Duration;
-use wamn_event::deploy_broker::{CA_FILE, DeploymentBroker, EventBroker, EventObserver};
+use wamn_event::deploy_broker::{CA_FILE, DeploymentBroker, EventBroker};
 use wamn_event::{SourceEvent, verified_source_event_id};
 use wamn_registry::Triple;
 
-use crate::nats::{InitialConnect, connect_platform};
+use crate::nats::InitialConnect;
 
 #[derive(Debug)]
 pub struct NatsDeployment;
@@ -45,14 +45,14 @@ impl DeploymentBroker for NatsDeployment {
 
     async fn last_capture_event(
         &self,
-        observer: &EventObserver,
+        url: &str,
+        credentials: &str,
         stream: &str,
         triple: &Triple,
     ) -> anyhow::Result<Option<(u64, DateTime<Utc>)>> {
-        let client = connect_platform(&observer.nats_url, &observer.nats_tls_ca, &observer.creds)
+        let broker = admin(url, credentials)
             .await
             .context("connect the event observer credential")?;
-        let broker = async_nats::jetstream::new(client);
         last_cdc_event(&broker, stream, &triple.project, &triple.env).await
     }
 }

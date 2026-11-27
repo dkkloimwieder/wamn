@@ -43,12 +43,12 @@ pub fn nats_user_inbox(public_key: &str) -> String {
     format!("_INBOX_wamn.{public_key}")
 }
 
-/// The org Secret holding an environment-scoped NATS user.
+/// The Secret in the environment namespace holding an environment-scoped NATS user.
 pub fn env_nats_secret(org: &crate::OrgId, env: &crate::EnvName, kind: &str) -> String {
     format!("wamn-nats-{kind}-{}", env_host_name(org, env))
 }
 
-/// The org Secret holding a project-scoped NATS user.
+/// The Secret in the environment namespace holding a project-scoped NATS user.
 pub fn project_nats_secret(target: &crate::Triple, kind: &str) -> String {
     format!(
         "wamn-nats-{kind}-{}",
@@ -261,10 +261,18 @@ pub fn event_subject(
 pub fn dev_host_group(key: &crate::ProjectEnvKey) -> String {
     format!("wamn-dev-{key}")
 }
-/// The Job and account of an org's control operation.
-pub fn operation(org: &crate::OrgId) -> String {
-    format!("wamn-operation-{org}")
+/// The ServiceAccount used for environment-wide Jobs.
+pub const ENV_WORKER_ACCOUNT: &str = "wamn-env";
+
+/// The ServiceAccount used for one project deployment's Jobs.
+pub fn project_operation_account(
+    org: &crate::OrgId,
+    project: &crate::ProjectId,
+    env: &crate::EnvName,
+) -> String {
+    format!("{}-operation", project_env_resource_name(org, project, env))
 }
+
 /// The installed OCI pull credential Secret in kind org and environment namespaces.
 pub const REGISTRY_PULL: &str = "wamn-registry-pull";
 

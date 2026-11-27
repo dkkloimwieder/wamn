@@ -1,7 +1,6 @@
 //! Event stream and recovery operations used by deployment.
 
 use std::fmt::Debug;
-use std::path::PathBuf;
 
 use chrono::{DateTime, Utc};
 use wamn_registry::Triple;
@@ -14,14 +13,6 @@ pub const CREDENTIALS_KEY: &str = "user.creds";
 pub struct EventBroker {
     pub stream_replicas: usize,
     pub dup_window_secs: u64,
-}
-
-/// Mounted credentials for reading the last verified capture event.
-#[derive(Debug)]
-pub struct EventObserver {
-    pub nats_url: String,
-    pub nats_tls_ca: PathBuf,
-    pub creds: PathBuf,
 }
 
 #[async_trait::async_trait]
@@ -40,7 +31,8 @@ pub trait DeploymentBroker: Debug + Send + Sync {
 
     async fn last_capture_event(
         &self,
-        observer: &EventObserver,
+        url: &str,
+        credentials: &str,
         stream: &str,
         triple: &Triple,
     ) -> anyhow::Result<Option<(u64, DateTime<Utc>)>>;

@@ -57,7 +57,7 @@ On failure, committed SQL and completed Helm steps stay applied. The normal retr
 Workers select managed database logins from the project placement and write their ServiceAccount kubeconfig under `/work`.
 They fetch the named Secrets in the environment namespace and write the login files and the server's `ca.crt` to `/etc/wamn/db/<login-secret>/` in memory.
 Project logins use `tls.crt` and `tls.key` in that directory.
-The recovery Job mounts its project recovery certificate. It can read only that project's source stream and receive replies on its own inbox.
+The recovery Job uses its projected pod token to obtain a NATS JWT. It can read its own project stream and receive replies in its own inbox.
 The [record history pruning code](../../crates/env/src/prune_record_history.rs) uses a project database login and binds `wamn:audit-retention` for each transaction.
 The [PostgreSQL test](../../crates/env/tests/history_retention_live.rs) checks that creation of a history table waits for pruning.
 
@@ -71,7 +71,7 @@ Each route takes `project` and `env` and uses the matching public connection fil
 The system database supplies the platform domain for service email addresses.
 Service creation refuses with `platform-domain-unset` if the domain is missing.
 Workflow administration also uses server-selected connections and the authenticated principal.
-`wamn-env` owns capture-gap recovery and reader lifecycle. Recovery selects the recorded capture role and its project recovery certificate. It accepts no database URL from the CLI.
+`wamn-env` owns capture-gap recovery and reader lifecycle. Recovery selects the recorded capture role and obtains a short-lived NATS credential for the project. It accepts no database URL from the CLI.
 The platform system schema seeds integration types. Only `wamn platform deploy` can change them.
 
 `wamn` is the user CLI and runs internal bootstrap steps.

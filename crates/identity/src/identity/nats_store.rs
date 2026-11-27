@@ -1,10 +1,12 @@
 //! Envelope-encrypted NKey seeds and the environment account's claim revision.
 //! The account's session lock spans SQL changes and resolver publication.
 
+use std::collections::BTreeMap;
+
 use nkeys::{KeyPair, KeyPairType};
 use sqlx::{Connection as _, PgConnection, Postgres, Transaction};
 use wamn_envelope::encryption::{Encrypted, Envelope};
-use wamn_registry::{EnvName, OrgId};
+use wamn_registry::{EnvName, OrgId, ProjectId};
 use zeroize::Zeroizing;
 
 use crate::nats::{Account, AccountRevision, EnvLimits, Error, Key, Limits, env_limits};
@@ -157,14 +159,23 @@ pub(super) async fn accounts_to_refresh(
         project_count: i32,
         claim_limits: sqlx::types::Json<Limits>,
         published: bool,
+        active: bool,
+        needs_revocation: bool,
         #[sqlx(flatten)]
         desired: EnvLimits,
     }
 
     let rows = sqlx::query_as::<_, Candidate>(sqlx::AssertSqlSafe(format!(
-        "SELECT e.org, e.env, k.project_count, k.claim_limits, k.published, {ENV_LIMITS}
+        "SELECT e.org, e.env, k.project_count, k.claim_limits, k.published, e.active, {ENV_LIMITS},
+                EXISTS (
+                    SELECT FROM identity.nats_user u JOIN registry.project_env d USING (org, env, project)
+                    JOIN registry.project p ON p.org = u.org AND p.id = u.project
+                    WHERE u.issuer = k.issuer AND u.org = k.org AND u.env = k.env
+                      AND u.revoked_at IS NULL
+                      AND (NOT d.active OR NOT p.active OR d.instance_suffix <> u.instance_suffix)
+                ) AS needs_revocation
          FROM registry.env e JOIN identity.nats_key k USING (org, env)
-         WHERE k.issuer = $1 AND k.kind = 'env' AND k.project_count > 0 AND e.active"
+         WHERE k.issuer = $1 AND k.kind = 'env'"
     )))
     .bind(issuer)
     .fetch_all(client)
@@ -174,8 +185,10 @@ pub(super) async fn accounts_to_refresh(
         .into_iter()
         .filter(|row| {
             !row.published
-                || !env_limits(&row.desired, row.project_count)
-                    .is_ok_and(|limits| row.claim_limits.0 == limits)
+                || row.needs_revocation
+                || (row.active
+                    && !env_limits(&row.desired, row.project_count)
+                        .is_ok_and(|limits| row.claim_limits.0 == limits))
         })
         .map(|row| (row.org, row.env))
         .collect())
@@ -208,40 +221,42 @@ pub(super) async fn ensure_env(
     project_count: Option<i32>,
     file_store_bytes: i64,
     observe: impl AsyncFnOnce(&str, Limits, Option<Limits>) -> Result<Option<AccountRevision>, Error>,
-) -> Result<Option<(Account, Limits)>, Error> {
+) -> Result<Option<(Account, Limits, BTreeMap<String, i64>)>, Error> {
     let scope = Scope {
         org: Some(org.as_str()),
         env: Some(env.as_str()),
     };
     let mut tx = client.begin().await.map_err(database_error)?;
     let existing = read_env(&mut tx, issuer, org, env).await?;
-    let Some(count) = project_count.or_else(|| {
-        existing
-            .as_ref()
-            .map(|account| account.project_count)
-            .filter(|count| *count > 0)
-    }) else {
+    let Some(count) = project_count.or_else(|| existing.as_ref().map(|key| key.project_count))
+    else {
         tx.commit().await.map_err(database_error)?;
         return Ok(None);
     };
+    if count == 0 && existing.is_none() {
+        tx.commit().await.map_err(database_error)?;
+        return Ok(None);
+    }
     let desired: Option<EnvLimits> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
-        "SELECT {ENV_LIMITS} FROM registry.env WHERE org = $1 AND env = $2 AND ($3 OR active)"
+        "SELECT {ENV_LIMITS} FROM registry.env e JOIN registry.org o ON o.id = e.org
+         WHERE e.org = $1 AND e.env = $2 AND e.active AND o.active"
     )))
     .bind(org.as_str())
     .bind(env.as_str())
-    .bind(project_count.is_some())
     .fetch_optional(&mut *tx)
     .await
     .map_err(database_error)?;
-    let Some(desired) = desired else {
-        tx.commit().await.map_err(database_error)?;
-        return if project_count.is_some() {
-            Err(database_error(sqlx::Error::RowNotFound))
-        } else {
-            Ok(None)
-        };
+    let limits = match (&existing, desired) {
+        (Some(account), _) if project_count.is_none() && !account.published => {
+            account.claim_limits.0
+        }
+        (_, Some(desired)) => env_limits(&desired, count)?,
+        (_, None) if project_count.is_some() => return Err(Error::scope_refused()),
+        _ => {
+            tx.commit().await.map_err(database_error)?;
+            return Ok(None);
+        }
     };
-    let limits = env_limits(&desired, count)?;
     if project_count.is_none()
         && existing
             .as_ref()
@@ -250,6 +265,7 @@ pub(super) async fn ensure_env(
         tx.commit().await.map_err(database_error)?;
         return Ok(None);
     }
+    let revocations = revoked_users(&mut tx, issuer, org, env).await?;
     let stored_signer = read(&mut tx, issuer, "env-signing", scope).await?;
     tx.commit().await.map_err(database_error)?;
 
@@ -318,7 +334,9 @@ pub(super) async fn ensure_env(
             && account.claim_limits.0 == limits
             && resolver_revision.as_ref().is_none_or(|revision| {
                 revision.iat < account.issued_at
-                    || (revision.iat == account.issued_at && revision.limits() == limits)
+                    || (revision.iat == account.issued_at
+                        && revision.limits() == limits
+                        && revision.revocations() == &revocations)
             }) =>
         {
             if account.published
@@ -406,6 +424,7 @@ pub(super) async fn ensure_env(
             issued_at,
         },
         limits,
+        revocations,
     )))
 }
 
@@ -454,30 +473,92 @@ pub(super) async fn acknowledge(
     tx.commit().await.map_err(database_error)
 }
 
-pub(super) async fn retire_env(
+/// Stage revocations and mark the corresponding account revision for publication.
+pub(super) async fn stage_revocations(
     client: &mut PgConnection,
     issuer: &str,
     org: &OrgId,
     env: &EnvName,
-) -> Result<Option<(String, i64)>, Error> {
+) -> Result<(), Error> {
     let mut tx = client.begin().await.map_err(database_error)?;
-    bind_actor(&mut tx).await?;
-    let row = sqlx::query_as(
-        "UPDATE identity.nats_key
-         SET issued_at = CASE WHEN project_count = 0 THEN issued_at ELSE
-             GREATEST(issued_at + 1, floor(EXTRACT(EPOCH FROM clock_timestamp()))::bigint) END,
-             published = published AND project_count = 0, project_count = 0
-         WHERE issuer = $1 AND kind = 'env' AND org = $2 AND env = $3
-         RETURNING public_key, issued_at",
+    let updated = sqlx::query(
+        "UPDATE identity.nats_user u SET revoked_at = u.issued_at
+         FROM registry.project_env d JOIN registry.project p ON p.org = d.org AND p.id = d.project
+         WHERE (u.org, u.env, u.project) = (d.org, d.env, d.project)
+           AND u.issuer = $1 AND u.org = $2 AND u.env = $3
+           AND u.revoked_at IS NULL
+           AND (NOT p.active OR NOT d.active OR d.instance_suffix <> u.instance_suffix)",
     )
     .bind(issuer)
     .bind(org.as_str())
     .bind(env.as_str())
-    .fetch_optional(&mut *tx)
+    .execute(&mut *tx)
     .await
     .map_err(database_error)?;
-    tx.commit().await.map_err(database_error)?;
-    Ok(row)
+    if updated.rows_affected() > 0 {
+        bind_actor(&mut tx).await?;
+        sqlx::query(
+            "UPDATE identity.nats_key SET published = false,
+             issued_at = GREATEST(issued_at + 1, floor(EXTRACT(EPOCH FROM clock_timestamp()))::bigint)
+             WHERE issuer = $1 AND org = $2 AND env = $3 AND kind = 'env'",
+        )
+        .bind(issuer)
+        .bind(org.as_str())
+        .bind(env.as_str())
+        .execute(&mut *tx)
+        .await
+        .map_err(database_error)?;
+    }
+    tx.commit().await.map_err(database_error)
+}
+
+async fn revoked_users(
+    client: &mut PgConnection,
+    issuer: &str,
+    org: &OrgId,
+    env: &EnvName,
+) -> Result<BTreeMap<String, i64>, Error> {
+    let rows = sqlx::query_as::<_, (String, i64)>(
+        "SELECT public_key, revoked_at FROM identity.nats_user
+         WHERE issuer = $1 AND org = $2 AND env = $3 AND revoked_at IS NOT NULL",
+    )
+    .bind(issuer)
+    .bind(org.as_str())
+    .bind(env.as_str())
+    .fetch_all(client)
+    .await
+    .map_err(database_error)?;
+    Ok(rows.into_iter().collect())
+}
+
+pub(super) async fn record_user(
+    client: &mut PgConnection,
+    issuer: &str,
+    (org, env, project): (&OrgId, &EnvName, &ProjectId),
+    public_key: &str,
+    issued_at: i64,
+) -> Result<bool, Error> {
+    let updated = sqlx::query(
+        "INSERT INTO identity.nats_user (issuer, org, env, project, public_key, instance_suffix, issued_at)
+         SELECT $1, $2, $3, $4, $5, d.instance_suffix, $6
+         FROM registry.project_env d JOIN registry.project p ON p.org = d.org AND p.id = d.project
+         JOIN registry.env e ON e.org = d.org AND e.env = d.env JOIN registry.org o ON o.id = d.org
+         WHERE (d.org, d.env, d.project) = ($2, $3, $4) AND d.active AND p.active AND e.active AND o.active
+         ON CONFLICT (issuer, org, env, public_key) DO UPDATE
+           SET issued_at = GREATEST(identity.nats_user.issued_at, EXCLUDED.issued_at)
+           WHERE identity.nats_user.project = EXCLUDED.project AND identity.nats_user.revoked_at IS NULL
+                 AND identity.nats_user.instance_suffix = EXCLUDED.instance_suffix",
+    )
+    .bind(issuer)
+    .bind(org.as_str())
+    .bind(env.as_str())
+    .bind(project.as_str())
+    .bind(public_key)
+    .bind(issued_at)
+    .execute(client)
+    .await
+    .map_err(database_error)?;
+    Ok(updated.rows_affected() != 0)
 }
 
 pub(super) async fn env_signer(

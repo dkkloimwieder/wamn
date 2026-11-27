@@ -253,9 +253,13 @@ pub(super) async fn ensure_stream(platform: &Platform, triple: &Triple) -> anyho
         .events
         .as_ref()
         .context("event stream policy is absent")?;
-    let broker = super::broker::admin(platform, &triple.org, &triple.env)
-        .await?
-        .context("environment stream-admin credential is absent")?;
+    let broker = super::broker::job_user(
+        platform,
+        &triple.org,
+        &triple.env,
+        wamn_identity_protocol::nats::UserPurpose::StreamAdmin,
+    )
+    .await?;
     platform
         .broker
         .provision(&platform.nats_url, &broker, triple, events)

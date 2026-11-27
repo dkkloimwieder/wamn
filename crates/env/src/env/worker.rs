@@ -92,11 +92,6 @@ async fn execute(
                     project: triple.project,
                     env: triple.env,
                     system_transaction_url: platform.system_transaction_url.clone(),
-                    nats: wamn_event::deploy_broker::EventObserver {
-                        nats_url: platform.nats_url.clone(),
-                        nats_tls_ca: wamn_event::deploy_broker::CA_FILE.into(),
-                        creds: "/etc/wamn/recovery-nats/user.creds".into(),
-                    },
                 },
                 phase.context("capture recovery needs an environment phase")?,
             )

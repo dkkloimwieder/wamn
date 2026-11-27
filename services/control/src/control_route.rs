@@ -718,7 +718,10 @@ impl ControlRoutes<'_> {
         let mut writer = self.writer.lock().await?;
         let mut transaction = self.begin(&mut writer, attachment, caller).await?;
         let project_scope = env.is_none().then_some(project);
-        let before =
+        if let Some(env) = env {
+            status_envs(&mut transaction, self.org, project, env).await?;
+        }
+        let mut before =
             crate::control_sql::status_mirrors(&mut transaction, self.org, project_scope, env)
                 .await?;
         transaction.commit().await?;
@@ -740,9 +743,26 @@ impl ControlRoutes<'_> {
                         })?;
                 logins.push(ConnectionInput::from(login));
             }
+
             Ok::<_, Refusal>(logins)
         }
         .await;
+
+        // Finish any pending revocations before a retry can make the project active again.
+        if env.is_none() && status == EnvStatus::Active {
+            self.refresh_nats_revocations(&before).await?;
+        }
+        let activation_logins = if status == EnvStatus::Inactive {
+            for mirror in &mut before {
+                mirror.status = EnvStatus::Inactive;
+            }
+            self.write_statuses(attachment, caller, &before, logins?)
+                .await?;
+            None
+        } else {
+            Some(logins)
+        };
+
         let mut transaction = self.begin(&mut writer, attachment, caller).await?;
         if let Some(env) = env {
             let envs = status_envs(&mut transaction, self.org, project, env).await?;
@@ -768,18 +788,30 @@ impl ControlRoutes<'_> {
         if !stable {
             return Err(anyhow::anyhow!("project deployment changed during status update").into());
         }
-        status::change_status(
-            status,
-            move || async move {
-                transaction.commit().await?;
-                Ok(())
-            },
-            || async {
-                self.write_statuses(attachment, caller, &mirrors, logins?)
-                    .await
-            },
-        )
-        .await
+        transaction.commit().await?;
+        if let Some(logins) = activation_logins {
+            self.write_statuses(attachment, caller, &mirrors, logins?)
+                .await?;
+        } else if env.is_none() {
+            self.refresh_nats_revocations(&mirrors).await?;
+        }
+        Ok(())
+    }
+
+    async fn refresh_nats_revocations(
+        &self,
+        mirrors: &[crate::control_sql::StatusMirror],
+    ) -> Result<(), Refusal> {
+        if let Some(identity) = self.identity {
+            for mirror in mirrors {
+                identity
+                    .refresh_nats(&wamn_identity_protocol::nats::RefreshAccount {
+                        env: mirror.env.clone(),
+                    })
+                    .await?;
+            }
+        }
+        Ok(())
     }
 
     /// Write each mirror in its own transaction and report any partial completion.

@@ -339,11 +339,16 @@ Identity reserves file storage across environments in a short SQL transaction.
 Identity publishes the signed account revision after commit and keeps the previous reservation until the resolver acknowledges a decrease.
 The account contains all the environment's project streams. Accounts exchange no imports or exports.
 
-The environment worker generates the other environment user keys and stores their credentials in Secrets in the environment namespace.
-The worker uses the environment's `stream-admin` credentials to manage project streams.
-Each project's CDC reader can publish only to the project's event subjects.
-Its recovery worker can request stream information and read messages from that project's stream.
-Each JWT authorizes a separate reply inbox.
+The environment worker creates the shared host credentials and each project's CDC credential as Secrets in the environment namespace.
+A CDC credential can publish to its own project's event subjects.
+Stream administration and recovery Jobs keep their keys and credentials in memory.
+Identity limits each Job JWT to the verified Job deadline.
+A recovery JWT grants stream information and message reads for the Job's project.
+Each JWT authorizes its own reply inbox.
+
+Identity records project user public keys in `identity.nats_user`.
+Project deactivation revokes those keys. Identity publishes the revocations in the retained account JWT.
+Environment deactivation keeps the namespace, account and streams and blocks new credentials.
 
 The host group mounts shared data credentials and separate credentials for its `workflow` and `ingress` bindings and native workflow client.
 Bindings use `workloadConfig: deny` and narrow access to the application's project stream and subjects.

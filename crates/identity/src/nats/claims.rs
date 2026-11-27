@@ -1,5 +1,7 @@
 //! NATS v2 JWT and credentials encoding.
 
+use std::collections::BTreeMap;
+
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use data_encoding::BASE32_NOPAD;
 use nkeys::{KeyPair, KeyPairType};
@@ -23,6 +25,8 @@ struct Claims<'a, T> {
 struct Common<'a> {
     #[serde(skip_serializing_if = "String::is_empty")]
     jti: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    exp: Option<i64>,
     iat: i64,
     iss: &'a str,
     name: &'a str,
@@ -47,6 +51,8 @@ struct Account<'a> {
     limits: AccountLimits,
     #[serde(skip_serializing_if = "<[String]>::is_empty")]
     signing_keys: &'a [String],
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    revocations: &'a BTreeMap<String, i64>,
 }
 
 #[derive(Serialize)]
@@ -77,6 +83,10 @@ pub(crate) struct AccountRevision {
 }
 
 impl AccountRevision {
+    pub(crate) fn revocations(&self) -> &BTreeMap<String, i64> {
+        &self.nats.revocations
+    }
+
     pub(crate) fn limits(&self) -> Limits {
         self.nats.limits
     }
@@ -85,6 +95,8 @@ impl AccountRevision {
 #[derive(Deserialize)]
 struct RevisionClaims {
     limits: Limits,
+    #[serde(default)]
+    revocations: BTreeMap<String, i64>,
 }
 
 pub(crate) fn account_revision(jwt: &[u8]) -> Result<Option<AccountRevision>, Error> {
@@ -159,7 +171,7 @@ pub(super) fn operator(
         root,
         &root.public_key(),
         "wamn",
-        issued_at,
+        (issued_at, None),
         Operator {
             claim_type: "operator",
             version: 2,
@@ -176,13 +188,13 @@ pub(super) fn account(
     name: &str,
     issued_at: i64,
     limits: Limits,
-    signing_keys: &[String],
+    (signing_keys, revocations): (&[String], &BTreeMap<String, i64>),
 ) -> Result<String, Error> {
     encode(
         issuer,
         subject,
         name,
-        issued_at,
+        (issued_at, None),
         Account {
             claim_type: "account",
             version: 2,
@@ -196,6 +208,7 @@ pub(super) fn account(
                 mem_storage: 0,
             },
             signing_keys,
+            revocations,
         },
     )
 }
@@ -205,7 +218,7 @@ pub(super) fn user(
     issuer_account: Option<&str>,
     subject: &str,
     name: &str,
-    issued_at: i64,
+    validity: (i64, Option<i64>),
     permissions: &Permissions,
 ) -> Result<String, Error> {
     if !is_user_public_key(subject) {
@@ -215,7 +228,7 @@ pub(super) fn user(
         issuer,
         subject,
         name,
-        issued_at,
+        validity,
         User {
             claim_type: "user",
             version: 2,
@@ -246,35 +259,17 @@ pub fn credentials(jwt: &str, key: &KeyPair) -> Result<Zeroizing<String>, Error>
     )))
 }
 
-pub(super) fn delete_account(
-    key: &KeyPair,
-    account: &str,
-    issued_at: i64,
-) -> Result<String, Error> {
-    // The resolver requires a generic JWT self-signed by a trusted operator key.
-    let subject = key.public_key();
-    encode(
-        key,
-        &subject,
-        "delete-account",
-        issued_at,
-        serde_json::json!({
-            "accounts": [account],
-            "version": 2
-        }),
-    )
-}
-
 fn encode<T: Serialize>(
     key: &KeyPair,
     subject: &str,
     name: &str,
-    issued_at: i64,
+    (issued_at, exp): (i64, Option<i64>),
     nats: T,
 ) -> Result<String, Error> {
     let issuer = key.public_key();
     let mut common = Common {
         jti: String::new(),
+        exp,
         iat: issued_at,
         iss: &issuer,
         name,
@@ -316,7 +311,15 @@ mod tests {
             disk_bytes_per_project: 512 * 1024 * 1024,
         };
         let limits = super::super::env_limits(&configured, 3).unwrap();
-        let jwt = super::account(&op, &account.public_key(), "env", 1, limits, &[]).unwrap();
+        let jwt = super::account(
+            &op,
+            &account.public_key(),
+            "env",
+            1,
+            limits,
+            (&[], &BTreeMap::new()),
+        )
+        .unwrap();
         let revision = account_revision(jwt.as_bytes()).unwrap().unwrap();
         let payload = jwt.split('.').nth(1).unwrap();
         let claims: serde_json::Value =

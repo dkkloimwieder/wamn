@@ -24,7 +24,7 @@ pub const IDENTITY_ISSUER_READ_COLUMNS: [(&str, &str, &[&str]); 9] = [
     (
         "registry",
         "project_env",
-        &["org", "env", "project", "instance_suffix"],
+        &["org", "env", "project", "instance_suffix", "active"],
     ),
     // The control audience of an org
     // (docs/architecture/execution.md#control-sessions): the org must be
@@ -35,7 +35,7 @@ pub const IDENTITY_ISSUER_READ_COLUMNS: [(&str, &str, &[&str]); 9] = [
         &["principal_id", "org", "project", "role"],
     ),
     ("registry", "org", &["id", "active"]),
-    ("registry", "project", &["org", "id"]),
+    ("registry", "project", &["org", "id", "active"]),
     (
         "registry",
         "env",

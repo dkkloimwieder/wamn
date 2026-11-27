@@ -135,7 +135,7 @@ async fn bootstrap_is_atomic_and_uses_database_facts() {
            AND ((schemaname = 'registry'
                 OR schemaname = 'identity' AND NOT starts_with(tablename::text, 'authentication_event')
                    AND tablename NOT IN (
-                    'session_key', 'nats_key', 'password_login', 'password_token',
+                    'session_key', 'nats_key', 'nats_user', 'password_login', 'password_token',
                     'password_attempt', 'renewal_credential', 'session_signing_state'
                 )) <> EXISTS (
                SELECT FROM pg_trigger

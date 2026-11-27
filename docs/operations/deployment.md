@@ -390,7 +390,7 @@ Environment apply reads the schemas for that publication from the package digest
 For each project, the worker waits for the database to be applied and allows up to 120 seconds for it to accept a SQL connection.
 CloudNativePG creates the database and assigns ownership to `wamn_migration`. The worker installs the project schema before restoring platform migrations. It checks the publication in SQL before it creates the replication slot.
 The CDC reader waits up to 120 seconds for its slot before it starts replication.
-The worker creates the stream with the environment's `stream-admin` credentials and saves the project's applied configuration.
+The worker obtains a short-lived stream administration JWT from identity and creates the stream. It then saves the project's applied configuration.
 The reader stays paused while a capture gap is open.
 The shared host group uses the runtime operator chart at version 2.12.3.
 At startup, the host uses `POD_NAME` as its host ID and generates a scheduler user key in memory.
@@ -404,7 +404,9 @@ Run `wamn env deactivate-project ORG/ENV/PROJECT --data` to remove resources kep
 Type the same `ORG/ENV/PROJECT` at the terminal prompt, or pass `--confirm ORG/ENV/PROJECT` with `--data`.
 See [Recover after deactivation](backup-and-recovery.md#recover-after-deactivation) for cleanup when the Cluster is already gone.
 Deactivation stops the reader before it removes the stream, then removes the replication slot and publication.
-It removes the project’s CDC and recovery credential Secrets. For the last active project it also removes the host group, the shared credentials, and the environment account.
+It removes the project's CDC credential Secret. Identity revokes the project's NATS users and keeps the environment account.
+For the last active project, the worker removes the host group and the shared host credentials.
+If you reactivate a project with a retained deployment, run `wamn env apply` to issue a new CDC credential and restart the reader.
 These lifecycle requests return Jobs. The CLI polls `env.operation_status`.
 Use `wamn revoke-pat --project PROJECT --env ENV --prefix PREFIX` from an org admin session.
 Other lifecycle operations take the coordinate and read the registry.

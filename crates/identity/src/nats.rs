@@ -3,7 +3,7 @@
 mod claims;
 mod monitor;
 
-use std::{error, fmt, time::SystemTime};
+use std::{collections::BTreeMap, error, fmt, time::SystemTime};
 
 use nkeys::KeyPair;
 use serde::{Deserialize, Serialize};
@@ -36,6 +36,17 @@ impl Error {
             context: "invalid NATS user public key",
             source: None,
         }
+    }
+
+    pub(crate) fn scope_refused() -> Self {
+        Self::new("authorize NATS workload scope", ScopeRefusal)
+    }
+
+    /// Whether the authenticated workload cannot use the requested scope.
+    pub fn is_scope_refused(&self) -> bool {
+        self.source
+            .as_ref()
+            .is_some_and(|source| source.is::<ScopeRefusal>())
     }
 
     pub(crate) fn limit_refused(reason: &'static str) -> Self {
@@ -156,10 +167,19 @@ pub const LOOKUP_SUBJECT: &str = "$SYS.REQ.ACCOUNT.*.CLAIMS.LOOKUP";
 pub const STATZ_SUBJECT: &str = "$SYS.REQ.ACCOUNT.*.STATZ";
 /// Read an environment's current streams and their usage.
 pub const JSZ_SUBJECT: &str = "$SYS.REQ.ACCOUNT.*.JSZ";
-/// Resolver endpoint for operator-signed account removal.
-pub const DELETE_SUBJECT: &str = "$SYS.REQ.CLAIMS.DELETE";
 /// Inbox prefix for the platform runtime operator.
 pub const RUNTIME_OPERATOR_INBOX: &str = "_INBOX_wasmcloud-operator";
+
+#[derive(Debug)]
+struct ScopeRefusal;
+
+impl fmt::Display for ScopeRefusal {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("requested workload scope is inactive or does not match")
+    }
+}
+
+impl error::Error for ScopeRefusal {}
 
 #[derive(Debug)]
 struct LimitRefusal(&'static str);
@@ -232,7 +252,7 @@ pub fn bootstrap(keys: BootstrapKeys, file_store_bytes: i64) -> Result<Bootstrap
         "SYS",
         system.issued_at,
         claims::PLATFORM_LIMITS,
-        &[system_signing.pair.public_key()],
+        (&[system_signing.pair.public_key()], &BTreeMap::new()),
     )?;
     let platform_jwt = claims::account(
         &signing.pair,
@@ -240,7 +260,7 @@ pub fn bootstrap(keys: BootstrapKeys, file_store_bytes: i64) -> Result<Bootstrap
         "PLATFORM",
         platform.issued_at,
         claims::PLATFORM_LIMITS,
-        &[platform_signing.pair.public_key()],
+        (&[platform_signing.pair.public_key()], &BTreeMap::new()),
     )?;
     let operator_include = format!(
         "operator: \"{operator_jwt}\"\nsystem_account: \"{system_id}\"\nresolver_preload: {{\n  \"{system_id}\": \"{system_jwt}\"\n  \"{platform_id}\": \"{platform_jwt}\"\n}}\n"
@@ -254,15 +274,9 @@ pub fn bootstrap(keys: BootstrapKeys, file_store_bytes: i64) -> Result<Bootstrap
         Some(&system_id),
         &resolver_user_id,
         "wamn-identity-resolver",
-        unix_seconds()?,
+        (unix_seconds()?, None),
         &permissions(
-            [
-                UPDATE_SUBJECT,
-                DELETE_SUBJECT,
-                LOOKUP_SUBJECT,
-                STATZ_SUBJECT,
-                JSZ_SUBJECT,
-            ],
+            [UPDATE_SUBJECT, LOOKUP_SUBJECT, STATZ_SUBJECT, JSZ_SUBJECT],
             [format!("{system_inbox}.>")],
         ),
     )?;
@@ -272,7 +286,7 @@ pub fn bootstrap(keys: BootstrapKeys, file_store_bytes: i64) -> Result<Bootstrap
         Some(&platform_id),
         &runtime_operator.pair.public_key(),
         "wasmcloud-operator",
-        runtime_operator.issued_at,
+        (runtime_operator.issued_at, None),
         &permissions(
             ["runtime.host.>"],
             [
@@ -309,6 +323,7 @@ impl Authority {
         env: &EnvName,
         key: Account,
         limits: Limits,
+        revocations: &BTreeMap<String, i64>,
     ) -> Result<(String, String), Error> {
         let jwt = claims::account(
             &self.operator_signing,
@@ -316,19 +331,19 @@ impl Authority {
             &name::env_nats_account(org, env),
             key.issued_at,
             limits,
-            &[key.signer.public_key()],
+            (&[key.signer.public_key()], revocations),
         )?;
         Ok((key.subject, jwt))
     }
 
-    /// Sign removal of the retired account's current revision.
-    pub fn retired_account(&self, account: &str, issued_at: i64) -> Result<String, Error> {
-        claims::delete_account(&self.operator_signing, account, issued_at)
-    }
-
     /// Issue a scoped JWT for a host connection to PLATFORM.
     pub fn platform_user(&self, user: &User<'_>) -> Result<String, Error> {
-        sign_user(&self.platform_signing, &self.platform, user)
+        sign_user(
+            &self.platform_signing,
+            &self.platform,
+            user,
+            unix_seconds()?,
+        )
     }
 }
 
@@ -338,15 +353,21 @@ pub struct User<'a> {
     pub public_key: &'a str,
     pub name: &'a str,
     pub permissions: &'a Permissions,
+    pub expires_at: Option<i64>,
 }
 
-pub fn sign_user(signer: &KeyPair, account: &str, user: &User<'_>) -> Result<String, Error> {
+pub(crate) fn sign_user(
+    signer: &KeyPair,
+    account: &str,
+    user: &User<'_>,
+    issued_at: i64,
+) -> Result<String, Error> {
     claims::user(
         signer,
         Some(account),
         user.public_key,
         user.name,
-        unix_seconds()?,
+        (issued_at, user.expires_at),
         user.permissions,
     )
 }
@@ -368,7 +389,7 @@ fn permissions<const P: usize, const S: usize>(
     }
 }
 
-fn unix_seconds() -> Result<i64, Error> {
+pub(crate) fn unix_seconds() -> Result<i64, Error> {
     let elapsed = SystemTime::UNIX_EPOCH
         .elapsed()
         .map_err(|source| Error::new("read NATS signing time", source))?;

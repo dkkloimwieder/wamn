@@ -49,6 +49,7 @@ pub struct ServiceAccountIdentity {
     pub namespace: String,
     pub name: String,
     pub pod_name: Option<String>,
+    pub pod_uid: Option<String>,
 }
 
 impl KubernetesApi {
@@ -135,15 +136,18 @@ impl KubernetesApi {
         else {
             return Ok(None);
         };
-        let pod_name = user
-            .extra
-            .and_then(|mut extra| extra.remove("authentication.kubernetes.io/pod-name"))
-            .filter(|names| names.len() == 1)
-            .and_then(|mut names| names.pop());
+        let mut extra = user.extra.unwrap_or_default();
+        let mut bound_pod = |key| {
+            extra
+                .remove(key)
+                .filter(|values| values.len() == 1)
+                .and_then(|mut values| values.pop())
+        };
         Ok(Some(ServiceAccountIdentity {
             namespace: namespace.to_owned(),
             name: name.to_owned(),
-            pod_name,
+            pod_name: bound_pod("authentication.kubernetes.io/pod-name"),
+            pod_uid: bound_pod("authentication.kubernetes.io/pod-uid"),
         }))
     }
 

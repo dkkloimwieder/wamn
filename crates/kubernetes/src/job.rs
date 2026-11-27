@@ -24,6 +24,79 @@ use kube::{
 // Bound execution even if the caller exits. Kubernetes never retries these Jobs.
 const INSTALL_DEADLINE: Duration = Duration::from_mins(15);
 
+/// Return the deadline of the running operation Job bound to the reviewed token.
+pub async fn credential_expiry(
+    api: &KubernetesApi,
+    account: &crate::client::ServiceAccountIdentity,
+    operation: &str,
+    coordinate: Option<&str>,
+) -> Result<Option<i64>, crate::Error> {
+    let (Some(pod_name), Some(pod_uid)) = (&account.pod_name, &account.pod_uid) else {
+        return Ok(None);
+    };
+    let pods = Api::<Pod>::namespaced(api.client(), &account.namespace);
+    let Some(pod) = tokio::time::timeout(REQUEST_TIMEOUT, pods.get_opt(pod_name))
+        .await
+        .map_err(|error| crate::failure("read credential pod", pod_name, error))?
+        .map_err(|error| crate::failure("read credential pod", pod_name, error))?
+    else {
+        return Ok(None);
+    };
+    if pod.metadata.uid.as_ref() != Some(pod_uid)
+        || pod.metadata.deletion_timestamp.is_some()
+        || pod
+            .spec
+            .as_ref()
+            .and_then(|spec| spec.service_account_name.as_ref())
+            != Some(&account.name)
+    {
+        return Ok(None);
+    }
+    let Some(owner) = pod
+        .metadata
+        .owner_references
+        .as_deref()
+        .unwrap_or_default()
+        .iter()
+        .find(|owner| {
+            owner.api_version == "batch/v1" && owner.kind == "Job" && owner.controller == Some(true)
+        })
+    else {
+        return Ok(None);
+    };
+    let jobs = Api::<Job>::namespaced(api.client(), &account.namespace);
+    let Some(job) = tokio::time::timeout(REQUEST_TIMEOUT, jobs.get_opt(&owner.name))
+        .await
+        .map_err(|error| crate::failure("read credential Job", &owner.name, error))?
+        .map_err(|error| crate::failure("read credential Job", &owner.name, error))?
+    else {
+        return Ok(None);
+    };
+    let annotation = |key| {
+        job.metadata
+            .annotations
+            .as_ref()?
+            .get(key)
+            .map(String::as_str)
+    };
+    if job.metadata.uid.as_ref() != Some(&owner.uid)
+        || job.metadata.deletion_timestamp.is_some()
+        || annotation("wamn.dev/operation") != Some(operation)
+        || coordinate.is_some_and(|value| annotation("wamn.dev/operation-target") != Some(value))
+        || state(&job) != State::Running
+    {
+        return Ok(None);
+    }
+    let start = job.status.and_then(|status| status.start_time);
+    let duration = job.spec.and_then(|spec| spec.active_deadline_seconds);
+    Ok(start.zip(duration).and_then(|(start, duration)| {
+        let max = i64::try_from(INSTALL_DEADLINE.as_secs()).ok()?;
+        let deadline = start.0.as_second().checked_add(duration)?;
+        let now = std::time::SystemTime::UNIX_EPOCH.elapsed().ok()?.as_secs();
+        (duration > 0 && duration <= max && deadline > i64::try_from(now).ok()?).then_some(deadline)
+    }))
+}
+
 /// The wamn Job identity matches the stock host. The group grants access to mounted volumes.
 pub fn pod_security_context() -> Value {
     json!({

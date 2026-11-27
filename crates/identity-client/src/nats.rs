@@ -7,14 +7,14 @@ use serde::{Serialize, de::DeserializeOwned};
 use url::Url;
 use wamn_identity_protocol::nats::{
     Account, BrokerIdentity, ENSURE_ACCOUNT_PATH, EnsureAccount, SIGN_HOST_USER_PATH,
-    SIGN_USER_PATH, SignHostUser, SignUser, SignedUser,
+    SIGN_USER_PATH, SignHostUser, SignUser, SignedUser, UserRefusal,
 };
 
 use super::{IdentityHttp, TOKEN_PATH, service_endpoint};
 
 const MAX_RESPONSE_BYTES: usize = 8192;
 
-/// The org worker's client of identity's NATS signing authority.
+/// The operation worker's client of identity's NATS signing authority.
 pub struct NatsClient {
     http: IdentityHttp,
     accounts: Url,
@@ -65,6 +65,13 @@ async fn post<T: DeserializeOwned>(
     request: &impl Serialize,
 ) -> anyhow::Result<T> {
     let mut response = http.post(endpoint, serde_json::to_vec(request)?).await?;
+    if endpoint.path().ends_with(SIGN_USER_PATH) {
+        match response.status() {
+            StatusCode::FORBIDDEN => return Err(UserRefusal::Scope.into()),
+            StatusCode::NOT_FOUND => return Err(UserRefusal::AccountMissing.into()),
+            _ => (),
+        }
+    }
     anyhow::ensure!(
         response.status() != StatusCode::CONFLICT,
         "NATS environment limits conflict with usage or store capacity"

@@ -8,7 +8,7 @@ use wamn_identity::authentication_event::{Event, EventType, Outcome};
 use wamn_identity::identity::issuer::Issuer;
 use wamn_identity::password::Invitation;
 use wamn_identity::password_requests;
-use wamn_identity_protocol::nats::{SIGN_HOST_USER_PATH, SIGN_USER_PATH};
+use wamn_identity_protocol::nats::{ENSURE_ACCOUNT_PATH, SIGN_HOST_USER_PATH, SIGN_USER_PATH};
 
 use crate::Inner;
 
@@ -31,7 +31,7 @@ pub(super) fn password_event(path: &str) -> Option<EventType> {
 pub(super) fn workload_event(path: &str) -> Option<EventType> {
     Some(match path {
         "/invitations" => EventType::InvitationRequest,
-        SIGN_USER_PATH => EventType::NatsWorkloadCredentialIssue,
+        ENSURE_ACCOUNT_PATH | SIGN_USER_PATH => EventType::NatsWorkloadCredentialIssue,
         SIGN_HOST_USER_PATH => EventType::NatsHostCredentialIssue,
         _ => return None,
     })

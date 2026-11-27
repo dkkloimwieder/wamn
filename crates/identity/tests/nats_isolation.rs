@@ -17,7 +17,8 @@ use tokio::time::{sleep, timeout};
 use wamn_envelope::encryption::Envelope;
 use wamn_identity::identity::nats as key_store;
 use wamn_identity::nats::{self, Bootstrap, Permissions, SubjectPermission};
-use wamn_registry::{EnvName, OrgId};
+use wamn_identity_protocol::nats::{SignUser, UserPurpose};
+use wamn_registry::name;
 use wamn_test_infrastructure::{
     containers::{self, Nats},
     database::{self, System},
@@ -184,21 +185,45 @@ impl Platform {
     }
 
     /// Sign a user with every subject in an environment account.
-    async fn env_user(&mut self, env: &str) -> Result<(Value, String)> {
+    async fn env_user(&self, env: &str) -> Result<(Value, String)> {
+        let request = SignUser {
+            org: ORG.parse()?,
+            env: env.parse()?,
+            purpose: UserPurpose::Workflow,
+            public_key: String::new(),
+        };
+        self.sign_user(
+            env,
+            name::ENV_WORKER_ACCOUNT,
+            request,
+            &every_subject(),
+            None,
+        )
+        .await
+    }
+
+    async fn sign_user(
+        &self,
+        caller_env: &str,
+        account: &str,
+        mut request: SignUser,
+        permissions: &Permissions,
+        expires_at: Option<i64>,
+    ) -> Result<(Value, String)> {
         let key = KeyPair::new_user();
-        let public_key = key.public_key();
-        let org: OrgId = ORG.parse()?;
-        let env: EnvName = env.parse()?;
+        request.public_key = key.public_key();
+        let namespace = name::env_key(&request.org, &caller_env.parse()?);
         let jwt = key_store::env_user(
-            &mut self.db,
+            connect_identity(&self.system, &self.database_login).await?,
             &self.envelope,
             &self.issuer,
-            &org,
-            &env,
+            (&namespace, account),
+            &request,
             &nats::User {
-                public_key: &public_key,
+                public_key: &request.public_key,
                 name: "isolation-probe",
-                permissions: &every_subject(),
+                permissions,
+                expires_at,
             },
         )
         .await?
@@ -213,6 +238,7 @@ impl Platform {
             public_key: &key.public_key(),
             name: "isolation-probe",
             permissions: &every_subject(),
+            expires_at: None,
         })?;
         Ok(nats::credentials(&jwt, &key)?.to_string())
     }
@@ -372,7 +398,8 @@ async fn env_account_publication_serializes_one_env_and_retries_its_committed_re
         );
         Ok::<_, anyhow::Error>(())
     };
-    let (initial, concurrent) = timeout(WAIT, async { tokio::join!(initial, concurrent) }).await?;
+    let (initial, concurrent) =
+        Box::pin(timeout(WAIT, async { tokio::join!(initial, concurrent) })).await?;
     concurrent?;
     ensure!(initial.is_err(), "unacknowledged publication must fail");
     Ok(())
@@ -567,7 +594,7 @@ async fn next_error(errors: &mut mpsc::UnboundedReceiver<String>) -> Result<Stri
 #[tokio::test]
 #[ignore = "requires: docker, bin:helm"]
 async fn each_env_has_one_account_and_no_traffic_crosses_accounts() -> Result<()> {
-    let mut platform = platform().await?;
+    let platform = platform().await?;
     let (dev, _) = platform.env("dev").await?;
     let (prod, _) = platform.env("prod").await?;
     assert_ne!(dev, prod, "two environments share one account");
@@ -662,7 +689,7 @@ async fn runtime_operator_user_holds_only_its_signed_subjects() -> Result<()> {
 #[tokio::test]
 #[ignore = "requires: docker, bin:helm"]
 async fn env_account_limits_refuse_the_next_connection_and_subscription() -> Result<()> {
-    let mut platform = platform().await?;
+    let platform = platform().await?;
     let (_, account) = platform.env("dev").await?;
     let limit = |name: &str| {
         account["nats"]["limits"][name]
@@ -711,6 +738,177 @@ async fn env_account_limits_refuse_the_next_connection_and_subscription() -> Res
     assert_eq!(
         reason.to_lowercase(),
         "maximum account active connections exceeded"
+    );
+    Ok(())
+}
+
+async fn register_projects(platform: &Platform) -> Result<()> {
+    let mut admin = platform.system.admin().await?;
+    let mut tx =
+        wamn_postgres::provisioning_transaction::provisioning_transaction(&mut admin).await?;
+    sqlx::query(
+        "INSERT INTO registry.project (org, id)
+         VALUES ($1, 'billing'), ($1, 'inventory')",
+    )
+    .bind(ORG)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query(
+        "INSERT INTO registry.project_env (org, env, project, secret_name, instance_suffix)
+         SELECT p.org, e.env, p.id, p.id || '-db', '12345678'
+         FROM registry.project p JOIN registry.env e USING (org) WHERE p.org = $1",
+    )
+    .bind(ORG)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+fn recovery(env: &str, project: &str) -> Result<SignUser> {
+    Ok(SignUser {
+        org: ORG.parse()?,
+        env: env.parse()?,
+        purpose: UserPurpose::Recovery {
+            project: project.parse()?,
+        },
+        public_key: String::new(),
+    })
+}
+
+#[tokio::test]
+#[ignore = "requires: docker, bin:helm"]
+async fn recovery_account_cannot_sign_for_another_project_or_env() -> Result<()> {
+    let platform = platform().await?;
+    register_projects(&platform).await?;
+    platform.env("dev").await?;
+    platform.env("prod").await?;
+    let org = ORG.parse()?;
+    let project = "billing".parse()?;
+    let dev = "dev".parse()?;
+    let account = name::project_operation_account(&org, &project, &dev);
+    let now: i64 = std::time::UNIX_EPOCH.elapsed()?.as_secs().try_into()?;
+    for (caller_env, request) in [
+        ("dev", recovery("dev", "inventory")?),
+        ("dev", recovery("prod", "billing")?),
+    ] {
+        let error = platform
+            .sign_user(
+                caller_env,
+                &account,
+                request,
+                &every_subject(),
+                Some(now + 60),
+            )
+            .await
+            .expect_err("identity signed outside the authenticated scope");
+        assert!(
+            error
+                .downcast_ref::<nats::Error>()
+                .is_some_and(nats::Error::is_scope_refused)
+        );
+    }
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires: docker, bin:helm"]
+async fn revocation_disconnects_the_project_and_preserves_its_sibling_and_account() -> Result<()> {
+    let platform = platform().await?;
+    register_projects(&platform).await?;
+    let (account, _) = platform.publish("dev", Some(2)).await?;
+    let project_creds = async |project: &str| -> Result<(Value, String)> {
+        let request = SignUser {
+            purpose: UserPurpose::Cdc {
+                project: project.parse()?,
+            },
+            ..recovery("dev", project)?
+        };
+        platform
+            .sign_user(
+                "dev",
+                name::ENV_WORKER_ACCOUNT,
+                request,
+                &every_subject(),
+                None,
+            )
+            .await
+    };
+    let (claims, creds) = project_creds("billing").await?;
+    let (_, sibling) = project_creds("inventory").await?;
+    let sibling_connection = platform.connect(&sibling).await?;
+    let mut messages = subscribed(&sibling_connection, SUBJECT).await?;
+    let (events, mut disconnected) = mpsc::channel(1);
+    let client = platform
+        .nats
+        .connect_options()
+        .credentials(&creds)?
+        .event_callback(move |event| {
+            if matches!(event, Event::Disconnected) {
+                let _ = events.try_send(());
+            }
+            async {}
+        })
+        .connect(platform.nats.url())
+        .await?;
+    client.flush().await?;
+    let mut admin = platform.system.admin().await?;
+    let mut tx =
+        wamn_postgres::provisioning_transaction::provisioning_transaction(&mut admin).await?;
+    sqlx::query("UPDATE registry.project_env SET active = false WHERE org = $1 AND env = 'dev' AND project = 'billing'")
+        .bind(ORG).execute(&mut *tx).await?;
+    tx.commit().await?;
+    let (retained, revision) = platform.publish("dev", None).await?;
+    assert_eq!(retained, account);
+    assert_eq!(
+        revision["nats"]["revocations"][claims["sub"].as_str().context("user subject")?],
+        claims["iat"]
+    );
+    timeout(WAIT, disconnected.recv())
+        .await?
+        .context("wait for NATS to disconnect the revoked user")?;
+    assert!(
+        platform.connect(&creds).await.is_err(),
+        "a revoked key reconnected"
+    );
+    let sibling = platform.connect(&sibling).await?;
+    sibling.publish(SUBJECT, "still active".into()).await?;
+    assert_eq!(next_payload(&mut messages).await?, b"still active");
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires: docker, bin:helm"]
+async fn nats_refuses_a_job_jwt_at_its_deadline() -> Result<()> {
+    let platform = platform().await?;
+    platform.env("dev").await?;
+    let now: i64 = std::time::UNIX_EPOCH.elapsed()?.as_secs().try_into()?;
+    let deadline = now + 3;
+    let request = SignUser {
+        purpose: UserPurpose::StreamAdmin,
+        ..recovery("dev", "unused")?
+    };
+    let (_, creds) = platform
+        .sign_user(
+            "dev",
+            name::ENV_WORKER_ACCOUNT,
+            request,
+            &every_subject(),
+            Some(deadline),
+        )
+        .await?;
+    platform.connect(&creds).await?.flush().await?;
+    let expires = std::time::UNIX_EPOCH + Duration::from_secs(deadline.try_into()?);
+    sleep(
+        expires
+            .duration_since(std::time::SystemTime::now())
+            .unwrap_or_default()
+            + Duration::from_secs(1),
+    )
+    .await;
+    assert!(
+        platform.connect(&creds).await.is_err(),
+        "an expired Job key reconnected"
     );
     Ok(())
 }

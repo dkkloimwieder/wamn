@@ -28,4 +28,4 @@ Set `cdcReader.pause` to stop the CDC reader without removing its configuration.
 The recovery Job pauses the reader before repairing the replication slot.
 The close Job records resynchronization before it starts the reader again.
 Deployment keeps the reader paused while the registry records an open gap.
-The chart issues a separate client certificate for project recovery.
+When environment apply replaces a CDC credential, it sets the new public key in the reader pod annotations. The change restarts the reader. The recovery Job obtains its own short-lived NATS credential.

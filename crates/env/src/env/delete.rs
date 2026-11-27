@@ -5,12 +5,13 @@
 //! Under the lifecycle lock, test ownership and existing unfinished runs before
 //! uninstalling application releases. Drain their hosts and test runs again.
 //! Delete and drain the CDC reader before removing credentials or replication.
-//! Retire the host and remove the project stream before retiring broker credentials.
+//! Retire the host when empty and remove the project stream before revoking the project users.
 //! Then remove the replication slot, Publication CR, and Database CR.
 //! With `--data`, remove the instance roles.
-//! Remove the credential store Secret and its account before the final transaction.
+//! Remove the credential store Secret before the final registry transaction.
 //! The final transaction marks the deployment inactive and removes its
 //! app bindings and memberships.
+//! After commit, refresh the retained environment account and publish revocations.
 //! Disable connection principals in a retained database.
 //!
 //! Helm preserves the Cluster, ObjectStore, and certificates unless deletion includes data.
@@ -21,6 +22,7 @@ use super::database::{DatabaseConnection, LifecycleLock};
 use crate::env_sql_effects::{self, PostgresSession};
 
 use anyhow::bail;
+use wamn_identity_protocol::nats::{UserPurpose, UserRefusal};
 
 use wamn_registry::name::{cdc_object_name, project_env_database_name};
 use wamn_registry::{Triple, name};
@@ -87,6 +89,8 @@ async fn deactivate_locked(
         } else {
             lines.push(format!("{triple} has no active deployment"));
         }
+        let remaining = system.project_count(org, env).await?;
+        super::broker::after_delete(platform, org, env, remaining).await?;
         return Ok(lines);
     };
     let database = project_env_database_name(org, project, env, &instance);
@@ -178,15 +182,20 @@ async fn deactivate_locked(
             "deleted the CDC reader of {triple} (or it was gone)"
         ));
 
-        if let Some(broker) = super::broker::admin(platform, org, env).await? {
-            let stream = name::stream_name(org, project, env);
-            if platform
-                .broker
-                .remove(&platform.nats_url, &broker, &stream)
-                .await?
-            {
-                lines.push(format!("deleted stream {stream}"));
+        match super::broker::job_user(platform, org, env, UserPurpose::StreamAdmin).await {
+            Ok(broker) => {
+                let stream = name::stream_name(org, project, env);
+                if platform
+                    .broker
+                    .remove(&platform.nats_url, &broker, &stream)
+                    .await?
+                {
+                    lines.push(format!("deleted stream {stream}"));
+                }
             }
+            Err(error)
+                if error.downcast_ref::<UserRefusal>() == Some(&UserRefusal::AccountMissing) => {}
+            Err(error) => return Err(error),
         }
 
         // Slot administration belongs to the capture login on the recorded cluster.
@@ -261,8 +270,8 @@ async fn deactivate_locked(
         let host = name::env_host_name(org, env);
         platform.cluster.uninstall(&host).await?;
     }
-    super::broker::after_delete(platform, triple, remaining).await?;
-    // Keep the registry inputs until the credential store and its account are gone.
+    super::broker::delete_project_user(platform, triple).await?;
+    // Keep the registry inputs until the credential store is gone.
     let secret = wamn_registry::credential_secret_name(org, project, env);
     if platform.cluster.delete_secret(&secret).await? {
         lines.push(format!(
@@ -270,5 +279,6 @@ async fn deactivate_locked(
         ));
     }
     lines.extend(system.deactivate_row(triple).await?);
+    super::broker::after_delete(platform, org, env, remaining).await?;
     Ok(lines)
 }

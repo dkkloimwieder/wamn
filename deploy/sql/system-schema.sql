@@ -825,6 +825,7 @@ INSERT INTO identity.authentication_event_outcome (code, label, success) VALUES
     ('delivery_failed', 'Credential delivery failed', false),
     ('delivery_cleanup_failed', 'Failed delivery credential could not be consumed', false),
     ('workload_refused', 'Workload credential refused', false),
+    ('env_mismatch', 'Workload scope does not authorize the requested NATS credentials', false),
     ('org_mismatch', 'Requested org differs from workload org', false),
     ('public_key_invalid', 'NATS public key refused', false),
     ('nats_account_missing', 'NATS environment account missing', false),
@@ -904,6 +905,26 @@ CREATE TRIGGER wamn_record_history_stamp
     BEFORE INSERT OR UPDATE ON registry.project_env
     FOR EACH ROW
     EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
+
+-- Project user subjects are public NKeys. The issuer never receives a user seed.
+CREATE TABLE identity.nats_user (
+    issuer text NOT NULL,
+    org text NOT NULL,
+    env text NOT NULL,
+    project text NOT NULL,
+    public_key text NOT NULL,
+    instance_suffix text NOT NULL,
+    issued_at bigint NOT NULL,
+    revoked_at bigint,
+    PRIMARY KEY (issuer, org, env, public_key),
+    FOREIGN KEY (org, env, project) REFERENCES registry.project_env (org, env, project) ON DELETE RESTRICT
+);
+DO $nats_user_grants$ BEGIN
+    IF to_regrole('wamn_identity_issuer') IS NOT NULL THEN
+        GRANT SELECT, INSERT ON identity.nats_user TO wamn_identity_issuer;
+        GRANT UPDATE (issued_at, revoked_at) ON identity.nats_user TO wamn_identity_issuer;
+    END IF;
+END $nats_user_grants$;
 
 -- Applied settings belong to the project deployment.
 -- Helm revisions record deployment attempts and supply rollback history.

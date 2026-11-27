@@ -167,7 +167,7 @@ async fn configure_project(
         wamn_registry::name::cdc_object_name(&triple.org, &triple.project, &triple.env, instance);
     let connections = workload::connections(connection)?;
 
-    super::broker::configure_project(platform, triple).await?;
+    let cdc_key = super::broker::configure_project(platform, triple).await?;
 
     super::chart_values::set_operation_values(
         &mut values,
@@ -189,6 +189,7 @@ async fn configure_project(
         &platform.nats_url,
         platform.registry_token_metadata,
     );
+    values["cdcReader"]["natsPublicKey"] = cdc_key.into();
     let paused = lock.has_capture_gap(triple).await?;
     values["cdcReader"]["pause"] = paused.into();
     // Wait for the database first because the reader needs the slot created below.

@@ -19,7 +19,7 @@ pub(super) const ENV_HOST_GROUP_LABEL: &str = "wamn.dev/env-host-group";
 pub use wamn_kubernetes::web_release::ROUTE_ORG_LABEL as ORG_NAME_LABEL;
 
 /// The ServiceAccount used for environment-wide jobs.
-pub const ENV_ACCOUNT: &str = "wamn-env";
+pub use wamn_registry::name::ENV_WORKER_ACCOUNT as ENV_ACCOUNT;
 
 /// The committed resource budgets and container defaults for one env.
 #[derive(Debug, Deserialize, Serialize)]
@@ -176,6 +176,15 @@ pub(super) fn boundary(org: &OrgId, namespace: &str, storage: &str, quota: &Quot
             "metadata":{"name":ENV_ACCOUNT,"namespace":namespace}}),
     ];
     objects.extend(bind_role(namespace, ENV_ACCOUNT, &worker_rules, &worker));
+    objects.extend(bind_role(
+        namespace,
+        "wamn-identity-job-reader",
+        &[
+            rule("", &["pods"], &["get"]),
+            rule("batch", &["jobs"], &["get"]),
+        ],
+        &json!({"kind":"ServiceAccount","name":"identity","namespace":PLATFORM}),
+    ));
     objects.extend(bind_role(
         namespace,
         "wamn-control-operations",

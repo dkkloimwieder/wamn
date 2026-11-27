@@ -6,7 +6,10 @@ use crate::nats::{self, Authority, Bootstrap, BootstrapKeys, Error, User};
 use nkeys::KeyPairType;
 use sqlx::PgConnection;
 use wamn_envelope::encryption::Envelope;
+use wamn_identity_protocol::nats::{SignUser, UserPurpose};
 use wamn_registry::{EnvName, OrgId};
+
+use crate::workload_identity;
 
 use super::nats_store;
 
@@ -121,7 +124,8 @@ where
     E: error::Error + Send + Sync + 'static,
 {
     nats_store::with_env_lock(client, issuer, (org, env), async |client| {
-        let Some((key, limits)) = nats_store::ensure_env(
+        nats_store::stage_revocations(client, issuer, org, env).await?;
+        let Some((key, limits, revocations)) = nats_store::ensure_env(
             client,
             envelope,
             issuer,
@@ -147,7 +151,7 @@ where
         else {
             return Ok(None);
         };
-        let (public_key, jwt) = authority.env_account(org, env, key, limits)?;
+        let (public_key, jwt) = authority.env_account(org, env, key, limits, &revocations)?;
         publish(&public_key, jwt)
             .await
             .map_err(|source| Error::new("publish NATS environment account", source))?;
@@ -157,46 +161,62 @@ where
     .await
 }
 
-/// Advance the account revision and publish its removal under the same session lock.
-/// The dedicated database connection is consumed.
-///
-/// # Errors
-///
-/// Returns an error if the lock, key storage, signing, or resolver operation fails.
-pub async fn retire_env<E: error::Error + Send + Sync + 'static>(
-    authority: &Authority,
-    client: PgConnection,
-    issuer: &str,
-    org: &OrgId,
-    env: &EnvName,
-    publish: impl AsyncFnOnce(String) -> Result<(), E>,
-) -> Result<Option<String>, Error> {
-    nats_store::with_env_lock(client, issuer, (org, env), async |client| {
-        let Some((account, issued_at)) = nats_store::retire_env(client, issuer, org, env).await?
-        else {
-            return Ok(None);
-        };
-        let jwt = authority.retired_account(&account, issued_at)?;
-        publish(jwt)
-            .await
-            .map_err(|source| Error::new("retire NATS environment account", source))?;
-        nats_store::acknowledge(client, issuer, (org, env), 0).await?;
-        Ok(Some(account))
-    })
-    .await
-}
-
-/// Issue a scoped JWT in an existing environment account.
+/// Authorize the workload against its current mapping and sign under the account lock.
+/// A project key is recorded before the JWT leaves identity so deactivation can revoke it.
 pub async fn env_user(
-    client: &mut PgConnection,
+    client: PgConnection,
     envelope: &Envelope,
     issuer: &str,
-    org: &OrgId,
-    env: &EnvName,
+    (namespace, account): (&str, &str),
+    request: &SignUser,
     user: &User<'_>,
 ) -> Result<Option<String>, Error> {
-    nats_store::env_signer(client, envelope, issuer, org, env)
-        .await?
-        .map(|key| nats::sign_user(&key.signer, &key.subject, user))
-        .transpose()
+    let (org, env) = (&request.org, &request.env);
+    nats_store::with_env_lock(client, issuer, (org, env), async |client| {
+        let Some(key) = nats_store::env_signer(client, envelope, issuer, org, env).await? else {
+            return Ok(None);
+        };
+        let Some(mapping) = workload_identity::mapped_env(client, namespace)
+            .await
+            .map_err(nats_store::database_error)?
+        else {
+            return Err(Error::scope_refused());
+        };
+        let project = workload_identity::project(&request.purpose);
+        let project_active = if let Some(project) = project {
+            workload_identity::project_active(client, &mapping, project)
+                .await
+                .map_err(nats_store::database_error)?
+        } else {
+            false
+        };
+        if !workload_identity::user_allowed(&mapping, account, request, project_active) {
+            return Err(Error::scope_refused());
+        }
+        let issued_at = nats::unix_seconds()?;
+        let job_user = matches!(
+            request.purpose,
+            UserPurpose::StreamAdmin | UserPurpose::Recovery { .. }
+        );
+        if job_user != user.expires_at.is_some()
+            || user.expires_at.is_some_and(|expiry| expiry <= issued_at)
+        {
+            return Err(Error::scope_refused());
+        }
+        let jwt = nats::sign_user(&key.signer, &key.subject, user, issued_at)?;
+        if let Some(project) = project
+            && !nats_store::record_user(
+                client,
+                issuer,
+                (org, env, project),
+                user.public_key,
+                issued_at,
+            )
+            .await?
+        {
+            return Err(Error::scope_refused());
+        }
+        Ok(Some(jwt))
+    })
+    .await
 }

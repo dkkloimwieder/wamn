@@ -305,6 +305,7 @@ impl IdentityService {
                     | "/invitations"
                     | "/users/disable"
                     | wamn_identity_protocol::nats::ENSURE_ACCOUNT_PATH
+                    | wamn_identity_protocol::nats::REFRESH_ACCOUNT_PATH
                     | wamn_identity_protocol::nats::SIGN_USER_PATH
                     | wamn_identity_protocol::nats::SIGN_HOST_USER_PATH
             )

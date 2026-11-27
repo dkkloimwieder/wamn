@@ -14,10 +14,13 @@ use wamn_identity::identity::{
 };
 use wamn_identity::password::RefusalCause;
 use wamn_identity::password_requests::{self, Attempt, DeliveryFailure};
-use wamn_identity::workload_identity::Role;
+use wamn_identity::workload_identity;
 use wamn_identity_protocol::PrincipalId;
+use wamn_identity_protocol::nats::{
+    ENSURE_ACCOUNT_PATH, REFRESH_ACCOUNT_PATH, SIGN_HOST_USER_PATH, SIGN_USER_PATH,
+};
 use wamn_identity_protocol::wire::{PrincipalRequest, UserRequest, UserResponse};
-use wamn_registry::{OrgId, name};
+use wamn_registry::OrgId;
 
 use crate::{
     Database, Inner, authentication_event, connect_database,
@@ -85,42 +88,11 @@ async fn handle(
         return unavailable();
     };
     let route = parts.uri.path();
-    if route == wamn_identity_protocol::nats::SIGN_HOST_USER_PATH {
-        let pod = match workload::authenticate_host(api, token).await {
-            Ok(Some(pod)) => pod,
-            Ok(None) => {
-                set_outcome(event, Outcome::WorkloadRefused);
-                return forbidden();
-            }
-            Err(error) => {
-                tracing::warn!(%error, "check identity host token failed");
-                return unavailable();
-            }
-        };
-        let event = event
-            .as_mut()
-            .expect("host route has an authentication event");
-        let Some(body) = json_body(&parts.headers, body).await else {
-            event.workload = Some(pod);
-            event.outcome = Some(Outcome::RequestInvalid);
-            return invalid();
-        };
-        let reply = nats::sign_host_user(inner, &pod, &body, event);
-        event.workload = Some(pod);
-        return finish_nats(inner, None, event, reply).await;
-    }
-    let nats_route = matches!(
-        route,
-        wamn_identity_protocol::nats::ENSURE_ACCOUNT_PATH
-            | wamn_identity_protocol::nats::SIGN_USER_PATH
-    );
-    let role = if nats_route {
-        Role::Worker
-    } else {
-        Role::Control
-    };
-    let org = match workload::authenticate(api, token, role).await {
-        Ok(Some(org)) => org,
+    let account = match api
+        .review_service_account_token(token, wamn_identity_client::TOKEN_AUDIENCE)
+        .await
+    {
+        Ok(Some(account)) => account,
         Ok(None) => {
             set_outcome(event, Outcome::WorkloadRefused);
             return forbidden();
@@ -130,11 +102,61 @@ async fn handle(
             return unavailable();
         }
     };
+    if matches!(
+        route,
+        ENSURE_ACCOUNT_PATH | SIGN_USER_PATH | SIGN_HOST_USER_PATH
+    ) {
+        let event = event
+            .as_mut()
+            .expect("NATS workload route has an authentication event");
+        let Some(bytes) = json_body(&parts.headers, body).await else {
+            event.workload = Some(account.name);
+            event.outcome = Some(Outcome::RequestInvalid);
+            return invalid();
+        };
+        let Ok(mut db) = connect_database(&inner.connection).await else {
+            return unavailable();
+        };
+        db.workload_slot = Some(permit);
+        let mapping = match workload_identity::mapped_env(&mut db.client, &account.namespace).await
+        {
+            Ok(Some(mapping)) => mapping,
+            Ok(None) => {
+                event.workload = Some(account.name);
+                return nats::scope_refused(event);
+            }
+            Err(error) => {
+                tracing::warn!(%error, "read NATS workload namespace mapping failed");
+                return unavailable();
+            }
+        };
+        let reply = match route {
+            ENSURE_ACCOUNT_PATH => {
+                nats::ensure_account(inner, db.client, &mapping, &account.name, &bytes, event).await
+            }
+            SIGN_HOST_USER_PATH => {
+                if let Some(pod) =
+                    workload_identity::host(&mapping, &account.name, account.pod_name.as_deref())
+                {
+                    let reply = nats::sign_host_user(inner, &pod, &bytes, event);
+                    event.workload = Some(pod);
+                    reply
+                } else {
+                    nats::scope_refused(event)
+                }
+            }
+            _ => nats::sign_user(inner, db.client, api, &mapping, &account, &bytes, event).await,
+        };
+        event.org = Some(mapping.org);
+        event.workload.get_or_insert(account.name);
+        return finish_nats(inner, event, reply).await;
+    }
+    let Some(org) = workload_identity::org(account.namespace, &account.name) else {
+        set_outcome(event, Outcome::WorkloadRefused);
+        return forbidden();
+    };
     if let Some(event) = event {
-        event.workload = Some(match role {
-            Role::Worker => name::operation(&org),
-            Role::Control => name::control_service_account(&org),
-        });
+        event.workload = Some(account.name);
         if event.event_type == EventType::InvitationRequest {
             event.org = Some(org.clone());
         }
@@ -155,7 +177,7 @@ async fn handle(
         }
         Err(_) => return unavailable(),
     }
-    if !nats_route
+    if route != REFRESH_ACCOUNT_PATH
         && let Some(reply) = admission_reply(
             &password_requests::admit(
                 &mut Issuer(&mut db.client),
@@ -173,16 +195,8 @@ async fn handle(
         return invalid();
     };
 
-    if route == wamn_identity_protocol::nats::ENSURE_ACCOUNT_PATH {
-        // Account publication needs this direct session through the resolver reply.
-        return nats::ensure_account(inner, db.client, &org, &bytes).await;
-    }
-    if route == wamn_identity_protocol::nats::SIGN_USER_PATH {
-        let event = event
-            .as_mut()
-            .expect("worker route has an authentication event");
-        let reply = nats::sign_user(inner, &mut db.client, &org, &bytes, event).await;
-        return finish_nats(inner, Some(&mut db.client), event, reply).await;
+    if route == REFRESH_ACCOUNT_PATH {
+        return nats::refresh_account(inner, db.client, &org, &bytes).await;
     }
     if route == "/users" {
         let Ok(request) = serde_json::from_slice::<UserRequest>(&bytes) else {
@@ -216,7 +230,6 @@ async fn handle(
 
 async fn finish_nats(
     inner: &Inner,
-    connection: Option<&mut Client>,
     event: &mut Event,
     reply: Response<Full<Bytes>>,
 ) -> Response<Full<Bytes>> {
@@ -225,7 +238,7 @@ async fn finish_nats(
     }
     // NATS signing issues credentials in memory. Publish the reply only after the append.
     event.outcome = None;
-    let recorded = authentication_event::append(inner, connection, event, Outcome::Succeeded).await;
+    let recorded = authentication_event::append(inner, None, event, Outcome::Succeeded).await;
     if recorded { reply } else { unavailable() }
 }
 

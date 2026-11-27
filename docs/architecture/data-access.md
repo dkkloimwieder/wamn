@@ -1100,6 +1100,9 @@ The operator command reads the public quota from the Job result and applies the 
 `registry.login_org()` and `registry.login_env()` resolve the worker's coordinates from its authenticated login.
 Row policies restrict environment data to that worker's environment. Control still spans its org's environments.
 Only provisioning can add a mapping. Environment apply requires an existing mapping.
+Identity uses this mapping after Kubernetes TokenReview to authorize NATS credentials.
+It records project user public keys in `identity.nats_user` so it can revoke them after deactivation.
+Account publication runs after its database transaction commits.
 
 The system database (`wamn_system`) stamps its identity authority relations.
 These relations are `identity.principal`, `identity.org_membership`, `identity.org_role`, `identity.project_role`, and `identity.project_env_membership`.

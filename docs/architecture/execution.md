@@ -965,8 +965,10 @@ Identity records at most one rate-limit refusal per bucket in each window.
 Password requests expire after ten seconds and accept at most 8,192 body bytes.
 User management and NATS signing use projected service account tokens with audience `wamn-identity`.
 Identity verifies each token through Kubernetes TokenReview.
-For control and worker requests, identity requires the token's namespace to exist in `registry.org`.
-The `wamn-control-<org>` service account can manage users. The `wamn-operation-<org>` service account can request NATS credentials for its own org.
+Identity maps a control token's namespace to its org. The `wamn-control-<org>` service account manages users.
+Identity looks up each worker and host token's namespace in `registry.env` and requires an active mapping.
+The `wamn-env` service account requests account and user credentials for its environment.
+A project operation account can request a recovery JWT for its active project deployment.
 The `wamn-host-<org>--<env>` service account can request a scheduler user at `POST /nats/host-user`.
 The request body contains only the public key. Identity takes the pod name from TokenReview and refuses a token without it.
 The scheduler JWT has no expiry. A restarted container can request another JWT with a fresh key for the same pod.

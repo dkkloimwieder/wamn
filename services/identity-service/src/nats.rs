@@ -12,8 +12,10 @@ use wamn_identity::authentication_event::{Event, Outcome};
 use wamn_identity::identity::nats as key_store;
 use wamn_identity::nats::{self, Authority};
 use wamn_identity::workload_identity;
-use wamn_identity_protocol::nats::{Account, EnsureAccount, SignHostUser, SignUser, SignedUser};
-use wamn_kubernetes::client::KubernetesApi;
+use wamn_identity_protocol::nats::{
+    Account, EnsureAccount, RefreshAccount, SignHostUser, SignUser, SignedUser, UserPurpose,
+};
+use wamn_kubernetes::client::{KubernetesApi, ServiceAccountIdentity};
 use wamn_registry::{EnvName, OrgId, name};
 
 use crate::{IdentityServiceError, Inner, response, unavailable};
@@ -191,46 +193,58 @@ pub(super) async fn start(
 
 pub(super) async fn ensure_account(
     inner: &Inner,
-    client: PgConnection,
-    org: &OrgId,
+    mut client: PgConnection,
+    mapping: &workload_identity::Env,
+    account: &str,
     body: &[u8],
+    event: &mut Event,
 ) -> Response<Full<Bytes>> {
     let Some(state) = &inner.nats else {
         return unavailable();
     };
     let Ok(request) = serde_json::from_slice::<EnsureAccount>(body) else {
+        event.outcome = Some(Outcome::RequestInvalid);
         return invalid();
     };
-    if &request.org != org {
-        return super::users::forbidden();
+    if !workload_identity::account_allowed(mapping, account, &request.org, &request.env) {
+        return scope_refused(event);
     }
     let Ok(count) = i32::try_from(request.project_count) else {
+        event.outcome = Some(Outcome::RequestInvalid);
         return invalid();
     };
-    if count == 0 {
-        return match key_store::retire_env(
-            &state.authority,
-            client,
-            &inner.issuer,
-            org,
-            &request.env,
-            async |jwt| {
-                state
-                    .resolver_request(nats::DELETE_SUBJECT, None, jwt)
-                    .await
-            },
-        )
-        .await
-        {
-            Ok(public_key) => json(&Account {
-                public_key: public_key.unwrap_or_default(),
-            }),
-            Err(error) => signing_error(&error),
-        };
+    // An inactive project can still have a retained deployment and streams.
+    let deployed: Result<i64, _> = sqlx::query_scalar(
+        "SELECT count(*) FROM registry.project_env WHERE org = $1 AND env = $2 AND active",
+    )
+    .bind(mapping.org.as_str())
+    .bind(mapping.env.as_str())
+    .fetch_one(&mut client)
+    .await;
+    match deployed {
+        Ok(deployed) if deployed == i64::from(count) => (),
+        Ok(_) => return scope_refused(event),
+        Err(error) => {
+            tracing::warn!(%error, "read NATS project allocation failed");
+            return unavailable();
+        }
     }
-    match publish_account(inner, state, client, org, &request.env, Some(count)).await {
+    match publish_account(
+        inner,
+        state,
+        client,
+        &mapping.org,
+        &mapping.env,
+        Some(count),
+    )
+    .await
+    {
         Ok(Some(public_key)) => json(&Account { public_key }),
+        Ok(None) if count == 0 => json(&Account {
+            public_key: String::new(),
+        }),
         Ok(None) => unavailable(),
+        Err(error) if error.is_scope_refused() => scope_refused(event),
         Err(error) if error.is_limit_refused() => {
             tracing::warn!(error = ?error, "NATS environment limits refused");
             response(
@@ -242,6 +256,29 @@ pub(super) async fn ensure_account(
         }
         Err(error) => signing_error(&error),
     }
+}
+
+pub(super) async fn refresh_account(
+    inner: &Inner,
+    client: PgConnection,
+    org: &OrgId,
+    body: &[u8],
+) -> Response<Full<Bytes>> {
+    let Some(state) = &inner.nats else {
+        return unavailable();
+    };
+    let Ok(request) = serde_json::from_slice::<RefreshAccount>(body) else {
+        return invalid();
+    };
+    match publish_account(inner, state, client, org, &request.env, None).await {
+        Ok(_) => response(StatusCode::NO_CONTENT, "application/json", Vec::new()),
+        Err(error) => signing_error(&error),
+    }
+}
+
+pub(super) fn scope_refused(event: &mut Event) -> Response<Full<Bytes>> {
+    event.outcome = Some(Outcome::EnvMismatch);
+    super::users::forbidden()
 }
 
 async fn publish_account(
@@ -317,8 +354,10 @@ async fn refresh_pending(inner: &Inner, state: &State) -> Result<(), nats::Error
 
 pub(super) async fn sign_user(
     inner: &Inner,
-    client: &mut PgConnection,
-    org: &OrgId,
+    mut client: PgConnection,
+    api: &KubernetesApi,
+    mapping: &workload_identity::Env,
+    account: &ServiceAccountIdentity,
     body: &[u8],
     event: &mut Event,
 ) -> Response<Full<Bytes>> {
@@ -329,30 +368,46 @@ pub(super) async fn sign_user(
         event.outcome = Some(Outcome::RequestInvalid);
         return invalid();
     };
-    if &request.org != org {
-        event.org = Some(request.org);
-        event.outcome = Some(Outcome::OrgMismatch);
-        return super::users::forbidden();
+    let project_active = if let Some(project) = workload_identity::project(&request.purpose) {
+        match workload_identity::project_active(&mut client, mapping, project).await {
+            Ok(active) => active,
+            Err(error) => {
+                tracing::warn!(%error, "read NATS workload project failed");
+                return unavailable();
+            }
+        }
+    } else {
+        false
+    };
+    if !workload_identity::user_allowed(mapping, &account.name, &request, project_active) {
+        return scope_refused(event);
     }
     if !nats::is_user_public_key(&request.public_key) {
-        event.org = Some(request.org);
         event.outcome = Some(Outcome::PublicKeyInvalid);
         return invalid();
     }
+    let expires_at = match job_expiry(api, account, &request).await {
+        Ok(Some(expiry)) => expiry,
+        Ok(None) => return scope_refused(event),
+        Err(error) => {
+            tracing::warn!(%error, "read NATS workload Job failed");
+            return unavailable();
+        }
+    };
     let inbox_prefix = name::nats_user_inbox(&request.public_key);
     let (name, permissions) = workload_identity::env_permissions(&request, &inbox_prefix);
-    event.org = Some(request.org);
     let user = nats::User {
         public_key: &request.public_key,
         name: &name,
         permissions: &permissions,
+        expires_at,
     };
     let signed = key_store::env_user(
         client,
         &inner.envelope,
         &inner.issuer,
-        org,
-        &request.env,
+        (&account.namespace, &account.name),
+        &request,
         &user,
     )
     .await;
@@ -366,8 +421,28 @@ pub(super) async fn sign_user(
                 br#"{"error":"NATS environment account is absent"}"#.to_vec(),
             )
         }
+        Err(error) if error.is_scope_refused() => scope_refused(event),
         Err(error) => credential_signing_error(&error, event),
     }
+}
+
+async fn job_expiry(
+    api: &KubernetesApi,
+    account: &ServiceAccountIdentity,
+    request: &SignUser,
+) -> Result<Option<Option<i64>>, wamn_kubernetes::Error> {
+    let expiry = match &request.purpose {
+        UserPurpose::Recovery { project } => {
+            let coordinate = name::project_env_resource_name(&request.org, project, &request.env);
+            wamn_kubernetes::job::credential_expiry(api, account, "recover", Some(&coordinate))
+                .await?
+        }
+        UserPurpose::StreamAdmin => {
+            wamn_kubernetes::job::credential_expiry(api, account, "env", None).await?
+        }
+        _ => return Ok(Some(None)),
+    };
+    Ok(expiry.map(Some))
 }
 
 pub(super) fn sign_host_user(
@@ -393,6 +468,7 @@ pub(super) fn sign_host_user(
         public_key: &request.public_key,
         name: pod,
         permissions: &permissions,
+        expires_at: None,
     };
     match state.authority.platform_user(&user) {
         Ok(jwt) => signed_user(jwt, inbox_prefix, event),

@@ -558,7 +558,7 @@ kubectl -n platform exec wamn-pg-1 -c postgres -- psql -U postgres -Atc \
   "select slot_name, active, wal_status, invalidation_reason from pg_replication_slots"
 ```
 
-`recover-capture-gap` drops the lost slot, makes it again under the same name and writes the open gap row. It calls authenticated control, which selects the capture login and project recovery certificate:
+`recover-capture-gap` drops the lost slot, makes it again under the same name and writes the open gap row. It calls authenticated control, which selects the capture login and starts a recovery Job.
 
 ```bash
 $CARGO_TARGET_DIR/debug/wamn recover-capture-gap --project wms --env dev
@@ -597,7 +597,7 @@ After issue 1, the confirmed position can sit past the last commit, so `start_at
 
 Two verbs write the row with the control credential:
 
-- `wamn recover-capture-gap --project PROJECT --env ENV` drops the lost slot and creates it again under the same name, `cdc_object_name(org, project, env, instance)`. The publication and the replication role keep that name and stay untouched. The Job pauses the reader through the project chart, repairs the slot, and writes its end position. The recovery Job reads the last CDC event with the project's recovery certificate. It selects the system owner and the recorded capture login. It refuses a healthy slot, an active slot, and a connection to any database other than the project-env database.
+- `wamn recover-capture-gap --project PROJECT --env ENV` drops the lost slot and creates it again under the same name, `cdc_object_name(org, project, env, instance)`. The publication and the replication role keep that name and stay untouched. The Job pauses the reader through the project chart, repairs the slot, and writes its end position. The recovery Job reads the last CDC event with a NATS JWT from identity that expires at the Job deadline. It selects the system owner and the recorded capture login. It refuses a healthy slot, an active slot, and a connection to any database other than the project-env database.
 - `wamn close-capture-gap --project PROJECT --env ENV` sets `resync_at` on the newest row and starts the reader through the project chart. It refuses when no row exists. Retrying a closed gap restarts the reader and retains the original `resync_at`. Until the resync exists, the operator runs it on the owner's word.
 
 - A lost slot is not recoverable. A new slot starts at the current WAL position, and the WAL between the old confirmed position and that point is removed. The rows written in that interval produce no events.

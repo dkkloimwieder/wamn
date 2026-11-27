@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use url::Url;
 use wamn_http_client::HttpResponse;
 use wamn_identity_protocol::PrincipalId;
+use wamn_identity_protocol::nats::{REFRESH_ACCOUNT_PATH, RefreshAccount};
 use wamn_identity_protocol::wire::{PrincipalRequest, UserRequest, UserResponse};
 
 use super::{IdentityHttp, TOKEN_PATH, service_endpoint};
@@ -20,6 +21,7 @@ pub struct UserClient {
     create: Url,
     invite: Url,
     disable: Url,
+    refresh_nats: Url,
 }
 
 impl fmt::Debug for UserClient {
@@ -50,6 +52,7 @@ impl UserClient {
             create: service_endpoint(endpoint, "users")?,
             invite: service_endpoint(endpoint, "invitations")?,
             disable: service_endpoint(endpoint, "users/disable")?,
+            refresh_nats: service_endpoint(endpoint, REFRESH_ACCOUNT_PATH.trim_start_matches('/'))?,
             http: IdentityHttp::new(ca, token)?,
         })
     }
@@ -92,6 +95,18 @@ impl UserClient {
             "identity did not accept the invitation for delivery: {status}"
         );
         // Drain the bounded response so the HTTPS connection can be reused.
+        read_response(response).await?;
+        Ok(())
+    }
+
+    /// Publish pending project revocations in an environment of the control org.
+    pub async fn refresh_nats(&self, request: &RefreshAccount) -> anyhow::Result<()> {
+        let response = self.http.post(&self.refresh_nats, encode(request)?).await?;
+        let status = response.status();
+        anyhow::ensure!(
+            status == StatusCode::NO_CONTENT,
+            "identity did not refresh the NATS account: {status}"
+        );
         read_response(response).await?;
         Ok(())
     }

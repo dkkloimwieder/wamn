@@ -1,21 +1,22 @@
-//! Org-owned NATS credentials and the environment's resolver account.
+//! Environment-owned NATS credentials and the environment's resolver account.
 
 use anyhow::Context as _;
 use wamn_event::deploy_broker::CREDENTIALS_KEY;
-use wamn_identity_protocol::nats::{BrokerIdentity, EnsureAccount, SignUser, UserPurpose};
+use wamn_identity_protocol::nats::{
+    BrokerIdentity, EnsureAccount, SignUser, UserPurpose, UserRefusal,
+};
 
 use wamn_registry::{EnvName, OrgId, Triple, name};
 use zeroize::Zeroizing;
 
 use super::Platform;
 
-fn env_users() -> [(&'static str, UserPurpose); 5] {
+fn env_users() -> [(&'static str, UserPurpose); 4] {
     [
         ("data", UserPurpose::HostData),
         ("workflow", UserPurpose::Workflow),
         ("ingress", UserPurpose::Ingress),
         ("workflow-native", UserPurpose::WorkflowNative),
-        ("stream-admin", UserPurpose::StreamAdmin),
     ]
 }
 
@@ -41,54 +42,65 @@ pub(super) async fn configure(
     Ok(())
 }
 
-pub(super) async fn configure_project(platform: &Platform, triple: &Triple) -> anyhow::Result<()> {
+pub(super) async fn configure_project(
+    platform: &Platform,
+    triple: &Triple,
+) -> anyhow::Result<String> {
     let identity = (platform.broker_identity)(&platform.identity_issuer)?;
-    for (purpose_name, user) in [
-        (
-            "cdc",
-            UserPurpose::Cdc {
-                project: triple.project.clone(),
-            },
-        ),
-        (
-            "recovery",
-            UserPurpose::Recovery {
-                project: triple.project.clone(),
-            },
-        ),
-    ] {
-        ensure_user(
-            platform,
-            &*identity,
-            &triple.org,
-            &triple.env,
-            &name::project_nats_secret(triple, purpose_name),
-            user,
-        )
-        .await?;
+    let secret = name::project_nats_secret(triple, "cdc");
+    let request = |public_key| SignUser {
+        org: triple.org.clone(),
+        env: triple.env.clone(),
+        purpose: UserPurpose::Cdc {
+            project: triple.project.clone(),
+        },
+        public_key,
+    };
+    if let Some(creds) = read_user(platform, &secret).await? {
+        let inbox = platform.broker.credentials_inbox(&creds)?;
+        let (_, public_key) = inbox
+            .rsplit_once('.')
+            .context("CDC credentials have no NATS user key")?;
+        let existing = request(public_key.to_owned());
+        match identity.sign_user(&existing).await {
+            Ok(_) => return Ok(existing.public_key),
+            Err(error) if error.downcast_ref::<UserRefusal>() == Some(&UserRefusal::Scope) => {
+                // A project may be active again while its previous key stays revoked.
+            }
+            Err(error) => return Err(error),
+        }
     }
-    Ok(())
+    let key = nkeys::KeyPair::new_user();
+    let request = request(key.public_key());
+    let signed = identity.sign_user(&request).await?;
+    let creds = credentials(platform, &key, &signed)?;
+    platform
+        .cluster
+        .write_credentials(&secret, CREDENTIALS_KEY, creds.as_bytes())
+        .await?;
+    Ok(request.public_key)
+}
+
+pub(super) async fn delete_project_user(
+    platform: &Platform,
+    triple: &Triple,
+) -> anyhow::Result<()> {
+    delete_secret(platform, &name::project_nats_secret(triple, "cdc")).await
 }
 
 pub(super) async fn after_delete(
     platform: &Platform,
-    triple: &Triple,
+    org: &OrgId,
+    env: &EnvName,
     remaining: u32,
 ) -> anyhow::Result<()> {
     let identity = (platform.broker_identity)(&platform.identity_issuer)?;
-    for purpose_name in ["cdc", "recovery"] {
-        delete_secret(platform, &name::project_nats_secret(triple, purpose_name)).await?;
-    }
     if remaining == 0 {
         for (purpose_name, _) in env_users() {
-            delete_secret(
-                platform,
-                &name::env_nats_secret(&triple.org, &triple.env, purpose_name),
-            )
-            .await?;
+            delete_secret(platform, &name::env_nats_secret(org, env, purpose_name)).await?;
         }
     }
-    set_limit(&*identity, &triple.org, &triple.env, remaining).await
+    set_limit(&*identity, org, env, remaining).await
 }
 
 async fn set_limit(
@@ -127,15 +139,24 @@ async fn ensure_user(
             public_key: key.public_key(),
         })
         .await?;
-    let creds = wamn_identity::nats::credentials(&signed.jwt, &key)?;
-    anyhow::ensure!(
-        platform.broker.credentials_inbox(&creds)? == signed.inbox_prefix,
-        "identity returned an unexpected NATS inbox"
-    );
+    let creds = credentials(platform, &key, &signed)?;
     platform
         .cluster
         .write_credentials(secret_name, CREDENTIALS_KEY, creds.as_bytes())
         .await
+}
+
+fn credentials(
+    platform: &Platform,
+    key: &nkeys::KeyPair,
+    signed: &wamn_identity_protocol::nats::SignedUser,
+) -> anyhow::Result<Zeroizing<String>> {
+    let creds = wamn_identity::nats::credentials(&signed.jwt, key)?;
+    anyhow::ensure!(
+        platform.broker.credentials_inbox(&creds)? == signed.inbox_prefix,
+        "identity returned an unexpected NATS inbox"
+    );
+    Ok(creds)
 }
 
 async fn read_user(platform: &Platform, name: &str) -> anyhow::Result<Option<Zeroizing<String>>> {
@@ -168,11 +189,22 @@ pub(super) async fn inbox(
     platform.broker.credentials_inbox(&creds)
 }
 
-pub(super) async fn admin(
+/// Obtain short-lived credentials bound to this Job's key and projected pod token.
+pub(super) async fn job_user(
     platform: &Platform,
     org: &OrgId,
     env: &EnvName,
-) -> anyhow::Result<Option<Zeroizing<String>>> {
-    let name = name::env_nats_secret(org, env, "stream-admin");
-    read_user(platform, &name).await
+    purpose: UserPurpose,
+) -> anyhow::Result<Zeroizing<String>> {
+    let identity = (platform.broker_identity)(&platform.identity_issuer)?;
+    let key = nkeys::KeyPair::new_user();
+    let signed = identity
+        .sign_user(&SignUser {
+            org: org.clone(),
+            env: env.clone(),
+            purpose,
+            public_key: key.public_key(),
+        })
+        .await?;
+    credentials(platform, &key, &signed)
 }

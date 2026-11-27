@@ -201,7 +201,8 @@ fn manifest(
     job["metadata"]["annotations"] = json!({TARGET:coordinate,OPERATION:command});
     job["spec"]["ttlSecondsAfterFinished"] = 3600.into();
     job["spec"]["template"]["spec"]["serviceAccountName"] = if operation.is_some() {
-        format!("{coordinate}-operation").into()
+        wamn_registry::name::project_operation_account(&triple.org, &triple.project, &triple.env)
+            .into()
     } else {
         worker.service_account.as_str().into()
     };
@@ -226,12 +227,10 @@ fn manifest(
     }
     if matches!(operation, Some(Operation::Recover)) {
         wamn_kubernetes::worker_mounts::mount_broker_ca(&mut job);
-        wamn_kubernetes::job::mount(
+        wamn_kubernetes::worker_mounts::mount_identity_worker_token(
             &mut job,
-            "recovery-nats",
-            &wamn_registry::name::project_nats_secret(triple, "recovery"),
-            "/etc/wamn/recovery-nats",
-            &[wamn_broker::nats::CREDENTIALS_KEY],
+            std::path::Path::new(wamn_identity_client::TOKEN_PATH),
+            wamn_identity_client::TOKEN_AUDIENCE,
         );
     }
     wamn_platform_install::worker_mounts::mount_database_files(&mut job);

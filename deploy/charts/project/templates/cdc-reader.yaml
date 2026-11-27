@@ -35,6 +35,9 @@ spec:
         app.kubernetes.io/instance: {{ .key | quote }}
       annotations:
         wamn.dev/cdc-configuration: {{ $settings | sha256sum | quote }}
+        {{- with .natsPublicKey }}
+        wamn.dev/cdc-nats-user: {{ . | quote }}
+        {{- end }}
     spec:
       securityContext:
         runAsNonRoot: true
