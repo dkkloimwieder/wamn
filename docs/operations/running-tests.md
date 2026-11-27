@@ -345,11 +345,39 @@ At most 4 tests hold an org at one time.
 At the end of a test, `wamn env deactivate-project` tears down its project deployment and retains its data for recovery.
 If capture is enabled and a test fails, the suite saves evidence before it deactivates the project deployment.
 The org stays.
-The system database Poolers cap server connections and queue clients under load. Org and env creation remain independent of this budget. The kind capacity run measures where wait times start rising.
 
 The `nats_outage` target stops the platform NATS server, so it must run alone.
 Cargo runs the test targets one after another, so the command above runs it alone.
 Do not run it beside another journey run.
+
+### System Pooler capacity on kind
+
+The system database Poolers cap server connections and queue clients under load.
+Org and env creation remain independent of this budget.
+The kind capacity run measures where wait times start rising.
+
+After the journeys finish, run this command with the same bundle that `journey-cluster` used.
+If `journey-cluster` used its default bundle, run:
+
+```bash
+cargo xtask pooler-capacity --chart target/journey/bundle --steps 1,2,4,8,12,16,24 --max-step 24 --step-timeout-secs 900
+```
+
+The command reads `target/journey/cluster.json` and adds one env per new org through `wamn`.
+Each step counts the run's load orgs. The report records how many orgs were already present.
+Each org runs four clients per transaction Pooler for 30 seconds.
+Each client times `BEGIN READ ONLY` before a 20 ms query and commit.
+The timer includes the wait for a server connection and the round trip through the port-forward.
+The client allows 15 seconds per login and per transaction.
+If acquisition times out, the report counts the timeout and uses 15 seconds as a lower bound for that wait.
+Each client with acquire samples has equal weight in the percentiles, even when its queries run slowly.
+
+The report shows the largest measured step where both Poolers' p95 times stay within twice their own one-org times.
+It also shows the first measured step above that threshold.
+Use the result as a capacity measurement for this cluster and load.
+The JSON includes creation times, client errors and timeouts, and samples of `SHOW POOLS` and `pg_stat_activity`.
+Find it under `WAMN_RESULTS`, or under `target/journey` if that variable is unset.
+The command leaves the new orgs and envs in place and prints the org names.
 
 ### Kind smoke run
 

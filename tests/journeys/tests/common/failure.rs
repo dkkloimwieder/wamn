@@ -20,7 +20,7 @@ use serde_json::{Value, json};
 use wamn_identity_protocol::PAT_TOKEN_PREFIX;
 use wamn_registry::{OrgId, Triple, name};
 
-use super::{Capacity, Cluster, Org, PLATFORM, host, postgres_clusters};
+use super::{Capacity, Cluster, Org, PLATFORM, host, load_cluster, postgres_clusters};
 
 // Storage namespaces named by wamn_kubernetes::helm::org_release_namespace.
 const HELM_NAMESPACE_PREFIX: &str = "wamn-helm-";
@@ -132,7 +132,7 @@ impl Capture {
             .create(&root)
             .with_context(|| format!("create {}", root.display()))?;
         eprintln!("journey evidence: {}", root.display());
-        let cluster = Cluster::load()
+        let cluster = load_cluster()
             .await
             .map_err(|_| anyhow::anyhow!("load the journey cluster inputs"))?;
 

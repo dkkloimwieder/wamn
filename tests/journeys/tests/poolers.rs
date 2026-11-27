@@ -7,26 +7,21 @@ use std::cell::Cell;
 use std::time::Duration;
 
 use anyhow::{Context as _, bail, ensure};
+use common::cluster::pooler::{APPLY, APPLY_TRANSACTION, CONTROL, Pooler, ready_pooler};
 use common::request::until;
-use common::{Env, Org, PortForward, exec, secret_key};
-use k8s_openapi::api::core::v1::{ConfigMap, Pod};
+use common::{Env, Org, PLATFORM, PortForward, exec};
+use k8s_openapi::api::core::v1::Pod;
 use kube::Api;
-use kube::api::{AttachParams, ListParams};
-use sqlx::postgres::{PgConnectOptions, PgSslMode};
+use kube::api::AttachParams;
+use sqlx::postgres::PgConnectOptions;
 use sqlx::{ConnectOptions as _, Connection as _, PgConnection};
-use tokio::net::{TcpStream, UnixListener};
 use tokio::task::JoinSet;
 use tokio::time::timeout;
 use wamn_http_client::HttpClient;
 use wamn_test_infrastructure::scratch::ScratchRoot;
 
-const PLATFORM: &str = "platform";
 const DATABASE: &str = "wamn_system";
-const POSTGRES_PORT: u16 = 5432;
 const METRICS_PORT: u16 = 9127;
-const CONTROL: &str = "control";
-const APPLY: &str = "apply";
-const APPLY_TRANSACTION: &str = "apply-transaction";
 /// Time for org creation and environment apply through their CLI waits.
 const PROVISION_DEADLINE: Duration = Duration::from_mins(15);
 /// Time for a Pooler pod to report Ready or for all held sessions to open.
@@ -128,30 +123,9 @@ fn platform_pods(org: &Org) -> Api<Pod> {
     Api::namespaced(org.cluster.client.clone(), PLATFORM)
 }
 
-async fn ready_pooler(pods: &Api<Pod>, family: &str) -> anyhow::Result<String> {
-    let name = format!("wamn-pg-{family}");
-    let selector = ListParams::default().labels(&format!("cnpg.io/poolerName={name}"));
-    let waiting = format!("a ready pod for {PLATFORM}/{name}");
-    timeout(
-        READY_DEADLINE,
-        until(READY_DEADLINE, &waiting, || async {
-            pods.list(&selector)
-                .await?
-                .items
-                .into_iter()
-                .find(|pod| pod.metadata.deletion_timestamp.is_none() && common::host::ready(pod))
-                .map(|pod| pod.metadata.name.context("ready Pooler pod name"))
-                .transpose()
-        }),
-    )
-    .await
-    .with_context(|| format!("find {waiting} within {READY_DEADLINE:?}"))?
-}
-
 struct PoolerLogin {
     options: PgConnectOptions,
-    _relay: JoinSet<anyhow::Result<()>>,
-    _forward: PortForward,
+    _pooler: Pooler,
     _scratch: ScratchRoot,
 }
 
@@ -159,84 +133,25 @@ async fn pooler_login(
     env: &Env,
     pods: &Api<Pod>,
     pod: &str,
-    family: &str,
+    family: &'static str,
 ) -> anyhow::Result<PoolerLogin> {
     let namespace = if family == CONTROL {
         env.org.name.to_string()
     } else {
         env.namespace()
     };
-    let namespace = namespace.as_str();
-    let client = &env.org.cluster.client;
-    let role = if family == CONTROL { CONTROL } else { APPLY };
-    let secret = format!("wamn-{role}-db");
-    let roots = Api::<ConfigMap>::namespaced(client.clone(), namespace);
-    let (username, password, ca, forward) = timeout(REQUEST_DEADLINE, async {
-        tokio::try_join!(
-            secret_key(client, namespace, &secret, "username"),
-            secret_key(client, namespace, &secret, "password"),
-            async { Ok(roots.get("wamn-pg-ca").await?) },
-            PortForward::start(pods.clone(), pod, POSTGRES_PORT),
-        )
+    let scratch = ScratchRoot::create()?;
+    timeout(REQUEST_DEADLINE, async {
+        let pooler = Pooler::start(pods.clone(), pod, family, scratch.path()).await?;
+        let options = pooler.login(&env.org.cluster.client, &namespace).await?;
+        Ok(PoolerLogin {
+            options,
+            _pooler: pooler,
+            _scratch: scratch,
+        })
     })
     .await
-    .with_context(|| {
-        format!("read {namespace}/{secret} and forward to {pod} within {REQUEST_DEADLINE:?}")
-    })??;
-    let username = String::from_utf8(username).context("Pooler login username must be UTF-8")?;
-    let password = String::from_utf8(password).context("Pooler login password must be UTF-8")?;
-    let ca = ca
-        .data
-        .and_then(|mut data| data.remove("ca.crt"))
-        .context("system database CA ConfigMap has no ca.crt")?;
-    ensure!(
-        !username.is_empty() && !password.is_empty() && !ca.is_empty(),
-        "empty Pooler login or CA in {namespace}/{secret}"
-    );
-
-    // SQLx uses the TCP host as the TLS name. A local Unix relay selects the port-forward
-    // independently, so VerifyFull still checks the Pooler Service DNS name.
-    let scratch = ScratchRoot::create()?;
-    let address = forward.address;
-    let socket = scratch.path().join(format!(".s.PGSQL.{}", address.port()));
-    let listener = UnixListener::bind(&socket)
-        .with_context(|| format!("bind the SQLx relay at {}", socket.display()))?;
-    let mut relay = JoinSet::new();
-    relay.spawn(async move {
-        let mut connections = JoinSet::new();
-        loop {
-            let (mut local, _) = listener
-                .accept()
-                .await
-                .context("accept a SQLx relay connection")?;
-            connections.spawn(async move {
-                let result = async {
-                    let mut tcp = TcpStream::connect(address).await?;
-                    tokio::io::copy_bidirectional(&mut local, &mut tcp).await?;
-                    std::io::Result::Ok(())
-                }
-                .await;
-                if let Err(error) = result {
-                    eprintln!("relay SQLx to {address}: {error}");
-                }
-            });
-        }
-    });
-    let options = PgConnectOptions::new_without_pgpass()
-        .host(&format!("wamn-pg-{family}.{PLATFORM}.svc.cluster.local"))
-        .port(address.port())
-        .socket(scratch.path())
-        .database(DATABASE)
-        .username(&username)
-        .password(&password)
-        .ssl_root_cert_from_pem(ca.into_bytes())
-        .ssl_mode(PgSslMode::VerifyFull);
-    Ok(PoolerLogin {
-        options,
-        _relay: relay,
-        _forward: forward,
-        _scratch: scratch,
-    })
+    .with_context(|| format!("read the {family} login in {namespace} and forward to {pod}"))?
 }
 
 async fn assert_queue(

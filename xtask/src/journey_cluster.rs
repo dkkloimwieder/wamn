@@ -1,8 +1,9 @@
 //! Install the local kind platform for journey tests and record their inputs.
 //!
 //! The outputs file at `target/journey/cluster.json` matches
-//! `tests/journeys/tests/common/mod.rs::Outputs` field for field.
+//! `tests/journeys/support/cluster.rs::Outputs` field for field.
 
+use crate::journey_support::{OUTPUTS, PortForward};
 use crate::{kind, platform, process};
 use anyhow::{Context as _, ensure};
 use k8s_openapi::api::admissionregistration::v1::ValidatingAdmissionPolicyBinding;
@@ -15,17 +16,12 @@ use serde::Serialize;
 use sqlx::ConnectOptions as _;
 use sqlx::postgres::{PgConnectOptions, PgSslMode};
 use std::io::{Read as _, Write as _};
-use std::net::Ipv4Addr;
 use std::os::unix::fs::OpenOptionsExt as _;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::time::Duration;
-use tokio::net::TcpListener;
-use tokio::task::{JoinHandle, JoinSet};
 
-const OUTPUTS: &str = "target/journey";
 const REGISTRY: &str = "localhost:5001";
-const CONTEXT: &str = "kind-wamn-local";
+pub(super) const CONTEXT: &str = "kind-wamn-local";
 const PLATFORM: &str = "platform";
 /// The namespaces that the infrastructure and platform charts fill.
 const PLATFORM_NAMESPACES: [&str; 3] = ["platform", "hosts", "cert-manager"];
@@ -501,7 +497,7 @@ async fn create_observer(client: &kube::Client) -> anyhow::Result<String> {
     let server = || {
         PgConnectOptions::new()
             .host("127.0.0.1")
-            .port(forward.port)
+            .port(forward.address.port())
             .ssl_mode(PgSslMode::VerifyFull)
             .ssl_root_cert_from_pem(ca.clone())
     };
@@ -540,50 +536,6 @@ async fn create_observer(client: &kube::Client) -> anyhow::Result<String> {
         .await
         .with_context(|| format!("the system Cluster refuses {OBSERVER} to {SYSTEM_DATABASE}"))?;
     Ok(password)
-}
-
-/// A local TCP listener that forwards each connection to one pod port. Drop closes it.
-struct PortForward {
-    port: u16,
-    task: JoinHandle<()>,
-}
-
-impl PortForward {
-    async fn start(pods: Api<Pod>, pod: &str, port: u16) -> anyhow::Result<Self> {
-        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await?;
-        let local = listener.local_addr()?.port();
-        let pod: Arc<str> = pod.into();
-        let task = tokio::spawn(async move {
-            // Aborting this task drops the set, which aborts every open connection.
-            let mut connections = JoinSet::new();
-            while let Ok((mut tcp, _)) = listener.accept().await {
-                let pods = pods.clone();
-                let pod = Arc::clone(&pod);
-                connections.spawn(async move {
-                    let forwarded = async {
-                        let mut forwarder = pods.portforward(&pod, &[port]).await?;
-                        let mut upstream = forwarder
-                            .take_stream(port)
-                            .context("the port-forward has no stream")?;
-                        tokio::io::copy_bidirectional(&mut tcp, &mut upstream).await?;
-                        drop(upstream);
-                        forwarder.join().await?;
-                        anyhow::Ok(())
-                    };
-                    if let Err(error) = forwarded.await {
-                        eprintln!("port-forward to {pod}:{port}: {error:#}");
-                    }
-                });
-            }
-        });
-        Ok(Self { port: local, task })
-    }
-}
-
-impl Drop for PortForward {
-    fn drop(&mut self) {
-        self.task.abort();
-    }
 }
 
 fn text(path: &Path) -> anyhow::Result<&str> {

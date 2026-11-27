@@ -5,11 +5,14 @@ mod bench_cloud;
 mod bench_data;
 mod helm_size;
 mod journey_cluster;
+#[path = "../../tests/journeys/support/cluster.rs"]
+mod journey_support;
 mod kind;
 mod machete;
 mod measure_tx_identity;
 mod netsuite;
 mod platform;
+mod pooler_capacity;
 mod preflight;
 mod prepare_tests;
 mod process;
@@ -79,6 +82,8 @@ enum Task {
     BenchPgMinimum(bench_cloud::PgArgs),
     /// Measure read transaction COMMIT latency on a private PostgreSQL 18 server.
     MeasureTxIdentity(measure_tx_identity::Args),
+    /// Measure system Pooler wait times on the journey kind cluster.
+    PoolerCapacity(pooler_capacity::Args),
     /// Summarize retained benchmark results.
     BenchResult {
         work: PathBuf,
@@ -207,6 +212,7 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
         Task::BenchTier(args) => bench_cloud::tier(&root, &args).await,
         Task::BenchPgMinimum(args) => bench_cloud::pg(&root, &args).await,
         Task::MeasureTxIdentity(args) => measure_tx_identity::run(&args).await,
+        Task::PoolerCapacity(args) => pooler_capacity::run(&root, args).await,
         Task::BenchResult {
             work,
             output,

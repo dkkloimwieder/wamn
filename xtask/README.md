@@ -28,7 +28,8 @@ The package builder owns both role component builds. The HTTP role then uses the
 
 Benchmark commands retain their workloads and result fields. Run output defaults to a temporary directory.
 The local benchmark keeps the caller's Cargo target directory. It uses the component builder for its guests.
-Tooling tests were removed with the old scripts. Check tasks by using their commands. Live benchmarks and publication need their external resources.
+Use task commands to check their external behavior. Live benchmarks and publication need their external resources.
+The [Pooler capacity command](../docs/operations/running-tests.md#system-pooler-capacity-on-kind) has unit tests for its latency calculations.
 
 The `wamn-build` library under `xtask/build` owns guest compilation and package orchestration.
 The CLI and dev loop call that library. The compiler returns generated artifacts and build facts.

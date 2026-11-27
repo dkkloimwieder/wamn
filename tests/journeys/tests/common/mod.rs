@@ -9,9 +9,8 @@
 )]
 
 use std::collections::BTreeSet;
-use std::net::{Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Condvar, Mutex, PoisonError};
+use std::sync::{Condvar, Mutex, PoisonError};
 use std::time::Duration;
 
 use anyhow::{Context as _, bail, ensure};
@@ -21,7 +20,7 @@ use k8s_openapi::api::authorization::v1::{
 };
 use k8s_openapi::api::batch::v1::{Job, JobSpec};
 use k8s_openapi::api::core::v1::{
-    Capabilities, ConfigMap, Pod, PodSecurityContext, PodTemplateSpec, SeccompProfile, Secret,
+    Capabilities, ConfigMap, Pod, PodSecurityContext, PodTemplateSpec, SeccompProfile,
     SecurityContext, Service,
 };
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
@@ -30,14 +29,7 @@ use kube::api::{
     ApiResource, AttachParams, DeleteParams, DynamicObject, GroupVersionKind, ListParams,
     LogParams, Patch, PatchParams, PostParams,
 };
-use kube::config::{KubeConfigOptions, Kubeconfig};
-use serde::Deserialize;
 use serde_json::{Value, json};
-use sqlx::ConnectOptions as _;
-use sqlx::postgres::{PgConnectOptions, PgSslMode};
-use tokio::io::AsyncReadExt as _;
-use tokio::net::TcpListener;
-use tokio::task::{JoinHandle, JoinSet};
 use tokio::time::Instant;
 use wamn_http_client::HttpClient;
 use wamn_identity_protocol::PrincipalId;
@@ -45,6 +37,9 @@ use wamn_package::local_operation::LocalOperation;
 use wamn_registry::{OrgId, Triple, name};
 use wamn_test_infrastructure::scratch::ScratchRoot;
 
+#[path = "../../support/cluster.rs"]
+pub(crate) mod cluster;
+pub(crate) use cluster::{Cluster, Observed, PLATFORM, PortForward, exec, run, secret_key};
 mod failure;
 pub(super) use failure::capture;
 pub mod host;
@@ -66,9 +61,6 @@ pub(super) use journey;
 
 /// The number of tests that hold an org and environment at one time (Epic 15 ruling C9).
 const CAPACITY: usize = 4;
-pub(crate) const PLATFORM: &str = "platform";
-const SYSTEM_CLUSTER: &str = "wamn-pg";
-const SYSTEM_DATABASE: &str = "wamn_system";
 pub(crate) const ENV: &str = "dev";
 const PROJECT: &str = "fixture";
 const LABEL: &str = "fixture";
@@ -84,140 +76,8 @@ const FIELD_MANAGER: &str = "wamn-journey-observer";
 static RUNNING: Mutex<usize> = Mutex::new(0);
 static FREED: Condvar = Condvar::new();
 
-/// The journey-cluster outputs. Field names match `xtask/src/journey_cluster.rs::Outputs`.
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Outputs {
-    pub kubeconfig: PathBuf,
-    pub context: String,
-    pub bundle: PathBuf,
-    pub wamn: PathBuf,
-    pub registry_auth_file: PathBuf,
-    pub registry: String,
-    pub web_address: SocketAddr,
-    pub base_domain: String,
-    pub observer_role: String,
-    pub observer_password: String,
-}
-
-/// The installed kind platform and a Kubernetes client on its recorded context.
-pub struct Cluster {
-    pub outputs: Outputs,
-    pub client: kube::Client,
-}
-
-impl Cluster {
-    /// Read the outputs file. A missing file or entry fails.
-    pub async fn load() -> anyhow::Result<Self> {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/journey/cluster.json");
-        let outputs: Outputs =
-            serde_json::from_slice(&std::fs::read(&path).with_context(|| {
-                format!("read {}; run cargo xtask journey-cluster", path.display())
-            })?)
-            .with_context(|| format!("decode {}", path.display()))?;
-        for file in [
-            &outputs.kubeconfig,
-            &outputs.bundle,
-            &outputs.wamn,
-            &outputs.registry_auth_file,
-        ] {
-            ensure!(
-                file.exists(),
-                "journey-cluster output {} is absent",
-                file.display()
-            );
-        }
-        let config = kube::Config::from_custom_kubeconfig(
-            Kubeconfig::read_from(&outputs.kubeconfig)?,
-            &KubeConfigOptions {
-                context: Some(outputs.context.clone()),
-                ..KubeConfigOptions::default()
-            },
-        )
-        .await?;
-        let client = kube::Client::try_from(config)?;
-        Ok(Self { outputs, client })
-    }
-
-    /// A `wamn` child with the cluster inputs and no control session.
-    fn command(&self) -> std::process::Command {
-        let outputs = &self.outputs;
-        let mut command = std::process::Command::new(&outputs.wamn);
-        command
-            .env("KUBECONFIG", &outputs.kubeconfig)
-            .env("WAMN_REGISTRY_AUTH_FILE", &outputs.registry_auth_file)
-            .env("WAMN_REGISTRY", &outputs.registry)
-            .env_remove("WAMN_CONTROL_URL")
-            .env_remove("WAMN_TOKEN")
-            .env_remove("WAMN_RELEASE_CHART");
-        command
-    }
-
-    /// Connect to the system database with the read-only observer login.
-    pub async fn observe_system(&self) -> anyhow::Result<Observed> {
-        let pods = Api::<Pod>::namespaced(self.client.clone(), PLATFORM);
-        let primary = pods
-            .list(&ListParams::default().labels(&format!(
-                "cnpg.io/cluster={SYSTEM_CLUSTER},cnpg.io/instanceRole=primary"
-            )))
-            .await?
-            .items
-            .into_iter()
-            .find_map(|pod| pod.metadata.name)
-            .context("the system Cluster has no primary pod")?;
-        let ca = secret_key(
-            &self.client,
-            PLATFORM,
-            &format!("{SYSTEM_CLUSTER}-server-tls"),
-            "ca.crt",
-        )
-        .await?;
-        let outputs = &self.outputs;
-        self.observe(
-            PLATFORM,
-            &primary,
-            SYSTEM_DATABASE,
-            &ca,
-            &outputs.observer_role,
-            &outputs.observer_password,
-        )
-        .await
-    }
-
-    /// Connect to `database` on PostgreSQL port 5432 of `pod`, through a port-forward, as `role`.
-    pub async fn observe(
-        &self,
-        namespace: &str,
-        pod: &str,
-        database: &str,
-        server_ca: &[u8],
-        role: &str,
-        password: &str,
-    ) -> anyhow::Result<Observed> {
-        let forward =
-            PortForward::start(Api::namespaced(self.client.clone(), namespace), pod, 5432).await?;
-        let connection = PgConnectOptions::new()
-            .host("127.0.0.1")
-            .port(forward.address.port())
-            .ssl_mode(PgSslMode::VerifyCa)
-            .ssl_root_cert_from_pem(server_ca.to_vec())
-            .username(role)
-            .password(password)
-            .database(database)
-            .connect()
-            .await
-            .with_context(|| format!("connect to {database} on {namespace}/{pod} as {role}"))?;
-        Ok(Observed {
-            connection,
-            _forward: forward,
-        })
-    }
-}
-
-/// A read-only database session. The port-forward closes with it.
-pub struct Observed {
-    pub connection: sqlx::PgConnection,
-    _forward: PortForward,
+async fn load_cluster() -> anyhow::Result<Cluster> {
+    Cluster::load(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")).await
 }
 
 /// One org with its owner session, made for one test.
@@ -233,13 +93,11 @@ impl Org {
     /// Run `wamn org create` with a unique org and owner email, and open the owner session.
     pub async fn create() -> anyhow::Result<Self> {
         let capacity = failure::hold_capacity(Capacity::acquire());
-        let cluster = Cluster::load().await?;
+        let cluster = load_cluster().await?;
         let name: OrgId =
             format!("j{}", &uuid::Uuid::new_v4().simple().to_string()[..10]).parse()?;
         failure::org(&name);
-        let email = format!("owner-{name}@example.com");
-        let mut command = cluster.command();
-        command.args(["org", "create", name.as_str(), "--owner", &email]);
+        let (command, email) = cluster.org_create_command(&name);
         run(command).await?;
         let (owner, invitation) = invitation(&cluster.client, &email).await?;
         let token = session(&cluster.client, &name, &email, &owner, &invitation).await?;
@@ -268,12 +126,9 @@ impl Org {
 
     /// Provision an env through the operator command.
     pub async fn create_env(&self, env: &wamn_registry::EnvName) -> anyhow::Result<()> {
-        let mut command = self.cluster.command();
-        command
-            .args(["env", "create"])
-            .arg(format!("{}/{env}", self.name));
-        run(command).await?;
-        Ok(())
+        run(self.cluster.env_create_command(&self.name, env))
+            .await
+            .map(drop)
     }
 
     /// Write an environment file with one project and one application, and run `wamn env apply`.
@@ -631,23 +486,6 @@ pub async fn probe_image(
         .with_context(|| format!("Cluster {namespace}/{cluster} has no digest-pinned imageName"))
 }
 
-/// Read one Secret key as bytes for Pooler credentials or a certificate (C7, C8, C11).
-pub async fn secret_key(
-    client: &kube::Client,
-    namespace: &str,
-    secret: &str,
-    key: &str,
-) -> anyhow::Result<Vec<u8>> {
-    Api::<Secret>::namespaced(client.clone(), namespace)
-        .get(secret)
-        .await
-        .with_context(|| format!("read key {key} from Secret {namespace}/{secret}"))?
-        .data
-        .and_then(|mut data| data.remove(key))
-        .map(|bytes| bytes.0)
-        .with_context(|| format!("Secret {namespace}/{secret} has no key {key}"))
-}
-
 /// Scale a Deployment such as `wamn_registry::name::control_resource` and wait for readiness (C7).
 pub async fn scale_deployment(
     client: &kube::Client,
@@ -838,31 +676,6 @@ pub async fn run_job(
 }
 
 /// Run a pod command such as `SHOW CONFIG` (C9), returning stdout on success.
-pub(crate) async fn exec<const N: usize>(
-    pods: &Api<Pod>,
-    pod: &str,
-    params: &AttachParams,
-    command: [&str; N],
-) -> anyhow::Result<String> {
-    let mut process = pods.exec(pod, command, params).await?;
-    let mut stdout = process.stdout().context("command output")?;
-    let mut stderr = process.stderr().context("command diagnostics")?;
-    let status = process.take_status().context("command status")?;
-    let (mut output, mut diagnostics) = (String::new(), String::new());
-    tokio::try_join!(
-        stdout.read_to_string(&mut output),
-        stderr.read_to_string(&mut diagnostics),
-    )?;
-    process.join().await?;
-    let status = status.await.context("the command has no exit status")?;
-    ensure!(
-        status.status.as_deref() == Some("Success"),
-        "{command:?} in {pod} failed: {} {diagnostics}",
-        status.message.unwrap_or_default()
-    );
-    Ok(output)
-}
-
 /// Ask the API server to authorize a request with the groups of a service-account token.
 pub(crate) async fn service_account_can(
     reviews: &Api<SubjectAccessReview>,
@@ -895,19 +708,6 @@ pub(crate) async fn service_account_can(
 }
 
 /// Run a command and return its standard output.
-pub(super) async fn run(command: std::process::Command) -> anyhow::Result<String> {
-    let mut command = tokio::process::Command::from(command);
-    let output = command.kill_on_drop(true).output().await?;
-    ensure!(
-        output.status.success(),
-        "{:?} failed: {}{}",
-        command.as_std().get_args().collect::<Vec<_>>(),
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    Ok(String::from_utf8(output.stdout)?)
-}
-
 /// The identity pods that the identity Service selects.
 pub(crate) async fn identity_pods(client: &kube::Client) -> anyhow::Result<(Service, Vec<Pod>)> {
     let service = Api::<Service>::namespaced(client.clone(), PLATFORM)
@@ -1044,58 +844,6 @@ async fn session(
         .as_str()
         .map(str::to_owned)
         .with_context(|| format!("the session has no access token: {body}"))
-}
-
-/// A local listener that forwards each connection to one pod port. Drop closes it.
-pub(crate) struct PortForward {
-    pub(crate) address: SocketAddr,
-    task: JoinHandle<()>,
-}
-
-impl PortForward {
-    /// Forward connections to a named pod and port for metrics or a TLS handshake (C7, C11).
-    pub(crate) async fn start(pods: Api<Pod>, pod: &str, port: u16) -> anyhow::Result<Self> {
-        let namespace = pods
-            .namespace()
-            .context("a port-forward needs a namespace")?;
-        ensure!(port != 0, "a port-forward needs a port");
-        pods.get_metadata(pod)
-            .await
-            .with_context(|| format!("read pod {namespace}/{pod} for port-forward"))?;
-        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await?;
-        let address = listener.local_addr()?;
-        let pod: Arc<str> = pod.into();
-        let task = tokio::spawn(async move {
-            // Aborting this task drops the set, which aborts every open connection.
-            let mut connections = JoinSet::new();
-            while let Ok((mut tcp, _)) = listener.accept().await {
-                let pods = pods.clone();
-                let pod = Arc::clone(&pod);
-                connections.spawn(async move {
-                    let forwarded = async {
-                        let mut forwarder = pods.portforward(&pod, &[port]).await?;
-                        let mut upstream = forwarder
-                            .take_stream(port)
-                            .context("the port-forward has no stream")?;
-                        tokio::io::copy_bidirectional(&mut tcp, &mut upstream).await?;
-                        drop(upstream);
-                        forwarder.join().await?;
-                        anyhow::Ok(())
-                    };
-                    if let Err(error) = forwarded.await {
-                        eprintln!("port-forward to {pod}:{port}: {error:#}");
-                    }
-                });
-            }
-        });
-        Ok(Self { address, task })
-    }
-}
-
-impl Drop for PortForward {
-    fn drop(&mut self) {
-        self.task.abort();
-    }
 }
 
 /// One of [`CAPACITY`] places. Each test thread waits here before it creates an org.
