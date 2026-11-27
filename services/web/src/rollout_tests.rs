@@ -5,6 +5,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::net::TcpStream;
 use tokio::sync::{mpsc, watch};
 use wamn_engine::expected_router::expected_host_router;
+use wamn_kubernetes::web_release::WEB_RELEASE_ANNOTATION;
 use wash_runtime::host::http::{HostHandler as _, Ingress, IngressRoute, ServiceHttpJob};
 
 use super::*;
@@ -63,9 +64,16 @@ async fn host_replacement_routes_the_next_post_to_the_serving_host() {
         // Only the Kubernetes route discovery source is synthetic.
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let endpoint = format!("http://{}", listener.local_addr().unwrap());
-        let route = serde_json::json!({"host":host,"release":"unused","api":format!("http://{service}")});
-        let objects = serde_json::json!({"items":[{"metadata":{"name":"route","namespace":"acme--dev"},"data":{"route.json":route.to_string()}}]}).to_string();
-        let namespaces = serde_json::json!({"items":[{"metadata":{"name":"acme--dev","labels":{
+        let route = serde_json::json!({
+            "host":host, "api":format!("http://{service}"), "org":"acme", "project":"app",
+            "digest":wamn_digest::bytes_sha256(b"release"), "clients":{}, "webs":{}
+        });
+        let objects = serde_json::json!({"metadata":{"resourceVersion":"2"},"items":[
+            {"metadata":{"name":"app-http","namespace":"acme--dev","annotations":{
+                (WEB_RELEASE_ANNOTATION):route.to_string()
+            }}}
+        ]}).to_string();
+        let namespaces = serde_json::json!({"metadata":{"resourceVersion":"1"},"items":[{"metadata":{"name":"acme--dev","labels":{
             "wamn.dev/env":"true","wamn.dev/org-workloads":"true","wamn.dev/org-name":"acme"
         }}}]}).to_string();
         tasks.spawn(async move {
@@ -74,7 +82,14 @@ async fn host_replacement_routes_the_next_post_to_the_serving_host() {
                 let objects = &objects;
                 let namespaces = &namespaces;
                 let service = service_fn(move |request: hyper::Request<hyper::body::Incoming>| async move {
-                    let body = if request.uri().path() == "/api/v1/namespaces" { namespaces } else { objects };
+                    let watching = request.uri().query().is_some_and(|query| query.contains("watch=true"));
+                    let body = match (request.uri().path(), watching) {
+                        ("/api/v1/namespaces", false) => namespaces,
+                        ("/api/v1/services", false) => objects,
+                        ("/api/v1/namespaces" | "/api/v1/services", true) =>
+                            "{\"type\":\"ERROR\",\"object\":{\"code\":410,\"reason\":\"Expired\"}}\n",
+                        (path, _) => panic!("unexpected Kubernetes request {path}"),
+                    };
                     Ok::<_, Infallible>(Response::builder()
                         .header(hyper::header::CONNECTION, "close")
                         .body(Full::new(Bytes::copy_from_slice(body.as_bytes()))).unwrap())
@@ -85,10 +100,13 @@ async fn host_replacement_routes_the_next_post_to_the_serving_host() {
         });
         let mut config = kube::Config::new(endpoint.parse().unwrap());
         config.default_namespace = "hosts".into();
-        let releases = Releases::new(
+        let releases = Arc::new(Releases::new(
             KubernetesApi::from_config(config).unwrap(),
             "example.test".parse().unwrap(),
-        ).await.unwrap();
+        ));
+        let watching = Arc::clone(&releases);
+        tasks.spawn(async move { watching.watch().await });
+        wait_for_route(&releases, host).await;
         let web = Web { store: None };
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let edge = listener.local_addr().unwrap();

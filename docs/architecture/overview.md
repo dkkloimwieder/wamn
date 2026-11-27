@@ -169,7 +169,7 @@ Applications are releases under those project deployments.
 `registry.env_app` stores each app's active flag and host label.
 Each label stays unique within the org, including labels held by inactive apps.
 Deploy derives `<label>--<org>.<base>` using the base in `registry.meta.platform_domain`.
-Web accepts an application route only when its host uses the ConfigMap namespace as the org and matches the platform base in web's settings file.
+Web gets the org from the Service's Namespace labels. The app host must name that org and match the platform base in the web settings.
 Environment coordinates contain org and environment.
 Project database coordinates also contain the project.
 `wamn_registry::OrgId`, `ProjectId`, and `EnvName` own the three coordinate names.

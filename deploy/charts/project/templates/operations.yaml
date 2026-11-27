@@ -62,15 +62,11 @@ rules:
     resources: [workloadreplicasets]
     verbs: [get]
   - apiGroups: [""]
-    resources: [services, configmaps]
+    resources: [services]
     verbs: [create, list, watch]
   - apiGroups: [""]
     resources: [services]
     resourceNames: {{ . | toJson }}
-    verbs: [get, patch, delete]
-  - apiGroups: [""]
-    resources: [configmaps]
-    resourceNames: {{ $operation.appConfigMaps | toJson }}
     verbs: [get, patch, delete]
   - apiGroups: [networking.k8s.io]
     resources: [networkpolicies]

@@ -1,6 +1,7 @@
 # Platform chart
 
 This chart installs shared services in `platform` and the edge in `hosts`. Use `wamn platform deploy` to install the infrastructure chart first. The platform Helm release is `wamn` in namespace `platform`.
+The edge account lists and watches Service and Namespace metadata for web routes.
 The deploy command sets Pod Security enforcement and warnings to `restricted` in `platform`. This chart sets the same policy in `hosts`.
 
 Use `values-kind.yaml` or `values-gcp.yaml` for the installation. The schema validates WAMN inputs. Vendored charts accept their upstream values.

@@ -1,4 +1,4 @@
-//! Route application hosts through chart-owned route and release ConfigMaps.
+//! Route application hosts through chart-owned Service annotations.
 
 use std::convert::Infallible;
 use std::future::poll_fn;
@@ -27,7 +27,7 @@ use tower_service::Service;
 use wamn_http_client::{self as http_transport, Protocols, Schemes};
 use wamn_kubernetes::{
     client::KubernetesApi,
-    web_release::{LiveRelease, Releases},
+    web_release::{LiveRelease, Releases, RouteLookup},
 };
 use wamn_registry::{name::valid_resource_segment, platform_domain::PlatformDomain};
 
@@ -119,7 +119,8 @@ impl Web {
         let config = file == "config.json";
         let file = if config {
             let target = if row.platform_ui.is_none() {
-                serde_json::json!({"org":row.org,"project":row.project,
+                let project = row.project.as_ref().context("the release has no project")?;
+                serde_json::json!({"org":row.org,"project":project,
                     "release":row.digest,"web":row.webs[host]})
             } else {
                 serde_json::json!({"org":row.org})
@@ -273,7 +274,6 @@ async fn respond(
     trusted_proxy_hops: usize,
     mut request: hyper::Request<hyper::body::Incoming>,
 ) -> anyhow::Result<Response<ProxyBody>> {
-    let routes = releases.routes().await?;
     if request.uri().path() == "/healthz" {
         return Ok(boxed(empty(StatusCode::OK)));
     }
@@ -286,8 +286,10 @@ async fn respond(
         .next()
         .unwrap_or_default()
         .to_ascii_lowercase();
-    let Some(route) = routes.get(&host) else {
-        return Ok(boxed(empty(StatusCode::NOT_FOUND)));
+    let route = match releases.route(&host).await {
+        RouteLookup::Found(route) => route,
+        RouteLookup::Loading => return Ok(boxed(empty(StatusCode::SERVICE_UNAVAILABLE))),
+        RouteLookup::Missing => return Ok(boxed(empty(StatusCode::NOT_FOUND))),
     };
     let path = request.uri().path();
     let native_api_request = path
@@ -385,9 +387,8 @@ async fn respond(
         }
         return Ok(response.map(http_body_util::BodyExt::boxed_unsync));
     }
-    let row = releases.read(&route.namespace, &route.release).await?;
     Ok(boxed(
-        web.answer(&row, &host, path, request.method()).await?,
+        web.answer(&route, &host, path, request.method()).await?,
     ))
 }
 
@@ -465,8 +466,10 @@ pub async fn serve(path: &Path) -> anyhow::Result<()> {
         ))
     };
     let web = Arc::new(Web { store });
-    let releases =
-        Arc::new(Releases::new(KubernetesApi::in_cluster()?, config.platform_domain).await?);
+    let releases = Arc::new(Releases::new(
+        KubernetesApi::in_cluster()?,
+        config.platform_domain,
+    ));
     ensure!(
         config.identity_password_url.starts_with("https://"),
         "identity password URL must use HTTPS"
@@ -476,11 +479,11 @@ pub async fn serve(path: &Path) -> anyhow::Result<()> {
     let identity_password_url: Arc<str> = config.identity_password_url.into();
     let trusted_proxy_hops = config.trusted_proxy_hops;
     let mut tasks = tokio::task::JoinSet::new();
-    let namespaces = releases.watch_namespaces();
-    tokio::pin!(namespaces);
+    let routes = releases.watch();
+    tokio::pin!(routes);
     loop {
         tokio::select! {
-            () = &mut namespaces => unreachable!("Namespace watch runs until shutdown"),
+            () = &mut routes => unreachable!("Route watches run until shutdown"),
             signal = tokio::signal::ctrl_c() => { signal?; break; }
             Some(_) = tasks.join_next(), if !tasks.is_empty() => {}
             accepted = listener.accept() => {
@@ -520,10 +523,9 @@ pub async fn serve(path: &Path) -> anyhow::Result<()> {
 /// Returns an error naming the host and path if a response is not successful.
 pub async fn probe(path: &Path) -> anyhow::Result<()> {
     let config: WebConfig = serde_json::from_slice(&std::fs::read(path)?)?;
-    let releases = Releases::new(KubernetesApi::in_cluster()?, config.platform_domain).await?;
+    let releases = Releases::new(KubernetesApi::in_cluster()?, config.platform_domain);
     let client: Client<HttpConnector, Empty<Bytes>> = http_transport::http_client();
-    for (host, route) in releases.routes().await? {
-        let row = releases.read(&route.namespace, &route.release).await?;
+    for (host, row) in releases.list().await? {
         if row.platform_ui.is_none() && !row.clients.contains_key(&host) {
             continue;
         }
@@ -550,6 +552,14 @@ pub async fn probe(path: &Path) -> anyhow::Result<()> {
 }
 
 #[cfg(test)]
+async fn wait_for_route(releases: &Releases, host: &str) {
+    while matches!(releases.route(host).await, RouteLookup::Loading) {
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    assert!(matches!(releases.route(host).await, RouteLookup::Found(_)));
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use object_store::memory::InMemory;
@@ -557,6 +567,7 @@ mod tests {
     fn row(digit: char) -> LiveRelease {
         LiveRelease {
             host: "app.example.com".into(),
+            api: "http://app-http.acme--dev.svc.cluster.local".into(),
             digest: (format!("sha256:{}", "c".repeat(64)))
                 .parse::<wamn_digest::Digest>()
                 .unwrap(),
@@ -570,7 +581,7 @@ mod tests {
             .into(),
             platform_ui: None,
             org: "acme".parse().unwrap(),
-            project: "app".parse().unwrap(),
+            project: Some("app".parse().unwrap()),
         }
     }
 
@@ -615,62 +626,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn discovered_routes_keep_services_and_web_pins_independent() {
-        use serde_json::json;
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let endpoint = format!("http://{}", listener.local_addr().unwrap());
-        let route = json!({"host":"app--acme.example", "release":"app", "api":endpoint});
-        let web_digest = (format!("sha256:{}", "a".repeat(64)))
-            .parse::<wamn_digest::Digest>()
-            .unwrap();
-        let release = json!({"host":"app--acme.example", "digest":wamn_digest::bytes_sha256(b"release"), "clients":{"app--acme.example":"client"},
-            "webs":{"app--acme.example":web_digest}, "platformUi":null, "org":"acme", "project":"app"});
+    async fn health_stays_available_while_routes_wait_for_discovery() {
+        let releases = Releases::new(
+            KubernetesApi::from_config(kube::Config::new("http://127.0.0.1:1".parse().unwrap()))
+                .unwrap(),
+            "example.test".parse().unwrap(),
+        );
+        let web = Web { store: None };
+        let proxy = Proxy {
+            client: http_transport::client(Connector(native_connector().unwrap()), |_| {}),
+        };
+        let (front, back) = tokio::io::duplex(4096);
         let mut tasks = tokio::task::JoinSet::new();
         tasks.spawn(async move {
-            loop {
-                let (stream, _) = listener.accept().await.unwrap();
-                let service = service_fn(|request: hyper::Request<hyper::body::Incoming>| {
-                    let (route, release) = (&route, &release);
-                    async move {
-                        let (status, value) = match request.uri().path() {
-                            "/api/v1/namespaces" => (StatusCode::OK, json!({"metadata":{"resourceVersion":"1"},"items":[
-                                {"metadata":{"name":"acme--dev","labels":{"wamn.dev/env":"true","wamn.dev/org-workloads":"true","wamn.dev/org-name":"acme"}}},
-                                {"metadata":{"name":"acme--prod","labels":{"wamn.dev/env":"true","wamn.dev/org-workloads":"true"}}}
-                            ]})),
-                            "/api/v1/configmaps" => (StatusCode::OK, json!({"items":[
-                                {"metadata":{"name":"a","namespace":"acme--prod"},"data":{"route.json":route.to_string()}},
-                                {"metadata":{"name":"app","namespace":"acme--dev"},"data":{"route.json":route.to_string()}}
-                            ]})),
-                            "/api/v1/namespaces/acme--dev/configmaps/app" => (StatusCode::OK,
-                                json!({"data":{"release.json":release.to_string()}})),
-                            _ => (StatusCode::ACCEPTED, json!(null)),
-                        };
-                        Ok::<_, Infallible>(Response::builder().status(status)
-                            .header(hyper::header::CONNECTION, "close")
-                            .body(Full::new(Bytes::from(value.to_string()))).unwrap())
-                    }
-                });
-                hyper::server::conn::http1::Builder::new()
-                    .serve_connection(TokioIo::new(stream), service).await.unwrap();
-            }
-        });
-        let connector = native_connector().unwrap();
-        let proxy = Proxy {
-            client: http_transport::client(Connector(connector.clone()), |_| {}),
-        };
-        let mut config = kube::Config::new(endpoint.parse().unwrap());
-        config.default_namespace = "hosts".into();
-        let releases = Releases::new(
-            KubernetesApi::from_config(config).unwrap(),
-            "example".parse().unwrap(),
-        )
-        .await
-        .unwrap();
-        let web = Web { store: None };
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let front = format!("http://{}", listener.local_addr().unwrap());
-        tasks.spawn(async move {
-            let (stream, peer) = listener.accept().await.unwrap();
             let service = service_fn(|request| async {
                 Ok::<_, Infallible>(
                     respond(
@@ -678,7 +646,7 @@ mod tests {
                         &releases,
                         &proxy,
                         "https://localhost",
-                        peer.ip(),
+                        std::net::Ipv4Addr::LOCALHOST.into(),
                         0,
                         request,
                     )
@@ -687,32 +655,41 @@ mod tests {
                 )
             });
             hyper::server::conn::http1::Builder::new()
-                .serve_connection(TokioIo::new(stream), service)
+                .serve_connection(TokioIo::new(back), service)
                 .await
                 .unwrap();
         });
-        let client: Client<HttpConnector, Full<Bytes>> = http_transport::http_client();
-        for path in ["/api/query", "/config.json"] {
-            let request = hyper::Request::builder()
-                .uri(format!("{front}{path}"))
-                .header(HOST, "app--acme.example")
-                .body(Full::new(Bytes::new()))
-                .unwrap();
-            let response = client.request(request).await.unwrap();
-            if path == "/api/query" {
-                assert_eq!(response.status(), StatusCode::ACCEPTED);
+        tokio::time::timeout(Duration::from_secs(5), async {
+            let (mut client, connection) =
+                hyper::client::conn::http1::handshake(TokioIo::new(front))
+                    .await
+                    .unwrap();
+            tasks.spawn(async move { connection.await.unwrap() });
+            for (host, path, status) in [
+                ("app--acme.example.test", "/healthz", StatusCode::OK),
+                (
+                    "app--acme.example.test",
+                    "/config.json",
+                    StatusCode::SERVICE_UNAVAILABLE,
+                ),
+                (
+                    "acme.example.test",
+                    "/api/health",
+                    StatusCode::SERVICE_UNAVAILABLE,
+                ),
+            ] {
+                let request = hyper::Request::builder()
+                    .uri(path)
+                    .header(HOST, host)
+                    .body(Empty::<Bytes>::new())
+                    .unwrap();
+                let response = client.send_request(request).await.unwrap();
+                assert_eq!(response.status(), status);
                 response.into_body().collect().await.unwrap();
-            } else {
-                assert_eq!(response.status(), StatusCode::OK);
-                let bytes = response.into_body().collect().await.unwrap().to_bytes();
-                let config: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-                assert_eq!(
-                    config["release"],
-                    serde_json::json!(wamn_digest::bytes_sha256(b"release"))
-                );
-                assert_eq!(config["web"], serde_json::json!(web_digest));
             }
-        }
+        })
+        .await
+        .expect("answer health and route requests before discovery");
         tasks.shutdown().await;
     }
 

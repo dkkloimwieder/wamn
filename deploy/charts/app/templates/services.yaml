@@ -1,11 +1,16 @@
+{{- $name := printf "%s-http" (default .Release.Name .Values.name) }}
+{{- $namespace := include "app.namespace" . }}
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ (default .Release.Name .Values.name) }}-http
-  namespace: {{ include "app.namespace" . | quote }}
+  name: {{ $name }}
+  namespace: {{ $namespace | quote }}
   annotations:
     {{- include "app.annotations" . | nindent 4 }}
+    {{- if .Values.routeHost }}
+    wamn.dev/web-release: {{ dict "host" .Values.routeHost "api" (printf "http://%s.%s.svc.cluster.local" $name $namespace) "digest" .Values.release.manifestDigest "clients" .Values.webClients "webs" .Values.webDigests "platformUi" nil "org" .Values.org "project" .Values.project | toJson | quote }}
+    {{- end }}
 spec:
   type: ClusterIP
   ports:

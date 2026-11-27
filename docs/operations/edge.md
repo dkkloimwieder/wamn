@@ -60,6 +60,8 @@ wamn-web --settings <path>
 wamn-web --settings <path> probe
 ```
 
-The service discovers hosts from release ConfigMaps.
-The probe requests `/` and `/config.json` through the local listener for each declared host.
+Web watches Service and Namespace metadata and keeps its route table in memory.
+It serves HTTP 503 for routes until both initial lists finish. The `/healthz` endpoint stays available.
+If a watch ends, web keeps its routes while it requests a fresh list.
+The probe lists the same metadata once. It requests `/` and `/config.json` through the local listener for each host with a browser bundle.
 It fails if a response is not HTTP 200.

@@ -22,6 +22,7 @@ Set `WAMN_REGISTRY` to that org origin when you publish. On kind, use `localhost
 Set `control.configuration.platform_registry` to the platform origin for integrations.
 `wamn org create` currently initializes both from `registry` in `wamn-org-inputs`.
 Pin `control.image` by digest. Set `control.platformUi` to publish the UI release at that host.
+The control Service publishes the route and UI pin in the `wamn.dev/web-release` annotation.
 Control mounts its login from `wamn-control-db`. The chart creates the Secret with its public username.
 After Helm installs the chart, the org SQL Job in `platform` writes the password.
 `wamn org create` copies the platform's `identity.oauthEncryption` to `control.configuration.oauth_encryption`.

@@ -430,11 +430,11 @@ Status reports each project in the file. An application name selects its project
 For each workload, status reports the deployed package digest, content revision, and workload conditions.
 
 Publication needs no destination database.
-Each application owns its Helm history, workloads, Services, and route ConfigMaps.
+Each application owns its Helm history, workloads, and Services.
 The environment chart owns one host for each org and environment. All projects share it.
 Application workloads and file Services select that host. Database credentials and event bindings remain separate for each project.
 Status reports application release state.
-The route ConfigMaps carry `wamn.route=true`. The edge reads that label.
+The application HTTP Service carries its route and browser pins in the `wamn.dev/web-release` annotation.
 A source deploy builds and publishes once. A digest deploy starts with the published package.
 Both forms submit one operation. The project Job resolves the package closure and environment bindings. The environment Job holds the lifecycle lock and updates the project chart.
 Before deployment or explicit rollback, the worker checks that the deployed Helm revision is serving. If it is unready, the worker restores the newest earlier successful Helm revision before it proceeds. The worker uninstalls an interrupted first install.
@@ -765,9 +765,8 @@ Ruled: the files under `assets/` carry a content hash in their names, so they ar
 Use [Web upload](web-upload.md#platform-ui) with the artifact digest that the prepared org chart pins in `control.platformUi`.
 The command pulls the artifact from the platform registry and makes sure that its bytes match the digest before any bucket write.
 The default destination is `gs://wamn-dev-web/platform-ui/sha256-<hex>/`.
-Organization configuration lives separately at `platform-ui/orgs/<org>/config.json`.
-The chart writes the UI digest and organization into `release.json`.
-The edge selects shared files by that digest and reads configuration from the organization path.
+The chart puts the UI digest and org in the `wamn.dev/web-release` annotation on the control Service.
+The edge selects shared files by that digest and generates the org configuration.
 Deployment needs no source checkout, pnpm installation, or local UI output.
 Kind keeps an empty web bucket and selects no platform UI.
 
@@ -777,7 +776,7 @@ The native service has no route guest or application release.
 The control Service selects that Deployment.
 Local platform deployment installs control without a UI upload. GCP integration for public control access remains unfinished.
 
-The org chart writes the control host and Service address to a route ConfigMap.
+The control Service annotation contains the control host and Service address.
 The edge forwards `/api/` to the control Service and `/password/` to the identity password listener.
 The Rust web front serves platform UI files and generates its org configuration.
 Every other page reaches that prefix's `index.html`, including `/`, `/invite`, `/recover`, `/reset`, and control or project-environment audience paths.
@@ -976,7 +975,8 @@ Application package migrations keep their own streams.
 Use `wamn rollback APP --revision N --env env.yaml` to restore the content of revision N.
 Without `--revision`, the worker finds the newest earlier deploy. It skips revisions that record a rollback.
 If no older deploy exists, the command reports the current content revision and refuses.
-The worker reads the target package digest from Helm, checks enabled workflows, and runs `helm rollback --wait=watcher` under the lifecycle lock.
+The worker refuses revisions whose application Service lacks the route annotation.
+It reads the target package digest from Helm, checks enabled workflows, and runs `helm rollback --wait=watcher` under the lifecycle lock.
 Before reporting success, the worker verifies that the restored templates are serving. The Helm command and the readiness check share the rollback phase budget within the Job deadline.
 Rollback keeps installed SQL migrations.
 

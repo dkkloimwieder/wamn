@@ -1,6 +1,7 @@
 //! The shared Helm command runner.
 pub(super) mod plan;
 use anyhow::{Context as _, ensure};
+use serde::Deserialize as _;
 use serde_json::Value;
 use std::{
     borrow::Cow,
@@ -12,7 +13,7 @@ use std::{
 };
 use tokio::time::{Instant, timeout_at};
 
-use crate::Target;
+use crate::{Target, web_release::WEB_RELEASE_ANNOTATION};
 use plan::{Recovery, app_recovery_revision, recovery};
 
 /// The Helm storage namespace for releases owned by an org or env namespace.
@@ -292,6 +293,44 @@ impl Error for UpgradeRolledBack {
     }
 }
 
+/// Require a saved app manifest to publish its route on its workload Service.
+///
+/// # Errors
+/// Refuses malformed manifests and app revisions from before Service routes.
+pub fn require_app_service_route(
+    manifest: &[u8],
+    namespace: &str,
+    release: &str,
+) -> anyhow::Result<()> {
+    let service = format!("{release}-http");
+    for document in serde_yaml::Deserializer::from_slice(manifest) {
+        let object = Value::deserialize(document)?;
+        if object["kind"] == "Service"
+            && object["metadata"]["name"] == service
+            && object["metadata"]["namespace"] == namespace
+            && object["metadata"]["annotations"][WEB_RELEASE_ANNOTATION]
+                .as_str()
+                .is_some_and(|value| !value.is_empty())
+        {
+            return Ok(());
+        }
+    }
+    anyhow::bail!("application release {namespace}/{release} predates Service routes");
+}
+
+async fn app_revision_manifest(
+    target: &Target,
+    name: &str,
+    revision: u32,
+) -> anyhow::Result<Vec<u8>> {
+    let manifest = get(target, "manifest", name, revision)
+        .await?
+        .with_context(|| format!("Helm release manifest for revision {revision} is absent"))?;
+    require_app_service_route(&manifest, &target.namespace, name)
+        .with_context(|| format!("application Helm revision {revision} cannot be restored"))?;
+    Ok(manifest)
+}
+
 /// Install or upgrade one release, applying the values files in order.
 /// A Job-bounded upgrade asks Helm to roll back on failure.
 pub async fn upgrade(
@@ -327,6 +366,10 @@ pub async fn upgrade(
     } else {
         None
     };
+    // Helm can restore the previous revision itself when the upgrade fails.
+    if let Some(revision) = previous {
+        app_revision_manifest(target, name, revision).await?;
+    }
     let (output, phase_end) =
         mutation_output(target, namespace, name, "upgrade", &arguments, wait).await?;
     let output = match stdout(output, "helm") {
@@ -550,10 +593,10 @@ pub(crate) async fn rollback(
 ) -> anyhow::Result<()> {
     let readiness = if let Wait::WatcherUntil { readiness, .. } = wait {
         let revision = revision.context("application rollback requires a Helm revision")?;
-        let manifest = get(target, "manifest", name, revision)
-            .await?
-            .with_context(|| format!("Helm release manifest for revision {revision} is absent"))?;
-        Some((readiness, manifest))
+        Some((
+            readiness,
+            app_revision_manifest(target, name, revision).await?,
+        ))
     } else {
         None
     };
@@ -653,6 +696,16 @@ pub(crate) async fn project_release_exists(target: &Target, release: &str) -> an
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn an_app_rollback_requires_its_service_to_carry_the_route() {
+        let old = b"kind: Service\nmetadata: {name: app-http, namespace: acme--dev}";
+        let new = format!(
+            "kind: Service\nmetadata:\n  name: app-http\n  namespace: acme--dev\n  annotations:\n    {WEB_RELEASE_ANNOTATION}: '{{}}'"
+        );
+        assert!(require_app_service_route(old, "acme--dev", "app").is_err());
+        assert!(require_app_service_route(new.as_bytes(), "acme--dev", "app").is_ok());
+    }
 
     #[test]
     fn app_upgrade_requests_rollback_with_the_watcher() {

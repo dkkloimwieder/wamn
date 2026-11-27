@@ -1,4 +1,4 @@
-//! Renders the app, org and project charts to check their release objects.
+//! Renders the app, org, project and platform charts to check their release objects.
 //!
 //! These tests need only the local Helm executable.
 
@@ -133,9 +133,13 @@ fn project_role_names_its_secrets_and_release_resources_and_binds_helm_storage()
         names("networkpolicies", "delete"),
         [operation["appNetworkPolicies"].clone()]
     );
-    let config_patches = names("configmaps", "patch");
-    assert!(config_patches.contains(&operation["appConfigMaps"]));
-    assert!(config_patches.contains(&json!([operation["phaseConfigMap"]])));
+    assert_eq!(
+        names("configmaps", "patch"),
+        [json!([operation["phaseConfigMap"]])]
+    );
+    for verb in ["create", "list", "watch", "delete"] {
+        assert!(names("configmaps", verb).is_empty());
+    }
     assert!(objects.iter().any(|object| object["kind"] == "ConfigMap"
         && object["metadata"]["name"] == operation["phaseConfigMap"]));
     Ok(())
@@ -158,8 +162,14 @@ fn an_unstamped_chart_does_not_render() {
 
 #[test]
 fn the_control_route_uses_service_port_80_and_the_pod_uses_8080() -> anyhow::Result<()> {
+    use wamn_kubernetes::web_release::{LiveRelease, WEB_RELEASE_ANNOTATION};
+
     let root = repository_root();
-    let output = helm(&[
+    let ui = wamn_digest::bytes_sha256(b"platform UI");
+    let org: wamn_registry::OrgId = "a"
+        .repeat(wamn_registry::identifiers::MAX_PROJECT_ID_LEN)
+        .parse()?;
+    let rendered = objects(&helm(&[
         "template",
         "acme",
         root.join("deploy/charts/org").to_str().unwrap(),
@@ -167,42 +177,49 @@ fn the_control_route_uses_service_port_80_and_the_pod_uses_8080() -> anyhow::Res
         root.join("crates/env/tests/support/org-chart-values.json")
             .to_str()
             .unwrap(),
-    ]);
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let objects: Vec<serde_yaml::Value> = serde_yaml::Deserializer::from_slice(&output.stdout)
-        .map(serde::Deserialize::deserialize)
-        .collect::<Result<_, _>>()?;
-    let route = objects
-        .iter()
-        .find_map(|object| object["data"]["route.json"].as_str())
-        .expect("control route");
-    let route: serde_json::Value = serde_json::from_str(route)?;
-    let service = objects
-        .iter()
-        .find(|object| object["kind"] == "Service")
-        .expect("control Service");
-    let name = service["metadata"]["name"].as_str().expect("Service name");
+        "--set-string",
+        &format!("control.platformUi={ui}"),
+        "--set-string",
+        &format!("org={org}"),
+    ]))?;
+    let name = format!("{}-http", wamn_registry::name::control_resource(&org));
+    let service = object(&rendered, "Service", &name)?;
     let namespace = service["metadata"]["namespace"]
         .as_str()
         .expect("Service namespace");
+    let route: LiveRelease = serde_json::from_str(
+        service["metadata"]["annotations"][WEB_RELEASE_ANNOTATION]
+            .as_str()
+            .expect("control Service route"),
+    )?;
     assert_eq!(
-        route["api"],
+        route.api,
         format!("http://{name}.{namespace}.svc.cluster.local")
+    );
+    assert_eq!(route.host, format!("{org}.wamn.localhost"));
+    assert_eq!(route.org, org);
+    assert_eq!(route.platform_ui, Some(ui));
+    assert!(route.project.is_none());
+    assert!(
+        rendered
+            .iter()
+            .filter(|object| object["kind"] == "ConfigMap")
+            .all(|object| {
+                object["data"].get("route.json").is_none()
+                    && object["data"].get("release.json").is_none()
+            })
     );
 
     let port = &service["spec"]["ports"][0];
     assert_eq!(port["port"].as_u64(), Some(80));
     assert_eq!(port["targetPort"].as_str(), Some("http"));
-    let pod = &objects
-        .iter()
-        .find(|object| object["kind"] == "Deployment")
-        .expect("control Deployment")["spec"]["template"];
+    let pod = &object(
+        &rendered,
+        "Deployment",
+        &wamn_registry::name::control_resource(&org),
+    )?["spec"]["template"];
     let port = pod["spec"]["containers"][0]["ports"]
-        .as_sequence()
+        .as_array()
         .expect("control pod ports")
         .iter()
         .find(|container_port| container_port["name"] == port["targetPort"])
@@ -393,6 +410,61 @@ fn control_host_and_capture_render_in_their_namespaces() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[test]
+fn an_app_service_carries_its_workload_route_and_static_pins() -> anyhow::Result<()> {
+    use serde_json::json;
+    use wamn_env::app_chart::plan::{release_name, workload_name};
+    use wamn_kubernetes::{
+        helm,
+        platform_env::entry,
+        web_release::{LiveRelease, WEB_RELEASE_ANNOTATION},
+    };
+    use wamn_registry::{Triple, name};
+
+    let triple = Triple::new("acme".parse()?, "dev".parse()?, "shop".parse()?);
+    let app = "app".parse()?;
+    let release = release_name(&triple.org, &triple.project, &triple.env, &app);
+    let namespace = name::env_key(&triple.org, &triple.env);
+    let host = name::app_host("app", &triple.org, &"example.com".parse()?);
+    let digest = wamn_digest::bytes_sha256(b"release");
+    let web = wamn_digest::bytes_sha256(b"bundle");
+    let values = json!({
+        "namespace":namespace, "org":triple.org, "project":triple.project,
+        "platform":{
+            "roles":{"ingress":{"image":format!("registry.example/ingress@{digest}")}},
+            "workflow":{"image":format!("registry.example/workflow@{digest}")},
+        },
+        "release":{"manifestDigest":digest}, "env":name::host_status(&triple.org, &triple.project, &triple.env),
+        "routeHost":host, "apps":{(app.as_str()):{}}, "route":{"config":{"wamn.project_env_key":"key"}},
+        "webClients":{(host.as_str()):"client"}, "webDigests":{(host.as_str()):web}, "hostGroup":"host",
+    });
+    let chart = repository_root().join("deploy/charts/app");
+    let rendered = helm::template(&entry(&chart, &namespace, &release, values)?)?;
+    let service = object(&rendered, "Service", &workload_name(&release))?;
+    let metadata = &service["metadata"];
+    let route: LiveRelease = serde_json::from_str(
+        metadata["annotations"][WEB_RELEASE_ANNOTATION]
+            .as_str()
+            .expect("app Service route"),
+    )?;
+    assert_eq!(
+        route.api,
+        format!(
+            "http://{}.{}.svc.cluster.local",
+            workload_name(&release),
+            metadata["namespace"].as_str().unwrap()
+        ),
+    );
+    assert_eq!(route.host, host);
+    assert_eq!(route.digest, digest);
+    assert_eq!(route.org, triple.org);
+    assert_eq!(route.project.as_ref(), Some(&triple.project));
+    assert_eq!(route.clients[&host].as_str(), "client");
+    assert_eq!(route.webs[&host], web);
+    assert!(rendered.iter().all(|object| object["kind"] != "ConfigMap"));
+    Ok(())
+}
+
 /// The integration egress policy opens exactly the sibling `egressPort`s and
 /// the `connectionPorts`, and renders only when one of them is declared.
 #[test]
@@ -492,13 +564,26 @@ fn platform_and_org_releases_wire_the_public_roots() -> anyhow::Result<()> {
         ]);
         let platform = objects(&output)?;
         let edge = object(&platform, "ClusterRole", "wamn-edge")?;
-        let rule = edge["rules"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|rule| rule["resources"] == json!(["namespaces"]))
-            .context("edge namespace rule")?;
-        assert_eq!(rule["verbs"], json!(["list", "watch"]));
+        let rules = edge["rules"].as_array().context("edge rules")?;
+        for resource in ["namespaces", "services"] {
+            let rule = rules
+                .iter()
+                .find(|rule| {
+                    rule["apiGroups"] == json!([""])
+                        && rule["resources"]
+                            .as_array()
+                            .is_some_and(|resources| resources.iter().any(|name| name == resource))
+                })
+                .with_context(|| format!("edge {resource} rule"))?;
+            assert_eq!(rule["verbs"], json!(["list", "watch"]));
+        }
+        assert!(rules.iter().all(
+            |rule| rule["resources"].as_array().is_some_and(|resources| {
+                resources
+                    .iter()
+                    .all(|name| name != "configmaps" && name != "*")
+            })
+        ));
         let database = object(&platform, "ConfigMap", "wamn-system-sql")?["data"]["database.json"]
             .as_str()
             .context("system SQL configuration")?;

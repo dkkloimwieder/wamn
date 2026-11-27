@@ -26,14 +26,11 @@ pub fn set_operation_values<'a>(
     };
     let capture = name::cdc_reader_name(&triple.org, &triple.project, &triple.env);
     let mut workloads = Vec::new();
-    let mut config_maps = Vec::new();
     let mut policies = Vec::new();
     for app in apps {
         let release = release_name(&triple.org, &triple.project, &triple.env, app);
         workloads.push(workload_name(&release));
         policies.push(format!("{release}-allow-public-integration-ports"));
-        config_maps.push(format!("{release}-route"));
-        config_maps.push(release);
     }
     let login_secrets = [
         APPLY_SECRET.into(),
@@ -48,7 +45,6 @@ pub fn set_operation_values<'a>(
         "controlNamespace":triple.org,
         "controlDeployment":wamn_registry::name::control_resource(&triple.org),
         "workloads":workloads,
-        "appConfigMaps":config_maps,
         "appNetworkPolicies":policies,
         "loginSecrets":login_secrets,
         "systemCa":SYSTEM_DATABASE_CA,

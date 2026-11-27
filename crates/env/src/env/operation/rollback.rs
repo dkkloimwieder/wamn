@@ -8,6 +8,7 @@ use serde_json::Value;
 use tokio::time::Instant;
 use wamn_app::app_config::{APP_CONFIG, AppConfig};
 use wamn_digest::Digest;
+use wamn_kubernetes::helm::require_app_service_route;
 use wamn_registry::AppName;
 use wamn_registry::Triple;
 
@@ -21,13 +22,20 @@ pub(super) async fn target(
     revision: Option<NonZeroU32>,
 ) -> anyhow::Result<u32> {
     if let Some(revision) = revision {
-        return Ok(revision.get());
+        let revision = revision.get();
+        let manifest = platform
+            .cluster
+            .release_manifest(release, revision)
+            .await?
+            .with_context(|| format!("Helm revision {revision} is absent"))?;
+        require_app_service_route(&manifest, &platform.cluster.namespace, release)?;
+        return Ok(revision);
     }
     let live = crate::env::document::workload_release(&platform.cluster, triple, app)
         .await?
         .context("application has no deployed release")?
         .revision;
-    let name = format!("{release}-http");
+    let name = crate::app_chart::plan::workload_name(release);
     for candidate in (1..live).rev() {
         let Some(manifest) = platform
             .cluster
@@ -44,6 +52,7 @@ pub(super) async fn target(
                     .context("rollback candidate has no content revision")?
                     .parse::<u32>()?;
                 if revision == candidate {
+                    require_app_service_route(&manifest, &platform.cluster.namespace, release)?;
                     return Ok(candidate);
                 }
                 break;
