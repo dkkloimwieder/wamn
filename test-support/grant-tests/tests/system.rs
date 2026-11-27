@@ -617,6 +617,11 @@ async fn org_logins_reach_no_other_org() -> Result<()> {
     };
     let mut pairs = Vec::new();
     for home_login in &system.orgs {
+        let limit: i32 = sqlx::query_scalar("SELECT rolconnlimit FROM pg_roles WHERE rolname=$1")
+            .bind(home_login.login.as_str())
+            .fetch_one(&mut admin)
+            .await?;
+        assert_eq!(limit, -1, "{}", home_login.login);
         let (group, _) = home_login
             .login
             .as_str()
