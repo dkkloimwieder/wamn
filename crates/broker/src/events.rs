@@ -242,13 +242,9 @@ mod tests {
             "dev".parse().unwrap(),
             "widgets".parse().unwrap(),
         );
-        let config = app_consumer(
-            &target,
-            &"sales.eu".parse().unwrap(),
-            &"orders".parse().unwrap(),
-            "order",
-        )
-        .unwrap();
+        let app = "sales-eu".parse().unwrap();
+        let package = "orders".parse().unwrap();
+        let config = app_consumer(&target, &app, &package, "order").unwrap();
         let durable = config.durable_name.as_deref().unwrap();
         assert!(wamn_event::valid_subject_token(durable));
         crate::streams::validate_inputs(
@@ -260,25 +256,12 @@ mod tests {
         .unwrap();
         assert_ne!(
             config.durable_name,
-            app_consumer(
-                &target,
-                &"sales_eu".parse().unwrap(),
-                &"orders".parse().unwrap(),
-                "order"
-            )
-            .unwrap()
-            .durable_name
+            app_consumer(&target, &"saleseu".parse().unwrap(), &package, "order")
+                .unwrap()
+                .durable_name
         );
         for invalid in ["", "orders.eu", "*", "bad name"] {
-            assert!(
-                app_consumer(
-                    &target,
-                    &"sales.eu".parse().unwrap(),
-                    &"orders".parse().unwrap(),
-                    invalid
-                )
-                .is_err()
-            );
+            assert!(app_consumer(&target, &app, &package, invalid).is_err());
         }
         for changed in [
             pull::Config {

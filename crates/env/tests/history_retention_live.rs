@@ -220,14 +220,14 @@ async fn positions(admin: &mut Client) -> BTreeMap<String, Vec<i64>> {
     observed
 }
 
-async fn wait_for_blocker(observer: &mut Client, app: &wamn_registry::AppName, blocker: i32) {
+async fn wait_for_blocker(observer: &mut Client, session_name: &str, blocker: i32) {
     tokio::time::timeout(std::time::Duration::from_secs(15), async {
         loop {
             let waiting: bool = sqlx::query(
                 "SELECT EXISTS (SELECT FROM pg_catalog.pg_stat_activity \
                       WHERE application_name = $1 AND $2 = ANY(pg_blocking_pids(pid)))",
             )
-            .bind(app.as_str())
+            .bind(session_name)
             .bind(blocker)
             .fetch_one(&mut *observer)
             .await
@@ -291,19 +291,16 @@ async fn history_table_creation_waits_for_a_running_prune() {
     .expect("prevent pruning from completing");
 
     let mut pruning = connect(&url).await;
-    sqlx::raw_sql("SET application_name = 'history_lock_prune'")
+    let prune_session = "history-lock-prune";
+    sqlx::query("SELECT set_config('application_name', $1, false)")
+        .bind(prune_session)
         .execute(&mut pruning)
         .await
         .map(drop)
         .unwrap();
     let prune =
         tokio::spawn(async move { wamn_env::prune_record_history::prune(&mut pruning).await });
-    wait_for_blocker(
-        &mut admin,
-        &"history_lock_prune".parse().expect("valid name"),
-        holder_pid,
-    )
-    .await;
+    wait_for_blocker(&mut admin, prune_session, holder_pid).await;
 
     let mut applying_url = database;
     let mut applying_migration = migration;
