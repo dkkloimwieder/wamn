@@ -1135,7 +1135,7 @@ A separate managed migration login inherits the selected owner role and runs the
 A `platform` row carries its `wamn:<component>` name in `subject` and in `display_name`, and its derived id.
 The `principal_platform_principal_check` constraint pins that subject, display name, and id.
 It also refuses a `wamn:` display name on another type, and the subject pattern of another type refuses a colon.
-The schema seeds `wamn:provisioning` and `wamn:identity-service` under the provisioning principal.
+The schema seeds `wamn:provisioning`, `wamn:identity-service`, and `wamn:apply-package` under the provisioning principal.
 A platform principal cannot authenticate.
 The system identity issuer binds `wamn:identity-service` for service writes.
 Control binds the calling administrator when it writes a project service row or a PAT.

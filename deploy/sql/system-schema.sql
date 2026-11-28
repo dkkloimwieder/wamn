@@ -192,8 +192,8 @@ CREATE TRIGGER wamn_record_history_stamp
 -- authorization boundary.
 --
 -- `type` is user or platform. A platform row names a platform
--- component that writes in this database, and only wamn:provisioning does. The
--- row carries its `wamn:<component>` name in `subject` and in `display_name`,
+-- component that writes in this database. The row carries its
+-- `wamn:<component>` name in `subject` and in `display_name`,
 -- and the id that `wamn-identity-protocol` derives from that name.
 -- `principal_platform_principal_check` pins the subject, display name, and id
 -- of each platform row, and it refuses a `wamn:` display name on another type.
@@ -249,7 +249,8 @@ CREATE TABLE identity.principal (
         CHECK (CASE WHEN type = 'platform'
                     THEN (subject, display_name, id) IN (
                              ('wamn:provisioning', 'wamn:provisioning', '770df186-ac15-579e-b46b-c297cae2011b'::uuid),
-                             ('wamn:identity-service', 'wamn:identity-service', '63082942-c2ba-5970-9b32-e86ed5c3eb79'::uuid))
+                             ('wamn:identity-service', 'wamn:identity-service', '63082942-c2ba-5970-9b32-e86ed5c3eb79'::uuid),
+                             ('wamn:apply-package', 'wamn:apply-package', '7695180f-4b9a-581f-84ef-d7e9cdbd2b77'::uuid))
                     ELSE display_name NOT LIKE 'wamn:%'
                END)
 );
@@ -1257,13 +1258,15 @@ INSERT INTO registry.integration_type_auth (integration_type, auth_type) VALUES
 
 INSERT INTO registry.target (name, type) VALUES ('cloud', 'cloud');
 
--- The system owner stamps both platform principals as wamn:provisioning.
+-- The system owner stamps the platform principals as wamn:provisioning.
 DO $provisioning$ BEGIN
   INSERT INTO identity.principal (id, type, subject, display_name)
   VALUES ('770df186-ac15-579e-b46b-c297cae2011b', 'platform',
           'wamn:provisioning', 'wamn:provisioning'),
          ('63082942-c2ba-5970-9b32-e86ed5c3eb79', 'platform',
-          'wamn:identity-service', 'wamn:identity-service');
+          'wamn:identity-service', 'wamn:identity-service'),
+         ('7695180f-4b9a-581f-84ef-d7e9cdbd2b77', 'platform',
+          'wamn:apply-package', 'wamn:apply-package');
 END $provisioning$;
 
 -- Install stamp keys after the system principals are seeded.
