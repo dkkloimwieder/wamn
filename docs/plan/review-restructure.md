@@ -687,6 +687,8 @@ From the restructure plan's open items (`docs/plan/wamn-restructure.md`) (F for 
 - Guest pins in root checks (epic not set, owner ruling 2026-11-26). The root checks that lanes run do not build guests against their pin files, so a router change can land with a stale pin (E4.7, 33532cfc6). Add the pin check to the root checks.
 - The stock runtime-operator Service targets a port named `https` that its Deployment does not declare (`runtime-operator/templates/operator/service.yaml`) (epic not set, found in Epic 4, lane report, Not verified here). No caller uses that Service today.
 - Stale test docs (epic not set, found in E6.5, lane report, Not verified here). The NetSuite README "Kind fixture" section names the absent `env_apply_kind` target (`apps/netsuite/README.md:232`). The build guide links to the absent `tests/selection.toml` (`docs/operations/building.md:23`), in place of the `cargo xtask test-changes` instructions.
+- Platform UI base red (epic not set, F, red at E5.1, E5.4 and at d9d724dcb). `pnpm --filter @wamn/platform-ui test` fails `projects.test.tsx` "shows every environment and member field and links to the member screen" (no element with the text Alex) and `shell.test.tsx` "uses cookies and keeps no token in browser storage". The root checks did not report them. E6.4 fixes the second.
+- Browser drivers and the saved data clear (epic not set, found in E6.4, lane report, Not verified here). Both browser drivers still wait for the retired Audiences table. `apps/platform_ui/src/shell.tsx` `saved().clear` resolves without deleting the saved rows and the outbox.
 - X5 is in T1.
 
 ## 5. Threat model
