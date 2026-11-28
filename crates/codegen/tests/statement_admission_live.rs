@@ -13,7 +13,7 @@ async fn generated_crud_outcomes_hold_under_column_grants() -> anyhow::Result<()
     };
 
     let server = wamn_test_infrastructure::containers::start_postgres().await?;
-    let database = server.create_database("tests").await?;
+    let database = wamn_test_infrastructure::identity::project(&server, "tests").await;
 
     let mut client = wamn_postgres::connect(database.as_str()).await?;
     wamn_fixture_package::apply_migrations(&mut client).await?;
@@ -48,16 +48,13 @@ async fn generated_crud_outcomes_hold_under_column_grants() -> anyhow::Result<()
     let delete = sql("delete")?;
 
     // Generate before adding the private column to retain the predecessor's grants.
-    sqlx::raw_sql(sqlx::AssertSqlSafe(
-        ("DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_app') \
-               THEN CREATE ROLE wamn_app NOLOGIN NOINHERIT; END IF; END $$; \
-             ALTER TABLE inventory.counter ADD COLUMN private_note text DEFAULT 'untouched'; \
+    sqlx::raw_sql(
+        "ALTER TABLE inventory.counter ADD COLUMN private_note text DEFAULT 'untouched'; \
              GRANT USAGE ON SCHEMA inventory TO wamn_app; \
              GRANT SELECT (id, label, edit_version, created_at), UPDATE (label, edit_version), \
                DELETE ON inventory.counter TO wamn_app; \
-             SET search_path = inventory;")
-            .to_string(),
-    ))
+             SET search_path = inventory;",
+    )
     .execute(&mut client)
     .await
     .map(drop)?;
